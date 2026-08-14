@@ -65,10 +65,16 @@ interface InstallResult {
 /** Whether `pnpm` resolves on PATH; success is cached, absence is re-probed. */
 let pnpmReady = false
 
+/**
+ * Windows npm/corepack/pnpm are `.cmd` shims. Node's `spawn` without a shell
+ * cannot start them (ENOENT / EINVAL). Same pattern as dsh's `plugin` forwarder.
+ */
+const winCmdShim = process.platform === 'win32'
+
 function probePnpm(): Promise<boolean> {
   if (pnpmReady) return Promise.resolve(true)
   return new Promise((resolvePromise) => {
-    const child = spawn('pnpm', ['--version'], { stdio: 'ignore' })
+    const child = spawn('pnpm', ['--version'], { stdio: 'ignore', shell: winCmdShim })
     child.on('error', () => resolvePromise(false))
     child.on('close', (code) => {
       pnpmReady = code === 0
@@ -79,7 +85,11 @@ function probePnpm(): Promise<boolean> {
 
 function runQuiet(file: string, args: string[], timeoutMs: number): Promise<{ code: number | null; output: string }> {
   return new Promise((resolvePromise) => {
-    const child = spawn(file, args, { env: { ...process.env, CI: 'true' }, stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = spawn(file, args, {
+      env: { ...process.env, CI: 'true' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+      shell: winCmdShim,
+    })
     let output = ''
     const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs)
     const collect = (chunk: Buffer): void => { output = (output + chunk.toString()).slice(-8 * 1024) }
