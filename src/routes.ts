@@ -49,6 +49,7 @@ export interface MarketConfig {
 
 const PROFILE_RE = /^[A-Za-z0-9_-]+$/
 const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
+const GIT_SPEC_RE = /^[A-Za-z0-9@:./_#+-]+$/
 const INSTALL_TIMEOUT_MS = 5 * 60 * 1000
 
 /**
@@ -72,6 +73,8 @@ function dshArgv(): { file: string; args: string[]; cwd: string | undefined; via
   // Bare `dsh` is a .cmd shim on Windows that only a shell can start (#13).
   return { file: 'dsh', args: [], cwd: undefined, viaShell: winCmdShim }
 }
+
+
 
 interface InstallResult {
   exitCode: number | null
@@ -168,7 +171,11 @@ function trackProgress(chunk: string): void {
 function runDshPlugin(profile: string, pluginArgs: string[]): Promise<InstallResult> {
   const { file, args, cwd, viaShell } = dshArgv()
   progress.active = true
-  progress.target = pluginArgs[pluginArgs.length - 1] ?? ''
+  const installTarget = pluginArgs[pluginArgs.length - 1] ?? ''
+  if (!GIT_SPEC_RE.test(installTarget)) {
+    throw new Error('Unsafe plugin target rejected: ' + JSON.stringify(installTarget))
+  }
+  progress.target = installTarget
   progress.startedAt = Date.now()
   progress.lastLine = ''
   return new Promise((resolvePromise) => {
@@ -707,8 +714,8 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
           }
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
-          host.logger?.warn(`[dsh-market] update failed: ${message}`)
-          logEvent('error', 'update', `route error: ${message}`)
+          host.logger?.warn('[dsh-market] update failed: ' + message)
+          logEvent('error', 'update', 'route error: ' + message)
           sendJson(response, 500, { error: message })
         }
       },
