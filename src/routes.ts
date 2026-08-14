@@ -7,7 +7,8 @@
  */
 
 import { spawn } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import type { ChildProcess, SpawnOptions } from 'node:child_process'
+import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -62,13 +63,69 @@ interface InstallResult {
   stderr: string
 }
 
+type ToolResolution =
+  | { type: 'shell'; name: string }
+  | { type: 'path'; file: string }
+  | { type: 'cmdshim'; file: string }
+
+/**
+ * Locate a CLI tool on Windows. `npm`/`corepack`/`pnpm` ship as `.cmd` shims
+ * (no `.exe`), which node:child_process cannot exec directly and which a bare
+ * `spawn` cannot find when the Node install dir isn't on PATH. Lookup order:
+ * the Node install directory (shims live next to node.exe), then PATH dirs.
+ */
+function resolveTool(name: string): ToolResolution {
+  if (process.platform !== 'win32') return { type: 'shell', name }
+  const candidates = [join(dirname(process.execPath), `${name}.cmd`)]
+  for (const dir of (process.env.Path ?? process.env.PATH ?? '').split(';')) {
+    if (dir !== '') candidates.push(join(dir, `${name}.cmd`), join(dir, `${name}.exe`))
+  }
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return /\.exe$/i.test(candidate)
+        ? { type: 'path', file: candidate }
+        : { type: 'cmdshim', file: candidate }
+    }
+  }
+  return { type: 'shell', name }
+}
+
+/**
+ * Spawn a CLI tool that node:child_process could otherwise not start on
+ * Windows: `.cmd`/`.bat` shims must run through cmd.exe, and a shim path
+ * containing spaces needs the outer-quote wrapper because cmd /c strips the
+ * first and last quote of the line.
+ */
+function spawnTool(name: string, args: string[], options: SpawnOptions = {}): ChildProcess {
+  const resolved = resolveTool(name)
+  if (process.platform !== 'win32' || resolved.type === 'path') {
+    return spawn(resolved.type === 'path' ? resolved.file : resolved.name, args, options)
+  }
+  const argLine = args.map((arg) => /[ \t&|<>^()"]/.test(arg) ? `"${arg.replace(/"/g, '\\"')}"` : arg).join(' ')
+  const cmdline = resolved.type === 'cmdshim'
+    ? (argLine === '' ? `""${resolved.file}""` : `""${resolved.file}" ${argLine}"`)
+    : (argLine === '' ? resolved.name : `${resolved.name} ${argLine}`)
+  return spawn('cmd.exe', ['/d', '/s', '/c', cmdline], { ...options, windowsVerbatimArguments: true })
+}
+
+/** Kill a spawned child and, on Windows, its whole process tree. */
+function killChild(child: ChildProcess): void {
+  if (process.platform === 'win32' && child.pid !== undefined) {
+    try {
+      spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' })
+    } catch { /* best effort */ }
+  } else {
+    child.kill('SIGKILL')
+  }
+}
+
 /** Whether `pnpm` resolves on PATH; success is cached, absence is re-probed. */
 let pnpmReady = false
 
 function probePnpm(): Promise<boolean> {
   if (pnpmReady) return Promise.resolve(true)
   return new Promise((resolvePromise) => {
-    const child = spawn('pnpm', ['--version'], { stdio: 'ignore' })
+    const child = spawnTool('pnpm', ['--version'], { stdio: 'ignore' })
     child.on('error', () => resolvePromise(false))
     child.on('close', (code) => {
       pnpmReady = code === 0
@@ -79,9 +136,9 @@ function probePnpm(): Promise<boolean> {
 
 function runQuiet(file: string, args: string[], timeoutMs: number): Promise<{ code: number | null; output: string }> {
   return new Promise((resolvePromise) => {
-    const child = spawn(file, args, { env: { ...process.env, CI: 'true' }, stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = spawnTool(file, args, { env: { ...process.env, CI: 'true' }, stdio: ['ignore', 'pipe', 'pipe'] })
     let output = ''
-    const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs)
+    const timer = setTimeout(() => killChild(child), timeoutMs)
     const collect = (chunk: Buffer): void => { output = (output + chunk.toString()).slice(-8 * 1024) }
     child.stdout.on('data', collect)
     child.stderr.on('data', collect)
@@ -142,7 +199,7 @@ function runDshPlugin(profile: string, pluginArgs: string[]): Promise<InstallRes
     let timedOut = false
     const timer = setTimeout(() => {
       timedOut = true
-      child.kill('SIGKILL')
+      killChild(child)
     }, INSTALL_TIMEOUT_MS)
     child.stdout.on('data', (chunk: Buffer) => {
       const text = chunk.toString()

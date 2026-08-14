@@ -133,7 +133,7 @@ const CSS = `
 .dshm-top{position:absolute;right:18px;bottom:18px;z-index:20;width:38px;height:38px;border-radius:99px;border:1px solid var(--dsw-alias-border-l1,#e5e7eb);background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-secondary,#6b7280);font-size:16px;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.12)}
 .dshm-top:hover{color:var(--dsw-alias-brand-primary,#4f6ef7)}
 .dshm-chip{font:inherit;font-size:12px;border:1px solid var(--dsw-alias-border-l1,#e5e7eb);background:var(--dsw-alias-bg-layer-1,#fff);border-radius:99px;padding:3px 11px;cursor:pointer;color:var(--dsw-alias-label-secondary,#6b7280)}
-.dshm-chip.on{background:var(--dsw-alias-brand-primary,#4f6ef7);border-color:var(--dsw-alias-brand-primary,#4f6ef7);color:#fff}
+.dshm-chip.on{background:var(--dsw-alias-button-primary-fill,#4f6ef7);border-color:var(--dsw-alias-button-primary-fill,#4f6ef7);color:var(--dsw-alias-label-primary-foreground,#fff)}
 .dshm-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px}
 .dshm-card{background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l1,#e5e7eb);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:6px}
 .dshm-row1{display:flex;align-items:center;gap:9px;min-width:0}
@@ -147,7 +147,7 @@ const CSS = `
 .dshm-src{font-size:11px;color:var(--dsw-alias-label-secondary,#9ca3af);text-decoration:none}
 .dshm-src:hover{color:var(--dsw-alias-brand-primary,#4f6ef7)}
 .dshm-btn{border:none;border-radius:7px;padding:5px 14px;font:inherit;font-size:12px;cursor:pointer;font-weight:600}
-.dshm-btn.install{background:var(--dsw-alias-brand-primary,#4f6ef7);color:#fff}
+.dshm-btn.install{background:var(--dsw-alias-button-primary-fill,#4f6ef7);color:var(--dsw-alias-label-primary-foreground,#fff)}
 .dshm-btn.busy{opacity:.65;cursor:default}
 .dshm-btn.done{background:transparent;color:var(--dsw-alias-state-success-primary,#16a34a);cursor:default}
 .dshm-btn.ghost{background:var(--dsw-alias-bg-layer-2,#f3f4f6);color:var(--dsw-alias-label-secondary,#6b7280)}
