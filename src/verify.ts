@@ -36,10 +36,10 @@ export interface ActivationResult {
 }
 
 /** The profile manifest's `dsh.profile.bundles` — what the CLI reconciled. */
-function readBundles(profile: string): Set<string> {
+function readBundles(profile: string, explicitDir?: string): Set<string> {
   try {
     const manifest = JSON.parse(
-      readFileSync(join(profileDir(profile), 'package.json'), 'utf8'),
+      readFileSync(join(profileDir(profile, explicitDir), 'package.json'), 'utf8'),
     ) as { dsh?: { profile?: { bundles?: unknown } } }
     const bundles = manifest.dsh?.profile?.bundles
     return new Set(Array.isArray(bundles) ? bundles.filter((n): n is string => typeof n === 'string') : [])
@@ -71,10 +71,10 @@ function liveIncludes(live: ReadonlySet<string>, packageName: string): boolean {
   return false
 }
 
-function readPkgDsh(profile: string, name: string): PkgDsh | null {
+function readPkgDsh(profile: string, name: string, explicitDir?: string): PkgDsh | null {
   try {
     const manifest = JSON.parse(
-      readFileSync(join(profileDir(profile), 'node_modules', name, 'package.json'), 'utf8'),
+      readFileSync(join(profileDir(profile, explicitDir), 'node_modules', name, 'package.json'), 'utf8'),
     ) as { dsh?: PkgDsh }
     return manifest.dsh ?? {}
   } catch {
@@ -82,9 +82,9 @@ function readPkgDsh(profile: string, name: string): PkgDsh | null {
   }
 }
 
-function patchTextOf(profile: string, name: string): string | null {
+function patchTextOf(profile: string, name: string, explicitDir?: string): string | null {
   try {
-    return readFileSync(join(profileDir(profile), 'node_modules', name, 'cordis.patch.yml'), 'utf8')
+    return readFileSync(join(profileDir(profile, explicitDir), 'node_modules', name, 'cordis.patch.yml'), 'utf8')
   } catch {
     return null
   }
@@ -99,16 +99,18 @@ export function verifyActivation(
   profile: string,
   name: string,
   live: ReadonlySet<string> = new Set(listHotMounts()),
+  explicitDir?: string,
 ): ActivationResult {
-  const bundles = readBundles(profile)
+  const activeProfileDir = profileDir(profile, explicitDir)
+  const bundles = readBundles(profile, activeProfileDir)
   const inBundles = bundles.has(name)
-  const dsh = readPkgDsh(profile, name)
+  const dsh = readPkgDsh(profile, name, activeProfileDir)
 
   if (dsh === null) {
     return { state: 'missing', reasons: ['未安装 / not installed'], bundle: inBundles, hot: false }
   }
 
-  const dir = join(profileDir(profile), 'node_modules', name)
+  const dir = join(activeProfileDir, 'node_modules', name)
   if (!hasDshManifest(dir)) {
     return {
       state: 'broken',
@@ -143,7 +145,7 @@ export function verifyActivation(
   }
 
   if (inBundles) {
-    const patch = patchTextOf(profile, name)
+    const patch = patchTextOf(profile, name, activeProfileDir)
     const complex = patch !== null && parseSimplePatch(patch) === null
     return {
       state: 'restart',

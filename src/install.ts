@@ -67,18 +67,19 @@ export async function withHoistRecovery(run: PluginRunner, profile: string, plug
  * @returns overall success (true when nothing needed retargeting).
  */
 export async function retargetCollections(
-  run: PluginRunner, profile: string, before: Set<string>, target: string,
+  run: PluginRunner, profile: string, before: Set<string>, target: string, explicitDir?: string,
 ): Promise<boolean> {
   if (!target.startsWith('github:')) return true
-  const junk = Object.keys(readInstalled(profile)).filter((name) => {
+  const dir = profileDir(profile, explicitDir)
+  const junk = Object.keys(readInstalled(profile, dir)).filter((name) => {
     if (before.has(name)) return false
-    const root = join(profileDir(profile), 'node_modules', name)
+    const root = join(dir, 'node_modules', name)
     if (!existsSync(join(root, 'package.json'))) return true
     return !hasDshManifest(root)
   })
   let allOk = true
   for (const name of junk) {
-    const root = join(profileDir(profile), 'node_modules', name)
+    const root = join(dir, 'node_modules', name)
     const candidates = pluginSubdirs(root)
     logEvent('info', 'install', `${name}: collection repo (root declares no dsh manifest); plugins inside: ${candidates.join(', ') || 'none'}`)
     await run(profile, ['remove', name])
@@ -106,14 +107,15 @@ export async function retargetCollections(
  * @returns names kept and names removed as broken.
  */
 export async function validateAddedPlugins(
-  run: PluginRunner, profile: string, before: Set<string>,
+  run: PluginRunner, profile: string, before: Set<string>, explicitDir?: string,
 ): Promise<{ keep: string[]; removedBroken: string[] }> {
-  const addedNow = Object.keys(readInstalled(profile)).filter(n => !before.has(n))
+  const dir = profileDir(profile, explicitDir)
+  const addedNow = Object.keys(readInstalled(profile, dir)).filter(n => !before.has(n))
   const keep: string[] = []
   const removedBroken: string[] = []
   for (const n of addedNow) {
-    const dir = join(profileDir(profile), 'node_modules', n)
-    if (hasDshManifest(dir) && entryArtifactExists(dir)) {
+    const packageDir = join(dir, 'node_modules', n)
+    if (hasDshManifest(packageDir) && entryArtifactExists(packageDir)) {
       keep.push(n)
     } else {
       removedBroken.push(n)

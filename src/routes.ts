@@ -17,7 +17,10 @@ import {
   mountClientOnlyDeps, readDisabledThemes,
 } from './hot.ts'
 import { exportLogs, logEvent } from './log.ts'
-import { BOOT_ID, cancelActive, probePnpm, progress, provisionPnpm, runDshPlugin } from './dsh-cli.ts'
+import {
+  BOOT_ID, cancelActive, probePnpm, progress, provisionPnpm, runDshPlugin,
+  type PluginCommandRuntime,
+} from './dsh-cli.ts'
 import { profileDir, readInstalled, readInstalledVersion, readLockCommits, readManifestDeps, restoreManifestDeps, setAllowBuilds } from './profile.ts'
 import { findInstalledAlias, gitAllowBuildsKey, installTargetFor } from './sources.ts'
 import { isStaleUpdate, parseIgnoredBuilds, parsePrepareNotAllowed, RELEASE_AGE_OVERRIDE, retargetCollections, validateAddedPlugins, withHoistRecovery } from './install.ts'
@@ -49,6 +52,8 @@ export interface MarketHost {
 export interface MarketConfig {
   /** Profile the market installs into; matches the profile serving this UI. */
   profile: string
+  /** Host-authoritative profile directory; ordinary DSH derives it from DSH_HOME. */
+  profileDirectory?: string
   /** Detached self-restart is unsafe under systemd/launchd/pm2; operators can disable it (#14). */
   allowRestart?: boolean
 }
@@ -76,21 +81,30 @@ function blockedBuilds(result: { ignoredBuilds?: unknown; stdout: string; stderr
  * @param config - Validated market configuration.
  * @returns Disposer removing every registered route.
  */
-export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () => void {
-  if (!PROFILE_RE.test(config.profile)) {
+export function mountMarketRoutes(
+  host: MarketHost,
+  config: MarketConfig,
+  commandRuntime?: PluginCommandRuntime,
+): () => void {
+  // Ordinary DSH profile names cross the CLI boundary and keep the legacy
+  // allowlist. A host-authoritative explicit directory (DSH Desktop) may
+  // legitimately pair with a Unicode or spaced display/profile name.
+  if (config.profileDirectory === undefined && !PROFILE_RE.test(config.profile)) {
     throw new Error(`dsh-market: invalid profile name: ${config.profile}`)
   }
+  const activeProfileDir = profileDir(config.profile, config.profileDirectory)
+  const commands = commandRuntime ?? { runPlugin: runDshPlugin, probePnpm, provisionPnpm, cancelActive }
   // Boot-time wipe: stale hot-mount inputs from a previous session must never
   // survive into a composition where the bundle layer already covers them.
-  cleanHotDir(profileDir(config.profile))
+  cleanHotDir(activeProfileDir)
   // The user's persisted theme choice; activateTheme mutates and writes it.
-  const disabledThemes = readDisabledThemes(profileDir(config.profile))
-  const themes = createThemeManager(host, config.profile, disabledThemes)
+  const disabledThemes = readDisabledThemes(activeProfileDir)
+  const themes = createThemeManager(host, config.profile, disabledThemes, activeProfileDir)
 
   // Client-only packages (dsh.client without dsh.bundle) are invisible to the
   // bundle layer in every boot; the market shim-mounts them so their client
   // bundles are actually served.
-  void mountClientOnlyDeps(host, profileDir(config.profile)).then(async (mounted) => {
+  void mountClientOnlyDeps(host, activeProfileDir).then(async (mounted) => {
     if (mounted.length > 0) logEvent('info', 'boot', `client-only shims mounted: ${mounted.join(', ')}`)
     // Replay the user's theme choice: bundle-layer themes they switched away
     // from get live-disabled again (bundle trees are in-memory, so the
@@ -112,7 +126,7 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
 
   /** Dependency diff vs. a pre-operation snapshot (cancel aftermath). */
   function changedSince(before: Record<string, string>): { changed: string[]; partial: boolean } {
-    const now = readInstalled(config.profile)
+    const now = readInstalled(config.profile, activeProfileDir)
     const changed = new Set<string>()
     for (const [name, spec] of Object.entries(now)) if (before[name] !== spec) changed.add(name)
     for (const name of Object.keys(before)) if (now[name] === undefined) changed.add(name)
@@ -141,14 +155,14 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
    */
   async function dropStaleHotMounts(): Promise<void> {
     for (const name of listHotMounts()) {
-      if (existsSync(join(profileDir(config.profile), 'node_modules', name, 'package.json'))) continue
+      if (existsSync(join(activeProfileDir, 'node_modules', name, 'package.json'))) continue
       await hotUnmount(name)
       logEvent('warn', 'hot-sweep', `${name}: package removed outside the market — live mount dropped`)
     }
   }
 
   /** Every plugin command goes through the pnpm-drift recovery wrapper (#20). */
-  const runPlugin = (profile: string, args: string[]) => withHoistRecovery(runDshPlugin, profile, args)
+  const runPlugin = (profile: string, args: string[]) => withHoistRecovery(commands.runPlugin, profile, args)
 
   const disposers = [
     host.webServer.register({
@@ -179,10 +193,12 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
           return
         }
         await dropStaleHotMounts()
-        const installed = readInstalled(config.profile)
+        const installed = readInstalled(config.profile, activeProfileDir)
         const activation: Record<string, ReturnType<typeof verifyActivation>> = {}
         const live = liveNames()
-        for (const name of Object.keys(installed)) activation[name] = verifyActivation(config.profile, name, live)
+        for (const name of Object.keys(installed)) {
+          activation[name] = verifyActivation(config.profile, name, live, activeProfileDir)
+        }
         sendJson(response, 200, {
           profile: config.profile,
           installed,
@@ -208,7 +224,7 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
         try {
           const body = (await readJsonBody(request)) as { name?: unknown }
           const name = typeof body.name === 'string' ? body.name : ''
-          const installed = readInstalled(config.profile)
+          const installed = readInstalled(config.profile, activeProfileDir)
           const themeNames = await themes.installedThemeNames()
           if (installed[name] === undefined || !themeNames.has(name)) {
             sendJson(response, 400, { error: 'not an installed theme' })
@@ -249,10 +265,10 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
           ndjson: progress.ndjson,
           error: progress.error,
           cancelling: progress.cancelling,
-          pnpm: await probePnpm(),
+          pnpm: await commands.probePnpm(),
           boot: BOOT_ID,
           restart: restartAllowed(config),
-          installed: readInstalled(config.profile),
+          installed: readInstalled(config.profile, activeProfileDir),
         })
       },
     }),
@@ -295,7 +311,7 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
         }
         try {
           const force = (request.url ?? '').includes('force=1')
-          sendJson(response, 200, { updates: await checkUpdates(config.profile, force) })
+          sendJson(response, 200, { updates: await checkUpdates(config.profile, force, activeProfileDir) })
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
         }
@@ -323,7 +339,7 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
           const body = (await readJsonBody(request)) as { name?: unknown; force?: unknown }
           const name = typeof body.name === 'string' ? body.name : ''
           const force = body.force === true
-          const spec = readInstalled(config.profile)[name]
+          const spec = readInstalled(config.profile, activeProfileDir)[name]
           if (spec === undefined) {
             sendJson(response, 400, { error: 'plugin is not installed' })
             return
@@ -332,7 +348,7 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
             sendJson(response, 400, { error: 'locally linked plugins update from their checkout' })
             return
           }
-          const beforeInstalled = readInstalled(config.profile)
+          const beforeInstalled = readInstalled(config.profile, activeProfileDir)
           // Re-running add re-resolves the source: git HEAD for github specs,
           // dist-tag latest for registry installs.
           const isGit = spec.startsWith('github:')
@@ -343,7 +359,7 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
           // `@latest`. Detection already hides the button; this guards the
           // route itself. Unreadable versions fall through and update as before.
           if (!isGit) {
-            const installedVersion = readInstalledVersion(config.profile, name)
+            const installedVersion = readInstalledVersion(config.profile, name, activeProfileDir)
             const registryLatest = await fetchNpmLatest(name)
             if (installedVersion !== null && registryLatest !== null && !isUpgrade(installedVersion, registryLatest)) {
               logEvent('info', 'update', `${name} refused: latest=${registryLatest} is not newer than installed=${installedVersion}`)
@@ -354,8 +370,10 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
             }
           }
           const repoKey = isGit ? spec.slice('github:'.length).replace(/#.*$/, '').toLowerCase() : null
-          const beforeVersion = readInstalledVersion(config.profile, name)
-          const beforeCommit = repoKey !== null ? readLockCommits(config.profile).get(repoKey) ?? null : null
+          const beforeVersion = readInstalledVersion(config.profile, name, activeProfileDir)
+          const beforeCommit = repoKey !== null
+            ? readLockCommits(config.profile, activeProfileDir).get(repoKey) ?? null
+            : null
           installing = true
           try {
             // force: the user chose to install a fresh release without the
@@ -364,11 +382,11 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
             // RAW manifest snapshot for failure rollback (#65) — pnpm writes
             // package.json before it finishes, so a hard-failed add leaves
             // ghost/bumped entries that break every later pnpm run.
-            const manifestBefore = readManifestDeps(config.profile)
+            const manifestBefore = readManifestDeps(config.profile, activeProfileDir)
             const result = await runPlugin(config.profile, addArgs)
             const cancelled = result.cancelled
             if ((result.exitCode !== 0 || result.timedOut) && !cancelled) {
-              const rolledBack = restoreManifestDeps(config.profile, manifestBefore)
+              const rolledBack = restoreManifestDeps(config.profile, manifestBefore, activeProfileDir)
               if (rolledBack.length > 0) logEvent('warn', 'update', `${name}: rolled back manifest residue of the failed run: ${rolledBack.join(', ')}`)
             }
             let ok = result.exitCode === 0 && !result.timedOut && !cancelled
@@ -378,15 +396,17 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
               stale = isStaleUpdate({
                 isGit,
                 beforeVersion,
-                afterVersion: readInstalledVersion(config.profile, name),
+                afterVersion: readInstalledVersion(config.profile, name, activeProfileDir),
                 beforeCommit,
-                afterCommit: repoKey !== null ? readLockCommits(config.profile).get(repoKey) ?? null : null,
+                afterCommit: repoKey !== null
+                  ? readLockCommits(config.profile, activeProfileDir).get(repoKey) ?? null
+                  : null,
               })
               if (stale) ok = false
             }
             if (ok) {
               invalidateUpdates()
-              activation = { [name]: verifyActivation(config.profile, name, liveNames()) }
+              activation = { [name]: verifyActivation(config.profile, name, liveNames(), activeProfileDir) }
             }
             // Diagnose the stale outcome with EVIDENCE (#45 by @ayingQAQ):
             // only blame pnpm's fresh-release wait when the target's latest
@@ -409,9 +429,10 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
             logEvent(ok || cancelled ? 'info' : 'error', 'update',
               `${name} -> ${target} exit=${String(result.exitCode)}${result.timedOut ? ' TIMEOUT' : ''}${cancelled ? ' CANCELLED' : ''}${stale ? ` STALE(${staleReason ?? 'unknown'})` : ''}${ok || cancelled ? '' : ` stderr=${result.stderr.slice(-300)}`}`)
             // A user-cancelled run is a quiet outcome, not an error.
-            sendJson(response, ok || cancelled ? 200 : 502, {
+            sendJson(response, ok || cancelled ? 200 : result.busy === true ? 409 : 502, {
               ok,
               cancelled: cancelled || undefined,
+              busy: result.busy || undefined,
               stale: stale || undefined,
               partial: cancelDiff?.partial,
               changed: cancelDiff?.changed,
@@ -423,7 +444,7 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
               timedOut: result.timedOut,
               stdout: result.stdout,
               stderr: result.stderr,
-              installed: readInstalled(config.profile),
+              installed: readInstalled(config.profile, activeProfileDir),
             })
           } finally {
             installing = false
@@ -451,7 +472,7 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
           return
         }
         try {
-          const result = await provisionPnpm()
+          const result = await commands.provisionPnpm()
           sendJson(response, 200, { ok: result.ok, error: result.hint })
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
@@ -532,7 +553,7 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
           const requested = (Array.isArray(body.packages) ? body.packages.map(String).map(stripVersion) : [])
             .filter(name => PKG_RE.test(name))
           const installed = requested
-            .filter(name => existsSync(join(profileDir(config.profile), 'node_modules', name, 'package.json')))
+            .filter(name => existsSync(join(activeProfileDir, 'node_modules', name, 'package.json')))
           // Git-hosted plugins rejected by pnpm's FETCHER (#68) exist in
           // neither node_modules nor package.json — the only trusted anchor
           // left is the curated registry itself: a name that resolves to a
@@ -544,7 +565,7 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
           // the github source is known: from the profile spec for installed
           // deps, from the curated registry for pending ones. The bare name
           // is kept alongside — it authorizes the npm-sourced case.
-          const specs = readInstalled(config.profile)
+          const specs = readInstalled(config.profile, activeProfileDir)
           const packages: string[] = []
           for (const name of requested) {
             if (installed.includes(name)) {
@@ -566,7 +587,7 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
             sendJson(response, 400, { error: 'no installed packages given' })
             return
           }
-          const approved = setAllowBuilds(config.profile, packages)
+          const approved = setAllowBuilds(config.profile, packages, activeProfileDir)
           logEvent('info', 'approve-builds', `allowed build scripts: ${approved.join(', ')}`)
           sendJson(response, 200, { ok: true, approved })
         } catch (error) {
@@ -591,7 +612,7 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
           return
         }
         // Cancel flow contributed in #6 by @qichuang321.
-        if (!cancelActive()) {
+        if (!commands.cancelActive()) {
           sendJson(response, 400, { error: 'no operation is running' })
           return
         }
@@ -624,12 +645,14 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
             sendJson(response, 400, { error: 'the market cannot uninstall itself; use the dsh CLI' })
             return
           }
-          if (readInstalled(config.profile)[name] === undefined) {
+          if (readInstalled(config.profile, activeProfileDir)[name] === undefined) {
             sendJson(response, 400, { error: 'plugin is not installed' })
             return
           }
-          const beforeInstalled = readInstalled(config.profile)
-          const activation = { [name]: verifyActivation(config.profile, name, liveNames()) }
+          const beforeInstalled = readInstalled(config.profile, activeProfileDir)
+          const activation = {
+            [name]: verifyActivation(config.profile, name, liveNames(), activeProfileDir),
+          }
           installing = true
           try {
             const result = await runPlugin(config.profile, ['remove', name])
@@ -650,9 +673,10 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
             }
             logEvent(ok || cancelled ? 'info' : 'error', 'uninstall',
               `${name} exit=${String(result.exitCode)}${cancelled ? ' CANCELLED' : ''}${ok ? ` live-removed=${String(hot)}` : cancelled ? '' : ` stderr=${result.stderr.slice(-300)}`}`)
-            sendJson(response, ok || cancelled ? 200 : 502, {
+            sendJson(response, ok || cancelled ? 200 : result.busy === true ? 409 : 502, {
               ok,
               cancelled: cancelled || undefined,
+              busy: result.busy || undefined,
               hot,
               partial: cancelDiff?.partial,
               changed: cancelDiff?.changed,
@@ -661,7 +685,7 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
               exitCode: result.exitCode,
               stdout: result.stdout,
               stderr: result.stderr,
-              installed: readInstalled(config.profile),
+              installed: readInstalled(config.profile, activeProfileDir),
             })
           } finally {
             installing = false
@@ -718,7 +742,7 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
           // make the approve-builds flow dead-end, so a leftover that is the
           // SAME package/source (not a repo-only alias of a different entry)
           // and is not yet active (bundle layer or live mount) may be retried.
-          const installedNow = readInstalled(config.profile)
+          const installedNow = readInstalled(config.profile, activeProfileDir)
           const aliasOf = findInstalledAlias(entry, installedNow)
           // When the duplicate guard allows a retry of a leftover dep, that
           // name must be treated as "newly added" by the post-install
@@ -733,7 +757,7 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
               || String(installedNow[aliasOf] ?? '').replace(/^file:/, '').toLowerCase() === String(target).replace(/^file:/, '').toLowerCase()
             let active = false
             try {
-              const manifest = JSON.parse(readFileSync(join(profileDir(config.profile), 'package.json'), 'utf8')) as { dsh?: { profile?: { bundles?: string[] } } }
+              const manifest = JSON.parse(readFileSync(join(activeProfileDir, 'package.json'), 'utf8')) as { dsh?: { profile?: { bundles?: string[] } } }
               active = (manifest.dsh?.profile?.bundles ?? []).includes(aliasOf) || liveNames().has(aliasOf)
             } catch {
               // unreadable manifest — treat as active to stay safe
@@ -767,7 +791,7 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
           }
           installing = true
           try {
-            const beforeSpecs = readInstalled(config.profile)
+            const beforeSpecs = readInstalled(config.profile, activeProfileDir)
             const before = new Set(Object.keys(beforeSpecs))
             if (retryAlias !== null) before.delete(retryAlias)
             // RAW manifest snapshot for failure rollback (#65): pnpm writes
@@ -775,11 +799,11 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
             // run, so a hard-failed add leaves ghost dependencies that break
             // every later pnpm run — of anything. Cancelled runs keep their
             // partial state on purpose (the user sees the diff and decides).
-            const manifestBefore = readManifestDeps(config.profile)
+            const manifestBefore = readManifestDeps(config.profile, activeProfileDir)
             const result = await runPlugin(config.profile, ['add', target])
             const cancelled = result.cancelled
             if ((result.exitCode !== 0 || result.timedOut) && !cancelled) {
-              const rolledBack = restoreManifestDeps(config.profile, manifestBefore)
+              const rolledBack = restoreManifestDeps(config.profile, manifestBefore, activeProfileDir)
               if (rolledBack.length > 0) logEvent('warn', 'install', `${target}: rolled back manifest residue of the failed run: ${rolledBack.join(', ')}`)
             }
             let ok = result.exitCode === 0 && !result.timedOut && !cancelled
@@ -789,7 +813,7 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
               // Collection repos (e.g. skin monorepos) install as a junk
               // fileset with no root package.json; retarget to the real
               // plugin subdirectories via pnpm's #path: selector.
-              ok = await retargetCollections(runPlugin, config.profile, before, target)
+              ok = await retargetCollections(runPlugin, config.profile, before, target, activeProfileDir)
             }
             // Fake-success guard (#18): a clean exit that added nothing
             // installable must not read as success. Runs even when
@@ -798,7 +822,7 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
             let notAPlugin = false
             let removedBroken: string[] = []
             if (result.exitCode === 0 && !result.timedOut && !cancelled) {
-              const validated = await validateAddedPlugins(runPlugin, config.profile, before)
+              const validated = await validateAddedPlugins(runPlugin, config.profile, before, activeProfileDir)
               removedBroken = validated.removedBroken
               if (removedBroken.length > 0) {
                 logEvent('warn', 'install', `${target}: removed uninstallable pieces (no dsh manifest or missing build artifacts): ${removedBroken.join(', ')}`)
@@ -812,7 +836,7 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
                 ok = true
               }
             }
-            const installed = readInstalled(config.profile)
+            const installed = readInstalled(config.profile, activeProfileDir)
             let hot = false
             let activation: Record<string, ReturnType<typeof verifyActivation>> | undefined
             if (ok) {
@@ -824,20 +848,23 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
                 for (const name of added) {
                   const live = entry.category === 'theme'
                     ? await themes.activateTheme(name)
-                    : (await hotMount(host, profileDir(config.profile), name)).ok
+                    : (await hotMount(host, activeProfileDir, name)).ok
                   if (!live) hot = false
                 }
                 activation = {}
                 const live = liveNames()
-                for (const name of added) activation[name] = verifyActivation(config.profile, name, live)
+                for (const name of added) {
+                  activation[name] = verifyActivation(config.profile, name, live, activeProfileDir)
+                }
               }
             }
             logEvent(ok || cancelled ? 'info' : 'error', 'install',
               `${target} exit=${String(result.exitCode)}${result.timedOut ? ' TIMEOUT' : ''}${cancelled ? ' CANCELLED' : ''}${ok ? ` hot=${String(hot)}` : cancelled ? '' : ` stderr=${result.stderr.slice(-300)}`}`)
             const ignoredBuilds = blockedBuilds(result)
-            sendJson(response, ok || cancelled ? 200 : 502, {
+            sendJson(response, ok || cancelled ? 200 : result.busy === true ? 409 : 502, {
               ok,
               cancelled: cancelled || undefined,
+              busy: result.busy || undefined,
               hot,
               partial: cancelDiff?.partial,
               changed: cancelDiff?.changed,

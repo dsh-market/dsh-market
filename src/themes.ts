@@ -36,7 +36,13 @@ export interface ThemeManager {
  * themes the user switched off — the caller owns reading it at boot and
  * replaying it; the manager mutates and persists it on switches.
  */
-export function createThemeManager(host: ThemeHost, profile: string, disabledThemes: Set<string>): ThemeManager {
+export function createThemeManager(
+  host: ThemeHost,
+  profile: string,
+  disabledThemes: Set<string>,
+  explicitDir?: string,
+): ThemeManager {
+  const activeProfileDir = profileDir(profile, explicitDir)
   /** Installed package names classified as themes by the registry's theme category. */
   async function installedThemeNames(): Promise<Set<string>> {
     const names = new Set<string>()
@@ -47,7 +53,7 @@ export function createThemeManager(host: ThemeHost, profile: string, disabledThe
       const themeRepos = new Set(
         themeEntries.map(p => repoOf(p.url)).filter((r): r is string => r !== null).map(r => r.toLowerCase()),
       )
-      for (const [name, spec] of Object.entries(readInstalled(profile))) {
+      for (const [name, spec] of Object.entries(readInstalled(profile, activeProfileDir))) {
         if (themeNames.has(name)) {
           names.add(name)
           continue
@@ -98,7 +104,6 @@ export function createThemeManager(host: ThemeHost, profile: string, disabledThe
    * it up. The choice persists in state.json and is replayed at boot.
    */
   async function activateTheme(name: string): Promise<boolean> {
-    const dir = profileDir(profile)
     const themes = await installedThemeNames()
     for (const other of themes) {
       if (other === name) continue
@@ -110,10 +115,10 @@ export function createThemeManager(host: ThemeHost, profile: string, disabledThe
       }
     }
     disabledThemes.delete(name)
-    writeDisabledThemes(dir, disabledThemes)
+    writeDisabledThemes(activeProfileDir, disabledThemes)
     if (listHotMounts().includes(name)) return true
     if (await setEntryDisabled(name, false)) return true
-    return (await hotMount(host, dir, name)).ok
+    return (await hotMount(host, activeProfileDir, name)).ok
   }
 
   return { installedThemeNames, setEntryDisabled, activateTheme }

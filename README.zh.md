@@ -25,6 +25,21 @@ dsh plugin --profile web add dshmarket
 
 重启 `dsh web`，打开 **设置 → 插件市场**。
 
+### DSH Desktop
+
+如果 DSH Desktop 版本提供公开的 `desktopProfiles` 与 `desktopPnpm`
+服务，可从 **Open DSH Terminal** 安装：
+
+```sh
+dsh plugin add dshmarket
+```
+
+市场会自动使用该代 Desktop 已锁定的活动 profile，以及 Desktop 内置的
+pnpm 操作服务；不会探测或安装系统 pnpm，应用重启仍由 Desktop 负责。
+没有这些服务的普通 DSH 会继续使用现有 profile/argv/CLI 路径。检测顺序遵循
+Desktop 支持的[跨环境插件 contract](https://github.com/anywhere-labs/deepseek-harness-desktop/blob/4f68147091e585aaa1d815f99d30a657b3842d7c/dsh-plugin-desktop/docs/plugin-services.zh.md#跨环境插件可选-desktop-adapter-与普通-dsh-fallback)。
+兼容 Desktop 并不代表市场已预装或捆绑进 Desktop。
+
 ## 你会得到
 
 - **逛与搜**——完整社区目录（300+ 插件，每天在涨），分类筛选、star 数、最热/最新排序，中英描述跟随界面语言
@@ -68,7 +83,7 @@ dsh plugin --profile web add dshmarket
 
 ### DeepSeek Harness Desktop
 
-[DeepSeek Harness Desktop](https://github.com/anywhere-labs/deepseek-harness-desktop) 是一款为 DeepSeek Harness 生态打造的现代化桌面端，让用户无需配置 Node.js 或执行命令，即可启动和管理本地 Harness 服务。项目后续还将支持插件市场、移动端远程控制和 IM Channels。
+[DeepSeek Harness Desktop](https://github.com/anywhere-labs/deepseek-harness-desktop) 是一款为 DeepSeek Harness 生态打造的现代化桌面端，无需在系统中安装 Node.js 即可启动和管理本地 Harness 服务。兼容版本可通过公开的 profile 与包操作服务运行用户自行安装的 dsh-market；是否预装仍由 Desktop 项目决定。
 
 [访问官网](https://www.dshdesktop.cn) · [GitHub](https://github.com/anywhere-labs/deepseek-harness-desktop)
 

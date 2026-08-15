@@ -25,6 +25,23 @@ dsh plugin --profile web add dshmarket
 
 Restart `dsh web`, then open **Settings → Plugin Market**.
 
+### DSH Desktop
+
+On DSH Desktop builds that expose the public `desktopProfiles` and
+`desktopPnpm` services, install from **Open DSH Terminal** with:
+
+```sh
+dsh plugin add dshmarket
+```
+
+The market automatically targets the immutable active Desktop profile and
+uses Desktop's packaged pnpm operation service. It does not probe or install a
+system pnpm, and Desktop keeps ownership of application restart. Ordinary DSH
+continues to use the existing profile/argv/CLI path when those services are
+absent. The detection order follows Desktop's supported
+[cross-environment plugin contract](https://github.com/anywhere-labs/deepseek-harness-desktop/blob/4f68147091e585aaa1d815f99d30a657b3842d7c/dsh-plugin-desktop/docs/plugin-services.md#cross-environment-plugin-optional-desktop-adapter-and-ordinary-dsh-fallback).
+This compatibility does not mean the market is bundled with Desktop.
+
 ## What you get
 
 - **Browse & search** the full community catalog (300+ plugins, growing daily) — category filters, star counts, top/new sorting, bilingual descriptions that follow your UI language
@@ -68,7 +85,7 @@ Live from [awesome-dsh-plugin.com/plugins.json](https://awesome-dsh-plugin.com/p
 
 ### DeepSeek Harness Desktop
 
-[DeepSeek Harness Desktop](https://github.com/anywhere-labs/deepseek-harness-desktop) is a modern desktop client for the DeepSeek Harness ecosystem — start and manage a local Harness service without installing Node.js or touching the command line. Plugin marketplace, mobile remote control, and IM Channels are on its roadmap.
+[DeepSeek Harness Desktop](https://github.com/anywhere-labs/deepseek-harness-desktop) is a modern desktop client for the DeepSeek Harness ecosystem — start and manage a local Harness service without a system Node.js installation. Compatible builds can host a user-installed dsh-market through their public profile and package-operation services; bundling remains a Desktop project decision.
 
 [Website](https://www.dshdesktop.cn) · [GitHub](https://github.com/anywhere-labs/deepseek-harness-desktop)
 

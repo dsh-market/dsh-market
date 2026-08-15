@@ -4,12 +4,28 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import { createDesktopPluginRuntime, type DesktopPnpmLike } from './dsh-cli.ts'
 import { mountMarketRoutes, type MarketConfig, type MarketHost } from './routes.ts'
 
 export const name = 'dsh-market'
 
 /** Optional cordis.yml configuration; profile defaults to `web`. */
-export type Config = Partial<MarketConfig>
+export type Config = Partial<Pick<MarketConfig, 'profile' | 'allowRestart'>>
+
+/** Structural subset of DSH Desktop's public `desktopProfiles` contract. */
+interface DesktopProfilesLike {
+  readonly current: {
+    readonly name: string
+    readonly dir: string
+  }
+}
+
+interface MarketEffectHost extends MarketHost {
+  effect(
+    callback: () => (() => void | Promise<void>),
+    label: string,
+  ): void
+}
 
 /**
  * Register the market against the host context.
@@ -29,14 +45,42 @@ function argvProfile(): string | undefined {
 }
 
 export function apply(ctx: Context, config?: Config): void {
-  const resolved: MarketConfig = {
-    profile: config?.profile ?? argvProfile() ?? 'web',
-    allowRestart: config?.allowRestart ?? true,
-  }
   ctx.inject(['webServer', 'loader'], (hostCtx: Context) => {
-    const host = hostCtx as unknown as MarketHost & {
-      effect(callback: () => () => void, label: string): void
+    const host = hostCtx as unknown as MarketEffectHost
+    const desktopProfiles = ctx.get('desktopProfiles') as DesktopProfilesLike | undefined
+    if (desktopProfiles === undefined) {
+      const resolved: MarketConfig = {
+        profile: config?.profile ?? argvProfile() ?? 'web',
+        allowRestart: config?.allowRestart ?? true,
+      }
+      host.effect(() => mountMarketRoutes(host, resolved), 'dsh-market: http routes')
+      return
     }
-    host.effect(() => mountMarketRoutes(host, resolved), 'dsh-market: http routes')
+
+    // Desktop's supported cross-environment contract guarantees that
+    // desktopProfiles exists before Loader entries mount, and prescribes this
+    // presence check plus a nested desktopPnpm injection:
+    // https://github.com/anywhere-labs/deepseek-harness-desktop/blob/4f68147091e585aaa1d815f99d30a657b3842d7c/dsh-plugin-desktop/docs/plugin-services.md#L190-L243
+    // Ordinary DSH keeps the existing CLI path above.
+    hostCtx.inject(['desktopPnpm'], (desktopCtx: Context) => {
+      const current = desktopProfiles.current
+      const service = (desktopCtx as unknown as { desktopPnpm: DesktopPnpmLike }).desktopPnpm
+      const runtime = createDesktopPluginRuntime(service, current.dir)
+      const resolved: MarketConfig = {
+        profile: current.name,
+        profileDirectory: current.dir,
+        // Relaunching a raw Electron process would bypass Desktop's launcher
+        // lifecycle. The shell remains responsible for restart in this mode.
+        allowRestart: false,
+      }
+      const desktopHost = desktopCtx as unknown as MarketEffectHost
+      desktopHost.effect(() => {
+        const disposeRoutes = mountMarketRoutes(host, resolved, runtime)
+        return async () => {
+          disposeRoutes()
+          await runtime.dispose()
+        }
+      }, 'dsh-market: Desktop http routes and package operations')
+    })
   })
 }

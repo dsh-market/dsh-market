@@ -248,7 +248,10 @@ interface Testbed {
   dispose(): void
 }
 
-function createTestbed(config: { allowRestart?: boolean } = {}): Testbed {
+function createTestbed(
+  config: { profile?: string; allowRestart?: boolean; profileDirectory?: string } = {},
+  runtime?: Parameters<typeof mountMarketRoutes>[2],
+): Testbed {
   const routes = new Map<string, Handler>()
   const loaderEntries: Testbed['loaderEntries'] = []
   const host = {
@@ -262,7 +265,7 @@ function createTestbed(config: { allowRestart?: boolean } = {}): Testbed {
     plugin: () => ({ await: () => Promise.resolve(), dispose: () => {} }),
     on: () => () => {},
   }
-  const dispose = mountMarketRoutes(host as never, { profile: 'web', ...config })
+  const dispose = mountMarketRoutes(host as never, { profile: 'web', ...config }, runtime)
   async function dispatch(method: string, path: string, body?: unknown, options?: { crossOrigin?: boolean }) {
     const handler = routes.get(path.split('?')[0])
     if (handler === undefined) throw new Error(`no route: ${path}`)
@@ -332,6 +335,146 @@ function installedSpec(name: string): string | undefined {
   const manifest = JSON.parse(readFileSync(join(profileDir('web'), 'package.json'), 'utf8'))
   return manifest.dependencies?.[name]
 }
+
+describe('host-provided profile and package-operation seams', () => {
+  it('uses the explicit profile directory and injected status/setup/cancel operations', async () => {
+    bed.dispose()
+    const explicitDir = join(home, 'desktop-owned-profile')
+    mkdirSync(explicitDir, { recursive: true })
+    writeFileSync(join(explicitDir, 'package.json'), '{"dependencies":{"desktop-only":"1.0.0"}}')
+    writeFileSync(join(explicitDir, 'pnpm-workspace.yaml'), 'packages:\n  - .\n')
+    fake.profileDir = explicitDir
+    const probe = vi.fn(() => Promise.resolve(true))
+    const provision = vi.fn(() => Promise.resolve({ ok: true }))
+    const cancel = vi.fn(() => true)
+    bed = createTestbed(
+      { profile: '工作 profile', profileDirectory: explicitDir, allowRestart: false },
+      { runPlugin: vi.fn() as never, probePnpm: probe, provisionPnpm: provision, cancelActive: cancel },
+    )
+
+    const installed = await bed.dispatch('GET', '/dsh-market/installed')
+    expect(installed.json).toMatchObject({
+      profile: '工作 profile',
+      installed: { 'desktop-only': '1.0.0' },
+    })
+    const status = await bed.dispatch('GET', '/dsh-market/status')
+    expect(status.json).toMatchObject({ pnpm: true, restart: false, installed: { 'desktop-only': '1.0.0' } })
+    expect(probe).toHaveBeenCalledOnce()
+    expect((await bed.dispatch('POST', '/dsh-market/setup-pnpm', {})).json.ok).toBe(true)
+    expect(provision).toHaveBeenCalledOnce()
+    expect((await bed.dispatch('POST', '/dsh-market/cancel', {})).status).toBe(200)
+    expect(cancel).toHaveBeenCalledOnce()
+  })
+
+  it('maps a generation-wide Desktop package-operation gate to conflict', async () => {
+    bed.dispose()
+    bed = createTestbed({}, {
+      runPlugin: () => Promise.resolve({
+        exitCode: 127,
+        timedOut: false,
+        stdout: '',
+        stderr: 'another desktop pnpm operation is already running',
+        cancelled: false,
+        busy: true,
+      }),
+      probePnpm: () => Promise.resolve(true),
+      provisionPnpm: () => Promise.resolve({ ok: true }),
+      cancelActive: () => false,
+    })
+
+    const result = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
+    expect(result.status).toBe(409)
+    expect(result.json).toMatchObject({ ok: false, busy: true })
+  })
+
+  it('writes build approvals and git keys only in the host-authoritative Desktop profile', async () => {
+    bed.dispose()
+    const explicitDir = join(home, 'desktop-owned-profile')
+    mkdirSync(join(explicitDir, 'node_modules', 'dsh-blue-whale'), { recursive: true })
+    writeFileSync(join(explicitDir, 'package.json'), JSON.stringify({
+      dependencies: { 'dsh-blue-whale': 'github:o/blue-whale' },
+    }))
+    writeFileSync(join(explicitDir, 'node_modules', 'dsh-blue-whale', 'package.json'), '{"name":"dsh-blue-whale"}')
+    writeFileSync(join(explicitDir, 'pnpm-workspace.yaml'), 'packages:\n  - .\n')
+    fake.profileDir = explicitDir
+    bed = createTestbed({ profile: '工作 profile', profileDirectory: explicitDir, allowRestart: false })
+
+    const approve = await bed.dispatch('POST', '/dsh-market/approve-builds', { packages: ['dsh-blue-whale'] })
+    expect(approve.status).toBe(200)
+    expect(approve.json.approved).toContain('dsh-blue-whale')
+    expect(approve.json.approved).toContain('dsh-blue-whale@git+https://github.com/o/blue-whale.git')
+    const desktopYaml = readFileSync(join(explicitDir, 'pnpm-workspace.yaml'), 'utf8')
+    expect(desktopYaml).toContain('dsh-blue-whale@git+https://github.com/o/blue-whale.git: true')
+    expect(readFileSync(join(profileDir('web'), 'pnpm-workspace.yaml'), 'utf8')).not.toContain('dsh-blue-whale')
+  })
+
+  it('rolls a failed Desktop install back in the host-authoritative profile only', async () => {
+    bed.dispose()
+    const explicitDir = join(home, 'desktop-owned-profile')
+    mkdirSync(explicitDir, { recursive: true })
+    writeFileSync(join(explicitDir, 'package.json'), JSON.stringify({ dependencies: { 'desktop-only': '1.0.0' } }))
+    writeFileSync(join(explicitDir, 'pnpm-workspace.yaml'), 'packages:\n  - .\n')
+    fake.profileDir = explicitDir
+    fake.npm['dsh-loop'] = {
+      latest: '1.0.0',
+      versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } },
+    }
+    fake.failAfterWriteStderrOnce = '[ERR_PNPM_FETCH_404] GET https://registry.npmjs.org/ghost: Not Found - 404'
+    bed = createTestbed({ profile: '工作 profile', profileDirectory: explicitDir, allowRestart: false })
+
+    const result = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
+    expect(result.status).toBe(502)
+    const desktopManifest = JSON.parse(readFileSync(join(explicitDir, 'package.json'), 'utf8'))
+    expect(desktopManifest.dependencies).toEqual({ 'desktop-only': '1.0.0' })
+    const ordinaryManifest = JSON.parse(readFileSync(join(profileDir('web'), 'package.json'), 'utf8'))
+    expect(ordinaryManifest.dependencies).toEqual({})
+  })
+
+  it('restores the previous Desktop pin when an update fails after a partial manifest write', async () => {
+    bed.dispose()
+    const explicitDir = join(home, 'desktop-owned-profile')
+    mkdirSync(join(explicitDir, 'node_modules', 'dsh-loop'), { recursive: true })
+    writeFileSync(join(explicitDir, 'package.json'), JSON.stringify({ dependencies: { 'dsh-loop': '^1.0.0' } }))
+    writeFileSync(join(explicitDir, 'pnpm-workspace.yaml'), 'packages:\n  - .\n')
+    writeFileSync(join(explicitDir, 'node_modules', 'dsh-loop', 'package.json'), JSON.stringify({
+      name: 'dsh-loop', version: '1.0.0', dsh: {}, main: 'lib/index.js',
+    }))
+    fake.profileDir = explicitDir
+    fake.npm['dsh-loop'] = {
+      latest: '1.2.0',
+      versions: { '1.2.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } },
+    }
+    fake.failAfterWriteStderrOnce = '[ERR_PNPM_FETCH_404] GET https://registry.npmjs.org/ghost: Not Found - 404'
+    vi.stubGlobal('fetch', () => Promise.resolve(new Response(JSON.stringify({ version: '1.2.0' }), { status: 200 })))
+    bed = createTestbed({ profile: '工作 profile', profileDirectory: explicitDir, allowRestart: false })
+
+    const result = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+    expect(result.status).toBe(502)
+    const desktopManifest = JSON.parse(readFileSync(join(explicitDir, 'package.json'), 'utf8'))
+    expect(desktopManifest.dependencies).toEqual({ 'dsh-loop': '^1.0.0' })
+    const ordinaryManifest = JSON.parse(readFileSync(join(profileDir('web'), 'package.json'), 'utf8'))
+    expect(ordinaryManifest.dependencies).toEqual({})
+  })
+
+  it('applies the same-name different-repo guard to the host-authoritative Desktop profile', async () => {
+    bed.dispose()
+    const explicitDir = join(home, 'desktop-owned-profile')
+    mkdirSync(explicitDir, { recursive: true })
+    writeFileSync(join(explicitDir, 'package.json'), JSON.stringify({
+      dependencies: { 'dsh-usage-stats': 'github:a1/dsh-usage-stats' },
+    }))
+    writeFileSync(join(explicitDir, 'pnpm-workspace.yaml'), 'packages:\n  - .\n')
+    fake.profileDir = explicitDir
+    bed = createTestbed({ profile: '工作 profile', profileDirectory: explicitDir, allowRestart: false })
+
+    const result = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/a2/dsh-usage-stats' })
+    expect(result.status).toBe(400)
+    expect(String(result.json.error)).toContain('同名冲突')
+    expect(fake.calls).toEqual([])
+    const desktopManifest = JSON.parse(readFileSync(join(explicitDir, 'package.json'), 'utf8'))
+    expect(desktopManifest.dependencies['dsh-usage-stats']).toBe('github:a1/dsh-usage-stats')
+  })
+})
 
 describe('install flow', () => {
   it('installs a curated plugin end to end and reports it installed', async () => {

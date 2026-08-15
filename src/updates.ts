@@ -4,7 +4,7 @@
  * dist-tag for registry installs — with a TTL cache.
  */
 
-import { readInstalled, readInstalledVersion, readLockCommits } from './profile.ts'
+import { profileDir, readInstalled, readInstalledVersion, readLockCommits } from './profile.ts'
 
 export interface UpdateStatus {
   kind: 'github' | 'npm' | 'linked'
@@ -15,7 +15,7 @@ export interface UpdateStatus {
 }
 
 const UPDATES_TTL_MS = 30 * 60 * 1000
-let updatesCache: { at: number; data: Record<string, UpdateStatus> } | null = null
+let updatesCache: { key: string; at: number; data: Record<string, UpdateStatus> } | null = null
 
 const SEMVER = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/
 
@@ -120,13 +120,20 @@ export async function fetchNpmLatest(name: string): Promise<string | null> {
 }
 
 /** Per-plugin update checks; a failed check reports no update rather than failing the listing. */
-export async function checkUpdates(profile: string, force = false): Promise<Record<string, UpdateStatus>> {
-  if (!force && updatesCache && Date.now() - updatesCache.at < UPDATES_TTL_MS) return updatesCache.data
-  const installed = readInstalled(profile)
-  const lockCommits = readLockCommits(profile)
+export async function checkUpdates(
+  profile: string,
+  force = false,
+  explicitDir?: string,
+): Promise<Record<string, UpdateStatus>> {
+  const activeProfileDir = profileDir(profile, explicitDir)
+  if (!force && updatesCache?.key === activeProfileDir && Date.now() - updatesCache.at < UPDATES_TTL_MS) {
+    return updatesCache.data
+  }
+  const installed = readInstalled(profile, activeProfileDir)
+  const lockCommits = readLockCommits(profile, activeProfileDir)
   const result: Record<string, UpdateStatus> = {}
   await Promise.all(Object.entries(installed).map(async ([name, spec]) => {
-    const version = readInstalledVersion(profile, name)
+    const version = readInstalledVersion(profile, name, activeProfileDir)
     if (spec.startsWith('link:') || spec.startsWith('file:')) {
       result[name] = { kind: 'linked', version, current: null, latest: null, updateAvailable: false }
       return
@@ -153,6 +160,6 @@ export async function checkUpdates(profile: string, force = false): Promise<Reco
       result[name] = { kind: spec.startsWith('github:') ? 'github' : 'npm', version, current: null, latest: null, updateAvailable: false }
     }
   }))
-  updatesCache = { at: Date.now(), data: result }
+  updatesCache = { key: activeProfileDir, at: Date.now(), data: result }
   return result
 }
