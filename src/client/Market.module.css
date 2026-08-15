@@ -84,6 +84,7 @@
 .empty{color:var(--dsw-alias-label-secondary,#9ca3af);font-size:13px;padding:32px;text-align:center}
 .err{color:var(--dsw-alias-state-error-primary,#dc2626);font-size:12px;margin:8px 0;white-space:pre-wrap;word-break:break-all}
 .irow{background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:12px;padding:12px 14px;display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.irowMissing{filter:grayscale(1);opacity:.5}
 .irow>.src,.irow>.owner{white-space:nowrap;flex-shrink:0}
 /* Buttons sharing the row with a description must keep one line (#26, thanks @yanshuai2002) */
 .dangerBtn.dangerBtn,.warnBtn.warnBtn,.dangerArmed.dangerArmed{white-space:nowrap;flex-shrink:0}

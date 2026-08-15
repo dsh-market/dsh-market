@@ -305,10 +305,12 @@ export function mountMarketRoutes(
             await uploadWebdav(url, username, password, createProfileBackup(config.profile))
             sendJson(response, 200, { ok: true })
           } else if (body.action === 'restore') {
-            // downloadWebdav validates the fetched body as a real profile
-            // backup before it is handed to restore, so the fetch result is
-            // never blindly echoed back (review #63).
-            sendJson(response, 200, { ok: true, ...await restoreBackup(await downloadWebdav(url, username, password)) })
+            // The preview flow first returns the downloaded backup so the
+            // client can show what will be restored; the real restore then
+            // posts it to /dsh-market/restore, where downloadWebdav's strict
+            // validation guarantees the fetch result is never blindly echoed
+            // (review #63).
+            sendJson(response, 200, { ok: true, backup: await downloadWebdav(url, username, password) })
           } else sendJson(response, 400, { error: 'invalid WebDAV action' })
         } catch (error) {
           sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) })
@@ -345,6 +347,9 @@ export function mountMarketRoutes(
         }
         await dropStaleHotMounts()
         const installed = readInstalled(config.profile, activeProfileDir)
+        const present = Object.keys(installed).filter(
+          name => readInstalledVersion(config.profile, name, activeProfileDir) !== null,
+        )
         const activation: Record<string, ReturnType<typeof verifyActivation>> = {}
         const live = liveNames()
         for (const name of Object.keys(installed)) {
@@ -353,6 +358,7 @@ export function mountMarketRoutes(
         sendJson(response, 200, {
           profile: config.profile,
           installed,
+          present,
           activation,
           live: listHotMounts(),
         })

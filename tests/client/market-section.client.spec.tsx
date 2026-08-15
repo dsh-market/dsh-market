@@ -21,8 +21,8 @@ const REGISTRY = {
   ],
 }
 
-function stubFetch(overrides: Record<string, unknown> = {}): void {
-  vi.stubGlobal('fetch', (url: string) => {
+function stubFetch(overrides: Record<string, unknown> = {}) {
+  const mock = vi.fn((url: string) => {
     const path = String(url).split('?')[0]
     const payload =
       path === '/dsh-market/registry' ? { source: 'snapshot', registry: REGISTRY }
@@ -34,6 +34,8 @@ function stubFetch(overrides: Record<string, unknown> = {}): void {
     if (merged === null) return Promise.reject(new Error(`unstubbed fetch: ${String(url)}`))
     return Promise.resolve(new Response(JSON.stringify(merged), { status: 200 }))
   })
+  vi.stubGlobal('fetch', mock)
+  return mock
 }
 
 // Snapshot objects must be referentially stable — useSyncExternalStore
@@ -52,7 +54,7 @@ function props() {
   }
 }
 
-beforeEach(() => stubFetch())
+beforeEach(() => { stubFetch() })
 afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
@@ -114,6 +116,31 @@ describe('MarketSection (jsdom)', () => {
     expect(await screen.findByRole('button', { name: en.confirm })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: en.cancel }))
     await waitFor(() => expect(screen.queryByRole('button', { name: en.confirm })).toBeNull())
+  })
+
+  it('imports a backup as a grey installed-list preview without restoring it', async () => {
+    const fetchMock = stubFetch({
+      '/dsh-market/installed': {
+        profile: 'web', installed: { 'already-here': '^1.0.0', 'ghost-dependency': '^1.0.0' }, present: ['already-here'], live: [],
+      },
+    })
+    const { container } = render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: en.tabBackup }))
+    const backup = {
+      format: 'dsh-profile-backup', version: 0.2, files: [
+        { path: 'package.json', json: { dependencies: { 'already-here': '^1.0.0', 'ghost-dependency': '^1.0.0', 'missing-backup': '^2.0.0' } } },
+      ],
+    }
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement
+    fireEvent.change(input, { target: { files: [{ text: () => Promise.resolve(JSON.stringify(backup)) }] } })
+
+    expect(await screen.findByText('missing-backup')).toBeTruthy()
+    expect(screen.getAllByText(en.notInstalled)).toHaveLength(2)
+    expect(screen.getByText('ghost-dependency').closest('[class*="irowMissing"]')).toBeTruthy()
+    expect(screen.getByText('already-here').closest('[class*="irowMissing"]')).toBeNull()
+    expect(screen.getByRole('button', { name: en.restoreStart })).toBeTruthy()
+    expect(fetchMock.mock.calls.some(([url]) => url === '/dsh-market/restore')).toBe(false)
   })
 
   it('a stale update response arms the Update-now button (#22 flow)', async () => {

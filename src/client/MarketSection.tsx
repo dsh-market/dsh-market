@@ -101,6 +101,20 @@ function savedWebdav(): { url: string; username: string; password: string; auto:
   }
 }
 
+function backupDependencies(value: unknown): InstalledMap {
+  if (value === null || typeof value !== 'object') throw new Error('invalid backup')
+  const backup = value as { format?: unknown; version?: unknown; files?: unknown }
+  if (backup.format !== 'dsh-profile-backup' || backup.version !== 0.2) throw new Error('unsupported backup format')
+  const files = backup.files
+  if (!Array.isArray(files)) throw new Error('unsupported backup format')
+  const manifest = files.find(file => file !== null && typeof file === 'object' && (file as { path?: unknown }).path === 'package.json') as { json?: unknown } | undefined
+  if (manifest?.json === null || typeof manifest?.json !== 'object' || Array.isArray(manifest.json)) throw new Error('backup package.json is invalid')
+  const dependencies = (manifest.json as { dependencies?: unknown }).dependencies
+  if (dependencies === null || typeof dependencies !== 'object' || Array.isArray(dependencies)) return {}
+  if (!Object.values(dependencies).every(spec => typeof spec === 'string')) throw new Error('backup dependencies are invalid')
+  return dependencies as InstalledMap
+}
+
 /** Sort field choices in the filter panel. */
 const SORT_FIELD_OPTIONS: ReadonlyArray<{ key: SortField; label: string }> = [
   { key: 'stars', label: 'sortStars' },
@@ -150,6 +164,7 @@ export function MarketSection(props: MarketSectionProps) {
   const [loadError, setLoadError] = useState(false)
   const [installed, setInstalledState] = useState<InstalledMap>(cachedInstalled ?? {})
   const setInstalled = useCallback((value: InstalledMap) => { cachedInstalled = value; setInstalledState(value) }, [])
+  const [installedFiles, setInstalledFiles] = useState<string[]>([])
   const [skins, setSkins] = useState<string[]>([])
   const [tab, setTab] = useState(() => {
     const saved = sessionStorage.getItem('dshm-tab')
@@ -209,6 +224,8 @@ export function MarketSection(props: MarketSectionProps) {
   const [backupBusy, setBackupBusy] = useState(false)
   const [backupMessage, setBackupMessage] = useState<string | null>(null)
   const [backupRestored, setBackupRestored] = useState(false)
+  const [pendingBackup, setPendingBackup] = useState<unknown>(null)
+  const [pendingDependencies, setPendingDependencies] = useState<InstalledMap>({})
   const [webdavUrl, setWebdavUrl] = useState(initialWebdav.url)
   const [webdavUser, setWebdavUser] = useState(initialWebdav.username)
   const [webdavPassword, setWebdavPassword] = useState(initialWebdav.password)
@@ -236,6 +253,7 @@ export function MarketSection(props: MarketSectionProps) {
       .then(res => res.json())
       .then(body => {
         setInstalled(body.installed || {})
+        setInstalledFiles(Array.isArray(body.present) ? body.present : Object.keys(body.installed || {}))
         setSkins(body.live || [])
         if (body.activation && typeof body.activation === 'object') setActivations(body.activation)
       })
@@ -675,25 +693,37 @@ export function MarketSection(props: MarketSectionProps) {
     }
     setBackupRestored(true)
     setBackupMessage(t('restoreDone'))
+    if (errors.length === 0) {
+      setPendingBackup(null)
+      setPendingDependencies({})
+    }
     refreshInstalled(true)
   }, [refreshInstalled, t])
 
-  const restoreBackup = useCallback((backup: unknown) => {
+  const previewBackup = useCallback((backup: unknown) => {
+    const dependencies = backupDependencies(backup)
+    setPendingBackup(backup)
+    setPendingDependencies(dependencies)
+    setBackupMessage(t('restorePreviewDone'))
+    setTab('installed')
+  }, [t])
+
+  const restoreBackup = useCallback(() => {
+    if (pendingBackup === null) return Promise.resolve()
     if (!window.confirm(t('restoreConfirm'))) return Promise.resolve()
     setBackupBusy(true)
     setBackupMessage(null)
     return fetch('/dsh-market/restore', {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ backup }),
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ backup: pendingBackup }),
     }).then(async response => {
       const body = await response.json()
       if (!response.ok) throw new Error(String(body.error || 'restore failed'))
       finishRestore(body)
     }).catch(error => setBackupMessage(String(error))).finally(() => setBackupBusy(false))
-  }, [finishRestore, t])
+  }, [finishRestore, pendingBackup, t])
 
   const runWebdav = useCallback((action: 'backup' | 'restore') => {
     if (webdavUrl.trim() === '') return
-    if (action === 'restore' && !window.confirm(t('restoreConfirm'))) return
     setBackupBusy(true)
     setBackupMessage(null)
     fetch('/dsh-market/webdav', {
@@ -703,14 +733,14 @@ export function MarketSection(props: MarketSectionProps) {
       const body = await response.json()
       if (!response.ok) throw new Error(String(body.error || 'WebDAV failed'))
       if (action === 'restore') {
-        finishRestore(body)
+        previewBackup(body.backup)
       }
       if (action === 'backup') {
         try { localStorage.setItem('dshm-webdav-last', String(Date.now())) } catch { /* storage unavailable */ }
+        setBackupMessage(t('backupDone'))
       }
-      setBackupMessage(t(action === 'backup' ? 'backupDone' : 'restoreDone'))
     }).catch(error => setBackupMessage(String(error))).finally(() => setBackupBusy(false))
-  }, [finishRestore, t, webdavPassword, webdavUrl, webdavUser])
+  }, [previewBackup, t, webdavPassword, webdavUrl, webdavUser])
 
   useEffect(() => {
     // Persist only the non-secret WebDAV settings; the password stays
@@ -728,6 +758,8 @@ export function MarketSection(props: MarketSectionProps) {
   }, [autoBackup, runWebdav, webdavUrl, webdavUser])
 
   const pendingRestart = doneUrls.length + updatedNames.length + removedCount + (backupRestored ? 1 : 0)
+  const displayedInstalled = pendingBackup === null ? installed : { ...pendingDependencies, ...installed }
+  const missingRestoreCount = Object.keys(pendingDependencies).filter(name => !installedFiles.includes(name)).length
   const hasUpdates = Object.keys(installed).some(
     name => !updatedNames.includes(name) && updates[name] && updates[name].updateAvailable,
   )
@@ -954,6 +986,15 @@ export function MarketSection(props: MarketSectionProps) {
             )}
           </div>
         )}
+        {tab === 'installed' && pendingBackup !== null && (
+          <div className={css.restart}>
+            <span>↺</span>
+            <span className={css.grow}>{t('restoreMissing').replace('{0}', String(missingRestoreCount))}</span>
+            <Button variant="primary" size="sm" disabled={backupBusy} onClick={restoreBackup}>
+              {backupBusy ? t('backupWorking') : t('restoreStart')}
+            </Button>
+          </div>
+        )}
         {hotUrls.length > 0 && (
           <div className={css.restart}>
             <span>✨</span>
@@ -1056,7 +1097,7 @@ export function MarketSection(props: MarketSectionProps) {
                         onChange={event => {
                           const file = event.currentTarget.files?.[0]
                           event.currentTarget.value = ''
-                          if (file !== undefined) file.text().then(text => restoreBackup(JSON.parse(text))).catch(error => setBackupMessage(String(error)))
+                          if (file !== undefined) file.text().then(text => previewBackup(JSON.parse(text))).catch(error => setBackupMessage(String(error)))
                         }}
                       />
                     </label>
@@ -1256,9 +1297,10 @@ export function MarketSection(props: MarketSectionProps) {
                       : <div className={css.grid}>{themePlugins.map(themePluginCard)}</div>}
                 </>
               )
-            : Object.keys(installed).length === 0
+            : Object.keys(displayedInstalled).length === 0
               ? <div className={css.empty}>{t('installedEmpty')}</div>
-              : Object.entries(installed).map(([name, spec]) => {
+              : Object.entries(displayedInstalled).map(([name, spec]) => {
+                  const missing = pendingBackup !== null && !installedFiles.includes(name)
                   const entry = data === null ? undefined : entryForDep(data.plugins, name, String(spec))
                   const status = updates[name]
                   const act = activations[name]
@@ -1268,7 +1310,7 @@ export function MarketSection(props: MarketSectionProps) {
                   const ghSpec = /^github:([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:#|$)/.exec(specText)
                   const repoUrl = entry !== undefined ? entry.url : ghSpec !== null ? 'https://github.com/' + ghSpec[1] : null
                   return (
-                    <div key={name} className={css.irow}>
+                    <div key={name} className={missing ? `${css.irow} ${css.irowMissing}` : css.irow}>
                       <div style={{ minWidth: 0 }}>
                         <div className={css.nm}>{name}{version && <span className={css.owner}>{' ' + version}</span>}</div>
                         {repoUrl !== null
@@ -1314,7 +1356,9 @@ export function MarketSection(props: MarketSectionProps) {
                       </div>
                       <span className={css.grow} />
                       {repoUrl !== null && <a className={css.src} href={repoUrl + '#readme'} target="_blank" rel="noreferrer">{t('readme')}</a>}
-                      {updatedNames.includes(name)
+                      {missing
+                        ? <span className={css.owner}>{t('notInstalled')}</span>
+                        : updatedNames.includes(name)
                         ? <span className={css.okState}>{act?.state === 'live' ? t('updatedLive') : t('updated')}</span>
                         : updatingName === name
                           ? <Button variant="primary" size="sm" className={css.warnBtn} disabled>{t('updating')}</Button>
@@ -1331,7 +1375,7 @@ export function MarketSection(props: MarketSectionProps) {
                             : status && status.kind === 'linked'
                               ? <span className={css.owner}>{t('linkedDev')}</span>
                               : <span className={css.owner}>{t('upToDate')}</span>}
-                      {name !== 'dsh-market' && name !== 'dshmarket' && (
+                      {!missing && name !== 'dsh-market' && name !== 'dshmarket' && (
                         removingName === name
                           ? <Button variant="outline" size="sm" className={css.dangerBtn} disabled>{t('uninstalling')}</Button>
                           : removeArmed === name
