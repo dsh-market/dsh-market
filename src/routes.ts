@@ -21,7 +21,7 @@ import { BOOT_ID, cancelActive, probePnpm, progress, provisionPnpm, runDshPlugin
 import { profileDir, readInstalled, readInstalledVersion, readLockCommits, setAllowBuilds } from './profile.ts'
 import { findInstalledAlias, installTargetFor } from './sources.ts'
 import { isStaleUpdate, parseIgnoredBuilds, RELEASE_AGE_OVERRIDE, retargetCollections, validateAddedPlugins, withHoistRecovery } from './install.ts'
-import { checkUpdates, invalidateUpdates, latestPublishedRecently } from './updates.ts'
+import { checkUpdates, fetchNpmLatest, invalidateUpdates, isUpgrade, latestPublishedRecently } from './updates.ts'
 import { createThemeManager, type LoaderEntry } from './themes.ts'
 import { readJsonBody, sameOrigin, sendJson } from './http.ts'
 import { restartAllowed, scheduleRestart, trustedRestartRequest } from './restart.ts'
@@ -322,6 +322,22 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
           // dist-tag latest for registry installs.
           const isGit = spec.startsWith('github:')
           const target = isGit ? spec.replace(/#.*$/, '') : `${name}@latest`
+          // Never let `@latest` walk a profile BACKWARDS (#64 by @ZeroOrigin64):
+          // a package whose latest dist-tag was left on an older release turns
+          // this update into a downgrade that also rewrites an exact pin to
+          // `@latest`. Detection already hides the button; this guards the
+          // route itself. Unreadable versions fall through and update as before.
+          if (!isGit) {
+            const installedVersion = readInstalledVersion(config.profile, name)
+            const registryLatest = await fetchNpmLatest(name)
+            if (installedVersion !== null && registryLatest !== null && !isUpgrade(installedVersion, registryLatest)) {
+              logEvent('info', 'update', `${name} refused: latest=${registryLatest} is not newer than installed=${installedVersion}`)
+              sendJson(response, 400, {
+                error: `已是最新：registry 的 latest 是 ${registryLatest}，不高于已装的 ${installedVersion}，更新会造成降级。 / Already current: the registry's latest (${registryLatest}) is not newer than the installed ${installedVersion}, so updating would downgrade it.`,
+              })
+              return
+            }
+          }
           const repoKey = isGit ? spec.slice('github:'.length).replace(/#.*$/, '').toLowerCase() : null
           const beforeVersion = readInstalledVersion(config.profile, name)
           const beforeCommit = repoKey !== null ? readLockCommits(config.profile).get(repoKey) ?? null : null

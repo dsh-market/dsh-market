@@ -17,6 +17,59 @@ export interface UpdateStatus {
 const UPDATES_TTL_MS = 30 * 60 * 1000
 let updatesCache: { at: number; data: Record<string, UpdateStatus> } | null = null
 
+const SEMVER = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/
+
+function parseSemver(v: string): { core: number[]; pre: string[] } | null {
+  const m = SEMVER.exec(v.trim())
+  if (m === null) return null
+  return { core: [Number(m[1]), Number(m[2]), Number(m[3])], pre: m[4] === undefined ? [] : m[4].split('.') }
+}
+
+/**
+ * Semver precedence: negative / 0 / positive like a comparator, or null when
+ * either side isn't a plain semver version. Build metadata is ignored, a
+ * release outranks any prerelease of the same core, and prerelease
+ * identifiers compare numerically when both are numeric (so `rc.10` > `rc.9`).
+ */
+export function compareVersions(a: string, b: string): number | null {
+  const pa = parseSemver(a)
+  const pb = parseSemver(b)
+  if (pa === null || pb === null) return null
+  for (let i = 0; i < 3; i++) {
+    if (pa.core[i] !== pb.core[i]) return pa.core[i] - pb.core[i]
+  }
+  if (pa.pre.length === 0 || pb.pre.length === 0) return pb.pre.length - pa.pre.length
+  for (let i = 0; i < Math.max(pa.pre.length, pb.pre.length); i++) {
+    const x = pa.pre[i]
+    const y = pb.pre[i]
+    if (x === undefined) return -1
+    if (y === undefined) return 1
+    if (x === y) continue
+    const nx = /^\d+$/.test(x)
+    const ny = /^\d+$/.test(y)
+    if (nx && ny) return Number(x) - Number(y)
+    if (nx !== ny) return nx ? -1 : 1
+    return x < y ? -1 : 1
+  }
+  return 0
+}
+
+/**
+ * True only when the registry's `latest` is semantically HIGHER than what the
+ * profile has (#64 by @ZeroOrigin64). A plain `!==` also fires when a
+ * package's `latest` dist-tag is left pointing at an OLDER release than the
+ * pinned install — clicking "update" then rewrote the exact pin to `@latest`
+ * and downgraded the profile until it no longer booted.
+ *
+ * Undecidable inputs (missing or non-semver versions) report no update:
+ * without a direction we cannot promise the "update" isn't a downgrade.
+ */
+export function isUpgrade(installed: string | null, latest: string | null): boolean {
+  if (installed === null || latest === null) return false
+  const cmp = compareVersions(latest, installed)
+  return cmp !== null && cmp > 0
+}
+
 /** Drop the cached listing (after a successful install/update/uninstall). */
 export function invalidateUpdates(): void {
   updatesCache = null
@@ -56,6 +109,16 @@ export async function latestPublishedRecently(name: string, windowMs = 26 * 60 *
   }
 }
 
+/** The registry's current `latest` version for a package, or null when it can't be read. */
+export async function fetchNpmLatest(name: string): Promise<string | null> {
+  try {
+    const meta = (await fetchJson(`https://registry.npmjs.org/${encodeURIComponent(name)}/latest`)) as { version?: string }
+    return typeof meta.version === 'string' ? meta.version : null
+  } catch {
+    return null
+  }
+}
+
 /** Per-plugin update checks; a failed check reports no update rather than failing the listing. */
 export async function checkUpdates(profile: string, force = false): Promise<Record<string, UpdateStatus>> {
   if (!force && updatesCache && Date.now() - updatesCache.at < UPDATES_TTL_MS) return updatesCache.data
@@ -83,7 +146,7 @@ export async function checkUpdates(profile: string, force = false): Promise<Reco
         const latest = typeof meta.version === 'string' ? meta.version : null
         result[name] = {
           kind: 'npm', version, current: version, latest,
-          updateAvailable: version !== null && latest !== null && version !== latest,
+          updateAvailable: isUpgrade(version, latest),
         }
       }
     } catch {

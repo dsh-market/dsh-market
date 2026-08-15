@@ -407,6 +407,21 @@ describe('update flow — no npm publishing required', () => {
     expect(r.json.activation['dsh-loop']).toMatchObject({ state: 'live' })
   })
 
+  it('never offers or performs a downgrade when the latest dist-tag is older (#64 by @ZeroOrigin64)', async () => {
+    // A package whose `latest` tag was left on its first release while newer
+    // prereleases shipped: latest 0.0.1 is BELOW the installed 1.0.0.
+    advanceNpmLatest('0.0.1')
+    const specBefore = installedSpec('dsh-loop')
+    const updates = await bed.dispatch('GET', '/dsh-market/updates?force=1')
+    expect(updates.json.updates['dsh-loop']).toMatchObject({ kind: 'npm', current: '1.0.0', latest: '0.0.1', updateAvailable: false })
+    // Even called directly, the route refuses rather than rewriting the pin to `@latest`.
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+    expect(r.status).toBe(400)
+    expect(String(r.json.error)).toContain('0.0.1')
+    expect(installedSpec('dsh-loop')).toBe(specBefore)
+    expect(fake.calls.some(c => c.includes('dsh-loop@latest'))).toBe(false)
+  })
+
   it('surfaces the silent fresh-release hold as an actionable error, and force applies it (#22)', async () => {
     advanceNpmLatest('1.2.0') // published 1h ago — inside the safety window
     fake.staleUpdates = true // pnpm keeps 1.0.0 and exits 0
