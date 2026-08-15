@@ -176,7 +176,7 @@ function runDshPlugin(profile: string, pluginArgs: string[]): Promise<InstallRes
   const { file, args, cwd, viaShell } = dshArgv()
   // pnpm 9 refuses to add at a workspace root without -w (#17); pnpm 10/11
   // accept the flag as a no-op there, so it is safe to pass always.
-  if (pluginArgs[0] === 'add' || pluginArgs[0] === 'remove') {
+  if (pluginArgs[0] === 'add' || pluginArgs[0] === 'remove' || pluginArgs[0] === 'update') {
     pluginArgs = [pluginArgs[0], '-w', ...pluginArgs.slice(1)]
   }
   const target = pluginArgs[pluginArgs.length - 1] ?? ''
