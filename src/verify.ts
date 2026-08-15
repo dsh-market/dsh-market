@@ -53,6 +53,24 @@ interface PkgDsh {
   client?: unknown
 }
 
+/**
+ * True when `live` contains the package itself or a subpath entry of it.
+ *
+ * The live set (see `liveNames` in routes.ts) holds loader entry names — the
+ * `name:` field of each bundle patch row. Bundles usually name the bare
+ * package (`dshmarket`, `@scope/pkg`), but may point at a subpath entry
+ * (`@vectorize-io/hindsight-coding-agents/dsh`, `aegis/extensions/dsh/index.js`).
+ * Either form means the package's fiber is up and it must read as live;
+ * a different package sharing a name prefix (`@scope/pkg2` vs `@scope/pkg`)
+ * must not — the `/` bound keeps the match a real subpath.
+ */
+function liveIncludes(live: ReadonlySet<string>, packageName: string): boolean {
+  if (live.has(packageName)) return true
+  const prefix = `${packageName}/`
+  for (const name of live) if (name.startsWith(prefix)) return true
+  return false
+}
+
 function readPkgDsh(profile: string, name: string): PkgDsh | null {
   try {
     const manifest = JSON.parse(
@@ -110,7 +128,7 @@ export function verifyActivation(
     }
   }
 
-  if (live.has(name)) {
+  if (liveIncludes(live, name)) {
     const clientOnly = dsh.bundle === undefined && dsh.client !== undefined
     return {
       state: 'live',

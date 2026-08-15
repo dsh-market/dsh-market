@@ -92,4 +92,32 @@ describe('verifyActivation (P0-2)', () => {
     pkg('dsh-loop', { dsh: { bundle: { patch: './cordis.patch.yml' } }, main: 'index.js' }, { 'index.js': '', 'cordis.patch.yml': SIMPLE_PATCH })
     expect(verifyActivation('web', 'dsh-loop', new Set())).toMatchObject({ state: 'restart', bundle: true })
   })
+
+  it('live when the bundle entry name is a scoped subpath of the package (patch name ≠ package name)', () => {
+    profile(['@vectorize-io/hindsight-coding-agents'])
+    pkg('@vectorize-io/hindsight-coding-agents',
+      { dsh: { bundle: { patch: './cordis.patch.yml' } }, main: 'index.js' },
+      { 'index.js': '', 'cordis.patch.yml': SIMPLE_PATCH })
+    // liveNames() reports loader entry names — the patch's `name:` field, which
+    // may be a subpath (`@vectorize-io/hindsight-coding-agents/dsh`) rather than
+    // the bare package name. The fiber being up must still read as live.
+    expect(verifyActivation('web', '@vectorize-io/hindsight-coding-agents',
+      new Set(['@vectorize-io/hindsight-coding-agents/dsh']))).toMatchObject({ state: 'live', hot: true, bundle: true })
+  })
+
+  it('live when the bundle entry name is an unscoped subpath of the package (e.g. aegis)', () => {
+    profile(['aegis'])
+    pkg('aegis',
+      { dsh: { bundle: { patch: './extensions/dsh/cordis.patch.yml' } }, main: 'index.js' },
+      { 'index.js': '' })
+    expect(verifyActivation('web', 'aegis', new Set(['aegis/extensions/dsh/index.js']))).toMatchObject({ state: 'live', hot: true, bundle: true })
+  })
+
+  it('does not treat a similarly-prefixed different package as live', () => {
+    profile(['dsh-loop'])
+    pkg('dsh-loop', { dsh: { bundle: { patch: './cordis.patch.yml' } }, main: 'index.js' }, { 'index.js': '', 'cordis.patch.yml': SIMPLE_PATCH })
+    // 'dsh-loop-tool' is a distinct package; only an exact name or a real
+    // `name/` subpath entry counts as the package being live.
+    expect(verifyActivation('web', 'dsh-loop', new Set(['dsh-loop-tool']))).toMatchObject({ state: 'restart', bundle: true })
+  })
 })
