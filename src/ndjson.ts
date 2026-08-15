@@ -138,7 +138,13 @@ export function createProgressTracker(): ProgressTracker {
       snap.seen = true
       if (Array.isArray(msg.packageNames)) {
         for (const pkg of msg.packageNames) {
-          if (typeof pkg === 'string' && !snap.ignoredBuilds.includes(pkg)) snap.ignoredBuilds.push(pkg)
+          // pnpm's ndjson event reports version-qualified names (cloudflared@0.7.3);
+          // the approve-builds allowlist keys and node_modules lookups use bare
+          // package names, so strip the suffix (same rule as the human-line
+          // fallback in install.ts's parseIgnoredBuilds).
+          const at = typeof pkg === 'string' ? pkg.lastIndexOf('@') : -1
+          const bare = at > 0 ? pkg.slice(0, at) : pkg
+          if (typeof bare === 'string' && bare !== '' && !snap.ignoredBuilds.includes(bare)) snap.ignoredBuilds.push(bare)
         }
       }
       return

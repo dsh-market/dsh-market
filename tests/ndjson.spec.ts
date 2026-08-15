@@ -68,6 +68,21 @@ describe('pnpm ndjson progress parser', () => {
     expect(snap.ignoredBuilds).toEqual(['esbuild', 'koffi'])
   })
 
+  it('strips @version suffixes from ignored-scripts names (pnpm 11 ndjson)', () => {
+    // pnpm 11's `pnpm:ignored-scripts` event reports version-qualified names
+    // (cloudflared@0.7.3), but the approve-builds allowlist keys and
+    // node_modules lookups use bare package names.
+    const snap = feed([
+      '{"time":1,"name":"pnpm:ignored-scripts","packageNames":["cloudflared@0.7.3","cpu-features@0.0.10","ssh2@1.17.0","@scope/pkg@1.2.3"]}',
+    ])
+    expect(snap.ignoredBuilds).toEqual(['cloudflared', 'cpu-features', 'ssh2', '@scope/pkg'])
+    // scoped bare names and duplicates stay untouched
+    const snap2 = feed([
+      '{"time":1,"name":"pnpm:ignored-scripts","packageNames":["@scope/pkg","cloudflared@0.7.3","cloudflared@0.7.3"]}',
+    ])
+    expect(snap2.ignoredBuilds).toEqual(['@scope/pkg', 'cloudflared'])
+  })
+
   it('captures the fatal error message from the stream', () => {
     const snap = feed([
       '{"time":1,"name":"pnpm","level":"error","prefix":"p","err":{"name":"pnpm","message":"Unexpected token \\"{\\" is not valid JSON","stack":"at JSON.parse"}}',

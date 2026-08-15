@@ -474,9 +474,16 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
           // scripts are usually TRANSITIVE deps (cloudflared, ssh2,
           // cpu-features…), which never appear in package.json (#56 by
           // @walnut1218).
+          // pnpm 11's ndjson `ignored-scripts` event reports version-qualified
+          // names (cloudflared@0.7.3); strip the @version suffix so the
+          // allowlist keys and node_modules lookups use bare package names.
+          const stripVersion = (name: string): string => {
+            const at = name.lastIndexOf('@')
+            return at > 0 ? name.slice(0, at) : name
+          }
           const PKG_RE = /^(@[A-Za-z0-9-~][A-Za-z0-9._~-]*\/)?[A-Za-z0-9-~][A-Za-z0-9._~-]*$/
           const body = (await readJsonBody(request)) as { packages?: unknown }
-          const packages = (Array.isArray(body.packages) ? body.packages.map(String) : [])
+          const packages = (Array.isArray(body.packages) ? body.packages.map(String).map(stripVersion) : [])
             .filter(name => PKG_RE.test(name)
               && existsSync(join(profileDir(config.profile), 'node_modules', name, 'package.json')))
           if (packages.length === 0) {
@@ -629,16 +636,46 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
           // twice — two loader entries with one id brick the next boot.
           // Monorepo subpath entries (distinct plugins in one repo) pass:
           // their entry urls differ by subpath and identity is name-based.
-          const aliasOf = findInstalledAlias(entry, readInstalled(config.profile))
+          // A dependency left in package.json by a FAILED install (blocked
+          // build scripts: pnpm writes the manifest, then exits 1) is NOT a
+          // duplicate — it was never activated. Blocking the retry would
+          // make the approve-builds flow dead-end, so a leftover that is the
+          // SAME package/source (not a repo-only alias of a different entry)
+          // and is not yet active (bundle layer or live mount) may be retried.
+          const installedNow = readInstalled(config.profile)
+          const aliasOf = findInstalledAlias(entry, installedNow)
+          // When the duplicate guard allows a retry of a leftover dep, that
+          // name must be treated as "newly added" by the post-install
+          // validation and hot-mount below (it IS in package.json from the
+          // failed attempt, so the plain before/after diff would miss it).
+          let retryAlias: string | null = null
           if (aliasOf !== null) {
-            logEvent('warn', 'install-rejected', `${entry.name}: same plugin already installed as ${aliasOf}`)
-            sendJson(response, 400, { error: `已以「${aliasOf}」安装过同一个插件，无需重复安装 / this plugin is already installed as "${aliasOf}"` })
-            return
+            // Same install? The leftover's own name/spec must match what we
+            // are about to add — an npm entry retries under its npm name; a
+            // github entry's package.json spec equals the target.
+            const sameSource = aliasOf.toLowerCase() === (entry.npm ?? '').toLowerCase()
+              || String(installedNow[aliasOf] ?? '').replace(/^file:/, '').toLowerCase() === String(target).replace(/^file:/, '').toLowerCase()
+            let active = false
+            try {
+              const manifest = JSON.parse(readFileSync(join(profileDir(config.profile), 'package.json'), 'utf8')) as { dsh?: { profile?: { bundles?: string[] } } }
+              active = (manifest.dsh?.profile?.bundles ?? []).includes(aliasOf) || liveNames().has(aliasOf)
+            } catch {
+              // unreadable manifest — treat as active to stay safe
+              active = true
+            }
+            if (active || !sameSource) {
+              logEvent('warn', 'install-rejected', `${entry.name}: same plugin already installed as ${aliasOf}`)
+              sendJson(response, 400, { error: `已以「${aliasOf}」安装过同一个插件，无需重复安装 / this plugin is already installed as "${aliasOf}"` })
+              return
+            }
+            retryAlias = aliasOf
+            logEvent('info', 'install', `${entry.name}: ${aliasOf} present but inactive (leftover of a failed install) — retrying`)
           }
           installing = true
           try {
             const beforeSpecs = readInstalled(config.profile)
             const before = new Set(Object.keys(beforeSpecs))
+            if (retryAlias !== null) before.delete(retryAlias)
             const result = await runPlugin(config.profile, ['add', target])
             const cancelled = result.cancelled
             let ok = result.exitCode === 0 && !result.timedOut && !cancelled
@@ -693,6 +730,12 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
             }
             logEvent(ok || cancelled ? 'info' : 'error', 'install',
               `${target} exit=${String(result.exitCode)}${result.timedOut ? ' TIMEOUT' : ''}${cancelled ? ' CANCELLED' : ''}${ok ? ` hot=${String(hot)}` : cancelled ? '' : ` stderr=${result.stderr.slice(-300)}`}`)
+            const ignoredBuilds = (() => {
+              // Prefer the structured event (pnpm 11 ndjson) over the human line.
+              if (Array.isArray(result.ignoredBuilds) && result.ignoredBuilds.length > 0) return result.ignoredBuilds
+              const list = parseIgnoredBuilds(result.stdout, result.stderr)
+              return list.length > 0 ? list : undefined
+            })()
             sendJson(response, ok || cancelled ? 200 : 502, {
               ok,
               cancelled: cancelled || undefined,
@@ -700,13 +743,15 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
               partial: cancelDiff?.partial,
               changed: cancelDiff?.changed,
               activation,
-              ignoredBuilds: (() => {
-                // Prefer the structured event (pnpm 11 ndjson) over the human line.
-                if (Array.isArray(result.ignoredBuilds) && result.ignoredBuilds.length > 0) return result.ignoredBuilds
-                const list = parseIgnoredBuilds(result.stdout, result.stderr)
-                return list.length > 0 ? list : undefined
-              })(),
-              error: notAPlugin ? 'nothing installable: the plugin(s) need a build step (blocked by default, see allowBuilds) or ship no prebuilt artifacts / 没有可安装的内容：插件需要构建授权（allowBuilds，默认拦截）或未附带构建产物，详见导出日志' : undefined,
+              ignoredBuilds,
+              // Blocked build scripts are expected (pnpm >= 10 blocks them by
+              // default): surface the approve-builds banner instead of scaring
+              // the user with pnpm's raw stack.
+              error: notAPlugin
+                ? 'nothing installable: the plugin(s) need a build step (blocked by default, see allowBuilds) or ship no prebuilt artifacts / 没有可安装的内容：插件需要构建授权（allowBuilds，默认拦截）或未附带构建产物，详见导出日志'
+                : Array.isArray(ignoredBuilds) && ignoredBuilds.length > 0
+                  ? `构建脚本被 pnpm 默认拦截（${ignoredBuilds.join(', ')}），请点击上方按钮放行后重试 / build scripts are blocked by pnpm by default (${ignoredBuilds.join(', ')}); click "Allow build scripts and retry" above`
+                  : undefined,
               exitCode: result.exitCode,
               timedOut: result.timedOut,
               stdout: result.stdout,
