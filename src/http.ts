@@ -28,13 +28,13 @@ export function sameOrigin(request: IncomingMessage): boolean {
 }
 
 /** Read and parse a JSON request body, rejecting anything over 4 KiB. */
-export async function readJsonBody(request: IncomingMessage): Promise<unknown> {
+export async function readJsonBody(request: IncomingMessage, maxBytes = 4096): Promise<unknown> {
   const chunks: Buffer[] = []
   let size = 0
   for await (const chunk of request) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
     size += buffer.length
-    if (size > 4096) throw new Error('request body too large')
+    if (size > maxBytes) throw new Error('request body too large')
     chunks.push(buffer)
   }
   return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown

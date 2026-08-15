@@ -29,6 +29,9 @@ import { createThemeManager, type LoaderEntry } from './themes.ts'
 import { readJsonBody, sameOrigin, sendJson } from './http.ts'
 import { restartAllowed, scheduleRestart, trustedRestartRequest } from './restart.ts'
 import { verifyActivation } from './verify.ts'
+import {
+  createProfileBackup, downloadWebdav, MAX_BACKUP_BYTES, restoreProfileBackup, secretFileCount, uploadWebdav,
+} from './backup.ts'
 
 export type { LoaderEntry } from './themes.ts'
 export type { UpdateStatus } from './updates.ts'
@@ -164,7 +167,106 @@ export function mountMarketRoutes(
   /** Every plugin command goes through the pnpm-drift recovery wrapper (#20). */
   const runPlugin = (profile: string, args: string[]) => withHoistRecovery(commands.runPlugin, profile, args)
 
+  async function restoreBackup(value: unknown): Promise<{ files: number }> {
+    if (installing) throw new Error('another plugin operation is already running')
+    if (!await probePnpm()) throw new Error('pnpm is required to restore plugins')
+    installing = true
+    const restored = restoreProfileBackup(config.profile, value)
+    try {
+      const result = await runPlugin(config.profile, ['install'])
+      if (result.exitCode !== 0 || result.timedOut || result.cancelled) {
+        throw new Error(result.stderr || result.stdout || 'plugin reinstall failed')
+      }
+      invalidateUpdates()
+      return { files: restored.files }
+    } catch (error) {
+      restored.rollback()
+      throw error
+    } finally {
+      installing = false
+    }
+  }
+
   const disposers = [
+    host.webServer.register({
+      kind: 'exact',
+      path: '/dsh-market/backup',
+      handler: (request, response) => {
+        if (request.method !== 'GET') {
+          response.writeHead(405, { allow: 'GET' })
+          response.end()
+          return
+        }
+        // Profile exports carry configuration that may include credentials
+        // (config.toml, .env, …), so they are limited to same-origin loopback
+        // requests exactly like process control (review #63).
+        if (!trustedRestartRequest(request)) {
+          sendJson(response, 403, { error: 'backup export is limited to same-origin loopback requests' })
+          return
+        }
+        try {
+          const backup = JSON.stringify(createProfileBackup(config.profile), null, 2)
+          response.writeHead(200, {
+            'cache-control': 'no-store',
+            'content-type': 'application/json; charset=utf-8',
+            'content-disposition': `attachment; filename="dsh-${config.profile}-backup.json"`,
+          })
+          response.end(backup)
+        } catch (error) {
+          sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    }),
+
+    host.webServer.register({
+      kind: 'exact',
+      path: '/dsh-market/restore',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) return sendJson(response, 403, { error: 'untrusted origin' })
+        try {
+          const body = await readJsonBody(request, MAX_BACKUP_BYTES + 4096) as { backup?: unknown }
+          sendJson(response, 200, { ok: true, ...await restoreBackup(body.backup) })
+        } catch (error) {
+          sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    }),
+
+    host.webServer.register({
+      kind: 'exact',
+      path: '/dsh-market/webdav',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) return sendJson(response, 403, { error: 'untrusted origin' })
+        try {
+          const body = await readJsonBody(request) as { action?: unknown; url?: unknown; username?: unknown; password?: unknown }
+          const url = typeof body.url === 'string' ? body.url : ''
+          const username = typeof body.username === 'string' ? body.username : ''
+          const password = typeof body.password === 'string' ? body.password : ''
+          if (body.action === 'backup') {
+            await uploadWebdav(url, username, password, createProfileBackup(config.profile))
+            sendJson(response, 200, { ok: true })
+          } else if (body.action === 'restore') {
+            // downloadWebdav validates the fetched body as a real profile
+            // backup before it is handed to restore, so the fetch result is
+            // never blindly echoed back (review #63).
+            sendJson(response, 200, { ok: true, ...await restoreBackup(await downloadWebdav(url, username, password)) })
+          } else sendJson(response, 400, { error: 'invalid WebDAV action' })
+        } catch (error) {
+          sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    }),
+
     host.webServer.register({
       kind: 'exact',
       path: '/dsh-market/registry',

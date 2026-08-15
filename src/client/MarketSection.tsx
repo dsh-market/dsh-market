@@ -81,6 +81,25 @@ let cachedInstalled: InstalledMap | null = null
 /** Discover grid page-size choices — the catalog grows daily, so cap each page. */
 const PAGE_SIZES = [24, 48, 96]
 const DEFAULT_PAGE_SIZE = 24
+const WEBDAV_STORAGE_KEY = 'dshm-webdav'
+
+function savedWebdav(): { url: string; username: string; password: string; auto: boolean } {
+  try {
+    const value = JSON.parse(localStorage.getItem(WEBDAV_STORAGE_KEY) ?? '{}') as Record<string, unknown>
+    return {
+      url: typeof value.url === 'string' ? value.url : '',
+      username: typeof value.username === 'string' ? value.username : '',
+      // The password never persists in the browser: plugins run same-origin
+      // with dshmarket, so a stored password would be readable by any plugin
+      // client on this host and become the weakest credential in the profile
+      // (review #63). It lives in server config / memory only.
+      password: '',
+      auto: value.auto === true,
+    }
+  } catch {
+    return { url: '', username: '', password: '', auto: false }
+  }
+}
 
 /** Sort field choices in the filter panel. */
 const SORT_FIELD_OPTIONS: ReadonlyArray<{ key: SortField; label: string }> = [
@@ -116,6 +135,7 @@ export interface MarketSectionProps {
 
 export function MarketSection(props: MarketSectionProps) {
   const t = props.t
+  const initialWebdav = useMemo(savedWebdav, [])
   const localeSnap = useSyncExternalStore(
     cb => props.locale.subscribe(cb),
     () => props.locale.getSnapshot(),
@@ -186,6 +206,13 @@ export function MarketSection(props: MarketSectionProps) {
   const [restartEnabled, setRestartEnabled] = useState(false)
   const [restarting, setRestarting] = useState(false)
   const [showTop, setShowTop] = useState(false)
+  const [backupBusy, setBackupBusy] = useState(false)
+  const [backupMessage, setBackupMessage] = useState<string | null>(null)
+  const [backupRestored, setBackupRestored] = useState(false)
+  const [webdavUrl, setWebdavUrl] = useState(initialWebdav.url)
+  const [webdavUser, setWebdavUser] = useState(initialWebdav.username)
+  const [webdavPassword, setWebdavPassword] = useState(initialWebdav.password)
+  const [autoBackup, setAutoBackup] = useState(initialWebdav.auto)
   const bodyRef = useRef<HTMLDivElement | null>(null)
   const [sortField, setSortField] = useState<SortField>('stars')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
@@ -641,7 +668,59 @@ export function MarketSection(props: MarketSectionProps) {
     next()
   }, [updatableNames, doUpdate])
 
-  const pendingRestart = doneUrls.length + updatedNames.length + removedCount
+  const restoreBackup = useCallback((backup: unknown) => {
+    if (!window.confirm(t('restoreConfirm'))) return Promise.resolve()
+    setBackupBusy(true)
+    setBackupMessage(null)
+    return fetch('/dsh-market/restore', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ backup }),
+    }).then(async response => {
+      const body = await response.json()
+      if (!response.ok) throw new Error(String(body.error || 'restore failed'))
+      setBackupRestored(true)
+      setBackupMessage(t('restoreDone'))
+      refreshInstalled(true)
+    }).catch(error => setBackupMessage(String(error))).finally(() => setBackupBusy(false))
+  }, [refreshInstalled, t])
+
+  const runWebdav = useCallback((action: 'backup' | 'restore') => {
+    if (webdavUrl.trim() === '') return
+    if (action === 'restore' && !window.confirm(t('restoreConfirm'))) return
+    setBackupBusy(true)
+    setBackupMessage(null)
+    fetch('/dsh-market/webdav', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action, url: webdavUrl.trim(), username: webdavUser, password: webdavPassword }),
+    }).then(async response => {
+      const body = await response.json()
+      if (!response.ok) throw new Error(String(body.error || 'WebDAV failed'))
+      if (action === 'restore') {
+        setBackupRestored(true)
+        refreshInstalled(true)
+      }
+      if (action === 'backup') {
+        try { localStorage.setItem('dshm-webdav-last', String(Date.now())) } catch { /* storage unavailable */ }
+      }
+      setBackupMessage(t(action === 'backup' ? 'backupDone' : 'restoreDone'))
+    }).catch(error => setBackupMessage(String(error))).finally(() => setBackupBusy(false))
+  }, [refreshInstalled, t, webdavPassword, webdavUrl, webdavUser])
+
+  useEffect(() => {
+    // Persist only the non-secret WebDAV settings; the password stays
+    // server-side/in-memory (see savedWebdav). Storage itself may be
+    // unavailable (e.g. the client test env), so never let it crash the UI.
+    try {
+      localStorage.setItem(WEBDAV_STORAGE_KEY, JSON.stringify({ url: webdavUrl, username: webdavUser, auto: autoBackup }))
+    } catch { /* storage unavailable — config just won't survive reload */ }
+    if (!autoBackup || webdavUrl.trim() === '') return
+    let last = 0
+    try {
+      last = Number(localStorage.getItem('dshm-webdav-last')) || 0
+    } catch { /* ignore */ }
+    if (Date.now() - last >= 24 * 60 * 60 * 1000) runWebdav('backup')
+  }, [autoBackup, runWebdav, webdavUrl, webdavUser])
+
+  const pendingRestart = doneUrls.length + updatedNames.length + removedCount + (backupRestored ? 1 : 0)
   const hasUpdates = Object.keys(installed).some(
     name => !updatedNames.includes(name) && updates[name] && updates[name].updateAvailable,
   )
@@ -853,8 +932,9 @@ export function MarketSection(props: MarketSectionProps) {
             {t('tabInstalled') + (Object.keys(installed).length > 0 ? ' (' + Object.keys(installed).length + ')' : '')}
             {hasUpdates && <StateDot state="error" size={7} className={css.dot} />}
           </button>
+          <button className={tab === 'backup' ? `${css.tab} ${css.on}` : css.tab} onClick={() => setTab('backup')}>{t('tabBackup')}</button>
           <span className={css.grow} />
-          <Input className={css.searchInline} icon={<IconSearchOutline16 size={14} />} placeholder={t('searchPh')} value={q} onChange={e => setQ(e.target.value)} />
+          {tab !== 'backup' && <Input className={css.searchInline} icon={<IconSearchOutline16 size={14} />} placeholder={t('searchPh')} value={q} onChange={e => setQ(e.target.value)} />}
         </div>
         {!envReady && (
           <div className={css.restart}>
@@ -951,7 +1031,65 @@ export function MarketSection(props: MarketSectionProps) {
         ref={bodyRef}
         onScroll={e => setShowTop(e.currentTarget.scrollTop > 400)}
       >
-        {tab === 'discover'
+        {tab === 'backup'
+          ? (
+              <div className={css.backupGrid}>
+                <section className={css.backupCard}>
+                  <h3>{t('backupLocal')}</h3>
+                  <p>{t('backupHint')}</p>
+                  <p className={css.backupWarn}>{t('credsWarning')}</p>
+                  <div className={css.backupActions}>
+                    <a className={`${css.backupButton} ${css.backupPrimary}`} href="/dsh-market/backup" download aria-disabled={backupBusy}>{t('backupDownload')}</a>
+                    <label className={css.backupButton} aria-disabled={backupBusy}>
+                      {backupBusy ? t('backupWorking') : t('backupImport')}
+                      <input
+                        type="file"
+                        accept="application/json,.json"
+                        disabled={backupBusy}
+                        onChange={event => {
+                          const file = event.currentTarget.files?.[0]
+                          event.currentTarget.value = ''
+                          if (file !== undefined) file.text().then(text => restoreBackup(JSON.parse(text))).catch(error => setBackupMessage(String(error)))
+                        }}
+                      />
+                    </label>
+                  </div>
+                </section>
+                <section className={css.backupCard}>
+                  <h3>{t('webdav')}</h3>
+                  <select
+                    className={css.backupInput}
+                    aria-label={t('webdavPreset')}
+                    defaultValue=""
+                    onChange={event => {
+                      const urls: Record<string, string> = {
+                        jianguoyun: 'https://dav.jianguoyun.com/dav/dsh-profile-backup.json',
+                        koofr: 'https://app.koofr.net/dav/Koofr/dsh-profile-backup.json',
+                        nextcloud: 'https://nextcloud.example/remote.php/dav/files/USERNAME/dsh-profile-backup.json',
+                      }
+                      if (urls[event.target.value] !== undefined) setWebdavUrl(urls[event.target.value]!)
+                    }}
+                  >
+                    <option value="">{t('webdavPreset')}</option>
+                    <option value="jianguoyun">坚果云 / Nutstore</option>
+                    <option value="koofr">Koofr</option>
+                    <option value="nextcloud">Nextcloud</option>
+                  </select>
+                  <input className={css.backupInput} type="url" value={webdavUrl} placeholder={t('webdavUrl')} onChange={e => setWebdavUrl(e.target.value)} />
+                  <input className={css.backupInput} autoComplete="username" value={webdavUser} placeholder={t('webdavUser')} onChange={e => setWebdavUser(e.target.value)} />
+                  <input className={css.backupInput} type="password" autoComplete="current-password" value={webdavPassword} placeholder={t('webdavPassword')} onChange={e => setWebdavPassword(e.target.value)} />
+                  <div className={css.backupActions}>
+                    <Button variant="primary" size="sm" disabled={backupBusy || webdavUrl.trim() === ''} onClick={() => runWebdav('backup')}>{backupBusy ? t('backupWorking') : t('webdavUpload')}</Button>
+                    <Button variant="outline" size="sm" disabled={backupBusy || webdavUrl.trim() === ''} onClick={() => runWebdav('restore')}>{t('webdavRestore')}</Button>
+                  </div>
+                  <label className={css.backupCheck}><input type="checkbox" checked={autoBackup} onChange={e => setAutoBackup(e.target.checked)} />{t('autoBackup')}</label>
+                  <p>{t('webdavNote')}</p>
+                  <p className={css.backupWarn}>{t('credsWarning')}</p>
+                </section>
+                {backupMessage !== null && <div className={css.backupMessage}>{backupMessage}</div>}
+              </div>
+            )
+          : tab === 'discover'
           ? loadError
             ? <div className={css.empty}>{t('loadFail')}</div>
             : data === null

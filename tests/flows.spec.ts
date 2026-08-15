@@ -476,6 +476,27 @@ describe('host-provided profile and package-operation seams', () => {
   })
 })
 
+describe('backup and restore (#55)', () => {
+  it('exports profile config, restores it, and reinstalls the dependency list', async () => {
+    writeFileSync(join(profileDir('web'), 'cordis.patch.yml'), '- config: original')
+    const exported = await bed.dispatch('GET', '/dsh-market/backup')
+    expect(exported.status).toBe(200)
+    expect(exported.json.format).toBe('dsh-profile-backup')
+    expect(exported.json.files['pnpm-lock.yaml']).toBeUndefined()
+
+    writeFileSync(join(profileDir('web'), 'cordis.patch.yml'), '- config: changed')
+    const restored = await bed.dispatch('POST', '/dsh-market/restore', { backup: exported.json })
+    expect(restored.status).toBe(200)
+    expect(restored.json.ok).toBe(true)
+    expect(readFileSync(join(profileDir('web'), 'cordis.patch.yml'), 'utf8')).toBe('- config: original')
+    expect(fake.calls.at(-1)?.[0]).toBe('install')
+  })
+
+  it('rejects cross-origin restore requests', async () => {
+    expect((await bed.dispatch('POST', '/dsh-market/restore', { backup: {} }, { crossOrigin: true })).status).toBe(403)
+  })
+})
+
 describe('install flow', () => {
   it('installs a curated plugin end to end and reports it installed', async () => {
     fake.npm['dsh-loop'] = { latest: '1.0.0', versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } } }
