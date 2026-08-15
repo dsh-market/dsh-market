@@ -207,7 +207,7 @@ export function mountMarketRoutes(
         try {
           const data = createProfileBackup(config.profile)
           const backup = JSON.stringify(data, null, 2)
-          const timestamp = data.createdAt.replace(/\D/g, '').slice(0, 14)
+          const timestamp = new Date(data.createdAt).toLocaleString('sv-SE').replace(/\D/g, '')
           response.writeHead(200, {
             'cache-control': 'no-store',
             'content-type': 'application/json; charset=utf-8',
