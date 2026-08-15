@@ -12,6 +12,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { loadRegistry } from './registry.ts'
+import { loadAudit, verdictMap } from './audit.ts'
 import {
   cleanHotDir, hotMount, hotUnmount, listHotMounts,
   mountClientOnlyDeps, readDisabledThemes,
@@ -150,6 +151,27 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
           sendJson(response, 200, { source, registry })
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    }),
+
+    host.webServer.register({
+      kind: 'exact',
+      path: '/dsh-market/audit',
+      handler: async (request, response) => {
+        if (request.method !== 'GET') {
+          response.writeHead(405, { allow: 'GET' })
+          response.end()
+          return
+        }
+        // Audit data is advisory only: any failure degrades to an empty
+        // verdict map (every plugin reads "unverified"), never a 5xx that
+        // could interfere with the catalog.
+        try {
+          const { audit, source } = await loadAudit()
+          sendJson(response, 200, { source, verdicts: verdictMap(audit) })
+        } catch {
+          sendJson(response, 200, { source: 'error', verdicts: {} })
         }
       },
     }),

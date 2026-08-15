@@ -93,6 +93,24 @@ export function repoOf(url: string): string | null {
   return m ? m[1]! : null
 }
 
+/** One audit verdict from the WhaleHarness audit layer. */
+export type AuditVerdict = 'PASS' | 'REJECT' | 'UNEVALUATED'
+
+/** Repo-keyed verdict map (repo lowercased) served by /dsh-market/audit. */
+export type AuditMap = Record<string, AuditVerdict>
+
+/**
+ * The audit verdict for a plugin URL, or null when the repo has no entry.
+ * Matching is case-insensitive; a monorepo /tree/ url resolves through its
+ * repo-level entry (repoOf drops the /tree/ suffix).
+ */
+export function verdictFor(url: string, verdicts: AuditMap | null): AuditVerdict | null {
+  if (verdicts === null) return null
+  const repo = repoOf(url)
+  if (repo === null) return null
+  return verdicts[repo.toLowerCase()] ?? null
+}
+
 export function readSession(key: string): any {
   try { return JSON.parse(sessionStorage.getItem(key) || 'null') } catch { return null }
 }

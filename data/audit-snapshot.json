@@ -1,0 +1,3194 @@
+{
+  "auditor": "WhaleHarness",
+  "site": "https://whaleharness.com",
+  "method": "Same static review as store listings (review-submission.py): structure, deps, red lines (subprocess/eval/exfiltration/sensitive-path), patch ownership, version format. Boot-in-sandbox verification applies to store listings; this batch is static-review only.",
+  "generated_at": "2026-08-15T15:10:03Z",
+  "entries": [
+    {
+      "repo": "deepseek-ai/deepseek-harness",
+      "version": "0.1.0-rc.5",
+      "commit": "47f943859bef",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x bad version: '0.1.0-rc.5'",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "nexu-io/open-design",
+      "version": "0.19.2",
+      "commit": "30fc648f6f61",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "CherryHQ/cherry-studio",
+      "version": "2.0.5",
+      "commit": "c649419df466",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x bad package name: 'CherryStudio'",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "titanwings/colleague-skill",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "NO-ROOT-PKG"
+      ]
+    },
+    {
+      "repo": "tt-a1i/archify",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "NO-ROOT-PKG"
+      ]
+    },
+    {
+      "repo": "Devin-AXIS/iPolloWork",
+      "version": "0.18.0",
+      "commit": "d5671e7b4809",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "crafter-station/petdex",
+      "version": "0.1.0",
+      "commit": "0243af614f30",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "anywhere-labs/deepseek-harness-desktop",
+      "version": "0.1.7",
+      "commit": "91a112efeee3",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "strukto-ai/mirage",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "NO-ROOT-PKG"
+      ]
+    },
+    {
+      "repo": "foryourhealth111-pixel/Vibe-Skills",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "NO-ROOT-PKG"
+      ]
+    },
+    {
+      "repo": "imsai-sh/zhuzhiliao",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "NO-ROOT-PKG"
+      ]
+    },
+    {
+      "repo": "whiteguo233/OpenBiliClaw",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "NO-ROOT-PKG"
+      ]
+    },
+    {
+      "repo": "awesome-dsh-plugin/awesome-dsh-plugin",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "CLONE-FAIL"
+      ]
+    },
+    {
+      "repo": "hyhmrright/brooks-lint",
+      "version": "1.5.0",
+      "commit": "d4b5c40804e6",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "xiaobright/dsh-anchored-standard",
+      "version": "0.1.0",
+      "commit": "ffb845c5480a",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "paean-ai/deeptide",
+      "version": "0.11.8",
+      "commit": "4604b1757131",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "GanyuanRan/Aegis",
+      "version": "2.8.0",
+      "commit": "21b27d23598e",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "PicGo/PicGo-Core",
+      "version": "3.0.1",
+      "commit": "95db432430fc",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "urzeye/ophel",
+      "version": "1.2.0",
+      "commit": "e586540f5e7a",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "AdamPlatin123/awesome-dsh-plugins",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "NO-ROOT-PKG"
+      ]
+    },
+    {
+      "repo": "Anionex/agent-vision-toolkit",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "NO-ROOT-PKG"
+      ]
+    },
+    {
+      "repo": "xyTom/coding-tools-mcp",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "NO-ROOT-PKG"
+      ]
+    },
+    {
+      "repo": "AMAP-ML/LongHorizon-Harness",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "NO-ROOT-PKG"
+      ]
+    },
+    {
+      "repo": "hellowind777/helloagents",
+      "version": "3.1.9",
+      "commit": "79c0b482fd20",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "ccch1mneyyy/working-activity",
+      "version": "1.7.1",
+      "commit": "03d403984b2d",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "sandbaseai/sandbase-harness",
+      "version": "0.3.2",
+      "commit": "967079659318",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "nutshellai-tech/mobius",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "NO-ROOT-PKG"
+      ]
+    },
+    {
+      "repo": "swuxyj/DeepHash-pytorch",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "NO-ROOT-PKG"
+      ]
+    },
+    {
+      "repo": "yejiming/MuseAI",
+      "version": "0.9.8",
+      "commit": "85c1ea76c565",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "adoresever/graph-memory",
+      "version": "1.6.0-beta.1",
+      "commit": "dbd72ccf2ea0",
+      "verdict": "REJECT",
+      "issues": [
+        "x bad version: '1.6.0-beta.1'",
+        "x patch loads foreign package 'graph-memory/dsh'"
+      ]
+    },
+    {
+      "repo": "mnemon-dev/mnemon",
+      "version": "0.1.0",
+      "commit": "e4040e728d80",
+      "verdict": "REJECT",
+      "issues": [
+        "x patch loads foreign package 'dsh-mnemon'"
+      ]
+    },
+    {
+      "repo": "0xsline/awesome-deepseek-harness",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "CLONE-FAIL"
+      ]
+    },
+    {
+      "repo": "superdesigndev/treg",
+      "version": "0.11.0",
+      "commit": "0760d574fd31",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "superdesigndev/superdesign-skill",
+      "version": "0.4.3",
+      "commit": "dc60b4362542",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "yogsoth-ai/de-anthropocentric-research-engine",
+      "version": "3.2.2",
+      "commit": "970c22052a92",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "PM-Shawn/Abu-Cowork",
+      "version": "0.38.0",
+      "commit": "b5b5de14f01e",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "Minara-AI/minara-skills",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "NO-ROOT-PKG"
+      ]
+    },
+    {
+      "repo": "morluto/rea",
+      "version": "3.1.0",
+      "commit": "07888ec096f6",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "linhay/harmony-next.skills",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "NO-ROOT-PKG"
+      ]
+    },
+    {
+      "repo": "alaliqing/claude-paper",
+      "version": "1.2.1",
+      "commit": "0af55d0daeae",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "text2future/flowix",
+      "version": "1.1.16",
+      "commit": "eb453ffd2daa",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "Electricitysheep/dsh-handbook",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "NO-ROOT-PKG"
+      ]
+    },
+    {
+      "repo": "SepineTam/mcp-for-stata",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "NO-ROOT-PKG"
+      ]
+    },
+    {
+      "repo": "openma-ai/open-managed-agents",
+      "version": "0.1.0",
+      "commit": "fa60e44847fa",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "zhoushoujianwork/easyeda-agent",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "NO-ROOT-PKG"
+      ]
+    },
+    {
+      "repo": "TencentCloud/tencentmeeting-cli",
+      "version": "v1.0.15",
+      "commit": "0407d61aa333",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x bad version: 'v1.0.15'",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "lencx/skills",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "NO-ROOT-PKG"
+      ]
+    },
+    {
+      "repo": "cofy-x/axern",
+      "version": "0.5.0",
+      "commit": "4c63d611380d",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "firstintent/ccteam",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "NO-ROOT-PKG"
+      ]
+    },
+    {
+      "repo": "tinqiao-oss/engramory",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "NO-ROOT-PKG"
+      ]
+    },
+    {
+      "repo": "zealot00/dsh-pet",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "CLONE-FAIL"
+      ]
+    },
+    {
+      "repo": "huiliyi37/dsh-tianshu-tui",
+      "version": "0.1.2-rc.7",
+      "commit": "0c7eaaed64a7",
+      "verdict": "REJECT",
+      "issues": [
+        "x bad version: '0.1.2-rc.7'",
+        "x subprocess usage: 4 occurrence(s)"
+      ]
+    },
+    {
+      "repo": "openma-ai/deepseek-harness-tui",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "NO-ROOT-PKG"
+      ]
+    },
+    {
+      "repo": "omdsh-dev/dsh-at-file",
+      "version": "0.6.0",
+      "commit": "9c71e52c483a",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "alingalingling/ui-status-label",
+      "version": "0.1.0",
+      "commit": "a1621413a470",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "ZSeven-W/dsh-openpencil",
+      "version": "0.1.0-rc.1",
+      "commit": "49b0417a6d6f",
+      "verdict": "REJECT",
+      "issues": [
+        "x bad version: '0.1.0-rc.1'"
+      ]
+    },
+    {
+      "repo": "Nagi-ovo/dsh-visualize",
+      "version": "0.1.2",
+      "commit": "e3254f762cbe",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])"
+      ]
+    },
+    {
+      "repo": "ccq1/dsh-side-panel",
+      "version": "0.2.0",
+      "commit": "baca7806714a",
+      "verdict": "REJECT",
+      "issues": [
+        "x subprocess usage: 5 occurrence(s)"
+      ]
+    },
+    {
+      "repo": "dingyi222666/dsh-focus-chat",
+      "version": "0.1.2",
+      "commit": "b29b83d5c5df",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "omdsh-dev/dsh-genui",
+      "version": "0.8.3",
+      "commit": "0e756efb7671",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "omdsh-dev/dsh-annotation",
+      "version": "1.3.15",
+      "commit": "402166422608",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "vlln/dsh-navbar",
+      "version": "0.3.0",
+      "commit": "6e23640bd60c",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "asukasec/dsh-message-preview",
+      "version": "0.1.1",
+      "commit": "dfdb543e3982",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "vlln/dsh-task-status",
+      "version": "0.3.0",
+      "commit": "4453da02d622",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "renat3u/dsh-web-archive",
+      "version": "0.1.1",
+      "commit": "e106daf623fe",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "0xsline/dsh-spotlight",
+      "version": "0.0.2",
+      "commit": "dd7ef5ed160a",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "bill9109/dsh-101",
+      "version": "0.1.8",
+      "commit": "ae6b4addadfd",
+      "verdict": "REJECT",
+      "issues": [
+        "x patch loads foreign package '@bill9109/dsh-101/tutor'"
+      ]
+    },
+    {
+      "repo": "bill9109/dsh-drag-and-drop",
+      "version": "0.1.5",
+      "commit": "09088d689086",
+      "verdict": "REJECT",
+      "issues": [
+        "x subprocess usage: 2 occurrence(s)"
+      ]
+    },
+    {
+      "repo": "l541402398/dsh-file-uploads",
+      "version": "1.0.0",
+      "commit": "3ea46e1583ea",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "qyw233/dsh-deeplink",
+      "version": "0.5.0",
+      "commit": "0ec5da351b24",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "lehhair/dsh-diff-viewer",
+      "version": "0.1.0",
+      "commit": "75ded1bc49d0",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "omdsh-dev/ex-setting",
+      "version": "0.0.2",
+      "commit": "b08744fce644",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "omdsh-dev/web-components",
+      "version": "0.0.2",
+      "commit": "6d6f77aaf881",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "vibeinging/dsh-turn-navigator",
+      "version": "0.0.1",
+      "commit": "bcae07a26842",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "SnowCrescenter-tech/dsh-milestone",
+      "version": "0.6.0",
+      "commit": "c238f8c5d4af",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "Ghost011118/dsh-balance-meter",
+      "version": "0.1.0",
+      "commit": "db97c0ea4976",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "v587d/dsh-opencode-go-usage",
+      "version": "0.1.0",
+      "commit": "ed8c8a080363",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "Han-1413141/dsh-cost-meter",
+      "version": "1.2.0",
+      "commit": "55515e3a263f",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "fishxcode/dsh-plugin-deepseek-balance",
+      "version": "0.1.0",
+      "commit": "0a1c211ad3e0",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "Sev7een/ds-api-usage",
+      "version": "0.1.0",
+      "commit": "b16fbf288ec7",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "nonewind/dsh-spend",
+      "version": "0.4.1",
+      "commit": "0d8fa242846c",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "ccch1mneyyy/dsh-TUI",
+      "version": "0.6.1",
+      "commit": "71ea53fb2d2d",
+      "verdict": "REJECT",
+      "issues": [
+        "x patch loads foreign package '@deepseek-ai/dsh-agent-presets'",
+        "x patch loads foreign package '@deepseek-ai/dsh-cordis-host-runner'",
+        "x patch loads foreign packa"
+      ]
+    },
+    {
+      "repo": "omdsh-dev/DSH-better-sidebar",
+      "version": "0.12.2",
+      "commit": "b6ef4d544a4d",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "Han-1413141/dsh-sticky-disclosure",
+      "version": "1.0.1",
+      "commit": "873bc91035e5",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "Meredith2328/dsh-sticky-note",
+      "version": "0.1.0",
+      "commit": "fa793c61f1b7",
+      "verdict": "REJECT",
+      "issues": [
+        "x subprocess usage: 1 occurrence(s)"
+      ]
+    },
+    {
+      "repo": "Luaphes/dsh-web-attention-badge",
+      "version": "0.3.2",
+      "commit": "8b2ede6ccda6",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "zhu1090093659/dsh-web-ui",
+      "version": "0.1.1",
+      "commit": "a7716d824479",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "Starfie1d1272/dsh-builtin-toggles",
+      "version": "0.3.1",
+      "commit": "044cf9e1fcf2",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "jiangnanquan/dsh-ux",
+      "version": "1.0.0",
+      "commit": "a080a6d104fb",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "a903067276-rgb/dsh-hud",
+      "version": "1.0.0",
+      "commit": "a9aa0a123459",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "Sttrevens/dsh-cost-meter",
+      "version": "1.2.0",
+      "commit": "55515e3a263f",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "a903067276-rgb/dsh-file-mentions",
+      "version": "1.0.0",
+      "commit": "c65d59b39b94",
+      "verdict": "REJECT",
+      "issues": [
+        "x subprocess usage: 1 occurrence(s)"
+      ]
+    },
+    {
+      "repo": "bobcat848/dsh-calculator",
+      "version": "1.2.1",
+      "commit": "1f4b17db702a",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "Jolly-J/dsh-deepseek-billing",
+      "version": "0.1.0-rc.5",
+      "commit": "20039ba5842f",
+      "verdict": "REJECT",
+      "issues": [
+        "x bad version: '0.1.0-rc.5'"
+      ]
+    },
+    {
+      "repo": "AKIRACOD/dsh-drag-and-drop",
+      "version": "0.1.5",
+      "commit": "09088d689086",
+      "verdict": "REJECT",
+      "issues": [
+        "x subprocess usage: 2 occurrence(s)"
+      ]
+    },
+    {
+      "repo": "GooodWei/context-vista",
+      "version": "0.1.0",
+      "commit": "9d854bd925e4",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "bpc-oss/dsh-web-billing",
+      "version": "1.1.0",
+      "commit": "6d86c7a7c09c",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "lqhl/dsh-pi-tui",
+      "version": "0.1.0",
+      "commit": "54057d8c7e54",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "CanglongCl/dsh-web-review",
+      "version": "0.2.0",
+      "commit": "7d6f446842fd",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "yyyyukari/dsh-plugin-workshop",
+      "version": "1.6.0",
+      "commit": "449765444f85",
+      "verdict": "REJECT",
+      "issues": [
+        "x subprocess usage: 4 occurrence(s)"
+      ]
+    },
+    {
+      "repo": "Simon314620/dsh-turn-index",
+      "version": "0.1.1",
+      "commit": "a324ecde201a",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "MysaDC/dsh-plugin-description",
+      "version": "1.2.1",
+      "commit": "64047f40cd02",
+      "verdict": "REJECT",
+      "issues": [
+        "x sensitive path: 2 occurrence(s)"
+      ]
+    },
+    {
+      "repo": "KinGao294/dsh-skin",
+      "version": "0.2.0",
+      "commit": "13554dfcb170",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "Small-tailqwq/dsh-deep-whale",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "NO-ROOT-PKG"
+      ]
+    },
+    {
+      "repo": "Anionex/dsh-turn-rewind",
+      "version": "0.1.0",
+      "commit": "27ebefa76a2d",
+      "verdict": "REJECT",
+      "issues": [
+        "x subprocess usage: 3 occurrence(s)"
+      ]
+    },
+    {
+      "repo": "Jesse-njx/dsh-crosstalk",
+      "version": "0.1.0",
+      "commit": "7b513104085d",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "hellodigua/dsh-share",
+      "version": "0.3.0",
+      "commit": "3f4cbcf2148d",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "Moeblack/dsh-message-edit",
+      "version": "0.2.1",
+      "commit": "e950651786e9",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "Buyi-wsgzg/dsh-sidechain",
+      "version": "0.6.3",
+      "commit": "ee6fadd9bae9",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "bill9109/dsh-conversation-share",
+      "version": "0.1.1",
+      "commit": "f582d8ec88e5",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "yuezengwu/dsh-explain",
+      "version": "0.1.0",
+      "commit": "f2cd85bb85bd",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "Moeblack/dsh-prompt-studio",
+      "version": "0.4.0",
+      "commit": "be5e97d6ea4e",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "czm15053/dsh-peer-link",
+      "version": "0.1.0",
+      "commit": "a6c5aa872fca",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "Nwflower/dsh-chat-import",
+      "version": "0.3.1",
+      "commit": "8a61dc7055d8",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])",
+        "x subprocess usage: 6"
+      ]
+    },
+    {
+      "repo": "Nwflower/dsh-file-claim",
+      "version": "0.1.6",
+      "commit": "65aebf02cd88",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "Chinesezjc/dsh-interconnect",
+      "version": "0.2.0",
+      "commit": "75488fbc4cbf",
+      "verdict": "REJECT",
+      "issues": [
+        "x patch loads foreign package 'dsh-interconnect/interconnect'",
+        "x patch loads foreign package 'dsh-interconnect/tool-interconnect'"
+      ]
+    },
+    {
+      "repo": "Wine-Red/dsh-prompt-stash",
+      "version": "0.2.2",
+      "commit": "265057c6ddc0",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "LoserFox/distill",
+      "version": "0.1.0",
+      "commit": "d2aaa395adef",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "omdsh-dev/dsh-mnemon",
+      "version": "0.1.4",
+      "commit": "ade5a7b395f2",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])",
+        "x subprocess usage: 2"
+      ]
+    },
+    {
+      "repo": "modusensus/dsh-mneme",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "NO-ROOT-PKG"
+      ]
+    },
+    {
+      "repo": "nowledge-co/nowledge-mem-deepseek-harness",
+      "version": "0.1.0",
+      "commit": "97956d33e793",
+      "verdict": "REJECT",
+      "issues": [
+        "x patch loads foreign package '@deepseek-ai/dsh-mcp-client'"
+      ]
+    },
+    {
+      "repo": "Jesse-njx/dsh-memory",
+      "version": "0.1.0",
+      "commit": "2eed97da7f95",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "flymysql/dsh-memory",
+      "version": "0.1.0",
+      "commit": "2eed97da7f95",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "Xplore-LAB/dsh-plugin-asmemory",
+      "version": "0.1.0",
+      "commit": "04ef11c60d18",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "PerryLink/dsh-memento",
+      "version": "0.3.1",
+      "commit": "5167203bd96a",
+      "verdict": "REJECT",
+      "issues": [
+        "x name dsh-memento already in the store"
+      ]
+    },
+    {
+      "repo": "ICCuse/dsh-file-memory",
+      "version": "0.1.0",
+      "commit": "979b17a7409b",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "ICCuse/dsh-knowledge",
+      "version": "0.1.0",
+      "commit": "34bec0c1ec33",
+      "verdict": "REJECT",
+      "issues": [
+        "x name dsh-knowledge already in the store",
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object"
+      ]
+    },
+    {
+      "repo": "ICCuse/dsh-premise-guard",
+      "version": "0.1.0",
+      "commit": "2161842c336d",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "freehul/sgme",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "NO-ROOT-PKG"
+      ]
+    },
+    {
+      "repo": "Phant0Meow/dsh-memory-meow",
+      "version": "0.1.0",
+      "commit": "0e6393b68e10",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "Tyan66666/billion-context-dsh",
+      "version": "0.1.8",
+      "commit": "694c97985eba",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "ysr666/dsh-vision-router",
+      "version": "1.2.0",
+      "commit": "493df3cd8c20",
+      "verdict": "REJECT",
+      "issues": [
+        "x subprocess usage: 1 occurrence(s)"
+      ]
+    },
+    {
+      "repo": "lire1131/dsh-undo-plugin",
+      "version": "0.3.0",
+      "commit": "129a2101ad60",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])",
+        "x subprocess usage: 1"
+      ]
+    },
+    {
+      "repo": "MAXeaglet/dsh-bash-terminal",
+      "version": "0.3.14",
+      "commit": "3bf1aa8baa11",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])"
+      ]
+    },
+    {
+      "repo": "Anionex/dsh-vision-toolkit",
+      "version": "0.1.7",
+      "commit": "29850a83871d",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])"
+      ]
+    },
+    {
+      "repo": "omdsh-dev/dsh-custom-tool",
+      "version": "0.1.1",
+      "commit": "b0392bb332cc",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])",
+        "x eval: 3 occurrence(s"
+      ]
+    },
+    {
+      "repo": "Anionex/dsh-computer-use",
+      "version": "0.1.0",
+      "commit": "76bfe8607f61",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])"
+      ]
+    },
+    {
+      "repo": "kunjinkao-os/dsh-mobile-gui-agent",
+      "version": "0.2.0",
+      "commit": "7c2b5609aa66",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])"
+      ]
+    },
+    {
+      "repo": "omdsh-dev/dsh-data-agent",
+      "version": "0.0.3",
+      "commit": "56871019e984",
+      "verdict": "REJECT",
+      "issues": [
+        "x patch loads foreign package '@yejiming/dsh-data-agent/routes'",
+        "x leaf property carries required: true - DSH supports required only at object top level (move i"
+      ]
+    },
+    {
+      "repo": "omdsh-dev/dsh-toolkit",
+      "version": "0.0.1",
+      "commit": "5d4628929aa2",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "flymysql/dsh-remote",
+      "version": "0.5.4",
+      "commit": "393782c39619",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])",
+        "x sensitive path: 1 oc"
+      ]
+    },
+    {
+      "repo": "omdsh-dev/dsh-tool-csv",
+      "version": "0.0.1",
+      "commit": "93657cbf6a48",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])"
+      ]
+    },
+    {
+      "repo": "omdsh-dev/dsh-tool-calculator",
+      "version": "0.0.1",
+      "commit": "701f6549b4e1",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])"
+      ]
+    },
+    {
+      "repo": "omdsh-dev/dsh-tool-diff",
+      "version": "0.0.1",
+      "commit": "73c142e26227",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])"
+      ]
+    },
+    {
+      "repo": "omdsh-dev/dsh-tool-encoding",
+      "version": "0.0.1",
+      "commit": "5baa75fcbe98",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])"
+      ]
+    },
+    {
+      "repo": "omdsh-dev/dsh-tool-json",
+      "version": "0.0.1",
+      "commit": "902bdf60da4d",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])"
+      ]
+    },
+    {
+      "repo": "omdsh-dev/dsh-tool-markdown",
+      "version": "0.0.1",
+      "commit": "51b9f2a9efa7",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])"
+      ]
+    },
+    {
+      "repo": "omdsh-dev/dsh-tool-regex",
+      "version": "0.0.1",
+      "commit": "457c84fed784",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])"
+      ]
+    },
+    {
+      "repo": "omdsh-dev/dsh-tool-schema",
+      "version": "0.0.1",
+      "commit": "8d9a65214493",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])"
+      ]
+    },
+    {
+      "repo": "omdsh-dev/dsh-tool-stat",
+      "version": "0.0.1",
+      "commit": "86d42cafd710",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])"
+      ]
+    },
+    {
+      "repo": "omdsh-dev/dsh-tool-time",
+      "version": "0.0.1",
+      "commit": "bc55c350f016",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])"
+      ]
+    },
+    {
+      "repo": "omdsh-dev/dsh-kb-sieve",
+      "version": "0.1.0",
+      "commit": "01aba653f576",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])",
+        "x subprocess usage: 1"
+      ]
+    },
+    {
+      "repo": "HuanLinOTO/dsh-plugin-mineru",
+      "version": "0.2.2",
+      "commit": "79809aa57bd1",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])"
+      ]
+    },
+    {
+      "repo": "Jesse-njx/dsh-cowork",
+      "version": "0.1.0",
+      "commit": "2ae5cf755c42",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "Jesse-njx/dsh-skillport",
+      "version": "0.1.0",
+      "commit": "77c1d4ecc202",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "sakikoTGW/pack-agent",
+      "version": "0.4.2",
+      "commit": "04f7ecac3e76",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "vibeinging/dsh-tool-search",
+      "version": "0.0.1",
+      "commit": "265ce76eda21",
+      "verdict": "REJECT",
+      "issues": [
+        "x patch loads foreign package '@deepseek-ai/dsh-tool-search/invariant'",
+        "x leaf property carries required: true - DSH supports required only at object top level"
+      ]
+    },
+    {
+      "repo": "THU-MAIC/dsh-openmaic",
+      "version": "0.4.0",
+      "commit": "09c1693cfe83",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])"
+      ]
+    },
+    {
+      "repo": "lzszq/dsh-scholar",
+      "version": "0.1.0",
+      "commit": "1cb518501ada",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "ylwl1997/noatmark-dsh-plugin",
+      "version": "0.1.0",
+      "commit": "a1936495fa6c",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "jihongboo/dsh-apple-mode",
+      "version": "0.1.0",
+      "commit": "2000ae233bfc",
+      "verdict": "REJECT",
+      "issues": [
+        "x patch loads foreign package '@deepseek-ai/dsh-mcp-client'"
+      ]
+    },
+    {
+      "repo": "ZK-Andy/dsh-continual-evolve",
+      "version": "0.1.0",
+      "commit": "9ff642c9b498",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "zp-home/dsh-recommend",
+      "version": "0.3.0",
+      "commit": "00ee1a55cd5f",
+      "verdict": "REJECT",
+      "issues": [
+        "x patch loads foreign package 'dsh-recommend/web'",
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the paren"
+      ]
+    },
+    {
+      "repo": "liustack/modlens",
+      "version": "3.16.6",
+      "commit": "28181920f6b0",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "dsh-market/dsh-market",
+      "version": "1.4.1",
+      "commit": "81e414588d6c",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "awesome-dsh-plugin/dsh-find-plugin",
+      "version": "0.3.6",
+      "commit": "e75dc2e865c3",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])"
+      ]
+    },
+    {
+      "repo": "lonelymoon87/dsh-code-intel",
+      "version": "0.1.2",
+      "commit": "3e95b9cb4113",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "lynx-gt/dsh-subagent-tools",
+      "version": "0.1.0",
+      "commit": "0c3e355a95b5",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])"
+      ]
+    },
+    {
+      "repo": "lynx-gt/dsh-subagent-cwd",
+      "version": "0.1.0",
+      "commit": "f6df81141006",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])"
+      ]
+    },
+    {
+      "repo": "Jesse-njx/dsh-voice",
+      "version": "0.1.0",
+      "commit": "37164b11690a",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "Jesse-njx/dsh-docker",
+      "version": "0.1.0",
+      "commit": "8fe414f419f8",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "hccccc01333/dsh-excel-chat",
+      "version": "0.33.0",
+      "commit": "bc3fe49cf33a",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "EvilIrving/dsh-context-proxy",
+      "version": "0.1.0",
+      "commit": "1e1965f51ace",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])"
+      ]
+    },
+    {
+      "repo": "zhaoolee/notes",
+      "version": "1.6.1",
+      "commit": "7f17349e1b38",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "zimai233/dsh-figma-to-lottie",
+      "version": "0.1.0",
+      "commit": "8e21469374eb",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "zimai233/dsh-exam-countdown",
+      "version": "0.1.0",
+      "commit": "54492515553f",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "zimai233/dsh-wash-calendar",
+      "version": "0.1.0",
+      "commit": "3622edd766f0",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "zimai233/dsh-adhd-copilot",
+      "version": "0.1.0",
+      "commit": "6527cb64b11b",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "zimai233/dsh-image-search",
+      "version": "0.1.0",
+      "commit": "95ac2b739f74",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "zimai233/dsh-video-downloader",
+      "version": "0.1.0",
+      "commit": "48107ee57bc1",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "Luke-Yong/dsh-plugin-knowledge-graph",
+      "version": "0.1.0",
+      "commit": "c5e80055a358",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "liustack/modsearch",
+      "version": "5.4.2",
+      "commit": "e1dba224b726",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "taxueseek/argo",
+      "version": "2.8.0",
+      "commit": "49f8a80302b1",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "TonyDua/dsh-web-search-exa",
+      "version": "0.1.3",
+      "commit": "083706bae60a",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "Lum1104/dsh-browser",
+      "version": "0.1.0",
+      "commit": "2cc70cf7f448",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "Sanqi-normal/dsh-webui-market-plugin",
+      "version": "0.4.0",
+      "commit": "da25f6a2f050",
+      "verdict": "REJECT",
+      "issues": [
+        "x subprocess usage: 1 occurrence(s)"
+      ]
+    },
+    {
+      "repo": "huey1in/trio",
+      "version": "0.5.1",
+      "commit": "46ba9ed8bab9",
+      "verdict": "REJECT",
+      "issues": [
+        "x patch loads foreign package 'dsh-trio/browser'",
+        "x patch loads foreign package 'dsh-trio/mcp'",
+        "x patch loads foreign package 'dsh-trio/github'",
+        "x patch loads f"
+      ]
+    },
+    {
+      "repo": "SamXiaBing/dsh-adb",
+      "version": "0.1.5",
+      "commit": "d0e38c887664",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "xiaoyuyu6420/dsh-backup",
+      "version": "0.3.0",
+      "commit": "1c4e0275cd4f",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])"
+      ]
+    },
+    {
+      "repo": "1na-ko/dsh-hdc-bridge",
+      "version": "0.6.1",
+      "commit": "5d4db7fca516",
+      "verdict": "REJECT",
+      "issues": [
+        "x subprocess usage: 1 occurrence(s)"
+      ]
+    },
+    {
+      "repo": "PicGo/dsh-plugin",
+      "version": "0.1.0",
+      "commit": "2f7dd0133932",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "acefun29/dsh-file-mount",
+      "version": "0.4.0",
+      "commit": "68b37b4e836d",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "cendaifeng/dsh-learn-everything",
+      "version": "0.1.0",
+      "commit": "67cd99210c17",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "canghai666x/dsh-news-plugin",
+      "version": "0.1.0",
+      "commit": "2303163a21e9",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "chushixixin/dsh-harness-mcp-server",
+      "version": "0.1.10",
+      "commit": "d174cea870aa",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "lxj808624/dsh-tool-git",
+      "version": "0.1.3",
+      "commit": "3bb1443a6291",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "ciceroyang/dsh-report-studio",
+      "version": "0.1.0",
+      "commit": "1b8355bb023e",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "creght-dev/skills",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "CLONE-FAIL"
+      ]
+    },
+    {
+      "repo": "icetomoyo/dsh_workflow",
+      "version": "0.1.2",
+      "commit": "44b83c182aa0",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])",
+        "x subprocess usage: 2"
+      ]
+    },
+    {
+      "repo": "NanmiCoder/dsh-agent-teams",
+      "version": "0.1.4",
+      "commit": "489c0078b5eb",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "titanwings/dsh-automation",
+      "version": "0.1.5",
+      "commit": "a622b1b1758c",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])"
+      ]
+    },
+    {
+      "repo": "Sev7een/dsh-plugin-automations",
+      "version": "0.2.0",
+      "commit": "971a53e5eaa1",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "Jesse-njx/dsh-routines",
+      "version": "0.1.0",
+      "commit": "f59b4f03e7b3",
+      "verdict": "REJECT",
+      "issues": [
+        "x patch loads foreign package '@dsh-routines/bundle/store'",
+        "x patch loads foreign package '@dsh-routines/bundle/scheduler'",
+        "x patch loads foreign package '@dsh-"
+      ]
+    },
+    {
+      "repo": "titanwings/dsh-plannotator",
+      "version": "0.1.3",
+      "commit": "c0fe880107aa",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "vlln/dsh-loop",
+      "version": "0.3.0",
+      "commit": "e71593691695",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])"
+      ]
+    },
+    {
+      "repo": "fuhefei/dsh-sentinel",
+      "version": "0.10.0",
+      "commit": "f73e8aeb4af3",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])",
+        "x subprocess usage: 1"
+      ]
+    },
+    {
+      "repo": "omdsh-dev/dsh-deep-research",
+      "version": "0.1.0",
+      "commit": "c0b329e02cd0",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])"
+      ]
+    },
+    {
+      "repo": "omdsh-dev/dsh-inspect",
+      "version": "0.1.0",
+      "commit": "9876349054f0",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])"
+      ]
+    },
+    {
+      "repo": "fakechris/dsh-track",
+      "version": "0.5.0",
+      "commit": "4e6112b6b3c2",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])"
+      ]
+    },
+    {
+      "repo": "btspoony/dsh-advisor",
+      "version": "0.1.3",
+      "commit": "d87f480db1d5",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "lonelymoon87/dsh-specflow",
+      "version": "0.1.2",
+      "commit": "76e308f9a9f1",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "biociao/dsh-science",
+      "version": "0.1.1",
+      "commit": "44ce8a1bba0d",
+      "verdict": "REJECT",
+      "issues": [
+        "x patch loads foreign package 'dsh-science/engines/research-loop.mjs'",
+        "x patch loads foreign package 'dsh-science/engines/artifact-registry.mjs'"
+      ]
+    },
+    {
+      "repo": "EvilIrving/dsh-proof",
+      "version": "0.1.0",
+      "commit": "7e5fb648ac93",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "PerryLink/dsh-doublecheck",
+      "version": "0.6.0",
+      "commit": "fb2c5e0a9efc",
+      "verdict": "REJECT",
+      "issues": [
+        "x patch loads foreign package 'dsh-doublecheck/grill'",
+        "x patch loads foreign package 'dsh-doublecheck/guard'",
+        "x leaf property carries required: true - DSH suppo"
+      ]
+    },
+    {
+      "repo": "btspoony/mstar-harness",
+      "version": "2.2.0",
+      "commit": "ee82c2b5f64a",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "Letter2025/dsh-approval-llm",
+      "version": "0.1.3",
+      "commit": "af70355a3c48",
+      "verdict": "REJECT",
+      "issues": [
+        "x patch loads foreign package '只读'",
+        "x patch loads foreign package '请求批准'",
+        "x patch loads foreign package '帮我批准'",
+        "x patch loads foreign package '完全放开'"
+      ]
+    },
+    {
+      "repo": "Letter2025/dsh-model-failover",
+      "version": "0.1.2",
+      "commit": "64d5c3558013",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "omdsh-dev/dsh-open-in-vscode",
+      "version": "0.1.5",
+      "commit": "149f21aed3d0",
+      "verdict": "REJECT",
+      "issues": [
+        "x subprocess usage: 1 occurrence(s)"
+      ]
+    },
+    {
+      "repo": "omdsh-dev/dsh-notification",
+      "version": "0.1.1",
+      "commit": "3e33100f51f2",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "bobleer/dsh-acp-for-bitfun",
+      "version": "0.1.0",
+      "commit": "8dedce1ee1a4",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "openma-ai/deepseek-harness-acp",
+      "version": "0.4.5",
+      "commit": "f1f60c3f3054",
+      "verdict": "REJECT",
+      "issues": [
+        "x patch loads foreign package '@deepseek-ai/dsh-agent-presets'",
+        "x patch loads foreign package '@openma/deepseek-harness-acp/bridge'"
+      ]
+    },
+    {
+      "repo": "LoserFox/telegram",
+      "version": "0.1.0",
+      "commit": "a0a9ca11e427",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "Jesse-njx/dsh-chatnode-wechat",
+      "version": "0.1.0",
+      "commit": "a724da34b5c7",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "dingyi222666/dsh-session-notification",
+      "version": "0.1.1",
+      "commit": "6bdd080f9e63",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "bill9109/dsh-web-ui-notify",
+      "version": "0.1.3",
+      "commit": "865d2f6fc93f",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "bill9109/dsh-webbridge",
+      "version": "0.0.2",
+      "commit": "fb6fa96fed4b",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])"
+      ]
+    },
+    {
+      "repo": "BiBoyang/dsh-im-bridge",
+      "version": "0.1.0",
+      "commit": "d5bcb1d27d13",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "imetn/dsh-lark-bridge",
+      "version": "0.1.0",
+      "commit": "f1e544cce510",
+      "verdict": "REJECT",
+      "issues": [
+        "x subprocess usage: 1 occurrence(s)",
+        "x sensitive path: 1 occurrence(s)"
+      ]
+    },
+    {
+      "repo": "SeverusZh/dsh-notify-windows",
+      "version": "0.5.0",
+      "commit": "1643197b5060",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml",
+        "x subprocess usage: 1 occurrence(s)"
+      ]
+    },
+    {
+      "repo": "dylan121322/llm-adaptive",
+      "version": "0.1.0",
+      "commit": "305be1c75d09",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "btspoony/dsh-llm-fallbacks",
+      "version": "0.1.4",
+      "commit": "8bfd446f84fd",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "franksong2702/dsh-codex-connect",
+      "version": "0.1.0-alpha.4.5",
+      "commit": "2c99d177db51",
+      "verdict": "REJECT",
+      "issues": [
+        "x bad version: '0.1.0-alpha.4.5'",
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's requir"
+      ]
+    },
+    {
+      "repo": "kam74515-boop/dsh-everything-oauth",
+      "version": "0.1.0",
+      "commit": "fe7b691f52bc",
+      "verdict": "REJECT",
+      "issues": [
+        "x subprocess usage: 2 occurrence(s)",
+        "x sensitive path: 2 occurrence(s)"
+      ]
+    },
+    {
+      "repo": "omdsh-dev/Qwen-MM-Plugins",
+      "version": "0.0.2",
+      "commit": "a03d50556272",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "suntianc/dsh-codex-auth",
+      "version": "0.2.0",
+      "commit": "484f5383dc7a",
+      "verdict": "REJECT",
+      "issues": [
+        "x patch loads foreign package 'dsh-codex-auth/search'",
+        "x patch loads foreign package 'dsh-codex-auth/image'"
+      ]
+    },
+    {
+      "repo": "omdsh-dev/fabric",
+      "version": "0.0.2",
+      "commit": "62ced221e725",
+      "verdict": "REJECT",
+      "issues": [
+        "x patch loads foreign package 'cordis-fabric'",
+        "x patch loads foreign package 'cordis-fabric-dsh'"
+      ]
+    },
+    {
+      "repo": "LoserFox/dsh-git-identity",
+      "version": "0.1.0",
+      "commit": "39c608ca8e07",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "Zhenyu98/dsh-context-doctor",
+      "version": "0.5.0",
+      "commit": "4a91502c106f",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])"
+      ]
+    },
+    {
+      "repo": "omdsh-dev/dsh-plugin-check",
+      "version": "0.0.1",
+      "commit": "397aa26df241",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])",
+        "x subprocess usage: 1"
+      ]
+    },
+    {
+      "repo": "omdsh-dev/dsh-security-audit",
+      "version": "0.0.1",
+      "commit": "b1974e1ac18c",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])",
+        "x sensitive path: 1 oc"
+      ]
+    },
+    {
+      "repo": "omdsh-dev/dsh-session-health",
+      "version": "0.0.1",
+      "commit": "72065059cec8",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])"
+      ]
+    },
+    {
+      "repo": "william-jin-cmu/dsh-evolve",
+      "version": "0.1.0",
+      "commit": "37462647f896",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "vibeinging/dsh-trace",
+      "version": "0.0.1",
+      "commit": "caadf1b831ae",
+      "verdict": "REJECT",
+      "issues": [
+        "x patch loads foreign package '@deepseek-ai/dsh-trace/invariant'"
+      ]
+    },
+    {
+      "repo": "030611/dsh-telemetry-redactor",
+      "version": "0.1.0",
+      "commit": "811b0b1abf42",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "030611/dsh-verification-receipt",
+      "version": "0.1.0",
+      "commit": "92f63a9022e1",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "omdsh-dev/sandbox-micro",
+      "version": "0.0.2",
+      "commit": "ebc8be539a4e",
+      "verdict": "REJECT",
+      "issues": [
+        "x patch loads foreign package '@deepseek-ai/dsh-sandbox-microsandbox/tool'"
+      ]
+    },
+    {
+      "repo": "omdsh-dev/sandbox-mxc",
+      "version": "0.0.2",
+      "commit": "61ed9e8dd135",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "omdsh-dev/sandbox-nono",
+      "version": "0.0.2",
+      "commit": "d8e1b7914db7",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "vibeinging/dsh-agent-budget",
+      "version": "0.0.1",
+      "commit": "2702e6d4846d",
+      "verdict": "REJECT",
+      "issues": [
+        "x patch loads foreign package '@deepseek-ai/dsh-agent-budget/command'",
+        "x leaf property carries required: true - DSH supports required only at object top level ("
+      ]
+    },
+    {
+      "repo": "Jesse-njx/dsh-polyglot",
+      "version": "0.1.0",
+      "commit": "127ceefb1532",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "ilharp/dsh-tool-approval",
+      "version": "0.1.0",
+      "commit": "c01801a7e39c",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "arrow949/dsh-turn-approval",
+      "version": "0.1.0",
+      "commit": "5b4cbfd42588",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "omdsh-dev/plugin-template",
+      "version": "0.0.1",
+      "commit": "68e1a7dce774",
+      "verdict": "REJECT",
+      "issues": [
+        "x patch loads foreign package '@your-scope/dsh-plugin-template/invariant'"
+      ]
+    },
+    {
+      "repo": "Small-tailqwq/dsh-tps",
+      "version": "0.1.0",
+      "commit": "69dac729c6c8",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "disyli/dsh-tool-call-stats",
+      "version": "0.1.0",
+      "commit": "f1e956cdbb5b",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "Areium/dsh-fail-logger",
+      "version": "0.5.1",
+      "commit": "854791d33511",
+      "verdict": "REJECT",
+      "issues": [
+        "x sensitive path: 2 occurrence(s)"
+      ]
+    },
+    {
+      "repo": "BiBoyang/dsh-eval-harness",
+      "version": "0.3.0",
+      "commit": "035d1c6e1ebf",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "hust-open-atom-club/oh-dsh",
+      "version": "0.1.5",
+      "commit": "1749d404c74d",
+      "verdict": "REJECT",
+      "issues": [
+        "x dsh.bundle.patch must be ./cordis.patch.yml",
+        "x patch loads foreign package '@oh-dsh/better-sidebar-runtime'",
+        "x patch loads foreign package '@oh-dsh/skins'"
+      ]
+    },
+    {
+      "repo": "BrambleXu/dsh-annotate",
+      "version": "0.1.0",
+      "commit": "43f39543f720",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "BrambleXu/dsh-prompt-profile",
+      "version": "0.1.0",
+      "commit": "c205d44e88e6",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "BrambleXu/dsh-revdiff",
+      "version": "0.1.0",
+      "commit": "90e7f41040ed",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "lonelymoon87/dsh-gitflow",
+      "version": "0.1.2",
+      "commit": "71fa14570363",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "lonelymoon87/dsh-guardian",
+      "version": "0.1.2",
+      "commit": "a6f076c85b0f",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "Jesse-njx/dsh-plugin-manager",
+      "version": "0.1.0",
+      "commit": "2da969ab638d",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "Jesse-njx/dsh-tmuxctl",
+      "version": "0.1.0",
+      "commit": "1804d3956cef",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])"
+      ]
+    },
+    {
+      "repo": "xingyingyuzhui/dsh-updater-ui",
+      "version": "1.0.0",
+      "commit": "bf3077254e1e",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "EvilIrving/dsh-repro",
+      "version": "0.1.0",
+      "commit": "e51736ba5838",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "PerryLink/dsh-mcp-panel",
+      "version": "0.3.0",
+      "commit": "b9ffa8c5f18e",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "ICCuse/dsh-pain-point-check",
+      "version": "0.1.0",
+      "commit": "1dfa372a1d9e",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing"
+      ]
+    },
+    {
+      "repo": "Jayden-X-L/forkprobe",
+      "version": "0.10.0",
+      "commit": "defe0b47e0d6",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "vlln/plugin-registry",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "NO-ROOT-PKG"
+      ]
+    },
+    {
+      "repo": "forrestchang/dsh-multica-runtime",
+      "version": "0.1.0-private.1",
+      "commit": "e29aae228449",
+      "verdict": "REJECT",
+      "issues": [
+        "x bad version: '0.1.0-private.1'"
+      ]
+    },
+    {
+      "repo": "DietCokewithSugar/dsh-user-experience",
+      "version": "0.3.1",
+      "commit": "c6fd7766234a",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "yflmq001/dsh-cost-tracker",
+      "version": "1.0.0",
+      "commit": "f83602fc8ea0",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "slywalker2006/dsh-passwords",
+      "version": "2.3.1",
+      "commit": "a9de1ea50d10",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "Yuuz12/dsh-webui-auth",
+      "version": "0.2.3",
+      "commit": "6adeb61e8db3",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "Leon0555/dsh-lan-access",
+      "version": "0.1.0",
+      "commit": "5eea4062ccc8",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "DoggyHU/dsh4vscode",
+      "version": "0.6.6",
+      "commit": "cad06963d201",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "foolgry/dsh-desktop",
+      "version": "0.1.0-rc.6.202608150341",
+      "commit": "c95e4a2561a7",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x bad version: '0.1.0-rc.6.202608150341'",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "Lixiaoyiao/deepseek-harness-action",
+      "version": "0.2.0",
+      "commit": "937a89cfc6b1",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "suimi8/dsh-test-runner",
+      "version": "0.1.0",
+      "commit": "89f89ed8d50c",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "wuxiangru915/dsh-review-loop",
+      "version": "0.1.0",
+      "commit": "fc67d8ae8d59",
+      "verdict": "REJECT",
+      "issues": [
+        "x subprocess usage: 3 occurrence(s)"
+      ]
+    },
+    {
+      "repo": "hyqhyq3/dsh-mcp-manager",
+      "version": "0.4.0",
+      "commit": "56d4c3cbbca7",
+      "verdict": "REJECT",
+      "issues": [
+        "x subprocess usage: 1 occurrence(s)"
+      ]
+    },
+    {
+      "repo": "asdf17128/dsh-doctor",
+      "version": "0.1.0",
+      "commit": "8b193b32c5a3",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "Jesse-njx/dsh-plugin-manager-registry",
+      "version": "0.1.0",
+      "commit": "32dfc3fa93e3",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "fountunt/dsh-session-cleaner",
+      "version": "1.0.2",
+      "commit": "f12ef7bad873",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "15828148/dsh-portable-launcher",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "NO-ROOT-PKG"
+      ]
+    },
+    {
+      "repo": "Nagi-ovo/dsh-ads",
+      "version": "0.1.0",
+      "commit": "401819c43f12",
+      "verdict": "REJECT",
+      "issues": [
+        "x subprocess usage: 1 occurrence(s)"
+      ]
+    },
+    {
+      "repo": "omdsh-dev/dsh-gomoku",
+      "version": "0.0.1",
+      "commit": "5b27af9808f5",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "AnacondaKC/dsh-stock-market",
+      "version": "0.2.0",
+      "commit": "02278af12330",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "hellodigua/dsh-emoji",
+      "version": "0.2.2-beta.1",
+      "commit": "2caa1987504a",
+      "verdict": "REJECT",
+      "issues": [
+        "x bad version: '0.2.2-beta.1'"
+      ]
+    },
+    {
+      "repo": "lhh010/dsh-minigames",
+      "version": "0.3.2",
+      "commit": "a22b3c143839",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "william-jin-cmu/dsh-stickers",
+      "version": "0.1.0",
+      "commit": "1703f09915db",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])"
+      ]
+    },
+    {
+      "repo": "vlln/whale-girl",
+      "version": "0.1.0",
+      "commit": "ecba322be408",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "Moeblack/deepseek-manners",
+      "version": "0.1.0",
+      "commit": "32f58a8a0087",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "HuanLinOTO/dsh-plugin-d399",
+      "version": "0.1.1",
+      "commit": "fe5e1179daef",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "omdsh-dev/dsh-auto-chess",
+      "version": "0.0.1",
+      "commit": "cc0728d808cb",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "AnacondaKC/dsh-douyin",
+      "version": "0.2.0",
+      "commit": "2f28338b2950",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "minybear/DeepSeek-Harness-Pet",
+      "version": "0.1.0",
+      "commit": "ef98b23fd6e0",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "anweat/dsh-web-search-pro",
+      "version": "0.1.2",
+      "commit": "f8f388c75d11",
+      "verdict": "REJECT",
+      "issues": [
+        "x patch loads foreign package '@anweat/dsh-browser'",
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the par"
+      ]
+    },
+    {
+      "repo": "anweat/dsh-browser",
+      "version": "0.1.0",
+      "commit": "2cc70cf7f448",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "anweat/dsh-voice-webspeech",
+      "version": "0.1.0",
+      "commit": "eb6a51ff9428",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "anweat/dsh-restart",
+      "version": "0.1.0",
+      "commit": "8d9f4947530a",
+      "verdict": "REJECT",
+      "issues": [
+        "x subprocess usage: 3 occurrence(s)"
+      ]
+    },
+    {
+      "repo": "FlytoMAYDAY80/dsh-pet",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "CLONE-FAIL"
+      ]
+    },
+    {
+      "repo": "sunshine-lang/dsh-weather",
+      "version": "0.1.0",
+      "commit": "9f85d87ac584",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])"
+      ]
+    },
+    {
+      "repo": "sunshine-lang/dsh-pdf",
+      "version": "0.1.0",
+      "commit": "bfb4231ab6ca",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])"
+      ]
+    },
+    {
+      "repo": "XiaoMaColtAI/math-modeling-skill",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "CLONE-FAIL"
+      ]
+    },
+    {
+      "repo": "myYangyunfan/dsh_desktop",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "CLONE-FAIL"
+      ]
+    },
+    {
+      "repo": "humblebanana/open-record-replay",
+      "version": "0.1.0",
+      "commit": "8eff3fa62178",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "Ariestar/sivtr",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "CLONE-FAIL"
+      ]
+    },
+    {
+      "repo": "bruc3van/awesome-dsh-plugin",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "CLONE-FAIL"
+      ]
+    },
+    {
+      "repo": "hewzhew/dsh-agent-rp",
+      "version": "0.0.0-rc.139",
+      "commit": "ad69fd0af470",
+      "verdict": "REJECT",
+      "issues": [
+        "x bad version: '0.0.0-rc.139'",
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required:"
+      ]
+    },
+    {
+      "repo": "drewnekota/cetus",
+      "version": "0.3.60",
+      "commit": "b49871ef2df2",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "vibeinging/deepseek-harness-desktop-app",
+      "version": "0.0.1",
+      "commit": "a7cfa02b2937",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "Sikao-Engine/KimiX",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "CLONE-FAIL"
+      ]
+    },
+    {
+      "repo": "alibaba/loongsuite-pilot",
+      "version": "1.2.0",
+      "commit": "703aec8f6cfb",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "Ikalus1988/MisakaNet",
+      "version": "?",
+      "commit": "864dfd39de6e",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x bad version: ''",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "zouyuxuan122/Deepseek-Harness-EAC",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "CLONE-FAIL"
+      ]
+    },
+    {
+      "repo": "fornarwhal/deepseek-whale-girl-icon",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "CLONE-FAIL"
+      ]
+    },
+    {
+      "repo": "agents-universe/agents-universe",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "CLONE-FAIL"
+      ]
+    },
+    {
+      "repo": "MaimoryLab/BootAgent",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "CLONE-FAIL"
+      ]
+    },
+    {
+      "repo": "freestylefly/awesome-gpt-image-2",
+      "version": "1.0.0",
+      "commit": "76fcd0e6b396",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "ZSeven-W/openpencil",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "CLONE-FAIL"
+      ]
+    },
+    {
+      "repo": "freestylefly/wesight",
+      "version": "1.0.4",
+      "commit": "53ce05f14d15",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "SheberDavid/v4-flash-godmode-opencode-go",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "CLONE-FAIL"
+      ]
+    },
+    {
+      "repo": "Ruler4396/dsh-launcher",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "CLONE-FAIL"
+      ]
+    },
+    {
+      "repo": "Nagi-ovo/dsh-find-plugins",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "CLONE-FAIL"
+      ]
+    },
+    {
+      "repo": "liceses/dsh-gitbash-preset",
+      "version": "0.1.1",
+      "commit": "fc475f4836ed",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "2nd1st/open-mcp-apps",
+      "version": "0.5.5",
+      "commit": "1e481044aa5b",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "csyangwen/dsh-memory-evolve",
+      "version": "0.1.0",
+      "commit": "ce7f0faa0e02",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml",
+        "x subprocess usage: 31 occurrence(s)"
+      ]
+    },
+    {
+      "repo": "orziz/odai",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "CLONE-FAIL"
+      ]
+    },
+    {
+      "repo": "pulseaiclub/phi",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "CLONE-FAIL"
+      ]
+    },
+    {
+      "repo": "ChisaAlter/Deepseek-Harness-Desktop",
+      "version": "0.1.3",
+      "commit": "5e3d7d3b6abc",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "Leslie-SSS/seeWxapkg",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "CLONE-FAIL"
+      ]
+    },
+    {
+      "repo": "hikariming/dshfind",
+      "version": "0.1.0",
+      "commit": "336022b5b953",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "wink-run/tokenbank",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "CLONE-FAIL"
+      ]
+    },
+    {
+      "repo": "labring/sealos-skills",
+      "version": "1.2.5",
+      "commit": "f6876f7df876",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "kuangre123/codex-switch",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "CLONE-FAIL"
+      ]
+    },
+    {
+      "repo": "bradeGithub/DSH-Plugins-Marketplace",
+      "version": "1.3.16",
+      "commit": "1abf03e08656",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml",
+        "x subprocess usage: 1 occurrence(s)"
+      ]
+    },
+    {
+      "repo": "libukai/awesome-deepseek-harness",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "CLONE-FAIL"
+      ]
+    },
+    {
+      "repo": "Zhiyuan-Fan/Awesome-DeepSeek-Harness-Plugins",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "CLONE-FAIL"
+      ]
+    },
+    {
+      "repo": "Alex-Yanggg/awesome-DSH-plugin",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "CLONE-FAIL"
+      ]
+    },
+    {
+      "repo": "BruzWJ/Liang-Saint-Slider",
+      "version": "1.0.0",
+      "commit": "ff19dde9997f",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "JingbiaoMei/Tokdash",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "CLONE-FAIL"
+      ]
+    },
+    {
+      "repo": "Lyn-77/ProMentor",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "CLONE-FAIL"
+      ]
+    },
+    {
+      "repo": "yjh051108/dsh-super-injector",
+      "version": "0.3.3",
+      "commit": "f4ef59fb3143",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "NanmiCoder/dsh-auto-mode",
+      "version": "0.1.2",
+      "commit": "db3a2ed8e310",
+      "verdict": "REJECT",
+      "issues": [
+        "x patch loads foreign package 'Auto'"
+      ]
+    },
+    {
+      "repo": "Dominic789654/awesome-deepseek-harness",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "CLONE-FAIL"
+      ]
+    },
+    {
+      "repo": "pingfanfan/hello-dsh",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "CLONE-FAIL"
+      ]
+    },
+    {
+      "repo": "Ayase34/gal-view",
+      "version": "0.3.2",
+      "commit": "3b5a6411d01f",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "LaplaceYoung/oh-my-dsh",
+      "version": "0.1.0",
+      "commit": "37b66715ce55",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "morluto/jacobian",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "CLONE-FAIL"
+      ]
+    },
+    {
+      "repo": "c3ll256/dsh-toy",
+      "version": "0.2.0",
+      "commit": "adece3467506",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])",
+        "x subprocess usage: 1"
+      ]
+    },
+    {
+      "repo": "ningbainb/deepseek-harness-desktop",
+      "version": "0.1.7",
+      "commit": "91a112efeee3",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "bowenliang123/dsh-context",
+      "version": "0.7.3",
+      "commit": "3951da0f42d0",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "yanhua1010/dsh-harness-tutorial",
+      "version": "1.0.0",
+      "commit": "2a29d03a8385",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "PC2005-cloud/dsh-pet",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "CLONE-FAIL"
+      ]
+    },
+    {
+      "repo": "ZASENJC/dsh-plugins-store",
+      "version": "0.1.0",
+      "commit": "baf746dc8b0d",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "wess09/DeepSeekHarnessDesktop",
+      "version": "0.1.0",
+      "commit": "5f282defdda4",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "hanelalo/browser-bridge",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "CLONE-FAIL"
+      ]
+    },
+    {
+      "repo": "xiincs/deepseek-harness-desktop",
+      "version": "0.1.7",
+      "commit": "91a112efeee3",
+      "verdict": "REJECT",
+      "issues": [
+        "x cordis.patch.yml missing",
+        "x dsh.bundle.patch must be ./cordis.patch.yml"
+      ]
+    },
+    {
+      "repo": "Fishquito7/dsh-skill-viewer",
+      "version": "0.4.0",
+      "commit": "ad4f1cb8b996",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "mishibeikejie/zat-dsh-engine",
+      "version": "0.4.3",
+      "commit": "b70f3f92939f",
+      "verdict": "REJECT",
+      "issues": [
+        "x leaf property carries required: true - DSH supports required only at object top level (move it to the parent object's required: [...])",
+        "x subprocess usage: 2"
+      ]
+    },
+    {
+      "repo": "multica-ai/dsh-multica-runtime",
+      "version": "0.1.0-private.1",
+      "commit": "e29aae228449",
+      "verdict": "REJECT",
+      "issues": [
+        "x bad version: '0.1.0-private.1'"
+      ]
+    },
+    {
+      "repo": "tencent-connect/dsh-qqbot",
+      "version": "0.1.0",
+      "commit": "378540b916e3",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "HeiGeAi/deepseek-harness-skin",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "CLONE-FAIL"
+      ]
+    },
+    {
+      "repo": "LX2000WASD/dsh-web-plugin-manager",
+      "version": "0.3.10",
+      "commit": "b9f60f84352c",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "anysearch-team/anysearch-dsh",
+      "version": "0.1.1",
+      "commit": "2758d49bbe3d",
+      "verdict": "PASS",
+      "issues": []
+    },
+    {
+      "repo": "morluto/flameox",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "CLONE-FAIL"
+      ]
+    },
+    {
+      "repo": "yuukiLike/zeromd",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "CLONE-FAIL"
+      ]
+    },
+    {
+      "repo": "like-study1/Oh-My-DSH",
+      "version": "",
+      "commit": "",
+      "verdict": "UNEVALUATED",
+      "issues": [
+        "CLONE-FAIL"
+      ]
+    }
+  ]
+}

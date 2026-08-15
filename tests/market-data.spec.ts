@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from 'vitest'
 import {
-  entryForDep, isInstalled, matchInstalledName, orderedCategories, pageItems, themePlugins, visiblePlugins,
+  entryForDep, isInstalled, matchInstalledName, orderedCategories, pageItems, themePlugins, verdictFor, visiblePlugins,
 } from '../src/client/market-data.ts'
 import type { RegistryPlugin } from '../src/client/market-data.ts'
 
@@ -151,5 +151,23 @@ describe('discover pager (pageItems)', () => {
     expect(pageItems(1, 17)).toEqual([1, 2, 3, 4, 5, '…', 17])
     expect(pageItems(9, 17)).toEqual([1, '…', 8, 9, 10, '…', 17])
     expect(pageItems(17, 17)).toEqual([1, '…', 13, 14, 15, 16, 17])
+  })
+})
+
+describe('audit verdict (verdictFor)', () => {
+  const verdicts = { 'o/loop': 'PASS', 'm/mono': 'REJECT', 'o/eval': 'UNEVALUATED' } as const
+
+  it('matches owner/repo case-insensitively', () => {
+    expect(verdictFor('https://github.com/O/Loop', verdicts as never)).toBe('PASS')
+  })
+
+  it('falls back to the repo-level verdict for a monorepo /tree/ url', () => {
+    expect(verdictFor('https://github.com/m/mono/tree/main/packages/plug-a', verdicts as never)).toBe('REJECT')
+  })
+
+  it('returns null for a repo with no entry, a non-github url, or a null map', () => {
+    expect(verdictFor('https://github.com/o/unknown', verdicts as never)).toBeNull()
+    expect(verdictFor('https://gitlab.com/o/loop', verdicts as never)).toBeNull()
+    expect(verdictFor('https://github.com/o/loop', null)).toBeNull()
   })
 })

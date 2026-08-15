@@ -101,6 +101,11 @@ export const zh = {
   updatedLive: '✓ 已更新，已生效',
   partialNote: '已取消，部分变更已写入',
   actWhy: '为什么未生效？',
+  auditPass: '✓ 已通过审核',
+  auditReject: '✗ 未通过审核',
+  auditPending: '未验证',
+  auditAppeal: '申诉',
+  auditFix: '修复指南',
 }
 
 /** A dictionary key; zh is the source of truth, en mirrors it 1:1. */
@@ -207,4 +212,9 @@ export const en: Record<MarketKey, string> = {
   updatedLive: '✓ Updated — live',
   partialNote: 'Cancelled — some changes were applied',
   actWhy: 'Why not live?',
+  auditPass: '✓ Audited',
+  auditReject: '✗ Failed review',
+  auditPending: 'Not verified',
+  auditAppeal: 'Appeal',
+  auditFix: 'Fix guide',
 }

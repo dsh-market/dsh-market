@@ -105,3 +105,9 @@
 .pageOn{background:var(--dsw-alias-brand-primary,#4f6ef7);border-color:var(--dsw-alias-brand-primary,#4f6ef7);color:#fff;font-weight:600}
 .pageEllipsis{color:var(--dsw-alias-label-secondary,#9ca3af);font-size:12px;padding:0 2px}
 .pageInfo{font-size:12px;color:var(--dsw-alias-label-secondary,#6b7280);white-space:nowrap}
+.verdictRow{display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11px;line-height:18px}
+.verdictPass{color:var(--dsw-alias-state-success-primary,#16a34a);font-weight:600}
+.verdictReject{color:var(--dsw-alias-state-error-primary,#dc2626);font-weight:600}
+.verdictPending{color:var(--dsw-alias-label-secondary,#9ca3af)}
+.verdictLink{color:var(--dsw-alias-brand-primary,#4f6ef7);text-decoration:none}
+.verdictLink:hover{text-decoration:underline}

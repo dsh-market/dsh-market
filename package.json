@@ -31,6 +31,7 @@
     "prepare": "npm run build",
     "validate:registry": "node scripts/validate-registry.mjs",
     "snapshot": "curl -sf https://awesome-dsh-plugin.com/plugins.json -o data/registry-snapshot.json",
+    "snapshot:audit": "curl -sf https://whaleharness.com/audit.json -o data/audit-snapshot.json",
     "test:web": "vitest run --config vitest.web.config.ts"
   },
   "peerDependencies": {

@@ -8,10 +8,10 @@ import { Button, IconChevronDownOutline14, IconChevronUpOutline14, IconSearchOut
 import css from './Market.module.css'
 import {
   avatarColor, entryForDep, isInstalled, looksTerminal, matchInstalledName, orderedCategories,
-  pageItems, readSession, repoOf, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
+  pageItems, readSession, repoOf, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, verdictFor, visiblePlugins,
 } from './market-data.ts'
 import type {
-  ActivationInfo, ActivationState, InstalledMap, MarketStatus, Registry, RegistryPlugin,
+  ActivationInfo, ActivationState, AuditMap, AuditVerdict, InstalledMap, MarketStatus, Registry, RegistryPlugin,
   SortDir, SortField, ThemeSnapshot, TimeRange, Translate, UpdateStatus,
 } from './market-data.ts'
 
@@ -52,6 +52,29 @@ function OwnerAvatar({ name, owner }: { name: string; owner: string }) {
       loading="lazy"
       onError={() => setFailed(true)}
     />
+  )
+}
+
+/**
+ * The audit verdict badge: PASS / REJECT (with appeal + fix links) /
+ * unverified. A REJECT is advisory only — it never blocks installation.
+ */
+const AUDIT_APPEAL_URL = 'https://whaleharness.com/submissions/whalepod2026/'
+const AUDIT_FIXES_URL = 'https://whaleharness.com/audit-fixes.html'
+
+function VerdictBadge({ verdict, t }: { verdict: AuditVerdict | null; t: Translate }) {
+  if (verdict === null || verdict === 'UNEVALUATED') {
+    return <span className={css.verdictPending}>{t('auditPending')}</span>
+  }
+  if (verdict === 'PASS') {
+    return <span className={css.verdictPass}>{t('auditPass')}</span>
+  }
+  return (
+    <span className={css.verdictRow}>
+      <span className={css.verdictReject}>{t('auditReject')}</span>
+      <a className={css.verdictLink} href={AUDIT_APPEAL_URL} target="_blank" rel="noreferrer">{t('auditAppeal')}</a>
+      <a className={css.verdictLink} href={AUDIT_FIXES_URL} target="_blank" rel="noreferrer">{t('auditFix')}</a>
+    </span>
   )
 }
 
@@ -127,6 +150,7 @@ export function MarketSection(props: MarketSectionProps) {
     props.themeStore.getSnapshot,
   )
   const [data, setData] = useState<Registry | null>(cachedRegistry)
+  const [verdicts, setVerdicts] = useState<AuditMap | null>(null)
   const [loadError, setLoadError] = useState(false)
   const [installed, setInstalledState] = useState<InstalledMap>(cachedInstalled ?? {})
   const setInstalled = useCallback((value: InstalledMap) => { cachedInstalled = value; setInstalledState(value) }, [])
@@ -230,6 +254,15 @@ export function MarketSection(props: MarketSectionProps) {
       .catch(() => {})
     refreshInstalled()
   }, [refreshInstalled])
+
+  // WhaleHarness audit verdicts are advisory: loaded independently so a
+  // network failure never delays or breaks the catalog render.
+  useEffect(() => {
+    fetch('/dsh-market/audit', { cache: 'no-store' })
+      .then(res => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.json() })
+      .then(body => { if (body && typeof body.verdicts === 'object') setVerdicts(body.verdicts) })
+      .catch(() => {})
+  }, [])
 
   // Pending-restart flags survive tab switches and page reloads, scoped to
   // one host process: a different boot id means the restart happened and the
@@ -659,6 +692,7 @@ export function MarketSection(props: MarketSectionProps) {
           <a className={css.src} href={p.url} target="_blank" rel="noreferrer" style={{ alignSelf: 'flex-start', flexShrink: 0 }}>{t('viewSource')}</a>
         </div>
         <div className={css.desc}>{desc}</div>
+        <VerdictBadge verdict={verdictFor(p.url, verdicts)} t={t} />
         <div className={css.foot}>
           <span className={css.tag}>
             {(data!.categories[p.category] && (data!.categories[p.category]![lang] || data!.categories[p.category]!.en)) || p.category}
@@ -729,6 +763,7 @@ export function MarketSection(props: MarketSectionProps) {
           <a className={css.src} href={p.url} target="_blank" rel="noreferrer" style={{ alignSelf: 'flex-start', flexShrink: 0 }}>{t('viewSource')}</a>
         </div>
         <div className={css.desc}>{desc}</div>
+        <VerdictBadge verdict={verdictFor(p.url, verdicts)} t={t} />
         <div className={css.foot}>
           <span className={css.grow} />
           {removingName === instName

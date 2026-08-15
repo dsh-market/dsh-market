@@ -29,9 +29,12 @@ function stubFetch(overrides: Record<string, unknown> = {}): void {
       : path === '/dsh-market/installed' ? { profile: 'web', installed: {}, live: [] }
       : path === '/dsh-market/status' ? { active: false, pnpm: true, boot: 'boot-1', restart: true, installed: {} }
       : path === '/dsh-market/updates' ? { updates: {} }
+      : path === '/dsh-market/audit' ? { source: 'snapshot', verdicts: {} }
       : null
-    const merged = overrides[path] ?? payload
-    if (merged === null) return Promise.reject(new Error(`unstubbed fetch: ${String(url)}`))
+    // An explicit `null` override simulates an unreachable endpoint; a missing
+    // key falls back to the default payload above.
+    const merged = Object.prototype.hasOwnProperty.call(overrides, path) ? overrides[path] : payload
+    if (merged === null || merged === undefined) return Promise.reject(new Error(`unstubbed fetch: ${String(url)}`))
     return Promise.resolve(new Response(JSON.stringify(merged), { status: 200 }))
   })
 }
@@ -288,5 +291,38 @@ describe('P0-2 activation states in the Installed tab', () => {
     expect(screen.getByText(en.stateLive)).toBeTruthy()
     // The reason is behind a disclosure; the chip itself must not claim success.
     expect(screen.getByText(en.stateRestart).textContent).toContain(en.stateRestart)
+  })
+})
+
+describe('WhaleHarness audit verdict badges', () => {
+  it('shows PASS and REJECT badges; REJECT keeps install enabled and exposes appeal + fix links', async () => {
+    stubFetch({
+      '/dsh-market/audit': { source: 'live', verdicts: { 'alice/dsh-loop': 'PASS', 'bob/dsh-notify': 'REJECT' } },
+    })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    // PASS badge on the audited plugin.
+    expect(screen.getByText(en.auditPass)).toBeTruthy()
+    // REJECT badge with the two reason links (appeal + fix guide).
+    expect(screen.getByText(en.auditReject)).toBeTruthy()
+    expect(screen.getByRole('link', { name: en.auditAppeal }).getAttribute('href'))
+      .toBe('https://whaleharness.com/submissions/whalepod2026/')
+    expect(screen.getByRole('link', { name: en.auditFix }).getAttribute('href'))
+      .toBe('https://whaleharness.com/audit-fixes.html')
+    // A REJECT verdict never blocks installation — every catalog entry keeps
+    // its Install button (loop PASS, notify REJECT, whale-skin unverified).
+    expect(screen.getAllByRole('button', { name: en.install }).length).toBeGreaterThanOrEqual(3)
+  })
+
+  it('degrades to an unverified badge and a normal list when the audit endpoint is unreachable', async () => {
+    // An explicit null override makes the audit endpoint reject.
+    stubFetch({ '/dsh-market/audit': null })
+    render(<MarketSection {...props()} />)
+    // The catalog still loads and installs remain available.
+    expect(await screen.findByText('dsh-loop')).toBeTruthy()
+    expect(screen.getByText('dsh-notify')).toBeTruthy()
+    expect(screen.getAllByRole('button', { name: en.install }).length).toBeGreaterThanOrEqual(3)
+    // Every plugin falls back to the neutral unverified state.
+    expect(screen.getAllByText(en.auditPending).length).toBeGreaterThanOrEqual(3)
   })
 })
