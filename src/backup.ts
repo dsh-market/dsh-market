@@ -107,12 +107,6 @@ function validatedBackup(value: unknown): ProfileBackup {
 export function restoreProfileBackup(profile: string, value: unknown): { files: number; rollback(): void } {
   const backup = validatedBackup(value)
   const root = profileDir(profile)
-  const manifest = backup.files.find((file): file is Extract<BackupFile, { json: unknown }> => 'json' in file)!.json as { dependencies?: Record<string, unknown> }
-  for (const [name, spec] of Object.entries(manifest.dependencies ?? {})) {
-    if (typeof spec !== 'string' || !spec.startsWith('link:')) continue
-    const projectPath = spec.slice(5)
-    if (!existsSync(resolve(root, projectPath))) throw new Error(`local project path does not exist for ${name}: ${projectPath}`)
-  }
   const previous = new Map<string, Buffer | null>()
   mkdirSync(root, { recursive: true })
   const rollback = (): void => {

@@ -53,14 +53,6 @@ describe('profile backup and restore', () => {
     expect(existsSync(join(home, 'profiles', 'outside'))).toBe(false)
   })
 
-  it('reports missing linked projects', () => {
-    const dir = profileDir('web')
-    mkdirSync(dir, { recursive: true })
-    writeFileSync(join(dir, 'package.json'), JSON.stringify({ dependencies: { local: `link:${join(home, 'missing-project')}` } }))
-    const backup = createProfileBackup('web')
-    expect(() => restoreProfileBackup('web', backup)).toThrow(/local project path does not exist for local/)
-  })
-
   it('uploads and downloads the same backup through WebDAV', async () => {
     const dir = profileDir('web')
     mkdirSync(dir, { recursive: true })

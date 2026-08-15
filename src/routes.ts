@@ -8,7 +8,7 @@
  * same-origin POSTs and only sources present in the curated registry.
  */
 
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { loadRegistry } from './registry.ts'
@@ -167,18 +167,54 @@ export function mountMarketRoutes(
   /** Every plugin command goes through the pnpm-drift recovery wrapper (#20). */
   const runPlugin = (profile: string, args: string[]) => withHoistRecovery(commands.runPlugin, profile, args)
 
-  async function restoreBackup(value: unknown): Promise<{ files: number }> {
+  async function restoreBackup(value: unknown): Promise<{ files: number; errors: { name: string; error: string }[] }> {
     if (installing) throw new Error('another plugin operation is already running')
     if (!await probePnpm()) throw new Error('pnpm is required to restore plugins')
     installing = true
     const restored = restoreProfileBackup(config.profile, value)
     try {
       const result = await runPlugin(config.profile, ['install'])
-      if (result.exitCode !== 0 || result.timedOut || result.cancelled) {
-        throw new Error(result.stderr || result.stdout || 'plugin reinstall failed')
+      if (result.exitCode === 0 && !result.timedOut && !result.cancelled) {
+        invalidateUpdates()
+        return { files: restored.files, errors: [] }
+      }
+
+      // A bad dependency makes pnpm abort the whole install. Retry from an
+      // empty dependency list so one broken plugin cannot block the rest.
+      const manifestFile = join(profileDir(config.profile), 'package.json')
+      const manifest = JSON.parse(readFileSync(manifestFile, 'utf8')) as {
+        dependencies?: Record<string, string>
+        dsh?: { profile?: { bundles?: string[] } }
+      }
+      const dependencies = Object.entries(manifest.dependencies ?? {})
+      manifest.dependencies = {}
+      writeFileSync(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`)
+      const errors: { name: string; error: string }[] = []
+      let installed = 0
+      for (const [name, spec] of dependencies) {
+        const target = /^(?:file|link|github|git\+|https?):/.test(spec) ? spec : `${name}@${spec}`
+        try {
+          const item = await runPlugin(config.profile, ['add', target])
+          if (item.exitCode === 0 && !item.timedOut && !item.cancelled) {
+            installed += 1
+            continue
+          }
+          errors.push({ name, error: (item.stderr || item.stdout || 'pnpm failed').trim().slice(-300) })
+        } catch (error) {
+          errors.push({ name, error: error instanceof Error ? error.message : String(error) })
+        }
+        const current = JSON.parse(readFileSync(manifestFile, 'utf8')) as typeof manifest
+        if (current.dependencies !== undefined) delete current.dependencies[name]
+        if (Array.isArray(current.dsh?.profile?.bundles)) {
+          current.dsh.profile.bundles = current.dsh.profile.bundles.filter(bundle => bundle !== name)
+        }
+        writeFileSync(manifestFile, `${JSON.stringify(current, null, 2)}\n`)
+      }
+      if (installed === 0 && dependencies.length > 0) {
+        restored.rollback()
       }
       invalidateUpdates()
-      return { files: restored.files }
+      return { files: restored.files, errors }
     } catch (error) {
       restored.rollback()
       throw error

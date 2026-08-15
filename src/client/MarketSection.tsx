@@ -668,6 +668,16 @@ export function MarketSection(props: MarketSectionProps) {
     next()
   }, [updatableNames, doUpdate])
 
+  const finishRestore = useCallback((body: { errors?: unknown }) => {
+    const errors = Array.isArray(body.errors) ? body.errors as { name?: unknown; error?: unknown }[] : []
+    if (errors.length > 0) {
+      window.alert(`${t('restorePartial')}\n\n${errors.map(item => `${String(item.name)}: ${String(item.error)}`).join('\n')}`)
+    }
+    setBackupRestored(true)
+    setBackupMessage(t('restoreDone'))
+    refreshInstalled(true)
+  }, [refreshInstalled, t])
+
   const restoreBackup = useCallback((backup: unknown) => {
     if (!window.confirm(t('restoreConfirm'))) return Promise.resolve()
     setBackupBusy(true)
@@ -677,11 +687,9 @@ export function MarketSection(props: MarketSectionProps) {
     }).then(async response => {
       const body = await response.json()
       if (!response.ok) throw new Error(String(body.error || 'restore failed'))
-      setBackupRestored(true)
-      setBackupMessage(t('restoreDone'))
-      refreshInstalled(true)
+      finishRestore(body)
     }).catch(error => setBackupMessage(String(error))).finally(() => setBackupBusy(false))
-  }, [refreshInstalled, t])
+  }, [finishRestore, t])
 
   const runWebdav = useCallback((action: 'backup' | 'restore') => {
     if (webdavUrl.trim() === '') return
@@ -695,15 +703,14 @@ export function MarketSection(props: MarketSectionProps) {
       const body = await response.json()
       if (!response.ok) throw new Error(String(body.error || 'WebDAV failed'))
       if (action === 'restore') {
-        setBackupRestored(true)
-        refreshInstalled(true)
+        finishRestore(body)
       }
       if (action === 'backup') {
         try { localStorage.setItem('dshm-webdav-last', String(Date.now())) } catch { /* storage unavailable */ }
       }
       setBackupMessage(t(action === 'backup' ? 'backupDone' : 'restoreDone'))
     }).catch(error => setBackupMessage(String(error))).finally(() => setBackupBusy(false))
-  }, [refreshInstalled, t, webdavPassword, webdavUrl, webdavUser])
+  }, [finishRestore, t, webdavPassword, webdavUrl, webdavUser])
 
   useEffect(() => {
     // Persist only the non-secret WebDAV settings; the password stays

@@ -43,7 +43,7 @@ const fake = vi.hoisted(() => ({
   cancelNext: false,
   /** Appended to the next add's stdout (e.g. pnpm's Ignored build scripts line). */
   buildScriptOutputOnce: '',
-  /** Fail the next add with exit 1 and this stderr (e.g. ERR_PNPM_IGNORED_BUILDS, #68/#69). */
+/** Fail the next add with exit 1 and this stderr (e.g. ERR_PNPM_IGNORED_BUILDS, #68/#69). */
   failNextAddStderrOnce: '',
   /**
    * Fail the next npm add with exit 1 and this stderr AFTER writing
@@ -51,6 +51,8 @@ const fake = vi.hoisted(() => ({
    * is written before registry fetches and the build-script check run.
    */
   failAfterWriteStderrOnce: '',
+  /** Make restore's bulk install fail so its per-plugin fallback is exercised. */
+  failInstallOnce: false,
   /** True while a fake command is in flight (mirrors the real activeChild). */
   running: false,
   calls: [] as string[][],
@@ -104,7 +106,13 @@ vi.mock('../src/dsh-cli.ts', () => {
         stderr: '[ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION] 1 lockfile entries failed verification:\n  dsh-loop@1.0.0 was published at 2026-08-15T00:00:00.000Z, within the minimumReleaseAge cutoff',
       }
     }
-    if (cmd === 'install') return ok
+    if (cmd === 'install') {
+      if (fake.failInstallOnce) {
+        fake.failInstallOnce = false
+        return { ...ok, exitCode: 1, stderr: 'dsh: pnpm failed in profile directory' }
+      }
+      return ok
+    }
     if (fake.hoistDiffTimes > 0) {
       fake.hoistDiffTimes--
       return { exitCode: 1, timedOut: false, stdout: '', stderr: 'ERR_PNPM_PUBLIC_HOIST_PATTERN_DIFF  Run "pnpm install" to recreate the modules directory.', cancelled: false }
@@ -316,6 +324,7 @@ beforeEach(() => {
   fake.buildScriptOutputOnce = ''
   fake.failNextAddStderrOnce = ''
   fake.failAfterWriteStderrOnce = ''
+  fake.failInstallOnce = false
   fake.running = false
   fake.calls = []
   restartCalls.count = 0
@@ -494,6 +503,22 @@ describe('backup and restore (#55)', () => {
 
   it('rejects cross-origin restore requests', async () => {
     expect((await bed.dispatch('POST', '/dsh-market/restore', { backup: {} }, { crossOrigin: true })).status).toBe(403)
+  })
+
+  it('continues with remaining plugins when one dependency fails', async () => {
+    const exported = await bed.dispatch('GET', '/dsh-market/backup')
+    const manifest = exported.json.files.find((file: { path: string }) => file.path === 'package.json').json
+    manifest.dependencies = { missing: '^1.0.0', 'dsh-loop': '^1.0.0' }
+    manifest.dsh = { profile: { bundles: ['missing', 'dsh-loop'] } }
+    fake.npm['dsh-loop'] = { latest: '1.0.0', versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } } }
+    fake.failInstallOnce = true
+
+    const restored = await bed.dispatch('POST', '/dsh-market/restore', { backup: exported.json })
+    expect(restored.status).toBe(200)
+    expect(restored.json.errors).toEqual([expect.objectContaining({ name: 'missing' })])
+    expect(installedSpec('missing')).toBeUndefined()
+    expect(installedSpec('dsh-loop')).toBe('^1.0.0')
+    expect(fake.calls.slice(-3).map(call => call[0])).toEqual(['install', 'add', 'add'])
   })
 })
 
