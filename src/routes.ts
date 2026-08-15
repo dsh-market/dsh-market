@@ -39,7 +39,7 @@ export interface WebServerService {
 
 export interface MarketHost {
   webServer: WebServerService
-  loader: { entries(): Iterable<LoaderEntry> }
+  loader: { entries(): Iterable<LoaderEntry>; remove(id: string): Promise<void> }
   plugin(plugin: unknown, config: unknown): { await(): Promise<unknown>; dispose(): Promise<unknown> | void }
   on?(event: string, callback: (fiber: { entry?: { options?: { name?: string } } }) => void): () => void
   logger?: { info?(message: string): void; warn(message: string): void }
@@ -106,6 +106,27 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
       await hotUnmount(name)
       logEvent('warn', 'hot-sweep', `${name}: package removed outside the market — live mount dropped`)
     }
+  }
+
+  /**
+   * A package removal deletes client assets immediately, while a bundle-layer
+   * loader entry stays alive until the host restarts. Remove those live
+   * entries first so the next page refresh cannot import a deleted bundle.
+   */
+  async function removeLiveEntries(name: string): Promise<boolean> {
+    let removed = false
+    for (const entry of [...host.loader.entries()]) {
+      if (entry.options.name !== name || entry.fiber === undefined) continue
+      try {
+        await host.loader.remove(entry.id)
+        removed = true
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        host.logger?.warn(`[dsh-market] live-remove ${name} failed: ${message}`)
+        logEvent('warn', 'uninstall', `${name}: live loader entry removal failed: ${message}`)
+      }
+    }
+    return removed
   }
 
   /** Every plugin command goes through the pnpm-drift recovery wrapper (#20). */
@@ -492,6 +513,7 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
             if (ok) {
               invalidateUpdates()
               hot = await hotUnmount(name)
+              if (await removeLiveEntries(name)) hot = true
             }
             logEvent(ok || cancelled ? 'info' : 'error', 'uninstall',
               `${name} exit=${String(result.exitCode)}${cancelled ? ' CANCELLED' : ''}${ok ? ` live-removed=${String(hot)}` : cancelled ? '' : ` stderr=${result.stderr.slice(-300)}`}`)

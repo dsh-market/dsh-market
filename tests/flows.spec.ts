@@ -199,13 +199,15 @@ type Handler = (request: unknown, response: unknown) => void | Promise<void>
 
 interface Testbed {
   dispatch(method: string, path: string, body?: unknown, options?: { crossOrigin?: boolean; remoteAddress?: string; forwarded?: boolean }): Promise<{ status: number; json: any }>
-  loaderEntries: { options: { name: string; disabled?: boolean | null }; fiber?: unknown; update(o: { disabled: boolean | null }): Promise<void> }[]
+  loaderEntries: { id: string; options: { name: string; disabled?: boolean | null }; fiber?: unknown; update(o: { disabled: boolean | null }): Promise<void> }[]
+  loaderRemovals: string[]
   dispose(): void
 }
 
 function createTestbed(config: { allowRestart?: boolean } = {}): Testbed {
   const routes = new Map<string, Handler>()
   const loaderEntries: Testbed['loaderEntries'] = []
+  const loaderRemovals: string[] = []
   const host = {
     webServer: {
       register(route: { path: string; handler: Handler }) {
@@ -213,7 +215,14 @@ function createTestbed(config: { allowRestart?: boolean } = {}): Testbed {
         return () => routes.delete(route.path)
       },
     },
-    loader: { entries: () => loaderEntries },
+    loader: {
+      entries: () => loaderEntries,
+      remove: async (id: string) => {
+        loaderRemovals.push(id)
+        const index = loaderEntries.findIndex(entry => entry.id === id)
+        if (index !== -1) loaderEntries.splice(index, 1)
+      },
+    },
     plugin: () => ({ await: () => Promise.resolve(), dispose: () => {} }),
     on: () => () => {},
   }
@@ -243,7 +252,7 @@ function createTestbed(config: { allowRestart?: boolean } = {}): Testbed {
     try { json = JSON.parse(payload) } catch { /* non-JSON (logs route) */ }
     return { status, json }
   }
-  return { dispatch, loaderEntries, dispose }
+  return { dispatch, loaderEntries, loaderRemovals, dispose }
 }
 
 // ---------------------------------------------------------------- suite
@@ -455,6 +464,24 @@ describe('market self-update', () => {
     const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'dshmarket' })
     expect(r.status).toBe(200)
     expect(installedSpec('dshmarket')).toBe('^1.2.3')
+  })
+})
+
+describe('bundle-layer uninstall (#37)', () => {
+  it('removes its live loader entry so refreshing cannot import deleted client files', async () => {
+    fake.npm['dsh-loop'] = { latest: '1.0.0', versions: { '1.0.0': { manifest: { dsh: { bundle: {} }, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } } }
+    await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
+    bed.loaderEntries.push({
+      id: 'bundle-dsh-loop', options: { name: 'dsh-loop' }, fiber: {},
+      update: () => Promise.resolve(),
+    })
+
+    const r = await bed.dispatch('POST', '/dsh-market/uninstall', { name: 'dsh-loop' })
+
+    expect(r.status).toBe(200)
+    expect(r.json.hot).toBe(true)
+    expect(bed.loaderRemovals).toEqual(['bundle-dsh-loop'])
+    expect(bed.loaderEntries).toEqual([])
   })
 })
 

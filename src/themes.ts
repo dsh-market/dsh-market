@@ -13,6 +13,7 @@ import { repoOf } from './sources.ts'
 
 /** The slice of a cordis loader entry the market needs for live enable/disable. */
 export interface LoaderEntry {
+  id: string
   options: { id?: string; name?: string; disabled?: boolean | null }
   fiber?: unknown
   update(options: { disabled: boolean | null }, create?: boolean, force?: boolean): Promise<void>
