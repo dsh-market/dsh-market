@@ -205,11 +205,13 @@ export function mountMarketRoutes(
           return
         }
         try {
-          const backup = JSON.stringify(createProfileBackup(config.profile), null, 2)
+          const data = createProfileBackup(config.profile)
+          const backup = JSON.stringify(data, null, 2)
+          const timestamp = data.createdAt.replace(/\D/g, '').slice(0, 14)
           response.writeHead(200, {
             'cache-control': 'no-store',
             'content-type': 'application/json; charset=utf-8',
-            'content-disposition': `attachment; filename="dsh-${config.profile}-backup.json"`,
+            'content-disposition': `attachment; filename="dsh-dshmarket-backup-${timestamp}.json"`,
           })
           response.end(backup)
         } catch (error) {
