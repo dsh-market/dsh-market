@@ -31,12 +31,16 @@ export function secretFileCount(profile: string): number {
   return count
 }
 
+export type BackupFile =
+  | { path: 'package.json'; json: Record<string, unknown> }
+  | { path: string; lines: string[] }
+
 export interface ProfileBackup {
   format: typeof BACKUP_FORMAT
-  version: 1
+  version: 0.2
   createdAt: string
   profile: string
-  files: Record<string, string>
+  files: BackupFile[]
 }
 
 function profileFiles(root: string, dir = root): string[] {
@@ -55,10 +59,14 @@ function profileFiles(root: string, dir = root): string[] {
 /** Serialize every profile file except dependencies, lock state, and market cache. */
 export function createProfileBackup(profile: string): ProfileBackup {
   const root = profileDir(profile)
-  const files: Record<string, string> = {}
-  for (const path of profileFiles(root).sort()) files[path] = readFileSync(resolve(root, path)).toString('base64')
-  if (files['package.json'] === undefined) throw new Error('profile package.json is missing')
-  const backup: ProfileBackup = { format: BACKUP_FORMAT, version: 1, createdAt: new Date().toISOString(), profile, files }
+  const files: BackupFile[] = profileFiles(root).sort().map((path) => {
+    const content = readFileSync(resolve(root, path), 'utf8')
+    return path === 'package.json'
+      ? { path, json: JSON.parse(content) as Record<string, unknown> }
+      : { path, lines: content.split(/\r?\n/) }
+  })
+  if (!files.some(file => file.path === 'package.json')) throw new Error('profile package.json is missing')
+  const backup: ProfileBackup = { format: BACKUP_FORMAT, version: 0.2, createdAt: new Date().toISOString(), profile, files }
   if (Buffer.byteLength(JSON.stringify(backup)) > MAX_BACKUP_BYTES) throw new Error('profile configuration is too large to back up')
   return backup
 }
@@ -66,26 +74,45 @@ export function createProfileBackup(profile: string): ProfileBackup {
 function validatedBackup(value: unknown): ProfileBackup {
   if (value === null || typeof value !== 'object') throw new Error('invalid backup')
   const backup = value as Partial<ProfileBackup>
-  if (backup.format !== BACKUP_FORMAT || backup.version !== 1 || backup.files === null || typeof backup.files !== 'object') {
+  if (backup.format !== BACKUP_FORMAT || backup.version !== 0.2 || !Array.isArray(backup.files)) {
     throw new Error('unsupported backup format')
   }
-  if (Object.keys(backup.files).length > MAX_FILES || backup.files['package.json'] === undefined) throw new Error('invalid backup contents')
-  for (const [path, content] of Object.entries(backup.files)) {
-    if (path === '' || isAbsolute(path) || path.split(/[\\/]/).includes('..') || typeof content !== 'string') throw new Error(`unsafe backup path: ${path}`)
+  if (backup.files.length > MAX_FILES) throw new Error('invalid backup contents')
+  const files: BackupFile[] = []
+  const paths = new Set<string>()
+  for (const value of backup.files as unknown[]) {
+    if (value === null || typeof value !== 'object') throw new Error('invalid backup contents')
+    const file = value as { path?: unknown; json?: unknown; lines?: unknown }
+    const path = file.path
+    if (typeof path !== 'string') throw new Error('invalid backup contents')
+    if (path === '' || isAbsolute(path) || path.split(/[\\/]/).includes('..')) throw new Error(`unsafe backup path: ${path}`)
     const normalized = path.replaceAll('\\', '/')
     if (normalized.split('/').some(part => SKIP_NAMES.has(part))) throw new Error(`excluded backup path: ${path}`)
-    const bytes = Buffer.from(content, 'base64')
-    if (bytes.toString('base64') !== content) throw new Error(`invalid file encoding: ${path}`)
+    if (paths.has(normalized)) throw new Error(`duplicate backup path: ${path}`)
+    paths.add(normalized)
+    if (path === 'package.json') {
+      if (file.json === null || typeof file.json !== 'object' || Array.isArray(file.json)) throw new Error('backup package.json is invalid')
+      files.push({ path, json: file.json as Record<string, unknown> })
+    } else {
+      if (!Array.isArray(file.lines) || !file.lines.every(line => typeof line === 'string')) throw new Error(`invalid file content: ${path}`)
+      files.push({ path, lines: file.lines as string[] })
+    }
   }
-  try { JSON.parse(Buffer.from(backup.files['package.json'], 'base64').toString('utf8')) } catch { throw new Error('backup package.json is invalid') }
+  if (!files.some(file => file.path === 'package.json')) throw new Error('invalid backup contents')
   if (Buffer.byteLength(JSON.stringify(backup)) > MAX_BACKUP_BYTES) throw new Error('backup is too large')
-  return backup as ProfileBackup
+  return { ...backup, files } as ProfileBackup
 }
 
 /** Atomically overwrite backed-up files and return a rollback for install failure. */
 export function restoreProfileBackup(profile: string, value: unknown): { files: number; rollback(): void } {
   const backup = validatedBackup(value)
   const root = profileDir(profile)
+  const manifest = backup.files.find((file): file is Extract<BackupFile, { json: unknown }> => 'json' in file)!.json as { dependencies?: Record<string, unknown> }
+  for (const [name, spec] of Object.entries(manifest.dependencies ?? {})) {
+    if (typeof spec !== 'string' || !spec.startsWith('link:')) continue
+    const projectPath = spec.slice(5)
+    if (!existsSync(resolve(root, projectPath))) throw new Error(`local project path does not exist for ${name}: ${projectPath}`)
+  }
   const previous = new Map<string, Buffer | null>()
   mkdirSync(root, { recursive: true })
   const rollback = (): void => {
@@ -95,14 +122,15 @@ export function restoreProfileBackup(profile: string, value: unknown): { files: 
     }
   }
   try {
-    for (const [path, content] of Object.entries(backup.files)) {
+    for (const file of backup.files) {
+      const { path } = file
       const target = resolve(root, path)
       if (!target.startsWith(root + sep)) throw new Error(`unsafe backup path: ${path}`)
       if (existsSync(target) && !lstatSync(target).isFile()) throw new Error(`backup path is not a file: ${path}`)
       previous.set(target, existsSync(target) ? readFileSync(target) : null)
       mkdirSync(dirname(target), { recursive: true })
       const temp = `${target}.dsh-restore-${String(process.pid)}`
-      writeFileSync(temp, Buffer.from(content, 'base64'))
+      writeFileSync(temp, 'json' in file ? `${JSON.stringify(file.json, null, 2)}\n` : file.lines.join('\n'), 'utf8')
       renameSync(temp, target)
     }
   } catch (error) {

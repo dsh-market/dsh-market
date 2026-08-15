@@ -30,7 +30,10 @@ describe('profile backup and restore', () => {
     writeFileSync(join(dir, '.dsh-market', 'state.json'), '{}')
 
     const backup = createProfileBackup('web')
-    expect(Object.keys(backup.files)).toEqual(['cordis.patch.yml', 'package.json', 'plugin-config/settings.json'])
+    expect(backup.files.map(file => file.path)).toEqual(['cordis.patch.yml', 'package.json', 'plugin-config/settings.json'])
+    expect(backup.version).toBe(0.2)
+    expect(backup.files.find(file => file.path === 'cordis.patch.yml')).toEqual({ path: 'cordis.patch.yml', lines: ['- config: true'] })
+    expect(backup.files.find(file => file.path === 'package.json')).toEqual({ path: 'package.json', json: { dependencies: { plugin: '^1.0.0' } } })
 
     writeFileSync(join(dir, 'package.json'), '{"dependencies":{}}')
     rmSync(join(dir, 'plugin-config', 'settings.json'))
@@ -45,9 +48,17 @@ describe('profile backup and restore', () => {
     mkdirSync(dir, { recursive: true })
     writeFileSync(join(dir, 'package.json'), '{}')
     const backup = createProfileBackup('web')
-    backup.files['../outside'] = Buffer.from('bad').toString('base64')
+    backup.files.push({ path: '../outside', lines: ['bad'] })
     expect(() => restoreProfileBackup('web', backup)).toThrow(/unsafe backup path/)
     expect(existsSync(join(home, 'profiles', 'outside'))).toBe(false)
+  })
+
+  it('reports missing linked projects', () => {
+    const dir = profileDir('web')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ dependencies: { local: `link:${join(home, 'missing-project')}` } }))
+    const backup = createProfileBackup('web')
+    expect(() => restoreProfileBackup('web', backup)).toThrow(/local project path does not exist for local/)
   })
 
   it('uploads and downloads the same backup through WebDAV', async () => {

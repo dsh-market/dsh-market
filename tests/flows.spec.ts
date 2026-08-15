@@ -482,7 +482,7 @@ describe('backup and restore (#55)', () => {
     const exported = await bed.dispatch('GET', '/dsh-market/backup')
     expect(exported.status).toBe(200)
     expect(exported.json.format).toBe('dsh-profile-backup')
-    expect(exported.json.files['pnpm-lock.yaml']).toBeUndefined()
+    expect(exported.json.files.some((file: { path: string }) => file.path === 'pnpm-lock.yaml')).toBe(false)
 
     writeFileSync(join(profileDir('web'), 'cordis.patch.yml'), '- config: changed')
     const restored = await bed.dispatch('POST', '/dsh-market/restore', { backup: exported.json })
