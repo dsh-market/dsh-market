@@ -53,6 +53,8 @@ const fake = vi.hoisted(() => ({
   failAfterWriteStderrOnce: '',
   /** Make restore's bulk install fail so its per-plugin fallback is exercised. */
   failInstallOnce: false,
+  captureBundlesOnNextAdd: false,
+  bundlesBeforeFallbackAdd: null as string[] | null,
   /** True while a fake command is in flight (mirrors the real activeChild). */
   running: false,
   calls: [] as string[][],
@@ -112,6 +114,11 @@ vi.mock('../src/dsh-cli.ts', () => {
         return { ...ok, exitCode: 1, stderr: 'dsh: pnpm failed in profile directory' }
       }
       return ok
+    }
+    if (cmd === 'add' && fake.captureBundlesOnNextAdd) {
+      fake.captureBundlesOnNextAdd = false
+      const manifest = readManifest() as { dsh?: { profile?: { bundles?: string[] } } }
+      fake.bundlesBeforeFallbackAdd = [...(manifest.dsh?.profile?.bundles ?? [])]
     }
     if (fake.hoistDiffTimes > 0) {
       fake.hoistDiffTimes--
@@ -325,6 +332,8 @@ beforeEach(() => {
   fake.failNextAddStderrOnce = ''
   fake.failAfterWriteStderrOnce = ''
   fake.failInstallOnce = false
+  fake.captureBundlesOnNextAdd = false
+  fake.bundlesBeforeFallbackAdd = null
   fake.running = false
   fake.calls = []
   restartCalls.count = 0
@@ -512,12 +521,16 @@ describe('backup and restore (#55)', () => {
     manifest.dsh = { profile: { bundles: ['missing', 'dsh-loop'] } }
     fake.npm['dsh-loop'] = { latest: '1.0.0', versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } } }
     fake.failInstallOnce = true
+    fake.captureBundlesOnNextAdd = true
 
     const restored = await bed.dispatch('POST', '/dsh-market/restore', { backup: exported.json })
     expect(restored.status).toBe(200)
     expect(restored.json.errors).toEqual([expect.objectContaining({ name: 'missing' })])
     expect(installedSpec('missing')).toBeUndefined()
     expect(installedSpec('dsh-loop')).toBe('^1.0.0')
+    expect(fake.bundlesBeforeFallbackAdd).toEqual([])
+    const finalManifest = JSON.parse(readFileSync(join(profileDir('web'), 'package.json'), 'utf8'))
+    expect(finalManifest.dsh.profile.bundles).toEqual(['dsh-loop'])
     expect(fake.calls.slice(-3).map(call => call[0])).toEqual(['install', 'add', 'add'])
   })
 })

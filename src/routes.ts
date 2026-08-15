@@ -187,7 +187,12 @@ export function mountMarketRoutes(
         dsh?: { profile?: { bundles?: string[] } }
       }
       const dependencies = Object.entries(manifest.dependencies ?? {})
+      const desiredBundles = [...(manifest.dsh?.profile?.bundles ?? [])]
+      const dependencyNames = new Set(dependencies.map(([name]) => name))
       manifest.dependencies = {}
+      if (Array.isArray(manifest.dsh?.profile?.bundles)) {
+        manifest.dsh.profile.bundles = desiredBundles.filter(bundle => !dependencyNames.has(bundle))
+      }
       writeFileSync(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`)
       const errors: { name: string; error: string }[] = []
       let installed = 0
@@ -195,8 +200,17 @@ export function mountMarketRoutes(
         const target = /^(?:file|link|github|git\+|https?):/.test(spec) ? spec : `${name}@${spec}`
         try {
           const item = await runPlugin(config.profile, ['add', target])
-          if (item.exitCode === 0 && !item.timedOut && !item.cancelled) {
+          if (item.exitCode === 0 && !item.timedOut && !item.cancelled
+            && existsSync(join(profileDir(config.profile), 'node_modules', name, 'package.json'))) {
             installed += 1
+            if (desiredBundles.includes(name)) {
+              const current = JSON.parse(readFileSync(manifestFile, 'utf8')) as typeof manifest
+              current.dsh ??= {}
+              current.dsh.profile ??= {}
+              current.dsh.profile.bundles ??= []
+              if (!current.dsh.profile.bundles.includes(name)) current.dsh.profile.bundles.push(name)
+              writeFileSync(manifestFile, `${JSON.stringify(current, null, 2)}\n`)
+            }
             continue
           }
           errors.push({ name, error: (item.stderr || item.stdout || 'pnpm failed').trim().slice(-300) })
@@ -205,9 +219,6 @@ export function mountMarketRoutes(
         }
         const current = JSON.parse(readFileSync(manifestFile, 'utf8')) as typeof manifest
         if (current.dependencies !== undefined) delete current.dependencies[name]
-        if (Array.isArray(current.dsh?.profile?.bundles)) {
-          current.dsh.profile.bundles = current.dsh.profile.bundles.filter(bundle => bundle !== name)
-        }
         writeFileSync(manifestFile, `${JSON.stringify(current, null, 2)}\n`)
       }
       if (installed === 0 && dependencies.length > 0) {
