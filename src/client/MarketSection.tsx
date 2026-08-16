@@ -1233,7 +1233,13 @@ export function MarketSection(props: MarketSectionProps) {
               <Button size="sm" onClick={() => doUpdate(staleName, true)}>{t('updateNow')}</Button>
             )}
             {/* The banner text told users to export the log; now it IS the button (#84). */}
-            <Button size="sm" variant="ghost" disabled={exportState === 'busy'} onClick={doExportLog}>
+            <Button
+              size="sm"
+              variant="outline"
+              icon={<IconDownloadOutline16 size={14} />}
+              disabled={exportState === 'busy'}
+              onClick={doExportLog}
+            >
               {exportState === 'busy' ? t('exportingLog') : t('exportLog')}
             </Button>
             {exportState === 'done' && <span className={css.exportNote}>{'✓ ' + t('exportedLog')}</span>}
