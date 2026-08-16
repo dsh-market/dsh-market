@@ -215,16 +215,24 @@ export function mergeOrder(bundles: string[], newOrder: string[]): { ok: true; b
 }
 
 /**
- * Topologically sort the community bundles by their before/after rules —
- * the "auto-fix" counterpart to validateOrder (LOOT-style): when the current
- * order violates declared rules, this computes a suggested order that
- * satisfies them. Kahn's algorithm with deterministic tie-breaking (stable
- * input order). Bundles without rules keep their relative order among the
- * unconstrained ones.
- * @returns the suggested community order, or a cycle report when the rules
- * cannot be satisfied (rules referencing unlisted bundles are ignored).
+ * Topologically sort the community bundles by their before/after rules AND
+ * plugin-to-plugin dependencies — the "auto-fix" counterpart to validateOrder
+ * (LOOT-style): the suggested order satisfies every declared rule and puts
+ * each bundle after the bundles it depends on. Kahn's algorithm with
+ * deterministic tie-breaking (stable input order). Bundles without
+ * constraints keep their relative order among the unconstrained ones.
+ *
+ * `dependencyEdges` expresses "from depends on to" (usually read from each
+ * bundle's dependencies/peerDependencies that name another community
+ * bundle); the constraint is `to` must load before `from`.
+ * @returns the suggested community order, or a cycle report when the
+ * constraints cannot be satisfied (references to unlisted bundles ignored).
  */
-export function suggestOrder(bundleNames: string[], rules: BundleRule[]): { ok: true; order: string[] } | { ok: false; cycle: string[] } {
+export function suggestOrder(
+  bundleNames: string[],
+  rules: BundleRule[],
+  dependencyEdges: Array<{ from: string; to: string }> = [],
+): { ok: true; order: string[] } | { ok: false; cycle: string[] } {
   const names = bundleNames.filter(name => !INBOX_BUNDLES.has(name))
   const inOrder = new Set(names)
   const active = rules.filter(rule => inOrder.has(rule.name))
@@ -244,6 +252,8 @@ export function suggestOrder(bundleNames: string[], rules: BundleRule[]): { ok: 
     for (const other of rule.before) addEdge(rule.name, other)
     for (const other of rule.after) addEdge(other, rule.name)
   }
+  // Dependency edges: "from depends on to" ⇒ to must load before from.
+  for (const edge of dependencyEdges) addEdge(edge.to, edge.from)
   const remaining = new Map<string, Set<string>>()
   for (const [name, depsOf] of deps) remaining.set(name, new Set(depsOf))
   const ready: string[] = names.filter(name => (remaining.get(name)?.size ?? 0) === 0)

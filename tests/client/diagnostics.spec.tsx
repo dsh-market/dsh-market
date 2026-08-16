@@ -139,7 +139,10 @@ describe('Diagnostics (jsdom)', () => {
     // Problem lists render in the red error style (css-module err class).
     const dupErrLine = screen.getByText(/duplicate loader entry id/)
     expect(dupErrLine.closest('[class*="err"]')).not.toBeNull()
-    expect(screen.getByText(/does not match resolved 0\.2\.0/)).toBeTruthy()
+    // Expand the warnings block, then its first warning row is visible exactly
+    // once (the collapsed overview line carries the same text).
+    fireEvent.click(screen.getByText(t('checkWarnings')))
+    expect(screen.getAllByText(/does not match resolved 0\.2\.0/).length).toBeGreaterThan(0)
 
     // Bundle blocks: one per bundle, in report order, with badges and errors.
     const bundleBlocks = Array.from(container.querySelectorAll('.' + css.diagBundle))

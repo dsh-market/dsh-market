@@ -118,28 +118,31 @@ interface CheckReport {
 /**
  * A collapsible report section: header shows title + count + chevron; the
  * body stays mounted (hidden via CSS when collapsed) so every block keeps
- * its state. ALL blocks are collapsed by default; only blocks with real
- * problems (errors/warnings) are passed `defaultOpen` by the caller. When
- * collapsed, an optional one-line `overview` summarizes the block so the
- * page reads without expanding everything.
+ * its state. ALL blocks are collapsed by default — the summary strip above
+ * gives the overview, and a problem block's title is highlighted and its
+ * collapsed `overview` line shows the first issue, so nothing important is
+ * hidden. Expand a block to see its full content.
  */
 function Section(props: {
   title: string
   count: number
   empty: string
   defaultOpen?: boolean
+  problem?: boolean
   overview?: ReactNode
   children: ReactNode
 }) {
-  const { title, count, empty, defaultOpen, overview, children } = props
+  const { title, count, empty, defaultOpen, problem = true, overview, children } = props
   const [open, setOpen] = useState(defaultOpen ?? false)
+  const alert = problem && count > 0
   return (
     <section className={css.diagSection}>
       <button type="button" className={css.collapseHead} onClick={() => setOpen(o => !o)} aria-expanded={open}>
         <span className={css.collapseIcon}>
           {open ? <IconChevronDownOutline14 size={14} /> : <IconChevronRightOutline14 size={14} />}
         </span>
-        <span className={css.collapseTitle}>{title}</span>
+        {alert && <span className={css.diagAlert}>⚠</span>}
+        <span className={`${css.collapseTitle}${alert ? ` ${css.diagAlert}` : ''}`}>{title}</span>
         <span className={css.diagCount}>({count})</span>
         <span className={css.grow} />
       </button>
@@ -342,7 +345,13 @@ export function Diagnostics(props: { t: Translate; workspaces?: { startSession(w
   const catOrder = report.orderConflicts?.length ?? 0
   const anyIssue = catConflict + catDeps + catOrder > 0
 
-  /** Build the AI-fix prompt from the current report and hand it to a new session. */
+  /**
+   * Build the AI-fix prompt (errors/warnings/order conflicts + scope) and
+   * hand it to a NEW agent session: close Settings, start a session, then
+   * prefill the composer textarea (native setter + input event so React
+   * picks it up). The agent never sends anything — the user reviews and
+   * sends. Clipboard is the fallback when the composer cannot be reached.
+   */
   const startAgentFix = () => {
     const lines: string[] = []
     lines.push(t('aiFixIntro').replace('{0}', report.profile))
@@ -364,7 +373,37 @@ export function Diagnostics(props: { t: Translate; workspaces?: { startSession(w
     }
     lines.push(t('aiFixScope'))
     const prompt = lines.join('\n')
-    const fallback = (): void => {
+
+    // Close the settings dialog (best effort — the section lives inside it).
+    try {
+      const close = document.querySelector<HTMLElement>(
+        '[role="dialog"] [aria-label*="关闭"], [role="dialog"] [aria-label*="Close"]',
+      )
+      close?.click()
+    } catch { /* ignore */ }
+
+    // Poll for the composer textarea of the freshly opened session (~6s).
+    const injectIntoComposer = (): Promise<boolean> => new Promise((resolve) => {
+      let tries = 0
+      const attempt = (): void => {
+        const ta = document.querySelector<HTMLTextAreaElement>('[data-input-scroll] textarea')
+        if (ta !== null) {
+          const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set
+          if (setter !== undefined) {
+            setter.call(ta, prompt)
+            ta.dispatchEvent(new Event('input', { bubbles: true }))
+            resolve(true)
+            return
+          }
+        }
+        tries += 1
+        if (tries >= 12) resolve(false)
+        else setTimeout(attempt, 500)
+      }
+      attempt()
+    })
+
+    const fallbackToClipboard = (): void => {
       try {
         void navigator.clipboard?.writeText(prompt)
         setFixMsg(t('aiFixCopied'))
@@ -372,16 +411,12 @@ export function Diagnostics(props: { t: Translate; workspaces?: { startSession(w
         setFixMsg(t('aiFixFail'))
       }
     }
-    if (typeof navigator.clipboard?.writeText === 'function') {
-      navigator.clipboard.writeText(prompt)
-        .then(() => {
-          workspaces?.startSession()
-          setFixMsg(t('aiFixReady'))
-        })
-        .catch(fallback)
-    } else {
-      fallback()
-    }
+
+    workspaces?.startSession()
+    void injectIntoComposer().then((ok) => {
+      if (ok) setFixMsg(t('aiFixPrefilled'))
+      else fallbackToClipboard()
+    })
   }
 
   return (
@@ -430,7 +465,6 @@ export function Diagnostics(props: { t: Translate; workspaces?: { startSession(w
         title={t('checkErrors')}
         count={summary.errors.length}
         empty={t('checkErrorsEmpty')}
-        defaultOpen={summary.errors.length > 0}
         overview={summary.errors.length > 0 ? summary.errors[0] : undefined}
       >
         <div className={css.diagList}>
@@ -444,7 +478,6 @@ export function Diagnostics(props: { t: Translate; workspaces?: { startSession(w
         title={t('checkWarnings')}
         count={summary.warnings.length}
         empty={t('checkWarningsEmpty')}
-        defaultOpen={summary.warnings.length > 0}
         overview={summary.warnings.length > 0 ? summary.warnings[0] : undefined}
       >
         <div className={css.diagList}>
@@ -458,6 +491,7 @@ export function Diagnostics(props: { t: Translate; workspaces?: { startSession(w
         title={t('checkBundles')}
         count={report.bundles.length}
         empty={t('checkBundlesEmpty')}
+        problem={false}
         overview={
           <span>
             {t('checkOfficial')} × {report.bundles.filter(b => b.kind === 'official').length}
@@ -544,11 +578,6 @@ export function Diagnostics(props: { t: Translate; workspaces?: { startSession(w
         title={t('checkPeerMismatches')}
         count={report.peerMismatches.filter(peer => peer.satisfied === false).length}
         empty={t('checkPeerEmpty')}
-        // Only CONFIRMED incompatibilities count as problems; informational
-        // entries (host-provided deps, optional accelerators, un-evaluable)
-        // are collapsed behind a disclosure so the page stays compact (UX
-        // review — the block used to render dozens of harmless rows).
-        defaultOpen={report.peerMismatches.some(peer => peer.satisfied === false)}
         overview={report.peerMismatches.length > 0
           ? `${report.peerMismatches.filter(p => p.satisfied === false).length} 不匹配 · ${report.peerMismatches.filter(p => p.satisfied !== false).length} 信息`
           : undefined}

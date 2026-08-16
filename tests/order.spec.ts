@@ -342,4 +342,43 @@ describe('suggestOrder (#98 opt: LOOT-style auto-fix)', () => {
     expect(result.ok).toBe(true)
     if (result.ok) expect(result.order).toEqual(['a', 'x'])
   })
+
+  it('puts a bundle after the bundles it depends on (dependency edges)', () => {
+    // a depends on b, b depends on c ⇒ order must be c, b, a.
+    const edges = [
+      { from: 'a', to: 'b' },
+      { from: 'b', to: 'c' },
+    ]
+    const result = suggestOrder(['a', 'b', 'c'], [], edges)
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.order.indexOf('c')).toBeLessThan(result.order.indexOf('b'))
+      expect(result.order.indexOf('b')).toBeLessThan(result.order.indexOf('a'))
+    }
+  })
+
+  it('combines before/after rules with dependency edges and reports cycles', () => {
+    // Rule: c before a. Dependencies: a→b. Both satisfied by b, c, a… and c
+    // before a means c, a order; deps force b before a → b, c, a.
+    const rules = [{ name: 'c', before: ['a'], after: [] }]
+    const edges = [{ from: 'a', to: 'b' }]
+    const result = suggestOrder(['a', 'b', 'c'], rules, edges)
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.order.indexOf('b')).toBeLessThan(result.order.indexOf('a'))
+      expect(result.order.indexOf('c')).toBeLessThan(result.order.indexOf('a'))
+    }
+    // Mutual dependency → cycle.
+    const cycle = suggestOrder(['a', 'b'], [], [
+      { from: 'a', to: 'b' },
+      { from: 'b', to: 'a' },
+    ])
+    expect(cycle.ok).toBe(false)
+  })
+
+  it('ignores dependency edges to unlisted bundles', () => {
+    const result = suggestOrder(['a', 'b'], [], [{ from: 'a', to: 'ghost' }])
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.order.sort()).toEqual(['a', 'b'])
+  })
 })

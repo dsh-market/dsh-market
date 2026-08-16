@@ -883,12 +883,31 @@ export function analyzeProfile(profileDirectory: string, options: CheckOptions =
     const own = orderConflicts.filter(conflict => conflict.name === bundle.name)
     if (own.length > 0) bundle.order = { ...bundle.order, conflicts: own }
   }
-  // LOOT-style auto-fix: when rules are violated, suggest a compliant order.
-  const suggestedOrder = suggestOrder(bundleNames, readBundleRules(profileDirectory))
+  // LOOT-style auto-fix: suggest an order satisfying every declared rule AND
+  // the plugin-to-plugin dependencies (a bundle loads after the bundles it
+  // depends on). Dependency edges come from each community bundle's manifest.
+  const communitySet = new Set(bundleNames.filter(name => !INBOX_BUNDLES.has(name)))
+  const dependencyEdges: Array<{ from: string; to: string }> = []
+  for (const name of communitySet) {
+    let manifest: { dependencies?: Record<string, string>; peerDependencies?: Record<string, string> }
+    try {
+      manifest = JSON.parse(readFileSync(join(profileDirectory, 'node_modules', name, 'package.json'), 'utf8')) as typeof manifest
+    } catch {
+      continue
+    }
+    for (const section of ['dependencies', 'peerDependencies'] as const) {
+      const map = manifest[section]
+      if (map === null || typeof map !== 'object') continue
+      for (const dep of Object.keys(map)) {
+        if (communitySet.has(dep)) dependencyEdges.push({ from: name, to: dep })
+      }
+    }
+  }
+  const suggestedOrder = suggestOrder(bundleNames, readBundleRules(profileDirectory), dependencyEdges)
   if (suggestedOrder.ok && suggestedOrder.order.join('\u0000') !== bundleNames.filter(name => !INBOX_BUNDLES.has(name)).join('\u0000')) {
-    warnings.push('current bundle order violates declared before/after rules — a compliant order is suggested / 当前 bundle 顺序违反声明的 before/after 规则，已给出建议顺序')
+    warnings.push('current bundle order violates declared rules or plugin dependencies — a better order is suggested / 当前 bundle 顺序违反声明规则或插件依赖，已给出更优顺序')
   } else if (!suggestedOrder.ok) {
-    warnings.push(`before/after rules contain a cycle: ${suggestedOrder.cycle.join(' -> ')} — no compliant order exists / before/after 规则存在循环依赖，无法得出合规顺序`)
+    warnings.push(`ordering constraints contain a cycle: ${suggestedOrder.cycle.join(' -> ')} — no compliant order exists / 排序约束存在循环依赖，无法得出合规顺序`)
   }
 
   // Duplicate loader NAMES: the Loader registers plugins by name, so two rows
