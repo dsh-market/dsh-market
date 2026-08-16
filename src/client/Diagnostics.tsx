@@ -344,6 +344,14 @@ export function Diagnostics(props: { t: Translate; workspaces?: { startSession(w
   const catDeps = report.coreDeps.length + report.peerMismatches.length + report.multiVersion.length
   const catOrder = report.orderConflicts?.length ?? 0
   const anyIssue = catConflict + catDeps + catOrder > 0
+  // AI-fix only shows for HARD issues — things that actually break the
+  // profile (boot errors, duplicate entries, confirmed peer mismatches).
+  // Purely informational/warning states stay quiet so the agent is not
+  // nudged into risky changes without a clear problem (conservative UX).
+  const hasHardIssues = summary.errors.length > 0
+    || report.duplicates.length > 0
+    || (report.duplicateNames?.length ?? 0) > 0
+    || report.peerMismatches.some(peer => peer.satisfied === false)
 
   /**
    * Build the AI-fix prompt (errors/warnings/order conflicts + scope) and
@@ -372,6 +380,8 @@ export function Diagnostics(props: { t: Translate; workspaces?: { startSession(w
       lines.push('')
     }
     lines.push(t('aiFixScope'))
+    lines.push('')
+    lines.push(t('aiFixConservative'))
     const prompt = lines.join('\n')
 
     // Close the settings dialog (best effort — the section lives inside it).
@@ -436,7 +446,7 @@ export function Diagnostics(props: { t: Translate; workspaces?: { startSession(w
           <StateDot state="warning" size={8} />{t('catOrder')}: {catOrder}
         </span>
         <span className={css.grow} />
-        {anyIssue && (
+        {hasHardIssues && (
           <Button variant="outline" size="sm" onClick={startAgentFix} title={t('aiFixHint')}>
             {t('aiFix')}
           </Button>

@@ -259,12 +259,16 @@ export function suggestOrder(
   const ready: string[] = names.filter(name => (remaining.get(name)?.size ?? 0) === 0)
   const ordered: string[] = []
   while (ready.length > 0) {
-    // Deterministic tie-break: the ready bundle earliest in the current order.
+    // Deterministic, INPUT-INDEPENDENT tie-break: the ready bundle with the
+    // smallest name. The suggested order is therefore UNIQUE for a given set
+    // of bundles/rules/dependencies — it never chases the user's current
+    // manual order, so re-clicking auto-sort after hand-tweaking an
+    // unconstrained bundle restores the same canonical result.
     let best = 0
     for (let i = 1; i < ready.length; i += 1) {
       const a = ready[i]
       const b = ready[best]
-      if (a !== undefined && b !== undefined && names.indexOf(a) < names.indexOf(b)) best = i
+      if (a !== undefined && b !== undefined && a.localeCompare(b) < 0) best = i
     }
     const name = ready.splice(best, 1)[0]
     if (name === undefined) break

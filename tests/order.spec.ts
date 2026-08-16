@@ -318,9 +318,14 @@ describe('suggestOrder (#98 opt: LOOT-style auto-fix)', () => {
     expect(result.ok).toBe(true)
     if (result.ok) {
       expect(result.order.indexOf('y')).toBeLessThan(result.order.indexOf('x'))
-      // a and b keep their relative order.
+      // Unconstrained bundles sort deterministically by name (input order no
+      // longer matters — the result is a UNIQUE canonical order).
       expect(result.order.indexOf('a')).toBeLessThan(result.order.indexOf('b'))
     }
+    // The same input order shifted produces the SAME canonical result, so
+    // re-clicking auto-sort after a manual tweak restores it.
+    const again = suggestOrder(['b', 'x', 'y', 'a'], rules)
+    if (again.ok && result.ok) expect(again.order).toEqual(result.order)
   })
 
   it('reports a cycle instead of an order', () => {

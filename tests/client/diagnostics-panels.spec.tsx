@@ -429,7 +429,11 @@ describe('Diagnostics panels (jsdom, #98 phase 2/3)', () => {
     composer.appendChild(textarea)
     document.body.appendChild(composer)
 
-    const api = stubApi()
+    // A HARD issue (duplicate entries) makes the AI-fix button visible —
+    // purely informational reports keep it hidden (conservative UX).
+    const api = stubApi({
+      check: { ...CHECK_REPORT, duplicates: [{ id: 'dup-entry', layers: ['alpha'], count: 2 }] },
+    })
     render(<Diagnostics t={t} workspaces={{ startSession }} />)
     await waitFor(() => expect(screen.queryByText(t('checkLoading'))).toBeNull())
 
@@ -450,6 +454,9 @@ describe('Diagnostics panels (jsdom, #98 phase 2/3)', () => {
 
   it('auto-sort shows and reports when no ordering rules exist', async () => {
     await renderLoaded()
+    // CHECK_REPORT has no hard issues → the AI-fix button stays hidden
+    // (conservative UX: don't nudge the agent without a clear problem).
+    expect(screen.queryByRole('button', { name: t('aiFix') })).toBeNull()
     const section = screen.getByText(t('orderSection')).closest('section') as HTMLElement
     fireEvent.click(screen.getByText(t('orderSection')))
     await waitFor(() => {
