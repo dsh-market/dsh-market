@@ -181,7 +181,10 @@ export function mountMarketRoutes(
 
       // A bad dependency makes pnpm abort the whole install. Retry from an
       // empty dependency list so one broken plugin cannot block the rest.
-      const manifestFile = join(profileDir(config.profile), 'package.json')
+      // activeProfileDir, NOT profileDir(config.profile): in DSH Desktop the
+      // profile directory is host-authoritative (#72) and the ambient
+      // derivation would edit the WRONG profile's manifest.
+      const manifestFile = join(activeProfileDir, 'package.json')
       const manifest = JSON.parse(readFileSync(manifestFile, 'utf8')) as {
         dependencies?: Record<string, string>
         dsh?: { profile?: { bundles?: string[] } }
@@ -201,7 +204,7 @@ export function mountMarketRoutes(
         try {
           const item = await runPlugin(config.profile, ['add', target])
           if (item.exitCode === 0 && !item.timedOut && !item.cancelled
-            && existsSync(join(profileDir(config.profile), 'node_modules', name, 'package.json'))) {
+            && existsSync(join(activeProfileDir, 'node_modules', name, 'package.json'))) {
             installed += 1
             if (desiredBundles.includes(name)) {
               const current = JSON.parse(readFileSync(manifestFile, 'utf8')) as typeof manifest
