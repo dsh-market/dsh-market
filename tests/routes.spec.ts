@@ -404,15 +404,15 @@ describe('GET /dsh-market/installed — local repository evidence', () => {
 })
 
 describe('POST /dsh-market/bundle-order', () => {
-  it('applies a valid community reorder: 200 with bundles + snapshot, manifest rewritten', async () => {
+  it('applies a valid community reorder: 200 with the merged stack, manifest rewritten', async () => {
+    // #125: the in-route pre-write safety net is the profile backup (not a
+    // persistent snapshot), so the bundle-order response carries no snapshot.
     writeStandardProfile()
     const res = await hit(routes, '/dsh-market/bundle-order', post('/dsh-market/bundle-order', { order: ['beta', 'alpha'] }))
     expect(res.status).toBe(200)
     const body = jsonBody(res)
     expect(body.ok).toBe(true)
     expect(body.bundles).toEqual(['@deepseek-ai/dsh-base', 'beta', 'alpha'])
-    expect(typeof body.snapshot).toBe('string')
-    expect(String(body.snapshot)).toMatch(/^snapshot-/)
 
     const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as { dsh: { profile: { bundles: string[] } } }
     expect(manifest.dsh.profile.bundles).toEqual(['@deepseek-ai/dsh-base', 'beta', 'alpha'])
