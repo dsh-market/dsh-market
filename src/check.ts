@@ -902,51 +902,23 @@ export function analyzeProfile(profileDirectory: string, options: CheckOptions =
     const own = orderConflicts.filter(conflict => conflict.name === bundle.name)
     if (own.length > 0) bundle.order = { ...bundle.order, conflicts: own }
   }
-  // LOOT-style auto-fix: suggest an order satisfying every declared rule AND
-  // the plugin-to-plugin dependencies (a bundle loads after the bundles it
-  // depends on). Dependency edges come from each community bundle's manifest,
-  // read from the SAME resolved directory buildBundleLayers found — never by
-  // re-walking profile node_modules, which would miss workspace-root-hoisted
-  // bundles and diverge from what the boot actually loads (issue #98
-  // analysis: unified dependency-edge resolution).
-  const communitySet = new Set(bundleNames.filter(name => !INBOX_BUNDLES.has(name)))
-  const dependencyEdges: Array<{ from: string; to: string }> = []
-  for (const bundle of bundles) {
-    if (INBOX_BUNDLES.has(bundle.name)) continue
-    if (bundle.directory === null) continue
-    let manifest: { dependencies?: Record<string, string>; peerDependencies?: Record<string, string> }
-    try {
-      manifest = JSON.parse(readFileSync(join(bundle.directory, 'package.json'), 'utf8')) as typeof manifest
-    } catch {
-      continue
-    }
-    for (const section of ['dependencies', 'peerDependencies'] as const) {
-      const map = manifest[section]
-      if (map === null || typeof map !== 'object') continue
-      for (const dep of Object.keys(map)) {
-        if (communitySet.has(dep)) dependencyEdges.push({ from: bundle.name, to: dep })
-      }
-    }
-  }
-  const suggestedOrder = suggestOrder(bundleNames, readBundleRules(profileDirectory), dependencyEdges)
-  if (!suggestedOrder.ok) {
+  // LOOT-style auto-fix: suggest a minimal-change order satisfying every
+  // declared before/after rule. No rules → no suggestion (nothing to fix);
+  // with rules the suggestion keeps unconstrained bundles in their current
+  // relative order (issue #125 review — never silently rewrites a hand-picked
+  // order into an arbitrary canonical one).
+  const suggestedOrder = suggestOrder(bundleNames, readBundleRules(profileDirectory))
+  if (suggestedOrder === null) {
+    // No declared rules — nothing to suggest and nothing to warn about.
+  } else if (!suggestedOrder.ok) {
     warnings.push(`ordering constraints contain a cycle: ${suggestedOrder.cycle.join(' -> ')} — no compliant order exists / 排序约束存在循环依赖，无法得出合规顺序`)
   } else {
-    // Only warn when the CURRENT order actually breaks a declared rule or a
-    // plugin-to-plugin dependency edge. A hand-picked order that satisfies
-    // every constraint but merely differs from the canonical suggestion is
-    // valid — flagging it as "violates declared rules" would be a false
-    // alert on a healthy profile (issue #98 analysis).
-    const currentOrder = bundleNames.filter(name => !INBOX_BUNDLES.has(name))
-    const positions = new Map(currentOrder.map((name, index) => [name, index]))
-    const edgeViolated = dependencyEdges.some((edge) => {
-      const from = positions.get(edge.from)
-      const to = positions.get(edge.to)
-      // "from depends on to" ⇒ to must load BEFORE from.
-      return from !== undefined && to !== undefined && to >= from
-    })
-    if (orderConflicts.length > 0 || edgeViolated) {
-      warnings.push('current bundle order violates declared rules or plugin dependencies — a better order is suggested / 当前 bundle 顺序违反声明规则或插件依赖，已给出更优顺序')
+    // Only warn when the CURRENT order actually breaks a declared rule. A
+    // hand-picked order that satisfies every rule but merely differs from the
+    // suggestion is valid — flagging it would be a false alert on a healthy
+    // profile (issue #98 analysis).
+    if (orderConflicts.length > 0) {
+      warnings.push('current bundle order violates declared rules — a better order is suggested / 当前 bundle 顺序违反声明规则，已给出更优顺序')
     }
   }
 

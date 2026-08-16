@@ -185,4 +185,24 @@ describe('trialValidate (#98 trial boot)', () => {
     expect(omit.ok).toBe(false)
     expect(omit.errors.some(e => e.layer === '(order)' && e.message.includes('exactly the current community bundles'))).toBe(true)
   })
+
+  it('reports what the reorder changes: overrides / orphans / duplicates introduced by the candidate (issue #125 review)', () => {
+    // beta inserts the entry id `shared`; alpha's patch row patches it. Under
+    // the CURRENT order [alpha, beta] alpha's patch runs before beta's insert,
+    // so it is an orphan; under the CANDIDATE [beta, alpha] it resolves and
+    // becomes an override (alpha overrides beta's row).
+    const dir = pdir()
+    writeProfile(dir, ['alpha', 'beta'])
+    writeBundle(dir, 'alpha', '1.0.0', [{ id: 'shared' }])
+    writeBundle(dir, 'beta', '1.0.0', [{ insert: [{ id: 'shared', name: 'beta' }] }])
+
+    const result = trialValidate(dir, ['beta', 'alpha'])
+    expect(result.ok).toBe(true)
+    // The candidate introduces an override that the current composition lacks.
+    expect(result.diff.overrides.some(o => o.id === 'shared' && o.layer === 'alpha' && o.overriddenLayers.includes('beta'))).toBe(true)
+    // The candidate has no new orphans (the orphan existed only under the
+    // current order) and no new duplicate loader ids.
+    expect(result.diff.orphans).toEqual([])
+    expect(result.diff.duplicates).toEqual([])
+  })
 })

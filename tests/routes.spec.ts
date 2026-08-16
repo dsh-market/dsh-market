@@ -326,7 +326,8 @@ describe('GET /dsh-market/check — report contract', () => {
       'peerMismatches', 'multiVersion', 'orderConflicts'] as const) {
       expect(Array.isArray(report[key]), key).toBe(true)
     }
-    expect(report.suggestedOrder).toEqual({ ok: true, order: ['alpha', 'beta'] })
+    // Healthy profile, no declared rules → no suggestion (issue #125 review).
+    expect(report.suggestedOrder).toBeNull()
     expect(report.summary).toEqual({ ok: true, errors: [], warnings: [] })
   })
 

@@ -226,27 +226,28 @@ export function mergeOrder(bundles: string[], newOrder: string[]): { ok: true; b
 }
 
 /**
- * Topologically sort the community bundles by their before/after rules AND
- * plugin-to-plugin dependencies — the "auto-fix" counterpart to validateOrder
- * (LOOT-style): the suggested order satisfies every declared rule and puts
- * each bundle after the bundles it depends on. Kahn's algorithm with
- * deterministic tie-breaking (stable input order). Bundles without
- * constraints keep their relative order among the unconstrained ones.
- *
- * `dependencyEdges` expresses "from depends on to" (usually read from each
- * bundle's dependencies/peerDependencies that name another community
- * bundle); the constraint is `to` must load before `from`.
- * @returns the suggested community order, or a cycle report when the
- * constraints cannot be satisfied (references to unlisted bundles ignored).
+ * Topologically sort the community bundles by their before/after rules — the
+ * "auto-fix" counterpart to validateOrder. Returns null when no declared rule
+ * applies to the current stack (nothing to suggest). With rules, Kahn's
+ * algorithm breaks ties by the CURRENT order: unconstrained bundles keep
+ * their current relative order and constrained bundles move only as far as
+ * the rules require — the suggestion is the minimal change that satisfies
+ * every rule, never an arbitrary canonical rewrite of a hand-picked order
+ * (issue #125 review).
+ * @returns the suggested community order, null when there are no rules, or a
+ * cycle report when the constraints cannot be satisfied (references to
+ * unlisted bundles ignored).
  */
 export function suggestOrder(
   bundleNames: string[],
   rules: BundleRule[],
-  dependencyEdges: Array<{ from: string; to: string }> = [],
-): { ok: true; order: string[] } | { ok: false; cycle: string[] } {
+): { ok: true; order: string[] } | { ok: false; cycle: string[] } | null {
   const names = bundleNames.filter(name => !INBOX_BUNDLES.has(name))
   const inOrder = new Set(names)
   const active = rules.filter(rule => inOrder.has(rule.name))
+  // No rule applies to the current stack — nothing to suggest.
+  if (active.length === 0) return null
+  const position = new Map(names.map((name, index) => [name, index]))
   // Constraint: "a must load before b" (from a.before or b.after) → edge a → b.
   const beforeOf = new Map<string, Set<string>>() // name → bundles that must come after it
   const deps = new Map<string, Set<string>>() // name → bundles that must come before it
@@ -263,23 +264,20 @@ export function suggestOrder(
     for (const other of rule.before) addEdge(rule.name, other)
     for (const other of rule.after) addEdge(other, rule.name)
   }
-  // Dependency edges: "from depends on to" ⇒ to must load before from.
-  for (const edge of dependencyEdges) addEdge(edge.to, edge.from)
   const remaining = new Map<string, Set<string>>()
   for (const [name, depsOf] of deps) remaining.set(name, new Set(depsOf))
   const ready: string[] = names.filter(name => (remaining.get(name)?.size ?? 0) === 0)
   const ordered: string[] = []
   while (ready.length > 0) {
-    // Deterministic, INPUT-INDEPENDENT tie-break: the ready bundle with the
-    // smallest name. The suggested order is therefore UNIQUE for a given set
-    // of bundles/rules/dependencies — it never chases the user's current
-    // manual order, so re-clicking auto-sort after hand-tweaking an
-    // unconstrained bundle restores the same canonical result.
+    // Minimal-change tie-break: among the ready bundles, prefer the one that
+    // comes FIRST in the current order. Bundles the rules do not constrain
+    // therefore keep their current relative order; constrained bundles move
+    // only as far as the rules require (issue #125 review).
     let best = 0
     for (let i = 1; i < ready.length; i += 1) {
       const a = ready[i]
       const b = ready[best]
-      if (a !== undefined && b !== undefined && a.localeCompare(b) < 0) best = i
+      if (a !== undefined && b !== undefined && (position.get(a) ?? 0) < (position.get(b) ?? 0)) best = i
     }
     const name = ready.splice(best, 1)[0]
     if (name === undefined) break

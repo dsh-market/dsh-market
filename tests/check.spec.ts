@@ -326,11 +326,11 @@ describe('suggestedOrder (#98 opt: LOOT-style auto-fix)', () => {
     expect(report.orderConflicts.some(c => c.name === 'a')).toBe(true)
   })
 
-  it('does NOT warn when the order differs from the canonical suggestion but breaks nothing (no false alert)', () => {
-    // Two unconstrained community bundles in a hand-picked order [b, a]: the
-    // canonical suggestion is [a, b] (deterministic name tie-break), but the
-    // current order violates NO rule and NO dependency edge — it must not be
-    // flagged as "violates declared rules" (issue #98 analysis: false alerts).
+  it('no declared rules → no suggestion and no order warning (no false alert)', () => {
+    // Two unconstrained community bundles in a hand-picked order [b, a]: with
+    // no declared rules there is nothing to suggest, and a hand-picked order
+    // that breaks no rule must never be flagged (issue #98 analysis: false
+    // alerts; issue #125 review: no rules → no suggestion).
     const dir = pdir()
     writeProfile(dir, {
       name: 'web-profile',
@@ -341,57 +341,12 @@ describe('suggestedOrder (#98 opt: LOOT-style auto-fix)', () => {
     writeBundle(dir, 'b', '1.0.0', [{ insert: [{ id: 'b' }] }])
 
     const report = analyzeProfile(dir)
-    expect(report.suggestedOrder?.ok).toBe(true)
-    if (report.suggestedOrder?.ok === true) expect(report.suggestedOrder.order).toEqual(['a', 'b'])
+    expect(report.suggestedOrder).toBeNull()
     expect(report.orderConflicts).toEqual([])
     expect(report.summary.warnings.some(w => w.includes('violates declared rules'))).toBe(false)
     expect(report.summary.ok).toBe(true)
   })
 
-  it('resolves dependency edges from workspace-root-hoisted bundles (unified resolution)', () => {
-    // app depends on lib; lib is hoisted ONLY to the workspace root
-    // (tmp/node_modules/lib), never to the profile's node_modules. The old
-    // code re-walked profile/node_modules and saw no lib → no edge → no
-    // warning and no suggested reorder. The fix reads the manifest from the
-    // SAME resolved directory the boot uses, so the edge app→lib appears and
-    // the suggestion puts lib first (issue #98 analysis).
-    const dir = pdir()
-    writeProfile(dir, {
-      dsh: { profile: { bundles: ['app', 'lib'] } },
-      dependencies: { app: '^1.0.0', lib: '^1.0.0' },
-    })
-    writeBundle(dir, 'app', '1.0.0', [{ insert: [{ id: 'app-entry', name: 'app' }] }])
-    writeFileSync(join(dir, 'node_modules', 'app', 'package.json'), JSON.stringify({
-      name: 'app',
-      version: '1.0.0',
-      dependencies: { lib: '^1.0.0' },
-      dsh: { bundle: { patch: './cordis.patch.yml' } },
-    }))
-    // lib lives ONLY at the workspace root.
-    const root = join(tmp, 'node_modules', 'lib')
-    mkdirSync(root, { recursive: true })
-    writeFileSync(join(root, 'package.json'), JSON.stringify({
-      name: 'lib',
-      version: '1.0.0',
-      dsh: { bundle: { patch: './cordis.patch.yml' } },
-    }))
-    writeFileSync(join(root, 'cordis.patch.yml'), dump([
-      { insert: [{ id: 'lib-entry', name: 'lib' }] },
-    ]))
-    expect(existsSync(join(dir, 'node_modules', 'lib'))).toBe(false)
-
-    const report = analyzeProfile(dir)
-    // The hoisted bundle resolves to the workspace root…
-    expect(report.bundles.find(b => b.name === 'lib')?.directory).toBe(root)
-    // …its dependency edge is seen and respected by the suggestion…
-    expect(report.suggestedOrder?.ok).toBe(true)
-    if (report.suggestedOrder?.ok === true) {
-      expect(report.suggestedOrder.order.indexOf('lib')).toBeLessThan(report.suggestedOrder.order.indexOf('app'))
-    }
-    // …and the CURRENT order [app, lib] is correctly flagged as violating the
-    // dependency edge (lib must load before app).
-    expect(report.summary.warnings.some(w => w.includes('violates declared rules or plugin dependencies'))).toBe(true)
-  })
 })
 
 describe('peer range mismatch', () => {

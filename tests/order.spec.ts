@@ -312,20 +312,22 @@ describe('suggestOrder (#98 opt: LOOT-style auto-fix)', () => {
     }
   })
 
-  it('keeps unconstrained bundles in their relative order', () => {
+  it('keeps unconstrained bundles in their current relative order (minimal change)', () => {
     const rules = [{ name: 'x', after: ['y'], before: [] }]
     const result = suggestOrder(['a', 'x', 'b', 'y'], rules)
     expect(result.ok).toBe(true)
     if (result.ok) {
       expect(result.order.indexOf('y')).toBeLessThan(result.order.indexOf('x'))
-      // Unconstrained bundles sort deterministically by name (input order no
-      // longer matters — the result is a UNIQUE canonical order).
-      expect(result.order.indexOf('a')).toBeLessThan(result.order.indexOf('b'))
+      // The unconstrained bundles keep their CURRENT relative order — the
+      // suggestion is the minimal change the rules force (issue #125 review),
+      // never an arbitrary canonical rewrite.
+      expect(result.order).toEqual(['a', 'b', 'y', 'x'])
     }
-    // The same input order shifted produces the SAME canonical result, so
-    // re-clicking auto-sort after a manual tweak restores it.
+    // The suggestion follows the CURRENT order, not a canonical one: the
+    // same rules over a different current order produce a different minimal
+    // change.
     const again = suggestOrder(['b', 'x', 'y', 'a'], rules)
-    if (again.ok && result.ok) expect(again.order).toEqual(result.order)
+    expect(again).toEqual({ ok: true, order: ['b', 'y', 'x', 'a'] })
   })
 
   it('reports a cycle instead of an order', () => {
@@ -348,42 +350,27 @@ describe('suggestOrder (#98 opt: LOOT-style auto-fix)', () => {
     if (result.ok) expect(result.order).toEqual(['a', 'x'])
   })
 
-  it('puts a bundle after the bundles it depends on (dependency edges)', () => {
-    // a depends on b, b depends on c ⇒ order must be c, b, a.
-    const edges = [
-      { from: 'a', to: 'b' },
-      { from: 'b', to: 'c' },
-    ]
-    const result = suggestOrder(['a', 'b', 'c'], [], edges)
-    expect(result.ok).toBe(true)
-    if (result.ok) {
-      expect(result.order.indexOf('c')).toBeLessThan(result.order.indexOf('b'))
-      expect(result.order.indexOf('b')).toBeLessThan(result.order.indexOf('a'))
-    }
-  })
 
-  it('combines before/after rules with dependency edges and reports cycles', () => {
-    // Rule: c before a. Dependencies: a→b. Both satisfied by b, c, a… and c
-    // before a means c, a order; deps force b before a → b, c, a.
+  it('combines before/after rules across bundles and reports cycles', () => {
+    // Rule: c before a → the minimal change moves only what the rule forces.
     const rules = [{ name: 'c', before: ['a'], after: [] }]
-    const edges = [{ from: 'a', to: 'b' }]
-    const result = suggestOrder(['a', 'b', 'c'], rules, edges)
+    const result = suggestOrder(['a', 'b', 'c'], rules)
     expect(result.ok).toBe(true)
     if (result.ok) {
-      expect(result.order.indexOf('b')).toBeLessThan(result.order.indexOf('a'))
       expect(result.order.indexOf('c')).toBeLessThan(result.order.indexOf('a'))
     }
-    // Mutual dependency → cycle.
-    const cycle = suggestOrder(['a', 'b'], [], [
-      { from: 'a', to: 'b' },
-      { from: 'b', to: 'a' },
+    // A rule cycle has no compliant order.
+    const cycle = suggestOrder(['a', 'b'], [
+      { name: 'a', before: ['b'], after: [] },
+      { name: 'b', before: ['a'], after: [] },
     ])
     expect(cycle.ok).toBe(false)
   })
 
-  it('ignores dependency edges to unlisted bundles', () => {
-    const result = suggestOrder(['a', 'b'], [], [{ from: 'a', to: 'ghost' }])
-    expect(result.ok).toBe(true)
-    if (result.ok) expect(result.order.sort()).toEqual(['a', 'b'])
-  })
 })
+
+  it('returns null when no declared rule applies (nothing to suggest)', () => {
+    expect(suggestOrder(['a', 'b'], [])).toBeNull()
+    // Rules naming bundles outside the current stack are not active either.
+    expect(suggestOrder(['a', 'b'], [{ name: 'ghost', after: ['x'], before: [] }])).toBeNull()
+  })
