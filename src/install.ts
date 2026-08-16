@@ -11,6 +11,7 @@ import type { InstallResult, PluginRunner } from './dsh-cli.ts'
 import { classifyPnpmFailure, isTransientPnpmFailure } from './pnpm-compat.ts'
 import { hasDshManifest, hasLoadableEntry, pluginSubdirs, profileDir, readInstalled } from './profile.ts'
 import { logEvent } from './log.ts'
+import { cleanOrphanedStore } from './store.ts'
 
 /** One-shot bypass for pnpm's fresh-release hold; scoped to a single command. */
 export const RELEASE_AGE_OVERRIDE = '--config.minimumReleaseAge=0'
@@ -61,6 +62,12 @@ export async function withHoistRecovery(run: PluginRunner, profile: string, plug
     }
   }
   if (!ok(result) && !result.cancelled) {
+    // A failed, timed-out, or killed run never finishes pnpm's staging, so
+    // its store tmp dirs (the WHOLE repo tarball for github: sources) are
+    // orphaned — reclaim them now that no pnpm is running. Safe by
+    // construction: directories are only removed when their owning pid is
+    // gone (the name carries it), so a live download is never touched.
+    await cleanOrphanedStore(run, profile)
     const failure = classifyPnpmFailure(`${result.stderr}\n${result.stdout}`)
     if (failure !== null) result = { ...result, stderr: `${result.stderr}\n\n${failure.message}` }
   }

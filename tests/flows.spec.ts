@@ -550,7 +550,9 @@ describe('backup and restore (#55)', () => {
     expect(fake.bundlesBeforeFallbackAdd).toEqual([])
     const finalManifest = JSON.parse(readFileSync(join(profileDir('web'), 'package.json'), 'utf8'))
     expect(finalManifest.dsh.profile.bundles).toEqual(['dsh-loop'])
-    expect(fake.calls.slice(-3).map(call => call[0])).toEqual(['install', 'add', 'add'])
+    // install fails once (store probe), add of the missing dep fails (store
+    // probe again), then dsh-loop adds cleanly.
+    expect(fake.calls.slice(-5).map(call => call[0])).toEqual(['install', 'store', 'add', 'store', 'add'])
   })
 })
 

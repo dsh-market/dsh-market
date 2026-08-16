@@ -5,11 +5,14 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { InstallResult } from '../src/dsh-cli.ts'
-import { isStaleUpdate, parseIgnoredBuilds, parsePrepareNotAllowed, retargetCollections, validateAddedPlugins } from '../src/install.ts'
+import {
+  isStaleUpdate, parseIgnoredBuilds, parsePrepareNotAllowed, retargetCollections,
+  validateAddedPlugins, withHoistRecovery,
+} from '../src/install.ts'
 import { profileDir } from '../src/profile.ts'
 
 let home: string
@@ -116,6 +119,46 @@ describe('validateAddedPlugins (#18 / #21)', () => {
     expect(keep.sort()).toEqual(['@linxin666/dsh-client-ui-skin-center', '@linxin666/dsh-skins'])
     expect(removedBroken).toEqual([])
     expect(calls).toEqual([])
+  })
+})
+
+describe('withHoistRecovery', () => {
+  it('reclaims orphaned pnpm store staging dirs after a failed run', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'dshm-storehome-'))
+    try {
+      const store = join(home, 'store')
+      mkdirSync(join(store, 'tmp', '_tmp_99999999_orphan'), { recursive: true })
+      const calls: string[][] = []
+      let failAdd = true
+      const run = async (_profile: string, args: string[]): Promise<InstallResult> => {
+        calls.push(args)
+        if (args[0] === 'store') {
+          return { exitCode: 0, timedOut: false, stdout: `${store}\n`, stderr: '', cancelled: false }
+        }
+        if (failAdd) {
+          failAdd = false
+          return { exitCode: 1, timedOut: false, stdout: '', stderr: 'ERR_PNPM_FETCH_404 GET https://registry.npmjs.org/ghost: Not Found - 404', cancelled: false }
+        }
+        return ok
+      }
+      const result = await withHoistRecovery(run, 'web', ['add', 'dsh-loop'])
+      expect(result.exitCode).toBe(1)
+      expect(calls.map(c => c.join(' '))).toEqual(['add dsh-loop', 'store path'])
+      expect(existsSync(join(store, 'tmp', '_tmp_99999999_orphan'))).toBe(false)
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+  it('skips store reclamation entirely when the run succeeds', async () => {
+    const calls: string[][] = []
+    const run = async (_profile: string, args: string[]): Promise<InstallResult> => {
+      calls.push(args)
+      return ok
+    }
+    const result = await withHoistRecovery(run, 'web', ['add', 'dsh-loop'])
+    expect(result.exitCode).toBe(0)
+    expect(calls).toEqual([['add', 'dsh-loop']])
   })
 })
 

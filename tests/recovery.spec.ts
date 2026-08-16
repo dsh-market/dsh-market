@@ -36,7 +36,8 @@ describe('withHoistRecovery', () => {
     const OTHER_FAIL: InstallResult = { exitCode: 1, timedOut: false, stdout: '', stderr: 'ELIFECYCLE build failed', cancelled: false }
     const other = scriptedRunner([OTHER_FAIL])
     expect((await withHoistRecovery(other.run, 'web', ['add', 'dsh-loop'])).exitCode).toBe(1)
-    expect(other.calls).toEqual([['add', 'dsh-loop']])
+    // The failed run still probes the store for orphaned staging dirs.
+    expect(other.calls).toEqual([['add', 'dsh-loop'], ['store', 'path']])
   })
 
   it('recovers from hoist-pattern drift: rebuild the modules dir, retry once, succeed', async () => {
@@ -55,13 +56,14 @@ describe('withHoistRecovery', () => {
     const FAILED_REBUILD: InstallResult = { exitCode: 1, timedOut: false, stdout: '', stderr: 'install failed', cancelled: false }
     const short = scriptedRunner([HOIST_DIFF, FAILED_REBUILD])
     expect((await withHoistRecovery(short.run, 'web', ['add', 'dsh-loop'])).exitCode).not.toBe(0)
-    expect(short.calls).toEqual([['add', 'dsh-loop'], ['install', '--no-frozen-lockfile']])
+    expect(short.calls).toEqual([['add', 'dsh-loop'], ['install', '--no-frozen-lockfile'], ['store', 'path']])
 
     // Retry fails again → stop (no loops) and surface the bilingual message (#20 bug 3).
     const { calls, run } = scriptedRunner([HOIST_DIFF, OK, HOIST_DIFF])
     const result = await withHoistRecovery(run, 'web', ['add', 'dsh-loop'])
     expect(result.exitCode).not.toBe(0)
-    expect(calls.length).toBe(3)
+    expect(calls.length).toBe(4)
+    expect(calls[3]).toEqual(['store', 'path'])
     expect(result.stderr).toMatch(/重建|rebuilt/)
   })
 })
@@ -83,7 +85,9 @@ describe('transient network retry (#83)', () => {
     const { calls, run } = scriptedRunner([TRANSIENT, TRANSIENT, TRANSIENT])
     const result = await withHoistRecovery(run, 'web', ['add', 'dsh-deepseek-billing'])
     expect(result.exitCode).toBe(1)
-    expect(calls).toHaveLength(2)
+    // One retry, then the store probe for orphaned staging dirs.
+    expect(calls).toHaveLength(3)
+    expect(calls[2]).toEqual(['store', 'path'])
     // The message tells the user the failing dep is not necessarily the
     // plugin they were installing (#83's core confusion).
     expect(result.stderr).toContain('重放整个依赖树')
