@@ -304,6 +304,14 @@ describe('Diagnostics panels (jsdom, #98 phase 2/3)', () => {
   it('drag & drop reorders the local draft only; "Apply order" POSTs the new order', async () => {
     const { calls, posts } = await renderLoaded()
 
+    // The ordering panel is collapsed by default (compact diagnostics); expand it.
+    const orderHeader = screen.getByText(t('orderSection'))
+    fireEvent.click(orderHeader)
+    await waitFor(() => {
+      const body = orderHeader.closest('section')?.querySelector('[class*="collapseBody"]') as HTMLElement | null
+      expect(body?.style.display).not.toBe('none')
+    })
+
     const orderSection = screen.getByText(t('orderSection')).closest('section') as HTMLElement
     const rows = () => Array.from(orderSection.querySelectorAll('.' + css.diagRow))
     expect(rows()).toHaveLength(2)

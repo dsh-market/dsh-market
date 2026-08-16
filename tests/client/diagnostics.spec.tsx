@@ -6,7 +6,7 @@
  * no absolute machine paths, so this runs on any environment/CI.
  */
 
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Diagnostics } from '../../src/client/Diagnostics.tsx'
 import css from '../../src/client/Market.module.css'
@@ -129,7 +129,7 @@ describe('Diagnostics (jsdom)', () => {
     assertSection(t('checkBundles'), 3)
     assertSection(t('checkDuplicates'), 1)
     assertSection(t('checkCoreDeps'), 1)
-    assertSection(t('checkPeerMismatches'), 3)
+    assertSection(t('checkPeerMismatches'), 1)
     assertSection(t('checkMultiVersion'), 1)
     // Overrides/orphans now use the same collapsible Section style as the
     // other blocks (title and count split across nodes).
@@ -166,10 +166,13 @@ describe('Diagnostics (jsdom)', () => {
     // Shadowing badge on the core-dep row.
     expect(screen.getByText(t('checkShadowing'))).toBeTruthy()
 
-    // Peer badges for every satisfiability state.
+    // Peer block counts only CONFIRMED mismatches; informational entries
+    // (satisfied / unknown) sit in a collapsed disclosure.
+    assertSection(t('checkPeerMismatches'), 1)
     expect(screen.getByText(t('checkUnsatisfied'))).toBeTruthy()
-    expect(screen.getByText(t('checkSatisfied'))).toBeTruthy()
-    expect(screen.getByText(t('checkUnknown'))).toBeTruthy()
+    // Informational (satisfied/unknown) peer entries are collapsed behind a
+    // disclosure to keep the page compact — the disclosure title is present.
+    expect(screen.getByText(/informational entries/)).toBeTruthy()
 
     // Multi-version row, scoped to its section (the name also appears in coreDeps).
     const mvSection = assertSection(t('checkMultiVersion'), 1)

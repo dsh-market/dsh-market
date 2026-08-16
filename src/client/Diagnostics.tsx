@@ -15,7 +15,7 @@
  * here because the client bundle is built independently of the host tree.
  */
 import { useCallback, useEffect, useMemo, useState, type DragEvent, type ReactNode } from 'react'
-import { Button, IconChevronDownOutline14, IconChevronRightOutline14, IconLoadingOutline16, IconRefreshOutline14, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, DisclosureRow, IconChevronDownOutline14, IconChevronRightOutline14, IconLoadingOutline16, IconRefreshOutline14, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
 import css from './Market.module.css'
 import type { Translate } from './market-data.ts'
 import { PresetPanel } from './preset-panel.tsx'
@@ -195,8 +195,9 @@ export function Diagnostics(props: { t: Translate }) {
   const { t } = props
   const [report, setReport] = useState<CheckReport | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [orderOpen, setOrderOpen] = useState(true)
+  const [orderOpen, setOrderOpen] = useState(false)
   const [explainOpen, setExplainOpen] = useState(false)
+  const [peerInfoOpen, setPeerInfoOpen] = useState(false)
   const [snapOpen, setSnapOpen] = useState(false)
   const [presetOpen, setPresetOpen] = useState(false)
   /** Bump to re-run the /dsh-market/check fetch after an order/preset/restore apply. */
@@ -491,25 +492,59 @@ export function Diagnostics(props: { t: Translate }) {
 
       <Section
         title={t('checkPeerMismatches')}
-        count={report.peerMismatches.length}
+        count={report.peerMismatches.filter(peer => peer.satisfied === false).length}
         empty={t('checkPeerEmpty')}
-        overview={report.peerMismatches.length > 0 ? `${report.peerMismatches[0]?.plugin} → ${report.peerMismatches[0]?.name}` : undefined}
+        // Only CONFIRMED incompatibilities count as problems; informational
+        // entries (host-provided deps, optional accelerators, un-evaluable)
+        // are collapsed behind a disclosure so the page stays compact (UX
+        // review — the block used to render dozens of harmless rows).
+        defaultOpen={report.peerMismatches.some(peer => peer.satisfied === false)}
+        overview={report.peerMismatches.length > 0
+          ? `${report.peerMismatches.filter(p => p.satisfied === false).length} 不匹配 · ${report.peerMismatches.filter(p => p.satisfied !== false).length} 信息`
+          : undefined}
       >
-        <div className={css.diagList}>
-          {report.peerMismatches.map((peer, i) => (
-            <div key={i} className={css.diagRow}>
-              <code className={css.diagVal}>{peer.name}</code>
-              <span className={css.nm}>{peer.plugin}</span>
-              <span className={css.spec}>{t('checkRange')}: {peer.range}</span>
-              <span className={css.spec}>{t('checkResolved')}: {peer.resolved ?? '—'}</span>
-              {peer.satisfied === false
-                ? <span className={css.diagBadgeShadow}>{t('checkUnsatisfied')}</span>
-                : peer.satisfied === true
-                  ? <span className={css.okState}>{t('checkSatisfied')}</span>
-                  : <span className={css.spec}>{t('checkUnknown')}</span>}
-            </div>
-          ))}
-        </div>
+        {report.peerMismatches.filter(peer => peer.satisfied === false).length === 0 ? (
+          <div className={css.diagEmpty}>{t('checkPeerEmpty')}</div>
+        ) : (
+          <div className={css.diagList}>
+            {report.peerMismatches.filter(peer => peer.satisfied === false).map((peer, i) => (
+              <div key={i} className={css.diagRow}>
+                <code className={css.diagVal}>{peer.name}</code>
+                <span className={css.nm}>{peer.plugin}</span>
+                <span className={css.spec}>{t('checkRange')}: {peer.range}</span>
+                <span className={css.spec}>{t('checkResolved')}: {peer.resolved ?? '—'}</span>
+                <span className={css.diagBadgeShadow}>{t('checkUnsatisfied')}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {(() => {
+          const info = report.peerMismatches.filter(peer => peer.satisfied !== false)
+          if (info.length === 0) return null
+          return (
+            <DisclosureRow
+              icon={<IconChevronDownOutline14 size={14} />}
+              title={`${t('checkPeerInfo').replace('{0}', String(info.length))} (${info.length})`}
+              expandable
+              open={peerInfoOpen}
+              onToggle={() => setPeerInfoOpen(o => !o)}
+            >
+              <div className={css.diagList}>
+                {info.map((peer, i) => (
+                  <div key={i} className={css.diagRow}>
+                    <code className={css.diagVal}>{peer.name}</code>
+                    <span className={css.nm}>{peer.plugin}</span>
+                    <span className={css.spec}>{t('checkRange')}: {peer.range}</span>
+                    <span className={css.spec}>{t('checkResolved')}: {peer.resolved ?? '—'}</span>
+                    {peer.satisfied === true
+                      ? <span className={css.okState}>{t('checkSatisfied')}</span>
+                      : <span className={css.spec}>{t('checkUnknown')}</span>}
+                  </div>
+                ))}
+              </div>
+            </DisclosureRow>
+          )
+        })()}
       </Section>
 
       <Section
