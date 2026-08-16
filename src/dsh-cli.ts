@@ -8,7 +8,7 @@
  */
 
 import { spawn } from 'node:child_process'
-import type { ChildProcess } from 'node:child_process'
+import type { ChildProcess, SpawnOptions } from 'node:child_process'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { logEvent } from './log.ts'
@@ -42,6 +42,56 @@ const INSTALL_TIMEOUT_MS = Number(process.env.DSH_MARKET_INSTALL_TIMEOUT_MS) || 
  * cannot start them (ENOENT / EINVAL). Same pattern as dsh's `plugin` forwarder.
  */
 export const winCmdShim = process.platform === 'win32'
+
+/** Characters cmd.exe treats as syntax even inside a token. */
+const CMD_METACHARS = /[\s"&|<>^()%!]/
+
+/**
+ * Quote one argv token for a cmd.exe `/c` command line. cmd only groups with
+ * double quotes, so a token that needs quoting gets wrapped and embedded
+ * quotes are doubled.
+ */
+export function quoteCmdArg(arg: string): string {
+  if (!CMD_METACHARS.test(arg)) return arg
+  return `"${arg.replace(/"/g, '""')}"`
+}
+
+/**
+ * Build a cmd.exe command line from argv. Only the Windows shim path uses
+ * this: cmd re-parses the joined string, so every token is quoted before
+ * joining.
+ */
+export function cmdCommandLine(argv: readonly string[]): string {
+  return argv.map(quoteCmdArg).join(' ')
+}
+
+/** cmd.exe resolved once; the Windows shim path only. */
+const COMSPEC = process.env.ComSpec ?? 'cmd.exe'
+
+/** Spawn options plus the explicit shim switch used by callers. */
+type SpawnShimOptions = SpawnOptions & { viaShell?: boolean }
+
+/**
+ * Spawn a command, avoiding Node's deprecated `shell: true` + argv
+ * combination (DEP0190). Windows `.cmd` shims cannot start without a shell,
+ * so the shim path routes through `cmd.exe /d /s /c` with an explicitly
+ * built, quoted command line; every other invocation spawns directly with
+ * `shell: false`.
+ */
+function spawnShim(file: string, args: readonly string[], options: SpawnShimOptions): ChildProcess {
+  const { viaShell = false, ...spawnOptions } = options
+  if (!viaShell) {
+    return spawn(file, [...args], { ...spawnOptions, shell: false })
+  }
+  if (process.platform !== 'win32') {
+    return spawn(file, [...args], { ...spawnOptions, shell: false })
+  }
+  return spawn(COMSPEC, ['/d', '/s', '/c', `"${cmdCommandLine([file, ...args])}"`], {
+    ...spawnOptions,
+    shell: false,
+    windowsVerbatimArguments: true,
+  })
+}
 
 /**
  * Argv re-invoking the CLI that launched this host process, so installs work
@@ -190,7 +240,7 @@ let pnpmReady = false
 export function probePnpm(): Promise<boolean> {
   if (pnpmReady) return Promise.resolve(true)
   return new Promise((resolvePromise) => {
-    const child = spawn('pnpm', ['--version'], { stdio: 'ignore', shell: winCmdShim, env: spawnEnv() })
+    const child = spawnShim('pnpm', ['--version'], { stdio: 'ignore', viaShell: winCmdShim, env: spawnEnv() })
     child.on('error', () => resolvePromise(false))
     child.on('close', (code) => {
       pnpmReady = code === 0
@@ -201,16 +251,16 @@ export function probePnpm(): Promise<boolean> {
 
 function runQuiet(file: string, args: string[], timeoutMs: number): Promise<{ code: number | null; output: string }> {
   return new Promise((resolvePromise) => {
-    const child = spawn(file, args, {
+    const child = spawnShim(file, args, {
       env: spawnEnv(),
       stdio: ['ignore', 'pipe', 'pipe'],
-      shell: winCmdShim,
+      viaShell: winCmdShim,
     })
     let output = ''
     const timer = setTimeout(() => killChild(child), timeoutMs)
     const collect = (chunk: Buffer): void => { output = (output + chunk.toString()).slice(-8 * 1024) }
-    child.stdout.on('data', collect)
-    child.stderr.on('data', collect)
+    child.stdout?.on('data', collect)
+    child.stderr?.on('data', collect)
     child.on('error', (error) => { clearTimeout(timer); resolvePromise({ code: 127, output: error.message }) })
     child.on('close', (code) => { clearTimeout(timer); resolvePromise({ code, output }) })
   })
@@ -359,14 +409,14 @@ export function runDshPlugin(profile: string, pluginArgs: string[]): Promise<Ins
   const tracker = beginProgress(prepared.target)
   const feed = makeProgressFeeder(tracker)
   return new Promise((resolvePromise) => {
-    const child = spawn(file, [...args, 'plugin', '--profile', profile, ...pluginArgs], {
+    const child = spawnShim(file, [...args, 'plugin', '--profile', profile, ...pluginArgs], {
       cwd,
       // pnpm v10 blocks forever on a silent interactive prompt without a TTY
       // (observed on re-add over a pinned git spec); CI mode forces it to act
       // or fail instead of asking.
       env: spawnEnv(),
       stdio: ['ignore', 'pipe', 'pipe'],
-      shell: viaShell,
+      viaShell,
       // Own process group on POSIX so cancel/timeout can kill the whole
       // tree (dsh wrapper + pnpm grandchild) with one group signal.
       detached: process.platform !== 'win32',
@@ -380,13 +430,13 @@ export function runDshPlugin(profile: string, pluginArgs: string[]): Promise<Ins
       timedOut = true
       killTree(child)
     }, INSTALL_TIMEOUT_MS)
-    child.stdout.on('data', (chunk: Buffer) => {
+    child.stdout?.on('data', (chunk: Buffer) => {
       const text = chunk.toString()
       stdout = (stdout + text).slice(-256 * 1024)
       feed(text)
       syncProgress(tracker)
     })
-    child.stderr.on('data', (chunk: Buffer) => {
+    child.stderr?.on('data', (chunk: Buffer) => {
       const text = chunk.toString()
       stderr = (stderr + text).slice(-64 * 1024)
       feed(text)
