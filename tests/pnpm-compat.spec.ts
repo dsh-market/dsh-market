@@ -60,6 +60,15 @@ describe('classifyPnpmFailure', () => {
     expect(classifyPnpmFailure('some other failure')).toBeNull()
   })
 
+  it('recognizes an unresolvable dependency and names it, decoding the scoped-URL form (#65)', () => {
+    const missing = classifyPnpmFailure('[ERR_PNPM_FETCH_404] GET https://registry.npmjs.org/@deepseek-ai%2Fdsh-client-ui-theme-toggle: Not Found - 404\n\nThis error happened while installing a direct dependency of /home/u/.dsh/profiles/web')
+    expect(missing?.code).toBe('fetch-404')
+    expect(missing?.message).toContain('@deepseek-ai/dsh-client-ui-theme-toggle')
+    expect(missing?.message).toContain('幽灵依赖')
+    // Unscoped form, no encoding involved.
+    expect(classifyPnpmFailure('[ERR_PNPM_FETCH_404] GET https://registry.npmjs.org/some-ghost: Not Found - 404')?.message).toContain('some-ghost')
+  })
+
   it('recognizes both build-script blocks: ignored builds (#69) and the git-prepare fetcher rejection (#68)', () => {
     const ignored = classifyPnpmFailure('[ERR_PNPM_IGNORED_BUILDS]\nIgnored build scripts: dsh-github-intelligence@https://codeload.github.com/z/r/tar.gz/abc.')
     expect(ignored?.code).toBe('ignored-builds')
