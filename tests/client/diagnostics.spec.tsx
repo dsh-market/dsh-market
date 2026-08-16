@@ -187,12 +187,13 @@ describe('Diagnostics (jsdom)', () => {
     expect(within(ovSection).getByText('@deepseek-ai/dsh-base')).toBeTruthy()
 
     // Orphan patch row is now category-badge + id + layer + reason span. The
-    // badge (t('orphanPatchTargetMissing')) and the reason both read "patch
-    // target not found" in en — expect both rendered.
+    // badge uses the plain-language label (t('orphanPatchTargetMissing')), the
+    // reason keeps the technical detail — assert each separately.
     const orphSection = assertSection(t('checkOrphans'), 1)
     expect(within(orphSection).getByText('ghost-entry')).toBeTruthy()
     expect(within(orphSection).getByText('user-patch')).toBeTruthy()
-    expect(within(orphSection).getAllByText(t('orphanPatchTargetMissing')).length).toBe(2)
+    expect(within(orphSection).getByText(t('orphanPatchTargetMissing'))).toBeTruthy()
+    expect(within(orphSection).getByText(/patch target not found/)).toBeTruthy()
   })
 
   it('renders the clean-report empty states and the ok badge', async () => {

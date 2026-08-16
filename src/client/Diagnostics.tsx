@@ -196,6 +196,7 @@ export function Diagnostics(props: { t: Translate }) {
   const [report, setReport] = useState<CheckReport | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [orderOpen, setOrderOpen] = useState(true)
+  const [explainOpen, setExplainOpen] = useState(false)
   const [snapOpen, setSnapOpen] = useState(false)
   const [presetOpen, setPresetOpen] = useState(false)
   /** Bump to re-run the /dsh-market/check fetch after an order/preset/restore apply. */
@@ -345,13 +346,13 @@ export function Diagnostics(props: { t: Translate }) {
           <StateDot state={summary.ok ? 'done' : 'error'} size={8} />
           {summary.ok ? (anyIssue ? t('checkIssues') : t('diagOkAll')) : t('checkIssues')}
         </span>
-        <span className={css.diagSummaryItem}>
+        <span className={css.diagSummaryItem} title={t('checkDuplicates')}>
           <StateDot state="error" size={8} />{t('catConflict')}: {catConflict}
         </span>
-        <span className={css.diagSummaryItem}>
+        <span className={css.diagSummaryItem} title={t('checkCoreDeps')}>
           <StateDot state="warning" size={8} />{t('catDeps')}: {catDeps}
         </span>
-        <span className={css.diagSummaryItem}>
+        <span className={css.diagSummaryItem} title={t('checkOverrides')}>
           <StateDot state="warning" size={8} />{t('catOrder')}: {catOrder}
         </span>
         <span className={css.grow} />
@@ -361,6 +362,18 @@ export function Diagnostics(props: { t: Translate }) {
         <span className={css.diagSummaryMeta} title={report.profile}>{t('checkProfile')}: {report.profile}</span>
         <span className={css.diagSummaryMeta}>{new Date(report.scannedAt).toLocaleString()}</span>
       </div>
+
+      <CollapsibleSection title={t('diagExplain')} open={explainOpen} onToggle={() => setExplainOpen(o => !o)}>
+        <p className={css.panelNote}>{t('diagExplainText')}</p>
+        <div className={css.diagList}>
+          <div className={css.spec}>{t('diagTermBundle')}</div>
+          <div className={css.spec}>{t('diagTermEntry')}</div>
+          <div className={css.spec}>{t('diagTermPeer')}</div>
+          <div className={css.spec}>{t('diagTermShadow')}</div>
+          <div className={css.spec}>{t('diagTermOrphan')}</div>
+          <div className={css.spec}>{t('diagTermOrder')}</div>
+        </div>
+      </CollapsibleSection>
 
       <Section
         title={t('checkErrors')}
