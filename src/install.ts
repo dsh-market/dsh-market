@@ -16,7 +16,16 @@ import { logEvent } from './log.ts'
 export const RELEASE_AGE_OVERRIDE = '--config.minimumReleaseAge=0'
 
 /**
- * Run one plugin command with automatic recovery from two known pnpm traps:
+ * Longer per-request fetch timeout for one retried command. pnpm's default
+ * 60-second limit aborts large tarball downloads (github: sources fetch the
+ * WHOLE repo even for a `#path:` subdirectory plugin) on slow networks; a
+ * plain retry fails again at the same limit, so the recovery re-runs with
+ * this override once. Scoped to a single command like RELEASE_AGE_OVERRIDE.
+ */
+export const FETCH_TIMEOUT_OVERRIDE = '--config.fetchTimeout=600000'
+
+/**
+ * Run one plugin command with automatic recovery from three known pnpm traps:
  *
  * - pnpm-major drift (#20 bug 2): a modules directory built by a different
  *   pnpm major fails mutation; pnpm's documented remedy is one `install` to
@@ -26,6 +35,10 @@ export const RELEASE_AGE_OVERRIDE = '--config.minimumReleaseAge=0'
  *   retry once with the one-shot minimumReleaseAge bypass (safe: the young
  *   package is already installed; the bypass only lets pnpm touch the
  *   lockfile again).
+ * - per-request fetch timeout: large tarballs (github: sources fetch the
+ *   whole repo even for a `#path:` subdirectory) on slow networks blow
+ *   pnpm's default 60-second limit; a plain retry fails again at the same
+ *   limit, so retry once with a longer fetchTimeout.
  *
  * Any recognized failure that survives gets its bilingual explanation
  * appended to stderr so the UI shows an actionable message instead of a
@@ -58,6 +71,16 @@ export async function withHoistRecovery(run: PluginRunner, profile: string, plug
       // Do that retry ourselves instead of reporting a false failure.
       logEvent('warn', 'install', `transient network failure while pnpm replayed the dependency tree (#83) — retrying once`)
       result = await run(profile, pluginArgs)
+    } else if (
+      failure?.code === 'fetch-timeout'
+      && (pluginArgs[0] === 'add' || pluginArgs[0] === 'remove')
+      && !pluginArgs.includes(FETCH_TIMEOUT_OVERRIDE)
+    ) {
+      // Large tarball / slow network: pnpm's default 60s per-request limit
+      // aborted the download. A plain retry fails again at the same limit,
+      // so retry once with a longer fetchTimeout.
+      logEvent('warn', 'install', `pnpm's per-request fetch timeout aborted a large download — retrying once with ${FETCH_TIMEOUT_OVERRIDE}`)
+      result = await run(profile, [pluginArgs[0], FETCH_TIMEOUT_OVERRIDE, ...pluginArgs.slice(1)])
     }
   }
   if (!ok(result) && !result.cancelled) {

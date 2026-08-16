@@ -36,7 +36,7 @@ export function pluginArgsFor(profileDir: string, pluginArgs: string[]): string[
 /** One recognized pnpm failure, with a bilingual explanation for the UI. */
 export interface PnpmFailure {
   code: 'adding-to-root' | 'not-a-workspace' | 'hoist-pattern-diff' | 'pnpm-missing' | 'release-age-violation'
-    | 'ignored-builds' | 'git-prepare-not-allowed' | 'fetch-404' | 'transient-network'
+    | 'ignored-builds' | 'git-prepare-not-allowed' | 'fetch-404' | 'transient-network' | 'fetch-timeout'
   /** Bilingual, actionable message shown to the user instead of the raw wall of text. */
   message: string
   /** True when re-running `pnpm install` in the profile is the documented recovery. */
@@ -51,6 +51,20 @@ export interface PnpmFailure {
  */
 export function isTransientPnpmFailure(output: string): boolean {
   return /ERR_PNPM_FETCH_5\d\d|ERR_PNPM_META_FETCH_FAIL|FetchError|ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENETUNREACH|socket hang up|network timeout/i.test(output)
+}
+
+/**
+ * pnpm's per-request fetch timeout: the abort surfaces as a DOMException
+ * ("The operation was aborted due to timeout", code 23) through undici —
+ * pnpm logs it as `GET … error (23)` before giving up. This is the failure
+ * shape for large tarballs (github: sources download the WHOLE repo, even
+ * for a `#path:` subdirectory plugin) on slow networks: pnpm's default
+ * 60-second limit is simply not enough, so a plain retry fails again at the
+ * same limit. The market's recovery re-runs once with a longer
+ * fetchTimeout (see withHoistRecovery).
+ */
+export function isFetchTimeoutFailure(output: string): boolean {
+  return /operation was aborted due to timeout|TimeoutError|error \(23\)/i.test(output)
 }
 
 /**
@@ -145,6 +159,17 @@ export function classifyPnpmFailure(output: string): PnpmFailure | null {
       code: 'transient-network',
       recoverable: false,
       message: '拉取依赖时网络临时失败（不一定是你正在装的插件——安装会重放整个依赖树，任何一个既有依赖抖动都会中断）。已自动重试一次仍失败，请稍后再试 / a transient network failure while fetching dependencies (not necessarily the plugin you are installing — installs replay the whole dependency tree, so any existing dependency can hiccup); one automatic retry failed too — please try again shortly',
+    }
+  }
+  // pnpm's per-request fetch timeout (#…): large tarballs (github: sources
+  // fetch the whole repo even for a `#path:` subdirectory) on slow networks
+  // blow pnpm's default 60s limit. A plain retry fails again at the same
+  // limit, so withHoistRecovery retries with a longer fetchTimeout.
+  if (isFetchTimeoutFailure(output)) {
+    return {
+      code: 'fetch-timeout',
+      recoverable: false,
+      message: '下载超时：这个插件的安装包较大（github 源会下载整个仓库）或网络较慢，pnpm 默认的单次请求 60 秒限制不够用。市场已用更长的超时自动重试一次；若仍失败，请稍后再试或检查网络 / download timed out: this plugin ships a large tarball (github sources download the whole repository) or your network is slow, and pnpm\'s default 60-second per-request limit was not enough; the market retries once with a longer timeout — if it still fails, try again later or check the network',
     }
   }
   if (output.includes('pnpm not found on PATH')) {
