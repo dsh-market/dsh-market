@@ -23,6 +23,8 @@ import {
   type PluginCommandRuntime,
 } from './dsh-cli.ts'
 import { profileDir, readInstalled, readInstalledVersion, readLockCommits, readManifestDeps, restoreManifestDeps, setAllowBuilds } from './profile.ts'
+import { analyzeProfile } from './check.ts'
+import { INBOX_BUNDLES, readBundleRules, readBundleStack, suggestOrder, validateOrder } from './order.ts'
 import { findInstalledAlias, gitAllowBuildsKey, installTargetFor } from './sources.ts'
 import { isStaleUpdate, parseIgnoredBuilds, parsePrepareNotAllowed, RELEASE_AGE_OVERRIDE, retargetCollections, validateAddedPlugins, withHoistRecovery } from './install.ts'
 import { checkUpdates, fetchNpmLatest, invalidateUpdates, isUpgrade, latestPublishedRecently } from './updates.ts'
@@ -412,6 +414,24 @@ export function mountMarketRoutes(
           groups,
           groupOrder,
         })
+      },
+    }),
+
+    host.webServer.register({
+      kind: 'exact',
+      path: '/dsh-market/check',
+      handler: (request, response) => {
+        if (request.method !== 'GET') {
+          response.writeHead(405, { allow: 'GET' })
+          response.end()
+          return
+        }
+        try {
+          const report = analyzeProfile(activeProfileDir)
+          sendJson(response, 200, report)
+        } catch (error) {
+          sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+        }
       },
     }),
 
