@@ -171,7 +171,7 @@ export function mountMarketRoutes(
     if (installing) throw new Error('another plugin operation is already running')
     if (!await probePnpm()) throw new Error('pnpm is required to restore plugins')
     installing = true
-    const restored = restoreProfileBackup(config.profile, value)
+    const restored = restoreProfileBackup(config.profile, value, activeProfileDir)
     try {
       const result = await runPlugin(config.profile, ['install'])
       if (result.exitCode === 0 && !result.timedOut && !result.cancelled) {
@@ -252,7 +252,7 @@ export function mountMarketRoutes(
           return
         }
         try {
-          const data = createProfileBackup(config.profile)
+          const data = createProfileBackup(config.profile, activeProfileDir)
           const backup = JSON.stringify(data, null, 2)
           const timestamp = new Date(data.createdAt).toLocaleString('sv-SE').replace(/\D/g, '')
           response.writeHead(200, {
@@ -302,7 +302,7 @@ export function mountMarketRoutes(
           const username = typeof body.username === 'string' ? body.username : ''
           const password = typeof body.password === 'string' ? body.password : ''
           if (body.action === 'backup') {
-            await uploadWebdav(url, username, password, createProfileBackup(config.profile))
+            await uploadWebdav(url, username, password, createProfileBackup(config.profile, activeProfileDir))
             sendJson(response, 200, { ok: true })
           } else if (body.action === 'restore') {
             // The preview flow first returns the downloaded backup so the

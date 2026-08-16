@@ -375,6 +375,9 @@ describe('host-provided profile and package-operation seams', () => {
       profile: '工作 profile',
       installed: { 'desktop-only': '1.0.0' },
     })
+    const exported = await bed.dispatch('GET', '/dsh-market/backup')
+    const exportedManifest = exported.json.files.find((file: { path: string }) => file.path === 'package.json')
+    expect(exportedManifest.json.dependencies).toEqual({ 'desktop-only': '1.0.0' })
     const status = await bed.dispatch('GET', '/dsh-market/status')
     expect(status.json).toMatchObject({ pnpm: true, restart: false, installed: { 'desktop-only': '1.0.0' } })
     expect(probe).toHaveBeenCalledOnce()

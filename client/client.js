@@ -90,6 +90,31 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			marketUpdate: "市场有新版本，升级",
 			updateAll: "全部更新",
 			tabThemes: "主题",
+			tabBackup: "备份与恢复",
+			backupLocal: "本地文件",
+			backupDownload: "导出备份",
+			backupImport: "导入并预览",
+			backupHint: "仅包含插件清单和 profile 配置，不包含 node_modules；恢复会按清单重新安装插件。",
+			webdav: "WebDAV",
+			webdavPreset: "服务商预设",
+			webdavUrl: "备份文件 URL",
+			webdavUser: "用户名（可选）",
+			webdavPassword: "密码（可选）",
+			webdavUpload: "上传备份",
+			webdavRestore: "从 WebDAV 恢复",
+			autoBackup: "每天自动备份（打开市场时）",
+			webdavNote: "WebDAV 地址与用户名仅保存在当前浏览器；密码只存于服务端，每次会话需重新输入。",
+			localOnly: "WebDAV 地址和凭证仅保存在当前浏览器。",
+			credsWarning: "注意：备份包含配置与可能含密钥的文件（config.toml、.env 等）。下载件会原样导出，上传 WebDAV 前请确认目标可信。",
+			backupWorking: "处理中…",
+			backupDone: "备份已上传",
+			restoreDone: "恢复完成，请重启 DeepSeek Harness",
+			restorePartial: "恢复已继续完成，但以下插件安装失败：",
+			restoreConfirm: "恢复将覆盖当前 profile 配置并重新安装插件，确定继续吗？",
+			restorePreviewDone: "备份已导入，请在“已安装”中确认后开始恢复",
+			restoreMissing: "备份中有 {0} 个插件尚未安装",
+			restoreStart: "开始恢复",
+			notInstalled: "未安装",
 			themeApply: "使用",
 			themeActive: "使用中",
 			themeEmpty: "目录里暂时还没有主题，敬请期待",
@@ -192,6 +217,31 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			marketUpdate: "Market update available — upgrade",
 			updateAll: "Update all",
 			tabThemes: "Themes",
+			tabBackup: "Backup & Restore",
+			backupLocal: "Local file",
+			backupDownload: "Export backup",
+			backupImport: "Import and preview",
+			backupHint: "Includes the plugin list and profile configuration, never node_modules. Restore reinstalls plugins from the list.",
+			webdav: "WebDAV",
+			webdavPreset: "Provider preset",
+			webdavUrl: "Backup file URL",
+			webdavUser: "Username (optional)",
+			webdavPassword: "Password (optional)",
+			webdavUpload: "Upload backup",
+			webdavRestore: "Restore from WebDAV",
+			autoBackup: "Back up daily (when the market opens)",
+			webdavNote: "The WebDAV URL and username stay in this browser only; the password is kept server-side and must be re-entered each session.",
+			localOnly: "The WebDAV URL and credentials stay in this browser only.",
+			credsWarning: "Heads up: backups include profile configuration and files that may hold secrets (config.toml, .env, …). Local exports are unmodified, so only upload to a WebDAV target you trust.",
+			backupWorking: "Working…",
+			backupDone: "Backup uploaded",
+			restoreDone: "Restore complete — restart DeepSeek Harness",
+			restorePartial: "Restore continued, but these plugins failed to install:",
+			restoreConfirm: "Restore will overwrite this profile configuration and reinstall plugins. Continue?",
+			restorePreviewDone: "Backup imported. Review Installed, then start restore.",
+			restoreMissing: "{0} plugins from this backup are not installed",
+			restoreStart: "Start restore",
+			notInstalled: "Not installed",
 			themeApply: "Use",
 			themeActive: "Active",
 			themeEmpty: "No more theme plugins in the catalog yet — stay tuned",
@@ -431,8 +481,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			});
 		}
 		//#endregion
-		//#region \0dsh-css:/Users/fkysly_mini/work/dsh-market/src/client/Market.module.css.mjs
-		const css = ".SOz1_a_root{min-width:0;height:100%;color:var(--dsw-alias-label-primary,#1f2328);flex-direction:column;display:flex;position:relative}.SOz1_a_head{flex-direction:column;gap:12px;padding:4px 4px 12px;display:flex}.SOz1_a_title{margin:0;font-size:16px;font-weight:500;line-height:24px}.SOz1_a_sub{color:var(--dsw-alias-label-tertiary,#8b93a1);margin:0;font-size:14px;line-height:22px}.SOz1_a_searchInline{flex-shrink:0;width:200px;margin-bottom:6px}.SOz1_a_tabs{border-bottom:1px solid var(--dsw-alias-border-l2,#e5e7eb);align-items:flex-end;gap:2px;display:flex}.SOz1_a_tab{font:inherit;color:var(--dsw-alias-label-secondary,#6b7280);cursor:pointer;white-space:nowrap;background:0 0;border:none;border-bottom:2px solid #0000;padding:7px 12px;font-size:13px}.SOz1_a_tab.SOz1_a_on{color:var(--dsw-alias-brand-primary,#4f6ef7);border-bottom-color:var(--dsw-alias-brand-primary,#4f6ef7);font-weight:600}.SOz1_a_restart{background:var(--dsw-alias-bg-layer-2,#fdf3e3);border:1px solid var(--dsw-alias-border-l2,#f3e3c3);border-radius:8px;align-items:center;gap:8px;margin:0;padding:8px 12px;font-size:12px;display:flex}.SOz1_a_body{flex:1;padding:12px 4px 24px;overflow-x:hidden;overflow-y:auto}.SOz1_a_cats{z-index:5;background:var(--dsw-alias-bg-layer-2,#f7f8fa);margin:-12px -4px 2px;padding:12px 4px 4px;position:sticky;top:-13px}.SOz1_a_catsRow{align-items:flex-start;gap:8px;display:flex;position:relative}.SOz1_a_filterWrap{flex-shrink:0;position:relative}.SOz1_a_filterBtn{border:1px solid var(--dsw-alias-border-l1,#e5e7eb);background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary,#1f2328);font:inherit;cursor:pointer;white-space:nowrap;border-radius:8px;align-items:center;gap:5px;padding:5px 11px;font-size:12px;line-height:18px;display:flex}.SOz1_a_filterBtn:hover,.SOz1_a_filterBtnOn{color:var(--dsw-alias-brand-primary,#4f6ef7);border-color:var(--dsw-alias-brand-primary,#4f6ef7)}.SOz1_a_filterPanel{z-index:30;background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:10px;flex-direction:column;gap:10px;width:250px;padding:8px;display:flex;position:absolute;top:calc(100% + 6px);right:0;box-shadow:0 8px 28px #00000024}.SOz1_a_filterGroup{flex-direction:column;gap:2px;display:flex}.SOz1_a_filterTitle{color:var(--dsw-alias-label-secondary,#6b7280);padding:4px 8px 2px;font-size:11px;font-weight:600}.SOz1_a_filterOption{cursor:pointer;color:var(--dsw-alias-label-primary,#1f2328);border-radius:6px;align-items:center;gap:8px;padding:5px 8px;font-size:12px;line-height:18px;display:flex}.SOz1_a_filterOption:hover{background:var(--dsw-alias-bg-layer-2,#f3f4f6)}.SOz1_a_filterOption input{margin:0}.SOz1_a_star{color:var(--dsw-alias-label-secondary,#9ca3af);font-size:11px}.SOz1_a_top{z-index:20;border:1px solid var(--dsw-alias-border-l1,#e5e7eb);background:var(--dsw-alias-bg-layer-1,#fff);width:38px;height:38px;color:var(--dsw-alias-label-secondary,#6b7280);cursor:pointer;border-radius:99px;font-size:16px;position:absolute;bottom:18px;right:18px;box-shadow:0 4px 14px #0000001f}.SOz1_a_top:hover{color:var(--dsw-alias-brand-primary,#4f6ef7)}.SOz1_a_tag{border:1px solid var(--dsw-alias-border-l3,#d9dde3);color:var(--dsw-alias-label-secondary,#6b7280);border-radius:4px;flex-shrink:0;padding:1px 6px;font-size:11px;line-height:16px}.SOz1_a_okState{color:var(--dsw-alias-state-success-primary,#16a34a);white-space:nowrap;font-size:12px;font-weight:600}.SOz1_a_dangerBtn.SOz1_a_dangerBtn{border-color:var(--dsw-alias-state-error-primary,#dc2626);color:var(--dsw-alias-state-error-primary,#dc2626)}.SOz1_a_dangerArmed.SOz1_a_dangerArmed{background:var(--dsw-alias-state-error-primary,#dc2626);color:#fff}.SOz1_a_warnBtn.SOz1_a_warnBtn{background:var(--dsw-alias-state-warn-primary,#ea580c);color:#fff}.SOz1_a_catsWrap{flex-wrap:wrap;flex:1;align-items:center;gap:6px;min-width:0;display:flex}.SOz1_a_catsCollapsed{max-height:62px;overflow:hidden}.SOz1_a_catsToggle.SOz1_a_catsToggle{height:26px;min-height:26px;color:var(--dsw-alias-label-secondary,#6b7280);padding:0 6px}.SOz1_a_cmdDetails{margin:0}.SOz1_a_cmdSummary{cursor:pointer;width:fit-content;color:var(--dsw-alias-label-secondary,#6b7280);border-radius:6px;align-items:center;gap:6px;margin-left:-4px;padding:2px 4px;font-size:12px;font-weight:500;line-height:18px;list-style:none;display:flex}.SOz1_a_cmdSummary::-webkit-details-marker{display:none}.SOz1_a_cmdSummary:before{content:\"\";border-bottom:1.5px solid;border-right:1.5px solid;width:5px;height:5px;transition:transform .12s;transform:rotate(-45deg)translate(-1px,-1px)}.SOz1_a_cmdDetails[open]>.SOz1_a_cmdSummary:before{transform:rotate(45deg)translate(-1px,-1px)}.SOz1_a_cmdSummary:hover{color:var(--dsw-alias-label-primary,#1f2328)}.SOz1_a_cmd{background:var(--dsw-alias-bg-layer-2,#f3f4f6);word-break:break-all;border-radius:6px;margin:8px 0 0;padding:8px 10px;font-family:ui-monospace,Menlo,monospace;font-size:11px;line-height:18px}.SOz1_a_warnLine{color:var(--dsw-alias-state-warn-primary,#b45309);margin:0;font-size:12px;font-weight:600;line-height:18px}.SOz1_a_modalNote{color:var(--dsw-alias-label-tertiary,#8b93a1);margin:12px 0 0;font-size:12px;line-height:18px}.SOz1_a_grid{grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;display:grid}.SOz1_a_sect{color:var(--dsw-alias-label-secondary,#6b7280);margin:14px 2px 8px;font-size:12px;font-weight:600}.SOz1_a_sect:first-child{margin-top:2px}.SOz1_a_swatches{border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:8px;gap:0;height:34px;display:flex;overflow:hidden}.SOz1_a_themesGrid{margin-bottom:12px}.SOz1_a_swatches i{flex:1}.SOz1_a_card{background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:12px;flex-direction:column;gap:12px;padding:12px 14px;display:flex}.SOz1_a_row1{align-items:center;gap:10px;min-width:0;display:flex}.SOz1_a_av{color:#fff;object-fit:cover;background:var(--dsw-alias-bg-layer-2,#f3f4f6);border-radius:8px;flex-shrink:0;place-items:center;width:32px;height:32px;font-size:14px;font-weight:700;display:grid}.SOz1_a_nm{text-overflow:ellipsis;white-space:nowrap;font-size:14px;font-weight:500;line-height:22px;overflow:hidden}.SOz1_a_owner{color:var(--dsw-alias-label-secondary,#9ca3af);font-size:11px}.SOz1_a_desc{color:var(--dsw-alias-label-tertiary,#8b93a1);min-height:36px;margin:0;font-size:12px;line-height:18px}.SOz1_a_foot{align-items:center;gap:8px;margin-top:auto;display:flex}.SOz1_a_grow{flex:1}.SOz1_a_titleRow{align-items:center;gap:10px;display:flex}.SOz1_a_descTight{min-height:0}.SOz1_a_src{color:var(--dsw-alias-label-secondary,#9ca3af);font-size:11px;text-decoration:none}.SOz1_a_src:hover{color:var(--dsw-alias-brand-primary,#4f6ef7)}.SOz1_a_dot{vertical-align:2px;margin-left:5px}.SOz1_a_act{flex-wrap:wrap;align-items:center;gap:6px;margin-top:6px;font-size:11px;display:flex}.SOz1_a_actLive{color:var(--dsw-alias-state-success-primary,#16a34a);align-items:center;gap:4px;font-weight:600;display:inline-flex}.SOz1_a_actWarn{color:var(--dsw-alias-state-warn-primary,#b45309);align-items:center;gap:4px;font-weight:600;display:inline-flex}.SOz1_a_actBroken{color:var(--dsw-alias-state-error-primary,#dc2626);align-items:center;gap:4px;font-weight:600;display:inline-flex}.SOz1_a_actWhy{margin:0}.SOz1_a_actWhy summary{cursor:pointer;color:var(--dsw-alias-label-secondary,#6b7280);font-size:11px}.SOz1_a_loading{color:var(--dsw-alias-label-secondary,#9ca3af);flex-direction:column;align-items:center;gap:12px;padding:48px;font-size:13px;display:flex}.SOz1_a_spin{border:3px solid var(--dsw-alias-border-l1,#e5e7eb);border-top-color:var(--dsw-alias-brand-primary,#4f6ef7);border-radius:99px;width:22px;height:22px;animation:.8s linear infinite SOz1_a_sp}@keyframes SOz1_a_sp{to{transform:rotate(360deg)}}.SOz1_a_progress{background:var(--dsw-alias-bg-layer-2,#f3f4f6);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);color:var(--dsw-alias-label-secondary,#6b7280);border-radius:8px;flex-wrap:wrap;align-items:center;gap:9px;margin:0;padding:8px 12px;font-size:12px;display:flex}.SOz1_a_bar{background:var(--dsw-alias-border-l1,#e5e7eb);border-radius:99px;width:100%;height:4px;overflow:hidden}.SOz1_a_barFill{background:var(--dsw-alias-brand-primary,#4f6ef7);border-radius:99px;height:100%;transition:width .6s}.SOz1_a_barWave{width:30%;animation:1.2s ease-in-out infinite SOz1_a_dshmSlide}@keyframes SOz1_a_dshmSlide{0%{margin-left:-30%}to{margin-left:100%}}.SOz1_a_irow .SOz1_a_progress{margin-top:8px}.SOz1_a_progress .SOz1_a_spin{border-width:2px;flex-shrink:0;width:14px;height:14px}.SOz1_a_progress code{text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,Menlo,monospace;font-size:11px;overflow:hidden}.SOz1_a_empty{color:var(--dsw-alias-label-secondary,#9ca3af);text-align:center;padding:32px;font-size:13px}.SOz1_a_err{color:var(--dsw-alias-state-error-primary,#dc2626);white-space:pre-wrap;word-break:break-all;margin:8px 0;font-size:12px}.SOz1_a_irow{background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:12px;align-items:center;gap:10px;margin-bottom:8px;padding:12px 14px;display:flex}.SOz1_a_irow>.SOz1_a_src,.SOz1_a_irow>.SOz1_a_owner,.SOz1_a_dangerBtn.SOz1_a_dangerBtn,.SOz1_a_warnBtn.SOz1_a_warnBtn,.SOz1_a_dangerArmed.SOz1_a_dangerArmed{white-space:nowrap;flex-shrink:0}.SOz1_a_spec{color:var(--dsw-alias-label-secondary,#9ca3af);font-family:ui-monospace,Menlo,monospace;font-size:11px}.SOz1_a_staleAction{margin-top:8px}.SOz1_a_pct{color:var(--dsw-alias-label-secondary,#6b7280);flex-shrink:0;font-size:11px;font-weight:600}.SOz1_a_cancelBtn{border:1px solid var(--dsw-alias-border-l2,#e5e7eb);background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-secondary,#6b7280);font:inherit;cursor:pointer;white-space:nowrap;border-radius:6px;flex-shrink:0;padding:2px 10px;font-size:11px;line-height:16px}.SOz1_a_cancelBtn:hover{color:var(--dsw-alias-state-error-primary,#dc2626);border-color:var(--dsw-alias-state-error-primary,#dc2626)}.SOz1_a_pager{flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;margin:16px 0 4px;display:flex}.SOz1_a_pagerPages{flex-wrap:wrap;flex:1;justify-content:center;align-items:center;gap:6px;min-width:0;display:flex}.SOz1_a_pagerSize{flex-shrink:0;align-items:center;gap:4px;display:flex}.SOz1_a_sizeLabel{color:var(--dsw-alias-label-secondary,#6b7280);font-size:12px}.SOz1_a_sizeBtn{border:1px solid var(--dsw-alias-border-l2,#e5e7eb);background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-secondary,#6b7280);font:inherit;cursor:pointer;border-radius:6px;padding:3px 8px;font-size:12px;line-height:18px}.SOz1_a_sizeBtn:hover{color:var(--dsw-alias-brand-primary,#4f6ef7);border-color:var(--dsw-alias-brand-primary,#4f6ef7)}.SOz1_a_sizeOn{background:var(--dsw-alias-brand-primary,#4f6ef7);border-color:var(--dsw-alias-brand-primary,#4f6ef7);color:#fff;font-weight:600}.SOz1_a_pageBtn{border:1px solid var(--dsw-alias-border-l2,#e5e7eb);background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-secondary,#6b7280);font:inherit;cursor:pointer;border-radius:6px;min-width:28px;padding:4px 10px;font-size:12px;line-height:18px}.SOz1_a_pageBtn:hover:not(:disabled){color:var(--dsw-alias-brand-primary,#4f6ef7);border-color:var(--dsw-alias-brand-primary,#4f6ef7)}.SOz1_a_pageBtn:disabled{opacity:.45;cursor:default}.SOz1_a_pageOn{background:var(--dsw-alias-brand-primary,#4f6ef7);border-color:var(--dsw-alias-brand-primary,#4f6ef7);color:#fff;font-weight:600}.SOz1_a_pageEllipsis{color:var(--dsw-alias-label-secondary,#9ca3af);padding:0 2px;font-size:12px}.SOz1_a_pageInfo{color:var(--dsw-alias-label-secondary,#6b7280);white-space:nowrap;font-size:12px}";
+		//#region \0dsh-css:/home/zkbot/data/my_project/dsh-market/src/client/Market.module.css.mjs
+		const css = ".oaE6AG_root{min-width:0;height:100%;color:var(--dsw-alias-label-primary,#1f2328);flex-direction:column;display:flex;position:relative}.oaE6AG_head{flex-direction:column;gap:12px;padding:4px 4px 12px;display:flex}.oaE6AG_title{margin:0;font-size:16px;font-weight:500;line-height:24px}.oaE6AG_sub{color:var(--dsw-alias-label-tertiary,#8b93a1);margin:0;font-size:14px;line-height:22px}.oaE6AG_searchInline{flex-shrink:0;width:200px;margin-bottom:6px}.oaE6AG_tabs{border-bottom:1px solid var(--dsw-alias-border-l2,#e5e7eb);align-items:flex-end;gap:2px;display:flex}.oaE6AG_tab{font:inherit;color:var(--dsw-alias-label-secondary,#6b7280);cursor:pointer;white-space:nowrap;background:0 0;border:none;border-bottom:2px solid #0000;padding:7px 12px;font-size:13px}.oaE6AG_tab.oaE6AG_on{color:var(--dsw-alias-brand-primary,#4f6ef7);border-bottom-color:var(--dsw-alias-brand-primary,#4f6ef7);font-weight:600}.oaE6AG_restart{background:var(--dsw-alias-bg-layer-2,#fdf3e3);border:1px solid var(--dsw-alias-border-l2,#f3e3c3);border-radius:8px;align-items:center;gap:8px;margin:0;padding:8px 12px;font-size:12px;display:flex}.oaE6AG_body{flex:1;padding:12px 4px 24px;overflow-x:hidden;overflow-y:auto}.oaE6AG_cats{z-index:5;background:var(--dsw-alias-bg-layer-2,#f7f8fa);margin:-12px -4px 2px;padding:12px 4px 4px;position:sticky;top:-13px}.oaE6AG_catsRow{align-items:flex-start;gap:8px;display:flex;position:relative}.oaE6AG_filterWrap{flex-shrink:0;position:relative}.oaE6AG_filterBtn{border:1px solid var(--dsw-alias-border-l1,#e5e7eb);background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary,#1f2328);font:inherit;cursor:pointer;white-space:nowrap;border-radius:8px;align-items:center;gap:5px;padding:5px 11px;font-size:12px;line-height:18px;display:flex}.oaE6AG_filterBtn:hover,.oaE6AG_filterBtnOn{color:var(--dsw-alias-brand-primary,#4f6ef7);border-color:var(--dsw-alias-brand-primary,#4f6ef7)}.oaE6AG_filterPanel{z-index:30;background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:10px;flex-direction:column;gap:10px;width:250px;padding:8px;display:flex;position:absolute;top:calc(100% + 6px);right:0;box-shadow:0 8px 28px #00000024}.oaE6AG_filterGroup{flex-direction:column;gap:2px;display:flex}.oaE6AG_filterTitle{color:var(--dsw-alias-label-secondary,#6b7280);padding:4px 8px 2px;font-size:11px;font-weight:600}.oaE6AG_filterOption{cursor:pointer;color:var(--dsw-alias-label-primary,#1f2328);border-radius:6px;align-items:center;gap:8px;padding:5px 8px;font-size:12px;line-height:18px;display:flex}.oaE6AG_filterOption:hover{background:var(--dsw-alias-bg-layer-2,#f3f4f6)}.oaE6AG_filterOption input{margin:0}.oaE6AG_star{color:var(--dsw-alias-label-secondary,#9ca3af);font-size:11px}.oaE6AG_top{z-index:20;border:1px solid var(--dsw-alias-border-l1,#e5e7eb);background:var(--dsw-alias-bg-layer-1,#fff);width:38px;height:38px;color:var(--dsw-alias-label-secondary,#6b7280);cursor:pointer;border-radius:99px;font-size:16px;position:absolute;bottom:18px;right:18px;box-shadow:0 4px 14px #0000001f}.oaE6AG_top:hover{color:var(--dsw-alias-brand-primary,#4f6ef7)}.oaE6AG_tag{border:1px solid var(--dsw-alias-border-l3,#d9dde3);color:var(--dsw-alias-label-secondary,#6b7280);border-radius:4px;flex-shrink:0;padding:1px 6px;font-size:11px;line-height:16px}.oaE6AG_okState{color:var(--dsw-alias-state-success-primary,#16a34a);white-space:nowrap;font-size:12px;font-weight:600}.oaE6AG_dangerBtn.oaE6AG_dangerBtn{border-color:var(--dsw-alias-state-error-primary,#dc2626);color:var(--dsw-alias-state-error-primary,#dc2626)}.oaE6AG_dangerArmed.oaE6AG_dangerArmed{background:var(--dsw-alias-state-error-primary,#dc2626);color:#fff}.oaE6AG_warnBtn.oaE6AG_warnBtn{background:var(--dsw-alias-state-warn-primary,#ea580c);color:#fff}.oaE6AG_catsWrap{flex-wrap:wrap;flex:1;align-items:center;gap:6px;min-width:0;display:flex}.oaE6AG_catsCollapsed{max-height:62px;overflow:hidden}.oaE6AG_catsToggle.oaE6AG_catsToggle{height:26px;min-height:26px;color:var(--dsw-alias-label-secondary,#6b7280);padding:0 6px}.oaE6AG_cmdDetails{margin:0}.oaE6AG_cmdSummary{cursor:pointer;width:fit-content;color:var(--dsw-alias-label-secondary,#6b7280);border-radius:6px;align-items:center;gap:6px;margin-left:-4px;padding:2px 4px;font-size:12px;font-weight:500;line-height:18px;list-style:none;display:flex}.oaE6AG_cmdSummary::-webkit-details-marker{display:none}.oaE6AG_cmdSummary:before{content:\"\";border-bottom:1.5px solid;border-right:1.5px solid;width:5px;height:5px;transition:transform .12s;transform:rotate(-45deg)translate(-1px,-1px)}.oaE6AG_cmdDetails[open]>.oaE6AG_cmdSummary:before{transform:rotate(45deg)translate(-1px,-1px)}.oaE6AG_cmdSummary:hover{color:var(--dsw-alias-label-primary,#1f2328)}.oaE6AG_cmd{background:var(--dsw-alias-bg-layer-2,#f3f4f6);word-break:break-all;border-radius:6px;margin:8px 0 0;padding:8px 10px;font-family:ui-monospace,Menlo,monospace;font-size:11px;line-height:18px}.oaE6AG_warnLine{color:var(--dsw-alias-state-warn-primary,#b45309);margin:0;font-size:12px;font-weight:600;line-height:18px}.oaE6AG_modalNote{color:var(--dsw-alias-label-tertiary,#8b93a1);margin:12px 0 0;font-size:12px;line-height:18px}.oaE6AG_grid{grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;display:grid}.oaE6AG_sect{color:var(--dsw-alias-label-secondary,#6b7280);margin:14px 2px 8px;font-size:12px;font-weight:600}.oaE6AG_sect:first-child{margin-top:2px}.oaE6AG_swatches{border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:8px;gap:0;height:34px;display:flex;overflow:hidden}.oaE6AG_themesGrid{margin-bottom:12px}.oaE6AG_swatches i{flex:1}.oaE6AG_card{background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:12px;flex-direction:column;gap:12px;padding:12px 14px;display:flex}.oaE6AG_row1{align-items:center;gap:10px;min-width:0;display:flex}.oaE6AG_av{color:#fff;object-fit:cover;background:var(--dsw-alias-bg-layer-2,#f3f4f6);border-radius:8px;flex-shrink:0;place-items:center;width:32px;height:32px;font-size:14px;font-weight:700;display:grid}.oaE6AG_nm{text-overflow:ellipsis;white-space:nowrap;font-size:14px;font-weight:500;line-height:22px;overflow:hidden}.oaE6AG_owner{color:var(--dsw-alias-label-secondary,#9ca3af);font-size:11px}.oaE6AG_desc{color:var(--dsw-alias-label-tertiary,#8b93a1);min-height:36px;margin:0;font-size:12px;line-height:18px}.oaE6AG_foot{align-items:center;gap:8px;margin-top:auto;display:flex}.oaE6AG_grow{flex:1}.oaE6AG_titleRow{align-items:center;gap:10px;display:flex}.oaE6AG_descTight{min-height:0}.oaE6AG_src{color:var(--dsw-alias-label-secondary,#9ca3af);font-size:11px;text-decoration:none}.oaE6AG_src:hover{color:var(--dsw-alias-brand-primary,#4f6ef7)}.oaE6AG_dot{vertical-align:2px;margin-left:5px}.oaE6AG_act{flex-wrap:wrap;align-items:center;gap:6px;margin-top:6px;font-size:11px;display:flex}.oaE6AG_actLive{color:var(--dsw-alias-state-success-primary,#16a34a);align-items:center;gap:4px;font-weight:600;display:inline-flex}.oaE6AG_actWarn{color:var(--dsw-alias-state-warn-primary,#b45309);align-items:center;gap:4px;font-weight:600;display:inline-flex}.oaE6AG_actBroken{color:var(--dsw-alias-state-error-primary,#dc2626);align-items:center;gap:4px;font-weight:600;display:inline-flex}.oaE6AG_actWhy{margin:0}.oaE6AG_actWhy summary{cursor:pointer;color:var(--dsw-alias-label-secondary,#6b7280);font-size:11px}.oaE6AG_loading{color:var(--dsw-alias-label-secondary,#9ca3af);flex-direction:column;align-items:center;gap:12px;padding:48px;font-size:13px;display:flex}.oaE6AG_spin{border:3px solid var(--dsw-alias-border-l1,#e5e7eb);border-top-color:var(--dsw-alias-brand-primary,#4f6ef7);border-radius:99px;width:22px;height:22px;animation:.8s linear infinite oaE6AG_sp}@keyframes oaE6AG_sp{to{transform:rotate(360deg)}}.oaE6AG_progress{background:var(--dsw-alias-bg-layer-2,#f3f4f6);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);color:var(--dsw-alias-label-secondary,#6b7280);border-radius:8px;flex-wrap:wrap;align-items:center;gap:9px;margin:0;padding:8px 12px;font-size:12px;display:flex}.oaE6AG_bar{background:var(--dsw-alias-border-l1,#e5e7eb);border-radius:99px;width:100%;height:4px;overflow:hidden}.oaE6AG_barFill{background:var(--dsw-alias-brand-primary,#4f6ef7);border-radius:99px;height:100%;transition:width .6s}.oaE6AG_barWave{width:30%;animation:1.2s ease-in-out infinite oaE6AG_dshmSlide}@keyframes oaE6AG_dshmSlide{0%{margin-left:-30%}to{margin-left:100%}}.oaE6AG_irow .oaE6AG_progress{margin-top:8px}.oaE6AG_progress .oaE6AG_spin{border-width:2px;flex-shrink:0;width:14px;height:14px}.oaE6AG_progress code{text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,Menlo,monospace;font-size:11px;overflow:hidden}.oaE6AG_empty{color:var(--dsw-alias-label-secondary,#9ca3af);text-align:center;padding:32px;font-size:13px}.oaE6AG_err{color:var(--dsw-alias-state-error-primary,#dc2626);white-space:pre-wrap;word-break:break-all;margin:8px 0;font-size:12px}.oaE6AG_irow{background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:12px;align-items:center;gap:10px;margin-bottom:8px;padding:12px 14px;display:flex}.oaE6AG_irowMissing{filter:grayscale();opacity:.5}.oaE6AG_irow>.oaE6AG_src,.oaE6AG_irow>.oaE6AG_owner,.oaE6AG_dangerBtn.oaE6AG_dangerBtn,.oaE6AG_warnBtn.oaE6AG_warnBtn,.oaE6AG_dangerArmed.oaE6AG_dangerArmed{white-space:nowrap;flex-shrink:0}.oaE6AG_spec{color:var(--dsw-alias-label-secondary,#9ca3af);font-family:ui-monospace,Menlo,monospace;font-size:11px}.oaE6AG_staleAction{margin-top:8px}.oaE6AG_pct{color:var(--dsw-alias-label-secondary,#6b7280);flex-shrink:0;font-size:11px;font-weight:600}.oaE6AG_cancelBtn{border:1px solid var(--dsw-alias-border-l2,#e5e7eb);background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-secondary,#6b7280);font:inherit;cursor:pointer;white-space:nowrap;border-radius:6px;flex-shrink:0;padding:2px 10px;font-size:11px;line-height:16px}.oaE6AG_cancelBtn:hover{color:var(--dsw-alias-state-error-primary,#dc2626);border-color:var(--dsw-alias-state-error-primary,#dc2626)}.oaE6AG_pager{flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;margin:16px 0 4px;display:flex}.oaE6AG_pagerPages{flex-wrap:wrap;flex:1;justify-content:center;align-items:center;gap:6px;min-width:0;display:flex}.oaE6AG_pagerSize{flex-shrink:0;align-items:center;gap:4px;display:flex}.oaE6AG_sizeLabel{color:var(--dsw-alias-label-secondary,#6b7280);font-size:12px}.oaE6AG_sizeBtn{border:1px solid var(--dsw-alias-border-l2,#e5e7eb);background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-secondary,#6b7280);font:inherit;cursor:pointer;border-radius:6px;padding:3px 8px;font-size:12px;line-height:18px}.oaE6AG_sizeBtn:hover{color:var(--dsw-alias-brand-primary,#4f6ef7);border-color:var(--dsw-alias-brand-primary,#4f6ef7)}.oaE6AG_sizeOn{background:var(--dsw-alias-brand-primary,#4f6ef7);border-color:var(--dsw-alias-brand-primary,#4f6ef7);color:#fff;font-weight:600}.oaE6AG_pageBtn{border:1px solid var(--dsw-alias-border-l2,#e5e7eb);background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-secondary,#6b7280);font:inherit;cursor:pointer;border-radius:6px;min-width:28px;padding:4px 10px;font-size:12px;line-height:18px}.oaE6AG_pageBtn:hover:not(:disabled){color:var(--dsw-alias-brand-primary,#4f6ef7);border-color:var(--dsw-alias-brand-primary,#4f6ef7)}.oaE6AG_pageBtn:disabled{opacity:.45;cursor:default}.oaE6AG_pageOn{background:var(--dsw-alias-brand-primary,#4f6ef7);border-color:var(--dsw-alias-brand-primary,#4f6ef7);color:#fff;font-weight:600}.oaE6AG_pageEllipsis{color:var(--dsw-alias-label-secondary,#9ca3af);padding:0 2px;font-size:12px}.oaE6AG_pageInfo{color:var(--dsw-alias-label-secondary,#6b7280);white-space:nowrap;font-size:12px}.oaE6AG_backupGrid{grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;display:grid}.oaE6AG_backupCard{background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:12px;flex-direction:column;gap:10px;padding:16px;display:flex}.oaE6AG_backupCard h3{margin:0;font-size:14px}.oaE6AG_backupCard p{color:var(--dsw-alias-label-secondary,#6b7280);margin:0;font-size:12px;line-height:18px}.oaE6AG_backupActions{flex-wrap:wrap;gap:8px;display:flex}.oaE6AG_backupButton{border:1px solid var(--dsw-alias-border-l2,#e5e7eb);color:var(--dsw-alias-label-primary,#1f2328);cursor:pointer;border-radius:6px;align-items:center;padding:4px 10px;font-size:12px;line-height:18px;text-decoration:none;display:inline-flex;position:relative}.oaE6AG_backupButton[aria-disabled=true]{opacity:.5;pointer-events:none}.oaE6AG_backupButton input{opacity:0;width:1px;height:1px;position:absolute}.oaE6AG_backupPrimary{background:var(--dsw-alias-brand-primary,#4f6ef7);border-color:var(--dsw-alias-brand-primary,#4f6ef7);color:#fff}.oaE6AG_backupInput{box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2,#e5e7eb);background:var(--dsw-alias-bg-layer-1,#fff);width:100%;color:var(--dsw-alias-label-primary,#1f2328);font:inherit;border-radius:8px;padding:7px 9px;font-size:12px}.oaE6AG_backupCheck{cursor:pointer;align-items:center;gap:6px;font-size:12px;display:flex}.oaE6AG_backupWarn{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-state-warn-primary,#b45309)!important}.oaE6AG_backupMessage{color:var(--dsw-alias-label-secondary,#6b7280);grid-column:1/-1;font-size:12px}";
 		const tagId = "dshmarket/Market.module.css";
 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId) + "]") === null) {
 			const tag = document.createElement("style");
@@ -442,86 +492,96 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			document.head.appendChild(tag);
 		}
 		var Market_module_css_default = {
-			"actLive": "SOz1_a_actLive",
-			"cmd": "SOz1_a_cmd",
-			"grow": "SOz1_a_grow",
-			"filterGroup": "SOz1_a_filterGroup",
-			"owner": "SOz1_a_owner",
-			"sizeBtn": "SOz1_a_sizeBtn",
-			"spec": "SOz1_a_spec",
-			"pageInfo": "SOz1_a_pageInfo",
-			"cats": "SOz1_a_cats",
-			"cmdSummary": "SOz1_a_cmdSummary",
-			"cmdDetails": "SOz1_a_cmdDetails",
-			"titleRow": "SOz1_a_titleRow",
-			"err": "SOz1_a_err",
-			"pct": "SOz1_a_pct",
-			"dshmSlide": "SOz1_a_dshmSlide",
-			"nm": "SOz1_a_nm",
-			"barWave": "SOz1_a_barWave",
-			"foot": "SOz1_a_foot",
-			"body": "SOz1_a_body",
-			"modalNote": "SOz1_a_modalNote",
-			"star": "SOz1_a_star",
-			"grid": "SOz1_a_grid",
-			"actWarn": "SOz1_a_actWarn",
-			"filterPanel": "SOz1_a_filterPanel",
-			"filterWrap": "SOz1_a_filterWrap",
-			"dot": "SOz1_a_dot",
-			"pageEllipsis": "SOz1_a_pageEllipsis",
-			"tab": "SOz1_a_tab",
-			"sect": "SOz1_a_sect",
-			"warnLine": "SOz1_a_warnLine",
-			"title": "SOz1_a_title",
-			"actBroken": "SOz1_a_actBroken",
-			"tabs": "SOz1_a_tabs",
-			"catsCollapsed": "SOz1_a_catsCollapsed",
-			"catsRow": "SOz1_a_catsRow",
-			"swatches": "SOz1_a_swatches",
-			"filterOption": "SOz1_a_filterOption",
-			"warnBtn": "SOz1_a_warnBtn",
-			"descTight": "SOz1_a_descTight",
-			"catsToggle": "SOz1_a_catsToggle",
-			"irow": "SOz1_a_irow",
-			"row1": "SOz1_a_row1",
-			"cancelBtn": "SOz1_a_cancelBtn",
-			"catsWrap": "SOz1_a_catsWrap",
-			"pagerSize": "SOz1_a_pagerSize",
-			"okState": "SOz1_a_okState",
-			"sp": "SOz1_a_sp",
-			"bar": "SOz1_a_bar",
-			"filterTitle": "SOz1_a_filterTitle",
-			"dangerBtn": "SOz1_a_dangerBtn",
-			"restart": "SOz1_a_restart",
-			"src": "SOz1_a_src",
-			"empty": "SOz1_a_empty",
-			"root": "SOz1_a_root",
-			"pageOn": "SOz1_a_pageOn",
-			"barFill": "SOz1_a_barFill",
-			"head": "SOz1_a_head",
-			"actWhy": "SOz1_a_actWhy",
-			"dangerArmed": "SOz1_a_dangerArmed",
-			"pager": "SOz1_a_pager",
-			"sizeOn": "SOz1_a_sizeOn",
-			"tag": "SOz1_a_tag",
-			"sizeLabel": "SOz1_a_sizeLabel",
-			"themesGrid": "SOz1_a_themesGrid",
-			"pagerPages": "SOz1_a_pagerPages",
-			"act": "SOz1_a_act",
-			"on": "SOz1_a_on",
-			"spin": "SOz1_a_spin",
-			"card": "SOz1_a_card",
-			"progress": "SOz1_a_progress",
-			"filterBtn": "SOz1_a_filterBtn",
-			"loading": "SOz1_a_loading",
-			"filterBtnOn": "SOz1_a_filterBtnOn",
-			"desc": "SOz1_a_desc",
-			"top": "SOz1_a_top",
-			"staleAction": "SOz1_a_staleAction",
-			"pageBtn": "SOz1_a_pageBtn",
-			"sub": "SOz1_a_sub",
-			"av": "SOz1_a_av",
-			"searchInline": "SOz1_a_searchInline"
+			"err": "oaE6AG_err",
+			"av": "oaE6AG_av",
+			"modalNote": "oaE6AG_modalNote",
+			"titleRow": "oaE6AG_titleRow",
+			"catsCollapsed": "oaE6AG_catsCollapsed",
+			"pageInfo": "oaE6AG_pageInfo",
+			"grid": "oaE6AG_grid",
+			"card": "oaE6AG_card",
+			"dangerBtn": "oaE6AG_dangerBtn",
+			"catsWrap": "oaE6AG_catsWrap",
+			"dot": "oaE6AG_dot",
+			"dshmSlide": "oaE6AG_dshmSlide",
+			"row1": "oaE6AG_row1",
+			"title": "oaE6AG_title",
+			"barFill": "oaE6AG_barFill",
+			"cancelBtn": "oaE6AG_cancelBtn",
+			"pagerPages": "oaE6AG_pagerPages",
+			"warnBtn": "oaE6AG_warnBtn",
+			"actBroken": "oaE6AG_actBroken",
+			"cats": "oaE6AG_cats",
+			"warnLine": "oaE6AG_warnLine",
+			"pageOn": "oaE6AG_pageOn",
+			"catsRow": "oaE6AG_catsRow",
+			"sizeLabel": "oaE6AG_sizeLabel",
+			"root": "oaE6AG_root",
+			"nm": "oaE6AG_nm",
+			"spec": "oaE6AG_spec",
+			"descTight": "oaE6AG_descTight",
+			"pageEllipsis": "oaE6AG_pageEllipsis",
+			"irowMissing": "oaE6AG_irowMissing",
+			"backupCard": "oaE6AG_backupCard",
+			"themesGrid": "oaE6AG_themesGrid",
+			"sizeBtn": "oaE6AG_sizeBtn",
+			"body": "oaE6AG_body",
+			"catsToggle": "oaE6AG_catsToggle",
+			"owner": "oaE6AG_owner",
+			"top": "oaE6AG_top",
+			"filterOption": "oaE6AG_filterOption",
+			"src": "oaE6AG_src",
+			"tab": "oaE6AG_tab",
+			"act": "oaE6AG_act",
+			"foot": "oaE6AG_foot",
+			"irow": "oaE6AG_irow",
+			"tabs": "oaE6AG_tabs",
+			"cmd": "oaE6AG_cmd",
+			"filterTitle": "oaE6AG_filterTitle",
+			"pager": "oaE6AG_pager",
+			"backupMessage": "oaE6AG_backupMessage",
+			"staleAction": "oaE6AG_staleAction",
+			"backupActions": "oaE6AG_backupActions",
+			"star": "oaE6AG_star",
+			"spin": "oaE6AG_spin",
+			"loading": "oaE6AG_loading",
+			"backupWarn": "oaE6AG_backupWarn",
+			"pageBtn": "oaE6AG_pageBtn",
+			"pct": "oaE6AG_pct",
+			"backupButton": "oaE6AG_backupButton",
+			"restart": "oaE6AG_restart",
+			"filterPanel": "oaE6AG_filterPanel",
+			"on": "oaE6AG_on",
+			"sect": "oaE6AG_sect",
+			"okState": "oaE6AG_okState",
+			"filterBtnOn": "oaE6AG_filterBtnOn",
+			"swatches": "oaE6AG_swatches",
+			"desc": "oaE6AG_desc",
+			"grow": "oaE6AG_grow",
+			"actWarn": "oaE6AG_actWarn",
+			"tag": "oaE6AG_tag",
+			"backupPrimary": "oaE6AG_backupPrimary",
+			"backupCheck": "oaE6AG_backupCheck",
+			"cmdSummary": "oaE6AG_cmdSummary",
+			"dangerArmed": "oaE6AG_dangerArmed",
+			"sizeOn": "oaE6AG_sizeOn",
+			"backupInput": "oaE6AG_backupInput",
+			"sub": "oaE6AG_sub",
+			"actWhy": "oaE6AG_actWhy",
+			"sp": "oaE6AG_sp",
+			"filterGroup": "oaE6AG_filterGroup",
+			"actLive": "oaE6AG_actLive",
+			"progress": "oaE6AG_progress",
+			"pagerSize": "oaE6AG_pagerSize",
+			"cmdDetails": "oaE6AG_cmdDetails",
+			"backupGrid": "oaE6AG_backupGrid",
+			"barWave": "oaE6AG_barWave",
+			"head": "oaE6AG_head",
+			"bar": "oaE6AG_bar",
+			"filterBtn": "oaE6AG_filterBtn",
+			"empty": "oaE6AG_empty",
+			"searchInline": "oaE6AG_searchInline",
+			"filterWrap": "oaE6AG_filterWrap"
 		};
 		//#endregion
 		//#region src/client/MarketSection.tsx
@@ -617,6 +677,38 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			96
 		];
 		const DEFAULT_PAGE_SIZE = 24;
+		const WEBDAV_STORAGE_KEY = "dshm-webdav";
+		function savedWebdav() {
+			try {
+				const value = JSON.parse(localStorage.getItem(WEBDAV_STORAGE_KEY) ?? "{}");
+				return {
+					url: typeof value.url === "string" ? value.url : "",
+					username: typeof value.username === "string" ? value.username : "",
+					password: "",
+					auto: value.auto === true
+				};
+			} catch {
+				return {
+					url: "",
+					username: "",
+					password: "",
+					auto: false
+				};
+			}
+		}
+		function backupDependencies(value) {
+			if (value === null || typeof value !== "object") throw new Error("invalid backup");
+			const backup = value;
+			if (backup.format !== "dsh-profile-backup" || backup.version !== .2) throw new Error("unsupported backup format");
+			const files = backup.files;
+			if (!Array.isArray(files)) throw new Error("unsupported backup format");
+			const manifest = files.find((file) => file !== null && typeof file === "object" && file.path === "package.json");
+			if (manifest?.json === null || typeof manifest?.json !== "object" || Array.isArray(manifest.json)) throw new Error("backup package.json is invalid");
+			const dependencies = manifest.json.dependencies;
+			if (dependencies === null || typeof dependencies !== "object" || Array.isArray(dependencies)) return {};
+			if (!Object.values(dependencies).every((spec) => typeof spec === "string")) throw new Error("backup dependencies are invalid");
+			return dependencies;
+		}
 		/** Sort field choices in the filter panel. */
 		const SORT_FIELD_OPTIONS = [{
 			key: "stars",
@@ -656,6 +748,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		];
 		function MarketSection(props) {
 			const t = props.t;
+			const initialWebdav = (0, react.useMemo)(savedWebdav, []);
 			const localeSnap = (0, react.useSyncExternalStore)((cb) => props.locale.subscribe(cb), () => props.locale.getSnapshot());
 			const lang = String(localeSnap.active).toLowerCase().startsWith("zh") ? "zh" : "en";
 			const themeSnap = (0, react.useSyncExternalStore)(props.themeStore.subscribe, props.themeStore.getSnapshot);
@@ -666,6 +759,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				cachedInstalled = value;
 				setInstalledState(value);
 			}, []);
+			const [installedFiles, setInstalledFiles] = (0, react.useState)([]);
 			const [skins, setSkins] = (0, react.useState)([]);
 			const [tab, setTab] = (0, react.useState)(() => {
 				const saved = sessionStorage.getItem("dshm-tab");
@@ -720,6 +814,15 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const [restartEnabled, setRestartEnabled] = (0, react.useState)(false);
 			const [restarting, setRestarting] = (0, react.useState)(false);
 			const [showTop, setShowTop] = (0, react.useState)(false);
+			const [backupBusy, setBackupBusy] = (0, react.useState)(false);
+			const [backupMessage, setBackupMessage] = (0, react.useState)(null);
+			const [backupRestored, setBackupRestored] = (0, react.useState)(false);
+			const [pendingBackup, setPendingBackup] = (0, react.useState)(null);
+			const [pendingDependencies, setPendingDependencies] = (0, react.useState)({});
+			const [webdavUrl, setWebdavUrl] = (0, react.useState)(initialWebdav.url);
+			const [webdavUser, setWebdavUser] = (0, react.useState)(initialWebdav.username);
+			const [webdavPassword, setWebdavPassword] = (0, react.useState)(initialWebdav.password);
+			const [autoBackup, setAutoBackup] = (0, react.useState)(initialWebdav.auto);
 			const bodyRef = (0, react.useRef)(null);
 			const [sortField, setSortField] = (0, react.useState)("stars");
 			const [sortDir, setSortDir] = (0, react.useState)("desc");
@@ -734,6 +837,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const refreshInstalled = (0, react.useCallback)((force) => {
 				fetch("/dsh-market/installed", { cache: "no-store" }).then((res) => res.json()).then((body) => {
 					setInstalled(body.installed || {});
+					setInstalledFiles(Array.isArray(body.present) ? body.present : Object.keys(body.installed || {}));
 					setSkins(body.live || []);
 					if (body.activation && typeof body.activation === "object") setActivations(body.activation);
 				}).catch(() => {});
@@ -1144,7 +1248,100 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				};
 				next();
 			}, [updatableNames, doUpdate]);
-			const pendingRestart = doneUrls.length + updatedNames.length + removedCount;
+			const finishRestore = (0, react.useCallback)((body) => {
+				const errors = Array.isArray(body.errors) ? body.errors : [];
+				if (errors.length > 0) window.alert(`${t("restorePartial")}\n\n${errors.map((item) => `${String(item.name)}: ${String(item.error)}`).join("\n")}`);
+				setBackupRestored(true);
+				setBackupMessage(t("restoreDone"));
+				if (errors.length === 0) {
+					setPendingBackup(null);
+					setPendingDependencies({});
+				}
+				refreshInstalled(true);
+			}, [refreshInstalled, t]);
+			const previewBackup = (0, react.useCallback)((backup) => {
+				const dependencies = backupDependencies(backup);
+				setPendingBackup(backup);
+				setPendingDependencies(dependencies);
+				setBackupMessage(t("restorePreviewDone"));
+				setTab("installed");
+			}, [t]);
+			const restoreBackup = (0, react.useCallback)(() => {
+				if (pendingBackup === null) return Promise.resolve();
+				if (!window.confirm(t("restoreConfirm"))) return Promise.resolve();
+				setBackupBusy(true);
+				setBackupMessage(null);
+				return fetch("/dsh-market/restore", {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({ backup: pendingBackup })
+				}).then(async (response) => {
+					const body = await response.json();
+					if (!response.ok) throw new Error(String(body.error || "restore failed"));
+					finishRestore(body);
+				}).catch((error) => setBackupMessage(String(error))).finally(() => setBackupBusy(false));
+			}, [
+				finishRestore,
+				pendingBackup,
+				t
+			]);
+			const runWebdav = (0, react.useCallback)((action) => {
+				if (webdavUrl.trim() === "") return;
+				setBackupBusy(true);
+				setBackupMessage(null);
+				fetch("/dsh-market/webdav", {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({
+						action,
+						url: webdavUrl.trim(),
+						username: webdavUser,
+						password: webdavPassword
+					})
+				}).then(async (response) => {
+					const body = await response.json();
+					if (!response.ok) throw new Error(String(body.error || "WebDAV failed"));
+					if (action === "restore") previewBackup(body.backup);
+					if (action === "backup") {
+						try {
+							localStorage.setItem("dshm-webdav-last", String(Date.now()));
+						} catch {}
+						setBackupMessage(t("backupDone"));
+					}
+				}).catch((error) => setBackupMessage(String(error))).finally(() => setBackupBusy(false));
+			}, [
+				previewBackup,
+				t,
+				webdavPassword,
+				webdavUrl,
+				webdavUser
+			]);
+			(0, react.useEffect)(() => {
+				try {
+					localStorage.setItem(WEBDAV_STORAGE_KEY, JSON.stringify({
+						url: webdavUrl,
+						username: webdavUser,
+						auto: autoBackup
+					}));
+				} catch {}
+				if (!autoBackup || webdavUrl.trim() === "") return;
+				let last = 0;
+				try {
+					last = Number(localStorage.getItem("dshm-webdav-last")) || 0;
+				} catch {}
+				if (Date.now() - last >= 864e5) runWebdav("backup");
+			}, [
+				autoBackup,
+				runWebdav,
+				webdavUrl,
+				webdavUser
+			]);
+			const pendingRestart = doneUrls.length + updatedNames.length + removedCount + (backupRestored ? 1 : 0);
+			const displayedInstalled = pendingBackup === null ? installed : {
+				...pendingDependencies,
+				...installed
+			};
+			const missingRestoreCount = Object.keys(pendingDependencies).filter((name) => !installedFiles.includes(name)).length;
 			const hasUpdates = Object.keys(installed).some((name) => !updatedNames.includes(name) && updates[name] && updates[name].updateAvailable);
 			/** Live status line: structured phase, or the human-line fallback. */
 			const phasePart = progressPhase != null ? phaseLabel(progressPhase, t) + (progressCurrent !== null ? " · " + progressCurrent : "") + (progressDone > 0 ? " · " + t("packagesDone").replace("{0}", String(progressDone)) : "") : progressLine || t("progressHint");
@@ -1491,8 +1688,13 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 											className: Market_module_css_default.dot
 										})]
 									}),
+									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+										className: tab === "backup" ? `${Market_module_css_default.tab} ${Market_module_css_default.on}` : Market_module_css_default.tab,
+										onClick: () => setTab("backup"),
+										children: t("tabBackup")
+									}),
 									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { className: Market_module_css_default.grow }),
-									/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
+									tab !== "backup" && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
 										className: Market_module_css_default.searchInline,
 										icon: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconSearchOutline16, { size: 14 }),
 										placeholder: t("searchPh"),
@@ -1515,6 +1717,23 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 										disabled: envFixing,
 										onClick: fixEnv,
 										children: envFixing ? t("envFixing") : t("envFix")
+									})
+								]
+							}),
+							tab === "installed" && pendingBackup !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+								className: Market_module_css_default.restart,
+								children: [
+									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: "↺" }),
+									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+										className: Market_module_css_default.grow,
+										children: t("restoreMissing").replace("{0}", String(missingRestoreCount))
+									}),
+									/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+										variant: "primary",
+										size: "sm",
+										disabled: backupBusy,
+										onClick: restoreBackup,
+										children: backupBusy ? t("backupWorking") : t("restoreStart")
 									})
 								]
 							}),
@@ -1631,7 +1850,137 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						className: Market_module_css_default.body,
 						ref: bodyRef,
 						onScroll: (e) => setShowTop(e.currentTarget.scrollTop > 400),
-						children: tab === "discover" ? loadError ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+						children: tab === "backup" ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+							className: Market_module_css_default.backupGrid,
+							children: [
+								/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("section", {
+									className: Market_module_css_default.backupCard,
+									children: [
+										/* @__PURE__ */ (0, react_jsx_runtime.jsx)("h3", { children: t("backupLocal") }),
+										/* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", { children: t("backupHint") }),
+										/* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+											className: Market_module_css_default.backupWarn,
+											children: t("credsWarning")
+										}),
+										/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+											className: Market_module_css_default.backupActions,
+											children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("a", {
+												className: `${Market_module_css_default.backupButton} ${Market_module_css_default.backupPrimary}`,
+												href: "/dsh-market/backup",
+												download: true,
+												"aria-disabled": backupBusy,
+												children: t("backupDownload")
+											}), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
+												className: Market_module_css_default.backupButton,
+												"aria-disabled": backupBusy,
+												children: [backupBusy ? t("backupWorking") : t("backupImport"), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+													type: "file",
+													accept: "application/json,.json",
+													disabled: backupBusy,
+													onChange: (event) => {
+														const file = event.currentTarget.files?.[0];
+														event.currentTarget.value = "";
+														if (file !== void 0) file.text().then((text) => previewBackup(JSON.parse(text))).catch((error) => setBackupMessage(String(error)));
+													}
+												})]
+											})]
+										})
+									]
+								}),
+								/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("section", {
+									className: Market_module_css_default.backupCard,
+									children: [
+										/* @__PURE__ */ (0, react_jsx_runtime.jsx)("h3", { children: t("webdav") }),
+										/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("select", {
+											className: Market_module_css_default.backupInput,
+											"aria-label": t("webdavPreset"),
+											defaultValue: "",
+											onChange: (event) => {
+												const urls = {
+													jianguoyun: "https://dav.jianguoyun.com/dav/dsh-profile-backup.json",
+													koofr: "https://app.koofr.net/dav/Koofr/dsh-profile-backup.json",
+													nextcloud: "https://nextcloud.example/remote.php/dav/files/USERNAME/dsh-profile-backup.json"
+												};
+												if (urls[event.target.value] !== void 0) setWebdavUrl(urls[event.target.value]);
+											},
+											children: [
+												/* @__PURE__ */ (0, react_jsx_runtime.jsx)("option", {
+													value: "",
+													children: t("webdavPreset")
+												}),
+												/* @__PURE__ */ (0, react_jsx_runtime.jsx)("option", {
+													value: "jianguoyun",
+													children: "坚果云 / Nutstore"
+												}),
+												/* @__PURE__ */ (0, react_jsx_runtime.jsx)("option", {
+													value: "koofr",
+													children: "Koofr"
+												}),
+												/* @__PURE__ */ (0, react_jsx_runtime.jsx)("option", {
+													value: "nextcloud",
+													children: "Nextcloud"
+												})
+											]
+										}),
+										/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+											className: Market_module_css_default.backupInput,
+											type: "url",
+											value: webdavUrl,
+											placeholder: t("webdavUrl"),
+											onChange: (e) => setWebdavUrl(e.target.value)
+										}),
+										/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+											className: Market_module_css_default.backupInput,
+											autoComplete: "username",
+											value: webdavUser,
+											placeholder: t("webdavUser"),
+											onChange: (e) => setWebdavUser(e.target.value)
+										}),
+										/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+											className: Market_module_css_default.backupInput,
+											type: "password",
+											autoComplete: "current-password",
+											value: webdavPassword,
+											placeholder: t("webdavPassword"),
+											onChange: (e) => setWebdavPassword(e.target.value)
+										}),
+										/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+											className: Market_module_css_default.backupActions,
+											children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+												variant: "primary",
+												size: "sm",
+												disabled: backupBusy || webdavUrl.trim() === "",
+												onClick: () => runWebdav("backup"),
+												children: backupBusy ? t("backupWorking") : t("webdavUpload")
+											}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+												variant: "outline",
+												size: "sm",
+												disabled: backupBusy || webdavUrl.trim() === "",
+												onClick: () => runWebdav("restore"),
+												children: t("webdavRestore")
+											})]
+										}),
+										/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
+											className: Market_module_css_default.backupCheck,
+											children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+												type: "checkbox",
+												checked: autoBackup,
+												onChange: (e) => setAutoBackup(e.target.checked)
+											}), t("autoBackup")]
+										}),
+										/* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", { children: t("webdavNote") }),
+										/* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+											className: Market_module_css_default.backupWarn,
+											children: t("credsWarning")
+										})
+									]
+								}),
+								backupMessage !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+									className: Market_module_css_default.backupMessage,
+									children: backupMessage
+								})
+							]
+						}) : tab === "discover" ? loadError ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 							className: Market_module_css_default.empty,
 							children: t("loadFail")
 						}) : data === null ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
@@ -1812,10 +2161,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						}) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 							className: Market_module_css_default.grid,
 							children: themePlugins$1.map(themePluginCard)
-						})] }) : Object.keys(installed).length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+						})] }) : Object.keys(displayedInstalled).length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 							className: Market_module_css_default.empty,
 							children: t("installedEmpty")
-						}) : Object.entries(installed).map(([name, spec]) => {
+						}) : Object.entries(displayedInstalled).map(([name, spec]) => {
+							const missing = pendingBackup !== null && !installedFiles.includes(name);
 							const entry = data === null ? void 0 : entryForDep(data.plugins, name, String(spec));
 							const status = updates[name];
 							const act = activations[name];
@@ -1825,7 +2175,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 							const ghSpec = /^github:([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:#|$)/.exec(specText);
 							const repoUrl = entry !== void 0 ? entry.url : ghSpec !== null ? "https://github.com/" + ghSpec[1] : null;
 							return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-								className: Market_module_css_default.irow,
+								className: missing ? `${Market_module_css_default.irow} ${Market_module_css_default.irowMissing}` : Market_module_css_default.irow,
 								children: [
 									/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 										style: { minWidth: 0 },
@@ -1906,7 +2256,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 										rel: "noreferrer",
 										children: t("readme")
 									}),
-									updatedNames.includes(name) ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+									missing ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+										className: Market_module_css_default.owner,
+										children: t("notInstalled")
+									}) : updatedNames.includes(name) ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 										className: Market_module_css_default.okState,
 										children: act?.state === "live" ? t("updatedLive") : t("updated")
 									}) : updatingName === name ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
@@ -1929,7 +2282,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 										className: Market_module_css_default.owner,
 										children: t("upToDate")
 									}),
-									name !== "dsh-market" && name !== "dshmarket" && (removingName === name ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+									!missing && name !== "dsh-market" && name !== "dshmarket" && (removingName === name ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 										variant: "outline",
 										size: "sm",
 										className: Market_module_css_default.dangerBtn,
