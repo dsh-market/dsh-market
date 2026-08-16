@@ -31,6 +31,22 @@ export function repoOf(url: string): string | null {
 }
 
 /**
+ * The allowBuilds key that actually authorizes a git-hosted dependency's
+ * build scripts. Verified against pnpm 11.21 (#68 by @yzr278892): for a
+ * `github:owner/repo` install, a bare `name: true` entry does NOT match —
+ * pnpm's own hint names a commit-pinned codeload URL that changes on every
+ * push; the stable form that matches is `name@git+https://github.com/owner/repo.git`.
+ * @param name - installed package name.
+ * @param spec - the dependency spec from package.json, or the install target.
+ * @returns the stable key, or null when the spec is not github-hosted.
+ */
+export function gitAllowBuildsKey(name: string, spec: string): string | null {
+  const m = /^github:([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:\.git)?(?:#.*)?$/.exec(spec)
+  if (m === null) return null
+  return `${name}@git+https://github.com/${m[1]}.git`
+}
+
+/**
  * The pnpm install target for a registry entry. Registry tarballs beat
  * full-repo GitHub downloads: smaller, prebuilt, and CDN/mirror served. The
  * npm name comes from our curated registry, which only maps repo-verified

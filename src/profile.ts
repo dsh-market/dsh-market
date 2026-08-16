@@ -148,17 +148,22 @@ export function setAllowBuilds(profile: string, packages: string[]): string[] {
   const blockMatch = blockRe.exec(yaml)
   if (blockMatch !== null) {
     for (const line of blockMatch[1].split('\n')) {
-      const m = /^[ \t]+([^:\s]+(?:\/[^:\s]+)?)\s*:\s*(\S.*)?$/.exec(line)
-      if (m === null) continue
-      // Keep only real booleans: pnpm's failed-install bug (#11535, seen in
-      // our #56) writes a literal "set this to true or false" placeholder,
+      // The key itself may contain colons: git-hosted deps are only matched
+      // by a `name@git+https://…` key (#68). The anchored boolean tail makes
+      // the split land on the LAST colon, never inside a `://` — and doubles
+      // as the placeholder filter: pnpm's failed-install bug (#11535, seen
+      // in our #56) writes a literal "set this to true or false" value,
       // which breaks every later approval until the entry is dropped.
-      const value = (m[2] ?? 'true').trim()
-      if (/^(true|false)$/.test(value)) map[m[1]] = value
+      const m = /^[ \t]+(\S.*?)\s*:\s*(true|false)?\s*$/.exec(line)
+      if (m === null || m[1] === '') continue
+      map[m[1]] = m[2] ?? 'true'
     }
   }
+  // Bare package names, or the server-derived stable git form
+  // `name@git+https://github.com/owner/repo.git` (#68) — nothing else.
+  const GIT_KEY_RE = /^[A-Za-z0-9@/_.-]+@git\+https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\.git$/
   for (const pkg of packages) {
-    if (/^[A-Za-z0-9@/_.-]+$/.test(pkg)) map[pkg] = 'true'
+    if (/^[A-Za-z0-9@/_.-]+$/.test(pkg) || GIT_KEY_RE.test(pkg)) map[pkg] = 'true'
   }
   const block = Object.entries(map).map(([k, v]) => `  ${k}: ${v}`).join('\n')
   const blockText = `allowBuilds:\n${block}\n`

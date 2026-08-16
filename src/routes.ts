@@ -19,8 +19,8 @@ import {
 import { exportLogs, logEvent } from './log.ts'
 import { BOOT_ID, cancelActive, probePnpm, progress, provisionPnpm, runDshPlugin } from './dsh-cli.ts'
 import { profileDir, readInstalled, readInstalledVersion, readLockCommits, setAllowBuilds } from './profile.ts'
-import { findInstalledAlias, installTargetFor } from './sources.ts'
-import { isStaleUpdate, parseIgnoredBuilds, RELEASE_AGE_OVERRIDE, retargetCollections, validateAddedPlugins, withHoistRecovery } from './install.ts'
+import { findInstalledAlias, gitAllowBuildsKey, installTargetFor } from './sources.ts'
+import { isStaleUpdate, parseIgnoredBuilds, parsePrepareNotAllowed, RELEASE_AGE_OVERRIDE, retargetCollections, validateAddedPlugins, withHoistRecovery } from './install.ts'
 import { checkUpdates, fetchNpmLatest, invalidateUpdates, isUpgrade, latestPublishedRecently } from './updates.ts'
 import { createThemeManager, type LoaderEntry } from './themes.ts'
 import { readJsonBody, sameOrigin, sendJson } from './http.ts'
@@ -54,6 +54,21 @@ export interface MarketConfig {
 }
 
 const PROFILE_RE = /^[A-Za-z0-9_-]+$/
+
+/**
+ * Packages whose build scripts pnpm refused to run, from any of its three
+ * reporting shapes: the structured ndjson event (pnpm 11), the human
+ * "Ignored build scripts:" line, or the fetcher's git-prepare rejection —
+ * which fires BEFORE the package lands in node_modules (#68). Undefined when
+ * none, so the field can be spread straight into a JSON response.
+ */
+function blockedBuilds(result: { ignoredBuilds?: unknown; stdout: string; stderr: string }): string[] | undefined {
+  if (Array.isArray(result.ignoredBuilds) && result.ignoredBuilds.length > 0) return result.ignoredBuilds as string[]
+  const list = parseIgnoredBuilds(result.stdout, result.stderr)
+  if (list.length > 0) return list
+  const pending = parsePrepareNotAllowed(result.stdout, result.stderr)
+  return pending !== null ? [pending] : undefined
+}
 
 /**
  * Register the market's HTTP routes.
@@ -377,6 +392,12 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
                 ? '这个新版本刚发布不久。为了安全，系统默认会等它发布满一天后再安装——刚发布的版本偶尔会被发现问题然后撤回。可以明天再试，或点「立即更新」不再等待。 / This version was just released; for safety, installs normally wait about a day after a release. Try again tomorrow, or click "Update now" to install it right away.'
                 : '更新命令执行完成，但版本没有变化，原因未能确认。点「立即更新」重试通常能解决；若仍不行，请导出日志反馈。 / The update command completed but the version did not change; the cause could not be confirmed. Clicking "Update now" to retry usually resolves it — if not, export the log and report it.'
             const cancelDiff = cancelled ? changedSince(beforeInstalled) : null
+            // Build-script blocks hit updates too (#69): a leftover invalid
+            // allowBuilds entry (pnpm's placeholder bug, #56) or a newly
+            // build-required dep fails the add with ERR_PNPM_IGNORED_BUILDS.
+            // Reporting the blocked packages here gives the client the same
+            // approve-and-retry banner the install flow has had since #6.
+            const ignoredBuilds = ok || cancelled ? undefined : blockedBuilds(result)
             logEvent(ok || cancelled ? 'info' : 'error', 'update',
               `${name} -> ${target} exit=${String(result.exitCode)}${result.timedOut ? ' TIMEOUT' : ''}${cancelled ? ' CANCELLED' : ''}${stale ? ` STALE(${staleReason ?? 'unknown'})` : ''}${ok || cancelled ? '' : ` stderr=${result.stderr.slice(-300)}`}`)
             // A user-cancelled run is a quiet outcome, not an error.
@@ -387,6 +408,7 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
               partial: cancelDiff?.partial,
               changed: cancelDiff?.changed,
               activation,
+              ignoredBuilds,
               staleReason: staleReason ?? undefined,
               error: staleError ?? undefined,
               exitCode: result.exitCode,
@@ -499,9 +521,39 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
           }
           const PKG_RE = /^(@[A-Za-z0-9-~][A-Za-z0-9._~-]*\/)?[A-Za-z0-9-~][A-Za-z0-9._~-]*$/
           const body = (await readJsonBody(request)) as { packages?: unknown }
-          const packages = (Array.isArray(body.packages) ? body.packages.map(String).map(stripVersion) : [])
-            .filter(name => PKG_RE.test(name)
-              && existsSync(join(profileDir(config.profile), 'node_modules', name, 'package.json')))
+          const requested = (Array.isArray(body.packages) ? body.packages.map(String).map(stripVersion) : [])
+            .filter(name => PKG_RE.test(name))
+          const installed = requested
+            .filter(name => existsSync(join(profileDir(config.profile), 'node_modules', name, 'package.json')))
+          // Git-hosted plugins rejected by pnpm's FETCHER (#68) exist in
+          // neither node_modules nor package.json — the only trusted anchor
+          // left is the curated registry itself: a name that resolves to a
+          // github-sourced catalog entry may be approved pre-materialization.
+          //
+          // pnpm only matches a git-hosted dep's allowBuilds entry under its
+          // stable `name@git+https://…` key (#68/#69) — a bare name entry is
+          // ignored (verified against pnpm 11.21). Derive that key wherever
+          // the github source is known: from the profile spec for installed
+          // deps, from the curated registry for pending ones. The bare name
+          // is kept alongside — it authorizes the npm-sourced case.
+          const specs = readInstalled(config.profile)
+          const packages: string[] = []
+          for (const name of requested) {
+            if (installed.includes(name)) {
+              packages.push(name)
+              const key = gitAllowBuildsKey(name, String(specs[name] ?? ''))
+              if (key !== null) packages.push(key)
+              continue
+            }
+            if (specs[name] !== undefined) continue
+            const { registry } = await loadRegistry()
+            const entry = registry.plugins.find(p => p.name === name || p.npm === name)
+            const target = entry === undefined ? null : installTargetFor(entry)
+            const key = target === null ? null : gitAllowBuildsKey(name, target)
+            if (key !== null) {
+              packages.push(name, key)
+            }
+          }
           if (packages.length === 0) {
             sendJson(response, 400, { error: 'no installed packages given' })
             return
@@ -746,12 +798,7 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
             }
             logEvent(ok || cancelled ? 'info' : 'error', 'install',
               `${target} exit=${String(result.exitCode)}${result.timedOut ? ' TIMEOUT' : ''}${cancelled ? ' CANCELLED' : ''}${ok ? ` hot=${String(hot)}` : cancelled ? '' : ` stderr=${result.stderr.slice(-300)}`}`)
-            const ignoredBuilds = (() => {
-              // Prefer the structured event (pnpm 11 ndjson) over the human line.
-              if (Array.isArray(result.ignoredBuilds) && result.ignoredBuilds.length > 0) return result.ignoredBuilds
-              const list = parseIgnoredBuilds(result.stdout, result.stderr)
-              return list.length > 0 ? list : undefined
-            })()
+            const ignoredBuilds = blockedBuilds(result)
             sendJson(response, ok || cancelled ? 200 : 502, {
               ok,
               cancelled: cancelled || undefined,

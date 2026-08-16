@@ -147,6 +147,24 @@ describe('setAllowBuilds (#6)', () => {
     expect(yaml).toMatch(/ssh2: true/)
   })
 
+  it('preserves existing git+https keys (whose keys contain colons) and accepts new ones (#68/#69)', async () => {
+    const { setAllowBuilds } = await import('../src/profile.ts')
+    const dir = writeProfile({})
+    // A git-hosted dep is only matched under its `name@git+https://…` key;
+    // the old line parser split on the FIRST colon and silently dropped
+    // such entries on every rewrite.
+    writeFileSync(join(dir, 'pnpm-workspace.yaml'),
+      'packages:\n  - .\n\nallowBuilds:\n  keep-me@git+https://github.com/o/keep-me.git: true\n  plain: false\n')
+    const approved = setAllowBuilds('web', ['dsh-audit@git+https://github.com/omdsh-dev/dsh-audit.git', 'dsh-audit', 'evil@git+https://evil.example/x.git'])
+    expect(approved).toContain('keep-me@git+https://github.com/o/keep-me.git')
+    expect(approved).toContain('dsh-audit@git+https://github.com/omdsh-dev/dsh-audit.git')
+    expect(approved).toContain('dsh-audit')
+    expect(approved).not.toContain('evil@git+https://evil.example/x.git')
+    const yaml = readFileSync(join(dir, 'pnpm-workspace.yaml'), 'utf8')
+    expect(yaml).toContain('keep-me@git+https://github.com/o/keep-me.git: true')
+    expect(yaml).toMatch(/plain: false/)
+  })
+
   it('creates the block when the yaml has none', async () => {
     const { setAllowBuilds } = await import('../src/profile.ts')
     const dir = writeProfile({})

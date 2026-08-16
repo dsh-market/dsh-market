@@ -155,8 +155,12 @@ export function MarketSection(props: MarketSectionProps) {
 
   /** Determinate percent parsed from pnpm's Progress line, when available. */
   const [progressPct, setProgressPct] = useState<number | null>(null)
-  /** Blocked build scripts from the last install: enables approve-and-retry (#6). */
-  const [buildsSkipped, setBuildsSkipped] = useState<{ plugin: RegistryPlugin; names: string[] } | null>(null)
+  /**
+   * Blocked build scripts from the last install or update: enables
+   * approve-and-retry (#6; updates in #69). Exactly one of `plugin`
+   * (retry installs it) / `updateName` (retry re-runs the update) is set.
+   */
+  const [buildsSkipped, setBuildsSkipped] = useState<{ plugin?: RegistryPlugin; updateName?: string; names: string[] } | null>(null)
   const [updatingAll, setUpdatingAll] = useState(false)
   const [updatedNames, setUpdatedNames] = useState<string[]>([])
   const [hotUrls, setHotUrls] = useState<string[]>([])
@@ -543,6 +547,11 @@ export function MarketSection(props: MarketSectionProps) {
         } else {
           if (status === 409) { setInstallError(t('busyWait')); return }
           if (body.stale === true) setStaleName(name)
+          // Blocked build scripts during an update (#69): same
+          // approve-and-retry banner as the install flow, retrying the update.
+          if (Array.isArray(body.ignoredBuilds) && body.ignoredBuilds.length > 0) {
+            setBuildsSkipped({ updateName: name, names: body.ignoredBuilds.map(String) })
+          }
           const text = (v: unknown) => typeof v === 'string' ? v : (v && typeof (v as any).text === 'string') ? (v as any).text : v == null ? '' : JSON.stringify(v)
           const detail = text(body.error) || [text(body.stderr), text(body.stdout)].filter(Boolean).join('\n').trim() || ('exit ' + body.exitCode)
           setInstallError(t('updateFail') + ': ' + name + ' — ' + detail.trim().slice(-600))
@@ -900,7 +909,7 @@ export function MarketSection(props: MarketSectionProps) {
             size="sm"
             disabled={busyUrl !== null}
             onClick={() => {
-              const { plugin, names } = buildsSkipped
+              const { plugin, updateName, names } = buildsSkipped
               setBuildsSkipped(null)
               fetch('/dsh-market/approve-builds', {
                 method: 'POST',
@@ -909,8 +918,9 @@ export function MarketSection(props: MarketSectionProps) {
               })
                 .then(res => res.json())
                 .then((body) => {
-                  if (body.ok) doInstall(plugin)
-                  else setInstallError(String(body.error || 'approve failed'))
+                  if (!body.ok) setInstallError(String(body.error || 'approve failed'))
+                  else if (plugin !== undefined) doInstall(plugin)
+                  else if (updateName !== undefined) doUpdate(updateName)
                 })
                 .catch(error => setInstallError(String(error)))
             }}

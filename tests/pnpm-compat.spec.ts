@@ -59,4 +59,13 @@ describe('classifyPnpmFailure', () => {
     // Unrecognized output → null, the raw text is then surfaced as-is.
     expect(classifyPnpmFailure('some other failure')).toBeNull()
   })
+
+  it('recognizes both build-script blocks: ignored builds (#69) and the git-prepare fetcher rejection (#68)', () => {
+    const ignored = classifyPnpmFailure('[ERR_PNPM_IGNORED_BUILDS]\nIgnored build scripts: dsh-github-intelligence@https://codeload.github.com/z/r/tar.gz/abc.')
+    expect(ignored?.code).toBe('ignored-builds')
+    expect(ignored?.message).toContain('允许构建脚本并重试')
+    const prepare = classifyPnpmFailure('[ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED] Failed to prepare git-hosted package fetched from "https://codeload.github.com/z/r/tar.gz/abc": The git-hosted package "r@2.8.0" needs to execute build scripts but is not in the "allowBuilds" allowlist.')
+    expect(prepare?.code).toBe('git-prepare-not-allowed')
+    expect(prepare?.message).toContain('允许构建脚本并重试')
+  })
 })

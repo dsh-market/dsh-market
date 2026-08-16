@@ -43,6 +43,8 @@ const fake = vi.hoisted(() => ({
   cancelNext: false,
   /** Appended to the next add's stdout (e.g. pnpm's Ignored build scripts line). */
   buildScriptOutputOnce: '',
+  /** Fail the next add with exit 1 and this stderr (e.g. ERR_PNPM_IGNORED_BUILDS, #68/#69). */
+  failNextAddStderrOnce: '',
   /** True while a fake command is in flight (mirrors the real activeChild). */
   running: false,
   calls: [] as string[][],
@@ -107,6 +109,11 @@ vi.mock('../src/dsh-cli.ts', () => {
       return ok
     }
     // cmd === 'add'
+    if (fake.failNextAddStderrOnce !== '') {
+      const stderr = fake.failNextAddStderrOnce
+      fake.failNextAddStderrOnce = ''
+      return { exitCode: 1, timedOut: false, stdout: '', stderr, cancelled: false }
+    }
     if (target.startsWith('github:')) {
       const repo = fake.repos[target]
       if (repo === undefined) return { exitCode: 1, timedOut: false, stdout: '', stderr: `fake dsh: unknown repo ${target}`, cancelled: false }
@@ -289,6 +296,7 @@ beforeEach(() => {
   fake.gate = null
   fake.cancelNext = false
   fake.buildScriptOutputOnce = ''
+  fake.failNextAddStderrOnce = ''
   fake.running = false
   fake.calls = []
   restartCalls.count = 0
@@ -441,6 +449,20 @@ describe('update flow — no npm publishing required', () => {
     expect(installedSpec('dsh-loop')).toBe('^1.2.0')
     const lastAdd = fake.calls[fake.calls.length - 1]
     expect(lastAdd).toContain('--config.minimumReleaseAge=0')
+  })
+
+  it('surfaces blocked build scripts during an update so the approve banner can retry it (#69)', async () => {
+    advanceNpmLatest('1.2.0')
+    // A leftover invalid allowBuilds entry (pnpm's placeholder bug, #56)
+    // makes the update's `add` re-evaluate a git-hosted dep and hard-fail.
+    fake.failNextAddStderrOnce = '[ERR_PNPM_IGNORED_BUILDS]\nIgnored build scripts: dsh-github-intelligence@https://codeload.github.com/zoahdev/dsh-github-intelligence/tar.gz/abc123.'
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+    expect(r.status).toBe(502)
+    expect(r.json.ok).toBe(false)
+    // The blocked package (bare name), so the client shows approve-and-retry.
+    expect(r.json.ignoredBuilds).toEqual(['dsh-github-intelligence'])
+    // The bilingual classification is appended to the raw stack.
+    expect(String(r.json.stderr)).toContain('允许构建脚本并重试')
   })
 
   it('does NOT blame the safety wait when the target release is old — honest unknown-cause message (#45)', async () => {
@@ -651,6 +673,48 @@ describe('build-script approval flow (#6)', () => {
     expect(approve.json.approved).not.toContain('ghost-package')
     const yaml = readFileSync(join(profileDir('web'), 'pnpm-workspace.yaml'), 'utf8')
     expect(yaml).toMatch(/allowBuilds:[\s\S]*cloudflared: true/)
+  })
+
+  it('surfaces a git-prepare rejection and approves the not-yet-installed package via the curated registry (#68)', async () => {
+    // pnpm's fetcher rejects a git-hosted package with a prepare script
+    // BEFORE it lands in node_modules — nothing to existsSync against.
+    fake.failNextAddStderrOnce = '[ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED] Failed to prepare git-hosted package fetched from "https://codeload.github.com/omdsh-dev/dsh-security-audit/tar.gz/abc123": The git-hosted package "dsh-security-audit@2.8.0" needs to execute build scripts but is not in the "allowBuilds" allowlist.'
+    const first = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/omdsh-dev/dsh-security-audit' })
+    expect(first.status).toBe(502)
+    expect(first.json.ignoredBuilds).toEqual(['dsh-security-audit'])
+    // The bilingual classification replaces the raw stack as the lead hint.
+    expect(String(first.json.stderr)).toContain('允许构建脚本并重试')
+
+    // Approval is anchored to the curated registry (the package exists in
+    // neither node_modules nor package.json) and writes the stable git key —
+    // the only form pnpm matches for a git-hosted dep.
+    const approve = await bed.dispatch('POST', '/dsh-market/approve-builds', { packages: ['dsh-security-audit'] })
+    expect(approve.status).toBe(200)
+    expect(approve.json.approved).toContain('dsh-security-audit@git+https://github.com/omdsh-dev/dsh-security-audit.git')
+    const yaml = readFileSync(join(profileDir('web'), 'pnpm-workspace.yaml'), 'utf8')
+    expect(yaml).toContain('dsh-security-audit@git+https://github.com/omdsh-dev/dsh-security-audit.git: true')
+
+    // The retry (the banner re-runs the install) now succeeds.
+    fake.repos['github:omdsh-dev/dsh-security-audit'] = {
+      name: 'dsh-security-audit', manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'],
+    }
+    const retry = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/omdsh-dev/dsh-security-audit' })
+    expect(retry.status).toBe(200)
+    expect(retry.json.ok).toBe(true)
+  })
+
+  it('writes the stable git allowBuilds key for an installed github-sourced dependency (#69)', async () => {
+    fake.repos['github:o/blue-whale'] = { name: 'dsh-blue-whale', manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] }
+    await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/blue-whale' })
+    expect(installedSpec('dsh-blue-whale')).toBe('github:o/blue-whale')
+    // Approving the bare name (what pnpm's error reports) must also write
+    // the `name@git+https://…` key — a bare entry does not authorize a
+    // git-hosted dep (verified against pnpm 11.21 in #68/#69).
+    const approve = await bed.dispatch('POST', '/dsh-market/approve-builds', { packages: ['dsh-blue-whale'] })
+    expect(approve.status).toBe(200)
+    const yaml = readFileSync(join(profileDir('web'), 'pnpm-workspace.yaml'), 'utf8')
+    expect(yaml).toMatch(/allowBuilds:[\s\S]*  dsh-blue-whale: true/)
+    expect(yaml).toContain('dsh-blue-whale@git+https://github.com/o/blue-whale.git: true')
   })
 })
 

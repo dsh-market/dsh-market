@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { findInstalledAlias, installTargetFor, parseSourceUrl, repoOf } from '../src/sources.ts'
+import { findInstalledAlias, gitAllowBuildsKey, installTargetFor, parseSourceUrl, repoOf } from '../src/sources.ts'
 
 describe('parseSourceUrl', () => {
   it('accepts github repo urls, plain or with a /tree/<branch>/<subpath> suffix', () => {
@@ -35,6 +35,22 @@ describe('installTargetFor', () => {
       .toBe('github:o/r#path:/packages/x')
     expect(installTargetFor({ url: 'https://github.com/o/r' })).toBe('github:o/r')
     expect(installTargetFor({ url: 'https://gitlab.com/o/r' })).toBeNull()
+  })
+})
+
+describe('gitAllowBuildsKey (#68/#69)', () => {
+  it('derives the stable git+https key pnpm actually matches for github specs', () => {
+    expect(gitAllowBuildsKey('dsh-github-intelligence', 'github:zoahdev/dsh-github-intelligence'))
+      .toBe('dsh-github-intelligence@git+https://github.com/zoahdev/dsh-github-intelligence.git')
+    // Subpath and ref suffixes belong to the install selector, not the repo.
+    expect(gitAllowBuildsKey('plug-a', 'github:m/mono#path:/packages/plug-a'))
+      .toBe('plug-a@git+https://github.com/m/mono.git')
+    expect(gitAllowBuildsKey('x', 'github:o/r.git')).toBe('x@git+https://github.com/o/r.git')
+  })
+  it('returns null for non-github specs — npm ranges, links, tarballs', () => {
+    expect(gitAllowBuildsKey('dsh-loop', '^1.2.0')).toBeNull()
+    expect(gitAllowBuildsKey('dsh-loop', 'link:../dev')).toBeNull()
+    expect(gitAllowBuildsKey('dsh-loop', '')).toBeNull()
   })
 })
 

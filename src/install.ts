@@ -142,6 +142,22 @@ export function isStaleUpdate(check: {
 }
 
 /**
+ * The package pnpm's fetcher refused to prepare because its build script is
+ * not allowlisted — `The git-hosted package "name@2.8.0" needs to execute
+ * build scripts but is not in the "allowBuilds" allowlist.` Null when the
+ * output is not this failure. Unlike ignored-builds, the package is NOT in
+ * node_modules yet (the fetcher rejects before materialization, #68).
+ */
+export function parsePrepareNotAllowed(stdout: string, stderr: string): string | null {
+  const m = /git-hosted package "([^"]+)" needs to execute build scripts/.exec(`${stdout}\n${stderr}`)
+  if (m === null) return null
+  // Strip the trailing @version — the name itself may be scoped (@scope/pkg).
+  const raw = m[1].trim()
+  const at = raw.lastIndexOf('@')
+  return at > 0 ? raw.slice(0, at) : raw
+}
+
+/**
  * Package names pnpm reported as having their build scripts ignored
  * ("Ignored build scripts: esbuild, koffi."). Empty when none.
  * (#6 by @qichuang321.)

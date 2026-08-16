@@ -9,7 +9,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { InstallResult } from '../src/dsh-cli.ts'
-import { isStaleUpdate, parseIgnoredBuilds, retargetCollections, validateAddedPlugins } from '../src/install.ts'
+import { isStaleUpdate, parseIgnoredBuilds, parsePrepareNotAllowed, retargetCollections, validateAddedPlugins } from '../src/install.ts'
 import { profileDir } from '../src/profile.ts'
 
 let home: string
@@ -122,5 +122,23 @@ describe('parseIgnoredBuilds (#6)', () => {
     expect(parseIgnoredBuilds('', 'warn Ignored build scripts: @scope/pkg@1.0.0'))
       .toEqual(['@scope/pkg'])
     expect(parseIgnoredBuilds('all good', '')).toEqual([])
+  })
+
+  it('strips git/codeload source suffixes the same way as versions (#69)', () => {
+    expect(parseIgnoredBuilds('', 'Ignored build scripts: dsh-github-intelligence@https://codeload.github.com/z/r/tar.gz/abc.'))
+      .toEqual(['dsh-github-intelligence'])
+  })
+})
+
+describe('parsePrepareNotAllowed (#68)', () => {
+  const STDERR = '[ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED] Failed to prepare git-hosted package fetched from "https://codeload.github.com/z/r/tar.gz/abc": The git-hosted package "dsh-github-intelligence@2.8.0" needs to execute build scripts but is not in the "allowBuilds" allowlist.'
+  it('extracts the rejected package name, stripping the version', () => {
+    expect(parsePrepareNotAllowed('', STDERR)).toBe('dsh-github-intelligence')
+    expect(parsePrepareNotAllowed(STDERR.replace('dsh-github-intelligence@2.8.0', '@scope/pkg@1.0.0'), ''))
+      .toBe('@scope/pkg')
+  })
+  it('returns null for anything else', () => {
+    expect(parsePrepareNotAllowed('all good', '')).toBeNull()
+    expect(parsePrepareNotAllowed('', 'Ignored build scripts: esbuild.')).toBeNull()
   })
 })

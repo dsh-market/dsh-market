@@ -36,6 +36,7 @@ export function pluginArgsFor(profileDir: string, pluginArgs: string[]): string[
 /** One recognized pnpm failure, with a bilingual explanation for the UI. */
 export interface PnpmFailure {
   code: 'adding-to-root' | 'not-a-workspace' | 'hoist-pattern-diff' | 'pnpm-missing' | 'release-age-violation'
+    | 'ignored-builds' | 'git-prepare-not-allowed'
   /** Bilingual, actionable message shown to the user instead of the raw wall of text. */
   message: string
   /** True when re-running `pnpm install` in the profile is the documented recovery. */
@@ -84,6 +85,28 @@ export function classifyPnpmFailure(output: string): PnpmFailure | null {
       code: 'release-age-violation',
       recoverable: false,
       message: '这个 profile 里有一个刚发布不久的插件版本，pnpm 的安全等待期检查因此拒绝了本次改动（即使改的是别的插件）。市场已自动放行重试一次；若仍看到本条，请导出日志反馈 / a recently-published plugin version in this profile trips pnpm\'s fresh-release safety check, blocking any change (even to other plugins); the market retries once with a one-shot bypass — if you still see this, export the log and report it',
+    }
+  }
+  // #69: pnpm >= 10 blocks dependency build scripts by default. The install
+  // route has long surfaced this via the approve-builds banner (#6, #56),
+  // but as a hard failure (pnpm 11 exits 1) the raw stack leaked through —
+  // and the update route showed it verbatim.
+  if (output.includes('ERR_PNPM_IGNORED_BUILDS')) {
+    return {
+      code: 'ignored-builds',
+      recoverable: false,
+      message: '有依赖需要执行构建脚本，被 pnpm 默认拦截。点击「允许构建脚本并重试」放行后重试即可 / a dependency needs to run build scripts, which pnpm blocks by default — click "Allow build scripts and retry" to approve and retry',
+    }
+  }
+  // #68: git-hosted packages with a prepare/prepack script are rejected in
+  // pnpm's FETCHER, before anything lands in node_modules — so the package
+  // the user must approve is not installed yet, and pnpm's own hint names a
+  // commit-pinned codeload URL that changes on every push.
+  if (output.includes('ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED')) {
+    return {
+      code: 'git-prepare-not-allowed',
+      recoverable: false,
+      message: '这个 git 插件需要在安装时执行构建脚本，被 pnpm 默认拦截。点击「允许构建脚本并重试」放行后重试即可 / this git-hosted plugin needs to run its build script at install time, which pnpm blocks by default — click "Allow build scripts and retry" to approve and retry',
     }
   }
   if (output.includes('pnpm not found on PATH')) {
