@@ -26,7 +26,6 @@
 .okState{font-size:12px;font-weight:600;color:var(--dsw-alias-state-success-primary,#16a34a);white-space:nowrap}
 .dangerBtn.dangerBtn{border-color:var(--dsw-alias-state-error-primary,#dc2626);color:var(--dsw-alias-state-error-primary,#dc2626)}
 .dangerArmed.dangerArmed{background:var(--dsw-alias-state-error-primary,#dc2626);color:#fff}
-.warnBtn.warnBtn{background:var(--dsw-alias-state-warn-primary,#ea580c);color:#fff}
 .catsWrap{display:flex;gap:6px;flex-wrap:wrap;flex:1;min-width:0;align-items:center}
 .catsCollapsed{max-height:62px;overflow:hidden}
 .catsToggle.catsToggle{height:26px;min-height:26px;padding:0 6px;color:var(--dsw-alias-label-secondary,#6b7280)}
@@ -77,7 +76,7 @@
 .irowMissing{filter:grayscale(1);opacity:.5}
 .irow>.src,.irow>.owner{white-space:nowrap;flex-shrink:0}
 /* Buttons sharing the row with a description must keep one line (#26, thanks @yanshuai2002) */
-.dangerBtn.dangerBtn,.warnBtn.warnBtn,.dangerArmed.dangerArmed{white-space:nowrap;flex-shrink:0}
+.dangerBtn.dangerBtn,.dangerArmed.dangerArmed{white-space:nowrap;flex-shrink:0}
 .spec{font-size:11px;color:var(--dsw-alias-label-secondary,#9ca3af);font-family:ui-monospace,Menlo,monospace}
 .staleAction{margin-top:8px}
 .pct{font-weight:600;font-size:11px;flex-shrink:0;color:var(--dsw-alias-label-secondary,#6b7280)}

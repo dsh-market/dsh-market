@@ -1095,7 +1095,6 @@ export function MarketSection(props: MarketSectionProps) {
                 <Button
                   variant="primary"
                   size="sm"
-                  className={css.warnBtn}
                   disabled={updatingName !== null || busyUrl !== null}
                   onClick={() => { setTab('installed'); doUpdate(self) }}
                 >{updatingName === self ? t('updating') : t('marketUpdate')}</Button>
@@ -1105,7 +1104,6 @@ export function MarketSection(props: MarketSectionProps) {
             <Button
               variant="primary"
               size="sm"
-              className={css.warnBtn}
               disabled={updatingAll || updatingName !== null || busyUrl !== null || removingName !== null}
               onClick={() => { setTab('installed'); doUpdateAll() }}
             >{updatingAll ? t('updating') : t('updateAll') + ' (' + updatableNames.length + ')'}</Button>
@@ -1547,13 +1545,12 @@ export function MarketSection(props: MarketSectionProps) {
                         : updatedNames.includes(name)
                         ? <span className={css.okState}>{act?.state === 'live' ? t('updatedLive') : t('updated')}</span>
                         : updatingName === name
-                          ? <Button variant="primary" size="sm" className={css.warnBtn} disabled>{t('updating')}</Button>
+                          ? <Button variant="primary" size="sm" disabled>{t('updating')}</Button>
                           : status && status.updateAvailable
                             ? (
                                 <Button
                                   variant="primary"
                                   size="sm"
-                                  className={css.warnBtn}
                                   disabled={updatingName !== null}
                                   onClick={() => doUpdate(name)}
                                 >{t('update')}</Button>
