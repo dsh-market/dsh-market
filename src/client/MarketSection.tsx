@@ -40,8 +40,54 @@ import {
 } from './market-data.ts'
 import type {
   ActivationInfo, ActivationState, InstalledMap, MarketStatus, Registry, RegistryPlugin,
-  SortDir, SortField, ThemeSnapshot, TimeRange, Translate, UpdateStatus,
+  SharedHostPackageDependencyFinding, SortDir, SortField, ThemeSnapshot, TimeRange, Translate, UpdateStatus,
 } from './market-data.ts'
+
+function isHostDependencyFinding(value: unknown): value is SharedHostPackageDependencyFinding {
+  if (value === null || typeof value !== 'object') return false
+  const finding = value as Partial<SharedHostPackageDependencyFinding>
+  return finding.code === 'shared-host-package-dependency'
+    && finding.severity === 'warning'
+    && finding.subject?.kind === 'package'
+    && typeof finding.subject.name === 'string'
+    && finding.evidence?.basis === 'manifest-declaration'
+    && typeof finding.evidence?.dependency === 'string'
+    && typeof finding.evidence.declaredRange === 'string'
+    && finding.evidence.declaredIn === 'dependencies'
+}
+
+const HOST_DEPENDENCY_PREVIEW_LIMIT = 5
+
+function HostDependencyDiagnostics({
+  findings,
+  t,
+}: {
+  findings: SharedHostPackageDependencyFinding[]
+  t: Translate
+}) {
+  if (findings.length === 0) return null
+  const preview = findings.slice(0, HOST_DEPENDENCY_PREVIEW_LIMIT)
+  const remaining = findings.length - preview.length
+  return (
+    <div className={css.banner}>
+      <IconWarningOutline16 size={14} className={css.bannerIcon} />
+      <span className={css.grow}>
+        <div>{t('hostDependencyWarning')}</div>
+        {preview.map(finding => (
+          <div
+            key={`${finding.subject.name}:${finding.evidence.dependency}`}
+            className={css.spec}
+          >
+            {finding.subject.name} → {finding.evidence.dependency}@{finding.evidence.declaredRange}
+          </div>
+        ))}
+        {remaining > 0 && (
+          <div className={css.spec}>{t('hostDependencyMore').replace('{0}', String(remaining))}</div>
+        )}
+      </span>
+    </div>
+  )
+}
 
 /** The state label + dot for one activation result (P0-2). */
 function activationMeta(state: ActivationState, t: Translate): { label: string; dot: 'done' | 'warning' | 'error' } {
@@ -328,6 +374,7 @@ export function MarketSection(props: MarketSectionProps) {
   const [hostBusy, setHostBusy] = useState(false)
   /** Non-live activation results from the last operation, shown as a banner. */
   const [activationWarnings, setActivationWarnings] = useState<{ name: string; info: ActivationInfo }[]>([])
+  const [hostDependencyFindings, setHostDependencyFindings] = useState<SharedHostPackageDependencyFinding[]>([])
   /** Plugin name awaiting uninstall confirmation (Modal). */
   const [removeConfirm, setRemoveConfirm] = useState<string | null>(null)
   const [removingName, setRemovingName] = useState<string | null>(null)
@@ -391,6 +438,11 @@ export function MarketSection(props: MarketSectionProps) {
         if (body.groups && typeof body.groups === 'object') setGroups(body.groups)
         if (Array.isArray(body.groupOrder)) setGroupOrder(body.groupOrder)
         if (body.activation && typeof body.activation === 'object') setActivations(body.activation)
+        const findings = body.diagnostics?.schema === 'dsh-market/diagnostics/v1'
+          && Array.isArray(body.diagnostics.findings)
+          ? body.diagnostics.findings.filter(isHostDependencyFinding)
+          : []
+        setHostDependencyFindings(findings)
       })
       .catch(() => {})
     fetch('/dsh-market/updates' + (force === true ? '?force=1' : ''), { cache: 'no-store' })
@@ -1447,6 +1499,7 @@ export function MarketSection(props: MarketSectionProps) {
             </span>
           </div>
         )}
+        {tab === 'installed' && <HostDependencyDiagnostics findings={hostDependencyFindings} t={t} />}
       </div>
       {buildsSkipped !== null && (
         <div className={css.banner}>

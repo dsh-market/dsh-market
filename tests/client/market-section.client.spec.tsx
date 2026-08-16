@@ -81,6 +81,66 @@ describe('MarketSection (jsdom)', () => {
     expect(screen.getAllByRole('button', { name: en.install }).length).toBeGreaterThanOrEqual(3)
   })
 
+  it('shows shared host dependency findings from the installed snapshot', async () => {
+    const findings = Array.from({ length: 7 }, (_, index) => ({
+      code: 'shared-host-package-dependency',
+      severity: 'warning',
+      subject: { kind: 'package', name: `plugin-${String(index + 1)}` },
+      evidence: {
+        basis: 'manifest-declaration',
+        dependency: '@deepseek-ai/dsh-tools',
+        declaredRange: `^0.${String(index + 1)}.0`,
+        declaredIn: 'dependencies',
+      },
+    }))
+    stubFetch({
+      '/dsh-market/installed': {
+        profile: 'web',
+        installed: { 'dsh-excel-chat': '^0.33.0' },
+        live: [],
+        diagnostics: {
+          schema: 'dsh-market/diagnostics/v1',
+          findings: [
+            ...findings,
+            {
+              code: 'shared-host-package-dependency',
+              severity: 'error',
+              subject: { kind: 'package', name: 'wrong-severity-plugin' },
+              evidence: {
+                basis: 'manifest-declaration',
+                dependency: '@deepseek-ai/dsh-tools',
+                declaredRange: '^0.0.1-rc.1',
+                declaredIn: 'dependencies',
+              },
+            },
+            {
+              code: 'shared-host-package-dependency',
+              severity: 'warning',
+              subject: { kind: 'package', name: 'missing-basis-plugin' },
+              evidence: {
+                dependency: '@deepseek-ai/dsh-tools',
+                declaredRange: '^0.0.1-rc.1',
+                declaredIn: 'dependencies',
+              },
+            },
+          ],
+        },
+      },
+    })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    expect(screen.queryByText(en.hostDependencyWarning)).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /^Installed/ }))
+    expect(await screen.findByText(en.hostDependencyWarning)).toBeTruthy()
+    expect(screen.getByText('plugin-1 → @deepseek-ai/dsh-tools@^0.1.0')).toBeTruthy()
+    expect(screen.getByText('plugin-5 → @deepseek-ai/dsh-tools@^0.5.0')).toBeTruthy()
+    expect(screen.queryByText(/plugin-6 →/)).toBeNull()
+    expect(screen.queryByText(/plugin-7 →/)).toBeNull()
+    expect(screen.getByText(en.hostDependencyMore.replace('{0}', '2'))).toBeTruthy()
+    expect(screen.queryByText(/wrong-severity-plugin/)).toBeNull()
+    expect(screen.queryByText(/missing-basis-plugin/)).toBeNull()
+  })
+
   it('search narrows the grid to matching plugins', async () => {
     render(<MarketSection {...props()} />)
     await screen.findByText('dsh-loop')

@@ -221,6 +221,8 @@ export const zh = {
   checkOrderTip: '社区 bundle 加载顺序与插件声明的 before/after 规则冲突',
   diagOkAll: '一切正常：未发现冲突、依赖或顺序问题',
   marketNoToggle: '市场自身不能停用',
+  hostDependencyWarning: '插件在 dependencies 中声明了已知的 DSH 共享宿主包，可能遮蔽宿主版本（仅依据清单，未确认运行时重复）：',
+  hostDependencyMore: '另有 {0} 条，已省略',
 }
 
 /** A dictionary key; zh is the source of truth, en mirrors it 1:1. */
@@ -447,4 +449,6 @@ export const en: Record<MarketKey, string> = {
   checkOrderTip: 'community bundle load order conflicts with declared before/after rules',
   diagOkAll: 'All good: no conflict, dependency or ordering issues found',
   marketNoToggle: 'The market itself cannot be disabled',
+  hostDependencyWarning: 'A plugin lists known shared DSH host packages in dependencies. This may shadow the host version; the check is manifest-only and does not confirm a duplicate runtime instance:',
+  hostDependencyMore: '{0} more finding(s) omitted',
 }

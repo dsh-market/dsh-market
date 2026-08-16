@@ -18,11 +18,12 @@ import {
 } from './hot.ts'
 import { createGroup, deleteGroup, removeFromGroups, renameGroup, setGroupMembers } from './groups.ts'
 import { exportLogs, logEvent } from './log.ts'
+import { diagnosePackageManifests } from './diagnostics.ts'
 import {
   BOOT_ID, cancelActive, probePnpm, progress, provisionPnpm, runDshPlugin,
   type PluginCommandRuntime,
 } from './dsh-cli.ts'
-import { profileDir, readInstalled, readInstalledVersion, readLockCommits, readManifestDeps, restoreManifestDeps, setAllowBuilds } from './profile.ts'
+import { profileDir, readInstalled, readInstalledManifest, readInstalledVersion, readLockCommits, readManifestDeps, restoreManifestDeps, setAllowBuilds } from './profile.ts'
 import { analyzeProfile } from './check.ts'
 import { INBOX_BUNDLES, readBundleRules, readBundleStack, suggestOrder, validateOrder } from './order.ts'
 import { findInstalledAlias, gitAllowBuildsKey, installTargetFor } from './sources.ts'
@@ -404,11 +405,16 @@ export function mountMarketRoutes(
         for (const name of Object.keys(installed)) {
           activation[name] = verifyActivation(config.profile, name, live, activeProfileDir)
         }
+        const diagnostics = diagnosePackageManifests(Object.keys(installed).map(packageName => ({
+          packageName,
+          manifest: readInstalledManifest(config.profile, packageName, activeProfileDir),
+        })))
         sendJson(response, 200, {
           profile: config.profile,
           installed,
           present,
           activation,
+          diagnostics,
           live: listHotMounts(),
           disabled: [...disabled],
           groups,
