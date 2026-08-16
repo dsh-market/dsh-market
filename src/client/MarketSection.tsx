@@ -1202,7 +1202,9 @@ export function MarketSection(props: MarketSectionProps) {
   const themePluginCard = (p: RegistryPlugin) => {
     const instName = installedNameOf(p)
     if (instName === null) return pluginCard(p)
-    const mounted = skins.includes(instName) || bootEntries.some(e => e.id === instName)
+    // A theme switched off via the Installed-tab toggle (or a group switch)
+    // stays in the boot manifest, so the disabled set must veto the badge.
+    const mounted = (skins.includes(instName) || bootEntries.some(e => e.id === instName)) && !disabledSet.has(instName)
     const desc = (p.description && (p.description[lang] || p.description.en)) || ''
     const replacement = replacementOf(p)
     return (
@@ -1247,8 +1249,17 @@ export function MarketSection(props: MarketSectionProps) {
           {removingName === instName
             ? <Button variant="outline" size="sm" disabled>{t('uninstalling')}</Button>
             : <Button variant="outline" size="sm" onClick={() => setRemoveConfirm(instName)}>{t('uninstall')}</Button>}
+          {disabledSet.has(instName) && <span className={css.spec}>{t('disabledState')}</span>}
           {mounted
-            ? <span className={css.okState}>{t('themeActive')}</span>
+            ? <>
+                <span className={css.okState}>{t('themeActive')}</span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={togglingName !== null}
+                  onClick={() => doToggle(instName, false)}
+                >{t('themeDeactivate')}</Button>
+              </>
             : <Button variant="primary" size="sm" onClick={() => doUseSkin(instName)}>{t('themeApply')}</Button>}
         </div>
       </div>

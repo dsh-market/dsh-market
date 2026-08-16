@@ -936,6 +936,61 @@ describe('per-tab search boxes', () => {
     await waitFor(() => expect(screen.queryByText('whale-skin')).toBeNull())
     expect(screen.getByText(en.empty)).toBeTruthy()
   })
+
+  it('themes tab: an active theme card offers Deactivate and posts the disable toggle', async () => {
+    // Stateful fake: mirrors the server-side toggle semantics for one theme.
+    const state = { installed: { 'whale-skin': 'github:carol/whale-skin' }, live: ['whale-skin'], disabled: [] as string[] }
+    stubFetch({
+      '/dsh-market/installed': () => ({ profile: 'web', installed: state.installed, live: state.live, disabled: state.disabled, groups: {}, groupOrder: [] }),
+      '/dsh-market/toggle': (body: any) => {
+        if (body?.enabled === false) state.disabled.push(String(body.name))
+        else state.disabled = state.disabled.filter(n => n !== body?.name)
+        state.live = state.disabled.includes('whale-skin') ? [] : ['whale-skin']
+        return { ok: true, disabled: state.disabled, live: state.live, activation: {} }
+      },
+    })
+    const THEME_SNAPSHOT = { preference: 'light', themes: [] as Array<{ id: string }> }
+    render(<MarketSection {...{
+      ...props(),
+      themeStore: { subscribe: () => () => {}, getSnapshot: () => THEME_SNAPSHOT },
+    }} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getAllByRole('button', { name: en.tabThemes })[0])
+    await screen.findByText('whale-skin')
+    // Mounted (live) theme: Active badge plus a Deactivate button.
+    expect(screen.getByText(en.themeActive)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: en.themeDeactivate }))
+    await waitFor(() => {
+      const toggle = fetchCalls.find(c => c.path === '/dsh-market/toggle')
+      expect(toggle?.body).toEqual({ name: 'whale-skin', enabled: false })
+    })
+    // The response flips the card to the disabled state: no Active badge,
+    // Disabled hint, and Apply (re-activate) instead of Deactivate.
+    await waitFor(() => expect(screen.queryByText(en.themeActive)).toBeNull())
+    expect(screen.getByText(en.disabledState)).toBeTruthy()
+    expect(screen.getByRole('button', { name: en.themeApply })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: en.themeDeactivate })).toBeNull()
+  })
+
+  it('themes tab: a disabled theme drops the Active badge and shows the Disabled hint', async () => {
+    // Boot manifest still lists the theme (bundle-layer entries persist),
+    // but the disabled set must win — the stale-badge regression case.
+    stubFetch({
+      '/dsh-market/installed': () => ({ profile: 'web', installed: { 'whale-skin': 'github:carol/whale-skin' }, live: [], disabled: ['whale-skin'], groups: {}, groupOrder: [] }),
+    })
+    const THEME_SNAPSHOT = { preference: 'light', themes: [] as Array<{ id: string }> }
+    render(<MarketSection {...{
+      ...props(),
+      themeStore: { subscribe: () => () => {}, getSnapshot: () => THEME_SNAPSHOT },
+    }} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getAllByRole('button', { name: en.tabThemes })[0])
+    await screen.findByText('whale-skin')
+    expect(screen.queryByText(en.themeActive)).toBeNull()
+    expect(screen.queryByRole('button', { name: en.themeDeactivate })).toBeNull()
+    expect(screen.getByText(en.disabledState)).toBeTruthy()
+    expect(screen.getByRole('button', { name: en.themeApply })).toBeTruthy()
+  })
 })
 
 describe('lost install response (#100)', () => {
