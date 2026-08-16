@@ -12,13 +12,14 @@
  * later stacked PRs.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { dump } from 'js-yaml'
 import { mountMarketRoutes, type MarketHost } from '../src/routes.ts'
+import * as orderApi from '../src/order.ts'
 import type { PluginCommandRuntime } from '../src/dsh-cli.ts'
 
 type RouteHandler = (request: IncomingMessage, response: ServerResponse) => void | Promise<void>
@@ -443,5 +444,29 @@ describe('POST /dsh-market/bundle-order', () => {
     const upd = await hit(routes, '/dsh-market/update', post('/dsh-market/update', { name: 'alpha' }))
     expect(upd.status).toBe(409)
     expect(jsonBody(upd)).toEqual({ error: 'another install is already running' })
+  })
+
+  it('restores the profile from the pre-write backup when the write throws (auto-rollback)', async () => {
+    // #125 hardening (lesson from #122): if the manifest write throws
+    // mid-flight, the route must roll the profile back from the backup it
+    // took before writing — a broken order must never stop DSH from starting.
+    writeStandardProfile()
+    const before = readFileSync(join(dir, 'package.json'), 'utf8')
+    const spy = vi.spyOn(orderApi, 'applyBundleOrder').mockImplementation(() => {
+      throw new Error('simulated disk failure')
+    })
+    try {
+      const res = await hit(routes, '/dsh-market/bundle-order', post('/dsh-market/bundle-order', { order: ['beta', 'alpha'] }))
+      expect(res.status).toBe(500)
+      expect(String(jsonBody(res).error)).toMatch(/simulated disk failure/)
+    } finally {
+      spy.mockRestore()
+    }
+    // The pre-write backup was restored: the manifest is semantically
+    // identical to the pre-request state (the backup format re-serializes
+    // package.json from its parsed JSON, so bytes may differ by formatting).
+    expect(JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'))).toEqual(JSON.parse(before))
+    expect((JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as { dsh: { profile: { bundles: string[] } } }).dsh.profile.bundles)
+      .toEqual(['@deepseek-ai/dsh-base', 'alpha', 'beta'])
   })
 })

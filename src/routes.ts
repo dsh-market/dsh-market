@@ -36,6 +36,7 @@ import { restartAllowed, scheduleRestart, trustedRestartRequest, trustedDownload
 import { verifyActivation } from './verify.ts'
 import {
   createProfileBackup, downloadWebdav, MAX_BACKUP_BYTES, restoreProfileBackup, secretFileCount, uploadWebdav,
+  type ProfileBackup,
 } from './backup.ts'
 
 export type { LoaderEntry } from './themes.ts'
@@ -486,6 +487,11 @@ export function mountMarketRoutes(
         // lock is taken BEFORE the body is read so a slow/pending request
         // cannot interleave with another write either.
         if (!acquireWrite(response)) return
+        // #125 hardening (lesson from #122: a bad order write can stop DSH
+        // from starting): keep a pre-write profile backup and restore it
+        // automatically if the write throws mid-flight. Persistent snapshots
+        // (PR-C) ship separately; this is the in-route safety net.
+        let backup: ProfileBackup | null = null
         try {
           try {
             const body = (await readJsonBody(request)) as { order?: unknown } | null
@@ -524,6 +530,7 @@ export function mountMarketRoutes(
                 })
                 return
               }
+              backup = createProfileBackup(config.profile, activeProfileDir)
               const applied = applyBundleOrder(activeProfileDir, order)
               if (!applied.ok) {
                 sendJson(response, 400, { error: applied.error })
@@ -536,6 +543,18 @@ export function mountMarketRoutes(
               writing = false
             }
         } catch (error) {
+          // The write threw mid-flight: restore the pre-write profile so a
+          // broken manifest can never stop DSH from starting (issue #125,
+          // lesson from #122). Best-effort — a failing restore must not mask
+          // the original error.
+          if (backup !== null) {
+            try {
+              restoreProfileBackup(config.profile, backup, activeProfileDir)
+              logEvent('error', 'bundle-order', `write failed — profile restored from pre-write backup: ${error instanceof Error ? error.message : String(error)}`)
+            } catch {
+              logEvent('error', 'bundle-order', 'write failed AND automatic rollback failed')
+            }
+          }
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
         }
       },
