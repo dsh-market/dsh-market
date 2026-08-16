@@ -938,6 +938,14 @@ describe('per-tab search boxes', () => {
   })
 
   it('themes tab: an active theme card offers Deactivate and posts the disable toggle', async () => {
+    // jsdom navigations are not implemented and its location is
+    // non-configurable — swap in a plain object so the auto-refresh path
+    // can be asserted.
+    const reload = vi.fn()
+    Object.defineProperty(window, 'location', {
+      value: { ...window.location, reload },
+      configurable: true,
+    })
     // Stateful fake: mirrors the server-side toggle semantics for one theme.
     const state = { installed: { 'whale-skin': 'github:carol/whale-skin' }, live: ['whale-skin'], disabled: [] as string[] }
     stubFetch({
@@ -970,6 +978,11 @@ describe('per-tab search boxes', () => {
     expect(screen.getByText(en.disabledState)).toBeTruthy()
     expect(screen.getByRole('button', { name: en.themeApply })).toBeTruthy()
     expect(screen.queryByRole('button', { name: en.themeDeactivate })).toBeNull()
+    // Card-level deactivate auto-reloads into the Themes tab (mirrors the
+    // use-skin reload on activate) with no stale toast resurrecting.
+    expect(reload).toHaveBeenCalled()
+    expect(sessionStorage.getItem('dshm-tab')).toBe('themes')
+    expect(sessionStorage.getItem('dshm-toast')).toBeNull()
   })
 
   it('themes tab: a disabled theme drops the Active badge and shows the Disabled hint', async () => {

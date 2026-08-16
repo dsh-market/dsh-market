@@ -837,8 +837,10 @@ export function MarketSection(props: MarketSectionProps) {
       .finally(() => setRemovingName(null))
   }, [refreshInstalled])
 
-  /** Live enable/disable of one installed plugin (#60). */
-  const doToggle = useCallback((name: string, enabled: boolean) => {
+  /** Live enable/disable of one installed plugin (#60). `reload` opts the
+   * card-level theme flow into a page refresh so the visual result lands
+   * immediately (mirrors the use-skin reload on activate). */
+  const doToggle = useCallback((name: string, enabled: boolean, reload = false) => {
     setTogglingName(name)
     setInstallError(null)
     return fetch('/dsh-market/toggle', {
@@ -855,6 +857,14 @@ export function MarketSection(props: MarketSectionProps) {
             setActivations(prev => ({ ...prev, ...body.activation }))
           }
           refreshInstalled()
+          if (reload) {
+            // Land back in the Themes tab with the stock look on screen.
+            // Drop a stale install/switch toast so it cannot resurrect.
+            sessionStorage.removeItem('dshm-toast')
+            sessionStorage.removeItem('dshm-toast-mode')
+            sessionStorage.setItem('dshm-tab', 'themes')
+            location.reload()
+          }
         } else {
           const text = (v: unknown) => typeof v === 'string' ? v : v == null ? '' : JSON.stringify(v)
           setInstallError(text(body.error) || t('toggleFail'))
@@ -1257,7 +1267,7 @@ export function MarketSection(props: MarketSectionProps) {
                   variant="outline"
                   size="sm"
                   disabled={togglingName !== null}
-                  onClick={() => doToggle(instName, false)}
+                  onClick={() => doToggle(instName, false, true)}
                 >{t('themeDeactivate')}</Button>
               </>
             : <Button variant="primary" size="sm" onClick={() => doUseSkin(instName)}>{t('themeApply')}</Button>}
