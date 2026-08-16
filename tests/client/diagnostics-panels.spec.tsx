@@ -418,37 +418,29 @@ describe('Diagnostics panels (jsdom, #98 phase 2/3)', () => {
     await waitFor(() => expect(calls('/dsh-market/presets').length).toBe(2))
   })
 
-  it('AI fix opens a new session and prefills the composer with the diagnostics', async () => {
+  it('AI fix copies the diagnostics prompt to the clipboard and confirms', async () => {
     const writeText = vi.fn(() => Promise.resolve())
     vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } })
-    const startSession = vi.fn()
-    // Simulate the new session's composer appearing after startSession.
-    const composer = document.createElement('div')
-    composer.setAttribute('data-input-scroll', 'true')
-    const textarea = document.createElement('textarea')
-    composer.appendChild(textarea)
-    document.body.appendChild(composer)
 
     // A HARD issue (duplicate entries) makes the AI-fix button visible —
     // purely informational reports keep it hidden (conservative UX).
     const api = stubApi({
       check: { ...CHECK_REPORT, duplicates: [{ id: 'dup-entry', layers: ['alpha'], count: 2 }] },
     })
-    render(<Diagnostics t={t} workspaces={{ startSession }} />)
+    render(<Diagnostics t={t} />)
     await waitFor(() => expect(screen.queryByText(t('checkLoading'))).toBeNull())
 
     const fixButton = screen.getByRole('button', { name: t('aiFix') })
     fireEvent.click(fixButton)
 
-    await waitFor(() => expect(startSession).toHaveBeenCalled())
-    // The composer textarea was prefilled with the diagnostics prompt.
-    await waitFor(() => expect(textarea.value).toContain('/synthetic/profiles/web'))
-    expect(textarea.value).toContain('alpha')
-    expect(textarea.value).toContain('must load after beta')
-    await waitFor(() => expect(screen.getByText(t('aiFixPrefilled'))).toBeTruthy())
-    // Clipboard was NOT used on the prefill path.
-    expect(writeText).not.toHaveBeenCalled()
-    document.body.removeChild(composer)
+    await waitFor(() => expect(writeText).toHaveBeenCalled())
+    // The prompt carries the diagnostics (order conflict + profile + scope).
+    const prompt = String(writeText.mock.calls[0]?.[0])
+    expect(prompt).toContain('/synthetic/profiles/web')
+    expect(prompt).toContain('alpha')
+    expect(prompt).toContain('must load after beta')
+    expect(prompt).toContain(t('aiFixConservative').slice(0, 20))
+    await waitFor(() => expect(screen.getByText(t('aiFixCopied'))).toBeTruthy())
     void api
   })
 

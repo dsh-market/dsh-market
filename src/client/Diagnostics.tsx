@@ -14,7 +14,7 @@
  * shape mirrors the CheckReport interface in src/check.ts; it is re-declared
  * here because the client bundle is built independently of the host tree.
  */
-import { useCallback, useEffect, useMemo, useState, type DragEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import { Button, DisclosureRow, IconChevronDownOutline14, IconChevronRightOutline14, IconLoadingOutline16, IconRefreshOutline14, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
 import css from './Market.module.css'
 import type { Translate } from './market-data.ts'
@@ -134,10 +134,20 @@ function Section(props: {
 }) {
   const { title, count, empty, defaultOpen, problem = true, overview, children } = props
   const [open, setOpen] = useState(defaultOpen ?? false)
+  const ref = useRef<HTMLElement | null>(null)
+  const toggle = (): void => {
+    const next = !open
+    setOpen(next)
+    if (next) {
+      // Bring the freshly expanded block into view so the user lands on it
+      // instead of an empty stretch above (issue #98 UX).
+      requestAnimationFrame(() => ref.current?.scrollIntoView?.({ block: 'nearest' }))
+    }
+  }
   const alert = problem && count > 0
   return (
-    <section className={css.diagSection}>
-      <button type="button" className={css.collapseHead} onClick={() => setOpen(o => !o)} aria-expanded={open}>
+    <section ref={ref} className={css.diagSection}>
+      <button type="button" className={css.collapseHead} onClick={toggle} aria-expanded={open}>
         <span className={css.collapseIcon}>
           {open ? <IconChevronDownOutline14 size={14} /> : <IconChevronRightOutline14 size={14} />}
         </span>
@@ -161,9 +171,15 @@ function Section(props: {
  */
 function CollapsibleSection(props: { title: string; count?: number; open: boolean; onToggle: () => void; children: ReactNode }) {
   const { title, count, open, onToggle, children } = props
+  const ref = useRef<HTMLElement | null>(null)
+  const toggle = (): void => {
+    const next = !open
+    onToggle()
+    if (next) requestAnimationFrame(() => ref.current?.scrollIntoView({ block: 'nearest' }))
+  }
   return (
-    <section className={css.diagSection}>
-      <button type="button" className={css.collapseHead} onClick={onToggle} aria-expanded={open}>
+    <section ref={ref} className={css.diagSection}>
+      <button type="button" className={css.collapseHead} onClick={toggle} aria-expanded={open}>
         <span className={css.collapseIcon}>
           {open ? <IconChevronDownOutline14 size={14} /> : <IconChevronRightOutline14 size={14} />}
         </span>
@@ -177,7 +193,6 @@ function CollapsibleSection(props: { title: string; count?: number; open: boolea
     </section>
   )
 }
-
 /** Map an orphan patch reason (src/check.ts) to a locale key for its badge. */
 function orphanKindLabel(reason: string): string {
   if (reason === 'insert is not an array') return 'orphanInsertNotArray'
@@ -195,7 +210,7 @@ function orphanKindLabel(reason: string): string {
  * phase 3 panels below call `refresh()` after applying changes.
  */
 export function Diagnostics(props: { t: Translate; workspaces?: { startSession(workspaceId?: string): void } }) {
-  const { t, workspaces } = props
+  const { t } = props
   const [report, setReport] = useState<CheckReport | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [orderOpen, setOrderOpen] = useState(false)
@@ -355,10 +370,10 @@ export function Diagnostics(props: { t: Translate; workspaces?: { startSession(w
 
   /**
    * Build the AI-fix prompt (errors/warnings/order conflicts + scope) and
-   * hand it to a NEW agent session: close Settings, start a session, then
-   * prefill the composer textarea (native setter + input event so React
-   * picks it up). The agent never sends anything — the user reviews and
-   * sends. Clipboard is the fallback when the composer cannot be reached.
+   * copy it to the clipboard. The user pastes it into a new conversation
+   * and decides whether to send — the agent never runs automatically.
+   * (A previous auto-open/prefill attempt was dropped: it was unreliable
+   * across host versions, so plain copy + toast is the contract.)
    */
   const startAgentFix = () => {
     const lines: string[] = []
@@ -384,52 +399,13 @@ export function Diagnostics(props: { t: Translate; workspaces?: { startSession(w
     lines.push(t('aiFixConservative'))
     const prompt = lines.join('\n')
 
-    // Close the settings dialog (best effort — the section lives inside it).
-    // The close button carries the text (no aria-label), so match both.
-    try {
-      const dialog = document.querySelector<HTMLElement>('[role="dialog"]')
-      const close = dialog !== null
-        ? [...dialog.querySelectorAll<HTMLButtonElement>('button')].find(button =>
-            /关闭|Close|✕|×/.test(`${button.getAttribute('aria-label') ?? ''} ${button.textContent ?? ''}`))
-        : null
-      close?.click()
-    } catch { /* ignore */ }
-
-    // Poll for the composer textarea of the freshly opened session (~6s).
-    const injectIntoComposer = (): Promise<boolean> => new Promise((resolve) => {
-      let tries = 0
-      const attempt = (): void => {
-        const ta = document.querySelector<HTMLTextAreaElement>('[data-input-scroll] textarea')
-        if (ta !== null) {
-          const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set
-          if (setter !== undefined) {
-            setter.call(ta, prompt)
-            ta.dispatchEvent(new Event('input', { bubbles: true }))
-            resolve(true)
-            return
-          }
-        }
-        tries += 1
-        if (tries >= 12) resolve(false)
-        else setTimeout(attempt, 500)
-      }
-      attempt()
-    })
-
-    const fallbackToClipboard = (): void => {
-      try {
-        void navigator.clipboard?.writeText(prompt)
-        setFixMsg(t('aiFixCopied'))
-      } catch {
-        setFixMsg(t('aiFixFail'))
-      }
+    if (typeof navigator.clipboard?.writeText === 'function') {
+      navigator.clipboard.writeText(prompt)
+        .then(() => setFixMsg(t('aiFixCopied')))
+        .catch(() => setFixMsg(t('aiFixFail')))
+    } else {
+      setFixMsg(t('aiFixFail'))
     }
-
-    workspaces?.startSession()
-    void injectIntoComposer().then((ok) => {
-      if (ok) setFixMsg(t('aiFixPrefilled'))
-      else fallbackToClipboard()
-    })
   }
 
   return (
