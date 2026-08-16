@@ -235,6 +235,9 @@ export function MarketSection(props: MarketSectionProps) {
     return saved || 'discover'
   })
   const [q, setQ] = useState('')
+  /** Per-tab searches stay independent: discover / themes / installed. */
+  const [qThemes, setQThemes] = useState('')
+  const [qInstalled, setQInstalled] = useState('')
   const [cat, setCat] = useState('all')
   const [confirming, setConfirming] = useState<RegistryPlugin | null>(null)
   const [busyUrl, setBusyUrl] = useState<string | null>(null)
@@ -304,7 +307,8 @@ export function MarketSection(props: MarketSectionProps) {
   const [cancelling, setCancelling] = useState(false)
   /** Non-live activation results from the last operation, shown as a banner. */
   const [activationWarnings, setActivationWarnings] = useState<{ name: string; info: ActivationInfo }[]>([])
-  const [removeArmed, setRemoveArmed] = useState<string | null>(null)
+  /** Plugin name awaiting uninstall confirmation (Modal). */
+  const [removeConfirm, setRemoveConfirm] = useState<string | null>(null)
   const [removingName, setRemovingName] = useState<string | null>(null)
   const [removedCount, setRemovedCount] = useState(0)
   const [envReady, setEnvReady] = useState(true)
@@ -756,7 +760,7 @@ export function MarketSection(props: MarketSectionProps) {
   }, [])
 
   const doUninstall = useCallback((name: string) => {
-    setRemoveArmed(null)
+    setRemoveConfirm(null)
     setInstallError(null)
     setActivationWarnings([])
     setRemovingName(name)
@@ -918,6 +922,17 @@ export function MarketSection(props: MarketSectionProps) {
   }
 
   const themePlugins = data === null ? [] : themePluginsOf(data.plugins)
+  /** Themes-tab search narrows by name/owner/description. */
+  const filteredThemePlugins = useMemo(() => {
+    const needle = qThemes.trim().toLowerCase()
+    if (needle === '') return themePlugins
+    return themePlugins.filter(p => {
+      const desc = (p.description && (p.description[lang] || p.description.en)) || ''
+      return p.name.toLowerCase().includes(needle)
+        || (p.owner || '').toLowerCase().includes(needle)
+        || desc.toLowerCase().includes(needle)
+    })
+  }, [themePlugins, qThemes, lang])
 
   const pluginCard = (p: RegistryPlugin) => {
     const desc = (p.description && (p.description[lang] || p.description.en)) || ''
@@ -1025,22 +1040,8 @@ export function MarketSection(props: MarketSectionProps) {
         <div className={css.foot}>
           <span className={css.grow} />
           {removingName === instName
-            ? <Button variant="outline" size="sm" className={css.dangerBtn} disabled>{t('uninstalling')}</Button>
-            : removeArmed === instName
-              ? (
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    className={css.dangerArmed}
-                    onClick={() => doUninstall(instName).then(() => {
-                      if (mounted) {
-                        sessionStorage.setItem('dshm-tab', 'themes')
-                        location.reload()
-                      }
-                    })}
-                  >{t('confirmRemove')}</Button>
-                )
-              : <Button variant="outline" size="sm" className={css.dangerBtn} onClick={() => setRemoveArmed(instName)}>{t('uninstall')}</Button>}
+            ? <Button variant="outline" size="sm" disabled>{t('uninstalling')}</Button>
+            : <Button variant="outline" size="sm" onClick={() => setRemoveConfirm(instName)}>{t('uninstall')}</Button>}
           {mounted
             ? <span className={css.okState}>{t('themeActive')}</span>
             : <Button variant="primary" size="sm" onClick={() => doUseSkin(instName)}>{t('themeApply')}</Button>}
@@ -1135,7 +1136,6 @@ export function MarketSection(props: MarketSectionProps) {
           </button>
           <button className={tab === 'backup' ? `${css.tab} ${css.on}` : css.tab} onClick={() => setTab('backup')}>{t('tabBackup')}</button>
           <span className={css.grow} />
-          {tab !== 'backup' && <Input className={css.searchInline} icon={<IconSearchOutline16 size={14} />} placeholder={t('searchPh')} value={q} onChange={e => setQ(e.target.value)} />}
         </div>
         {!envReady && (
           <div className={css.banner}>
@@ -1351,6 +1351,9 @@ export function MarketSection(props: MarketSectionProps) {
               ? <div className={css.loading}><span className={css.spin}><IconLoadingOutline16 size={22} /></span>{t('loading')}</div>
               : (
                   <>
+                    <div className={css.tabSearchRow}>
+                      <Input className={css.tabSearch} icon={<IconSearchOutline16 size={14} />} placeholder={t('searchPh')} value={q} onChange={e => setQ(e.target.value)} />
+                    </div>
                     <div className={css.cats}>
                       <div className={css.catsRow}>
                       <div ref={catsWrapRef} className={catsOpen || visibleCats === null ? `${css.catsWrap} ${css.catsCollapsed}` : css.catsWrap}>
@@ -1465,6 +1468,9 @@ export function MarketSection(props: MarketSectionProps) {
           : tab === 'themes' && themeSnap !== null
             ? (
                 <>
+                  <div className={css.tabSearchRow}>
+                    <Input className={css.tabSearch} icon={<IconSearchOutline16 size={14} />} placeholder={t('searchPh')} value={qThemes} onChange={e => setQThemes(e.target.value)} />
+                  </div>
                   {/* Light/dark/system live in the official Appearance setting; this
                     tab only shows what that setting can't: registered third-party
                     palettes (none in the wild yet) and installable theme plugins. */}
@@ -1480,12 +1486,33 @@ export function MarketSection(props: MarketSectionProps) {
                     ? <div className={css.loading}><span className={css.spin}><IconLoadingOutline16 size={22} /></span>{t('loading')}</div>
                     : themePlugins.length === 0
                       ? <div className={css.empty}>{t('themeEmpty')}</div>
-                      : <div className={css.grid}>{themePlugins.map(themePluginCard)}</div>}
+                      : filteredThemePlugins.length === 0
+                        ? <div className={css.empty}>{t('empty')}</div>
+                        : <div className={css.grid}>{filteredThemePlugins.map(themePluginCard)}</div>}
                 </>
               )
-            : Object.keys(displayedInstalled).length === 0
-              ? <div className={css.empty}>{t('installedEmpty')}</div>
-              : Object.entries(displayedInstalled).map(([name, spec]) => {
+            : (
+                <>
+                  <div className={css.tabSearchRow}>
+                    <Input className={css.tabSearch} icon={<IconSearchOutline16 size={14} />} placeholder={t('searchPh')} value={qInstalled} onChange={e => setQInstalled(e.target.value)} />
+                  </div>
+                  {Object.keys(displayedInstalled).length === 0
+                    ? <div className={css.empty}>{t('installedEmpty')}</div>
+                    : Object.entries(displayedInstalled)
+                        .filter(([name, spec]) => {
+                          const needle = qInstalled.trim().toLowerCase()
+                          if (needle === '') return true
+                          if (name.toLowerCase().includes(needle)) return true
+                          if (String(spec).toLowerCase().includes(needle)) return true
+                          const entry = data === null ? undefined : entryForDep(data.plugins, name, String(spec))
+                          if (entry !== undefined) {
+                            const desc = (entry.description && (entry.description[lang] || entry.description.en)) || ''
+                            if (desc.toLowerCase().includes(needle)) return true
+                            if ((entry.owner || '').toLowerCase().includes(needle)) return true
+                          }
+                          return false
+                        })
+                        .map(([name, spec]) => {
                   const missing = pendingBackup !== null && !installedFiles.includes(name)
                   const entry = data === null ? undefined : entryForDep(data.plugins, name, String(spec))
                   const status = updates[name]
@@ -1568,30 +1595,21 @@ export function MarketSection(props: MarketSectionProps) {
                               : <span className={css.owner}>{t('upToDate')}</span>}
                       {!missing && name !== 'dsh-market' && name !== 'dshmarket' && (
                         removingName === name
-                          ? <Button variant="outline" size="sm" className={css.dangerBtn} disabled>{t('uninstalling')}</Button>
-                          : removeArmed === name
-                            ? (
-                                <Button
-                                  variant="primary"
-                                  size="sm"
-                                  className={css.dangerArmed}
-                                  onClick={() => doUninstall(name)}
-                                  onMouseLeave={() => setRemoveArmed(null)}
-                                >{t('confirmRemove')}</Button>
-                              )
-                            : (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  className={css.dangerBtn}
-                                  disabled={removingName !== null || busyUrl !== null || updatingName !== null}
-                                  onClick={() => setRemoveArmed(name)}
-                                >{t('uninstall')}</Button>
-                              )
+                          ? <Button variant="outline" size="sm" disabled>{t('uninstalling')}</Button>
+                          : (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                disabled={removingName !== null || busyUrl !== null || updatingName !== null}
+                                onClick={() => setRemoveConfirm(name)}
+                              >{t('uninstall')}</Button>
+                            )
                       )}
                     </div>
                   )
                 })}
+                </>
+              )}
       </div>
       {showTop && (
         <Tooltip label={t('backTop')} side="top">
@@ -1637,6 +1655,20 @@ export function MarketSection(props: MarketSectionProps) {
           )}
           <p className={css.modalNote}><IconWarningOutline16 size={14} className={css.bannerIcon} />{' ' + t('confirmWarn')}</p>
         </Modal>
+      )}
+      {removeConfirm !== null && (
+        <Modal
+          open
+          onClose={() => setRemoveConfirm(null)}
+          title={t('uninstall') + ' ' + removeConfirm + '?'}
+          description={t('uninstallConfirmDesc')}
+          footer={(
+            <>
+              <Button variant="ghost" onClick={() => setRemoveConfirm(null)}>{t('cancel')}</Button>
+              <Button variant="primary" disabled={removingName !== null} onClick={() => doUninstall(removeConfirm)}>{t('uninstall')}</Button>
+            </>
+          )}
+        />
       )}
       {restoreConfirmOpen && pendingBackup !== null && (
         <Modal

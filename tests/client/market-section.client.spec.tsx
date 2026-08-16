@@ -457,3 +457,72 @@ describe('status-poll / install-response race (#73)', () => {
     }
   })
 })
+
+describe('uninstall confirmation Modal', () => {
+  const installedFixture = {
+    '/dsh-market/installed': { profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: [] },
+    '/dsh-market/updates': { updates: {} },
+  }
+
+  it('cancel does not call the uninstall API', async () => {
+    const fetchMock = stubFetch(installedFixture)
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    fireEvent.click(await screen.findByRole('button', { name: en.uninstall }))
+    // Modal opens with the confirmation copy.
+    expect(await screen.findByText(re(en.uninstallConfirmDesc))).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: en.cancel }))
+    await waitFor(() => expect(screen.queryByText(re(en.uninstallConfirmDesc))).toBeNull())
+    expect(fetchMock.mock.calls.some(([url]) => url === '/dsh-market/uninstall')).toBe(false)
+  })
+
+  it('confirming in the Modal calls the uninstall API', async () => {
+    const fetchMock = stubFetch(installedFixture)
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    fireEvent.click(await screen.findByRole('button', { name: en.uninstall }))
+    const dialog = await screen.findByRole('dialog', { name: re(en.uninstall + ' dsh-loop?') })
+    fireEvent.click(within(dialog).getByRole('button', { name: en.uninstall }))
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => url === '/dsh-market/uninstall')).toBe(true))
+  })
+})
+
+describe('per-tab search boxes', () => {
+  it('the installed tab has its own search that narrows the list', async () => {
+    stubFetch({
+      '/dsh-market/installed': { profile: 'web', installed: { 'dsh-loop': '^1.0.0', 'whale-skin': '^1.0.0' }, live: [] },
+      '/dsh-market/updates': { updates: {} },
+    })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    await screen.findByText('whale-skin')
+    fireEvent.change(screen.getByPlaceholderText(en.searchPh), { target: { value: 'whale' } })
+    await waitFor(() => {
+      expect(screen.getByText('whale-skin')).toBeTruthy()
+      expect(screen.queryByText('dsh-loop')).toBeNull()
+    })
+    // Clearing restores both rows.
+    fireEvent.change(screen.getByPlaceholderText(en.searchPh), { target: { value: '' } })
+    await waitFor(() => expect(screen.getByText('dsh-loop')).toBeTruthy())
+  })
+
+  it('the themes tab has its own search that narrows the theme grid', async () => {
+    // Snapshot object must be referentially stable (see LOCALE_SNAPSHOT above).
+    const THEME_SNAPSHOT = { preference: 'light', themes: [] as Array<{ id: string }> }
+    render(<MarketSection {...{
+      ...props(),
+      themeStore: { subscribe: () => () => {}, getSnapshot: () => THEME_SNAPSHOT },
+    }} />)
+    await screen.findByText('dsh-loop')
+    // The Themes tab button and the theme category pill share the same label;
+    // the tab comes first in DOM order.
+    fireEvent.click(screen.getAllByRole('button', { name: en.tabThemes })[0])
+    await screen.findByText('whale-skin')
+    fireEvent.change(screen.getByPlaceholderText(en.searchPh), { target: { value: 'zzz-no-match' } })
+    await waitFor(() => expect(screen.queryByText('whale-skin')).toBeNull())
+    expect(screen.getByText(en.empty)).toBeTruthy()
+  })
+})
