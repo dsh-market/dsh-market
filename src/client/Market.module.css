@@ -74,7 +74,7 @@
 .tabSearchRow{display:flex;padding:0 4px 10px}
 .tabSearch{width:260px}
 /* Buttons sharing the row with a description must keep one line (#26, thanks @yanshuai2002) */
-.spec{font-size:11px;color:var(--dsw-alias-label-secondary,#9ca3af);font-family:ui-monospace,Menlo,monospace}
+.spec{font-size:11px;color:var(--dsw-alias-label-secondary,#9ca3af);font-family:ui-monospace,Menlo,monospace;overflow-wrap:anywhere;min-width:0}
 .staleAction{margin-top:8px}
 .pct{font-weight:600;font-size:11px;flex-shrink:0;color:var(--dsw-alias-label-secondary,#6b7280)}
 .pager{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:16px 0 4px;flex-wrap:wrap}
@@ -123,3 +123,45 @@
 .backupCheck{display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer}
 .backupWarn{color:var(--dsw-alias-state-warn-primary,#b45309)!important;font-size:12px;line-height:18px;margin:0}
 .backupMessage{grid-column:1/-1;font-size:12px;color:var(--dsw-alias-label-secondary,#6b7280)}
+
+/* #98: Diagnostics tab — profile composition check report.
+   The page fills the settings dialog's content height and scrolls INSIDE
+   itself (overflow-y:auto), so the outer dialog never overflows and its own
+   overflow-y:auto stays silent (no outer scrollbar). */
+.diagPage{display:flex;flex-direction:column;gap:12px;height:100%;min-height:0;overflow-y:auto}
+.diagSummary{display:flex;flex-wrap:wrap;align-items:center;gap:12px;background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:12px;padding:10px 14px;font-size:12px}
+.diagSummaryItem{display:inline-flex;align-items:center;gap:6px;color:var(--dsw-alias-label-secondary,#6b7280);white-space:nowrap}
+.diagSummaryMeta{color:var(--dsw-alias-label-tertiary,#9ca3af);font-family:ui-monospace,Menlo,monospace;font-size:11px;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.diagSection{background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:12px;padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+.diagSection h3{font-size:13px;font-weight:600;margin:0;color:var(--dsw-alias-label-primary,#1f2328)}
+.diagCount{font-size:11px;color:var(--dsw-alias-label-tertiary,#9ca3af);font-weight:400}
+.diagEmpty{color:var(--dsw-alias-label-secondary,#9ca3af);font-size:12px;padding:8px 0}
+.diagBundle{display:flex;flex-direction:column;gap:6px;border-top:1px solid var(--dsw-alias-border-l2,#f0f1f3);padding-top:8px}
+.diagBundle:first-of-type{border-top:none;padding-top:0}
+.diagRow{display:flex;align-items:center;flex-wrap:wrap;gap:8px;font-size:12px;line-height:18px;min-width:0}
+.diagMeta{display:flex;align-items:baseline;gap:8px;font-size:12px;min-width:0}
+.diagKey{color:var(--dsw-alias-label-tertiary,#9ca3af);font-size:11px;flex-shrink:0;min-width:64px}
+.diagVal{font-size:12px;font-weight:500;color:var(--dsw-alias-label-primary,#1f2328);font-family:ui-monospace,Menlo,monospace;overflow-wrap:anywhere;min-width:0}
+.diagIndex{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;border-radius:9px;background:var(--dsw-alias-bg-layer-2,#f3f4f6);color:var(--dsw-alias-label-secondary,#6b7280);font-size:11px;font-weight:600;flex-shrink:0}
+.diagArrow{color:var(--dsw-alias-label-tertiary,#9ca3af);font-size:12px;flex-shrink:0}
+.diagBadgeOfficial{display:inline-flex;align-items:center;padding:0 8px;height:18px;border-radius:9px;background:var(--dsw-alias-brand-primary,#4f6ef7);color:#fff;font-size:11px;font-weight:600;flex-shrink:0}
+.diagBadgeCommunity{display:inline-flex;align-items:center;padding:0 8px;height:18px;border-radius:9px;background:var(--dsw-alias-bg-layer-2,#f3f4f6);color:var(--dsw-alias-label-secondary,#6b7280);font-size:11px;flex-shrink:0}
+.diagBadgeShadow{display:inline-flex;align-items:center;padding:0 8px;height:18px;border-radius:9px;background:var(--dsw-alias-state-error-primary,#dc2626);color:#fff;font-size:11px;font-weight:600;flex-shrink:0}
+.diagList{display:flex;flex-direction:column;gap:6px}
+
+/* #98 supplement: section overview line, overrides/orphans rows */
+.sectionOverview{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#8b93a1);padding:2px 0 6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+.diagAlert{color:var(--dsw-alias-state-warn-primary,#b45309)}
+.ovRow{display:flex;align-items:center;flex-wrap:wrap;gap:8px;font-size:12px;line-height:18px;background:var(--dsw-alias-bg-layer-2,#f7f8fa);border-radius:8px;padding:6px 10px;min-width:0}
+.ovArrow{color:var(--dsw-alias-label-tertiary,#9ca3af);font-size:12px;flex-shrink:0}
+.ovByTag{display:inline-flex;align-items:center;padding:0 8px;height:18px;border-radius:9px;background:var(--dsw-alias-brand-primary,#4f6ef7);color:#fff;font-size:11px;font-weight:600;flex-shrink:0;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ovFrom{color:var(--dsw-alias-label-secondary,#6b7280);font-size:12px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.orphRow{display:flex;align-items:center;flex-wrap:wrap;gap:8px;font-size:12px;line-height:18px;background:var(--dsw-alias-bg-layer-2,#f7f8fa);border-radius:8px;padding:6px 10px;min-width:0}
+.orphBadge{display:inline-flex;align-items:center;padding:0 8px;height:18px;border-radius:9px;background:var(--dsw-alias-state-warn-primary,#b45309);color:#fff;font-size:11px;font-weight:600;flex-shrink:0;white-space:nowrap}
+
+/* #98: collapsible report sections + neutral note text */
+.collapseHead{display:flex;align-items:center;gap:8px;border:none;background:none;font:inherit;font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary,#1f2328);padding:0;cursor:pointer;text-align:left;width:100%}
+.collapseIcon{display:inline-flex;flex-shrink:0;color:var(--dsw-alias-label-secondary,#6b7280)}
+.collapseTitle{flex:1;min-width:0}
+.collapseBody{display:flex;flex-direction:column;gap:10px;padding-top:10px;border-top:1px solid var(--dsw-alias-border-l2,#f0f1f3);margin-top:8px;min-width:0;overflow-wrap:anywhere}
+.panelNote{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#6b7280);margin:0}

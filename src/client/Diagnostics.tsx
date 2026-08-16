@@ -1,0 +1,483 @@
+/**
+ * Diagnostics tab — issue #98: renders the profile composition check report
+ * served by the host route /dsh-market/check (see src/check.ts). Read-only:
+ * the loading-layer stack and the conflict surface — bundle order (official
+ * vs community), duplicate loader entry ids, same-name rows, peer dependency
+ * mismatches, multi-version core packages, overrides, orphan patches and
+ * before/after ordering conflicts. (PR-A: the interactive community-ordering,
+ * snapshots & rollback and plugin-presets panels ship in later stacked PRs.)
+ *
+ * The report shape mirrors the CheckReport interface in src/check.ts; it is
+ * re-declared here because the client bundle is built independently of the
+ * host tree.
+ */
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { Button, DisclosureRow, IconChevronDownOutline14, IconChevronRightOutline14, IconLoadingOutline16, IconRefreshOutline14, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
+import css from './Market.module.css'
+import type { Translate } from './market-data.ts'
+
+/** Mirrors BundleLayer in src/check.ts. */
+interface BundleLayer {
+  name: string
+  source: string
+  kind: 'official' | 'community'
+  directory: string | null
+  patchPath: string | null
+  error: string | null
+  entries: string[]
+  parseError: string | null
+}
+
+/** Mirrors DuplicateId in src/check.ts. */
+interface DuplicateId {
+  id: string
+  layers: string[]
+  count: number
+}
+
+/** Mirrors OverrideRow in src/check.ts. */
+interface OverrideRow {
+  id: string
+  layer: string
+  overriddenLayers: string[]
+}
+
+/** Mirrors OrphanRow in src/check.ts. */
+interface OrphanRow {
+  id: string
+  layer: string
+  reason: string
+}
+
+/** Mirrors PeerMismatch in src/check.ts. */
+interface PeerMismatch {
+  plugin: string
+  name: string
+  range: string
+  resolved: string | null
+  satisfied: boolean | null
+}
+
+/** Mirrors MultiVersion in src/check.ts. */
+interface MultiVersion {
+  name: string
+  versions: string[]
+  hoisted: string | null
+}
+
+/** Mirrors CheckSummary in src/check.ts. */
+interface CheckSummary {
+  ok: boolean
+  errors: string[]
+  warnings: string[]
+}
+
+/** Mirrors OrderConflict in src/order.ts (top-level orderConflicts in CheckReport). */
+interface OrderConflict {
+  name: string
+  reason: string
+}
+
+/** Mirrors CheckReport in src/check.ts. */
+interface CheckReport {
+  profile: string
+  scannedAt: number
+  bundles: BundleLayer[]
+  duplicates: DuplicateId[]
+  overrides: OverrideRow[]
+  orphans: OrphanRow[]
+  peerMismatches: PeerMismatch[]
+  multiVersion: MultiVersion[]
+  summary: CheckSummary
+  /** #98: before/after rule conflicts in the CURRENT bundle order, when the host emits it. */
+  orderConflicts?: OrderConflict[]
+  /** #98: loader rows sharing one name — informational display only, never a conflict (review #109). */
+  duplicateNames?: Array<{ name: string; layers: string[]; count: number }>
+}
+
+/**
+ * A collapsible report section: header shows title + count + chevron; the
+ * body stays mounted (hidden via CSS when collapsed) so every block keeps
+ * its state. ALL blocks are collapsed by default — the summary strip above
+ * gives the overview, and a problem block's title is highlighted and its
+ * collapsed `overview` line shows the first issue, so nothing important is
+ * hidden. Expand a block to see its full content.
+ */
+function Section(props: {
+  title: string
+  count: number
+  empty: string
+  defaultOpen?: boolean
+  problem?: boolean
+  overview?: ReactNode
+  /** Render `children` even at count 0 (e.g. a zero-mismatch peer block whose
+   * informational disclosure must stay reachable). */
+  alwaysShowBody?: boolean
+  children: ReactNode
+}) {
+  const { title, count, empty, defaultOpen, problem = true, overview, alwaysShowBody = false, children } = props
+  const [open, setOpen] = useState(defaultOpen ?? false)
+  const alert = problem && count > 0
+  return (
+    <section className={css.diagSection}>
+      <button type="button" className={css.collapseHead} onClick={() => setOpen(o => !o)} aria-expanded={open}>
+        <span className={css.collapseIcon}>
+          {open ? <IconChevronDownOutline14 size={14} /> : <IconChevronRightOutline14 size={14} />}
+        </span>
+        {alert && <span className={css.diagAlert}>⚠</span>}
+        <span className={`${css.collapseTitle}${alert ? ` ${css.diagAlert}` : ''}`}>{title}</span>
+        <span className={css.diagCount}>({count})</span>
+        <span className={css.grow} />
+      </button>
+      {!open && overview !== undefined && <div className={css.sectionOverview}>{overview}</div>}
+      <div className={css.collapseBody} style={open ? undefined : { display: 'none' }}>
+        {count === 0 && !alwaysShowBody ? <div className={css.diagEmpty}>{empty}</div> : children}
+      </div>
+    </section>
+  )
+}
+
+/** A collapsible section that KEEPS its children mounted (hidden via CSS when
+ * collapsed), used by the plain-language explainer block.
+ */
+function CollapsibleSection(props: { title: string; count?: number; open: boolean; onToggle: () => void; children: ReactNode }) {
+  const { title, count, open, onToggle, children } = props
+  return (
+    <section className={css.diagSection}>
+      <button type="button" className={css.collapseHead} onClick={onToggle} aria-expanded={open}>
+        <span className={css.collapseIcon}>
+          {open ? <IconChevronDownOutline14 size={14} /> : <IconChevronRightOutline14 size={14} />}
+        </span>
+        <span className={css.collapseTitle}>{title}</span>
+        {count !== undefined && <span className={css.diagCount}>({count})</span>}
+        <span className={css.grow} />
+      </button>
+      <div className={css.collapseBody} style={open ? undefined : { display: 'none' }}>
+        {children}
+      </div>
+    </section>
+  )
+}
+
+/** Map an orphan patch reason (src/check.ts) to a locale key for its badge. */
+function orphanKindLabel(reason: string): string {
+  if (reason === 'insert is not an array') return 'orphanInsertNotArray'
+  if (reason === 'insert target not found') return 'orphanInsertTargetMissing'
+  if (reason === 'insert target is not a group') return 'orphanInsertTargetNotGroup'
+  if (reason === 'id required for non-insert patch') return 'orphanIdRequired'
+  if (reason === 'patch target not found') return 'orphanPatchTargetMissing'
+  if (reason.startsWith('name mismatch')) return 'orphanNameMismatch'
+  return 'orphanReasonOther'
+}
+
+/**
+ * Fetch and render the profile check report. Refetches on every mount, so
+ * switching tabs away and back re-runs the (cheap, read-only) analysis.
+ */
+export function Diagnostics(props: { t: Translate }) {
+  const { t } = props
+  const [report, setReport] = useState<CheckReport | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [explainOpen, setExplainOpen] = useState(false)
+  const [peerInfoOpen, setPeerInfoOpen] = useState(false)
+  /** Bump to re-run the /dsh-market/check fetch (manual re-check). */
+  const [version, setVersion] = useState(0)
+  const refresh = useCallback(() => setVersion(v => v + 1), [])
+
+  useEffect(() => {
+    let live = true
+    // Do NOT null the report here: a refresh() (manual re-check) must keep
+    // the previous data visible instead of flashing the loading state.
+    setError(null)
+    fetch('/dsh-market/check', { cache: 'no-store' })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`HTTP ${String(res.status)}`)
+        const body = (await res.json()) as CheckReport
+        if (live) setReport(body)
+      })
+      .catch((err: unknown) => {
+        if (live) setError(err instanceof Error ? err.message : String(err))
+      })
+    return () => { live = false }
+  }, [version])
+
+  if (error !== null) {
+    return <div className={css.err}>{t('checkLoadFail')}{error}</div>
+  }
+  if (report === null) {
+    return (
+      <div className={css.loading}>
+        <span className={css.spin}><IconLoadingOutline16 size={22} /></span>
+        {t('checkLoading')}
+      </div>
+    )
+  }
+
+  const summary = report.summary
+  // Confirmed mismatches vs informational entries (satisfied / unknown).
+  const peerConfirmed = report.peerMismatches.filter(peer => peer.satisfied === false)
+  const peerInfo = report.peerMismatches.filter(peer => peer.satisfied !== false)
+  // Category counts for the overview strip: conflicts / dependencies / order.
+  // Conflicts = HARD duplicate loader entries only; same-name rows are
+  // informational and stay out of the conflict count (review #109).
+  const catConflict = report.duplicates.length
+  const catDeps = report.peerMismatches.length + report.multiVersion.length
+  const catOrder = report.orderConflicts?.length ?? 0
+  const anyIssue = catConflict + catDeps + catOrder > 0
+
+  return (
+    <div className={css.diagPage}>
+      <div className={css.diagSummary}>
+        <span className={summary.ok ? css.okState : css.err}>
+          <StateDot state={summary.ok ? 'done' : 'error'} size={8} />
+          {summary.ok ? (anyIssue ? t('checkIssues') : t('diagOkAll')) : t('checkIssues')}
+        </span>
+        <span className={css.diagSummaryItem} title={t('checkDuplicates')}>
+          <StateDot state="error" size={8} />{t('catConflict')}: {catConflict}
+        </span>
+        <span className={css.diagSummaryItem} title={t('checkPeerMismatches')}>
+          <StateDot state="warning" size={8} />{t('catDeps')}: {catDeps}
+        </span>
+        <span className={css.diagSummaryItem} title={t('checkOrderTip')}>
+          <StateDot state="warning" size={8} />{t('catOrder')}: {catOrder}
+        </span>
+        <span className={css.grow} />
+        <Button variant="ghost" size="sm" aria-label={t('checkRefresh')} onClick={refresh}>
+          <IconRefreshOutline14 size={14} />
+        </Button>
+        <span className={css.diagSummaryMeta} title={report.profile}>{t('checkProfile')}: {report.profile}</span>
+        <span className={css.diagSummaryMeta}>{new Date(report.scannedAt).toLocaleString()}</span>
+      </div>
+
+      <CollapsibleSection title={t('diagExplain')} open={explainOpen} onToggle={() => setExplainOpen(o => !o)}>
+        <p className={css.panelNote}>{t('diagExplainText')}</p>
+        <div className={css.diagList}>
+          <div className={css.spec}>{t('diagTermBundle')}</div>
+          <div className={css.spec}>{t('diagTermEntry')}</div>
+          <div className={css.spec}>{t('diagTermPeer')}</div>
+          <div className={css.spec}>{t('diagTermShadow')}</div>
+          <div className={css.spec}>{t('diagTermOrphan')}</div>
+          <div className={css.spec}>{t('diagTermOrder')}</div>
+        </div>
+      </CollapsibleSection>
+
+      <Section
+        title={t('checkErrors')}
+        count={summary.errors.length}
+        empty={t('checkErrorsEmpty')}
+        overview={summary.errors.length > 0 ? summary.errors[0] : undefined}
+      >
+        <div className={css.diagList}>
+          {summary.errors.map((line, i) => (
+            <div key={i} className={css.err}>{line}</div>
+          ))}
+        </div>
+      </Section>
+
+      <Section
+        title={t('checkWarnings')}
+        count={summary.warnings.length}
+        empty={t('checkWarningsEmpty')}
+        overview={summary.warnings.length > 0 ? summary.warnings[0] : undefined}
+      >
+        <div className={css.diagList}>
+          {summary.warnings.map((line, i) => (
+            <div key={i} className={css.warnLine}><span>{line}</span></div>
+          ))}
+        </div>
+      </Section>
+
+      <Section
+        title={t('checkBundles')}
+        count={report.bundles.length}
+        empty={t('checkBundlesEmpty')}
+        problem={false}
+        overview={
+          <span>
+            {t('checkOfficial')} × {report.bundles.filter(b => b.kind === 'official').length}
+            {' · '}
+            {t('checkCommunity')} × {report.bundles.filter(b => b.kind === 'community').length}
+          </span>
+        }
+      >
+        {report.bundles.map((bundle, i) => (
+          <div key={bundle.name} className={css.diagBundle}>
+            <div className={css.diagRow}>
+              <span className={css.diagIndex}>{i + 1}</span>
+              <span className={css.diagArrow}>→</span>
+              <span className={css.nm}>{bundle.name}</span>
+              <span className={bundle.kind === 'official' ? css.diagBadgeOfficial : css.diagBadgeCommunity}>
+                {bundle.kind === 'official' ? t('checkOfficial') : t('checkCommunity')}
+              </span>
+              {bundle.error !== null && <span className={css.err}>{bundle.error}</span>}
+              {bundle.parseError !== null && <span className={css.err}>{t('checkPatch')}: {bundle.parseError}</span>}
+            </div>
+            <div className={css.diagMeta}>
+              <span className={css.diagKey}>{t('checkSource')}</span>
+              <code className={css.spec}>{bundle.source}</code>
+            </div>
+            <div className={css.diagMeta}>
+              <span className={css.diagKey}>{t('checkEntries')}</span>
+              <code className={css.spec}>{bundle.entries.length > 0 ? bundle.entries.join(', ') : '—'}</code>
+            </div>
+            {bundle.directory !== null && (
+              <div className={css.diagMeta}>
+                <span className={css.diagKey}>{t('checkDir')}</span>
+                <code className={css.spec}>{bundle.directory}</code>
+              </div>
+            )}
+            {bundle.patchPath !== null && (
+              <div className={css.diagMeta}>
+                <span className={css.diagKey}>{t('checkPatch')}</span>
+                <code className={css.spec}>{bundle.patchPath}</code>
+              </div>
+            )}
+          </div>
+        ))}
+      </Section>
+
+      <Section
+        title={t('checkDuplicates')}
+        count={report.duplicates.length}
+        empty={t('checkDuplicatesEmpty')}
+        overview={report.duplicates.length > 0 ? `${report.duplicates[0]?.id} × ${report.duplicates[0]?.count}` : undefined}
+      >
+        <div className={css.diagList}>
+          {report.duplicates.map(dup => (
+            <div key={dup.id} className={css.diagRow}>
+              <code className={css.diagVal}>{dup.id}</code>
+              <span className={css.err}>× {dup.count}</span>
+              <span className={css.spec}>{dup.layers.join(' / ')}</span>
+            </div>
+          ))}
+        </div>
+      </Section>
+
+      <Section
+        title={t('checkPeerMismatches')}
+        count={peerConfirmed.length}
+        empty={t('checkPeerEmpty')}
+        overview={report.peerMismatches.length > 0
+          ? t('checkPeerOverview')
+            .replace('{0}', String(peerConfirmed.length))
+            .replace('{1}', String(peerInfo.length))
+          : undefined}
+        // The body must render even with zero CONFIRMED mismatches when
+        // informational entries exist — otherwise the disclosure holding them
+        // would be unreachable (count-0 sections render only the empty text).
+        alwaysShowBody={peerInfo.length > 0}
+      >
+        {peerConfirmed.length === 0 ? (
+          <div className={css.diagEmpty}>{t('checkPeerEmpty')}</div>
+        ) : (
+          <div className={css.diagList}>
+            {peerConfirmed.map((peer, i) => (
+              <div key={i} className={css.diagRow}>
+                <code className={css.diagVal}>{peer.name}</code>
+                <span className={css.nm}>{peer.plugin}</span>
+                <span className={css.spec}>{t('checkRange')}: {peer.range}</span>
+                <span className={css.spec}>{t('checkResolved')}: {peer.resolved ?? '—'}</span>
+                <span className={css.diagBadgeShadow}>{t('checkUnsatisfied')}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {peerInfo.length > 0 && (
+          <DisclosureRow
+            icon={<IconChevronDownOutline14 size={14} />}
+            title={`${t('checkPeerInfo').replace('{0}', String(peerInfo.length))} (${peerInfo.length})`}
+            expandable
+            open={peerInfoOpen}
+            onToggle={() => setPeerInfoOpen(o => !o)}
+          >
+            <div className={css.diagList}>
+              {peerInfo.map((peer, i) => (
+                <div key={i} className={css.diagRow}>
+                  <code className={css.diagVal}>{peer.name}</code>
+                  <span className={css.nm}>{peer.plugin}</span>
+                  <span className={css.spec}>{t('checkRange')}: {peer.range}</span>
+                  <span className={css.spec}>{t('checkResolved')}: {peer.resolved ?? '—'}</span>
+                  {peer.satisfied === true
+                    ? <span className={css.okState}>{t('checkSatisfied')}</span>
+                    : <span className={css.spec}>{t('checkUnknown')}</span>}
+                </div>
+              ))}
+            </div>
+          </DisclosureRow>
+        )}
+      </Section>
+
+      <Section
+        title={t('checkMultiVersion')}
+        count={report.multiVersion.length}
+        empty={t('checkMultiEmpty')}
+        overview={report.multiVersion.length > 0 ? `${report.multiVersion[0]?.name}: ${report.multiVersion[0]?.versions.join(' / ')}` : undefined}
+      >
+        <div className={css.diagList}>
+          {report.multiVersion.map(mv => (
+            <div key={mv.name} className={css.diagRow}>
+              <code className={css.diagVal}>{mv.name}</code>
+              <span className={css.spec}>{mv.versions.join(' / ')}</span>
+              {mv.hoisted !== null && <span className={css.spec}>{t('checkHoisted')}: {mv.hoisted}</span>}
+            </div>
+          ))}
+        </div>
+      </Section>
+
+      <Section
+        title={t('checkOverrides')}
+        count={report.overrides.length}
+        empty={t('checkOverridesEmpty')}
+        overview={report.overrides.length > 0 ? `${report.overrides[0]?.id} ← ${report.overrides[0]?.layer}` : undefined}
+      >
+        <div className={css.diagList}>
+          {report.overrides.map((ov, i) => (
+            <div key={i} className={css.ovRow}>
+              <code className={css.diagVal}>{ov.id}</code>
+              <span className={css.ovArrow}>←</span>
+              <span className={css.ovByTag}>{ov.layer}</span>
+              <span className={css.spec}>{t('checkOverridden')}</span>
+              <span className={css.ovFrom}>{ov.overriddenLayers.join(', ')}</span>
+            </div>
+          ))}
+        </div>
+      </Section>
+
+      <Section
+        title={t('checkOrphans')}
+        count={report.orphans.length}
+        empty={t('checkOrphansEmpty')}
+        overview={report.orphans.length > 0 ? `${report.orphans[0]?.id}（${t(orphanKindLabel(report.orphans[0]?.reason ?? ''))}）` : undefined}
+      >
+        <div className={css.diagList}>
+          {report.orphans.map((orphan, i) => (
+            <div key={i} className={css.orphRow}>
+              <span className={css.orphBadge}>{t(orphanKindLabel(orphan.reason))}</span>
+              <code className={css.diagVal}>{orphan.id}</code>
+              <span className={css.nm}>{orphan.layer}</span>
+              <span className={css.spec}>{orphan.reason}</span>
+            </div>
+          ))}
+        </div>
+      </Section>
+
+      {/* Read-only extras (used to live inside the phase-2 ordering panel). */}
+      {report.orderConflicts !== undefined && report.orderConflicts.length > 0 && (
+        <div className={css.diagList}>
+          <span className={css.diagKey}>{t('orderConflicts')}</span>
+          {report.orderConflicts.map((conflict, i) => (
+            <div key={i} className={css.warnLine}>{conflict.name} — {conflict.reason}</div>
+          ))}
+        </div>
+      )}
+      {report.duplicateNames !== undefined && report.duplicateNames.length > 0 && (
+        <div className={css.diagList}>
+          <span className={css.diagKey}>{t('duplicateNames')}</span>
+          {report.duplicateNames.map((dup, i) => (
+            <div key={i} className={css.panelNote}>{dup.name} × {dup.count} — {dup.layers.join(' / ')}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}

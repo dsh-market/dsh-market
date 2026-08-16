@@ -33,6 +33,7 @@ import {
   type MenuEntry,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import css from './Market.module.css'
+import { Diagnostics } from './Diagnostics.tsx'
 import {
   avatarColor, entryForDep, groupSwitchState, isInstalled, looksTerminal, matchInstalledName, orderedCategories,
   pageItems, pluginScreenshots, readSession, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
@@ -1378,6 +1379,7 @@ export function MarketSection(props: MarketSectionProps) {
             {hasUpdates && <StateDot state="error" size={7} className={css.dot} />}
           </button>
           <button className={tab === 'backup' ? `${css.tab} ${css.on}` : css.tab} onClick={() => setTab('backup')}>{t('tabBackup')}</button>
+          <button className={tab === 'diagnostics' ? `${css.tab} ${css.on}` : css.tab} onClick={() => setTab('diagnostics')}>{t('tabDiagnostics')}</button>
           <span className={css.grow} />
         </div>
         {!envReady && (
@@ -1734,6 +1736,8 @@ export function MarketSection(props: MarketSectionProps) {
                         : <div className={css.grid}>{filteredThemePlugins.map(themePluginCard)}</div>}
                 </>
               )
+            : tab === 'diagnostics'
+            ? <Diagnostics t={t} />
             : (
                 <>
                   <div className={css.viewBar}>
