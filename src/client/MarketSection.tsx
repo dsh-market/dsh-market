@@ -205,6 +205,8 @@ export interface MarketSectionProps {
     getSnapshot(): { active: string }
   }
   theme: { setTheme(id: string): void }
+  /** UI face to start a new agent session (diagnostics AI-fix button). */
+  workspaces?: { startSession(workspaceId?: string): void }
   themeStore: {
     subscribe(callback: () => void): () => void
     getSnapshot(): ThemeSnapshot | null
@@ -1709,7 +1711,7 @@ export function MarketSection(props: MarketSectionProps) {
                 </>
               )
             : tab === 'diagnostics'
-            ? <Diagnostics t={t} />
+            ? <Diagnostics t={t} workspaces={props.workspaces} />
             : (
                 <>
                   <div className={css.viewBar}>

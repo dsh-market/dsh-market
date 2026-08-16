@@ -191,8 +191,8 @@ function orphanKindLabel(reason: string): string {
  * switching tabs away and back re-runs the (cheap, read-only) analysis; the
  * phase 3 panels below call `refresh()` after applying changes.
  */
-export function Diagnostics(props: { t: Translate }) {
-  const { t } = props
+export function Diagnostics(props: { t: Translate; workspaces?: { startSession(workspaceId?: string): void } }) {
+  const { t, workspaces } = props
   const [report, setReport] = useState<CheckReport | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [orderOpen, setOrderOpen] = useState(false)
@@ -200,6 +200,7 @@ export function Diagnostics(props: { t: Translate }) {
   const [peerInfoOpen, setPeerInfoOpen] = useState(false)
   const [snapOpen, setSnapOpen] = useState(false)
   const [presetOpen, setPresetOpen] = useState(false)
+  const [fixMsg, setFixMsg] = useState<string | null>(null)
   /** Bump to re-run the /dsh-market/check fetch after an order/preset/restore apply. */
   const [version, setVersion] = useState(0)
   const refresh = useCallback(() => setVersion(v => v + 1), [])
@@ -340,6 +341,49 @@ export function Diagnostics(props: { t: Translate }) {
   const catDeps = report.coreDeps.length + report.peerMismatches.length + report.multiVersion.length
   const catOrder = report.orderConflicts?.length ?? 0
   const anyIssue = catConflict + catDeps + catOrder > 0
+
+  /** Build the AI-fix prompt from the current report and hand it to a new session. */
+  const startAgentFix = () => {
+    const lines: string[] = []
+    lines.push(t('aiFixIntro').replace('{0}', report.profile))
+    lines.push('')
+    if (summary.errors.length > 0) {
+      lines.push(`${t('checkErrors')}:`)
+      for (const e of summary.errors) lines.push(`- ${e}`)
+      lines.push('')
+    }
+    if (summary.warnings.length > 0) {
+      lines.push(`${t('checkWarnings')}:`)
+      for (const w of summary.warnings) lines.push(`- ${w}`)
+      lines.push('')
+    }
+    if ((report.orderConflicts ?? []).length > 0) {
+      lines.push(`${t('catOrder')}:`)
+      for (const c of report.orderConflicts ?? []) lines.push(`- ${c.name}: ${c.reason}`)
+      lines.push('')
+    }
+    lines.push(t('aiFixScope'))
+    const prompt = lines.join('\n')
+    const fallback = (): void => {
+      try {
+        void navigator.clipboard?.writeText(prompt)
+        setFixMsg(t('aiFixCopied'))
+      } catch {
+        setFixMsg(t('aiFixFail'))
+      }
+    }
+    if (typeof navigator.clipboard?.writeText === 'function') {
+      navigator.clipboard.writeText(prompt)
+        .then(() => {
+          workspaces?.startSession()
+          setFixMsg(t('aiFixReady'))
+        })
+        .catch(fallback)
+    } else {
+      fallback()
+    }
+  }
+
   return (
     <div className={css.diagPage}>
       <div className={css.diagSummary}>
@@ -357,12 +401,18 @@ export function Diagnostics(props: { t: Translate }) {
           <StateDot state="warning" size={8} />{t('catOrder')}: {catOrder}
         </span>
         <span className={css.grow} />
+        {anyIssue && (
+          <Button variant="outline" size="sm" onClick={startAgentFix} title={t('aiFixHint')}>
+            {t('aiFix')}
+          </Button>
+        )}
         <Button variant="ghost" size="sm" aria-label={t('checkRefresh')} onClick={refresh}>
           <IconRefreshOutline14 size={14} />
         </Button>
         <span className={css.diagSummaryMeta} title={report.profile}>{t('checkProfile')}: {report.profile}</span>
         <span className={css.diagSummaryMeta}>{new Date(report.scannedAt).toLocaleString()}</span>
       </div>
+      {fixMsg !== null && <div className={css.okState}>{fixMsg}</div>}
 
       <CollapsibleSection title={t('diagExplain')} open={explainOpen} onToggle={() => setExplainOpen(o => !o)}>
         <p className={css.panelNote}>{t('diagExplainText')}</p>
@@ -623,6 +673,18 @@ export function Diagnostics(props: { t: Translate }) {
                 {t('orderSuggestApply')}
               </Button>
             )}
+          {suggested !== null && suggested !== undefined && suggested.ok === true
+            && suggested.order.join('\u0000') === communityNames.join('\u0000')
+            && (
+              <Button variant="outline" size="sm" disabled={orderBusy} onClick={() => setOrderMsg(t('orderAlreadyOptimal'))}>
+                {t('orderAutoSort')}
+              </Button>
+            )}
+          {suggested === null && (
+            <Button variant="outline" size="sm" disabled={orderBusy} onClick={() => setOrderMsg(t('orderNoRules'))}>
+              {t('orderAutoSort')}
+            </Button>
+          )}
           {order.join('\u0000') !== communityNames.join('\u0000') && (
             <Button variant="ghost" size="sm" disabled={orderBusy} onClick={() => setOrder(communityNames)}>
               {t('orderReset')}

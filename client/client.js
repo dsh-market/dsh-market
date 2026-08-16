@@ -256,9 +256,19 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			orderApplied: "✓ 已应用",
 			orderSuggestApply: "一键采用建议顺序",
 			orderSuggestHint: "建议顺序（按 before/after 规则自动排序）：",
+			orderAutoSort: "自动排序",
+			orderAlreadyOptimal: "已按规则最优排序",
+			orderNoRules: "没有可用的排序规则（插件未声明 before/after）",
 			duplicateNames: "重复的插件名（运行时互相覆盖）",
 			orderReset: "重置草稿",
 			checkRefresh: "重新检查",
+			aiFix: "AI 修复",
+			aiFixHint: "把诊断问题交给新对话的 Agent 修复（复制到剪贴板，由你决定发送）",
+			aiFixIntro: "请帮我修复 DeepSeek Harness 的插件问题（profile：{0}）。诊断发现如下：",
+			aiFixScope: "你可以修改 profile 的 dsh.profile.bundles 顺序、停用/启用插件、调整 cordis.patch.yml。注意：官方 bundle 不可移动；动手前先说明计划。",
+			aiFixReady: "已复制修复任务并打开新对话——在输入框粘贴后自行决定发送",
+			aiFixCopied: "已把修复任务复制到剪贴板，请在新对话中粘贴后发送",
+			aiFixFail: "无法访问剪贴板，请手动复制诊断内容",
 			catConflict: "冲突",
 			catDeps: "依赖",
 			catOrder: "顺序",
@@ -542,9 +552,19 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			orderApplied: "✓ Applied",
 			orderSuggestApply: "Apply suggested order",
 			orderSuggestHint: "Suggested order (auto-sorted by before/after rules):",
+			orderAutoSort: "Auto-sort",
+			orderAlreadyOptimal: "Order already optimal per the declared rules",
+			orderNoRules: "No ordering rules declared (plugins do not specify before/after)",
 			duplicateNames: "Duplicate plugin names (shadow each other at runtime)",
 			orderReset: "Reset draft",
 			checkRefresh: "Re-check",
+			aiFix: "AI fix",
+			aiFixHint: "Hand the diagnostics to a new Agent session (copied to the clipboard; you decide whether to send)",
+			aiFixIntro: "Please help me fix the plugin issues of DeepSeek Harness (profile: {0}). Diagnostics found:",
+			aiFixScope: "You may reorder dsh.profile.bundles, disable/enable plugins, or adjust cordis.patch.yml. Note: official bundles are fixed; state your plan before changing anything.",
+			aiFixReady: "Fix task copied and a new conversation opened — paste it and send when you are ready",
+			aiFixCopied: "Fix task copied to the clipboard — paste it into a new conversation and send",
+			aiFixFail: "Clipboard unavailable — copy the diagnostics manually",
 			catConflict: "Conflicts",
 			catDeps: "Dependencies",
 			catOrder: "Order",
@@ -933,148 +953,148 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			document.head.appendChild(tag);
 		}
 		var Market_module_css_default = {
-			"diagKey": "P9NphG_diagKey",
-			"staleAction": "P9NphG_staleAction",
-			"snapList": "P9NphG_snapList",
-			"row1": "P9NphG_row1",
-			"presetList": "P9NphG_presetList",
-			"diagSummary": "P9NphG_diagSummary",
-			"av": "P9NphG_av",
-			"diagEmpty": "P9NphG_diagEmpty",
-			"diagRow": "P9NphG_diagRow",
-			"title": "P9NphG_title",
-			"pager": "P9NphG_pager",
-			"switchMixed": "P9NphG_switchMixed",
-			"groupHint": "P9NphG_groupHint",
-			"backupInput": "P9NphG_backupInput",
-			"backupMessage": "P9NphG_backupMessage",
-			"dragging": "P9NphG_dragging",
-			"presetRow": "P9NphG_presetRow",
-			"grow": "P9NphG_grow",
-			"err": "P9NphG_err",
-			"ovByTag": "P9NphG_ovByTag",
-			"diagMeta": "P9NphG_diagMeta",
-			"head": "P9NphG_head",
-			"diagSection": "P9NphG_diagSection",
-			"progress": "P9NphG_progress",
-			"diagBadgeCommunity": "P9NphG_diagBadgeCommunity",
-			"desc": "P9NphG_desc",
-			"owner": "P9NphG_owner",
-			"loading": "P9NphG_loading",
-			"empty": "P9NphG_empty",
-			"inlineInput": "P9NphG_inlineInput",
-			"nm": "P9NphG_nm",
-			"backupGrid": "P9NphG_backupGrid",
-			"tab": "P9NphG_tab",
-			"groupMembers": "P9NphG_groupMembers",
-			"diagList": "P9NphG_diagList",
-			"snapConfirmText": "P9NphG_snapConfirmText",
-			"diagBadgeShadow": "P9NphG_diagBadgeShadow",
-			"collapseTitle": "P9NphG_collapseTitle",
-			"cats": "P9NphG_cats",
-			"viewBtn": "P9NphG_viewBtn",
-			"collapseIcon": "P9NphG_collapseIcon",
-			"pagerPages": "P9NphG_pagerPages",
-			"irow": "P9NphG_irow",
-			"srcBtn": "P9NphG_srcBtn",
-			"backupActions": "P9NphG_backupActions",
-			"ovFrom": "P9NphG_ovFrom",
-			"catsWrap": "P9NphG_catsWrap",
-			"assignRow": "P9NphG_assignRow",
-			"bannerIcon": "P9NphG_bannerIcon",
-			"dshmSlide": "P9NphG_dshmSlide",
-			"sectAction": "P9NphG_sectAction",
-			"ovRow": "P9NphG_ovRow",
-			"actBroken": "P9NphG_actBroken",
-			"groupActions": "P9NphG_groupActions",
-			"diagBundle": "P9NphG_diagBundle",
-			"confirmRow": "P9NphG_confirmRow",
-			"tabs": "P9NphG_tabs",
-			"warnLine": "P9NphG_warnLine",
-			"on": "P9NphG_on",
-			"catsCollapsed": "P9NphG_catsCollapsed",
-			"groupMember": "P9NphG_groupMember",
-			"catsToggle": "P9NphG_catsToggle",
-			"switchKnob": "P9NphG_switchKnob",
-			"catsRow": "P9NphG_catsRow",
-			"groupHead": "P9NphG_groupHead",
-			"shots": "P9NphG_shots",
-			"depBadge": "P9NphG_depBadge",
-			"act": "P9NphG_act",
-			"bannerHint": "P9NphG_bannerHint",
-			"spin": "P9NphG_spin",
-			"diagSummaryMeta": "P9NphG_diagSummaryMeta",
-			"assignSelect": "P9NphG_assignSelect",
-			"tag": "P9NphG_tag",
-			"sectionOverview": "P9NphG_sectionOverview",
-			"tabSearchRow": "P9NphG_tabSearchRow",
-			"groupAddPanel": "P9NphG_groupAddPanel",
-			"body": "P9NphG_body",
-			"titleRow": "P9NphG_titleRow",
-			"star": "P9NphG_star",
-			"pageInfo": "P9NphG_pageInfo",
-			"okState": "P9NphG_okState",
-			"cmd": "P9NphG_cmd",
-			"switchOn": "P9NphG_switchOn",
-			"banner": "P9NphG_banner",
-			"ovArrow": "P9NphG_ovArrow",
-			"sub": "P9NphG_sub",
-			"descTight": "P9NphG_descTight",
-			"diagIndex": "P9NphG_diagIndex",
-			"viewOn": "P9NphG_viewOn",
-			"groupName": "P9NphG_groupName",
-			"diagBadgeOfficial": "P9NphG_diagBadgeOfficial",
-			"panelActions": "P9NphG_panelActions",
-			"collapseBody": "P9NphG_collapseBody",
-			"backupCheck": "P9NphG_backupCheck",
-			"dot": "P9NphG_dot",
-			"diagPage": "P9NphG_diagPage",
-			"backupWarn": "P9NphG_backupWarn",
-			"diagVal": "P9NphG_diagVal",
-			"swatches": "P9NphG_swatches",
-			"actLive": "P9NphG_actLive",
-			"actWhy": "P9NphG_actWhy",
-			"snapMeta": "P9NphG_snapMeta",
-			"collapseHead": "P9NphG_collapseHead",
-			"spec": "P9NphG_spec",
-			"orphBadge": "P9NphG_orphBadge",
-			"deprecate": "P9NphG_deprecate",
-			"grid": "P9NphG_grid",
-			"panelNote": "P9NphG_panelNote",
-			"backupCard": "P9NphG_backupCard",
-			"pct": "P9NphG_pct",
-			"themesGrid": "P9NphG_themesGrid",
-			"groupCreate": "P9NphG_groupCreate",
-			"barFill": "P9NphG_barFill",
-			"orderPanel": "P9NphG_orderPanel",
-			"root": "P9NphG_root",
-			"topBtn": "P9NphG_topBtn",
 			"tabSearch": "P9NphG_tabSearch",
-			"foot": "P9NphG_foot",
-			"shot": "P9NphG_shot",
-			"depLine": "P9NphG_depLine",
+			"catsCollapsed": "P9NphG_catsCollapsed",
 			"dragOver": "P9NphG_dragOver",
-			"snapRow": "P9NphG_snapRow",
-			"diagArrow": "P9NphG_diagArrow",
-			"actWarn": "P9NphG_actWarn",
-			"viewBar": "P9NphG_viewBar",
-			"groupRow": "P9NphG_groupRow",
+			"foot": "P9NphG_foot",
+			"presetRow": "P9NphG_presetRow",
+			"snapList": "P9NphG_snapList",
 			"diagSummaryItem": "P9NphG_diagSummaryItem",
+			"ovFrom": "P9NphG_ovFrom",
+			"diagSummaryMeta": "P9NphG_diagSummaryMeta",
+			"diagVal": "P9NphG_diagVal",
+			"okState": "P9NphG_okState",
 			"modalNote": "P9NphG_modalNote",
-			"sp": "P9NphG_sp",
-			"orphRow": "P9NphG_orphRow",
-			"irowMissing": "P9NphG_irowMissing",
-			"pageEllipsis": "P9NphG_pageEllipsis",
-			"hiddenFile": "P9NphG_hiddenFile",
+			"swatches": "P9NphG_swatches",
+			"act": "P9NphG_act",
+			"switchMixed": "P9NphG_switchMixed",
+			"backupWarn": "P9NphG_backupWarn",
+			"tab": "P9NphG_tab",
+			"dot": "P9NphG_dot",
+			"diagMeta": "P9NphG_diagMeta",
+			"root": "P9NphG_root",
+			"ovByTag": "P9NphG_ovByTag",
+			"groupHead": "P9NphG_groupHead",
 			"diagCount": "P9NphG_diagCount",
-			"dragHandle": "P9NphG_dragHandle",
-			"bar": "P9NphG_bar",
-			"barWave": "P9NphG_barWave",
-			"presetName": "P9NphG_presetName",
-			"top": "P9NphG_top",
+			"sub": "P9NphG_sub",
+			"groupName": "P9NphG_groupName",
+			"diagBadgeCommunity": "P9NphG_diagBadgeCommunity",
+			"owner": "P9NphG_owner",
+			"catsRow": "P9NphG_catsRow",
+			"star": "P9NphG_star",
+			"groupCreate": "P9NphG_groupCreate",
+			"tabSearchRow": "P9NphG_tabSearchRow",
+			"diagRow": "P9NphG_diagRow",
+			"collapseHead": "P9NphG_collapseHead",
+			"progress": "P9NphG_progress",
+			"groupMembers": "P9NphG_groupMembers",
+			"diagPage": "P9NphG_diagPage",
+			"viewBtn": "P9NphG_viewBtn",
+			"actWarn": "P9NphG_actWarn",
+			"dshmSlide": "P9NphG_dshmSlide",
+			"titleRow": "P9NphG_titleRow",
+			"grow": "P9NphG_grow",
+			"inlineInput": "P9NphG_inlineInput",
 			"card": "P9NphG_card",
+			"presetName": "P9NphG_presetName",
+			"srcBtn": "P9NphG_srcBtn",
+			"pageInfo": "P9NphG_pageInfo",
+			"backupCard": "P9NphG_backupCard",
+			"hiddenFile": "P9NphG_hiddenFile",
+			"on": "P9NphG_on",
+			"catsWrap": "P9NphG_catsWrap",
+			"backupActions": "P9NphG_backupActions",
+			"orderPanel": "P9NphG_orderPanel",
+			"backupCheck": "P9NphG_backupCheck",
+			"dragging": "P9NphG_dragging",
+			"panelActions": "P9NphG_panelActions",
+			"depLine": "P9NphG_depLine",
+			"viewBar": "P9NphG_viewBar",
+			"actWhy": "P9NphG_actWhy",
+			"groupMember": "P9NphG_groupMember",
+			"pagerPages": "P9NphG_pagerPages",
 			"switch": "P9NphG_switch",
-			"src": "P9NphG_src"
+			"groupRow": "P9NphG_groupRow",
+			"pageEllipsis": "P9NphG_pageEllipsis",
+			"orphBadge": "P9NphG_orphBadge",
+			"collapseIcon": "P9NphG_collapseIcon",
+			"av": "P9NphG_av",
+			"backupGrid": "P9NphG_backupGrid",
+			"bannerIcon": "P9NphG_bannerIcon",
+			"diagArrow": "P9NphG_diagArrow",
+			"spec": "P9NphG_spec",
+			"switchKnob": "P9NphG_switchKnob",
+			"backupInput": "P9NphG_backupInput",
+			"assignRow": "P9NphG_assignRow",
+			"sectionOverview": "P9NphG_sectionOverview",
+			"panelNote": "P9NphG_panelNote",
+			"actBroken": "P9NphG_actBroken",
+			"bar": "P9NphG_bar",
+			"pct": "P9NphG_pct",
+			"diagBadgeOfficial": "P9NphG_diagBadgeOfficial",
+			"collapseTitle": "P9NphG_collapseTitle",
+			"diagKey": "P9NphG_diagKey",
+			"desc": "P9NphG_desc",
+			"snapRow": "P9NphG_snapRow",
+			"snapMeta": "P9NphG_snapMeta",
+			"cats": "P9NphG_cats",
+			"grid": "P9NphG_grid",
+			"tag": "P9NphG_tag",
+			"irow": "P9NphG_irow",
+			"shot": "P9NphG_shot",
+			"spin": "P9NphG_spin",
+			"topBtn": "P9NphG_topBtn",
+			"barWave": "P9NphG_barWave",
+			"snapConfirmText": "P9NphG_snapConfirmText",
+			"banner": "P9NphG_banner",
+			"presetList": "P9NphG_presetList",
+			"orphRow": "P9NphG_orphRow",
+			"head": "P9NphG_head",
+			"barFill": "P9NphG_barFill",
+			"diagEmpty": "P9NphG_diagEmpty",
+			"descTight": "P9NphG_descTight",
+			"row1": "P9NphG_row1",
+			"diagIndex": "P9NphG_diagIndex",
+			"depBadge": "P9NphG_depBadge",
+			"viewOn": "P9NphG_viewOn",
+			"groupActions": "P9NphG_groupActions",
+			"warnLine": "P9NphG_warnLine",
+			"err": "P9NphG_err",
+			"assignSelect": "P9NphG_assignSelect",
+			"pager": "P9NphG_pager",
+			"tabs": "P9NphG_tabs",
+			"switchOn": "P9NphG_switchOn",
+			"ovRow": "P9NphG_ovRow",
+			"groupHint": "P9NphG_groupHint",
+			"nm": "P9NphG_nm",
+			"body": "P9NphG_body",
+			"cmd": "P9NphG_cmd",
+			"backupMessage": "P9NphG_backupMessage",
+			"dragHandle": "P9NphG_dragHandle",
+			"sectAction": "P9NphG_sectAction",
+			"ovArrow": "P9NphG_ovArrow",
+			"diagSummary": "P9NphG_diagSummary",
+			"diagList": "P9NphG_diagList",
+			"empty": "P9NphG_empty",
+			"collapseBody": "P9NphG_collapseBody",
+			"diagSection": "P9NphG_diagSection",
+			"themesGrid": "P9NphG_themesGrid",
+			"actLive": "P9NphG_actLive",
+			"top": "P9NphG_top",
+			"staleAction": "P9NphG_staleAction",
+			"confirmRow": "P9NphG_confirmRow",
+			"bannerHint": "P9NphG_bannerHint",
+			"src": "P9NphG_src",
+			"title": "P9NphG_title",
+			"deprecate": "P9NphG_deprecate",
+			"loading": "P9NphG_loading",
+			"catsToggle": "P9NphG_catsToggle",
+			"shots": "P9NphG_shots",
+			"diagBadgeShadow": "P9NphG_diagBadgeShadow",
+			"irowMissing": "P9NphG_irowMissing",
+			"groupAddPanel": "P9NphG_groupAddPanel",
+			"diagBundle": "P9NphG_diagBundle",
+			"sp": "P9NphG_sp"
 		};
 		//#endregion
 		//#region src/client/preset-panel.tsx
@@ -1871,7 +1891,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		* phase 3 panels below call `refresh()` after applying changes.
 		*/
 		function Diagnostics(props) {
-			const { t } = props;
+			const { t, workspaces } = props;
 			const [report, setReport] = (0, react.useState)(null);
 			const [error, setError] = (0, react.useState)(null);
 			const [orderOpen, setOrderOpen] = (0, react.useState)(false);
@@ -1879,6 +1899,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const [peerInfoOpen, setPeerInfoOpen] = (0, react.useState)(false);
 			const [snapOpen, setSnapOpen] = (0, react.useState)(false);
 			const [presetOpen, setPresetOpen] = (0, react.useState)(false);
+			const [fixMsg, setFixMsg] = (0, react.useState)(null);
 			/** Bump to re-run the /dsh-market/check fetch after an order/preset/restore apply. */
 			const [version, setVersion] = (0, react.useState)(0);
 			const refresh = (0, react.useCallback)(() => setVersion((v) => v + 1), []);
@@ -1992,6 +2013,42 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const catDeps = report.coreDeps.length + report.peerMismatches.length + report.multiVersion.length;
 			const catOrder = report.orderConflicts?.length ?? 0;
 			const anyIssue = catConflict + catDeps + catOrder > 0;
+			/** Build the AI-fix prompt from the current report and hand it to a new session. */
+			const startAgentFix = () => {
+				const lines = [];
+				lines.push(t("aiFixIntro").replace("{0}", report.profile));
+				lines.push("");
+				if (summary.errors.length > 0) {
+					lines.push(`${t("checkErrors")}:`);
+					for (const e of summary.errors) lines.push(`- ${e}`);
+					lines.push("");
+				}
+				if (summary.warnings.length > 0) {
+					lines.push(`${t("checkWarnings")}:`);
+					for (const w of summary.warnings) lines.push(`- ${w}`);
+					lines.push("");
+				}
+				if ((report.orderConflicts ?? []).length > 0) {
+					lines.push(`${t("catOrder")}:`);
+					for (const c of report.orderConflicts ?? []) lines.push(`- ${c.name}: ${c.reason}`);
+					lines.push("");
+				}
+				lines.push(t("aiFixScope"));
+				const prompt = lines.join("\n");
+				const fallback = () => {
+					try {
+						navigator.clipboard?.writeText(prompt);
+						setFixMsg(t("aiFixCopied"));
+					} catch {
+						setFixMsg(t("aiFixFail"));
+					}
+				};
+				if (typeof navigator.clipboard?.writeText === "function") navigator.clipboard.writeText(prompt).then(() => {
+					workspaces?.startSession();
+					setFixMsg(t("aiFixReady"));
+				}).catch(fallback);
+				else fallback();
+			};
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 				className: Market_module_css_default.diagPage,
 				children: [
@@ -2045,6 +2102,13 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 								]
 							}),
 							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { className: Market_module_css_default.grow }),
+							anyIssue && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+								variant: "outline",
+								size: "sm",
+								onClick: startAgentFix,
+								title: t("aiFixHint"),
+								children: t("aiFix")
+							}),
 							/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 								variant: "ghost",
 								size: "sm",
@@ -2066,6 +2130,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 								children: new Date(report.scannedAt).toLocaleString()
 							})
 						]
+					}),
+					fixMsg !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+						className: Market_module_css_default.okState,
+						children: fixMsg
 					}),
 					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)(CollapsibleSection, {
 						title: t("diagExplain"),
@@ -2538,6 +2606,20 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 										disabled: orderBusy,
 										onClick: () => applyOrder(suggested.order),
 										children: t("orderSuggestApply")
+									}),
+									suggested !== null && suggested !== void 0 && suggested.ok === true && suggested.order.join("\0") === communityNames.join("\0") && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+										variant: "outline",
+										size: "sm",
+										disabled: orderBusy,
+										onClick: () => setOrderMsg(t("orderAlreadyOptimal")),
+										children: t("orderAutoSort")
+									}),
+									suggested === null && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+										variant: "outline",
+										size: "sm",
+										disabled: orderBusy,
+										onClick: () => setOrderMsg(t("orderNoRules")),
+										children: t("orderAutoSort")
 									}),
 									order.join("\0") !== communityNames.join("\0") && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 										variant: "ghost",
@@ -4674,7 +4756,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 								className: Market_module_css_default.grid,
 								children: filteredThemePlugins.map(themePluginCard)
 							})
-						] }) : tab === "diagnostics" ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(Diagnostics, { t }) : /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
+						] }) : tab === "diagnostics" ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(Diagnostics, {
+							t,
+							workspaces: props.workspaces
+						}) : /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
 							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 								className: Market_module_css_default.viewBar,
 								children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
@@ -5378,7 +5463,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		const inject = [
 			"slots",
 			"locale",
-			"theme"
+			"theme",
+			"workspaces"
 		];
 		function apply(ctx) {
 			const gaps = missingPrimitives(_deepseek_ai_dsh_client_ui_primitives);
@@ -5402,6 +5488,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				t,
 				locale: ctx.locale,
 				theme: ctx.theme,
+				workspaces: ctx.workspaces,
 				themeStore: {
 					subscribe: (cb) => ctx.on("theme/change", cb),
 					getSnapshot: () => ctx.theme.getTheme()

@@ -417,4 +417,40 @@ describe('Diagnostics panels (jsdom, #98 phase 2/3)', () => {
     )).toBeTruthy())
     await waitFor(() => expect(calls('/dsh-market/presets').length).toBe(2))
   })
+
+  it('AI fix copies the diagnostics to the clipboard and opens a new session', async () => {
+    const writeText = vi.fn(() => Promise.resolve())
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } })
+    const startSession = vi.fn()
+    const api = stubApi()
+    render(<Diagnostics t={t} workspaces={{ startSession }} />)
+    await waitFor(() => expect(screen.queryByText(t('checkLoading'))).toBeNull())
+
+    // The AI-fix button shows because the report has issues (order conflict).
+    const fixButton = screen.getByRole('button', { name: t('aiFix') })
+    fireEvent.click(fixButton)
+
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalled()
+      expect(startSession).toHaveBeenCalled()
+    })
+    // The prompt carries the diagnostics (order conflict + profile).
+    const prompt = String(writeText.mock.calls[0]?.[0])
+    expect(prompt).toContain('/synthetic/profiles/web')
+    expect(prompt).toContain('alpha')
+    await waitFor(() => expect(screen.getByText(t('aiFixReady'))).toBeTruthy())
+    void api
+  })
+
+  it('auto-sort shows and reports when no ordering rules exist', async () => {
+    await renderLoaded()
+    const section = screen.getByText(t('orderSection')).closest('section') as HTMLElement
+    fireEvent.click(screen.getByText(t('orderSection')))
+    await waitFor(() => {
+      const body = section.querySelector('[class*="collapseBody"]') as HTMLElement | null
+      expect(body?.style.display).not.toBe('none')
+    })
+    fireEvent.click(within(section).getByRole('button', { name: t('orderAutoSort') }))
+    await waitFor(() => expect(within(section).getByText(t('orderNoRules'))).toBeTruthy())
+  })
 })

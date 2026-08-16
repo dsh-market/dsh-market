@@ -56,13 +56,15 @@ interface MarketClientContext {
   locale: LocaleService
   slots: SlotsService
   theme: ThemeService
+  /** UI face for starting a new agent session (used by the AI-fix button). */
+  workspaces: { startSession(workspaceId?: string): void }
 }
 
 export const name = 'dsh-market'
 // 'theme' is safe to require: ui-layout (mandatory in every web composition)
 // already hard-depends on it. This cordis's object-form inject means
 // intercept config, NOT {required,optional} — do not use it here.
-export const inject = ['slots', 'locale', 'theme']
+export const inject = ['slots', 'locale', 'theme', 'workspaces']
 export function apply(ctx: MarketClientContext): void {
   // Older hosts resolve the primitives module but lack the rc.6 exports the
   // market renders with. Skip registration (market simply absent from the
@@ -87,6 +89,7 @@ export function apply(ctx: MarketClientContext): void {
     t,
     locale: ctx.locale,
     theme: ctx.theme,
+    workspaces: ctx.workspaces,
     themeStore: {
       subscribe: (cb: () => void) => ctx.on('theme/change', cb),
       getSnapshot: () => ctx.theme.getTheme(),
