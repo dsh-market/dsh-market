@@ -21,7 +21,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { listHotMounts, parseSimplePatch } from './hot.ts'
-import { entryArtifactExists, hasDshManifest, profileDir } from './profile.ts'
+import { hasDshManifest, hasLoadableEntry, profileDir } from './profile.ts'
 
 export type ActivationState = 'live' | 'restart' | 'inert' | 'broken' | 'missing'
 
@@ -119,7 +119,10 @@ export function verifyActivation(
       hot: false,
     }
   }
-  if (!entryArtifactExists(dir)) {
+  // Carrier bundles (#103) ship no entry of their own — what they mount is
+  // the point — so judge by "is anything loadable", not by this package's
+  // own artifact.
+  if (!hasLoadableEntry(activeProfileDir, name)) {
     return {
       state: 'broken',
       reasons: [

@@ -170,7 +170,7 @@ async function webdavRequest(
   url: string,
   username: string,
   password: string,
-  method: 'GET' | 'PUT',
+  method: 'GET' | 'PUT' | 'MKCOL',
   body?: string,
 ): Promise<WebdavResponse> {
   const parsed = new URL(url)
@@ -231,9 +231,48 @@ async function webdavRequest(
   })
 }
 
+/**
+ * Ancestor collection URLs of a WebDAV file, outermost first.
+ * `https://dav.example/a/b/x.json` → [`https://dav.example/a/`, `https://dav.example/a/b/`].
+ * The server root itself is never included — it always exists, and some
+ * providers reject MKCOL on it.
+ */
+export function webdavParentCollections(url: string): string[] {
+  let parsed: URL
+  try { parsed = new URL(url) } catch { return [] }
+  const parts = parsed.pathname.split('/').filter(part => part !== '')
+  parts.pop() // the file itself
+  const collections: string[] = []
+  let path = ''
+  for (const part of parts) {
+    path += `/${part}`
+    collections.push(`${parsed.origin}${path}/`)
+  }
+  return collections
+}
+
+/**
+ * Upload the backup, creating missing parent collections first (#102).
+ *
+ * WebDAV servers do not create intermediate collections implicitly, so a PUT
+ * into a folder that does not exist yet fails — Jianguoyun answers 404, which
+ * read as "sync is broken" rather than "make the folder first". MKCOL on an
+ * existing collection answers 405, which is success for our purposes; any
+ * other failure is left to the PUT to report, since some providers restrict
+ * MKCOL while still accepting the upload.
+ */
 export async function uploadWebdav(url: string, username: string, password: string, backup: ProfileBackup): Promise<void> {
+  for (const collection of webdavParentCollections(url)) {
+    try {
+      await webdavRequest(collection, username, password, 'MKCOL')
+    } catch { /* fall through: the PUT below reports the real problem */ }
+  }
   const response = await webdavRequest(url, username, password, 'PUT', JSON.stringify(backup))
-  if (response.status < 200 || response.status >= 300) throw new Error(`WebDAV upload failed: HTTP ${response.status}`)
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(response.status === 404
+      ? `WebDAV upload failed: HTTP 404 — the target folder does not exist and could not be created. Some providers (e.g. Jianguoyun) refuse files at the root: use a path inside a folder, e.g. https://dav.example.com/dsh/backup.json / 目标目录不存在且无法自动创建；部分服务商（如坚果云）不允许在根目录放文件，请使用形如 https://dav.example.com/dsh/backup.json 的子目录路径`
+      : `WebDAV upload failed: HTTP ${response.status}`)
+  }
 }
 
 /** Refuse non-global IPv4 targets, including metadata and carrier NAT ranges. */
@@ -302,7 +341,11 @@ export async function resolvePublicAddress(hostname: string): Promise<PublicAddr
 
 export async function downloadWebdav(url: string, username: string, password: string): Promise<unknown> {
   const response = await webdavRequest(url, username, password, 'GET')
-  if (response.status < 200 || response.status >= 300) throw new Error(`WebDAV download failed: HTTP ${response.status}`)
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(response.status === 404
+      ? 'WebDAV download failed: HTTP 404 — no backup at that path yet. Upload one first, and check the URL points at the backup FILE (…/dsh/backup.json), not its folder / 该路径下还没有备份文件。请先执行一次上传，并确认地址指向备份文件本身（…/dsh/backup.json）而不是目录'
+      : `WebDAV download failed: HTTP ${response.status}`)
+  }
   // Validate strictly server-side so the fetch result is never a generic
   // echo of an internal response: restore only accepts real backups.
   const body = JSON.parse(response.body.toString('utf8')) as unknown

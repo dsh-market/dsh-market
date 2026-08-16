@@ -121,3 +121,39 @@ describe('verifyActivation (P0-2)', () => {
     expect(verifyActivation('web', 'dsh-loop', new Set(['dsh-loop-tool']))).toMatchObject({ state: 'restart', bundle: true })
   })
 })
+
+describe('carrier bundles (#103)', () => {
+  // Real shape of @linxin666/dsh-skins 0.1.17: skin assets + a patch mounting
+  // the skin center, no main/exports/index.js of its own.
+  const CARRIER_PATCH = "- insert:\n    - id: ui-skin-center\n      name: '@linxin666/dsh-client-ui-skin-center'\n"
+
+  it('is not broken when its patch mounts an installed package that has an entry', () => {
+    profile(['@linxin666/dsh-skins'])
+    pkg('@linxin666/dsh-skins', { dsh: { bundle: { patch: './cordis.patch.yml' } } }, {
+      'cordis.patch.yml': CARRIER_PATCH,
+      'skins/ocean.json': '{}',
+    })
+    pkg('@linxin666/dsh-client-ui-skin-center', { main: 'lib/index.js' }, { 'lib/index.js': '' })
+    // Judged by its own artifact it looked like a source-only checkout and was
+    // both flagged broken AND uninstalled by the #18 guard.
+    expect(verifyActivation('web', '@linxin666/dsh-skins', new Set())).toMatchObject({ state: 'restart', bundle: true })
+    expect(verifyActivation('web', '@linxin666/dsh-skins', new Set(['@linxin666/dsh-skins']))).toMatchObject({ state: 'live' })
+  })
+
+  it('stays broken when nothing it mounts is loadable — the #18 guard still bites', () => {
+    profile(['@linxin666/dsh-skins'])
+    pkg('@linxin666/dsh-skins', { dsh: { bundle: { patch: './cordis.patch.yml' } } }, { 'cordis.patch.yml': CARRIER_PATCH })
+    // Target absent entirely (or present without an artifact) → still broken.
+    expect(verifyActivation('web', '@linxin666/dsh-skins', new Set())).toMatchObject({ state: 'broken' })
+    pkg('@linxin666/dsh-client-ui-skin-center', { main: 'lib/index.js' })
+    expect(verifyActivation('web', '@linxin666/dsh-skins', new Set())).toMatchObject({ state: 'broken' })
+  })
+
+  it('a source-only checkout naming ONLY itself is still broken (no self-carrier loophole)', () => {
+    profile(['dsh-unbuilt'])
+    pkg('dsh-unbuilt', { main: 'lib/index.js', dsh: { bundle: { patch: './cordis.patch.yml' } } }, {
+      'cordis.patch.yml': "- insert:\n    - id: unbuilt\n      name: 'dsh-unbuilt'\n",
+    })
+    expect(verifyActivation('web', 'dsh-unbuilt', new Set())).toMatchObject({ state: 'broken' })
+  })
+})

@@ -141,3 +141,39 @@ describe('profile backup and restore', () => {
     })
   })
 })
+
+describe('WebDAV parent collections (#102)', () => {
+  it('creates missing folders before the upload, and explains a surviving 404', async () => {
+    const dir = profileDir('web')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'package.json'), '{}')
+    const backup = createProfileBackup('web')
+    // Jianguoyun: PUT into a folder that does not exist answers 404, and files
+    // are not allowed at the root at all.
+    respondWith('', 405) // MKCOL /dav/ — already exists
+    respondWith('', 201) // MKCOL /dav/dsh/ — created
+    respondWith('', 201) // PUT the backup
+    await uploadWebdav('https://dav.jianguoyun.com/dav/dsh/backup.json', 'u', 'p', backup)
+    expect(network.request.mock.calls.map(call => call[0].method)).toEqual(['MKCOL', 'MKCOL', 'PUT'])
+    expect(network.request.mock.calls[1][0]).toMatchObject({ path: '/dav/dsh/', method: 'MKCOL' })
+
+    // A root-level file has no folder to create — Jianguoyun's 404 there now
+    // names the actual remedy (put it inside a folder) instead of the code.
+    network.request.mockReset()
+    respondWith('', 404)
+    await expect(uploadWebdav('https://dav.jianguoyun.com/backup.json', 'u', 'p', backup))
+      .rejects.toThrow(/does not exist and could not be created/)
+    expect(network.request.mock.calls.map(call => call[0].method)).toEqual(['PUT'])
+  })
+
+  it('lists ancestor collections outermost first, excluding the server root', async () => {
+    const { webdavParentCollections } = await import('../src/backup.ts')
+    // Jianguoyun's shape: the file must live inside a folder, and the folder
+    // has to be created explicitly or the PUT answers 404.
+    expect(webdavParentCollections('https://dav.jianguoyun.com/dav/dsh/backup.json'))
+      .toEqual(['https://dav.jianguoyun.com/dav/', 'https://dav.jianguoyun.com/dav/dsh/'])
+    // A file at the root has no collection to create.
+    expect(webdavParentCollections('https://dav.example.com/backup.json')).toEqual([])
+    expect(webdavParentCollections('not a url')).toEqual([])
+  })
+})

@@ -9,7 +9,7 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import type { InstallResult, PluginRunner } from './dsh-cli.ts'
 import { classifyPnpmFailure, isTransientPnpmFailure } from './pnpm-compat.ts'
-import { entryArtifactExists, hasDshManifest, pluginSubdirs, profileDir, readInstalled } from './profile.ts'
+import { hasDshManifest, hasLoadableEntry, pluginSubdirs, profileDir, readInstalled } from './profile.ts'
 import { logEvent } from './log.ts'
 
 /** One-shot bypass for pnpm's fresh-release hold; scoped to a single command. */
@@ -124,7 +124,9 @@ export async function validateAddedPlugins(
   const removedBroken: string[] = []
   for (const n of addedNow) {
     const packageDir = join(dir, 'node_modules', n)
-    if (hasDshManifest(packageDir) && entryArtifactExists(packageDir)) {
+    // hasLoadableEntry, not entryArtifactExists: carrier bundles legitimately
+    // ship no entry of their own (#103) and must not be uninstalled here.
+    if (hasDshManifest(packageDir) && hasLoadableEntry(dir, n)) {
       keep.push(n)
     } else {
       removedBroken.push(n)
