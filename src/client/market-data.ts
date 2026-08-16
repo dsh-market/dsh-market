@@ -246,10 +246,52 @@ function depIdentities(name: string, spec: string): Set<string> {
   return ids
 }
 
+/**
+ * Repo identities stated by the dependency SPEC itself (github: installs) —
+ * hard evidence of where the package came from, unlike the name-derived
+ * mirror in depIdentities, which is only a matching aid.
+ */
+function depSpecRepoIds(spec: string): Set<string> {
+  const ids = new Set<string>()
+  const m = /github:([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)(?:#path:\/([A-Za-z0-9_./-]+))?/i.exec(spec)
+  if (m !== null) {
+    ids.add(m[1]!.toLowerCase())
+    if (m[2] !== undefined) ids.add(`${m[1]!.toLowerCase()}#path:/${m[2].toLowerCase()}`)
+  }
+  return ids
+}
+
+/** Repo identity of a registry entry's source url (repo or repo#path form). */
+function entryRepoIds(plugin: RegistryPlugin): Set<string> {
+  const ids = new Set<string>()
+  const m = /^https:\/\/github\.com\/([^/]+\/[^/]+?)(?:\/tree\/[^/]+\/(.+?))?\/?$/.exec(plugin.url)
+  if (m !== null) {
+    ids.add(m[2] !== undefined ? `${m[1]!.toLowerCase()}#path:/${m[2].toLowerCase()}` : m[1]!.toLowerCase())
+  }
+  return ids
+}
+
+/**
+ * The curated registry lists distinct plugins sharing one name — twelve
+ * name-groups at the time of #66 (both dsh-usage-stats, four dsh-memory…).
+ * A name coincidence must not survive contradicting repo evidence: when the
+ * dependency's spec pins a github repo AND the entry states one, the repos
+ * decide — the loose name/npm identities only apply when at least one side
+ * carries no repo evidence (npm installs, non-github entries).
+ */
+function sameSourceConflict(plugin: RegistryPlugin, spec: string): boolean {
+  const entry = entryRepoIds(plugin)
+  const dep = depSpecRepoIds(spec)
+  if (entry.size === 0 || dep.size === 0) return false
+  for (const id of dep) if (entry.has(id)) return false
+  return true
+}
+
 /** The installed dependency name a registry entry corresponds to, or null. */
 export function matchInstalledName(plugin: RegistryPlugin, installed: InstalledMap): string | null {
   const ids = entryIdentities(plugin)
   for (const [name, spec] of Object.entries(installed)) {
+    if (sameSourceConflict(plugin, String(spec))) continue
     for (const id of depIdentities(name, String(spec))) {
       if (ids.has(id)) return name
     }
@@ -261,6 +303,7 @@ export function matchInstalledName(plugin: RegistryPlugin, installed: InstalledM
 export function entryForDep(plugins: RegistryPlugin[], name: string, spec: string): RegistryPlugin | undefined {
   const ids = depIdentities(name, String(spec))
   return plugins.find((plugin) => {
+    if (sameSourceConflict(plugin, String(spec))) return false
     for (const id of entryIdentities(plugin)) if (ids.has(id)) return true
     return false
   })

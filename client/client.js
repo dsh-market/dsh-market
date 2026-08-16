@@ -327,16 +327,56 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			}
 			return ids;
 		}
+		/**
+		* Repo identities stated by the dependency SPEC itself (github: installs) —
+		* hard evidence of where the package came from, unlike the name-derived
+		* mirror in depIdentities, which is only a matching aid.
+		*/
+		function depSpecRepoIds(spec) {
+			const ids = /* @__PURE__ */ new Set();
+			const m = /github:([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)(?:#path:\/([A-Za-z0-9_./-]+))?/i.exec(spec);
+			if (m !== null) {
+				ids.add(m[1].toLowerCase());
+				if (m[2] !== void 0) ids.add(`${m[1].toLowerCase()}#path:/${m[2].toLowerCase()}`);
+			}
+			return ids;
+		}
+		/** Repo identity of a registry entry's source url (repo or repo#path form). */
+		function entryRepoIds(plugin) {
+			const ids = /* @__PURE__ */ new Set();
+			const m = /^https:\/\/github\.com\/([^/]+\/[^/]+?)(?:\/tree\/[^/]+\/(.+?))?\/?$/.exec(plugin.url);
+			if (m !== null) ids.add(m[2] !== void 0 ? `${m[1].toLowerCase()}#path:/${m[2].toLowerCase()}` : m[1].toLowerCase());
+			return ids;
+		}
+		/**
+		* The curated registry lists distinct plugins sharing one name — twelve
+		* name-groups at the time of #66 (both dsh-usage-stats, four dsh-memory…).
+		* A name coincidence must not survive contradicting repo evidence: when the
+		* dependency's spec pins a github repo AND the entry states one, the repos
+		* decide — the loose name/npm identities only apply when at least one side
+		* carries no repo evidence (npm installs, non-github entries).
+		*/
+		function sameSourceConflict(plugin, spec) {
+			const entry = entryRepoIds(plugin);
+			const dep = depSpecRepoIds(spec);
+			if (entry.size === 0 || dep.size === 0) return false;
+			for (const id of dep) if (entry.has(id)) return false;
+			return true;
+		}
 		/** The installed dependency name a registry entry corresponds to, or null. */
 		function matchInstalledName(plugin, installed) {
 			const ids = entryIdentities(plugin);
-			for (const [name, spec] of Object.entries(installed)) for (const id of depIdentities(name, String(spec))) if (ids.has(id)) return name;
+			for (const [name, spec] of Object.entries(installed)) {
+				if (sameSourceConflict(plugin, String(spec))) continue;
+				for (const id of depIdentities(name, String(spec))) if (ids.has(id)) return name;
+			}
 			return null;
 		}
 		/** The registry entry an installed dependency corresponds to, or undefined. */
 		function entryForDep(plugins, name, spec) {
 			const ids = depIdentities(name, String(spec));
 			return plugins.find((plugin) => {
+				if (sameSourceConflict(plugin, String(spec))) return false;
 				for (const id of entryIdentities(plugin)) if (ids.has(id)) return true;
 				return false;
 			});
@@ -402,86 +442,86 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			document.head.appendChild(tag);
 		}
 		var Market_module_css_default = {
-			"top": "SOz1_a_top",
-			"actWhy": "SOz1_a_actWhy",
 			"on": "SOz1_a_on",
-			"empty": "SOz1_a_empty",
-			"catsToggle": "SOz1_a_catsToggle",
-			"warnLine": "SOz1_a_warnLine",
-			"av": "SOz1_a_av",
-			"filterBtn": "SOz1_a_filterBtn",
-			"loading": "SOz1_a_loading",
-			"cmdDetails": "SOz1_a_cmdDetails",
-			"actBroken": "SOz1_a_actBroken",
-			"err": "SOz1_a_err",
-			"root": "SOz1_a_root",
-			"cmdSummary": "SOz1_a_cmdSummary",
-			"cancelBtn": "SOz1_a_cancelBtn",
-			"act": "SOz1_a_act",
-			"pageEllipsis": "SOz1_a_pageEllipsis",
-			"filterPanel": "SOz1_a_filterPanel",
-			"filterBtnOn": "SOz1_a_filterBtnOn",
-			"title": "SOz1_a_title",
-			"pageBtn": "SOz1_a_pageBtn",
-			"barWave": "SOz1_a_barWave",
-			"row1": "SOz1_a_row1",
-			"barFill": "SOz1_a_barFill",
-			"src": "SOz1_a_src",
-			"modalNote": "SOz1_a_modalNote",
-			"bar": "SOz1_a_bar",
-			"filterGroup": "SOz1_a_filterGroup",
-			"pageInfo": "SOz1_a_pageInfo",
-			"filterOption": "SOz1_a_filterOption",
-			"dshmSlide": "SOz1_a_dshmSlide",
-			"spin": "SOz1_a_spin",
-			"themesGrid": "SOz1_a_themesGrid",
-			"tab": "SOz1_a_tab",
-			"tag": "SOz1_a_tag",
-			"nm": "SOz1_a_nm",
-			"filterTitle": "SOz1_a_filterTitle",
-			"pager": "SOz1_a_pager",
-			"pageOn": "SOz1_a_pageOn",
-			"catsWrap": "SOz1_a_catsWrap",
-			"progress": "SOz1_a_progress",
-			"pct": "SOz1_a_pct",
-			"sect": "SOz1_a_sect",
-			"catsCollapsed": "SOz1_a_catsCollapsed",
-			"restart": "SOz1_a_restart",
-			"card": "SOz1_a_card",
-			"filterWrap": "SOz1_a_filterWrap",
-			"sp": "SOz1_a_sp",
-			"cats": "SOz1_a_cats",
-			"okState": "SOz1_a_okState",
+			"sizeBtn": "SOz1_a_sizeBtn",
 			"actLive": "SOz1_a_actLive",
+			"av": "SOz1_a_av",
+			"descTight": "SOz1_a_descTight",
+			"barFill": "SOz1_a_barFill",
+			"grid": "SOz1_a_grid",
 			"pagerSize": "SOz1_a_pagerSize",
 			"titleRow": "SOz1_a_titleRow",
-			"foot": "SOz1_a_foot",
-			"dangerArmed": "SOz1_a_dangerArmed",
+			"filterWrap": "SOz1_a_filterWrap",
+			"filterBtn": "SOz1_a_filterBtn",
+			"grow": "SOz1_a_grow",
+			"warnLine": "SOz1_a_warnLine",
+			"actWhy": "SOz1_a_actWhy",
+			"pager": "SOz1_a_pager",
+			"restart": "SOz1_a_restart",
 			"swatches": "SOz1_a_swatches",
+			"tag": "SOz1_a_tag",
+			"spec": "SOz1_a_spec",
+			"title": "SOz1_a_title",
+			"filterOption": "SOz1_a_filterOption",
 			"catsRow": "SOz1_a_catsRow",
-			"head": "SOz1_a_head",
-			"owner": "SOz1_a_owner",
-			"body": "SOz1_a_body",
-			"actWarn": "SOz1_a_actWarn",
-			"warnBtn": "SOz1_a_warnBtn",
-			"staleAction": "SOz1_a_staleAction",
-			"dot": "SOz1_a_dot",
-			"searchInline": "SOz1_a_searchInline",
-			"irow": "SOz1_a_irow",
-			"sizeLabel": "SOz1_a_sizeLabel",
-			"sub": "SOz1_a_sub",
+			"star": "SOz1_a_star",
+			"pageEllipsis": "SOz1_a_pageEllipsis",
+			"desc": "SOz1_a_desc",
 			"cmd": "SOz1_a_cmd",
 			"tabs": "SOz1_a_tabs",
-			"grid": "SOz1_a_grid",
-			"descTight": "SOz1_a_descTight",
-			"spec": "SOz1_a_spec",
-			"star": "SOz1_a_star",
+			"catsWrap": "SOz1_a_catsWrap",
+			"filterGroup": "SOz1_a_filterGroup",
+			"filterPanel": "SOz1_a_filterPanel",
 			"dangerBtn": "SOz1_a_dangerBtn",
-			"sizeBtn": "SOz1_a_sizeBtn",
+			"dangerArmed": "SOz1_a_dangerArmed",
+			"barWave": "SOz1_a_barWave",
+			"sect": "SOz1_a_sect",
+			"head": "SOz1_a_head",
+			"warnBtn": "SOz1_a_warnBtn",
+			"filterTitle": "SOz1_a_filterTitle",
+			"okState": "SOz1_a_okState",
+			"owner": "SOz1_a_owner",
+			"act": "SOz1_a_act",
+			"root": "SOz1_a_root",
+			"modalNote": "SOz1_a_modalNote",
+			"pct": "SOz1_a_pct",
 			"pagerPages": "SOz1_a_pagerPages",
+			"actBroken": "SOz1_a_actBroken",
+			"dot": "SOz1_a_dot",
+			"pageOn": "SOz1_a_pageOn",
+			"staleAction": "SOz1_a_staleAction",
+			"src": "SOz1_a_src",
+			"top": "SOz1_a_top",
+			"foot": "SOz1_a_foot",
+			"tab": "SOz1_a_tab",
+			"catsToggle": "SOz1_a_catsToggle",
+			"card": "SOz1_a_card",
+			"actWarn": "SOz1_a_actWarn",
+			"empty": "SOz1_a_empty",
+			"cats": "SOz1_a_cats",
+			"catsCollapsed": "SOz1_a_catsCollapsed",
+			"err": "SOz1_a_err",
+			"body": "SOz1_a_body",
+			"row1": "SOz1_a_row1",
 			"sizeOn": "SOz1_a_sizeOn",
-			"grow": "SOz1_a_grow",
-			"desc": "SOz1_a_desc"
+			"spin": "SOz1_a_spin",
+			"filterBtnOn": "SOz1_a_filterBtnOn",
+			"bar": "SOz1_a_bar",
+			"dshmSlide": "SOz1_a_dshmSlide",
+			"progress": "SOz1_a_progress",
+			"nm": "SOz1_a_nm",
+			"cmdSummary": "SOz1_a_cmdSummary",
+			"cancelBtn": "SOz1_a_cancelBtn",
+			"sizeLabel": "SOz1_a_sizeLabel",
+			"pageBtn": "SOz1_a_pageBtn",
+			"themesGrid": "SOz1_a_themesGrid",
+			"sub": "SOz1_a_sub",
+			"cmdDetails": "SOz1_a_cmdDetails",
+			"searchInline": "SOz1_a_searchInline",
+			"pageInfo": "SOz1_a_pageInfo",
+			"loading": "SOz1_a_loading",
+			"sp": "SOz1_a_sp",
+			"irow": "SOz1_a_irow"
 		};
 		//#endregion
 		//#region src/client/MarketSection.tsx

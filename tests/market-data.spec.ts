@@ -60,6 +60,30 @@ describe('matchInstalledName / isInstalled', () => {
       { 'dsh-loop-extended': '^1.0.0' },
     )).toBe(false)
   })
+
+  it('repo evidence beats a name coincidence — same-named entries from different repos never cross-match (#66)', () => {
+    // The curated registry really lists both: two distinct dsh-usage-stats.
+    const installed = { 'dsh-usage-stats': 'github:Make0209/dsh-usage-stats' }
+    expect(matchInstalledName(
+      plugin({ name: 'dsh-usage-stats', url: 'https://github.com/Make0209/dsh-usage-stats' }), installed,
+    )).toBe('dsh-usage-stats')
+    // The OTHER repo's card must not read as installed, despite the equal name.
+    expect(matchInstalledName(
+      plugin({ name: 'dsh-usage-stats', url: 'https://github.com/Ychris12138/dsh-usage-stats' }), installed,
+    )).toBeNull()
+    // …and the installed dep resolves back to the repo it came from.
+    const plugins = [
+      plugin({ name: 'dsh-usage-stats', url: 'https://github.com/Ychris12138/dsh-usage-stats' }),
+      plugin({ name: 'dsh-usage-stats', url: 'https://github.com/Make0209/dsh-usage-stats' }),
+    ]
+    expect(entryForDep(plugins, 'dsh-usage-stats', 'github:make0209/dsh-usage-stats')?.url)
+      .toBe('https://github.com/Make0209/dsh-usage-stats')
+    // An npm-installed dep carries no repo evidence — the name path stands (#15).
+    expect(matchInstalledName(
+      plugin({ name: 'dsh-usage-stats', url: 'https://github.com/Ychris12138/dsh-usage-stats' }),
+      { 'dsh-usage-stats': '^1.0.0' },
+    )).toBe('dsh-usage-stats')
+  })
 })
 
 describe('entryForDep', () => {

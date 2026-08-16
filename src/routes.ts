@@ -739,6 +739,24 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
             retryAlias = aliasOf
             logEvent('info', 'install', `${entry.name}: ${aliasOf} present but inactive (leftover of a failed install) — retrying`)
           }
+          // Name-collision guard (#66): the curated registry lists DISTINCT
+          // plugins sharing one name (both dsh-usage-stats, four dsh-memory…).
+          // The alias guard above no longer cross-matches them (repo evidence
+          // decides), but two packages with one name still cannot coexist —
+          // pnpm would silently REPLACE the installed one's dependency entry.
+          // Refuse with the honest reason instead.
+          if (aliasOf === null) {
+            const clashName = [entry.npm, entry.name].find(
+              (n): n is string => typeof n === 'string' && n !== '' && installedNow[n] !== undefined,
+            )
+            if (clashName !== undefined) {
+              logEvent('warn', 'install-rejected', `${entry.name}: name collision with installed ${clashName} (${installedNow[clashName]}) from a different source`)
+              sendJson(response, 400, {
+                error: `同名冲突：已安装的「${clashName}」来自其他来源，两个同名插件无法共存于一个 profile，请先卸载再安装 / name conflict: an installed plugin already uses the name "${clashName}" but comes from a different source; two plugins with the same name cannot coexist in one profile — uninstall it first`,
+              })
+              return
+            }
+          }
           installing = true
           try {
             const beforeSpecs = readInstalled(config.profile)

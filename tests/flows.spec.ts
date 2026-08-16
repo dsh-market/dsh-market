@@ -211,6 +211,10 @@ const REGISTRY = {
     { name: 'dsh-share', owner: 'h', url: 'https://github.com/h/dsh-share', category: 'tool', npm: 'dsh-share', description: {}, install: '', added: '' },
     { name: '@dsh-external/dsh-share', owner: 'h', url: 'https://github.com/h/dsh-share', category: 'tool', npm: null, description: {}, install: '', added: '' },
     { name: 'dsh-security-audit', owner: 'omdsh-dev', url: 'https://github.com/omdsh-dev/dsh-security-audit', category: 'tool', npm: null, description: {}, install: '', added: '' },
+    // #66 shape: two DISTINCT plugins listed under one name (real examples:
+    // dsh-usage-stats ×2, dsh-memory ×4 in the live registry).
+    { name: 'dsh-usage-stats', owner: 'a1', url: 'https://github.com/a1/dsh-usage-stats', category: 'tool', npm: null, description: {}, install: '', added: '' },
+    { name: 'dsh-usage-stats', owner: 'a2', url: 'https://github.com/a2/dsh-usage-stats', category: 'tool', npm: null, description: {}, install: '', added: '' },
     { name: 'dsh-blue-whale', owner: 'o', url: 'https://github.com/o/blue-whale', category: 'tool', npm: null, description: {}, install: '', added: '' },
     // Monorepo siblings: distinct plugins sharing one repo.
     { name: 'mono#plug-a', owner: 'm', url: 'https://github.com/m/mono/tree/main/packages/plug-a', category: 'tool', npm: null, description: {}, install: '', added: '' },
@@ -544,6 +548,20 @@ describe('duplicate alias guard (#27)', () => {
     const dup = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/h/dsh-share' })
     expect(dup.status).toBe(400)
     expect(String(dup.json.error)).toContain('dsh-share')
+  })
+
+  it('refuses a same-named plugin from a DIFFERENT repo with an honest name-conflict error (#66)', async () => {
+    fake.repos['github:a1/dsh-usage-stats'] = { name: 'dsh-usage-stats', manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] }
+    const first = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/a1/dsh-usage-stats' })
+    expect(first.json.ok).toBe(true)
+    // The other same-named plugin is NOT "the same plugin already installed"
+    // (that message would be a lie) — but pnpm would silently replace a1's
+    // dependency entry, so the install is refused as a name conflict.
+    const second = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/a2/dsh-usage-stats' })
+    expect(second.status).toBe(400)
+    expect(String(second.json.error)).toContain('同名冲突')
+    // a1's install is untouched.
+    expect(installedSpec('dsh-usage-stats')).toBe('github:a1/dsh-usage-stats')
   })
 
   it('does NOT block sibling subpackages of one monorepo', async () => {

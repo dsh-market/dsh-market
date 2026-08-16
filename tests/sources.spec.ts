@@ -62,6 +62,18 @@ describe('findInstalledAlias (#27 duplicate guard)', () => {
     expect(findInstalledAlias(alias, {})).toBeNull()
   })
 
+  it('never treats a same-named plugin from a DIFFERENT repo as an alias (#66)', () => {
+    const installed = { 'dsh-usage-stats': 'github:Make0209/dsh-usage-stats' }
+    // Same name, different repo → distinct plugin, not an alias.
+    expect(findInstalledAlias(
+      { name: 'dsh-usage-stats', url: 'https://github.com/Ychris12138/dsh-usage-stats' }, installed,
+    )).toBeNull()
+    // Same repo → the entry's own plugin, matched case-insensitively.
+    expect(findInstalledAlias(
+      { name: 'dsh-usage-stats', url: 'https://github.com/make0209/dsh-usage-stats' }, installed,
+    )).toBe('dsh-usage-stats')
+  })
+
   it('keeps monorepo siblings independent but matches the exact subpackage', () => {
     const installed = { 'plug-a': 'github:m/mono#path:/packages/plug-a' }
     const siblingB = { name: 'mono#plug-b', url: 'https://github.com/m/mono/tree/main/packages/plug-b' }

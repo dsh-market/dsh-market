@@ -78,13 +78,14 @@ export function findInstalledAlias(
   installed: Record<string, string>,
 ): string | null {
   const source = parseSourceUrl(entry.url)
+  const entryRepoId = source === null
+    ? null
+    : source.subpath === null
+      ? source.repo.toLowerCase()
+      : `${source.repo.toLowerCase()}#path:/${source.subpath.toLowerCase()}`
   const ids = new Set<string>([entry.name.toLowerCase()])
   if (typeof entry.npm === 'string' && entry.npm !== '') ids.add(entry.npm.toLowerCase())
-  if (source !== null) {
-    ids.add(source.subpath === null
-      ? source.repo.toLowerCase()
-      : `${source.repo.toLowerCase()}#path:/${source.subpath.toLowerCase()}`)
-  }
+  if (entryRepoId !== null) ids.add(entryRepoId)
   for (const [name, spec] of Object.entries(installed)) {
     const dep = new Set<string>([name.toLowerCase()])
     const scoped = /^@([^/]+)\/(.+)$/.exec(name)
@@ -93,6 +94,14 @@ export function findInstalledAlias(
     if (m !== null) {
       dep.add(m[1].toLowerCase())
       if (m[2] !== undefined) dep.add(`${m[1].toLowerCase()}#path:/${m[2].toLowerCase()}`)
+      // Repo evidence on both sides is decisive (#66): the curated registry
+      // lists distinct plugins under one name (both dsh-usage-stats, four
+      // dsh-memory…), so a github-installed dependency is the entry's plugin
+      // only if the REPOS agree — a bare name coincidence must not count.
+      if (entryRepoId !== null) {
+        if (dep.has(entryRepoId)) return name
+        continue
+      }
     }
     for (const id of dep) if (ids.has(id)) return name
   }
