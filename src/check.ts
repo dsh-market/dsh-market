@@ -425,10 +425,20 @@ function semverStr(v: Semver): string {
  * Minimal range matcher for the peer-range check: `*`, exact, ^, ~, >=, >,
  * <=, <, whitespace-separated pairs, and `||` alternatives. Anything else
  * returns null (unknown — reported, not asserted).
+ *
+ * Prerelease handling follows npm's semver rule, evaluated at the comparator
+ * SET level (one `||` alternative is one set): a version carrying a
+ * prerelease tag only satisfies a set when at least one comparator in that
+ * set shares the version's [major, minor, patch] tuple AND carries a
+ * prerelease of its own; then every comparator is checked normally. So
+ * `^0.1.0` never matches `0.2.0-rc.1` (nor `0.1.0-rc.5`), while
+ * `>=1.2.3-rc.1 <2.0.0` does match `1.2.3-rc.2` (issue #98 analysis).
  */
 export function satisfiesRange(version: string, range: string): boolean | null {
   const v = parseSemver(version)
   if (v === null) return null
+  const versionHasPre = v.pre.length > 0
+
   const single = (part: string): boolean | null => {
     const p = part.trim()
     if (p === '' || p === '*' || p === 'x' || p === 'X') return true
@@ -469,18 +479,44 @@ export function satisfiesRange(version: string, range: string): boolean | null {
         return null
     }
   }
+
+  /** Parse one comparator part into op + target; null when unknown. */
+  const comparator = (part: string): { op: string; target: string } | null => {
+    const p = part.trim()
+    if (p === '' || p === '*' || p === 'x' || p === 'X') return { op: '', target: '' }
+    const m = /^(\^|~|>=|<=|>|<)?(.*)$/.exec(p)
+    if (m === null) return null
+    return { op: m[1] ?? '', target: (m[2] ?? '').trim() }
+  }
+
+  /** Evaluate ONE comparator set (a `||` alternative) as a conjunction. */
+  const evaluateSet = (set: string): boolean | null => {
+    const parts = set.trim().split(/\s+/).filter(part => part !== '')
+    if (parts.length === 0) return true
+    const parsed = parts.map(part => comparator(part))
+    if (parsed.some(part => part === null)) return null
+    if (versionHasPre) {
+      // npm gate (set-level): the set admits prerelease versions only when a
+      // comparator pins the SAME base tuple with a prerelease of its own.
+      const admitted = parsed.some((part) => {
+        if (part?.target === '') return false
+        const tv = parseSemver(part?.target ?? '')
+        return tv !== null && tv.pre.length > 0
+          && v.major === tv.major && v.minor === tv.minor && v.patch === tv.patch
+      })
+      if (!admitted) return false
+    }
+    const results = parsed.map(part => single(part?.op !== undefined ? `${part.op}${part.target}` : ''))
+    if (results.some(r => r === null)) return null
+    return results.every(r => r === true)
+  }
+
   if (range.includes('||')) {
-    const outcomes = range.split('||').map(part => single(part))
+    const outcomes = range.split('||').map(part => evaluateSet(part))
     if (outcomes.some(out => out === true)) return true
     return outcomes.every(out => out === null) ? null : false
   }
-  // Whitespace-separated compound ranges (`>=1 <2`) — all parts must hold.
-  const parts = range.trim().split(/\s+/).filter(part => part !== '')
-  if (parts.length === 0) return true
-  if (parts.length === 1) return single(parts[0] ?? '')
-  const results = parts.map(part => single(part ?? ''))
-  if (results.some(r => r === null)) return null
-  return results.every(r => r === true)
+  return evaluateSet(range)
 }
 
 // --- composition (mirrors dsh-app-boot applyEntryPatches) ---
@@ -491,20 +527,6 @@ interface EntryNode {
   layer: string
   group?: boolean
   config?: unknown
-}
-
-function findEntry(nodes: EntryNode[], id: string): EntryNode | undefined {
-  // The boot's entryMap keeps the LAST row for an id (later patches overwrite
-  // the map entry), so a duplicate id must resolve to the final definition.
-  let found: EntryNode | undefined
-  const walk = (list: EntryNode[]): void => {
-    for (const node of list) {
-      if (node.id === id) found = node
-      if (node.group === true && Array.isArray(node.config)) walk(node.config as EntryNode[])
-    }
-  }
-  walk(nodes)
-  return found
 }
 
 /** Flatten a tree of entries (group configs included) into row records. */
@@ -543,13 +565,33 @@ export function composeLayers(layers: LayerInput[]): Composed {
   const tree: EntryNode[] = []
   const orphans: OrphanRow[] = []
   const overrides: OverrideRow[] = []
+  /**
+   * The boot's entryMap, mirrored incrementally: the LAST row registered for
+   * an id (top-level or nested group member) is the patch target, and later
+   * inserts overwrite the map entry — exactly dsh-app-boot's applyEntryPatches
+   * buildMap. Keeping the map instead of re-walking the tree pins the
+   * duplicate-id resolution to the boot's behavior (issue #98 analysis:
+   * explicit composition boundaries).
+   */
+  const entryMap = new Map<string, EntryNode>()
+  const buildMap = (nodes: EntryNode[]): void => {
+    for (const node of nodes) {
+      if (node.id !== '') entryMap.set(node.id, node)
+      if (node.group === true && Array.isArray(node.config)) buildMap(node.config as EntryNode[])
+    }
+  }
   for (const layer of layers) {
     for (const patch of layer.patches) {
       if (!isRecord(patch)) continue
       const { id, insert, name, ...overridesOf } = patch
-      if (insert !== undefined) {
+      // Boot boundary: `insert` and `id` are truthiness-checked, so a falsy
+      // `insert` (null/''/0) falls through to the patch path and an empty id
+      // makes an insert a plain top-level append (applyEntryPatches).
+      const hasId = typeof id === 'string' ? id !== '' : Boolean(id)
+      const lookupKey = hasId ? String(id) : ''
+      if (insert) {
         if (!Array.isArray(insert)) {
-          orphans.push({ id: String(id ?? '(anonymous)'), layer: layer.label, reason: 'insert is not an array' })
+          orphans.push({ id: lookupKey === '' ? '(anonymous)' : lookupKey, layer: layer.label, reason: 'insert is not an array' })
           continue
         }
         const nodes = (insert as unknown[]).filter(isRecord).map((entry): EntryNode | null => {
@@ -562,41 +604,47 @@ export function composeLayers(layers: LayerInput[]): Composed {
             config: Array.isArray(entry.config) ? entry.config : undefined,
           }
         }).filter((n): n is EntryNode => n !== null)
-        if (typeof id === 'string') {
-          const target = findEntry(tree, id)
+        if (hasId) {
+          const target = entryMap.get(lookupKey)
           if (target === undefined) {
-            orphans.push({ id, layer: layer.label, reason: 'insert target not found' })
+            orphans.push({ id: lookupKey, layer: layer.label, reason: 'insert target not found' })
             continue
           }
-          if (target.group !== true || !Array.isArray(target.config)) {
-            orphans.push({ id, layer: layer.label, reason: 'insert target is not a group' })
+          if (target.group !== true) {
+            orphans.push({ id: lookupKey, layer: layer.label, reason: 'insert target is not a group' })
             continue
           }
+          // Boot boundary: a group with a non-array config is fixed up to an
+          // empty array before the append (applyEntryPatches does the same).
+          if (!Array.isArray(target.config)) target.config = []
           target.config = [...(target.config as unknown[]), ...nodes]
-          continue
+        } else {
+          tree.push(...nodes)
         }
-        tree.push(...nodes)
+        buildMap(nodes)
         continue
       }
-      if (typeof id !== 'string') {
+      if (!hasId) {
         orphans.push({ id: '(anonymous)', layer: layer.label, reason: 'id required for non-insert patch' })
         continue
       }
-      const target = findEntry(tree, id)
+      const target = entryMap.get(lookupKey)
       if (target === undefined) {
-        orphans.push({ id, layer: layer.label, reason: 'patch target not found' })
+        orphans.push({ id: lookupKey, layer: layer.label, reason: 'patch target not found' })
         continue
       }
-      if (name !== undefined && name !== target.name) {
-        orphans.push({ id, layer: layer.label, reason: `name mismatch (expected ${String(target.name)}, got ${String(name)})` })
+      // Boot boundary: the name guard is truthiness-based — an empty-string
+      // name on the patch row does not trigger the mismatch skip.
+      if (name && name !== target.name) {
+        orphans.push({ id: lookupKey, layer: layer.label, reason: `name mismatch (expected ${String(target.name)}, got ${String(name)})` })
         continue
       }
       const priorLayers: string[] = []
       for (const node of flattenEntries(tree)) {
-        if (node.id === id && !priorLayers.includes(node.layer)) priorLayers.push(node.layer)
+        if (node.id === lookupKey && !priorLayers.includes(node.layer)) priorLayers.push(node.layer)
       }
       if (priorLayers.some(prior => prior !== layer.label)) {
-        overrides.push({ id, layer: layer.label, overriddenLayers: priorLayers.filter(prior => prior !== layer.label) })
+        overrides.push({ id: lookupKey, layer: layer.label, overriddenLayers: priorLayers.filter(prior => prior !== layer.label) })
       }
       for (const [key, value] of Object.entries(overridesOf)) {
         if (key === 'id') continue
@@ -631,14 +679,17 @@ function lockfileCoreVersions(profileDir: string): Map<string, string[]> {
   } catch {
     return new Map()
   }
-  for (const m of text.matchAll(/(@deepseek-ai\/(?:dsh|cordis)[^@\s'"]*?)@([^\s:'"]+)/g)) {
+  for (const m of text.matchAll(/(@deepseek-ai\/(?:dsh|cordis)[^@\s'"]*?)@([0-9][^\s:'"()]*)/g)) {
     const name = m[1] ?? ''
     // pnpm v9 peer-resolution keys carry a suffix: `name@1.0.0(peer@x)`. The
-    // regex greedily captured it as part of the version, inventing fake
-    // "versions" and false multi-version reports on healthy profiles (B1).
-    const version = (m[2] ?? '').split('(')[0] ?? ''
-    // Registry resolutions only: skip link: and git forms.
-    if (!/^\d/.test(version)) continue
+    // version capture stops at the `(` — and at `)` too, so the peer
+    // reference INSIDE the suffix (`name@1.0.0(@deepseek-ai/dsh-base@4.0.1)`)
+    // never yields a fake `4.0.1)` version that would invent a phantom
+    // multi-version report on a healthy profile (issue #98 analysis).
+    const version = m[2] ?? ''
+    // Registry resolutions only: skip link:/git forms and anything that is
+    // not a well-formed semver (parseSemver double-checks the capture).
+    if (parseSemver(version) === null) continue
     const versions = found.get(name) ?? new Set<string>()
     versions.add(version)
     found.set(name, versions)
@@ -885,13 +936,19 @@ export function analyzeProfile(profileDirectory: string, options: CheckOptions =
   }
   // LOOT-style auto-fix: suggest an order satisfying every declared rule AND
   // the plugin-to-plugin dependencies (a bundle loads after the bundles it
-  // depends on). Dependency edges come from each community bundle's manifest.
+  // depends on). Dependency edges come from each community bundle's manifest,
+  // read from the SAME resolved directory buildBundleLayers found — never by
+  // re-walking profile node_modules, which would miss workspace-root-hoisted
+  // bundles and diverge from what the boot actually loads (issue #98
+  // analysis: unified dependency-edge resolution).
   const communitySet = new Set(bundleNames.filter(name => !INBOX_BUNDLES.has(name)))
   const dependencyEdges: Array<{ from: string; to: string }> = []
-  for (const name of communitySet) {
+  for (const bundle of bundles) {
+    if (INBOX_BUNDLES.has(bundle.name)) continue
+    if (bundle.directory === null) continue
     let manifest: { dependencies?: Record<string, string>; peerDependencies?: Record<string, string> }
     try {
-      manifest = JSON.parse(readFileSync(join(profileDirectory, 'node_modules', name, 'package.json'), 'utf8')) as typeof manifest
+      manifest = JSON.parse(readFileSync(join(bundle.directory, 'package.json'), 'utf8')) as typeof manifest
     } catch {
       continue
     }
@@ -899,15 +956,30 @@ export function analyzeProfile(profileDirectory: string, options: CheckOptions =
       const map = manifest[section]
       if (map === null || typeof map !== 'object') continue
       for (const dep of Object.keys(map)) {
-        if (communitySet.has(dep)) dependencyEdges.push({ from: name, to: dep })
+        if (communitySet.has(dep)) dependencyEdges.push({ from: bundle.name, to: dep })
       }
     }
   }
   const suggestedOrder = suggestOrder(bundleNames, readBundleRules(profileDirectory), dependencyEdges)
-  if (suggestedOrder.ok && suggestedOrder.order.join('\u0000') !== bundleNames.filter(name => !INBOX_BUNDLES.has(name)).join('\u0000')) {
-    warnings.push('current bundle order violates declared rules or plugin dependencies — a better order is suggested / 当前 bundle 顺序违反声明规则或插件依赖，已给出更优顺序')
-  } else if (!suggestedOrder.ok) {
+  if (!suggestedOrder.ok) {
     warnings.push(`ordering constraints contain a cycle: ${suggestedOrder.cycle.join(' -> ')} — no compliant order exists / 排序约束存在循环依赖，无法得出合规顺序`)
+  } else {
+    // Only warn when the CURRENT order actually breaks a declared rule or a
+    // plugin-to-plugin dependency edge. A hand-picked order that satisfies
+    // every constraint but merely differs from the canonical suggestion is
+    // valid — flagging it as "violates declared rules" would be a false
+    // alert on a healthy profile (issue #98 analysis).
+    const currentOrder = bundleNames.filter(name => !INBOX_BUNDLES.has(name))
+    const positions = new Map(currentOrder.map((name, index) => [name, index]))
+    const edgeViolated = dependencyEdges.some((edge) => {
+      const from = positions.get(edge.from)
+      const to = positions.get(edge.to)
+      // "from depends on to" ⇒ to must load BEFORE from.
+      return from !== undefined && to !== undefined && to >= from
+    })
+    if (orderConflicts.length > 0 || edgeViolated) {
+      warnings.push('current bundle order violates declared rules or plugin dependencies — a better order is suggested / 当前 bundle 顺序违反声明规则或插件依赖，已给出更优顺序')
+    }
   }
 
   // Duplicate loader NAMES: the Loader registers plugins by name, so two rows

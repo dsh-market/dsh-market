@@ -130,9 +130,12 @@ function Section(props: {
   defaultOpen?: boolean
   problem?: boolean
   overview?: ReactNode
+  /** Render `children` even at count 0 (e.g. a zero-mismatch peer block whose
+   * informational disclosure must stay reachable). */
+  alwaysShowBody?: boolean
   children: ReactNode
 }) {
-  const { title, count, empty, defaultOpen, problem = true, overview, children } = props
+  const { title, count, empty, defaultOpen, problem = true, overview, alwaysShowBody = false, children } = props
   const [open, setOpen] = useState(defaultOpen ?? false)
   const alert = problem && count > 0
   return (
@@ -148,7 +151,7 @@ function Section(props: {
       </button>
       {!open && overview !== undefined && <div className={css.sectionOverview}>{overview}</div>}
       <div className={css.collapseBody} style={open ? undefined : { display: 'none' }}>
-        {count === 0 ? <div className={css.diagEmpty}>{empty}</div> : children}
+        {count === 0 && !alwaysShowBody ? <div className={css.diagEmpty}>{empty}</div> : children}
       </div>
     </section>
   )
@@ -193,7 +196,7 @@ function orphanKindLabel(reason: string): string {
  * switching tabs away and back re-runs the (cheap, read-only) analysis; the
  * phase 3 panels below call `refresh()` after applying changes.
  */
-export function Diagnostics(props: { t: Translate; workspaces?: { startSession(workspaceId?: string): void } }) {
+export function Diagnostics(props: { t: Translate }) {
   const { t } = props
   const [report, setReport] = useState<CheckReport | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -203,6 +206,9 @@ export function Diagnostics(props: { t: Translate; workspaces?: { startSession(w
   const [snapOpen, setSnapOpen] = useState(false)
   const [presetOpen, setPresetOpen] = useState(false)
   const [fixMsg, setFixMsg] = useState<string | null>(null)
+  /** The built AI-fix prompt when the clipboard path failed — rendered as a
+   * selectable text block so the user can still copy it manually. */
+  const [fixFallback, setFixFallback] = useState<string | null>(null)
   /** Bump to re-run the /dsh-market/check fetch after an order/preset/restore apply. */
   const [version, setVersion] = useState(0)
   const refresh = useCallback(() => setVersion(v => v + 1), [])
@@ -218,7 +224,24 @@ export function Diagnostics(props: { t: Translate; workspaces?: { startSession(w
   const [orderMsg, setOrderMsg] = useState<string | null>(null)
   const [orderErr, setOrderErr] = useState<string | null>(null)
   const [orderBusy, setOrderBusy] = useState(false)
-  useEffect(() => { setOrder(communityNames) }, [communityNames])
+  /**
+   * Content identity of the last community order this draft synced to. A
+   * refresh() refetch returns a NEW array even when the order is unchanged,
+   * so a naive `setOrder(communityNames)` effect would wipe the user's
+   * in-progress drag/↑↓ edits on every unrelated re-check. Only resync when
+   * the report's community order actually CHANGED (apply order / preset /
+   * restore) — an identical refetch keeps the draft (review M2).
+   */
+  const syncedOrderRef = useRef<string[] | null>(null)
+  useEffect(() => {
+    const synced = syncedOrderRef.current
+    const same = synced !== null
+      && synced.length === communityNames.length
+      && communityNames.every((name, i) => name === synced[i])
+    if (same) return
+    syncedOrderRef.current = communityNames
+    setOrder(communityNames)
+  }, [communityNames])
 
   /** Swap one community bundle with its neighbour (-1 up, +1 down). */
   const moveBundle = (index: number, delta: -1 | 1) => {
@@ -297,8 +320,8 @@ export function Diagnostics(props: { t: Translate; workspaces?: { startSession(w
           return
         }
         setOrderMsg(t('orderApplied'))
-        // Refetch the report so communityNames / the PresetPanel bundleOrder
-        // reflect the applied order before anything is saved as a preset.
+        // Refetch the report so communityNames / the ordering draft reflect
+        // the applied order before anything is saved as a preset.
         refresh()
       })
       .catch((err: unknown) => setOrderErr(err instanceof Error ? err.message : String(err)))
@@ -338,6 +361,9 @@ export function Diagnostics(props: { t: Translate; workspaces?: { startSession(w
 
   const summary = report.summary
   const suggested = report.suggestedOrder ?? null
+  // Confirmed mismatches vs informational entries (satisfied / unknown).
+  const peerConfirmed = report.peerMismatches.filter(peer => peer.satisfied === false)
+  const peerInfo = report.peerMismatches.filter(peer => peer.satisfied !== false)
   // Category counts for the overview strip: conflicts / dependencies / order.
   const catConflict = report.duplicates.length + (report.duplicateNames?.length ?? 0)
   const catDeps = report.coreDeps.length + report.peerMismatches.length + report.multiVersion.length
@@ -383,12 +409,18 @@ export function Diagnostics(props: { t: Translate; workspaces?: { startSession(w
     lines.push(t('aiFixConservative'))
     const prompt = lines.join('\n')
 
+    // Clipboard-first; on any failure (missing API or a rejected promise) show
+    // the prompt in a selectable block so the user can still copy it by hand —
+    // a bare "clipboard unavailable" message left nothing to copy.
+    setFixMsg(null)
+    setFixFallback(null)
+    const fallback = () => setFixFallback(prompt)
     if (typeof navigator.clipboard?.writeText === 'function') {
       navigator.clipboard.writeText(prompt)
         .then(() => setFixMsg(t('aiFixCopied')))
-        .catch(() => setFixMsg(t('aiFixFail')))
+        .catch(fallback)
     } else {
-      setFixMsg(t('aiFixFail'))
+      fallback()
     }
   }
 
@@ -405,7 +437,7 @@ export function Diagnostics(props: { t: Translate; workspaces?: { startSession(w
         <span className={css.diagSummaryItem} title={t('checkCoreDeps')}>
           <StateDot state="warning" size={8} />{t('catDeps')}: {catDeps}
         </span>
-        <span className={css.diagSummaryItem} title={t('checkOverrides')}>
+        <span className={css.diagSummaryItem} title={t('checkOrderTip')}>
           <StateDot state="warning" size={8} />{t('catOrder')}: {catOrder}
         </span>
         <span className={css.grow} />
@@ -421,6 +453,18 @@ export function Diagnostics(props: { t: Translate; workspaces?: { startSession(w
         <span className={css.diagSummaryMeta}>{new Date(report.scannedAt).toLocaleString()}</span>
       </div>
       {fixMsg !== null && <div className={css.okState}>{fixMsg}</div>}
+      {fixFallback !== null && (
+        <div className={css.fixFallback}>
+          <p className={css.panelNote}>{t('aiFixFail')}</p>
+          <textarea
+            readOnly
+            rows={10}
+            className={css.fixFallbackText}
+            value={fixFallback}
+            onFocus={e => e.currentTarget.select()}
+          />
+        </div>
+      )}
 
       <CollapsibleSection title={t('diagExplain')} open={explainOpen} onToggle={() => setExplainOpen(o => !o)}>
         <p className={css.panelNote}>{t('diagExplainText')}</p>
@@ -549,17 +593,23 @@ export function Diagnostics(props: { t: Translate; workspaces?: { startSession(w
 
       <Section
         title={t('checkPeerMismatches')}
-        count={report.peerMismatches.filter(peer => peer.satisfied === false).length}
+        count={peerConfirmed.length}
         empty={t('checkPeerEmpty')}
         overview={report.peerMismatches.length > 0
-          ? `${report.peerMismatches.filter(p => p.satisfied === false).length} 不匹配 · ${report.peerMismatches.filter(p => p.satisfied !== false).length} 信息`
+          ? t('checkPeerOverview')
+            .replace('{0}', String(peerConfirmed.length))
+            .replace('{1}', String(peerInfo.length))
           : undefined}
+        // The body must render even with zero CONFIRMED mismatches when
+        // informational entries exist — otherwise the disclosure holding them
+        // would be unreachable (count-0 sections render only the empty text).
+        alwaysShowBody={peerInfo.length > 0}
       >
-        {report.peerMismatches.filter(peer => peer.satisfied === false).length === 0 ? (
+        {peerConfirmed.length === 0 ? (
           <div className={css.diagEmpty}>{t('checkPeerEmpty')}</div>
         ) : (
           <div className={css.diagList}>
-            {report.peerMismatches.filter(peer => peer.satisfied === false).map((peer, i) => (
+            {peerConfirmed.map((peer, i) => (
               <div key={i} className={css.diagRow}>
                 <code className={css.diagVal}>{peer.name}</code>
                 <span className={css.nm}>{peer.plugin}</span>
@@ -570,33 +620,29 @@ export function Diagnostics(props: { t: Translate; workspaces?: { startSession(w
             ))}
           </div>
         )}
-        {(() => {
-          const info = report.peerMismatches.filter(peer => peer.satisfied !== false)
-          if (info.length === 0) return null
-          return (
-            <DisclosureRow
-              icon={<IconChevronDownOutline14 size={14} />}
-              title={`${t('checkPeerInfo').replace('{0}', String(info.length))} (${info.length})`}
-              expandable
-              open={peerInfoOpen}
-              onToggle={() => setPeerInfoOpen(o => !o)}
-            >
-              <div className={css.diagList}>
-                {info.map((peer, i) => (
-                  <div key={i} className={css.diagRow}>
-                    <code className={css.diagVal}>{peer.name}</code>
-                    <span className={css.nm}>{peer.plugin}</span>
-                    <span className={css.spec}>{t('checkRange')}: {peer.range}</span>
-                    <span className={css.spec}>{t('checkResolved')}: {peer.resolved ?? '—'}</span>
-                    {peer.satisfied === true
-                      ? <span className={css.okState}>{t('checkSatisfied')}</span>
-                      : <span className={css.spec}>{t('checkUnknown')}</span>}
-                  </div>
-                ))}
-              </div>
-            </DisclosureRow>
-          )
-        })()}
+        {peerInfo.length > 0 && (
+          <DisclosureRow
+            icon={<IconChevronDownOutline14 size={14} />}
+            title={`${t('checkPeerInfo').replace('{0}', String(peerInfo.length))} (${peerInfo.length})`}
+            expandable
+            open={peerInfoOpen}
+            onToggle={() => setPeerInfoOpen(o => !o)}
+          >
+            <div className={css.diagList}>
+              {peerInfo.map((peer, i) => (
+                <div key={i} className={css.diagRow}>
+                  <code className={css.diagVal}>{peer.name}</code>
+                  <span className={css.nm}>{peer.plugin}</span>
+                  <span className={css.spec}>{t('checkRange')}: {peer.range}</span>
+                  <span className={css.spec}>{t('checkResolved')}: {peer.resolved ?? '—'}</span>
+                  {peer.satisfied === true
+                    ? <span className={css.okState}>{t('checkSatisfied')}</span>
+                    : <span className={css.spec}>{t('checkUnknown')}</span>}
+                </div>
+              ))}
+            </div>
+          </DisclosureRow>
+        )}
       </Section>
 
       <Section
@@ -668,14 +714,14 @@ export function Diagnostics(props: { t: Translate; workspaces?: { startSession(w
           <Button variant="primary" size="sm" disabled={order.length === 0 || orderBusy} onClick={() => applyOrder()}>
             {orderBusy ? '…' : t('orderApply')}
           </Button>
-          {suggested !== null && suggested !== undefined && suggested.ok === true
+          {suggested !== null && suggested.ok === true
             && suggested.order.join('\u0000') !== communityNames.join('\u0000')
             && (
               <Button variant="outline" size="sm" disabled={orderBusy} onClick={() => applyOrder(suggested.order)}>
                 {t('orderSuggestApply')}
               </Button>
             )}
-          {suggested !== null && suggested !== undefined && suggested.ok === true
+          {suggested !== null && suggested.ok === true
             && suggested.order.join('\u0000') === communityNames.join('\u0000')
             && (
               <Button variant="outline" size="sm" disabled={orderBusy} onClick={() => setOrderMsg(t('orderAlreadyOptimal'))}>
@@ -695,7 +741,7 @@ export function Diagnostics(props: { t: Translate; workspaces?: { startSession(w
           {orderMsg !== null && <span className={css.okState}>{orderMsg}</span>}
           {orderErr !== null && <span className={css.err}>{orderErr}</span>}
         </div>
-        {suggested !== null && suggested !== undefined && suggested.ok === false && (
+        {suggested !== null && suggested.ok === false && (
           <div className={css.warnLine}>{t('orderSuggestHint')} ⚠ {suggested.cycle.join(' → ')}</div>
         )}
         {report.duplicateNames !== undefined && report.duplicateNames.length > 0 && (
@@ -757,7 +803,10 @@ export function Diagnostics(props: { t: Translate; workspaces?: { startSession(w
       </CollapsibleSection>
 
       <CollapsibleSection title={t('presetSection')} open={presetOpen} onToggle={() => setPresetOpen(o => !o)}>
-        <PresetPanel t={t} open={presetOpen} bundleOrder={communityNames} onRefresh={refresh} />
+        {/* Save the ordering DRAFT, not the last-reported order: a preset must
+          capture the order the user is currently editing (↑/↓ or drag), even
+          before "应用顺序 / Apply order" is clicked. */}
+        <PresetPanel t={t} open={presetOpen} bundleOrder={order} onRefresh={refresh} />
       </CollapsibleSection>
     </div>
   )

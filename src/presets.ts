@@ -11,7 +11,7 @@
  * shape routes.ts owns.
  */
 
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { readMarketState, writeMarketState } from './hot.ts'
 import { applyBundleOrder, mergeOrder, readBundleRules, readBundleStack, validateOrder } from './order.ts'
@@ -21,6 +21,44 @@ import { logEvent } from './log.ts'
 
 /** Group-style name rule: letters/digits (incl. CJK), spaces, _, -; ≤ 40 chars, at least one non-space. */
 const PRESET_NAME_RE = /^[\p{L}\p{N}_ -]{1,40}$/u
+
+/**
+ * The market's own package names. The toggle route refuses to disable them;
+ * a preset must never carry them in its disabled list either — otherwise
+ * applying a preset (or importing one) could disable the very page doing the
+ * applying (issue #98 analysis: applyPreset self-disable guard). They are
+ * filtered at save/import time and again at apply time (defense in depth).
+ */
+const MARKET_SELF_NAMES = new Set(['dsh-market', 'dshmarket'])
+
+/** Maximum presets stored per profile (quota — issue #98 analysis). */
+export const MAX_PRESETS = 50
+
+/**
+ * Atomic same-directory replace (write temp + rename): a crash mid-write can
+ * never leave presets.json truncated, which would silently drop every saved
+ * preset on the next read.
+ */
+function writeFileAtomic(file: string, content: string): void {
+  const temp = `${file}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  writeFileSync(temp, content)
+  renameSync(temp, file)
+}
+
+/** Drop the market's own names from a raw disabled list (strings only). */
+function sanitizeDisabled(disabled: unknown): string[] {
+  if (!Array.isArray(disabled)) return []
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const item of disabled) {
+    if (typeof item !== 'string' || item === '') continue
+    if (MARKET_SELF_NAMES.has(item)) continue
+    if (seen.has(item)) continue
+    seen.add(item)
+    out.push(item)
+  }
+  return out
+}
 
 export interface Preset {
   name: string
@@ -59,7 +97,7 @@ function readPresets(profileDir: string): Preset[] {
 
 function writePresets(profileDir: string, presets: Preset[]): void {
   mkdirSync(join(profileDir, '.dsh-market'), { recursive: true, mode: 0o700 })
-  writeFileSync(presetsFile(profileDir), `${JSON.stringify({ presets }, null, 2)}\n`)
+  writeFileAtomic(presetsFile(profileDir), `${JSON.stringify({ presets }, null, 2)}\n`)
 }
 
 /** All saved presets, newest first. */
@@ -92,12 +130,15 @@ export function savePreset(
   if (new Set(order).size !== order.length || order.length !== community.length || order.some(name => !community.includes(name))) {
     return { ok: false, error: 'bundle order must be a permutation of the current community bundles / bundle 顺序必须是当前社区 bundle 的排列' }
   }
-  const normalizedDisabled = Array.isArray(disabled)
-    ? disabled.filter((item): item is string => typeof item === 'string' && item !== '')
-    : []
+  const normalizedDisabled = sanitizeDisabled(disabled)
   const presets = readPresets(profileDir)
   if (presets.some(preset => preset.name === name)) {
     return { ok: false, error: 'a preset with this name already exists / 同名组合已存在' }
+  }
+  // Quota (issue #98 analysis): a bounded store keeps the file small and the
+  // list usable; refuse instead of silently trimming.
+  if (presets.length >= MAX_PRESETS) {
+    return { ok: false, error: `preset quota reached (${MAX_PRESETS}) — delete one first / 组合数量已达上限（${MAX_PRESETS}），请先删除一个` }
   }
   presets.push({
     name,
@@ -197,7 +238,9 @@ export function previewPreset(profileDir: string, name: unknown): PresetResult &
   const { community } = readBundleStack(profileDir)
   const reordered = community.filter((name, index) => name !== preset.bundleOrder[index])
   const currentDisabled = readMarketState(profileDir).disabled
-  const presetDisabled = new Set(preset.disabled)
+  // The market's own names are never applied (self-disable guard) — exclude
+  // them from the diff too, so the preview matches what apply will actually do.
+  const presetDisabled = new Set(preset.disabled.filter(name => !MARKET_SELF_NAMES.has(name)))
   const enabled = [...currentDisabled].filter(name => !presetDisabled.has(name))
   const disabled = [...presetDisabled].filter(name => !currentDisabled.has(name))
   return {
@@ -265,7 +308,14 @@ export function applyPreset(profileDir: string, name: unknown, maxSnapshots: num
     return { ok: false, error: ordered.error }
   }
   const state = readMarketState(profileDir)
-  state.disabled = new Set(preset.disabled)
+  // Self-disable guard (issue #98 analysis): a preset (possibly imported)
+  // carrying the market's own name must never switch this page off — drop
+  // those names from the applied disabled list.
+  const filtered = preset.disabled.filter(name => !MARKET_SELF_NAMES.has(name))
+  if (filtered.length !== preset.disabled.length) {
+    logEvent('warn', 'preset', `apply "${name}": dropped market self-names from the disabled list`)
+  }
+  state.disabled = new Set(filtered)
   writeMarketState(profileDir, state)
   logEvent('info', 'preset', `applied "${name}"${snapshot !== null ? ` (snapshot ${snapshot.id})` : ''}`)
   return { ok: true, snapshot: snapshot?.id, changes: preview.ok ? preview.changes : undefined }
@@ -367,9 +417,7 @@ export function importPresets(profileDir: string, value: unknown): PresetImportR
       skipped += 1
       continue
     }
-    const disabled = Array.isArray(item.disabled)
-      ? item.disabled.filter((name): name is string => typeof name === 'string' && name !== '')
-      : []
+    const disabled = sanitizeDisabled(item.disabled)
     const createdAt = typeof item.createdAt === 'number' && Number.isFinite(item.createdAt) && item.createdAt > 0
       ? item.createdAt
       : Date.now()
@@ -393,16 +441,36 @@ export function importPresets(profileDir: string, value: unknown): PresetImportR
       names: [],
     }
   }
+  // Dedupe same-name entries WITHIN the payload (last wins), so one imported
+  // file can never write the same name twice nor inflate the imported count
+  // (issue #98 analysis: import dedup).
+  const unique = new Map<string, Preset>()
+  for (const preset of incoming) unique.set(preset.name, preset)
   const local = readPresets(profileDir)
   const byName = new Map(local.map(preset => [preset.name, preset]))
   let added = 0
   let updated = 0
-  for (const preset of incoming) {
+  for (const preset of unique.values()) {
     if (byName.has(preset.name)) updated += 1
     else added += 1
     byName.set(preset.name, preset)
   }
-  writePresets(profileDir, [...byName.values()])
-  logEvent('info', 'preset', `imported ${incoming.length} preset(s) (${added} added, ${updated} overwritten, ${skipped} skipped): ${incoming.map(p => p.name).join(', ')}`)
-  return { ok: true, imported: incoming.length, added, updated, skipped, names: incoming.map(p => p.name) }
+  // Quota (issue #98 analysis): refuse the whole import when the merged list
+  // would exceed the cap — never silently trim the user's data.
+  if (byName.size > MAX_PRESETS) {
+    return {
+      ok: false,
+      error: `import would exceed the preset quota (${MAX_PRESETS}) / 导入会超过组合数量上限（${MAX_PRESETS}）`,
+      imported: 0,
+      added: 0,
+      updated: 0,
+      skipped,
+      names: [],
+    }
+  }
+  const merged = [...byName.values()]
+  writePresets(profileDir, merged)
+  const names = [...unique.keys()]
+  logEvent('info', 'preset', `imported ${unique.size} preset(s) (${added} added, ${updated} overwritten, ${skipped} skipped): ${names.join(', ')}`)
+  return { ok: true, imported: unique.size, added, updated, skipped, names }
 }

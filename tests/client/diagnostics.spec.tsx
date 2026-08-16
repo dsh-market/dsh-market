@@ -234,4 +234,42 @@ describe('Diagnostics (jsdom)', () => {
     })
     expect(screen.queryByText(t('checkLoading'))).toBeNull()
   })
+
+  it('renders the informational peer disclosure even with zero CONFIRMED mismatches', async () => {
+    // Regression for the #98 peer-drawer fix: with 0 confirmed mismatches the
+    // section used to render only the count-0 empty text, making the
+    // informational entries (satisfied / unknown) unreachable. alwaysShowBody
+    // keeps the disclosure visible whenever info entries exist.
+    const report = {
+      ...CLEAN_REPORT,
+      peerMismatches: [
+        { plugin: 'plugin-y', name: '@deepseek-ai/cordis', range: '^4.0.1', resolved: '4.0.1', satisfied: true },
+        { plugin: 'plugin-z', name: '@deepseek-ai/dsh-agent', range: '^0.1.0-rc.6', resolved: null, satisfied: null },
+      ],
+    }
+    stubCheckReport(report)
+    render(<Diagnostics t={t} />)
+    await waitFor(() => expect(screen.queryByText(t('checkLoading'))).toBeNull())
+
+    // Section count is 0 (no CONFIRMED mismatches)…
+    const section = assertSection(t('checkPeerMismatches'), 0)
+    // …the overview line shows "0 mismatch(es) · 2 informational"…
+    expect(screen.getByText(t('checkPeerOverview').replace('{0}', '0').replace('{1}', '2'))).toBeTruthy()
+    // …and the body still renders (empty text + the reachable disclosure).
+    expect(within(section).getByText(t('checkPeerEmpty'))).toBeTruthy()
+    const disclosure = within(section).getByText(/informational entries/)
+    expect(disclosure).toBeTruthy()
+
+    // The disclosure's leading chevron button is the toggle (the title span
+    // itself is inert). Expanding it reveals both informational rows.
+    const row = disclosure.closest('[data-disclosure-row]') as HTMLElement | null
+    expect(row).not.toBeNull()
+    const toggle = row?.querySelector('button') as HTMLButtonElement | null
+    expect(toggle).not.toBeNull()
+    expect(toggle?.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(toggle!)
+    expect(toggle?.getAttribute('aria-expanded')).toBe('true')
+    expect(within(section).getByText(t('checkSatisfied'))).toBeTruthy()
+    expect(within(section).getByText(t('checkUnknown'))).toBeTruthy()
+  })
 })

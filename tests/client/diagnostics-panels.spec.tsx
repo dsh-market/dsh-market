@@ -458,4 +458,109 @@ describe('Diagnostics panels (jsdom, #98 phase 2/3)', () => {
     fireEvent.click(within(section).getByRole('button', { name: t('orderAutoSort') }))
     await waitFor(() => expect(within(section).getByText(t('orderNoRules'))).toBeTruthy())
   })
+
+  it('saves the ordering DRAFT (un-applied drag) as a preset — not the last-reported order', async () => {
+    // Regression for the #98 preset-save fix: PresetPanel receives the local
+    // `order` DRAFT. Dragging alpha below beta changes the draft to
+    // [beta, alpha] WITHOUT applying it; saving a preset must capture the
+    // draft, not the last-reported community order [alpha, beta].
+    const { posts } = await renderLoaded()
+
+    // Expand the ordering panel and drag alpha (row 0) onto beta (row 1).
+    fireEvent.click(screen.getByText(t('orderSection')))
+    const orderSection = screen.getByText(t('orderSection')).closest('section') as HTMLElement
+    await waitFor(() => {
+      const body = orderSection.querySelector('[class*="collapseBody"]') as HTMLElement | null
+      expect(body?.style.display).not.toBe('none')
+    })
+    const rows = () => Array.from(orderSection.querySelectorAll('.' + css.diagRow))
+    expect(rows()).toHaveLength(2)
+    fireEvent.dragStart(rows()[0]!, { dataTransfer: {} })
+    fireEvent.dragOver(rows()[1]!, { dataTransfer: {} })
+    fireEvent.drop(rows()[1]!, { dataTransfer: {} })
+    fireEvent.dragEnd(rows()[1]!, { dataTransfer: {} })
+    await waitFor(() => expect(rows()[0]?.textContent).toContain('beta'))
+    // The draft changed, but nothing was applied yet.
+    expect(posts('/dsh-market/bundle-order').length).toBe(0)
+
+    // Open the presets panel and save WITHOUT applying the order.
+    fireEvent.click(screen.getByRole('button', { name: t('presetSection') }))
+    const section = sectionOf(t('presetSection'))
+    await waitFor(() => expect(within(section).getByText('work')).toBeTruthy())
+    fireEvent.change(within(section).getByPlaceholderText(t('presetName')), { target: { value: 'draft-x' } })
+    fireEvent.click(within(section).getByRole('button', { name: t('presetSave') }))
+    await waitFor(() => expect(posts('/dsh-market/presets').length).toBe(1))
+
+    const post = posts('/dsh-market/presets')[0]!
+    expect(JSON.parse(String(post[1]?.body))).toEqual({
+      action: 'save',
+      name: 'draft-x',
+      bundleOrder: ['beta', 'alpha'], // the DRAFT, not the reported [alpha, beta]
+      disabled: [],
+    })
+    await waitFor(() => expect(within(section).getByText(t('presetSaved'))).toBeTruthy())
+  })
+
+  it('AI-fix without a clipboard API shows the prompt in a copyable text block', async () => {
+    // Regression for the #98 AI-fix fallback: when navigator.clipboard is
+    // unavailable, the built prompt renders as a selectable <textarea> so the
+    // user can still copy it by hand. Diagnostics renders with the post-#98
+    // props signature (t only — the workspaces prop is gone).
+    vi.stubGlobal('navigator', { ...navigator, clipboard: undefined })
+    stubApi({
+      check: { ...CHECK_REPORT, duplicates: [{ id: 'dup-entry', layers: ['alpha'], count: 2 }] },
+    })
+    const { container } = render(<Diagnostics t={t} />)
+    await waitFor(() => expect(screen.queryByText(t('checkLoading'))).toBeNull())
+
+    fireEvent.click(screen.getByRole('button', { name: t('aiFix') }))
+    await waitFor(() => expect(screen.getByText(t('aiFixFail'))).toBeTruthy())
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement
+    expect(textarea).not.toBeNull()
+    expect(textarea.readOnly).toBe(true)
+    expect(textarea.value).toContain('/synthetic/profiles/web')
+    expect(textarea.value).toContain('must load after beta')
+    expect(textarea.value).toContain(t('aiFixConservative').slice(0, 20))
+    // The clipboard path was skipped → no success toast.
+    expect(screen.queryByText(t('aiFixCopied'))).toBeNull()
+  })
+
+  it('AI-fix falls back to the text block when the clipboard promise rejects', async () => {
+    const writeText = vi.fn(() => Promise.reject(new Error('permission denied')))
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } })
+
+    stubApi({
+      check: { ...CHECK_REPORT, duplicates: [{ id: 'dup-entry', layers: ['alpha'], count: 2 }] },
+    })
+    const { container } = render(<Diagnostics t={t} />)
+    await waitFor(() => expect(screen.queryByText(t('checkLoading'))).toBeNull())
+
+    fireEvent.click(screen.getByRole('button', { name: t('aiFix') }))
+    await waitFor(() => expect(screen.getByText(t('aiFixFail'))).toBeTruthy())
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement
+    expect(textarea).not.toBeNull()
+    expect(textarea.readOnly).toBe(true)
+    expect(textarea.value).toContain('/synthetic/profiles/web')
+    expect(textarea.value).toContain('must load after beta')
+    expect(textarea.value).toContain(t('aiFixConservative').slice(0, 20))
+    // The clipboard path failed → no success toast.
+    expect(screen.queryByText(t('aiFixCopied'))).toBeNull()
+  })
+
+  it('AI-fix works without the removed workspaces prop (clipboard-only contract)', async () => {
+    // Diagnostics previously took a workspaces.startSession prop for the AI-fix
+    // button; the #98 change removed it (clipboard-first flow). Rendering with
+    // `t` only must mount and the fix flow must succeed through the clipboard.
+    const writeText = vi.fn(() => Promise.resolve())
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } })
+    stubApi({
+      check: { ...CHECK_REPORT, duplicates: [{ id: 'dup-entry', layers: ['alpha'], count: 2 }] },
+    })
+    render(<Diagnostics t={t} />)
+    await waitFor(() => expect(screen.queryByText(t('checkLoading'))).toBeNull())
+
+    fireEvent.click(screen.getByRole('button', { name: t('aiFix') }))
+    await waitFor(() => expect(screen.getByText(t('aiFixCopied'))).toBeTruthy())
+    expect(writeText).toHaveBeenCalledTimes(1)
+  })
 })

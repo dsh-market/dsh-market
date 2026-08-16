@@ -164,6 +164,26 @@ export function mountMarketRoutes(
   })
   let installing = false
   let restarting = false
+  /**
+   * Direct-write lock (issue #98 analysis: write-route mutual exclusion). The
+   * bundle-order / snapshot / preset routes write package.json, state.json and
+   * presets.json THEMSELVES (they must, to survive the next boot) — the pnpm
+   * `installing` flag alone cannot serialize them: two direct writes, or a
+   * direct write racing a pnpm run, would corrupt the manifest. `writing` is
+   * set for the duration of every direct write and checked (alongside
+   * `installing`) by every mutating route, so a conflict answers 409.
+   */
+  let writing = false
+
+  /** Acquire the direct-write lock; sends 409 (and returns false) when any mutating operation is in flight. */
+  function acquireWrite(response: ServerResponse): boolean {
+    if (installing || writing) {
+      sendJson(response, 409, { error: 'another plugin operation is running' })
+      return false
+    }
+    writing = true
+    return true
+  }
 
   /** Dependency diff vs. a pre-operation snapshot (cancel aftermath). */
   function changedSince(before: Record<string, string>): { changed: string[]; partial: boolean } {
@@ -241,7 +261,7 @@ export function mountMarketRoutes(
   const runPlugin = (profile: string, args: string[]) => withHoistRecovery(commands.runPlugin, profile, args)
 
   async function restoreBackup(value: unknown): Promise<{ files: number; errors: { name: string; error: string }[] }> {
-    if (installing) throw new Error('another plugin operation is already running')
+    if (installing || writing) throw new Error('another plugin operation is already running')
     if (!await probePnpm()) throw new Error('pnpm is required to restore plugins')
     installing = true
     const restored = restoreProfileBackup(config.profile, value, activeProfileDir)
@@ -492,48 +512,50 @@ export function mountMarketRoutes(
             return
           }
           const order = body.order as string[]
-          // Mutex with pnpm operations (review M1): reordering writes
-          // package.json directly; racing an install/update/uninstall would
+          // Mutex with pnpm operations AND other direct writes (issue #98
+          // analysis): reordering writes package.json directly; racing an
+          // install/update/uninstall — or another direct write — would
           // corrupt the manifest (backup restore uses the same guard).
-          if (installing) {
-            sendJson(response, 409, { error: 'another plugin operation is running' })
-            return
-          }
-          // Before/after rules (issue #98 phase 2): the merged stack must
-          // satisfy every rule the bundles declare. Enforced BEFORE the
-          // trial/snapshot/write so a rule-breaking order is refused outright.
-          const stack = readBundleStack(activeProfileDir)
-          const merged = mergeOrder(stack.bundles, order)
-          if (merged.ok) {
-            const conflicts = validateOrder(merged.bundles, readBundleRules(activeProfileDir))
-            if (conflicts.length > 0) {
-              logEvent('warn', 'bundle-order', `rejected by before/after rules: ${conflicts.map(c => c.reason).join('; ')}`)
+          if (!acquireWrite(response)) return
+          try {
+            // Before/after rules (issue #98 phase 2): the merged stack must
+            // satisfy every rule the bundles declare. Enforced BEFORE the
+            // trial/snapshot/write so a rule-breaking order is refused outright.
+            const stack = readBundleStack(activeProfileDir)
+            const merged = mergeOrder(stack.bundles, order)
+            if (merged.ok) {
+              const conflicts = validateOrder(merged.bundles, readBundleRules(activeProfileDir))
+              if (conflicts.length > 0) {
+                logEvent('warn', 'bundle-order', `rejected by before/after rules: ${conflicts.map(c => c.reason).join('; ')}`)
+                sendJson(response, 422, {
+                  error: 'the order violates declared before/after rules / 该顺序违反了插件声明的 before/after 规则',
+                  conflicts,
+                })
+                return
+              }
+            }
+            const trial = trialValidate(activeProfileDir, order)
+            if (!trial.ok) {
+              const first = trial.errors[0]
+              logEvent('warn', 'bundle-order', `rejected by trial validation: ${first?.message ?? 'unknown'}`)
               sendJson(response, 422, {
-                error: 'the order violates declared before/after rules / 该顺序违反了插件声明的 before/after 规则',
-                conflicts,
+                error: `trial validation failed — ${first?.message ?? 'this order would not boot'} / 试启动校验失败：${first?.message ?? '该顺序无法启动'}`,
+                trial: { errors: trial.errors, warnings: trial.warnings },
               })
               return
             }
+            const snapshot = createProfileSnapshot(activeProfileDir, maxSnapshots)
+            const applied = applyBundleOrder(activeProfileDir, order)
+            if (!applied.ok) {
+              sendJson(response, 400, { error: applied.error })
+              return
+            }
+            invalidateUpdates()
+            logEvent('info', 'bundle-order', `applied new community order${snapshot !== null ? ` (snapshot ${snapshot.id})` : ''}`)
+            sendJson(response, 200, { ok: true, bundles: applied.bundles, snapshot: snapshot?.id ?? null })
+          } finally {
+            writing = false
           }
-          const trial = trialValidate(activeProfileDir, order)
-          if (!trial.ok) {
-            const first = trial.errors[0]
-            logEvent('warn', 'bundle-order', `rejected by trial validation: ${first?.message ?? 'unknown'}`)
-            sendJson(response, 422, {
-              error: `trial validation failed — ${first?.message ?? 'this order would not boot'} / 试启动校验失败：${first?.message ?? '该顺序无法启动'}`,
-              trial: { errors: trial.errors, warnings: trial.warnings },
-            })
-            return
-          }
-          const snapshot = createProfileSnapshot(activeProfileDir, maxSnapshots)
-          const applied = applyBundleOrder(activeProfileDir, order)
-          if (!applied.ok) {
-            sendJson(response, 400, { error: applied.error })
-            return
-          }
-          invalidateUpdates()
-          logEvent('info', 'bundle-order', `applied new community order${snapshot !== null ? ` (snapshot ${snapshot.id})` : ''}`)
-          sendJson(response, 200, { ok: true, bundles: applied.bundles, snapshot: snapshot?.id ?? null })
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
         }
@@ -554,20 +576,21 @@ export function mountMarketRoutes(
             sendJson(response, 403, { error: 'untrusted origin' })
             return
           }
-          if (installing) {
-            sendJson(response, 409, { error: 'another plugin operation is running' })
-            return
-          }
+          if (!acquireWrite(response)) return
           try {
             const snapshot = createProfileSnapshot(activeProfileDir, maxSnapshots)
             sendJson(response, snapshot !== null ? 200 : 400, {
               ok: snapshot !== null,
-              ...(snapshot !== null ? { snapshot } : { error: 'profile has no package.json / profile 缺少 package.json' }),
+              ...(snapshot !== null
+                ? { snapshot }
+                : { error: 'profile package.json is missing or unparseable / profile 的 package.json 缺失或无法解析' }),
             })
             return
           } catch (error) {
             sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
             return
+          } finally {
+            writing = false
           }
         }
         response.writeHead(405, { allow: 'GET, POST' })
@@ -588,10 +611,7 @@ export function mountMarketRoutes(
           sendJson(response, 403, { error: 'untrusted origin' })
           return
         }
-        if (installing) {
-          sendJson(response, 409, { error: 'another plugin operation is running' })
-          return
-        }
+        if (!acquireWrite(response)) return
         try {
           const body = (await readJsonBody(request)) as { snapshot?: unknown } | null
           if (body === null || typeof body !== 'object' || typeof body.snapshot !== 'string' || body.snapshot === '') {
@@ -606,6 +626,8 @@ export function mountMarketRoutes(
           sendJson(response, restored.ok ? 200 : 400, restored)
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+        } finally {
+          writing = false
         }
       },
     }),
@@ -625,10 +647,7 @@ export function mountMarketRoutes(
           sendJson(response, 403, { error: 'untrusted origin' })
           return
         }
-        if (installing) {
-          sendJson(response, 409, { error: 'another plugin operation is running' })
-          return
-        }
+        if (!acquireWrite(response)) return
         try {
           const body = (await readJsonBody(request)) as { snapshot?: unknown } | null
           if (body === null || typeof body !== 'object' || typeof body.snapshot !== 'string' || body.snapshot === '') {
@@ -647,6 +666,8 @@ export function mountMarketRoutes(
           sendJson(response, 200, { ok: true, snapshot: body.snapshot })
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+        } finally {
+          writing = false
         }
       },
     }),
@@ -678,39 +699,43 @@ export function mountMarketRoutes(
             sendJson(response, 400, { error: 'JSON body is required / 需要 JSON body' })
             return
           }
-          // Mutex with pnpm operations: apply writes package.json + state.json.
-          if (body.action === 'apply' && installing) {
-            sendJson(response, 409, { error: 'another plugin operation is running' })
+          const name = body.name
+          // Preview is a pure read; save/apply/delete write presets.json,
+          // package.json and state.json, so they take the direct-write lock —
+          // a concurrent pnpm run or another direct write must not interleave
+          // (issue #98 analysis: write-route mutual exclusion).
+          if (body.action === 'preview') {
+            const previewed = previewPreset(activeProfileDir, name)
+            sendJson(response, previewed.ok ? 200 : 422, previewed)
             return
           }
-          const name = body.name
-          switch (body.action) {
-            case 'save': {
-              const saved = savePreset(activeProfileDir, name, body.bundleOrder, body.disabled)
-              sendJson(response, saved.ok ? 200 : 400, saved)
-              return
-            }
-            case 'apply': {
-              const applied = applyPreset(activeProfileDir, name, maxSnapshots)
-              if (applied.ok) {
-                invalidateUpdates()
-                refreshMarketState()
+          if (!acquireWrite(response)) return
+          try {
+            switch (body.action) {
+              case 'save': {
+                const saved = savePreset(activeProfileDir, name, body.bundleOrder, body.disabled)
+                sendJson(response, saved.ok ? 200 : 400, saved)
+                return
               }
-              sendJson(response, applied.ok ? 200 : 422, applied)
-              return
+              case 'apply': {
+                const applied = applyPreset(activeProfileDir, name, maxSnapshots)
+                if (applied.ok) {
+                  invalidateUpdates()
+                  refreshMarketState()
+                }
+                sendJson(response, applied.ok ? 200 : 422, applied)
+                return
+              }
+              case 'delete': {
+                const deleted = deletePreset(activeProfileDir, name)
+                sendJson(response, deleted.ok ? 200 : 400, deleted)
+                return
+              }
+              default:
+                sendJson(response, 400, { error: 'action must be save | preview | apply | delete / action 必须是 save | preview | apply | delete' })
             }
-            case 'preview': {
-              const previewed = previewPreset(activeProfileDir, name)
-              sendJson(response, previewed.ok ? 200 : 422, previewed)
-              return
-            }
-            case 'delete': {
-              const deleted = deletePreset(activeProfileDir, name)
-              sendJson(response, deleted.ok ? 200 : 400, deleted)
-              return
-            }
-            default:
-              sendJson(response, 400, { error: 'action must be save | preview | apply | delete / action 必须是 save | preview | apply | delete' })
+          } finally {
+            writing = false
           }
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
@@ -762,12 +787,15 @@ export function mountMarketRoutes(
           sendJson(response, 403, { error: 'untrusted origin' })
           return
         }
+        if (!acquireWrite(response)) return
         try {
           const body = await readJsonBody(request, 256 * 1024)
           const imported = importPresets(activeProfileDir, body)
           sendJson(response, imported.ok ? 200 : 400, imported)
         } catch (error) {
           sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) })
+        } finally {
+          writing = false
         }
       },
     }),
@@ -1038,6 +1066,10 @@ export function mountMarketRoutes(
           sendJson(response, 403, { error: 'untrusted origin' })
           return
         }
+        if (writing) {
+          sendJson(response, 409, { error: 'another plugin operation is running' })
+          return
+        }
         if (installing) {
           sendJson(response, 409, { error: 'another install is already running' })
           return
@@ -1205,7 +1237,7 @@ export function mountMarketRoutes(
           sendJson(response, 403, { error: 'restart is limited to same-origin loopback requests' })
           return
         }
-        if (installing) {
+        if (writing || installing) {
           sendJson(response, 409, { error: 'cannot restart while a plugin operation is running' })
           return
         }
@@ -1341,6 +1373,10 @@ export function mountMarketRoutes(
           sendJson(response, 403, { error: 'untrusted origin' })
           return
         }
+        if (writing) {
+          sendJson(response, 409, { error: 'another plugin operation is running' })
+          return
+        }
         if (installing) {
           sendJson(response, 409, { error: 'another install is already running' })
           return
@@ -1423,6 +1459,10 @@ export function mountMarketRoutes(
         }
         if (!sameOrigin(request)) {
           sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        if (writing) {
+          sendJson(response, 409, { error: 'another plugin operation is running' })
           return
         }
         if (installing) {

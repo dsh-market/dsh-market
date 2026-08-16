@@ -54,6 +54,39 @@ export interface ProfileSnapshot {
   files: SnapshotFile[]
 }
 
+/**
+ * Strict shape validation for a parsed snapshot document (issue #98 analysis:
+ * snapshot JSON validation). A snapshot that fails these checks is corrupt —
+ * it can never be restored safely, so listing it would only offer the user a
+ * restore that must fail.
+ */
+function isSnapshotDocument(value: unknown): value is ProfileSnapshot {
+  if (value === null || typeof value !== 'object') return false
+  const snap = value as { id?: unknown; createdAt?: unknown; files?: unknown }
+  if (typeof snap.id !== 'string' || !validSnapshotId(snap.id)) return false
+  if (typeof snap.createdAt !== 'number' || !Number.isFinite(snap.createdAt)) return false
+  if (!Array.isArray(snap.files)) return false
+  for (const file of snap.files) {
+    if (file === null || typeof file !== 'object') return false
+    const entry = file as { path?: unknown; json?: unknown; lines?: unknown }
+    if (typeof entry.path !== 'string' || !(SNAPSHOT_FILES as readonly string[]).includes(entry.path) || entry.path.includes('..')) return false
+    if (entry.json === undefined && !Array.isArray(entry.lines)) return false
+    if (entry.lines !== undefined && !Array.isArray(entry.lines)) return false
+  }
+  return true
+}
+
+/**
+ * Atomic same-directory replace (write temp + rename): a crash mid-write can
+ * never leave a snapshot file truncated — a half-written snapshot would parse
+ * as corrupt forever and could not be restored.
+ */
+function writeFileAtomic(file: string, content: string): void {
+  const temp = `${file}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  writeFileSync(temp, content)
+  renameSync(temp, file)
+}
+
 /** Absolute snapshot directory for a profile. */
 function snapshotDir(profileDir: string): string {
   return join(profileDir, SNAPSHOT_DIR)
@@ -128,13 +161,18 @@ export function createProfileSnapshot(profileDir: string, maxSnapshots: number =
   const id = nextSnapshotId(profileDir)
   const snapshot: ProfileSnapshot = { id, createdAt: Date.now(), files }
   mkdirSync(snapshotDir(profileDir), { recursive: true, mode: 0o700 })
-  writeFileSync(snapshotFile(profileDir, id), `${JSON.stringify(snapshot, null, 2)}\n`)
+  writeFileAtomic(snapshotFile(profileDir, id), `${JSON.stringify(snapshot, null, 2)}\n`)
   logEvent('info', 'snapshot', `created ${id} (${files.map(file => file.path).join(', ')})`)
   pruneSnapshots(profileDir, maxSnapshots)
   return snapshot
 }
 
-/** All snapshots for a profile, newest first. Invalid files are skipped. */
+/**
+ * All snapshots for a profile, newest first. Files that are unparseable,
+ * shape-invalid (bad id/createdAt/files), or whose internal id does not match
+ * the file name are skipped — a snapshot that could never be restored is not
+ * listed (issue #98 analysis: snapshot JSON validation).
+ */
 export function listSnapshots(profileDir: string): ProfileSnapshot[] {
   let names: string[]
   try {
@@ -145,8 +183,9 @@ export function listSnapshots(profileDir: string): ProfileSnapshot[] {
   const snapshots: ProfileSnapshot[] = []
   for (const name of names) {
     try {
-      const value = JSON.parse(readFileSync(snapshotFile(profileDir, name.slice(0, -5)), 'utf8')) as ProfileSnapshot
-      if (value?.id !== undefined && Array.isArray(value.files)) snapshots.push(value)
+      const id = name.slice(0, -5)
+      const value = JSON.parse(readFileSync(snapshotFile(profileDir, id), 'utf8')) as unknown
+      if (isSnapshotDocument(value) && value.id === id) snapshots.push(value)
     } catch { /* corrupt snapshot — skip */ }
   }
   return snapshots.sort((a, b) => b.createdAt - a.createdAt)

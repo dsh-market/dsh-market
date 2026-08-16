@@ -178,3 +178,8 @@
 .snapMeta{display:flex;flex-wrap:wrap;align-items:center;gap:8px;min-width:0}
 .snapConfirmText{font-size:12px;line-height:18px;color:var(--dsw-alias-state-warn-primary,#b45309);margin:0}
 .confirmRow{display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap}
+
+/* #98: AI-fix clipboard failure fallback — the built prompt as a selectable
+   text block, so the user can still copy it by hand. */
+.fixFallback{display:flex;flex-direction:column;gap:6px;margin:8px 0}
+.fixFallbackText{width:100%;box-sizing:border-box;font-family:ui-monospace,Menlo,monospace;font-size:11px;line-height:16px;color:var(--dsw-alias-label-primary,#1f2328);background:var(--dsw-alias-bg-layer-2,#f3f4f6);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:6px;padding:8px 10px;resize:vertical;white-space:pre-wrap;word-break:break-all}

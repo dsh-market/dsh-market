@@ -307,6 +307,73 @@ describe('suggestedOrder (#98 opt: LOOT-style auto-fix)', () => {
     // The violation itself surfaces as a warning + orderConflicts.
     expect(report.orderConflicts.some(c => c.name === 'a')).toBe(true)
   })
+
+  it('does NOT warn when the order differs from the canonical suggestion but breaks nothing (no false alert)', () => {
+    // Two unconstrained community bundles in a hand-picked order [b, a]: the
+    // canonical suggestion is [a, b] (deterministic name tie-break), but the
+    // current order violates NO rule and NO dependency edge — it must not be
+    // flagged as "violates declared rules" (issue #98 analysis: false alerts).
+    const dir = pdir()
+    writeProfile(dir, {
+      name: 'web-profile',
+      dsh: { profile: { bundles: ['b', 'a'] } }, // hand-picked order
+      dependencies: {},
+    })
+    writeBundle(dir, 'a', '1.0.0', [{ insert: [{ id: 'a' }] }])
+    writeBundle(dir, 'b', '1.0.0', [{ insert: [{ id: 'b' }] }])
+
+    const report = analyzeProfile(dir)
+    expect(report.suggestedOrder?.ok).toBe(true)
+    if (report.suggestedOrder?.ok === true) expect(report.suggestedOrder.order).toEqual(['a', 'b'])
+    expect(report.orderConflicts).toEqual([])
+    expect(report.summary.warnings.some(w => w.includes('violates declared rules'))).toBe(false)
+    expect(report.summary.ok).toBe(true)
+  })
+
+  it('resolves dependency edges from workspace-root-hoisted bundles (unified resolution)', () => {
+    // app depends on lib; lib is hoisted ONLY to the workspace root
+    // (tmp/node_modules/lib), never to the profile's node_modules. The old
+    // code re-walked profile/node_modules and saw no lib → no edge → no
+    // warning and no suggested reorder. The fix reads the manifest from the
+    // SAME resolved directory the boot uses, so the edge app→lib appears and
+    // the suggestion puts lib first (issue #98 analysis).
+    const dir = pdir()
+    writeProfile(dir, {
+      dsh: { profile: { bundles: ['app', 'lib'] } },
+      dependencies: { app: '^1.0.0', lib: '^1.0.0' },
+    })
+    writeBundle(dir, 'app', '1.0.0', [{ insert: [{ id: 'app-entry', name: 'app' }] }])
+    writeFileSync(join(dir, 'node_modules', 'app', 'package.json'), JSON.stringify({
+      name: 'app',
+      version: '1.0.0',
+      dependencies: { lib: '^1.0.0' },
+      dsh: { bundle: { patch: './cordis.patch.yml' } },
+    }))
+    // lib lives ONLY at the workspace root.
+    const root = join(tmp, 'node_modules', 'lib')
+    mkdirSync(root, { recursive: true })
+    writeFileSync(join(root, 'package.json'), JSON.stringify({
+      name: 'lib',
+      version: '1.0.0',
+      dsh: { bundle: { patch: './cordis.patch.yml' } },
+    }))
+    writeFileSync(join(root, 'cordis.patch.yml'), dump([
+      { insert: [{ id: 'lib-entry', name: 'lib' }] },
+    ]))
+    expect(existsSync(join(dir, 'node_modules', 'lib'))).toBe(false)
+
+    const report = analyzeProfile(dir)
+    // The hoisted bundle resolves to the workspace root…
+    expect(report.bundles.find(b => b.name === 'lib')?.directory).toBe(root)
+    // …its dependency edge is seen and respected by the suggestion…
+    expect(report.suggestedOrder?.ok).toBe(true)
+    if (report.suggestedOrder?.ok === true) {
+      expect(report.suggestedOrder.order.indexOf('lib')).toBeLessThan(report.suggestedOrder.order.indexOf('app'))
+    }
+    // …and the CURRENT order [app, lib] is correctly flagged as violating the
+    // dependency edge (lib must load before app).
+    expect(report.summary.warnings.some(w => w.includes('violates declared rules or plugin dependencies'))).toBe(true)
+  })
 })
 
 describe('peer range mismatch', () => {
@@ -406,6 +473,29 @@ describe('satisfiesRange', () => {
     expect(satisfiesRange('0.1.0', '^0.1.0-rc.6')).toBe(true)
     expect(satisfiesRange('0.0.1-rc.1', '^0.1.0-rc.6')).toBe(false)
     expect(satisfiesRange('0.2.1', '^0.1.0-rc.6')).toBe(false)
+  })
+
+  it('applies the npm prerelease gate at the comparator-SET level (#98)', () => {
+    // A prerelease version only satisfies a set when a comparator pins the
+    // SAME [major, minor, patch] tuple WITH a prerelease of its own. This is
+    // a set-level rule, not a per-comparator one.
+    // 0.2.0-rc.1 is outside ^0.1.0's tuple → never admitted (and out of range).
+    expect(satisfiesRange('0.2.0-rc.1', '^0.1.0')).toBe(false)
+    // 0.1.0-rc.5 is INSIDE the numeric range of ^0.1.0 but the range declares
+    // no prerelease → npm still refuses it.
+    expect(satisfiesRange('0.1.0-rc.5', '^0.1.0')).toBe(false)
+    expect(satisfiesRange('1.2.3-rc.1', '^1.2.3')).toBe(false)
+    // A compound range with a same-tuple prerelease comparator admits it…
+    expect(satisfiesRange('1.2.3-rc.2', '>=1.2.3-rc.1 <2.0.0')).toBe(true)
+    // …even when the plain release form of the same bounds would not.
+    expect(satisfiesRange('1.2.3-rc.1', '>=1.2.3 <1.2.4')).toBe(false)
+    // Same-tuple prerelease ranges match normally.
+    expect(satisfiesRange('0.1.0-rc.2', '^0.1.0-rc.1')).toBe(true)
+    expect(satisfiesRange('2.0.0-rc.1', '^2.0.0-rc.1')).toBe(true)
+    // || alternatives are independent sets: the second set's own prerelease
+    // comparator admits the version.
+    expect(satisfiesRange('2.0.0-rc.1', '^1.0.0 || ^2.0.0-rc.1')).toBe(true)
+    expect(satisfiesRange('0.2.0-rc.1', '^0.1.0 || ^0.2.0-rc.1')).toBe(true)
   })
 
   it('matches wildcard, compound and || ranges; unknown ranges are null', () => {

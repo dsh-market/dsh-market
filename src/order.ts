@@ -13,7 +13,7 @@
  * Pure functions plus one manifest write-back; no processes, no network.
  */
 
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 
@@ -23,6 +23,17 @@ export const INBOX_BUNDLES = new Set([
   '@deepseek-ai/dsh-web-app',
   '@deepseek-ai/dsh-headless',
 ])
+
+/**
+ * Atomic same-directory replace (write temp + rename): a crash mid-write can
+ * never leave the profile manifest truncated, which would break every later
+ * pnpm run. Used for every package.json write this module makes.
+ */
+function writeFileAtomic(file: string, content: string): void {
+  const temp = `${file}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  writeFileSync(temp, content)
+  renameSync(temp, file)
+}
 
 /** The bundle stack as it appears in the profile manifest. */
 export interface BundleStack {
@@ -305,7 +316,7 @@ export function applyBundleOrder(profileDir: string, newOrder: string[]): { ok: 
     manifest.dsh ??= {}
     manifest.dsh.profile ??= {}
     manifest.dsh.profile.bundles = merged.bundles
-    writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+    writeFileAtomic(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
     return merged
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) }

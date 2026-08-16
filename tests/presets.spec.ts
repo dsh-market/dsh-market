@@ -356,3 +356,115 @@ describe('exportPresets / importPresets', () => {
     expect(typeof saved?.createdAt).toBe('number')
   })
 })
+
+describe('market self-disable guard (#98)', () => {
+  it('savePreset never stores the market’s own names in the disabled list', () => {
+    const dir = pdir()
+    writeProfile(dir, ['alpha'])
+
+    expect(savePreset(dir, 'combo', ['alpha'], ['dsh-market', 'dshmarket', 'x', 'x'])).toEqual({ ok: true })
+    const saved = listPresets(dir).find(p => p.name === 'combo')
+    expect(saved?.disabled).toEqual(['x'])
+  })
+
+  it('importPresets strips the market’s own names at import time', () => {
+    const dir = pdir()
+    writeProfile(dir, ['alpha'])
+
+    const result = importPresets(dir, {
+      presets: [{ name: 'imported', bundleOrder: ['alpha'], disabled: ['dsh-market', 'dshmarket', 'y'] }],
+    })
+    expect(result.ok).toBe(true)
+    expect(listPresets(dir).find(p => p.name === 'imported')?.disabled).toEqual(['y'])
+  })
+
+  it('applyPreset drops market self-names from the applied disabled list (defense in depth)', () => {
+    // A preset (possibly hand-edited or imported from an old export) that
+    // carries the market's own name must never switch this page off — the
+    // apply path filters it even if it slipped through save/import.
+    const dir = pdir()
+    writeProfile(dir, ['alpha', 'beta'])
+    writeBundle(dir, 'alpha', '1.0.0', [{ insert: [{ id: 'alpha-entry', name: 'alpha' }] }])
+    writeBundle(dir, 'beta', '1.0.0', [{ insert: [{ id: 'beta-entry', name: 'beta' }] }])
+    writeState(dir, ['off-a'])
+    writePresetFile(dir, [{ name: 'guarded', bundleOrder: ['beta', 'alpha'], disabled: ['dsh-market', 'dshmarket', 'on-c'], createdAt: 1 }])
+
+    const result = applyPreset(dir, 'guarded')
+    expect(result.ok).toBe(true)
+    const state = JSON.parse(readFileSync(join(dir, '.dsh-market', 'state.json'), 'utf8')) as { disabled: string[] }
+    expect(state.disabled).toEqual(['on-c'])
+    expect(state.disabled).not.toContain('dsh-market')
+  })
+
+  it('previewPreset excludes market self-names from the change diff', () => {
+    const dir = pdir()
+    writeProfile(dir, ['alpha', 'beta'])
+    writeBundle(dir, 'alpha', '1.0.0', [{ insert: [{ id: 'alpha-entry', name: 'alpha' }] }])
+    writeBundle(dir, 'beta', '1.0.0', [{ insert: [{ id: 'beta-entry', name: 'beta' }] }])
+    writeState(dir, ['off-a'])
+    writePresetFile(dir, [{ name: 'preview-guard', bundleOrder: ['beta', 'alpha'], disabled: ['dsh-market', 'on-c'], createdAt: 1 }])
+
+    const preview = previewPreset(dir, 'preview-guard')
+    expect(preview.ok).toBe(true)
+    // The market's own name is not part of what the preset would disable.
+    expect(preview.changes?.disabled).toEqual(['on-c'])
+    expect(preview.changes?.enabled).toEqual(['off-a'])
+  })
+})
+
+describe('import dedupe & preset quota (#98)', () => {
+  it('dedupes same-name entries WITHIN one import payload (last wins)', () => {
+    const dir = pdir()
+    writeProfile(dir, ['alpha', 'beta'])
+
+    const result = importPresets(dir, {
+      presets: [
+        { name: 'dup', bundleOrder: ['alpha', 'beta'], disabled: ['v1'], createdAt: 1 },
+        { name: 'dup', bundleOrder: ['beta', 'alpha'], disabled: ['v2'], createdAt: 2 },
+        { name: 'other', bundleOrder: ['alpha', 'beta'], disabled: [], createdAt: 3 },
+      ],
+    })
+    // Two unique names → imported 2, NOT 3; the name list is deduped too.
+    expect(result).toMatchObject({ ok: true, imported: 2, added: 2, updated: 0, names: ['dup', 'other'] })
+
+    const list = listPresets(dir)
+    expect(list).toHaveLength(2)
+    const dup = list.find(p => p.name === 'dup')
+    expect(dup?.bundleOrder).toEqual(['beta', 'alpha']) // last entry wins
+    expect(dup?.disabled).toEqual(['v2'])
+  })
+
+  it('savePreset refuses once the store is at the MAX_PRESETS quota', () => {
+    const dir = pdir()
+    writeProfile(dir, ['alpha'])
+    const full = Array.from({ length: 50 }, (_, i) => ({
+      name: `p${i}`, bundleOrder: ['alpha'], disabled: [], createdAt: i,
+    }))
+    writePresetFile(dir, full)
+
+    const result = savePreset(dir, 'overflow', ['alpha'], [])
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('preset quota reached')
+    expect(listPresets(dir)).toHaveLength(50)
+  })
+
+  it('importPresets refuses when the merged list would exceed the quota', () => {
+    const dir = pdir()
+    writeProfile(dir, ['alpha'])
+    const local = Array.from({ length: 49 }, (_, i) => ({
+      name: `p${i}`, bundleOrder: ['alpha'], disabled: [], createdAt: i,
+    }))
+    writePresetFile(dir, local)
+
+    const result = importPresets(dir, {
+      presets: [
+        { name: 'n1', bundleOrder: ['alpha'], disabled: [], createdAt: 1 },
+        { name: 'n2', bundleOrder: ['alpha'], disabled: [], createdAt: 2 },
+      ],
+    })
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('import would exceed the preset quota')
+    // Refused wholesale — nothing was written.
+    expect(listPresets(dir)).toHaveLength(49)
+  })
+})

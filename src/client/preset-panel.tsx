@@ -29,7 +29,8 @@ interface PresetPanelProps {
   t: Translate
   /** True while the parent collapsible section is expanded (lazy-load gate). */
   open: boolean
-  /** Current community bundle order from the check report; saved as the preset. */
+  /** Current community bundle order (the Diagnostics ordering DRAFT — what the
+   * user is editing, not necessarily the last-applied order); saved verbatim. */
   bundleOrder: string[]
   /** Re-fetch the check report after a successful preset apply. */
   onRefresh: () => void
