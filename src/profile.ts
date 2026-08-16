@@ -242,6 +242,28 @@ export function pluginSubdirs(root: string): string[] {
  * (#6 by @qichuang321.)
  * @returns every package now allowed.
  */
+/**
+ * Quote a YAML block-mapping key when a plain scalar would be invalid.
+ * Scoped npm names start with `@` — a reserved YAML indicator — so an
+ * unquoted `@scope/pkg: true` entry breaks the whole pnpm-workspace.yaml
+ * for every later pnpm run in the profile (and for the market itself).
+ * Keys containing `: ` or ending with `:` are quoted for the same reason;
+ * git keys like `name@git+https://…` keep their existing plain form.
+ */
+function quoteYamlKey(key: string): string {
+  if (/^[-?:,[\]{}#&*!|>'"%@`]/.test(key) || /:(\s|$)/.test(key)) {
+    return `'${key.replace(/'/g, "''")}'`
+  }
+  return key
+}
+
+/**
+ * Allow the given packages' build scripts in the profile's
+ * pnpm-workspace.yaml `allowBuilds` block (the key dsh profiles use),
+ * merging with existing entries and leaving the rest of the yaml intact.
+ * (#6 by @qichuang321.)
+ * @returns every package now allowed.
+ */
 export function setAllowBuilds(profile: string, packages: string[], explicitDir?: string): string[] {
   const file = join(profileDir(profile, explicitDir), 'pnpm-workspace.yaml')
   let yaml = ''
@@ -259,7 +281,16 @@ export function setAllowBuilds(profile: string, packages: string[], explicitDir?
       // which breaks every later approval until the entry is dropped.
       const m = /^[ \t]+(\S.*?)\s*:\s*(true|false)?\s*$/.exec(line)
       if (m === null || m[1] === '') continue
-      map[m[1]] = m[2] ?? 'true'
+      // Entries this fix wrote may carry single/double quotes around the key
+      // (reserved indicators like `@` cannot start a plain scalar); strip
+      // them so the map key is the bare package name and a later rewrite
+      // never nests quotes.
+      let key = m[1]
+      if (key.length >= 2
+        && (key[0] === "'" && key[key.length - 1] === "'" || key[0] === '"' && key[key.length - 1] === '"')) {
+        key = key.slice(1, -1)
+      }
+      map[key] = m[2] ?? 'true'
     }
   }
   // Bare package names, or the server-derived stable git form
@@ -268,7 +299,7 @@ export function setAllowBuilds(profile: string, packages: string[], explicitDir?
   for (const pkg of packages) {
     if (/^[A-Za-z0-9@/_.-]+$/.test(pkg) || GIT_KEY_RE.test(pkg)) map[pkg] = 'true'
   }
-  const block = Object.entries(map).map(([k, v]) => `  ${k}: ${v}`).join('\n')
+  const block = Object.entries(map).map(([k, v]) => `  ${quoteYamlKey(k)}: ${v}`).join('\n')
   const blockText = `allowBuilds:\n${block}\n`
   writeFileSync(file, blockMatch !== null ? yaml.replace(blockRe, blockText) : `${yaml.replace(/\n?$/, '\n')}${blockText}`)
   return Object.keys(map)

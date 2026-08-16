@@ -199,6 +199,32 @@ describe('setAllowBuilds (#6)', () => {
     expect(yaml).toMatch(/plain: false/)
   })
 
+  it('quotes scoped `@` keys so the block stays valid YAML', async () => {
+    const { setAllowBuilds } = await import('../src/profile.ts')
+    const dir = writeProfile({})
+    writeFileSync(join(dir, 'pnpm-workspace.yaml'), 'packages:\n  - .\n')
+    const approved = setAllowBuilds('web', ['@deepseek-ai/dsh-subprocess-local', 'plain-pkg'])
+    expect(approved).toContain('@deepseek-ai/dsh-subprocess-local')
+    const yaml = readFileSync(join(dir, 'pnpm-workspace.yaml'), 'utf8')
+    // `@` cannot start a plain YAML scalar; the key must be quoted or pnpm
+    // fails to parse the workspace on every later run.
+    expect(yaml).toContain("'@deepseek-ai/dsh-subprocess-local': true")
+    expect(yaml).toMatch(/plain-pkg: true/)
+  })
+
+  it('round-trips an already-quoted scoped key without nesting quotes', async () => {
+    const { setAllowBuilds } = await import('../src/profile.ts')
+    const dir = writeProfile({})
+    writeFileSync(join(dir, 'pnpm-workspace.yaml'),
+      "packages:\n  - .\n\nallowBuilds:\n  '@google/genai': true\n")
+    const approved = setAllowBuilds('web', ['ssh2'])
+    expect(approved).toContain('@google/genai')
+    const yaml = readFileSync(join(dir, 'pnpm-workspace.yaml'), 'utf8')
+    expect(yaml).toContain("'@google/genai': true")
+    expect(yaml).not.toContain("''@google/genai''")
+    expect(yaml).toContain('ssh2: true')
+  })
+
   it('creates the block when the yaml has none', async () => {
     const { setAllowBuilds } = await import('../src/profile.ts')
     const dir = writeProfile({})
