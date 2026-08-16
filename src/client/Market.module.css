@@ -8,7 +8,7 @@
 .root{height:100%;display:flex;flex-direction:column;min-width:0;color:var(--dsw-alias-label-primary,#1f2328);position:relative}
 .head{display:flex;flex-direction:column;gap:12px;padding:4px 4px 12px}
 .title{font-size:16px;line-height:24px;font-weight:500;margin:0}
-.sub{font-size:14px;line-height:22px;color:var(--dsw-alias-label-tertiary,#8b93a1);margin:0}
+.sub{display:flex;align-items:center;gap:8px;font-size:14px;line-height:22px;color:var(--dsw-alias-label-tertiary,#8b93a1);margin:0}
 .searchInline{width:200px;margin-bottom:6px;flex-shrink:0}
 .tabs{display:flex;gap:2px;border-bottom:1px solid var(--dsw-alias-border-l2,#e5e7eb);align-items:flex-end}
 .tab{border:none;background:none;font:inherit;font-size:13px;color:var(--dsw-alias-label-secondary,#6b7280);padding:7px 12px;cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap}
@@ -45,6 +45,7 @@
 .swatches i{flex:1}
 .card{background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:12px;padding:12px 14px;display:flex;flex-direction:column;gap:12px}
 .row1{display:flex;align-items:center;gap:10px;min-width:0}
+.srcBtn{flex-shrink:0;align-self:flex-start}
 .av{width:32px;height:32px;border-radius:8px;display:grid;place-items:center;font-weight:700;color:#fff;font-size:14px;flex-shrink:0;object-fit:cover;background:var(--dsw-alias-bg-layer-2,#f3f4f6)}
 .nm{font-weight:500;font-size:14px;line-height:22px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .owner{font-size:11px;color:var(--dsw-alias-label-secondary,#9ca3af)}
@@ -90,12 +91,9 @@
 .backupCard{background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px}
 .backupCard h3{font-size:14px;margin:0}
 .backupCard p{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#6b7280);margin:0}
-.backupActions{display:flex;gap:8px;flex-wrap:wrap}
-.backupButton{display:inline-flex;position:relative;align-items:center;border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:6px;color:var(--dsw-alias-label-primary,#1f2328);cursor:pointer;font-size:12px;line-height:18px;padding:4px 10px;text-decoration:none}
-.backupButton[aria-disabled="true"]{opacity:.5;pointer-events:none}
-.backupButton input{position:absolute;width:1px;height:1px;opacity:0}
-.backupPrimary{background:var(--dsw-alias-brand-primary,#4f6ef7);border-color:var(--dsw-alias-brand-primary,#4f6ef7);color:#fff}
-.backupInput{width:100%}
+.backupActions{display:flex;gap:8px;flex-wrap:wrap;position:relative}
+.hiddenFile{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+.backupInput{width:100%;box-sizing:border-box}
 .backupCheck{display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer}
 .backupWarn{color:var(--dsw-alias-state-warn-primary,#b45309)!important;font-size:12px;line-height:18px;margin:0}
 .backupMessage{grid-column:1/-1;font-size:12px;color:var(--dsw-alias-label-secondary,#6b7280)}

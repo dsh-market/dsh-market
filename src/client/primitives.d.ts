@@ -126,6 +126,8 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
   export function IconCordisPluginOutline14(props: IconProps): ReactElement
   export function IconLoadingOutline16(props: IconProps): ReactElement
   export function IconLinkOutline14(props: IconProps): ReactElement
+  export function IconDownloadOutline16(props: IconProps): ReactElement
+  export function IconFolderOpen16(props: IconProps): ReactElement
 
   export type StateDotState = 'done' | 'warning' | 'ongoing' | 'error'
   export function StateDot(props: {
