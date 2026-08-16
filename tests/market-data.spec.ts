@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from 'vitest'
 import {
-  entryForDep, isInstalled, matchInstalledName, orderedCategories, pageItems, themePlugins, visiblePlugins,
+  entryForDep, extractReadmeImages, isInstalled, matchInstalledName, orderedCategories, pageItems, safeScreenshots, themePlugins, visiblePlugins,
 } from '../src/client/market-data.ts'
 import type { RegistryPlugin } from '../src/client/market-data.ts'
 
@@ -175,5 +175,49 @@ describe('discover pager (pageItems)', () => {
     expect(pageItems(1, 17)).toEqual([1, 2, 3, 4, 5, '…', 17])
     expect(pageItems(9, 17)).toEqual([1, '…', 8, 9, 10, '…', 17])
     expect(pageItems(17, 17)).toEqual([1, '…', 13, 14, 15, 16, 17])
+  })
+})
+
+describe('screenshots (#61)', () => {
+  it('safeScreenshots keeps only https GitHub-hosted raster images, deduped and capped', () => {
+    expect(safeScreenshots([
+      'https://raw.githubusercontent.com/o/r/main/a.png',
+      'https://raw.githubusercontent.com/o/r/main/a.png', // dupe
+      'https://user-images.githubusercontent.com/1/shot.gif',
+      'https://evil.example/track.png',                    // host not allowlisted
+      'http://raw.githubusercontent.com/o/r/main/b.png',   // not https
+      'https://raw.githubusercontent.com/o/r/main/logo.svg', // svg = logo/badge noise
+      42,
+    ])).toEqual([
+      'https://raw.githubusercontent.com/o/r/main/a.png',
+      'https://user-images.githubusercontent.com/1/shot.gif',
+    ])
+    expect(safeScreenshots(undefined)).toEqual([])
+    // capped at 6
+    const many = Array.from({ length: 9 }, (_, i) => `https://raw.githubusercontent.com/o/r/main/s${i}.png`)
+    expect(safeScreenshots(many)).toHaveLength(6)
+  })
+
+  it('extractReadmeImages handles markdown + html forms and resolves relative paths', () => {
+    const md = [
+      '# my-plugin',
+      '[![npm](https://img.shields.io/npm/v/x)](https://npmjs.com/x)', // badge → host filtered
+      '![demo](assets/demo.png)',
+      '![abs](/docs/abs.png)',
+      '<img src="./assets/two.png" width="600">',
+      '![ext](https://user-images.githubusercontent.com/1/ext.png)',
+      '![logo](assets/logo.svg)', // svg filtered
+    ].join('\n')
+    expect(extractReadmeImages(md, 'o', 'r', null)).toEqual([
+      'https://raw.githubusercontent.com/o/r/HEAD/assets/demo.png',
+      'https://raw.githubusercontent.com/o/r/HEAD/docs/abs.png',
+      'https://raw.githubusercontent.com/o/r/HEAD/assets/two.png',
+      'https://user-images.githubusercontent.com/1/ext.png',
+    ])
+    // Monorepo subpath README: relative paths resolve against the subdir.
+    expect(extractReadmeImages('![s](shot.png)', 'o', 'r', 'packages/plug-a')).toEqual([
+      'https://raw.githubusercontent.com/o/r/HEAD/packages/plug-a/shot.png',
+    ])
+    expect(extractReadmeImages('no images here', 'o', 'r', null)).toEqual([])
   })
 })

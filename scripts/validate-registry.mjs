@@ -150,6 +150,25 @@ function main() {
       }
     }
 
+    // E12 — screenshots (optional): 1-8 https URLs on GitHub image hosting.
+    // Mirrors the upstream build gate — a snapshot must never carry an image
+    // URL that would let a compromised registry plant a tracking pixel in
+    // every market user's browser (#61).
+    if (p.screenshots !== undefined) {
+      const SHOT_HOSTS = new Set(['raw.githubusercontent.com', 'user-images.githubusercontent.com', 'camo.githubusercontent.com', 'github.com'])
+      if (!Array.isArray(p.screenshots) || p.screenshots.length === 0 || p.screenshots.length > 8) {
+        fail(errors, p, 'E12', 'screenshots must be an array of 1-8 URLs when present')
+      } else {
+        for (const shot of p.screenshots) {
+          let parsed = null
+          try { parsed = new URL(String(shot)) } catch { /* fails below */ }
+          if (parsed === null || parsed.protocol !== 'https:' || !SHOT_HOSTS.has(parsed.hostname)) {
+            fail(errors, p, 'E12', `screenshot must be an https URL on GitHub hosting: ${String(shot)}`)
+          }
+        }
+      }
+    }
+
     // E11 — true install-identity uniqueness
     let identity
     if (p.npm) {

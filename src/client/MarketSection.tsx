@@ -8,7 +8,7 @@ import { Button, IconChevronDownOutline14, IconChevronUpOutline14, IconSearchOut
 import css from './Market.module.css'
 import {
   avatarColor, entryForDep, isInstalled, looksTerminal, matchInstalledName, orderedCategories,
-  pageItems, readSession, repoOf, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
+  pageItems, pluginScreenshots, readSession, repoOf, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
 } from './market-data.ts'
 import type {
   ActivationInfo, ActivationState, InstalledMap, MarketStatus, Registry, RegistryPlugin,
@@ -52,6 +52,42 @@ function OwnerAvatar({ name, owner }: { name: string; owner: string }) {
       loading="lazy"
       onError={() => setFailed(true)}
     />
+  )
+}
+
+/**
+ * AppStore-style screenshot strip in the install detail dialog (#61).
+ * Curated registry screenshots win; otherwise images are extracted from the
+ * repo README. Requests start only once the dialog opens; failures — no
+ * README, no images, broken links — degrade to rendering nothing at all.
+ */
+function ScreenshotStrip({ plugin }: { plugin: RegistryPlugin }) {
+  const [shots, setShots] = useState<string[]>([])
+  const [broken, setBroken] = useState<string[]>([])
+  useEffect(() => {
+    let live = true
+    setShots([])
+    setBroken([])
+    pluginScreenshots(plugin).then((list) => { if (live) setShots(list) })
+    return () => { live = false }
+  }, [plugin])
+  const visible = shots.filter(src => !broken.includes(src))
+  if (visible.length === 0) return null
+  return (
+    <div className={css.shots}>
+      {visible.map(src => (
+        <img
+          key={src}
+          className={css.shot}
+          src={src}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          referrerPolicy="no-referrer"
+          onError={() => setBroken(prev => prev.includes(src) ? prev : prev.concat(src))}
+        />
+      ))}
+    </div>
   )
 }
 
@@ -1422,6 +1458,7 @@ export function MarketSection(props: MarketSectionProps) {
             </>
           )}
         >
+          <ScreenshotStrip plugin={confirming} />
           <details className={css.cmdDetails}>
             <summary className={css.cmdSummary}>{t('cmdDetails')}</summary>
             <div className={css.cmd}>{confirming.install}</div>

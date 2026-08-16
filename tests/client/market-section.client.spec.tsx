@@ -9,6 +9,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MarketSection } from '../../src/client/MarketSection.tsx'
+import { resetScreenshotsCache } from '../../src/client/market-data.ts'
 import { en } from '../../src/client/locales.ts'
 
 const REGISTRY = {
@@ -54,7 +55,7 @@ function props() {
   }
 }
 
-beforeEach(() => { stubFetch() })
+beforeEach(() => { stubFetch(); resetScreenshotsCache() })
 afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
@@ -116,6 +117,54 @@ describe('MarketSection (jsdom)', () => {
     expect(await screen.findByRole('button', { name: en.confirm })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: en.cancel }))
     await waitFor(() => expect(screen.queryByRole('button', { name: en.confirm })).toBeNull())
+  })
+
+  it('shows curated registry screenshots in the dialog, and README-extracted ones as fallback (#61)', async () => {
+    const CURATED = 'https://raw.githubusercontent.com/alice/dsh-loop/main/assets/demo.png'
+    const registry = JSON.parse(JSON.stringify(REGISTRY))
+    registry.plugins[0].screenshots = [CURATED, 'https://evil.example/track.png']
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      const path = String(url).split('?')[0]
+      if (path === '/dsh-market/registry') return Promise.resolve(new Response(JSON.stringify({ source: 'snapshot', registry }), { status: 200 }))
+      if (path === '/dsh-market/installed') return Promise.resolve(new Response(JSON.stringify({ profile: 'web', installed: {}, live: [] }), { status: 200 }))
+      if (path === '/dsh-market/status') return Promise.resolve(new Response(JSON.stringify({ active: false, pnpm: true, boot: 'boot-1', installed: {} }), { status: 200 }))
+      if (path === '/dsh-market/updates') return Promise.resolve(new Response(JSON.stringify({ updates: {} }), { status: 200 }))
+      // README fallback for dsh-notify (no curated screenshots).
+      if (path === 'https://raw.githubusercontent.com/bob/dsh-notify/HEAD/README.md') {
+        return Promise.resolve(new Response('# dsh-notify\n![shot](assets/notify.png)', { status: 200 }))
+      }
+      return Promise.reject(new Error(`unstubbed fetch: ${String(url)}`))
+    }))
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+
+    // Grid order is by stars — walk up from the name to the card's own button.
+    const installButtonOf = (name: string) => {
+      let card: HTMLElement | null = screen.getByText(name)
+      while (card !== null && within(card).queryAllByRole('button', { name: en.install }).length === 0) {
+        card = card.parentElement
+      }
+      return within(card!).getAllByRole('button', { name: en.install })[0]!
+    }
+
+    // Curated: the allowlisted screenshot renders, the third-party host never does.
+    fireEvent.click(installButtonOf('dsh-loop'))
+    await screen.findByRole('button', { name: en.confirm })
+    await waitFor(() => {
+      const srcs = [...document.querySelectorAll('img')].map(img => img.getAttribute('src'))
+      expect(srcs).toContain(CURATED)
+      expect(srcs).not.toContain('https://evil.example/track.png')
+    })
+    fireEvent.click(screen.getByRole('button', { name: en.cancel }))
+    await waitFor(() => expect(screen.queryByRole('button', { name: en.confirm })).toBeNull())
+
+    // Fallback: dsh-notify's dialog extracts from its README, path resolved to raw.
+    fireEvent.click(installButtonOf('dsh-notify'))
+    await screen.findByRole('button', { name: en.confirm })
+    await waitFor(() => {
+      const srcs = [...document.querySelectorAll('img')].map(img => img.getAttribute('src'))
+      expect(srcs).toContain('https://raw.githubusercontent.com/bob/dsh-notify/HEAD/assets/notify.png')
+    })
   })
 
   it('imports a backup as a grey installed-list preview without restoring it', async () => {

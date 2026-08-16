@@ -17,6 +17,8 @@ export interface RegistryPlugin {
   stars?: number
   added?: string
   install?: string
+  /** Author-curated screenshot URLs from the registry (#61); optional. */
+  screenshots?: string[]
 }
 
 /** The catalog payload under `registry` in /dsh-market/registry. */
@@ -330,4 +332,109 @@ export function themeSwatch(def: ThemeDef): string[] {
     pick(['--dsw-alias-brand-primary']) || '#4f6ef7',
     pick(['--dsw-alias-label-primary']) || (dark ? '#e5e7eb' : '#1f2328'),
   ]
+}
+
+// ------------------------------------------------------------- screenshots
+
+/**
+ * Image hosts screenshots may load from (#61) — GitHub's own hosting only.
+ * Any other host is dropped BEFORE an <img> is created: a screenshot URL is
+ * a request carrying the user's IP, so registry data and README content are
+ * both treated as untrusted here, matching the upstream build gate.
+ */
+const SCREENSHOT_HOSTS = new Set([
+  'raw.githubusercontent.com',
+  'user-images.githubusercontent.com',
+  'camo.githubusercontent.com',
+  'github.com',
+])
+
+const MAX_SCREENSHOTS = 6
+
+/** Keep only https URLs on allowlisted image hosts; SVG dropped (logos/badges). */
+export function safeScreenshots(urls: unknown): string[] {
+  if (!Array.isArray(urls)) return []
+  const safe: string[] = []
+  for (const value of urls) {
+    if (typeof value !== 'string') continue
+    let parsed: URL | null = null
+    try { parsed = new URL(value) } catch { continue }
+    if (parsed.protocol !== 'https:' || !SCREENSHOT_HOSTS.has(parsed.hostname)) continue
+    if (/\.svg$/i.test(parsed.pathname)) continue
+    if (!safe.includes(value)) safe.push(value)
+    if (safe.length >= MAX_SCREENSHOTS) break
+  }
+  return safe
+}
+
+/**
+ * Image URLs extracted from a repo README, in document order — the fallback
+ * when an entry has no curated screenshots (#61). Markdown and <img> forms;
+ * relative paths resolve against the README's directory on
+ * raw.githubusercontent.com; badges fall out naturally (shields.io etc. are
+ * not allowlisted) and SVG is skipped as logo/badge noise.
+ */
+export function extractReadmeImages(markdown: string, owner: string, repo: string, subpath: string | null): string[] {
+  const base = `https://raw.githubusercontent.com/${owner}/${repo}/HEAD/${subpath === null ? '' : subpath + '/'}`
+  const found: string[] = []
+  const push = (raw: string) => {
+    const src = raw.trim().replace(/^<|>$/g, '')
+    if (src === '' || src.startsWith('data:')) return
+    let absolute: string
+    if (/^https?:\/\//i.test(src)) {
+      absolute = src
+    } else if (src.startsWith('/')) {
+      absolute = `https://raw.githubusercontent.com/${owner}/${repo}/HEAD${src}`
+    } else {
+      try { absolute = new URL(src, base).href } catch { return }
+    }
+    found.push(absolute)
+  }
+  // One pass over both forms so the result keeps document order.
+  for (const m of markdown.matchAll(/!\[[^\]]*\]\(\s*([^)\s]+)(?:\s+"[^"]*")?\s*\)|<img[^>]*\ssrc=["']([^"']+)["']/gi)) {
+    push(m[1] ?? m[2]!)
+  }
+  return safeScreenshots(found)
+}
+
+const readmeShotsCache = new Map<string, Promise<string[]>>()
+
+/** Test hook: the cache is module-level and outlives component unmounts. */
+export function resetScreenshotsCache(): void {
+  readmeShotsCache.clear()
+}
+
+/**
+ * Screenshots for a plugin: the registry's curated list when present,
+ * otherwise lazily extracted from the repo README. Only ever called AFTER
+ * the user opens the detail dialog — browsing the list must make zero
+ * external requests. Failures resolve to [] (silent degradation).
+ */
+export function pluginScreenshots(plugin: RegistryPlugin): Promise<string[]> {
+  const curated = safeScreenshots(plugin.screenshots)
+  if (curated.length > 0) return Promise.resolve(curated)
+  const m = /^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\/tree\/[^/]+\/(.+?))?\/?$/.exec(plugin.url)
+  if (m === null) return Promise.resolve([])
+  const [, owner, repo, subpath = null] = m
+  const cacheKey = plugin.url
+  const cached = readmeShotsCache.get(cacheKey)
+  if (cached !== undefined) return cached
+  const fetchReadme = async (path: string | null): Promise<string | null> => {
+    try {
+      const res = await fetch(`https://raw.githubusercontent.com/${owner}/${repo}/HEAD/${path === null ? '' : path + '/'}README.md`)
+      return res.ok ? await res.text() : null
+    } catch {
+      return null
+    }
+  }
+  const task = (async () => {
+    // Monorepo subpath entries prefer their own README, falling back to the
+    // repo root; shots in the subpath README resolve against its directory.
+    const sub = subpath === null ? null : await fetchReadme(subpath)
+    if (sub !== null) return extractReadmeImages(sub, owner!, repo!, subpath)
+    const root = await fetchReadme(null)
+    return root === null ? [] : extractReadmeImages(root, owner!, repo!, null)
+  })().catch(() => [] as string[])
+  readmeShotsCache.set(cacheKey, task)
+  return task
 }
