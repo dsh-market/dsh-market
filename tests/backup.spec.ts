@@ -28,6 +28,27 @@ function respondWith(body: string, statusCode: number): void {
   })
 }
 
+/**
+ * Windows without Developer Mode / elevated privileges rejects symlinkSync
+ * with EPERM (an environment limitation unrelated to issue #98). Probe once
+ * with the exact same call shape the symlink test uses; when unavailable the
+ * test is skipped so the suite stays green on locked-down machines/CI.
+ */
+const symlinksAvailable = ((): boolean => {
+  const dir = mkdtempSync(join(tmpdir(), 'dshm-symlink-probe-'))
+  try {
+    const target = join(dir, 'target')
+    const link = join(dir, 'link')
+    mkdirSync(target)
+    symlinkSync(target, link)
+    return existsSync(link)
+  } catch {
+    return false
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})()
+
 let home: string
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'dshm-backup-'))
@@ -79,7 +100,7 @@ describe('profile backup and restore', () => {
     expect(existsSync(join(home, 'profiles', 'outside'))).toBe(false)
   })
 
-  it('rejects an existing symlink in a restored path parent', () => {
+  it.skipIf(!symlinksAvailable)('rejects an existing symlink in a restored path parent', () => {
     const dir = profileDir('web')
     const outside = join(home, 'outside')
     mkdirSync(dir, { recursive: true })
