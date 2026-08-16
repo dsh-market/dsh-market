@@ -887,22 +887,20 @@ export function mountMarketRoutes(
             sendJson(response, 403, { error: 'untrusted origin' })
             return
           }
-          if (!acquireWrite(response)) return
           try {
-            const snapshot = createProfileSnapshot(activeProfileDir, maxSnapshots)
-            sendJson(response, snapshot !== null ? 200 : 400, {
-              ok: snapshot !== null,
-              ...(snapshot !== null
-                ? { snapshot }
-                : { error: 'profile package.json is missing or unparseable / profile 的 package.json 缺失或无法解析' }),
+            await withMutationLock(response, 'write', async () => {
+              const snapshot = createProfileSnapshot(activeProfileDir, maxSnapshots)
+              sendJson(response, snapshot !== null ? 200 : 400, {
+                ok: snapshot !== null,
+                ...(snapshot !== null
+                  ? { snapshot }
+                  : { error: 'profile package.json is missing or unparseable / profile 的 package.json 缺失或无法解析' }),
+              })
             })
-            return
           } catch (error) {
             sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
-            return
-          } finally {
-            writing = false
           }
+          return
         }
         response.writeHead(405, { allow: 'GET, POST' })
         response.end()
@@ -922,23 +920,22 @@ export function mountMarketRoutes(
           sendJson(response, 403, { error: 'untrusted origin' })
           return
         }
-        if (!acquireWrite(response)) return
         try {
-          const body = (await readJsonBody(request)) as { snapshot?: unknown } | null
-          if (body === null || typeof body !== 'object' || typeof body.snapshot !== 'string' || body.snapshot === '') {
-            sendJson(response, 400, { error: 'snapshot id is required / 需要快照 id' })
-            return
-          }
-          const restored = restoreSnapshot(activeProfileDir, body.snapshot)
-          if (restored.ok) {
-            invalidateUpdates()
-            refreshMarketState()
-          }
-          sendJson(response, restored.ok ? 200 : 400, restored)
+          await withMutationLock(response, 'write', async () => {
+            const body = (await readJsonBody(request)) as { snapshot?: unknown } | null
+            if (body === null || typeof body !== 'object' || typeof body.snapshot !== 'string' || body.snapshot === '') {
+              sendJson(response, 400, { error: 'snapshot id is required / 需要快照 id' })
+              return
+            }
+            const restored = restoreSnapshot(activeProfileDir, body.snapshot)
+            if (restored.ok) {
+              invalidateUpdates()
+              refreshMarketState()
+            }
+            sendJson(response, restored.ok ? 200 : 400, restored)
+          })
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
-        } finally {
-          writing = false
         }
       },
     }),
@@ -958,27 +955,26 @@ export function mountMarketRoutes(
           sendJson(response, 403, { error: 'untrusted origin' })
           return
         }
-        if (!acquireWrite(response)) return
         try {
-          const body = (await readJsonBody(request)) as { snapshot?: unknown } | null
-          if (body === null || typeof body !== 'object' || typeof body.snapshot !== 'string' || body.snapshot === '') {
-            sendJson(response, 400, { error: 'snapshot id is required / 需要快照 id' })
-            return
-          }
-          // deleteSnapshot refuses traversal-shaped ids before touching the
-          // filesystem (same discipline as restore); a false result means the
-          // id is malformed or no such snapshot exists.
-          const deleted = deleteSnapshot(activeProfileDir, body.snapshot)
-          if (!deleted) {
-            sendJson(response, 400, { ok: false, error: 'snapshot not found / 快照不存在' })
-            return
-          }
-          logEvent('info', 'snapshot', `deleted ${body.snapshot}`)
-          sendJson(response, 200, { ok: true, snapshot: body.snapshot })
+          await withMutationLock(response, 'write', async () => {
+            const body = (await readJsonBody(request)) as { snapshot?: unknown } | null
+            if (body === null || typeof body !== 'object' || typeof body.snapshot !== 'string' || body.snapshot === '') {
+              sendJson(response, 400, { error: 'snapshot id is required / 需要快照 id' })
+              return
+            }
+            // deleteSnapshot refuses traversal-shaped ids before touching the
+            // filesystem (same discipline as restore); a false result means the
+            // id is malformed or no such snapshot exists.
+            const deleted = deleteSnapshot(activeProfileDir, body.snapshot)
+            if (!deleted) {
+              sendJson(response, 400, { ok: false, error: 'snapshot not found / 快照不存在' })
+              return
+            }
+            logEvent('info', 'snapshot', `deleted ${body.snapshot}`)
+            sendJson(response, 200, { ok: true, snapshot: body.snapshot })
+          })
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
-        } finally {
-          writing = false
         }
       },
     }),
