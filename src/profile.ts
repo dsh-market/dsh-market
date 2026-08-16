@@ -155,6 +155,59 @@ export function entryArtifactExists(dir: string): boolean {
   }
 }
 
+/**
+ * Package names a bundle patch mounts — the `name:` rows of the package's
+ * declared `dsh.bundle.patch` file. Line-wise on purpose: the strict
+ * hot-mount parser rejects config/expression rows, but for "what does this
+ * bundle bring in" any name row counts.
+ */
+export function bundlePatchTargets(dir: string): string[] {
+  let patchPath: string
+  try {
+    const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as {
+      dsh?: { bundle?: { patch?: unknown } }
+    }
+    const declared = manifest.dsh?.bundle?.patch
+    if (typeof declared !== 'string' || declared === '') return []
+    patchPath = join(dir, declared)
+  } catch {
+    return []
+  }
+  const names: string[] = []
+  try {
+    for (const line of readFileSync(patchPath, 'utf8').split('\n')) {
+      const m = /^\s*name:\s*['"]?([^'"\s]+)/.exec(line)
+      if (m !== null && !names.includes(m[1])) names.push(m[1])
+    }
+  } catch { /* unreadable patch — no targets */ }
+  return names
+}
+
+/**
+ * Whether the loader has anything to load for this package: its own entry
+ * artifact, or — for CARRIER bundles — patch rows naming other packages that
+ * do have one.
+ *
+ * Carriers are why `entryArtifactExists` alone is the wrong test (#103):
+ * `@linxin666/dsh-skins` ships skin assets plus a patch mounting
+ * `@linxin666/dsh-client-ui-skin-center`, and declares no main/exports/
+ * index.js of its own. Judged by its own entry it looks like the
+ * source-only checkout the #18 guard removes — so the market both flagged it
+ * broken AND uninstalled it right after installing.
+ * @param profileDirectory - resolved profile directory (host-authoritative under Desktop).
+ * @param name - installed package name.
+ */
+export function hasLoadableEntry(profileDirectory: string, name: string): boolean {
+  const dir = join(profileDirectory, 'node_modules', name)
+  if (entryArtifactExists(dir)) return true
+  // A carrier is only sound when something it mounts is itself loadable.
+  // Targets resolve hoisted (the dsh profile default) or nested under it.
+  return bundlePatchTargets(dir)
+    .filter(target => target !== name)
+    .some(target => entryArtifactExists(join(profileDirectory, 'node_modules', target))
+      || entryArtifactExists(join(dir, 'node_modules', target)))
+}
+
 /** Plugin subdirectories (depth 2) of a collection checkout, as relative paths. */
 export function pluginSubdirs(root: string): string[] {
   const found: string[] = []

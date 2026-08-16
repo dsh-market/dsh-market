@@ -300,6 +300,7 @@ export const zh = {
   presetImportedCount: '已导入 {0} 个组合（新增 {1} / 覆盖 {2} / 跳过 {3}）',
   presetImportFail: '导入失败：',
   presetImportBadJson: '文件不是有效的 JSON',
+  marketNoToggle: '市场自身不能停用',
 }
 
 /** A dictionary key; zh is the source of truth, en mirrors it 1:1. */
@@ -605,4 +606,5 @@ export const en: Record<MarketKey, string> = {
   presetImportedCount: 'Imported {0} preset(s) — {1} added / {2} overwritten / {3} skipped',
   presetImportFail: 'Import failed: ',
   presetImportBadJson: 'the file is not valid JSON',
+  marketNoToggle: 'The market itself cannot be disabled',
 }

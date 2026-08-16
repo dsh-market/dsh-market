@@ -466,6 +466,29 @@ describe('#60 enable/disable switches in the Installed tab', () => {
     expect(screen.getByText(en.stateBroken)).toBeTruthy()
     expect(screen.queryByRole('switch')).toBeNull()
   })
+
+  it('the market row shows a disabled switch with an explanation instead of calling the API', async () => {
+    stubFetch({
+      '/dsh-market/installed': {
+        profile: 'web',
+        installed: { dshmarket: '^1.5.0' },
+        live: ['dshmarket'],
+        disabled: [],
+        groups: {},
+        groupOrder: [],
+        activation: { dshmarket: { state: 'live', reasons: [], bundle: true, hot: true } },
+      },
+    })
+    render(<MarketSection {...props()} />)
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    const sw = await screen.findByRole('switch', { name: en.marketNoToggle })
+    expect(screen.getByText('dshmarket')).toBeTruthy()
+    expect((sw as HTMLButtonElement).disabled).toBe(true)
+    expect(sw.getAttribute('aria-checked')).toBe('true')
+    fireEvent.click(sw)
+    // A disabled control never bounces a rejected request off the server.
+    expect(fetchCalls.some(c => c.path === '/dsh-market/toggle')).toBe(false)
+  })
 })
 
 describe('#60 catalog deprecation', () => {
@@ -676,10 +699,17 @@ describe('#60 groups view', () => {
     await waitFor(() => {
       expect(screen.getByRole('switch', { name: en.disable + ' work' }).getAttribute('aria-checked')).toBe('true')
     })
+    // The batch enable lands in every member row: dsh-loop is back on.
+    await waitFor(() => {
+      expect(screen.getByRole('switch', { name: en.disable + ' dsh-loop' }).getAttribute('aria-checked')).toBe('true')
+    })
     // And switching it off disables every member at once.
     fireEvent.click(screen.getByRole('switch', { name: en.disable + ' work' }))
     await waitFor(() => {
       expect(screen.getByRole('switch', { name: en.enable + ' work' }).getAttribute('aria-checked')).toBe('false')
+    })
+    await waitFor(() => {
+      expect(screen.getByRole('switch', { name: en.enable + ' dsh-loop' }).getAttribute('aria-checked')).toBe('false')
     })
   })
 
@@ -905,5 +935,56 @@ describe('per-tab search boxes', () => {
     fireEvent.change(screen.getByPlaceholderText(en.searchPh), { target: { value: 'zzz-no-match' } })
     await waitFor(() => expect(screen.queryByText('whale-skin')).toBeNull())
     expect(screen.getByText(en.empty)).toBeTruthy()
+  })
+})
+
+describe('lost install response (#100)', () => {
+  it('a rejected install fetch keeps the pending state and the poll recovery lands the success — no false failure', async () => {
+    vi.useFakeTimers()
+    try {
+      // Phase 1: the /install connection DIES (proxy/loopback reset) while
+      // the server keeps installing. Status still shows nothing installed.
+      let installedNow: Record<string, string> = {}
+      vi.stubGlobal('fetch', vi.fn((url: string) => {
+        const path = String(url).split('?')[0]
+        if (path === '/dsh-market/install') return Promise.reject(new TypeError('network connection was lost'))
+        const payload =
+          path === '/dsh-market/registry' ? { source: 'snapshot', registry: REGISTRY }
+          : path === '/dsh-market/installed' ? { profile: 'web', installed: installedNow, live: [] }
+          : path === '/dsh-market/status' ? { active: false, busy: false, pnpm: true, boot: 'boot-1', restart: true, installed: installedNow }
+          : path === '/dsh-market/updates' ? { updates: {} }
+          : null
+        if (payload === null) return Promise.reject(new Error(`unstubbed fetch: ${String(url)}`))
+        return Promise.resolve(new Response(JSON.stringify(payload), { status: 200 }))
+      }))
+      render(<MarketSection {...props()} />)
+      await vi.waitFor(() => { screen.getByText('dsh-loop') })
+      await vi.waitFor(() => { screen.getByRole('button', { name: en.tabInstalled }) })
+      const installButtonOf = (name: string) => {
+        let card: HTMLElement | null = screen.getByText(name)
+        while (card !== null && within(card).queryAllByRole('button', { name: en.install }).length === 0) {
+          card = card.parentElement
+        }
+        return within(card!).getAllByRole('button', { name: en.install })[0]!
+      }
+      fireEvent.click(installButtonOf('dsh-loop'))
+      await vi.waitFor(() => { screen.getByRole('button', { name: en.confirm }) })
+      fireEvent.click(screen.getByRole('button', { name: en.confirm }))
+      // The install fetch rejects; the old code showed "install failed" here.
+      await vi.advanceTimersByTimeAsync(100)
+      expect(screen.queryByText(new RegExp(en.installFail))).toBeNull()
+      expect(sessionStorage.getItem('dshm-pending')).toContain('dsh-loop')
+
+      // Phase 2: the server finishes minutes later; the next poll sees the
+      // plugin installed and the recovery path completes the flow quietly.
+      installedNow = { 'dsh-loop': '^1.0.0' }
+      await vi.advanceTimersByTimeAsync(4500)
+      await vi.waitFor(() => {
+        expect(sessionStorage.getItem('dshm-pending')).toBeNull()
+        expect(screen.queryByText(new RegExp(en.installFail))).toBeNull()
+      })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

@@ -99,6 +99,24 @@ describe('validateAddedPlugins (#18 / #21)', () => {
     expect(removedBroken.sort()).toEqual(['broken', 'dshmarket'])
     expect(calls.map(c => c.join(' ')).sort()).toEqual(['remove broken', 'remove dshmarket'])
   })
+
+  it('keeps a carrier bundle that mounts other installed packages (#103)', async () => {
+    // @linxin666/dsh-skins ships skin assets + a patch mounting the skin
+    // center, with no entry of its own — the guard used to uninstall it right
+    // after installing ("nothing installable survived validation").
+    const dir = writeProfile({ '@linxin666/dsh-skins': '^0.1.17', '@linxin666/dsh-client-ui-skin-center': '^0.1.0' })
+    writePkg(dir, '@linxin666/dsh-skins', { dsh: { bundle: { patch: './cordis.patch.yml' } } })
+    writeFileSync(
+      join(dir, 'node_modules', '@linxin666/dsh-skins', 'cordis.patch.yml'),
+      "- insert:\n    - id: ui-skin-center\n      name: '@linxin666/dsh-client-ui-skin-center'\n",
+    )
+    writePkg(dir, '@linxin666/dsh-client-ui-skin-center', { dsh: {}, main: 'lib/index.js' }, ['lib/index.js'])
+    const { calls, run } = recordingRunner()
+    const { keep, removedBroken } = await validateAddedPlugins(run, 'web', new Set())
+    expect(keep.sort()).toEqual(['@linxin666/dsh-client-ui-skin-center', '@linxin666/dsh-skins'])
+    expect(removedBroken).toEqual([])
+    expect(calls).toEqual([])
+  })
 })
 
 describe('isStaleUpdate (#22: clean exit, nothing changed)', () => {
