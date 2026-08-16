@@ -70,7 +70,8 @@
   ],
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-client-ui-primitives": "^0.0.1-rc.1",
+    "@deepseek-ai/dsh-invariants": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-primitives": "^0.1.0-rc.6",
     "@testing-library/react": "^16.3.2",
     "@types/node": "^26.2.0",
     "@types/react": "~18.3.1",

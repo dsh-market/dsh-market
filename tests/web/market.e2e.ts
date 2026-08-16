@@ -57,7 +57,8 @@ describe.skipIf(!HAS_DSH)('web e2e: plugin market', () => {
     // Pagination: a bounded first page (24) instead of the full 400+ catalog,
     // with a numbered pager underneath.
     expect(cards).toBe(24)
-    expect(await page.locator('[class*="pager"] [class*="pageBtn"]').count()).toBeGreaterThan(0)
+    // Numbered pager: primitives Buttons inside the pager row.
+    expect(await page.locator('[class*="pager"] button').count()).toBeGreaterThan(0)
   })
 
   it('search and category filter the grid', async () => {

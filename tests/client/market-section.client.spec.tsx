@@ -93,17 +93,18 @@ describe('MarketSection (jsdom)', () => {
 
     // Default field is Stars → direction labels are Ascending/Descending.
     fireEvent.click(screen.getByRole('button', { name: en.filter }))
-    expect(screen.getByRole('radio', { name: en.sortDesc })).toBeTruthy()
-    expect(screen.getByRole('radio', { name: en.sortAsc })).toBeTruthy()
+    expect(screen.getByRole('menuitem', { name: en.sortDesc })).toBeTruthy()
+    expect(screen.getByRole('menuitem', { name: en.sortAsc })).toBeTruthy()
 
     // Field = Release date → direction labels switch to Newest/Oldest; the
-    // already-selected desc means newest first.
-    fireEvent.click(screen.getByRole('radio', { name: en.sortAdded }))
+    // already-selected desc means newest first. The menu stays open across
+    // selections, so the re-rendered items are still queryable in place.
+    fireEvent.click(screen.getByRole('menuitem', { name: en.sortAdded }))
     await waitFor(() => {
       const names = screen.getAllByText(/^(dsh-loop|dsh-notify|whale-skin)$/).map(n => n.textContent)
       expect(names[0]).toBe('whale-skin') // newest first
     })
-    fireEvent.click(screen.getByRole('radio', { name: en.sortOldest }))
+    fireEvent.click(screen.getByRole('menuitem', { name: en.sortOldest }))
     await waitFor(() => {
       const names = screen.getAllByText(/^(dsh-loop|dsh-notify|whale-skin)$/).map(n => n.textContent)
       expect(names[0]).toBe('dsh-loop') // oldest first
@@ -275,13 +276,15 @@ describe('MarketSection (jsdom)', () => {
     fireEvent.click(screen.getByRole('button', { name: en.lastPage }))
     await waitFor(() => expect(screen.getByText('dsh-q30')).toBeTruthy())
     // A larger page size collapses the 30 plugins to a single page and hides
-    // the numbered pager while keeping the size switcher visible.
-    fireEvent.click(screen.getByRole('button', { name: '48' }))
+    // the numbered pager while keeping the size switcher visible. The
+    // switcher is a primitives Menu: open it, then pick 48.
+    fireEvent.click(screen.getByRole('button', { name: en.perPage + ' 24' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '48' }))
     await waitFor(() => {
       expect(screen.getByText('dsh-q1')).toBeTruthy()
       expect(screen.getByText('dsh-q30')).toBeTruthy()
       expect(screen.queryByRole('button', { name: '2' })).toBeNull()
-      expect(screen.getByRole('button', { name: '96' })).toBeTruthy()
+      expect(screen.getByRole('button', { name: en.perPage + ' 48' })).toBeTruthy()
     })
   })
 
@@ -301,7 +304,7 @@ describe('MarketSection (jsdom)', () => {
     await screen.findByText('dsh-fresh')
     expect(screen.getByText('dsh-stale')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: en.filter }))
-    fireEvent.click(screen.getByRole('radio', { name: en.timeWeek }))
+    fireEvent.click(screen.getByRole('menuitem', { name: en.timeWeek }))
     await waitFor(() => {
       expect(screen.getByText('dsh-fresh')).toBeTruthy()
       expect(screen.queryByText('dsh-stale')).toBeNull()

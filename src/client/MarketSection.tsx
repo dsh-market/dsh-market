@@ -4,7 +4,30 @@
  * pending-restart bookkeeping in sessionStorage.
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
-import { Button, IconChevronDownOutline14, IconChevronUpOutline14, IconSearchOutline16, Input, Modal, Pill, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
+import {
+  Button,
+  DisclosureRow,
+  IconChevronDownOutline14,
+  IconChevronLeftOutline14,
+  IconChevronRightOutline14,
+  IconChevronUpOutline14,
+  IconCodeOutline16,
+  IconCordisPluginOutline14,
+  IconLinkOutline14,
+  IconLoadingOutline16,
+  IconQuestionOutline14,
+  IconRefreshOutline14,
+  IconSearchOutline16,
+  IconSparkle16,
+  IconWarningOutline16,
+  Input,
+  Menu,
+  Modal,
+  Pill,
+  StateDot,
+  Tooltip,
+  type MenuEntry,
+} from '@deepseek-ai/dsh-client-ui-primitives'
 import css from './Market.module.css'
 import {
   avatarColor, entryForDep, isInstalled, looksTerminal, matchInstalledName, orderedCategories,
@@ -303,8 +326,19 @@ export function MarketSection(props: MarketSectionProps) {
       : dir === 'desc' ? 'sortDesc' : 'sortAsc'
   const [timeRange, setTimeRange] = useState<TimeRange>('all')
   const [filterOpen, setFilterOpen] = useState(false)
-  const filterWrapRef = useRef<HTMLDivElement | null>(null)
   const [catsOpen, setCatsOpen] = useState(false)
+  /** Page-size switcher dropdown (primitives Menu). */
+  const [sizeOpen, setSizeOpen] = useState(false)
+  /** WebDAV provider-preset dropdown (primitives Menu). */
+  const [presetOpen, setPresetOpen] = useState(false)
+  /** Install-command disclosure inside the confirm dialog. */
+  const [cmdOpen, setCmdOpen] = useState(false)
+  /** Per-row "why is it not live" disclosure (installed tab). */
+  const [whyOpen, setWhyOpen] = useState<string | null>(null)
+  /** Restore-confirm dialog (replaces window.confirm). */
+  const [restoreConfirmOpen, setRestoreConfirmOpen] = useState(false)
+  /** Plugins that failed to install during a restore (replaces window.alert). */
+  const [restoreErrors, setRestoreErrors] = useState<string[]>([])
   // How many category pills fit in the two collapsed rows (measured once —
   // the settings panel width is fixed); null = measuring render with all
   // pills clamped, then slice so the chevron flows inline after the last one.
@@ -478,18 +512,6 @@ export function MarketSection(props: MarketSectionProps) {
     [data, q, cat, lang, sortField, sortDir, timeRange])
 
   useEffect(() => { setPage(1) }, [q, cat, sortField, sortDir, timeRange])
-
-  // Close the filter panel when the pointer leaves it.
-  useEffect(() => {
-    if (!filterOpen) return
-    const onDown = (event: MouseEvent) => {
-      if (filterWrapRef.current !== null && !filterWrapRef.current.contains(event.target as Node)) {
-        setFilterOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', onDown)
-    return () => document.removeEventListener('mousedown', onDown)
-  }, [filterOpen])
 
   const totalPages = Math.max(1, Math.ceil(plugins.length / pageSize))
   // Clamp in case the list shrank while the user was on a later page.
@@ -751,9 +773,9 @@ export function MarketSection(props: MarketSectionProps) {
 
   const finishRestore = useCallback((body: { errors?: unknown }) => {
     const errors = Array.isArray(body.errors) ? body.errors as { name?: unknown; error?: unknown }[] : []
-    if (errors.length > 0) {
-      window.alert(`${t('restorePartial')}\n\n${errors.map(item => `${String(item.name)}: ${String(item.error)}`).join('\n')}`)
-    }
+    // Partial failures surface inline in the Backup tab (previously a
+    // window.alert); the restore itself still completes.
+    setRestoreErrors(errors.map(item => `${String(item.name)}: ${String(item.error)}`))
     setBackupRestored(true)
     setBackupMessage(t('restoreDone'))
     if (errors.length === 0) {
@@ -768,14 +790,17 @@ export function MarketSection(props: MarketSectionProps) {
     setPendingBackup(backup)
     setPendingDependencies(dependencies)
     setBackupMessage(t('restorePreviewDone'))
+    setRestoreErrors([])
     setTab('installed')
   }, [t])
 
-  const restoreBackup = useCallback(() => {
+  /** Actually run the restore; the confirm dialog gates this (previously window.confirm). */
+  const doRestore = useCallback(() => {
     if (pendingBackup === null) return Promise.resolve()
-    if (!window.confirm(t('restoreConfirm'))) return Promise.resolve()
+    setRestoreConfirmOpen(false)
     setBackupBusy(true)
     setBackupMessage(null)
+    setRestoreErrors([])
     return fetch('/dsh-market/restore', {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ backup: pendingBackup }),
     }).then(async response => {
@@ -783,12 +808,13 @@ export function MarketSection(props: MarketSectionProps) {
       if (!response.ok) throw new Error(String(body.error || 'restore failed'))
       finishRestore(body)
     }).catch(error => setBackupMessage(String(error))).finally(() => setBackupBusy(false))
-  }, [finishRestore, pendingBackup, t])
+  }, [finishRestore, pendingBackup])
 
   const runWebdav = useCallback((action: 'backup' | 'restore') => {
     if (webdavUrl.trim() === '') return
     setBackupBusy(true)
     setBackupMessage(null)
+    setRestoreErrors([])
     fetch('/dsh-market/webdav', {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ action, url: webdavUrl.trim(), username: webdavUser, password: webdavPassword }),
@@ -835,6 +861,28 @@ export function MarketSection(props: MarketSectionProps) {
     : progressLine || t('progressHint')
   const progressText = cancelling ? t('cancelling') + ' · ' + phasePart : phasePart
 
+  // Filter dropdown (primitives Menu): three independent option groups, ids
+  // namespaced so one onSelect routes by prefix. The menu stays open across
+  // selections — outside click / Escape close it (Menu's own behavior).
+  const filterItems = useMemo<MenuEntry[]>(() => [
+    { type: 'label', id: 'f-sort', text: t('filterSort') },
+    ...SORT_FIELD_OPTIONS.map(opt => ({ id: 'field:' + opt.key, label: t(opt.label) })),
+    { type: 'separator', id: 'f-sep1' },
+    { type: 'label', id: 'f-dir', text: t('filterDir') },
+    ...SORT_DIR_OPTIONS.map(dir => ({ id: 'dir:' + dir, label: t(sortDirLabel(dir)) })),
+    { type: 'separator', id: 'f-sep2' },
+    { type: 'label', id: 'f-time', text: t('filterTime') },
+    ...TIME_OPTIONS.map(opt => ({ id: 'time:' + opt.key, label: t(opt.label) })),
+  ], [t, sortField])
+  const filterSelectedIds = useMemo(
+    () => ['field:' + sortField, 'dir:' + sortDir, 'time:' + timeRange],
+    [sortField, sortDir, timeRange])
+  const onFilterSelect = (id: string) => {
+    if (id.startsWith('field:')) setSortField(id.slice(6) as SortField)
+    else if (id.startsWith('dir:')) setSortDir(id.slice(4) as SortDir)
+    else if (id.startsWith('time:')) setTimeRange(id.slice(5) as TimeRange)
+  }
+
   const themePlugins = data === null ? [] : themePluginsOf(data.plugins)
 
   const pluginCard = (p: RegistryPlugin) => {
@@ -880,12 +928,12 @@ export function MarketSection(props: MarketSectionProps) {
         </div>
         {busy && (
           <div className={css.progress}>
-            <span className={css.spin} />
+            <span className={css.spin}><IconLoadingOutline16 size={14} /></span>
             <code className={css.grow}>{progressText}</code>
             {progressPct !== null && <span className={css.pct}>{progressPct}%</span>}
-            <button type="button" className={css.cancelBtn} disabled={cancelling} onClick={doCancel}>
+            <Button variant="outline" size="sm" disabled={cancelling} onClick={doCancel}>
               {cancelling ? t('cancelling') : t('cancelOp')}
-            </button>
+            </Button>
             <div className={css.bar}>
               <div
                 className={progressPct !== null ? css.barFill : `${css.barFill} ${css.barWave}`}
@@ -1043,8 +1091,8 @@ export function MarketSection(props: MarketSectionProps) {
           {tab !== 'backup' && <Input className={css.searchInline} icon={<IconSearchOutline16 size={14} />} placeholder={t('searchPh')} value={q} onChange={e => setQ(e.target.value)} />}
         </div>
         {!envReady && (
-          <div className={css.restart}>
-            <span>🧩</span>
+          <div className={css.banner}>
+            <IconCordisPluginOutline14 size={14} className={css.bannerIcon} />
             <span className={css.grow}>{envFailed ? t('envFixFail') : t('envMissing')}</span>
             {!envFailed && (
               <Button variant="primary" size="sm" disabled={envFixing} onClick={fixEnv}>
@@ -1054,17 +1102,17 @@ export function MarketSection(props: MarketSectionProps) {
           </div>
         )}
         {tab === 'installed' && pendingBackup !== null && (
-          <div className={css.restart}>
-            <span>↺</span>
+          <div className={css.banner}>
+            <IconRefreshOutline14 size={14} className={css.bannerIcon} />
             <span className={css.grow}>{t('restoreMissing').replace('{0}', String(missingRestoreCount))}</span>
-            <Button variant="primary" size="sm" disabled={backupBusy} onClick={restoreBackup}>
+            <Button variant="primary" size="sm" disabled={backupBusy} onClick={() => setRestoreConfirmOpen(true)}>
               {backupBusy ? t('backupWorking') : t('restoreStart')}
             </Button>
           </div>
         )}
         {hotUrls.length > 0 && (
-          <div className={css.restart}>
-            <span>✨</span>
+          <div className={css.banner}>
+            <IconSparkle16 size={14} className={css.bannerIcon} />
             <span className={css.grow}><b>{hotUrls.length}</b> {t('hotBanner')}</span>
             <Button
               variant="primary"
@@ -1078,10 +1126,12 @@ export function MarketSection(props: MarketSectionProps) {
           </div>
         )}
         {pendingRestart > 0 && (
-          <div className={css.restart}>
-            <span>🔄</span>
+          <div className={css.banner}>
+            <IconRefreshOutline14 size={14} className={css.bannerIcon} />
             <span className={css.grow}><b>{pendingRestart}</b> {t('restartBanner')}</span>
-            <span title={t('restartHint')}>ℹ️</span>
+            <Tooltip label={t('restartHint')} side="bottom">
+              <span className={css.bannerHint}><IconQuestionOutline14 size={14} /></span>
+            </Tooltip>
             {restartEnabled && (
               <Button
                 variant="primary"
@@ -1093,8 +1143,8 @@ export function MarketSection(props: MarketSectionProps) {
           </div>
         )}
         {activationWarnings.length > 0 && (
-          <div className={css.restart}>
-            <span>⚠️</span>
+          <div className={css.banner}>
+            <IconWarningOutline16 size={14} className={css.bannerIcon} />
             <span className={css.grow}>
               {activationWarnings.map(({ name, info }) => (
                 <div key={name}>
@@ -1107,7 +1157,8 @@ export function MarketSection(props: MarketSectionProps) {
         )}
       </div>
       {buildsSkipped !== null && (
-        <div className={css.restart}>
+        <div className={css.banner}>
+          <IconWarningOutline16 size={14} className={css.bannerIcon} />
           <span className={css.grow}>{t('buildsSkipped')} {buildsSkipped.names.join(', ')}</span>
           <Button
             size="sm"
@@ -1178,27 +1229,36 @@ export function MarketSection(props: MarketSectionProps) {
                 </section>
                 <section className={css.backupCard}>
                   <h3>{t('webdav')}</h3>
-                  <select
-                    className={css.backupInput}
-                    aria-label={t('webdavPreset')}
-                    defaultValue=""
-                    onChange={event => {
+                  <Menu
+                    open={presetOpen}
+                    onClose={() => setPresetOpen(false)}
+                    onSelect={id => {
                       const urls: Record<string, string> = {
                         jianguoyun: 'https://dav.jianguoyun.com/dav/dsh-profile-backup.json',
                         koofr: 'https://app.koofr.net/dav/Koofr/dsh-profile-backup.json',
                         nextcloud: 'https://nextcloud.example/remote.php/dav/files/USERNAME/dsh-profile-backup.json',
                       }
-                      if (urls[event.target.value] !== undefined) setWebdavUrl(urls[event.target.value]!)
+                      if (urls[id] !== undefined) setWebdavUrl(urls[id]!)
                     }}
-                  >
-                    <option value="">{t('webdavPreset')}</option>
-                    <option value="jianguoyun">坚果云 / Nutstore</option>
-                    <option value="koofr">Koofr</option>
-                    <option value="nextcloud">Nextcloud</option>
-                  </select>
-                  <input className={css.backupInput} type="url" value={webdavUrl} placeholder={t('webdavUrl')} onChange={e => setWebdavUrl(e.target.value)} />
-                  <input className={css.backupInput} autoComplete="username" value={webdavUser} placeholder={t('webdavUser')} onChange={e => setWebdavUser(e.target.value)} />
-                  <input className={css.backupInput} type="password" autoComplete="current-password" value={webdavPassword} placeholder={t('webdavPassword')} onChange={e => setWebdavPassword(e.target.value)} />
+                    align="start"
+                    anchor={(
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        icon={<IconChevronDownOutline14 size={14} />}
+                        onClick={() => setPresetOpen(o => !o)}
+                      >{t('webdavPreset')}</Button>
+                    )}
+                    items={[
+                      { id: 'custom', label: t('webdavPreset') },
+                      { id: 'jianguoyun', label: '坚果云 / Nutstore' },
+                      { id: 'koofr', label: 'Koofr' },
+                      { id: 'nextcloud', label: 'Nextcloud' },
+                    ]}
+                  />
+                  <Input className={css.backupInput} icon={<IconLinkOutline14 size={14} />} type="url" value={webdavUrl} placeholder={t('webdavUrl')} onChange={e => setWebdavUrl(e.target.value)} />
+                  <Input className={css.backupInput} autoComplete="username" value={webdavUser} placeholder={t('webdavUser')} onChange={e => setWebdavUser(e.target.value)} />
+                  <Input className={css.backupInput} type="password" autoComplete="current-password" value={webdavPassword} placeholder={t('webdavPassword')} onChange={e => setWebdavPassword(e.target.value)} />
                   <div className={css.backupActions}>
                     <Button variant="primary" size="sm" disabled={backupBusy || webdavUrl.trim() === ''} onClick={() => runWebdav('backup')}>{backupBusy ? t('backupWorking') : t('webdavUpload')}</Button>
                     <Button variant="outline" size="sm" disabled={backupBusy || webdavUrl.trim() === ''} onClick={() => runWebdav('restore')}>{t('webdavRestore')}</Button>
@@ -1208,13 +1268,22 @@ export function MarketSection(props: MarketSectionProps) {
                   <p className={css.backupWarn}>{t('credsWarning')}</p>
                 </section>
                 {backupMessage !== null && <div className={css.backupMessage}>{backupMessage}</div>}
+                {restoreErrors.length > 0 && (
+                  <div className={css.banner}>
+                    <IconWarningOutline16 size={14} className={css.bannerIcon} />
+                    <span className={css.grow}>
+                      <div><b>{t('restorePartial')}</b></div>
+                      {restoreErrors.map(error => <div key={error} className={css.spec}>{error}</div>)}
+                    </span>
+                  </div>
+                )}
               </div>
             )
           : tab === 'discover'
           ? loadError
             ? <div className={css.empty}>{t('loadFail')}</div>
             : data === null
-              ? <div className={css.loading}><span className={css.spin} />{t('loading')}</div>
+              ? <div className={css.loading}><span className={css.spin}><IconLoadingOutline16 size={22} /></span>{t('loading')}</div>
               : (
                   <>
                     <div className={css.cats}>
@@ -1247,61 +1316,23 @@ export function MarketSection(props: MarketSectionProps) {
                           )
                         })()}
                       </div>
-                      <div className={css.filterWrap} ref={filterWrapRef}>
-                        <button
-                          type="button"
-                          className={filterOpen ? `${css.filterBtn} ${css.filterBtnOn}` : css.filterBtn}
-                          onClick={() => setFilterOpen(o => !o)}
-                        >{t('filter')}
-                          {filterOpen ? <IconChevronUpOutline14 size={14} /> : <IconChevronDownOutline14 size={14} />}
-                        </button>
-                        {filterOpen && (
-                          <div className={css.filterPanel}>
-                            <div className={css.filterGroup}>
-                              <div className={css.filterTitle}>{t('filterSort')}</div>
-                              {SORT_FIELD_OPTIONS.map(opt => (
-                                <label key={opt.key} className={css.filterOption}>
-                                  <input
-                                    type="radio"
-                                    name="dshm-sort-field"
-                                    checked={sortField === opt.key}
-                                    onChange={() => setSortField(opt.key)}
-                                  />
-                                  <span>{t(opt.label)}</span>
-                                </label>
-                              ))}
-                            </div>
-                            <div className={css.filterGroup}>
-                              <div className={css.filterTitle}>{t('filterDir')}</div>
-                              {SORT_DIR_OPTIONS.map(dir => (
-                                <label key={dir} className={css.filterOption}>
-                                  <input
-                                    type="radio"
-                                    name="dshm-sort-dir"
-                                    checked={sortDir === dir}
-                                    onChange={() => setSortDir(dir)}
-                                  />
-                                  <span>{t(sortDirLabel(dir))}</span>
-                                </label>
-                              ))}
-                            </div>
-                            <div className={css.filterGroup}>
-                              <div className={css.filterTitle}>{t('filterTime')}</div>
-                              {TIME_OPTIONS.map(opt => (
-                                <label key={opt.key} className={css.filterOption}>
-                                  <input
-                                    type="radio"
-                                    name="dshm-time"
-                                    checked={timeRange === opt.key}
-                                    onChange={() => setTimeRange(opt.key)}
-                                  />
-                                  <span>{t(opt.label)}</span>
-                                </label>
-                              ))}
-                            </div>
-                          </div>
+                      <Menu
+                        open={filterOpen}
+                        onClose={() => setFilterOpen(false)}
+                        onSelect={onFilterSelect}
+                        selectedIds={filterSelectedIds}
+                        align="end"
+                        portal
+                        anchor={(
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            icon={filterOpen ? <IconChevronUpOutline14 size={14} /> : <IconChevronDownOutline14 size={14} />}
+                            onClick={() => setFilterOpen(o => !o)}
+                          >{t('filter')}</Button>
                         )}
-                      </div>
+                        items={filterItems}
+                      />
                       </div>
                     </div>
                     {plugins.length === 0
@@ -1313,37 +1344,54 @@ export function MarketSection(props: MarketSectionProps) {
                               <div className={css.pagerPages}>
                                 {totalPages > 1 && (
                                   <>
-                                    <button type="button" className={css.pageBtn} disabled={currentPage === 1} onClick={() => goToPage(1)} aria-label={t('firstPage')}>«</button>
-                                    <button type="button" className={css.pageBtn} disabled={currentPage === 1} onClick={() => goToPage(currentPage - 1)}>{t('prevPage')}</button>
+                                    <Button variant="outline" size="sm" disabled={currentPage === 1} onClick={() => goToPage(1)} aria-label={t('firstPage')}>«</Button>
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      icon={<IconChevronLeftOutline14 size={14} />}
+                                      disabled={currentPage === 1}
+                                      onClick={() => goToPage(currentPage - 1)}
+                                    >{t('prevPage')}</Button>
                                     {pageItems(currentPage, totalPages).map((item, i) => (
                                       item === '…'
                                         ? <span key={'e' + i} className={css.pageEllipsis}>…</span>
                                         : (
-                                            <button
+                                            <Button
                                               key={item}
-                                              type="button"
-                                              className={item === currentPage ? `${css.pageBtn} ${css.pageOn}` : css.pageBtn}
+                                              variant={item === currentPage ? 'primary' : 'outline'}
+                                              size="sm"
                                               onClick={() => goToPage(item)}
-                                            >{item}</button>
+                                            >{item}</Button>
                                           )
                                     ))}
-                                    <button type="button" className={css.pageBtn} disabled={currentPage === totalPages} onClick={() => goToPage(currentPage + 1)}>{t('nextPage')}</button>
-                                    <button type="button" className={css.pageBtn} disabled={currentPage === totalPages} onClick={() => goToPage(totalPages)} aria-label={t('lastPage')}>»</button>
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      disabled={currentPage === totalPages}
+                                      onClick={() => goToPage(currentPage + 1)}
+                                    >{t('nextPage')}<IconChevronRightOutline14 size={14} /></Button>
+                                    <Button variant="outline" size="sm" disabled={currentPage === totalPages} onClick={() => goToPage(totalPages)} aria-label={t('lastPage')}>»</Button>
                                     <span className={css.pageInfo}>{t('pageInfo').replace('{0}', String(currentPage)).replace('{1}', String(totalPages))}</span>
                                   </>
                                 )}
                               </div>
-                              <div className={css.pagerSize}>
-                                <span className={css.sizeLabel}>{t('perPage')}</span>
-                                {PAGE_SIZES.map(size => (
-                                  <button
-                                    key={size}
-                                    type="button"
-                                    className={size === pageSize ? `${css.sizeBtn} ${css.sizeOn}` : css.sizeBtn}
-                                    onClick={() => changePageSize(size)}
-                                  >{size}</button>
-                                ))}
-                              </div>
+                              <Menu
+                                open={sizeOpen}
+                                onClose={() => setSizeOpen(false)}
+                                onSelect={id => changePageSize(Number(id))}
+                                selectedId={String(pageSize)}
+                                align="end"
+                                portal
+                                anchor={(
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    icon={<IconChevronDownOutline14 size={14} />}
+                                    onClick={() => setSizeOpen(o => !o)}
+                                  >{t('perPage') + ' ' + pageSize}</Button>
+                                )}
+                                items={PAGE_SIZES.map(size => ({ id: String(size), label: String(size) }))}
+                              />
                             </div>
                           </>
                         )}
@@ -1364,7 +1412,7 @@ export function MarketSection(props: MarketSectionProps) {
                     )
                   })()}
                   {data === null
-                    ? <div className={css.loading}><span className={css.spin} />{t('loading')}</div>
+                    ? <div className={css.loading}><span className={css.spin}><IconLoadingOutline16 size={22} /></span>{t('loading')}</div>
                     : themePlugins.length === 0
                       ? <div className={css.empty}>{t('themeEmpty')}</div>
                       : <div className={css.grid}>{themePlugins.map(themePluginCard)}</div>}
@@ -1403,21 +1451,27 @@ export function MarketSection(props: MarketSectionProps) {
                               {meta.label}
                             </span>
                             {act.state !== 'live' && act.reasons.length > 0 && (
-                              <details className={css.actWhy}>
-                                <summary>{t('actWhy')}</summary>
+                              <DisclosureRow
+                                icon={<IconQuestionOutline14 size={14} />}
+                                title={t('actWhy')}
+                                open={whyOpen === name}
+                                expandable
+                                onToggle={() => setWhyOpen(whyOpen === name ? null : name)}
+                                className={css.actWhy}
+                              >
                                 <div className={css.spec}>{act.reasons.join(' / ')}</div>
-                              </details>
+                              </DisclosureRow>
                             )}
                           </div>
                         )}
                         {updatingName === name && (
                           <div className={css.progress}>
-                            <span className={css.spin} />
+                            <span className={css.spin}><IconLoadingOutline16 size={14} /></span>
                             <code className={css.grow}>{progressText}</code>
                             {progressPct !== null && <span className={css.pct}>{progressPct}%</span>}
-                            <button type="button" className={css.cancelBtn} disabled={cancelling} onClick={doCancel}>
+                            <Button variant="outline" size="sm" disabled={cancelling} onClick={doCancel}>
                               {cancelling ? t('cancelling') : t('cancelOp')}
-                            </button>
+                            </Button>
                             <div className={css.bar}>
                               <div
                                 className={progressPct !== null ? css.barFill : `${css.barFill} ${css.barWave}`}
@@ -1476,38 +1530,62 @@ export function MarketSection(props: MarketSectionProps) {
                 })}
       </div>
       {showTop && (
-        <button
-          className={css.top}
-          title={t('backTop')}
-          onClick={() => { const el = bodyRef.current; if (el) el.scrollTo({ top: 0, behavior: 'smooth' }) }}
-        >↑</button>
+        <Tooltip label={t('backTop')} side="top">
+          <span className={css.top}>
+            <Button
+              variant="outline"
+              className={css.topBtn}
+              aria-label={t('backTop')}
+              onClick={() => { const el = bodyRef.current; if (el) el.scrollTo({ top: 0, behavior: 'smooth' }) }}
+            ><IconChevronUpOutline14 size={16} /></Button>
+          </span>
+        </Tooltip>
       )}
       {confirming !== null && (
         <Modal
           open
-          onClose={() => setConfirming(null)}
+          onClose={() => { setConfirming(null); setCmdOpen(false) }}
           title={t('confirmTitle') + ' ' + confirming.name + '?'}
           description={(confirming.description && (confirming.description[lang] || confirming.description.en)) || ''}
           footer={(
             <>
-              <Button variant="ghost" onClick={() => setConfirming(null)}>{t('cancel')}</Button>
+              <Button variant="ghost" onClick={() => { setConfirming(null); setCmdOpen(false) }}>{t('cancel')}</Button>
               <Button variant="primary" onClick={() => doInstall(confirming)}>{t('confirm')}</Button>
             </>
           )}
         >
           <ScreenshotStrip plugin={confirming} />
-          <details className={css.cmdDetails}>
-            <summary className={css.cmdSummary}>{t('cmdDetails')}</summary>
+          <DisclosureRow
+            icon={<IconCodeOutline16 size={16} />}
+            title={t('cmdDetails')}
+            open={cmdOpen}
+            expandable
+            onToggle={() => setCmdOpen(o => !o)}
+          >
             <div className={css.cmd}>{confirming.install}</div>
-          </details>
+          </DisclosureRow>
           {looksTerminal(confirming, lang) && (
             <p className={css.warnLine}>
-              {'🖥️ ' + t('terminalWarn') + ' '}
+              <IconCodeOutline16 size={14} className={css.bannerIcon} />
+              {' ' + t('terminalWarn') + ' '}
               <a className={css.src} href={confirming.url + '#readme'} target="_blank" rel="noreferrer">{t('readme')}</a>
             </p>
           )}
-          <p className={css.modalNote}>{'⚠️ ' + t('confirmWarn')}</p>
+          <p className={css.modalNote}><IconWarningOutline16 size={14} className={css.bannerIcon} />{' ' + t('confirmWarn')}</p>
         </Modal>
+      )}
+      {restoreConfirmOpen && pendingBackup !== null && (
+        <Modal
+          open
+          onClose={() => setRestoreConfirmOpen(false)}
+          title={t('restoreConfirm')}
+          footer={(
+            <>
+              <Button variant="ghost" onClick={() => setRestoreConfirmOpen(false)}>{t('cancel')}</Button>
+              <Button variant="primary" disabled={backupBusy} onClick={doRestore}>{t('confirm')}</Button>
+            </>
+          )}
+        />
       )}
     </div>
   )
