@@ -49,6 +49,7 @@ function activationMeta(state: ActivationState, t: Translate): { label: string; 
   if (state === 'restart') return { label: t('stateRestart'), dot: 'warning' }
   if (state === 'inert') return { label: t('stateInert'), dot: 'warning' }
   if (state === 'broken') return { label: t('stateBroken'), dot: 'error' }
+  if (state === 'disabled') return { label: t('stateDisabled'), dot: 'warning' }
   return { label: '—', dot: 'warning' }
 }
 
@@ -303,6 +304,13 @@ export function MarketSection(props: MarketSectionProps) {
   const [activations, setActivations] = useState<Record<string, ActivationInfo>>({})
   /** #60: persisted disable list + custom groups, straight from /installed. */
   const [disabledNames, setDisabledNames] = useState<string[]>([])
+  /**
+   * Patch-layer flags (port of dsh-plugin-hub): packages whose bundle rows
+   * the user patch layer disables / force-enables. The UI treats them as the
+   * real switch state so hand-edited cordis.patch.yml toggles are visible.
+   */
+  const [patchDisabledNames, setPatchDisabledNames] = useState<string[]>([])
+  const [patchForcedNames, setPatchForcedNames] = useState<string[]>([])
   const [groups, setGroups] = useState<Record<string, string[]>>({})
   const [groupOrder, setGroupOrder] = useState<string[]>([])
   /** Installed-tab sub-view: flat list or groups (All-plugins was removed —
@@ -332,6 +340,10 @@ export function MarketSection(props: MarketSectionProps) {
   const [removeConfirm, setRemoveConfirm] = useState<string | null>(null)
   const [removingName, setRemovingName] = useState<string | null>(null)
   const [removedCount, setRemovedCount] = useState(0)
+  /** Toggles whose live fiber did not follow the switch — restart to apply. */
+  const [toggleRestart, setToggleRestart] = useState(0)
+  /** Client-part plugins toggled this session — their UI needs a refresh. */
+  const [refreshNames, setRefreshNames] = useState<string[]>([])
   const [envReady, setEnvReady] = useState(true)
   const [envFixing, setEnvFixing] = useState(false)
   const [envFailed, setEnvFailed] = useState(false)
@@ -388,6 +400,8 @@ export function MarketSection(props: MarketSectionProps) {
         setInstalledFiles(Array.isArray(body.present) ? body.present : Object.keys(body.installed || {}))
         setSkins(body.live || [])
         if (Array.isArray(body.disabled)) setDisabledNames(body.disabled)
+        if (Array.isArray(body.patchDisabled)) setPatchDisabledNames(body.patchDisabled)
+        if (Array.isArray(body.patchForced)) setPatchForcedNames(body.patchForced)
         if (body.groups && typeof body.groups === 'object') setGroups(body.groups)
         if (Array.isArray(body.groupOrder)) setGroupOrder(body.groupOrder)
         if (body.activation && typeof body.activation === 'object') setActivations(body.activation)
@@ -401,6 +415,11 @@ export function MarketSection(props: MarketSectionProps) {
 
   /** Lookup set for the persisted disable list (#60). */
   const disabledSet = useMemo(() => new Set(disabledNames), [disabledNames])
+  /** Effective switch state: market disable list ∪ user-patch-layer disables. */
+  const effectiveDisabledSet = useMemo(
+    () => new Set([...disabledNames, ...patchDisabledNames]),
+    [disabledNames, patchDisabledNames],
+  )
 
   useEffect(() => {
     fetch('/dsh-market/registry', { cache: 'no-store' })
@@ -432,11 +451,12 @@ export function MarketSection(props: MarketSectionProps) {
     if (Array.isArray(saved.doneUrls) && saved.doneUrls.length > 0) setDoneUrls(saved.doneUrls)
     if (Array.isArray(saved.updated) && saved.updated.length > 0) setUpdatedNames(saved.updated)
     if (typeof saved.removed === 'number' && saved.removed > 0) setRemovedCount(saved.removed)
+    if (typeof saved.toggled === 'number' && saved.toggled > 0) setToggleRestart(saved.toggled)
   }, [bootId])
 
   useEffect(() => {
     if (bootId === null) return
-    if (doneUrls.length === 0 && updatedNames.length === 0 && removedCount === 0) {
+    if (doneUrls.length === 0 && updatedNames.length === 0 && removedCount === 0 && toggleRestart === 0) {
       // Nothing pending: drop any stale entry (e.g. a hot mount cleared the
       // only doneUrl) so a same-boot remount cannot resurrect the banner (#73).
       sessionStorage.removeItem('dshm-restart')
@@ -447,8 +467,9 @@ export function MarketSection(props: MarketSectionProps) {
       doneUrls,
       updated: updatedNames,
       removed: removedCount,
+      toggled: toggleRestart,
     }))
-  }, [bootId, doneUrls, updatedNames, removedCount])
+  }, [bootId, doneUrls, updatedNames, removedCount, toggleRestart])
 
   const fixEnv = useCallback(() => {
     setEnvFixing(true)
@@ -857,6 +878,12 @@ export function MarketSection(props: MarketSectionProps) {
           if (body.activation && typeof body.activation === 'object') {
             setActivations(prev => ({ ...prev, ...body.activation }))
           }
+          // A toggle whose fiber did not follow the switch joins the
+          // pending-restart banner (same path as installs/updates/removals).
+          if (body.restart === true) setToggleRestart(n => n + 1)
+          // A client-part plugin's UI is already in the page — refresh to
+          // show the change (mirrors the install hot banner).
+          if (body.refresh === true) setRefreshNames(names => names.includes(name) ? names : names.concat(name))
           refreshInstalled()
           if (reload) {
             // Land back in the Themes tab with the stock look on screen.
@@ -868,7 +895,13 @@ export function MarketSection(props: MarketSectionProps) {
           }
         } else {
           const text = (v: unknown) => typeof v === 'string' ? v : v == null ? '' : JSON.stringify(v)
-          setInstallError(text(body.error) || t('toggleFail'))
+          // The server's bilingual reason (e.g. host cannot hot-mount —
+          // restart required) beats the generic failure line.
+          setInstallError(text(body.reason) || text(body.error) || t('toggleFail'))
+          // The durable state (state.json + patch layer) was still written,
+          // so a restart applies it even though the live drive failed.
+          if (body.restart === true) setToggleRestart(n => n + 1)
+          if (body.refresh === true) setRefreshNames(names => names.includes(name) ? names : names.concat(name))
         }
       })
       .catch(error => setInstallError(String(error)))
@@ -898,11 +931,25 @@ export function MarketSection(props: MarketSectionProps) {
       .then(({ status, body }) => {
         if (status === 200 && body.ok) {
           setGroupPayload(body)
+          // Batch toggles whose members did not follow the switch join the
+          // pending-restart banner too.
+          if (Array.isArray(body.restartMembers) && body.restartMembers.length > 0) {
+            setToggleRestart(n => n + body.restartMembers.length)
+          }
+          if (Array.isArray(body.refreshMembers) && body.refreshMembers.length > 0) {
+            setRefreshNames(names => [...new Set([...names, ...body.refreshMembers])])
+          }
           refreshInstalled()
           return true
         }
         const text = (v: unknown) => typeof v === 'string' ? v : v == null ? '' : JSON.stringify(v)
         setInstallError(text(body.error) || t('toggleFail'))
+        if (Array.isArray(body.restartMembers) && body.restartMembers.length > 0) {
+          setToggleRestart(n => n + body.restartMembers.length)
+        }
+        if (Array.isArray(body.refreshMembers) && body.refreshMembers.length > 0) {
+          setRefreshNames(names => [...new Set([...names, ...body.refreshMembers])])
+        }
         return false
       })
       .catch(error => { setInstallError(String(error)); return false })
@@ -1062,7 +1109,7 @@ export function MarketSection(props: MarketSectionProps) {
     if (Date.now() - last >= 24 * 60 * 60 * 1000) runWebdav('backup')
   }, [autoBackup, runWebdav, webdavUrl, webdavUser])
 
-  const pendingRestart = doneUrls.length + updatedNames.length + removedCount + (backupRestored ? 1 : 0)
+  const pendingRestart = doneUrls.length + updatedNames.length + removedCount + toggleRestart + (backupRestored ? 1 : 0)
   const displayedInstalled = pendingBackup === null ? installed : { ...pendingDependencies, ...installed }
   const missingRestoreCount = Object.keys(pendingDependencies).filter(name => !installedFiles.includes(name)).length
   const hasUpdates = Object.keys(installed).some(
@@ -1215,7 +1262,7 @@ export function MarketSection(props: MarketSectionProps) {
     if (instName === null) return pluginCard(p)
     // A theme switched off via the Installed-tab toggle (or a group switch)
     // stays in the boot manifest, so the disabled set must veto the badge.
-    const mounted = (skins.includes(instName) || bootEntries.some(e => e.id === instName)) && !disabledSet.has(instName)
+    const mounted = (skins.includes(instName) || bootEntries.some(e => e.id === instName)) && !effectiveDisabledSet.has(instName)
     const desc = (p.description && (p.description[lang] || p.description.en)) || ''
     const replacement = replacementOf(p)
     return (
@@ -1260,7 +1307,7 @@ export function MarketSection(props: MarketSectionProps) {
           {removingName === instName
             ? <Button variant="outline" size="sm" disabled>{t('uninstalling')}</Button>
             : <Button variant="outline" size="sm" onClick={() => setRemoveConfirm(instName)}>{t('uninstall')}</Button>}
-          {disabledSet.has(instName) && <span className={css.spec}>{t('disabledState')}</span>}
+          {effectiveDisabledSet.has(instName) && <span className={css.spec}>{t('disabledState')}</span>}
           {mounted
             ? <>
                 <span className={css.okState}>{t('themeActive')}</span>
@@ -1411,6 +1458,20 @@ export function MarketSection(props: MarketSectionProps) {
               size="sm"
               onClick={() => {
                 sessionStorage.setItem('dshm-toast', JSON.stringify(hotNames))
+                sessionStorage.setItem('dshm-tab', 'installed')
+                location.reload()
+              }}
+            >{t('refresh')}</Button>
+          </div>
+        )}
+        {refreshNames.length > 0 && (
+          <div className={css.banner}>
+            <IconRefreshOutline14 size={14} className={css.bannerIcon} />
+            <span className={css.grow}><b>{refreshNames.length}</b> {t('refreshBanner')}</span>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => {
                 sessionStorage.setItem('dshm-tab', 'installed')
                 location.reload()
               }}
@@ -1765,7 +1826,7 @@ export function MarketSection(props: MarketSectionProps) {
                               ? <div className={css.empty}>{t('noGroups')}</div>
                               : groupOrder.map(gid => {
                                   const members = groups[gid] ?? []
-                                  const sw = groupSwitchState(members, disabledSet)
+                                  const sw = groupSwitchState(members, effectiveDisabledSet)
                                   return (
                                     <div className={css.groupRow} key={gid}>
                                       <div className={css.groupHead}>
@@ -1828,7 +1889,7 @@ export function MarketSection(props: MarketSectionProps) {
                                               : candidates.map(name => (
                                                   <div className={css.groupMember} key={name}>
                                                     <span className={css.nm}>{name}</span>
-                                                    {disabledSet.has(name) && <span className={css.spec}>{t('disabledState')}</span>}
+                                                    {effectiveDisabledSet.has(name) && <span className={css.spec}>{t('disabledState')}</span>}
                                                     <span className={css.grow} />
                                                     <Button variant="outline" size="sm" onClick={() => doAddMember(gid, name)}>
                                                       {addPanel.kind === 'theme' ? t('groupAddTheme') : t('groupAdd')}
@@ -1843,16 +1904,17 @@ export function MarketSection(props: MarketSectionProps) {
                                         {members.map(member => (
                                           <div className={css.groupMember} key={member}>
                                             <span className={css.nm}>{member}</span>
-                                            {disabledSet.has(member) && <span className={css.spec}>{t('disabledState')}</span>}
+                                            {effectiveDisabledSet.has(member) && <span className={css.spec}>{t('disabledState')}</span>}
+                                            {patchDisabledNames.includes(member) && <span className={css.spec}>{' · ' + t('patchDisabled')}</span>}
                                             <span className={css.grow} />
                                             <button
                                               type="button"
                                               role="switch"
-                                              aria-checked={!disabledSet.has(member)}
-                                              aria-label={(disabledSet.has(member) ? t('enable') : t('disable')) + ' ' + member}
-                                              className={disabledSet.has(member) ? css.switch : `${css.switch} ${css.switchOn}`}
+                                              aria-checked={!effectiveDisabledSet.has(member)}
+                                              aria-label={(effectiveDisabledSet.has(member) ? t('enable') : t('disable')) + ' ' + member}
+                                              className={effectiveDisabledSet.has(member) ? css.switch : `${css.switch} ${css.switchOn}`}
                                               disabled={togglingName !== null}
-                                              onClick={() => doToggle(member, disabledSet.has(member))}
+                                              onClick={() => doToggle(member, effectiveDisabledSet.has(member))}
                                             >
                                               <span className={css.switchKnob} />
                                             </button>
@@ -1868,13 +1930,14 @@ export function MarketSection(props: MarketSectionProps) {
                               ? <div className={css.empty}>{t('installedEmpty')}</div>
                               : ungroupedNames.map(name => {
                                   const entry = data === null ? undefined : entryForDep(data.plugins, name, String(installed[name]))
-                                  const off = disabledSet.has(name)
+                                  const off = effectiveDisabledSet.has(name)
                                   return (
                                     <div className={css.irow} key={'ug-' + name}>
                                       <div style={{ minWidth: 0 }}>
                                         <div className={css.nm}>
                                           {name}
                                           {entry?.deprecated === true && <span className={css.depBadge}>{t('deprecatedBadge')}</span>}
+                                          {patchDisabledNames.includes(name) && <span className={css.depBadge}>{t('patchDisabled')}</span>}
                                         </div>
                                         <div className={css.act}>
                                           {off
@@ -1926,7 +1989,7 @@ export function MarketSection(props: MarketSectionProps) {
                             const specText = String(spec)
                             const ghSpec = /^github:([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:#|$)/.exec(specText)
                             const repoUrl = entry !== undefined ? entry.url : ghSpec !== null ? 'https://github.com/' + ghSpec[1] : null
-                            const off = disabledSet.has(name)
+                            const off = effectiveDisabledSet.has(name)
                             // Switches only where they make sense: everything in
                             // the disable list (to re-enable), plus live/restart
                             // states. inert/broken rows keep their diagnosis
@@ -1938,6 +2001,8 @@ export function MarketSection(props: MarketSectionProps) {
                                   <div className={css.nm}>
                                     {name}
                                     {entry?.deprecated === true && <span className={css.depBadge}>{t('deprecatedBadge')}</span>}
+                                    {patchDisabledNames.includes(name) && <span className={css.depBadge}>{t('patchDisabled')}</span>}
+                                    {!effectiveDisabledSet.has(name) && patchForcedNames.includes(name) && <span className={css.depBadge}>{t('patchForced')}</span>}
                                     {version && <span className={css.owner}>{' ' + version}</span>}
                                   </div>
                                   {repoUrl !== null
@@ -1954,6 +2019,7 @@ export function MarketSection(props: MarketSectionProps) {
                                           <span className={css.actWarn}>
                                             <StateDot state="warning" size={7} />
                                             {t('disabledState')}
+                                            {patchDisabledNames.includes(name) && <span className={css.spec}>{' · ' + t('patchDisabled')}</span>}
                                           </span>
                                         </div>
                                       )

@@ -489,6 +489,75 @@ describe('#60 enable/disable switches in the Installed tab', () => {
     // A disabled control never bounces a rejected request off the server.
     expect(fetchCalls.some(c => c.path === '/dsh-market/toggle')).toBe(false)
   })
+
+  it('shows the pending-restart banner when a toggle needs a boot to apply', async () => {
+    stubFetch({
+      '/dsh-market/installed': {
+        profile: 'web',
+        installed: { 'dsh-loop': '^1.0.0' },
+        live: ['dsh-loop'],
+        disabled: [],
+        groups: {},
+        groupOrder: [],
+        activation: { 'dsh-loop': { state: 'live', reasons: [], bundle: true, hot: true } },
+      },
+      '/dsh-market/toggle': () => ({
+        ok: true,
+        name: 'dsh-loop',
+        enabled: false,
+        disabled: ['dsh-loop'],
+        live: [],
+        restart: true,
+        activation: { 'dsh-loop': { state: 'disabled', reasons: ['disabled'], bundle: true, hot: false } },
+      }),
+    })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    const sw = await screen.findByRole('switch', { name: en.disable + ' dsh-loop' })
+    fireEvent.click(sw)
+    await waitFor(() => {
+      expect(screen.getAllByText(re(en.restartBanner)).length).toBeGreaterThan(0)
+    })
+    // The toggle joins the persisted pending-restart set under the boot.
+    await waitFor(() => {
+      expect(sessionStorage.getItem('dshm-restart')).toContain('"toggled":1')
+    })
+  })
+
+  it('shows the refresh banner when a client-part toggle needs a reload', async () => {
+    stubFetch({
+      '/dsh-market/installed': {
+        profile: 'web',
+        installed: { 'dsh-loop': '^1.0.0' },
+        live: ['dsh-loop'],
+        disabled: [],
+        groups: {},
+        groupOrder: [],
+        activation: { 'dsh-loop': { state: 'live', reasons: [], bundle: true, hot: true } },
+      },
+      '/dsh-market/toggle': () => ({
+        ok: true,
+        name: 'dsh-loop',
+        enabled: false,
+        disabled: ['dsh-loop'],
+        live: [],
+        restart: false,
+        refresh: true,
+        activation: { 'dsh-loop': { state: 'disabled', reasons: ['disabled'], bundle: true, hot: false } },
+      }),
+    })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    const sw = await screen.findByRole('switch', { name: en.disable + ' dsh-loop' })
+    fireEvent.click(sw)
+    await waitFor(() => {
+      expect(screen.getAllByText(re(en.refreshBanner)).length).toBeGreaterThan(0)
+    })
+    // No restart banner — the toggle itself went live.
+    expect(screen.queryAllByText(re(en.restartBanner)).length).toBe(0)
+  })
 })
 
 describe('#60 catalog deprecation', () => {
