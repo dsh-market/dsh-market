@@ -2,22 +2,23 @@
  * Diagnostics tab — issue #98: renders the profile composition check report
  * served by the host route /dsh-market/check (see src/check.ts). Below the
  * report sit the phase 2/3 action panels: a community-bundle ordering block
- * (reorder locally with ↑/↓, POST to /dsh-market/bundle-order) and a
- * snapshots & rollback panel (snapshot-panel.tsx) — collapsible, default
- * collapsed, and lazy-fetching on first expand. The plugin presets panel
- * ships in a later stacked PR.
+ * (reorder locally with ↑/↓, POST to /dsh-market/bundle-order), a snapshots
+ * & rollback panel (snapshot-panel.tsx) and a plugin presets panel
+ * (preset-panel.tsx) — the latter two are collapsible, default collapsed,
+ * and lazy-fetch on first expand.
  *
  * Read-only view of the loading-layer stack and the conflict surface: bundle
  * order (official vs community), duplicate loader entry ids, peer dependency
  * mismatches, multi-version core packages, overrides and orphan patches. The
- * report
- * shape mirrors the CheckReport interface in src/check.ts; it is re-declared
- * here because the client bundle is built independently of the host tree.
+ * report shape mirrors the CheckReport interface in src/check.ts; it is
+ * re-declared here because the client bundle is built independently of the
+ * host tree.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import { Button, DisclosureRow, IconChevronDownOutline14, IconChevronRightOutline14, IconLoadingOutline16, IconRefreshOutline14, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
 import css from './Market.module.css'
 import type { Translate } from './market-data.ts'
+import { PresetPanel } from './preset-panel.tsx'
 import { SnapshotPanel } from './snapshot-panel.tsx'
 
 /** Mirrors BundleLayer in src/check.ts. */
@@ -190,11 +191,12 @@ export function Diagnostics(props: { t: Translate }) {
   const [explainOpen, setExplainOpen] = useState(false)
   const [peerInfoOpen, setPeerInfoOpen] = useState(false)
   const [snapOpen, setSnapOpen] = useState(false)
+  const [presetOpen, setPresetOpen] = useState(false)
   const [fixMsg, setFixMsg] = useState<string | null>(null)
   /** The built AI-fix prompt when the clipboard path failed — rendered as a
    * selectable text block so the user can still copy it manually. */
   const [fixFallback, setFixFallback] = useState<string | null>(null)
-  /** Bump to re-run the /dsh-market/check fetch after an order/snapshot-restore apply. */
+  /** Bump to re-run the /dsh-market/check fetch after an order/preset/restore apply. */
   const [version, setVersion] = useState(0)
   const refresh = useCallback(() => setVersion(v => v + 1), [])
 
@@ -217,7 +219,7 @@ export function Diagnostics(props: { t: Translate }) {
    * refresh() refetch returns a NEW array even when the order is unchanged,
    * so a naive `setOrder(communityNames)` effect would wipe the user's
    * in-progress drag/↑↓ edits on every unrelated re-check. Only resync when
-   * the report's community order actually CHANGED (apply order / snapshot
+   * the report's community order actually CHANGED (apply order / preset /
    * restore) — an identical refetch keeps the draft (review M2).
    */
   const syncedOrderRef = useRef<string[] | null>(null)
@@ -331,7 +333,7 @@ export function Diagnostics(props: { t: Translate }) {
         setOrderDiff(null)
         setOrderMsg(t('orderApplied'))
         // Refetch the report so communityNames / the ordering draft reflect
-        // the applied order.
+        // the applied order before anything is saved as a preset.
         refresh()
       })
       .catch((err: unknown) => setOrderErr(err instanceof Error ? err.message : String(err)))
@@ -341,7 +343,7 @@ export function Diagnostics(props: { t: Translate }) {
   useEffect(() => {
     let live = true
     // Do NOT null the report here: a refresh() (manual re-check, or after an
-    // order/snapshot-restore apply) must keep the previous data visible and
+    // order/preset/restore apply) must keep the previous data visible and
     // must not clobber the in-progress ordering draft, which re-syncs from
     // communityNames only when the report actually changes (review M2).
     setError(null)
@@ -785,9 +787,16 @@ export function Diagnostics(props: { t: Translate }) {
             )}
       </CollapsibleSection>
 
-      {/* issue #98 phase 3: snapshots & rollback */}
+      {/* issue #98 phase 3: snapshots & rollback / plugin presets */}
       <CollapsibleSection title={t('snapSection')} open={snapOpen} onToggle={() => setSnapOpen(o => !o)}>
         <SnapshotPanel t={t} open={snapOpen} onRefresh={refresh} />
+      </CollapsibleSection>
+
+      <CollapsibleSection title={t('presetSection')} open={presetOpen} onToggle={() => setPresetOpen(o => !o)}>
+        {/* Save the ordering DRAFT, not the last-reported order: a preset must
+          capture the order the user is currently editing (↑/↓ or drag), even
+          before "应用顺序 / Apply order" is clicked. */}
+        <PresetPanel t={t} open={presetOpen} bundleOrder={order} onRefresh={refresh} />
       </CollapsibleSection>
     </div>
   )

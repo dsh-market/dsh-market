@@ -29,6 +29,7 @@ import { runningAgentIds, type AgentsLookup } from './agents.ts'
 import { analyzeProfile } from './check.ts'
 import { applyBundleOrder, mergeOrder, readBundleRules, readBundleStack, validateOrder } from './order.ts'
 import { createProfileSnapshot, DEFAULT_MAX_SNAPSHOTS, deleteSnapshot, listSnapshots, restoreSnapshot } from './snapshot.ts'
+import { applyPreset, deletePreset, exportPresets, importPresets, listPresets, previewPreset, savePreset } from './presets.ts'
 import { trialValidate } from './trial.ts'
 import { findInstalledAlias, gitAllowBuildsKey, installTargetFor } from './sources.ts'
 import { groupConflictsByOwner, isStaleUpdate, parseIgnoredBuilds, parsePrepareNotAllowed, RELEASE_AGE_OVERRIDE, retargetCollections, validateAddedPlugins, withHoistRecovery } from './install.ts'
@@ -204,9 +205,9 @@ export function mountMarketRoutes(
   const themes = createThemeManager(host, config.profile, disabled, activeProfileDir)
 
   /**
-   * Re-sync the live closure state from disk. Snapshot restore writes
-   * state.json directly (it must, to survive the next boot), which would
-   * leave this in-memory `disabled`/`groups`/`groupOrder` stale —
+   * Re-sync the live closure state from disk. Snapshot restore and preset
+   * apply write state.json directly (they must, to survive the next boot),
+   * which would leave this in-memory `disabled`/`groups`/`groupOrder` stale —
    * the next toggle/groups write would then overwrite the restored values.
    * The objects are mutated in place (clear + refill) so every captured
    * reference (themes manager, live handlers) sees the fresh state (issue
@@ -981,6 +982,134 @@ export function mountMarketRoutes(
           })
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    }),
+
+    // Issue #98 phase 3: named plugin presets (bundle order + disable list).
+    host.webServer.register({
+      kind: 'exact',
+      path: '/dsh-market/presets',
+      handler: async (request, response) => {
+        if (request.method === 'GET') {
+          sendJson(response, 200, { presets: listPresets(activeProfileDir) })
+          return
+        }
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'GET, POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) {
+          sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        try {
+          // save carries the FULL community order + disabled list, which can
+          // exceed the 4KiB default (CJK names are 3 bytes/char) — the same
+          // budget as presets-import (review M2).
+          const body = (await readJsonBody(request, 256 * 1024)) as { action?: unknown; name?: unknown; bundleOrder?: unknown; disabled?: unknown } | null
+          if (body === null || typeof body !== 'object') {
+            sendJson(response, 400, { error: 'JSON body is required / 需要 JSON body' })
+            return
+          }
+          const name = body.name
+          // Preview is a pure read; save/apply/delete write presets.json,
+          // package.json and state.json, so they take the direct-write lock —
+          // a concurrent pnpm run or another direct write must not interleave
+          // (issue #98 analysis: write-route mutual exclusion).
+          if (body.action === 'preview') {
+            const previewed = previewPreset(activeProfileDir, name)
+            sendJson(response, previewed.ok ? 200 : 422, previewed)
+            return
+          }
+          if (!acquireWrite(response)) return
+          try {
+            switch (body.action) {
+              case 'save': {
+                const saved = savePreset(activeProfileDir, name, body.bundleOrder, body.disabled)
+                sendJson(response, saved.ok ? 200 : 400, saved)
+                return
+              }
+              case 'apply': {
+                const applied = applyPreset(activeProfileDir, name, maxSnapshots)
+                if (applied.ok) {
+                  invalidateUpdates()
+                  refreshMarketState()
+                }
+                sendJson(response, applied.ok ? 200 : 422, applied)
+                return
+              }
+              case 'delete': {
+                const deleted = deletePreset(activeProfileDir, name)
+                sendJson(response, deleted.ok ? 200 : 400, deleted)
+                return
+              }
+              default:
+                sendJson(response, 400, { error: 'action must be save | preview | apply | delete / action 必须是 save | preview | apply | delete' })
+            }
+          } finally {
+            writing = false
+          }
+        } catch (error) {
+          sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    }),
+
+    // Issue #98 supplement: export presets as a downloadable JSON file
+    // (plain GET — presets hold no credentials and the data is already
+    // exposed by GET /dsh-market/presets, so no loopback restriction).
+    host.webServer.register({
+      kind: 'exact',
+      path: '/dsh-market/presets-export',
+      handler: (request, response) => {
+        if (request.method !== 'GET') {
+          response.writeHead(405, { allow: 'GET' })
+          response.end()
+          return
+        }
+        try {
+          const data = exportPresets(activeProfileDir)
+          const body = JSON.stringify(data, null, 2)
+          const timestamp = new Date(data.exportedAt).toLocaleString('sv-SE').replace(/\D/g, '')
+          response.writeHead(200, {
+            'cache-control': 'no-store',
+            'content-type': 'application/json; charset=utf-8',
+            'content-disposition': `attachment; filename="dsh-market-presets-${timestamp}.json"`,
+          })
+          response.end(body)
+        } catch (error) {
+          sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    }),
+
+    // Issue #98 supplement: import a preset export file. The document can be
+    // much larger than a single preset (many combinations, CJK names), so the
+    // body limit is raised well above the default 4 KiB.
+    host.webServer.register({
+      kind: 'exact',
+      path: '/dsh-market/presets-import',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) {
+          sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        if (!acquireWrite(response)) return
+        try {
+          const body = await readJsonBody(request, 256 * 1024)
+          const imported = importPresets(activeProfileDir, body)
+          sendJson(response, imported.ok ? 200 : 400, imported)
+        } catch (error) {
+          sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) })
+        } finally {
+          writing = false
         }
       },
     }),

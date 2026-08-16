@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 /**
  * Portable render tests for the issue #98 phase 2/3 Diagnostics panels: the
- * community-bundle ordering block (orderConflicts) and the collapsible
- * snapshots & rollback panel (snapshot-panel.tsx). The host boundary is
- * stubbed with a URL-routing fetch mock (GET /dsh-market/check, GET+POST
- * /dsh-market/snapshots, POST /dsh-market/restore-snapshot) — no real
+ * community-bundle ordering block (orderConflicts), the collapsible snapshots
+ * & rollback panel (snapshot-panel.tsx) and the collapsible plugin presets
+ * panel (preset-panel.tsx). The host boundary is stubbed with a URL-routing
+ * fetch mock (GET /dsh-market/check, GET+POST /dsh-market/snapshots,
+ * POST /dsh-market/restore-snapshot, GET+POST /dsh-market/presets) — no real
  * profile, no absolute machine paths, so this runs on any environment/CI.
  */
 
@@ -63,6 +64,14 @@ const SNAPSHOTS = {
   ],
 }
 
+/** Synthetic preset list payload. */
+const PRESETS = {
+  presets: [
+    { name: 'work', bundleOrder: ['beta', 'alpha'], disabled: [] },
+    { name: 'chat', bundleOrder: ['alpha', 'beta', 'gamma'], disabled: ['x'] },
+  ],
+}
+
 function json(payload: unknown): Response {
   return new Response(JSON.stringify(payload), { status: 200, headers: { 'content-type': 'application/json' } })
 }
@@ -72,12 +81,13 @@ interface ApiOverrides {
   /** Override the POST /dsh-market/bundle-order response (defaults to 200 ok). */
   bundleOrder?: { status?: number; body?: unknown }
   snapshots?: unknown
+  presets?: unknown
 }
 
 /**
  * URL-routing fetch stub. Records every call so tests can assert request
  * shapes; GETs return the routed fixture, POSTs answer { ok: true } (create /
- * restore actions all succeed).
+ * restore / preset actions all succeed).
  */
 function stubApi(overrides: ApiOverrides = {}) {
   const mock = vi.fn((input: unknown, init?: RequestInit) => {
@@ -97,6 +107,29 @@ function stubApi(overrides: ApiOverrides = {}) {
     }
     if (url === '/dsh-market/restore-snapshot') {
       return Promise.resolve(json({ ok: true, restored: ['package.json'] }))
+    }
+    if (url === '/dsh-market/presets') {
+      if (method === 'GET') return Promise.resolve(json(overrides.presets ?? PRESETS))
+      return Promise.resolve(json({ ok: true }))
+    }
+    if (url === '/dsh-market/presets-export') {
+      // Mirrors the host route: JSON document + attachment content-disposition.
+      return Promise.resolve(new Response(JSON.stringify({
+        format: 'dsh-market-presets',
+        version: 1,
+        exportedAt: 1780000000000,
+        presets: [],
+      }), {
+        status: 200,
+        headers: {
+          'content-type': 'application/json; charset=utf-8',
+          'content-disposition': 'attachment; filename="dsh-market-presets-20250101T000000.json"',
+        },
+      }))
+    }
+    if (url === '/dsh-market/presets-import') {
+      // Import reports imported/added/updated/skipped counts on success.
+      return Promise.resolve(json({ ok: true, imported: 1, added: 1, updated: 0, skipped: 0 }))
     }
     return Promise.resolve(json({ ok: true }))
   })
@@ -131,14 +164,16 @@ afterEach(() => {
 })
 
 describe('Diagnostics panels (jsdom, #98 phase 2/3)', () => {
-  it('keeps the snapshot section collapsed without fetching it', async () => {
+  it('keeps the snapshot/preset sections collapsed without fetching them', async () => {
     const { mock } = await renderLoaded()
 
-    // Only the check report is fetched on mount; the snapshot panel is lazy.
+    // Only the check report is fetched on mount; the panels are lazy.
     expect(mock.mock.calls.map(c => String(c[0]))).toEqual(['/dsh-market/check'])
 
     const snapHead = screen.getByRole('button', { name: t('snapSection') })
+    const presetHead = screen.getByRole('button', { name: t('presetSection') })
     expect(snapHead.getAttribute('aria-expanded')).toBe('false')
+    expect(presetHead.getAttribute('aria-expanded')).toBe('false')
   })
 
   it('expanding the snapshot section fetches and renders the snapshot list', async () => {
@@ -207,6 +242,71 @@ describe('Diagnostics panels (jsdom, #98 phase 2/3)', () => {
     expect(within(orderSection).getByText('(2)')).toBeTruthy()
     // Conflict row: name — reason.
     expect(within(orderSection).getByText(/^alpha — must load after beta/)).toBeTruthy()
+  })
+
+  it('saves the current community order as a preset via POST /dsh-market/presets', async () => {
+    const { calls, posts } = await renderLoaded()
+    fireEvent.click(screen.getByRole('button', { name: t('presetSection') }))
+    await waitFor(() => expect(calls('/dsh-market/presets').length).toBe(1))
+
+    const section = sectionOf(t('presetSection'))
+    // List renders preset names and bundle counts.
+    expect(within(section).getByText('work')).toBeTruthy()
+    expect(within(section).getByText('2 bundles')).toBeTruthy()
+    expect(within(section).getByText('chat')).toBeTruthy()
+
+    fireEvent.change(within(section).getByPlaceholderText(t('presetName')), { target: { value: 'combo-x' } })
+    fireEvent.click(within(section).getByRole('button', { name: t('presetSave') }))
+    await waitFor(() => expect(posts('/dsh-market/presets').length).toBe(1))
+    const post = posts('/dsh-market/presets')[0]!
+    // bundleOrder is the community bundle order from the check report.
+    expect(JSON.parse(String(post[1]?.body))).toEqual({
+      action: 'save',
+      name: 'combo-x',
+      bundleOrder: ['alpha', 'beta'],
+      disabled: [],
+    })
+
+    await waitFor(() => expect(within(section).getByText(t('presetSaved'))).toBeTruthy())
+  })
+
+  it('applies a preset via POST /dsh-market/presets and refreshes the check report', async () => {
+    const { calls, posts } = await renderLoaded()
+    fireEvent.click(screen.getByRole('button', { name: t('presetSection') }))
+    const section = sectionOf(t('presetSection'))
+    await waitFor(() => expect(within(section).getByText('work')).toBeTruthy())
+
+    // Two presets → two Apply buttons; scope to the 'work' row.
+    const row = within(section).getByText('work').closest('.' + css.presetRow) as HTMLElement
+    fireEvent.click(within(row).getByRole('button', { name: t('presetApply') }))
+    await waitFor(() => expect(posts('/dsh-market/presets').length).toBe(1))
+    expect(JSON.parse(String(posts('/dsh-market/presets')[0]?.[1]?.body))).toEqual({ action: 'apply', name: 'work' })
+
+    // Success triggers onRefresh → the check report is re-fetched.
+    await waitFor(() => expect(calls('/dsh-market/check').length).toBeGreaterThanOrEqual(2))
+  })
+
+  it('deletes a preset after inline double confirmation', async () => {
+    const { calls, posts } = await renderLoaded()
+    fireEvent.click(screen.getByRole('button', { name: t('presetSection') }))
+    const section = sectionOf(t('presetSection'))
+    await waitFor(() => expect(within(section).getByText('work')).toBeTruthy())
+    const row = () => within(section).getByText('work').closest('.' + css.presetRow) as HTMLElement
+
+    // Arm the confirm state — no request yet.
+    fireEvent.click(within(row()).getByRole('button', { name: t('presetDelete') }))
+    expect(posts('/dsh-market/presets').length).toBe(0)
+
+    // Cancel.
+    fireEvent.click(within(row()).getByRole('button', { name: t('cancel') }))
+
+    // Arm again and confirm → POST {action:'delete'}.
+    fireEvent.click(within(row()).getByRole('button', { name: t('presetDelete') }))
+    fireEvent.click(within(row()).getByRole('button', { name: t('presetDelete') }))
+    await waitFor(() => expect(posts('/dsh-market/presets').length).toBe(1))
+    expect(JSON.parse(String(posts('/dsh-market/presets')[0]?.[1]?.body))).toEqual({ action: 'delete', name: 'work' })
+
+    await waitFor(() => expect(within(section).getByText(t('presetDeleted'))).toBeTruthy())
   })
 
   it('drag & drop reorders the local draft only; "Apply order" POSTs the new order', async () => {
@@ -353,6 +453,58 @@ describe('Diagnostics panels (jsdom, #98 phase 2/3)', () => {
     await waitFor(() => expect(within(section).getByText(t('snapDeleted'))).toBeTruthy())
   })
 
+  it('exports presets via GET /dsh-market/presets-export', async () => {
+    const { gets } = await renderLoaded()
+    // jsdom has no URL.createObjectURL — stub it for the download path.
+    const urlShim = URL as unknown as { createObjectURL?: () => string; revokeObjectURL?: () => void }
+    const originalCreate = urlShim.createObjectURL
+    const originalRevoke = urlShim.revokeObjectURL
+    urlShim.createObjectURL = vi.fn(() => 'blob:mock-presets')
+    urlShim.revokeObjectURL = vi.fn()
+    try {
+      fireEvent.click(screen.getByRole('button', { name: t('presetSection') }))
+      const section = sectionOf(t('presetSection'))
+      await waitFor(() => expect(within(section).getByText('work')).toBeTruthy())
+
+      fireEvent.click(within(section).getByRole('button', { name: t('presetExport') }))
+      await waitFor(() => expect(gets('/dsh-market/presets-export').length).toBe(1))
+      await waitFor(() => expect(within(section).getByText(t('presetExported'))).toBeTruthy())
+      expect(urlShim.createObjectURL).toHaveBeenCalledTimes(1)
+    } finally {
+      urlShim.createObjectURL = originalCreate
+      urlShim.revokeObjectURL = originalRevoke
+    }
+  })
+
+  it('imports presets from a JSON file via POST /dsh-market/presets-import', async () => {
+    const { calls, posts } = await renderLoaded()
+    fireEvent.click(screen.getByRole('button', { name: t('presetSection') }))
+    const section = sectionOf(t('presetSection'))
+    await waitFor(() => expect(within(section).getByText('work')).toBeTruthy())
+
+    const input = section.querySelector('input[type="file"]') as HTMLInputElement
+    expect(input).not.toBeNull()
+    const payload = {
+      format: 'dsh-market-presets',
+      version: 1,
+      exportedAt: 1780000000000,
+      presets: [{ name: 'imported-x', bundleOrder: ['beta', 'alpha'], disabled: [] }],
+    }
+    const file = new File([JSON.stringify(payload)], 'presets.json', { type: 'application/json' })
+    fireEvent.change(input, { target: { files: [file] } })
+
+    await waitFor(() => expect(posts('/dsh-market/presets-import').length).toBe(1))
+    const post = posts('/dsh-market/presets-import')[0]!
+    expect(JSON.parse(String(post[1]?.body))).toEqual(payload)
+
+    // The host's imported/added/updated/skipped counts drive the message and
+    // the list is reloaded afterwards.
+    await waitFor(() => expect(within(section).getByText(
+      t('presetImportedCount').replace('{0}', '1').replace('{1}', '1').replace('{2}', '0').replace('{3}', '0'),
+    )).toBeTruthy())
+    await waitFor(() => expect(calls('/dsh-market/presets').length).toBe(2))
+  })
+
   it('AI fix copies the diagnostics prompt to the clipboard and confirms', async () => {
     const writeText = vi.fn(() => Promise.resolve())
     vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } })
@@ -377,6 +529,49 @@ describe('Diagnostics panels (jsdom, #98 phase 2/3)', () => {
     expect(prompt).toContain(t('aiFixConservative').slice(0, 20))
     await waitFor(() => expect(screen.getByText(t('aiFixCopied'))).toBeTruthy())
     void api
+  })
+
+
+  it('saves the ordering DRAFT (un-applied drag) as a preset — not the last-reported order', async () => {
+    // Regression for the #98 preset-save fix: PresetPanel receives the local
+    // `order` DRAFT. Dragging alpha below beta changes the draft to
+    // [beta, alpha] WITHOUT applying it; saving a preset must capture the
+    // draft, not the last-reported community order [alpha, beta].
+    const { posts } = await renderLoaded()
+
+    // Expand the ordering panel and drag alpha (row 0) onto beta (row 1).
+    fireEvent.click(screen.getByText(t('orderSection')))
+    const orderSection = screen.getByText(t('orderSection')).closest('section') as HTMLElement
+    await waitFor(() => {
+      const body = orderSection.querySelector('[class*="collapseBody"]') as HTMLElement | null
+      expect(body?.style.display).not.toBe('none')
+    })
+    const rows = () => Array.from(orderSection.querySelectorAll('.' + css.diagRow))
+    expect(rows()).toHaveLength(2)
+    fireEvent.dragStart(rows()[0]!, { dataTransfer: {} })
+    fireEvent.dragOver(rows()[1]!, { dataTransfer: {} })
+    fireEvent.drop(rows()[1]!, { dataTransfer: {} })
+    fireEvent.dragEnd(rows()[1]!, { dataTransfer: {} })
+    await waitFor(() => expect(rows()[0]?.textContent).toContain('beta'))
+    // The draft changed, but nothing was applied yet.
+    expect(posts('/dsh-market/bundle-order').length).toBe(0)
+
+    // Open the presets panel and save WITHOUT applying the order.
+    fireEvent.click(screen.getByRole('button', { name: t('presetSection') }))
+    const section = sectionOf(t('presetSection'))
+    await waitFor(() => expect(within(section).getByText('work')).toBeTruthy())
+    fireEvent.change(within(section).getByPlaceholderText(t('presetName')), { target: { value: 'draft-x' } })
+    fireEvent.click(within(section).getByRole('button', { name: t('presetSave') }))
+    await waitFor(() => expect(posts('/dsh-market/presets').length).toBe(1))
+
+    const post = posts('/dsh-market/presets')[0]!
+    expect(JSON.parse(String(post[1]?.body))).toEqual({
+      action: 'save',
+      name: 'draft-x',
+      bundleOrder: ['beta', 'alpha'], // the DRAFT, not the reported [alpha, beta]
+      disabled: [],
+    })
+    await waitFor(() => expect(within(section).getByText(t('presetSaved'))).toBeTruthy())
   })
 
   it('AI-fix without a clipboard API shows the prompt in a copyable text block', async () => {
