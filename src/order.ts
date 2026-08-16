@@ -215,6 +215,64 @@ export function mergeOrder(bundles: string[], newOrder: string[]): { ok: true; b
 }
 
 /**
+ * Topologically sort the community bundles by their before/after rules —
+ * the "auto-fix" counterpart to validateOrder (LOOT-style): when the current
+ * order violates declared rules, this computes a suggested order that
+ * satisfies them. Kahn's algorithm with deterministic tie-breaking (stable
+ * input order). Bundles without rules keep their relative order among the
+ * unconstrained ones.
+ * @returns the suggested community order, or a cycle report when the rules
+ * cannot be satisfied (rules referencing unlisted bundles are ignored).
+ */
+export function suggestOrder(bundleNames: string[], rules: BundleRule[]): { ok: true; order: string[] } | { ok: false; cycle: string[] } {
+  const names = bundleNames.filter(name => !INBOX_BUNDLES.has(name))
+  const inOrder = new Set(names)
+  const active = rules.filter(rule => inOrder.has(rule.name))
+  // Constraint: "a must load before b" (from a.before or b.after) → edge a → b.
+  const beforeOf = new Map<string, Set<string>>() // name → bundles that must come after it
+  const deps = new Map<string, Set<string>>() // name → bundles that must come before it
+  for (const name of names) {
+    beforeOf.set(name, new Set())
+    deps.set(name, new Set())
+  }
+  const addEdge = (a: string, b: string): void => {
+    if (!inOrder.has(a) || !inOrder.has(b) || a === b) return
+    beforeOf.get(a)?.add(b)
+    deps.get(b)?.add(a)
+  }
+  for (const rule of active) {
+    for (const other of rule.before) addEdge(rule.name, other)
+    for (const other of rule.after) addEdge(other, rule.name)
+  }
+  const remaining = new Map<string, Set<string>>()
+  for (const [name, depsOf] of deps) remaining.set(name, new Set(depsOf))
+  const ready: string[] = names.filter(name => (remaining.get(name)?.size ?? 0) === 0)
+  const ordered: string[] = []
+  while (ready.length > 0) {
+    // Deterministic tie-break: the ready bundle earliest in the current order.
+    let best = 0
+    for (let i = 1; i < ready.length; i += 1) {
+      const a = ready[i]
+      const b = ready[best]
+      if (a !== undefined && b !== undefined && names.indexOf(a) < names.indexOf(b)) best = i
+    }
+    const name = ready.splice(best, 1)[0]
+    if (name === undefined) break
+    ordered.push(name)
+    for (const dependent of beforeOf.get(name) ?? []) {
+      const depsOf = remaining.get(dependent)
+      if (depsOf === undefined) continue
+      depsOf.delete(name)
+      if (depsOf.size === 0 && !ordered.includes(dependent) && !ready.includes(dependent)) ready.push(dependent)
+    }
+  }
+  if (ordered.length < names.length) {
+    return { ok: false, cycle: names.filter(name => !ordered.includes(name)) }
+  }
+  return { ok: true, order: ordered }
+}
+
+/**
  * Apply a new community-bundle order to the profile manifest. The official
  * in-box bundles keep their exact positions; `newOrder` must be a permutation
  * of the current community bundles (no duplicates, no additions, no

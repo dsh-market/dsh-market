@@ -15,7 +15,7 @@
  * here because the client bundle is built independently of the host tree.
  */
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Button, DisclosureRow, IconChevronDownOutline14, IconChevronRightOutline14, IconLoadingOutline16, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, DisclosureRow, IconChevronDownOutline14, IconChevronRightOutline14, IconLoadingOutline16, IconRefreshOutline14, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
 import css from './Market.module.css'
 import type { Translate } from './market-data.ts'
 import { PresetPanel } from './preset-panel.tsx'
@@ -109,6 +109,10 @@ interface CheckReport {
   summary: CheckSummary
   /** #98 phase 2: validateOrder result for the CURRENT bundle order, when the host emits it. */
   orderConflicts?: OrderConflict[]
+  /** #98 opt: loader rows sharing one name — runtime shadowing, not a boot failure. */
+  duplicateNames?: Array<{ name: string; layers: string[]; count: number }>
+  /** #98 opt: LOOT-style suggested community order satisfying every rule. */
+  suggestedOrder?: { ok: true; order: string[] } | { ok: false; cycle: string[] } | null
 }
 
 /** One always-present section card with a count and an empty-state text. */
@@ -211,7 +215,7 @@ export function Diagnostics(props: { t: Translate }) {
   }
 
   /** POST the current community order; the host trial-validates and snapshots first. */
-  const applyOrder = () => {
+  const applyOrder = (target?: string[]) => {
     if (orderBusy) return
     setOrderBusy(true)
     setOrderMsg(null)
@@ -219,7 +223,7 @@ export function Diagnostics(props: { t: Translate }) {
     fetch('/dsh-market/bundle-order', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ order }),
+      body: JSON.stringify({ order: target ?? order }),
     })
       .then(async (res) => {
         const body = (await res.json().catch(() => null)) as { ok?: unknown; error?: unknown } | null
@@ -265,22 +269,34 @@ export function Diagnostics(props: { t: Translate }) {
   }
 
   const summary = report.summary
+  const suggested = report.suggestedOrder ?? null
+  // Category counts for the overview strip: conflicts / dependencies / order.
+  const catConflict = report.duplicates.length + (report.duplicateNames?.length ?? 0)
+  const catDeps = report.coreDeps.length + report.peerMismatches.length + report.multiVersion.length
+  const catOrder = report.orderConflicts?.length ?? 0
+  const anyIssue = catConflict + catDeps + catOrder > 0
   return (
     <div className={css.diagPage}>
       <div className={css.diagSummary}>
         <span className={summary.ok ? css.okState : css.err}>
           <StateDot state={summary.ok ? 'done' : 'error'} size={8} />
-          {summary.ok ? t('checkOk') : t('checkIssues')}
+          {summary.ok ? (anyIssue ? t('checkIssues') : t('diagOkAll')) : t('checkIssues')}
         </span>
         <span className={css.diagSummaryItem}>
-          <StateDot state="error" size={8} />{t('checkErrors')}: {summary.errors.length}
+          <StateDot state="error" size={8} />{t('catConflict')}: {catConflict}
         </span>
         <span className={css.diagSummaryItem}>
-          <StateDot state="warning" size={8} />{t('checkWarnings')}: {summary.warnings.length}
+          <StateDot state="warning" size={8} />{t('catDeps')}: {catDeps}
+        </span>
+        <span className={css.diagSummaryItem}>
+          <StateDot state="warning" size={8} />{t('catOrder')}: {catOrder}
         </span>
         <span className={css.grow} />
+        <Button variant="ghost" size="sm" aria-label={t('checkRefresh')} onClick={refresh}>
+          <IconRefreshOutline14 size={14} />
+        </Button>
         <span className={css.diagSummaryMeta} title={report.profile}>{t('checkProfile')}: {report.profile}</span>
-        <span className={css.diagSummaryMeta}>{t('checkScannedAt')}: {new Date(report.scannedAt).toLocaleString()}</span>
+        <span className={css.diagSummaryMeta}>{new Date(report.scannedAt).toLocaleString()}</span>
       </div>
 
       <Section title={t('checkErrors')} count={summary.errors.length} empty={t('checkErrorsEmpty')}>
@@ -304,6 +320,7 @@ export function Diagnostics(props: { t: Translate }) {
           <div key={bundle.name} className={css.diagBundle}>
             <div className={css.diagRow}>
               <span className={css.diagIndex}>{i + 1}</span>
+              <span className={css.diagArrow}>→</span>
               <span className={css.nm}>{bundle.name}</span>
               <span className={bundle.kind === 'official' ? css.diagBadgeOfficial : css.diagBadgeCommunity}>
                 {bundle.kind === 'official' ? t('checkOfficial') : t('checkCommunity')}
@@ -441,12 +458,35 @@ export function Diagnostics(props: { t: Translate }) {
           </div>
         )}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <Button variant="primary" size="sm" disabled={order.length === 0 || orderBusy} onClick={applyOrder}>
+          <Button variant="primary" size="sm" disabled={order.length === 0 || orderBusy} onClick={() => applyOrder()}>
             {orderBusy ? '…' : t('orderApply')}
           </Button>
+          {suggested !== null && suggested !== undefined && suggested.ok === true
+            && suggested.order.join('\u0000') !== communityNames.join('\u0000')
+            && (
+              <Button variant="outline" size="sm" disabled={orderBusy} onClick={() => applyOrder(suggested.order)}>
+                {t('orderSuggestApply')}
+              </Button>
+            )}
+          {order.length !== communityNames.length && (
+            <Button variant="ghost" size="sm" disabled={orderBusy} onClick={() => setOrder(communityNames)}>
+              {t('orderReset')}
+            </Button>
+          )}
           {orderMsg !== null && <span className={css.okState}>{orderMsg}</span>}
           {orderErr !== null && <span className={css.err}>{orderErr}</span>}
         </div>
+        {suggested !== null && suggested !== undefined && suggested.ok === false && (
+          <div className={css.warnLine}>{t('orderSuggestHint')} ⚠ {suggested.cycle.join(' → ')}</div>
+        )}
+        {report.duplicateNames !== undefined && report.duplicateNames.length > 0 && (
+          <div className={css.diagList}>
+            <span className={css.diagKey}>{t('duplicateNames')}</span>
+            {report.duplicateNames.map((dup, i) => (
+              <div key={i} className={css.warnLine}>{dup.name} × {dup.count} — {dup.layers.join(' / ')}</div>
+            ))}
+          </div>
+        )}
         {order.length === 0
           ? <div className={css.diagEmpty}>—</div>
           : (

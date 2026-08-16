@@ -29,7 +29,7 @@ import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { JSON_SCHEMA, Type, load } from 'js-yaml'
-import { readBundleRules, validateOrder } from './order.ts'
+import { readBundleRules, suggestOrder, validateOrder } from './order.ts'
 
 /** Profile bundles that ship with the dsh host and must stay put (#98). */
 const INBOX_BUNDLES = new Set([
@@ -128,7 +128,7 @@ export interface CoreDepIssue {
   shadowing: boolean
 }
 
-/** A plugin peerDependencies range vs the resolved core version. */
+/** A plugin peerDependencies range vs the resolved version. */
 export interface PeerMismatch {
   plugin: string
   name: string
@@ -136,6 +136,18 @@ export interface PeerMismatch {
   resolved: string | null
   /** False = confirmed incompatible; null = could not be evaluated. */
   satisfied: boolean | null
+}
+
+/**
+ * Distinct loader entries sharing one NAME — the Loader registers plugins by
+ * name, so two rows with the same name shadow each other at runtime (the
+ * later layer wins), unlike duplicate ids which fail the boot outright.
+ */
+export interface DuplicateName {
+  name: string
+  /** Every layer that inserts/defines a row with this name. */
+  layers: string[]
+  count: number
 }
 
 /** Distinct resolved versions of one core package found in the lockfile. */
@@ -153,6 +165,7 @@ export interface CheckReport {
   bundles: BundleLayer[]
   rows: LoaderRow[]
   duplicates: DuplicateId[]
+  duplicateNames: DuplicateName[]
   overrides: OverrideRow[]
   orphans: OrphanRow[]
   coreDeps: CoreDepIssue[]
@@ -160,6 +173,8 @@ export interface CheckReport {
   multiVersion: MultiVersion[]
   /** Before/after rule conflicts in the CURRENT bundle order (issue #98 phase 2). */
   orderConflicts: Array<{ name: string; reason: string }>
+  /** LOOT-style auto-fix: a community order satisfying every declared rule. */
+  suggestedOrder: { ok: true; order: string[] } | { ok: false; cycle: string[] } | null
   summary: CheckSummary
 }
 
@@ -775,7 +790,7 @@ export function analyzeProfile(profileDirectory: string, options: CheckOptions =
       const map = pkg[section]
       if (map === null || typeof map !== 'object') continue
       for (const [name, spec] of Object.entries(map)) {
-        if (!core.has(name) || typeof spec !== 'string') continue
+        if (typeof spec !== 'string') continue
         const key = `${plugin}\u0000${name}\u0000${section}`
         if (seenDeps.has(key)) continue
         seenDeps.add(key)
@@ -783,13 +798,17 @@ export function analyzeProfile(profileDirectory: string, options: CheckOptions =
         const nested = readNodeModulesVersion(pluginDir, name)
         const host = dshInstall !== null ? readNodeModulesVersion(dshInstall, name) : null
         const resolved = hoisted ?? nested ?? host
-        const shadowing = (hoisted ?? nested) !== null && host !== null && (hoisted ?? nested) !== host
-        if (section === 'dependencies') {
+        const isCore = core.has(name)
+        if (section === 'dependencies' && isCore) {
+          const shadowing = (hoisted ?? nested) !== null && host !== null && (hoisted ?? nested) !== host
           coreDeps.push({
             plugin, name, spec, section,
             hoisted, nested, host, shadowing,
           })
-        } else {
+        } else if (section === 'peerDependencies') {
+          // Peer checks cover EVERY declared peer, not just host core
+          // packages: plugin-to-plugin peer mismatches break runtime
+          // registration just as hard (issue #98 optimization round).
           const satisfied = resolved !== null ? satisfiesRange(resolved, spec) : null
           peerMismatches.push({
             plugin, name, range: spec, resolved,
@@ -833,10 +852,12 @@ export function analyzeProfile(profileDirectory: string, options: CheckOptions =
     }
   }
   for (const mismatch of peerMismatches) {
+    // Only CONFIRMED incompatibilities warn. Un-evaluable peers (sat=null —
+    // the peer is supplied by the host, an optional accelerator, or simply
+    // absent) stay in the peerMismatches list for the UI but are not noise
+    // in the summary (issue #98 optimization round).
     if (mismatch.satisfied === false) {
       warnings.push(`${mismatch.plugin} peer range ${mismatch.name}@${mismatch.range} does not match resolved ${String(mismatch.resolved)}`)
-    } else if (mismatch.satisfied === null) {
-      warnings.push(`${mismatch.plugin} peer range ${mismatch.name}@${mismatch.range} could not be evaluated (resolved ${String(mismatch.resolved)})`)
     }
   }
   for (const mv of multiVersion) {
@@ -857,6 +878,31 @@ export function analyzeProfile(profileDirectory: string, options: CheckOptions =
     const own = orderConflicts.filter(conflict => conflict.name === bundle.name)
     if (own.length > 0) bundle.order = { ...bundle.order, conflicts: own }
   }
+  // LOOT-style auto-fix: when rules are violated, suggest a compliant order.
+  const suggestedOrder = suggestOrder(bundleNames, readBundleRules(profileDirectory))
+  if (suggestedOrder.ok && suggestedOrder.order.join('\u0000') !== bundleNames.filter(name => !INBOX_BUNDLES.has(name)).join('\u0000')) {
+    warnings.push('current bundle order violates declared before/after rules — a compliant order is suggested / 当前 bundle 顺序违反声明的 before/after 规则，已给出建议顺序')
+  } else if (!suggestedOrder.ok) {
+    warnings.push(`before/after rules contain a cycle: ${suggestedOrder.cycle.join(' -> ')} — no compliant order exists / before/after 规则存在循环依赖，无法得出合规顺序`)
+  }
+
+  // Duplicate loader NAMES: the Loader registers plugins by name, so two rows
+  // with the same name shadow each other at runtime (later layer wins).
+  const nameCounts = new Map<string, string[]>()
+  for (const row of composed.rows) {
+    if (row.name === undefined) continue
+    const layers = nameCounts.get(row.name) ?? []
+    if (!layers.includes(row.layer)) layers.push(row.layer)
+    nameCounts.set(row.name, layers)
+  }
+  const duplicateNames: DuplicateName[] = []
+  for (const [name, layers] of nameCounts) {
+    const count = composed.rows.filter(row => row.name === name).length
+    if (count < 2) continue
+    duplicateNames.push({ name, layers, count })
+    warnings.push(`duplicate loader entry name ${JSON.stringify(name)} (${count} rows: ${layers.join(', ')}) — the later layer shadows the earlier one / 重复的 loader 条目名称，后加载者会覆盖先加载者`)
+  }
+  duplicateNames.sort((a, b) => a.name.localeCompare(b.name))
 
   return {
     profile: profileDirectory,
@@ -864,12 +910,14 @@ export function analyzeProfile(profileDirectory: string, options: CheckOptions =
     bundles,
     rows: composed.rows,
     duplicates: composed.duplicates,
+    duplicateNames,
     overrides: composed.overrides,
     orphans: composed.orphans,
     coreDeps,
     peerMismatches,
     multiVersion,
     orderConflicts,
+    suggestedOrder,
     summary: {
       ok: errors.length === 0,
       errors,

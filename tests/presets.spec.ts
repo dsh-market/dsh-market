@@ -9,7 +9,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { dump } from 'js-yaml'
-import { applyPreset, deletePreset, listPresets, savePreset } from '../src/presets.ts'
+import { applyPreset, deletePreset, listPresets, previewPreset, savePreset } from '../src/presets.ts'
 
 let tmp: string
 beforeEach(() => {
@@ -214,5 +214,40 @@ describe('applyPreset', () => {
 
     expect(applyPreset(dir, 'ghost')).toMatchObject({ ok: false, error: 'preset not found / 组合不存在' })
     expect(applyPreset(dir, 42 as unknown as string)).toMatchObject({ ok: false })
+  })
+
+  it('previews the change a preset would make, without writing anything', () => {
+    const dir = pdir()
+    writeProfile(dir, ['alpha', 'beta'])
+    writeBundle(dir, 'alpha', '1.0.0', [{ insert: [{ id: 'alpha-entry', name: 'alpha' }] }])
+    writeBundle(dir, 'beta', '1.0.0', [{ insert: [{ id: 'beta-entry', name: 'beta' }] }])
+    writeState(dir, ['off-a', 'off-b'])
+    writePresetFile(dir, [{ name: 'swap', bundleOrder: ['beta', 'alpha'], disabled: ['off-a', 'on-c'], createdAt: 1 }])
+
+    const preview = previewPreset(dir, 'swap')
+    expect(preview.ok).toBe(true)
+    expect(preview.changes).toEqual({
+      reordered: ['alpha', 'beta'], // both move (positions swap)
+      enabled: ['off-b'], // disabled now, enabled by the preset
+      disabled: ['on-c'], // enabled now, disabled by the preset
+      noop: false,
+    })
+    // Pure read: nothing was written.
+    expect(existsSync(join(dir, '.dsh-market', 'snapshots'))).toBe(false)
+    expect(existsSync(join(dir, '.dsh-market', 'presets.json'))).toBe(true)
+    const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as { dsh: { profile: { bundles: string[] } } }
+    expect(manifest.dsh.profile.bundles).toEqual(['alpha', 'beta'])
+  })
+
+  it('previews noop for an apply that changes nothing', () => {
+    const dir = pdir()
+    writeProfile(dir, ['alpha'])
+    writeBundle(dir, 'alpha', '1.0.0', [{ insert: [{ id: 'alpha-entry', name: 'alpha' }] }])
+    writeState(dir, ['x'])
+    writePresetFile(dir, [{ name: 'same', bundleOrder: ['alpha'], disabled: ['x'], createdAt: 1 }])
+
+    const preview = previewPreset(dir, 'same')
+    expect(preview.ok).toBe(true)
+    expect(preview.changes?.noop).toBe(true)
   })
 })

@@ -117,10 +117,10 @@ describe('Diagnostics (jsdom)', () => {
     await waitFor(() => expect(screen.queryByText(t('checkLoading'))).toBeNull())
     expect(fetchMock.mock.calls.length).toBe(1)
 
-    // Summary strip: status badge, error/warning counts, profile meta.
+    // Summary strip: status badge, category counts, profile meta.
     expect(screen.getByText(t('checkIssues'))).toBeTruthy()
-    expect(screen.getByText(new RegExp(`^${t('checkErrors')}:\\s*2$`))).toBeTruthy()
-    expect(screen.getByText(new RegExp(`^${t('checkWarnings')}:\\s*1$`))).toBeTruthy()
+    expect(screen.getByText(new RegExp(`^${t('catConflict')}:\\s*1$`))).toBeTruthy()
+    expect(screen.getByText(new RegExp(`^${t('catDeps')}:\\s*5$`))).toBeTruthy()
     expect(screen.getByText(`${t('checkProfile')}: /synthetic/profiles/web`)).toBeTruthy()
 
     // Every section heading renders with its count (scoped to the section).
@@ -189,9 +189,10 @@ describe('Diagnostics (jsdom)', () => {
     expect(screen.getByText(t('checkLoading'))).toBeTruthy()
     await waitFor(() => expect(screen.queryByText(t('checkLoading'))).toBeNull())
 
-    expect(screen.getByText(t('checkOk'))).toBeTruthy()
-    expect(screen.getByText(new RegExp(`^${t('checkErrors')}:\\s*0$`))).toBeTruthy()
-    expect(screen.getByText(new RegExp(`^${t('checkWarnings')}:\\s*0$`))).toBeTruthy()
+    expect(screen.getByText(t('diagOkAll'))).toBeTruthy()
+    expect(screen.getByText(new RegExp(`^${t('catConflict')}:\\s*0$`))).toBeTruthy()
+    expect(screen.getByText(new RegExp(`^${t('catDeps')}:\\s*0$`))).toBeTruthy()
+    expect(screen.getByText(new RegExp(`^${t('catOrder')}:\\s*0$`))).toBeTruthy()
 
     for (const key of [
       'checkErrorsEmpty', 'checkWarningsEmpty', 'checkBundlesEmpty',

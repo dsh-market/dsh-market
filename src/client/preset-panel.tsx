@@ -35,7 +35,11 @@ interface PresetPanelProps {
   onRefresh: () => void
 }
 
-interface JsonBody { ok?: unknown; error?: unknown }
+interface JsonBody {
+  ok?: unknown
+  error?: unknown
+  changes?: unknown
+}
 
 async function postJson(url: string, body: unknown): Promise<{ status: number; body: JsonBody | null }> {
   let res: Response
@@ -160,6 +164,39 @@ export function PresetPanel(props: PresetPanelProps) {
       .finally(() => setBusy(null))
   }, [busy, load, t])
 
+  /** Change preview of one preset: {reordered[], enabled[], disabled[], noop}. */
+  const [previewed, setPreviewed] = useState<{ name: string; changes: { reordered: string[]; enabled: string[]; disabled: string[]; noop: boolean } } | null>(null)
+  const preview = useCallback((presetName: string) => {
+    if (busy !== null) return
+    setBusy('preview')
+    setMsg(null)
+    setError(null)
+    if (previewed?.name === presetName) {
+      setPreviewed(null)
+      setBusy(null)
+      return
+    }
+    postJson('/dsh-market/presets', { action: 'preview', name: presetName })
+      .then(({ status, body }) => {
+        if (status >= 200 && status < 300 && body?.ok === true && body.changes !== null && typeof body.changes === 'object') {
+          const changes = body.changes as { reordered?: unknown; enabled?: unknown; disabled?: unknown; noop?: unknown }
+          setPreviewed({
+            name: presetName,
+            changes: {
+              reordered: Array.isArray(changes.reordered) ? changes.reordered.map(String) : [],
+              enabled: Array.isArray(changes.enabled) ? changes.enabled.map(String) : [],
+              disabled: Array.isArray(changes.disabled) ? changes.disabled.map(String) : [],
+              noop: changes.noop === true,
+            },
+          })
+        } else {
+          setError(errorText(status, body, t('presetPreviewFail')))
+        }
+      })
+      .catch(() => setError(t('presetPreviewFail') + 'network'))
+      .finally(() => setBusy(null))
+  }, [busy, previewed, t])
+
   return (
     <div className={css.orderPanel}>
       <p className={css.panelNote}>{t('presetHint')}</p>
@@ -185,21 +222,43 @@ export function PresetPanel(props: PresetPanelProps) {
             <div className={css.presetList}>
               {presets.map(preset => (
                 <div key={preset.name} className={css.presetRow}>
-                  <span className={css.presetName}>{preset.name}</span>
-                  {preset.bundleOrder.length > 0 && (
-                    <span className={css.spec}>{t('presetBundleCount').replace('{0}', String(preset.bundleOrder.length))}</span>
-                  )}
-                  <span className={css.grow} />
-                  {confirmDelete === preset.name ? (
-                    <span className={css.confirmRow}>
-                      <Button variant="primary" size="sm" disabled={busy !== null} onClick={() => remove(preset.name)}>{t('presetDelete')}</Button>
-                      <Button variant="ghost" size="sm" disabled={busy !== null} onClick={() => setConfirmDelete(null)}>{t('cancel')}</Button>
-                    </span>
-                  ) : (
-                    <span className={css.confirmRow}>
-                      <Button variant="outline" size="sm" disabled={busy !== null} onClick={() => apply(preset.name)}>{t('presetApply')}</Button>
-                      <Button variant="ghost" size="sm" disabled={busy !== null} onClick={() => setConfirmDelete(preset.name)}>{t('presetDelete')}</Button>
-                    </span>
+                  <div className={css.confirmRow}>
+                    <span className={css.presetName}>{preset.name}</span>
+                    {preset.bundleOrder.length > 0 && (
+                      <span className={css.spec}>{t('presetBundleCount').replace('{0}', String(preset.bundleOrder.length))}</span>
+                    )}
+                    <span className={css.grow} />
+                    {confirmDelete === preset.name ? (
+                      <span className={css.confirmRow}>
+                        <Button variant="primary" size="sm" disabled={busy !== null} onClick={() => remove(preset.name)}>{t('presetDelete')}</Button>
+                        <Button variant="ghost" size="sm" disabled={busy !== null} onClick={() => setConfirmDelete(null)}>{t('cancel')}</Button>
+                      </span>
+                    ) : (
+                      <span className={css.confirmRow}>
+                        <Button variant="outline" size="sm" disabled={busy !== null} onClick={() => apply(preset.name)}>{t('presetApply')}</Button>
+                        <Button variant="ghost" size="sm" disabled={busy !== null} onClick={() => preview(preset.name)}>
+                          {previewed?.name === preset.name ? t('cancel') : t('presetPreview')}
+                        </Button>
+                        <Button variant="ghost" size="sm" disabled={busy !== null} onClick={() => setConfirmDelete(preset.name)}>{t('presetDelete')}</Button>
+                      </span>
+                    )}
+                  </div>
+                  {previewed?.name === preset.name && (
+                    <div className={css.diagList}>
+                      <span className={css.diagKey}>{t('presetPreviewTitle')}</span>
+                      {previewed.changes.noop
+                        ? <div className={css.spec}>{t('presetNoop')}</div>
+                        : (
+                            <div className={css.spec}>
+                              {previewed.changes.reordered.length > 0
+                                && <div className={css.warnLine}>{t('presetReorder').replace('{0}', String(previewed.changes.reordered.length))}: {previewed.changes.reordered.join(', ')}</div>}
+                              {previewed.changes.enabled.length > 0
+                                && <div className={css.warnLine}>{t('presetEnable').replace('{0}', String(previewed.changes.enabled.length))}: {previewed.changes.enabled.join(', ')}</div>}
+                              {previewed.changes.disabled.length > 0
+                                && <div className={css.warnLine}>{t('presetDisable').replace('{0}', String(previewed.changes.disabled.length))}: {previewed.changes.disabled.join(', ')}</div>}
+                            </div>
+                          )}
+                    </div>
                   )}
                 </div>
               ))}

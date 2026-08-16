@@ -215,6 +215,100 @@ describe('core package shadowing (#98 repro scenario)', () => {
   })
 })
 
+describe('duplicate loader entry names (#98 opt: runtime shadowing)', () => {
+  it('detects two rows sharing one name across layers (not a boot failure, but a warning)', () => {
+    const dir = pdir()
+    writeProfile(dir, {
+      dsh: { profile: { bundles: ['@deepseek-ai/dsh-base'] } },
+      dependencies: { '@deepseek-ai/dsh-base': '^4.0.1' },
+    })
+    writeBundle(dir, '@deepseek-ai/dsh-base', '4.0.1', [
+      { insert: [{ id: 'one', name: 'same-plugin' }] },
+    ])
+    writeFileSync(join(dir, 'cordis.patch.yml'), dump([
+      { insert: [{ id: 'two', name: 'same-plugin' }] },
+    ]))
+
+    const report = analyzeProfile(dir)
+    const dup = report.duplicateNames.find(d => d.name === 'same-plugin')
+    expect(dup).toBeDefined()
+    expect(dup?.count).toBe(2)
+    expect(dup?.layers).toContain('@deepseek-ai/dsh-base')
+    expect(dup?.layers).toContain('user-patch')
+    // Distinct ids, so NOT a boot failure — only a runtime-shadowing warning.
+    expect(report.summary.errors.some(e => e.includes('duplicate loader entry id'))).toBe(false)
+    expect(report.summary.warnings.some(w => w.includes('duplicate loader entry name'))).toBe(true)
+  })
+})
+
+describe('peer checks cover every plugin (#98 opt: plugin-to-plugin peers)', () => {
+  it('flags a peer mismatch on a NON-core package', () => {
+    const dir = pdir()
+    writeProfile(dir, { name: 'web-profile', dependencies: {} })
+    writePackage(dir, 'plugin-a', {
+      name: 'plugin-a',
+      version: '1.0.0',
+      peerDependencies: { 'community-lib': '^2.0.0' },
+    })
+    writePackage(dir, 'community-lib', { name: 'community-lib', version: '1.5.0' })
+
+    const report = analyzeProfile(dir)
+    const mismatch = report.peerMismatches.find(
+      m => m.plugin === 'plugin-a' && m.name === 'community-lib',
+    )
+    expect(mismatch).toBeDefined()
+    expect(mismatch?.satisfied).toBe(false)
+    expect(report.summary.warnings.some(w => w.includes('community-lib'))).toBe(true)
+  })
+
+  it('reports a peer dependency that is not installed at all (info-level, no summary warning)', () => {
+    const dir = pdir()
+    writeProfile(dir, { name: 'web-profile', dependencies: {} })
+    writePackage(dir, 'plugin-b', {
+      name: 'plugin-b',
+      version: '1.0.0',
+      peerDependencies: { 'missing-peer': '^1.0.0' },
+    })
+
+    const report = analyzeProfile(dir)
+    const mismatch = report.peerMismatches.find(
+      m => m.plugin === 'plugin-b' && m.name === 'missing-peer',
+    )
+    expect(mismatch).toBeDefined()
+    expect(mismatch?.resolved).toBeNull()
+    expect(mismatch?.satisfied).toBeNull()
+    // Un-evaluable peers stay in the list but do not pollute the summary.
+    expect(report.summary.warnings.some(w => w.includes('missing-peer'))).toBe(false)
+  })
+})
+
+describe('suggestedOrder (#98 opt: LOOT-style auto-fix)', () => {
+  it('suggests a compliant community order when rules are violated', () => {
+    const dir = pdir()
+    writeProfile(dir, {
+      dsh: { profile: { bundles: ['a', 'b'] } },
+      dependencies: {},
+    })
+    // b declares after a → current order [a, b] already satisfies it; force a
+    // violation by having a declare after b with order [a, b].
+    writeBundle(dir, 'a', '1.0.0', [{ insert: [{ id: 'a' }] }])
+    writeBundle(dir, 'b', '1.0.0', [{ insert: [{ id: 'b' }] }])
+    writeFileSync(join(dir, 'node_modules', 'a', 'package.json'), JSON.stringify({
+      name: 'a',
+      version: '1.0.0',
+      dsh: { bundle: { patch: './cordis.patch.yml', order: { after: ['b'] } } },
+    }))
+
+    const report = analyzeProfile(dir)
+    expect(report.suggestedOrder?.ok).toBe(true)
+    if (report.suggestedOrder?.ok === true) {
+      expect(report.suggestedOrder.order).toEqual(['b', 'a'])
+    }
+    // The violation itself surfaces as a warning + orderConflicts.
+    expect(report.orderConflicts.some(c => c.name === 'a')).toBe(true)
+  })
+})
+
 describe('peer range mismatch', () => {
   // NOTE: resolved 0.2.0 vs peer range ^0.1.0 is a mismatch per npm semantics
   // (^0.1.0 := >=0.1.0 <0.2.0). check.ts currently returns satisfied=true here

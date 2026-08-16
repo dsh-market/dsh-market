@@ -15,6 +15,7 @@ import {
   mergeOrder,
   readBundleRules,
   readBundleStack,
+  suggestOrder,
   validateOrder,
 } from '../src/order.ts'
 
@@ -292,5 +293,53 @@ describe('mergeOrder (#98 in-place merge)', () => {
 
   it('accepts an empty new order when there are no community bundles', () => {
     expect(mergeOrder(['@deepseek-ai/dsh-base'], [])).toEqual({ ok: true, bundles: ['@deepseek-ai/dsh-base'] })
+  })
+})
+
+describe('suggestOrder (#98 opt: LOOT-style auto-fix)', () => {
+  it('topologically sorts community bundles by before/after rules', () => {
+    // b after a  →  a must load before b. d before c → d must load before c.
+    const rules = [
+      { name: 'b', after: ['a'], before: [] },
+      { name: 'd', before: ['c'], after: [] },
+    ]
+    const result = suggestOrder(['a', 'b', 'c', 'd'], rules)
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.order.indexOf('a')).toBeLessThan(result.order.indexOf('b'))
+      expect(result.order.indexOf('d')).toBeLessThan(result.order.indexOf('c'))
+      expect(result.order.sort()).toEqual(['a', 'b', 'c', 'd'])
+    }
+  })
+
+  it('keeps unconstrained bundles in their relative order', () => {
+    const rules = [{ name: 'x', after: ['y'], before: [] }]
+    const result = suggestOrder(['a', 'x', 'b', 'y'], rules)
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.order.indexOf('y')).toBeLessThan(result.order.indexOf('x'))
+      // a and b keep their relative order.
+      expect(result.order.indexOf('a')).toBeLessThan(result.order.indexOf('b'))
+    }
+  })
+
+  it('reports a cycle instead of an order', () => {
+    const rules = [
+      { name: 'a', before: ['b'], after: [] },
+      { name: 'b', before: ['a'], after: [] },
+    ]
+    const result = suggestOrder(['a', 'b'], rules)
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.cycle.length).toBeGreaterThan(0)
+  })
+
+  it('ignores rules referencing unlisted bundles and official names', () => {
+    const rules = [
+      { name: 'a', after: ['not-installed'], before: [] },
+      { name: '@deepseek-ai/dsh-base', after: ['x'], before: [] }, // official — not reorderable
+    ]
+    const result = suggestOrder(['a', 'x'], rules)
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.order).toEqual(['a', 'x'])
   })
 })

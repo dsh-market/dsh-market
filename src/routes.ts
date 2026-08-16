@@ -26,7 +26,7 @@ import { profileDir, readInstalled, readInstalledVersion, readLockCommits, readM
 import { analyzeProfile } from './check.ts'
 import { applyBundleOrder, mergeOrder, readBundleRules, readBundleStack, validateOrder } from './order.ts'
 import { createProfileSnapshot, listSnapshots, restoreSnapshot } from './snapshot.ts'
-import { applyPreset, deletePreset, listPresets, savePreset } from './presets.ts'
+import { applyPreset, deletePreset, listPresets, previewPreset, savePreset } from './presets.ts'
 import { trialValidate } from './trial.ts'
 import { findInstalledAlias, gitAllowBuildsKey, installTargetFor } from './sources.ts'
 import { isStaleUpdate, parseIgnoredBuilds, parsePrepareNotAllowed, RELEASE_AGE_OVERRIDE, retargetCollections, validateAddedPlugins, withHoistRecovery } from './install.ts'
@@ -628,13 +628,18 @@ export function mountMarketRoutes(
               sendJson(response, applied.ok ? 200 : 422, applied)
               return
             }
+            case 'preview': {
+              const previewed = previewPreset(activeProfileDir, name)
+              sendJson(response, previewed.ok ? 200 : 422, previewed)
+              return
+            }
             case 'delete': {
               const deleted = deletePreset(activeProfileDir, name)
               sendJson(response, deleted.ok ? 200 : 400, deleted)
               return
             }
             default:
-              sendJson(response, 400, { error: 'action must be save | apply | delete / action 必须是 save | apply | delete' })
+              sendJson(response, 400, { error: 'action must be save | preview | apply | delete / action 必须是 save | preview | apply | delete' })
           }
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })

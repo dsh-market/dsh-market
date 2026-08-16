@@ -121,12 +121,65 @@ export function deletePreset(profileDir: string, name: unknown): PresetResult {
   return { ok: true }
 }
 
+/** The concrete change a preset apply would make — computed BEFORE writing. */
+export interface PresetChange {
+  /** Bundles whose position changes under the preset order. */
+  reordered: string[]
+  /** Plugins the preset would ENABLE (currently disabled, enabled by the preset). */
+  enabled: string[]
+  /** Plugins the preset would DISABLE (currently enabled, disabled by the preset). */
+  disabled: string[]
+  /** True when nothing would change. */
+  noop: boolean
+}
+
+export interface PresetApplyResult extends PresetResult {
+  changes?: PresetChange
+}
+
+/**
+ * Preview what applying a preset would change, WITHOUT writing anything.
+ * Runs the same trial validation as applyPreset so a broken preset is
+ * surfaced before the user commits.
+ */
+export function previewPreset(profileDir: string, name: unknown): PresetResult & { changes?: PresetChange } {
+  if (typeof name !== 'string') return { ok: false, error: 'invalid preset name / 组合名称无效' }
+  const preset = readPresets(profileDir).find(item => item.name === name)
+  if (preset === undefined) return { ok: false, error: 'preset not found / 组合不存在' }
+
+  const trial = trialValidate(profileDir, preset.bundleOrder)
+  if (!trial.ok) {
+    const first = trial.errors[0]
+    return {
+      ok: false,
+      error: `trial validation failed — ${first?.message ?? 'composition would not boot'} / 试启动校验失败：${first?.message ?? '组合无法启动'}`,
+    }
+  }
+
+  const { community } = readBundleStack(profileDir)
+  const reordered = community.filter((name, index) => name !== preset.bundleOrder[index])
+  const currentDisabled = readMarketState(profileDir).disabled
+  const presetDisabled = new Set(preset.disabled)
+  const enabled = [...currentDisabled].filter(name => !presetDisabled.has(name))
+  const disabled = [...presetDisabled].filter(name => !currentDisabled.has(name))
+  return {
+    ok: true,
+    changes: {
+      reordered,
+      enabled,
+      disabled,
+      noop: reordered.length === 0 && enabled.length === 0 && disabled.length === 0,
+    },
+  }
+}
+
 /**
  * Apply a saved preset: trial-validate the candidate order first (refuse
  * without writing on any boot-breaking issue), auto-snapshot the profile,
- * then write the bundle order and the disable list.
+ * then write the bundle order and the disable list. The response carries the
+ * change preview so the UI can report exactly what moved.
  */
-export function applyPreset(profileDir: string, name: unknown): PresetResult {
+export function applyPreset(profileDir: string, name: unknown): PresetApplyResult {
   if (typeof name !== 'string') return { ok: false, error: 'invalid preset name / 组合名称无效' }
   const preset = readPresets(profileDir).find(item => item.name === name)
   if (preset === undefined) return { ok: false, error: 'preset not found / 组合不存在' }
@@ -141,6 +194,7 @@ export function applyPreset(profileDir: string, name: unknown): PresetResult {
     }
   }
 
+  const preview = previewPreset(profileDir, name)
   const snapshot = createProfileSnapshot(profileDir)
   const ordered = applyBundleOrder(profileDir, preset.bundleOrder)
   if (!ordered.ok) {
@@ -150,5 +204,5 @@ export function applyPreset(profileDir: string, name: unknown): PresetResult {
   state.disabled = new Set(preset.disabled)
   writeMarketState(profileDir, state)
   logEvent('info', 'preset', `applied "${name}"${snapshot !== null ? ` (snapshot ${snapshot.id})` : ''}`)
-  return { ok: true, snapshot: snapshot?.id }
+  return { ok: true, snapshot: snapshot?.id, changes: preview.ok ? preview.changes : undefined }
 }
