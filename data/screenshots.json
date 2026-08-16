@@ -1,0 +1,42 @@
+{
+  "https://github.com/STARDUSTLC666/dsh-email": [
+    "https://raw.githubusercontent.com/STARDUSTLC666/dsh-email/main/assets/screenshots/screenshot-1.png",
+    "https://raw.githubusercontent.com/STARDUSTLC666/dsh-email/main/assets/screenshots/screenshot-2.png"
+  ],
+  "https://github.com/STARDUSTLC666/dsh-calendar": [
+    "https://raw.githubusercontent.com/STARDUSTLC666/dsh-calendar/main/assets/screenshots/screenshot-1.png",
+    "https://raw.githubusercontent.com/STARDUSTLC666/dsh-calendar/main/assets/screenshots/screenshot-2.png"
+  ],
+  "https://github.com/STARDUSTLC666/dsh-rss": [
+    "https://raw.githubusercontent.com/STARDUSTLC666/dsh-rss/master/assets/screenshots/screenshot-1.png",
+    "https://raw.githubusercontent.com/STARDUSTLC666/dsh-rss/master/assets/screenshots/screenshot-2.png"
+  ],
+  "https://github.com/STARDUSTLC666/dsh-ffmpeg": [
+    "https://raw.githubusercontent.com/STARDUSTLC666/dsh-ffmpeg/master/assets/screenshots/screenshot-1.png",
+    "https://raw.githubusercontent.com/STARDUSTLC666/dsh-ffmpeg/master/assets/screenshots/screenshot-2.png"
+  ],
+  "https://github.com/STARDUSTLC666/dsh-voice": [
+    "https://raw.githubusercontent.com/STARDUSTLC666/dsh-voice/master/assets/screenshots/screenshot-1.png",
+    "https://raw.githubusercontent.com/STARDUSTLC666/dsh-voice/master/assets/screenshots/screenshot-2.png"
+  ],
+  "https://github.com/STARDUSTLC666/dsh-codex-port": [
+    "https://raw.githubusercontent.com/STARDUSTLC666/dsh-codex-port/master/assets/screenshots/screenshot-1.png",
+    "https://raw.githubusercontent.com/STARDUSTLC666/dsh-codex-port/master/assets/screenshots/screenshot-2.png"
+  ],
+  "https://github.com/STARDUSTLC666/dsh-remotion": [
+    "https://raw.githubusercontent.com/STARDUSTLC666/dsh-remotion/master/assets/screenshots/screenshot-1.png",
+    "https://raw.githubusercontent.com/STARDUSTLC666/dsh-remotion/master/assets/screenshots/screenshot-2.png"
+  ],
+  "https://github.com/STARDUSTLC666/dsh-hyperframes": [
+    "https://raw.githubusercontent.com/STARDUSTLC666/dsh-hyperframes/master/assets/screenshots/screenshot-1.png",
+    "https://raw.githubusercontent.com/STARDUSTLC666/dsh-hyperframes/master/assets/screenshots/screenshot-2.png"
+  ],
+  "https://github.com/STARDUSTLC666/dsh-slack": [
+    "https://raw.githubusercontent.com/STARDUSTLC666/dsh-slack/main/assets/screenshots/screenshot-1.png",
+    "https://raw.githubusercontent.com/STARDUSTLC666/dsh-slack/main/assets/screenshots/screenshot-2.png"
+  ],
+  "https://github.com/STARDUSTLC666/dsh-dingtalk": [
+    "https://raw.githubusercontent.com/STARDUSTLC666/dsh-dingtalk/main/assets/screenshots/screenshot-1.png",
+    "https://raw.githubusercontent.com/STARDUSTLC666/dsh-dingtalk/main/assets/screenshots/screenshot-2.png"
+  ]
+}
