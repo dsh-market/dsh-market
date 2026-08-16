@@ -56,6 +56,19 @@ describe('verifyActivation (P0-2)', () => {
     expect(verifyActivation('web', 'client-a', new Set(['client-a']))).toMatchObject({ state: 'live', hot: true, bundle: false })
   })
 
+  it('disabled when the user switched it off — never "restart to apply"', () => {
+    profile(['dsh-loop'])
+    pkg('dsh-loop', { dsh: { bundle: { patch: './cordis.patch.yml' } }, main: 'index.js' }, { 'index.js': '', 'cordis.patch.yml': SIMPLE_PATCH })
+    // Even when the fiber is somehow still up, the disabled flag wins.
+    const result = verifyActivation('web', 'dsh-loop', new Set(['dsh-loop']), undefined, true)
+    expect(result).toMatchObject({ state: 'disabled', hot: false, bundle: true })
+    expect(result.reasons.join(' ')).toMatch(/disabled|已停用/)
+
+    // A client-only package switched off reads disabled too, not inert.
+    pkg('client-a', { dsh: { client: {} }, main: 'index.js' }, { 'index.js': '' })
+    expect(verifyActivation('web', 'client-a', new Set(), undefined, true)).toMatchObject({ state: 'disabled', bundle: false })
+  })
+
   it('restart when in bundles but not live, with the patch reason', () => {
     profile(['dsh-loop'])
     pkg('dsh-loop', { dsh: { bundle: { patch: './cordis.patch.yml' } }, main: 'index.js' }, { 'index.js': '', 'cordis.patch.yml': COMPLEX_PATCH })
