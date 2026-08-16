@@ -1,6 +1,11 @@
 /**
- * Diagnostics tab — issue #98 (phase 1): renders the profile composition
- * check report served by the host route /dsh-market/check (see src/check.ts).
+ * Diagnostics tab — issue #98: renders the profile composition check report
+ * served by the host route /dsh-market/check (see src/check.ts). Below the
+ * report sit the phase 2/3 action panels: a community-bundle ordering block
+ * (reorder locally with ↑/↓, POST to /dsh-market/bundle-order), a snapshots
+ * & rollback panel (snapshot-panel.tsx) and a plugin presets panel
+ * (preset-panel.tsx) — the latter two are collapsible, default collapsed,
+ * and lazy-fetch on first expand.
  *
  * Read-only view of the loading-layer stack and the conflict surface: bundle
  * order (official vs community), duplicate loader entry ids, core packages
@@ -9,10 +14,12 @@
  * shape mirrors the CheckReport interface in src/check.ts; it is re-declared
  * here because the client bundle is built independently of the host tree.
  */
-import { useEffect, useState, type ReactNode } from 'react'
-import { DisclosureRow, IconChevronDownOutline14, IconLoadingOutline16, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { Button, DisclosureRow, IconChevronDownOutline14, IconChevronRightOutline14, IconLoadingOutline16, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
 import css from './Market.module.css'
 import type { Translate } from './market-data.ts'
+import { PresetPanel } from './preset-panel.tsx'
+import { SnapshotPanel } from './snapshot-panel.tsx'
 
 /** Mirrors BundleLayer in src/check.ts. */
 interface BundleLayer {
@@ -82,6 +89,12 @@ interface CheckSummary {
   warnings: string[]
 }
 
+/** Mirrors OrderConflict in src/order.ts (top-level orderConflicts in CheckReport). */
+interface OrderConflict {
+  name: string
+  reason: string
+}
+
 /** Mirrors CheckReport in src/check.ts. */
 interface CheckReport {
   profile: string
@@ -94,6 +107,8 @@ interface CheckReport {
   peerMismatches: PeerMismatch[]
   multiVersion: MultiVersion[]
   summary: CheckSummary
+  /** #98 phase 2: validateOrder result for the CURRENT bundle order, when the host emits it. */
+  orderConflicts?: OrderConflict[]
 }
 
 /** One always-present section card with a count and an empty-state text. */
@@ -131,8 +146,33 @@ function DisclosureSection(props: {
 }
 
 /**
+ * A collapsible section that KEEPS its children mounted (hidden via CSS when
+ * collapsed) so the phase 3 panels below retain their loaded data and
+ * in-progress edits across collapses. Children mount from the start, but the
+ * panels only fetch when `open` first becomes true.
+ */
+function CollapsibleSection(props: { title: string; open: boolean; onToggle: () => void; children: ReactNode }) {
+  const { title, open, onToggle, children } = props
+  return (
+    <section className={css.diagSection}>
+      <button type="button" className={css.collapseHead} onClick={onToggle} aria-expanded={open}>
+        <span className={css.collapseIcon}>
+          {open ? <IconChevronDownOutline14 size={14} /> : <IconChevronRightOutline14 size={14} />}
+        </span>
+        <span className={css.collapseTitle}>{title}</span>
+        <span className={css.grow} />
+      </button>
+      <div className={css.collapseBody} style={open ? undefined : { display: 'none' }}>
+        {children}
+      </div>
+    </section>
+  )
+}
+
+/**
  * Fetch and render the profile check report. Refetches on every mount, so
- * switching tabs away and back re-runs the (cheap, read-only) analysis.
+ * switching tabs away and back re-runs the (cheap, read-only) analysis; the
+ * phase 3 panels below call `refresh()` after applying changes.
  */
 export function Diagnostics(props: { t: Translate }) {
   const { t } = props
@@ -140,6 +180,61 @@ export function Diagnostics(props: { t: Translate }) {
   const [error, setError] = useState<string | null>(null)
   const [overridesOpen, setOverridesOpen] = useState(true)
   const [orphansOpen, setOrphansOpen] = useState(true)
+  const [snapOpen, setSnapOpen] = useState(false)
+  const [presetOpen, setPresetOpen] = useState(false)
+  /** Bump to re-run the /dsh-market/check fetch after an order/preset/restore apply. */
+  const [version, setVersion] = useState(0)
+  const refresh = useCallback(() => setVersion(v => v + 1), [])
+
+  // --- issue #98 phase 2 (step 1): community-bundle ordering ---------------
+  /** Community bundle names from the report, in declared order. */
+  const communityNames = useMemo(
+    () => report === null ? [] : report.bundles.filter(bundle => bundle.kind === 'community').map(bundle => bundle.name),
+    [report],
+  )
+  /** Local editing state: re-synced whenever the report (re)loads. */
+  const [order, setOrder] = useState<string[]>(communityNames)
+  const [orderMsg, setOrderMsg] = useState<string | null>(null)
+  const [orderErr, setOrderErr] = useState<string | null>(null)
+  const [orderBusy, setOrderBusy] = useState(false)
+  useEffect(() => { setOrder(communityNames) }, [communityNames])
+
+  /** Swap one community bundle with its neighbour (-1 up, +1 down). */
+  const moveBundle = (index: number, delta: -1 | 1) => {
+    setOrder(prev => {
+      const next = [...prev]
+      const target = index + delta
+      if (target < 0 || target >= next.length) return prev
+      ;[next[index], next[target]] = [next[target]!, next[index]!]
+      return next
+    })
+  }
+
+  /** POST the current community order; the host trial-validates and snapshots first. */
+  const applyOrder = () => {
+    if (orderBusy) return
+    setOrderBusy(true)
+    setOrderMsg(null)
+    setOrderErr(null)
+    fetch('/dsh-market/bundle-order', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ order }),
+    })
+      .then(async (res) => {
+        const body = (await res.json().catch(() => null)) as { ok?: unknown; error?: unknown } | null
+        if (!res.ok || body?.ok !== true) {
+          setOrderErr(String(body?.error ?? `HTTP ${String(res.status)}`))
+          return
+        }
+        setOrderMsg(t('orderApplied'))
+        // Refetch the report so communityNames / the PresetPanel bundleOrder
+        // reflect the applied order before anything is saved as a preset.
+        refresh()
+      })
+      .catch((err: unknown) => setOrderErr(err instanceof Error ? err.message : String(err)))
+      .finally(() => setOrderBusy(false))
+  }
 
   useEffect(() => {
     let live = true
@@ -155,7 +250,7 @@ export function Diagnostics(props: { t: Translate }) {
         if (live) setError(err instanceof Error ? err.message : String(err))
       })
     return () => { live = false }
-  }, [])
+  }, [version])
 
   if (error !== null) {
     return <div className={css.err}>{t('checkLoadFail')}{error}</div>
@@ -333,6 +428,62 @@ export function Diagnostics(props: { t: Translate }) {
           ))}
         </div>
       </DisclosureSection>
+
+      {/* issue #98 phase 2 (step 1): community-bundle ordering */}
+      <section className={css.diagSection}>
+        <h3>{t('orderSection')} <span className={css.diagCount}>({order.length})</span></h3>
+        {report.orderConflicts !== undefined && report.orderConflicts.length > 0 && (
+          <div className={css.diagList}>
+            <span className={css.diagKey}>{t('orderConflicts')}</span>
+            {report.orderConflicts.map((conflict, i) => (
+              <div key={i} className={css.warnLine}>{conflict.name} — {conflict.reason}</div>
+            ))}
+          </div>
+        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <Button variant="primary" size="sm" disabled={order.length === 0 || orderBusy} onClick={applyOrder}>
+            {orderBusy ? '…' : t('orderApply')}
+          </Button>
+          {orderMsg !== null && <span className={css.okState}>{orderMsg}</span>}
+          {orderErr !== null && <span className={css.err}>{orderErr}</span>}
+        </div>
+        {order.length === 0
+          ? <div className={css.diagEmpty}>—</div>
+          : (
+              <div className={css.diagList}>
+                {order.map((name, i) => (
+                  <div key={name} className={css.diagRow}>
+                    <span className={css.diagIndex}>{i + 1}</span>
+                    <span className={css.nm}>{name}</span>
+                    <span className={css.grow} />
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      aria-label={t('orderUp')}
+                      disabled={i === 0 || orderBusy}
+                      onClick={() => moveBundle(i, -1)}
+                    >{t('orderUp')}</Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      aria-label={t('orderDown')}
+                      disabled={i >= order.length - 1 || orderBusy}
+                      onClick={() => moveBundle(i, 1)}
+                    >{t('orderDown')}</Button>
+                  </div>
+                ))}
+              </div>
+            )}
+      </section>
+
+      {/* issue #98 phase 3: snapshots & rollback / plugin presets */}
+      <CollapsibleSection title={t('snapSection')} open={snapOpen} onToggle={() => setSnapOpen(o => !o)}>
+        <SnapshotPanel t={t} open={snapOpen} onRefresh={refresh} />
+      </CollapsibleSection>
+
+      <CollapsibleSection title={t('presetSection')} open={presetOpen} onToggle={() => setPresetOpen(o => !o)}>
+        <PresetPanel t={t} open={presetOpen} bundleOrder={communityNames} onRefresh={refresh} />
+      </CollapsibleSection>
     </div>
   )
 }

@@ -24,6 +24,10 @@ import {
 } from './dsh-cli.ts'
 import { profileDir, readInstalled, readInstalledVersion, readLockCommits, readManifestDeps, restoreManifestDeps, setAllowBuilds } from './profile.ts'
 import { analyzeProfile } from './check.ts'
+import { applyBundleOrder, mergeOrder, readBundleRules, readBundleStack, validateOrder } from './order.ts'
+import { createProfileSnapshot, listSnapshots, restoreSnapshot } from './snapshot.ts'
+import { applyPreset, deletePreset, listPresets, savePreset } from './presets.ts'
+import { trialValidate } from './trial.ts'
 import { findInstalledAlias, gitAllowBuildsKey, installTargetFor } from './sources.ts'
 import { isStaleUpdate, parseIgnoredBuilds, parsePrepareNotAllowed, RELEASE_AGE_OVERRIDE, retargetCollections, validateAddedPlugins, withHoistRecovery } from './install.ts'
 import { checkUpdates, fetchNpmLatest, invalidateUpdates, isUpgrade, latestPublishedRecently } from './updates.ts'
@@ -110,6 +114,25 @@ export function mountMarketRoutes(
   const groups = marketState.groups
   const groupOrder = marketState.groupOrder
   const themes = createThemeManager(host, config.profile, disabled, activeProfileDir)
+
+  /**
+   * Re-sync the live closure state from disk. Snapshot restore and preset
+   * apply write state.json directly (they must, to survive the next boot),
+   * which would leave this in-memory `disabled`/`groups`/`groupOrder` stale —
+   * the next toggle/groups write would then overwrite the restored values.
+   * The objects are mutated in place (clear + refill) so every captured
+   * reference (themes manager, live handlers) sees the fresh state (issue
+   * #98 review M2).
+   */
+  function refreshMarketState(): void {
+    const fresh = readMarketState(activeProfileDir)
+    disabled.clear()
+    for (const name of fresh.disabled) disabled.add(name)
+    for (const key of Object.keys(groups)) delete groups[key]
+    Object.assign(groups, fresh.groups)
+    groupOrder.length = 0
+    groupOrder.push(...fresh.groupOrder)
+  }
 
   // Client-only packages (dsh.client without dsh.bundle) are invisible to the
   // bundle layer in every boot; the market shim-mounts them so their client
@@ -428,6 +451,191 @@ export function mountMarketRoutes(
         try {
           const report = analyzeProfile(activeProfileDir)
           sendJson(response, 200, report)
+        } catch (error) {
+          sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    }),
+
+    // Issue #98 phase 2: reorder the community bundles. Official bundles are
+    // fixed; the candidate is trial-validated (dry-run composition replay)
+    // and snapshotted BEFORE the manifest is written — a broken order is
+    // refused and the profile is never touched.
+    host.webServer.register({
+      kind: 'exact',
+      path: '/dsh-market/bundle-order',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) {
+          sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        try {
+          const body = (await readJsonBody(request)) as { order?: unknown } | null
+          if (body === null || typeof body !== 'object') {
+            sendJson(response, 400, { error: 'JSON body is required / 需要 JSON body' })
+            return
+          }
+          if (!Array.isArray(body.order) || !body.order.every(item => typeof item === 'string')) {
+            sendJson(response, 400, { error: 'order must be an array of bundle names / order 必须是 bundle 名称数组' })
+            return
+          }
+          const order = body.order as string[]
+          // Before/after rules (issue #98 phase 2): the merged stack must
+          // satisfy every rule the bundles declare. Enforced BEFORE the
+          // trial/snapshot/write so a rule-breaking order is refused outright.
+          const stack = readBundleStack(activeProfileDir)
+          const merged = mergeOrder(stack.bundles, order)
+          if (merged.ok) {
+            const conflicts = validateOrder(merged.bundles, readBundleRules(activeProfileDir))
+            if (conflicts.length > 0) {
+              logEvent('warn', 'bundle-order', `rejected by before/after rules: ${conflicts.map(c => c.reason).join('; ')}`)
+              sendJson(response, 422, {
+                error: 'the order violates declared before/after rules / 该顺序违反了插件声明的 before/after 规则',
+                conflicts,
+              })
+              return
+            }
+          }
+          const trial = trialValidate(activeProfileDir, order)
+          if (!trial.ok) {
+            const first = trial.errors[0]
+            logEvent('warn', 'bundle-order', `rejected by trial validation: ${first?.message ?? 'unknown'}`)
+            sendJson(response, 422, {
+              error: `trial validation failed — ${first?.message ?? 'this order would not boot'} / 试启动校验失败：${first?.message ?? '该顺序无法启动'}`,
+              trial: { errors: trial.errors, warnings: trial.warnings },
+            })
+            return
+          }
+          const snapshot = createProfileSnapshot(activeProfileDir)
+          const applied = applyBundleOrder(activeProfileDir, order)
+          if (!applied.ok) {
+            sendJson(response, 400, { error: applied.error })
+            return
+          }
+          invalidateUpdates()
+          logEvent('info', 'bundle-order', `applied new community order${snapshot !== null ? ` (snapshot ${snapshot.id})` : ''}`)
+          sendJson(response, 200, { ok: true, bundles: applied.bundles, snapshot: snapshot?.id ?? null })
+        } catch (error) {
+          sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    }),
+
+    // Issue #98 phase 3 (#19): profile snapshots — list, create, restore.
+    host.webServer.register({
+      kind: 'exact',
+      path: '/dsh-market/snapshots',
+      handler: async (request, response) => {
+        if (request.method === 'GET') {
+          sendJson(response, 200, { snapshots: listSnapshots(activeProfileDir) })
+          return
+        }
+        if (request.method === 'POST') {
+          if (!sameOrigin(request)) {
+            sendJson(response, 403, { error: 'untrusted origin' })
+            return
+          }
+          try {
+            const snapshot = createProfileSnapshot(activeProfileDir)
+            sendJson(response, snapshot !== null ? 200 : 400, {
+              ok: snapshot !== null,
+              ...(snapshot !== null ? { snapshot } : { error: 'profile has no package.json / profile 缺少 package.json' }),
+            })
+            return
+          } catch (error) {
+            sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+            return
+          }
+        }
+        response.writeHead(405, { allow: 'GET, POST' })
+        response.end()
+      },
+    }),
+
+    host.webServer.register({
+      kind: 'exact',
+      path: '/dsh-market/restore-snapshot',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) {
+          sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        try {
+          const body = (await readJsonBody(request)) as { snapshot?: unknown } | null
+          if (body === null || typeof body !== 'object' || typeof body.snapshot !== 'string' || body.snapshot === '') {
+            sendJson(response, 400, { error: 'snapshot id is required / 需要快照 id' })
+            return
+          }
+          const restored = restoreSnapshot(activeProfileDir, body.snapshot)
+          if (restored.ok) {
+            invalidateUpdates()
+            refreshMarketState()
+          }
+          sendJson(response, restored.ok ? 200 : 400, restored)
+        } catch (error) {
+          sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    }),
+
+    // Issue #98 phase 3: named plugin presets (bundle order + disable list).
+    host.webServer.register({
+      kind: 'exact',
+      path: '/dsh-market/presets',
+      handler: async (request, response) => {
+        if (request.method === 'GET') {
+          sendJson(response, 200, { presets: listPresets(activeProfileDir) })
+          return
+        }
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'GET, POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) {
+          sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        try {
+          const body = (await readJsonBody(request)) as { action?: unknown; name?: unknown; bundleOrder?: unknown; disabled?: unknown } | null
+          if (body === null || typeof body !== 'object') {
+            sendJson(response, 400, { error: 'JSON body is required / 需要 JSON body' })
+            return
+          }
+          const name = body.name
+          switch (body.action) {
+            case 'save': {
+              const saved = savePreset(activeProfileDir, name, body.bundleOrder, body.disabled)
+              sendJson(response, saved.ok ? 200 : 400, saved)
+              return
+            }
+            case 'apply': {
+              const applied = applyPreset(activeProfileDir, name)
+              if (applied.ok) {
+                invalidateUpdates()
+                refreshMarketState()
+              }
+              sendJson(response, applied.ok ? 200 : 422, applied)
+              return
+            }
+            case 'delete': {
+              const deleted = deletePreset(activeProfileDir, name)
+              sendJson(response, deleted.ok ? 200 : 400, deleted)
+              return
+            }
+            default:
+              sendJson(response, 400, { error: 'action must be save | apply | delete / action 必须是 save | apply | delete' })
+          }
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
         }

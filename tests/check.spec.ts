@@ -7,7 +7,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { dump } from 'js-yaml'
@@ -108,6 +108,43 @@ describe('bundle stack (#98 diagnostics)', () => {
     expect(missing?.error).not.toBeNull()
     expect(report.summary.errors.some(e => e.includes('missing-bundle'))).toBe(true)
     expect(report.summary.ok).toBe(false)
+  })
+})
+
+describe('workspace-root hoisted bundles (#98 review B1)', () => {
+  it('resolves a bundle that physically lives only in the parent node_modules', () => {
+    // dsh layouts share <profiles>/node_modules as the workspace root: the
+    // bundle package is NOT inside the profile's own node_modules, only at
+    // tmp/node_modules/bundle-a. createRequire's upward search (the same
+    // resolution the boot uses) must find it.
+    const dir = pdir() // tmp/profile
+    writeProfile(dir, {
+      name: 'web-profile',
+      dsh: { profile: { bundles: ['bundle-a'] } },
+      dependencies: { 'bundle-a': '^1.0.0' },
+    })
+    const root = join(tmp, 'node_modules', 'bundle-a')
+    mkdirSync(root, { recursive: true })
+    writeFileSync(join(root, 'package.json'), JSON.stringify({
+      name: 'bundle-a',
+      version: '1.0.0',
+      dsh: { bundle: { patch: './cordis.patch.yml' } },
+    }))
+    writeFileSync(join(root, 'cordis.patch.yml'), dump([
+      { insert: [{ id: 'a-entry', name: 'bundle-a' }] },
+    ]))
+    // Guard the fixture itself: the profile must NOT carry a local copy.
+    expect(existsSync(join(dir, 'node_modules', 'bundle-a'))).toBe(false)
+
+    const report = analyzeProfile(dir)
+    const bundle = report.bundles[0]
+    expect(bundle?.name).toBe('bundle-a')
+    expect(bundle?.error).toBeNull()
+    expect(bundle?.parseError).toBeNull()
+    expect(bundle?.entries).toEqual(['a-entry'])
+    expect(bundle?.directory).toBe(root)
+    expect(report.rows.map(r => r.id)).toEqual(['a-entry'])
+    expect(report.summary.ok).toBe(true)
   })
 })
 

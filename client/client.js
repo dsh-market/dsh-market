@@ -229,7 +229,43 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			checkOverridden: "被覆盖层",
 			checkOrphans: "孤儿 patch",
 			checkOrphansEmpty: "没有孤儿 patch",
-			checkReason: "原因"
+			checkReason: "原因",
+			orderSection: "排序",
+			orderUp: "↑",
+			orderDown: "↓",
+			orderApply: "应用顺序",
+			orderConflicts: "当前顺序的 before/after 冲突",
+			orderApplied: "✓ 已应用",
+			snapSection: "快照与回滚",
+			snapHint: "应用变更前会自动创建快照；也可以手动创建快照，随时回滚到任意状态。",
+			snapCreate: "创建快照",
+			snapCreating: "创建中…",
+			snapCreated: "快照已创建",
+			snapEmpty: "还没有快照",
+			snapListFail: "快照列表加载失败：",
+			snapCreateFail: "创建快照失败：",
+			snapRestore: "回滚",
+			snapRestoring: "回滚中…",
+			snapRestored: "已回滚，重启后生效",
+			snapRestoreFail: "回滚失败：",
+			snapRestoreConfirm: "确认回滚",
+			snapRestoreConfirmText: "回滚会用快照覆盖当前 profile 的 package.json 与配置，且不可撤销（可先创建新快照再回滚）。",
+			snapFiles: "包含文件",
+			presetSection: "插件组合",
+			presetHint: "把当前的 bundle 顺序与停用列表保存为组合，随时切换；应用前会做试启动校验并自动创建快照。",
+			presetName: "组合名称",
+			presetSave: "保存当前状态",
+			presetSaving: "保存中…",
+			presetSaved: "组合已保存",
+			presetApply: "应用",
+			presetApplied: "已应用",
+			presetDelete: "删除",
+			presetDeleted: "组合已删除",
+			presetEmpty: "还没有保存过组合",
+			presetNameEmpty: "请输入组合名称",
+			presetFail: "组合操作失败：",
+			presetListFail: "组合列表加载失败：",
+			presetBundleCount: "{0} 个 bundle"
 		};
 		const en = {
 			nav: "Plugin Market",
@@ -428,7 +464,43 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			checkOverridden: "overridden layers",
 			checkOrphans: "Orphan patches",
 			checkOrphansEmpty: "No orphan patches",
-			checkReason: "reason"
+			checkReason: "reason",
+			orderSection: "Ordering",
+			orderUp: "↑",
+			orderDown: "↓",
+			orderApply: "Apply order",
+			orderConflicts: "before/after conflicts in the current order",
+			orderApplied: "✓ Applied",
+			snapSection: "Snapshots & Rollback",
+			snapHint: "Snapshots are taken automatically before applying changes; you can also create one manually and roll back anytime.",
+			snapCreate: "Create snapshot",
+			snapCreating: "Creating…",
+			snapCreated: "Snapshot created",
+			snapEmpty: "No snapshots yet",
+			snapListFail: "Failed to load snapshots: ",
+			snapCreateFail: "Failed to create snapshot: ",
+			snapRestore: "Restore",
+			snapRestoring: "Restoring…",
+			snapRestored: "Restored — restart to apply",
+			snapRestoreFail: "Failed to restore: ",
+			snapRestoreConfirm: "Confirm restore",
+			snapRestoreConfirmText: "Restoring overwrites the current profile package.json and configuration from the snapshot; this cannot be undone (create a fresh snapshot first if unsure).",
+			snapFiles: "files",
+			presetSection: "Plugin presets",
+			presetHint: "Save the current bundle order and disabled list as a preset and switch anytime; applying runs a trial-start check and creates a snapshot first.",
+			presetName: "Preset name",
+			presetSave: "Save current state",
+			presetSaving: "Saving…",
+			presetSaved: "Preset saved",
+			presetApply: "Apply",
+			presetApplied: "Applied",
+			presetDelete: "Delete",
+			presetDeleted: "Preset deleted",
+			presetEmpty: "No presets saved yet",
+			presetNameEmpty: "Enter a preset name",
+			presetFail: "Preset operation failed: ",
+			presetListFail: "Failed to load presets: ",
+			presetBundleCount: "{0} bundles"
 		};
 		//#endregion
 		//#region src/client/market-data.ts
@@ -749,7 +821,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		}
 		//#endregion
 		//#region \0dsh-css:D:\workspace\dsh-market\src\client\Market.module.css.mjs
-		const css = ".P9NphG_root{min-width:0;height:100%;color:var(--dsw-alias-label-primary,#1f2328);flex-direction:column;display:flex;position:relative}.P9NphG_head{flex-direction:column;gap:12px;padding:4px 4px 12px;display:flex}.P9NphG_title{margin:0;font-size:16px;font-weight:500;line-height:24px}.P9NphG_sub{color:var(--dsw-alias-label-tertiary,#8b93a1);align-items:center;gap:8px;margin:0;font-size:14px;line-height:22px;display:flex}.P9NphG_tabs{border-bottom:1px solid var(--dsw-alias-border-l2,#e5e7eb);align-items:flex-end;gap:2px;display:flex}.P9NphG_tab{font:inherit;color:var(--dsw-alias-label-secondary,#6b7280);cursor:pointer;white-space:nowrap;background:0 0;border:none;border-bottom:2px solid #0000;padding:7px 12px;font-size:13px}.P9NphG_tab.P9NphG_on{color:var(--dsw-alias-brand-primary,#4f6ef7);border-bottom-color:var(--dsw-alias-brand-primary,#4f6ef7);font-weight:600}.P9NphG_banner{background:var(--dsw-alias-bg-layer-2,#fdf3e3);border:1px solid var(--dsw-alias-border-l2,#f3e3c3);border-radius:8px;align-items:center;gap:8px;margin:0;padding:8px 12px;font-size:12px;display:flex}.P9NphG_bannerIcon{color:var(--dsw-alias-label-secondary,#6b7280);flex-shrink:0}.P9NphG_bannerHint{color:var(--dsw-alias-label-tertiary,#8b93a1);cursor:help;display:inline-flex}.P9NphG_body{flex:1;padding:12px 4px 24px;overflow-x:hidden;overflow-y:auto}.P9NphG_cats{z-index:5;background:var(--dsw-alias-bg-layer-2,#f7f8fa);margin:-12px -4px 2px;padding:12px 4px 4px;position:sticky;top:-13px}.P9NphG_catsRow{align-items:flex-start;gap:8px;display:flex;position:relative}.P9NphG_star{color:var(--dsw-alias-label-secondary,#9ca3af);font-size:11px}.P9NphG_top{z-index:20;display:inline-flex;position:absolute;bottom:18px;right:18px}.P9NphG_topBtn{border-radius:99px;width:38px;height:38px;padding:0}.P9NphG_tag{border:1px solid var(--dsw-alias-border-l3,#d9dde3);color:var(--dsw-alias-label-secondary,#6b7280);border-radius:4px;flex-shrink:0;padding:1px 6px;font-size:11px;line-height:16px}.P9NphG_okState{color:var(--dsw-alias-state-success-primary,#16a34a);white-space:nowrap;font-size:12px;font-weight:600}.P9NphG_catsWrap{flex-wrap:wrap;flex:1;align-items:center;gap:6px;min-width:0;display:flex}.P9NphG_catsCollapsed{max-height:62px;overflow:hidden}.P9NphG_catsToggle.P9NphG_catsToggle{height:26px;min-height:26px;color:var(--dsw-alias-label-secondary,#6b7280);padding:0 6px}.P9NphG_shots{-webkit-overflow-scrolling:touch;scrollbar-width:thin;gap:8px;margin:0 0 8px;padding:2px 0 6px;display:flex;overflow-x:auto}.P9NphG_shot{object-fit:cover;border:1px solid var(--dsw-alias-border-default,#e5e7eb);background:var(--dsw-alias-bg-layer-2,#f3f4f6);border-radius:8px;flex:none;max-width:260px;height:150px}.P9NphG_cmd{background:var(--dsw-alias-bg-layer-2,#f3f4f6);word-break:break-all;border-radius:6px;margin:8px 0 0;padding:8px 10px;font-family:ui-monospace,Menlo,monospace;font-size:11px;line-height:18px}.P9NphG_warnLine{color:var(--dsw-alias-state-warn-primary,#b45309);align-items:center;gap:4px;margin:0;font-size:12px;font-weight:600;line-height:18px;display:flex}.P9NphG_modalNote{color:var(--dsw-alias-label-tertiary,#8b93a1);align-items:center;gap:4px;margin:12px 0 0;font-size:12px;line-height:18px;display:flex}.P9NphG_grid{grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;display:grid}.P9NphG_swatches{border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:8px;gap:0;height:34px;display:flex;overflow:hidden}.P9NphG_themesGrid{margin-bottom:12px}.P9NphG_swatches i{flex:1}.P9NphG_card{background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:12px;flex-direction:column;gap:12px;padding:12px 14px;display:flex}.P9NphG_row1{align-items:center;gap:10px;min-width:0;display:flex}.P9NphG_srcBtn{flex-shrink:0;align-self:flex-start}.P9NphG_av{color:#fff;object-fit:cover;background:var(--dsw-alias-bg-layer-2,#f3f4f6);border-radius:8px;flex-shrink:0;place-items:center;width:32px;height:32px;font-size:14px;font-weight:700;display:grid}.P9NphG_nm{text-overflow:ellipsis;white-space:nowrap;font-size:14px;font-weight:500;line-height:22px;overflow:hidden}.P9NphG_owner{color:var(--dsw-alias-label-secondary,#9ca3af);font-size:11px}.P9NphG_desc{color:var(--dsw-alias-label-tertiary,#8b93a1);min-height:36px;margin:0;font-size:12px;line-height:18px}.P9NphG_foot{align-items:center;gap:8px;margin-top:auto;display:flex}.P9NphG_grow{flex:1}.P9NphG_titleRow{align-items:center;gap:10px;display:flex}.P9NphG_descTight{min-height:0}.P9NphG_src{color:var(--dsw-alias-label-secondary,#9ca3af);font-size:11px;text-decoration:none}.P9NphG_src:hover{color:var(--dsw-alias-brand-primary,#4f6ef7)}.P9NphG_dot{vertical-align:2px;margin-left:5px}.P9NphG_act{flex-wrap:wrap;align-items:center;gap:6px;margin-top:6px;font-size:11px;display:flex}.P9NphG_actLive{color:var(--dsw-alias-state-success-primary,#16a34a);align-items:center;gap:4px;font-weight:600;display:inline-flex}.P9NphG_actWarn{color:var(--dsw-alias-state-warn-primary,#b45309);align-items:center;gap:4px;font-weight:600;display:inline-flex}.P9NphG_actBroken{color:var(--dsw-alias-state-error-primary,#dc2626);align-items:center;gap:4px;font-weight:600;display:inline-flex}.P9NphG_actWhy{color:var(--dsw-alias-label-secondary,#6b7280);margin-top:2px}.P9NphG_loading{color:var(--dsw-alias-label-secondary,#9ca3af);flex-direction:column;align-items:center;gap:12px;padding:48px;font-size:13px;display:flex}.P9NphG_spin{color:var(--dsw-alias-brand-primary,#4f6ef7);flex-shrink:0;animation:.8s linear infinite P9NphG_sp;display:inline-flex}@keyframes P9NphG_sp{to{transform:rotate(360deg)}}.P9NphG_progress{background:var(--dsw-alias-bg-layer-2,#f3f4f6);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);color:var(--dsw-alias-label-secondary,#6b7280);border-radius:8px;flex-wrap:wrap;align-items:center;gap:9px;margin:0;padding:8px 12px;font-size:12px;display:flex}.P9NphG_bar{background:var(--dsw-alias-border-l1,#e5e7eb);border-radius:99px;width:100%;height:4px;overflow:hidden}.P9NphG_barFill{background:var(--dsw-alias-brand-primary,#4f6ef7);border-radius:99px;height:100%;transition:width .6s}.P9NphG_barWave{width:30%;animation:1.2s ease-in-out infinite P9NphG_dshmSlide}@keyframes P9NphG_dshmSlide{0%{margin-left:-30%}to{margin-left:100%}}.P9NphG_irow .P9NphG_progress{margin-top:8px}.P9NphG_progress code{text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,Menlo,monospace;font-size:11px;overflow:hidden}.P9NphG_empty{color:var(--dsw-alias-label-secondary,#9ca3af);text-align:center;padding:32px;font-size:13px}.P9NphG_err{color:var(--dsw-alias-state-error-primary,#dc2626);white-space:pre-wrap;word-break:break-all;margin:8px 0;font-size:12px}.P9NphG_irow{background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:12px;align-items:center;gap:10px;margin-bottom:8px;padding:12px 14px;display:flex}.P9NphG_irowMissing{filter:grayscale();opacity:.5}.P9NphG_irow>.P9NphG_src,.P9NphG_irow>.P9NphG_owner,.P9NphG_irow button{white-space:nowrap;flex-shrink:0}.P9NphG_tabSearchRow{padding:0 4px 10px;display:flex}.P9NphG_tabSearch{width:260px}.P9NphG_spec{color:var(--dsw-alias-label-secondary,#9ca3af);font-family:ui-monospace,Menlo,monospace;font-size:11px}.P9NphG_staleAction{margin-top:8px}.P9NphG_pct{color:var(--dsw-alias-label-secondary,#6b7280);flex-shrink:0;font-size:11px;font-weight:600}.P9NphG_pager{flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;margin:16px 0 4px;display:flex}.P9NphG_pagerPages{flex-wrap:wrap;flex:1;justify-content:center;align-items:center;gap:6px;min-width:0;display:flex}.P9NphG_pageEllipsis{color:var(--dsw-alias-label-secondary,#9ca3af);padding:0 2px;font-size:12px}.P9NphG_pageInfo{color:var(--dsw-alias-label-secondary,#6b7280);white-space:nowrap;font-size:12px}.P9NphG_depBadge{border:1px solid var(--dsw-alias-state-warn-primary,#b45309);color:var(--dsw-alias-state-warn-primary,#b45309);white-space:nowrap;border-radius:4px;flex-shrink:0;margin-left:6px;padding:1px 6px;font-size:11px;font-weight:600;line-height:16px}.P9NphG_deprecate{color:var(--dsw-alias-state-warn-primary,#b45309);background:var(--dsw-alias-bg-layer-2,#fdf3e3);border:1px solid var(--dsw-alias-border-l2,#f3e3c3);border-radius:8px;margin:0;padding:8px 10px;font-size:12px;line-height:18px}.P9NphG_deprecate a{color:var(--dsw-alias-state-warn-primary,#b45309);text-decoration:underline}.P9NphG_deprecate .P9NphG_src{margin-left:8px}.P9NphG_depLine{flex-wrap:wrap;align-items:center;gap:8px;display:flex}.P9NphG_switch{border:1px solid var(--dsw-alias-border-l2,#d9dde3);background:var(--dsw-alias-bg-layer-2,#e5e7eb);cursor:pointer;border-radius:99px;flex-shrink:0;width:38px;height:22px;padding:0;transition:background .15s,border-color .15s;position:relative}.P9NphG_switchOn{background:var(--dsw-alias-state-success-primary,#16a34a);border-color:var(--dsw-alias-state-success-primary,#16a34a)}.P9NphG_switchMixed{background:var(--dsw-alias-state-warn-primary,#b45309);border-color:var(--dsw-alias-state-warn-primary,#b45309)}.P9NphG_switchKnob{background:#fff;border-radius:99px;width:16px;height:16px;transition:left .15s;position:absolute;top:2px;left:2px;box-shadow:0 1px 2px #00000040}.P9NphG_switchOn .P9NphG_switchKnob,.P9NphG_switchMixed .P9NphG_switchKnob{left:18px}.P9NphG_switch:disabled{opacity:.5;cursor:default}.P9NphG_viewBar{border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:8px;align-items:center;gap:2px;width:fit-content;margin-bottom:12px;padding:2px;display:flex}.P9NphG_viewBtn{font:inherit;color:var(--dsw-alias-label-secondary,#6b7280);cursor:pointer;white-space:nowrap;background:0 0;border:none;border-radius:6px;padding:4px 10px;font-size:12px;line-height:18px}.P9NphG_viewBtn:hover{color:var(--dsw-alias-brand-primary,#4f6ef7)}.P9NphG_viewOn{background:var(--dsw-alias-bg-layer-2,#eef0f4);color:var(--dsw-alias-label-primary,#1f2328);font-weight:600}.P9NphG_groupRow{background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:12px;margin-bottom:10px;padding:12px 14px}.P9NphG_groupHead{align-items:center;gap:10px;min-width:0;display:flex}.P9NphG_groupName{text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:600;line-height:20px;overflow:hidden}.P9NphG_groupActions{flex-shrink:0;align-items:center;gap:6px;display:flex}.P9NphG_groupMembers{flex-direction:column;gap:6px;margin-top:10px;display:flex}.P9NphG_groupMember{background:var(--dsw-alias-bg-layer-2,#f7f8fa);border-radius:8px;align-items:center;gap:8px;padding:6px 8px;font-size:12px;line-height:18px;display:flex}.P9NphG_groupMember .P9NphG_nm{flex:1;min-width:0;font-size:12px}.P9NphG_groupAddPanel{border-top:1px dashed var(--dsw-alias-border-l2,#e5e7eb);flex-direction:column;gap:6px;margin-top:10px;padding-top:10px;display:flex}.P9NphG_groupCreate{align-items:center;gap:8px;margin-bottom:10px;display:flex}.P9NphG_inlineInput{flex:1;min-width:120px}.P9NphG_assignRow{flex-wrap:wrap;align-items:center;gap:8px;display:flex}.P9NphG_assignSelect{border:1px solid var(--dsw-alias-border-l2,#e5e7eb);background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary,#1f2328);font:inherit;border-radius:6px;padding:3px 6px;font-size:12px;line-height:18px}.P9NphG_groupHint{color:var(--dsw-alias-label-tertiary,#8b93a1);font-size:11px}.P9NphG_sectAction{color:var(--dsw-alias-label-secondary,#6b7280);align-items:center;gap:8px;margin:14px 2px 8px;font-size:12px;font-weight:600;display:flex}.P9NphG_backupGrid{grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;display:grid}.P9NphG_backupCard{background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:12px;flex-direction:column;gap:10px;padding:16px;display:flex}.P9NphG_backupCard h3{margin:0;font-size:14px}.P9NphG_backupCard p{color:var(--dsw-alias-label-secondary,#6b7280);margin:0;font-size:12px;line-height:18px}.P9NphG_backupActions{flex-wrap:wrap;gap:8px;display:flex;position:relative}.P9NphG_hiddenFile{opacity:0;pointer-events:none;width:1px;height:1px;position:absolute}.P9NphG_backupInput{box-sizing:border-box;width:100%}.P9NphG_backupCheck{cursor:pointer;align-items:center;gap:6px;font-size:12px;display:flex}.P9NphG_backupWarn{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-state-warn-primary,#b45309)!important}.P9NphG_backupMessage{color:var(--dsw-alias-label-secondary,#6b7280);grid-column:1/-1;font-size:12px}.P9NphG_diagPage{flex-direction:column;gap:12px;display:flex}.P9NphG_diagSummary{background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:12px;flex-wrap:wrap;align-items:center;gap:12px;padding:10px 14px;font-size:12px;display:flex}.P9NphG_diagSummaryItem{color:var(--dsw-alias-label-secondary,#6b7280);white-space:nowrap;align-items:center;gap:6px;display:inline-flex}.P9NphG_diagSummaryMeta{color:var(--dsw-alias-label-tertiary,#9ca3af);text-overflow:ellipsis;white-space:nowrap;max-width:320px;font-family:ui-monospace,Menlo,monospace;font-size:11px;overflow:hidden}.P9NphG_diagSection{background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:12px;flex-direction:column;gap:8px;padding:12px 14px;display:flex}.P9NphG_diagSection h3{color:var(--dsw-alias-label-primary,#1f2328);margin:0;font-size:13px;font-weight:600}.P9NphG_diagCount{color:var(--dsw-alias-label-tertiary,#9ca3af);font-size:11px;font-weight:400}.P9NphG_diagEmpty{color:var(--dsw-alias-label-secondary,#9ca3af);padding:8px 0;font-size:12px}.P9NphG_diagBundle{border-top:1px solid var(--dsw-alias-border-l2,#f0f1f3);flex-direction:column;gap:6px;padding-top:8px;display:flex}.P9NphG_diagBundle:first-of-type{border-top:none;padding-top:0}.P9NphG_diagRow{flex-wrap:wrap;align-items:center;gap:8px;min-width:0;font-size:12px;line-height:18px;display:flex}.P9NphG_diagMeta{align-items:baseline;gap:8px;min-width:0;font-size:12px;display:flex}.P9NphG_diagKey{color:var(--dsw-alias-label-tertiary,#9ca3af);flex-shrink:0;min-width:64px;font-size:11px}.P9NphG_diagVal{color:var(--dsw-alias-label-primary,#1f2328);font-family:ui-monospace,Menlo,monospace;font-size:12px;font-weight:500}.P9NphG_diagIndex{background:var(--dsw-alias-bg-layer-2,#f3f4f6);min-width:18px;height:18px;color:var(--dsw-alias-label-secondary,#6b7280);border-radius:9px;flex-shrink:0;justify-content:center;align-items:center;font-size:11px;font-weight:600;display:inline-flex}.P9NphG_diagBadgeOfficial{background:var(--dsw-alias-brand-primary,#4f6ef7);color:#fff;border-radius:9px;flex-shrink:0;align-items:center;height:18px;padding:0 8px;font-size:11px;font-weight:600;display:inline-flex}.P9NphG_diagBadgeCommunity{background:var(--dsw-alias-bg-layer-2,#f3f4f6);height:18px;color:var(--dsw-alias-label-secondary,#6b7280);border-radius:9px;flex-shrink:0;align-items:center;padding:0 8px;font-size:11px;display:inline-flex}.P9NphG_diagBadgeShadow{background:var(--dsw-alias-state-error-primary,#dc2626);color:#fff;border-radius:9px;flex-shrink:0;align-items:center;height:18px;padding:0 8px;font-size:11px;font-weight:600;display:inline-flex}.P9NphG_diagList{flex-direction:column;gap:6px;display:flex}";
+		const css = ".P9NphG_root{min-width:0;height:100%;color:var(--dsw-alias-label-primary,#1f2328);flex-direction:column;display:flex;position:relative}.P9NphG_head{flex-direction:column;gap:12px;padding:4px 4px 12px;display:flex}.P9NphG_title{margin:0;font-size:16px;font-weight:500;line-height:24px}.P9NphG_sub{color:var(--dsw-alias-label-tertiary,#8b93a1);align-items:center;gap:8px;margin:0;font-size:14px;line-height:22px;display:flex}.P9NphG_tabs{border-bottom:1px solid var(--dsw-alias-border-l2,#e5e7eb);align-items:flex-end;gap:2px;display:flex}.P9NphG_tab{font:inherit;color:var(--dsw-alias-label-secondary,#6b7280);cursor:pointer;white-space:nowrap;background:0 0;border:none;border-bottom:2px solid #0000;padding:7px 12px;font-size:13px}.P9NphG_tab.P9NphG_on{color:var(--dsw-alias-brand-primary,#4f6ef7);border-bottom-color:var(--dsw-alias-brand-primary,#4f6ef7);font-weight:600}.P9NphG_banner{background:var(--dsw-alias-bg-layer-2,#fdf3e3);border:1px solid var(--dsw-alias-border-l2,#f3e3c3);border-radius:8px;align-items:center;gap:8px;margin:0;padding:8px 12px;font-size:12px;display:flex}.P9NphG_bannerIcon{color:var(--dsw-alias-label-secondary,#6b7280);flex-shrink:0}.P9NphG_bannerHint{color:var(--dsw-alias-label-tertiary,#8b93a1);cursor:help;display:inline-flex}.P9NphG_body{flex:1;padding:12px 4px 24px;overflow-x:hidden;overflow-y:auto}.P9NphG_cats{z-index:5;background:var(--dsw-alias-bg-layer-2,#f7f8fa);margin:-12px -4px 2px;padding:12px 4px 4px;position:sticky;top:-13px}.P9NphG_catsRow{align-items:flex-start;gap:8px;display:flex;position:relative}.P9NphG_star{color:var(--dsw-alias-label-secondary,#9ca3af);font-size:11px}.P9NphG_top{z-index:20;display:inline-flex;position:absolute;bottom:18px;right:18px}.P9NphG_topBtn{border-radius:99px;width:38px;height:38px;padding:0}.P9NphG_tag{border:1px solid var(--dsw-alias-border-l3,#d9dde3);color:var(--dsw-alias-label-secondary,#6b7280);border-radius:4px;flex-shrink:0;padding:1px 6px;font-size:11px;line-height:16px}.P9NphG_okState{color:var(--dsw-alias-state-success-primary,#16a34a);white-space:nowrap;font-size:12px;font-weight:600}.P9NphG_catsWrap{flex-wrap:wrap;flex:1;align-items:center;gap:6px;min-width:0;display:flex}.P9NphG_catsCollapsed{max-height:62px;overflow:hidden}.P9NphG_catsToggle.P9NphG_catsToggle{height:26px;min-height:26px;color:var(--dsw-alias-label-secondary,#6b7280);padding:0 6px}.P9NphG_shots{-webkit-overflow-scrolling:touch;scrollbar-width:thin;gap:8px;margin:0 0 8px;padding:2px 0 6px;display:flex;overflow-x:auto}.P9NphG_shot{object-fit:cover;border:1px solid var(--dsw-alias-border-default,#e5e7eb);background:var(--dsw-alias-bg-layer-2,#f3f4f6);border-radius:8px;flex:none;max-width:260px;height:150px}.P9NphG_cmd{background:var(--dsw-alias-bg-layer-2,#f3f4f6);word-break:break-all;border-radius:6px;margin:8px 0 0;padding:8px 10px;font-family:ui-monospace,Menlo,monospace;font-size:11px;line-height:18px}.P9NphG_warnLine{color:var(--dsw-alias-state-warn-primary,#b45309);align-items:center;gap:4px;margin:0;font-size:12px;font-weight:600;line-height:18px;display:flex}.P9NphG_modalNote{color:var(--dsw-alias-label-tertiary,#8b93a1);align-items:center;gap:4px;margin:12px 0 0;font-size:12px;line-height:18px;display:flex}.P9NphG_grid{grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;display:grid}.P9NphG_swatches{border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:8px;gap:0;height:34px;display:flex;overflow:hidden}.P9NphG_themesGrid{margin-bottom:12px}.P9NphG_swatches i{flex:1}.P9NphG_card{background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:12px;flex-direction:column;gap:12px;padding:12px 14px;display:flex}.P9NphG_row1{align-items:center;gap:10px;min-width:0;display:flex}.P9NphG_srcBtn{flex-shrink:0;align-self:flex-start}.P9NphG_av{color:#fff;object-fit:cover;background:var(--dsw-alias-bg-layer-2,#f3f4f6);border-radius:8px;flex-shrink:0;place-items:center;width:32px;height:32px;font-size:14px;font-weight:700;display:grid}.P9NphG_nm{text-overflow:ellipsis;white-space:nowrap;font-size:14px;font-weight:500;line-height:22px;overflow:hidden}.P9NphG_owner{color:var(--dsw-alias-label-secondary,#9ca3af);font-size:11px}.P9NphG_desc{color:var(--dsw-alias-label-tertiary,#8b93a1);min-height:36px;margin:0;font-size:12px;line-height:18px}.P9NphG_foot{align-items:center;gap:8px;margin-top:auto;display:flex}.P9NphG_grow{flex:1}.P9NphG_titleRow{align-items:center;gap:10px;display:flex}.P9NphG_descTight{min-height:0}.P9NphG_src{color:var(--dsw-alias-label-secondary,#9ca3af);font-size:11px;text-decoration:none}.P9NphG_src:hover{color:var(--dsw-alias-brand-primary,#4f6ef7)}.P9NphG_dot{vertical-align:2px;margin-left:5px}.P9NphG_act{flex-wrap:wrap;align-items:center;gap:6px;margin-top:6px;font-size:11px;display:flex}.P9NphG_actLive{color:var(--dsw-alias-state-success-primary,#16a34a);align-items:center;gap:4px;font-weight:600;display:inline-flex}.P9NphG_actWarn{color:var(--dsw-alias-state-warn-primary,#b45309);align-items:center;gap:4px;font-weight:600;display:inline-flex}.P9NphG_actBroken{color:var(--dsw-alias-state-error-primary,#dc2626);align-items:center;gap:4px;font-weight:600;display:inline-flex}.P9NphG_actWhy{color:var(--dsw-alias-label-secondary,#6b7280);margin-top:2px}.P9NphG_loading{color:var(--dsw-alias-label-secondary,#9ca3af);flex-direction:column;align-items:center;gap:12px;padding:48px;font-size:13px;display:flex}.P9NphG_spin{color:var(--dsw-alias-brand-primary,#4f6ef7);flex-shrink:0;animation:.8s linear infinite P9NphG_sp;display:inline-flex}@keyframes P9NphG_sp{to{transform:rotate(360deg)}}.P9NphG_progress{background:var(--dsw-alias-bg-layer-2,#f3f4f6);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);color:var(--dsw-alias-label-secondary,#6b7280);border-radius:8px;flex-wrap:wrap;align-items:center;gap:9px;margin:0;padding:8px 12px;font-size:12px;display:flex}.P9NphG_bar{background:var(--dsw-alias-border-l1,#e5e7eb);border-radius:99px;width:100%;height:4px;overflow:hidden}.P9NphG_barFill{background:var(--dsw-alias-brand-primary,#4f6ef7);border-radius:99px;height:100%;transition:width .6s}.P9NphG_barWave{width:30%;animation:1.2s ease-in-out infinite P9NphG_dshmSlide}@keyframes P9NphG_dshmSlide{0%{margin-left:-30%}to{margin-left:100%}}.P9NphG_irow .P9NphG_progress{margin-top:8px}.P9NphG_progress code{text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,Menlo,monospace;font-size:11px;overflow:hidden}.P9NphG_empty{color:var(--dsw-alias-label-secondary,#9ca3af);text-align:center;padding:32px;font-size:13px}.P9NphG_err{color:var(--dsw-alias-state-error-primary,#dc2626);white-space:pre-wrap;word-break:break-all;margin:8px 0;font-size:12px}.P9NphG_irow{background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:12px;align-items:center;gap:10px;margin-bottom:8px;padding:12px 14px;display:flex}.P9NphG_irowMissing{filter:grayscale();opacity:.5}.P9NphG_irow>.P9NphG_src,.P9NphG_irow>.P9NphG_owner,.P9NphG_irow button{white-space:nowrap;flex-shrink:0}.P9NphG_tabSearchRow{padding:0 4px 10px;display:flex}.P9NphG_tabSearch{width:260px}.P9NphG_spec{color:var(--dsw-alias-label-secondary,#9ca3af);font-family:ui-monospace,Menlo,monospace;font-size:11px}.P9NphG_staleAction{margin-top:8px}.P9NphG_pct{color:var(--dsw-alias-label-secondary,#6b7280);flex-shrink:0;font-size:11px;font-weight:600}.P9NphG_pager{flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;margin:16px 0 4px;display:flex}.P9NphG_pagerPages{flex-wrap:wrap;flex:1;justify-content:center;align-items:center;gap:6px;min-width:0;display:flex}.P9NphG_pageEllipsis{color:var(--dsw-alias-label-secondary,#9ca3af);padding:0 2px;font-size:12px}.P9NphG_pageInfo{color:var(--dsw-alias-label-secondary,#6b7280);white-space:nowrap;font-size:12px}.P9NphG_depBadge{border:1px solid var(--dsw-alias-state-warn-primary,#b45309);color:var(--dsw-alias-state-warn-primary,#b45309);white-space:nowrap;border-radius:4px;flex-shrink:0;margin-left:6px;padding:1px 6px;font-size:11px;font-weight:600;line-height:16px}.P9NphG_deprecate{color:var(--dsw-alias-state-warn-primary,#b45309);background:var(--dsw-alias-bg-layer-2,#fdf3e3);border:1px solid var(--dsw-alias-border-l2,#f3e3c3);border-radius:8px;margin:0;padding:8px 10px;font-size:12px;line-height:18px}.P9NphG_deprecate a{color:var(--dsw-alias-state-warn-primary,#b45309);text-decoration:underline}.P9NphG_deprecate .P9NphG_src{margin-left:8px}.P9NphG_depLine{flex-wrap:wrap;align-items:center;gap:8px;display:flex}.P9NphG_switch{border:1px solid var(--dsw-alias-border-l2,#d9dde3);background:var(--dsw-alias-bg-layer-2,#e5e7eb);cursor:pointer;border-radius:99px;flex-shrink:0;width:38px;height:22px;padding:0;transition:background .15s,border-color .15s;position:relative}.P9NphG_switchOn{background:var(--dsw-alias-state-success-primary,#16a34a);border-color:var(--dsw-alias-state-success-primary,#16a34a)}.P9NphG_switchMixed{background:var(--dsw-alias-state-warn-primary,#b45309);border-color:var(--dsw-alias-state-warn-primary,#b45309)}.P9NphG_switchKnob{background:#fff;border-radius:99px;width:16px;height:16px;transition:left .15s;position:absolute;top:2px;left:2px;box-shadow:0 1px 2px #00000040}.P9NphG_switchOn .P9NphG_switchKnob,.P9NphG_switchMixed .P9NphG_switchKnob{left:18px}.P9NphG_switch:disabled{opacity:.5;cursor:default}.P9NphG_viewBar{border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:8px;align-items:center;gap:2px;width:fit-content;margin-bottom:12px;padding:2px;display:flex}.P9NphG_viewBtn{font:inherit;color:var(--dsw-alias-label-secondary,#6b7280);cursor:pointer;white-space:nowrap;background:0 0;border:none;border-radius:6px;padding:4px 10px;font-size:12px;line-height:18px}.P9NphG_viewBtn:hover{color:var(--dsw-alias-brand-primary,#4f6ef7)}.P9NphG_viewOn{background:var(--dsw-alias-bg-layer-2,#eef0f4);color:var(--dsw-alias-label-primary,#1f2328);font-weight:600}.P9NphG_groupRow{background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:12px;margin-bottom:10px;padding:12px 14px}.P9NphG_groupHead{align-items:center;gap:10px;min-width:0;display:flex}.P9NphG_groupName{text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:600;line-height:20px;overflow:hidden}.P9NphG_groupActions{flex-shrink:0;align-items:center;gap:6px;display:flex}.P9NphG_groupMembers{flex-direction:column;gap:6px;margin-top:10px;display:flex}.P9NphG_groupMember{background:var(--dsw-alias-bg-layer-2,#f7f8fa);border-radius:8px;align-items:center;gap:8px;padding:6px 8px;font-size:12px;line-height:18px;display:flex}.P9NphG_groupMember .P9NphG_nm{flex:1;min-width:0;font-size:12px}.P9NphG_groupAddPanel{border-top:1px dashed var(--dsw-alias-border-l2,#e5e7eb);flex-direction:column;gap:6px;margin-top:10px;padding-top:10px;display:flex}.P9NphG_groupCreate{align-items:center;gap:8px;margin-bottom:10px;display:flex}.P9NphG_inlineInput{flex:1;min-width:120px}.P9NphG_assignRow{flex-wrap:wrap;align-items:center;gap:8px;display:flex}.P9NphG_assignSelect{border:1px solid var(--dsw-alias-border-l2,#e5e7eb);background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary,#1f2328);font:inherit;border-radius:6px;padding:3px 6px;font-size:12px;line-height:18px}.P9NphG_groupHint{color:var(--dsw-alias-label-tertiary,#8b93a1);font-size:11px}.P9NphG_sectAction{color:var(--dsw-alias-label-secondary,#6b7280);align-items:center;gap:8px;margin:14px 2px 8px;font-size:12px;font-weight:600;display:flex}.P9NphG_backupGrid{grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;display:grid}.P9NphG_backupCard{background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:12px;flex-direction:column;gap:10px;padding:16px;display:flex}.P9NphG_backupCard h3{margin:0;font-size:14px}.P9NphG_backupCard p{color:var(--dsw-alias-label-secondary,#6b7280);margin:0;font-size:12px;line-height:18px}.P9NphG_backupActions{flex-wrap:wrap;gap:8px;display:flex;position:relative}.P9NphG_hiddenFile{opacity:0;pointer-events:none;width:1px;height:1px;position:absolute}.P9NphG_backupInput{box-sizing:border-box;width:100%}.P9NphG_backupCheck{cursor:pointer;align-items:center;gap:6px;font-size:12px;display:flex}.P9NphG_backupWarn{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-state-warn-primary,#b45309)!important}.P9NphG_backupMessage{color:var(--dsw-alias-label-secondary,#6b7280);grid-column:1/-1;font-size:12px}.P9NphG_diagPage{flex-direction:column;gap:12px;display:flex}.P9NphG_diagSummary{background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:12px;flex-wrap:wrap;align-items:center;gap:12px;padding:10px 14px;font-size:12px;display:flex}.P9NphG_diagSummaryItem{color:var(--dsw-alias-label-secondary,#6b7280);white-space:nowrap;align-items:center;gap:6px;display:inline-flex}.P9NphG_diagSummaryMeta{color:var(--dsw-alias-label-tertiary,#9ca3af);text-overflow:ellipsis;white-space:nowrap;max-width:320px;font-family:ui-monospace,Menlo,monospace;font-size:11px;overflow:hidden}.P9NphG_diagSection{background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:12px;flex-direction:column;gap:8px;padding:12px 14px;display:flex}.P9NphG_diagSection h3{color:var(--dsw-alias-label-primary,#1f2328);margin:0;font-size:13px;font-weight:600}.P9NphG_diagCount{color:var(--dsw-alias-label-tertiary,#9ca3af);font-size:11px;font-weight:400}.P9NphG_diagEmpty{color:var(--dsw-alias-label-secondary,#9ca3af);padding:8px 0;font-size:12px}.P9NphG_diagBundle{border-top:1px solid var(--dsw-alias-border-l2,#f0f1f3);flex-direction:column;gap:6px;padding-top:8px;display:flex}.P9NphG_diagBundle:first-of-type{border-top:none;padding-top:0}.P9NphG_diagRow{flex-wrap:wrap;align-items:center;gap:8px;min-width:0;font-size:12px;line-height:18px;display:flex}.P9NphG_diagMeta{align-items:baseline;gap:8px;min-width:0;font-size:12px;display:flex}.P9NphG_diagKey{color:var(--dsw-alias-label-tertiary,#9ca3af);flex-shrink:0;min-width:64px;font-size:11px}.P9NphG_diagVal{color:var(--dsw-alias-label-primary,#1f2328);font-family:ui-monospace,Menlo,monospace;font-size:12px;font-weight:500}.P9NphG_diagIndex{background:var(--dsw-alias-bg-layer-2,#f3f4f6);min-width:18px;height:18px;color:var(--dsw-alias-label-secondary,#6b7280);border-radius:9px;flex-shrink:0;justify-content:center;align-items:center;font-size:11px;font-weight:600;display:inline-flex}.P9NphG_diagBadgeOfficial{background:var(--dsw-alias-brand-primary,#4f6ef7);color:#fff;border-radius:9px;flex-shrink:0;align-items:center;height:18px;padding:0 8px;font-size:11px;font-weight:600;display:inline-flex}.P9NphG_diagBadgeCommunity{background:var(--dsw-alias-bg-layer-2,#f3f4f6);height:18px;color:var(--dsw-alias-label-secondary,#6b7280);border-radius:9px;flex-shrink:0;align-items:center;padding:0 8px;font-size:11px;display:inline-flex}.P9NphG_diagBadgeShadow{background:var(--dsw-alias-state-error-primary,#dc2626);color:#fff;border-radius:9px;flex-shrink:0;align-items:center;height:18px;padding:0 8px;font-size:11px;font-weight:600;display:inline-flex}.P9NphG_diagList{flex-direction:column;gap:6px;display:flex}.P9NphG_collapseHead{font:inherit;color:var(--dsw-alias-label-primary,#1f2328);cursor:pointer;text-align:left;background:0 0;border:none;align-items:center;gap:8px;width:100%;padding:0;font-size:13px;font-weight:600;display:flex}.P9NphG_collapseIcon{color:var(--dsw-alias-label-secondary,#6b7280);flex-shrink:0;display:inline-flex}.P9NphG_collapseTitle{flex:1;min-width:0}.P9NphG_collapseBody{border-top:1px solid var(--dsw-alias-border-l2,#f0f1f3);flex-direction:column;gap:10px;margin-top:8px;padding-top:10px;display:flex}.P9NphG_orderPanel{flex-direction:column;gap:10px;display:flex}.P9NphG_panelNote{color:var(--dsw-alias-label-secondary,#6b7280);margin:0;font-size:12px;line-height:18px}.P9NphG_panelActions{flex-wrap:wrap;align-items:center;gap:8px;display:flex}.P9NphG_presetList{flex-direction:column;gap:6px;display:flex}.P9NphG_presetRow{background:var(--dsw-alias-bg-layer-2,#f7f8fa);border-radius:8px;align-items:center;gap:10px;min-width:0;padding:8px 10px;font-size:12px;line-height:18px;display:flex}.P9NphG_presetName{text-overflow:ellipsis;white-space:nowrap;min-width:0;font-size:13px;font-weight:600;overflow:hidden}.P9NphG_snapList{flex-direction:column;gap:6px;display:flex}.P9NphG_snapRow{background:var(--dsw-alias-bg-layer-2,#f7f8fa);border-radius:8px;flex-direction:column;align-items:stretch;gap:8px;padding:10px 12px;font-size:12px;line-height:18px;display:flex}.P9NphG_snapMeta{flex-wrap:wrap;align-items:center;gap:8px;min-width:0;display:flex}.P9NphG_snapConfirmText{color:var(--dsw-alias-state-warn-primary,#b45309);margin:0;font-size:12px;line-height:18px}.P9NphG_confirmRow{flex-wrap:wrap;align-items:center;gap:6px;display:inline-flex}";
 		const tagId = "dshmarket/Market.module.css";
 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId) + "]") === null) {
 			const tag = document.createElement("style");
@@ -759,128 +831,584 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			document.head.appendChild(tag);
 		}
 		var Market_module_css_default = {
-			"sub": "P9NphG_sub",
-			"backupMessage": "P9NphG_backupMessage",
-			"diagBundle": "P9NphG_diagBundle",
-			"sectAction": "P9NphG_sectAction",
-			"backupCheck": "P9NphG_backupCheck",
-			"desc": "P9NphG_desc",
-			"irow": "P9NphG_irow",
-			"empty": "P9NphG_empty",
-			"switchKnob": "P9NphG_switchKnob",
-			"viewBar": "P9NphG_viewBar",
-			"catsCollapsed": "P9NphG_catsCollapsed",
-			"actLive": "P9NphG_actLive",
-			"tab": "P9NphG_tab",
-			"modalNote": "P9NphG_modalNote",
-			"root": "P9NphG_root",
-			"actBroken": "P9NphG_actBroken",
-			"diagSummaryMeta": "P9NphG_diagSummaryMeta",
-			"bannerHint": "P9NphG_bannerHint",
-			"switchMixed": "P9NphG_switchMixed",
-			"groupMember": "P9NphG_groupMember",
-			"diagCount": "P9NphG_diagCount",
-			"spec": "P9NphG_spec",
-			"staleAction": "P9NphG_staleAction",
-			"diagSummaryItem": "P9NphG_diagSummaryItem",
-			"nm": "P9NphG_nm",
-			"on": "P9NphG_on",
-			"titleRow": "P9NphG_titleRow",
-			"diagBadgeOfficial": "P9NphG_diagBadgeOfficial",
-			"err": "P9NphG_err",
-			"hiddenFile": "P9NphG_hiddenFile",
-			"catsRow": "P9NphG_catsRow",
-			"topBtn": "P9NphG_topBtn",
-			"loading": "P9NphG_loading",
-			"body": "P9NphG_body",
-			"cats": "P9NphG_cats",
-			"barWave": "P9NphG_barWave",
-			"backupActions": "P9NphG_backupActions",
-			"srcBtn": "P9NphG_srcBtn",
-			"diagPage": "P9NphG_diagPage",
-			"pageInfo": "P9NphG_pageInfo",
-			"pageEllipsis": "P9NphG_pageEllipsis",
-			"diagMeta": "P9NphG_diagMeta",
-			"warnLine": "P9NphG_warnLine",
-			"diagBadgeShadow": "P9NphG_diagBadgeShadow",
-			"bannerIcon": "P9NphG_bannerIcon",
-			"grow": "P9NphG_grow",
-			"actWhy": "P9NphG_actWhy",
-			"diagEmpty": "P9NphG_diagEmpty",
-			"spin": "P9NphG_spin",
-			"star": "P9NphG_star",
-			"swatches": "P9NphG_swatches",
-			"tabSearch": "P9NphG_tabSearch",
-			"diagBadgeCommunity": "P9NphG_diagBadgeCommunity",
-			"switch": "P9NphG_switch",
-			"groupHead": "P9NphG_groupHead",
-			"bar": "P9NphG_bar",
-			"shot": "P9NphG_shot",
-			"tabs": "P9NphG_tabs",
-			"backupWarn": "P9NphG_backupWarn",
-			"grid": "P9NphG_grid",
-			"row1": "P9NphG_row1",
-			"depLine": "P9NphG_depLine",
-			"foot": "P9NphG_foot",
-			"title": "P9NphG_title",
-			"barFill": "P9NphG_barFill",
-			"top": "P9NphG_top",
-			"actWarn": "P9NphG_actWarn",
-			"viewBtn": "P9NphG_viewBtn",
-			"groupCreate": "P9NphG_groupCreate",
-			"inlineInput": "P9NphG_inlineInput",
-			"assignSelect": "P9NphG_assignSelect",
-			"groupAddPanel": "P9NphG_groupAddPanel",
-			"dot": "P9NphG_dot",
-			"pager": "P9NphG_pager",
-			"diagRow": "P9NphG_diagRow",
-			"groupActions": "P9NphG_groupActions",
-			"backupGrid": "P9NphG_backupGrid",
-			"head": "P9NphG_head",
-			"card": "P9NphG_card",
-			"sp": "P9NphG_sp",
-			"groupMembers": "P9NphG_groupMembers",
-			"descTight": "P9NphG_descTight",
-			"progress": "P9NphG_progress",
-			"catsToggle": "P9NphG_catsToggle",
-			"viewOn": "P9NphG_viewOn",
-			"groupRow": "P9NphG_groupRow",
-			"catsWrap": "P9NphG_catsWrap",
-			"cmd": "P9NphG_cmd",
-			"tag": "P9NphG_tag",
-			"diagKey": "P9NphG_diagKey",
-			"diagList": "P9NphG_diagList",
-			"av": "P9NphG_av",
-			"act": "P9NphG_act",
-			"deprecate": "P9NphG_deprecate",
 			"assignRow": "P9NphG_assignRow",
+			"viewBar": "P9NphG_viewBar",
+			"snapConfirmText": "P9NphG_snapConfirmText",
+			"diagBadgeShadow": "P9NphG_diagBadgeShadow",
+			"spin": "P9NphG_spin",
+			"depBadge": "P9NphG_depBadge",
+			"top": "P9NphG_top",
+			"catsRow": "P9NphG_catsRow",
+			"title": "P9NphG_title",
+			"srcBtn": "P9NphG_srcBtn",
+			"head": "P9NphG_head",
+			"titleRow": "P9NphG_titleRow",
+			"actWarn": "P9NphG_actWarn",
+			"empty": "P9NphG_empty",
+			"tab": "P9NphG_tab",
+			"err": "P9NphG_err",
+			"actWhy": "P9NphG_actWhy",
+			"tabSearch": "P9NphG_tabSearch",
+			"pager": "P9NphG_pager",
+			"sp": "P9NphG_sp",
 			"shots": "P9NphG_shots",
+			"assignSelect": "P9NphG_assignSelect",
+			"diagRow": "P9NphG_diagRow",
+			"catsWrap": "P9NphG_catsWrap",
+			"viewBtn": "P9NphG_viewBtn",
+			"pct": "P9NphG_pct",
+			"desc": "P9NphG_desc",
+			"backupActions": "P9NphG_backupActions",
+			"actBroken": "P9NphG_actBroken",
+			"dot": "P9NphG_dot",
+			"backupGrid": "P9NphG_backupGrid",
+			"presetRow": "P9NphG_presetRow",
+			"orderPanel": "P9NphG_orderPanel",
+			"actLive": "P9NphG_actLive",
 			"dshmSlide": "P9NphG_dshmSlide",
-			"banner": "P9NphG_banner",
+			"descTight": "P9NphG_descTight",
+			"snapList": "P9NphG_snapList",
+			"switch": "P9NphG_switch",
+			"staleAction": "P9NphG_staleAction",
+			"star": "P9NphG_star",
+			"irow": "P9NphG_irow",
+			"groupCreate": "P9NphG_groupCreate",
+			"switchKnob": "P9NphG_switchKnob",
+			"hiddenFile": "P9NphG_hiddenFile",
 			"themesGrid": "P9NphG_themesGrid",
+			"diagSummaryItem": "P9NphG_diagSummaryItem",
 			"diagSection": "P9NphG_diagSection",
-			"diagVal": "P9NphG_diagVal",
-			"groupHint": "P9NphG_groupHint",
+			"loading": "P9NphG_loading",
+			"diagCount": "P9NphG_diagCount",
+			"diagBadgeCommunity": "P9NphG_diagBadgeCommunity",
+			"backupWarn": "P9NphG_backupWarn",
+			"cmd": "P9NphG_cmd",
+			"catsToggle": "P9NphG_catsToggle",
+			"bannerHint": "P9NphG_bannerHint",
+			"progress": "P9NphG_progress",
 			"groupName": "P9NphG_groupName",
-			"pagerPages": "P9NphG_pagerPages",
-			"okState": "P9NphG_okState",
-			"src": "P9NphG_src",
-			"tabSearchRow": "P9NphG_tabSearchRow",
+			"groupMember": "P9NphG_groupMember",
+			"barFill": "P9NphG_barFill",
 			"owner": "P9NphG_owner",
 			"switchOn": "P9NphG_switchOn",
-			"backupInput": "P9NphG_backupInput",
-			"pct": "P9NphG_pct",
-			"backupCard": "P9NphG_backupCard",
+			"groupHead": "P9NphG_groupHead",
+			"panelActions": "P9NphG_panelActions",
+			"groupHint": "P9NphG_groupHint",
+			"on": "P9NphG_on",
+			"bannerIcon": "P9NphG_bannerIcon",
+			"diagMeta": "P9NphG_diagMeta",
+			"diagVal": "P9NphG_diagVal",
+			"diagIndex": "P9NphG_diagIndex",
+			"cats": "P9NphG_cats",
+			"topBtn": "P9NphG_topBtn",
+			"sub": "P9NphG_sub",
 			"irowMissing": "P9NphG_irowMissing",
+			"pagerPages": "P9NphG_pagerPages",
+			"diagPage": "P9NphG_diagPage",
+			"grow": "P9NphG_grow",
+			"snapRow": "P9NphG_snapRow",
+			"groupAddPanel": "P9NphG_groupAddPanel",
+			"act": "P9NphG_act",
+			"tabs": "P9NphG_tabs",
+			"tabSearchRow": "P9NphG_tabSearchRow",
+			"diagBadgeOfficial": "P9NphG_diagBadgeOfficial",
+			"diagKey": "P9NphG_diagKey",
+			"body": "P9NphG_body",
+			"grid": "P9NphG_grid",
+			"av": "P9NphG_av",
+			"foot": "P9NphG_foot",
+			"row1": "P9NphG_row1",
+			"confirmRow": "P9NphG_confirmRow",
+			"diagEmpty": "P9NphG_diagEmpty",
+			"diagSummaryMeta": "P9NphG_diagSummaryMeta",
 			"diagSummary": "P9NphG_diagSummary",
-			"depBadge": "P9NphG_depBadge",
-			"diagIndex": "P9NphG_diagIndex"
+			"collapseIcon": "P9NphG_collapseIcon",
+			"backupMessage": "P9NphG_backupMessage",
+			"pageEllipsis": "P9NphG_pageEllipsis",
+			"groupMembers": "P9NphG_groupMembers",
+			"inlineInput": "P9NphG_inlineInput",
+			"groupRow": "P9NphG_groupRow",
+			"diagBundle": "P9NphG_diagBundle",
+			"nm": "P9NphG_nm",
+			"collapseBody": "P9NphG_collapseBody",
+			"spec": "P9NphG_spec",
+			"snapMeta": "P9NphG_snapMeta",
+			"banner": "P9NphG_banner",
+			"panelNote": "P9NphG_panelNote",
+			"shot": "P9NphG_shot",
+			"tag": "P9NphG_tag",
+			"pageInfo": "P9NphG_pageInfo",
+			"presetName": "P9NphG_presetName",
+			"warnLine": "P9NphG_warnLine",
+			"okState": "P9NphG_okState",
+			"deprecate": "P9NphG_deprecate",
+			"groupActions": "P9NphG_groupActions",
+			"backupInput": "P9NphG_backupInput",
+			"backupCard": "P9NphG_backupCard",
+			"modalNote": "P9NphG_modalNote",
+			"presetList": "P9NphG_presetList",
+			"catsCollapsed": "P9NphG_catsCollapsed",
+			"depLine": "P9NphG_depLine",
+			"diagList": "P9NphG_diagList",
+			"collapseHead": "P9NphG_collapseHead",
+			"swatches": "P9NphG_swatches",
+			"backupCheck": "P9NphG_backupCheck",
+			"sectAction": "P9NphG_sectAction",
+			"card": "P9NphG_card",
+			"viewOn": "P9NphG_viewOn",
+			"collapseTitle": "P9NphG_collapseTitle",
+			"src": "P9NphG_src",
+			"bar": "P9NphG_bar",
+			"switchMixed": "P9NphG_switchMixed",
+			"barWave": "P9NphG_barWave",
+			"root": "P9NphG_root"
 		};
+		//#endregion
+		//#region src/client/preset-panel.tsx
+		/**
+		* Diagnostics sub-panel — issue #98 phase 3 (plugin presets).
+		*
+		* Rendered at the bottom of the Diagnostics tab inside a collapsible section
+		* (the parent keeps it mounted and passes `open`, so it lazy-loads on first
+		* expand and keeps its state across collapses). Lists named presets
+		* (GET /dsh-market/presets), saves the current community bundle order as a
+		* new preset (POST /dsh-market/presets {action:'save', name, bundleOrder,
+		* disabled}), applies one (action:'apply' — the host trial-validates and
+		* auto-snapshots before writing; on success the parent refreshes the check
+		* report) and deletes one after an inline double confirmation
+		* (action:'delete').
+		*
+		* The list payload is read defensively (bare array or {presets: [...]}).
+		*/
+		async function postJson$1(url, body) {
+			let res;
+			try {
+				res = await fetch(url, {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify(body)
+				});
+			} catch {
+				return {
+					status: 0,
+					body: null
+				};
+			}
+			let payload = null;
+			try {
+				payload = await res.json();
+			} catch {}
+			return {
+				status: res.status,
+				body: payload
+			};
+		}
+		const errorText = (status, body, fallback) => body !== null && typeof body.error === "string" ? body.error : status === 0 ? fallback + "network error" : fallback + `HTTP ${String(status)}`;
+		function PresetPanel(props) {
+			const { t, open, bundleOrder, onRefresh } = props;
+			const [presets, setPresets] = (0, react.useState)(null);
+			const [error, setError] = (0, react.useState)(null);
+			const [msg, setMsg] = (0, react.useState)(null);
+			const [busy, setBusy] = (0, react.useState)(null);
+			const [name, setName] = (0, react.useState)("");
+			/** Preset name awaiting the second confirm click, or null. */
+			const [confirmDelete, setConfirmDelete] = (0, react.useState)(null);
+			const loaded = (0, react.useRef)(false);
+			const load = (0, react.useCallback)(() => {
+				fetch("/dsh-market/presets", { cache: "no-store" }).then((res) => res.json()).then((body) => {
+					const list = Array.isArray(body) ? body : Array.isArray(body.presets) ? body.presets : [];
+					setPresets(list.map((item) => {
+						const preset = item ?? {};
+						return {
+							name: String(preset.name ?? ""),
+							bundleOrder: Array.isArray(preset.bundleOrder) ? preset.bundleOrder.map(String) : [],
+							disabled: Array.isArray(preset.disabled) ? preset.disabled.map(String) : []
+						};
+					}));
+					setError(null);
+				}).catch(() => setError(t("presetListFail") + "network"));
+			}, [t]);
+			(0, react.useEffect)(() => {
+				if (open && !loaded.current) {
+					loaded.current = true;
+					load();
+				}
+			}, [open, load]);
+			const save = (0, react.useCallback)(() => {
+				const presetName = name.trim();
+				if (presetName === "") {
+					setError(t("presetNameEmpty"));
+					return;
+				}
+				if (busy !== null) return;
+				setBusy("save");
+				setMsg(null);
+				setError(null);
+				fetch("/dsh-market/installed", { cache: "no-store" }).then((res) => res.json()).then((installed) => postJson$1("/dsh-market/presets", {
+					action: "save",
+					name: presetName,
+					bundleOrder,
+					disabled: Array.isArray(installed.disabled) ? installed.disabled.map(String) : []
+				})).then(({ status, body }) => {
+					if (status >= 200 && status < 300 && body?.ok === true) {
+						setName("");
+						setMsg(t("presetSaved"));
+						load();
+					} else setError(errorText(status, body, t("presetFail")));
+				}).catch(() => setError(t("presetFail") + "network")).finally(() => setBusy(null));
+			}, [
+				busy,
+				bundleOrder,
+				load,
+				name,
+				t
+			]);
+			const apply = (0, react.useCallback)((presetName) => {
+				if (busy !== null) return;
+				setBusy("apply");
+				setMsg(null);
+				setError(null);
+				postJson$1("/dsh-market/presets", {
+					action: "apply",
+					name: presetName
+				}).then(({ status, body }) => {
+					if (status >= 200 && status < 300 && body?.ok === true) {
+						setMsg(t("presetApplied"));
+						onRefresh();
+					} else setError(errorText(status, body, t("presetFail")));
+				}).catch(() => setError(t("presetFail") + "network")).finally(() => setBusy(null));
+			}, [
+				busy,
+				onRefresh,
+				t
+			]);
+			const remove = (0, react.useCallback)((presetName) => {
+				if (busy !== null) return;
+				setBusy("delete");
+				setMsg(null);
+				setError(null);
+				postJson$1("/dsh-market/presets", {
+					action: "delete",
+					name: presetName
+				}).then(({ status, body }) => {
+					if (status >= 200 && status < 300 && body?.ok === true) {
+						setConfirmDelete(null);
+						setMsg(t("presetDeleted"));
+						load();
+					} else setError(errorText(status, body, t("presetFail")));
+				}).catch(() => setError(t("presetFail") + "network")).finally(() => setBusy(null));
+			}, [
+				busy,
+				load,
+				t
+			]);
+			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+				className: Market_module_css_default.orderPanel,
+				children: [
+					/* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+						className: Market_module_css_default.panelNote,
+						children: t("presetHint")
+					}),
+					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+						className: Market_module_css_default.panelActions,
+						children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
+							className: Market_module_css_default.inlineInput,
+							placeholder: t("presetName"),
+							value: name,
+							onChange: (e) => setName(e.target.value),
+							onKeyDown: (e) => {
+								if (e.key === "Enter") save();
+							}
+						}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+							variant: "outline",
+							size: "sm",
+							disabled: busy !== null,
+							onClick: save,
+							children: busy === "save" ? t("presetSaving") : t("presetSave")
+						})]
+					}),
+					error !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+						className: Market_module_css_default.err,
+						children: error
+					}),
+					presets === null || presets.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+						className: Market_module_css_default.diagEmpty,
+						children: t("presetEmpty")
+					}) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+						className: Market_module_css_default.presetList,
+						children: presets.map((preset) => /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+							className: Market_module_css_default.presetRow,
+							children: [
+								/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+									className: Market_module_css_default.presetName,
+									children: preset.name
+								}),
+								preset.bundleOrder.length > 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+									className: Market_module_css_default.spec,
+									children: t("presetBundleCount").replace("{0}", String(preset.bundleOrder.length))
+								}),
+								/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { className: Market_module_css_default.grow }),
+								confirmDelete === preset.name ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
+									className: Market_module_css_default.confirmRow,
+									children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+										variant: "primary",
+										size: "sm",
+										disabled: busy !== null,
+										onClick: () => remove(preset.name),
+										children: t("presetDelete")
+									}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+										variant: "ghost",
+										size: "sm",
+										disabled: busy !== null,
+										onClick: () => setConfirmDelete(null),
+										children: t("cancel")
+									})]
+								}) : /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
+									className: Market_module_css_default.confirmRow,
+									children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+										variant: "outline",
+										size: "sm",
+										disabled: busy !== null,
+										onClick: () => apply(preset.name),
+										children: t("presetApply")
+									}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+										variant: "ghost",
+										size: "sm",
+										disabled: busy !== null,
+										onClick: () => setConfirmDelete(preset.name),
+										children: t("presetDelete")
+									})]
+								})
+							]
+						}, preset.name))
+					}),
+					msg !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+						className: Market_module_css_default.okState,
+						children: msg
+					})
+				]
+			});
+		}
+		//#endregion
+		//#region src/client/snapshot-panel.tsx
+		/**
+		* Diagnostics sub-panel — issue #98 phase 3 (snapshots & rollback).
+		*
+		* Rendered at the bottom of the Diagnostics tab inside a collapsible section
+		* (the parent keeps it mounted and passes `open`, so it lazy-loads on first
+		* expand and keeps its state across collapses). Lists profile snapshots
+		* (GET /dsh-market/snapshots), creates one (POST /dsh-market/snapshots) and
+		* restores one after an inline double confirmation
+		* (POST /dsh-market/restore-snapshot {snapshot}).
+		*
+		* The list payload is read defensively (bare array or {snapshots: [...]});
+		* `files` entries are {path, json|lines} objects, from which only `path` is
+		* displayed.
+		*/
+		async function postJson(url, body) {
+			let res;
+			try {
+				res = await fetch(url, {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify(body)
+				});
+			} catch {
+				return {
+					status: 0,
+					body: null
+				};
+			}
+			let payload = null;
+			try {
+				payload = await res.json();
+			} catch {}
+			return {
+				status: res.status,
+				body: payload
+			};
+		}
+		/** Snapshot file entries may be plain names or {path, json|lines} objects. */
+		function fileNames(files) {
+			if (!Array.isArray(files)) return [];
+			const names = [];
+			for (const file of files) if (typeof file === "string") names.push(file);
+			else if (file !== null && typeof file === "object") {
+				const path = file.path;
+				if (typeof path === "string") names.push(path);
+			}
+			return names;
+		}
+		function snapshotOf(value) {
+			if (value === null || typeof value !== "object") return null;
+			const item = value;
+			if (typeof item.id !== "string" && typeof item.id !== "number") return null;
+			return {
+				id: String(item.id),
+				createdAt: typeof item.createdAt === "string" || typeof item.createdAt === "number" ? item.createdAt : 0,
+				files: fileNames(item.files)
+			};
+		}
+		function formatTime(value) {
+			const date = new Date(value);
+			return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
+		}
+		function SnapshotPanel(props) {
+			const { t, open, onRefresh } = props;
+			const [snapshots, setSnapshots] = (0, react.useState)(null);
+			const [error, setError] = (0, react.useState)(null);
+			const [msg, setMsg] = (0, react.useState)(null);
+			const [busy, setBusy] = (0, react.useState)(null);
+			/** Snapshot id awaiting the second confirm click, or null. */
+			const [confirmId, setConfirmId] = (0, react.useState)(null);
+			const loaded = (0, react.useRef)(false);
+			const load = (0, react.useCallback)(() => {
+				fetch("/dsh-market/snapshots", { cache: "no-store" }).then((res) => res.json()).then((body) => {
+					const list = Array.isArray(body) ? body : Array.isArray(body.snapshots) ? body.snapshots : [];
+					setSnapshots(list.map(snapshotOf).filter((snap) => snap !== null));
+					setError(null);
+				}).catch(() => setError(t("snapListFail") + "network"));
+			}, [t]);
+			(0, react.useEffect)(() => {
+				if (open && !loaded.current) {
+					loaded.current = true;
+					load();
+				}
+			}, [open, load]);
+			const create = (0, react.useCallback)(() => {
+				if (busy !== null) return;
+				setBusy("create");
+				setMsg(null);
+				setError(null);
+				postJson("/dsh-market/snapshots", {}).then(({ status, body }) => {
+					if (status >= 200 && status < 300 && body?.ok === true) {
+						setMsg(t("snapCreated"));
+						load();
+					} else {
+						const detail = body !== null && typeof body.error === "string" ? body.error : status === 0 ? "network error" : `HTTP ${String(status)}`;
+						setError(t("snapCreateFail") + detail);
+					}
+				}).catch(() => setError(t("snapCreateFail") + "network")).finally(() => setBusy(null));
+			}, [
+				busy,
+				load,
+				t
+			]);
+			const restore = (0, react.useCallback)((id) => {
+				if (busy !== null) return;
+				setBusy("restore");
+				setMsg(null);
+				setError(null);
+				postJson("/dsh-market/restore-snapshot", { snapshot: id }).then(({ status, body }) => {
+					if (status >= 200 && status < 300 && body?.ok === true) {
+						setConfirmId(null);
+						setMsg(t("snapRestored"));
+						onRefresh();
+					} else {
+						const detail = body !== null && typeof body.error === "string" ? body.error : status === 0 ? "network error" : `HTTP ${String(status)}`;
+						setError(t("snapRestoreFail") + detail);
+					}
+				}).catch(() => setError(t("snapRestoreFail") + "network")).finally(() => setBusy(null));
+			}, [
+				busy,
+				onRefresh,
+				t
+			]);
+			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+				className: Market_module_css_default.orderPanel,
+				children: [
+					/* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+						className: Market_module_css_default.panelNote,
+						children: t("snapHint")
+					}),
+					/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+						className: Market_module_css_default.panelActions,
+						children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+							variant: "primary",
+							size: "sm",
+							disabled: busy !== null,
+							onClick: create,
+							children: busy === "create" ? t("snapCreating") : t("snapCreate")
+						})
+					}),
+					error !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+						className: Market_module_css_default.err,
+						children: error
+					}),
+					snapshots === null || snapshots.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+						className: Market_module_css_default.diagEmpty,
+						children: t("snapEmpty")
+					}) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+						className: Market_module_css_default.snapList,
+						children: snapshots.map((snap) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+							className: Market_module_css_default.snapRow,
+							children: confirmId === snap.id ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+								className: Market_module_css_default.snapConfirmText,
+								children: t("snapRestoreConfirmText")
+							}), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+								className: Market_module_css_default.confirmRow,
+								children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+									variant: "primary",
+									size: "sm",
+									disabled: busy !== null,
+									onClick: () => restore(snap.id),
+									children: busy === "restore" ? t("snapRestoring") : t("snapRestoreConfirm")
+								}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+									variant: "ghost",
+									size: "sm",
+									disabled: busy !== null,
+									onClick: () => setConfirmId(null),
+									children: t("cancel")
+								})]
+							})] }) : /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+								className: Market_module_css_default.snapMeta,
+								children: [
+									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+										className: Market_module_css_default.diagVal,
+										children: formatTime(snap.createdAt)
+									}),
+									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+										className: Market_module_css_default.spec,
+										children: snap.id
+									}),
+									snap.files.length > 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
+										className: Market_module_css_default.spec,
+										children: [
+											t("snapFiles"),
+											": ",
+											snap.files.join(", ")
+										]
+									})
+								]
+							}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+								className: Market_module_css_default.confirmRow,
+								children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+									variant: "outline",
+									size: "sm",
+									disabled: busy !== null,
+									onClick: () => setConfirmId(snap.id),
+									children: t("snapRestore")
+								})
+							})] })
+						}, snap.id))
+					}),
+					msg !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+						className: Market_module_css_default.okState,
+						children: msg
+					})
+				]
+			});
+		}
 		//#endregion
 		//#region src/client/Diagnostics.tsx
 		/**
-		* Diagnostics tab — issue #98 (phase 1): renders the profile composition
-		* check report served by the host route /dsh-market/check (see src/check.ts).
+		* Diagnostics tab — issue #98: renders the profile composition check report
+		* served by the host route /dsh-market/check (see src/check.ts). Below the
+		* report sit the phase 2/3 action panels: a community-bundle ordering block
+		* (reorder locally with ↑/↓, POST to /dsh-market/bundle-order), a snapshots
+		* & rollback panel (snapshot-panel.tsx) and a plugin presets panel
+		* (preset-panel.tsx) — the latter two are collapsible, default collapsed,
+		* and lazy-fetch on first expand.
 		*
 		* Read-only view of the loading-layer stack and the conflict surface: bundle
 		* order (official vs community), duplicate loader entry ids, core packages
@@ -927,8 +1455,42 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			});
 		}
 		/**
+		* A collapsible section that KEEPS its children mounted (hidden via CSS when
+		* collapsed) so the phase 3 panels below retain their loaded data and
+		* in-progress edits across collapses. Children mount from the start, but the
+		* panels only fetch when `open` first becomes true.
+		*/
+		function CollapsibleSection(props) {
+			const { title, open, onToggle, children } = props;
+			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("section", {
+				className: Market_module_css_default.diagSection,
+				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("button", {
+					type: "button",
+					className: Market_module_css_default.collapseHead,
+					onClick: onToggle,
+					"aria-expanded": open,
+					children: [
+						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+							className: Market_module_css_default.collapseIcon,
+							children: open ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconChevronDownOutline14, { size: 14 }) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconChevronRightOutline14, { size: 14 })
+						}),
+						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+							className: Market_module_css_default.collapseTitle,
+							children: title
+						}),
+						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { className: Market_module_css_default.grow })
+					]
+				}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+					className: Market_module_css_default.collapseBody,
+					style: open ? void 0 : { display: "none" },
+					children
+				})]
+			});
+		}
+		/**
 		* Fetch and render the profile check report. Refetches on every mount, so
-		* switching tabs away and back re-runs the (cheap, read-only) analysis.
+		* switching tabs away and back re-runs the (cheap, read-only) analysis; the
+		* phase 3 panels below call `refresh()` after applying changes.
 		*/
 		function Diagnostics(props) {
 			const { t } = props;
@@ -936,6 +1498,51 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const [error, setError] = (0, react.useState)(null);
 			const [overridesOpen, setOverridesOpen] = (0, react.useState)(true);
 			const [orphansOpen, setOrphansOpen] = (0, react.useState)(true);
+			const [snapOpen, setSnapOpen] = (0, react.useState)(false);
+			const [presetOpen, setPresetOpen] = (0, react.useState)(false);
+			/** Bump to re-run the /dsh-market/check fetch after an order/preset/restore apply. */
+			const [version, setVersion] = (0, react.useState)(0);
+			const refresh = (0, react.useCallback)(() => setVersion((v) => v + 1), []);
+			/** Community bundle names from the report, in declared order. */
+			const communityNames = (0, react.useMemo)(() => report === null ? [] : report.bundles.filter((bundle) => bundle.kind === "community").map((bundle) => bundle.name), [report]);
+			/** Local editing state: re-synced whenever the report (re)loads. */
+			const [order, setOrder] = (0, react.useState)(communityNames);
+			const [orderMsg, setOrderMsg] = (0, react.useState)(null);
+			const [orderErr, setOrderErr] = (0, react.useState)(null);
+			const [orderBusy, setOrderBusy] = (0, react.useState)(false);
+			(0, react.useEffect)(() => {
+				setOrder(communityNames);
+			}, [communityNames]);
+			/** Swap one community bundle with its neighbour (-1 up, +1 down). */
+			const moveBundle = (index, delta) => {
+				setOrder((prev) => {
+					const next = [...prev];
+					const target = index + delta;
+					if (target < 0 || target >= next.length) return prev;
+					[next[index], next[target]] = [next[target], next[index]];
+					return next;
+				});
+			};
+			/** POST the current community order; the host trial-validates and snapshots first. */
+			const applyOrder = () => {
+				if (orderBusy) return;
+				setOrderBusy(true);
+				setOrderMsg(null);
+				setOrderErr(null);
+				fetch("/dsh-market/bundle-order", {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({ order })
+				}).then(async (res) => {
+					const body = await res.json().catch(() => null);
+					if (!res.ok || body?.ok !== true) {
+						setOrderErr(String(body?.error ?? `HTTP ${String(res.status)}`));
+						return;
+					}
+					setOrderMsg(t("orderApplied"));
+					refresh();
+				}).catch((err) => setOrderErr(err instanceof Error ? err.message : String(err))).finally(() => setOrderBusy(false));
+			};
 			(0, react.useEffect)(() => {
 				let live = true;
 				setReport(null);
@@ -950,7 +1557,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				return () => {
 					live = false;
 				};
-			}, []);
+			}, [version]);
 			if (error !== null) return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 				className: Market_module_css_default.err,
 				children: [t("checkLoadFail"), error]
@@ -1337,6 +1944,119 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									})
 								]
 							}, i))
+						})
+					}),
+					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("section", {
+						className: Market_module_css_default.diagSection,
+						children: [
+							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("h3", { children: [
+								t("orderSection"),
+								" ",
+								/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
+									className: Market_module_css_default.diagCount,
+									children: [
+										"(",
+										order.length,
+										")"
+									]
+								})
+							] }),
+							report.orderConflicts !== void 0 && report.orderConflicts.length > 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+								className: Market_module_css_default.diagList,
+								children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+									className: Market_module_css_default.diagKey,
+									children: t("orderConflicts")
+								}), report.orderConflicts.map((conflict, i) => /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+									className: Market_module_css_default.warnLine,
+									children: [
+										conflict.name,
+										" — ",
+										conflict.reason
+									]
+								}, i))]
+							}),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+								style: {
+									display: "flex",
+									alignItems: "center",
+									gap: 8,
+									flexWrap: "wrap"
+								},
+								children: [
+									/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+										variant: "primary",
+										size: "sm",
+										disabled: order.length === 0 || orderBusy,
+										onClick: applyOrder,
+										children: orderBusy ? "…" : t("orderApply")
+									}),
+									orderMsg !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+										className: Market_module_css_default.okState,
+										children: orderMsg
+									}),
+									orderErr !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+										className: Market_module_css_default.err,
+										children: orderErr
+									})
+								]
+							}),
+							order.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+								className: Market_module_css_default.diagEmpty,
+								children: "—"
+							}) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+								className: Market_module_css_default.diagList,
+								children: order.map((name, i) => /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+									className: Market_module_css_default.diagRow,
+									children: [
+										/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+											className: Market_module_css_default.diagIndex,
+											children: i + 1
+										}),
+										/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+											className: Market_module_css_default.nm,
+											children: name
+										}),
+										/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { className: Market_module_css_default.grow }),
+										/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+											variant: "ghost",
+											size: "sm",
+											"aria-label": t("orderUp"),
+											disabled: i === 0 || orderBusy,
+											onClick: () => moveBundle(i, -1),
+											children: t("orderUp")
+										}),
+										/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+											variant: "ghost",
+											size: "sm",
+											"aria-label": t("orderDown"),
+											disabled: i >= order.length - 1 || orderBusy,
+											onClick: () => moveBundle(i, 1),
+											children: t("orderDown")
+										})
+									]
+								}, name))
+							})
+						]
+					}),
+					/* @__PURE__ */ (0, react_jsx_runtime.jsx)(CollapsibleSection, {
+						title: t("snapSection"),
+						open: snapOpen,
+						onToggle: () => setSnapOpen((o) => !o),
+						children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(SnapshotPanel, {
+							t,
+							open: snapOpen,
+							onRefresh: refresh
+						})
+					}),
+					/* @__PURE__ */ (0, react_jsx_runtime.jsx)(CollapsibleSection, {
+						title: t("presetSection"),
+						open: presetOpen,
+						onToggle: () => setPresetOpen((o) => !o),
+						children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(PresetPanel, {
+							t,
+							open: presetOpen,
+							bundleOrder: communityNames,
+							onRefresh: refresh
 						})
 					})
 				]

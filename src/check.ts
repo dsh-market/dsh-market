@@ -29,6 +29,7 @@ import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { JSON_SCHEMA, Type, load } from 'js-yaml'
+import { readBundleRules, validateOrder } from './order.ts'
 
 /** Profile bundles that ship with the dsh host and must stay put (#98). */
 const INBOX_BUNDLES = new Set([
@@ -69,6 +70,13 @@ export interface BundleLayer {
   entries: string[]
   /** The patch file exists but could not be parsed as the entry-list dialect. */
   parseError: string | null
+  /** Author-declared ordering constraints (issue #98 phase 2), when present. */
+  order?: {
+    before?: string[]
+    after?: string[]
+    /** Violated rules for THIS bundle in the current stack order. */
+    conflicts?: Array<{ name: string; reason: string }>
+  }
 }
 
 /** One loader row of the composed tree, with the layer that introduced it. */
@@ -150,6 +158,8 @@ export interface CheckReport {
   coreDeps: CoreDepIssue[]
   peerMismatches: PeerMismatch[]
   multiVersion: MultiVersion[]
+  /** Before/after rule conflicts in the CURRENT bundle order (issue #98 phase 2). */
+  orderConflicts: Array<{ name: string; reason: string }>
   summary: CheckSummary
 }
 
@@ -165,7 +175,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /** Parse one entry-list patch file with the dsh dialect; null when unreadable. */
-function parsePatchFile(path: string): unknown[] | null {
+export function parsePatchFile(path: string): unknown[] | null {
   let text: string
   try {
     text = readFileSync(path, 'utf8')
@@ -495,7 +505,7 @@ function flattenEntries(nodes: EntryNode[]): LoaderRow[] {
   return rows
 }
 
-interface LayerInput {
+export interface LayerInput {
   label: string
   kind: 'bundle' | 'user' | 'home'
   patches: unknown[]
@@ -509,8 +519,12 @@ interface Composed {
   orphans: OrphanRow[]
 }
 
-/** Apply the layer stack over an empty root exactly like the dsh boot include. */
-function composeLayers(layers: LayerInput[]): Composed {
+/**
+ * Apply the layer stack over an empty root exactly like the dsh boot include.
+ * Exported so the trial-start validation (src/trial.ts) can replay the
+ * composition with a candidate bundle order BEFORE anything is written.
+ */
+export function composeLayers(layers: LayerInput[]): Composed {
   const tree: EntryNode[] = []
   const orphans: OrphanRow[] = []
   const overrides: OverrideRow[] = []
@@ -617,36 +631,24 @@ function lockfileCoreVersions(profileDir: string): Map<string, string[]> {
 }
 
 /**
- * Analyze one profile directory (issue #98, phase 1). Pure function of the
- * directory contents — safe to call on every market open.
+ * Build the bundle layer stack for a profile under a GIVEN bundle order —
+ * the manifest order for analyzeProfile, or a candidate order for trial
+ * validation (src/trial.ts). Bundle resolution mirrors the boot exactly:
+ * the dsh installation anchor first (in-box bundles always come from the
+ * running dsh, never a profile-local copy), then Node's module search from
+ * the profile directory (covers community bundles and pnpm workspace-root
+ * hoisting). A single code path keeps the check report and the trial
+ * validation from ever disagreeing about what a bundle is or where it lives.
  */
-export function analyzeProfile(profileDirectory: string, options: CheckOptions = {}): CheckReport {
-  const dshInstall = options.dshInstallDir ?? findDshInstallDir()
-  const home = options.homeDir ?? process.env.DSH_HOME ?? join(homedir(), '.dsh')
-  const core = corePackageNames(dshInstall)
-
-  // --- 1. bundle stack ---
-  const manifest = (() => {
-    try {
-      return JSON.parse(readFileSync(join(profileDirectory, 'package.json'), 'utf8')) as {
-        dependencies?: Record<string, string>
-        dsh?: { profile?: { bundles?: unknown } }
-      }
-    } catch {
-      return null
-    }
-  })()
-  const bundleNames = Array.isArray(manifest?.dsh?.profile?.bundles)
-    ? manifest.dsh.profile.bundles.filter((name): name is string => typeof name === 'string')
-    : []
-  const specs = manifest?.dependencies ?? {}
+export function buildBundleLayers(
+  profileDirectory: string,
+  bundleNames: string[],
+  specs: Record<string, string>,
+  dshInstallDir: string | null,
+): { bundles: BundleLayer[]; layers: LayerInput[] } {
   const bundles: BundleLayer[] = bundleNames.map((name) => {
-    // Same resolution order as the boot: the dsh installation anchor first
-    // (in-box bundles always come from the running dsh, never a profile-local
-    // copy), then the profile directory (covers community bundles and
-    // workspace-root hoisting).
     const anchors = [
-      dshInstall !== null ? join(dshInstall, 'package.json') : null,
+      dshInstallDir !== null ? join(dshInstallDir, 'package.json') : null,
       join(profileDirectory, 'package.json'),
     ]
     let directory: string | null = null
@@ -669,7 +671,7 @@ export function analyzeProfile(profileDirectory: string, options: CheckOptions =
       layer.error = 'bundle package is not installed — the profile will fail to boot'
       return layer
     }
-    let bundleManifest: { dsh?: { bundle?: { patch?: unknown } } }
+    let bundleManifest: { dsh?: { bundle?: { patch?: unknown; order?: unknown } } }
     try {
       bundleManifest = JSON.parse(readFileSync(join(directory, 'package.json'), 'utf8')) as typeof bundleManifest
     } catch {
@@ -693,16 +695,58 @@ export function analyzeProfile(profileDirectory: string, options: CheckOptions =
       return layer
     }
     layer.entries = collectInsertIds(patches)
+    const order = bundleManifest.dsh?.bundle?.order
+    if (order !== null && typeof order === 'object' && !Array.isArray(order)) {
+      const listOf = (value: unknown): string[] | undefined => Array.isArray(value)
+        ? value.filter((item): item is string => typeof item === 'string')
+        : undefined
+      const after = listOf((order as Record<string, unknown>).after)
+      const before = listOf((order as Record<string, unknown>).before)
+      if (after !== undefined || before !== undefined) {
+        layer.order = { ...(before !== undefined ? { before } : {}), ...(after !== undefined ? { after } : {}) }
+      }
+    }
     return layer
   })
-
-  // --- 2. composed loader rows / duplicates / overrides / orphans ---
   const layers: LayerInput[] = bundles.map((bundle) => ({
     label: bundle.name,
     kind: 'bundle' as const,
     patches: bundle.patchPath !== null && bundle.parseError === null ? parsePatchFile(bundle.patchPath) ?? [] : [],
     parseError: bundle.parseError,
   }))
+  return { bundles, layers }
+}
+
+/**
+ * Analyze one profile directory (issue #98, phase 1). Pure function of the
+ * directory contents — safe to call on every market open.
+ */
+export function analyzeProfile(profileDirectory: string, options: CheckOptions = {}): CheckReport {
+  const dshInstall = options.dshInstallDir ?? findDshInstallDir()
+  const home = options.homeDir ?? process.env.DSH_HOME ?? join(homedir(), '.dsh')
+  const core = corePackageNames(dshInstall)
+
+  // --- 1. bundle stack ---
+  const manifest = (() => {
+    try {
+      return JSON.parse(readFileSync(join(profileDirectory, 'package.json'), 'utf8')) as {
+        dependencies?: Record<string, string>
+        dsh?: { profile?: { bundles?: unknown } }
+      }
+    } catch {
+      return null
+    }
+  })()
+  const bundleNames = Array.isArray(manifest?.dsh?.profile?.bundles)
+    ? manifest.dsh.profile.bundles.filter((name): name is string => typeof name === 'string')
+    : []
+  const specs = manifest?.dependencies ?? {}
+  const built = buildBundleLayers(profileDirectory, bundleNames, specs, dshInstall)
+  const bundles = built.bundles
+  const bundleLayers = built.layers
+
+  // --- 2. composed loader rows / duplicates / overrides / orphans ---
+  const layers: LayerInput[] = [...bundleLayers]
   const userPatchPath = join(profileDirectory, 'cordis.patch.yml')
   if (existsSync(userPatchPath)) {
     const patches = parsePatchFile(userPatchPath)
@@ -800,6 +844,19 @@ export function analyzeProfile(profileDirectory: string, options: CheckOptions =
     if (core.has(mv.name)) errors.push(`multiple versions of core package — ${line}`)
     else warnings.push(`multiple versions of ${line}`)
   }
+  // Current-order before/after rule conflicts (issue #98 phase 2): these are
+  // informative for the ordering UI; the author-declared rule breaking the
+  // CURRENT stack is worth a warning but not a boot failure. Conflicts are
+  // exposed both at the report top level and per bundle (order.conflicts) so
+  // the ordering panel can render them next to the bundle rows.
+  const orderConflicts = validateOrder(bundleNames, readBundleRules(profileDirectory))
+  for (const conflict of orderConflicts) {
+    warnings.push(`${conflict.name}: ${conflict.reason}`)
+  }
+  for (const bundle of bundles) {
+    const own = orderConflicts.filter(conflict => conflict.name === bundle.name)
+    if (own.length > 0) bundle.order = { ...bundle.order, conflicts: own }
+  }
 
   return {
     profile: profileDirectory,
@@ -812,6 +869,7 @@ export function analyzeProfile(profileDirectory: string, options: CheckOptions =
     coreDeps,
     peerMismatches,
     multiVersion,
+    orderConflicts,
     summary: {
       ok: errors.length === 0,
       errors,
