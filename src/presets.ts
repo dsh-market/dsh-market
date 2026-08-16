@@ -16,7 +16,7 @@ import { join } from 'node:path'
 import { readMarketState, writeMarketState } from './hot.ts'
 import { applyBundleOrder, mergeOrder, readBundleRules, readBundleStack, validateOrder } from './order.ts'
 import { createProfileSnapshot, DEFAULT_MAX_SNAPSHOTS } from './snapshot.ts'
-import { trialValidate } from './trial.ts'
+import { trialValidate, type TrialDiff, type TrialIssue } from './trial.ts'
 import { logEvent } from './log.ts'
 
 /** Group-style name rule: letters/digits (incl. CJK), spaces, _, -; ≤ 40 chars, at least one non-space. */
@@ -176,6 +176,8 @@ export interface PresetChange {
 
 export interface PresetApplyResult extends PresetResult {
   changes?: PresetChange
+  /** Set when the preset order fails trial validation — errors + current-vs-candidate diff (issue #125 review). */
+  trial?: { errors: TrialIssue[]; warnings: TrialIssue[]; diff: TrialDiff }
 }
 
 /**
@@ -284,6 +286,7 @@ export function applyPreset(profileDir: string, name: unknown, maxSnapshots: num
     return {
       ok: false,
       error: `trial validation failed — ${first?.message ?? 'composition would not boot'} / 试启动校验失败：${first?.message ?? '组合无法启动'}`,
+      trial: { errors: trial.errors, warnings: trial.warnings, diff: trial.diff },
     }
   }
   // Before/after rules (review B5): the reorder endpoint refuses rule-violating

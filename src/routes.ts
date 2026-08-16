@@ -1023,34 +1023,31 @@ export function mountMarketRoutes(
             sendJson(response, previewed.ok ? 200 : 422, previewed)
             return
           }
-          if (!acquireWrite(response)) return
-          try {
-            switch (body.action) {
-              case 'save': {
-                const saved = savePreset(activeProfileDir, name, body.bundleOrder, body.disabled)
-                sendJson(response, saved.ok ? 200 : 400, saved)
-                return
-              }
-              case 'apply': {
-                const applied = applyPreset(activeProfileDir, name, maxSnapshots)
-                if (applied.ok) {
-                  invalidateUpdates()
-                  refreshMarketState()
+            await withMutationLock(response, 'write', async () => {
+              switch (body.action) {
+                case 'save': {
+                  const saved = savePreset(activeProfileDir, name, body.bundleOrder, body.disabled)
+                  sendJson(response, saved.ok ? 200 : 400, saved)
+                  return
                 }
-                sendJson(response, applied.ok ? 200 : 422, applied)
-                return
+                case 'apply': {
+                  const applied = applyPreset(activeProfileDir, name, maxSnapshots)
+                  if (applied.ok) {
+                    invalidateUpdates()
+                    refreshMarketState()
+                  }
+                  sendJson(response, applied.ok ? 200 : 422, applied)
+                  return
+                }
+                case 'delete': {
+                  const deleted = deletePreset(activeProfileDir, name)
+                  sendJson(response, deleted.ok ? 200 : 400, deleted)
+                  return
+                }
+                default:
+                  sendJson(response, 400, { error: 'action must be save | preview | apply | delete / action 必须是 save | preview | apply | delete' })
               }
-              case 'delete': {
-                const deleted = deletePreset(activeProfileDir, name)
-                sendJson(response, deleted.ok ? 200 : 400, deleted)
-                return
-              }
-              default:
-                sendJson(response, 400, { error: 'action must be save | preview | apply | delete / action 必须是 save | preview | apply | delete' })
-            }
-          } finally {
-            writing = false
-          }
+            })
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
         }
@@ -1101,15 +1098,14 @@ export function mountMarketRoutes(
           sendJson(response, 403, { error: 'untrusted origin' })
           return
         }
-        if (!acquireWrite(response)) return
         try {
-          const body = await readJsonBody(request, 256 * 1024)
-          const imported = importPresets(activeProfileDir, body)
-          sendJson(response, imported.ok ? 200 : 400, imported)
+          await withMutationLock(response, 'write', async () => {
+            const body = await readJsonBody(request, 256 * 1024)
+            const imported = importPresets(activeProfileDir, body)
+            sendJson(response, imported.ok ? 200 : 400, imported)
+          })
         } catch (error) {
-          sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) })
-        } finally {
-          writing = false
+            sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) })
         }
       },
     }),
