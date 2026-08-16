@@ -216,7 +216,7 @@ describe('core package shadowing (#98 repro scenario)', () => {
 })
 
 describe('duplicate loader entry names (#98 opt: runtime shadowing)', () => {
-  it('detects two rows sharing one name across layers (not a boot failure, but a warning)', () => {
+  it('reports two rows sharing one name across layers — informational, not a boot failure and not a summary warning', () => {
     const dir = pdir()
     writeProfile(dir, {
       dsh: { profile: { bundles: ['@deepseek-ai/dsh-base'] } },
@@ -230,14 +230,73 @@ describe('duplicate loader entry names (#98 opt: runtime shadowing)', () => {
     ]))
 
     const report = analyzeProfile(dir)
+    // The shadowing pair stays structurally visible with the SAME shape
+    // ({name, layers, count}) for the diagnostics panel to render.
     const dup = report.duplicateNames.find(d => d.name === 'same-plugin')
     expect(dup).toBeDefined()
     expect(dup?.count).toBe(2)
     expect(dup?.layers).toContain('@deepseek-ai/dsh-base')
     expect(dup?.layers).toContain('user-patch')
-    // Distinct ids, so NOT a boot failure — only a runtime-shadowing warning.
+    // Distinct ids, so NOT a boot failure (issue #109: only id collisions
+    // fail the boot; name collisions are informational, never a summary
+    // warning — a healthy profile must not be flagged).
     expect(report.summary.errors.some(e => e.includes('duplicate loader entry id'))).toBe(false)
-    expect(report.summary.warnings.some(w => w.includes('duplicate loader entry name'))).toBe(true)
+    expect(report.summary.warnings.some(w => w.includes('duplicate loader entry name'))).toBe(false)
+  })
+
+  it('ignores same-name rows within ONE layer — the official multi-instance bundle pattern', () => {
+    // dsh-base ships tool-subagent and tool-subagent-fork under the SAME name
+    // (@deepseek-ai/dsh-tool-subagent, different provider/toolName configs).
+    // Same-layer same-name rows are a routine multi-entry bundle, never a
+    // conflict: the loader addresses them by id within one layer.
+    const dir = pdir()
+    writeProfile(dir, {
+      dsh: { profile: { bundles: ['@deepseek-ai/dsh-base'] } },
+      dependencies: { '@deepseek-ai/dsh-base': '^4.0.1' },
+    })
+    writeBundle(dir, '@deepseek-ai/dsh-base', '4.0.1', [
+      {
+        insert: [
+          { id: 'tool-subagent', name: '@deepseek-ai/dsh-tool-subagent' },
+          { id: 'tool-subagent-fork', name: '@deepseek-ai/dsh-tool-subagent' },
+        ],
+      },
+    ])
+
+    const report = analyzeProfile(dir)
+    expect(report.duplicateNames.find(d => d.name === '@deepseek-ai/dsh-tool-subagent')).toBeUndefined()
+    expect(report.summary.warnings).toEqual([])
+    expect(report.summary.ok).toBe(true)
+  })
+
+  it('fresh profile with only the official bundle warns about nothing out of the box', () => {
+    // Maintainer-reported false positive (issue #109): an untouched profile
+    // with zero community plugins must not be flagged. The official bundle
+    // legitimately repeats a name for multi-instance rows, so the whole
+    // duplicate-name machinery stays silent on a healthy profile.
+    const dir = pdir()
+    writeProfile(dir, {
+      dsh: { profile: { bundles: ['@deepseek-ai/dsh-base'] } },
+      dependencies: { '@deepseek-ai/dsh-base': '^4.0.1' },
+    })
+    writeBundle(dir, '@deepseek-ai/dsh-base', '4.0.1', [
+      {
+        insert: [
+          { id: 'timer', name: '@deepseek-ai/cordis-plugin-timer' },
+          { id: 'llm', name: '@deepseek-ai/dsh-llm' },
+          { id: 'session', name: '@deepseek-ai/dsh-session' },
+          { id: 'tool-subagent', name: '@deepseek-ai/dsh-tool-subagent' },
+          { id: 'tool-subagent-fork', name: '@deepseek-ai/dsh-tool-subagent' },
+          { id: 'tool-web', name: '@deepseek-ai/dsh-tool-web' },
+        ],
+      },
+    ])
+
+    const report = analyzeProfile(dir)
+    expect(report.duplicateNames).toEqual([])
+    expect(report.summary.warnings).toEqual([])
+    expect(report.summary.errors).toEqual([])
+    expect(report.summary.ok).toBe(true)
   })
 })
 

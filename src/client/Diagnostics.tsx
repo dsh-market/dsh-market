@@ -365,7 +365,9 @@ export function Diagnostics(props: { t: Translate }) {
   const peerConfirmed = report.peerMismatches.filter(peer => peer.satisfied === false)
   const peerInfo = report.peerMismatches.filter(peer => peer.satisfied !== false)
   // Category counts for the overview strip: conflicts / dependencies / order.
-  const catConflict = report.duplicates.length + (report.duplicateNames?.length ?? 0)
+  // Conflicts = HARD duplicate loader entries only; same-name rows are
+  // informational and stay out of the conflict count (review #109).
+  const catConflict = report.duplicates.length
   const catDeps = report.coreDeps.length + report.peerMismatches.length + report.multiVersion.length
   const catOrder = report.orderConflicts?.length ?? 0
   const anyIssue = catConflict + catDeps + catOrder > 0
@@ -373,9 +375,10 @@ export function Diagnostics(props: { t: Translate }) {
   // profile (boot errors, duplicate entries, confirmed peer mismatches).
   // Purely informational/warning states stay quiet so the agent is not
   // nudged into risky changes without a clear problem (conservative UX).
+  // duplicateNames (same-name rows) is informational only and never counts
+  // as a hard issue (review #109).
   const hasHardIssues = summary.errors.length > 0
     || report.duplicates.length > 0
-    || (report.duplicateNames?.length ?? 0) > 0
     || report.peerMismatches.some(peer => peer.satisfied === false)
 
   /**
@@ -748,7 +751,7 @@ export function Diagnostics(props: { t: Translate }) {
           <div className={css.diagList}>
             <span className={css.diagKey}>{t('duplicateNames')}</span>
             {report.duplicateNames.map((dup, i) => (
-              <div key={i} className={css.warnLine}>{dup.name} × {dup.count} — {dup.layers.join(' / ')}</div>
+              <div key={i} className={css.panelNote}>{dup.name} × {dup.count} — {dup.layers.join(' / ')}</div>
             ))}
           </div>
         )}

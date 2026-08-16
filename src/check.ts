@@ -132,9 +132,12 @@ export interface PeerMismatch {
 }
 
 /**
- * Distinct loader entries sharing one NAME — the Loader registers plugins by
- * name, so two rows with the same name shadow each other at runtime (the
- * later layer wins), unlike duplicate ids which fail the boot outright.
+ * Loader entries sharing one NAME across DIFFERENT layers — the Loader
+ * registers plugins by name, so a later layer's row with the same name
+ * shadows the earlier one at runtime. Same-layer rows sharing a name are
+ * routine (a bundle defining several entries under one name) and are never
+ * reported here. Unlike duplicate ids (report.duplicates), which fail the
+ * boot outright, shadowing names only decide which entry wins at runtime.
  */
 export interface DuplicateName {
   name: string
@@ -983,7 +986,12 @@ export function analyzeProfile(profileDirectory: string, options: CheckOptions =
   }
 
   // Duplicate loader NAMES: the Loader registers plugins by name, so two rows
-  // with the same name shadow each other at runtime (later layer wins).
+  // with the same name in DIFFERENT layers shadow each other at runtime (the
+  // later layer wins). Rows sharing a name within ONE layer are routine — a
+  // single bundle may define several entries under the same name — and are
+  // skipped entirely: a same-layer "duplicate name" is a false positive, not
+  // a conflict. The hard conflict is duplicate loader entry ids
+  // (report.duplicates), which fail the boot outright and are unchanged.
   const nameCounts = new Map<string, string[]>()
   for (const row of composed.rows) {
     if (row.name === undefined) continue
@@ -993,10 +1001,15 @@ export function analyzeProfile(profileDirectory: string, options: CheckOptions =
   }
   const duplicateNames: DuplicateName[] = []
   for (const [name, layers] of nameCounts) {
+    // Only cross-layer collisions are real shadowing candidates: all rows
+    // with this name living in one layer is a normal multi-entry bundle.
+    if (layers.length < 2) continue
     const count = composed.rows.filter(row => row.name === name).length
-    if (count < 2) continue
     duplicateNames.push({ name, layers, count })
-    warnings.push(`duplicate loader entry name ${JSON.stringify(name)} (${count} rows: ${layers.join(', ')}) — the later layer shadows the earlier one / 重复的 loader 条目名称，后加载者会覆盖先加载者`)
+    // Deliberately NOT pushed into summary.warnings: the report carries the
+    // shadowing rows structurally (duplicateNames, rendered by the
+    // diagnostics panel), and the cost of a false positive — a healthy
+    // profile flagged with a warning — outweighs a false negative here.
   }
   duplicateNames.sort((a, b) => a.name.localeCompare(b.name))
 
