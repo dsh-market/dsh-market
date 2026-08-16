@@ -131,9 +131,10 @@ describe('Diagnostics (jsdom)', () => {
     assertSection(t('checkCoreDeps'), 1)
     assertSection(t('checkPeerMismatches'), 3)
     assertSection(t('checkMultiVersion'), 1)
-    // DisclosureRows render title and count as one text node.
-    expect(screen.getByText(`${t('checkOverrides')} (1)`)).toBeTruthy()
-    expect(screen.getByText(`${t('checkOrphans')} (1)`)).toBeTruthy()
+    // Overrides/orphans now use the same collapsible Section style as the
+    // other blocks (title and count split across nodes).
+    assertSection(t('checkOverrides'), 1)
+    assertSection(t('checkOrphans'), 1)
 
     // Problem lists render in the red error style (css-module err class).
     const dupErrLine = screen.getByText(/duplicate loader entry id/)
@@ -178,8 +179,8 @@ describe('Diagnostics (jsdom)', () => {
     // Overrides disclosure opens expanded. Each row is a structured line
     // `id ← layer-badge t('checkOverridden') overridden-layers` — the label
     // and the value are separate spans now, so assert them separately (scoped
-    // to the disclosure: the same id/layer texts also appear elsewhere).
-    const ovSection = screen.getByText(`${t('checkOverrides')} (1)`).closest('[data-disclosure-row]')!.parentElement as HTMLElement
+    // to the section: the same id/layer texts also appear elsewhere).
+    const ovSection = assertSection(t('checkOverrides'), 1)
     expect(within(ovSection).getByText('shared-entry')).toBeTruthy()
     expect(within(ovSection).getByText('user-patch')).toBeTruthy()
     expect(within(ovSection).getByText(t('checkOverridden'))).toBeTruthy()
@@ -188,7 +189,7 @@ describe('Diagnostics (jsdom)', () => {
     // Orphan patch row is now category-badge + id + layer + reason span. The
     // badge (t('orphanPatchTargetMissing')) and the reason both read "patch
     // target not found" in en — expect both rendered.
-    const orphSection = screen.getByText(`${t('checkOrphans')} (1)`).closest('[data-disclosure-row]')!.parentElement as HTMLElement
+    const orphSection = assertSection(t('checkOrphans'), 1)
     expect(within(orphSection).getByText('ghost-entry')).toBeTruthy()
     expect(within(orphSection).getByText('user-patch')).toBeTruthy()
     expect(within(orphSection).getAllByText(t('orphanPatchTargetMissing')).length).toBe(2)
@@ -212,8 +213,8 @@ describe('Diagnostics (jsdom)', () => {
     ]) {
       expect(screen.getByText(t(key)), t(key)).toBeTruthy()
     }
-    expect(screen.getByText(`${t('checkOverrides')} (0)`)).toBeTruthy()
-    expect(screen.getByText(`${t('checkOrphans')} (0)`)).toBeTruthy()
+    assertSection(t('checkOverrides'), 0)
+    assertSection(t('checkOrphans'), 0)
     expect(container.querySelectorAll('.' + css.diagBundle).length).toBe(0)
   })
 

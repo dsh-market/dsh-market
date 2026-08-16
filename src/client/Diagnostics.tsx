@@ -15,7 +15,7 @@
  * here because the client bundle is built independently of the host tree.
  */
 import { useCallback, useEffect, useMemo, useState, type DragEvent, type ReactNode } from 'react'
-import { Button, DisclosureRow, IconChevronDownOutline14, IconChevronRightOutline14, IconLoadingOutline16, IconRefreshOutline14, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconChevronDownOutline14, IconChevronRightOutline14, IconLoadingOutline16, IconRefreshOutline14, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
 import css from './Market.module.css'
 import type { Translate } from './market-data.ts'
 import { PresetPanel } from './preset-panel.tsx'
@@ -118,8 +118,8 @@ interface CheckReport {
 /**
  * A collapsible report section: header shows title + count + chevron; the
  * body stays mounted (hidden via CSS when collapsed) so every block keeps
- * its state. Problem blocks (default) open when they have content; purely
- * informational blocks (Bundles) stay collapsed until opened. When
+ * its state. ALL blocks are collapsed by default; only blocks with real
+ * problems (errors/warnings) are passed `defaultOpen` by the caller. When
  * collapsed, an optional one-line `overview` summarizes the block so the
  * page reads without expanding everything.
  */
@@ -128,12 +128,11 @@ function Section(props: {
   count: number
   empty: string
   defaultOpen?: boolean
-  problem?: boolean
   overview?: ReactNode
   children: ReactNode
 }) {
-  const { title, count, empty, defaultOpen, problem = true, overview, children } = props
-  const [open, setOpen] = useState(defaultOpen ?? (problem ? count > 0 : false))
+  const { title, count, empty, defaultOpen, overview, children } = props
+  const [open, setOpen] = useState(defaultOpen ?? false)
   return (
     <section className={css.diagSection}>
       <button type="button" className={css.collapseHead} onClick={() => setOpen(o => !o)} aria-expanded={open}>
@@ -152,31 +151,7 @@ function Section(props: {
   )
 }
 
-/** A collapsible secondary section (overrides / orphans). */
-function DisclosureSection(props: {
-  title: string
-  count: number
-  empty: string
-  open: boolean
-  onToggle: () => void
-  children: ReactNode
-}) {
-  const { title, count, empty, open, onToggle, children } = props
-  return (
-    <DisclosureRow
-      icon={<IconChevronDownOutline14 size={14} />}
-      title={`${title} (${count})`}
-      expandable
-      open={open}
-      onToggle={onToggle}
-    >
-      {count === 0 ? <div className={css.diagEmpty}>{empty}</div> : children}
-    </DisclosureRow>
-  )
-}
-
-/**
- * A collapsible section that KEEPS its children mounted (hidden via CSS when
+/** A collapsible section that KEEPS its children mounted (hidden via CSS when
  * collapsed) so the phase 3 panels below retain their loaded data and
  * in-progress edits across collapses. Children mount from the start, but the
  * panels only fetch when `open` first becomes true.
@@ -220,8 +195,6 @@ export function Diagnostics(props: { t: Translate }) {
   const { t } = props
   const [report, setReport] = useState<CheckReport | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [overridesOpen, setOverridesOpen] = useState(true)
-  const [orphansOpen, setOrphansOpen] = useState(true)
   const [orderOpen, setOrderOpen] = useState(true)
   const [snapOpen, setSnapOpen] = useState(false)
   const [presetOpen, setPresetOpen] = useState(false)
@@ -386,7 +359,13 @@ export function Diagnostics(props: { t: Translate }) {
         <span className={css.diagSummaryMeta}>{new Date(report.scannedAt).toLocaleString()}</span>
       </div>
 
-      <Section title={t('checkErrors')} count={summary.errors.length} empty={t('checkErrorsEmpty')} overview={summary.errors.length > 0 ? summary.errors[0] : undefined}>
+      <Section
+        title={t('checkErrors')}
+        count={summary.errors.length}
+        empty={t('checkErrorsEmpty')}
+        defaultOpen={summary.errors.length > 0}
+        overview={summary.errors.length > 0 ? summary.errors[0] : undefined}
+      >
         <div className={css.diagList}>
           {summary.errors.map((line, i) => (
             <div key={i} className={css.err}>{line}</div>
@@ -394,7 +373,13 @@ export function Diagnostics(props: { t: Translate }) {
         </div>
       </Section>
 
-      <Section title={t('checkWarnings')} count={summary.warnings.length} empty={t('checkWarningsEmpty')} overview={summary.warnings.length > 0 ? summary.warnings[0] : undefined}>
+      <Section
+        title={t('checkWarnings')}
+        count={summary.warnings.length}
+        empty={t('checkWarningsEmpty')}
+        defaultOpen={summary.warnings.length > 0}
+        overview={summary.warnings.length > 0 ? summary.warnings[0] : undefined}
+      >
         <div className={css.diagList}>
           {summary.warnings.map((line, i) => (
             <div key={i} className={css.warnLine}><span>{line}</span></div>
@@ -406,7 +391,6 @@ export function Diagnostics(props: { t: Translate }) {
         title={t('checkBundles')}
         count={report.bundles.length}
         empty={t('checkBundlesEmpty')}
-        problem={false}
         overview={
           <span>
             {t('checkOfficial')} × {report.bundles.filter(b => b.kind === 'official').length}
@@ -529,12 +513,11 @@ export function Diagnostics(props: { t: Translate }) {
         </div>
       </Section>
 
-      <DisclosureSection
+      <Section
         title={t('checkOverrides')}
         count={report.overrides.length}
         empty={t('checkOverridesEmpty')}
-        open={overridesOpen}
-        onToggle={() => setOverridesOpen(o => !o)}
+        overview={report.overrides.length > 0 ? `${report.overrides[0]?.id} ← ${report.overrides[0]?.layer}` : undefined}
       >
         <div className={css.diagList}>
           {report.overrides.map((ov, i) => (
@@ -547,14 +530,13 @@ export function Diagnostics(props: { t: Translate }) {
             </div>
           ))}
         </div>
-      </DisclosureSection>
+      </Section>
 
-      <DisclosureSection
+      <Section
         title={t('checkOrphans')}
         count={report.orphans.length}
         empty={t('checkOrphansEmpty')}
-        open={orphansOpen}
-        onToggle={() => setOrphansOpen(o => !o)}
+        overview={report.orphans.length > 0 ? `${report.orphans[0]?.id}（${t(orphanKindLabel(report.orphans[0]?.reason ?? ''))}）` : undefined}
       >
         <div className={css.diagList}>
           {report.orphans.map((orphan, i) => (
@@ -566,7 +548,7 @@ export function Diagnostics(props: { t: Translate }) {
             </div>
           ))}
         </div>
-      </DisclosureSection>
+      </Section>
 
       {/* issue #98 phase 2 (step 1): community-bundle ordering */}
       <CollapsibleSection title={t('orderSection')} count={order.length} open={orderOpen} onToggle={() => setOrderOpen(o => !o)}>
