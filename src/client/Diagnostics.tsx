@@ -1,17 +1,19 @@
 /**
  * Diagnostics tab — issue #98: renders the profile composition check report
- * served by the host route /dsh-market/check (see src/check.ts). Read-only:
- * the loading-layer stack and the conflict surface — bundle order (official
- * vs community), duplicate loader entry ids, same-name rows, peer dependency
- * mismatches, multi-version core packages, overrides, orphan patches and
- * before/after ordering conflicts. (PR-A: the interactive community-ordering,
- * snapshots & rollback and plugin-presets panels ship in later stacked PRs.)
+ * served by the host route /dsh-market/check (see src/check.ts). Below the
+ * report sits the phase 2 action panel: community-bundle ordering (reorder
+ * locally with ↑/↓ or drag, POST to /dsh-market/bundle-order) plus the AI-fix
+ * clipboard prompt for HARD issues. The phase 3 snapshots & rollback and
+ * plugin presets panels ship in later stacked PRs.
  *
- * The report shape mirrors the CheckReport interface in src/check.ts; it is
+ * Read-only view of the loading-layer stack and the conflict surface: bundle
+ * order (official vs community), duplicate loader entry ids, peer dependency
+ * mismatches, multi-version core packages, overrides and orphan patches. The
+ * report shape mirrors the CheckReport interface in src/check.ts; it is
  * re-declared here because the client bundle is built independently of the
  * host tree.
  */
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import { Button, DisclosureRow, IconChevronDownOutline14, IconChevronRightOutline14, IconLoadingOutline16, IconRefreshOutline14, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
 import css from './Market.module.css'
 import type { Translate } from './market-data.ts'
@@ -89,10 +91,12 @@ interface CheckReport {
   peerMismatches: PeerMismatch[]
   multiVersion: MultiVersion[]
   summary: CheckSummary
-  /** #98: before/after rule conflicts in the CURRENT bundle order, when the host emits it. */
+  /** #98 phase 2: validateOrder result for the CURRENT bundle order, when the host emits it. */
   orderConflicts?: OrderConflict[]
-  /** #98: loader rows sharing one name — informational display only, never a conflict (review #109). */
+  /** #98 opt: loader rows sharing one name — informational display only, never a conflict (review #109). */
   duplicateNames?: Array<{ name: string; layers: string[]; count: number }>
+  /** #98 opt: LOOT-style suggested community order satisfying every rule. */
+  suggestedOrder?: { ok: true; order: string[] } | { ok: false; cycle: string[] } | null
 }
 
 /**
@@ -138,7 +142,8 @@ function Section(props: {
 }
 
 /** A collapsible section that KEEPS its children mounted (hidden via CSS when
- * collapsed), used by the plain-language explainer block.
+ * collapsed) so the ordering panel below retains its loaded data and
+ * in-progress edits across collapses.
  */
 function CollapsibleSection(props: { title: string; count?: number; open: boolean; onToggle: () => void; children: ReactNode }) {
   const { title, count, open, onToggle, children } = props
@@ -172,22 +177,145 @@ function orphanKindLabel(reason: string): string {
 
 /**
  * Fetch and render the profile check report. Refetches on every mount, so
- * switching tabs away and back re-runs the (cheap, read-only) analysis.
+ * switching tabs away and back re-runs the (cheap, read-only) analysis; the
+ * ordering panel calls `refresh()` after applying an order.
  */
 export function Diagnostics(props: { t: Translate }) {
   const { t } = props
   const [report, setReport] = useState<CheckReport | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [orderOpen, setOrderOpen] = useState(false)
   const [explainOpen, setExplainOpen] = useState(false)
   const [peerInfoOpen, setPeerInfoOpen] = useState(false)
-  /** Bump to re-run the /dsh-market/check fetch (manual re-check). */
+  const [fixMsg, setFixMsg] = useState<string | null>(null)
+  /** The built AI-fix prompt when the clipboard path failed — rendered as a
+   * selectable text block so the user can still copy it manually. */
+  const [fixFallback, setFixFallback] = useState<string | null>(null)
+  /** Bump to re-run the /dsh-market/check fetch after an order apply. */
   const [version, setVersion] = useState(0)
   const refresh = useCallback(() => setVersion(v => v + 1), [])
 
+  // --- issue #98 phase 2 (step 1): community-bundle ordering ---------------
+  /** Community bundle names from the report, in declared order. */
+  const communityNames = useMemo(
+    () => report === null ? [] : report.bundles.filter(bundle => bundle.kind === 'community').map(bundle => bundle.name),
+    [report],
+  )
+  /** Local editing state: re-synced whenever the report (re)loads. */
+  const [order, setOrder] = useState<string[]>(communityNames)
+  const [orderMsg, setOrderMsg] = useState<string | null>(null)
+  const [orderErr, setOrderErr] = useState<string | null>(null)
+  const [orderBusy, setOrderBusy] = useState(false)
+  /**
+   * Content identity of the last community order this draft synced to. A
+   * refresh() refetch returns a NEW array even when the order is unchanged,
+   * so a naive `setOrder(communityNames)` effect would wipe the user's
+   * in-progress drag/↑↓ edits on every unrelated re-check. Only resync when
+   * the report's community order actually CHANGED (apply order) — an
+   * identical refetch keeps the draft (review M2).
+   */
+  const syncedOrderRef = useRef<string[] | null>(null)
+  useEffect(() => {
+    const synced = syncedOrderRef.current
+    const same = synced !== null
+      && synced.length === communityNames.length
+      && communityNames.every((name, i) => name === synced[i])
+    if (same) return
+    syncedOrderRef.current = communityNames
+    setOrder(communityNames)
+  }, [communityNames])
+
+  /** Swap one community bundle with its neighbour (-1 up, +1 down). */
+  const moveBundle = (index: number, delta: -1 | 1) => {
+    setOrder(prev => {
+      const next = [...prev]
+      const target = index + delta
+      if (target < 0 || target >= next.length) return prev
+      ;[next[index], next[target]] = [next[target]!, next[index]!]
+      return next
+    })
+  }
+
+  // --- drag & drop reordering (draft only — saved by 应用顺序 / Apply order) ---
+  /** Row being dragged (index into the local `order` draft). */
+  const [dragIndex, setDragIndex] = useState<number | null>(null)
+  /** Row currently under the pointer, highlighted as the drop target. */
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
+
+  const onRowDragStart = (index: number) => (event: DragEvent<HTMLDivElement>) => {
+    if (orderBusy) {
+      event.preventDefault()
+      return
+    }
+    setDragIndex(index)
+    event.dataTransfer?.setData?.('text/plain', order[index] ?? '')
+    if (event.dataTransfer !== undefined) event.dataTransfer.effectAllowed = 'move'
+  }
+
+  const onRowDragOver = (index: number) => (event: DragEvent<HTMLDivElement>) => {
+    if (dragIndex === null || dragIndex === index) return
+    // preventDefault marks the row as a valid drop target (no auto-scroll).
+    event.preventDefault()
+    if (event.dataTransfer !== undefined) event.dataTransfer.dropEffect = 'move'
+    setDragOverIndex(index)
+  }
+
+  const onRowDragLeave = (index: number) => () => {
+    setDragOverIndex(prev => prev === index ? null : prev)
+  }
+
+  const onRowDrop = (index: number) => (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    const from = dragIndex
+    setDragIndex(null)
+    setDragOverIndex(null)
+    if (from === null || from === index) return
+    // Reorder the LOCAL draft only; the host is told via 应用顺序 / Apply order.
+    setOrder(prev => {
+      const next = [...prev]
+      const [moved] = next.splice(from, 1)
+      next.splice(index, 0, moved!)
+      return next
+    })
+  }
+
+  const onRowDragEnd = () => {
+    setDragIndex(null)
+    setDragOverIndex(null)
+  }
+
+  /** POST the current community order; the host trial-validates first. */
+  const applyOrder = (target?: string[]) => {
+    if (orderBusy) return
+    setOrderBusy(true)
+    setOrderMsg(null)
+    setOrderErr(null)
+    fetch('/dsh-market/bundle-order', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ order: target ?? order }),
+    })
+      .then(async (res) => {
+        const body = (await res.json().catch(() => null)) as { ok?: unknown; error?: unknown } | null
+        if (!res.ok || body?.ok !== true) {
+          setOrderErr(String(body?.error ?? `HTTP ${String(res.status)}`))
+          return
+        }
+        setOrderMsg(t('orderApplied'))
+        // Refetch the report so communityNames / the ordering draft reflect
+        // the applied order.
+        refresh()
+      })
+      .catch((err: unknown) => setOrderErr(err instanceof Error ? err.message : String(err)))
+      .finally(() => setOrderBusy(false))
+  }
+
   useEffect(() => {
     let live = true
-    // Do NOT null the report here: a refresh() (manual re-check) must keep
-    // the previous data visible instead of flashing the loading state.
+    // Do NOT null the report here: a refresh() (manual re-check, or after an
+    // order apply) must keep the previous data visible and must not clobber
+    // the in-progress ordering draft, which re-syncs from communityNames only
+    // when the report actually changes (review M2).
     setError(null)
     fetch('/dsh-market/check', { cache: 'no-store' })
       .then(async (res) => {
@@ -214,6 +342,7 @@ export function Diagnostics(props: { t: Translate }) {
   }
 
   const summary = report.summary
+  const suggested = report.suggestedOrder ?? null
   // Confirmed mismatches vs informational entries (satisfied / unknown).
   const peerConfirmed = report.peerMismatches.filter(peer => peer.satisfied === false)
   const peerInfo = report.peerMismatches.filter(peer => peer.satisfied !== false)
@@ -224,6 +353,61 @@ export function Diagnostics(props: { t: Translate }) {
   const catDeps = report.peerMismatches.length + report.multiVersion.length
   const catOrder = report.orderConflicts?.length ?? 0
   const anyIssue = catConflict + catDeps + catOrder > 0
+  // AI-fix only shows for HARD issues — things that actually break the
+  // profile (boot errors, duplicate entries, confirmed peer mismatches).
+  // Purely informational/warning states stay quiet so the agent is not
+  // nudged into risky changes without a clear problem (conservative UX).
+  // duplicateNames (same-name rows) is informational only and never counts
+  // as a hard issue (review #109).
+  const hasHardIssues = summary.errors.length > 0
+    || report.duplicates.length > 0
+    || report.peerMismatches.some(peer => peer.satisfied === false)
+
+  /**
+   * Build the AI-fix prompt (errors/warnings/order conflicts + scope) and
+   * copy it to the clipboard. The user pastes it into a new conversation
+   * and decides whether to send — the agent never runs automatically.
+   * (A previous auto-open/prefill attempt was dropped: it was unreliable
+   * across host versions, so plain copy + toast is the contract.)
+   */
+  const startAgentFix = () => {
+    const lines: string[] = []
+    lines.push(t('aiFixIntro').replace('{0}', report.profile))
+    lines.push('')
+    if (summary.errors.length > 0) {
+      lines.push(`${t('checkErrors')}:`)
+      for (const e of summary.errors) lines.push(`- ${e}`)
+      lines.push('')
+    }
+    if (summary.warnings.length > 0) {
+      lines.push(`${t('checkWarnings')}:`)
+      for (const w of summary.warnings) lines.push(`- ${w}`)
+      lines.push('')
+    }
+    if ((report.orderConflicts ?? []).length > 0) {
+      lines.push(`${t('catOrder')}:`)
+      for (const c of report.orderConflicts ?? []) lines.push(`- ${c.name}: ${c.reason}`)
+      lines.push('')
+    }
+    lines.push(t('aiFixScope'))
+    lines.push('')
+    lines.push(t('aiFixConservative'))
+    const prompt = lines.join('\n')
+
+    // Clipboard-first; on any failure (missing API or a rejected promise) show
+    // the prompt in a selectable block so the user can still copy it by hand —
+    // a bare "clipboard unavailable" message left nothing to copy.
+    setFixMsg(null)
+    setFixFallback(null)
+    const fallback = () => setFixFallback(prompt)
+    if (typeof navigator.clipboard?.writeText === 'function') {
+      navigator.clipboard.writeText(prompt)
+        .then(() => setFixMsg(t('aiFixCopied')))
+        .catch(fallback)
+    } else {
+      fallback()
+    }
+  }
 
   return (
     <div className={css.diagPage}>
@@ -242,12 +426,30 @@ export function Diagnostics(props: { t: Translate }) {
           <StateDot state="warning" size={8} />{t('catOrder')}: {catOrder}
         </span>
         <span className={css.grow} />
+        {hasHardIssues && (
+          <Button variant="outline" size="sm" onClick={startAgentFix} title={t('aiFixHint')}>
+            {t('aiFix')}
+          </Button>
+        )}
         <Button variant="ghost" size="sm" aria-label={t('checkRefresh')} onClick={refresh}>
           <IconRefreshOutline14 size={14} />
         </Button>
         <span className={css.diagSummaryMeta} title={report.profile}>{t('checkProfile')}: {report.profile}</span>
         <span className={css.diagSummaryMeta}>{new Date(report.scannedAt).toLocaleString()}</span>
       </div>
+      {fixMsg !== null && <div className={css.okState}>{fixMsg}</div>}
+      {fixFallback !== null && (
+        <div className={css.fixFallback}>
+          <p className={css.panelNote}>{t('aiFixFail')}</p>
+          <textarea
+            readOnly
+            rows={10}
+            className={css.fixFallbackText}
+            value={fixFallback}
+            onFocus={e => e.currentTarget.select()}
+          />
+        </div>
+      )}
 
       <CollapsibleSection title={t('diagExplain')} open={explainOpen} onToggle={() => setExplainOpen(o => !o)}>
         <p className={css.panelNote}>{t('diagExplainText')}</p>
@@ -461,23 +663,103 @@ export function Diagnostics(props: { t: Translate }) {
         </div>
       </Section>
 
-      {/* Read-only extras (used to live inside the phase-2 ordering panel). */}
-      {report.orderConflicts !== undefined && report.orderConflicts.length > 0 && (
-        <div className={css.diagList}>
-          <span className={css.diagKey}>{t('orderConflicts')}</span>
-          {report.orderConflicts.map((conflict, i) => (
-            <div key={i} className={css.warnLine}>{conflict.name} — {conflict.reason}</div>
-          ))}
+      {/* issue #98 phase 2 (step 1): community-bundle ordering */}
+      <CollapsibleSection title={t('orderSection')} count={order.length} open={orderOpen} onToggle={() => setOrderOpen(o => !o)}>
+        <p className={css.panelNote}>{t('orderDragHint')}</p>
+        {report.orderConflicts !== undefined && report.orderConflicts.length > 0 && (
+          <div className={css.diagList}>
+            <span className={css.diagKey}>{t('orderConflicts')}</span>
+            {report.orderConflicts.map((conflict, i) => (
+              <div key={i} className={css.warnLine}>{conflict.name} — {conflict.reason}</div>
+            ))}
+          </div>
+        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <Button variant="primary" size="sm" disabled={order.length === 0 || orderBusy} onClick={() => applyOrder()}>
+            {orderBusy ? '…' : t('orderApply')}
+          </Button>
+          {suggested !== null && suggested.ok === true
+            && suggested.order.join('\u0000') !== communityNames.join('\u0000')
+            && (
+              <Button variant="outline" size="sm" disabled={orderBusy} onClick={() => applyOrder(suggested.order)}>
+                {t('orderSuggestApply')}
+              </Button>
+            )}
+          {suggested !== null && suggested.ok === true
+            && suggested.order.join('\u0000') === communityNames.join('\u0000')
+            && (
+              <Button variant="outline" size="sm" disabled={orderBusy} onClick={() => setOrderMsg(t('orderAlreadyOptimal'))}>
+                {t('orderAutoSort')}
+              </Button>
+            )}
+          {suggested === null && (
+            <Button variant="outline" size="sm" disabled={orderBusy} onClick={() => setOrderMsg(t('orderNoRules'))}>
+              {t('orderAutoSort')}
+            </Button>
+          )}
+          {order.join('\u0000') !== communityNames.join('\u0000') && (
+            <Button variant="ghost" size="sm" disabled={orderBusy} onClick={() => setOrder(communityNames)}>
+              {t('orderReset')}
+            </Button>
+          )}
+          {orderMsg !== null && <span className={css.okState}>{orderMsg}</span>}
+          {orderErr !== null && <span className={css.err}>{orderErr}</span>}
         </div>
-      )}
-      {report.duplicateNames !== undefined && report.duplicateNames.length > 0 && (
-        <div className={css.diagList}>
-          <span className={css.diagKey}>{t('duplicateNames')}</span>
-          {report.duplicateNames.map((dup, i) => (
-            <div key={i} className={css.panelNote}>{dup.name} × {dup.count} — {dup.layers.join(' / ')}</div>
-          ))}
-        </div>
-      )}
+        {suggested !== null && suggested.ok === false && (
+          <div className={css.warnLine}>{t('orderSuggestHint')} ⚠ {suggested.cycle.join(' → ')}</div>
+        )}
+        {report.duplicateNames !== undefined && report.duplicateNames.length > 0 && (
+          <div className={css.diagList}>
+            <span className={css.diagKey}>{t('duplicateNames')}</span>
+            {report.duplicateNames.map((dup, i) => (
+              <div key={i} className={css.panelNote}>{dup.name} × {dup.count} — {dup.layers.join(' / ')}</div>
+            ))}
+          </div>
+        )}
+        {order.length === 0
+          ? <div className={css.diagEmpty}>—</div>
+          : (
+              <div className={css.diagList}>
+                {order.map((name, i) => (
+                  <div
+                    key={name}
+                    draggable={!orderBusy}
+                    className={[
+                      css.diagRow,
+                      dragIndex === i ? css.dragging : '',
+                      dragOverIndex === i ? css.dragOver : '',
+                    ].filter(Boolean).join(' ')}
+                    onDragStart={onRowDragStart(i)}
+                    onDragOver={onRowDragOver(i)}
+                    onDragLeave={onRowDragLeave(i)}
+                    onDrop={onRowDrop(i)}
+                    onDragEnd={onRowDragEnd}
+                  >
+                    <span className={css.dragHandle} aria-label={t('orderDrag')} title={t('orderDrag')}>⠿</span>
+                    <span className={css.diagIndex}>{i + 1}</span>
+                    <span className={css.nm}>{name}</span>
+                    <span className={css.grow} />
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      draggable={false}
+                      aria-label={t('orderUp')}
+                      disabled={i === 0 || orderBusy}
+                      onClick={() => moveBundle(i, -1)}
+                    >{t('orderUp')}</Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      draggable={false}
+                      aria-label={t('orderDown')}
+                      disabled={i >= order.length - 1 || orderBusy}
+                      onClick={() => moveBundle(i, 1)}
+                    >{t('orderDown')}</Button>
+                  </div>
+                ))}
+              </div>
+            )}
+      </CollapsibleSection>
     </div>
   )
 }

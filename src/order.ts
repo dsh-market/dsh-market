@@ -10,12 +10,10 @@
  * cordis.patch.yml and --patch overlays are not part of the bundle stack and
  * are never touched here.
  *
- * Read-only helpers — nothing here writes the manifest; no processes, no
- * network. The write side (mergeOrder / applyBundleOrder) lives on the
- * ordering branch.
+ * Pure functions plus one manifest write-back; no processes, no network.
  */
 
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 
@@ -25,6 +23,17 @@ export const INBOX_BUNDLES = new Set([
   '@deepseek-ai/dsh-web-app',
   '@deepseek-ai/dsh-headless',
 ])
+
+/**
+ * Atomic same-directory replace (write temp + rename): a crash mid-write can
+ * never leave the profile manifest truncated, which would break every later
+ * pnpm run. Used for every package.json write this module makes.
+ */
+function writeFileAtomic(file: string, content: string): void {
+  const temp = `${file}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  writeFileSync(temp, content)
+  renameSync(temp, file)
+}
 
 /** The bundle stack as it appears in the profile manifest. */
 export interface BundleStack {
@@ -185,6 +194,38 @@ export function validateOrder(bundleNames: string[], rules: BundleRule[]): Order
 }
 
 /**
+ * Merge a community-bundle permutation into the full stack. Official in-box
+ * bundles keep their EXACT positions (never moved); community bundles are
+ * replaced by `newOrder` in order of appearance. Pure — nothing is written.
+ * @returns the merged full stack, or the rejection reason when `newOrder` is
+ * not a permutation of the community bundles (duplicates, additions,
+ * omissions, official names).
+ */
+export function mergeOrder(bundles: string[], newOrder: string[]): { ok: true; bundles: string[] } | { ok: false; error: string } {
+  const communitySet = new Set(bundles.filter(name => !INBOX_BUNDLES.has(name)))
+  if (new Set(newOrder).size !== newOrder.length) {
+    return { ok: false, error: 'duplicate bundle names in the new order / 新顺序包含重复的 bundle' }
+  }
+  if (newOrder.length !== communitySet.size) {
+    return { ok: false, error: 'the new order must contain exactly the current community bundles / 新顺序必须恰好包含全部社区 bundle' }
+  }
+  for (const name of newOrder) {
+    if (!communitySet.has(name)) {
+      return { ok: false, error: `${name} is not a reorderable community bundle / ${name} 不是可排序的社区 bundle` }
+    }
+  }
+  const merged = [...bundles]
+  let cursor = 0
+  for (let index = 0; index < merged.length; index += 1) {
+    const name = merged[index]
+    if (name === undefined || INBOX_BUNDLES.has(name)) continue
+    merged[index] = newOrder[cursor]
+    cursor += 1
+  }
+  return { ok: true, bundles: merged }
+}
+
+/**
  * Topologically sort the community bundles by their before/after rules AND
  * plugin-to-plugin dependencies — the "auto-fix" counterpart to validateOrder
  * (LOOT-style): the suggested order satisfies every declared rule and puts
@@ -254,4 +295,30 @@ export function suggestOrder(
     return { ok: false, cycle: names.filter(name => !ordered.includes(name)) }
   }
   return { ok: true, order: ordered }
+}
+
+/**
+ * Apply a new community-bundle order to the profile manifest. The official
+ * in-box bundles keep their exact positions; `newOrder` must be a permutation
+ * of the current community bundles (no duplicates, no additions, no
+ * omissions). On any failure the manifest is left untouched.
+ * @returns the new full stack on success, or an error description.
+ */
+export function applyBundleOrder(profileDir: string, newOrder: string[]): { ok: true; bundles: string[] } | { ok: false; error: string } {
+  const { bundles } = readBundleStack(profileDir)
+  const merged = mergeOrder(bundles, newOrder)
+  if (!merged.ok) return merged
+  try {
+    const manifestPath = join(profileDir, 'package.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+      dsh?: { profile?: { bundles?: unknown } }
+    }
+    manifest.dsh ??= {}
+    manifest.dsh.profile ??= {}
+    manifest.dsh.profile.bundles = merged.bundles
+    writeFileAtomic(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+    return merged
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) }
+  }
 }
