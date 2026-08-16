@@ -89,12 +89,6 @@ export function avatarColor(name: string): string {
   return 'hsl(' + (((hash % 360) + 360) % 360) + ' 55% 52%)'
 }
 
-export function repoOf(url: string): string | null {
-  // Plain repo urls plus /tree/<branch>/<subpath> monorepo links.
-  const m = /^https:\/\/github\.com\/([^/]+\/[^/]+?)(?:\/tree\/.+)?\/?$/.exec(url)
-  return m ? m[1]! : null
-}
-
 export function readSession(key: string): any {
   try { return JSON.parse(sessionStorage.getItem(key) || 'null') } catch { return null }
 }

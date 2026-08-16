@@ -33,7 +33,7 @@ import {
 import css from './Market.module.css'
 import {
   avatarColor, entryForDep, isInstalled, looksTerminal, matchInstalledName, orderedCategories,
-  pageItems, pluginScreenshots, readSession, repoOf, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
+  pageItems, pluginScreenshots, readSession, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
 } from './market-data.ts'
 import type {
   ActivationInfo, ActivationState, InstalledMap, MarketStatus, Registry, RegistryPlugin,
@@ -542,10 +542,20 @@ export function MarketSection(props: MarketSectionProps) {
     scrollToTop()
   }
 
-  /** Download a host endpoint as a file — primitives Button can't be an <a download>. */
+  /** Download a host endpoint as a file — primitives Button can't be an <a download>.
+   * Prefers the server's Content-Disposition filename (e.g. the timestamped
+   * backup export) and falls back to the caller's name. */
   const downloadFile = useCallback((url: string, filename: string) => {
     fetch(url)
-      .then(res => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.blob() })
+      .then(res => {
+        if (!res.ok) throw new Error('HTTP ' + res.status)
+        const disposition = res.headers.get('content-disposition')
+        if (disposition !== null) {
+          const match = /filename="?([^";]+)"?/.exec(disposition)
+          if (match !== null && match[1] !== undefined && match[1] !== '') filename = match[1]
+        }
+        return res.blob()
+      })
       .then(blob => {
         const a = document.createElement('a')
         a.href = URL.createObjectURL(blob)
