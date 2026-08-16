@@ -804,8 +804,9 @@ export function mountMarketRoutes(
         // cannot interleave with another write either.
         // #125 hardening (lesson from #122: a bad order write can stop DSH
         // from starting): keep a pre-write profile backup and restore it
-        // automatically if the write throws mid-flight. Persistent snapshots
-        // (PR-C) ship separately; this is the in-route safety net.
+        // automatically if the write throws mid-flight, and persist a profile
+        // snapshot before the write (issue #126) so the change is recoverable
+        // from the snapshots tab — the backup is the immediate rollback net.
         let backup: ProfileBackup | null = null
         try {
           await withMutationLock(response, 'write', async () => {
@@ -846,14 +847,19 @@ export function mountMarketRoutes(
                 return
               }
               backup = createProfileBackup(config.profile, activeProfileDir)
+              // yzke review point 4 (issue #126): persist a profile snapshot BEFORE
+              // the write (subject to the maxSnapshots quota), so the change is
+              // recoverable from the snapshots tab; the in-process backup above
+              // stays as the immediate rollback net (double protection).
+              const snapshot = createProfileSnapshot(activeProfileDir, maxSnapshots)
               const applied = applyBundleOrder(activeProfileDir, order)
               if (!applied.ok) {
                 sendJson(response, 400, { error: applied.error })
                 return
               }
               invalidateUpdates()
-              logEvent('info', 'bundle-order', 'applied new community order')
-              sendJson(response, 200, { ok: true, bundles: applied.bundles })
+              logEvent('info', 'bundle-order', 'applied new community order' + (snapshot !== null ?  (snapshot ) : ''))
+              sendJson(response, 200, { ok: true, bundles: applied.bundles, snapshot: snapshot?.id ?? null })
           })
         } catch (error) {
           // The write threw mid-flight: restore the pre-write profile so a

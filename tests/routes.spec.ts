@@ -13,7 +13,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -405,8 +405,8 @@ describe('GET /dsh-market/installed — local repository evidence', () => {
 
 describe('POST /dsh-market/bundle-order', () => {
   it('applies a valid community reorder: 200 with the merged stack, manifest rewritten', async () => {
-    // #125: the in-route pre-write safety net is the profile backup (not a
-    // persistent snapshot), so the bundle-order response carries no snapshot.
+    // #125/#126: the in-route pre-write safety net is the profile backup, and
+    // a persistent snapshot is auto-created before the write (issue #126).
     writeStandardProfile()
     const res = await hit(routes, '/dsh-market/bundle-order', post('/dsh-market/bundle-order', { order: ['beta', 'alpha'] }))
     expect(res.status).toBe(200)
@@ -416,6 +416,25 @@ describe('POST /dsh-market/bundle-order', () => {
 
     const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as { dsh: { profile: { bundles: string[] } } }
     expect(manifest.dsh.profile.bundles).toEqual(['@deepseek-ai/dsh-base', 'beta', 'alpha'])
+  })
+
+  it('persists a profile snapshot BEFORE the write (issue #126: recoverable reorder)', async () => {
+    writeStandardProfile()
+    const res = await hit(routes, '/dsh-market/bundle-order', post('/dsh-market/bundle-order', { order: ['beta', 'alpha'] }))
+    expect(res.status).toBe(200)
+    const body = jsonBody(res)
+    expect(body.ok).toBe(true)
+    // The response carries the pre-write snapshot id.
+    expect(typeof body.snapshot).toBe('string')
+    expect(String(body.snapshot)).toMatch(/^snapshot-/)
+    // The snapshot was persisted BEFORE the write: it captures the ORIGINAL
+    // order [alpha, beta], so restoring it reverts the reorder.
+    const snapDir = join(dir, '.dsh-market', 'snapshots')
+    const snapFiles = readdirSync(snapDir).filter(f => f.endsWith('.json'))
+    expect(snapFiles).toHaveLength(1)
+    const snap = JSON.parse(readFileSync(join(snapDir, snapFiles[0]!), 'utf8')) as { files: Array<{ path: string; json: { dsh?: { profile?: { bundles?: string[] } } } }> }
+    const manifestJson = snap.files.find(f => f.path === 'package.json')
+    expect(manifestJson?.json.dsh?.profile?.bundles).toEqual(['@deepseek-ai/dsh-base', 'alpha', 'beta'])
   })
 
   it('refuses a rule-violating order with 422 + conflicts', async () => {

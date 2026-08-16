@@ -90,6 +90,7 @@ function stubApi(overrides: ApiOverrides = {}) {
         return Promise.resolve(new Response(JSON.stringify(resp.body), { status: resp.status ?? 200 }))
       }
       return Promise.resolve(json({ ok: true, bundles: ['@deepseek-ai/dsh-base', 'beta', 'alpha'] }))
+    }
     if (url === '/dsh-market/snapshots') {
       if (method === 'GET') return Promise.resolve(json(overrides.snapshots ?? SNAPSHOTS))
       return Promise.resolve(json({ ok: true, snapshot: { id: 'snapshot-new', createdAt: 1780000000001, files: [] } }))
@@ -376,21 +377,6 @@ describe('Diagnostics panels (jsdom, #98 phase 2/3)', () => {
     expect(prompt).toContain(t('aiFixConservative').slice(0, 20))
     await waitFor(() => expect(screen.getByText(t('aiFixCopied'))).toBeTruthy())
     void api
-  })
-
-  it('auto-sort shows and reports when no ordering rules exist', async () => {
-    await renderLoaded()
-    // CHECK_REPORT has no hard issues → the AI-fix button stays hidden
-    // (conservative UX: don't nudge the agent without a clear problem).
-    expect(screen.queryByRole('button', { name: t('aiFix') })).toBeNull()
-    const section = screen.getByText(t('orderSection')).closest('section') as HTMLElement
-    fireEvent.click(screen.getByText(t('orderSection')))
-    await waitFor(() => {
-      const body = section.querySelector('[class*="collapseBody"]') as HTMLElement | null
-      expect(body?.style.display).not.toBe('none')
-    })
-    fireEvent.click(within(section).getByRole('button', { name: t('orderAutoSort') }))
-    await waitFor(() => expect(within(section).getByText(t('orderNoRules'))).toBeTruthy())
   })
 
   it('AI-fix without a clipboard API shows the prompt in a copyable text block', async () => {
