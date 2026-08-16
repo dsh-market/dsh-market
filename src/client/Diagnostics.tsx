@@ -134,20 +134,10 @@ function Section(props: {
 }) {
   const { title, count, empty, defaultOpen, problem = true, overview, children } = props
   const [open, setOpen] = useState(defaultOpen ?? false)
-  const ref = useRef<HTMLElement | null>(null)
-  const toggle = (): void => {
-    const next = !open
-    setOpen(next)
-    if (next) {
-      // Bring the freshly expanded block into view so the user lands on it
-      // instead of an empty stretch above (issue #98 UX).
-      requestAnimationFrame(() => ref.current?.scrollIntoView?.({ block: 'nearest' }))
-    }
-  }
   const alert = problem && count > 0
   return (
-    <section ref={ref} className={css.diagSection}>
-      <button type="button" className={css.collapseHead} onClick={toggle} aria-expanded={open}>
+    <section className={css.diagSection}>
+      <button type="button" className={css.collapseHead} onClick={() => setOpen(o => !o)} aria-expanded={open}>
         <span className={css.collapseIcon}>
           {open ? <IconChevronDownOutline14 size={14} /> : <IconChevronRightOutline14 size={14} />}
         </span>
@@ -171,15 +161,9 @@ function Section(props: {
  */
 function CollapsibleSection(props: { title: string; count?: number; open: boolean; onToggle: () => void; children: ReactNode }) {
   const { title, count, open, onToggle, children } = props
-  const ref = useRef<HTMLElement | null>(null)
-  const toggle = (): void => {
-    const next = !open
-    onToggle()
-    if (next) requestAnimationFrame(() => ref.current?.scrollIntoView({ block: 'nearest' }))
-  }
   return (
-    <section ref={ref} className={css.diagSection}>
-      <button type="button" className={css.collapseHead} onClick={toggle} aria-expanded={open}>
+    <section className={css.diagSection}>
+      <button type="button" className={css.collapseHead} onClick={onToggle} aria-expanded={open}>
         <span className={css.collapseIcon}>
           {open ? <IconChevronDownOutline14 size={14} /> : <IconChevronRightOutline14 size={14} />}
         </span>

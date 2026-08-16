@@ -125,10 +125,10 @@
 .backupMessage{grid-column:1/-1;font-size:12px;color:var(--dsw-alias-label-secondary,#6b7280)}
 
 /* #98: Diagnostics tab — profile composition check report.
-   The page scrolls INSIDE itself (min-height:0 + overflow-y:auto) so
-   expanding a panel never pushes the OUTER settings dialog to scroll —
-   the dialog keeps its height and the diagnostics area scrolls instead. */
-.diagPage{display:flex;flex-direction:column;gap:12px;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding-right:2px}
+   The page fills the settings dialog's content height and scrolls INSIDE
+   itself (overflow-y:auto), so the outer dialog never overflows and its own
+   overflow-y:auto stays silent (no outer scrollbar). */
+.diagPage{display:flex;flex-direction:column;gap:12px;height:100%;min-height:0;overflow-y:auto}
 .diagSummary{display:flex;flex-wrap:wrap;align-items:center;gap:12px;background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:12px;padding:10px 14px;font-size:12px}
 .diagSummaryItem{display:inline-flex;align-items:center;gap:6px;color:var(--dsw-alias-label-secondary,#6b7280);white-space:nowrap}
 .diagSummaryMeta{color:var(--dsw-alias-label-tertiary,#9ca3af);font-family:ui-monospace,Menlo,monospace;font-size:11px;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
