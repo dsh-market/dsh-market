@@ -25,8 +25,8 @@ import {
 import { profileDir, readInstalled, readInstalledVersion, readLockCommits, readManifestDeps, restoreManifestDeps, setAllowBuilds } from './profile.ts'
 import { analyzeProfile } from './check.ts'
 import { applyBundleOrder, mergeOrder, readBundleRules, readBundleStack, validateOrder } from './order.ts'
-import { createProfileSnapshot, listSnapshots, restoreSnapshot } from './snapshot.ts'
-import { applyPreset, deletePreset, listPresets, previewPreset, savePreset } from './presets.ts'
+import { createProfileSnapshot, DEFAULT_MAX_SNAPSHOTS, deleteSnapshot, listSnapshots, restoreSnapshot } from './snapshot.ts'
+import { applyPreset, deletePreset, exportPresets, importPresets, listPresets, previewPreset, savePreset } from './presets.ts'
 import { trialValidate } from './trial.ts'
 import { findInstalledAlias, gitAllowBuildsKey, installTargetFor } from './sources.ts'
 import { isStaleUpdate, parseIgnoredBuilds, parsePrepareNotAllowed, RELEASE_AGE_OVERRIDE, retargetCollections, validateAddedPlugins, withHoistRecovery } from './install.ts'
@@ -65,6 +65,8 @@ export interface MarketConfig {
   profileDirectory?: string
   /** Detached self-restart is unsafe under systemd/launchd/pm2; operators can disable it (#14). */
   allowRestart?: boolean
+  /** Snapshots retained per profile (issue #98); defaults to DEFAULT_MAX_SNAPSHOTS. */
+  maxSnapshots?: number
 }
 
 const PROFILE_RE = /^[A-Za-z0-9_-]+$/
@@ -103,6 +105,11 @@ export function mountMarketRoutes(
   }
   const activeProfileDir = profileDir(config.profile, config.profileDirectory)
   const commands = commandRuntime ?? { runPlugin: runDshPlugin, probePnpm, provisionPnpm, cancelActive }
+  // Snapshot retention cap (issue #98 supplement): a finite positive number
+  // from the market config wins; anything else falls back to the default.
+  const maxSnapshots = typeof config.maxSnapshots === 'number' && Number.isFinite(config.maxSnapshots) && config.maxSnapshots >= 1
+    ? Math.floor(config.maxSnapshots)
+    : DEFAULT_MAX_SNAPSHOTS
   // Boot-time wipe: stale hot-mount inputs from a previous session must never
   // survive into a composition where the bundle layer already covers them.
   cleanHotDir(activeProfileDir)
@@ -511,7 +518,7 @@ export function mountMarketRoutes(
             })
             return
           }
-          const snapshot = createProfileSnapshot(activeProfileDir)
+          const snapshot = createProfileSnapshot(activeProfileDir, maxSnapshots)
           const applied = applyBundleOrder(activeProfileDir, order)
           if (!applied.ok) {
             sendJson(response, 400, { error: applied.error })
@@ -541,7 +548,7 @@ export function mountMarketRoutes(
             return
           }
           try {
-            const snapshot = createProfileSnapshot(activeProfileDir)
+            const snapshot = createProfileSnapshot(activeProfileDir, maxSnapshots)
             sendJson(response, snapshot !== null ? 200 : 400, {
               ok: snapshot !== null,
               ...(snapshot !== null ? { snapshot } : { error: 'profile has no package.json / profile 缺少 package.json' }),
@@ -588,6 +595,43 @@ export function mountMarketRoutes(
       },
     }),
 
+    // Issue #98 supplement: delete one snapshot (the cap also prunes old ones
+    // automatically, but the user may want to drop a specific snapshot).
+    host.webServer.register({
+      kind: 'exact',
+      path: '/dsh-market/delete-snapshot',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) {
+          sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        try {
+          const body = (await readJsonBody(request)) as { snapshot?: unknown } | null
+          if (body === null || typeof body !== 'object' || typeof body.snapshot !== 'string' || body.snapshot === '') {
+            sendJson(response, 400, { error: 'snapshot id is required / 需要快照 id' })
+            return
+          }
+          // deleteSnapshot refuses traversal-shaped ids before touching the
+          // filesystem (same discipline as restore); a false result means the
+          // id is malformed or no such snapshot exists.
+          const deleted = deleteSnapshot(activeProfileDir, body.snapshot)
+          if (!deleted) {
+            sendJson(response, 400, { ok: false, error: 'snapshot not found / 快照不存在' })
+            return
+          }
+          logEvent('info', 'snapshot', `deleted ${body.snapshot}`)
+          sendJson(response, 200, { ok: true, snapshot: body.snapshot })
+        } catch (error) {
+          sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    }),
+
     // Issue #98 phase 3: named plugin presets (bundle order + disable list).
     host.webServer.register({
       kind: 'exact',
@@ -620,7 +664,7 @@ export function mountMarketRoutes(
               return
             }
             case 'apply': {
-              const applied = applyPreset(activeProfileDir, name)
+              const applied = applyPreset(activeProfileDir, name, maxSnapshots)
               if (applied.ok) {
                 invalidateUpdates()
                 refreshMarketState()
@@ -643,6 +687,60 @@ export function mountMarketRoutes(
           }
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    }),
+
+    // Issue #98 supplement: export presets as a downloadable JSON file
+    // (plain GET — presets hold no credentials and the data is already
+    // exposed by GET /dsh-market/presets, so no loopback restriction).
+    host.webServer.register({
+      kind: 'exact',
+      path: '/dsh-market/presets-export',
+      handler: (request, response) => {
+        if (request.method !== 'GET') {
+          response.writeHead(405, { allow: 'GET' })
+          response.end()
+          return
+        }
+        try {
+          const data = exportPresets(activeProfileDir)
+          const body = JSON.stringify(data, null, 2)
+          const timestamp = new Date(data.exportedAt).toLocaleString('sv-SE').replace(/\D/g, '')
+          response.writeHead(200, {
+            'cache-control': 'no-store',
+            'content-type': 'application/json; charset=utf-8',
+            'content-disposition': `attachment; filename="dsh-market-presets-${timestamp}.json"`,
+          })
+          response.end(body)
+        } catch (error) {
+          sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    }),
+
+    // Issue #98 supplement: import a preset export file. The document can be
+    // much larger than a single preset (many combinations, CJK names), so the
+    // body limit is raised well above the default 4 KiB.
+    host.webServer.register({
+      kind: 'exact',
+      path: '/dsh-market/presets-import',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) {
+          sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        try {
+          const body = await readJsonBody(request, 256 * 1024)
+          const imported = importPresets(activeProfileDir, body)
+          sendJson(response, imported.ok ? 200 : 400, imported)
+        } catch (error) {
+          sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) })
         }
       },
     }),

@@ -146,6 +146,18 @@
 .diagBadgeShadow{display:inline-flex;align-items:center;padding:0 8px;height:18px;border-radius:9px;background:var(--dsw-alias-state-error-primary,#dc2626);color:#fff;font-size:11px;font-weight:600;flex-shrink:0}
 .diagList{display:flex;flex-direction:column;gap:6px}
 
+/* #98 supplement: section overview line, overrides/orphans rows, drag ordering */
+.sectionOverview{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#8b93a1);padding:2px 0 6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ovRow{display:flex;align-items:center;flex-wrap:wrap;gap:8px;font-size:12px;line-height:18px;background:var(--dsw-alias-bg-layer-2,#f7f8fa);border-radius:8px;padding:6px 10px;min-width:0}
+.ovArrow{color:var(--dsw-alias-label-tertiary,#9ca3af);font-size:12px;flex-shrink:0}
+.ovByTag{display:inline-flex;align-items:center;padding:0 8px;height:18px;border-radius:9px;background:var(--dsw-alias-brand-primary,#4f6ef7);color:#fff;font-size:11px;font-weight:600;flex-shrink:0;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ovFrom{color:var(--dsw-alias-label-secondary,#6b7280);font-size:12px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.orphRow{display:flex;align-items:center;flex-wrap:wrap;gap:8px;font-size:12px;line-height:18px;background:var(--dsw-alias-bg-layer-2,#f7f8fa);border-radius:8px;padding:6px 10px;min-width:0}
+.orphBadge{display:inline-flex;align-items:center;padding:0 8px;height:18px;border-radius:9px;background:var(--dsw-alias-state-warn-primary,#b45309);color:#fff;font-size:11px;font-weight:600;flex-shrink:0;white-space:nowrap}
+.dragHandle{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;color:var(--dsw-alias-label-tertiary,#9ca3af);cursor:grab;flex-shrink:0;user-select:none;font-size:12px;line-height:20px}
+.dragOver{outline:2px dashed var(--dsw-alias-brand-primary,#4f6ef7);outline-offset:2px;border-radius:8px;background:var(--dsw-alias-bg-layer-2,#f0f2f8)}
+.dragging{opacity:.45;background:var(--dsw-alias-bg-layer-2,#f3f4f6)}
+
 /* #98 phase 3: collapsible snapshots & presets panels */
 .collapseHead{display:flex;align-items:center;gap:8px;border:none;background:none;font:inherit;font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary,#1f2328);padding:0;cursor:pointer;text-align:left;width:100%}
 .collapseIcon{display:inline-flex;flex-shrink:0;color:var(--dsw-alias-label-secondary,#6b7280)}

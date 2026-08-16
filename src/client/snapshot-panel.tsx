@@ -83,8 +83,10 @@ export function SnapshotPanel(props: SnapshotPanelProps) {
   const [error, setError] = useState<string | null>(null)
   const [msg, setMsg] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
-  /** Snapshot id awaiting the second confirm click, or null. */
+  /** Snapshot id awaiting the second confirm click (restore), or null. */
   const [confirmId, setConfirmId] = useState<string | null>(null)
+  /** Snapshot id awaiting the second confirm click (delete), or null. */
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const loaded = useRef(false)
 
   const load = useCallback(() => {
@@ -148,6 +150,29 @@ export function SnapshotPanel(props: SnapshotPanelProps) {
       .finally(() => setBusy(null))
   }, [busy, onRefresh, t])
 
+  /** Delete one snapshot after inline double confirmation. */
+  const remove = useCallback((id: string) => {
+    if (busy !== null) return
+    setBusy('delete')
+    setMsg(null)
+    setError(null)
+    postJson('/dsh-market/delete-snapshot', { snapshot: id })
+      .then(({ status, body }) => {
+        if (status >= 200 && status < 300 && body?.ok === true) {
+          setConfirmDeleteId(null)
+          setMsg(t('snapDeleted'))
+          load()
+        } else {
+          const detail = body !== null && typeof body.error === 'string'
+            ? body.error
+            : status === 0 ? 'network error' : `HTTP ${String(status)}`
+          setError(t('snapDeleteFail') + detail)
+        }
+      })
+      .catch(() => setError(t('snapDeleteFail') + 'network'))
+      .finally(() => setBusy(null))
+  }, [busy, load, t])
+
   return (
     <div className={css.orderPanel}>
       <p className={css.panelNote}>{t('snapHint')}</p>
@@ -176,6 +201,16 @@ export function SnapshotPanel(props: SnapshotPanelProps) {
                         <Button variant="ghost" size="sm" disabled={busy !== null} onClick={() => setConfirmId(null)}>{t('cancel')}</Button>
                       </div>
                     </>
+                  ) : confirmDeleteId === snap.id ? (
+                    <>
+                      <p className={css.snapConfirmText}>{t('snapDeleteConfirmText')}</p>
+                      <div className={css.confirmRow}>
+                        <Button variant="primary" size="sm" disabled={busy !== null} onClick={() => remove(snap.id)}>
+                          {busy === 'delete' ? t('snapDeleting') : t('snapDeleteConfirm')}
+                        </Button>
+                        <Button variant="ghost" size="sm" disabled={busy !== null} onClick={() => setConfirmDeleteId(null)}>{t('cancel')}</Button>
+                      </div>
+                    </>
                   ) : (
                     <>
                       <div className={css.snapMeta}>
@@ -188,6 +223,9 @@ export function SnapshotPanel(props: SnapshotPanelProps) {
                       <div className={css.confirmRow}>
                         <Button variant="outline" size="sm" disabled={busy !== null} onClick={() => setConfirmId(snap.id)}>
                           {t('snapRestore')}
+                        </Button>
+                        <Button variant="ghost" size="sm" disabled={busy !== null} onClick={() => setConfirmDeleteId(snap.id)}>
+                          {t('snapDelete')}
                         </Button>
                       </div>
                     </>

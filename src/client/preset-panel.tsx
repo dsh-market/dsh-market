@@ -67,6 +67,8 @@ export function PresetPanel(props: PresetPanelProps) {
   const [name, setName] = useState('')
   /** Preset name awaiting the second confirm click, or null. */
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
+  /** Hidden <input type="file"> for the import action. */
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
   const loaded = useRef(false)
 
   const load = useCallback(() => {
@@ -164,6 +166,89 @@ export function PresetPanel(props: PresetPanelProps) {
       .finally(() => setBusy(null))
   }, [busy, load, t])
 
+  /**
+   * Export the preset list as a downloadable JSON file
+   * (GET /dsh-market/presets-export). Prefers the server's
+   * Content-Disposition filename and falls back to a fixed name.
+   */
+  const exportPresets = useCallback(() => {
+    if (busy !== null) return
+    setBusy('export')
+    setMsg(null)
+    setError(null)
+    fetch('/dsh-market/presets-export', { cache: 'no-store' })
+      .then(async res => {
+        if (!res.ok) throw new Error(`HTTP ${String(res.status)}`)
+        let filename = 'dsh-market-presets.json'
+        const disposition = res.headers.get('content-disposition')
+        if (disposition !== null) {
+          const match = /filename="?([^";]+)"?/.exec(disposition)
+          if (match !== null && match[1] !== undefined && match[1] !== '') filename = match[1]
+        }
+        return { blob: await res.blob(), filename }
+      })
+      .then(({ blob, filename }) => {
+        const url = URL.createObjectURL(blob)
+        const anchor = document.createElement('a')
+        anchor.href = url
+        anchor.download = filename
+        document.body.appendChild(anchor)
+        anchor.click()
+        anchor.remove()
+        setTimeout(() => URL.revokeObjectURL(url), 2000)
+        setMsg(t('presetExported'))
+      })
+      .catch(err => setError(t('presetExportFail') + (err instanceof Error ? err.message : String(err))))
+      .finally(() => setBusy(null))
+  }, [busy, t])
+
+  /** Import a preset JSON file (POST /dsh-market/presets-import, raw JSON body). */
+  const importPresets = useCallback((file: File) => {
+    if (busy !== null) return
+    setBusy('import')
+    setMsg(null)
+    setError(null)
+    file.text()
+      .then(text => {
+        let payload: unknown
+        try {
+          payload = JSON.parse(text)
+        } catch {
+          setError(t('presetImportFail') + t('presetImportBadJson'))
+          setBusy(null)
+          return null
+        }
+        return postJson('/dsh-market/presets-import', payload)
+      })
+      .then(result => {
+        if (result === null) return
+        const { status, body } = result
+        if (status >= 200 && status < 300 && body?.ok === true) {
+          // The host reports imported/added/updated/skipped counts — surface
+          // them in the success message when present.
+          const counts = body as { imported?: unknown; added?: unknown; updated?: unknown; skipped?: unknown }
+          const imported = typeof counts.imported === 'number' ? counts.imported : null
+          if (imported !== null) {
+            const added = typeof counts.added === 'number' ? counts.added : 0
+            const updated = typeof counts.updated === 'number' ? counts.updated : 0
+            const skipped = typeof counts.skipped === 'number' ? counts.skipped : 0
+            setMsg(t('presetImportedCount')
+              .replace('{0}', String(imported))
+              .replace('{1}', String(added))
+              .replace('{2}', String(updated))
+              .replace('{3}', String(skipped)))
+          } else {
+            setMsg(t('presetImported'))
+          }
+          load()
+        } else {
+          setError(errorText(status, body, t('presetImportFail')))
+        }
+      })
+      .catch(() => setError(t('presetImportFail') + 'network'))
+      .finally(() => setBusy(null))
+  }, [busy, load, t])
+
   /** Change preview of one preset: {reordered[], enabled[], disabled[], noop}. */
   const [previewed, setPreviewed] = useState<{ name: string; changes: { reordered: string[]; enabled: string[]; disabled: string[]; noop: boolean } } | null>(null)
   const preview = useCallback((presetName: string) => {
@@ -212,6 +297,28 @@ export function PresetPanel(props: PresetPanelProps) {
         <Button variant="outline" size="sm" disabled={busy !== null} onClick={save}>
           {busy === 'save' ? t('presetSaving') : t('presetSave')}
         </Button>
+      </div>
+
+      <div className={css.panelActions}>
+        <Button variant="outline" size="sm" disabled={busy !== null} onClick={exportPresets}>
+          {busy === 'export' ? t('presetExporting') : t('presetExport')}
+        </Button>
+        <Button variant="outline" size="sm" disabled={busy !== null} onClick={() => fileInputRef.current?.click()}>
+          {busy === 'import' ? t('presetImporting') : t('presetImport')}
+        </Button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="application/json,.json"
+          className={css.hiddenFile}
+          tabIndex={-1}
+          aria-hidden="true"
+          onChange={event => {
+            const file = event.currentTarget.files?.[0]
+            event.currentTarget.value = ''
+            if (file !== undefined) importPresets(file)
+          }}
+        />
       </div>
 
       {error !== null && <div className={css.err}>{error}</div>}

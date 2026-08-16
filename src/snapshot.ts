@@ -11,6 +11,11 @@
  * list + groups). Restoring validates every path (no traversal, no absolute
  * paths — same discipline as backup.ts) and writes all files from memory, so
  * a mid-restore failure cannot leave a half-written profile.
+ *
+ * Retention: after every create, snapshots are pruned to the most recent
+ * `maxSnapshots` (default 20); the cap is configurable through the market
+ * plugin config (`maxSnapshots`) and each snapshot can also be deleted
+ * individually from the UI.
  */
 
 import { dirname, join } from 'node:path'
@@ -76,12 +81,35 @@ function nextSnapshotId(profileDir: string): string {
   return id
 }
 
+/** Default number of snapshots retained; configurable via `maxSnapshots`. */
+export const DEFAULT_MAX_SNAPSHOTS = 20
+
+/**
+ * Prune the snapshot directory to the `max` most recent snapshots (newest
+ * first). Extra ones are deleted oldest-first. A non-positive cap is clamped
+ * to 1 — a 0/negative max must never drop the snapshot that was just created
+ * nor invert to keeping the OLDEST set (issue #98 review hardening).
+ * @returns the ids that were deleted.
+ */
+export function pruneSnapshots(profileDir: string, max: number): string[] {
+  const cap = Math.max(1, max)
+  const all = listSnapshots(profileDir)
+  if (all.length <= cap) return []
+  const dropped = all.slice(cap)
+  for (const snap of dropped) deleteSnapshot(profileDir, snap.id)
+  if (dropped.length > 0) {
+    logEvent('info', 'snapshot', `pruned ${dropped.length} old snapshot(s) (cap ${cap}): ${dropped.map(s => s.id).join(', ')}`)
+  }
+  return dropped.map(s => s.id)
+}
+
 /**
  * Capture the profile's composition files into a new snapshot. Never throws
  * for missing optional files (cordis.patch.yml / state.json may not exist);
- * a missing package.json is not a snapshot-able profile.
+ * a missing package.json is not a snapshot-able profile. After creating, the
+ * directory is pruned to the most recent `maxSnapshots`.
  */
-export function createProfileSnapshot(profileDir: string): ProfileSnapshot | null {
+export function createProfileSnapshot(profileDir: string, maxSnapshots: number = DEFAULT_MAX_SNAPSHOTS): ProfileSnapshot | null {
   const packagePath = join(profileDir, 'package.json')
   let packageJson: unknown
   try {
@@ -102,6 +130,7 @@ export function createProfileSnapshot(profileDir: string): ProfileSnapshot | nul
   mkdirSync(snapshotDir(profileDir), { recursive: true, mode: 0o700 })
   writeFileSync(snapshotFile(profileDir, id), `${JSON.stringify(snapshot, null, 2)}\n`)
   logEvent('info', 'snapshot', `created ${id} (${files.map(file => file.path).join(', ')})`)
+  pruneSnapshots(profileDir, maxSnapshots)
   return snapshot
 }
 

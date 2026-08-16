@@ -9,7 +9,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { dump } from 'js-yaml'
-import { applyPreset, deletePreset, listPresets, previewPreset, savePreset } from '../src/presets.ts'
+import { applyPreset, deletePreset, exportPresets, importPresets, listPresets, previewPreset, savePreset } from '../src/presets.ts'
 
 let tmp: string
 beforeEach(() => {
@@ -249,5 +249,110 @@ describe('applyPreset', () => {
     const preview = previewPreset(dir, 'same')
     expect(preview.ok).toBe(true)
     expect(preview.changes?.noop).toBe(true)
+  })
+})
+
+describe('exportPresets / importPresets', () => {
+  it('exportPresets wraps the current presets in a round-trippable envelope', () => {
+    const dir = pdir()
+    writeProfile(dir, ['alpha'])
+    writePresetFile(dir, [
+      { name: 'a', bundleOrder: ['alpha'], disabled: [], createdAt: 1000 },
+      { name: 'b', bundleOrder: ['alpha'], disabled: ['x'], createdAt: 2000 },
+    ])
+
+    const exported = exportPresets(dir)
+    expect(exported.format).toBe('dsh-market-presets')
+    expect(exported.version).toBe(1)
+    expect(typeof exported.exportedAt).toBe('number')
+    // listPresets order (newest first) is preserved in the document.
+    expect(exported.presets.map(p => p.name)).toEqual(['b', 'a'])
+  })
+
+  it('import merges: same-name entries are overwritten, new names added, local presets kept', () => {
+    const dir = pdir()
+    writeProfile(dir, ['alpha', 'beta'])
+    writePresetFile(dir, [
+      { name: 'local-keep', bundleOrder: ['alpha', 'beta'], disabled: [], createdAt: 1000 },
+      { name: 'shared', bundleOrder: ['alpha', 'beta'], disabled: ['old'], createdAt: 2000 },
+    ])
+
+    const result = importPresets(dir, {
+      format: 'dsh-market-presets',
+      version: 1,
+      exportedAt: 3000,
+      presets: [
+        // Same name as a local preset → overwrite (bundleOrder + disabled).
+        { name: 'shared', bundleOrder: ['beta', 'alpha'], disabled: ['new'], createdAt: 3000 },
+        // New name → added.
+        { name: 'brand-new', bundleOrder: ['beta', 'alpha'], disabled: [], createdAt: 3000 },
+      ],
+    })
+    expect(result.ok).toBe(true)
+    expect(result).toMatchObject({ imported: 2, added: 1, updated: 1, skipped: 0, names: ['shared', 'brand-new'] })
+
+    const list = listPresets(dir)
+    expect(list).toHaveLength(3)
+    expect(list.find(p => p.name === 'local-keep')).toBeTruthy()
+    expect(list.find(p => p.name === 'brand-new')).toBeTruthy()
+    const shared = list.find(p => p.name === 'shared')
+    expect(shared?.bundleOrder).toEqual(['beta', 'alpha'])
+    expect(shared?.disabled).toEqual(['new'])
+  })
+
+  it('import stores the bundleOrder as-is — no match against the current profile (check happens at apply time)', () => {
+    const dir = pdir()
+    writeProfile(dir, ['alpha']) // current profile has only alpha
+
+    // 'foreign' references 'zeta', which is not a community bundle here —
+    // import still stores it; applyPreset would be the one to refuse it.
+    const result = importPresets(dir, [
+      { name: 'foreign', bundleOrder: ['zeta'], disabled: [], createdAt: 1 },
+    ])
+    expect(result.ok).toBe(true)
+    expect(result).toMatchObject({ imported: 1, added: 1, skipped: 0 })
+    expect(listPresets(dir).find(p => p.name === 'foreign')?.bundleOrder).toEqual(['zeta'])
+  })
+
+  it('skips invalid entries (shape/name/bundleOrder) and counts them', () => {
+    const dir = pdir()
+    writeProfile(dir, ['alpha'])
+
+    const result = importPresets(dir, {
+      presets: [
+        'garbage',                                            // not an object
+        { bundleOrder: ['alpha'], disabled: [] },             // missing name
+        { name: 'bad/name', bundleOrder: ['alpha'], disabled: [] },   // invalid name chars
+        { name: 'x'.repeat(41), bundleOrder: ['alpha'], disabled: [] }, // name too long
+        { name: 'no-order', bundleOrder: 'alpha', disabled: [] },      // bundleOrder not an array
+        { name: 'ok', bundleOrder: ['alpha'], disabled: [] },          // valid
+      ],
+    })
+    expect(result.ok).toBe(true)
+    expect(result).toMatchObject({ imported: 1, added: 1, updated: 0, skipped: 5, names: ['ok'] })
+    expect(listPresets(dir).map(p => p.name)).toEqual(['ok'])
+  })
+
+  it('rejects a payload that is neither an array nor { presets: [...] }', () => {
+    const dir = pdir()
+    writeProfile(dir, ['alpha'])
+
+    expect(importPresets(dir, { format: 'nope' })).toMatchObject({ ok: false })
+    expect(importPresets(dir, null)).toMatchObject({ ok: false })
+    expect(importPresets(dir, 'text')).toMatchObject({ ok: false })
+    expect(listPresets(dir)).toEqual([])
+  })
+
+  it('sanitizes the disabled list and fills a missing/invalid createdAt', () => {
+    const dir = pdir()
+    writeProfile(dir, ['alpha'])
+
+    const result = importPresets(dir, {
+      presets: [{ name: 'clean', bundleOrder: ['alpha'], disabled: ['p1', '', 42], createdAt: 'nope' }],
+    })
+    expect(result.ok).toBe(true)
+    const saved = listPresets(dir).find(p => p.name === 'clean')
+    expect(saved?.disabled).toEqual(['p1'])
+    expect(typeof saved?.createdAt).toBe('number')
   })
 })

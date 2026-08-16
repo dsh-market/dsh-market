@@ -175,12 +175,23 @@ describe('Diagnostics (jsdom)', () => {
     expect(within(mvSection).getByText('@deepseek-ai/dsh-tools')).toBeTruthy()
     expect(within(mvSection).getByText('0.0.1-rc.1 / 0.1.0-rc.6')).toBeTruthy()
 
-    // Overrides disclosure opens expanded and lists its row.
-    expect(screen.getByText(`overridden layers: @deepseek-ai/dsh-base`)).toBeTruthy()
+    // Overrides disclosure opens expanded. Each row is a structured line
+    // `id ← layer-badge t('checkOverridden') overridden-layers` — the label
+    // and the value are separate spans now, so assert them separately (scoped
+    // to the disclosure: the same id/layer texts also appear elsewhere).
+    const ovSection = screen.getByText(`${t('checkOverrides')} (1)`).closest('[data-disclosure-row]')!.parentElement as HTMLElement
+    expect(within(ovSection).getByText('shared-entry')).toBeTruthy()
+    expect(within(ovSection).getByText('user-patch')).toBeTruthy()
+    expect(within(ovSection).getByText(t('checkOverridden'))).toBeTruthy()
+    expect(within(ovSection).getByText('@deepseek-ai/dsh-base')).toBeTruthy()
 
-    // Orphan patch row renders its id and reason.
-    expect(screen.getByText('ghost-entry')).toBeTruthy()
-    expect(screen.getByText(`reason: patch target not found`)).toBeTruthy()
+    // Orphan patch row is now category-badge + id + layer + reason span. The
+    // badge (t('orphanPatchTargetMissing')) and the reason both read "patch
+    // target not found" in en — expect both rendered.
+    const orphSection = screen.getByText(`${t('checkOrphans')} (1)`).closest('[data-disclosure-row]')!.parentElement as HTMLElement
+    expect(within(orphSection).getByText('ghost-entry')).toBeTruthy()
+    expect(within(orphSection).getByText('user-patch')).toBeTruthy()
+    expect(within(orphSection).getAllByText(t('orphanPatchTargetMissing')).length).toBe(2)
   })
 
   it('renders the clean-report empty states and the ok badge', async () => {

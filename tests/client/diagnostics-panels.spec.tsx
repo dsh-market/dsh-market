@@ -104,6 +104,25 @@ function stubApi(overrides: ApiOverrides = {}) {
       if (method === 'GET') return Promise.resolve(json(overrides.presets ?? PRESETS))
       return Promise.resolve(json({ ok: true }))
     }
+    if (url === '/dsh-market/presets-export') {
+      // Mirrors the host route: JSON document + attachment content-disposition.
+      return Promise.resolve(new Response(JSON.stringify({
+        format: 'dsh-market-presets',
+        version: 1,
+        exportedAt: 1780000000000,
+        presets: [],
+      }), {
+        status: 200,
+        headers: {
+          'content-type': 'application/json; charset=utf-8',
+          'content-disposition': 'attachment; filename="dsh-market-presets-20250101T000000.json"',
+        },
+      }))
+    }
+    if (url === '/dsh-market/presets-import') {
+      // Import reports imported/added/updated/skipped counts on success.
+      return Promise.resolve(json({ ok: true, imported: 1, added: 1, updated: 0, skipped: 0 }))
+    }
     return Promise.resolve(json({ ok: true }))
   })
   vi.stubGlobal('fetch', mock)
@@ -280,5 +299,114 @@ describe('Diagnostics panels (jsdom, #98 phase 2/3)', () => {
     expect(JSON.parse(String(posts('/dsh-market/presets')[0]?.[1]?.body))).toEqual({ action: 'delete', name: 'work' })
 
     await waitFor(() => expect(within(section).getByText(t('presetDeleted'))).toBeTruthy())
+  })
+
+  it('drag & drop reorders the local draft only; "Apply order" POSTs the new order', async () => {
+    const { calls, posts } = await renderLoaded()
+
+    const orderSection = screen.getByText(t('orderSection')).closest('section') as HTMLElement
+    const rows = () => Array.from(orderSection.querySelectorAll('.' + css.diagRow))
+    expect(rows()).toHaveLength(2)
+
+    // Drag alpha (row 0) onto beta (row 1) — draft-only: no POST yet.
+    fireEvent.dragStart(rows()[0]!, { dataTransfer: {} })
+    fireEvent.dragOver(rows()[1]!, { dataTransfer: {} })
+    fireEvent.drop(rows()[1]!, { dataTransfer: {} })
+    fireEvent.dragEnd(rows()[1]!, { dataTransfer: {} })
+    expect(posts('/dsh-market/bundle-order').length).toBe(0)
+
+    // The local draft reordered to beta, alpha (row order in the DOM).
+    await waitFor(() => {
+      const text = rows().map(row => row.textContent ?? '')
+      expect(text[0]).toContain('beta')
+      expect(text[1]).toContain('alpha')
+    })
+
+    // Applying the order persists the draft via POST /dsh-market/bundle-order.
+    fireEvent.click(screen.getByRole('button', { name: t('orderApply') }))
+    await waitFor(() => expect(posts('/dsh-market/bundle-order').length).toBe(1))
+    expect(JSON.parse(String(posts('/dsh-market/bundle-order')[0]?.[1]?.body))).toEqual({ order: ['beta', 'alpha'] })
+
+    // Success triggers onRefresh → the check report is re-fetched.
+    await waitFor(() => expect(calls('/dsh-market/check').length).toBeGreaterThanOrEqual(2))
+  })
+
+  it('deletes a snapshot only after inline double confirmation', async () => {
+    const { posts } = await renderLoaded()
+    fireEvent.click(screen.getByRole('button', { name: t('snapSection') }))
+    const section = sectionOf(t('snapSection'))
+    await waitFor(() => expect(within(section).getByText('snapshot-2025-01-01T00-00-00-000Z')).toBeTruthy())
+
+    // First click arms the delete confirmation — no request yet.
+    fireEvent.click(within(section).getByRole('button', { name: t('snapDelete') }))
+    expect(within(section).getByText(t('snapDeleteConfirmText'))).toBeTruthy()
+    expect(posts('/dsh-market/delete-snapshot').length).toBe(0)
+
+    // Cancel leaves everything untouched.
+    fireEvent.click(within(section).getByRole('button', { name: t('cancel') }))
+    expect(within(section).queryByText(t('snapDeleteConfirmText'))).toBeNull()
+    expect(posts('/dsh-market/delete-snapshot').length).toBe(0)
+
+    // Arm again and confirm → POST delete-snapshot with the snapshot id.
+    fireEvent.click(within(section).getByRole('button', { name: t('snapDelete') }))
+    fireEvent.click(within(section).getByRole('button', { name: t('snapDeleteConfirm') }))
+    await waitFor(() => expect(posts('/dsh-market/delete-snapshot').length).toBe(1))
+    const post = posts('/dsh-market/delete-snapshot')[0]!
+    expect(JSON.parse(String(post[1]?.body))).toEqual({ snapshot: 'snapshot-2025-01-01T00-00-00-000Z' })
+
+    // Success reloads the snapshot list and shows the deleted message.
+    await waitFor(() => expect(within(section).getByText(t('snapDeleted'))).toBeTruthy())
+  })
+
+  it('exports presets via GET /dsh-market/presets-export', async () => {
+    const { gets } = await renderLoaded()
+    // jsdom has no URL.createObjectURL — stub it for the download path.
+    const urlShim = URL as unknown as { createObjectURL?: () => string; revokeObjectURL?: () => void }
+    const originalCreate = urlShim.createObjectURL
+    const originalRevoke = urlShim.revokeObjectURL
+    urlShim.createObjectURL = vi.fn(() => 'blob:mock-presets')
+    urlShim.revokeObjectURL = vi.fn()
+    try {
+      fireEvent.click(screen.getByRole('button', { name: t('presetSection') }))
+      const section = sectionOf(t('presetSection'))
+      await waitFor(() => expect(within(section).getByText('work')).toBeTruthy())
+
+      fireEvent.click(within(section).getByRole('button', { name: t('presetExport') }))
+      await waitFor(() => expect(gets('/dsh-market/presets-export').length).toBe(1))
+      await waitFor(() => expect(within(section).getByText(t('presetExported'))).toBeTruthy())
+      expect(urlShim.createObjectURL).toHaveBeenCalledTimes(1)
+    } finally {
+      urlShim.createObjectURL = originalCreate
+      urlShim.revokeObjectURL = originalRevoke
+    }
+  })
+
+  it('imports presets from a JSON file via POST /dsh-market/presets-import', async () => {
+    const { calls, posts } = await renderLoaded()
+    fireEvent.click(screen.getByRole('button', { name: t('presetSection') }))
+    const section = sectionOf(t('presetSection'))
+    await waitFor(() => expect(within(section).getByText('work')).toBeTruthy())
+
+    const input = section.querySelector('input[type="file"]') as HTMLInputElement
+    expect(input).not.toBeNull()
+    const payload = {
+      format: 'dsh-market-presets',
+      version: 1,
+      exportedAt: 1780000000000,
+      presets: [{ name: 'imported-x', bundleOrder: ['beta', 'alpha'], disabled: [] }],
+    }
+    const file = new File([JSON.stringify(payload)], 'presets.json', { type: 'application/json' })
+    fireEvent.change(input, { target: { files: [file] } })
+
+    await waitFor(() => expect(posts('/dsh-market/presets-import').length).toBe(1))
+    const post = posts('/dsh-market/presets-import')[0]!
+    expect(JSON.parse(String(post[1]?.body))).toEqual(payload)
+
+    // The host's imported/added/updated/skipped counts drive the message and
+    // the list is reloaded afterwards.
+    await waitFor(() => expect(within(section).getByText(
+      t('presetImportedCount').replace('{0}', '1').replace('{1}', '1').replace('{2}', '0').replace('{3}', '0'),
+    )).toBeTruthy())
+    await waitFor(() => expect(calls('/dsh-market/presets').length).toBe(2))
   })
 })

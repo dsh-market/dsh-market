@@ -12,6 +12,7 @@ import {
   createProfileSnapshot,
   deleteSnapshot,
   listSnapshots,
+  pruneSnapshots,
   restoreSnapshot,
 } from '../src/snapshot.ts'
 
@@ -236,5 +237,62 @@ describe('deleteSnapshot', () => {
     // Malformed (traversal-shaped / no snapshot- prefix) — refused → false.
     expect(deleteSnapshot(dir, '../state')).toBe(false)
     expect(deleteSnapshot(dir, 'ghost')).toBe(false)
+  })
+})
+
+describe('pruneSnapshots', () => {
+  /** Write a raw snapshot file with a controlled id/createdAt. */
+  const mkSnapshot = (dir: string, id: string, createdAt: number): void => {
+    writeFileSync(join(snapshotsDir(dir), `${id}.json`), JSON.stringify({
+      id,
+      createdAt,
+      files: [{ path: 'package.json', json: { name: id } }],
+    }))
+  }
+
+  it('createProfileSnapshot prunes to the cap — only the newest snapshots survive', () => {
+    const dir = pdir()
+    writeProfile(dir, SAMPLE_MANIFEST)
+    // Pre-seed 25 snapshots (newest seed last) with controlled timestamps so
+    // the survivor set is deterministic regardless of wall-clock speed.
+    mkdirSync(snapshotsDir(dir), { recursive: true })
+    for (let i = 1; i <= 25; i += 1) {
+      const id = `snapshot-seed-${String(i).padStart(2, '0')}`
+      mkSnapshot(dir, id, i * 1000)
+    }
+
+    // Creating one more snapshot with cap 2 must drop the 24 oldest seeds.
+    const snapshot = createProfileSnapshot(dir, 2)
+    expect(snapshot).not.toBeNull()
+
+    const remaining = listSnapshots(dir)
+    // The freshly created snapshot is the newest; the newest seed survives.
+    expect(remaining.map(s => s.id)).toEqual([snapshot?.id, 'snapshot-seed-25'])
+    expect(readdirSync(snapshotsDir(dir)).filter(name => name.endsWith('.json'))).toHaveLength(2)
+  })
+
+  it('prunes oldest-first and returns the dropped ids', () => {
+    const dir = pdir()
+    writeProfile(dir, SAMPLE_MANIFEST)
+    mkdirSync(snapshotsDir(dir), { recursive: true })
+    for (let i = 1; i <= 5; i += 1) {
+      mkSnapshot(dir, `snapshot-${i}`, i * 1000)
+    }
+
+    const dropped = pruneSnapshots(dir, 2)
+    // pruneSnapshots lists the dropped ids in listSnapshots order, i.e.
+    // newest-first among the dropped: the 3 oldest are removed, newest of
+    // those first.
+    expect(dropped).toEqual(['snapshot-3', 'snapshot-2', 'snapshot-1'])
+    expect(listSnapshots(dir).map(s => s.id)).toEqual(['snapshot-5', 'snapshot-4'])
+  })
+
+  it('is a no-op when at or under the cap', () => {
+    const dir = pdir()
+    writeProfile(dir, SAMPLE_MANIFEST)
+    createProfileSnapshot(dir, 5)
+    expect(pruneSnapshots(dir, 5)).toEqual([])
+    expect(pruneSnapshots(dir, 99)).toEqual([])
+    expect(listSnapshots(dir)).toHaveLength(1)
   })
 })

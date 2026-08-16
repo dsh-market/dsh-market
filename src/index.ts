@@ -10,7 +10,7 @@ import { mountMarketRoutes, type MarketConfig, type MarketHost } from './routes.
 export const name = 'dsh-market'
 
 /** Optional cordis.yml configuration; profile defaults to `web`. */
-export type Config = Partial<Pick<MarketConfig, 'profile' | 'allowRestart'>>
+export type Config = Partial<Pick<MarketConfig, 'profile' | 'allowRestart' | 'maxSnapshots'>>
 
 /** Structural subset of DSH Desktop's public `desktopProfiles` contract. */
 interface DesktopProfilesLike {
@@ -52,6 +52,7 @@ export function apply(ctx: Context, config?: Config): void {
       const resolved: MarketConfig = {
         profile: config?.profile ?? argvProfile() ?? 'web',
         allowRestart: config?.allowRestart ?? true,
+        maxSnapshots: config?.maxSnapshots,
       }
       host.effect(() => mountMarketRoutes(host, resolved), 'dsh-market: http routes')
       return
@@ -72,6 +73,7 @@ export function apply(ctx: Context, config?: Config): void {
         // Relaunching a raw Electron process would bypass Desktop's launcher
         // lifecycle. The shell remains responsible for restart in this mode.
         allowRestart: false,
+        maxSnapshots: config?.maxSnapshots,
       }
       const desktopHost = desktopCtx as unknown as MarketEffectHost
       desktopHost.effect(() => {
