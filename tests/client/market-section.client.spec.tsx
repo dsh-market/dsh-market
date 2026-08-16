@@ -6,7 +6,7 @@
  * endpoints, stubbed with fixture payloads.
  */
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MarketSection } from '../../src/client/MarketSection.tsx'
 import { en } from '../../src/client/locales.ts'
@@ -39,6 +39,9 @@ function stubFetch(overrides: Record<string, unknown> = {}): void {
 // Snapshot objects must be referentially stable — useSyncExternalStore
 // treats a fresh object per call as an endless change feed.
 const LOCALE_SNAPSHOT = { active: 'en' }
+
+/** Escape a locale string so it can be used inside a RegExp literal. */
+const re = (s: string) => new RegExp(s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
 
 function props() {
   return {
@@ -288,5 +291,67 @@ describe('P0-2 activation states in the Installed tab', () => {
     expect(screen.getByText(en.stateLive)).toBeTruthy()
     // The reason is behind a disclosure; the chip itself must not claim success.
     expect(screen.getByText(en.stateRestart).textContent).toContain(en.stateRestart)
+  })
+})
+
+describe('status-poll / install-response race (#73)', () => {
+  it('clears the premature pending-restart entry once the install response confirms a hot mount', async () => {
+    vi.useFakeTimers()
+    try {
+      // The /install response is held open (deferred) while the status poll runs.
+      let resolveInstall: (value: Response) => void = () => {}
+      const installGate = new Promise<Response>(res => { resolveInstall = res })
+      vi.stubGlobal('fetch', (url: string) => {
+        const path = String(url).split('?')[0]
+        const payload =
+          path === '/dsh-market/registry' ? { source: 'snapshot', registry: REGISTRY }
+          : path === '/dsh-market/installed' ? { profile: 'web', installed: {}, live: [] }
+          // Poll recovery precondition: host idle AND dsh-loop already installed.
+          : path === '/dsh-market/status' ? { active: false, pnpm: true, boot: 'boot-1', restart: true, installed: { 'dsh-loop': '^1.0.0' } }
+          : path === '/dsh-market/updates' ? { updates: {} }
+          : path === '/dsh-market/install' ? installGate
+          : null
+        if (payload === null) return Promise.reject(new Error(`unstubbed fetch: ${String(url)}`))
+        if (payload instanceof Promise) return payload
+        return Promise.resolve(new Response(JSON.stringify(payload), { status: 200 }))
+      })
+      render(<MarketSection {...props()} />)
+      await vi.waitFor(() => { screen.getByText('dsh-loop') })
+      // The module-level installed cache from earlier tests can briefly make
+      // dsh-loop look already-installed (no Install button); wait until the
+      // mount-time refreshInstalled applies the empty fixture.
+      await vi.waitFor(() => { screen.getByRole('button', { name: en.tabInstalled }) })
+      // Grid order is by stars, not registry order — target dsh-loop's own card.
+      let card: HTMLElement | null = screen.getByText('dsh-loop')
+      while (card !== null && within(card).queryAllByRole('button', { name: en.install }).length === 0) {
+        card = card.parentElement
+      }
+      expect(card).not.toBeNull()
+      fireEvent.click(within(card!).getByRole('button', { name: en.install }))
+      await vi.waitFor(() => { screen.getByRole('button', { name: en.confirm }) })
+      fireEvent.click(screen.getByRole('button', { name: en.confirm }))
+      // The /install response is still pending; the 2s status poll now sees
+      // idle + installed and the recovery path counts dsh-loop as a pending
+      // restart even though the mount may still come back hot.
+      await vi.advanceTimersByTimeAsync(2100)
+      await vi.waitFor(() => {
+        expect(screen.getAllByText(re(en.restartBanner)).length).toBeGreaterThan(0)
+      })
+      // The real /install response arrives: hot mount confirmed.
+      resolveInstall(new Response(JSON.stringify({
+        ok: true,
+        hot: true,
+        installed: { 'dsh-loop': '^1.0.0' },
+        activation: { 'dsh-loop': { state: 'live', reasons: ['live via hot mount'], bundle: true, hot: true } },
+      }), { status: 200 }))
+      // The stale pending-restart entry must be dropped: no restart banner.
+      await vi.waitFor(() => {
+        expect(screen.queryAllByText(re(en.restartBanner)).length).toBe(0)
+      })
+      // Stable counterpart: the hot banner still shows the live mount.
+      expect(screen.getAllByText(re(en.hotBanner)).length).toBeGreaterThan(0)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

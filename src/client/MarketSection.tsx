@@ -438,6 +438,10 @@ export function MarketSection(props: MarketSectionProps) {
             setActivationWarnings(warns)
           }
           if (body.hot) {
+            // The status-poll recovery path may have already counted this URL
+            // as pending-restart before the install response confirmed a hot
+            // mount; a hot plugin must not stay in doneUrls (#73).
+            setDoneUrls(urls => urls.filter(url => url !== plugin.url))
             setHotUrls(urls => urls.includes(plugin.url) ? urls : urls.concat(plugin.url))
             setHotNames(names => names.includes(plugin.name) ? names : names.concat(plugin.name))
           } else {
