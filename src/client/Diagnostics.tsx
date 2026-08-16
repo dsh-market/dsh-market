@@ -385,10 +385,13 @@ export function Diagnostics(props: { t: Translate; workspaces?: { startSession(w
     const prompt = lines.join('\n')
 
     // Close the settings dialog (best effort — the section lives inside it).
+    // The close button carries the text (no aria-label), so match both.
     try {
-      const close = document.querySelector<HTMLElement>(
-        '[role="dialog"] [aria-label*="关闭"], [role="dialog"] [aria-label*="Close"]',
-      )
+      const dialog = document.querySelector<HTMLElement>('[role="dialog"]')
+      const close = dialog !== null
+        ? [...dialog.querySelectorAll<HTMLButtonElement>('button')].find(button =>
+            /关闭|Close|✕|×/.test(`${button.getAttribute('aria-label') ?? ''} ${button.textContent ?? ''}`))
+        : null
       close?.click()
     } catch { /* ignore */ }
 
