@@ -18,7 +18,7 @@ import {
 } from './hot.ts'
 import { exportLogs, logEvent } from './log.ts'
 import { BOOT_ID, cancelActive, probePnpm, progress, provisionPnpm, runDshPlugin } from './dsh-cli.ts'
-import { profileDir, readInstalled, readInstalledVersion, readLockCommits, setAllowBuilds } from './profile.ts'
+import { profileDir, readInstalled, readInstalledVersion, readLockCommits, readManifestDeps, restoreManifestDeps, setAllowBuilds } from './profile.ts'
 import { findInstalledAlias, gitAllowBuildsKey, installTargetFor } from './sources.ts'
 import { isStaleUpdate, parseIgnoredBuilds, parsePrepareNotAllowed, RELEASE_AGE_OVERRIDE, retargetCollections, validateAddedPlugins, withHoistRecovery } from './install.ts'
 import { checkUpdates, fetchNpmLatest, invalidateUpdates, isUpgrade, latestPublishedRecently } from './updates.ts'
@@ -361,8 +361,16 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
             // force: the user chose to install a fresh release without the
             // default one-day safety wait; scoped to this single command.
             const addArgs = force ? ['add', RELEASE_AGE_OVERRIDE, target] : ['add', target]
+            // RAW manifest snapshot for failure rollback (#65) — pnpm writes
+            // package.json before it finishes, so a hard-failed add leaves
+            // ghost/bumped entries that break every later pnpm run.
+            const manifestBefore = readManifestDeps(config.profile)
             const result = await runPlugin(config.profile, addArgs)
             const cancelled = result.cancelled
+            if ((result.exitCode !== 0 || result.timedOut) && !cancelled) {
+              const rolledBack = restoreManifestDeps(config.profile, manifestBefore)
+              if (rolledBack.length > 0) logEvent('warn', 'update', `${name}: rolled back manifest residue of the failed run: ${rolledBack.join(', ')}`)
+            }
             let ok = result.exitCode === 0 && !result.timedOut && !cancelled
             let stale = false
             let activation: Record<string, ReturnType<typeof verifyActivation>> | undefined
@@ -762,8 +770,18 @@ export function mountMarketRoutes(host: MarketHost, config: MarketConfig): () =>
             const beforeSpecs = readInstalled(config.profile)
             const before = new Set(Object.keys(beforeSpecs))
             if (retryAlias !== null) before.delete(retryAlias)
+            // RAW manifest snapshot for failure rollback (#65): pnpm writes
+            // package.json before the build-script check / registry fetches
+            // run, so a hard-failed add leaves ghost dependencies that break
+            // every later pnpm run — of anything. Cancelled runs keep their
+            // partial state on purpose (the user sees the diff and decides).
+            const manifestBefore = readManifestDeps(config.profile)
             const result = await runPlugin(config.profile, ['add', target])
             const cancelled = result.cancelled
+            if ((result.exitCode !== 0 || result.timedOut) && !cancelled) {
+              const rolledBack = restoreManifestDeps(config.profile, manifestBefore)
+              if (rolledBack.length > 0) logEvent('warn', 'install', `${target}: rolled back manifest residue of the failed run: ${rolledBack.join(', ')}`)
+            }
             let ok = result.exitCode === 0 && !result.timedOut && !cancelled
             const cancelDiff = cancelled ? changedSince(beforeSpecs) : null
             if (ok) invalidateUpdates()

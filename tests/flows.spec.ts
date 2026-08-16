@@ -45,6 +45,12 @@ const fake = vi.hoisted(() => ({
   buildScriptOutputOnce: '',
   /** Fail the next add with exit 1 and this stderr (e.g. ERR_PNPM_IGNORED_BUILDS, #68/#69). */
   failNextAddStderrOnce: '',
+  /**
+   * Fail the next npm add with exit 1 and this stderr AFTER writing
+   * package.json/node_modules — pnpm's real order (#65, #69): the manifest
+   * is written before registry fetches and the build-script check run.
+   */
+  failAfterWriteStderrOnce: '',
   /** True while a fake command is in flight (mirrors the real activeChild). */
   running: false,
   calls: [] as string[][],
@@ -136,6 +142,11 @@ vi.mock('../src/dsh-cli.ts', () => {
     const version = pkg.latest
     writeDep(name, `^${version}`)
     writePkg(name, { version, ...(pkg.versions[version].manifest as object) }, pkg.versions[version].artifacts)
+    if (fake.failAfterWriteStderrOnce !== '') {
+      const stderr = fake.failAfterWriteStderrOnce
+      fake.failAfterWriteStderrOnce = ''
+      return { exitCode: 1, timedOut: false, stdout: '', stderr, cancelled: false }
+    }
     if (fake.buildScriptOutputOnce !== '') {
       const stdout = fake.buildScriptOutputOnce
       fake.buildScriptOutputOnce = ''
@@ -301,6 +312,7 @@ beforeEach(() => {
   fake.cancelNext = false
   fake.buildScriptOutputOnce = ''
   fake.failNextAddStderrOnce = ''
+  fake.failAfterWriteStderrOnce = ''
   fake.running = false
   fake.calls = []
   restartCalls.count = 0
@@ -354,6 +366,21 @@ describe('install flow', () => {
     expect(outside.status).toBe(400)
     const cross = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' }, { crossOrigin: true })
     expect(cross.status).toBe(403)
+  })
+
+  it('rolls back manifest residue when the add fails after pnpm wrote package.json (#65)', async () => {
+    fake.npm['dsh-loop'] = { latest: '1.0.0', versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } } }
+    // pnpm writes the manifest, then fails resolving another (ghost/private)
+    // direct dependency — the classic #65 shape.
+    fake.failAfterWriteStderrOnce = '[ERR_PNPM_FETCH_404] GET https://registry.npmjs.org/@deepseek-ai%2Fdsh-client-ui-theme-toggle: Not Found - 404'
+    const r = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
+    expect(r.status).toBe(502)
+    // The failed run's manifest write is rolled back — no ghost entry left
+    // to break every later pnpm operation.
+    expect(installedSpec('dsh-loop')).toBeUndefined()
+    // The classification names the unresolvable package, decoded.
+    expect(String(r.json.stderr)).toContain('@deepseek-ai/dsh-client-ui-theme-toggle')
+    expect(String(r.json.stderr)).toContain('幽灵依赖')
   })
 
   it('auto-recovers when the modules dir was built by another pnpm major (#20)', async () => {
@@ -453,6 +480,16 @@ describe('update flow — no npm publishing required', () => {
     expect(installedSpec('dsh-loop')).toBe('^1.2.0')
     const lastAdd = fake.calls[fake.calls.length - 1]
     expect(lastAdd).toContain('--config.minimumReleaseAge=0')
+  })
+
+  it('restores the previous pin when an update fails after pnpm wrote the bumped spec (#65)', async () => {
+    advanceNpmLatest('1.2.0')
+    fake.failAfterWriteStderrOnce = '[ERR_PNPM_FETCH_404] GET https://registry.npmjs.org/some-ghost-dep: Not Found - 404'
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+    expect(r.status).toBe(502)
+    // pnpm had already bumped the spec to ^1.2.0 before failing; the
+    // rollback restores the pre-update pin.
+    expect(installedSpec('dsh-loop')).toBe('^1.0.0')
   })
 
   it('surfaces blocked build scripts during an update so the approve banner can retry it (#69)', async () => {

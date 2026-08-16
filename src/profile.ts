@@ -43,6 +43,51 @@ export function readInstalled(profile: string): Record<string, string> {
   }
 }
 
+/**
+ * RAW dependency map of the profile manifest — including the in-box bundles
+ * readInstalled() filters out. This is the rollback snapshot (#65): restoring
+ * a filtered view would delete @deepseek-ai/dsh-base and friends.
+ */
+export function readManifestDeps(profile: string): Record<string, string> {
+  try {
+    const manifest = JSON.parse(readFileSync(join(profileDir(profile), 'package.json'), 'utf8')) as {
+      dependencies?: Record<string, string>
+    }
+    return { ...manifest.dependencies }
+  } catch {
+    return {}
+  }
+}
+
+/**
+ * Restore the profile manifest's dependency map to a pre-operation snapshot,
+ * leaving every other manifest field untouched. pnpm writes package.json
+ * BEFORE it finishes installing (#65, #69: a 404/blocked-build failure lands
+ * after the write), so a failed add leaves ghost dependencies that break
+ * every later pnpm run — and pnpm itself can no longer remove them (the same
+ * failure re-fires on any mutation). Direct manifest surgery is the only
+ * reliable rollback; the lockfile is left as-is (pnpm reconciles it from the
+ * manifest on the next run).
+ * @returns names whose entries were dropped or reverted, empty when nothing changed.
+ */
+export function restoreManifestDeps(profile: string, snapshot: Record<string, string>): string[] {
+  const file = join(profileDir(profile), 'package.json')
+  let manifest: { dependencies?: Record<string, string> }
+  try {
+    manifest = JSON.parse(readFileSync(file, 'utf8')) as { dependencies?: Record<string, string> }
+  } catch {
+    return []
+  }
+  const current = manifest.dependencies ?? {}
+  const touched = new Set<string>()
+  for (const name of Object.keys(current)) if (current[name] !== snapshot[name]) touched.add(name)
+  for (const name of Object.keys(snapshot)) if (current[name] !== snapshot[name]) touched.add(name)
+  if (touched.size === 0) return []
+  manifest.dependencies = { ...snapshot }
+  writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`)
+  return [...touched]
+}
+
 /** The version actually present in the profile's node_modules, or null. */
 export function readInstalledVersion(profile: string, name: string): string | null {
   try {

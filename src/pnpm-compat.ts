@@ -36,7 +36,7 @@ export function pluginArgsFor(profileDir: string, pluginArgs: string[]): string[
 /** One recognized pnpm failure, with a bilingual explanation for the UI. */
 export interface PnpmFailure {
   code: 'adding-to-root' | 'not-a-workspace' | 'hoist-pattern-diff' | 'pnpm-missing' | 'release-age-violation'
-    | 'ignored-builds' | 'git-prepare-not-allowed'
+    | 'ignored-builds' | 'git-prepare-not-allowed' | 'fetch-404'
   /** Bilingual, actionable message shown to the user instead of the raw wall of text. */
   message: string
   /** True when re-running `pnpm install` in the profile is the documented recovery. */
@@ -107,6 +107,21 @@ export function classifyPnpmFailure(output: string): PnpmFailure | null {
       code: 'git-prepare-not-allowed',
       recoverable: false,
       message: '这个 git 插件需要在安装时执行构建脚本，被 pnpm 默认拦截。点击「允许构建脚本并重试」放行后重试即可 / this git-hosted plugin needs to run its build script at install time, which pnpm blocks by default — click "Allow build scripts and retry" to approve and retry',
+    }
+  }
+  // #65: a dependency that no longer resolves — an unpublished package left
+  // in the manifest by an earlier failed operation (pnpm writes package.json
+  // before it finishes), or a private-registry package without credentials.
+  // pnpm re-resolves EVERY direct dependency on any add, so one ghost entry
+  // blocks all later installs, of anything.
+  if (output.includes('ERR_PNPM_FETCH_404')) {
+    const pkg = /GET\s+\S*\/([^/\s]+):/.exec(output)?.[1].replace(/%2[Ff]/g, '/')
+    const zh = pkg === undefined ? '' : `（${pkg}）`
+    const en = pkg === undefined ? '' : ` (${pkg})`
+    return {
+      code: 'fetch-404',
+      recoverable: false,
+      message: `有一个依赖在 registry 上不存在${zh}，pnpm 因此拒绝任何安装操作。它可能是之前失败操作残留在 profile package.json 里的幽灵依赖（可手动删除该行），也可能是需要登录的私有包 / a dependency cannot be resolved from the registry${en}; pnpm refuses every install while it is present. It may be a ghost entry left in the profile's package.json by an earlier failed operation (remove that line by hand), or a private package needing registry credentials`,
     }
   }
   if (output.includes('pnpm not found on PATH')) {

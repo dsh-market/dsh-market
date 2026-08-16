@@ -115,6 +115,40 @@ describe('pluginSubdirs', () => {
   })
 })
 
+describe('manifest rollback (#65)', () => {
+  it('readManifestDeps is RAW — includes the in-box bundles readInstalled filters', async () => {
+    const { readManifestDeps } = await import('../src/profile.ts')
+    writeProfile({ dependencies: { 'dsh-loop': '^1.0.0', '@deepseek-ai/dsh-base': 'latest' } })
+    expect(readManifestDeps('web')).toEqual({ 'dsh-loop': '^1.0.0', '@deepseek-ai/dsh-base': 'latest' })
+  })
+
+  it('restoreManifestDeps drops ghost entries and reverts bumped specs, preserving other fields', async () => {
+    const { readManifestDeps, restoreManifestDeps } = await import('../src/profile.ts')
+    const dir = writeProfile({
+      name: 'web-profile',
+      dsh: { profile: { bundles: ['@deepseek-ai/dsh-base'] } },
+      dependencies: { 'dsh-loop': '^1.0.0', '@deepseek-ai/dsh-base': 'latest' },
+    })
+    const snapshot = readManifestDeps('web')
+    // Simulate pnpm's partial write of a failed run: a ghost dep appears
+    // and an existing pin is bumped.
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({
+      name: 'web-profile',
+      dsh: { profile: { bundles: ['@deepseek-ai/dsh-base'] } },
+      dependencies: { 'dsh-loop': '^1.2.0', '@deepseek-ai/dsh-base': 'latest', 'ghost-pkg': '0.1.0-rc.6' },
+    }))
+    const rolledBack = restoreManifestDeps('web', snapshot)
+    expect(rolledBack.sort()).toEqual(['dsh-loop', 'ghost-pkg'])
+    const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'))
+    expect(manifest.dependencies).toEqual({ 'dsh-loop': '^1.0.0', '@deepseek-ai/dsh-base': 'latest' })
+    // The in-box bundle survived, and non-dependency fields are untouched.
+    expect(manifest.dsh).toEqual({ profile: { bundles: ['@deepseek-ai/dsh-base'] } })
+    expect(manifest.name).toBe('web-profile')
+    // A second restore is a no-op.
+    expect(restoreManifestDeps('web', snapshot)).toEqual([])
+  })
+})
+
 describe('setAllowBuilds (#6)', () => {
   it('merges into an existing allowBuilds block and preserves the rest of the yaml', async () => {
     const { setAllowBuilds } = await import('../src/profile.ts')
