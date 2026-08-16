@@ -167,7 +167,7 @@
 .panelNote{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#6b7280);margin:0}
 .panelActions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .presetList{display:flex;flex-direction:column;gap:6px}
-.presetRow{display:flex;align-items:center;gap:10px;background:var(--dsw-alias-bg-layer-2,#f7f8fa);border-radius:8px;padding:8px 10px;font-size:12px;line-height:18px;min-width:0}
+.presetRow{display:flex;flex-direction:column;align-items:stretch;gap:6px;background:var(--dsw-alias-bg-layer-2,#f7f8fa);border-radius:8px;padding:8px 10px;font-size:12px;line-height:18px;min-width:0}
 .presetName{font-weight:600;font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .snapList{display:flex;flex-direction:column;gap:6px}
 .snapRow{display:flex;flex-direction:column;align-items:stretch;gap:8px;background:var(--dsw-alias-bg-layer-2,#f7f8fa);border-radius:8px;padding:10px 12px;font-size:12px;line-height:18px}
