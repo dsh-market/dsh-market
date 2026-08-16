@@ -10,8 +10,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { InstallResult } from '../src/dsh-cli.ts'
 import {
+<<<<<<< HEAD
   isStaleUpdate, parseIgnoredBuilds, parsePrepareNotAllowed, retargetCollections,
   validateAddedPlugins, withHoistRecovery,
+=======
+  FETCH_TIMEOUT_OVERRIDE, isStaleUpdate, parseIgnoredBuilds, parsePrepareNotAllowed,
+  retargetCollections, validateAddedPlugins, withHoistRecovery,
+>>>>>>> origin/main
 } from '../src/install.ts'
 import { profileDir } from '../src/profile.ts'
 
@@ -26,6 +31,8 @@ afterEach(() => {
 })
 
 const ok: InstallResult = { exitCode: 0, timedOut: false, stdout: '', stderr: '', cancelled: false }
+
+const FETCH_TIMEOUT_STDERR = '[23] The operation was aborted due to timeout\n\nTimeoutError: The operation was aborted due to timeout'
 
 function recordingRunner(): { calls: string[][]; run: (profile: string, args: string[]) => Promise<InstallResult> } {
   const calls: string[][] = []
@@ -123,6 +130,7 @@ describe('validateAddedPlugins (#18 / #21)', () => {
 })
 
 describe('withHoistRecovery', () => {
+<<<<<<< HEAD
   it('reclaims orphaned pnpm store staging dirs after a failed run', async () => {
     const home = mkdtempSync(join(tmpdir(), 'dshm-storehome-'))
     try {
@@ -159,6 +167,38 @@ describe('withHoistRecovery', () => {
     const result = await withHoistRecovery(run, 'web', ['add', 'dsh-loop'])
     expect(result.exitCode).toBe(0)
     expect(calls).toEqual([['add', 'dsh-loop']])
+=======
+  it('retries a per-request fetch timeout once with a longer fetchTimeout (#…)', async () => {
+    const calls: string[][] = []
+    let failFirst = true
+    const run = async (_profile: string, args: string[]): Promise<InstallResult> => {
+      calls.push(args)
+      if (failFirst) {
+        failFirst = false
+        return { exitCode: 1, timedOut: false, stdout: '', stderr: FETCH_TIMEOUT_STDERR, cancelled: false }
+      }
+      return ok
+    }
+    const result = await withHoistRecovery(run, 'web', ['add', 'github:volcengine/OpenViking#path:/examples/dsh-memory-plugin'])
+    expect(result.exitCode).toBe(0)
+    expect(calls).toEqual([
+      ['add', 'github:volcengine/OpenViking#path:/examples/dsh-memory-plugin'],
+      ['add', FETCH_TIMEOUT_OVERRIDE, 'github:volcengine/OpenViking#path:/examples/dsh-memory-plugin'],
+    ])
+  })
+
+  it('does not double-apply the fetchTimeout override when it is already present', async () => {
+    const calls: string[][] = []
+    const run = async (_profile: string, args: string[]): Promise<InstallResult> => {
+      calls.push(args)
+      return { exitCode: 1, timedOut: false, stdout: '', stderr: FETCH_TIMEOUT_STDERR, cancelled: false }
+    }
+    const result = await withHoistRecovery(run, 'web', ['add', FETCH_TIMEOUT_OVERRIDE, 'dsh-loop'])
+    expect(result.exitCode).toBe(1)
+    expect(calls).toEqual([['add', FETCH_TIMEOUT_OVERRIDE, 'dsh-loop']])
+    // The final failure message is appended for the UI.
+    expect(result.stderr).toContain('下载超时')
+>>>>>>> origin/main
   })
 })
 

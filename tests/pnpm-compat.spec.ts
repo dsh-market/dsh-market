@@ -79,6 +79,20 @@ describe('classifyPnpmFailure', () => {
     expect(classifyPnpmFailure('[ERR_PNPM_FETCH_404] GET https://registry.npmjs.org/ghost: Not Found - 404')?.code).toBe('fetch-404')
   })
 
+  it('recognizes pnpm\u2019s per-request fetch timeout as fetch-timeout, not transient (#…)', () => {
+    // The exact pnpm/undici abort shape for a large tarball that outlives the
+    // default 60s limit: DOMException "The operation was aborted due to
+    // timeout" (code 23), logged by pnpm as a retried GET error.
+    const abort = classifyPnpmFailure('[WARN] GET https://codeload.github.com/volcengine/OpenViking/tar.gz/dbf3fcccefe43616e4b1c3b60dfe36c2222e2dd6 error (23). Will retry in 10 seconds. 2 retries left.\n[23] The operation was aborted due to timeout\n\nTimeoutError: The operation was aborted due to timeout\n    at new DOMException (node:internal/per_context/domexception:76:18)')
+    expect(abort?.code).toBe('fetch-timeout')
+    expect(abort?.message).toContain('下载超时')
+    // The transient regex must NOT claim the same text — the two recoveries
+    // differ (plain retry vs longer fetchTimeout).
+    expect(classifyPnpmFailure('TimeoutError: The operation was aborted due to timeout')?.code).toBe('fetch-timeout')
+    // Unrelated shapes stay unrecognized.
+    expect(classifyPnpmFailure('some other failure')?.code).toBeUndefined()
+  })
+
   it('recognizes both build-script blocks: ignored builds (#69) and the git-prepare fetcher rejection (#68)', () => {
     const ignored = classifyPnpmFailure('[ERR_PNPM_IGNORED_BUILDS]\nIgnored build scripts: dsh-github-intelligence@https://codeload.github.com/z/r/tar.gz/abc.')
     expect(ignored?.code).toBe('ignored-builds')
