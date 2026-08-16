@@ -138,14 +138,52 @@ export interface PresetApplyResult extends PresetResult {
 }
 
 /**
- * Preview what applying a preset would change, WITHOUT writing anything.
- * Runs the same trial validation as applyPreset so a broken preset is
- * surfaced before the user commits.
+ * The preset's bundle set vs the profile's current community bundles —
+ * a stale preset (saved before a plugin was installed/uninstalled) can no
+ * longer be applied as-is, but its intent (enabled/disabled plugins,
+ * relative order) is still previewable.
  */
-export function previewPreset(profileDir: string, name: unknown): PresetResult & { changes?: PresetChange } {
+export interface PresetMismatch {
+  /** Bundles in the current profile that the preset does not mention. */
+  missing: string[]
+  /** Bundles the preset mentions that are not installed anymore. */
+  extra: string[]
+  /** True when the preset's bundle set differs from the current one. */
+  stale: boolean
+}
+
+/** Compare a preset's order against the current community bundle set. */
+function presetMismatch(profileDir: string, bundleOrder: string[]): PresetMismatch {
+  const { community } = readBundleStack(profileDir)
+  const current = new Set(community)
+  const preset = new Set(bundleOrder)
+  const missing = community.filter(name => !preset.has(name))
+  const extra = bundleOrder.filter(name => !current.has(name))
+  return { missing, extra, stale: missing.length > 0 || extra.length > 0 }
+}
+
+/**
+ * Preview what applying a preset would change, WITHOUT writing anything.
+ * A stale preset (bundle set mismatch) is NOT a hard failure: the preview
+ * reports the mismatch alongside the still-computable changes (relative
+ * order + enabled/disabled diffs over the intersection).
+ */
+export function previewPreset(profileDir: string, name: unknown): PresetResult & { changes?: PresetChange; mismatch?: PresetMismatch } {
   if (typeof name !== 'string') return { ok: false, error: 'invalid preset name / 组合名称无效' }
   const preset = readPresets(profileDir).find(item => item.name === name)
   if (preset === undefined) return { ok: false, error: 'preset not found / 组合不存在' }
+
+  // Full composition replay only makes sense when the bundle SET matches;
+  // otherwise report the mismatch (and keep the apply path's hard refusal).
+  const mismatch = presetMismatch(profileDir, preset.bundleOrder)
+  if (mismatch.stale) {
+    const detail = [...mismatch.missing.map(n => `+${n}`), ...mismatch.extra.map(n => `-${n}`)].join(' ')
+    return {
+      ok: false,
+      mismatch,
+      error: `preset is out of date — current profile differs: ${detail} / 组合已过期——当前 profile 的插件列表已变化：${detail}`,
+    }
+  }
 
   const trial = trialValidate(profileDir, preset.bundleOrder)
   if (!trial.ok) {
@@ -183,6 +221,18 @@ export function applyPreset(profileDir: string, name: unknown, maxSnapshots: num
   if (typeof name !== 'string') return { ok: false, error: 'invalid preset name / 组合名称无效' }
   const preset = readPresets(profileDir).find(item => item.name === name)
   if (preset === undefined) return { ok: false, error: 'preset not found / 组合不存在' }
+
+  // A stale preset (bundle set differs) cannot be applied as-is; say exactly
+  // what differs instead of the raw trial-merge error (issue #98 report).
+  const mismatch = presetMismatch(profileDir, preset.bundleOrder)
+  if (mismatch.stale) {
+    const detail = [...mismatch.missing.map(n => `+${n}`), ...mismatch.extra.map(n => `-${n}`)].join(' ')
+    logEvent('warn', 'preset', `apply "${name}" rejected: preset out of date — ${detail}`)
+    return {
+      ok: false,
+      error: `preset is out of date — current profile differs: ${detail} / 组合已过期——当前 profile 的插件列表已变化：${detail}`,
+    }
+  }
 
   const trial = trialValidate(profileDir, preset.bundleOrder)
   if (!trial.ok) {
