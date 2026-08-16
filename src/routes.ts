@@ -28,6 +28,7 @@ import { assessProfile, introducedRisks, type CompatibilityRisk } from './compat
 import { runningAgentIds, type AgentsLookup } from './agents.ts'
 import { analyzeProfile } from './check.ts'
 import { applyBundleOrder, mergeOrder, readBundleRules, readBundleStack, validateOrder } from './order.ts'
+import { createProfileSnapshot, DEFAULT_MAX_SNAPSHOTS, deleteSnapshot, listSnapshots, restoreSnapshot } from './snapshot.ts'
 import { trialValidate } from './trial.ts'
 import { findInstalledAlias, gitAllowBuildsKey, installTargetFor } from './sources.ts'
 import { groupConflictsByOwner, isStaleUpdate, parseIgnoredBuilds, parsePrepareNotAllowed, RELEASE_AGE_OVERRIDE, retargetCollections, validateAddedPlugins, withHoistRecovery } from './install.ts'
@@ -77,6 +78,8 @@ export interface MarketConfig {
   allowRestart?: boolean
   /** Which release channel the market offers ITSELF from; other plugins never follow it. */
   channel?: Channel
+  /** Snapshots retained per profile (issue #98); defaults to DEFAULT_MAX_SNAPSHOTS. */
+  maxSnapshots?: number
 }
 
 const PROFILE_RE = /^[A-Za-z0-9_-]+$/
@@ -179,6 +182,11 @@ export function mountMarketRoutes(
   // re-applies the same choice on every boot (ported from dsh-plugin-hub).
   const userPatchPath = findUserPatchPath(host, activeProfileDir)
   const commands = commandRuntime ?? { runPlugin: runDshPlugin, probePnpm, provisionPnpm, cancelActive }
+  // Snapshot retention cap (issue #98 supplement): a finite positive number
+  // from the market config wins; anything else falls back to the default.
+  const maxSnapshots = typeof config.maxSnapshots === 'number' && Number.isFinite(config.maxSnapshots) && config.maxSnapshots >= 1
+    ? Math.floor(config.maxSnapshots)
+    : DEFAULT_MAX_SNAPSHOTS
   // Boot-time wipe: stale hot-mount inputs from a previous session must never
   // survive into a composition where the bundle layer already covers them.
   cleanHotDir(activeProfileDir)
@@ -194,6 +202,25 @@ export function mountMarketRoutes(
   if (marketState.channel !== undefined) config.channel = marketState.channel
   const activeChannel = (): Channel => resolveChannel(config.channel, marketVersion())
   const themes = createThemeManager(host, config.profile, disabled, activeProfileDir)
+
+  /**
+   * Re-sync the live closure state from disk. Snapshot restore writes
+   * state.json directly (it must, to survive the next boot), which would
+   * leave this in-memory `disabled`/`groups`/`groupOrder` stale —
+   * the next toggle/groups write would then overwrite the restored values.
+   * The objects are mutated in place (clear + refill) so every captured
+   * reference (themes manager, live handlers) sees the fresh state (issue
+   * #98 review M2).
+   */
+  function refreshMarketState(): void {
+    const fresh = readMarketState(activeProfileDir)
+    disabled.clear()
+    for (const name of fresh.disabled) disabled.add(name)
+    for (const key of Object.keys(groups)) delete groups[key]
+    Object.assign(groups, fresh.groups)
+    groupOrder.length = 0
+    groupOrder.push(...fresh.groupOrder)
+  }
 
   // Client-only packages (dsh.client without dsh.bundle) are invisible to the
   // bundle layer in every boot; the market shim-mounts them so their client
@@ -842,6 +869,116 @@ export function mountMarketRoutes(
             }
           }
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    }),
+
+    // Issue #98 phase 3 (#19): profile snapshots — list, create, restore.
+    host.webServer.register({
+      kind: 'exact',
+      path: '/dsh-market/snapshots',
+      handler: async (request, response) => {
+        if (request.method === 'GET') {
+          sendJson(response, 200, { snapshots: listSnapshots(activeProfileDir) })
+          return
+        }
+        if (request.method === 'POST') {
+          if (!sameOrigin(request)) {
+            sendJson(response, 403, { error: 'untrusted origin' })
+            return
+          }
+          if (!acquireWrite(response)) return
+          try {
+            const snapshot = createProfileSnapshot(activeProfileDir, maxSnapshots)
+            sendJson(response, snapshot !== null ? 200 : 400, {
+              ok: snapshot !== null,
+              ...(snapshot !== null
+                ? { snapshot }
+                : { error: 'profile package.json is missing or unparseable / profile 的 package.json 缺失或无法解析' }),
+            })
+            return
+          } catch (error) {
+            sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+            return
+          } finally {
+            writing = false
+          }
+        }
+        response.writeHead(405, { allow: 'GET, POST' })
+        response.end()
+      },
+    }),
+
+    host.webServer.register({
+      kind: 'exact',
+      path: '/dsh-market/restore-snapshot',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) {
+          sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        if (!acquireWrite(response)) return
+        try {
+          const body = (await readJsonBody(request)) as { snapshot?: unknown } | null
+          if (body === null || typeof body !== 'object' || typeof body.snapshot !== 'string' || body.snapshot === '') {
+            sendJson(response, 400, { error: 'snapshot id is required / 需要快照 id' })
+            return
+          }
+          const restored = restoreSnapshot(activeProfileDir, body.snapshot)
+          if (restored.ok) {
+            invalidateUpdates()
+            refreshMarketState()
+          }
+          sendJson(response, restored.ok ? 200 : 400, restored)
+        } catch (error) {
+          sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+        } finally {
+          writing = false
+        }
+      },
+    }),
+
+    // Issue #98 supplement: delete one snapshot (the cap also prunes old ones
+    // automatically, but the user may want to drop a specific snapshot).
+    host.webServer.register({
+      kind: 'exact',
+      path: '/dsh-market/delete-snapshot',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) {
+          sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        if (!acquireWrite(response)) return
+        try {
+          const body = (await readJsonBody(request)) as { snapshot?: unknown } | null
+          if (body === null || typeof body !== 'object' || typeof body.snapshot !== 'string' || body.snapshot === '') {
+            sendJson(response, 400, { error: 'snapshot id is required / 需要快照 id' })
+            return
+          }
+          // deleteSnapshot refuses traversal-shaped ids before touching the
+          // filesystem (same discipline as restore); a false result means the
+          // id is malformed or no such snapshot exists.
+          const deleted = deleteSnapshot(activeProfileDir, body.snapshot)
+          if (!deleted) {
+            sendJson(response, 400, { ok: false, error: 'snapshot not found / 快照不存在' })
+            return
+          }
+          logEvent('info', 'snapshot', `deleted ${body.snapshot}`)
+          sendJson(response, 200, { ok: true, snapshot: body.snapshot })
+        } catch (error) {
+          sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+        } finally {
+          writing = false
         }
       },
     }),
