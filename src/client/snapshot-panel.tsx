@@ -96,13 +96,15 @@ export function SnapshotPanel(props: SnapshotPanelProps) {
         const list: unknown[] = Array.isArray(body) ? body : Array.isArray(body.snapshots) ? body.snapshots : []
         setSnapshots(list.map(snapshotOf).filter((snap): snap is Snapshot => snap !== null))
         setError(null)
+        // Mark loaded only on success so a transient failure retries on the
+        // next expand (review M3).
+        loaded.current = true
       })
       .catch(() => setError(t('snapListFail') + 'network'))
   }, [t])
 
   useEffect(() => {
     if (open && !loaded.current) {
-      loaded.current = true
       load()
     }
   }, [open, load])

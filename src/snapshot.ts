@@ -173,9 +173,18 @@ export function restoreSnapshot(profileDir: string, id: string): { ok: boolean; 
     return { ok: false, restored: [], error: 'snapshot not found / 快照不存在' }
   }
   const allowed = new Set<string>(SNAPSHOT_FILES)
+  // Shape validation (review B4): a malformed snapshot must be refused before
+  // any write — a missing/string `files` would otherwise throw mid-restore or
+  // silently write an empty package.json.
+  if (!Array.isArray(snapshot.files)) {
+    return { ok: false, restored: [], error: 'corrupt snapshot: files is not an array / 快照损坏：files 不是数组' }
+  }
   for (const file of snapshot.files) {
-    if (typeof file.path !== 'string' || !allowed.has(file.path) || file.path.includes('..')) {
-      return { ok: false, restored: [], error: `unsafe snapshot path: ${String(file.path)} / 快照路径不安全` }
+    if (file === null || typeof file !== 'object' || typeof file.path !== 'string' || !allowed.has(file.path) || file.path.includes('..')) {
+      return { ok: false, restored: [], error: `unsafe snapshot path: ${String(file?.path)} / 快照路径不安全` }
+    }
+    if (file.json === undefined && !Array.isArray(file.lines)) {
+      return { ok: false, restored: [], error: `snapshot file ${file.path} has no content / 快照文件 ${file.path} 缺少内容` }
     }
   }
   // Materialize every target + its current content FIRST, so a rollback can

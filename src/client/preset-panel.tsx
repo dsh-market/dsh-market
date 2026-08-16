@@ -85,13 +85,15 @@ export function PresetPanel(props: PresetPanelProps) {
           }
         }))
         setError(null)
+        // Mark loaded only on success so a transient failure retries on the
+        // next expand (review M3).
+        loaded.current = true
       })
       .catch(() => setError(t('presetListFail') + 'network'))
   }, [t])
 
   useEffect(() => {
     if (open && !loaded.current) {
-      loaded.current = true
       load()
     }
   }, [open, load])

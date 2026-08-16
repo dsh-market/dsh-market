@@ -302,7 +302,10 @@ export function Diagnostics(props: { t: Translate }) {
 
   useEffect(() => {
     let live = true
-    setReport(null)
+    // Do NOT null the report here: a refresh() (manual re-check, or after an
+    // order/preset/restore apply) must keep the previous data visible and
+    // must not clobber the in-progress ordering draft, which re-syncs from
+    // communityNames only when the report actually changes (review M2).
     setError(null)
     fetch('/dsh-market/check', { cache: 'no-store' })
       .then(async (res) => {
@@ -572,7 +575,7 @@ export function Diagnostics(props: { t: Translate }) {
                 {t('orderSuggestApply')}
               </Button>
             )}
-          {order.length !== communityNames.length && (
+          {order.join('\u0000') !== communityNames.join('\u0000') && (
             <Button variant="ghost" size="sm" disabled={orderBusy} onClick={() => setOrder(communityNames)}>
               {t('orderReset')}
             </Button>

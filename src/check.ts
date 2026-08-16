@@ -29,14 +29,7 @@ import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { JSON_SCHEMA, Type, load } from 'js-yaml'
-import { readBundleRules, suggestOrder, validateOrder } from './order.ts'
-
-/** Profile bundles that ship with the dsh host and must stay put (#98). */
-const INBOX_BUNDLES = new Set([
-  '@deepseek-ai/dsh-base',
-  '@deepseek-ai/dsh-web-app',
-  '@deepseek-ai/dsh-headless',
-])
+import { INBOX_BUNDLES, readBundleRules, suggestOrder, validateOrder } from './order.ts'
 
 /** js-yaml dialect for `!!js` scalars — identical to dsh-app-boot's entryListSchema. */
 const jsExpr = new Type('tag:yaml.org,2002:js', {
@@ -256,7 +249,7 @@ export function corePackageNames(dshInstallDir: string | null): Set<string> {
     // everything under @deepseek-ai whose bare name starts with dsh or cordis,
     // plus the app package itself.
     for (const entry of readdirSync(join(dshInstallDir, 'node_modules', '@deepseek-ai'), { withFileTypes: true })) {
-      if (!entry.isDirectory()) continue
+      if (!entry.isDirectory() && !entry.isSymbolicLink()) continue
       if (/^(?:dsh|cordis)/.test(entry.name)) names.add(`@deepseek-ai/${entry.name}`)
     }
   } catch { /* install node_modules unreadable — the curated seed stands */ }
@@ -338,10 +331,14 @@ function readProfileVisibleVersion(profileDirectory: string, name: string): stri
 /** Top-level installed package names (incl. scoped), excluding pnpm internals. */
 function installedPackageNames(profileDir: string): string[] {
   const names: string[] = []
+  // Windows `link:` installs are junctions; Dirent.isDirectory() is false for
+  // them on some Node versions, so treat symlinks as packages too (B2).
+  const isPkgDir = (entry: { isDirectory(): boolean; isSymbolicLink(): boolean }): boolean =>
+    entry.isDirectory() || entry.isSymbolicLink()
   let root: string[]
   try {
     root = readdirSync(join(profileDir, 'node_modules'), { withFileTypes: true })
-      .filter(entry => entry.isDirectory() && entry.name !== '.bin' && entry.name !== '.pnpm' && entry.name !== '.dsh-plugin-backups')
+      .filter(entry => isPkgDir(entry) && entry.name !== '.bin' && entry.name !== '.pnpm' && entry.name !== '.dsh-plugin-backups')
       .map(entry => entry.name)
   } catch {
     return names
@@ -353,7 +350,7 @@ function installedPackageNames(profileDir: string): string[] {
     }
     try {
       for (const scoped of readdirSync(join(profileDir, 'node_modules', name), { withFileTypes: true })) {
-        if (scoped.isDirectory()) names.push(`${name}/${scoped.name}`)
+        if (isPkgDir(scoped)) names.push(`${name}/${scoped.name}`)
       }
     } catch { /* empty scope dir */ }
   }
@@ -497,14 +494,17 @@ interface EntryNode {
 }
 
 function findEntry(nodes: EntryNode[], id: string): EntryNode | undefined {
-  for (const node of nodes) {
-    if (node.id === id) return node
-    if (node.group === true && Array.isArray(node.config)) {
-      const nested = findEntry(node.config as EntryNode[], id)
-      if (nested !== undefined) return nested
+  // The boot's entryMap keeps the LAST row for an id (later patches overwrite
+  // the map entry), so a duplicate id must resolve to the final definition.
+  let found: EntryNode | undefined
+  const walk = (list: EntryNode[]): void => {
+    for (const node of list) {
+      if (node.id === id) found = node
+      if (node.group === true && Array.isArray(node.config)) walk(node.config as EntryNode[])
     }
   }
-  return undefined
+  walk(nodes)
+  return found
 }
 
 /** Flatten a tree of entries (group configs included) into row records. */
@@ -633,7 +633,10 @@ function lockfileCoreVersions(profileDir: string): Map<string, string[]> {
   }
   for (const m of text.matchAll(/(@deepseek-ai\/(?:dsh|cordis)[^@\s'"]*?)@([^\s:'"]+)/g)) {
     const name = m[1] ?? ''
-    const version = m[2] ?? ''
+    // pnpm v9 peer-resolution keys carry a suffix: `name@1.0.0(peer@x)`. The
+    // regex greedily captured it as part of the version, inventing fake
+    // "versions" and false multi-version reports on healthy profiles (B1).
+    const version = (m[2] ?? '').split('(')[0] ?? ''
     // Registry resolutions only: skip link: and git forms.
     if (!/^\d/.test(version)) continue
     const versions = found.get(name) ?? new Set<string>()
@@ -797,7 +800,9 @@ export function analyzeProfile(profileDirectory: string, options: CheckOptions =
         const hoisted = readProfileVisibleVersion(profileDirectory, name)
         const nested = readNodeModulesVersion(pluginDir, name)
         const host = dshInstall !== null ? readNodeModulesVersion(dshInstall, name) : null
-        const resolved = hoisted ?? nested ?? host
+        // Node resolves a plugin's peer from its OWN node_modules first
+        // (nested), then the profile tree (hoisted), then the host install.
+        const resolved = nested ?? hoisted ?? host
         const isCore = core.has(name)
         if (section === 'dependencies' && isCore) {
           const shadowing = (hoisted ?? nested) !== null && host !== null && (hoisted ?? nested) !== host

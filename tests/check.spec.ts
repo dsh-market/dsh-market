@@ -310,10 +310,8 @@ describe('suggestedOrder (#98 opt: LOOT-style auto-fix)', () => {
 })
 
 describe('peer range mismatch', () => {
-  // NOTE: resolved 0.2.0 vs peer range ^0.1.0 is a mismatch per npm semantics
-  // (^0.1.0 := >=0.1.0 <0.2.0). check.ts currently returns satisfied=true here
-  // because its `^` matcher uses an INCLUSIVE upper bound (gte(upper, v)) —
-  // this is a reported check.ts bug, not a test bug; do not relax this test.
+  // ^0.1.0 := >=0.1.0 <0.2.0 (exclusive upper bound), so resolved 0.2.0
+  // must be reported as unsatisfied.
   it('marks satisfied=false when resolved 0.2.0 is outside ^0.1.0', () => {
     const dir = pdir()
     writeProfile(dir, { name: 'web-profile', dependencies: {} })

@@ -14,12 +14,12 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { readMarketState, writeMarketState } from './hot.ts'
-import { applyBundleOrder, readBundleStack } from './order.ts'
+import { applyBundleOrder, mergeOrder, readBundleRules, readBundleStack, validateOrder } from './order.ts'
 import { createProfileSnapshot, DEFAULT_MAX_SNAPSHOTS } from './snapshot.ts'
 import { trialValidate } from './trial.ts'
 import { logEvent } from './log.ts'
 
-/** Group-style name rule: letters/digits (incl. CJK), spaces, _, -; ≤ 40 chars. */
+/** Group-style name rule: letters/digits (incl. CJK), spaces, _, -; ≤ 40 chars, at least one non-space. */
 const PRESET_NAME_RE = /^[\p{L}\p{N}_ -]{1,40}$/u
 
 export interface Preset {
@@ -78,7 +78,7 @@ export function savePreset(
   bundleOrder: unknown,
   disabled: unknown,
 ): PresetResult {
-  if (typeof name !== 'string' || !PRESET_NAME_RE.test(name)) {
+  if (typeof name !== 'string' || !PRESET_NAME_RE.test(name) || name.trim() === '') {
     return { ok: false, error: 'invalid preset name / 组合名称无效' }
   }
   if (!Array.isArray(bundleOrder) || !bundleOrder.every(item => typeof item === 'string')) {
@@ -193,6 +193,20 @@ export function applyPreset(profileDir: string, name: unknown, maxSnapshots: num
       error: `trial validation failed — ${first?.message ?? 'composition would not boot'} / 试启动校验失败：${first?.message ?? '组合无法启动'}`,
     }
   }
+  // Before/after rules (review B5): the reorder endpoint refuses rule-violating
+  // stacks; the preset path must enforce the same gate before writing.
+  const { bundles } = readBundleStack(profileDir)
+  const merged = mergeOrder(bundles, preset.bundleOrder)
+  if (merged.ok) {
+    const conflicts = validateOrder(merged.bundles, readBundleRules(profileDir))
+    if (conflicts.length > 0) {
+      logEvent('warn', 'preset', `apply "${name}" rejected by before/after rules: ${conflicts.map(c => c.reason).join('; ')}`)
+      return {
+        ok: false,
+        error: 'the preset order violates declared before/after rules / 组合顺序违反了插件声明的 before/after 规则',
+      }
+    }
+  }
 
   const preview = previewPreset(profileDir, name)
   const snapshot = createProfileSnapshot(profileDir, maxSnapshots)
@@ -294,6 +308,12 @@ export function importPresets(profileDir: string, value: unknown): PresetImportR
       continue
     }
     if (!Array.isArray(item.bundleOrder) || !item.bundleOrder.every(name => typeof name === 'string')) {
+      skipped += 1
+      continue
+    }
+    // Missing `disabled` is tolerated (legacy exports); an explicit
+    // non-array value is malformed and skips the entry (review B16).
+    if (item.disabled !== undefined && !Array.isArray(item.disabled)) {
       skipped += 1
       continue
     }

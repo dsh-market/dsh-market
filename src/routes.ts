@@ -492,6 +492,13 @@ export function mountMarketRoutes(
             return
           }
           const order = body.order as string[]
+          // Mutex with pnpm operations (review M1): reordering writes
+          // package.json directly; racing an install/update/uninstall would
+          // corrupt the manifest (backup restore uses the same guard).
+          if (installing) {
+            sendJson(response, 409, { error: 'another plugin operation is running' })
+            return
+          }
           // Before/after rules (issue #98 phase 2): the merged stack must
           // satisfy every rule the bundles declare. Enforced BEFORE the
           // trial/snapshot/write so a rule-breaking order is refused outright.
@@ -547,6 +554,10 @@ export function mountMarketRoutes(
             sendJson(response, 403, { error: 'untrusted origin' })
             return
           }
+          if (installing) {
+            sendJson(response, 409, { error: 'another plugin operation is running' })
+            return
+          }
           try {
             const snapshot = createProfileSnapshot(activeProfileDir, maxSnapshots)
             sendJson(response, snapshot !== null ? 200 : 400, {
@@ -575,6 +586,10 @@ export function mountMarketRoutes(
         }
         if (!sameOrigin(request)) {
           sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        if (installing) {
+          sendJson(response, 409, { error: 'another plugin operation is running' })
           return
         }
         try {
@@ -608,6 +623,10 @@ export function mountMarketRoutes(
         }
         if (!sameOrigin(request)) {
           sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        if (installing) {
+          sendJson(response, 409, { error: 'another plugin operation is running' })
           return
         }
         try {
@@ -651,9 +670,17 @@ export function mountMarketRoutes(
           return
         }
         try {
-          const body = (await readJsonBody(request)) as { action?: unknown; name?: unknown; bundleOrder?: unknown; disabled?: unknown } | null
+          // save carries the FULL community order + disabled list, which can
+          // exceed the 4KiB default (CJK names are 3 bytes/char) — the same
+          // budget as presets-import (review M2).
+          const body = (await readJsonBody(request, 256 * 1024)) as { action?: unknown; name?: unknown; bundleOrder?: unknown; disabled?: unknown } | null
           if (body === null || typeof body !== 'object') {
             sendJson(response, 400, { error: 'JSON body is required / 需要 JSON body' })
+            return
+          }
+          // Mutex with pnpm operations: apply writes package.json + state.json.
+          if (body.action === 'apply' && installing) {
+            sendJson(response, 409, { error: 'another plugin operation is running' })
             return
           }
           const name = body.name
