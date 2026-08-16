@@ -3,7 +3,7 @@
  "url": "https://awesome-dsh-plugin.com",
  "source": "https://github.com/awesome-dsh-plugin/awesome-dsh-plugin",
  "updated": "2026-08-16",
- "count": 839,
+ "count": 840,
  "categories": {
   "ui": {
    "en": "UI Enhancements",
@@ -55,6 +55,21 @@
   }
  },
  "plugins": [
+  {
+   "name": "FrameFactory",
+   "owner": "anywhere-labs",
+   "url": "https://github.com/anywhere-labs/framefactory-plugin",
+   "page": "https://awesome-dsh-plugin.com/p/anywhere-labs/framefactory-plugin/",
+   "category": "skill",
+   "description": {
+    "en": "Content-production workflow skill for creator topics: title candidates, short-video scripts, visual plans, evidence checks, and a pre-publish quality checklist.",
+    "zh": "面向自媒体选题的内容生产工作流技能：标题候选、短视频脚本、视觉计划、证据核验与发布前质量检查。"
+   },
+   "npm": null,
+   "stars": 0,
+   "install": "dsh plugin --profile web add github:anywhere-labs/framefactory-plugin",
+   "added": "2026-08-16"
+  },
   {
    "name": "DSH-Right-Sidebar",
    "owner": "Limitinfinitude",
