@@ -206,6 +206,9 @@ export function Diagnostics(props: { t: Translate }) {
   const [orderMsg, setOrderMsg] = useState<string | null>(null)
   const [orderErr, setOrderErr] = useState<string | null>(null)
   const [orderBusy, setOrderBusy] = useState(false)
+  /** Current-vs-candidate composition diff from a rejected static-composition
+   * validation (#125 review): what the candidate would change, shown as a hint. */
+  const [orderDiff, setOrderDiff] = useState<{ overrides: number; orphans: number; duplicates: number } | null>(null)
   /**
    * Content identity of the last community order this draft synced to. A
    * refresh() refetch returns a NEW array even when the order is unchanged,
@@ -284,23 +287,45 @@ export function Diagnostics(props: { t: Translate }) {
     setDragOverIndex(null)
   }
 
-  /** POST the current community order; the host trial-validates first. */
+  /** POST the current community order; the host statically validates the
+   * candidate composition (dry-run replay) before writing. */
   const applyOrder = (target?: string[]) => {
     if (orderBusy) return
     setOrderBusy(true)
     setOrderMsg(null)
     setOrderErr(null)
+    setOrderDiff(null)
     fetch('/dsh-market/bundle-order', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ order: target ?? order }),
     })
       .then(async (res) => {
-        const body = (await res.json().catch(() => null)) as { ok?: unknown; error?: unknown } | null
+        const body = (await res.json().catch(() => null)) as {
+          ok?: unknown
+          error?: unknown
+          trial?: {
+            errors?: Array<{ layer?: unknown; message?: unknown }>
+            warnings?: unknown[]
+            diff?: { overrides?: unknown[]; orphans?: unknown[]; duplicates?: unknown[] }
+          }
+        } | null
         if (!res.ok || body?.ok !== true) {
-          setOrderErr(String(body?.error ?? `HTTP ${String(res.status)}`))
+          // A rejected static-composition validation (422) carries the
+          // current-vs-candidate diff — surface what the candidate would
+          // change as an informational hint (issue #125 review).
+          const diff = body?.trial?.diff
+          const overrides = diff?.overrides?.length ?? 0
+          const orphans = diff?.orphans?.length ?? 0
+          const duplicates = diff?.duplicates?.length ?? 0
+          setOrderDiff(overrides + orphans + duplicates > 0 ? { overrides, orphans, duplicates } : null)
+          const firstMessage = body?.trial?.errors?.[0]?.message
+          setOrderErr(body?.trial !== undefined
+            ? t('orderTrialFail').replace('{0}', firstMessage !== undefined ? String(firstMessage) : '')
+            : String(body?.error ?? `HTTP ${String(res.status)}`))
           return
         }
+        setOrderDiff(null)
         setOrderMsg(t('orderApplied'))
         // Refetch the report so communityNames / the ordering draft reflect
         // the applied order.
@@ -687,16 +712,7 @@ export function Diagnostics(props: { t: Translate }) {
             )}
           {suggested !== null && suggested.ok === true
             && suggested.order.join('\u0000') === communityNames.join('\u0000')
-            && (
-              <Button variant="outline" size="sm" disabled={orderBusy} onClick={() => setOrderMsg(t('orderAlreadyOptimal'))}>
-                {t('orderAutoSort')}
-              </Button>
-            )}
-          {suggested === null && (
-            <Button variant="outline" size="sm" disabled={orderBusy} onClick={() => setOrderMsg(t('orderNoRules'))}>
-              {t('orderAutoSort')}
-            </Button>
-          )}
+            && <span className={css.okState}>{t('orderAlreadyOptimal')}</span>}
           {order.join('\u0000') !== communityNames.join('\u0000') && (
             <Button variant="ghost" size="sm" disabled={orderBusy} onClick={() => setOrder(communityNames)}>
               {t('orderReset')}
@@ -705,6 +721,11 @@ export function Diagnostics(props: { t: Translate }) {
           {orderMsg !== null && <span className={css.okState}>{orderMsg}</span>}
           {orderErr !== null && <span className={css.err}>{orderErr}</span>}
         </div>
+        {orderDiff !== null && (
+          <div className={css.panelNote}>
+            {t('orderDiffHint').replace('{0}', String(orderDiff.overrides)).replace('{1}', String(orderDiff.orphans)).replace('{2}', String(orderDiff.duplicates))}
+          </div>
+        )}
         {suggested !== null && suggested.ok === false && (
           <div className={css.warnLine}>{t('orderSuggestHint')} ⚠ {suggested.cycle.join(' → ')}</div>
         )}

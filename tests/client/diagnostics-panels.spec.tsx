@@ -63,6 +63,8 @@ function json(payload: unknown): Response {
 
 interface ApiOverrides {
   check?: unknown
+  /** Override the POST /dsh-market/bundle-order response (defaults to 200 ok). */
+  bundleOrder?: { status?: number; body?: unknown }
 }
 
 /**
@@ -76,6 +78,10 @@ function stubApi(overrides: ApiOverrides = {}) {
     const method = init?.method ?? 'GET'
     if (url === '/dsh-market/check') return Promise.resolve(json(overrides.check ?? CHECK_REPORT))
     if (url === '/dsh-market/bundle-order') {
+      const resp = overrides.bundleOrder
+      if (resp !== undefined) {
+        return Promise.resolve(new Response(JSON.stringify(resp.body), { status: resp.status ?? 200 }))
+      }
       return Promise.resolve(json({ ok: true, bundles: ['@deepseek-ai/dsh-base', 'beta', 'alpha'] }))
     }
     return Promise.resolve(json({ ok: true }))
@@ -168,19 +174,84 @@ describe('Diagnostics panels (jsdom, #98 phase 2)', () => {
     await waitFor(() => expect(calls('/dsh-market/check').length).toBeGreaterThanOrEqual(2))
   })
 
-  it('auto-sort shows and reports when no ordering rules exist', async () => {
+  it('shows no auto-sort / apply-suggested button when the host reports no ordering rules', async () => {
     await renderLoaded()
-    // CHECK_REPORT has no hard issues → the AI-fix button stays hidden
-    // (conservative UX: don't nudge the agent without a clear problem).
-    expect(screen.queryByRole('button', { name: t('aiFix') })).toBeNull()
+    // CHECK_REPORT carries no suggestedOrder → nothing to suggest and no
+    // auto-sort affordance at all (#125: only a DIFFERING suggestion shows the
+    // apply-suggested button; the already-optimal text is kept).
     const section = screen.getByText(t('orderSection')).closest('section') as HTMLElement
     fireEvent.click(screen.getByText(t('orderSection')))
     await waitFor(() => {
       const body = section.querySelector('[class*="collapseBody"]') as HTMLElement | null
       expect(body?.style.display).not.toBe('none')
     })
-    fireEvent.click(within(section).getByRole('button', { name: t('orderAutoSort') }))
-    await waitFor(() => expect(within(section).getByText(t('orderNoRules'))).toBeTruthy())
+    expect(within(section).queryByRole('button', { name: t('orderAutoSort') })).toBeNull()
+    expect(within(section).queryByRole('button', { name: t('orderSuggestApply') })).toBeNull()
+  })
+
+  it('shows the apply-suggested button only when a different suggested order exists', async () => {
+    const expand = async () => {
+      const section = screen.getByText(t('orderSection')).closest('section') as HTMLElement
+      fireEvent.click(screen.getByText(t('orderSection')))
+      await waitFor(() => {
+        const body = section.querySelector('[class*="collapseBody"]') as HTMLElement | null
+        expect(body?.style.display).not.toBe('none')
+      })
+      return section
+    }
+
+    // A suggested order that differs from the current community order → button.
+    stubApi({ check: { ...CHECK_REPORT, suggestedOrder: { ok: true, order: ['beta', 'alpha'] } } })
+    render(<Diagnostics t={t} />)
+    await waitFor(() => expect(screen.queryByText(t('checkLoading'))).toBeNull())
+    const differSection = await expand()
+    expect(within(differSection).getByRole('button', { name: t('orderSuggestApply') })).toBeTruthy()
+    cleanup()
+    vi.unstubAllGlobals()
+
+    // A suggested order equal to the current one → already-optimal text, no buttons.
+    stubApi({ check: { ...CHECK_REPORT, suggestedOrder: { ok: true, order: ['alpha', 'beta'] } } })
+    render(<Diagnostics t={t} />)
+    await waitFor(() => expect(screen.queryByText(t('checkLoading'))).toBeNull())
+    const equalSection = await expand()
+    expect(within(equalSection).queryByRole('button', { name: t('orderSuggestApply') })).toBeNull()
+    expect(within(equalSection).queryByRole('button', { name: t('orderAutoSort') })).toBeNull()
+    expect(within(equalSection).getByText(t('orderAlreadyOptimal'))).toBeTruthy()
+  })
+
+  it('shows the composition diff hint when static validation rejects an apply', async () => {
+    stubApi({
+      bundleOrder: {
+        status: 422,
+        body: {
+          error: 'trial validation failed — would not boot / 试启动校验失败',
+          trial: {
+            errors: [{ layer: 'alpha', message: 'duplicate loader entry id "x"' }],
+            warnings: [],
+            diff: {
+              overrides: [{ id: 'x', layer: 'alpha', overriddenLayers: ['beta'] }],
+              orphans: [{ id: 'y', layer: 'beta', reason: 'patch target not found' }],
+              duplicates: [{ id: 'x', layers: ['alpha', 'beta'], count: 2 }],
+            },
+          },
+        },
+      },
+    })
+    render(<Diagnostics t={t} />)
+    await waitFor(() => expect(screen.queryByText(t('checkLoading'))).toBeNull())
+
+    // Expand the ordering panel, then apply the manual draft → the host
+    // rejects with 422 + the candidate diff.
+    const section = screen.getByText(t('orderSection')).closest('section') as HTMLElement
+    fireEvent.click(screen.getByText(t('orderSection')))
+    await waitFor(() => {
+      const body = section.querySelector('[class*="collapseBody"]') as HTMLElement | null
+      expect(body?.style.display).not.toBe('none')
+    })
+    fireEvent.click(within(section).getByRole('button', { name: t('orderApply') }))
+    await waitFor(() => expect(screen.getByText(t('orderTrialFail').replace('{0}', 'duplicate loader entry id "x"'))).toBeTruthy())
+    // The diff hint line: 1 override, 1 orphan, 1 duplicate.
+    expect(screen.getByText(t('orderDiffHint').replace('{0}', '1').replace('{1}', '1').replace('{2}', '1'))).toBeTruthy()
   })
 
   it('AI fix copies the diagnostics prompt to the clipboard and confirms', async () => {
