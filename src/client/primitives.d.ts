@@ -115,6 +115,7 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
   }
   export function IconChevronDownOutline14(props: IconProps): ReactElement
   export function IconChevronUpOutline14(props: IconProps): ReactElement
+  export function IconCheckOutline16(props: IconProps): ReactElement
   export function IconChevronLeftOutline14(props: IconProps): ReactElement
   export function IconChevronRightOutline14(props: IconProps): ReactElement
   export function IconSearchOutline16(props: IconProps): ReactElement

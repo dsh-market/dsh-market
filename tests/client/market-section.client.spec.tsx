@@ -126,8 +126,9 @@ describe('MarketSection (jsdom)', () => {
     await screen.findByText('dsh-loop')
     const exportButton = screen.getByRole('button', { name: en.exportLog })
     fireEvent.click(exportButton)
-    // Success feedback appears, then the button returns to idle.
-    await waitFor(() => { expect(screen.getByText('✓ ' + en.exportedLog)).toBeTruthy() })
+    // Success feedback appears as a Toast (body portal, no layout impact),
+    // then the button returns to idle.
+    await waitFor(() => { expect(screen.getByText(en.exportedLog)).toBeTruthy() })
   })
 
   it('shows curated registry screenshots in the dialog, and README-extracted ones as fallback (#61)', async () => {

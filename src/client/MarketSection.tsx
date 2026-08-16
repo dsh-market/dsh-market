@@ -11,6 +11,7 @@ import {
   IconChevronLeftOutline14,
   IconChevronRightOutline14,
   IconChevronUpOutline14,
+  IconCheckOutline16,
   IconCodeOutline16,
   IconCordisPluginOutline14,
   IconDownloadOutline16,
@@ -27,6 +28,7 @@ import {
   Modal,
   Pill,
   StateDot,
+  Toast,
   Tooltip,
   type MenuEntry,
 } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -247,6 +249,8 @@ export function MarketSection(props: MarketSectionProps) {
    * Programmatic log download with explicit feedback (#84) — the plain
    * `<a download>` gave no sign anything happened, and the error banner's
    * "export the log" wording pointed at text that was not clickable at all.
+   * Success/failure surface as a primitives Toast (body portal, no layout
+   * impact) instead of inline text.
    */
   const doExportLog = useCallback(() => {
     setExportState('busy')
@@ -265,8 +269,10 @@ export function MarketSection(props: MarketSectionProps) {
         setExportState('done')
       })
       .catch(() => setExportState('fail'))
-      .finally(() => { setTimeout(() => setExportState('idle'), 6000) })
   }, [])
+  /** Stable onDone for the export Toast — a fresh closure per render would
+   * reset the Toast's auto-dismiss timer on every parent re-render. */
+  const exportToastDone = useCallback(() => setExportState('idle'), [])
   const [updates, setUpdates] = useState<Record<string, UpdateStatus>>({})
   const [updatingName, setUpdatingName] = useState<string | null>(null)
   // Plugin blocked by pnpm's fresh-release safety wait; arms the update-now button.
@@ -1119,8 +1125,6 @@ export function MarketSection(props: MarketSectionProps) {
             disabled={exportState === 'busy'}
             onClick={doExportLog}
           >{exportState === 'busy' ? t('exportingLog') : t('exportLog')}</Button>
-          {exportState === 'done' && <span className={css.exportNote}>{'✓ ' + t('exportedLog')}</span>}
-          {exportState === 'fail' && <span className={css.exportNoteErr}>{t('exportLogFail')}</span>}
         </div>
         <div className={css.tabs}>
           <button className={tab === 'discover' ? `${css.tab} ${css.on}` : css.tab} onClick={() => setTab('discover')}>{t('tabDiscover')}</button>
@@ -1242,8 +1246,6 @@ export function MarketSection(props: MarketSectionProps) {
             >
               {exportState === 'busy' ? t('exportingLog') : t('exportLog')}
             </Button>
-            {exportState === 'done' && <span className={css.exportNote}>{'✓ ' + t('exportedLog')}</span>}
-            {exportState === 'fail' && <span className={css.exportNoteErr}>{t('exportLogFail')}</span>}
           </div>
         </div>
       )}
@@ -1648,6 +1650,14 @@ export function MarketSection(props: MarketSectionProps) {
             </>
           )}
         />
+      )}
+      {/* Log-export feedback via the Toast primitive — body portal, so it
+        never squeezes the subtitle row or the error banner. */}
+      {exportState === 'done' && (
+        <Toast text={t('exportedLog')} icon={<IconCheckOutline16 size={14} />} onDone={exportToastDone} />
+      )}
+      {exportState === 'fail' && (
+        <Toast text={t('exportLogFail')} icon={<IconWarningOutline16 size={14} />} onDone={exportToastDone} />
       )}
     </div>
   )
