@@ -74,7 +74,7 @@
 .tabSearchRow{display:flex;padding:0 4px 10px}
 .tabSearch{width:260px}
 /* Buttons sharing the row with a description must keep one line (#26, thanks @yanshuai2002) */
-.spec{font-size:11px;color:var(--dsw-alias-label-secondary,#9ca3af);font-family:ui-monospace,Menlo,monospace}
+.spec{font-size:11px;color:var(--dsw-alias-label-secondary,#9ca3af);font-family:ui-monospace,Menlo,monospace;overflow-wrap:anywhere;min-width:0}
 .staleAction{margin-top:8px}
 .pct{font-weight:600;font-size:11px;flex-shrink:0;color:var(--dsw-alias-label-secondary,#6b7280)}
 .pager{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:16px 0 4px;flex-wrap:wrap}
@@ -138,7 +138,7 @@
 .diagRow{display:flex;align-items:center;flex-wrap:wrap;gap:8px;font-size:12px;line-height:18px;min-width:0}
 .diagMeta{display:flex;align-items:baseline;gap:8px;font-size:12px;min-width:0}
 .diagKey{color:var(--dsw-alias-label-tertiary,#9ca3af);font-size:11px;flex-shrink:0;min-width:64px}
-.diagVal{font-size:12px;font-weight:500;color:var(--dsw-alias-label-primary,#1f2328);font-family:ui-monospace,Menlo,monospace}
+.diagVal{font-size:12px;font-weight:500;color:var(--dsw-alias-label-primary,#1f2328);font-family:ui-monospace,Menlo,monospace;overflow-wrap:anywhere;min-width:0}
 .diagIndex{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;border-radius:9px;background:var(--dsw-alias-bg-layer-2,#f3f4f6);color:var(--dsw-alias-label-secondary,#6b7280);font-size:11px;font-weight:600;flex-shrink:0}
 .diagArrow{color:var(--dsw-alias-label-tertiary,#9ca3af);font-size:12px;flex-shrink:0}
 .diagBadgeOfficial{display:inline-flex;align-items:center;padding:0 8px;height:18px;border-radius:9px;background:var(--dsw-alias-brand-primary,#4f6ef7);color:#fff;font-size:11px;font-weight:600;flex-shrink:0}
@@ -167,7 +167,7 @@
 .panelNote{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#6b7280);margin:0}
 .panelActions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .presetList{display:flex;flex-direction:column;gap:6px}
-.presetRow{display:flex;flex-direction:column;align-items:stretch;gap:6px;background:var(--dsw-alias-bg-layer-2,#f7f8fa);border-radius:8px;padding:8px 10px;font-size:12px;line-height:18px;min-width:0}
+.presetRow{display:flex;flex-direction:column;align-items:stretch;gap:6px;background:var(--dsw-alias-bg-layer-2,#f7f8fa);border-radius:8px;padding:8px 10px;font-size:12px;line-height:18px;min-width:0;max-width:100%}
 .presetName{font-weight:600;font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .snapList{display:flex;flex-direction:column;gap:6px}
 .snapRow{display:flex;flex-direction:column;align-items:stretch;gap:8px;background:var(--dsw-alias-bg-layer-2,#f7f8fa);border-radius:8px;padding:10px 12px;font-size:12px;line-height:18px}
