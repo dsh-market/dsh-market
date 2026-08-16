@@ -27,7 +27,7 @@ import { isStaleUpdate, parseIgnoredBuilds, parsePrepareNotAllowed, RELEASE_AGE_
 import { checkUpdates, fetchNpmLatest, invalidateUpdates, isUpgrade, latestPublishedRecently } from './updates.ts'
 import { createThemeManager, type LoaderEntry } from './themes.ts'
 import { readJsonBody, sameOrigin, sendJson } from './http.ts'
-import { restartAllowed, scheduleRestart, trustedRestartRequest } from './restart.ts'
+import { restartAllowed, scheduleRestart, trustedRestartRequest, trustedDownloadRequest } from './restart.ts'
 import { verifyActivation } from './verify.ts'
 import {
   createProfileBackup, downloadWebdav, MAX_BACKUP_BYTES, restoreProfileBackup, secretFileCount, uploadWebdav,
@@ -248,9 +248,11 @@ export function mountMarketRoutes(
           return
         }
         // Profile exports carry configuration that may include credentials
-        // (config.toml, .env, …), so they are limited to same-origin loopback
-        // requests exactly like process control (review #63).
-        if (!trustedRestartRequest(request)) {
+        // (config.toml, .env, …), so they stay limited to loopback peers
+        // without proxy forwarding (review #63). Unlike process control,
+        // browsers omit the Origin header on `<a download>` GET navigations,
+        // so a missing Origin passes; a present one must still match Host.
+        if (!trustedDownloadRequest(request)) {
           sendJson(response, 403, { error: 'backup export is limited to same-origin loopback requests' })
           return
         }

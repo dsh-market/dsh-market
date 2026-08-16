@@ -39,6 +39,33 @@ export function trustedRestartRequest(request: Pick<IncomingMessage, 'headers' |
   }
 }
 
+/**
+ * Whether a download navigation may fetch a sensitive GET export.
+ * Browsers do NOT send an Origin header on same-origin GET navigations
+ * (`<a href="/..." download>`), so unlike process-control requests a missing
+ * Origin is the NORMAL shape of a user-initiated download and must pass.
+ * Keep the rest of the posture: loopback peer only, no proxy forwarding
+ * headers, and — when an Origin IS present (fetch/CORS attempts) — it must
+ * still match Host so a cross-origin page cannot read the export.
+ */
+export function trustedDownloadRequest(request: Pick<IncomingMessage, 'headers' | 'socket'>): boolean {
+  const address = request.socket.remoteAddress
+  if (address !== '127.0.0.1' && address !== '::1' && address !== '::ffff:127.0.0.1') return false
+  if (request.headers.forwarded !== undefined
+    || request.headers['x-forwarded-for'] !== undefined
+    || request.headers['x-real-ip'] !== undefined) return false
+  const origin = request.headers.origin
+  const host = request.headers.host
+  if (host === undefined) return false
+  if (origin === undefined) return true // plain browser download navigation
+  try {
+    const parsed = new URL(origin)
+    return (parsed.protocol === 'http:' || parsed.protocol === 'https:') && parsed.host === host
+  } catch {
+    return false
+  }
+}
+
 /** The exact boot invocation the detached restart helper replays. */
 export function restartLaunch(): { file: string; args: string[]; cwd: string; viaShell: boolean } {
   const launch = dshArgv()
