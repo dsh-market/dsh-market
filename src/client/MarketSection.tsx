@@ -249,7 +249,12 @@ export function MarketSection(props: MarketSectionProps) {
 
   useEffect(() => {
     if (bootId === null) return
-    if (doneUrls.length === 0 && updatedNames.length === 0 && removedCount === 0) return
+    if (doneUrls.length === 0 && updatedNames.length === 0 && removedCount === 0) {
+      // Nothing pending: drop any stale entry (e.g. a hot mount cleared the
+      // only doneUrl) so a same-boot remount cannot resurrect the banner (#73).
+      sessionStorage.removeItem('dshm-restart')
+      return
+    }
     sessionStorage.setItem('dshm-restart', JSON.stringify({
       boot: bootId,
       doneUrls,

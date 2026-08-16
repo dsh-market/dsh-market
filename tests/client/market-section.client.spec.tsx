@@ -336,6 +336,8 @@ describe('status-poll / install-response race (#73)', () => {
       await vi.advanceTimersByTimeAsync(2100)
       await vi.waitFor(() => {
         expect(screen.getAllByText(re(en.restartBanner)).length).toBeGreaterThan(0)
+        // The premature entry must also be persisted under the current boot.
+        expect(sessionStorage.getItem('dshm-restart')).toContain('dsh-loop')
       })
       // The real /install response arrives: hot mount confirmed.
       resolveInstall(new Response(JSON.stringify({
@@ -344,12 +346,22 @@ describe('status-poll / install-response race (#73)', () => {
         installed: { 'dsh-loop': '^1.0.0' },
         activation: { 'dsh-loop': { state: 'live', reasons: ['live via hot mount'], bundle: true, hot: true } },
       }), { status: 200 }))
-      // The stale pending-restart entry must be dropped: no restart banner.
+      // The stale pending-restart entry must be dropped — both in memory (no
+      // restart banner) and in the persisted session state.
       await vi.waitFor(() => {
         expect(screen.queryAllByText(re(en.restartBanner)).length).toBe(0)
+        expect(sessionStorage.getItem('dshm-restart')).toBeNull()
       })
       // Stable counterpart: the hot banner still shows the live mount.
       expect(screen.getAllByText(re(en.hotBanner)).length).toBeGreaterThan(0)
+      // A same-boot remount must not resurrect the banner from stale storage.
+      cleanup()
+      sessionStorage.removeItem('dshm-tab')
+      render(<MarketSection {...props()} />)
+      await vi.waitFor(() => { screen.getByRole('button', { name: en.tabInstalled }) })
+      await vi.waitFor(() => {
+        expect(screen.queryAllByText(re(en.restartBanner)).length).toBe(0)
+      })
     } finally {
       vi.useRealTimers()
     }
