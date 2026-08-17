@@ -75,6 +75,10 @@ Live from [awesome-dsh-plugin.com/plugins.json](https://awesome-dsh-plugin.com/p
 
 [dsh-desktop](https://github.com/dataelement/dsh-desktop) — a desktop app for DeepSeek Harness: run and manage a local Harness without installing Node.js yourself. Ships with this plugin market preset as the default. [dshdesktop.com](https://dshdesktop.com)
 
+### DeepSeek Harness Desktop (hairyf)
+
+[deepseek-harness-desktop](https://github.com/hairyf/deepseek-harness-desktop) — a native desktop app for DeepSeek Harness: one-click local install and launch with no Node.js setup required. On first run it offers to install this plugin market as a recommended preset.
+
 ### DSH Get
 
 [DSH Get](https://www.dshget.com/) — a searchable web directory for discovering DeepSeek Harness plugins: category filters, bilingual descriptions, install commands and per-plugin detail pages. Its normalized catalog snapshot is public at [bobby-sheng/dshget-data](https://github.com/bobby-sheng/dshget-data).
