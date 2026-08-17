@@ -1,0 +1,93 @@
+name: Bug report / 问题反馈
+description: Install failures, UI glitches, boot problems / 安装失败、界面异常、启动问题
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **先做这一步 / Do this first** — 市场每天都在发新版，今天收到的报告里有相当一部分在新版已经修好了：
+
+        ```sh
+        dsh plugin --profile web add dshmarket@latest
+        ```
+
+        升级并重启后如果问题还在，再继续填写下面的内容。
+        *Upgrade, restart, and only file this if it still reproduces.*
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: 升级复测 / Retested on the latest version
+      options:
+        - label: 我已升级到最新版并重启，问题仍然存在 / I upgraded to the latest version, restarted, and it still happens
+          required: true
+
+  - type: input
+    id: market-version
+    attributes:
+      label: dshmarket 版本 / version
+      description: 市场页面顶部可见，或导出日志的第一行 / Shown at the top of the market page, and on the first line of the exported log
+      placeholder: "1.11.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: host
+    attributes:
+      label: 运行环境 / Where are you running it
+      description: |
+        桌面端是最常见的差异来源，请如实选择 / Desktop builds are the most common source of environment-specific problems.
+      options:
+        - 普通 dsh web（浏览器打开）/ plain dsh web in a browser
+        - DSH Desktop 桌面端 / a DSH Desktop app
+        - 其他 / other
+    validations:
+      required: true
+
+  - type: input
+    id: host-detail
+    attributes:
+      label: 桌面端版本与来源 / Desktop build and version
+      description: 上一项选了桌面端才需要填；哪个发行版、什么版本号 / Only if you picked a Desktop app — which build, which version
+      placeholder: "dsh-desktop 2.0.0 (dataelement)"
+
+  - type: textarea
+    id: what
+    attributes:
+      label: 发生了什么 / What happened
+      description: 你做了什么、看到什么、期望是什么；界面上的报错请原样贴出 / What you did, what you saw, what you expected — paste on-screen errors verbatim
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤 / Steps to reproduce
+      description: 涉及具体插件时请写出它的名字或仓库链接 / Name the plugin (or link its repo) when one is involved
+      placeholder: |
+        1. 打开 设置 → 插件市场
+        2. 搜索并安装 xxx
+        3. …
+    validations:
+      required: true
+
+  - type: textarea
+    id: log
+    attributes:
+      label: 导出日志 / Exported log
+      description: |
+        **打开 设置 → 插件市场 → 页面上方「导出日志」按钮**，浏览器会下载 `dsh-market-log.txt`，把它拖进下面的输入框即可。
+
+        日志已脱敏（家目录路径与凭证会被遮盖），不上传到任何地方。**附上它通常能让排查从「来回问」变成「直接定位」。**
+
+        Click **Export log** at the top of the market page and drag the downloaded `dsh-market-log.txt` here. It is sanitized (home paths and credentials masked) and is never uploaded anywhere — attaching it is usually the difference between a diagnosis and a round-trip of questions.
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: 操作系统 / OS
+      placeholder: "macOS 15.7 / Windows 11 / Ubuntu 24.04 (WSL2)"
+    validations:
+      required: true

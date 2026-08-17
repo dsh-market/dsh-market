@@ -75,6 +75,11 @@
 .tabSearch{width:260px}
 /* Buttons sharing the row with a description must keep one line (#26, thanks @yanshuai2002) */
 .spec{font-size:11px;color:var(--dsw-alias-label-secondary,#9ca3af);font-family:ui-monospace,Menlo,monospace;overflow-wrap:anywhere;min-width:0}
+.specTag{display:inline-flex;align-items:center;height:16px;padding:0 5px;border-radius:4px;font-size:10px;font-weight:600;white-space:nowrap;flex-shrink:0}
+.specTagGit{color:#0b7285;background:rgba(18,163,196,.12)}
+.specTagFile{color:#b07d1b;background:rgba(240,180,41,.14)}
+.backupCheckList .grow{flex:1 1 70%;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.backupCheckList .spec{flex:0 1 30%;max-width:30%;text-align:right;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .staleAction{margin-top:8px}
 .pct{font-weight:600;font-size:11px;flex-shrink:0;color:var(--dsw-alias-label-secondary,#6b7280)}
 .pager{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:16px 0 4px;flex-wrap:wrap}
@@ -123,6 +128,8 @@
 .backupCheck{display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer}
 .backupWarn{color:var(--dsw-alias-state-warn-primary,#b45309)!important;font-size:12px;line-height:18px;margin:0}
 .backupMessage{grid-column:1/-1;font-size:12px;color:var(--dsw-alias-label-secondary,#6b7280)}
+.backupCheckList{display:flex;flex-direction:column;gap:6px;max-height:260px;overflow-y:auto;margin:10px 0 4px;padding-right:4px}
+.backupCheckList .backupCheck{justify-content:space-between;gap:8px}
 
 /* #98: Diagnostics tab — profile composition check report.
    The page fills the settings dialog's content height and scrolls INSIDE

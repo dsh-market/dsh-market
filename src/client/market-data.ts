@@ -41,6 +41,13 @@ export interface Registry {
 /** Profile dependency map: package name → install spec. */
 export type InstalledMap = Record<string, string>
 
+/** Response of the /dsh-market/gist export action. */
+export interface GistExportResult {
+  ok: boolean
+  gistId: string
+  gistUrl: string
+}
+
 /** Per-package update status from /dsh-market/updates. */
 export interface UpdateStatus {
   updateAvailable?: boolean
@@ -74,7 +81,7 @@ export interface MarketStatus {
 }
 
 /** Post-install activation state (P0-2), per installed package. */
-export type ActivationState = 'live' | 'restart' | 'inert' | 'broken' | 'missing'
+export type ActivationState = 'live' | 'restart' | 'inert' | 'broken' | 'missing' | 'disabled'
 
 export interface ActivationInfo {
   state: ActivationState
@@ -92,6 +99,14 @@ export interface InstalledPayload {
   live?: string[]
   /** Plugins the user switched off; persisted across restarts (#60). */
   disabled?: string[]
+  /**
+   * Packages whose bundle rows the user patch layer (cordis.patch.yml)
+   * disables / force-enables (port of dsh-plugin-hub). Covers toggles made
+   * OUTSIDE the market — hand-edited patch files, the dsh CLI — which the
+   * market's own disable list never sees.
+   */
+  patchDisabled?: string[]
+  patchForced?: string[]
   /** Custom plugin groups: group name → member package names. */
   groups?: Record<string, string[]>
   /** Display order of group names. */

@@ -23,7 +23,7 @@ import {
   BOOT_ID, cancelActive, probePnpm, progress, provisionPnpm, runDshPlugin,
   type PluginCommandRuntime,
 } from './dsh-cli.ts'
-import { profileDir, readInstalled, readInstalledManifest, readInstalledVersion, readLockCommits, readManifestDeps, restoreManifestDeps, setAllowBuilds } from './profile.ts'
+import { INBOX_BUNDLES, profileDir, readInstalled, readInstalledManifest, readInstalledVersion, readLockCommits, readManifestDeps, readProfileBundles, restoreManifestDeps, setAllowBuilds } from './profile.ts'
 import { analyzeProfile } from './check.ts'
 import { applyBundleOrder, mergeOrder, readBundleRules, readBundleStack, validateOrder } from './order.ts'
 import { trialValidate } from './trial.ts'
@@ -35,9 +35,16 @@ import { readJsonBody, sameOrigin, sendJson } from './http.ts'
 import { restartAllowed, scheduleRestart, trustedRestartRequest, trustedDownloadRequest } from './restart.ts'
 import { verifyActivation } from './verify.ts'
 import {
-  createProfileBackup, downloadWebdav, MAX_BACKUP_BYTES, restoreProfileBackup, secretFileCount, uploadWebdav,
+  disableRow, enableRow, findUserPatchPath, isProtectedModule, packagePatchFlags,
+  readUserPatchState, removeRowBlocks, rowIdsForPackage,
+} from './patch.ts'
+import {
+  createProfileBackup, downloadWebdav, MAX_BACKUP_BYTES, mergeRestoreManifest, restoreProfileBackup, secretFileCount, uploadWebdav,
   type ProfileBackup,
 } from './backup.ts'
+import {
+  createGist, fitsGistLimit, GistError, gistErrorCode, parseGistId, readGist, resolveGistTokenSource, updateGist, verifyGistToken,
+} from './gist.ts'
 
 export type { LoaderEntry } from './themes.ts'
 export type { UpdateStatus } from './updates.ts'
@@ -68,6 +75,22 @@ export interface MarketConfig {
 }
 
 const PROFILE_RE = /^[A-Za-z0-9_-]+$/
+
+/**
+ * Whether an installed package declares a client part (`dsh.client`). Its UI
+ * is injected into the page, so toggling it needs a browser refresh to show
+ * the change — the install flow prompts the same way via the hot banner.
+ */
+function packageHasClientPart(profileDirectory: string, name: string): boolean {
+  try {
+    const manifest = JSON.parse(
+      readFileSync(join(profileDirectory, 'node_modules', name, 'package.json'), 'utf8'),
+    ) as { dsh?: { client?: unknown } }
+    return manifest.dsh?.client !== undefined
+  } catch {
+    return false
+  }
+}
 
 /**
  * Packages whose build scripts pnpm refused to run, from any of its three
@@ -102,6 +125,10 @@ export function mountMarketRoutes(
     throw new Error(`dsh-market: invalid profile name: ${config.profile}`)
   }
   const activeProfileDir = profileDir(config.profile, config.profileDirectory)
+  // The profile's user patch layer (cordis.patch.yml): toggles are written
+  // here so DSH's own HMR re-composes the tree (no restart) and the loader
+  // re-applies the same choice on every boot (ported from dsh-plugin-hub).
+  const userPatchPath = findUserPatchPath(host, activeProfileDir)
   const commands = commandRuntime ?? { runPlugin: runDshPlugin, probePnpm, provisionPnpm, cancelActive }
   // Boot-time wipe: stale hot-mount inputs from a previous session must never
   // survive into a composition where the bundle layer already covers them.
@@ -259,8 +286,21 @@ export function mountMarketRoutes(
 
   async function restoreBackup(value: unknown): Promise<{ files: number; errors: { name: string; error: string }[] }> {
     if (!await probePnpm()) throw new Error('pnpm is required to restore plugins')
+    // Snapshot the target's manifest BEFORE the backup files overwrite it, so
+    // the restore can merge rather than replace: plugins the target already
+    // has that are NOT in the backup stay installed instead of silently
+    // dropping off the manifest (partial exports, issue #89). The mutation
+    // lock is owned by withMutationLock now, so no `installing` flag here.
+    const manifestBefore = JSON.parse(readFileSync(join(activeProfileDir, 'package.json'), 'utf8')) as Record<string, unknown>
     const restored = restoreProfileBackup(config.profile, value, activeProfileDir)
     try {
+      // Merge: current deps stay, backup specs win on name conflicts; bundle
+      // lists are unioned. Full exports merge to the backup view unchanged.
+      const mergedManifest = mergeRestoreManifest(
+        JSON.parse(readFileSync(join(activeProfileDir, 'package.json'), 'utf8')) as Record<string, unknown>,
+        manifestBefore,
+      )
+      writeFileSync(join(activeProfileDir, 'package.json'), `${JSON.stringify(mergedManifest, null, 2)}\n`)
       const result = await runPlugin(config.profile, ['install'])
       if (result.exitCode === 0 && !result.timedOut && !result.cancelled) {
         invalidateUpdates()
@@ -413,6 +453,58 @@ export function mountMarketRoutes(
 
     host.webServer.register({
       kind: 'exact',
+      path: '/dsh-market/gist',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) return sendJson(response, 403, { error: 'untrusted origin' })
+        // 25 s route-level ceiling: abort the underlying GitHub request too,
+        // so the client always gets a definite, structured answer and a
+        // wedged gh CLI / slow network can never leave a request running in
+        // the background (issue #89; the error carries a code for the UI).
+        const controller = new AbortController()
+        const timer = setTimeout(() => controller.abort(new GistError('Gist operation timed out', 'timeout')), 25_000)
+        try {
+          const body = await readJsonBody(request) as { action?: unknown; token?: unknown; gistId?: unknown; includeDeps?: unknown; includeConfig?: unknown }
+          const { token, source } = await resolveGistTokenSource(body.token)
+          if (body.action === 'export') {
+            const gistIdInput = typeof body.gistId === 'string' ? body.gistId.trim() : ''
+            const includeDeps = Array.isArray(body.includeDeps)
+              ? body.includeDeps.filter((name): name is string => typeof name === 'string' && name !== '')
+              : undefined
+            const backup = createProfileBackup(config.profile, activeProfileDir, includeDeps !== undefined
+              ? { includeDeps, includeConfig: body.includeConfig === true }
+              : undefined)
+            const content = JSON.stringify(backup, null, 2)
+            if (!fitsGistLimit(content)) throw new Error('backup exceeds the GitHub Gist 1 MB limit')
+            const ref = gistIdInput === ''
+              ? await createGist(token, content, controller.signal)
+              : await updateGist(token, parseGistId(gistIdInput), content, controller.signal)
+            sendJson(response, 200, { ok: true, gistId: ref.id, gistUrl: ref.htmlUrl })
+          } else if (body.action === 'import') {
+            if (typeof body.gistId !== 'string' || body.gistId.trim() === '') throw new Error('gist id is required')
+            const backup = await readGist(token, parseGistId(body.gistId), controller.signal)
+            // Preview flow, same as WebDAV: the client reviews the backup and
+            // posts it to /dsh-market/restore; readGist's strict validation
+            // guarantees the fetch result is never blindly echoed.
+            sendJson(response, 200, { ok: true, backup })
+          } else if (body.action === 'verify') {
+            await verifyGistToken(token, controller.signal)
+            sendJson(response, 200, { ok: true, source })
+          } else sendJson(response, 400, { error: 'invalid Gist action' })
+        } catch (error) {
+          sendJson(response, 400, { error: error instanceof Error ? error.message : String(error), code: gistErrorCode(error) })
+        } finally {
+          clearTimeout(timer)
+        }
+      },
+    }),
+
+    host.webServer.register({
+      kind: 'exact',
       path: '/dsh-market/registry',
       handler: async (request, response) => {
         if (request.method !== 'GET') {
@@ -443,10 +535,17 @@ export function mountMarketRoutes(
         const present = Object.keys(installed).filter(
           name => readInstalledVersion(config.profile, name, activeProfileDir) !== null,
         )
+        // User-patch-layer state (port of dsh-plugin-hub): rows the user
+        // patch disables/force-enables, plus per-package flags so the UI can
+        // show toggles made OUTSIDE the market (hand-edited cordis.patch.yml,
+        // the dsh CLI) that state.json never sees.
+        const patch = readUserPatchState(userPatchPath)
+        const patchFlags = packagePatchFlags(host, activeProfileDir, Object.keys(installed), patch)
         const activation: Record<string, ReturnType<typeof verifyActivation>> = {}
         const live = liveNames()
         for (const name of Object.keys(installed)) {
-          activation[name] = verifyActivation(config.profile, name, live, activeProfileDir)
+          activation[name] = verifyActivation(config.profile, name, live, activeProfileDir,
+            disabled.has(name) || patchFlags.disabled.includes(name))
         }
         const diagnostics = diagnosePackageManifests(Object.keys(installed).map(packageName => ({
           packageName,
@@ -462,6 +561,10 @@ export function mountMarketRoutes(
           disabled: [...disabled],
           groups,
           groupOrder,
+          patch: { disables: patch.disables, forced: patch.forced, inserts: patch.inserts },
+          patchDisabled: patchFlags.disabled,
+          patchForced: patchFlags.forced,
+          bundles: readProfileBundles(activeProfileDir).filter(name => !INBOX_BUNDLES.has(name)),
         })
       },
     }),
@@ -636,6 +739,15 @@ export function mountMarketRoutes(
             sendJson(response, 400, { error: 'plugin is not installed' })
             return
           }
+          // Host infrastructure (port of dsh-plugin-hub): switching off the
+          // timer/hmr/webserver/storage chain would break the very HMR the
+          // patch layer relies on, so those rows refuse to toggle.
+          if (isProtectedModule(name)) {
+            sendJson(response, 403, {
+              error: `${name} 属于宿主基础设施,禁止开关(会破坏热加载/传输/存储链) / ${name} is host infrastructure and cannot be toggled (it would break the hot-reload/transport/storage chain)`,
+            })
+            return
+          }
           let ok: boolean
           let reason: string | undefined
           if (enabled && (await themes.installedThemeNames()).has(name)) {
@@ -649,15 +761,52 @@ export function mountMarketRoutes(
             ok = result.ok
             reason = result.reason
           }
+          // Durable patch-layer write (port of dsh-plugin-hub): the package's
+          // bundle rows get 'disabled: true|false' in the user patch layer,
+          // which DSH's HMR applies within ~1s AND the loader re-applies on
+          // every boot. Client-only packages have no bundle rows — the
+          // market's own state.json replay covers those.
+          const patchRows = rowIdsForPackage(host, activeProfileDir, name)
+          let patchWrite: { ok: boolean; reason: string | null } | null = null
+          if (patchRows.length > 0) {
+            for (const rowId of patchRows) {
+              const result = enabled ? await enableRow(userPatchPath, rowId) : await disableRow(userPatchPath, rowId)
+              if (!result.ok && patchWrite === null) patchWrite = result
+            }
+            if (patchWrite === null) {
+              logEvent('info', 'toggle', `${name}: patch layer ${enabled ? 'enabled' : 'disabled'} rows ${patchRows.join(', ')}`)
+            } else {
+              logEvent('warn', 'toggle', `${name}: patch layer write refused — ${patchWrite.reason}`)
+            }
+          }
           logEvent(ok ? 'info' : 'error', 'toggle', `${name}: ${enabled ? 'on' : 'off'} ok=${String(ok)}`)
+          // Activation reads the post-write truth: the switch state OR the
+          // patch layer, so a disabled plugin never reports "restart to
+          // apply".
+          const patchNow = readUserPatchState(userPatchPath)
+          const offNow = disabled.has(name) || patchRows.some(id => patchNow.disables.includes(id))
+          // When the live composition does not match the requested state
+          // (enable failed to hot-mount / disable left the fiber up), the
+          // change lands on the next boot via the patch layer + state.json —
+          // the client reuses the market's pending-restart banner for it.
+          const liveAfter = liveNames().has(name)
+          const restart = enabled ? !liveAfter : liveAfter
+          // A client-part plugin's UI is in the page already — toggling it
+          // needs a browser refresh to show the change (same signal the
+          // install flow uses for the hot banner).
+          const refresh = packageHasClientPart(activeProfileDir, name)
           sendJson(response, ok ? 200 : 502, {
             ok,
             name,
             enabled,
             disabled: [...disabled],
             live: listHotMounts(),
-            activation: { [name]: verifyActivation(config.profile, name, liveNames()) },
+            activation: { [name]: verifyActivation(config.profile, name, liveNames(), activeProfileDir, offNow) },
             reason,
+            patchRows,
+            patchWrite: patchWrite ?? { ok: true, reason: null },
+            restart,
+            refresh,
           })
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
@@ -701,6 +850,8 @@ export function mountMarketRoutes(
           const themeNames = await themes.installedThemeNames()
           let ok = true
           let error: string | undefined
+          let restartMembers: string[] = []
+          let refreshMembers: string[] = []
           if (action === 'toggle') {
             const name = typeof body.name === 'string' ? body.name : ''
             const enabled = body.enabled === true
@@ -719,6 +870,12 @@ export function mountMarketRoutes(
                 ? { ok: await themes.activateTheme(member), reason: undefined }
                 : await setPluginEnabled(member, enabled)
               if (!result.ok) failures.push(member)
+              // Same live-mismatch signal as the single toggle: a member
+              // whose fiber did not follow the switch needs a boot.
+              const liveAfter = liveNames().has(member)
+              if ((enabled && !liveAfter) || (!enabled && liveAfter)) restartMembers.push(member)
+              // Client-part members need a page refresh to show the change.
+              if (packageHasClientPart(activeProfileDir, member)) refreshMembers.push(member)
             }
             ok = failures.length === 0
             if (!ok) error = `failed to ${enabled ? 'enable' : 'disable'}: ${failures.join(', ')}`
@@ -740,6 +897,8 @@ export function mountMarketRoutes(
             groups,
             groupOrder,
             disabled: [...disabled],
+            restartMembers,
+            refreshMembers,
           })
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
@@ -914,7 +1073,7 @@ export function mountMarketRoutes(
             }
             if (ok) {
               invalidateUpdates()
-              activation = { [name]: verifyActivation(config.profile, name, liveNames(), activeProfileDir) }
+              activation = { [name]: verifyActivation(config.profile, name, liveNames(), activeProfileDir, disabled.has(name)) }
             }
             // Diagnose the stale outcome with EVIDENCE (#45 by @ayingQAQ):
             // only blame pnpm's fresh-release wait when the target's latest
@@ -1153,8 +1312,10 @@ export function mountMarketRoutes(
               return
             }
             const beforeInstalled = readInstalled(config.profile, activeProfileDir)
+            // isDisabled comes from the patch layer (#130) — keep it while the
+            // lock moves into withMutationLock (#125).
             const activation = {
-              [name]: verifyActivation(config.profile, name, liveNames(), activeProfileDir),
+              [name]: verifyActivation(config.profile, name, liveNames(), activeProfileDir, disabled.has(name)),
             }
             const result = await runPlugin(config.profile, ['remove', name])
             const cancelled = result.cancelled
@@ -1171,6 +1332,10 @@ export function mountMarketRoutes(
               // @1123762794). Live-disable the entry so the refresh composes
               // without it; after a real restart the entry is gone anyway.
               if (!hot) hot = await themes.setEntryDisabled(name, true)
+              // Patch-layer rows must not survive the remove either: a
+              // `- id: X` + `disabled: true` row for a package that no longer
+              // mounts is a boot-time orphan (port of dsh-plugin-hub).
+              removeRowBlocks(userPatchPath, rowIdsForPackage(host, activeProfileDir, name))
               // The disable list must not keep a removed plugin: a later
               // reinstall starts enabled. Group memberships follow the same
               // rule so no group toggle ever targets a ghost member.
@@ -1361,7 +1526,7 @@ export function mountMarketRoutes(
                 activation = {}
                 const live = liveNames()
                 for (const name of added) {
-                  activation[name] = verifyActivation(config.profile, name, live, activeProfileDir)
+                  activation[name] = verifyActivation(config.profile, name, live, activeProfileDir, disabled.has(name))
                 }
               }
             }

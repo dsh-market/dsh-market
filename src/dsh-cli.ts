@@ -24,15 +24,26 @@ import { profileDir } from './profile.ts'
  * with ENOENT/127 (#32, #38). Append the well-known bin directories so the
  * market's children find their tools regardless of how dsh was started.
  */
+/**
+ * Directories discovered at runtime that hold a usable pnpm — currently
+ * npm's global bin, learned after a successful one-click setup (#149).
+ * Every later spawn sees them, so the market does not have to be restarted
+ * for the pnpm it just installed to become visible.
+ */
+const extraPathDirs: string[] = []
+
 function spawnEnv(): NodeJS.ProcessEnv {
   // pnpm v10+ blocks forever on a silent interactive prompt without a TTY;
   // CI mode forces it to act or fail instead of asking.
-  if (process.platform === 'win32') return { ...process.env, CI: 'true' }
-  const parts = (process.env.PATH ?? '').split(':').filter(part => part !== '')
-  for (const bin of ['/opt/homebrew/bin', '/usr/local/bin', join(homedir(), '.local', 'bin')]) {
+  const separator = process.platform === 'win32' ? ';' : ':'
+  const parts = (process.env.PATH ?? '').split(separator).filter(part => part !== '')
+  const candidates = process.platform === 'win32'
+    ? extraPathDirs
+    : ['/opt/homebrew/bin', '/usr/local/bin', join(homedir(), '.local', 'bin'), ...extraPathDirs]
+  for (const bin of candidates) {
     if (!parts.includes(bin)) parts.push(bin)
   }
-  return { ...process.env, CI: 'true', PATH: parts.join(':') }
+  return { ...process.env, CI: 'true', PATH: parts.join(separator) }
 }
 
 const INSTALL_TIMEOUT_MS = Number(process.env.DSH_MARKET_INSTALL_TIMEOUT_MS) || 15 * 60 * 1000
@@ -278,17 +289,53 @@ export async function provisionPnpm(): Promise<{ ok: boolean; hint?: string }> {
   const npm = await runQuiet('npm', ['install', '-g', 'pnpm'], 3 * 60 * 1000)
   logEvent(npm.code === 0 ? 'info' : 'error', 'setup-pnpm', `npm -g: exit=${String(npm.code)} ${npm.output.slice(-200)}`)
   if (await probePnpm()) return { ok: true }
-  // Both provisioning tools missing = Node itself is not on this process's
-  // PATH (typical for Finder/Dock launches with nvm/fnm). Pointing the user
-  // back at this same button would be a dead end (#32) — say what actually
-  // helps.
-  const pathIssue = /ENOENT/.test(corepack.output) && /ENOENT/.test(npm.output)
-  return {
-    ok: false,
-    hint: pathIssue
-      ? '这台机器的 dsh 进程找不到 Node（从图形界面启动不继承终端 PATH）。请改从终端启动 dsh，或安装 Homebrew 版 pnpm：brew install pnpm / This dsh process cannot find Node (GUI launches skip your shell PATH). Start dsh from a terminal, or install pnpm via Homebrew: brew install pnpm'
-      : undefined,
+  // The install SUCCEEDED but the new binary is somewhere this process does
+  // not look (#149: corepack exit=0, npm -g exit=0, and the market still
+  // said "setup failed"). npm knows where it just put it, so ask — and if
+  // pnpm runs from there, remember that directory for every later spawn
+  // instead of telling the user a successful install failed.
+  if (npm.code === 0 || corepack.code === 0) {
+    const prefix = await runQuiet('npm', ['prefix', '-g'], 30 * 1000)
+    const bin = prefix.code === 0 ? join(prefix.output.trim().split('\n').pop() ?? '', 'bin') : ''
+    if (bin !== '' && isAbsolute(bin) && !extraPathDirs.includes(bin)) {
+      extraPathDirs.push(bin)
+      logEvent('info', 'setup-pnpm', `added npm's global bin to the probe path: ${bin}`)
+      if (await probePnpm()) return { ok: true }
+      extraPathDirs.pop()
+    }
   }
+  return { ok: false, hint: provisionHint(corepack.output, npm.output) }
+}
+
+/**
+ * Why the one-click pnpm setup failed, in terms the user can act on.
+ *
+ * Every one of these was a real report where the market said only "自动准备
+ * 没成功" while the log held the actual cause: EEXIST (#142 — corepack had
+ * already placed a pnpm shim, so `npm -g` refused to overwrite it), EPERM
+ * (#108 — Node installed somewhere the user cannot write), ENOENT (#32 —
+ * a GUI launch with no Node on PATH at all).
+ * @returns a bilingual, actionable hint, or undefined when unrecognized.
+ */
+export function provisionHint(corepackOutput: string, npmOutput: string): string | undefined {
+  // Node itself unreachable: pointing the user back at this same button
+  // would be a dead end (#32).
+  if (/ENOENT/.test(corepackOutput) && /ENOENT/.test(npmOutput)) {
+    return '这台机器的 dsh 进程找不到 Node（从图形界面启动不继承终端 PATH）。请改从终端启动 dsh，或安装 Homebrew 版 pnpm：brew install pnpm / This dsh process cannot find Node (GUI launches skip your shell PATH). Start dsh from a terminal, or install pnpm via Homebrew: brew install pnpm'
+  }
+  if (/EEXIST|already exists|--force to overwrite/i.test(npmOutput)) {
+    return 'pnpm 的可执行文件已存在（通常是 corepack 先放好了同名 shim），npm 拒绝覆盖。在终端里执行其一即可：corepack prepare pnpm@latest --activate（推荐，直接激活已有 shim）或 npm i -g pnpm --force / A pnpm executable already exists (usually a corepack shim), so npm refused to overwrite it. Run one of these in a terminal: `corepack prepare pnpm@latest --activate` (preferred — activates the shim already there) or `npm i -g pnpm --force`'
+  }
+  if (/EPERM|EACCES|permission denied|as root\/Administrator/i.test(`${corepackOutput}\n${npmOutput}`)) {
+    return '没有权限写入 Node 的安装目录。请用管理员/sudo 执行一次 npm i -g pnpm，或改用无需写系统目录的安装方式：macOS/Linux 用 brew install pnpm，Windows 用 iwr https://get.pnpm.io/install.ps1 -useb | iex / No permission to write into the Node install directory. Run `npm i -g pnpm` once as Administrator/sudo, or install pnpm without touching system dirs: `brew install pnpm` (macOS/Linux) or `iwr https://get.pnpm.io/install.ps1 -useb | iex` (Windows)'
+  }
+  // Network-shaped failures: the corepack shim downloads pnpm on first run,
+  // so a blocked registry or proxy leaves a shim that never works. The
+  // button cannot fix that; a full install (or a mirror) can.
+  if (/ETIMEDOUT|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|network|proxy|certificate/i.test(`${corepackOutput}\n${npmOutput}`)) {
+    return '装 pnpm 时网络失败。若你在受限网络下，corepack 的 shim 也下载不到 pnpm 本体——请改用完整安装或指定镜像：brew install pnpm（macOS/Linux），或 npm i -g pnpm --registry <你的镜像> / Network failure while installing pnpm. On a restricted network the corepack shim cannot download pnpm either — install it fully or point at a mirror: `brew install pnpm`, or `npm i -g pnpm --registry <your mirror>`'
+  }
+  return undefined
 }
 
 /** Live progress of the running plugin command, for the status route. */

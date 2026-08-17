@@ -31,7 +31,7 @@ dsh plugin --profile web add dshmarket
 - **截图展示**——安装弹窗内 App Store 式截图：作者可在 registry 里策展，没有则自动从 README 抽取；图片仅从 GitHub 图床加载，且只在你打开弹窗后才发请求
 - **主题**——独立主题页：装完立即生效，点一下切换（主题互斥、选择跨重启保留），卸载即恢复
 - **一键安装**——确认来源，实时进度；多数插件刷新页面即可用，无需重启
-- **备份与恢复**——把 profile 的插件清单与配置导出为可读 JSON，换机导入，或存到 WebDAV 并每日自动备份；恢复前校验、失败自动回滚
+- **备份与恢复**——把 profile 的插件清单与配置导出为可读 JSON，换机导入，存到 WebDAV 并每日自动备份，或通过私有 GitHub Gist 跨机器同步；恢复采用**合并**方式（备份之后新装的插件会保留），写入前校验、失败自动回滚
 - **更新**——逐插件检测（npm 版本或锁定 commit 对比 HEAD），一键更新或全部更新；市场自己也走同一通道升级
 - **卸载**——两步确认防误触；本次会话装的插件即点即卸
 - **按需重启**——无法热加载的变更会在待重启提示旁显示一键重启；操作仅接受本机同源请求
@@ -72,6 +72,10 @@ dsh plugin --profile web add dshmarket
 ### DSH Desktop（dataelement）
 
 [dsh-desktop](https://github.com/dataelement/dsh-desktop)——DeepSeek Harness 桌面客户端：无需自装 Node.js 即可运行和管理本地 Harness，并默认预置本插件市场。[dshdesktop.com](https://dshdesktop.com)
+
+### DeepSeek Harness Desktop（hairyf）
+
+[deepseek-harness-desktop](https://github.com/hairyf/deepseek-harness-desktop)——基于 **Tauri**（Rust + Web）构建的 DeepSeek Harness 原生桌面客户端：一键本地安装并启动，无需自装 Node.js；首次启动可选择安装本插件市场作为推荐插件。
 
 ### DSH Get
 

@@ -39,7 +39,7 @@ import {
   pageItems, pluginScreenshots, readSession, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
 } from './market-data.ts'
 import type {
-  ActivationInfo, ActivationState, InstalledMap, MarketStatus, Registry, RegistryPlugin,
+ActivationInfo, ActivationState, GistExportResult, InstalledMap, MarketStatus, Registry, RegistryPlugin,
   SharedHostPackageDependencyFinding, SortDir, SortField, ThemeSnapshot, TimeRange, Translate, UpdateStatus,
 } from './market-data.ts'
 
@@ -95,6 +95,7 @@ function activationMeta(state: ActivationState, t: Translate): { label: string; 
   if (state === 'restart') return { label: t('stateRestart'), dot: 'warning' }
   if (state === 'inert') return { label: t('stateInert'), dot: 'warning' }
   if (state === 'broken') return { label: t('stateBroken'), dot: 'error' }
+  if (state === 'disabled') return { label: t('stateDisabled'), dot: 'warning' }
   return { label: '—', dot: 'warning' }
 }
 
@@ -349,6 +350,13 @@ export function MarketSection(props: MarketSectionProps) {
   const [activations, setActivations] = useState<Record<string, ActivationInfo>>({})
   /** #60: persisted disable list + custom groups, straight from /installed. */
   const [disabledNames, setDisabledNames] = useState<string[]>([])
+  /**
+   * Patch-layer flags (port of dsh-plugin-hub): packages whose bundle rows
+   * the user patch layer disables / force-enables. The UI treats them as the
+   * real switch state so hand-edited cordis.patch.yml toggles are visible.
+   */
+  const [patchDisabledNames, setPatchDisabledNames] = useState<string[]>([])
+  const [patchForcedNames, setPatchForcedNames] = useState<string[]>([])
   const [groups, setGroups] = useState<Record<string, string[]>>({})
   const [groupOrder, setGroupOrder] = useState<string[]>([])
   /** Installed-tab sub-view: flat list or groups (All-plugins was removed —
@@ -379,6 +387,16 @@ export function MarketSection(props: MarketSectionProps) {
   const [removeConfirm, setRemoveConfirm] = useState<string | null>(null)
   const [removingName, setRemovingName] = useState<string | null>(null)
   const [removedCount, setRemovedCount] = useState(0)
+  /** Toggles whose live fiber did not follow the switch — restart to apply. */
+  const [toggleRestart, setToggleRestart] = useState(0)
+  /**
+   * Dismissal of the host-reported restart notice, keyed to the current boot
+   * so it reappears after a restart that did not happen and after any new
+   * change. sessionStorage, not local: closing the tab is a fresh start.
+   */
+  const [restartNoticeDismissed, setRestartNoticeDismissed] = useState(false)
+  /** Client-part plugins toggled this session — their UI needs a refresh. */
+  const [refreshNames, setRefreshNames] = useState<string[]>([])
   const [envReady, setEnvReady] = useState(true)
   const [envFixing, setEnvFixing] = useState(false)
   const [envFailed, setEnvFailed] = useState(false)
@@ -396,6 +414,28 @@ export function MarketSection(props: MarketSectionProps) {
   const [webdavUser, setWebdavUser] = useState(initialWebdav.username)
   const [webdavPassword, setWebdavPassword] = useState(initialWebdav.password)
   const [autoBackup, setAutoBackup] = useState(initialWebdav.auto)
+  /** GitHub token — session memory only, never written to any storage. */
+  const [gistToken, setGistToken] = useState('')
+  /** Gist id — persisted across reloads (non-sensitive: the Gist itself is private). */
+  const [gistId, setGistId] = useState(() => {
+    try { return localStorage.getItem('dshm-gist-id') ?? '' } catch { return '' }
+  })
+  /** Export mode: 'update' PATCHes the Gist in the field, 'create' makes a new one. */
+  const [gistMode, setGistMode] = useState<'update' | 'create'>(() => {
+    try { return localStorage.getItem('dshm-gist-id') ? 'update' : 'create' } catch { return 'create' }
+  })
+  const [gistBusy, setGistBusy] = useState(false)
+  const [gistMessage, setGistMessage] = useState<string | null>(null)
+  const [gistOk, setGistOk] = useState(false)
+  const [gistResult, setGistResult] = useState<GistExportResult | null>(null)
+  /** Export picker: open state, selected plugin names, include-config flag. */
+  const [exportOpen, setExportOpen] = useState(false)
+  const [exportSelection, setExportSelection] = useState<Set<string>>(new Set())
+  const [exportIncludeConfig, setExportIncludeConfig] = useState(false)
+  /** Export failure shown INSIDE the picker so it is never hidden behind it. */
+  const [exportError, setExportError] = useState<string | null>(null)
+  /** Bundle-only plugin names from /dsh-market/installed (picker list). */
+  const [installedBundles, setInstalledBundles] = useState<string[]>([])
   const bodyRef = useRef<HTMLDivElement | null>(null)
   /** Hidden file input behind the Import button (a Button can't host an <input>). */
   const fileInputRef = useRef<HTMLInputElement | null>(null)
@@ -435,8 +475,11 @@ export function MarketSection(props: MarketSectionProps) {
         setInstalledFiles(Array.isArray(body.present) ? body.present : Object.keys(body.installed || {}))
         setSkins(body.live || [])
         if (Array.isArray(body.disabled)) setDisabledNames(body.disabled)
+        if (Array.isArray(body.patchDisabled)) setPatchDisabledNames(body.patchDisabled)
+        if (Array.isArray(body.patchForced)) setPatchForcedNames(body.patchForced)
         if (body.groups && typeof body.groups === 'object') setGroups(body.groups)
         if (Array.isArray(body.groupOrder)) setGroupOrder(body.groupOrder)
+        setInstalledBundles(Array.isArray(body.bundles) ? body.bundles.filter((name: unknown): name is string => typeof name === 'string') : [])
         if (body.activation && typeof body.activation === 'object') setActivations(body.activation)
         const findings = body.diagnostics?.schema === 'dsh-market/diagnostics/v1'
           && Array.isArray(body.diagnostics.findings)
@@ -453,6 +496,11 @@ export function MarketSection(props: MarketSectionProps) {
 
   /** Lookup set for the persisted disable list (#60). */
   const disabledSet = useMemo(() => new Set(disabledNames), [disabledNames])
+  /** Effective switch state: market disable list ∪ user-patch-layer disables. */
+  const effectiveDisabledSet = useMemo(
+    () => new Set([...disabledNames, ...patchDisabledNames]),
+    [disabledNames, patchDisabledNames],
+  )
 
   useEffect(() => {
     fetch('/dsh-market/registry', { cache: 'no-store' })
@@ -463,7 +511,15 @@ export function MarketSection(props: MarketSectionProps) {
       .then(res => res.json())
       .then(status => {
         setEnvReady(status.pnpm !== false)
-        if (typeof status.boot === 'string') setBootId(status.boot)
+        if (typeof status.boot === 'string') {
+          setBootId(status.boot)
+          // A dismissal only silences the notice for the boot it was made
+          // in: if the user dismissed instead of restarting, the next boot
+          // (or a stale dismissal from a previous one) shows it again.
+          try {
+            setRestartNoticeDismissed(sessionStorage.getItem('dshm-restart-dismissed') === status.boot)
+          } catch { /* storage unavailable */ }
+        }
         setRestartEnabled(status.restart === true)
       })
       .catch(() => {})
@@ -484,11 +540,12 @@ export function MarketSection(props: MarketSectionProps) {
     if (Array.isArray(saved.doneUrls) && saved.doneUrls.length > 0) setDoneUrls(saved.doneUrls)
     if (Array.isArray(saved.updated) && saved.updated.length > 0) setUpdatedNames(saved.updated)
     if (typeof saved.removed === 'number' && saved.removed > 0) setRemovedCount(saved.removed)
+    if (typeof saved.toggled === 'number' && saved.toggled > 0) setToggleRestart(saved.toggled)
   }, [bootId])
 
   useEffect(() => {
     if (bootId === null) return
-    if (doneUrls.length === 0 && updatedNames.length === 0 && removedCount === 0) {
+    if (doneUrls.length === 0 && updatedNames.length === 0 && removedCount === 0 && toggleRestart === 0) {
       // Nothing pending: drop any stale entry (e.g. a hot mount cleared the
       // only doneUrl) so a same-boot remount cannot resurrect the banner (#73).
       sessionStorage.removeItem('dshm-restart')
@@ -499,8 +556,9 @@ export function MarketSection(props: MarketSectionProps) {
       doneUrls,
       updated: updatedNames,
       removed: removedCount,
+      toggled: toggleRestart,
     }))
-  }, [bootId, doneUrls, updatedNames, removedCount])
+  }, [bootId, doneUrls, updatedNames, removedCount, toggleRestart])
 
   const fixEnv = useCallback(() => {
     setEnvFixing(true)
@@ -909,6 +967,12 @@ export function MarketSection(props: MarketSectionProps) {
           if (body.activation && typeof body.activation === 'object') {
             setActivations(prev => ({ ...prev, ...body.activation }))
           }
+          // A toggle whose fiber did not follow the switch joins the
+          // pending-restart banner (same path as installs/updates/removals).
+          if (body.restart === true) setToggleRestart(n => n + 1)
+          // A client-part plugin's UI is already in the page — refresh to
+          // show the change (mirrors the install hot banner).
+          if (body.refresh === true) setRefreshNames(names => names.includes(name) ? names : names.concat(name))
           refreshInstalled()
           if (reload) {
             // Land back in the Themes tab with the stock look on screen.
@@ -920,7 +984,13 @@ export function MarketSection(props: MarketSectionProps) {
           }
         } else {
           const text = (v: unknown) => typeof v === 'string' ? v : v == null ? '' : JSON.stringify(v)
-          setInstallError(text(body.error) || t('toggleFail'))
+          // The server's bilingual reason (e.g. host cannot hot-mount —
+          // restart required) beats the generic failure line.
+          setInstallError(text(body.reason) || text(body.error) || t('toggleFail'))
+          // The durable state (state.json + patch layer) was still written,
+          // so a restart applies it even though the live drive failed.
+          if (body.restart === true) setToggleRestart(n => n + 1)
+          if (body.refresh === true) setRefreshNames(names => names.includes(name) ? names : names.concat(name))
         }
       })
       .catch(error => setInstallError(String(error)))
@@ -950,11 +1020,25 @@ export function MarketSection(props: MarketSectionProps) {
       .then(({ status, body }) => {
         if (status === 200 && body.ok) {
           setGroupPayload(body)
+          // Batch toggles whose members did not follow the switch join the
+          // pending-restart banner too.
+          if (Array.isArray(body.restartMembers) && body.restartMembers.length > 0) {
+            setToggleRestart(n => n + body.restartMembers.length)
+          }
+          if (Array.isArray(body.refreshMembers) && body.refreshMembers.length > 0) {
+            setRefreshNames(names => [...new Set([...names, ...body.refreshMembers])])
+          }
           refreshInstalled()
           return true
         }
         const text = (v: unknown) => typeof v === 'string' ? v : v == null ? '' : JSON.stringify(v)
         setInstallError(text(body.error) || t('toggleFail'))
+        if (Array.isArray(body.restartMembers) && body.restartMembers.length > 0) {
+          setToggleRestart(n => n + body.restartMembers.length)
+        }
+        if (Array.isArray(body.refreshMembers) && body.refreshMembers.length > 0) {
+          setRefreshNames(names => [...new Set([...names, ...body.refreshMembers])])
+        }
         return false
       })
       .catch(error => { setInstallError(String(error)); return false })
@@ -1099,6 +1183,128 @@ export function MarketSection(props: MarketSectionProps) {
     }).catch(error => setBackupMessage(String(error))).finally(() => setBackupBusy(false))
   }, [previewBackup, t, webdavPassword, webdavUrl, webdavUser])
 
+  /** Map the server's token-source string to a localized label. */
+  const gistSourceLabel = (source: string): string => {
+    if (source === 'token') return t('gistSrcToken')
+    if (source === 'env') return t('gistSrcEnv')
+    if (source === 'gh') return t('gistSrcGh')
+    return source
+  }
+
+  /** Turn any failure (server error, network error, timeout) into a friendly message. */
+  const gistErrorMessage = (error: unknown): string => {
+    const err = error as { name?: unknown; code?: unknown }
+    const name = typeof err?.name === 'string' ? err.name : ''
+    const code = typeof err?.code === 'string' ? err.code : ''
+    if (code === 'timeout' || name === 'TimeoutError' || name === 'AbortError') return t('gistErrTimeout')
+    if (code === 'network') return t('gistErrNetwork')
+    if (code === 'auth') return t('gistErrAuth')
+    if (code === 'notfound') return t('gistErrNotFound')
+    if (code === 'rate-limit') return t('gistErrRateLimit')
+    if (code === 'invalid') return t('gistErrInvalid')
+    // Network-level fetch failures surface as TypeError("Failed to fetch").
+    if (error instanceof TypeError) return t('gistErrNetwork')
+    return String(error)
+  }
+
+  const runGist = useCallback((action: 'export' | 'import' | 'verify') => {
+    setGistBusy(true)
+    setGistMessage(null)
+    setGistOk(false)
+    setGistResult(null)
+    setRestoreErrors([])
+    setExportError(null)
+    const body: Record<string, unknown> = { action, token: gistToken.trim() }
+    // Import always targets the field; export targets it only in update mode
+    // (create mode deliberately ignores the field and makes a new Gist).
+    if (action === 'import') body.gistId = gistId.trim()
+    if (action === 'export' && gistMode === 'update') {
+      if (gistId.trim() === '') {
+        setGistBusy(false)
+        setGistMessage(t('gistErrNoId'))
+        setGistOk(false)
+        return
+      }
+      body.gistId = gistId.trim()
+    }
+    if (action === 'export') {
+      // All plugins selected → full backup (with config); partial → only
+      // the checked plugins, config optional via the picker flag.
+      const allNames = new Set([...Object.keys(installed), ...installedBundles])
+      const allSelected = exportSelection.size === allNames.size && exportSelection.size > 0
+      if (!allSelected) {
+        body.includeDeps = [...exportSelection]
+        if (exportIncludeConfig) body.includeConfig = true
+      }
+    }
+    fetch('/dsh-market/gist', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+      // Fallback ceiling only — the server answers structured errors (with a
+      // code) within 25 s, so a wedged host cannot leave the user staring at
+      // "working…" forever.
+      signal: AbortSignal.timeout(30_000),
+    }).then(async response => {
+      let body: Record<string, unknown> = {}
+      try { body = await response.json() as Record<string, unknown> } catch { /* non-JSON response */ }
+      if (!response.ok) {
+        const error = new Error(String(body.error || 'Gist failed'))
+        if (typeof body.code === 'string') (error as { code?: string }).code = body.code
+        throw error
+      }
+      if (action === 'export') {
+        setGistResult(body as unknown as GistExportResult)
+        // Backfill the id so the next export updates this Gist instead of
+        // creating yet another one.
+        const ref = body as unknown as GistExportResult
+        if (typeof ref.gistId === 'string' && ref.gistId !== '') {
+          setGistId(ref.gistId)
+          // A fresh export flips the mode to update so the next export
+          // PATCHes the same Gist instead of creating yet another one.
+          setGistMode('update')
+          try { localStorage.setItem('dshm-gist-id', ref.gistId) } catch { /* storage unavailable */ }
+        }
+        setGistMessage(t('gistExportDone'))
+        setGistOk(true)
+        setExportOpen(false)
+      } else if (action === 'import') {
+        previewBackup(body.backup)
+      } else {
+        // verify: tell the user which token source actually served the request.
+        const source = typeof body.source === 'string' ? body.source : ''
+        setGistMessage(t('gistVerifySource').replace('{0}', gistSourceLabel(source)))
+        setGistOk(true)
+      }
+    }).catch(error => {
+      const message = gistErrorMessage(error)
+      setGistMessage(message)
+      setGistOk(false)
+      // Keep the picker open (selection preserved) and show the failure
+      // inside it — never hidden behind the dialog.
+      if (action === 'export') setExportError(message)
+    }).finally(() => setGistBusy(false))
+  }, [exportIncludeConfig, exportSelection, gistId, gistToken, installed, installedBundles, previewBackup, t])
+
+  /** The picker list: dependency plugins + bundle-only plugins, deduplicated. */
+  const exportOptions = useMemo(() => {
+    const names = new Set([...Object.keys(installed), ...installedBundles])
+    return [...names].sort()
+  }, [installed, installedBundles])
+
+  /** Classify an install spec for the export picker badge. */
+  const specKind = (spec: string | undefined): 'npm' | 'git' | 'file' | 'bundle' => {
+    if (spec === undefined) return 'bundle'
+    if (/^file:/i.test(spec)) return 'file'
+    if (/^(github:|git\+|git:)/i.test(spec)) return 'git'
+    return 'npm'
+  }
+
+  const openExportPicker = useCallback(() => {
+    const names = new Set([...Object.keys(installed), ...installedBundles])
+    setExportSelection(new Set(names))
+    setExportIncludeConfig(false)
+    setExportOpen(true)
+  }, [installed, installedBundles])
+
   useEffect(() => {
     // Persist only the non-secret WebDAV settings; the password stays
     // server-side/in-memory (see savedWebdav). Storage itself may be
@@ -1114,7 +1320,20 @@ export function MarketSection(props: MarketSectionProps) {
     if (Date.now() - last >= 24 * 60 * 60 * 1000) runWebdav('backup')
   }, [autoBackup, runWebdav, webdavUrl, webdavUser])
 
-  const pendingRestart = doneUrls.length + updatedNames.length + removedCount + (backupRestored ? 1 : 0)
+  const sessionPendingRestart = doneUrls.length + updatedNames.length + removedCount + toggleRestart + (backupRestored ? 1 : 0)
+  /**
+   * Plugins the HOST reports as restart-pending, independent of what this
+   * browser session happens to remember. Installing and then reloading the
+   * page used to leave no restart affordance at all: the banner is built
+   * from session state, while the Installed tab only says "activates on
+   * restart" in passing — so the user was told a restart was needed and
+   * given nothing to press. Dismissible, because a standing banner nobody
+   * wants to act on right now is just noise (it returns next session, or
+   * as soon as another change lands).
+   */
+  const hostPendingNames = Object.keys(activations).filter(name => activations[name]?.state === 'restart')
+  const showHostPending = hostPendingNames.length > 0 && !restartNoticeDismissed && sessionPendingRestart === 0
+  const pendingRestart = sessionPendingRestart > 0 ? sessionPendingRestart : (showHostPending ? hostPendingNames.length : 0)
   const displayedInstalled = pendingBackup === null ? installed : { ...pendingDependencies, ...installed }
   const missingRestoreCount = Object.keys(pendingDependencies).filter(name => !installedFiles.includes(name)).length
   const hasUpdates = Object.keys(installed).some(
@@ -1267,7 +1486,7 @@ export function MarketSection(props: MarketSectionProps) {
     if (instName === null) return pluginCard(p)
     // A theme switched off via the Installed-tab toggle (or a group switch)
     // stays in the boot manifest, so the disabled set must veto the badge.
-    const mounted = (skins.includes(instName) || bootEntries.some(e => e.id === instName)) && !disabledSet.has(instName)
+    const mounted = (skins.includes(instName) || bootEntries.some(e => e.id === instName)) && !effectiveDisabledSet.has(instName)
     const desc = (p.description && (p.description[lang] || p.description.en)) || ''
     const replacement = replacementOf(p)
     return (
@@ -1312,7 +1531,7 @@ export function MarketSection(props: MarketSectionProps) {
           {removingName === instName
             ? <Button variant="outline" size="sm" disabled>{t('uninstalling')}</Button>
             : <Button variant="outline" size="sm" onClick={() => setRemoveConfirm(instName)}>{t('uninstall')}</Button>}
-          {disabledSet.has(instName) && <span className={css.spec}>{t('disabledState')}</span>}
+          {effectiveDisabledSet.has(instName) && <span className={css.spec}>{t('disabledState')}</span>}
           {mounted
             ? <>
                 <span className={css.okState}>{t('themeActive')}</span>
@@ -1445,6 +1664,16 @@ export function MarketSection(props: MarketSectionProps) {
             )}
           </div>
         )}
+        {backupMessage !== null && <div className={css.backupMessage}>{backupMessage}</div>}
+        {restoreErrors.length > 0 && (
+          <div className={css.banner}>
+            <IconWarningOutline16 size={14} className={css.bannerIcon} />
+            <span className={css.grow}>
+              <div><b>{t('restorePartial')}</b></div>
+              {restoreErrors.map(error => <div key={error} className={css.spec}>{error}</div>)}
+            </span>
+          </div>
+        )}
         {tab === 'installed' && pendingBackup !== null && (
           <div className={css.banner}>
             <IconRefreshOutline14 size={14} className={css.bannerIcon} />
@@ -1469,6 +1698,20 @@ export function MarketSection(props: MarketSectionProps) {
             >{t('refresh')}</Button>
           </div>
         )}
+        {refreshNames.length > 0 && (
+          <div className={css.banner}>
+            <IconRefreshOutline14 size={14} className={css.bannerIcon} />
+            <span className={css.grow}><b>{refreshNames.length}</b> {t('refreshBanner')}</span>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => {
+                sessionStorage.setItem('dshm-tab', 'installed')
+                location.reload()
+              }}
+            >{t('refresh')}</Button>
+          </div>
+        )}
         {pendingRestart > 0 && (
           <div className={css.banner}>
             <IconRefreshOutline14 size={14} className={css.bannerIcon} />
@@ -1483,6 +1726,20 @@ export function MarketSection(props: MarketSectionProps) {
                 disabled={restarting || hostBusy || busyUrl !== null || updatingName !== null || removingName !== null}
                 onClick={doRestart}
               >{restarting ? t('restarting') : t('restartNow')}</Button>
+            )}
+            {/* Only the standing host-reported notice is dismissible: a
+                banner for something you just did in this session should not
+                be swipeable away mid-flow. */}
+            {showHostPending && (
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label={t('dismissNotice')}
+                onClick={() => {
+                  setRestartNoticeDismissed(true)
+                  try { sessionStorage.setItem('dshm-restart-dismissed', String(bootId ?? '')) } catch { /* storage unavailable */ }
+                }}
+              >{t('dismiss')}</Button>
             )}
           </div>
         )}
@@ -1630,16 +1887,49 @@ export function MarketSection(props: MarketSectionProps) {
                   <p>{t('webdavNote')}</p>
                   <p className={css.backupWarn}>{t('credsWarning')}</p>
                 </section>
-                {backupMessage !== null && <div className={css.backupMessage}>{backupMessage}</div>}
-                {restoreErrors.length > 0 && (
-                  <div className={css.banner}>
-                    <IconWarningOutline16 size={14} className={css.bannerIcon} />
-                    <span className={css.grow}>
-                      <div><b>{t('restorePartial')}</b></div>
-                      {restoreErrors.map(error => <div key={error} className={css.spec}>{error}</div>)}
-                    </span>
+                <section className={css.backupCard}>
+                  <h3>{t('gist')}</h3>
+                  <Input
+                    className={css.backupInput}
+                    type="password"
+                    autoComplete="off"
+                    value={gistToken}
+                    placeholder={t('gistToken')}
+                    onChange={e => setGistToken(e.target.value)}
+                  />
+                  <Input
+                    className={css.backupInput}
+                    icon={<IconLinkOutline14 size={14} />}
+                    value={gistId}
+                    placeholder={t('gistId')}
+                    onChange={e => setGistId(e.target.value)}
+                  />
+                  <div className={css.backupActions}>
+                    <label className={css.backupCheck}>
+                      <input type="radio" name="gist-mode" checked={gistMode === 'update'} onChange={() => setGistMode('update')} />
+                      {t('gistModeUpdate')}
+                    </label>
+                    <label className={css.backupCheck}>
+                      <input type="radio" name="gist-mode" checked={gistMode === 'create'} onChange={() => setGistMode('create')} />
+                      {t('gistModeCreate')}
+                    </label>
                   </div>
-                )}
+                  <div className={css.backupActions}>
+                    <Button variant="outline" size="sm" disabled={gistBusy} onClick={() => runGist('verify')}>{gistBusy ? t('backupWorking') : t('gistVerify')}</Button>
+                    <Button variant="primary" size="sm" disabled={gistBusy || (gistMode === 'update' && gistId.trim() === '')} onClick={openExportPicker}>{gistBusy ? t('backupWorking') : t('gistExport')}</Button>
+                    <Button variant="outline" size="sm" disabled={gistBusy || gistId.trim() === ''} onClick={() => runGist('import')}>{t('gistImport')}</Button>
+                  </div>
+                  {gistResult !== null && (
+                    <p className={css.backupCheck}>
+                      <span>{t('gistCreated')}</span>{' '}
+                      <a className={css.src} href={gistResult.gistUrl} target="_blank" rel="noreferrer">{gistResult.gistUrl}</a>
+                    </p>
+                  )}
+                  {gistMessage !== null && (
+                    <div className={gistOk ? css.backupMessage : css.backupWarn}>{gistMessage}</div>
+                  )}
+                  <p>{t('gistNote')}</p>
+                </section>
               </div>
             )
           : tab === 'discover'
@@ -1818,7 +2108,7 @@ export function MarketSection(props: MarketSectionProps) {
                               ? <div className={css.empty}>{t('noGroups')}</div>
                               : groupOrder.map(gid => {
                                   const members = groups[gid] ?? []
-                                  const sw = groupSwitchState(members, disabledSet)
+                                  const sw = groupSwitchState(members, effectiveDisabledSet)
                                   return (
                                     <div className={css.groupRow} key={gid}>
                                       <div className={css.groupHead}>
@@ -1881,7 +2171,7 @@ export function MarketSection(props: MarketSectionProps) {
                                               : candidates.map(name => (
                                                   <div className={css.groupMember} key={name}>
                                                     <span className={css.nm}>{name}</span>
-                                                    {disabledSet.has(name) && <span className={css.spec}>{t('disabledState')}</span>}
+                                                    {effectiveDisabledSet.has(name) && <span className={css.spec}>{t('disabledState')}</span>}
                                                     <span className={css.grow} />
                                                     <Button variant="outline" size="sm" onClick={() => doAddMember(gid, name)}>
                                                       {addPanel.kind === 'theme' ? t('groupAddTheme') : t('groupAdd')}
@@ -1896,16 +2186,17 @@ export function MarketSection(props: MarketSectionProps) {
                                         {members.map(member => (
                                           <div className={css.groupMember} key={member}>
                                             <span className={css.nm}>{member}</span>
-                                            {disabledSet.has(member) && <span className={css.spec}>{t('disabledState')}</span>}
+                                            {effectiveDisabledSet.has(member) && <span className={css.spec}>{t('disabledState')}</span>}
+                                            {patchDisabledNames.includes(member) && <span className={css.spec}>{' · ' + t('patchDisabled')}</span>}
                                             <span className={css.grow} />
                                             <button
                                               type="button"
                                               role="switch"
-                                              aria-checked={!disabledSet.has(member)}
-                                              aria-label={(disabledSet.has(member) ? t('enable') : t('disable')) + ' ' + member}
-                                              className={disabledSet.has(member) ? css.switch : `${css.switch} ${css.switchOn}`}
+                                              aria-checked={!effectiveDisabledSet.has(member)}
+                                              aria-label={(effectiveDisabledSet.has(member) ? t('enable') : t('disable')) + ' ' + member}
+                                              className={effectiveDisabledSet.has(member) ? css.switch : `${css.switch} ${css.switchOn}`}
                                               disabled={togglingName !== null}
-                                              onClick={() => doToggle(member, disabledSet.has(member))}
+                                              onClick={() => doToggle(member, effectiveDisabledSet.has(member))}
                                             >
                                               <span className={css.switchKnob} />
                                             </button>
@@ -1921,13 +2212,14 @@ export function MarketSection(props: MarketSectionProps) {
                               ? <div className={css.empty}>{t('installedEmpty')}</div>
                               : ungroupedNames.map(name => {
                                   const entry = data === null ? undefined : entryForDep(data.plugins, name, String(installed[name]))
-                                  const off = disabledSet.has(name)
+                                  const off = effectiveDisabledSet.has(name)
                                   return (
                                     <div className={css.irow} key={'ug-' + name}>
                                       <div style={{ minWidth: 0 }}>
                                         <div className={css.nm}>
                                           {name}
                                           {entry?.deprecated === true && <span className={css.depBadge}>{t('deprecatedBadge')}</span>}
+                                          {patchDisabledNames.includes(name) && <span className={css.depBadge}>{t('patchDisabled')}</span>}
                                         </div>
                                         <div className={css.act}>
                                           {off
@@ -1979,7 +2271,7 @@ export function MarketSection(props: MarketSectionProps) {
                             const specText = String(spec)
                             const ghSpec = /^github:([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:#|$)/.exec(specText)
                             const repoUrl = entry !== undefined ? entry.url : ghSpec !== null ? 'https://github.com/' + ghSpec[1] : null
-                            const off = disabledSet.has(name)
+                            const off = effectiveDisabledSet.has(name)
                             // Switches only where they make sense: everything in
                             // the disable list (to re-enable), plus live/restart
                             // states. inert/broken rows keep their diagnosis
@@ -1991,6 +2283,8 @@ export function MarketSection(props: MarketSectionProps) {
                                   <div className={css.nm}>
                                     {name}
                                     {entry?.deprecated === true && <span className={css.depBadge}>{t('deprecatedBadge')}</span>}
+                                    {patchDisabledNames.includes(name) && <span className={css.depBadge}>{t('patchDisabled')}</span>}
+                                    {!effectiveDisabledSet.has(name) && patchForcedNames.includes(name) && <span className={css.depBadge}>{t('patchForced')}</span>}
                                     {version && <span className={css.owner}>{' ' + version}</span>}
                                   </div>
                                   {repoUrl !== null
@@ -2007,6 +2301,7 @@ export function MarketSection(props: MarketSectionProps) {
                                           <span className={css.actWarn}>
                                             <StateDot state="warning" size={7} />
                                             {t('disabledState')}
+                                            {patchDisabledNames.includes(name) && <span className={css.spec}>{' · ' + t('patchDisabled')}</span>}
                                           </span>
                                         </div>
                                       )
@@ -2230,6 +2525,58 @@ export function MarketSection(props: MarketSectionProps) {
             </>
           )}
         />
+      )}
+      {exportOpen && (
+        <Modal
+          open
+          onClose={() => setExportOpen(false)}
+          title={t('gistExportSelect')}
+          description={t('gistExportHint')}
+          footer={(
+            <>
+              <Button variant="ghost" onClick={() => setExportOpen(false)}>{t('cancel')}</Button>
+              <Button variant="primary" disabled={gistBusy || exportSelection.size === 0} onClick={() => runGist('export')}>
+                {gistBusy ? t('backupWorking') : t('gistExportGo')}
+              </Button>
+            </>
+          )}
+        >
+          {exportOptions.length === 0 && <p>{t('gistNoPlugins')}</p>}
+          {exportOptions.length > 0 && (
+            <>
+              <div className={css.backupActions}>
+                <Button size="sm" variant="outline" onClick={() => setExportSelection(new Set(exportOptions))}>{t('gistSelectAll')}</Button>
+                <Button size="sm" variant="outline" onClick={() => setExportSelection(new Set())}>{t('gistSelectNone')}</Button>
+              </div>
+              <div className={css.backupCheckList}>
+                {exportOptions.map(name => (
+                  <label key={name} className={css.backupCheck}>
+                    <input
+                      type="checkbox"
+                      checked={exportSelection.has(name)}
+                      onChange={e => {
+                        const next = new Set(exportSelection)
+                        if (e.currentTarget.checked) next.add(name)
+                        else next.delete(name)
+                        setExportSelection(next)
+                      }}
+                    />
+                    <span className={css.grow}>{name}</span>
+                    {specKind(installed[name]) === 'git' && <span className={`${css.specTag} ${css.specTagGit}`}>git</span>}
+                    {specKind(installed[name]) === 'file' && <span className={`${css.specTag} ${css.specTagFile}`}>{t('gistSpecLocal')}</span>}
+                    <span className={css.spec} title={installed[name]}>{installed[name] ?? t('bundleTag')}</span>
+                  </label>
+                ))}
+              </div>
+              <label className={css.backupCheck}>
+                <input type="checkbox" checked={exportIncludeConfig} onChange={e => setExportIncludeConfig(e.target.checked)} />
+                {t('gistIncludeConfig')}
+              </label>
+              {exportIncludeConfig && <p className={css.backupWarn}>{t('credsWarning')}</p>}
+              {exportError !== null && <p className={css.backupWarn}>{exportError}</p>}
+            </>
+          )}
+        </Modal>
       )}
       {/* Log-export feedback via the Toast primitive — body portal, so it
         never squeezes the subtitle row or the error banner. */}

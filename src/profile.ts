@@ -26,7 +26,7 @@ export function profileDir(profile: string, explicitDir?: string): string {
  * filter would make them invisible and fail install validation.
  * (Diagnosis and fix proposed in #28 by @Lograthmic.)
  */
-const INBOX_BUNDLES = new Set([
+export const INBOX_BUNDLES = new Set([
   '@deepseek-ai/dsh-base',
   '@deepseek-ai/dsh-web-app',
   '@deepseek-ai/dsh-headless',
@@ -186,33 +186,78 @@ export function bundlePatchEntryIds(dir: string): string[] {
 }
 
 /**
+ * Loader entry ids the patch INSERTS — the rows the package owns, as opposed
+ * to rows of OTHER plugins it merely configures (#147).
+ *
+ * A bundle patch has two kinds of entry:
+ *
+ *     - insert:                     ← rows this package brings into the tree
+ *         - id: vision-router
+ *           name: dsh-vision-router
+ *     - id: attachment-local        ← someone else's row, only reconfigured
+ *       config: { maxImageBytes: … }
+ *
+ * Treating both as "this package's rows" made disabling one plugin write
+ * `disabled: true` onto the official rows it tuned — killing attachments and
+ * the DeepSeek model with it.
+ */
+export function bundlePatchInsertedIds(dir: string): string[] {
+  return readBundlePatchRows(dir).insertedIds
+}
+
+/**
  * `name:` and `id:` rows of the package's declared bundle patch. Line-wise
  * on purpose: the strict hot-mount parser rejects config/expression rows,
- * but for "what does this bundle bring in" any row counts.
+ * but for "what does this bundle bring in" any row counts. `insertedIds` is
+ * the subset nested under an `insert:` key (#147).
  */
-function readBundlePatchRows(dir: string): { names: string[]; ids: string[] } {
+function readBundlePatchRows(dir: string): { names: string[]; ids: string[]; insertedIds: string[] } {
   let patchPath: string
   try {
     const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as {
       dsh?: { bundle?: { patch?: unknown } }
     }
     const declared = manifest.dsh?.bundle?.patch
-    if (typeof declared !== 'string' || declared === '') return { names: [], ids: [] }
+    if (typeof declared !== 'string' || declared === '') return { names: [], ids: [], insertedIds: [] }
     patchPath = join(dir, declared)
   } catch {
-    return { names: [], ids: [] }
+    return { names: [], ids: [], insertedIds: [] }
   }
   const names: string[] = []
   const ids: string[] = []
+  const insertedIds: string[] = []
   try {
-    for (const line of readFileSync(patchPath, 'utf8').split('\n')) {
+    // `insert:` opens a nested list; every id below it, at deeper
+    // indentation, is a row this package brings in. A row at or above the
+    // `insert:` indentation closes the block — those target OTHER plugins.
+    let insertIndent: number | null = null
+    for (const raw of readFileSync(patchPath, 'utf8').split('\n')) {
+      const line = raw.replace(/#.*$/, '')
+      if (line.trim() === '') continue
+      const indent = line.length - line.trimStart().length
+      if (insertIndent !== null && indent <= insertIndent && !/^\s*-?\s*(id|name|config):/u.test(line)) {
+        insertIndent = null
+      }
+      if (/^\s*-?\s*insert:\s*$/u.test(line)) {
+        insertIndent = indent
+        continue
+      }
       const name = /^\s*-?\s*name:\s*['"]?([^'"\s]+)/.exec(line)
       if (name !== null && !names.includes(name[1])) names.push(name[1])
       const id = /^\s*-?\s*id:\s*['"]?([^'"\s]+)/.exec(line)
-      if (id !== null && !ids.includes(id[1])) ids.push(id[1])
+      if (id !== null) {
+        if (!ids.includes(id[1])) ids.push(id[1])
+        // A top-level `- id:` row closes any open insert block: it is a
+        // sibling of `- insert:`, not a member of it.
+        if (insertIndent !== null && indent > insertIndent) {
+          if (!insertedIds.includes(id[1])) insertedIds.push(id[1])
+        } else if (indent <= (insertIndent ?? -1)) {
+          insertIndent = null
+        }
+      }
     }
   } catch { /* unreadable patch — nothing to report */ }
-  return { names, ids }
+  return { names, ids, insertedIds }
 }
 
 /** The profile manifest's `dsh.profile.bundles` — what the CLI reconciled. */

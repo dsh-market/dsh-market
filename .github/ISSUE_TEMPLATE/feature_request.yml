@@ -1,0 +1,42 @@
+name: Feature request / 功能建议
+description: A capability the market should have / 希望市场支持的能力
+labels: [roadmap]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        欢迎提想法。先看一眼 [已有的 roadmap issues](https://github.com/dsh-market/dsh-market/issues?q=is%3Aissue+is%3Aopen+label%3Aroadmap)，如果已经有人提过，直接在那条下面补充你的场景比新开一条更有用。
+
+        *Check the existing roadmap issues first — adding your use case to an existing one carries more weight than a new duplicate.*
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: 你遇到的问题 / The problem
+      description: |
+        **先说问题，再说方案。** 你当前是怎么做的、卡在哪里——这决定了功能该长什么样，比直接描述实现更有价值。
+
+        Describe the problem before the solution: what you do today and where it breaks. That shapes the feature far more than a proposed implementation does.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 你设想的做法 / What you have in mind
+      description: 有具体设想就写；没有也可以留空，只描述问题同样有用 / Optional — a well-described problem is enough
+
+  - type: dropdown
+    id: contribute
+    attributes:
+      label: 你愿意实现它吗 / Would you like to implement it
+      description: |
+        社区 PR 一直是这个仓库的主力。愿意动手的话，我们会先把范围和边界跟你对齐，避免白做。
+
+        Community PRs carry this repo. If you're up for it we'll agree on scope with you first, so no work gets wasted.
+      options:
+        - 我想认领并实现 / I'd like to claim and implement it
+        - 我可以参与讨论/测试 / I can help discuss or test
+        - 只是提想法 / Just proposing the idea
+    validations:
+      required: true

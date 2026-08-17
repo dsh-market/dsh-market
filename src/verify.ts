@@ -2,19 +2,25 @@
  * Post-install activation verification (P0-2): what "installed" actually
  * means for a package in a dsh profile.
  *
- * The ground truth is the same manifest the dsh CLI reconciles:
- * `<profile>/package.json` → `dsh.profile.bundles`. A package is a
- * profile-layer plugin only when its name is in that list; a package
- * without `dsh.bundle` in its own manifest is never reconciled there and
- * therefore never activates through the normal boot path (client-only
- * plugins get a market-owned shim mount instead).
+ * Two sources of truth, in strict order of authority:
+ *
+ * 1. The LOADER INVENTORY (observed): whatever the loader is running right
+ *    now is live, full stop. A plain library with no `dsh` field can be
+ *    loaded by name from someone else's bundle patch — the official
+ *    dsh-base patch loads `@deepseek-ai/dsh-tools`, which has no `dsh`
+ *    field at all — so no manifest check may overrule it (#135).
+ * 2. The profile manifest (inferred): `<profile>/package.json` →
+ *    `dsh.profile.bundles`, what the dsh CLI reconciled. This predicts what
+ *    the NEXT boot will load, and is the only evidence available for a
+ *    package that is not currently running.
  *
  * State taxonomy (IMPROVEMENT-PLAN P0-2):
- *   live    – mounted into the running composition (hot mount present)
+ *   live    – running in the current composition (hot mount or loader entry)
  *   restart – installed and will activate on the next boot, but not live now
- *   inert   – installed but never a profile-layer plugin (no dsh.bundle)
- *   broken  – installed but validation failed (no dsh surface / no entry
- *             artifact) — the next boot could fail
+ *   inert   – installed but not a profile-layer plugin (plain dependency, or
+ *             client-only — the market shim-mounts those at boot)
+ *   broken  – would fail to load: listed as a bundle without a dsh surface,
+ *             or a declared entry artifact that is missing
  *   missing – not present in node_modules
  */
 
@@ -23,7 +29,7 @@ import { join } from 'node:path'
 import { listHotMounts, parseSimplePatch } from './hot.ts'
 import { hasDshManifest, hasLoadableEntry, profileDir } from './profile.ts'
 
-export type ActivationState = 'live' | 'restart' | 'inert' | 'broken' | 'missing'
+export type ActivationState = 'live' | 'restart' | 'inert' | 'broken' | 'missing' | 'disabled'
 
 export interface ActivationResult {
   state: ActivationState
@@ -100,6 +106,7 @@ export function verifyActivation(
   name: string,
   live: ReadonlySet<string> = new Set(listHotMounts()),
   explicitDir?: string,
+  isDisabled = false,
 ): ActivationResult {
   const activeProfileDir = profileDir(profile, explicitDir)
   const bundles = readBundles(profile, activeProfileDir)
@@ -110,19 +117,56 @@ export function verifyActivation(
     return { state: 'missing', reasons: ['未安装 / not installed'], bundle: inBundles, hot: false }
   }
 
-  const dir = join(activeProfileDir, 'node_modules', name)
-  if (!hasDshManifest(dir)) {
+  // A user-disabled plugin reads as disabled, never as "restart to apply":
+  // the switch state (market disable list or the user patch layer) is the
+  // dominant fact, and the loader keeps it off on every boot.
+  if (isDisabled) {
     return {
-      state: 'broken',
-      reasons: ['该包未声明 dsh 元数据,不会在启动时加载 / this package declares no dsh metadata and will never load'],
+      state: 'disabled',
+      reasons: ['已停用(市场开关或补丁层),重启后保持关闭 / disabled (market toggle or the patch layer) — stays off across restarts'],
       bundle: inBundles,
       hot: false,
     }
   }
+
+  const dir = join(activeProfileDir, 'node_modules', name)
+  // OBSERVED beats INFERRED (#135): the loader inventory is ground truth, so
+  // a package the loader is running is live no matter what its manifest says.
+  // Plain library packages legitimately carry no `dsh` field and are still
+  // loaded by name from a bundle patch — @deepseek-ai/dsh-tools is loaded by
+  // the official dsh-base patch and has no `dsh` field at all — so this check
+  // has to come before any manifest-based verdict.
+  const loaderLive = liveIncludes(live, name)
+  if (!hasDshManifest(dir)) {
+    if (loaderLive) {
+      return {
+        state: 'live',
+        reasons: ['已由 Loader 加载(该包未声明 dsh 元数据,由某个 bundle patch 按名加载)/ loaded by the loader (no dsh metadata of its own — a bundle patch loads it by name)'],
+        bundle: inBundles,
+        hot: true,
+      }
+    }
+    // Not live and no dsh surface: for a package the profile lists as a
+    // BUNDLE this is a real defect; for a plain dependency it is normal —
+    // most dependencies are libraries, not plugins (#135).
+    return inBundles
+      ? {
+          state: 'broken',
+          reasons: ['已列入 profile bundle 层但未声明 dsh 元数据,加载会失败 / listed in the profile bundle layer but declares no dsh metadata — loading it fails'],
+          bundle: true,
+          hot: false,
+        }
+      : {
+          state: 'inert',
+          reasons: ['普通依赖(未声明 dsh 元数据),不是 profile 层插件;若它由某个 bundle patch 按名加载,启动后会显示为已加载 / a plain dependency with no dsh metadata — not a profile-layer plugin; if some bundle patch loads it by name it will read as live once running'],
+          bundle: false,
+          hot: false,
+        }
+  }
   // Carrier bundles (#103) ship no entry of their own — what they mount is
   // the point — so judge by "is anything loadable", not by this package's
   // own artifact.
-  if (!hasLoadableEntry(activeProfileDir, name)) {
+  if (!loaderLive && !hasLoadableEntry(activeProfileDir, name)) {
     return {
       state: 'broken',
       reasons: [
@@ -133,7 +177,7 @@ export function verifyActivation(
     }
   }
 
-  if (liveIncludes(live, name)) {
+  if (loaderLive) {
     const clientOnly = dsh.bundle === undefined && dsh.client !== undefined
     return {
       state: 'live',

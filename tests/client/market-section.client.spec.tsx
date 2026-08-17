@@ -549,6 +549,75 @@ describe('#60 enable/disable switches in the Installed tab', () => {
     // A disabled control never bounces a rejected request off the server.
     expect(fetchCalls.some(c => c.path === '/dsh-market/toggle')).toBe(false)
   })
+
+  it('shows the pending-restart banner when a toggle needs a boot to apply', async () => {
+    stubFetch({
+      '/dsh-market/installed': {
+        profile: 'web',
+        installed: { 'dsh-loop': '^1.0.0' },
+        live: ['dsh-loop'],
+        disabled: [],
+        groups: {},
+        groupOrder: [],
+        activation: { 'dsh-loop': { state: 'live', reasons: [], bundle: true, hot: true } },
+      },
+      '/dsh-market/toggle': () => ({
+        ok: true,
+        name: 'dsh-loop',
+        enabled: false,
+        disabled: ['dsh-loop'],
+        live: [],
+        restart: true,
+        activation: { 'dsh-loop': { state: 'disabled', reasons: ['disabled'], bundle: true, hot: false } },
+      }),
+    })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    const sw = await screen.findByRole('switch', { name: en.disable + ' dsh-loop' })
+    fireEvent.click(sw)
+    await waitFor(() => {
+      expect(screen.getAllByText(re(en.restartBanner)).length).toBeGreaterThan(0)
+    })
+    // The toggle joins the persisted pending-restart set under the boot.
+    await waitFor(() => {
+      expect(sessionStorage.getItem('dshm-restart')).toContain('"toggled":1')
+    })
+  })
+
+  it('shows the refresh banner when a client-part toggle needs a reload', async () => {
+    stubFetch({
+      '/dsh-market/installed': {
+        profile: 'web',
+        installed: { 'dsh-loop': '^1.0.0' },
+        live: ['dsh-loop'],
+        disabled: [],
+        groups: {},
+        groupOrder: [],
+        activation: { 'dsh-loop': { state: 'live', reasons: [], bundle: true, hot: true } },
+      },
+      '/dsh-market/toggle': () => ({
+        ok: true,
+        name: 'dsh-loop',
+        enabled: false,
+        disabled: ['dsh-loop'],
+        live: [],
+        restart: false,
+        refresh: true,
+        activation: { 'dsh-loop': { state: 'disabled', reasons: ['disabled'], bundle: true, hot: false } },
+      }),
+    })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    const sw = await screen.findByRole('switch', { name: en.disable + ' dsh-loop' })
+    fireEvent.click(sw)
+    await waitFor(() => {
+      expect(screen.getAllByText(re(en.refreshBanner)).length).toBeGreaterThan(0)
+    })
+    // No restart banner — the toggle itself went live.
+    expect(screen.queryAllByText(re(en.restartBanner)).length).toBe(0)
+  })
 })
 
 describe('#60 catalog deprecation', () => {
@@ -1114,5 +1183,53 @@ describe('lost install response (#100)', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('standing restart notice for host-reported pending plugins', () => {
+  function stubWithActivation(boot: string) {
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      const path = String(url).split('?')[0]
+      const installed = { 'dsh-loop': '^1.0.0' }
+      const payload =
+        path === '/dsh-market/registry' ? { source: 'snapshot', registry: REGISTRY }
+        : path === '/dsh-market/installed' ? {
+            profile: 'web', installed, live: [],
+            // The host says: installed, will activate on restart.
+            activation: { 'dsh-loop': { state: 'restart', reasons: ['in the bundle layer'], bundle: true, hot: false } },
+          }
+        : path === '/dsh-market/status' ? { active: false, busy: false, pnpm: true, boot, restart: true, installed }
+        : path === '/dsh-market/updates' ? { updates: {} }
+        : null
+      if (payload === null) return Promise.reject(new Error(`unstubbed fetch: ${String(url)}`))
+      return Promise.resolve(new Response(JSON.stringify(payload), { status: 200 }))
+    }))
+  }
+
+  it('shows the notice after a reload with no session memory, and can be dismissed', async () => {
+    // The gap this closes: install, reload, and the page told you a restart
+    // was needed while offering nothing to press.
+    stubWithActivation('boot-1')
+    render(<MarketSection {...props()} />)
+    await waitFor(() => { expect(screen.getAllByText(re(en.restartBanner)).length).toBeGreaterThan(0) })
+    expect(screen.getByRole('button', { name: en.restartNow })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: en.dismissNotice }))
+    await waitFor(() => { expect(screen.queryAllByText(re(en.restartBanner)).length).toBe(0) })
+    expect(sessionStorage.getItem('dshm-restart-dismissed')).toBe('boot-1')
+  })
+
+  it('reappears on the next boot, because the restart never happened', async () => {
+    sessionStorage.setItem('dshm-restart-dismissed', 'boot-1')
+    stubWithActivation('boot-2')
+    render(<MarketSection {...props()} />)
+    await waitFor(() => { expect(screen.getAllByText(re(en.restartBanner)).length).toBeGreaterThan(0) })
+  })
+
+  it('stays quiet when nothing is pending', async () => {
+    stubFetch()
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    expect(screen.queryAllByText(re(en.restartBanner)).length).toBe(0)
   })
 })

@@ -56,6 +56,19 @@ describe('verifyActivation (P0-2)', () => {
     expect(verifyActivation('web', 'client-a', new Set(['client-a']))).toMatchObject({ state: 'live', hot: true, bundle: false })
   })
 
+  it('disabled when the user switched it off — never "restart to apply"', () => {
+    profile(['dsh-loop'])
+    pkg('dsh-loop', { dsh: { bundle: { patch: './cordis.patch.yml' } }, main: 'index.js' }, { 'index.js': '', 'cordis.patch.yml': SIMPLE_PATCH })
+    // Even when the fiber is somehow still up, the disabled flag wins.
+    const result = verifyActivation('web', 'dsh-loop', new Set(['dsh-loop']), undefined, true)
+    expect(result).toMatchObject({ state: 'disabled', hot: false, bundle: true })
+    expect(result.reasons.join(' ')).toMatch(/disabled|已停用/)
+
+    // A client-only package switched off reads disabled too, not inert.
+    pkg('client-a', { dsh: { client: {} }, main: 'index.js' }, { 'index.js': '' })
+    expect(verifyActivation('web', 'client-a', new Set(), undefined, true)).toMatchObject({ state: 'disabled', bundle: false })
+  })
+
   it('restart when in bundles but not live, with the patch reason', () => {
     profile(['dsh-loop'])
     pkg('dsh-loop', { dsh: { bundle: { patch: './cordis.patch.yml' } }, main: 'index.js' }, { 'index.js': '', 'cordis.patch.yml': COMPLEX_PATCH })
@@ -155,5 +168,34 @@ describe('carrier bundles (#103)', () => {
       'cordis.patch.yml': "- insert:\n    - id: unbuilt\n      name: 'dsh-unbuilt'\n",
     })
     expect(verifyActivation('web', 'dsh-unbuilt', new Set())).toMatchObject({ state: 'broken' })
+  })
+})
+
+describe('loader inventory beats manifest inference (#135)', () => {
+  it('a live package with no dsh field is live, not broken', () => {
+    // @deepseek-ai/dsh-tools is loaded by the official dsh-base patch and
+    // carries no `dsh` field at all — "no manifest" never implied "never loads".
+    profile([])
+    pkg('@deepseek-ai/dsh-tools', { name: '@deepseek-ai/dsh-tools', main: 'lib/index.js' }, { 'lib/index.js': '' })
+    expect(verifyActivation('web', '@deepseek-ai/dsh-tools', new Set(['@deepseek-ai/dsh-tools'])))
+      .toMatchObject({ state: 'live', hot: true })
+  })
+
+  it('not live and no dsh field: inert as a plain dependency, broken only when listed as a bundle', () => {
+    profile([])
+    pkg('some-lib', { name: 'some-lib', main: 'i.js' }, { 'i.js': '' })
+    expect(verifyActivation('web', 'some-lib', new Set())).toMatchObject({ state: 'inert', bundle: false })
+    // Listed as a bundle but with no dsh surface — that IS a real defect.
+    profile(['some-lib'])
+    expect(verifyActivation('web', 'some-lib', new Set())).toMatchObject({ state: 'broken', bundle: true })
+  })
+
+  it('a live package still reads live when its entry artifact is missing', () => {
+    // Running is running: an unbuilt checkout that the loader nonetheless has
+    // up must not be reported as broken.
+    profile(['half-built'])
+    pkg('half-built', { dsh: { bundle: { patch: './cordis.patch.yml' } }, main: 'lib/index.js' })
+    expect(verifyActivation('web', 'half-built', new Set(['half-built']))).toMatchObject({ state: 'live' })
+    expect(verifyActivation('web', 'half-built', new Set())).toMatchObject({ state: 'broken' })
   })
 })

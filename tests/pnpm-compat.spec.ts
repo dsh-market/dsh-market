@@ -102,3 +102,23 @@ describe('classifyPnpmFailure', () => {
     expect(prepare?.message).toContain('允许构建脚本并重试')
   })
 })
+
+describe('provisionHint (#142 / #108 / #32)', () => {
+  it('names the actual cause instead of a generic failure', async () => {
+    const { provisionHint } = await import('../src/dsh-cli.ts')
+    // #142: corepack succeeded and left a shim, so npm -g refused to overwrite.
+    const eexist = provisionHint('', 'npm error EEXIST: file already exists\nnpm error File exists: /usr/local/bin/pnpm\nnpm error Remove the existing file and try again, or run npm\nnpm error with --force to overwrite files recklessly.')
+    expect(eexist).toContain('corepack prepare pnpm@latest --activate')
+    // #108: Node installed where the user cannot write.
+    const eperm = provisionHint('Internal Error: EPERM: operation not permitted, open \'D:\\nodejs\\pnpm.CMD\'', 'npm error ... try running the command again as root/Administrator.')
+    expect(eperm).toContain('brew install pnpm')
+    expect(eperm).toContain('管理员')
+    // #32: no Node on PATH at all — the button is a dead end, say so.
+    expect(provisionHint('spawn corepack ENOENT', 'spawn npm ENOENT')).toContain('找不到 Node')
+    // Restricted network: the corepack shim cannot fetch pnpm either.
+    expect(provisionHint('', 'npm error network request to https://registry.npmjs.org failed, reason: ETIMEDOUT'))
+      .toContain('镜像')
+    // Unrecognized output stays undefined rather than guessing.
+    expect(provisionHint('', 'some unknown failure')).toBeUndefined()
+  })
+})

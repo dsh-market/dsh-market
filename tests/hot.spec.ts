@@ -11,7 +11,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { hotUnmount, listHotMounts, mountClientOnlyDeps } from '../src/hot.ts'
+import { hotMount, hotUnmount, listHotMounts, mountClientOnlyDeps } from '../src/hot.ts'
 
 // The harness-vendored Include class is not importable in the unit lane;
 // a minimal stand-in lets hotMount succeed so the skip logic is observable.
@@ -56,6 +56,39 @@ describe('mountClientOnlyDeps vs the user patch layer (#58)', () => {
       expect(mounted).toContain('dsh-free-plugin')
       expect(mounted).not.toContain('@deepseek-ai/dsh-client-ui-aqua')
     } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('hotMount activation timeout guard', () => {
+  it('falls back to restart and disposes the subtree when activation never settles', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dshm-hot-'))
+    try {
+      clientOnlyPkg(dir, 'dsh-wedged-plugin')
+      let disposed = false
+      // A fiber waiting on a service that never arrives: await() never
+      // settles. Without the guard the route hangs forever — its
+      // `finally { installing = false }` never runs and every later install/
+      // update/uninstall gets 409'd until a host restart.
+      const wedgedCtx = {
+        plugin: () => ({
+          await: () => new Promise<never>(() => {}),
+          dispose: () => { disposed = true },
+        }),
+      }
+      vi.useFakeTimers()
+      const pending = hotMount(wedgedCtx, dir, 'dsh-wedged-plugin')
+      const assertion = pending.then(result => {
+        expect(result.ok).toBe(false)
+        expect(result.reason).toContain('did not settle')
+        expect(disposed).toBe(true)
+        expect(listHotMounts()).not.toContain('dsh-wedged-plugin')
+      })
+      await vi.advanceTimersByTimeAsync(10000)
+      await assertion
+    } finally {
+      vi.useRealTimers()
       rmSync(dir, { recursive: true, force: true })
     }
   })

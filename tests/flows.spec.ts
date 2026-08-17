@@ -257,6 +257,7 @@ const REGISTRY = {
     { name: 'dsh-usage-stats', owner: 'a1', url: 'https://github.com/a1/dsh-usage-stats', category: 'tool', npm: null, description: {}, install: '', added: '' },
     { name: 'dsh-usage-stats', owner: 'a2', url: 'https://github.com/a2/dsh-usage-stats', category: 'tool', npm: null, description: {}, install: '', added: '' },
     { name: 'dsh-blue-whale', owner: 'o', url: 'https://github.com/o/blue-whale', category: 'tool', npm: null, description: {}, install: '', added: '' },
+    { name: 'dsh-patchy', owner: 'o', url: 'https://github.com/o/dsh-patchy', category: 'tool', npm: null, description: {}, install: '', added: '' },
     // Monorepo siblings: distinct plugins sharing one repo.
     { name: 'mono#plug-a', owner: 'm', url: 'https://github.com/m/mono/tree/main/packages/plug-a', category: 'tool', npm: null, description: {}, install: '', added: '' },
     { name: 'mono#plug-b', owner: 'm', url: 'https://github.com/m/mono/tree/main/packages/plug-b', category: 'tool', npm: null, description: {}, install: '', added: '' },
@@ -1309,6 +1310,80 @@ describe('generic enable/disable toggle (#60)', () => {
     expect(hot.disabled.has('dsh-blue-whale')).toBe(false)
   })
 
+  it('writes the user patch layer on toggle (port of dsh-plugin-hub); activation reads disabled', async () => {
+    // A bundle-layer plugin with a real insert row.
+    fake.repos['github:o/dsh-patchy'] = {
+      name: 'dsh-patchy',
+      manifest: { dsh: { bundle: { patch: './cordis.patch.yml' } }, main: 'lib/index.js' },
+      artifacts: ['lib/index.js', 'cordis.patch.yml'],
+    }
+    await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-patchy' })
+    hot.mounts = []
+    // The fake install writes an EMPTY patch artifact; give it the real row
+    // and mirror the loader entry the boot would create.
+    const patchFile = join(profileDir('web'), 'node_modules', 'dsh-patchy', 'cordis.patch.yml')
+    writeFileSync(patchFile, "- insert:\n    - id: dsh-patchy\n      name: 'dsh-patchy'\n")
+    bed.loaderEntries.push({
+      options: { id: 'dsh-patchy', name: 'dsh-patchy', disabled: null as boolean | null },
+      fiber: {},
+      update: async (options: { disabled: boolean | null }) => {
+        const target = bed.loaderEntries.find(e => e.options.name === 'dsh-patchy')!
+        target.options.disabled = options.disabled
+        target.fiber = options.disabled === true ? undefined : {}
+      },
+    })
+
+    const off = await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-patchy', enabled: false })
+    expect(off.status).toBe(200)
+    const userPatch = join(profileDir('web'), 'cordis.patch.yml')
+    expect(readFileSync(userPatch, 'utf8')).toContain('- id: dsh-patchy\n  disabled: true\n')
+    expect(off.json.patchWrite.ok).toBe(true)
+    // Disabled plugins read as disabled, never "restart to apply".
+    expect(off.json.activation['dsh-patchy'].state).toBe('disabled')
+
+    const listed = await bed.dispatch('GET', '/dsh-market/installed')
+    expect(listed.json.patch.disables).toContain('dsh-patchy')
+    expect(listed.json.patchDisabled).toContain('dsh-patchy')
+    expect(listed.json.activation['dsh-patchy'].state).toBe('disabled')
+
+    const on = await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-patchy', enabled: true })
+    expect(on.status).toBe(200)
+    expect(readFileSync(userPatch, 'utf8')).not.toContain('dsh-patchy')
+    expect(on.json.activation['dsh-patchy'].state).toBe('live')
+    // The live fiber followed the switch — no restart needed.
+    expect(on.json.restart).toBe(false)
+    // Bundle-only plugin (no dsh.client) — no page refresh needed either.
+    expect(on.json.refresh).toBe(false)
+  })
+
+  it('reports restart when the disable leaves the live fiber up', async () => {
+    await installNpm('dsh-loop')
+    hot.mounts = [] // only the loader entry is live
+    bed.loaderEntries.push({
+      options: { id: 'dsh-loop', name: 'dsh-loop', disabled: null as boolean | null },
+      fiber: {},
+      // The live drive cannot bring the fiber down (retries exhaust).
+      update: async () => {},
+    })
+    const off = await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-loop', enabled: false })
+    expect(off.status).toBe(200)
+    expect(off.json.ok).toBe(true)
+    expect(off.json.restart).toBe(true)
+    // The choice is still durable (state.json; the next boot applies it).
+    expect(hot.disabled.has('dsh-loop')).toBe(true)
+  })
+
+  it('reports restart + the reason when enabling cannot hot-mount', async () => {
+    await installNpm('dsh-loop')
+    await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-loop', enabled: false })
+    hot.failNext = true // hotMount fails with a restart-required reason
+    const on = await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-loop', enabled: true })
+    expect(on.status).toBe(502)
+    expect(on.json.ok).toBe(false)
+    expect(on.json.restart).toBe(true)
+    expect(on.json.reason).toMatch(/cannot hot-mount|restart/)
+  })
+
   it('toggles a client-only shim (dsh.client without dsh.bundle) through the hot path', async () => {
     await installNpm('dsh-loop', { client: './client.js' })
     expect(hot.mounts).toEqual(['dsh-loop'])
@@ -1316,6 +1391,8 @@ describe('generic enable/disable toggle (#60)', () => {
     expect(off.status).toBe(200)
     expect(hot.mounts).toEqual([])
     expect(hot.disabled.has('dsh-loop')).toBe(true)
+    // The client part is injected into the page — a refresh is prompted.
+    expect(off.json.refresh).toBe(true)
     const on = await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-loop', enabled: true })
     expect(on.status).toBe(200)
     expect(hot.mounts).toEqual(['dsh-loop'])
