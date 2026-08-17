@@ -8,7 +8,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import {
-  addProfileBundle, conflictingEntryIds, entryArtifactExists, hasDshManifest, hasLoadableEntry, isDshProfileName, pluginSubdirs, profileDir,
+  addProfileBundle, conflictingEntryIds, dropFromManifest, entryArtifactExists, hasDshManifest, hasLoadableEntry, isDshProfileName, pluginSubdirs, profileDir,
   readInstalled, readInstalledManifest, readInstalledRepoEvidence, readInstalledRepoIdentities, readInstalledVersion, readLockCommits,
   removeProfileBundle,
 } from '../src/profile.ts'
@@ -68,6 +68,29 @@ describe('readInstalled', () => {
       '@deepseek-ai/dsh-security-audit': 'github:omdsh-dev/dsh-security-audit',
       dshmarket: '^1.2.3',
     })
+  })
+})
+
+describe('dropFromManifest (half-uninstall reconcile)', () => {
+  it('drops the package from dependencies AND dsh.profile.bundles, leaving every other field untouched', () => {
+    writeProfile({
+      name: 'web',
+      private: true,
+      dependencies: { 'dsh-loop': '^1.0.0', other: '^2.0.0' },
+      dsh: { profile: { bundles: ['dshmarket', 'dsh-loop'] } },
+    })
+    expect(dropFromManifest('web', 'dsh-loop')).toBe(true)
+    const manifest = JSON.parse(readFileSync(join(profileDir('web'), 'package.json'), 'utf8'))
+    expect(manifest.dependencies).toEqual({ other: '^2.0.0' })
+    expect(manifest.dsh.profile.bundles).toEqual(['dshmarket'])
+    expect(manifest.name).toBe('web')
+    expect(manifest.private).toBe(true)
+  })
+
+  it('returns false when the manifest never mentioned the package, and fails open when unreadable', () => {
+    writeProfile({ dependencies: { other: '^2.0.0' } })
+    expect(dropFromManifest('web', 'dsh-loop')).toBe(false)
+    expect(dropFromManifest('missing-profile', 'dsh-loop')).toBe(false)
   })
 })
 

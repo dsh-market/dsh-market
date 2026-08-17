@@ -41,6 +41,18 @@ const fake = vi.hoisted(() => ({
   gate: null as Promise<void> | null,
   /** Set by the mocked cancelActive: the in-flight command resolves cancelled. */
   cancelNext: false,
+  /**
+   * Fail the next remove AFTER deleting node_modules but WITHOUT saving
+   * package.json — pnpm's real half-uninstall shape (#65's mirror image:
+   * files are gone, the manifest entry survives, the next boot's loader
+   * misses its modules and the profile dies to activate).
+   */
+  failNextRemoveHalfGone: false,
+  /**
+   * Fail the next remove with exit 1 and this stderr, touching nothing —
+   * a non-retryable pnpm failure (EPERM etc.) with the package intact.
+   */
+  failNextRemoveOnce: '',
   /** Appended to the next add's stdout (e.g. pnpm's Ignored build scripts line). */
   buildScriptOutputOnce: '',
 /** Fail the next add with exit 1 and this stderr (e.g. ERR_PNPM_IGNORED_BUILDS, #68/#69). */
@@ -152,6 +164,16 @@ vi.mock('../src/dsh-cli.ts', () => {
     }
     const target = positional[positional.length - 1]
     if (cmd === 'remove') {
+      if (fake.failNextRemoveOnce !== '') {
+        const stderr = fake.failNextRemoveOnce
+        fake.failNextRemoveOnce = ''
+        return { exitCode: 1, timedOut: false, stdout: '', stderr, cancelled: false }
+      }
+      if (fake.failNextRemoveHalfGone) {
+        fake.failNextRemoveHalfGone = false
+        rmSync(join(fake.profileDir, 'node_modules', target), { recursive: true, force: true })
+        return { exitCode: 1, timedOut: false, stdout: '', cancelled: false, stderr: 'EPERM: operation not permitted, unlink …\\node_modules\\dsh-loop\\package.json' }
+      }
       removeDep(target)
       return ok
     }
@@ -1397,6 +1419,37 @@ describe('uninstall flow', () => {
     expect(installedSpec('dsh-loop')).toBeUndefined()
     const removes = fake.calls.filter(c => c[0] === 'remove')
     expect(removes[removes.length - 1]).toContain('--config.minimumReleaseAge=0')
+  })
+
+  it('reconciles the manifest when a remove fails halfway (half-uninstall)', async () => {
+    fake.npm['dsh-loop'] = { latest: '1.0.0', versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } } }
+    await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
+    expect(installedSpec('dsh-loop')).toBeDefined()
+    // pnpm dies AFTER deleting node_modules but BEFORE saving package.json
+    // — disk truth and the manifest disagree; the next boot would fail to
+    // activate the ghost dependency. The market must finish the removal.
+    fake.failNextRemoveHalfGone = true
+    const r = await bed.dispatch('POST', '/dsh-market/uninstall', { name: 'dsh-loop' })
+    expect(r.status).toBe(502)
+    expect(r.json.ok).toBe(false)
+    expect(r.json.reconciled).toBe(true)
+    // Both manifest lists now match disk truth.
+    expect(installedSpec('dsh-loop')).toBeUndefined()
+    const manifest = JSON.parse(readFileSync(join(profileDir('web'), 'package.json'), 'utf8')) as { dsh?: { profile?: { bundles?: string[] } } }
+    expect(manifest.dsh?.profile?.bundles ?? []).not.toContain('dsh-loop')
+  })
+
+  it('keeps the manifest when a failed remove left the package intact', async () => {
+    fake.npm['dsh-loop'] = { latest: '1.0.0', versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } } }
+    await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
+    // pnpm fails without touching anything (a non-retryable EPERM): disk
+    // intact → the user may simply retry, so the manifest must stay as it was.
+    fake.failNextRemoveOnce = 'EPERM: operation not permitted, rename …\\node_modules\\dsh-loop'
+    const r = await bed.dispatch('POST', '/dsh-market/uninstall', { name: 'dsh-loop' })
+    expect(r.status).toBe(502)
+    expect(r.json.ok).toBe(false)
+    expect(r.json.reconciled).toBeUndefined()
+    expect(installedSpec('dsh-loop')).toBeDefined()
   })
 })
 
