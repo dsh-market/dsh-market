@@ -3,6 +3,9 @@
  * Market UI shares between its section and toast components.
  */
 
+import type { DiagnosticReportV1 } from '../diagnostics.ts'
+export type { SharedHostPackageDependencyFinding } from '../diagnostics.ts'
+
 /** Localized text keyed by language ('zh' / 'en'). */
 export type LocalizedText = Record<string, string | undefined>
 
@@ -85,6 +88,7 @@ export interface InstalledPayload {
   profile?: string
   installed: InstalledMap
   activation?: Record<string, ActivationInfo>
+  diagnostics?: DiagnosticReportV1
   live?: string[]
   /** Plugins the user switched off; persisted across restarts (#60). */
   disabled?: string[]

@@ -170,3 +170,32 @@ describe('carrier bundles (#103)', () => {
     expect(verifyActivation('web', 'dsh-unbuilt', new Set())).toMatchObject({ state: 'broken' })
   })
 })
+
+describe('loader inventory beats manifest inference (#135)', () => {
+  it('a live package with no dsh field is live, not broken', () => {
+    // @deepseek-ai/dsh-tools is loaded by the official dsh-base patch and
+    // carries no `dsh` field at all — "no manifest" never implied "never loads".
+    profile([])
+    pkg('@deepseek-ai/dsh-tools', { name: '@deepseek-ai/dsh-tools', main: 'lib/index.js' }, { 'lib/index.js': '' })
+    expect(verifyActivation('web', '@deepseek-ai/dsh-tools', new Set(['@deepseek-ai/dsh-tools'])))
+      .toMatchObject({ state: 'live', hot: true })
+  })
+
+  it('not live and no dsh field: inert as a plain dependency, broken only when listed as a bundle', () => {
+    profile([])
+    pkg('some-lib', { name: 'some-lib', main: 'i.js' }, { 'i.js': '' })
+    expect(verifyActivation('web', 'some-lib', new Set())).toMatchObject({ state: 'inert', bundle: false })
+    // Listed as a bundle but with no dsh surface — that IS a real defect.
+    profile(['some-lib'])
+    expect(verifyActivation('web', 'some-lib', new Set())).toMatchObject({ state: 'broken', bundle: true })
+  })
+
+  it('a live package still reads live when its entry artifact is missing', () => {
+    // Running is running: an unbuilt checkout that the loader nonetheless has
+    // up must not be reported as broken.
+    profile(['half-built'])
+    pkg('half-built', { dsh: { bundle: { patch: './cordis.patch.yml' } }, main: 'lib/index.js' })
+    expect(verifyActivation('web', 'half-built', new Set(['half-built']))).toMatchObject({ state: 'live' })
+    expect(verifyActivation('web', 'half-built', new Set())).toMatchObject({ state: 'broken' })
+  })
+})

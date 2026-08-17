@@ -246,6 +246,7 @@ const REGISTRY = {
     { name: 'theme-a', owner: 'o', url: 'https://github.com/o/theme-a', category: 'theme', npm: null, description: {}, install: '', added: '' },
     { name: 'theme-b', owner: 'o', url: 'https://github.com/o/theme-b', category: 'theme', npm: null, description: {}, install: '', added: '' },
     { name: 'skin-pack', owner: 'o', url: 'https://github.com/o/skin-pack', category: 'theme', npm: null, description: {}, install: '', added: '' },
+    { name: 'dsh-excel-chat', owner: 'hccccc01333', url: 'https://github.com/hccccc01333/dsh-excel-chat', category: 'tool', npm: null, description: {}, install: '', added: '' },
     { name: 'dshmarket', owner: 'dsh-market', url: 'https://github.com/dsh-market/dsh-market', category: 'tool', npm: 'dshmarket', description: {}, install: '', added: '' },
     // #27 shape: the same repo listed twice under different names.
     { name: 'dsh-share', owner: 'h', url: 'https://github.com/h/dsh-share', category: 'tool', npm: 'dsh-share', description: {}, install: '', added: '' },
@@ -574,6 +575,86 @@ describe('install flow', () => {
     expect(listed.json.activation['dsh-loop'].state).toBe('live')
   })
 
+  it('reports host contracts declared as normal dependencies without rejecting the plugin', async () => {
+    fake.npm['dsh-loop'] = {
+      latest: '1.0.0',
+      versions: {
+        '1.0.0': {
+          manifest: {
+            dsh: {},
+            main: 'lib/index.js',
+            dependencies: {
+              '@deepseek-ai/dsh-attachment': '^0.0.1-rc.1',
+              '@deepseek-ai/dsh-llm': '^0.0.1-rc.1',
+              '@deepseek-ai/dsh-system-prompt': '^0.0.1-rc.1',
+              '@deepseek-ai/dsh-tools': '^0.0.1-rc.1',
+            },
+          },
+          artifacts: ['lib/index.js'],
+        },
+      },
+    }
+
+    const installed = await bed.dispatch('POST', '/dsh-market/install', {
+      url: 'https://github.com/o/dsh-loop',
+    })
+    expect(installed.status).toBe(200)
+    expect(installed.json.ok).toBe(true)
+    expect(installedSpec('dsh-loop')).toBe('^1.0.0')
+    expect(fake.calls.some(call => call[0] === 'remove' && call[1] === 'dsh-loop')).toBe(false)
+
+    const profileManifest = JSON.parse(readFileSync(join(fake.profileDir, 'package.json'), 'utf8'))
+    profileManifest.dependencies['plain-helper'] = '^1.0.0'
+    writeFileSync(join(fake.profileDir, 'package.json'), JSON.stringify(profileManifest))
+    mkdirSync(join(fake.profileDir, 'node_modules', 'plain-helper'), { recursive: true })
+    writeFileSync(join(fake.profileDir, 'node_modules', 'plain-helper', 'package.json'), JSON.stringify({
+      name: 'plain-helper',
+      dependencies: { '@deepseek-ai/cordis': '^4.0.1' },
+    }))
+
+    const profilePath = join(fake.profileDir, 'package.json')
+    const pluginPath = join(fake.profileDir, 'node_modules', 'dsh-loop', 'package.json')
+    const profileBefore = readFileSync(profilePath)
+    const pluginBefore = readFileSync(pluginPath)
+    const listed = await bed.dispatch('GET', '/dsh-market/installed')
+    expect(listed.json.diagnostics.schema).toBe('dsh-market/diagnostics/v1')
+    expect(listed.json.diagnostics.findings).toHaveLength(4)
+    expect(listed.json.diagnostics.findings).toContainEqual(expect.objectContaining({
+      code: 'shared-host-package-dependency',
+      subject: { kind: 'package', name: 'dsh-loop' },
+      evidence: {
+        basis: 'manifest-declaration',
+        dependency: '@deepseek-ai/dsh-tools',
+        declaredRange: '^0.0.1-rc.1',
+        declaredIn: 'dependencies',
+      },
+    }))
+    expect(listed.json.diagnostics.findings.some((finding: { subject: { name: string } }) =>
+      finding.subject.name === 'plain-helper',
+    )).toBe(false)
+    expect(readFileSync(profilePath)).toEqual(profileBefore)
+    expect(readFileSync(pluginPath)).toEqual(pluginBefore)
+  })
+
+  it('does not diagnose in-box bundles hidden from the community installed set', async () => {
+    const profilePath = join(fake.profileDir, 'package.json')
+    const manifest = JSON.parse(readFileSync(profilePath, 'utf8'))
+    manifest.dependencies['@deepseek-ai/dsh-base'] = '0.1.0-rc.6'
+    writeFileSync(profilePath, JSON.stringify(manifest))
+    const baseDir = join(fake.profileDir, 'node_modules', '@deepseek-ai', 'dsh-base')
+    mkdirSync(baseDir, { recursive: true })
+    writeFileSync(join(baseDir, 'package.json'), JSON.stringify({
+      name: '@deepseek-ai/dsh-base',
+      version: '0.1.0-rc.6',
+      dsh: { bundle: { patch: './cordis.patch.yml' } },
+      dependencies: { '@deepseek-ai/dsh-tools': '0.1.0-rc.6' },
+    }))
+
+    const listed = await bed.dispatch('GET', '/dsh-market/installed')
+    expect(listed.json.installed['@deepseek-ai/dsh-base']).toBeUndefined()
+    expect(listed.json.diagnostics.findings).toEqual([])
+  })
+
   it('reports inert activation for a client-only plugin the host cannot hot-mount (P0-2)', async () => {
     fake.npm['dsh-loop'] = { latest: '1.0.0', versions: { '1.0.0': { manifest: { dsh: { client: {} }, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } } }
     hot.failNext = true
@@ -629,6 +710,52 @@ describe('install flow', () => {
     expect(r.status).toBe(200)
     expect(installedSpec('whale-skin')).toBeDefined()
     expect(installedSpec('skin-pack')).toBeUndefined()
+  })
+
+  it('inspects the current dsh-excel-chat bundle after collection retargeting', async () => {
+    fake.repos['github:hccccc01333/dsh-excel-chat'] = {
+      name: 'vera',
+      manifest: {
+        name: 'vera',
+        version: '0.34.1',
+        private: true,
+        dependencies: {
+          '@deepseek-ai/cordis': '^4.0.1',
+          exceljs: '^4.4.0',
+          fflate: '^0.8.3',
+        },
+      },
+      junkChildren: ['bundle'],
+    }
+    fake.repos['github:hccccc01333/dsh-excel-chat#path:/bundle'] = {
+      name: 'dsh-excel-chat',
+      manifest: {
+        name: 'dsh-excel-chat',
+        version: '0.34.1',
+        dsh: { bundle: { patch: './cordis.patch.yml' } },
+        main: 'dist/index.js',
+        dependencies: { exceljs: '^4.4.0', fflate: '^0.8.3' },
+        peerDependencies: {
+          '@deepseek-ai/cordis': '^4.0.1',
+          '@deepseek-ai/dsh-attachment': '^0.1.0-rc.6',
+          '@deepseek-ai/dsh-llm': '^0.1.0-rc.6',
+          '@deepseek-ai/dsh-system-prompt': '^0.1.0-rc.6',
+          '@deepseek-ai/dsh-tools': '^0.1.0-rc.6',
+        },
+      },
+      artifacts: ['dist/index.js'],
+    }
+
+    const installed = await bed.dispatch('POST', '/dsh-market/install', {
+      url: 'https://github.com/hccccc01333/dsh-excel-chat',
+    })
+    expect(installed.status).toBe(200)
+    expect(installedSpec('vera')).toBeUndefined()
+    expect(installedSpec('dsh-excel-chat')).toBeDefined()
+
+    const listed = await bed.dispatch('GET', '/dsh-market/installed')
+    expect(listed.json.diagnostics.schema).toBe('dsh-market/diagnostics/v1')
+    expect(listed.json.diagnostics.findings).toEqual([])
   })
 })
 

@@ -105,6 +105,17 @@ export function readInstalledVersion(profile: string, name: string, explicitDir?
   }
 }
 
+/** The installed package manifest, or null when absent or malformed. */
+export function readInstalledManifest(profile: string, name: string, explicitDir?: string): unknown | null {
+  try {
+    return JSON.parse(
+      readFileSync(join(profileDir(profile, explicitDir), 'node_modules', name, 'package.json'), 'utf8'),
+    ) as unknown
+  } catch {
+    return null
+  }
+}
+
 /** Pinned commit per `owner/repo` from the profile lockfile's codeload tarball URLs. */
 export function readLockCommits(profile: string, explicitDir?: string): Map<string, string> {
   const commits = new Map<string, string>()

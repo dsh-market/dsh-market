@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   entryArtifactExists, hasDshManifest, pluginSubdirs, profileDir,
-  readInstalled, readInstalledVersion, readLockCommits,
+  readInstalled, readInstalledManifest, readInstalledVersion, readLockCommits,
 } from '../src/profile.ts'
 
 let home: string
@@ -56,6 +56,23 @@ describe('readInstalledVersion', () => {
     writeFileSync(join(dir, 'node_modules', 'dsh-loop', 'package.json'), '{"version":"1.0.3"}')
     expect(readInstalledVersion('web', 'dsh-loop')).toBe('1.0.3')
     expect(readInstalledVersion('web', 'missing')).toBeNull()
+  })
+})
+
+describe('readInstalledManifest', () => {
+  it('reads explicit profile directories and fails open for missing or malformed packages', () => {
+    const explicitDir = mkdtempSync(join(tmpdir(), 'dshm-profile-'))
+    try {
+      const packageDir = join(explicitDir, 'node_modules', 'dsh-loop')
+      mkdirSync(packageDir, { recursive: true })
+      writeFileSync(join(packageDir, 'package.json'), JSON.stringify({ name: 'dsh-loop', dsh: {} }))
+      expect(readInstalledManifest('ignored', 'dsh-loop', explicitDir)).toMatchObject({ name: 'dsh-loop' })
+      expect(readInstalledManifest('ignored', 'missing', explicitDir)).toBeNull()
+      writeFileSync(join(packageDir, 'package.json'), '{')
+      expect(readInstalledManifest('ignored', 'dsh-loop', explicitDir)).toBeNull()
+    } finally {
+      rmSync(explicitDir, { recursive: true, force: true })
+    }
   })
 })
 
