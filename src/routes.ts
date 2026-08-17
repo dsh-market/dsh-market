@@ -23,7 +23,7 @@ import {
   BOOT_ID, cancelActive, probePnpm, progress, provisionPnpm, runDshPlugin,
   type PluginCommandRuntime,
 } from './dsh-cli.ts'
-import { profileDir, readInstalled, readInstalledManifest, readInstalledVersion, readLockCommits, readManifestDeps, restoreManifestDeps, setAllowBuilds } from './profile.ts'
+import { profileDir, readInstalled, readInstalledManifest, readInstalledVersion, readLockCommits, readManifestDeps, readProfileBundles, restoreManifestDeps, setAllowBuilds } from './profile.ts'
 import { analyzeProfile } from './check.ts'
 import { INBOX_BUNDLES, readBundleRules, readBundleStack, suggestOrder, validateOrder } from './order.ts'
 import { findInstalledAlias, gitAllowBuildsKey, installTargetFor } from './sources.ts'
@@ -38,8 +38,11 @@ import {
   readUserPatchState, removeRowBlocks, rowIdsForPackage,
 } from './patch.ts'
 import {
-  createProfileBackup, downloadWebdav, MAX_BACKUP_BYTES, restoreProfileBackup, secretFileCount, uploadWebdav,
+  createProfileBackup, downloadWebdav, MAX_BACKUP_BYTES, mergeRestoreManifest, restoreProfileBackup, secretFileCount, uploadWebdav,
 } from './backup.ts'
+import {
+  createGist, fitsGistLimit, GistError, gistErrorCode, parseGistId, readGist, resolveGistTokenSource, updateGist, verifyGistToken,
+} from './gist.ts'
 
 export type { LoaderEntry } from './themes.ts'
 export type { UpdateStatus } from './updates.ts'
@@ -240,8 +243,20 @@ export function mountMarketRoutes(
     if (installing) throw new Error('another plugin operation is already running')
     if (!await probePnpm()) throw new Error('pnpm is required to restore plugins')
     installing = true
+// Snapshot the target's manifest BEFORE the backup files overwrite it, so
+    // the restore can merge rather than replace: plugins the target already
+    // has that are NOT in the backup stay installed instead of silently
+    // dropping off the manifest (partial exports, issue #89).
+    const manifestBefore = JSON.parse(readFileSync(join(activeProfileDir, 'package.json'), 'utf8')) as Record<string, unknown>
     const restored = restoreProfileBackup(config.profile, value, activeProfileDir)
     try {
+      // Merge: current deps stay, backup specs win on name conflicts; bundle
+      // lists are unioned. Full exports merge to the backup view unchanged.
+      const mergedManifest = mergeRestoreManifest(
+        JSON.parse(readFileSync(join(activeProfileDir, 'package.json'), 'utf8')) as Record<string, unknown>,
+        manifestBefore,
+      )
+      writeFileSync(join(activeProfileDir, 'package.json'), `${JSON.stringify(mergedManifest, null, 2)}\n`)
       const result = await runPlugin(config.profile, ['install'])
       if (result.exitCode === 0 && !result.timedOut && !result.cancelled) {
         invalidateUpdates()
@@ -394,6 +409,58 @@ export function mountMarketRoutes(
 
     host.webServer.register({
       kind: 'exact',
+      path: '/dsh-market/gist',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) return sendJson(response, 403, { error: 'untrusted origin' })
+        // 25 s route-level ceiling: abort the underlying GitHub request too,
+        // so the client always gets a definite, structured answer and a
+        // wedged gh CLI / slow network can never leave a request running in
+        // the background (issue #89; the error carries a code for the UI).
+        const controller = new AbortController()
+        const timer = setTimeout(() => controller.abort(new GistError('Gist operation timed out', 'timeout')), 25_000)
+        try {
+          const body = await readJsonBody(request) as { action?: unknown; token?: unknown; gistId?: unknown; includeDeps?: unknown; includeConfig?: unknown }
+          const { token, source } = await resolveGistTokenSource(body.token)
+          if (body.action === 'export') {
+            const gistIdInput = typeof body.gistId === 'string' ? body.gistId.trim() : ''
+            const includeDeps = Array.isArray(body.includeDeps)
+              ? body.includeDeps.filter((name): name is string => typeof name === 'string' && name !== '')
+              : undefined
+            const backup = createProfileBackup(config.profile, activeProfileDir, includeDeps !== undefined
+              ? { includeDeps, includeConfig: body.includeConfig === true }
+              : undefined)
+            const content = JSON.stringify(backup, null, 2)
+            if (!fitsGistLimit(content)) throw new Error('backup exceeds the GitHub Gist 1 MB limit')
+            const ref = gistIdInput === ''
+              ? await createGist(token, content, controller.signal)
+              : await updateGist(token, parseGistId(gistIdInput), content, controller.signal)
+            sendJson(response, 200, { ok: true, gistId: ref.id, gistUrl: ref.htmlUrl })
+          } else if (body.action === 'import') {
+            if (typeof body.gistId !== 'string' || body.gistId.trim() === '') throw new Error('gist id is required')
+            const backup = await readGist(token, parseGistId(body.gistId), controller.signal)
+            // Preview flow, same as WebDAV: the client reviews the backup and
+            // posts it to /dsh-market/restore; readGist's strict validation
+            // guarantees the fetch result is never blindly echoed.
+            sendJson(response, 200, { ok: true, backup })
+          } else if (body.action === 'verify') {
+            await verifyGistToken(token, controller.signal)
+            sendJson(response, 200, { ok: true, source })
+          } else sendJson(response, 400, { error: 'invalid Gist action' })
+        } catch (error) {
+          sendJson(response, 400, { error: error instanceof Error ? error.message : String(error), code: gistErrorCode(error) })
+        } finally {
+          clearTimeout(timer)
+        }
+      },
+    }),
+
+    host.webServer.register({
+      kind: 'exact',
       path: '/dsh-market/registry',
       handler: async (request, response) => {
         if (request.method !== 'GET') {
@@ -453,6 +520,7 @@ export function mountMarketRoutes(
           patch: { disables: patch.disables, forced: patch.forced, inserts: patch.inserts },
           patchDisabled: patchFlags.disabled,
           patchForced: patchFlags.forced,
+          bundles: readProfileBundles(activeProfileDir).filter(name => !INBOX_BUNDLES.has(name)),
         })
       },
     }),

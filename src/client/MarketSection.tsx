@@ -39,7 +39,7 @@ import {
   pageItems, pluginScreenshots, readSession, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
 } from './market-data.ts'
 import type {
-  ActivationInfo, ActivationState, InstalledMap, MarketStatus, Registry, RegistryPlugin,
+ActivationInfo, ActivationState, GistExportResult, InstalledMap, MarketStatus, Registry, RegistryPlugin,
   SharedHostPackageDependencyFinding, SortDir, SortField, ThemeSnapshot, TimeRange, Translate, UpdateStatus,
 } from './market-data.ts'
 
@@ -408,6 +408,28 @@ export function MarketSection(props: MarketSectionProps) {
   const [webdavUser, setWebdavUser] = useState(initialWebdav.username)
   const [webdavPassword, setWebdavPassword] = useState(initialWebdav.password)
   const [autoBackup, setAutoBackup] = useState(initialWebdav.auto)
+  /** GitHub token — session memory only, never written to any storage. */
+  const [gistToken, setGistToken] = useState('')
+  /** Gist id — persisted across reloads (non-sensitive: the Gist itself is private). */
+  const [gistId, setGistId] = useState(() => {
+    try { return localStorage.getItem('dshm-gist-id') ?? '' } catch { return '' }
+  })
+  /** Export mode: 'update' PATCHes the Gist in the field, 'create' makes a new one. */
+  const [gistMode, setGistMode] = useState<'update' | 'create'>(() => {
+    try { return localStorage.getItem('dshm-gist-id') ? 'update' : 'create' } catch { return 'create' }
+  })
+  const [gistBusy, setGistBusy] = useState(false)
+  const [gistMessage, setGistMessage] = useState<string | null>(null)
+  const [gistOk, setGistOk] = useState(false)
+  const [gistResult, setGistResult] = useState<GistExportResult | null>(null)
+  /** Export picker: open state, selected plugin names, include-config flag. */
+  const [exportOpen, setExportOpen] = useState(false)
+  const [exportSelection, setExportSelection] = useState<Set<string>>(new Set())
+  const [exportIncludeConfig, setExportIncludeConfig] = useState(false)
+  /** Export failure shown INSIDE the picker so it is never hidden behind it. */
+  const [exportError, setExportError] = useState<string | null>(null)
+  /** Bundle-only plugin names from /dsh-market/installed (picker list). */
+  const [installedBundles, setInstalledBundles] = useState<string[]>([])
   const bodyRef = useRef<HTMLDivElement | null>(null)
   /** Hidden file input behind the Import button (a Button can't host an <input>). */
   const fileInputRef = useRef<HTMLInputElement | null>(null)
@@ -451,6 +473,7 @@ export function MarketSection(props: MarketSectionProps) {
         if (Array.isArray(body.patchForced)) setPatchForcedNames(body.patchForced)
         if (body.groups && typeof body.groups === 'object') setGroups(body.groups)
         if (Array.isArray(body.groupOrder)) setGroupOrder(body.groupOrder)
+        setInstalledBundles(Array.isArray(body.bundles) ? body.bundles.filter((name: unknown): name is string => typeof name === 'string') : [])
         if (body.activation && typeof body.activation === 'object') setActivations(body.activation)
         const findings = body.diagnostics?.schema === 'dsh-market/diagnostics/v1'
           && Array.isArray(body.diagnostics.findings)
@@ -1146,6 +1169,128 @@ export function MarketSection(props: MarketSectionProps) {
     }).catch(error => setBackupMessage(String(error))).finally(() => setBackupBusy(false))
   }, [previewBackup, t, webdavPassword, webdavUrl, webdavUser])
 
+  /** Map the server's token-source string to a localized label. */
+  const gistSourceLabel = (source: string): string => {
+    if (source === 'token') return t('gistSrcToken')
+    if (source === 'env') return t('gistSrcEnv')
+    if (source === 'gh') return t('gistSrcGh')
+    return source
+  }
+
+  /** Turn any failure (server error, network error, timeout) into a friendly message. */
+  const gistErrorMessage = (error: unknown): string => {
+    const err = error as { name?: unknown; code?: unknown }
+    const name = typeof err?.name === 'string' ? err.name : ''
+    const code = typeof err?.code === 'string' ? err.code : ''
+    if (code === 'timeout' || name === 'TimeoutError' || name === 'AbortError') return t('gistErrTimeout')
+    if (code === 'network') return t('gistErrNetwork')
+    if (code === 'auth') return t('gistErrAuth')
+    if (code === 'notfound') return t('gistErrNotFound')
+    if (code === 'rate-limit') return t('gistErrRateLimit')
+    if (code === 'invalid') return t('gistErrInvalid')
+    // Network-level fetch failures surface as TypeError("Failed to fetch").
+    if (error instanceof TypeError) return t('gistErrNetwork')
+    return String(error)
+  }
+
+  const runGist = useCallback((action: 'export' | 'import' | 'verify') => {
+    setGistBusy(true)
+    setGistMessage(null)
+    setGistOk(false)
+    setGistResult(null)
+    setRestoreErrors([])
+    setExportError(null)
+    const body: Record<string, unknown> = { action, token: gistToken.trim() }
+    // Import always targets the field; export targets it only in update mode
+    // (create mode deliberately ignores the field and makes a new Gist).
+    if (action === 'import') body.gistId = gistId.trim()
+    if (action === 'export' && gistMode === 'update') {
+      if (gistId.trim() === '') {
+        setGistBusy(false)
+        setGistMessage(t('gistErrNoId'))
+        setGistOk(false)
+        return
+      }
+      body.gistId = gistId.trim()
+    }
+    if (action === 'export') {
+      // All plugins selected → full backup (with config); partial → only
+      // the checked plugins, config optional via the picker flag.
+      const allNames = new Set([...Object.keys(installed), ...installedBundles])
+      const allSelected = exportSelection.size === allNames.size && exportSelection.size > 0
+      if (!allSelected) {
+        body.includeDeps = [...exportSelection]
+        if (exportIncludeConfig) body.includeConfig = true
+      }
+    }
+    fetch('/dsh-market/gist', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+      // Fallback ceiling only — the server answers structured errors (with a
+      // code) within 25 s, so a wedged host cannot leave the user staring at
+      // "working…" forever.
+      signal: AbortSignal.timeout(30_000),
+    }).then(async response => {
+      let body: Record<string, unknown> = {}
+      try { body = await response.json() as Record<string, unknown> } catch { /* non-JSON response */ }
+      if (!response.ok) {
+        const error = new Error(String(body.error || 'Gist failed'))
+        if (typeof body.code === 'string') (error as { code?: string }).code = body.code
+        throw error
+      }
+      if (action === 'export') {
+        setGistResult(body as unknown as GistExportResult)
+        // Backfill the id so the next export updates this Gist instead of
+        // creating yet another one.
+        const ref = body as unknown as GistExportResult
+        if (typeof ref.gistId === 'string' && ref.gistId !== '') {
+          setGistId(ref.gistId)
+          // A fresh export flips the mode to update so the next export
+          // PATCHes the same Gist instead of creating yet another one.
+          setGistMode('update')
+          try { localStorage.setItem('dshm-gist-id', ref.gistId) } catch { /* storage unavailable */ }
+        }
+        setGistMessage(t('gistExportDone'))
+        setGistOk(true)
+        setExportOpen(false)
+      } else if (action === 'import') {
+        previewBackup(body.backup)
+      } else {
+        // verify: tell the user which token source actually served the request.
+        const source = typeof body.source === 'string' ? body.source : ''
+        setGistMessage(t('gistVerifySource').replace('{0}', gistSourceLabel(source)))
+        setGistOk(true)
+      }
+    }).catch(error => {
+      const message = gistErrorMessage(error)
+      setGistMessage(message)
+      setGistOk(false)
+      // Keep the picker open (selection preserved) and show the failure
+      // inside it — never hidden behind the dialog.
+      if (action === 'export') setExportError(message)
+    }).finally(() => setGistBusy(false))
+  }, [exportIncludeConfig, exportSelection, gistId, gistToken, installed, installedBundles, previewBackup, t])
+
+  /** The picker list: dependency plugins + bundle-only plugins, deduplicated. */
+  const exportOptions = useMemo(() => {
+    const names = new Set([...Object.keys(installed), ...installedBundles])
+    return [...names].sort()
+  }, [installed, installedBundles])
+
+  /** Classify an install spec for the export picker badge. */
+  const specKind = (spec: string | undefined): 'npm' | 'git' | 'file' | 'bundle' => {
+    if (spec === undefined) return 'bundle'
+    if (/^file:/i.test(spec)) return 'file'
+    if (/^(github:|git\+|git:)/i.test(spec)) return 'git'
+    return 'npm'
+  }
+
+  const openExportPicker = useCallback(() => {
+    const names = new Set([...Object.keys(installed), ...installedBundles])
+    setExportSelection(new Set(names))
+    setExportIncludeConfig(false)
+    setExportOpen(true)
+  }, [installed, installedBundles])
+
   useEffect(() => {
     // Persist only the non-secret WebDAV settings; the password stays
     // server-side/in-memory (see savedWebdav). Storage itself may be
@@ -1492,6 +1637,16 @@ export function MarketSection(props: MarketSectionProps) {
             )}
           </div>
         )}
+        {backupMessage !== null && <div className={css.backupMessage}>{backupMessage}</div>}
+        {restoreErrors.length > 0 && (
+          <div className={css.banner}>
+            <IconWarningOutline16 size={14} className={css.bannerIcon} />
+            <span className={css.grow}>
+              <div><b>{t('restorePartial')}</b></div>
+              {restoreErrors.map(error => <div key={error} className={css.spec}>{error}</div>)}
+            </span>
+          </div>
+        )}
         {tab === 'installed' && pendingBackup !== null && (
           <div className={css.banner}>
             <IconRefreshOutline14 size={14} className={css.bannerIcon} />
@@ -1691,16 +1846,49 @@ export function MarketSection(props: MarketSectionProps) {
                   <p>{t('webdavNote')}</p>
                   <p className={css.backupWarn}>{t('credsWarning')}</p>
                 </section>
-                {backupMessage !== null && <div className={css.backupMessage}>{backupMessage}</div>}
-                {restoreErrors.length > 0 && (
-                  <div className={css.banner}>
-                    <IconWarningOutline16 size={14} className={css.bannerIcon} />
-                    <span className={css.grow}>
-                      <div><b>{t('restorePartial')}</b></div>
-                      {restoreErrors.map(error => <div key={error} className={css.spec}>{error}</div>)}
-                    </span>
+                <section className={css.backupCard}>
+                  <h3>{t('gist')}</h3>
+                  <Input
+                    className={css.backupInput}
+                    type="password"
+                    autoComplete="off"
+                    value={gistToken}
+                    placeholder={t('gistToken')}
+                    onChange={e => setGistToken(e.target.value)}
+                  />
+                  <Input
+                    className={css.backupInput}
+                    icon={<IconLinkOutline14 size={14} />}
+                    value={gistId}
+                    placeholder={t('gistId')}
+                    onChange={e => setGistId(e.target.value)}
+                  />
+                  <div className={css.backupActions}>
+                    <label className={css.backupCheck}>
+                      <input type="radio" name="gist-mode" checked={gistMode === 'update'} onChange={() => setGistMode('update')} />
+                      {t('gistModeUpdate')}
+                    </label>
+                    <label className={css.backupCheck}>
+                      <input type="radio" name="gist-mode" checked={gistMode === 'create'} onChange={() => setGistMode('create')} />
+                      {t('gistModeCreate')}
+                    </label>
                   </div>
-                )}
+                  <div className={css.backupActions}>
+                    <Button variant="outline" size="sm" disabled={gistBusy} onClick={() => runGist('verify')}>{gistBusy ? t('backupWorking') : t('gistVerify')}</Button>
+                    <Button variant="primary" size="sm" disabled={gistBusy || (gistMode === 'update' && gistId.trim() === '')} onClick={openExportPicker}>{gistBusy ? t('backupWorking') : t('gistExport')}</Button>
+                    <Button variant="outline" size="sm" disabled={gistBusy || gistId.trim() === ''} onClick={() => runGist('import')}>{t('gistImport')}</Button>
+                  </div>
+                  {gistResult !== null && (
+                    <p className={css.backupCheck}>
+                      <span>{t('gistCreated')}</span>{' '}
+                      <a className={css.src} href={gistResult.gistUrl} target="_blank" rel="noreferrer">{gistResult.gistUrl}</a>
+                    </p>
+                  )}
+                  {gistMessage !== null && (
+                    <div className={gistOk ? css.backupMessage : css.backupWarn}>{gistMessage}</div>
+                  )}
+                  <p>{t('gistNote')}</p>
+                </section>
               </div>
             )
           : tab === 'discover'
@@ -2296,6 +2484,58 @@ export function MarketSection(props: MarketSectionProps) {
             </>
           )}
         />
+      )}
+      {exportOpen && (
+        <Modal
+          open
+          onClose={() => setExportOpen(false)}
+          title={t('gistExportSelect')}
+          description={t('gistExportHint')}
+          footer={(
+            <>
+              <Button variant="ghost" onClick={() => setExportOpen(false)}>{t('cancel')}</Button>
+              <Button variant="primary" disabled={gistBusy || exportSelection.size === 0} onClick={() => runGist('export')}>
+                {gistBusy ? t('backupWorking') : t('gistExportGo')}
+              </Button>
+            </>
+          )}
+        >
+          {exportOptions.length === 0 && <p>{t('gistNoPlugins')}</p>}
+          {exportOptions.length > 0 && (
+            <>
+              <div className={css.backupActions}>
+                <Button size="sm" variant="outline" onClick={() => setExportSelection(new Set(exportOptions))}>{t('gistSelectAll')}</Button>
+                <Button size="sm" variant="outline" onClick={() => setExportSelection(new Set())}>{t('gistSelectNone')}</Button>
+              </div>
+              <div className={css.backupCheckList}>
+                {exportOptions.map(name => (
+                  <label key={name} className={css.backupCheck}>
+                    <input
+                      type="checkbox"
+                      checked={exportSelection.has(name)}
+                      onChange={e => {
+                        const next = new Set(exportSelection)
+                        if (e.currentTarget.checked) next.add(name)
+                        else next.delete(name)
+                        setExportSelection(next)
+                      }}
+                    />
+                    <span className={css.grow}>{name}</span>
+                    {specKind(installed[name]) === 'git' && <span className={`${css.specTag} ${css.specTagGit}`}>git</span>}
+                    {specKind(installed[name]) === 'file' && <span className={`${css.specTag} ${css.specTagFile}`}>{t('gistSpecLocal')}</span>}
+                    <span className={css.spec} title={installed[name]}>{installed[name] ?? t('bundleTag')}</span>
+                  </label>
+                ))}
+              </div>
+              <label className={css.backupCheck}>
+                <input type="checkbox" checked={exportIncludeConfig} onChange={e => setExportIncludeConfig(e.target.checked)} />
+                {t('gistIncludeConfig')}
+              </label>
+              {exportIncludeConfig && <p className={css.backupWarn}>{t('credsWarning')}</p>}
+              {exportError !== null && <p className={css.backupWarn}>{exportError}</p>}
+            </>
+          )}
+        </Modal>
       )}
       {/* Log-export feedback via the Toast primitive — body portal, so it
         never squeezes the subtitle row or the error banner. */}

@@ -41,6 +41,13 @@ export interface Registry {
 /** Profile dependency map: package name → install spec. */
 export type InstalledMap = Record<string, string>
 
+/** Response of the /dsh-market/gist export action. */
+export interface GistExportResult {
+  ok: boolean
+  gistId: string
+  gistUrl: string
+}
+
 /** Per-package update status from /dsh-market/updates. */
 export interface UpdateStatus {
   updateAvailable?: boolean
