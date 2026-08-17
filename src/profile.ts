@@ -94,6 +94,40 @@ export function restoreManifestDeps(profile: string, snapshot: Record<string, st
   return [...touched]
 }
 
+/**
+ * Remove a package from BOTH manifest lists — dependencies and
+ * dsh.profile.bundles. The uninstall counterpart of restoreManifestDeps:
+ * pnpm can fail a remove after deleting node_modules but before saving
+ * package.json (the #65 write-order's mirror image — a file locked mid-
+ * unlink aborts the run), leaving the manifest pointing at a package that
+ * no longer exists on disk. The next boot then fails to activate the ghost
+ * dependency. When disk truth says the package is gone, this finishes the
+ * removal the CLI could not. Every other manifest field is untouched.
+ * @returns true when either list still mentioned the package.
+ */
+export function dropFromManifest(profile: string, name: string, explicitDir?: string): boolean {
+  const file = join(profileDir(profile, explicitDir), 'package.json')
+  let manifest: { dependencies?: Record<string, string>; dsh?: { profile?: { bundles?: string[] } } }
+  try {
+    manifest = JSON.parse(readFileSync(file, 'utf8')) as typeof manifest
+  } catch {
+    return false
+  }
+  let touched = false
+  if (manifest.dependencies !== undefined && manifest.dependencies[name] !== undefined) {
+    delete manifest.dependencies[name]
+    touched = true
+  }
+  const bundles = manifest.dsh?.profile?.bundles
+  if (Array.isArray(bundles) && bundles.includes(name)) {
+    manifest.dsh!.profile!.bundles = bundles.filter(bundle => bundle !== name)
+    touched = true
+  }
+  if (!touched) return false
+  writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`)
+  return true
+}
+
 /** The version actually present in the profile's node_modules, or null. */
 export function readInstalledVersion(profile: string, name: string, explicitDir?: string): string | null {
   try {

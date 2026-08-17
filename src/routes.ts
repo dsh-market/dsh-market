@@ -23,7 +23,7 @@ import {
   BOOT_ID, cancelActive, probePnpm, progress, provisionPnpm, runDshPlugin,
   type PluginCommandRuntime,
 } from './dsh-cli.ts'
-import { hasLoadableEntry, INBOX_BUNDLES, profileDir, readInstalled, readInstalledManifest, readInstalledRepoEvidence, readInstalledVersion, readLockCommits, readManifestDeps, readProfileBundles, restoreManifestDeps, setAllowBuilds } from './profile.ts'
+import { dropFromManifest, hasLoadableEntry, INBOX_BUNDLES, profileDir, readInstalled, readInstalledManifest, readInstalledRepoEvidence, readInstalledVersion, readLockCommits, readManifestDeps, readProfileBundles, restoreManifestDeps, setAllowBuilds } from './profile.ts'
 import { assessProfile, introducedRisks, type CompatibilityRisk } from './compatibility.ts'
 import { runningAgentIds, type AgentsLookup } from './agents.ts'
 import { analyzeProfile } from './check.ts'
@@ -1798,8 +1798,23 @@ export function mountMarketRoutes(
             const cancelled = result.cancelled
             const ok = result.exitCode === 0 && !result.timedOut && !cancelled
             const cancelDiff = cancelled ? changedSince(beforeInstalled) : null
+            // Half-uninstall guard: pnpm can fail a remove AFTER deleting
+            // node_modules but BEFORE saving package.json (#65's write-order
+            // mirror image — a file locked mid-unlink aborts the run). The
+            // manifest would then reference a package that no longer exists,
+            // and the next boot fails to activate the ghost dependency.
+            // Reconcile from disk truth: when the package is gone, finish
+            // the removal the CLI could not; when it is intact, keep the
+            // manifest so the user can simply retry.
+            const halfGone = !ok && !cancelled
+              && !existsSync(join(activeProfileDir, 'node_modules', name, 'package.json'))
+            let reconciled = false
+            if (halfGone) {
+              reconciled = dropFromManifest(config.profile, name, activeProfileDir)
+              logEvent('warn', 'uninstall', `${name}: remove failed (exit ${String(result.exitCode)}) but the package is gone from disk; ${reconciled ? 'reconciled manifest lists to match' : 'manifest lists already clean'}`)
+            }
             let hot = false
-            if (ok) {
+            if (ok || halfGone) {
               invalidateUpdates()
               hot = await hotUnmount(name)
               // Bundle-layer plugins never hot-mount, but their loader entry
@@ -1826,6 +1841,10 @@ export function mountMarketRoutes(
               ok,
               cancelled: cancelled || undefined,
               busy: result.busy || undefined,
+              // A failed remove whose package vanished from disk was
+              // reconciled: the manifest lists match disk truth again, the
+              // removal is final (a retry would 400 on "not installed").
+              reconciled: reconciled || undefined,
               hot,
               partial: cancelDiff?.partial,
               changed: cancelDiff?.changed,
