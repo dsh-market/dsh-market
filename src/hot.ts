@@ -38,6 +38,14 @@ interface HotContext {
 
 const HOT_DIR = '.dsh-market'
 
+/**
+ * Ceiling for one hot-mount activation, env-overridable like the install
+ * timeout in dsh-cli.ts. An activation that exceeds it is treated as wedged
+ * (typically a plugin pending on a service nothing provides) and falls back
+ * to restart activation.
+ */
+const HOT_MOUNT_TIMEOUT_MS = Number(process.env.DSH_MARKET_HOT_MOUNT_TIMEOUT_MS) || 10000
+
 let hotTreeClass: unknown | null | undefined
 
 /**
@@ -239,6 +247,26 @@ let hotSequence = 0
 
 const hotHandles = new Map<string, PluginHandle>()
 
+/** Activation did not settle within HOT_MOUNT_TIMEOUT_MS. */
+class ActivationTimeout extends Error {}
+
+/**
+ * Race an activation awaitable against the hot-mount ceiling. The handlers
+ * stay attached to the original promise, so a late rejection after a timeout
+ * can never surface as an unhandled rejection.
+ */
+function raceActivationTimeout<T>(awaitable: T | Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new ActivationTimeout(`activation did not settle within ${HOT_MOUNT_TIMEOUT_MS / 1000}s — the plugin may be waiting on a service that never arrives`))
+    }, HOT_MOUNT_TIMEOUT_MS)
+    Promise.resolve(awaitable).then(
+      value => { clearTimeout(timer); resolve(value) },
+      error => { clearTimeout(timer); reject(error) },
+    )
+  })
+}
+
 /** Outcome of one hot-mount attempt; `reason` explains non-`ok` results. */
 export interface HotMountResult {
   ok: boolean
@@ -328,7 +356,19 @@ export async function hotMount(ctx: HotContext, profileDir: string, packageName:
       .join('')
     writeFileSync(file, yml)
     const handle = ctx.plugin(HotTree, { path: pathToFileURL(file).href })
-    await handle.await()
+    try {
+      await raceActivationTimeout(handle.await())
+    } catch (error) {
+      if (error instanceof ActivationTimeout) {
+        // A wedged activation would otherwise hold this request open forever:
+        // the route's `finally { installing = false }` never runs, so every
+        // later install/update/uninstall gets 409'd until a host restart.
+        // Unwind the half-mounted subtree best-effort; disposal never blocks
+        // the reply, and the caller falls back to restart activation.
+        try { Promise.resolve(handle.dispose()).catch(() => {}) } catch { /* best effort */ }
+      }
+      throw error
+    }
     hotHandles.set(packageName, handle)
     ctx.logger?.info?.(`[dsh-market] hot-mounted ${packageName}`)
     logEvent('info', 'hot-mount', `${packageName}: live${shimNames.has(packageName) ? ' (client-only shim)' : ''}`)
