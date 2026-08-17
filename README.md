@@ -77,7 +77,7 @@ Live from [awesome-dsh-plugin.com/plugins.json](https://awesome-dsh-plugin.com/p
 
 ### DeepSeek Harness Desktop (hairyf)
 
-[deepseek-harness-desktop](https://github.com/hairyf/deepseek-harness-desktop) — a native desktop app for DeepSeek Harness: one-click local install and launch with no Node.js setup required. On first run it offers to install this plugin market as a recommended preset.
+[deepseek-harness-desktop](https://github.com/hairyf/deepseek-harness-desktop) — a native desktop app for DeepSeek Harness built with **Tauri** (Rust + Web): one-click local install and launch with no Node.js setup required. On first run it offers to install this plugin market as a recommended preset.
 
 ### DSH Get
 

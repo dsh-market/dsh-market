@@ -75,7 +75,7 @@ dsh plugin --profile web add dshmarket
 
 ### DeepSeek Harness Desktop（hairyf）
 
-[deepseek-harness-desktop](https://github.com/hairyf/deepseek-harness-desktop)——DeepSeek Harness 原生桌面客户端：一键本地安装并启动，无需自装 Node.js；首次启动可选择安装本插件市场作为推荐插件。
+[deepseek-harness-desktop](https://github.com/hairyf/deepseek-harness-desktop)——基于 **Tauri**（Rust + Web）构建的 DeepSeek Harness 原生桌面客户端：一键本地安装并启动，无需自装 Node.js；首次启动可选择安装本插件市场作为推荐插件。
 
 ### DSH Get
 
