@@ -1968,6 +1968,17 @@ export function MarketSection(props: MarketSectionProps) {
             if (body.partial === true) setInstallError(t('partialNote'))
             return
           }
+          // Half-uninstall reconcile: the package is gone and the server has
+          // already converged the manifest to disk truth. Refresh so the card
+          // leaves the list instead of luring the user into a retry that
+          // would 400 on "not installed"; the note separates the outcome
+          // (removed, profile synced) from the process (pnpm errored).
+          if (body.reconciled === true) {
+            if (!body.hot) setRemovedCount(n => n + 1)
+            refreshInstalled()
+            setInstallError(t('reconciledNote'))
+            return
+          }
           const text = (v: unknown) => typeof v === 'string' ? v : (v && typeof (v as any).text === 'string') ? (v as any).text : v == null ? '' : JSON.stringify(v)
           setInstallError((text(body.error) || humanOutput(text(body.stderr)) || 'error').trim().slice(-600))
         }
