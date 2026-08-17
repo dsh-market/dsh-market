@@ -1,5 +1,11 @@
-blank_issues_enabled: true
+blank_issues_enabled: false
 contact_links:
-  - name: Plugin catalog submissions / 插件收录
+  - name: 插件收录 / 截图提交 — Plugin catalog & screenshots
     url: https://github.com/awesome-dsh-plugin/awesome-dsh-plugin
-    about: To list your plugin (or theme) in the market, PR the curated list. / 想让插件/主题出现在市场里，请向精选列表提 PR。
+    about: 想让插件、主题出现在市场里，或提交插件截图，请到精选列表仓库提 PR，本仓库不收。/ Plugin, theme and screenshot submissions go to the curated catalog repo — not here.
+  - name: 我的插件装不上 / My own plugin fails to install
+    url: https://github.com/dsh-market/dsh-market/issues/136
+    about: 常见原因是插件自身没附带构建产物（声明了 main 却没提交 lib/），见此例。/ Usually the plugin ships no build artifact — see this example before filing.
+  - name: 桌面端相关问题 / Desktop-specific problems
+    url: https://github.com/dsh-market/dsh-market/blob/main/README.md
+    about: 桌面端需要市场 ≥1.6.0 且宿主 DSH ≥0.1.0-rc.6；没有菜单项通常是宿主版本过旧。/ Desktop needs market ≥1.6.0 and a host DSH ≥0.1.0-rc.6; a missing menu entry usually means the host is too old.

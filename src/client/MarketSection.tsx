@@ -389,6 +389,12 @@ export function MarketSection(props: MarketSectionProps) {
   const [removedCount, setRemovedCount] = useState(0)
   /** Toggles whose live fiber did not follow the switch — restart to apply. */
   const [toggleRestart, setToggleRestart] = useState(0)
+  /**
+   * Dismissal of the host-reported restart notice, keyed to the current boot
+   * so it reappears after a restart that did not happen and after any new
+   * change. sessionStorage, not local: closing the tab is a fresh start.
+   */
+  const [restartNoticeDismissed, setRestartNoticeDismissed] = useState(false)
   /** Client-part plugins toggled this session — their UI needs a refresh. */
   const [refreshNames, setRefreshNames] = useState<string[]>([])
   const [envReady, setEnvReady] = useState(true)
@@ -505,7 +511,15 @@ export function MarketSection(props: MarketSectionProps) {
       .then(res => res.json())
       .then(status => {
         setEnvReady(status.pnpm !== false)
-        if (typeof status.boot === 'string') setBootId(status.boot)
+        if (typeof status.boot === 'string') {
+          setBootId(status.boot)
+          // A dismissal only silences the notice for the boot it was made
+          // in: if the user dismissed instead of restarting, the next boot
+          // (or a stale dismissal from a previous one) shows it again.
+          try {
+            setRestartNoticeDismissed(sessionStorage.getItem('dshm-restart-dismissed') === status.boot)
+          } catch { /* storage unavailable */ }
+        }
         setRestartEnabled(status.restart === true)
       })
       .catch(() => {})
@@ -1306,7 +1320,20 @@ export function MarketSection(props: MarketSectionProps) {
     if (Date.now() - last >= 24 * 60 * 60 * 1000) runWebdav('backup')
   }, [autoBackup, runWebdav, webdavUrl, webdavUser])
 
-  const pendingRestart = doneUrls.length + updatedNames.length + removedCount + toggleRestart + (backupRestored ? 1 : 0)
+  const sessionPendingRestart = doneUrls.length + updatedNames.length + removedCount + toggleRestart + (backupRestored ? 1 : 0)
+  /**
+   * Plugins the HOST reports as restart-pending, independent of what this
+   * browser session happens to remember. Installing and then reloading the
+   * page used to leave no restart affordance at all: the banner is built
+   * from session state, while the Installed tab only says "activates on
+   * restart" in passing — so the user was told a restart was needed and
+   * given nothing to press. Dismissible, because a standing banner nobody
+   * wants to act on right now is just noise (it returns next session, or
+   * as soon as another change lands).
+   */
+  const hostPendingNames = Object.keys(activations).filter(name => activations[name]?.state === 'restart')
+  const showHostPending = hostPendingNames.length > 0 && !restartNoticeDismissed && sessionPendingRestart === 0
+  const pendingRestart = sessionPendingRestart > 0 ? sessionPendingRestart : (showHostPending ? hostPendingNames.length : 0)
   const displayedInstalled = pendingBackup === null ? installed : { ...pendingDependencies, ...installed }
   const missingRestoreCount = Object.keys(pendingDependencies).filter(name => !installedFiles.includes(name)).length
   const hasUpdates = Object.keys(installed).some(
@@ -1699,6 +1726,20 @@ export function MarketSection(props: MarketSectionProps) {
                 disabled={restarting || hostBusy || busyUrl !== null || updatingName !== null || removingName !== null}
                 onClick={doRestart}
               >{restarting ? t('restarting') : t('restartNow')}</Button>
+            )}
+            {/* Only the standing host-reported notice is dismissible: a
+                banner for something you just did in this session should not
+                be swipeable away mid-flow. */}
+            {showHostPending && (
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label={t('dismissNotice')}
+                onClick={() => {
+                  setRestartNoticeDismissed(true)
+                  try { sessionStorage.setItem('dshm-restart-dismissed', String(bootId ?? '')) } catch { /* storage unavailable */ }
+                }}
+              >{t('dismiss')}</Button>
             )}
           </div>
         )}

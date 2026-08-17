@@ -1185,3 +1185,51 @@ describe('lost install response (#100)', () => {
     }
   })
 })
+
+describe('standing restart notice for host-reported pending plugins', () => {
+  function stubWithActivation(boot: string) {
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      const path = String(url).split('?')[0]
+      const installed = { 'dsh-loop': '^1.0.0' }
+      const payload =
+        path === '/dsh-market/registry' ? { source: 'snapshot', registry: REGISTRY }
+        : path === '/dsh-market/installed' ? {
+            profile: 'web', installed, live: [],
+            // The host says: installed, will activate on restart.
+            activation: { 'dsh-loop': { state: 'restart', reasons: ['in the bundle layer'], bundle: true, hot: false } },
+          }
+        : path === '/dsh-market/status' ? { active: false, busy: false, pnpm: true, boot, restart: true, installed }
+        : path === '/dsh-market/updates' ? { updates: {} }
+        : null
+      if (payload === null) return Promise.reject(new Error(`unstubbed fetch: ${String(url)}`))
+      return Promise.resolve(new Response(JSON.stringify(payload), { status: 200 }))
+    }))
+  }
+
+  it('shows the notice after a reload with no session memory, and can be dismissed', async () => {
+    // The gap this closes: install, reload, and the page told you a restart
+    // was needed while offering nothing to press.
+    stubWithActivation('boot-1')
+    render(<MarketSection {...props()} />)
+    await waitFor(() => { expect(screen.getAllByText(re(en.restartBanner)).length).toBeGreaterThan(0) })
+    expect(screen.getByRole('button', { name: en.restartNow })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: en.dismissNotice }))
+    await waitFor(() => { expect(screen.queryAllByText(re(en.restartBanner)).length).toBe(0) })
+    expect(sessionStorage.getItem('dshm-restart-dismissed')).toBe('boot-1')
+  })
+
+  it('reappears on the next boot, because the restart never happened', async () => {
+    sessionStorage.setItem('dshm-restart-dismissed', 'boot-1')
+    stubWithActivation('boot-2')
+    render(<MarketSection {...props()} />)
+    await waitFor(() => { expect(screen.getAllByText(re(en.restartBanner)).length).toBeGreaterThan(0) })
+  })
+
+  it('stays quiet when nothing is pending', async () => {
+    stubFetch()
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    expect(screen.queryAllByText(re(en.restartBanner)).length).toBe(0)
+  })
+})
