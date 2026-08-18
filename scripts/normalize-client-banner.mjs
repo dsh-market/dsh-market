@@ -15,9 +15,17 @@
  *    in a region comment and shipped to npm. Besides leaking the path, it
  *    makes every contributor's artifact diff churn. Rewrite it to a stable
  *    repo-relative form.
+ * 3. The CSS module's class map is emitted in an UNSTABLE key order — two
+ *    consecutive builds of identical source differ by ~265 lines. `prepare`
+ *    runs the build on a plain `npm install`, so every contributor's working
+ *    tree acquires that diff without touching anything, and three open PRs
+ *    carry it. Sort the map by key; object key order has no effect on
+ *    behaviour, and sorting preserves the line COUNT so the sourcemap's line
+ *    numbers stay valid, exactly as the banner fold above relies on.
  */
 import fs from 'node:fs'
 import path from 'node:path'
+import { sortClassMaps } from './sort-class-maps.mjs'
 
 const file = 'client/client.js'
 const name = JSON.parse(fs.readFileSync('package.json', 'utf8')).name
@@ -62,5 +70,9 @@ if (leaks.length > 0) {
   process.exit(1)
 }
 
+// --- 3. deterministic CSS class-map order ---------------------------------
+const { code: ordered, sorted } = sortClassMaps(code)
+code = ordered
+
 fs.writeFileSync(file, code)
-console.log(`normalize-client-banner ok: ${file}${before === code ? '' : ' (paths normalized)'}`)
+console.log(`normalize-client-banner ok: ${file}${before === code ? '' : ' (paths normalized)'}${sorted > 0 ? ` (${sorted} class-map keys sorted)` : ''}`)
