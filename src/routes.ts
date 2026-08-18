@@ -98,6 +98,30 @@ export function marketVersion(): string {
 }
 
 /**
+ * Which release channel applies right now.
+ *
+ * A choice on record always wins — including "stable" while a beta build is
+ * running, which is the only way back off the channel. Only the ABSENCE of a
+ * choice is derived, and then from what is actually running: installing
+ * `dshmarket@beta` by hand IS the subscription, and treating that as
+ * "stable" costs updates rather than just clarity — on the stable channel
+ * `latest` (1.13.1) is not newer than an installed 1.14.0-beta.1, so the
+ * market answers "up to date" and the next beta is never offered.
+ *
+ * Which makes `undefined` load-bearing: it has to survive both the settings
+ * schema (no `.default`) and state.json (field omitted) or "never chose"
+ * silently becomes "chose stable".
+ */
+export function resolveChannel(setting: 'stable' | 'beta' | undefined, version: string): 'stable' | 'beta' {
+  if (setting !== undefined) return setting
+  return version.includes('-') ? 'beta' : 'stable'
+}
+
+function activeChannel(config: MarketConfig): 'stable' | 'beta' {
+  return resolveChannel(config.channel, marketVersion())
+}
+
+/**
  * Whether an installed package declares a client part (`dsh.client`). Its UI
  * is injected into the page, so toggling it needs a browser refresh to show
  * the change — the install flow prompts the same way via the hot banner.
@@ -161,6 +185,9 @@ export function mountMarketRoutes(
   const disabled = marketState.disabled
   const groups = marketState.groups
   const groupOrder = marketState.groupOrder
+  // A choice made in a previous session outranks whatever the entry layer
+  // composed, which is only ever a default.
+  if (marketState.channel !== undefined) config.channel = marketState.channel
   const themes = createThemeManager(host, config.profile, disabled, activeProfileDir)
 
   // Client-only packages (dsh.client without dsh.bundle) are invisible to the
@@ -984,7 +1011,7 @@ export function mountMarketRoutes(
           boot: BOOT_ID,
           // Shown in the page heading so screenshots carry it (#159).
           version: marketVersion(),
-          channel: config.channel === 'beta' ? 'beta' : 'stable',
+          channel: activeChannel(config),
           restart: restartAllowed(config),
           installed: readInstalled(config.profile, activeProfileDir),
         })
@@ -1030,7 +1057,7 @@ export function mountMarketRoutes(
           // MarketSettings.channel): a user opting into betas is volunteering
           // to try THIS plugin early, not to be handed every other author's
           // unreleased work.
-          const betaFor = config.channel === 'beta'
+          const betaFor = activeChannel(config) === 'beta'
             ? new Set(Object.keys(readInstalled(config.profile, activeProfileDir)).filter(name => name === 'dshmarket' || name === 'dsh-market'))
             : new Set<string>()
           sendJson(response, 200, { updates: await checkUpdates(config.profile, force, activeProfileDir, betaFor) })
@@ -1074,7 +1101,7 @@ export function mountMarketRoutes(
             // `@latest` was hardcoded, so a beta subscriber would have been
             // told an update existed and then handed the stable build. The
             // dist-tag has to follow the same setting the offer came from.
-            const selfOnBeta = config.channel === 'beta' && (name === 'dshmarket' || name === 'dsh-market')
+            const selfOnBeta = activeChannel(config) === 'beta' && (name === 'dshmarket' || name === 'dsh-market')
             const target = isGit ? spec.replace(/#.*$/, '') : `${name}@${selfOnBeta ? 'beta' : 'latest'}`
             // Never let `@latest` walk a profile BACKWARDS (#64 by @ZeroOrigin64):
             // a package whose latest dist-tag was left on an older release turns
@@ -1277,6 +1304,11 @@ export function mountMarketRoutes(
             return
           }
           config.channel = body.channel
+          // Persisted with the market's own durable state, so the choice
+          // survives a restart — a setting that forgets is a setting the
+          // user has to make again every boot.
+          marketState.channel = body.channel
+          writeMarketState(activeProfileDir, marketState)
           // The cached listing was computed for the old channel, so the very
           // next check would answer for a setting that no longer applies.
           invalidateUpdates()

@@ -82,6 +82,62 @@ describe('market state.json (#60)', () => {
       rmSync(dir, { recursive: true, force: true })
     }
   })
+
+  it('remembers the release channel the user picked, in both directions', () => {
+    // "用户选完之后,应该就要记住用户上次选的". Round-tripped through the
+    // real file because the route-level spec runs against a stand-in, and a
+    // stand-in cannot vouch for the writer it stands in for.
+    const dir = stateDir()
+    try {
+      const base = { disabled: new Set(['dsh-loop']), groups: { work: ['dsh-loop'] }, groupOrder: ['work'] }
+      writeMarketState(dir, { ...base, channel: 'beta' })
+      expect(readRaw(dir).channel).toBe('beta')
+      expect(readMarketState(dir).channel).toBe('beta')
+
+      // The way back off the channel has to persist as a CHOICE. Left to
+      // derivation a prerelease build re-reads as 'beta' every boot, so a
+      // writer that only recorded the interesting-looking value would strand
+      // the user on the channel they just left.
+      writeMarketState(dir, { ...base, channel: 'stable' })
+      expect(readRaw(dir).channel).toBe('stable')
+      expect(readMarketState(dir).channel).toBe('stable')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('records no channel at all until one is chosen', () => {
+    // Absent has to stay absent through a round trip: it is what lets the
+    // channel derive from the running build, so hand-installing a
+    // prerelease lands on beta without a second step. Persisting a
+    // stand-in 'stable' here would silently answer the question for the
+    // user and then claim they had answered it.
+    const dir = stateDir()
+    try {
+      writeMarketState(dir, { disabled: new Set(), groups: {}, groupOrder: [] })
+      expect('channel' in readRaw(dir)).toBe(false)
+      expect(readMarketState(dir).channel).toBeUndefined()
+
+      // ...and a junk value on disk is not a choice either.
+      writeFileSync(join(dir, '.dsh-market', 'state.json'), JSON.stringify({ channel: 'nightly' }))
+      expect(readMarketState(dir).channel).toBeUndefined()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('a disable toggle does not forget the channel', () => {
+    // writeDisabled re-reads, mutates one field and writes the whole file
+    // back. Every field it fails to carry is erased by an unrelated click.
+    const dir = stateDir()
+    try {
+      writeMarketState(dir, { disabled: new Set(), groups: {}, groupOrder: [], channel: 'beta' })
+      writeDisabled(dir, new Set(['theme-a']))
+      expect(readMarketState(dir).channel).toBe('beta')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('group CRUD (groups.ts)', () => {

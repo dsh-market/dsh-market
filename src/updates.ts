@@ -4,6 +4,7 @@
  * dist-tag for registry installs — with a TTL cache.
  */
 
+import { marketFetch } from './net.ts'
 import { profileDir, readInstalled, readInstalledVersion, readLockCommits } from './profile.ts'
 
 export interface UpdateStatus {
@@ -76,9 +77,12 @@ export function invalidateUpdates(): void {
 }
 
 async function fetchJson(url: string): Promise<unknown> {
-  const res = await fetch(url, {
+  // Through the proxy when one is configured: Node's global fetch ignores
+  // HTTP_PROXY, so on a machine whose route out is a local proxy every
+  // update check silently took the slow path — or none at all.
+  const res = await marketFetch(url, {
     headers: { accept: 'application/json', 'user-agent': 'dsh-market' },
-    signal: AbortSignal.timeout(4000),
+    signal: AbortSignal.timeout(10_000),
   })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json() as unknown

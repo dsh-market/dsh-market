@@ -1,10 +1,10 @@
 /**
- * Registry access: fetch the curated list from awesome-dsh-plugin.com with an
- * in-memory cache, falling back to the bundled snapshot when offline.
+ * Registry access: the curated list from awesome-dsh-plugin.com, fetched
+ * fresh on every request. See `loadRegistry` for why there is nothing
+ * behind it any more.
  */
 
-import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
+import { configuredProxy, marketFetch } from './net.ts'
 
 export interface RegistryPlugin {
   name: string
@@ -45,7 +45,6 @@ export interface Registry {
  * changes is WHICH list is curated, never WHETHER the check runs.
  */
 const REGISTRY_URL = process.env.DSHM_REGISTRY_URL ?? 'https://awesome-dsh-plugin.com/plugins.json'
-const TTL_MS = 60 * 60 * 1000
 
 /**
  * How long to wait for the catalog.
@@ -76,9 +75,43 @@ const FETCH_TIMEOUT_MS = 15_000
  * @throws when the catalog cannot be fetched or does not look like one.
  */
 export async function loadRegistry(): Promise<Registry> {
-  const res = await fetch(REGISTRY_URL, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  const data = (await res.json()) as Registry
-  if (!Array.isArray(data.plugins) || data.plugins.length === 0) throw new Error('the catalog came back empty')
-  return data
+  const started = Date.now()
+  let last: unknown
+  // Two attempts. A catalog fetch crossing a long, lossy path fails
+  // transiently often enough that one retry is worth more than the second
+  // or two it costs — and with nothing behind this call any more, a
+  // transient failure is a market with no plugins in it.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await marketFetch(REGISTRY_URL, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) })
+      if (!res.ok) throw new Error(`HTTP ${String(res.status)}`)
+      const data = (await res.json()) as Registry
+      if (!Array.isArray(data.plugins) || data.plugins.length === 0) throw new Error('the catalog came back empty')
+      return data
+    } catch (error) {
+      last = error
+    }
+  }
+  throw new Error(describeFetchFailure(last, Date.now() - started))
+}
+
+/**
+ * A catalog failure with the facts needed to classify it, in the message
+ * itself.
+ *
+ * The market shows this string and the log export carries it, so it is the
+ * whole of what a bug report will contain. "The operation was aborted due to
+ * timeout" alone cannot distinguish a slow link from a blocked one from a
+ * proxy this process cannot use — and Node's `fetch` ignores HTTP_PROXY
+ * entirely (measured on Node 25), so a machine whose only route out is a
+ * proxy fails here every time while every other tool on it works.
+ */
+export function describeFetchFailure(error: unknown, elapsedMs: number): string {
+  const reason = error instanceof Error ? error.message : String(error)
+  const proxy = configuredProxy()
+  const parts = [`${reason} (${String(Math.round(elapsedMs / 1000))}s, 2 attempts)`]
+  if (proxy !== null) {
+    parts.push(`tried through the configured proxy ${proxy.replace(/\/\/[^@]*@/u, '//***@')}`)
+  }
+  return parts.join(' · ')
 }

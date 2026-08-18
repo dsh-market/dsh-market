@@ -197,6 +197,8 @@ const hot = vi.hoisted(() => ({
   disabled: new Set<string>(),
   groups: {} as Record<string, string[]>,
   groupOrder: [] as string[],
+  /** Stands in for the channel line of state.json; undefined = never chosen. */
+  channel: undefined as 'stable' | 'beta' | undefined,
   failNext: false,
 }))
 vi.mock('../src/hot.ts', () => ({
@@ -205,11 +207,16 @@ vi.mock('../src/hot.ts', () => ({
   writeDisabledThemes: (_dir: string, set: Set<string>) => { hot.disabled = new Set(set) },
   readDisabled: () => hot.disabled,
   writeDisabled: (_dir: string, set: Set<string>) => { hot.disabled = new Set(set) },
-  readMarketState: () => ({ disabled: hot.disabled, groups: hot.groups, groupOrder: hot.groupOrder }),
-  writeMarketState: (_dir: string, state: { disabled: Set<string>; groups: Record<string, string[]>; groupOrder: string[] }) => {
+  readMarketState: () => ({ disabled: hot.disabled, groups: hot.groups, groupOrder: hot.groupOrder, channel: hot.channel }),
+  // Carries `channel` because the real one does. A stand-in that silently
+  // drops a field cannot fail when the code under test forgets to persist
+  // it — which is exactly how the channel choice reached this suite with
+  // zero coverage while four route tests passed.
+  writeMarketState: (_dir: string, state: { disabled: Set<string>; groups: Record<string, string[]>; groupOrder: string[]; channel?: 'stable' | 'beta' }) => {
     hot.disabled = new Set(state.disabled)
     hot.groups = state.groups
     hot.groupOrder = state.groupOrder
+    hot.channel = state.channel
   },
   listHotMounts: () => [...hot.mounts],
   hotMount: (_ctx: unknown, _dir: string, name: string) => {
@@ -365,6 +372,7 @@ beforeEach(() => {
   hot.disabled = new Set()
   hot.groups = {}
   hot.groupOrder = []
+  hot.channel = undefined
   hot.failNext = false
   bed = createTestbed()
 })
@@ -1000,6 +1008,11 @@ describe('duplicate alias guard (#27)', () => {
 
 describe('market self-update', () => {
   it('the market updates itself through the same flow', async () => {
+    // Pin the channel: with no choice on record it is derived from the
+    // RUNNING build, and this repo carries a prerelease version while a beta
+    // is in flight — which would send this test down the beta dist-tag it
+    // has no fixture for. The channel's own behaviour is covered separately.
+    await bed.dispatch('POST', '/dsh-market/channel', { channel: 'stable' })
     fake.npm['dshmarket'] = { latest: '1.0.3', versions: { '1.0.3': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } } }
     await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/dsh-market/dsh-market' })
     fake.npm['dshmarket'].latest = '1.2.3'
@@ -1655,17 +1668,20 @@ describe('release channel', () => {
     expect((await bed.dispatch('POST', '/dsh-market/channel', { channel: 'beta' }, { crossOrigin: true })).status).toBe(403)
   })
 
-  it('takes effect on the next check rather than after the cache expires', async () => {
+  it('round-trips the setting', async () => {
+    // /status reports the ACTIVE channel, which a prerelease build forces to
+    // beta whatever the setting says — so the round-trip is asserted on the
+    // setting itself here, and the derivation is covered by resolveChannel's
+    // own spec. Asserting /status against a literal would tie this test to
+    // whatever version the repo happens to carry today.
     const set = await bed.dispatch('POST', '/dsh-market/channel', { channel: 'beta' })
     expect(set.status).toBe(200)
     expect(set.json.channel).toBe('beta')
-    // /status is what the card reads back, so a setting it cannot see is a
-    // setting the user will think did nothing.
     expect((await bed.dispatch('GET', '/dsh-market/status')).json.channel).toBe('beta')
 
     const back = await bed.dispatch('POST', '/dsh-market/channel', { channel: 'stable' })
     expect(back.status).toBe(200)
-    expect((await bed.dispatch('GET', '/dsh-market/status')).json.channel).toBe('stable')
+    expect(back.json.channel).toBe('stable')
   })
 
   it('installs from the channel it offered from, not from latest', async () => {
@@ -1726,5 +1742,64 @@ describe('catalog: one source, and a failure says so', () => {
     expect(failed.status).toBe(502)
     expect(String(failed.json.error)).toContain('ENOTFOUND')
     expect(failed.json.registry, 'a failed catalog fetch must not carry data').toBeUndefined()
+  })
+})
+
+describe('resolveChannel', () => {
+  it('treats a prerelease BUILD as the beta channel, whatever the setting says', async () => {
+    // Reported while running 1.14.0-beta.1: the card showed "稳定版" selected,
+    // because the build had been installed by hand with @beta and the setting
+    // was never touched. That is not only confusing — it costs updates. On
+    // the stable channel `latest` (1.13.1) is not newer than an installed
+    // 1.14.0-beta.1, so the market answers "up to date" and the NEXT beta is
+    // never offered. Installing a beta IS the subscription.
+    const { resolveChannel } = await import('../src/routes.ts')
+    expect(resolveChannel(undefined, '1.14.0-beta.1')).toBe('beta')
+    // ...but a choice ON RECORD wins, including choosing stable while a beta
+    // runs — that is the only way back off the channel, and a setting the
+    // user cannot un-set is not a setting.
+    expect(resolveChannel('stable', '1.14.0-beta.1')).toBe('stable')
+    // An explicit opt-in still works on a stable build.
+    expect(resolveChannel('beta', '1.13.1')).toBe('beta')
+    expect(resolveChannel('stable', '1.13.1')).toBe('stable')
+    expect(resolveChannel(undefined, '1.13.1')).toBe('stable')
+  })
+})
+
+describe('the channel choice survives a restart', () => {
+  it('is written down, not just held in memory', async () => {
+    // The route used to mutate the in-memory config only, so the choice
+    // lived exactly as long as the process — and no test noticed, because
+    // every assertion queried the same instance that had just been told.
+    expect(hot.channel).toBeUndefined()
+    expect((await bed.dispatch('POST', '/dsh-market/channel', { channel: 'beta' })).status).toBe(200)
+    expect(hot.channel, 'the choice never reached durable state').toBe('beta')
+  })
+
+  it('is read back by a freshly mounted market', async () => {
+    // 'stable' is the load-bearing direction, and deliberately so: this
+    // build is a prerelease (1.14.0-beta.1), so a market that persisted
+    // NOTHING would still answer 'beta' on the way in — derived from the
+    // running version. Only the way back off the channel can tell a
+    // remembered choice from a re-derived one.
+    expect((await bed.dispatch('POST', '/dsh-market/channel', { channel: 'stable' })).status).toBe(200)
+
+    // A second market over the same profile state: this is what a restart
+    // looks like from the state file's point of view.
+    const restarted = createTestbed({ profile: 'web' })
+    try {
+      expect((await restarted.dispatch('GET', '/dsh-market/status')).json.channel).toBe('stable')
+    } finally { restarted.dispose() }
+  })
+
+  it('leaves the channel derived from the build until the user picks one', async () => {
+    // Absent is not 'stable'. Installing a prerelease by hand should land
+    // on the beta channel with no second step — that is what makes the
+    // setting a memory of a CHOICE rather than a default with extra steps.
+    const fresh = createTestbed({ profile: 'web' })
+    try {
+      expect(hot.channel).toBeUndefined()
+      expect((await fresh.dispatch('GET', '/dsh-market/status')).json.channel).toBe('beta')
+    } finally { fresh.dispose() }
   })
 })

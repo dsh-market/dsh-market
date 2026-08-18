@@ -167,6 +167,16 @@ export interface MarketState {
   groups: Record<string, string[]>
   /** Display order of group names; "ungrouped" is implicit and never listed. */
   groupOrder: string[]
+  /**
+   * The release channel the user PICKED, absent until they pick one.
+   *
+   * Absent is not the same as 'stable': with no choice on record the channel
+   * is derived from the running build, so installing a prerelease by hand
+   * puts you on the beta channel without a second step. Once chosen, the
+   * choice is the answer — including "stable" while a beta is running, which
+   * is how someone gets back off the channel.
+   */
+  channel?: 'stable' | 'beta'
 }
 
 /** Unique non-empty strings in `value`, order preserved. */
@@ -194,6 +204,7 @@ export function readMarketState(profileDir: string): MarketState {
       disabledSkins?: unknown
       groups?: unknown
       groupOrder?: unknown
+      channel?: unknown
     }
     const disabled = uniqueStrings(state.disabled !== undefined ? state.disabled : state.disabledSkins)
     const groups: Record<string, string[]> = {}
@@ -206,6 +217,7 @@ export function readMarketState(profileDir: string): MarketState {
       disabled: new Set(disabled),
       groups,
       groupOrder: uniqueStrings(state.groupOrder),
+      channel: state.channel === 'beta' || state.channel === 'stable' ? state.channel : undefined,
     }
   } catch {
     return { disabled: new Set(), groups: {}, groupOrder: [] }
@@ -219,6 +231,9 @@ export function writeMarketState(profileDir: string, state: MarketState): void {
     disabled: [...state.disabled],
     groups: state.groups,
     groupOrder: state.groupOrder,
+    // Omitted while unchosen, so "never picked" survives a round trip and
+    // keeps deriving from the running build.
+    ...(state.channel === undefined ? {} : { channel: state.channel }),
   }))
 }
 

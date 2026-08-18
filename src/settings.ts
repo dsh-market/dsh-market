@@ -30,7 +30,7 @@ export const MARKET_SETTINGS_NS = settingsNamespace('dsh-market')
 /** The market settings a user may edit at runtime. */
 export interface MarketSettings {
   allowRestart: boolean
-  channel: 'stable' | 'beta'
+  channel?: 'stable' | 'beta'
 }
 
 export const MarketSettings: z<MarketSettings> = z.object({
@@ -43,7 +43,10 @@ export const MarketSettings: z<MarketSettings> = z.object({
    * about the market. Someone opting into betas is volunteering to try this
    * plugin early, not to change what every author ships them.
    */
-  channel: z.union([z.const('stable'), z.const('beta')]).default('stable'),
+  // No default on purpose. "Never chosen" has to survive as absent, or it
+  // reads as "chose stable" and a hand-installed prerelease could never
+  // derive its own channel — see resolveChannel.
+  channel: z.union([z.const('stable'), z.const('beta')]),
 })
 
 /**
@@ -62,7 +65,7 @@ export function installMarketSettings(ctx: Context, resolved: { allowRestart?: b
   // `!== false` is the routes' own reading: an absent value allows restart,
   // so the entry layer this registers must say the same thing rather than
   // presenting "unset" as "off".
-  const entry = { allowRestart: resolved.allowRestart !== false, channel: resolved.channel ?? 'stable' as const }
+  const entry = { allowRestart: resolved.allowRestart !== false, channel: resolved.channel }
   let source = (): MarketSettings => entry
   installSettingsSection(
     ctx,
