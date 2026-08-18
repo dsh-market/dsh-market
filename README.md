@@ -17,10 +17,6 @@ One-click themes — install, switch live, no restart:
 
 ![Themes tab](assets/themes-en.png)
 
-On dsh 0.1.0-rc.7 and newer the market puts its own option where the host keeps every other plugin's — no YAML:
-
-![Settings card](assets/settings-en.png)
-
 ## Install
 
 ```sh

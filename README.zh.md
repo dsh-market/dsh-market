@@ -17,10 +17,6 @@
 
 ![主题](assets/themes-zh.png)
 
-dsh 0.1.0-rc.7 起，市场自己的选项也放在宿主统一管理插件配置的地方——不用改 YAML：
-
-![设置卡片](assets/settings-zh.png)
-
 ## 安装
 
 ```sh
