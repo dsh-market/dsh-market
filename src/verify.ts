@@ -271,15 +271,39 @@ export function verifyActivation(
  * Only a plugin that was ALREADY live is affected. One that was missing,
  * broken or disabled beforehand has nothing loaded to shadow the new build,
  * so its fresh mount really does run the new code.
+ *
+ * Client-only packages are excluded for the same reason from the other end:
+ * they have no host half to go stale, and the browser fetches their bundle
+ * from disk on the next page load. Telling their users to restart would be
+ * #156 again, in a narrower place — see `hasHostHalf`.
  * @param result the verdict computed from the loader inventory
- * @param wasLive whether the plugin was live BEFORE the files were replaced
+ * @param hostHalfWasLive whether a HOST half was live BEFORE the replacement
  */
-export function activationAfterReplace(result: ActivationResult, wasLive: boolean): ActivationResult {
-  if (!wasLive || result.state !== 'live') return result
+export function activationAfterReplace(result: ActivationResult, hostHalfWasLive: boolean): ActivationResult {
+  if (!hostHalfWasLive || result.state !== 'live') return result
   return {
     ...result,
     state: 'restart',
     hot: false,
     reasons: ['新版本已就位,但运行中的进程仍在使用启动时加载的旧模块——重启后生效(页面本身会立即变成新版,服务端不会) / the new build is in place, but the running process still serves the module it imported at boot — restart to apply (the page itself updates immediately; the server half does not)'],
   }
+}
+
+/**
+ * Whether a package has a host (Node) half at all.
+ *
+ * A `dsh.client`-only package — themes, skins, most pure-UI plugins — runs
+ * no server code: the market shim-mounts it so the loader has a live row,
+ * and the browser re-fetches its bundle from disk on the next page load. An
+ * update to one takes effect on refresh, with no restart to ask for.
+ */
+export function hasHostHalf(profile: string, name: string, explicitDir?: string): boolean {
+  const dsh = readPkgDsh(profile, name, explicitDir)
+  if (dsh === null) return false
+  // Only a DEFINITE client-only package is excluded — the same test
+  // verifyActivation uses for its own verdict. Testing `dsh.bundle` on its
+  // own would read a package that declares neither key (`"dsh": {}`, which
+  // the bundle layer still loads) as client-only, and quietly disable the
+  // correction for it.
+  return !(dsh.bundle === undefined && dsh.client !== undefined)
 }

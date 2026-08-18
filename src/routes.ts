@@ -33,7 +33,7 @@ import { checkUpdates, fetchNpmLatest, invalidateUpdates, isUpgrade, latestPubli
 import { createThemeManager, type LoaderEntry } from './themes.ts'
 import { readJsonBody, sameOrigin, sendJson } from './http.ts'
 import { restartAllowed, scheduleRestart, trustedRestartRequest, trustedDownloadRequest } from './restart.ts'
-import { activationAfterReplace, verifyActivation } from './verify.ts'
+import { activationAfterReplace, hasHostHalf, verifyActivation } from './verify.ts'
 import {
   disableRow, enableRow, findUserPatchPath, isProtectedModule, packagePatchFlags,
   readUserPatchState, removeRowBlocks, rowIdsForPackage,
@@ -1074,7 +1074,11 @@ export function mountMarketRoutes(
             // Captured BEFORE pnpm replaces the files: afterwards the loader
             // inventory reads exactly the same, because replacing a package
             // on disk does not unload the module the process already imported.
+            // A client-only package has no host half to go stale: its bundle
+            // is re-fetched from disk on the next page load, so an update to
+            // one needs a refresh, not a restart.
             const wasLive = verifyActivation(config.profile, name, liveNames(), activeProfileDir, disabled.has(name)).state === 'live'
+              && hasHostHalf(config.profile, name, activeProfileDir)
             const beforeVersion = readInstalledVersion(config.profile, name, activeProfileDir)
             const beforeCommit = repoKey !== null
               ? readLockCommits(config.profile, activeProfileDir).get(repoKey) ?? null

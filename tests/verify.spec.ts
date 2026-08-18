@@ -236,3 +236,34 @@ describe('activationAfterReplace (post-update verdict)', () => {
     }
   })
 })
+
+describe('hasHostHalf (client-only updates need a refresh, not a restart)', () => {
+  it('is false for a dsh.client package with no dsh.bundle', async () => {
+    // Themes and skins. The market shim-mounts them so the loader has a live
+    // row, but no server code runs — the browser re-fetches their bundle from
+    // disk on the next page load. Asking these users to restart would repeat
+    // #156 in a narrower place.
+    const { hasHostHalf } = await import('../src/verify.ts')
+    const dir = mkdtempSync(join(tmpdir(), 'dshm-hosthalf-'))
+    const pkg = join(dir, 'node_modules', 'theme-only')
+    mkdirSync(pkg, { recursive: true })
+    writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name: 'theme-only', dsh: { client: 'client/client.js' } }))
+    expect(hasHostHalf('web', 'theme-only', dir)).toBe(false)
+
+    const both = join(dir, 'node_modules', 'has-host')
+    mkdirSync(both, { recursive: true })
+    writeFileSync(join(both, 'package.json'), JSON.stringify({ name: 'has-host', dsh: { bundle: 'lib/index.js', client: 'client/client.js' } }))
+    expect(hasHostHalf('web', 'has-host', dir)).toBe(true)
+
+    // A package declaring NEITHER key still loads through the bundle layer,
+    // so it has a host half. Reading `dsh.bundle` alone would call this one
+    // client-only and silently switch the correction off for it.
+    const neither = join(dir, 'node_modules', 'bare')
+    mkdirSync(neither, { recursive: true })
+    writeFileSync(join(neither, 'package.json'), JSON.stringify({ name: 'bare', dsh: {} }))
+    expect(hasHostHalf('web', 'bare', dir)).toBe(true)
+
+    // A package that is not installed cannot have a stale host half either.
+    expect(hasHostHalf('web', 'absent', dir)).toBe(false)
+  })
+})
