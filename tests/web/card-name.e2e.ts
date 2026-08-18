@@ -40,13 +40,17 @@ describe.skipIf(!dshAvailable())('web e2e: card header', () => {
     // against what it is — no dependence on driving the search box.
     let found: { shown: string; identity: string } | null = null
     for (let page_ = 1; page_ <= 12 && found === null; page_++) {
-      found = await page.evaluate(() => {
-        for (const el of document.querySelectorAll('[class*="grid"] [class*="nm"]')) {
-          const identity = el.getAttribute('title') ?? ''
-          if (identity.includes('#')) return { shown: (el.textContent ?? '').trim(), identity }
+      // Locators rather than page.evaluate: the callback of evaluate runs
+      // in the browser but is type-checked against the Node lib, where
+      // `document` does not exist.
+      const names = page.locator('[class*="grid"] [class*="nm"]')
+      for (let i = 0; i < await names.count(); i++) {
+        const identity = (await names.nth(i).getAttribute('title')) ?? ''
+        if (identity.includes('#')) {
+          found = { shown: (await names.nth(i).innerText()).trim(), identity }
+          break
         }
-        return null
-      })
+      }
       if (found === null) {
         const next = page.getByRole('button', { name: /^(下一页|Next|›|»)$/ }).first()
         if (await next.count() === 0) break

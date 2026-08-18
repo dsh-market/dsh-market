@@ -1455,8 +1455,13 @@ export function MarketSection(props: MarketSectionProps) {
             </div>
           </div>
           <span className={css.grow} />
+          {/* Ghost, not outline. A bordered button here read as the card's
+              second action and sat opposite Install at the same weight,
+              while almost nobody opens the source before installing. It
+              stays labelled and in place for the people who do — the
+              change is its claim on attention, not its availability. */}
           <Button
-            variant="outline"
+            variant="ghost"
             size="sm"
             className={css.srcBtn}
             icon={<IconCodeOutline16 size={14} />}
@@ -1555,8 +1560,13 @@ export function MarketSection(props: MarketSectionProps) {
             </div>
           </div>
           <span className={css.grow} />
+          {/* Ghost, not outline. A bordered button here read as the card's
+              second action and sat opposite Install at the same weight,
+              while almost nobody opens the source before installing. It
+              stays labelled and in place for the people who do — the
+              change is its claim on attention, not its availability. */}
           <Button
-            variant="outline"
+            variant="ghost"
             size="sm"
             className={css.srcBtn}
             icon={<IconCodeOutline16 size={14} />}
