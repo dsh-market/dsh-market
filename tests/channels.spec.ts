@@ -9,9 +9,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import {
-  asChannel, availableChannels, channelAllowed, DIST_TAG, resolveChannel,
-} from '../src/channels.ts'
+import { asChannel, CHANNELS, DIST_TAG, resolveChannel } from '../src/channels.ts'
 
 describe('resolveChannel', () => {
   it('treats a prerelease BUILD as the beta channel when nothing is on record', () => {
@@ -32,35 +30,19 @@ describe('resolveChannel', () => {
     expect(resolveChannel('stable', '1.13.1')).toBe('stable')
   })
 
-  it('derives past a dev choice that developer mode no longer permits', () => {
-    // Reachable by switching the mode off while dev is selected. Honouring
-    // the stored value would leave a profile following unreviewed builds
-    // with nothing on screen able to say so — the state the mode exists to
-    // prevent, arrived at by turning the protection ON.
-    expect(resolveChannel('dev', '1.15.0-dev.20260818-abc1234', false)).toBe('beta')
-    expect(resolveChannel('dev', '1.13.1', false)).toBe('stable')
-    // With the mode on it is an ordinary choice.
-    expect(resolveChannel('dev', '1.13.1', true)).toBe('dev')
+})
+
+describe('CHANNELS', () => {
+  it('offers all three, always', () => {
+    // `dev` sat behind a developer-mode switch for one version. The switch
+    // cost a stored mode, a route to change it, a rule for what happens to
+    // a dev choice when it is turned off, and a control that needed its own
+    // explanation — to hide an option that a sentence of label explains
+    // better. The label does the work the gate was doing.
+    expect(CHANNELS).toEqual(['stable', 'beta', 'dev'])
   })
 })
 
-describe('availableChannels', () => {
-  it('hides dev until developer mode is on', () => {
-    expect(availableChannels(false)).toEqual(['stable', 'beta'])
-    expect(availableChannels(true)).toEqual(['stable', 'beta', 'dev'])
-  })
-
-  it('agrees with channelAllowed, which is what the route enforces', () => {
-    // Two readings of the same rule — one draws the control, one guards the
-    // POST. They have to be the same rule or the hidden channel is only
-    // unlabelled.
-    for (const devMode of [false, true]) {
-      for (const channel of ['stable', 'beta', 'dev'] as const) {
-        expect(channelAllowed(channel, devMode)).toBe(availableChannels(devMode).includes(channel))
-      }
-    }
-  })
-})
 
 describe('asChannel', () => {
   it('accepts only the three, and answers null for anything else', () => {

@@ -89,7 +89,7 @@ describe.skipIf(!HAS_DSH)('web e2e: release channel', () => {
   })
 })
 
-describe.skipIf(!HAS_DSH)('web e2e: developer mode', () => {
+describe.skipIf(!HAS_DSH)('web e2e: the dev channel', () => {
   let scaffold: WebScaffold
 
   beforeAll(async () => { scaffold = await launchMarketScaffold() }, 300_000)
@@ -110,45 +110,22 @@ describe.skipIf(!HAS_DSH)('web e2e: developer mode', () => {
   const statusNow = async (): Promise<any> =>
     await (await fetch(`${scaffold.baseUrl}/dsh-market/status`, { cache: 'no-store' })).json()
 
-  it('refuses the dev channel on a profile that never enabled it', async () => {
-    // The whole feature in one assertion, and the reason it is asserted
-    // HERE: a control that simply omits an option is not a gate. This is a
-    // real host answering a real POST that no UI would have sent.
-    const status = await statusNow()
-    expect(status.devMode).toBe(false)
-    expect(status.channels).toEqual(['stable', 'beta'])
-
-    const refused = await post('/dsh-market/channel', { channel: 'dev' })
-    expect(refused.status).toBe(403)
-    expect(readState().channel).not.toBe('dev')
+  it('is offered by a real host with no opt-in of any kind', async () => {
+    // It was behind a stored developer mode for one version. Nothing has to
+    // be switched on any more — the label carries the warning instead.
+    expect((await statusNow()).channels).toEqual(['stable', 'beta', 'dev'])
   })
 
-  it('opens the channel, and both facts survive a real restart', async () => {
-    expect((await post('/dsh-market/dev-mode', { enabled: true })).status).toBe(200)
-    expect(readState().devMode).toBe(true)
+  it('is selected, written down, and survives a real restart', async () => {
     expect((await post('/dsh-market/channel', { channel: 'dev' })).status).toBe(200)
     expect(readState().channel).toBe('dev')
 
     await scaffold.restart()
-    const status = await statusNow()
-    expect(status.devMode).toBe(true)
-    expect(status.channel).toBe('dev')
-    expect(status.channels).toEqual(['stable', 'beta', 'dev'])
+    expect((await statusNow()).channel).toBe('dev')
   }, 300_000)
 
-  it('does not strand a profile on dev when the mode is switched off', async () => {
-    // Turning the PROTECTION on is what would otherwise leave a profile
-    // following unreviewed builds with no control on screen able to say so.
-    await post('/dsh-market/dev-mode', { enabled: true })
-    await post('/dsh-market/channel', { channel: 'dev' })
+  it('refuses a channel that does not exist, without writing it', async () => {
+    expect((await post('/dsh-market/channel', { channel: 'nightly' })).status).toBe(400)
     expect(readState().channel).toBe('dev')
-
-    const off = await post('/dsh-market/dev-mode', { enabled: false })
-    expect(off.body.channel).not.toBe('dev')
-    expect(readState().channel).toBeUndefined()
-    expect(readState().devMode).toBeUndefined()
-
-    await scaffold.restart()
-    expect((await statusNow()).channel).not.toBe('dev')
-  }, 300_000)
+  })
 })

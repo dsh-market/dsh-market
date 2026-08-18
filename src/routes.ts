@@ -29,7 +29,7 @@ import { applyBundleOrder, mergeOrder, readBundleRules, readBundleStack, validat
 import { trialValidate } from './trial.ts'
 import { findInstalledAlias, gitAllowBuildsKey, installTargetFor } from './sources.ts'
 import { isStaleUpdate, parseIgnoredBuilds, parsePrepareNotAllowed, RELEASE_AGE_OVERRIDE, retargetCollections, validateAddedPlugins, withHoistRecovery } from './install.ts'
-import { asChannel, availableChannels, channelAllowed, DIST_TAG, resolveChannel, type Channel } from './channels.ts'
+import { asChannel, CHANNELS, DIST_TAG, resolveChannel, type Channel } from './channels.ts'
 import { checkUpdates, fetchNpmLatest, invalidateUpdates, isUpgrade, latestPublishedRecently, versionOnChannel } from './updates.ts'
 import { createThemeManager, type LoaderEntry } from './themes.ts'
 import { readJsonBody, sameOrigin, sendJson } from './http.ts'
@@ -168,11 +168,7 @@ export function mountMarketRoutes(
   // A choice made in a previous session outranks whatever the entry layer
   // composed, which is only ever a default.
   if (marketState.channel !== undefined) config.channel = marketState.channel
-  // Developer mode gates the dev channel on the SERVER, not just in the UI:
-  // the channel route refuses `dev` while this is off, so a hidden channel
-  // is unreachable rather than merely unpainted.
-  let devMode = marketState.devMode === true
-  const activeChannel = (): Channel => resolveChannel(config.channel, marketVersion(), devMode)
+  const activeChannel = (): Channel => resolveChannel(config.channel, marketVersion())
   const themes = createThemeManager(host, config.profile, disabled, activeProfileDir)
 
   // Client-only packages (dsh.client without dsh.bundle) are invisible to the
@@ -997,8 +993,7 @@ export function mountMarketRoutes(
           // Shown in the page heading so screenshots carry it (#159).
           version: marketVersion(),
           channel: activeChannel(),
-          devMode,
-          channels: availableChannels(devMode),
+          channels: CHANNELS,
           restart: restartAllowed(config),
           installed: readInstalled(config.profile, activeProfileDir),
         })
@@ -1308,15 +1303,6 @@ export function mountMarketRoutes(
             sendJson(response, 400, { error: 'channel must be "stable", "beta" or "dev"' })
             return
           }
-          // The gate is HERE, not only in the control that draws the
-          // options. A hidden channel that a hand-written POST can still
-          // select is not hidden, it is merely unlabelled — and the one
-          // thing developer mode has to guarantee is that a profile which
-          // never enabled it cannot end up following unreviewed builds.
-          if (!channelAllowed(wanted, devMode)) {
-            sendJson(response, 403, { error: `the ${wanted} channel needs developer mode` })
-            return
-          }
           config.channel = wanted
           // Persisted with the market's own durable state, so the choice
           // survives a restart — a setting that forgets is a setting the
@@ -1328,62 +1314,6 @@ export function mountMarketRoutes(
           invalidateUpdates()
           logEvent('info', 'channel', `release channel set to ${wanted}`)
           sendJson(response, 200, { ok: true, channel: wanted })
-        } catch (error) {
-          sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
-        }
-      },
-    }),
-
-    /**
-     * Developer mode: whether the dev channel exists for this profile.
-     *
-     * Off by default and stored with the profile, because it is not a
-     * display preference — the channel route consults it before accepting a
-     * selection. A dev build is published straight from a branch by whoever
-     * pressed the button, with no promise that anyone ran it first, so it
-     * has to be something a user opts into rather than something they can
-     * wander into from a control that looks like three degrees of caution.
-     */
-    host.webServer.register({
-      kind: 'exact',
-      path: '/dsh-market/dev-mode',
-      handler: async (request, response) => {
-        if (request.method !== 'POST') {
-          response.writeHead(405, { allow: 'POST' })
-          response.end()
-          return
-        }
-        if (!sameOrigin(request)) {
-          sendJson(response, 403, { error: 'untrusted origin' })
-          return
-        }
-        try {
-          const body = (await readJsonBody(request)) as { enabled?: unknown }
-          if (typeof body.enabled !== 'boolean') {
-            sendJson(response, 400, { error: 'enabled must be a boolean' })
-            return
-          }
-          devMode = body.enabled
-          marketState.devMode = body.enabled ? true : undefined
-          // Switching the mode off while the dev channel is selected has to
-          // move the channel too. Leaving `dev` on record would keep the
-          // profile following unreviewed builds with no control on screen
-          // that could say so — the exact state the mode exists to prevent,
-          // reached by turning the protection ON.
-          if (!devMode && marketState.channel === 'dev') {
-            marketState.channel = undefined
-            config.channel = undefined
-            logEvent('info', 'channel', 'left the dev channel: developer mode was switched off')
-          }
-          writeMarketState(activeProfileDir, marketState)
-          invalidateUpdates()
-          logEvent('info', 'channel', `developer mode ${devMode ? 'on' : 'off'}`)
-          sendJson(response, 200, {
-            ok: true,
-            devMode,
-            channel: activeChannel(),
-            channels: availableChannels(devMode),
-          })
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
         }

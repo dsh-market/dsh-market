@@ -60,9 +60,7 @@ interface SelfStatus {
   version: string | null
   restart: boolean
   channel: Channel
-  /** Whether the dev channel is offered at all — off unless switched on. */
-  devMode: boolean
-  /** The channels this profile may pick, as the SERVER sees them. */
+  /** The channels the SERVER offers; the card never invents its own list. */
   channels: Channel[]
 }
 
@@ -93,19 +91,17 @@ const CHANNEL_HINT: Record<Channel, string> = {
 /**
  * Read the server's answer, taking the list of channels FROM it.
  *
- * The card does not decide which channels exist. Developer mode is enforced
- * server-side — the channel route refuses `dev` while it is off — so a card
- * that drew its own list could only ever disagree with the thing that
- * actually says yes or no.
+ * The card does not decide which channels exist: the server is what accepts
+ * or refuses a selection, so a card drawing its own list could only ever
+ * disagree with it.
  */
-function readStatus(body: { version?: string; restart?: boolean; channel?: string; devMode?: boolean; channels?: string[] }): SelfStatus {
+function readStatus(body: { version?: string; restart?: boolean; channel?: string; channels?: string[] }): SelfStatus {
   const offered = (body.channels ?? []).map(asChannel).filter((c): c is Channel => c !== null)
   return {
     version: body.version ?? null,
     restart: body.restart === true,
     channel: asChannel(body.channel) ?? 'stable',
-    devMode: body.devMode === true,
-    // A host too old to send the list still gets the two that always exist.
+    // A host too old to send the list still gets the two that predate it.
     channels: offered.length > 0 ? offered : ['stable', 'beta'],
   }
 }
@@ -157,9 +153,9 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
     void (async () => {
       try {
         const response = await fetch('/dsh-market/status', { cache: 'no-store' })
-        const body = (await response.json()) as { version?: string; restart?: boolean; channel?: string; devMode?: boolean; channels?: string[] }
+        const body = (await response.json()) as { version?: string; restart?: boolean; channel?: string; channels?: string[] }
         if (live) setStatus(readStatus(body))
-      } catch { if (live) setStatus({ version: null, restart: false, channel: 'stable', devMode: false, channels: ['stable', 'beta'] }) }
+      } catch { if (live) setStatus({ version: null, restart: false, channel: 'stable', channels: ['stable', 'beta'] }) }
       try {
         const response = await fetch('/dsh-market/updates', { cache: 'no-store' })
         const body = (await response.json()) as { updates?: Record<string, RawUpdate> }
@@ -248,41 +244,6 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
     })()
   }, [post, refreshUpdate, t])
 
-  /**
-   * Turn developer mode on or off.
-   *
-   * The server owns the consequence: switching it off while dev is selected
-   * moves the channel too, and it answers with the channel and the list it
-   * now permits. So this takes the whole answer rather than flipping a
-   * local boolean — the card would otherwise keep showing "dev" selected
-   * for a channel the profile had just been moved off.
-   */
-  const onDevMode = useCallback((next: boolean) => {
-    setError(null)
-    void (async () => {
-      try {
-        const response = await fetch('/dsh-market/dev-mode', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ enabled: next }),
-        })
-        const body = (await response.json()) as { ok?: boolean; error?: string; devMode?: boolean; channel?: string; channels?: string[] }
-        if (body.ok !== true) { setError(body.error ?? t('setSelfFailed')); return }
-        setStatus(current => (current === null ? current : {
-          ...current,
-          devMode: body.devMode === true,
-          channel: asChannel(body.channel) ?? current.channel,
-          channels: (body.channels ?? []).map(asChannel).filter((c): c is Channel => c !== null),
-        }))
-        // The offer on screen was computed for the channel we may have just
-        // left. Same reason the channel control refreshes it.
-        await refreshUpdate()
-      } catch (cause) {
-        setError(cause instanceof Error ? cause.message : String(cause))
-      }
-    })()
-  }, [refreshUpdate, t])
-
   /** One label + hint block with an optional action, the host's row shape. */
   const row = (label: string, hint: string, action: ReactElement | null): ReactElement =>
     h('div', { className: css.setRow },
@@ -328,22 +289,13 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
               type: 'button',
               className: status?.channel === id ? `${css.setSegBtn} ${css.setSegOn}` : css.setSegBtn,
               disabled: busy || status === null,
+              // The dev option says what it is on hover rather than being
+              // hidden behind a switch. A label a user can read beats a gate
+              // plus the machinery that maintains it, and the row's own hint
+              // repeats it in full once the channel is selected.
+              title: id === 'dev' ? t('setChannelDevHint') : undefined,
               onClick: () => { onChannel(id) },
             }, t(CHANNEL_LABEL[id]))),
-          )),
-        row(t('setDevMode'), t('setDevModeHint'),
-          h('label', { className: css.setCheck },
-            h('input', {
-              type: 'checkbox',
-              // Named for the row it belongs to. The label text sits in the
-              // row heading rather than beside the box, so without this the
-              // control has no accessible name at all — and the card now has
-              // two checkboxes that only position tells apart.
-              'aria-label': t('setDevMode'),
-              checked: status?.devMode === true,
-              disabled: busy || status === null,
-              onChange: () => { onDevMode(status?.devMode !== true) },
-            }),
           )),
         row(t('setSelfRemove'), t('setSelfRemoveHint'),
           phase === 'confirming' || busy

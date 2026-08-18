@@ -30,22 +30,18 @@ export const DIST_TAG: Record<Channel, string> = {
 }
 
 /**
- * Channels a user may actually pick.
+ * Every channel a user may pick. All three, always.
  *
- * `dev` is hidden until developer mode is switched on. Not as decoration:
- * a dev build is published from an unmerged branch by whoever pressed the
- * button, with no promise that it was run by anyone first. Offering that in
- * the same control as "stable" would make it look like a third degree of
- * caution rather than what it is.
+ * `dev` was behind a developer-mode switch for one version, on the reasoning
+ * that a build published straight off a branch should not sit beside
+ * "stable" looking like a third degree of caution. The switch cost more than
+ * it bought: a stored mode, a route to change it, a rule for what happens to
+ * a dev choice when it is turned off, and a control whose own purpose needed
+ * explaining. A plainly labelled option a user can read is simpler than a
+ * hidden one plus the machinery that hides it — the label does the work the
+ * gate was doing.
  */
-export function availableChannels(devMode: boolean): Channel[] {
-  return devMode ? ['stable', 'beta', 'dev'] : ['stable', 'beta']
-}
-
-/** Whether a channel may be selected at all under the current mode. */
-export function channelAllowed(channel: Channel, devMode: boolean): boolean {
-  return availableChannels(devMode).includes(channel)
-}
+export const CHANNELS: readonly Channel[] = ['stable', 'beta', 'dev']
 
 /** Narrow an untrusted value to a Channel, or null. */
 export function asChannel(value: unknown): Channel | null {
@@ -67,18 +63,8 @@ export function asChannel(value: unknown): Channel | null {
  * schema (no `.default`) and state.json (field omitted) or "never chose"
  * silently becomes "chose stable".
  *
- * A stored `dev` with developer mode off is treated as NO choice and
- * derived past, rather than honoured. That state is reachable by turning
- * the mode off while dev is selected, or by hand-editing state.json, and
- * silently following a hidden channel is precisely what the mode exists to
- * prevent. Deriving is right rather than picking a substitute: an
- * unusable choice is not evidence of what the user would have picked.
  */
-export function resolveChannel(
-  setting: Channel | undefined,
-  version: string,
-  devMode = false,
-): Channel {
-  if (setting !== undefined && channelAllowed(setting, devMode)) return setting
+export function resolveChannel(setting: Channel | undefined, version: string): Channel {
+  if (setting !== undefined) return setting
   return version.includes('-') ? 'beta' : 'stable'
 }

@@ -23,7 +23,7 @@ let calls: Array<{ path: string; body: unknown }> = []
 
 function stubFetch(options: {
   version?: string; restart?: boolean; latest?: string | null; removeOk?: boolean; error?: string
-  devMode?: boolean; channel?: string; channelSwitch?: string; channelError?: string
+  channel?: string; channelSwitch?: string; channelError?: string
 } = {}): void {
   calls = []
   vi.stubGlobal('fetch', vi.fn((input: unknown, init?: RequestInit) => {
@@ -36,23 +36,13 @@ function stubFetch(options: {
         version: options.version ?? '1.12.2',
         restart: options.restart !== false,
         channel: options.channel ?? 'stable',
-        devMode: options.devMode === true,
-        channels: options.devMode === true ? ['stable', 'beta', 'dev'] : ['stable', 'beta'],
+        channels: ['stable', 'beta', 'dev'],
       })
     }
     if (path.includes('/dsh-market/updates')) {
       return json({ updates: { dshmarket: options.channelSwitch !== undefined
         ? { updateAvailable: false, latest: options.channelSwitch, channelSwitch: options.channelSwitch }
         : { updateAvailable: options.latest != null, latest: options.latest ?? null } } })
-    }
-    if (path.endsWith('/dsh-market/dev-mode')) {
-      const enabled = (init?.body === undefined ? {} : JSON.parse(String(init.body))) as { enabled?: boolean }
-      return json({
-        ok: true,
-        devMode: enabled.enabled === true,
-        channel: enabled.enabled === true ? 'stable' : 'stable',
-        channels: enabled.enabled === true ? ['stable', 'beta', 'dev'] : ['stable', 'beta'],
-      })
     }
     if (path.endsWith('/dsh-market/channel')) {
       return options.channelError !== undefined
@@ -261,43 +251,36 @@ describe('clearBrowserState', () => {
   })
 })
 
-describe('SettingsCard — developer mode', () => {
-  it('offers only stable and beta until developer mode is on', async () => {
+describe('SettingsCard — channels', () => {
+  it('offers all three, with the dev one saying what it is on hover', async () => {
     await open()
     await waitFor(() => { expect(screen.getByRole('button', { name: t('setChannelStable') })).toBeTruthy() })
-    // The dev channel is not a third degree of caution — it is builds
-    // published straight off a branch, possibly run by nobody. A user who
-    // never asked for that must not be able to wander into it.
-    expect(screen.queryByRole('button', { name: t('setChannelDev') })).toBeNull()
-    expect((screen.getByRole('checkbox', { name: t('setDevMode') }) as HTMLInputElement).checked).toBe(false)
+    expect(screen.getByRole('button', { name: t('setChannelBeta') })).toBeTruthy()
+    const dev = screen.getByRole('button', { name: t('setChannelDev') })
+    // A plainly labelled option a user can read, rather than one hidden
+    // behind a switch: the warning has to travel WITH the control.
+    expect(dev.getAttribute('title')).toBe(t('setChannelDevHint'))
+    expect(screen.queryByRole('checkbox', { name: /开发者模式|Developer mode/ })).toBeNull()
   })
 
-  it('reveals the dev channel once the switch is on', async () => {
-    await open()
-    await waitFor(() => { expect(screen.getByRole('checkbox', { name: t('setDevMode') })).toBeTruthy() })
-    fireEvent.click(screen.getByRole('checkbox', { name: t('setDevMode') }))
-    await waitFor(() => { expect(screen.getByRole('button', { name: t('setChannelDev') })).toBeTruthy() })
-    expect(calls.find(call => call.path.includes('dev-mode'))?.body).toEqual({ enabled: true })
-  })
-
-  it('takes the channel list from the server, not from its own idea of it', async () => {
-    // The route refuses `dev` while the mode is off, so a card drawing its
-    // own list could only ever disagree with the thing that says yes or no.
-    stubFetch({ devMode: true, channel: 'dev' })
+  it('sends the channel the user picked', async () => {
     await open()
     await waitFor(() => { expect(screen.getByRole('button', { name: t('setChannelDev') })).toBeTruthy() })
-    expect((screen.getByRole('checkbox', { name: t('setDevMode') }) as HTMLInputElement).checked).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: t('setChannelDev') }))
+    await waitFor(() => {
+      expect(calls.find(call => call.path.includes('/dsh-market/channel'))?.body).toEqual({ channel: 'dev' })
+    })
   })
 
   it('does not leave a refused channel looking selected', async () => {
-    // It used to move the control first and ignore the answer, which was
-    // harmless while every channel was permitted. A 403 would now have left
-    // the user looking at a channel their profile is not on.
-    stubFetch({ channelError: 'the dev channel needs developer mode' })
+    // It used to move the control first and ignore the answer. Any refusal
+    // — a bad value, a host that does not know the channel — would have
+    // left the user looking at one their profile is not on.
+    stubFetch({ channelError: 'no such channel' })
     await open()
     await waitFor(() => { expect(screen.getByRole('button', { name: t('setChannelBeta') })).toBeTruthy() })
     fireEvent.click(screen.getByRole('button', { name: t('setChannelBeta') }))
-    await waitFor(() => { expect(screen.getByText(/needs developer mode/)).toBeTruthy() })
+    await waitFor(() => { expect(screen.getByText(/no such channel/)).toBeTruthy() })
     expect(screen.getByRole('button', { name: t('setChannelStable') }).className).toMatch(/SegOn|setSegOn/)
   })
 })

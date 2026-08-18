@@ -46,11 +46,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			setChannelStableHint: "仅接收正式发布版本。",
 			setChannelBetaHint: "提前获取待验证版本，可能不稳定。仅影响插件市场自身。",
 			setChannelDev: "开发版",
-			setChannelDevHint: "开发分支构建，仅供调试。仅影响插件市场自身。",
+			setChannelDevHint: "开发分支构建，未经验证，不建议普通用户使用。",
 			setChannelSwitch: "切换至",
 			setChannelSwitchHint: "该版本低于当前已安装版本。",
-			setDevMode: "开发者模式",
-			setDevModeHint: "在更新通道中显示「开发版」。",
 			setSelfRemove: "移除插件市场",
 			setSelfRemoveHint: "从这个 profile 卸载市场。已装的其它插件不受影响。",
 			setSelfConfirm: "确定要移除插件市场吗？移除后需要用命令行才能装回来。",
@@ -354,11 +352,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			setChannelStableHint: "Released versions only.",
 			setChannelBetaHint: "Early access to unverified versions. Affects the plugin market only.",
 			setChannelDev: "Dev",
-			setChannelDevHint: "Development branch builds, for debugging only. Affects the plugin market only.",
+			setChannelDevHint: "Unverified builds from a development branch. Not recommended for general use.",
 			setChannelSwitch: "Switch to",
 			setChannelSwitchHint: "This version is lower than the one installed.",
-			setDevMode: "Developer mode",
-			setDevModeHint: "Shows the Dev option in the update channel.",
 			setSelfRemove: "Remove the plugin market",
 			setSelfRemoveHint: "Uninstall the market from this profile. Your other plugins are untouched.",
 			setSelfConfirm: "Remove the plugin market? Installing it again takes the command line.",
@@ -5498,10 +5494,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		/**
 		* Read the server's answer, taking the list of channels FROM it.
 		*
-		* The card does not decide which channels exist. Developer mode is enforced
-		* server-side — the channel route refuses `dev` while it is off — so a card
-		* that drew its own list could only ever disagree with the thing that
-		* actually says yes or no.
+		* The card does not decide which channels exist: the server is what accepts
+		* or refuses a selection, so a card drawing its own list could only ever
+		* disagree with it.
 		*/
 		function readStatus(body) {
 			const offered = (body.channels ?? []).map(asChannel).filter((c) => c !== null);
@@ -5509,7 +5504,6 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				version: body.version ?? null,
 				restart: body.restart === true,
 				channel: asChannel(body.channel) ?? "stable",
-				devMode: body.devMode === true,
 				channels: offered.length > 0 ? offered : ["stable", "beta"]
 			};
 		}
@@ -5555,7 +5549,6 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 							version: null,
 							restart: false,
 							channel: "stable",
-							devMode: false,
 							channels: ["stable", "beta"]
 						});
 					}
@@ -5661,40 +5654,6 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				refreshUpdate,
 				t
 			]);
-			/**
-			* Turn developer mode on or off.
-			*
-			* The server owns the consequence: switching it off while dev is selected
-			* moves the channel too, and it answers with the channel and the list it
-			* now permits. So this takes the whole answer rather than flipping a
-			* local boolean — the card would otherwise keep showing "dev" selected
-			* for a channel the profile had just been moved off.
-			*/
-			const onDevMode = (0, react.useCallback)((next) => {
-				setError(null);
-				(async () => {
-					try {
-						const body = await (await fetch("/dsh-market/dev-mode", {
-							method: "POST",
-							headers: { "content-type": "application/json" },
-							body: JSON.stringify({ enabled: next })
-						})).json();
-						if (body.ok !== true) {
-							setError(body.error ?? t("setSelfFailed"));
-							return;
-						}
-						setStatus((current) => current === null ? current : {
-							...current,
-							devMode: body.devMode === true,
-							channel: asChannel(body.channel) ?? current.channel,
-							channels: (body.channels ?? []).map(asChannel).filter((c) => c !== null)
-						});
-						await refreshUpdate();
-					} catch (cause) {
-						setError(cause instanceof Error ? cause.message : String(cause));
-					}
-				})();
-			}, [refreshUpdate, t]);
 			/** One label + hint block with an optional action, the host's row shape. */
 			const row = (label, hint, action) => (0, react.createElement)("div", { className: Market_module_css_default.setRow }, (0, react.createElement)("div", { className: Market_module_css_default.setLabelBox }, (0, react.createElement)("div", { className: Market_module_css_default.setLabel }, label), (0, react.createElement)("div", { className: Market_module_css_default.setHint }, hint)), action);
 			const body = phase === "removed" ? row(t("setSelfRemoved"), t("setSelfRemovedHint"), null) : (0, react.createElement)(react.Fragment, null, row(update?.updateAvailable === true && update.latest !== null ? `${t("setSelfUpdateReady")} ${update.latest}` : update?.channelSwitch != null ? `${t("setChannelSwitch")} ${update.channelSwitch}` : t("setSelfUpToDate"), phase === "updated" ? t("setSelfUpdatedHint") : update?.channelSwitch != null ? t("setChannelSwitchHint") : t("setSelfUpdateHint"), phase === "updated" ? null : update?.updateAvailable === true ? (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
@@ -5712,18 +5671,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				type: "button",
 				className: status?.channel === id ? `${Market_module_css_default.setSegBtn} ${Market_module_css_default.setSegOn}` : Market_module_css_default.setSegBtn,
 				disabled: busy || status === null,
+				title: id === "dev" ? t("setChannelDevHint") : void 0,
 				onClick: () => {
 					onChannel(id);
 				}
-			}, t(CHANNEL_LABEL[id]))))), row(t("setDevMode"), t("setDevModeHint"), (0, react.createElement)("label", { className: Market_module_css_default.setCheck }, (0, react.createElement)("input", {
-				type: "checkbox",
-				"aria-label": t("setDevMode"),
-				checked: status?.devMode === true,
-				disabled: busy || status === null,
-				onChange: () => {
-					onDevMode(status?.devMode !== true);
-				}
-			}))), row(t("setSelfRemove"), t("setSelfRemoveHint"), phase === "confirming" || busy ? null : (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+			}, t(CHANNEL_LABEL[id]))))), row(t("setSelfRemove"), t("setSelfRemoveHint"), phase === "confirming" || busy ? null : (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 				variant: "outline",
 				size: "sm",
 				className: Market_module_css_default.setDanger,
