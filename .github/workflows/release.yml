@@ -32,7 +32,19 @@ jobs:
             echo "tag v$TAG != package.json $PKG" >&2
             exit 1
           fi
-      - run: npm publish
+      # A prerelease tag (v1.14.0-beta.1) publishes under the `beta` dist-tag
+      # and NEVER moves `latest`. Without this every fix reached every user the
+      # moment it was tagged, before anyone had clicked the thing it changed —
+      # which is how 1.13.0 shipped a restart button that could not work.
+      - name: choose the npm dist-tag
+        id: channel
+        run: |
+          TAG=${GITHUB_REF_NAME#v}
+          case "$TAG" in
+            *-*) echo "dist=beta"    >> "$GITHUB_OUTPUT"; echo "pre=true"  >> "$GITHUB_OUTPUT" ;;
+            *)   echo "dist=latest"  >> "$GITHUB_OUTPUT"; echo "pre=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+      - run: npm publish --tag ${{ steps.channel.outputs.dist }}
       - name: create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -40,5 +52,6 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             --title "dshmarket ${GITHUB_REF_NAME#v}" \
             --generate-notes \
-            --notes "npm: https://www.npmjs.com/package/dshmarket/v/${GITHUB_REF_NAME#v}"
+            ${{ steps.channel.outputs.pre == 'true' && '--prerelease' || '' }} \
+            --notes "npm: https://www.npmjs.com/package/dshmarket/v/${GITHUB_REF_NAME#v} · dist-tag: ${{ steps.channel.outputs.dist }}"
 
