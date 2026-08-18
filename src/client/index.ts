@@ -94,22 +94,34 @@ export function apply(ctx: MarketClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-market: dictionaries')
   const t = ctx.locale.bind(NS)
 
-  ctx.slots.inject('settings.section', () => ctx.slots.register({
-    name: 'settings.section',
-    id: 'market',
-    order: 40,
-    label: () => t('nav'),
-    locale: NS,
-    inject: () => ({ t }),
-  }, () => h(MarketSection, {
-    t,
-    locale: ctx.locale,
-    theme: ctx.theme,
-    themeStore: {
-      subscribe: (cb: () => void) => ctx.on('theme/change', cb),
-      getSnapshot: () => ctx.theme.getTheme(),
-    },
-  })))
+  // Kept so the removal flow can retire the market's own nav entry the
+  // moment the package is gone: leaving "插件市场" in the left menu after
+  // the user removed it is the card claiming something the profile no
+  // longer agrees with. `register` hands back its own disposer; calling it
+  // twice (here and again when the context unwinds) is harmless, but the
+  // reference is dropped after use so the intent stays readable.
+  let retireSection: (() => void) | null = null
+
+  ctx.slots.inject('settings.section', () => {
+    const off = ctx.slots.register({
+      name: 'settings.section',
+      id: 'market',
+      order: 40,
+      label: () => t('nav'),
+      locale: NS,
+      inject: () => ({ t }),
+    }, () => h(MarketSection, {
+      t,
+      locale: ctx.locale,
+      theme: ctx.theme,
+      themeStore: {
+        subscribe: (cb: () => void) => ctx.on('theme/change', cb),
+        getSnapshot: () => ctx.theme.getTheme(),
+      },
+    }))
+    if (typeof off === 'function') retireSection = off as () => void
+    return off
+  })
 
   // The settings card (dsh >= 0.1.0-rc.7). Registered through a NESTED
   // inject on purpose: naming settingsScope in the module-level `inject`
@@ -125,7 +137,7 @@ export function apply(ctx: MarketClientContext): void {
       key: NS,
       locale: NS,
       inject: () => ({ t }),
-    }, () => h(SettingsCard, { t })))
+    }, () => h(SettingsCard, { t, onRemoved: () => { const off = retireSection; retireSection = null; off?.() } })))
   })
 
   const Toast = () => h(InstallToast, { t })

@@ -42,6 +42,15 @@ const BROWSER_KEYS = ['dshm-webdav', 'dshm-gist-id'] as const
 
 export interface SettingsCardProps {
   t: Translate
+  /**
+   * Retire the market's own entry in the left settings menu.
+   *
+   * Called once the package is gone. Leaving "插件市场" in the menu after
+   * the user removed it is the card asserting something the profile no
+   * longer agrees with — and the section behind it can no longer talk to a
+   * server that has disposed its routes.
+   */
+  onRemoved?: () => void
 }
 
 /** What `/dsh-market/status` tells this card. */
@@ -73,13 +82,12 @@ export function clearBrowserState(storage: Pick<Storage, 'removeItem'>): void {
   }
 }
 
-export function SettingsCard({ t }: SettingsCardProps): ReactElement | null {
+export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement | null {
   const [open, setOpen] = useState(false)
   const [status, setStatus] = useState<SelfStatus | null>(null)
   const [update, setUpdate] = useState<SelfUpdate | null>(null)
   const [phase, setPhase] = useState<Phase>('idle')
   const [purge, setPurge] = useState(false)
-  const [restartAfter, setRestartAfter] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   // Only once the row is opened: the plugin configuration page renders every
@@ -140,17 +148,18 @@ export function SettingsCard({ t }: SettingsCardProps): ReactElement | null {
     setError(null)
     void (async () => {
       try {
-        const body = await post('/dsh-market/self-uninstall', { confirm: true, purge, restart: restartAfter })
+        const body = await post('/dsh-market/self-uninstall', { confirm: true, purge })
         if (body.ok === true) {
           if (purge) clearBrowserState(localStorage)
           setPhase('removed')
+          onRemoved?.()
         } else { setError(body.error ?? t('setSelfFailed')); setPhase('failed') }
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : String(cause))
         setPhase('failed')
       }
     })()
-  }, [post, purge, restartAfter, t])
+  }, [onRemoved, post, purge, t])
 
   const busy = phase === 'working'
   const version = status?.version ?? null
@@ -169,7 +178,7 @@ export function SettingsCard({ t }: SettingsCardProps): ReactElement | null {
   // package is gone from disk, so an update button next to "removed" would
   // offer something that cannot happen.
   const body = phase === 'removed'
-    ? row(t('setSelfRemoved'), restartAfter ? t('setSelfRestartingHint') : t('setSelfRemovedHint'), null)
+    ? row(t('setSelfRemoved'), t('setSelfRemovedHint'), null)
     : h(Fragment, null,
         row(
           update?.updateAvailable === true && update.latest !== null
@@ -203,24 +212,13 @@ export function SettingsCard({ t }: SettingsCardProps): ReactElement | null {
               // them back on about to disappear — is the part a user cannot
               // work out on their own.
               h('div', { className: css.setHint }, purge ? t('setSelfPurgeOn') : t('setSelfPurgeOff')),
-              // Offered BEFORE the removal, not after it. A button placed in
-              // the end state could only ever answer 405: taking the market
-              // out of the running process disposes its routes, restart
-              // included. Asked here, the restart becomes the removal's
-              // second half and actually happens.
-              status?.restart === true
-                ? h('label', { className: css.setCheck },
-                    h('input', { type: 'checkbox', checked: restartAfter, disabled: busy, onChange: () => { setRestartAfter(!restartAfter) } }),
-                    h('span', null, t('setSelfRestartAfter')),
-                  )
-                : null,
               h('div', { className: css.setActions },
                 busy
                   ? null
                   : h(Button, {
                       variant: 'ghost',
                       size: 'sm',
-                      onClick: () => { setPhase('idle'); setPurge(false); setRestartAfter(false) },
+                      onClick: () => { setPhase('idle'); setPurge(false) },
                     }, t('setSelfCancel')),
                 h(Button, {
                   variant: 'primary',

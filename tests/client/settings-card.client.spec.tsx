@@ -110,7 +110,7 @@ describe('SettingsCard', () => {
     fireEvent.click(screen.getByRole('button', { name: t('setSelfRemoveConfirm') }))
     await waitFor(() => { expect(screen.getByText(t('setSelfRemoved'))).toBeTruthy() })
     const sent = calls.find(call => call.path.includes('self-uninstall'))
-    expect(sent?.body).toEqual({ confirm: true, purge: true, restart: false })
+    expect(sent?.body).toEqual({ confirm: true, purge: true })
   })
 
   it('defaults purge to off when the user does not tick it', async () => {
@@ -118,7 +118,7 @@ describe('SettingsCard', () => {
     fireEvent.click(screen.getByRole('button', { name: t('setSelfRemove') }))
     fireEvent.click(screen.getByRole('button', { name: t('setSelfRemoveConfirm') }))
     await waitFor(() => { expect(screen.getByText(t('setSelfRemoved'))).toBeTruthy() })
-    expect(calls.find(call => call.path.includes('self-uninstall'))?.body).toEqual({ confirm: true, purge: false, restart: false })
+    expect(calls.find(call => call.path.includes('self-uninstall'))?.body).toEqual({ confirm: true, purge: false })
   })
 
   it('offers no control in the end state that the server can no longer answer', async () => {
@@ -136,32 +136,49 @@ describe('SettingsCard', () => {
     expect(screen.queryByRole('button')).toBe(screen.getByRole('button', { expanded: true }))
   })
 
-  it('asks about the restart BEFORE removing, where it can still be honoured', async () => {
-    await open()
-    fireEvent.click(screen.getByRole('button', { name: t('setSelfRemove') }))
-    const boxes = screen.getAllByRole('checkbox')
-    expect(boxes).toHaveLength(2)
-    fireEvent.click(boxes[1]!) // restart-after
-    fireEvent.click(screen.getByRole('button', { name: t('setSelfRemoveConfirm') }))
-    await waitFor(() => { expect(screen.getByText(t('setSelfRemoved'))).toBeTruthy() })
-    expect(calls.find(call => call.path.includes('self-uninstall'))?.body)
-      .toEqual({ confirm: true, purge: false, restart: true })
-    // ...and it says a restart is happening rather than telling the user to
-    // go and do one.
-    expect(screen.getByText(t('setSelfRestartingHint'))).toBeTruthy()
-  })
-
-  it('does not offer the restart on a host that forbids self-restart', async () => {
-    // Same rule the pending-change banner follows: when a supervisor owns the
-    // process, the market states what is pending and lets the supervisor act.
-    stubFetch({ restart: false })
+  it('asks exactly one thing — whether to keep the data', async () => {
+    // The confirmation carried a second checkbox for a moment: whether to
+    // restart afterwards. It was there to work around a constraint of ours
+    // (the restart route dies with the market), not because the answer was
+    // the user's to give — a removal is not finished without a restart, and
+    // there is no version of "removed but not restarted" anyone wants. A
+    // consequence gets STATED; only a real choice gets asked.
     await open()
     fireEvent.click(screen.getByRole('button', { name: t('setSelfRemove') }))
     expect(screen.getAllByRole('checkbox')).toHaveLength(1)
     fireEvent.click(screen.getByRole('button', { name: t('setSelfRemoveConfirm') }))
     await waitFor(() => { expect(screen.getByText(t('setSelfRemoved'))).toBeTruthy() })
     expect(calls.find(call => call.path.includes('self-uninstall'))?.body)
-      .toEqual({ confirm: true, purge: false, restart: false })
+      .toEqual({ confirm: true, purge: false })
+  })
+
+  it('retires the market\'s own menu entry once the package is gone', async () => {
+    // The visible half of the removal. Without it the left menu still offers
+    // "插件市场", and clicking it opens a page whose server routes have just
+    // been disposed — the card would be claiming something the profile no
+    // longer agrees with.
+    const retired = vi.fn()
+    render(<SettingsCard t={t} onRemoved={retired} />)
+    fireEvent.click(screen.getByRole('button', { expanded: false }))
+    await waitFor(() => { expect(screen.getByText(t('setSelfRemove'), { selector: 'div' })).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: t('setSelfRemove') }))
+    expect(retired).not.toHaveBeenCalled() // not before it actually happened
+    fireEvent.click(screen.getByRole('button', { name: t('setSelfRemoveConfirm') }))
+    await waitFor(() => { expect(retired).toHaveBeenCalledTimes(1) })
+  })
+
+  it('leaves the menu alone when removal fails', async () => {
+    stubFetch({ removeOk: false })
+    const retired = vi.fn()
+    render(<SettingsCard t={t} onRemoved={retired} />)
+    fireEvent.click(screen.getByRole('button', { expanded: false }))
+    await waitFor(() => { expect(screen.getByText(t('setSelfRemove'), { selector: 'div' })).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: t('setSelfRemove') }))
+    fireEvent.click(screen.getByRole('button', { name: t('setSelfRemoveConfirm') }))
+    await waitFor(() => { expect(screen.getByText(/boom/)).toBeTruthy() })
+    // The market is still installed and still working; removing its menu
+    // entry would strand the user with no way back to it.
+    expect(retired).not.toHaveBeenCalled()
   })
 
   it('shows that it is working instead of looking frozen', async () => {

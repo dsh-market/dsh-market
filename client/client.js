@@ -50,9 +50,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			setSelfCancel: "取消",
 			setSelfWorking: "正在移除…",
 			setSelfRemoved: "已移除",
-			setSelfRemovedHint: "重启 DeepSeek Harness 后完全生效。",
-			setSelfRestartingHint: "正在重启 DeepSeek Harness…",
-			setSelfRestartAfter: "移除后立即重启 DeepSeek Harness",
+			setSelfRemovedHint: "重启 DeepSeek Harness 后完全清理。",
 			setSelfFailed: "操作失败",
 			versionHint: "插件市场版本 — 反馈问题时请把它一起截图",
 			subtitle: "发现社区为 DeepSeek Harness 打造的能力",
@@ -349,9 +347,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			setSelfCancel: "Cancel",
 			setSelfWorking: "Removing…",
 			setSelfRemoved: "Removed",
-			setSelfRemovedHint: "Restart DeepSeek Harness to finish.",
-			setSelfRestartingHint: "Restarting DeepSeek Harness…",
-			setSelfRestartAfter: "Restart DeepSeek Harness right after removing",
+			setSelfRemovedHint: "Restart DeepSeek Harness to finish cleaning up.",
 			setSelfFailed: "The operation failed",
 			versionHint: "Plugin market version — include it when reporting an issue",
 			subtitle: "Discover community plugins for DeepSeek Harness",
@@ -5425,13 +5421,12 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				storage.removeItem(key);
 			} catch {}
 		}
-		function SettingsCard({ t }) {
+		function SettingsCard({ t, onRemoved }) {
 			const [open, setOpen] = (0, react.useState)(false);
 			const [status, setStatus] = (0, react.useState)(null);
 			const [update, setUpdate] = (0, react.useState)(null);
 			const [phase, setPhase] = (0, react.useState)("idle");
 			const [purge, setPurge] = (0, react.useState)(false);
-			const [restartAfter, setRestartAfter] = (0, react.useState)(false);
 			const [error, setError] = (0, react.useState)(null);
 			const probed = (0, react.useRef)(false);
 			(0, react.useEffect)(() => {
@@ -5495,12 +5490,12 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					try {
 						const body = await post("/dsh-market/self-uninstall", {
 							confirm: true,
-							purge,
-							restart: restartAfter
+							purge
 						});
 						if (body.ok === true) {
 							if (purge) clearBrowserState(localStorage);
 							setPhase("removed");
+							onRemoved?.();
 						} else {
 							setError(body.error ?? t("setSelfFailed"));
 							setPhase("failed");
@@ -5511,16 +5506,16 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					}
 				})();
 			}, [
+				onRemoved,
 				post,
 				purge,
-				restartAfter,
 				t
 			]);
 			const busy = phase === "working";
 			const version = status?.version ?? null;
 			/** One label + hint block with an optional action, the host's row shape. */
 			const row = (label, hint, action) => (0, react.createElement)("div", { className: Market_module_css_default.setRow }, (0, react.createElement)("div", { className: Market_module_css_default.setLabelBox }, (0, react.createElement)("div", { className: Market_module_css_default.setLabel }, label), (0, react.createElement)("div", { className: Market_module_css_default.setHint }, hint)), action);
-			const body = phase === "removed" ? row(t("setSelfRemoved"), restartAfter ? t("setSelfRestartingHint") : t("setSelfRemovedHint"), null) : (0, react.createElement)(react.Fragment, null, row(update?.updateAvailable === true && update.latest !== null ? `${t("setSelfUpdateReady")} ${update.latest}` : t("setSelfUpToDate"), phase === "updated" ? t("setSelfUpdatedHint") : t("setSelfUpdateHint"), update?.updateAvailable === true && phase !== "updated" ? (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+			const body = phase === "removed" ? row(t("setSelfRemoved"), t("setSelfRemovedHint"), null) : (0, react.createElement)(react.Fragment, null, row(update?.updateAvailable === true && update.latest !== null ? `${t("setSelfUpdateReady")} ${update.latest}` : t("setSelfUpToDate"), phase === "updated" ? t("setSelfUpdatedHint") : t("setSelfUpdateHint"), update?.updateAvailable === true && phase !== "updated" ? (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 				variant: "primary",
 				size: "sm",
 				disabled: busy,
@@ -5539,20 +5534,12 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				onChange: () => {
 					setPurge(!purge);
 				}
-			}), (0, react.createElement)("span", null, t("setSelfPurge"))), (0, react.createElement)("div", { className: Market_module_css_default.setHint }, purge ? t("setSelfPurgeOn") : t("setSelfPurgeOff")), status?.restart === true ? (0, react.createElement)("label", { className: Market_module_css_default.setCheck }, (0, react.createElement)("input", {
-				type: "checkbox",
-				checked: restartAfter,
-				disabled: busy,
-				onChange: () => {
-					setRestartAfter(!restartAfter);
-				}
-			}), (0, react.createElement)("span", null, t("setSelfRestartAfter"))) : null, (0, react.createElement)("div", { className: Market_module_css_default.setActions }, busy ? null : (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+			}), (0, react.createElement)("span", null, t("setSelfPurge"))), (0, react.createElement)("div", { className: Market_module_css_default.setHint }, purge ? t("setSelfPurgeOn") : t("setSelfPurgeOff")), (0, react.createElement)("div", { className: Market_module_css_default.setActions }, busy ? null : (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 				variant: "ghost",
 				size: "sm",
 				onClick: () => {
 					setPhase("idle");
 					setPurge(false);
-					setRestartAfter(false);
 				}
 			}, t("setSelfCancel")), (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 				variant: "primary",
@@ -5614,29 +5601,41 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				en
 			}), "dsh-market: dictionaries");
 			const t = ctx.locale.bind(NS);
-			ctx.slots.inject("settings.section", () => ctx.slots.register({
-				name: "settings.section",
-				id: "market",
-				order: 40,
-				label: () => t("nav"),
-				locale: NS,
-				inject: () => ({ t })
-			}, () => (0, react.createElement)(MarketSection, {
-				t,
-				locale: ctx.locale,
-				theme: ctx.theme,
-				themeStore: {
-					subscribe: (cb) => ctx.on("theme/change", cb),
-					getSnapshot: () => ctx.theme.getTheme()
-				}
-			})));
+			let retireSection = null;
+			ctx.slots.inject("settings.section", () => {
+				const off = ctx.slots.register({
+					name: "settings.section",
+					id: "market",
+					order: 40,
+					label: () => t("nav"),
+					locale: NS,
+					inject: () => ({ t })
+				}, () => (0, react.createElement)(MarketSection, {
+					t,
+					locale: ctx.locale,
+					theme: ctx.theme,
+					themeStore: {
+						subscribe: (cb) => ctx.on("theme/change", cb),
+						getSnapshot: () => ctx.theme.getTheme()
+					}
+				}));
+				if (typeof off === "function") retireSection = off;
+				return off;
+			});
 			ctx.inject(["settingsScope"], (scoped) => {
 				scoped.slots.inject("settings.plugin.item", () => scoped.slots.register({
 					name: "settings.plugin.item",
 					key: NS,
 					locale: NS,
 					inject: () => ({ t })
-				}, () => (0, react.createElement)(SettingsCard, { t })));
+				}, () => (0, react.createElement)(SettingsCard, {
+					t,
+					onRemoved: () => {
+						const off = retireSection;
+						retireSection = null;
+						off?.();
+					}
+				})));
 			});
 			const Toast = () => (0, react.createElement)(InstallToast, { t });
 			ctx.slots.inject("shell.overlay", () => ctx.slots.register({
