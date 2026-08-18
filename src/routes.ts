@@ -32,7 +32,7 @@ import { isStaleUpdate, parseIgnoredBuilds, parsePrepareNotAllowed, RELEASE_AGE_
 import { checkUpdates, fetchNpmLatest, invalidateUpdates, isUpgrade, latestPublishedRecently } from './updates.ts'
 import { createThemeManager, type LoaderEntry } from './themes.ts'
 import { readJsonBody, sameOrigin, sendJson } from './http.ts'
-import { restartAllowed, scheduleRestart, trustedRestartRequest, trustedDownloadRequest } from './restart.ts'
+import { restartAllowed, scheduleRestart, servingPort, trustedRestartRequest, trustedDownloadRequest } from './restart.ts'
 import { activationAfterReplace, hasHostHalf, verifyActivation } from './verify.ts'
 import {
   disableRow, enableRow, findUserPatchPath, isProtectedModule, packagePatchFlags,
@@ -1374,7 +1374,7 @@ export function mountMarketRoutes(
         }
         restarting = true
         try {
-          const result = scheduleRestart()
+          const result = scheduleRestart(servingPort(request))
           logEvent('info', 'restart', `scheduled pid=${String(result.pid)} helper=${String(result.helperPid)}`)
           sendJson(response, 202, { ok: true, boot: BOOT_ID, ...result })
         } catch (error) {
