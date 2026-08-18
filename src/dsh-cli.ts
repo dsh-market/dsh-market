@@ -34,6 +34,23 @@ import { profileDir } from './profile.ts'
 const extraPathDirs: string[] = []
 
 /**
+ * The real Node executable for spawning children. On Android the kernel runs
+ * node through the dynamic linker, so `process.execPath` is
+ * `/apex/.../linker64` — spawning IT with `--expose-internals` makes the
+ * linker treat the flag as the program path and die with
+ * `error: expected absolute path: "--expose-internals"`. `process.argv0`
+ * carries the real node binary; prefer it whenever it is an existing
+ * absolute path, and fall back to execPath everywhere else.
+ * @param argv0 - `process.argv0`, injectable for tests.
+ * @param execPath - `process.execPath`, injectable for tests.
+ */
+export function nodeExecutable(argv0: string | undefined = process.argv0, execPath: string = process.execPath): string {
+  if (argv0 !== undefined && argv0 !== '' && isAbsolute(argv0) && existsSync(argv0))
+    return argv0
+  return execPath
+}
+
+/**
  * The directory holding the Node binary running this process. `npm`,
  * `npm.cmd` and `corepack` are installed alongside it by every official Node
  * distribution, so it is the one place the toolchain can be looked for
@@ -45,7 +62,7 @@ const extraPathDirs: string[] = []
  * both `corepack` and `npm` came back "not recognized as an internal or
  * external command", so the one-click setup had no way to succeed.
  */
-export const nodeBinDir = dirname(process.execPath)
+export const nodeBinDir = dirname(nodeExecutable())
 
 function spawnEnv(): NodeJS.ProcessEnv {
   // pnpm v10+ blocks forever on a silent interactive prompt without a TTY;
@@ -132,7 +149,7 @@ export function dshArgv(): { file: string; args: string[]; cwd: string | undefin
     // with MODULE_NOT_FOUND (#13). cwd near the entry keeps execArgv imports
     // (tsx/esm) resolvable on source launches.
     const abs = resolve(entry)
-    return { file: process.execPath, args: [...process.execArgv, abs], cwd: dirname(abs), viaShell: false }
+    return { file: nodeExecutable(), args: [...process.execArgv, abs], cwd: dirname(abs), viaShell: false }
   }
   // Bare `dsh` is a .cmd shim on Windows that only a shell can start (#13).
   return { file: 'dsh', args: [], cwd: undefined, viaShell: winCmdShim }

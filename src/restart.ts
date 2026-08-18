@@ -13,7 +13,7 @@ import { spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { IncomingMessage } from 'node:http'
-import { dshArgv } from './dsh-cli.ts'
+import { dshArgv, nodeExecutable } from './dsh-cli.ts'
 
 /** Self-restart is enabled by default and disabled only by an explicit false. */
 export function restartAllowed(config: { allowRestart?: boolean }): boolean {
@@ -237,7 +237,7 @@ export function scheduleRestart(port: number | null = null): RestartResult {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
   const logOut = join(tmpdir(), `dsh-market-restart-${stamp}.out.log`)
   const logErr = join(tmpdir(), `dsh-market-restart-${stamp}.err.log`)
-  const helper = spawn(process.execPath, ['-e', restartHelperSource(spawned, launch, { out: logOut, err: logErr }, port)], {
+  const helper = spawn(nodeExecutable(), ['-e', restartHelperSource(spawned, launch, { out: logOut, err: logErr }, port)], {
     detached: true,
     stdio: 'ignore',
     env: process.env,

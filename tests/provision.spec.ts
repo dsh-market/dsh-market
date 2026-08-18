@@ -73,10 +73,11 @@ describe('provisionPnpm (#149)', () => {
     // "not recognized as an internal or external command" — the host spawns
     // dsh without the Node install directory on PATH.
     //
-    // npm and corepack live in that exact directory, and `process.execPath`
-    // is the one path this process can always be sure of, so the setup has
-    // no business failing here.
-    const nodeDir = dirname(process.execPath)
+    // npm and corepack live in that exact directory, and the Node binary
+    // (resolved the same way the market resolves it for its children) is the
+    // one path this process can always be sure of, so the setup has no
+    // business failing here.
+    const nodeDir = dirname((await import('../src/dsh-cli.ts')).nodeExecutable())
     childProcess.spawn.mockImplementation((_file: string, _args: string[], options: { env?: Record<string, string> }) => {
       // The whole toolchain is invisible unless Node's own directory is on
       // the PATH handed to the child — exactly the reported machine. No
