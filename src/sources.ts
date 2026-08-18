@@ -29,25 +29,41 @@ export function parseSourceUrl(url: string): { repo: string; subpath: string | n
   return { repo: m[1], subpath }
 }
 
+function repoFromParts(owner: string, name: string): { repo: string } | null {
+  const repoName = name.replace(/\.git$/i, '')
+  const repo = `${owner}/${repoName}`
+  return REPO_RE.test(repo) ? { repo } : null
+}
+
+/** Parse repository forms accepted by package.json.repository. */
+export function parseGitHubRepository(value: string): { repo: string } | null {
+  const input = value.trim()
+  const shortcut = /^(?:github:)?([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?(?:#.*)?$/i.exec(input)
+  if (shortcut !== null) return repoFromParts(shortcut[1]!, shortcut[2]!)
+
+  const remote = input.replace(/^git\+/i, '')
+  const web = /^(?:https?|git|ssh):\/\/(?:git@)?github\.com[/:]([^/]+)\/([^/?#]+)\/?(?:[?#].*)?$/i.exec(remote)
+  const scp = /^git@github\.com:([^/]+)\/([^/?#]+)$/i.exec(remote)
+  const match = web ?? scp
+  return match === null ? null : repoFromParts(match[1]!, match[2]!)
+}
+
 /**
- * Parse the common GitHub remote forms found in package.json and .git/config.
- * Credentials and transport details are deliberately discarded: callers only
- * receive the public owner/repo identity used for catalog matching.
+ * Parse a Git remote. Unlike package metadata, a local origin may contain a
+ * proxy prefix (for example `https://proxy/https://github.com/o/r.git`). In
+ * that case only the last GitHub occurrence is considered.
  */
 export function parseGitHubRemote(url: string): { repo: string } | null {
-  const value = url.trim().replace(/^git\+/i, '')
-  const web = /^(?:https?|git|ssh):\/\/(?:git@)?github\.com\/([^/]+)\/([^/?#]+)\/?(?:[?#].*)?$/i.exec(value)
-  const scp = /^git@github\.com:([^/]+)\/([^/?#]+)$/i.exec(value)
-  const match = web ?? scp
-  if (match === null) return null
-  const repoName = match[2]!.replace(/\.git$/i, '')
-  const repo = `${match[1]!}/${repoName}`
-  return REPO_RE.test(repo) ? { repo } : null
+  const exact = parseGitHubRepository(url)
+  if (exact !== null) return exact
+  const matches = [...url.matchAll(/github\.com[/:]([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?(?=$|[/?#])/ig)]
+  const match = matches.at(-1)
+  return match === undefined ? null : repoFromParts(match[1]!, match[2]!)
 }
 
 /** Normalized repo identity shared by server discovery and client matching. */
 export function githubRepoIdentity(url: string, directory?: string | null): string | null {
-  const source = parseGitHubRemote(url)
+  const source = parseGitHubRepository(url)
   if (source === null) return null
   const repo = source.repo.toLowerCase()
   if (directory === undefined || directory === null || directory.trim() === '') return repo
@@ -65,6 +81,13 @@ export function githubRepoIdentities(url: string, directory?: string | null): st
   if (identity === null) return []
   const pathAt = identity.indexOf('#path:/')
   return pathAt === -1 ? [identity] : [identity.slice(0, pathAt), identity]
+}
+
+/** Weak identity hints from a local Git origin; never used to reject a unique match. */
+export function githubRemoteIdentities(url: string, directory?: string | null): string[] {
+  const source = parseGitHubRemote(url)
+  if (source === null) return []
+  return githubRepoIdentities(`https://github.com/${source.repo}`, directory)
 }
 
 /** GitHub `owner/repo` for a registry URL, or null when it is not a GitHub repo URL. */

@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   conflictingEntryIds, entryArtifactExists, hasDshManifest, pluginSubdirs, profileDir,
-  readInstalled, readInstalledManifest, readInstalledRepoIdentities, readInstalledVersion, readLockCommits,
+  readInstalled, readInstalledManifest, readInstalledRepoEvidence, readInstalledRepoIdentities, readInstalledVersion, readLockCommits,
 } from '../src/profile.ts'
 
 let home: string
@@ -76,7 +76,7 @@ describe('readInstalledManifest', () => {
   })
 })
 
-describe('readInstalledRepoIdentities (#141)', () => {
+describe('readInstalledRepoEvidence (#141)', () => {
   it('reads package.json repository metadata, including monorepo directories', () => {
     const target = mkdtempSync(join(tmpdir(), 'dshm-link-'))
     try {
@@ -107,11 +107,12 @@ describe('readInstalledRepoIdentities (#141)', () => {
         '[core]',
         '\trepositoryformatversion = 0',
         '[remote "origin"]',
-        '\turl = git@github.com:GXX182/dsh-vision-bridge.git',
+        '\turl = https://ghfast.top/https://github.com/GXX182/dsh-vision-bridge.git',
       ].join('\n'))
       writeFileSync(join(target, 'package.json'), JSON.stringify({ name: 'local-plugin' }))
-      expect(readInstalledRepoIdentities('web', 'local-plugin', `link:${target}`))
-        .toEqual(['gxx182/dsh-vision-bridge', 'gxx182/dsh-vision-bridge#path:/packages/local-plugin'])
+      expect(readInstalledRepoIdentities('web', 'local-plugin', `link:${target}`)).toEqual([])
+      expect(readInstalledRepoEvidence('web', 'local-plugin', `link:${target}`))
+        .toEqual({ identities: [], hints: ['gxx182/dsh-vision-bridge', 'gxx182/dsh-vision-bridge#path:/packages/local-plugin'] })
     } finally {
       rmSync(repo, { recursive: true, force: true })
     }

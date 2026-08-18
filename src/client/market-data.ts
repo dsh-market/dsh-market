@@ -44,6 +44,9 @@ export type InstalledMap = Record<string, string>
 /** Strong repo identities discovered for local link:/file: dependencies (#141). */
 export type InstalledRepoIdentities = Record<string, string[]>
 
+/** Weak Git-origin hints used only to disambiguate multiple same-named entries. */
+export type InstalledRepoHints = Record<string, string[]>
+
 /** Response of the /dsh-market/gist export action. */
 export interface GistExportResult {
   ok: boolean
@@ -101,6 +104,8 @@ export interface InstalledPayload {
   installed: InstalledMap
   /** Strong source identities for local link:/file: dependencies (#141). */
   repoIdentities?: InstalledRepoIdentities
+  /** Weak local Git-origin hints; never used to reject a unique match. */
+  repoHints?: InstalledRepoHints
   activation?: Record<string, ActivationInfo>
   diagnostics?: DiagnosticReportV1
   live?: string[]
@@ -393,17 +398,22 @@ function sameSourceConflict(plugin: RegistryPlugin, spec: string, repoIdentities
   return true
 }
 
+function repoHintMatches(plugin: RegistryPlugin, hints: readonly string[]): boolean {
+  const entry = entryRepoIds(plugin)
+  const values = new Set<string>()
+  addRepoIdentities(values, hints)
+  for (const id of values) if (entry.has(id)) return true
+  return false
+}
+
 function looseMatchCount(plugins: RegistryPlugin[], name: string): number {
+  return plugins.filter(plugin => looseMatches(plugin, name)).length
+}
+
+function looseMatches(plugin: RegistryPlugin, name: string): boolean {
   const dep = depIdentities(name, '')
-  let count = 0
-  for (const plugin of plugins) {
-    for (const id of entryIdentities(plugin)) {
-      if (!dep.has(id)) continue
-      count++
-      break
-    }
-  }
-  return count
+  for (const id of entryIdentities(plugin)) if (dep.has(id)) return true
+  return false
 }
 
 /** The installed dependency name a registry entry corresponds to, or null. */
@@ -412,11 +422,13 @@ export function matchInstalledName(
   installed: InstalledMap,
   repoIdentities: InstalledRepoIdentities = {},
   plugins?: RegistryPlugin[],
+  repoHints: InstalledRepoHints = {},
 ): string | null {
   const ids = entryIdentities(plugin)
   for (const [name, spec] of Object.entries(installed)) {
     const repos = repoIdentities[name] ?? []
-    if (depRepoIds(String(spec), repos).size === 0 && plugins !== undefined && looseMatchCount(plugins, name) > 1) continue
+    if (depRepoIds(String(spec), repos).size === 0 && plugins !== undefined && looseMatchCount(plugins, name) > 1
+      && !repoHintMatches(plugin, repoHints[name] ?? [])) continue
     if (sameSourceConflict(plugin, String(spec), repos)) continue
     for (const id of depIdentities(name, String(spec), repos)) {
       if (ids.has(id)) return name
@@ -431,8 +443,12 @@ export function entryForDep(
   name: string,
   spec: string,
   repoIdentities: readonly string[] = [],
+  repoHints: readonly string[] = [],
 ): RegistryPlugin | undefined {
-  if (depRepoIds(String(spec), repoIdentities).size === 0 && looseMatchCount(plugins, name) > 1) return undefined
+  if (depRepoIds(String(spec), repoIdentities).size === 0 && looseMatchCount(plugins, name) > 1) {
+    const hinted = plugins.find(plugin => repoHintMatches(plugin, repoHints) && looseMatches(plugin, name))
+    if (hinted === undefined) return undefined
+  }
   const ids = depIdentities(name, String(spec), repoIdentities)
   return plugins.find((plugin) => {
     if (sameSourceConflict(plugin, String(spec), repoIdentities)) return false
@@ -446,8 +462,9 @@ export function isInstalled(
   installed: InstalledMap,
   repoIdentities: InstalledRepoIdentities = {},
   plugins?: RegistryPlugin[],
+  repoHints: InstalledRepoHints = {},
 ): boolean {
-  return matchInstalledName(plugin, installed, repoIdentities, plugins) !== null
+  return matchInstalledName(plugin, installed, repoIdentities, plugins, repoHints) !== null
 }
 
 /**

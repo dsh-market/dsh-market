@@ -110,6 +110,28 @@ describe('matchInstalledName / isInstalled', () => {
     expect(entryForDep(plugins, 'dsh-vision-bridge', installed['dsh-vision-bridge']!)).toBeUndefined()
   })
 
+  it('uses a weak Git-origin hint only among duplicate candidates', () => {
+    const installed = { 'dsh-vision-bridge': 'link:D:/src/dsh-vision-bridge' }
+    const plugins = [
+      plugin({ name: 'dsh-vision-bridge', url: 'https://github.com/gxx182/dsh-vision-bridge' }),
+      plugin({ name: 'dsh-vision-bridge', url: 'https://github.com/other/dsh-vision-bridge' }),
+    ]
+    const hints = { 'dsh-vision-bridge': ['gxx182/dsh-vision-bridge'] }
+
+    expect(matchInstalledName(plugins[0]!, installed, {}, plugins, hints)).toBe('dsh-vision-bridge')
+    expect(matchInstalledName(plugins[1]!, installed, {}, plugins, hints)).toBeNull()
+    expect(entryForDep(plugins, 'dsh-vision-bridge', installed['dsh-vision-bridge']!, [], hints['dsh-vision-bridge'])).toBe(plugins[0])
+  })
+
+  it('keeps the unique loose name match when a weak hint disagrees', () => {
+    const installed = { 'dsh-vision-bridge': 'link:D:/src/dsh-vision-bridge' }
+    const only = plugin({ name: 'dsh-vision-bridge', url: 'https://github.com/other/dsh-vision-bridge' })
+    const hints = { 'dsh-vision-bridge': ['gxx182/dsh-vision-bridge'] }
+
+    expect(matchInstalledName(only, installed, {}, [only], hints)).toBe('dsh-vision-bridge')
+    expect(entryForDep([only], 'dsh-vision-bridge', installed['dsh-vision-bridge']!, [], hints['dsh-vision-bridge'])).toBe(only)
+  })
+
   it('matches local monorepo evidence the same way as a github:#path spec', () => {
     const root = plugin({ name: 'collection', url: 'https://github.com/o/collection' })
     const exact = plugin({

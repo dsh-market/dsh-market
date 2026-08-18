@@ -7,7 +7,7 @@
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
-import { githubRepoIdentities, parseGitHubRemote } from './sources.ts'
+import { githubRemoteIdentities, githubRepoIdentities } from './sources.ts'
 
 /**
  * Resolve a profile name to its directory under DSH_HOME (default ~/.dsh).
@@ -136,6 +136,15 @@ function localSpecDirectory(root: string, spec: string): string | null {
   }
 }
 
+function installedPackageDirectory(root: string, name: string): string | null {
+  try {
+    const candidate = join(root, 'node_modules', name)
+    return statSync(candidate).isDirectory() ? realpathSync(candidate) : null
+  } catch {
+    return null
+  }
+}
+
 function manifestAt(dir: string): Record<string, unknown> | null {
   try {
     const value = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as unknown
@@ -213,8 +222,8 @@ function checkoutSubpath(root: string, packageDir: string): string | null {
 /**
  * Strong repository identities for a locally linked dependency (#141).
  * Explicit github: specs already carry this evidence; only link:/file: need
- * filesystem discovery. package.json.repository wins, with the checkout's
- * origin as a fallback for source trees that omit publish metadata.
+ * filesystem discovery. This compatibility wrapper returns only declared
+ * package.json identities; Git origins are exposed separately as hints.
  */
 export function readInstalledRepoIdentities(
   profile: string,
@@ -222,37 +231,50 @@ export function readInstalledRepoIdentities(
   spec: string,
   explicitDir?: string,
 ): string[] {
-  if (!PACKAGE_NAME_RE.test(name) || !/^(?:link|file):/i.test(spec)) return []
+  return readInstalledRepoEvidence(profile, name, spec, explicitDir).identities
+}
+
+export interface InstalledRepoEvidence {
+  identities: string[]
+  hints: string[]
+}
+
+/**
+ * Discover declared repository identities and weaker local-origin hints. A
+ * package.json repository declaration is authoritative; Git origin is only a
+ * disambiguation hint because a checkout may legitimately point at a fork.
+ */
+export function readInstalledRepoEvidence(
+  profile: string,
+  name: string,
+  spec: string,
+  explicitDir?: string,
+): InstalledRepoEvidence {
+  if (!PACKAGE_NAME_RE.test(name) || !/^(?:link|file):/i.test(spec)) return { identities: [], hints: [] }
   const root = profileDir(profile, explicitDir)
   const sourceDir = localSpecDirectory(root, spec)
-  const manifest = sourceDir === null ? readInstalledManifest(profile, name, explicitDir) : manifestAt(sourceDir)
+  const installedDir = installedPackageDirectory(root, name)
+  const manifestDir = installedDir ?? sourceDir
+  const manifest = manifestDir === null ? readInstalledManifest(profile, name, explicitDir) : manifestAt(manifestDir)
   const repository = manifestRepository(
     typeof manifest === 'object' && manifest !== null ? manifest as Record<string, unknown> : null,
   )
-  const checkout = sourceDir === null ? null : gitCheckout(sourceDir)
+  const checkoutDir = sourceDir ?? (installedDir !== null && /^(?:link):/i.test(spec) ? installedDir : null)
+  const checkout = checkoutDir === null ? null : gitCheckout(checkoutDir)
 
   if (repository !== null) {
-    let directory = repository.directory === null || repository.directory.trim() === '' || repository.directory.trim() === '.'
-      ? null
-      : repository.directory
-    if (directory === null && checkout !== null) {
-      const declared = parseGitHubRemote(repository.url)
-      const actual = parseGitHubRemote(checkout.origin)
-      if (declared !== null && actual !== null && declared.repo.toLowerCase() === actual.repo.toLowerCase()) {
-        directory = checkoutSubpath(checkout.root, sourceDir!)
-      }
-    }
-    return githubRepoIdentities(repository.url, directory)
+    const identities = githubRepoIdentities(repository.url, repository.directory)
+    if (identities.length > 0) return { identities, hints: [] }
   }
 
   if (checkout !== null) {
-    return githubRepoIdentities(checkout.origin, checkoutSubpath(checkout.root, sourceDir!))
+    return { identities: [], hints: githubRemoteIdentities(checkout.origin, checkoutSubpath(checkout.root, checkoutDir!)) }
   }
 
   // node_modules is intentionally not searched upward for .git: a copied
   // file: package may sit inside an unrelated profile checkout. Only the
   // explicit local source directory is valid Git-origin evidence.
-  return []
+  return { identities: [], hints: [] }
 }
 
 /** Pinned commit per `owner/repo` from the profile lockfile's codeload tarball URLs. */

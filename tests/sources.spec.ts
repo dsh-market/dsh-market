@@ -5,8 +5,8 @@
 
 import { describe, expect, it } from 'vitest'
 import {
-  findInstalledAlias, gitAllowBuildsKey, githubRepoIdentities, githubRepoIdentity, installTargetFor, parseGitHubRemote,
-  parseSourceUrl, repoOf,
+  findInstalledAlias, gitAllowBuildsKey, githubRemoteIdentities, githubRepoIdentities, githubRepoIdentity,
+  installTargetFor, parseGitHubRemote, parseGitHubRepository, parseSourceUrl, repoOf,
 } from '../src/sources.ts'
 
 describe('parseSourceUrl', () => {
@@ -38,6 +38,12 @@ describe('local GitHub source identity (#141)', () => {
       .toEqual({ repo: 'GXX182/dsh-vision-bridge' })
     expect(parseGitHubRemote('ssh://git@github.com/GXX182/dsh-vision-bridge.git'))
       .toEqual({ repo: 'GXX182/dsh-vision-bridge' })
+    expect(parseGitHubRepository('owner/repo')).toEqual({ repo: 'owner/repo' })
+    expect(parseGitHubRepository('github:owner/repo')).toEqual({ repo: 'owner/repo' })
+    expect(parseGitHubRepository('git+ssh://git@github.com/Owner/Repo.git'))
+      .toEqual({ repo: 'Owner/Repo' })
+    expect(parseGitHubRemote('https://ghfast.top/https://github.com/Owner/Repo.git'))
+      .toEqual({ repo: 'Owner/Repo' })
     expect(parseGitHubRemote('https://gitlab.com/GXX182/dsh-vision-bridge.git')).toBeNull()
   })
 
@@ -52,6 +58,8 @@ describe('local GitHub source identity (#141)', () => {
     expect(githubRepoIdentities('https://github.com/Owner/Repo.git'))
       .toEqual(['owner/repo'])
     expect(githubRepoIdentities('https://github.com/Owner/Repo.git', 'packages/plugin'))
+      .toEqual(['owner/repo', 'owner/repo#path:/packages/plugin'])
+    expect(githubRemoteIdentities('git@github.com:Owner/Repo.git', 'packages/plugin'))
       .toEqual(['owner/repo', 'owner/repo#path:/packages/plugin'])
   })
 })
