@@ -454,3 +454,22 @@ export function patchLayerManages(controls: { ids: Set<string>; names: Set<strin
   return controls.ids.has(rowId) || controls.names.has(name)
 }
 
+
+/**
+ * Delete the market's own state directory.
+ *
+ * `cleanHotDir` wipes the ephemeral hot-mount inputs on every boot but
+ * deliberately preserves `state.json` — the disable list and custom groups
+ * are the user's durable choices. Uninstalling the market is the one moment
+ * where removing them is the right thing, and only when the user asked.
+ * @returns true when a directory was there to remove.
+ */
+export function purgeMarketState(profileDir: string): boolean {
+  const dir = join(profileDir, HOT_DIR)
+  try {
+    rmSync(dir, { recursive: true, force: true })
+    return true
+  } catch {
+    return false
+  }
+}

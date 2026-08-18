@@ -172,11 +172,29 @@ function ScreenshotStrip({ plugin }: { plugin: RegistryPlugin }) {
  * follows the active theme. Mirrors the settings-nav glyph used for the
  * "market" section id.
  */
-function MarketLogo({ size = 16, style }: { size?: number; style?: CSSProperties }) {
+function MarketLogo({ size = 16, style, animated = false }: { size?: number; style?: CSSProperties; animated?: boolean }) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" style={style}>
-      <path fill="currentColor" d="M2.35 1.75H4.95A0.6 0.6 0 0 1 5.55 2.35V4.95A0.6 0.6 0 0 1 4.95 5.55H2.35A0.6 0.6 0 0 1 1.75 4.95V2.35A0.6 0.6 0 0 1 2.35 1.75ZM6.7 1.75H9.3A0.6 0.6 0 0 1 9.9 2.35V4.95A0.6 0.6 0 0 1 9.3 5.55H6.7A0.6 0.6 0 0 1 6.1 4.95V2.35A0.6 0.6 0 0 1 6.7 1.75ZM2.35 6.1H4.95A0.6 0.6 0 0 1 5.55 6.7V9.3A0.6 0.6 0 0 1 4.95 9.9H2.35A0.6 0.6 0 0 1 1.75 9.3V6.7A0.6 0.6 0 0 1 2.35 6.1ZM6.7 6.1H9.3A0.6 0.6 0 0 1 9.9 6.7V9.3A0.6 0.6 0 0 1 9.3 9.9H6.7A0.6 0.6 0 0 1 6.1 9.3V6.7A0.6 0.6 0 0 1 6.7 6.1ZM11.05 6.1H13.65A0.6 0.6 0 0 1 14.25 6.7V9.3A0.6 0.6 0 0 1 13.65 9.9H11.05A0.6 0.6 0 0 1 10.45 9.3V6.7A0.6 0.6 0 0 1 11.05 6.1ZM2.35 10.45H4.95A0.6 0.6 0 0 1 5.55 11.05V13.65A0.6 0.6 0 0 1 4.95 14.25H2.35A0.6 0.6 0 0 1 1.75 13.65V11.05A0.6 0.6 0 0 1 2.35 10.45ZM6.7 10.45H9.3A0.6 0.6 0 0 1 9.9 11.05V13.65A0.6 0.6 0 0 1 9.3 14.25H6.7A0.6 0.6 0 0 1 6.1 13.65V11.05A0.6 0.6 0 0 1 6.7 10.45ZM11.05 10.45H13.65A0.6 0.6 0 0 1 14.25 11.05V13.65A0.6 0.6 0 0 1 13.65 14.25H11.05A0.6 0.6 0 0 1 10.45 13.65V11.05A0.6 0.6 0 0 1 11.05 10.45Z" />
-      <path fill="currentColor" d="M11.05 1.75H13.65A0.6 0.6 0 0 1 14.25 2.35V4.95A0.6 0.6 0 0 1 13.65 5.55H11.05A0.6 0.6 0 0 1 10.45 4.95V2.35A0.6 0.6 0 0 1 11.05 1.75Z" transform="rotate(9 12.35 3.65)" />
+      <g fill="currentColor">
+        <rect x="1.96" y="3.36" width="3.3" height="3.3" rx="0.53" />
+        <rect x="5.71" y="3.36" width="3.3" height="3.3" rx="0.53" />
+        <rect x="1.96" y="7.11" width="3.3" height="3.3" rx="0.53" />
+        <rect x="5.71" y="7.11" width="3.3" height="3.3" rx="0.53" />
+        <rect x="9.46" y="7.11" width="3.3" height="3.3" rx="0.53" />
+        <rect x="1.96" y="10.86" width="3.3" height="3.3" rx="0.53" />
+        <rect x="5.71" y="10.86" width="3.3" height="3.3" rx="0.53" />
+        <rect x="9.46" y="10.86" width="3.3" height="3.3" rx="0.53" />
+      </g>
+      {/* The block being plugged in: OUTSIDE the grid's empty corner, offset
+          (+1.28, -1.27) and tilted 9deg, exactly as in assets/logo.svg. The
+          earlier icon sat it neatly in the empty slot, which reads as one
+          crooked tile rather than a block arriving — the whole idea of the
+          mark, and the reason it no longer matched the GitHub logo. */}
+      <rect
+        className={animated ? css.logoPlug : undefined}
+        x="10.74" y="2.09" width="3.3" height="3.3" rx="0.53" fill="currentColor"
+        transform={animated ? undefined : 'rotate(9 12.39 3.74)'}
+      />
     </svg>
   )
 }
@@ -1944,7 +1962,7 @@ export function MarketSection(props: MarketSectionProps) {
           ? loadError
             ? <div className={css.empty}>{t('loadFail')}</div>
             : data === null
-              ? <div className={css.loading}><span className={css.spin}><IconLoadingOutline16 size={22} /></span>{t('loading')}</div>
+              ? <div className={css.loading}><span className={css.logoMark}><MarketLogo size={26} animated /></span>{t('loading')}</div>
               : (
                   <>
                     <div className={css.tabSearchRow}>
@@ -2087,7 +2105,7 @@ export function MarketSection(props: MarketSectionProps) {
                     )
                   })()}
                   {data === null
-                    ? <div className={css.loading}><span className={css.spin}><IconLoadingOutline16 size={22} /></span>{t('loading')}</div>
+                    ? <div className={css.loading}><span className={css.logoMark}><MarketLogo size={26} animated /></span>{t('loading')}</div>
                     : themePlugins.length === 0
                       ? <div className={css.empty}>{t('themeEmpty')}</div>
                       : filteredThemePlugins.length === 0

@@ -14,7 +14,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { loadRegistry } from './registry.ts'
 import {
   cleanHotDir, hotMount, hotUnmount, listHotMounts,
-  mountClientOnlyDeps, readMarketState, writeMarketState,
+  mountClientOnlyDeps, purgeMarketState, readMarketState, writeMarketState,
 } from './hot.ts'
 import { createGroup, deleteGroup, removeFromGroups, renameGroup, setGroupMembers } from './groups.ts'
 import { exportLogs, logEvent } from './log.ts'
@@ -1209,6 +1209,117 @@ export function mountMarketRoutes(
         try {
           const result = await commands.provisionPnpm()
           sendJson(response, 200, { ok: result.ok, error: result.hint })
+        } catch (error) {
+          sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    }),
+
+    /**
+     * Remove the market itself, from its card on the plugin configuration
+     * page. Deliberately NOT the generic uninstall route, which keeps
+     * refusing the market: a destructive action on the thing serving the
+     * request should be reachable only from the surface built for it, and
+     * never as a stray `{ name: "dshmarket" }` on the ordinary path.
+     *
+     * Removing itself is safe, which is not obvious and was measured before
+     * this was written: an already-imported module does not vanish with its
+     * files, so the process keeps serving and the response completes
+     * normally. The profile boots clean afterwards, with the market's rows
+     * gone from `dependencies` and `dsh.profile.bundles`.
+     */
+    host.webServer.register({
+      kind: 'exact',
+      path: '/dsh-market/self-uninstall',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'POST' })
+          response.end()
+          return
+        }
+        // The same single door the restart route uses — and only it. Both
+        // end the market's life in this process, so neither may be driven by
+        // a remote or forwarded client. A separate `sameOrigin` call would
+        // read as an extra guard while testing nothing: origin-matches-host
+        // is already part of what this checks, so no request can fail one
+        // and pass the other.
+        if (!trustedRestartRequest(request)) {
+          sendJson(response, 403, { error: 'self-uninstall is limited to same-origin loopback requests' })
+          return
+        }
+        try {
+          await withMutationLock(response, 'install', async () => {
+            const body = (await readJsonBody(request)) as { confirm?: unknown; purge?: unknown }
+            // An explicit flag, not merely reaching the endpoint: this is the
+            // one route whose accidental success cannot be undone from the UI
+            // that would have undone it.
+            if (body.confirm !== true) {
+              sendJson(response, 400, { error: 'self-uninstall requires an explicit confirmation' })
+              return
+            }
+            const installed = readInstalled(config.profile, activeProfileDir)
+            const selfName = ['dshmarket', 'dsh-market'].find(candidate => installed[candidate] !== undefined)
+            if (selfName === undefined) {
+              sendJson(response, 400, { error: 'the market is not an installed dependency of this profile' })
+              return
+            }
+
+            const result = await runPlugin(config.profile, ['remove', selfName])
+            const ok = result.exitCode === 0 && !result.timedOut && !result.cancelled
+            if (!ok) {
+              // Report what pnpm actually said. A bare "removal failed" on
+              // the one action the user cannot retry from a UI that is
+              // still there would leave them with nothing to act on.
+              const said = (result.stderr.trim() || result.stdout.trim()).slice(-800)
+              sendJson(response, 502, {
+                ok: false,
+                error: said === '' ? 'removing the market failed' : said,
+                timedOut: result.timedOut,
+                cancelled: result.cancelled,
+              })
+              return
+            }
+
+            // Opt-in cleanup. Rows the market wrote to the USER patch layer
+            // outlive it: a plugin switched off here stays off after the
+            // market is gone, and the only UI that could switch it back on
+            // has just been removed. Only rows belonging to packages on the
+            // market's own disable list are touched — a hand-written row is
+            // the user's, not ours.
+            const purge = body.purge === true
+            const restored: string[] = []
+            if (purge) {
+              for (const name of disabled) {
+                const ids = rowIdsForPackage(host, activeProfileDir, name)
+                if (ids.length > 0) {
+                  removeRowBlocks(userPatchPath, ids)
+                  restored.push(name)
+                }
+              }
+              purgeMarketState(activeProfileDir)
+            }
+            logEvent('info', 'self-uninstall',
+              `removed ${selfName}${purge ? `; purged state, restored ${String(restored.length)} disabled plugin(s)` : '; state kept'}`)
+
+            sendJson(response, 200, {
+              ok: true,
+              removed: selfName,
+              purged: purge,
+              restored,
+              restart: restartAllowed(config),
+            })
+
+            // AFTER the response. The package is gone from disk, so the host
+            // now 404s on this plugin's client bundle while the loader entry
+            // is still live — the shape that wedges the whole page on the
+            // next refresh (#37). Disabling our own entry composes the page
+            // without the market instead, which is also the end state the
+            // user just asked for. Deferred because it disposes the context
+            // this handler is running in.
+            setTimeout(() => {
+              void themes.setEntryDisabled(selfName, true).catch(() => { /* the restart resolves it either way */ })
+            }, 0)
+          })
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
         }

@@ -10,7 +10,7 @@ import * as primitives from '@deepseek-ai/dsh-client-ui-primitives'
 import { en, zh } from './locales.ts'
 import { InstallToast } from './InstallToast.tsx'
 import { MarketSection } from './MarketSection.tsx'
-import { SettingsCard, type CardScope } from './SettingsCard.tsx'
+import { SettingsCard } from './SettingsCard.tsx'
 import type { ThemeSnapshot, Translate } from './market-data.ts'
 
 const NS = 'dsh-market'
@@ -28,9 +28,17 @@ export function missingPrimitives(mod: Record<string, unknown>, required: readon
   return required.filter(name => mod[name] === undefined)
 }
 
-/** The host surface the settings card needs, present only on rc.7+. */
+/**
+ * The host surface the settings card needs, present only on rc.7+.
+ *
+ * The card no longer reads or writes settings — it manages the market's own
+ * package — but `settingsScope` stays as the INJECTION KEY, because its
+ * presence is what distinguishes a host that has the plugin configuration
+ * page from one that does not. The market's namespace (registered in
+ * settings.ts) is likewise still required: the page dispatches a card keyed
+ * by a namespace it serves, so dropping it would take the card with it.
+ */
 interface SettingsScopeHost {
-  settingsScope: { bind(spec: { namespace: string }): CardScope }
   slots: {
     inject(name: string, register: () => unknown): void
     register(options: Record<string, unknown>, render: () => unknown): unknown
@@ -112,13 +120,12 @@ export function apply(ctx: MarketClientContext): void {
     inject(services: string[], callback: (scoped: SettingsScopeHost) => void): void
   }
   settingsCtx.inject(['settingsScope'], (scoped) => {
-    const scope = scoped.settingsScope.bind({ namespace: NS })
     scoped.slots.inject('settings.plugin.item', () => scoped.slots.register({
       name: 'settings.plugin.item',
       key: NS,
       locale: NS,
       inject: () => ({ t }),
-    }, () => h(SettingsCard, { scope, t })))
+    }, () => h(SettingsCard, { t })))
   })
 
   const Toast = () => h(InstallToast, { t })

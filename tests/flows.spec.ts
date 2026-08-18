@@ -1608,3 +1608,39 @@ describe('custom groups (#60)', () => {
     expect(hot.disabled.has('theme-a')).toBe(true)
   })
 })
+
+describe('self-uninstall — the market removing itself from its settings card', () => {
+  /**
+   * Deliberately a separate route from `/dsh-market/uninstall`, which keeps
+   * refusing the market. A destructive action on the plugin serving the
+   * request should be reachable only from the surface built for it, never as
+   * a stray `{ name: "dshmarket" }` on the ordinary path.
+   */
+  it('is refused without an explicit confirmation', async () => {
+    // Assert the REASON, not just the 400: this route has several ways to
+    // reject, and a status-only assertion passed even with the confirmation
+    // check removed entirely — the request then failed one step later for an
+    // unrelated reason and looked identical from outside.
+    const bare = await bed.dispatch('POST', '/dsh-market/self-uninstall', {})
+    expect(bare.status).toBe(400)
+    expect(String(bare.json.error)).toContain('explicit confirmation')
+    // `confirm: false` is not "close enough" either.
+    const explicitlyNot = await bed.dispatch('POST', '/dsh-market/self-uninstall', { confirm: false })
+    expect(String(explicitlyNot.json.error)).toContain('explicit confirmation')
+  })
+
+  it('is refused from a cross-origin, forwarded or remote client', async () => {
+    // The same door the restart route uses: both end the market's life in
+    // this process, so neither may be driven by anything but the user's own
+    // loopback browser.
+    expect((await bed.dispatch('POST', '/dsh-market/self-uninstall', { confirm: true }, { crossOrigin: true })).status).toBe(403)
+    expect((await bed.dispatch('POST', '/dsh-market/self-uninstall', { confirm: true }, { forwarded: true })).status).toBe(403)
+    expect((await bed.dispatch('POST', '/dsh-market/self-uninstall', { confirm: true }, { remoteAddress: '192.168.1.7' })).status).toBe(403)
+  })
+
+  it('the ordinary uninstall route still refuses the market', async () => {
+    // Adding a way to remove the market must not quietly open the old one.
+    const viaGeneric = await bed.dispatch('POST', '/dsh-market/uninstall', { name: 'dshmarket' })
+    expect(viaGeneric.status).toBe(400)
+  })
+})
