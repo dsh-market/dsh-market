@@ -113,8 +113,8 @@ describe('provisionHint (#142 / #108 / #32)', () => {
     const eperm = provisionHint('Internal Error: EPERM: operation not permitted, open \'D:\\nodejs\\pnpm.CMD\'', 'npm error ... try running the command again as root/Administrator.')
     expect(eperm).toContain('brew install pnpm')
     expect(eperm).toContain('管理员')
-    // #32: no Node on PATH at all — the button is a dead end, say so.
-    expect(provisionHint('spawn corepack ENOENT', 'spawn npm ENOENT')).toContain('找不到 Node')
+    // #32: no toolchain on PATH at all — the button is a dead end, say so.
+    expect(provisionHint('spawn corepack ENOENT', 'spawn npm ENOENT')).toContain('找不到 npm/corepack')
     // Restricted network: the corepack shim cannot fetch pnpm either.
     expect(provisionHint('', 'npm error network request to https://registry.npmjs.org failed, reason: ETIMEDOUT'))
       .toContain('镜像')

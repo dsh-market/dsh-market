@@ -9,6 +9,7 @@
 
 import { spawn } from 'node:child_process'
 import type { ChildProcess, SpawnOptions } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { logEvent } from './log.ts'
@@ -32,14 +33,28 @@ import { profileDir } from './profile.ts'
  */
 const extraPathDirs: string[] = []
 
+/**
+ * The directory holding the Node binary running this process. `npm`,
+ * `npm.cmd` and `corepack` are installed alongside it by every official Node
+ * distribution, so it is the one place the toolchain can be looked for
+ * without guessing — and unlike a PATH entry it cannot be absent, because
+ * this process is executing out of it.
+ *
+ * #167: a Windows desktop host spawned dsh without the Node install
+ * directory on PATH. Node itself was running (v24.18.1 in the log) while
+ * both `corepack` and `npm` came back "not recognized as an internal or
+ * external command", so the one-click setup had no way to succeed.
+ */
+export const nodeBinDir = dirname(process.execPath)
+
 function spawnEnv(): NodeJS.ProcessEnv {
   // pnpm v10+ blocks forever on a silent interactive prompt without a TTY;
   // CI mode forces it to act or fail instead of asking.
   const separator = process.platform === 'win32' ? ';' : ':'
   const parts = (process.env.PATH ?? '').split(separator).filter(part => part !== '')
   const candidates = process.platform === 'win32'
-    ? extraPathDirs
-    : ['/opt/homebrew/bin', '/usr/local/bin', join(homedir(), '.local', 'bin'), ...extraPathDirs]
+    ? [nodeBinDir, ...extraPathDirs]
+    : ['/opt/homebrew/bin', '/usr/local/bin', join(homedir(), '.local', 'bin'), nodeBinDir, ...extraPathDirs]
   for (const bin of candidates) {
     if (!parts.includes(bin)) parts.push(bin)
   }
@@ -304,7 +319,37 @@ export async function provisionPnpm(): Promise<{ ok: boolean; hint?: string }> {
       extraPathDirs.pop()
     }
   }
-  return { ok: false, hint: provisionHint(corepack.output, npm.output) }
+  const npmFound = toolOnPath('npm')
+  if (!npmFound) logEvent('warn', 'setup-pnpm', `npm is not on any searched path (node lives in ${nodeBinDir})`)
+  return { ok: false, hint: provisionHint(corepack.output, npm.output, npmFound) }
+}
+
+/** Executable suffixes a bare command name can carry on this platform. */
+const EXECUTABLE_SUFFIXES = process.platform === 'win32'
+  ? (process.env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(';').filter(part => part !== '')
+  : ['']
+
+/**
+ * Whether a bare command name resolves to a file on the PATH the market
+ * hands its children.
+ *
+ * The market cannot read the reason a spawn failed out of the child's
+ * message: cmd.exe reports a missing command in the console's ANSI codepage
+ * ("'npm' 不是内部或外部命令" on a Chinese Windows), which is neither the
+ * string `ENOENT` nor even valid UTF-8 — so the #32 hint, written against
+ * Node's own ENOENT wording, could never fire on Windows and the user was
+ * left with no guidance at all (#167). Looking on disk answers the same
+ * question in every locale.
+ */
+export function toolOnPath(name: string): boolean {
+  const separator = process.platform === 'win32' ? ';' : ':'
+  for (const dir of (spawnEnv().PATH ?? '').split(separator)) {
+    if (dir === '') continue
+    for (const suffix of EXECUTABLE_SUFFIXES) {
+      if (existsSync(join(dir, name + suffix))) return true
+    }
+  }
+  return false
 }
 
 /**
@@ -317,11 +362,13 @@ export async function provisionPnpm(): Promise<{ ok: boolean; hint?: string }> {
  * a GUI launch with no Node on PATH at all).
  * @returns a bilingual, actionable hint, or undefined when unrecognized.
  */
-export function provisionHint(corepackOutput: string, npmOutput: string): string | undefined {
+export function provisionHint(corepackOutput: string, npmOutput: string, npmFound = true): string | undefined {
   // Node itself unreachable: pointing the user back at this same button
-  // would be a dead end (#32).
-  if (/ENOENT/.test(corepackOutput) && /ENOENT/.test(npmOutput)) {
-    return '这台机器的 dsh 进程找不到 Node（从图形界面启动不继承终端 PATH）。请改从终端启动 dsh，或安装 Homebrew 版 pnpm：brew install pnpm / This dsh process cannot find Node (GUI launches skip your shell PATH). Start dsh from a terminal, or install pnpm via Homebrew: brew install pnpm'
+  // would be a dead end (#32). `npmFound` answers this from disk, so it
+  // holds on a Windows console that reports the same thing in a codepage we
+  // cannot read (#167); the ENOENT match stays for callers without it.
+  if (!npmFound || (/ENOENT/.test(corepackOutput) && /ENOENT/.test(npmOutput))) {
+    return `这台机器的 dsh 进程找不到 npm/corepack（图形界面或桌面端启动时不继承终端 PATH）。已在 Node 自己的目录里找过（${nodeBinDir}）也没有——多半是宿主内置的 Node 运行时不带 npm。请改从终端启动 dsh，或单独装一个 pnpm：Windows 用 iwr https://get.pnpm.io/install.ps1 -useb | iex，macOS/Linux 用 brew install pnpm / This dsh process cannot find npm/corepack (GUI and desktop launches skip your shell PATH). The directory Node itself runs from (${nodeBinDir}) was searched too — a bundled Node runtime without npm is the usual cause. Start dsh from a terminal, or install pnpm on its own: \`iwr https://get.pnpm.io/install.ps1 -useb | iex\` (Windows) or \`brew install pnpm\` (macOS/Linux)`
   }
   if (/EEXIST|already exists|--force to overwrite/i.test(npmOutput)) {
     return 'pnpm 的可执行文件已存在（通常是 corepack 先放好了同名 shim），npm 拒绝覆盖。在终端里执行其一即可：corepack prepare pnpm@latest --activate（推荐，直接激活已有 shim）或 npm i -g pnpm --force / A pnpm executable already exists (usually a corepack shim), so npm refused to overwrite it. Run one of these in a terminal: `corepack prepare pnpm@latest --activate` (preferred — activates the shim already there) or `npm i -g pnpm --force`'
