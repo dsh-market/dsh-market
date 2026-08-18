@@ -350,6 +350,30 @@ export function mountMarketRoutes(
   /** Every plugin command goes through the pnpm-drift recovery wrapper (#20). */
   const runPlugin = (profile: string, args: string[]) => withHoistRecovery(commands.runPlugin, profile, args)
 
+  /**
+   * Undo a clean-exit update whose new build cannot boot. Restoring only the
+   * manifest pin (the original #159 behavior) leaves the bad package files
+   * on disk, and the boot resolves bundle patches from node_modules — the
+   * next start still fails. Re-run pnpm install against the restored
+   * manifest to rematerialize the previous build's files.
+   */
+  async function rollbackUpdateBuild(name: string, manifestBefore: Record<string, string>): Promise<{ ok: boolean; detail: string | null }> {
+    const rolledBack = restoreManifestDeps(config.profile, manifestBefore, activeProfileDir)
+    if (rolledBack.length === 0) return { ok: true, detail: null }
+    // CI=true (the market always runs pnpm that way) turns frozen-lockfile
+    // on, and the restored manifest pin now disagrees with the lockfile the
+    // bad add just wrote — without the flag this restore run fails with
+    // ERR_PNPM_OUTDATED_LOCKFILE (measured). The age override lets pnpm
+    // re-resolve a previous release that is still inside its fresh window.
+    // Flags come BEFORE the command: preparePluginArgs treats the last arg as
+    // the package target and rejects a trailing flag, while pnpm accepts the
+    // same flags in front of `install`.
+    const reinstall = await runPlugin(config.profile, ['--no-frozen-lockfile', RELEASE_AGE_OVERRIDE, 'install'])
+    const ok = reinstall.exitCode === 0 && !reinstall.timedOut && !reinstall.cancelled
+    if (ok) logEvent('info', 'update', `${name}: previous build rematerialized (${rolledBack.join(', ')})`)
+    return { ok, detail: ok ? null : (reinstall.stderr || reinstall.stdout).slice(-300) }
+  }
+
   async function restoreBackup(value: unknown): Promise<{ files: number; errors: { name: string; error: string }[] }> {
     if (!await probePnpm()) throw new Error('pnpm is required to restore plugins')
     // Snapshot the target's manifest BEFORE the backup files overwrite it, so
@@ -1210,12 +1234,38 @@ export function mountMarketRoutes(
             // the OLD code that is already in memory. The failure only
             // surfaces on the next boot, as a profile that will not start.
             let brokenEntry = false
+            let rollbackOk = true
+            let rollbackDetail: string | null = null
             if (ok && !hasLoadableEntry(activeProfileDir, name)) {
               brokenEntry = true
               ok = false
-              const rolledBack = restoreManifestDeps(config.profile, manifestBefore, activeProfileDir)
+              const rollback = await rollbackUpdateBuild(name, manifestBefore)
+              rollbackOk = rollback.ok
+              rollbackDetail = rollback.detail
               logEvent('error', 'update',
-                `${name}: updated build has no loadable entry — rolled back the pin${rolledBack.length > 0 ? ` (${rolledBack.join(', ')})` : ''}`)
+                `${name}: updated build has no loadable entry — ${rollback.ok ? 'previous build restored' : `could not restore previous files: ${rollback.detail ?? 'unknown'}`}`)
+            }
+            // Composition-level boot check for the remaining brick shapes:
+            // duplicate loader entry ids, unparseable bundle patches, or
+            // bundle layers that no longer resolve. hasLoadableEntry cannot
+            // see these because the entry file exists — the profile still
+            // cannot boot until the next start.
+            let trialError: string | null = null
+            if (ok) {
+              const stack = readBundleStack(activeProfileDir)
+              const trial = trialValidate(activeProfileDir, stack.community)
+              if (!trial.ok) {
+                ok = false
+                const first = trial.errors[0]?.message ?? 'the composition would not boot'
+                const rollback = await rollbackUpdateBuild(name, manifestBefore)
+                rollbackOk = rollback.ok
+                rollbackDetail = rollback.detail
+                trialError = rollback.ok
+                  ? `${name} 更新后的组合无法启动（${first}），已自动回滚并恢复原版本文件。 / ${name} updated to a composition that cannot boot (${first}); the previous build was restored.`
+                  : `${name} 更新后的组合无法启动（${first}），回滚未能恢复原版本文件（${rollback.detail ?? 'unknown'}）；请运行 dsh plugin --profile ${config.profile} install 手工恢复。 / ${name} updated to a composition that cannot boot (${first}); the previous files could not be restored (${rollback.detail ?? 'unknown'}) — run 'dsh plugin --profile ${config.profile} install' to recover manually.`
+                logEvent('error', 'update',
+                  `${name}: trial validation failed — ${first}${rollback.ok ? '; previous build restored' : `; could not restore previous files: ${rollback.detail ?? 'unknown'}`}`)
+              }
             }
             if (ok) {
               invalidateUpdates()
@@ -1241,7 +1291,7 @@ export function mountMarketRoutes(
             // the bad artifact is cached under its integrity hash, so a plain
             // re-add reuses it — the package has to be removed first.
             const brokenEntryError = !brokenEntry ? null
-              : `${name} 更新后缺少入口文件（package.json 的 main/exports 指向的文件不存在），已回滚版本号以免下次启动失败。这通常是镜像源在新版本刚发布时同步不完整。请先卸载再从官方源重装：dsh plugin --profile ${config.profile} remove ${name} 然后 add ${name} --registry=https://registry.npmjs.org / ${name} arrived without the entry file its package.json points at; the version pin was rolled back so the next boot still works. A registry mirror serving an incomplete tarball for a just-published version is the usual cause. Remove it and reinstall from the official registry — a plain retry reuses the cached bad artifact.`
+              : `${name} 更新后缺少入口文件（package.json 的 main/exports 指向的文件不存在），已自动回滚并重新安装原版本文件，下次启动不受影响。这通常是镜像源在新版本刚发布时同步不完整；若仍需这个版本，请先卸载再从官方源重装。 / ${name} arrived without the entry file its package.json points at; the previous build was restored, so the next boot is unaffected. A registry mirror serving an incomplete tarball for a just-published version is the usual cause — remove the package and reinstall from the official registry if you still want this version.${rollbackOk ? '' : ` Rollback could not restore the previous files: ${rollbackDetail ?? ''}`}`
 
             const cancelDiff = cancelled ? changedSince(beforeInstalled) : null
             // Build-script blocks hit updates too (#69): a leftover invalid
@@ -1263,7 +1313,7 @@ export function mountMarketRoutes(
               activation,
               ignoredBuilds,
               staleReason: staleReason ?? undefined,
-              error: brokenEntryError ?? staleError ?? undefined,
+              error: trialError ?? brokenEntryError ?? staleError ?? undefined,
               exitCode: result.exitCode,
               timedOut: result.timedOut,
               stdout: result.stdout,

@@ -25,7 +25,7 @@ import { join } from 'node:path'
 const fake = vi.hoisted(() => ({
   profileDir: '',
   /** name → { versions: v→{manifest, artifacts}, latest } */
-  npm: {} as Record<string, { versions: Record<string, { manifest: unknown; artifacts?: string[] }>; latest: string }>,
+  npm: {} as Record<string, { versions: Record<string, { manifest: unknown; artifacts?: string[]; artifactContents?: Record<string, string> }>; latest: string }>,
   /** github:owner/repo target → packages it installs (or a junk collection) */
   repos: {} as Record<string, { name: string; manifest: unknown; artifacts?: string[]; junkChildren?: string[] }>,
   /** Simulate pnpm minimumReleaseAge: adds resolve to the ALREADY INSTALLED version, exit 0. */
@@ -61,7 +61,7 @@ const fake = vi.hoisted(() => ({
 }))
 
 vi.mock('../src/dsh-cli.ts', () => {
-  function writePkg(name: string, manifest: unknown, artifacts: string[] = []): void {
+  function writePkg(name: string, manifest: unknown, artifacts: string[] = [], artifactContents: Record<string, string> = {}): void {
     const root = join(fake.profileDir, 'node_modules', name)
     // Replace, do not merge: pnpm swaps the package directory when the
     // version changes, so files the NEW version does not ship must be gone.
@@ -72,7 +72,7 @@ vi.mock('../src/dsh-cli.ts', () => {
     writeFileSync(join(root, 'package.json'), JSON.stringify(manifest))
     for (const rel of artifacts) {
       mkdirSync(join(root, rel, '..'), { recursive: true })
-      writeFileSync(join(root, rel), '')
+      writeFileSync(join(root, rel), artifactContents[rel] ?? '')
     }
   }
   function readManifest(): { dependencies?: Record<string, string> } {
@@ -118,6 +118,19 @@ vi.mock('../src/dsh-cli.ts', () => {
         fake.failInstallOnce = false
         return { ...ok, exitCode: 1, stderr: 'dsh: pnpm failed in profile directory' }
       }
+      // pnpm install rematerializes whatever package.json currently pins,
+      // independent of the registry's latest dist-tag.
+      const manifest = readManifest()
+      for (const [depName, spec] of Object.entries(manifest.dependencies ?? {})) {
+        const pkg = fake.npm[depName]
+        if (pkg === undefined) continue
+        const match = /^\^?(\d+\.\d+\.\d+)$/.exec(spec)
+        if (match === null) continue
+        const version = match[1]
+        const def = pkg.versions[version]
+        if (def === undefined) continue
+        writePkg(depName, { version, ...(def.manifest as object) }, def.artifacts, def.artifactContents)
+      }
       return ok
     }
     if (cmd === 'add' && fake.captureBundlesOnNextAdd) {
@@ -161,7 +174,7 @@ vi.mock('../src/dsh-cli.ts', () => {
     }
     const version = pkg.latest
     writeDep(name, `^${version}`)
-    writePkg(name, { version, ...(pkg.versions[version].manifest as object) }, pkg.versions[version].artifacts)
+    writePkg(name, { version, ...(pkg.versions[version].manifest as object) }, pkg.versions[version].artifacts, pkg.versions[version].artifactContents)
     if (fake.failAfterWriteStderrOnce !== '') {
       const stderr = fake.failAfterWriteStderrOnce
       fake.failAfterWriteStderrOnce = ''
@@ -898,8 +911,93 @@ describe('update flow — no npm publishing required', () => {
     const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
     expect(r.json.ok).toBe(false)
     expect(String(r.json.error)).toMatch(/入口|entry/)
-    // The pin is rolled back, so the profile is not left describing a build
-    // that cannot load.
+    // The pin is rolled back AND the previous files are rematerialized —
+    // restoring only package.json left the bad package on disk and the next
+    // boot still failed (measured on a real host).
+    expect(installedSpec('dsh-loop')).toBe('^1.0.0')
+    expect(existsSync(join(fake.profileDir, 'node_modules', 'dsh-loop', 'lib', 'index.js'))).toBe(true)
+    expect(fake.calls.some(call => call.includes('install'))).toBe(true)
+  })
+
+  it('refuses an update whose new patch would duplicate a loader entry id and boots would fail', async () => {
+    // Start over with a bundle-shaped install: the patch declares one row.
+    await bed.dispatch('POST', '/dsh-market/uninstall', { name: 'dsh-loop' })
+    fake.npm['dsh-loop'] = {
+      latest: '1.0.0',
+      versions: {
+        '1.0.0': {
+          manifest: { dsh: { bundle: { patch: './cordis.patch.yml' } }, main: 'lib/index.js' },
+          artifacts: ['lib/index.js', 'cordis.patch.yml'],
+          artifactContents: {
+            'cordis.patch.yml': '- insert:\n    - id: loop-id\n      name: dsh-loop\n',
+          },
+        },
+      },
+    }
+    await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
+    // The real dsh plugin command reconciles the bundle layer; FakeDsh does
+    // not, so write what the host would have written.
+    const manifest = JSON.parse(readFileSync(join(fake.profileDir, 'package.json'), 'utf8')) as Record<string, unknown>
+    manifest.dsh = { profile: { bundles: ['dsh-loop'] } }
+    writeFileSync(join(fake.profileDir, 'package.json'), JSON.stringify(manifest))
+
+    // The new version is perfectly loadable; its patch inserts the same id
+    // twice. hasLoadableEntry cannot see this — the next boot would refuse
+    // the whole tree with "duplicate loader entry id".
+    fake.npm['dsh-loop'].latest = '1.4.0'
+    fake.npm['dsh-loop'].versions['1.4.0'] = {
+      manifest: { dsh: { bundle: { patch: './cordis.patch.yml' } }, main: 'lib/index.js' },
+      artifacts: ['lib/index.js', 'cordis.patch.yml'],
+      artifactContents: {
+        'cordis.patch.yml': '- insert:\n    - id: loop-id\n      name: dsh-loop\n    - id: loop-id\n      name: dsh-loop\n',
+      },
+    }
+    vi.stubGlobal('fetch', () => Promise.resolve(new Response(JSON.stringify({ version: '1.4.0' }), { status: 200 })))
+
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+    expect(r.status).toBe(502)
+    expect(r.json.ok).toBe(false)
+    expect(String(r.json.error)).toMatch(/duplicate|重复/)
+    // Rolled back to the previous manifest AND previous files.
+    expect(installedSpec('dsh-loop')).toBe('^1.0.0')
+    const patch = readFileSync(join(fake.profileDir, 'node_modules', 'dsh-loop', 'cordis.patch.yml'), 'utf8')
+    expect(patch.match(/id: loop-id/g)?.length).toBe(1)
+  })
+
+  it('tells the truth when the rollback of a duplicate-id update cannot restore the files', async () => {
+    await bed.dispatch('POST', '/dsh-market/uninstall', { name: 'dsh-loop' })
+    fake.npm['dsh-loop'] = {
+      latest: '1.0.0',
+      versions: {
+        '1.0.0': {
+          manifest: { dsh: { bundle: { patch: './cordis.patch.yml' } }, main: 'lib/index.js' },
+          artifacts: ['lib/index.js', 'cordis.patch.yml'],
+          artifactContents: {
+            'cordis.patch.yml': '- insert:\n    - id: loop-id\n      name: dsh-loop\n',
+          },
+        },
+      },
+    }
+    await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
+    const manifest = JSON.parse(readFileSync(join(fake.profileDir, 'package.json'), 'utf8')) as Record<string, unknown>
+    manifest.dsh = { profile: { bundles: ['dsh-loop'] } }
+    writeFileSync(join(fake.profileDir, 'package.json'), JSON.stringify(manifest))
+    fake.npm['dsh-loop'].latest = '1.4.0'
+    fake.npm['dsh-loop'].versions['1.4.0'] = {
+      manifest: { dsh: { bundle: { patch: './cordis.patch.yml' } }, main: 'lib/index.js' },
+      artifacts: ['lib/index.js', 'cordis.patch.yml'],
+      artifactContents: {
+        'cordis.patch.yml': '- insert:\n    - id: loop-id\n      name: dsh-loop\n    - id: loop-id\n      name: dsh-loop\n',
+      },
+    }
+    vi.stubGlobal('fetch', () => Promise.resolve(new Response(JSON.stringify({ version: '1.4.0' }), { status: 200 })))
+    fake.failInstallOnce = true
+
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+    expect(r.status).toBe(502)
+    expect(r.json.ok).toBe(false)
+    expect(String(r.json.error)).toMatch(/未能恢复|could not restore/)
+    expect(String(r.json.error)).not.toMatch(/已自动回滚并恢复原版本文件|previous build was restored/)
     expect(installedSpec('dsh-loop')).toBe('^1.0.0')
   })
 
