@@ -30,8 +30,9 @@
     "prepack": "npm run build && node scripts/preflight.mjs",
     "prepare": "npm run build",
     "validate:registry": "node scripts/validate-registry.mjs",
-    "snapshot": "curl -sf https://awesome-dsh-plugin.com/plugins.json -o data/registry-snapshot.json",
-    "test:web": "vitest run --config vitest.web.config.ts"
+    "snapshot": "curl -sf https://awesome-dsh-plugin.com/plugins.json -o data/registry-snapshot.json && curl -sf https://awesome-dsh-plugin.com/readmes.json -o data/readmes-snapshot.json",
+    "test:web": "vitest run --config vitest.web.config.ts",
+    "build:site": "node scripts/build-site.mjs"
   },
   "dependencies": {
     "js-yaml": "^4.1.0"
@@ -85,6 +86,7 @@
     "@types/react": "~18.3.1",
     "jsdom": "^29.1.1",
     "lightningcss": "^1.33.0",
+    "marked": "^18.0.10",
     "playwright": "^1.62.1",
     "react": "^18.3.1",
     "react-dom": "~18.3.1",

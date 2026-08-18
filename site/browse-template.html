@@ -1,0 +1,81 @@
+<!doctype html>
+<!-- Full catalog index. Deliberately one page rather than twenty category
+     pages: every plugin page needs an internal link a crawler can follow, and
+     thin per-category pages earn almost no clicks of their own (measured at a
+     third of the click-through their position should give, on the sibling
+     site). One browsable list does the linking job without that cost. -->
+<html lang="__LANG__">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<meta name="description" content="__DESC__">
+<link rel="canonical" href="__URL__">
+__HREFLANGS__
+<link rel="sitemap" type="application/xml" href="https://dshmarket.com/sitemap.xml">
+<link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
+<meta property="og:type" content="website">
+<meta property="og:title" content="__TITLE__">
+<meta property="og:description" content="__DESC__">
+<meta property="og:url" content="__URL__">
+<meta property="og:image" content="__OG_IMAGE__">
+<meta name="twitter:card" content="summary_large_image">
+<style>
+:root{--accent:#c0392b;--accent-soft:#f7e5e2;--ink:#101722;--ink2:#5b6472;--ink3:#9aa3b2;--line:#e7eaf0;--bg:#fafbfd;--card:#fff}
+*{margin:0;box-sizing:border-box}
+body{font-family:-apple-system,"SF Pro Text","Segoe UI","PingFang SC",sans-serif;background:var(--bg);color:var(--ink);line-height:1.65}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+.wrap{max-width:64rem;margin:0 auto;padding:0 1.5rem}
+header{display:flex;align-items:center;gap:.8rem;padding:1.4rem 0;border-bottom:1px solid var(--line)}
+header img{height:30px}
+header .grow{flex:1}
+header a{color:var(--ink2);font-size:.9rem;margin-left:1.2rem}
+header a:hover{color:var(--accent);text-decoration:none}
+.head{padding:2.2rem 0 1.4rem}
+.head h1{font-size:clamp(1.7rem,4vw,2.5rem);font-weight:800;letter-spacing:-.02em}
+.head p{color:var(--ink2);margin-top:.7rem;max-width:42rem}
+.head code{font-family:ui-monospace,Menlo,monospace;background:var(--accent-soft);border-radius:5px;padding:.08em .35em;font-size:.88em}
+.jump{display:flex;flex-wrap:wrap;gap:.4rem;margin:1.4rem 0 0}
+.jump a{font-size:.82rem;border:1px solid var(--line);background:var(--card);border-radius:999px;padding:.24rem .7rem;color:var(--ink2)}
+.jump a:hover{border-color:var(--accent);color:var(--accent);text-decoration:none}
+.jump a small{color:var(--ink3);margin-left:.3rem}
+section.cat{padding:2rem 0 .5rem;border-top:1px solid var(--line);margin-top:1.6rem}
+section.cat h2{font-size:1.15rem;font-weight:700;scroll-margin-top:1rem}
+section.cat h2 small{color:var(--ink3);font-weight:500;font-size:.8rem;margin-left:.45rem}
+ul.list{list-style:none;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(19rem,1fr));gap:.2rem 1.6rem;margin-top:.8rem}
+ul.list li{padding:.5rem 0;border-top:1px solid var(--line)}
+ul.list a{font-weight:650;font-size:.92rem}
+ul.list .owner{color:var(--ink3);font-weight:500}
+ul.list p{font-size:.83rem;color:var(--ink2);margin-top:.1rem}
+footer{border-top:1px solid var(--line);margin-top:2.5rem;padding:2rem 0 3rem;font-size:.85rem;color:var(--ink3);display:flex;flex-wrap:wrap;gap:1rem;justify-content:space-between}
+footer a{color:var(--ink2)}
+</style>
+<!-- Cloudflare Web Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "6fdc1fdb390e417599a363e3109357b2"}'></script><!-- End Cloudflare Web Analytics -->
+</head>
+<body>
+<div class="wrap">
+<header>
+  <a href="__HOME__"><img src="/assets/wordmark.svg" alt="dsh-market"></a>
+  <span class="grow"></span>
+  <a href="https://github.com/dsh-market/dsh-market" rel="noopener">__T_NAV_GITHUB__</a>
+  __LOCALE_LINKS__
+</header>
+
+<div class="head">
+  <h1>__T_BROWSE_H1__</h1>
+  <p>__T_BROWSE_LEAD__</p>
+  <nav class="jump">__JUMP__</nav>
+</div>
+
+<main>
+__SECTIONS__
+</main>
+</div>
+
+<footer class="wrap">
+  <span>MIT · <a href="https://github.com/dsh-market/dsh-market" rel="noopener">dsh-market/dsh-market</a> · <a href="__PRIVACY__">__T_PRIVACY__</a></span>
+  <span><a href="__HOME__">__T_BACK__</a></span>
+</footer>
+</body>
+</html>

@@ -1,0 +1,136 @@
+<!doctype html>
+<!-- Plugin page template. Placeholders are upper-snake names wrapped in double
+     underscores; the ones prefixed with T_ are per-locale UI strings from
+     site/locales.mjs. The :root block is shared with site/index.*.html and
+     site/browse-template.html — keep them in sync. -->
+<html lang="__LANG__">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<meta name="description" content="__DESC__">
+<link rel="canonical" href="__URL__">
+__HREFLANGS__
+<link rel="sitemap" type="application/xml" href="https://dshmarket.com/sitemap.xml">
+<link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
+<meta property="og:type" content="website">
+<meta property="og:title" content="__TITLE__">
+<meta property="og:description" content="__DESC__">
+<meta property="og:url" content="__URL__">
+<meta property="og:image" content="__OG_IMAGE__">
+<meta name="twitter:card" content="summary_large_image">
+<script type="application/ld+json">__JSONLD__</script>
+<style>
+:root{--accent:#c0392b;--accent-soft:#f7e5e2;--ink:#101722;--ink2:#5b6472;--ink3:#9aa3b2;--line:#e7eaf0;--bg:#fafbfd;--card:#fff}
+*{margin:0;box-sizing:border-box}
+body{font-family:-apple-system,"SF Pro Text","Segoe UI","PingFang SC",sans-serif;background:var(--bg);color:var(--ink);line-height:1.65}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+.wrap{max-width:64rem;margin:0 auto;padding:0 1.5rem}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+header{display:flex;align-items:center;gap:.8rem;padding:1.4rem 0;border-bottom:1px solid var(--line)}
+header img{height:30px}
+header .grow{flex:1}
+header a{color:var(--ink2);font-size:.9rem;margin-left:1.2rem}
+header a:hover{color:var(--accent);text-decoration:none}
+.crumbs{font-size:.82rem;color:var(--ink3);padding:1.1rem 0 0}
+.crumbs a{color:var(--ink2)}
+.crumbs span{margin:0 .4rem}
+.plate{padding:.6rem 0 1.8rem;border-bottom:1px solid var(--line)}
+.plate h1{font-size:clamp(1.5rem,4vw,2.3rem);font-weight:800;letter-spacing:-.02em;line-height:1.15;margin-top:.4rem;overflow-wrap:anywhere}
+.plate h1 .owner{color:var(--ink3);font-weight:600}
+.lede{color:var(--ink2);margin-top:.7rem;max-width:44rem}
+.facts{display:flex;flex-wrap:wrap;gap:.4rem 1.6rem;margin-top:1rem;font-size:.85rem;color:var(--ink3)}
+.facts b{color:var(--ink);font-weight:650}
+.cols{display:grid;grid-template-columns:minmax(0,1fr) 17rem;gap:2.5rem;align-items:start;padding:2rem 0 1rem}
+@media(max-width:860px){.cols{grid-template-columns:minmax(0,1fr)}}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:1.2rem 1.3rem;margin-bottom:1.2rem}
+.panel h2{font-size:1rem;font-weight:700;margin-bottom:.7rem}
+.note{font-size:.82rem;color:var(--ink3);margin:.5rem 0}
+.cmd{display:flex;align-items:center;gap:.6rem;background:var(--ink);color:#e8ecf4;border-radius:10px;padding:.65rem .8rem;font-family:ui-monospace,Menlo,monospace;font-size:.84rem;margin:.35rem 0 .8rem;overflow-x:auto}
+.cmd pre{flex:1;margin:0;white-space:pre;overflow-x:auto}
+.cmd button{flex:none;border:none;background:var(--accent);color:#fff;border-radius:7px;padding:.32rem .7rem;font-size:.76rem;cursor:pointer;font-weight:600}
+.cmd button:hover{filter:brightness(1.1)}
+.shots{display:grid;gap:.8rem}
+.shots img{width:100%;border:1px solid var(--line);border-radius:10px;display:block}
+.md{font-size:.93rem;overflow-wrap:anywhere}
+.md h2,.md h3,.md h4{margin:1.4rem 0 .5rem;font-weight:700;line-height:1.3}
+.md h2{font-size:1.05rem}.md h3{font-size:.98rem}.md h4{font-size:.93rem}
+.md p,.md li{color:var(--ink2);margin:.5rem 0}
+.md ul,.md ol{padding-left:1.2rem}
+.md img{max-width:100%;height:auto;border-radius:8px}
+.md pre{background:var(--ink);color:#e8ecf4;border-radius:10px;padding:.8rem .9rem;overflow-x:auto;font-size:.82rem;margin:.6rem 0}
+.md code{font-family:ui-monospace,Menlo,monospace;background:var(--accent-soft);border-radius:5px;padding:.08em .35em;font-size:.88em}
+.md pre code{background:none;padding:0;color:inherit}
+.md blockquote{border-left:3px solid var(--line);padding-left:.9rem;color:var(--ink3);margin:.6rem 0}
+.md table{width:100%;border-collapse:collapse;font-size:.88rem;margin:.6rem 0;display:block;overflow-x:auto}
+.md th,.md td{border:1px solid var(--line);padding:.4rem .55rem;text-align:left}
+.rel{list-style:none;padding:0}
+.rel li{padding:.55rem 0;border-top:1px solid var(--line)}
+.rel li:first-child{border-top:0}
+.rel a{font-weight:650;font-size:.9rem}
+.rel p{font-size:.82rem;color:var(--ink3);margin-top:.15rem}
+footer{border-top:1px solid var(--line);margin-top:2rem;padding:2rem 0 3rem;font-size:.85rem;color:var(--ink3);display:flex;flex-wrap:wrap;gap:1rem;justify-content:space-between}
+footer a{color:var(--ink2)}
+</style>
+<!-- Cloudflare Web Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "6fdc1fdb390e417599a363e3109357b2"}'></script><!-- End Cloudflare Web Analytics -->
+</head>
+<body>
+<a class="sr" href="#main">__T_SKIPTO__</a>
+<div class="wrap">
+<header>
+  <a href="__HOME__"><img src="/assets/wordmark.svg" alt="dsh-market"></a>
+  <span class="grow"></span>
+  <a href="__BROWSE__">__T_NAV_BROWSE__</a>
+  <a href="https://github.com/dsh-market/dsh-market" rel="noopener">__T_NAV_GITHUB__</a>
+  __LOCALE_LINKS__
+</header>
+
+<nav class="crumbs" aria-label="breadcrumb">
+  <a href="__HOME__">__T_CRUMB_HOME__</a><span>/</span><a href="__BROWSE__">__T_CRUMB_BROWSE__</a><span>/</span>__P_SHORT__
+</nav>
+
+<div class="plate">
+  <h1>__P_H1__</h1>
+  <p class="lede">__P_DESC__</p>
+  <div class="facts">__P_FACTS__</div>
+</div>
+
+<main id="main" class="cols">
+  <div>
+    <section class="panel">
+      <h2>__T_P_INSTALL__</h2>
+      __P_INSTALL__
+      <p class="note">__T_P_INSTALL_NOTE__</p>
+    </section>
+    __P_SHOTS__
+    __P_README_SECTION__
+  </div>
+  <aside>
+    <section class="panel">
+      <h2>__T_P_LINKS__</h2>
+      __P_LINKS__
+    </section>
+    __P_RELATED__
+  </aside>
+</main>
+</div>
+
+<footer class="wrap">
+  <span>MIT · <a href="https://github.com/dsh-market/dsh-market" rel="noopener">dsh-market/dsh-market</a> · <a href="__PRIVACY__">__T_PRIVACY__</a></span>
+  <span><a href="__BROWSE__">__T_BACK__</a></span>
+</footer>
+
+<script>
+document.addEventListener('click', (ev) => {
+  const b = ev.target.closest('button[data-cmd]')
+  if (!b) return
+  navigator.clipboard?.writeText(b.dataset.cmd).then(() => {
+    const was = b.textContent
+    b.textContent = b.dataset.copied
+    setTimeout(() => { b.textContent = was }, 1400)
+  })
+})
+</script>
+</body>
+</html>

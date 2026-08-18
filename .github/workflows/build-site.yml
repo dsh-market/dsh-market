@@ -1,0 +1,65 @@
+name: Build site
+
+on:
+  # The catalog changes upstream, not here, so the site has to rebuild on a
+  # clock as well as on pushes — otherwise a plugin listed today would not get
+  # a page until someone happened to touch this repository.
+  schedule:
+    - cron: '41 3 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'site/**'
+      - 'scripts/build-site.mjs'
+      - 'data/registry-snapshot.json'
+      - '.github/workflows/build-site.yml'
+
+# The build never writes to the repository: snapshots are fetched into the
+# ephemeral checkout and docs/ ships as a Pages artifact.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# docs/ is a pure function of the catalog and main's tip, so an older run can
+# only produce staler output — supersede it rather than queueing it.
+concurrency:
+  group: build-site
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm install
+
+      # Both snapshots come from awesome-dsh-plugin, which owns the list. The
+      # registry copy in the repo is the plugin's runtime fallback and is
+      # deliberately left alone by anything that commits; here it is only a
+      # build input, refreshed in a checkout that is thrown away.
+      - name: Fetch catalog
+        run: |
+          curl -sfL --retry 3 --retry-delay 5 \
+            https://awesome-dsh-plugin.com/plugins.json -o data/registry-snapshot.json
+          # READMEs are a nice-to-have: without them pages still build, they
+          # just carry no body text. A catalog hiccup should degrade the pages,
+          # not cancel the deploy that would have refreshed them.
+          curl -sfL --retry 3 --retry-delay 5 \
+            https://awesome-dsh-plugin.com/readmes.json -o data/readmes-snapshot.json \
+            || echo "readmes.json unavailable — building without README bodies"
+
+      - run: node scripts/build-site.mjs
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+      - id: deployment
+        uses: actions/deploy-pages@v4
