@@ -53,8 +53,13 @@
 .card{background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:12px;padding:12px 14px;display:flex;flex-direction:column;gap:12px}
 .row1{display:flex;align-items:center;gap:10px;min-width:0}
 .srcBtn{flex-shrink:0;align-self:flex-start}
-.av{width:32px;height:32px;border-radius:8px;display:grid;place-items:center;font-weight:700;color:#fff;font-size:14px;flex-shrink:0;object-fit:cover;background:var(--dsw-alias-bg-layer-2,#f3f4f6)}
-.nm{font-weight:500;font-size:14px;line-height:22px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.av{width:16px;height:16px;border-radius:50%;display:grid;place-items:center;font-weight:700;color:#fff;font-size:9px;flex-shrink:0;object-fit:cover;background:var(--dsw-alias-bg-layer-2,#f3f4f6)}
+/* The plugin name carries the card, so it is the one thing sized up; the
+   author sits under it as a signature. Same reading order as a post
+   header — you take in who wrote it in one glance and spend the rest on
+   what it is. */
+.nm{font-weight:600;font-size:15px;line-height:22px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.byline{display:flex;align-items:center;gap:6px;min-width:0;margin-top:2px}
 .owner{font-size:11px;color:var(--dsw-alias-label-secondary,#9ca3af)}
 .desc{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#8b93a1);min-height:36px;margin:0}
 .foot{display:flex;align-items:center;gap:8px;margin-top:auto}

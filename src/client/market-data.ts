@@ -535,3 +535,37 @@ export function humanOutput(raw: string): string {
   }
   return kept.join('\n').trim()
 }
+
+/**
+ * The plugin's own name, for display.
+ *
+ * The catalog's `name` is an IDENTITY, and for the 104 entries that live in
+ * a repository holding several plugins it is a compound one:
+ * `dsh-web-ui#packages/dsh-web-ui-all`. Shown verbatim it puts a repository
+ * path in front of a user who did not ask about repositories — and worse, it
+ * disagrees with the market's own installed list, which reads names out of
+ * the profile manifest and calls the same plugin `dsh-web-ui-all`. The same
+ * thing had two names either side of the Install button.
+ *
+ * A card answers two questions: who made it, and what is it called. The
+ * author is drawn beside their avatar as one unit, so the title is free to
+ * be just the plugin. Duplicate titles across authors are fine — the byline
+ * is what separates them — which is why this does not try to keep the
+ * repository as a qualifier.
+ *
+ * The repository name IS the plugin name in the ordinary case, because a
+ * repository holding one plugin is named after it. Only the compound form
+ * needs unpicking, and its last segment is the plugin's own directory.
+ *
+ * Not a substitute for the identity: every key, lookup and install still
+ * uses `name` unchanged.
+ */
+export function pluginName(name: string): string {
+  const hash = name.indexOf('#')
+  if (hash === -1) return name
+  const sub = name.slice(hash + 1)
+  const leaf = sub.slice(sub.lastIndexOf('/') + 1)
+  // A sub-path that is empty or trailing-slashed tells us nothing; the
+  // repository half is a better answer than an empty title.
+  return leaf === '' ? name.slice(0, hash) : leaf
+}

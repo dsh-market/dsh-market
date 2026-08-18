@@ -36,7 +36,7 @@ import css from './Market.module.css'
 import { Diagnostics } from './Diagnostics.tsx'
 import {
   avatarColor, entryForDep, groupSwitchState, humanOutput, isInstalled, looksTerminal, matchInstalledName, orderedCategories,
-  pageItems, pluginScreenshots, readSession, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
+  pageItems, pluginName, pluginScreenshots, readSession, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
 } from './market-data.ts'
 import type {
 ActivationInfo, ActivationState, GistExportResult, InstalledMap, MarketStatus, Registry, RegistryPlugin,
@@ -1436,16 +1436,22 @@ export function MarketSection(props: MarketSectionProps) {
     return (
       <div key={p.url} className={css.card}>
         <div className={css.row1}>
-          <OwnerAvatar name={p.name} owner={p.owner || ''} />
+          {/* The avatar belongs to the AUTHOR, not to the title. Beside the
+              name it reads as one signature, which is what frees the title
+              to be just the plugin — and lets two authors ship a plugin of
+              the same name without either card needing a qualifier. */}
           <div style={{ minWidth: 0 }}>
-            <div className={css.nm}>
-              {p.name}
+            <div className={css.nm} title={p.name}>
+              {pluginName(p.name)}
               {p.deprecated === true && <span className={css.depBadge}>{t('deprecatedBadge')}</span>}
             </div>
-            <div className={css.owner}>
-              {p.owner}
-              {typeof p.stars === 'number' && <span className={css.star}>{' · ★ ' + p.stars}</span>}
-              {p.added && <span className={css.star}>{' · ' + t('published') + ' ' + p.added}</span>}
+            <div className={css.byline}>
+              <OwnerAvatar name={p.name} owner={p.owner || ''} />
+              <span className={css.owner}>
+                {p.owner}
+                {typeof p.stars === 'number' && <span className={css.star}>{' · ★ ' + p.stars}</span>}
+                {p.added && <span className={css.star}>{' · ' + t('published') + ' ' + p.added}</span>}
+              </span>
             </div>
           </div>
           <span className={css.grow} />
@@ -1530,16 +1536,22 @@ export function MarketSection(props: MarketSectionProps) {
     return (
       <div key={p.url} className={css.card}>
         <div className={css.row1}>
-          <OwnerAvatar name={p.name} owner={p.owner || ''} />
+          {/* Same header as the discover card, and it has to stay that way:
+              the themes tab lists the same plugins from the same catalog,
+              so a different title here would name one plugin two ways in
+              one product. */}
           <div style={{ minWidth: 0 }}>
-            <div className={css.nm}>
-              {p.name}
+            <div className={css.nm} title={p.name}>
+              {pluginName(p.name)}
               {p.deprecated === true && <span className={css.depBadge}>{t('deprecatedBadge')}</span>}
             </div>
-            <div className={css.owner}>
-              {p.owner}
-              {typeof p.stars === 'number' && <span className={css.star}>{' · ★ ' + p.stars}</span>}
-              {p.added && <span className={css.star}>{' · ' + t('published') + ' ' + p.added}</span>}
+            <div className={css.byline}>
+              <OwnerAvatar name={p.name} owner={p.owner || ''} />
+              <span className={css.owner}>
+                {p.owner}
+                {typeof p.stars === 'number' && <span className={css.star}>{' · ★ ' + p.stars}</span>}
+                {p.added && <span className={css.star}>{' · ' + t('published') + ' ' + p.added}</span>}
+              </span>
             </div>
           </div>
           <span className={css.grow} />
