@@ -209,7 +209,13 @@ export function restartHelperSource(
     '    note(`could not start the replacement: ${error && error.message ? error.message : error}`)',
     '    return',
     '  }',
-    '  if (!port) return',
+    // Outliving the spawn matters on Windows: a helper that exits the
+    // instant it has spawned can take the replacement with it, because the
+    // child is in its process group and has not detached yet. The port path
+    // below already lingers while it polls; this is the same guarantee for
+    // the path that has no port to poll. CI on windows-latest caught it —
+    // locally it passes either way.
+    "  if (!port) { await sleep(3000); return }",
     '  const upBy = Date.now() + 20000',
     '  while (Date.now() < upBy && !(await listening())) await sleep(500)',
     '  if (!(await listening())) note(`the replacement did not bind port ${port} within 20s — see the output log beside this one`)',
