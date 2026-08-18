@@ -99,18 +99,18 @@ describe('SettingsCard', () => {
     // part a user cannot work out alone. It has to be on screen before the
     // choice, not after it.
     expect(screen.getByText(t('setSelfPurgeOff'))).toBeTruthy()
-    fireEvent.click(screen.getByRole('checkbox'))
+    fireEvent.click(screen.getAllByRole('checkbox')[0]!) // purge is the first
     expect(screen.getByText(t('setSelfPurgeOn'))).toBeTruthy()
   })
 
   it('sends the confirmation and the purge choice the user actually made', async () => {
     await open()
     fireEvent.click(screen.getByRole('button', { name: t('setSelfRemove') }))
-    fireEvent.click(screen.getByRole('checkbox'))
+    fireEvent.click(screen.getAllByRole('checkbox')[0]!) // purge is the first
     fireEvent.click(screen.getByRole('button', { name: t('setSelfRemoveConfirm') }))
     await waitFor(() => { expect(screen.getByText(t('setSelfRemoved'))).toBeTruthy() })
     const sent = calls.find(call => call.path.includes('self-uninstall'))
-    expect(sent?.body).toEqual({ confirm: true, purge: true })
+    expect(sent?.body).toEqual({ confirm: true, purge: true, restart: false })
   })
 
   it('defaults purge to off when the user does not tick it', async () => {
@@ -118,32 +118,73 @@ describe('SettingsCard', () => {
     fireEvent.click(screen.getByRole('button', { name: t('setSelfRemove') }))
     fireEvent.click(screen.getByRole('button', { name: t('setSelfRemoveConfirm') }))
     await waitFor(() => { expect(screen.getByText(t('setSelfRemoved'))).toBeTruthy() })
-    expect(calls.find(call => call.path.includes('self-uninstall'))?.body).toEqual({ confirm: true, purge: false })
+    expect(calls.find(call => call.path.includes('self-uninstall'))?.body).toEqual({ confirm: true, purge: false, restart: false })
   })
 
-  it('replaces the controls after removal instead of offering dead ones', async () => {
+  it('offers no control in the end state that the server can no longer answer', async () => {
     stubFetch({ latest: '1.13.0' })
     await open()
     await waitFor(() => { expect(screen.getByRole('button', { name: t('setSelfUpdate') })).toBeTruthy() })
     fireEvent.click(screen.getByRole('button', { name: t('setSelfRemove') }))
     fireEvent.click(screen.getByRole('button', { name: t('setSelfRemoveConfirm') }))
     await waitFor(() => { expect(screen.getByText(t('setSelfRemoved'))).toBeTruthy() })
-    // The package is gone from disk; an update button beside "removed" would
-    // offer something that cannot happen.
+    // The package is gone from disk AND the market is out of the running
+    // composition, so every one of its routes is gone with it. The first
+    // version put a "restart now" button here; on a real host it could only
+    // answer 405. Nothing actionable belongs in this state.
     expect(screen.queryByRole('button', { name: t('setSelfUpdate') })).toBeNull()
-    expect(screen.getByRole('button', { name: t('setSelfRestartNow') })).toBeTruthy()
+    expect(screen.queryByRole('button')).toBe(screen.getByRole('button', { expanded: true }))
   })
 
-  it('hides the restart button on a host that forbids self-restart', async () => {
+  it('asks about the restart BEFORE removing, where it can still be honoured', async () => {
+    await open()
+    fireEvent.click(screen.getByRole('button', { name: t('setSelfRemove') }))
+    const boxes = screen.getAllByRole('checkbox')
+    expect(boxes).toHaveLength(2)
+    fireEvent.click(boxes[1]!) // restart-after
+    fireEvent.click(screen.getByRole('button', { name: t('setSelfRemoveConfirm') }))
+    await waitFor(() => { expect(screen.getByText(t('setSelfRemoved'))).toBeTruthy() })
+    expect(calls.find(call => call.path.includes('self-uninstall'))?.body)
+      .toEqual({ confirm: true, purge: false, restart: true })
+    // ...and it says a restart is happening rather than telling the user to
+    // go and do one.
+    expect(screen.getByText(t('setSelfRestartingHint'))).toBeTruthy()
+  })
+
+  it('does not offer the restart on a host that forbids self-restart', async () => {
     // Same rule the pending-change banner follows: when a supervisor owns the
-    // process, the market says what is pending and lets the supervisor act.
+    // process, the market states what is pending and lets the supervisor act.
     stubFetch({ restart: false })
     await open()
     fireEvent.click(screen.getByRole('button', { name: t('setSelfRemove') }))
+    expect(screen.getAllByRole('checkbox')).toHaveLength(1)
     fireEvent.click(screen.getByRole('button', { name: t('setSelfRemoveConfirm') }))
     await waitFor(() => { expect(screen.getByText(t('setSelfRemoved'))).toBeTruthy() })
-    expect(screen.queryByRole('button', { name: t('setSelfRestartNow') })).toBeNull()
-    expect(screen.getByText(t('setSelfRemovedHint'))).toBeTruthy()
+    expect(calls.find(call => call.path.includes('self-uninstall'))?.body)
+      .toEqual({ confirm: true, purge: false, restart: false })
+  })
+
+  it('shows that it is working instead of looking frozen', async () => {
+    // Reported from real use: the confirmation vanished the instant the
+    // button was clicked and the card fell back to its resting layout with a
+    // dimmed button, so a removal that takes seconds of pnpm read as a hang.
+    let release: (() => void) | undefined
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const inner = globalThis.fetch as unknown as (input: unknown, init?: RequestInit) => Promise<Response>
+    vi.stubGlobal('fetch', vi.fn(async (input: unknown, init?: RequestInit) => {
+      if (String(input).includes('self-uninstall')) await gate
+      return inner(input, init)
+    }))
+
+    await open()
+    fireEvent.click(screen.getByRole('button', { name: t('setSelfRemove') }))
+    fireEvent.click(screen.getByRole('button', { name: t('setSelfRemoveConfirm') }))
+    // Mid-flight: the state has to be visible ON SCREEN, not merely internal.
+    await waitFor(() => { expect(screen.getByRole('button', { name: t('setSelfWorking') })).toBeTruthy() })
+    // ...and cancel is gone, because by now there is nothing left to cancel.
+    expect(screen.queryByRole('button', { name: t('setSelfCancel') })).toBeNull()
+    release?.()
+    await waitFor(() => { expect(screen.getByText(t('setSelfRemoved'))).toBeTruthy() })
   })
 
   it('surfaces the server\'s reason when removal fails', async () => {

@@ -33,7 +33,7 @@
 
 import { createElement as h, Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
-import { Button, IconChevronDownOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconChevronDownOutline14, IconLoadingOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import css from './Market.module.css'
 import type { Translate } from './market-data.ts'
 
@@ -79,6 +79,7 @@ export function SettingsCard({ t }: SettingsCardProps): ReactElement | null {
   const [update, setUpdate] = useState<SelfUpdate | null>(null)
   const [phase, setPhase] = useState<Phase>('idle')
   const [purge, setPurge] = useState(false)
+  const [restartAfter, setRestartAfter] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   // Only once the row is opened: the plugin configuration page renders every
@@ -139,7 +140,7 @@ export function SettingsCard({ t }: SettingsCardProps): ReactElement | null {
     setError(null)
     void (async () => {
       try {
-        const body = await post('/dsh-market/self-uninstall', { confirm: true, purge })
+        const body = await post('/dsh-market/self-uninstall', { confirm: true, purge, restart: restartAfter })
         if (body.ok === true) {
           if (purge) clearBrowserState(localStorage)
           setPhase('removed')
@@ -149,9 +150,7 @@ export function SettingsCard({ t }: SettingsCardProps): ReactElement | null {
         setPhase('failed')
       }
     })()
-  }, [post, purge, t])
-
-  const onRestart = useCallback(() => { void post('/dsh-market/restart', {}) }, [post])
+  }, [post, purge, restartAfter, t])
 
   const busy = phase === 'working'
   const version = status?.version ?? null
@@ -170,10 +169,7 @@ export function SettingsCard({ t }: SettingsCardProps): ReactElement | null {
   // package is gone from disk, so an update button next to "removed" would
   // offer something that cannot happen.
   const body = phase === 'removed'
-    ? row(t('setSelfRemoved'), t('setSelfRemovedHint'),
-        status?.restart === true
-          ? h(Button, { variant: 'primary', size: 'sm', onClick: onRestart }, t('setSelfRestartNow'))
-          : null)
+    ? row(t('setSelfRemoved'), restartAfter ? t('setSelfRestartingHint') : t('setSelfRemovedHint'), null)
     : h(Fragment, null,
         row(
           update?.updateAvailable === true && update.latest !== null
@@ -185,7 +181,7 @@ export function SettingsCard({ t }: SettingsCardProps): ReactElement | null {
             : null,
         ),
         row(t('setSelfRemove'), t('setSelfRemoveHint'),
-          phase === 'confirming'
+          phase === 'confirming' || busy
             ? null
             : h(Button, {
                 variant: 'outline',
@@ -194,7 +190,7 @@ export function SettingsCard({ t }: SettingsCardProps): ReactElement | null {
                 disabled: busy,
                 onClick: () => { setPhase('confirming') },
               }, t('setSelfRemove'))),
-        phase === 'confirming'
+        phase === 'confirming' || busy
           ? h('div', { className: css.setConfirm },
               h('div', { className: css.setHint }, t('setSelfConfirm')),
               h('label', { className: css.setCheck },
@@ -207,18 +203,31 @@ export function SettingsCard({ t }: SettingsCardProps): ReactElement | null {
               // them back on about to disappear — is the part a user cannot
               // work out on their own.
               h('div', { className: css.setHint }, purge ? t('setSelfPurgeOn') : t('setSelfPurgeOff')),
+              // Offered BEFORE the removal, not after it. A button placed in
+              // the end state could only ever answer 405: taking the market
+              // out of the running process disposes its routes, restart
+              // included. Asked here, the restart becomes the removal's
+              // second half and actually happens.
+              status?.restart === true
+                ? h('label', { className: css.setCheck },
+                    h('input', { type: 'checkbox', checked: restartAfter, disabled: busy, onChange: () => { setRestartAfter(!restartAfter) } }),
+                    h('span', null, t('setSelfRestartAfter')),
+                  )
+                : null,
               h('div', { className: css.setActions },
-                h(Button, {
-                  variant: 'ghost',
-                  size: 'sm',
-                  disabled: busy,
-                  onClick: () => { setPhase('idle'); setPurge(false) },
-                }, t('setSelfCancel')),
+                busy
+                  ? null
+                  : h(Button, {
+                      variant: 'ghost',
+                      size: 'sm',
+                      onClick: () => { setPhase('idle'); setPurge(false); setRestartAfter(false) },
+                    }, t('setSelfCancel')),
                 h(Button, {
                   variant: 'primary',
                   size: 'sm',
                   className: css.setDanger,
                   disabled: busy,
+                  icon: busy ? h('span', { className: css.spin }, h(IconLoadingOutline16, { size: 16 })) : undefined,
                   onClick: onRemove,
                 }, busy ? t('setSelfWorking') : t('setSelfRemoveConfirm')),
               ),

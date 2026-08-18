@@ -1249,7 +1249,7 @@ export function mountMarketRoutes(
         }
         try {
           await withMutationLock(response, 'install', async () => {
-            const body = (await readJsonBody(request)) as { confirm?: unknown; purge?: unknown }
+            const body = (await readJsonBody(request)) as { confirm?: unknown; purge?: unknown; restart?: unknown }
             // An explicit flag, not merely reaching the endpoint: this is the
             // one route whose accidental success cannot be undone from the UI
             // that would have undone it.
@@ -1307,17 +1307,37 @@ export function mountMarketRoutes(
               purged: purge,
               restored,
               restart: restartAllowed(config),
+              restarting: body.restart === true && restartAllowed(config),
             })
 
-            // AFTER the response. The package is gone from disk, so the host
-            // now 404s on this plugin's client bundle while the loader entry
-            // is still live — the shape that wedges the whole page on the
-            // next refresh (#37). Disabling our own entry composes the page
-            // without the market instead, which is also the end state the
-            // user just asked for. Deferred because it disposes the context
-            // this handler is running in.
+            // AFTER the response, and one of two ways.
+            //
+            // The package is gone from disk, so the host now 404s on this
+            // plugin's client bundle while the loader entry is still live —
+            // the shape that wedges the whole page on the next refresh (#37).
+            // Something has to take the market out of this process.
+            //
+            // Disabling our own entry does that, but it disposes every route
+            // we own, INCLUDING /dsh-market/restart. The first version of
+            // this left a "restart now" button behind that could only ever
+            // answer 405 — measured on a real host, not theorised. So when
+            // the user asks for the restart up front, the restart IS the
+            // removal's second half: it leaves a process that never had the
+            // market, which is strictly cleaner than a disabled entry.
+            const wantsRestart = body.restart === true && restartAllowed(config)
             setTimeout(() => {
-              void themes.setEntryDisabled(selfName, true).catch(() => { /* the restart resolves it either way */ })
+              if (wantsRestart) {
+                try {
+                  const scheduled = scheduleRestart()
+                  logEvent('info', 'self-uninstall', `restart scheduled pid=${String(scheduled.pid)}`)
+                  return
+                } catch (error) {
+                  // A failed relaunch must not leave the market half-removed
+                  // and still composing the page.
+                  logEvent('warn', 'self-uninstall', `restart failed, disabling the entry instead: ${error instanceof Error ? error.message : String(error)}`)
+                }
+              }
+              void themes.setEntryDisabled(selfName, true).catch(() => { /* a later restart resolves it either way */ })
             }, 0)
           })
         } catch (error) {

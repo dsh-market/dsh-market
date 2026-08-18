@@ -48,10 +48,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			setSelfPurgeOff: "保留市场数据。注意：被市场停用的插件会保持停用，而移除之后就没有界面能把它们打开了。",
 			setSelfRemoveConfirm: "确认移除",
 			setSelfCancel: "取消",
-			setSelfWorking: "处理中…",
+			setSelfWorking: "正在移除…",
 			setSelfRemoved: "已移除",
-			setSelfRemovedHint: "重启 DeepSeek Harness 后彻底消失。在那之前刷新页面，市场界面就已经不在了。",
-			setSelfRestartNow: "立即重启",
+			setSelfRemovedHint: "重启 DeepSeek Harness 后完全生效。",
+			setSelfRestartingHint: "正在重启 DeepSeek Harness…",
+			setSelfRestartAfter: "移除后立即重启 DeepSeek Harness",
 			setSelfFailed: "操作失败",
 			versionHint: "插件市场版本 — 反馈问题时请把它一起截图",
 			subtitle: "发现社区为 DeepSeek Harness 打造的能力",
@@ -346,10 +347,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			setSelfPurgeOff: "Keeps the market's data. Note: plugins the market switched off stay off, and once it is removed there is no UI left to switch them back on.",
 			setSelfRemoveConfirm: "Remove",
 			setSelfCancel: "Cancel",
-			setSelfWorking: "Working…",
+			setSelfWorking: "Removing…",
 			setSelfRemoved: "Removed",
-			setSelfRemovedHint: "It disappears completely after you restart DeepSeek Harness. Before that, refreshing the page already leaves the market UI gone.",
-			setSelfRestartNow: "Restart now",
+			setSelfRemovedHint: "Restart DeepSeek Harness to finish.",
+			setSelfRestartingHint: "Restarting DeepSeek Harness…",
+			setSelfRestartAfter: "Restart DeepSeek Harness right after removing",
 			setSelfFailed: "The operation failed",
 			versionHint: "Plugin market version — include it when reporting an issue",
 			subtitle: "Discover community plugins for DeepSeek Harness",
@@ -5429,6 +5431,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const [update, setUpdate] = (0, react.useState)(null);
 			const [phase, setPhase] = (0, react.useState)("idle");
 			const [purge, setPurge] = (0, react.useState)(false);
+			const [restartAfter, setRestartAfter] = (0, react.useState)(false);
 			const [error, setError] = (0, react.useState)(null);
 			const probed = (0, react.useRef)(false);
 			(0, react.useEffect)(() => {
@@ -5492,7 +5495,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					try {
 						const body = await post("/dsh-market/self-uninstall", {
 							confirm: true,
-							purge
+							purge,
+							restart: restartAfter
 						});
 						if (body.ok === true) {
 							if (purge) clearBrowserState(localStorage);
@@ -5509,25 +5513,19 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			}, [
 				post,
 				purge,
+				restartAfter,
 				t
 			]);
-			const onRestart = (0, react.useCallback)(() => {
-				post("/dsh-market/restart", {});
-			}, [post]);
 			const busy = phase === "working";
 			const version = status?.version ?? null;
 			/** One label + hint block with an optional action, the host's row shape. */
 			const row = (label, hint, action) => (0, react.createElement)("div", { className: Market_module_css_default.setRow }, (0, react.createElement)("div", { className: Market_module_css_default.setLabelBox }, (0, react.createElement)("div", { className: Market_module_css_default.setLabel }, label), (0, react.createElement)("div", { className: Market_module_css_default.setHint }, hint)), action);
-			const body = phase === "removed" ? row(t("setSelfRemoved"), t("setSelfRemovedHint"), status?.restart === true ? (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-				variant: "primary",
-				size: "sm",
-				onClick: onRestart
-			}, t("setSelfRestartNow")) : null) : (0, react.createElement)(react.Fragment, null, row(update?.updateAvailable === true && update.latest !== null ? `${t("setSelfUpdateReady")} ${update.latest}` : t("setSelfUpToDate"), phase === "updated" ? t("setSelfUpdatedHint") : t("setSelfUpdateHint"), update?.updateAvailable === true && phase !== "updated" ? (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+			const body = phase === "removed" ? row(t("setSelfRemoved"), restartAfter ? t("setSelfRestartingHint") : t("setSelfRemovedHint"), null) : (0, react.createElement)(react.Fragment, null, row(update?.updateAvailable === true && update.latest !== null ? `${t("setSelfUpdateReady")} ${update.latest}` : t("setSelfUpToDate"), phase === "updated" ? t("setSelfUpdatedHint") : t("setSelfUpdateHint"), update?.updateAvailable === true && phase !== "updated" ? (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 				variant: "primary",
 				size: "sm",
 				disabled: busy,
 				onClick: onUpdate
-			}, t("setSelfUpdate")) : null), row(t("setSelfRemove"), t("setSelfRemoveHint"), phase === "confirming" ? null : (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+			}, t("setSelfUpdate")) : null), row(t("setSelfRemove"), t("setSelfRemoveHint"), phase === "confirming" || busy ? null : (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 				variant: "outline",
 				size: "sm",
 				className: Market_module_css_default.setDanger,
@@ -5535,25 +5533,33 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				onClick: () => {
 					setPhase("confirming");
 				}
-			}, t("setSelfRemove"))), phase === "confirming" ? (0, react.createElement)("div", { className: Market_module_css_default.setConfirm }, (0, react.createElement)("div", { className: Market_module_css_default.setHint }, t("setSelfConfirm")), (0, react.createElement)("label", { className: Market_module_css_default.setCheck }, (0, react.createElement)("input", {
+			}, t("setSelfRemove"))), phase === "confirming" || busy ? (0, react.createElement)("div", { className: Market_module_css_default.setConfirm }, (0, react.createElement)("div", { className: Market_module_css_default.setHint }, t("setSelfConfirm")), (0, react.createElement)("label", { className: Market_module_css_default.setCheck }, (0, react.createElement)("input", {
 				type: "checkbox",
 				checked: purge,
 				onChange: () => {
 					setPurge(!purge);
 				}
-			}), (0, react.createElement)("span", null, t("setSelfPurge"))), (0, react.createElement)("div", { className: Market_module_css_default.setHint }, purge ? t("setSelfPurgeOn") : t("setSelfPurgeOff")), (0, react.createElement)("div", { className: Market_module_css_default.setActions }, (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+			}), (0, react.createElement)("span", null, t("setSelfPurge"))), (0, react.createElement)("div", { className: Market_module_css_default.setHint }, purge ? t("setSelfPurgeOn") : t("setSelfPurgeOff")), status?.restart === true ? (0, react.createElement)("label", { className: Market_module_css_default.setCheck }, (0, react.createElement)("input", {
+				type: "checkbox",
+				checked: restartAfter,
+				disabled: busy,
+				onChange: () => {
+					setRestartAfter(!restartAfter);
+				}
+			}), (0, react.createElement)("span", null, t("setSelfRestartAfter"))) : null, (0, react.createElement)("div", { className: Market_module_css_default.setActions }, busy ? null : (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 				variant: "ghost",
 				size: "sm",
-				disabled: busy,
 				onClick: () => {
 					setPhase("idle");
 					setPurge(false);
+					setRestartAfter(false);
 				}
 			}, t("setSelfCancel")), (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 				variant: "primary",
 				size: "sm",
 				className: Market_module_css_default.setDanger,
 				disabled: busy,
+				icon: busy ? (0, react.createElement)("span", { className: Market_module_css_default.spin }, (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.IconLoadingOutline16, { size: 16 })) : void 0,
 				onClick: onRemove
 			}, busy ? t("setSelfWorking") : t("setSelfRemoveConfirm")))) : null, error !== null ? (0, react.createElement)("div", { className: Market_module_css_default.err }, error) : null);
 			return (0, react.createElement)("div", { className: open ? `${Market_module_css_default.setCard} ${Market_module_css_default.setCardOpen}` : Market_module_css_default.setCard }, (0, react.createElement)("button", {
