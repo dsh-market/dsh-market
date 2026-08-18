@@ -251,3 +251,35 @@ export function verifyActivation(
     hot: false,
   }
 }
+
+/**
+ * Correct a post-UPDATE verdict for a plugin that was already running.
+ *
+ * `verifyActivation` answers "is this name in the live loader inventory".
+ * That is the right question after an install and the wrong one after an
+ * update: the plugin was already live, so the answer stays "live" while the
+ * process keeps serving the module it imported at boot. Replacing files under
+ * a running composition does not re-import anything.
+ *
+ * Measured on a real host rather than reasoned about — updating the market
+ * from 1.11.3 to 1.12.2 left `/dsh-market/status` reporting 1.11.3 with an
+ * unchanged boot id, while the update route called it hot-loaded in the same
+ * response. The browser half genuinely does refresh (the host re-serves the
+ * client bundle from disk), which is what makes the wrong verdict credible:
+ * the UI visibly becomes the new version while the server half does not.
+ *
+ * Only a plugin that was ALREADY live is affected. One that was missing,
+ * broken or disabled beforehand has nothing loaded to shadow the new build,
+ * so its fresh mount really does run the new code.
+ * @param result the verdict computed from the loader inventory
+ * @param wasLive whether the plugin was live BEFORE the files were replaced
+ */
+export function activationAfterReplace(result: ActivationResult, wasLive: boolean): ActivationResult {
+  if (!wasLive || result.state !== 'live') return result
+  return {
+    ...result,
+    state: 'restart',
+    hot: false,
+    reasons: ['新版本已就位,但运行中的进程仍在使用启动时加载的旧模块——重启后生效(页面本身会立即变成新版,服务端不会) / the new build is in place, but the running process still serves the module it imported at boot — restart to apply (the page itself updates immediately; the server half does not)'],
+  }
+}

@@ -799,7 +799,16 @@ describe('update flow — no npm publishing required', () => {
     expect(r.status).toBe(200)
     expect(r.json.ok).toBe(true)
     expect(installedSpec('dsh-loop')).toBe('^1.2.0')
-    expect(r.json.activation['dsh-loop']).toMatchObject({ state: 'live' })
+    // NOT 'live'. This expectation used to say so, and it was wrong in a way
+    // only a real host could show: replacing a package on disk does not
+    // unload the module the process already imported, so the loader
+    // inventory keeps reporting the name and the verdict keeps reading
+    // "live" while the OLD build is what answers requests.
+    //
+    // Measured — the market updated from 1.11.3 to 1.12.2 with 1.12.2 on
+    // disk, `/dsh-market/status` still reporting 1.11.3, an unchanged boot
+    // id, and this route calling it hot-loaded in the same response.
+    expect(r.json.activation['dsh-loop']).toMatchObject({ state: 'restart', hot: false })
   })
 
   it('refuses an update whose new version has no entry artifact (#159)', async () => {

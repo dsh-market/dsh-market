@@ -33,7 +33,7 @@ import { checkUpdates, fetchNpmLatest, invalidateUpdates, isUpgrade, latestPubli
 import { createThemeManager, type LoaderEntry } from './themes.ts'
 import { readJsonBody, sameOrigin, sendJson } from './http.ts'
 import { restartAllowed, scheduleRestart, trustedRestartRequest, trustedDownloadRequest } from './restart.ts'
-import { verifyActivation } from './verify.ts'
+import { activationAfterReplace, verifyActivation } from './verify.ts'
 import {
   disableRow, enableRow, findUserPatchPath, isProtectedModule, packagePatchFlags,
   readUserPatchState, removeRowBlocks, rowIdsForPackage,
@@ -1071,6 +1071,10 @@ export function mountMarketRoutes(
               }
             }
             const repoKey = isGit ? spec.slice('github:'.length).replace(/#.*$/, '').toLowerCase() : null
+            // Captured BEFORE pnpm replaces the files: afterwards the loader
+            // inventory reads exactly the same, because replacing a package
+            // on disk does not unload the module the process already imported.
+            const wasLive = verifyActivation(config.profile, name, liveNames(), activeProfileDir, disabled.has(name)).state === 'live'
             const beforeVersion = readInstalledVersion(config.profile, name, activeProfileDir)
             const beforeCommit = repoKey !== null
               ? readLockCommits(config.profile, activeProfileDir).get(repoKey) ?? null
@@ -1124,7 +1128,12 @@ export function mountMarketRoutes(
             }
             if (ok) {
               invalidateUpdates()
-              activation = { [name]: verifyActivation(config.profile, name, liveNames(), activeProfileDir, disabled.has(name)) }
+              activation = {
+                [name]: activationAfterReplace(
+                  verifyActivation(config.profile, name, liveNames(), activeProfileDir, disabled.has(name)),
+                  wasLive,
+                ),
+              }
             }
             // Diagnose the stale outcome with EVIDENCE (#45 by @ayingQAQ):
             // only blame pnpm's fresh-release wait when the target's latest
