@@ -17,20 +17,10 @@
 .bannerHint{display:inline-flex;color:var(--dsw-alias-label-tertiary,#8b93a1);cursor:help}
 .body{flex:1;overflow-y:auto;padding:12px 4px 24px;overflow-x:hidden}
 /* Sticky, so the category row stays reachable while the grid scrolls. The
-   negative top margin used to pull it 12px up over the search row, and
-   with a background and z-index above it that covered the input's lower
-   edge — the control looked cut in half at rest, before any scrolling.
-   Only the horizontal bleed is wanted; the vertical one was collateral. */
-/* The scroller (.body) carries padding-top:12px, and a sticky child cannot
-   rise above its containing block — the parent's CONTENT box. So this row
-   stops 12px short of the scrollport and the grid scrolls through the strip
-   above it: measured on a real host as cats.top=214 against scroller.top=203.
-   Reported twice, first as "a big gap above the sticky row" and then as a
-   card clipped into it.
-   ::before paints that strip in the same background and inherits the row's
-   z-index, so the row covers what it cannot reach. Fixing it by removing the
-   scroller's padding would re-space all five tabs to repair one. */
-.cats{position:sticky;top:-1px;z-index:5;background:var(--dsw-alias-bg-layer-2,#f7f8fa);padding:12px 4px 4px;margin:0 -4px 2px}
+   scroller carries padding-top:12px, and a sticky child cannot rise above
+   its containing block; ::before paints that strip in the same background
+   so content cannot show through above the sticky row. */
+.cats{position:sticky;top:-1px;z-index:5;background:var(--dsw-alias-bg-layer-2,#f7f8fa);padding:4px;margin:0 -4px 2px}
 .cats::before{content:'';position:absolute;left:0;right:0;bottom:100%;height:14px;background:inherit;pointer-events:none}
 .catsRow{display:flex;gap:8px;align-items:flex-start;position:relative}
 .star{font-size:11px;color:var(--dsw-alias-label-secondary,#9ca3af)}
@@ -116,7 +106,9 @@
 .irow>.src,.irow>.owner{white-space:nowrap;flex-shrink:0}
 .irow button{white-space:nowrap;flex-shrink:0}
 .tabSearchRow{display:flex;padding:0 4px 10px}
-.tabSearch{width:260px}
+/* Discover, Themes & Installed: the search field spans the full row so its
+   left/right edges line up with the list below it. */
+.tabSearchWide{flex:1;min-width:0}
 /* Buttons sharing the row with a description must keep one line (#26, thanks @yanshuai2002) */
 .spec{font-size:11px;color:var(--dsw-alias-label-secondary,#9ca3af);font-family:ui-monospace,Menlo,monospace;overflow-wrap:anywhere;min-width:0}
 .specTag{display:inline-flex;align-items:center;height:16px;padding:0 5px;border-radius:4px;font-size:10px;font-weight:600;white-space:nowrap;flex-shrink:0}
@@ -142,7 +134,7 @@
 .switchKnob{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:99px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.25);transition:left .15s ease}
 .switchOn .switchKnob,.switchMixed .switchKnob{left:18px}
 .switch:disabled{opacity:.5;cursor:default}
-.viewBar{display:flex;gap:2px;align-items:center;border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:8px;padding:2px;margin-bottom:12px;width:fit-content}
+.viewBar{display:flex;gap:2px;align-items:center;border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:8px;padding:2px;margin:0 4px 12px auto;width:fit-content}
 .viewBtn{border:none;background:none;font:inherit;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#6b7280);padding:4px 10px;border-radius:6px;cursor:pointer;white-space:nowrap}
 .viewBtn:hover{color:var(--dsw-alias-brand-primary,#4f6ef7)}
 .viewOn{background:var(--dsw-alias-bg-layer-2,#eef0f4);color:var(--dsw-alias-label-primary,#1f2328);font-weight:600}
