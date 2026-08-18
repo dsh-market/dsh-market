@@ -23,7 +23,7 @@ let calls: Array<{ path: string; body: unknown }> = []
 
 function stubFetch(options: {
   version?: string; restart?: boolean; latest?: string | null; removeOk?: boolean; error?: string
-  devMode?: boolean; channel?: string; older?: boolean; channelError?: string
+  devMode?: boolean; channel?: string; channelSwitch?: string; channelError?: string
 } = {}): void {
   calls = []
   vi.stubGlobal('fetch', vi.fn((input: unknown, init?: RequestInit) => {
@@ -41,9 +41,9 @@ function stubFetch(options: {
       })
     }
     if (path.includes('/dsh-market/updates')) {
-      return json({ updates: { dshmarket: {
-        updateAvailable: options.latest != null, latest: options.latest ?? null, older: options.older === true,
-      } } })
+      return json({ updates: { dshmarket: options.channelSwitch !== undefined
+        ? { updateAvailable: false, latest: options.channelSwitch, channelSwitch: options.channelSwitch }
+        : { updateAvailable: options.latest != null, latest: options.latest ?? null } } })
     }
     if (path.endsWith('/dsh-market/dev-mode')) {
       const enabled = (init?.body === undefined ? {} : JSON.parse(String(init.body))) as { enabled?: boolean }
@@ -307,11 +307,15 @@ describe('SettingsCard — a channel switch is not an update', () => {
     // Picking stable while a prerelease runs offers 1.13.1, which is older.
     // Calling that "更新" would have the user click Update to go backwards;
     // it IS what they asked for, so it is offered under its own name.
-    stubFetch({ version: '1.14.0-beta.1', channel: 'stable', latest: '1.13.1', older: true })
+    stubFetch({ version: '1.14.0-beta.1', channel: 'stable', channelSwitch: '1.13.1' })
     await open()
     await waitFor(() => { expect(screen.getByText(`${t('setChannelSwitch')} 1.13.1`)).toBeTruthy() })
     expect(screen.getByRole('button', { name: t('setChannelSwitch') })).toBeTruthy()
+    // Never the update wording, and never the update button: the market
+    // page reads `updateAvailable` in three places and would announce a
+    // downgrade as "a new version is available".
     expect(screen.queryByRole('button', { name: t('setSelfUpdate') })).toBeNull()
+    expect(screen.queryByText(new RegExp(t('setSelfUpdateReady')))).toBeNull()
     expect(screen.getByText(t('setChannelSwitchHint'))).toBeTruthy()
   })
 

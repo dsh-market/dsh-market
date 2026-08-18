@@ -70,14 +70,14 @@ interface SelfStatus {
 interface SelfUpdate {
   updateAvailable: boolean
   latest: string | null
-  /** The offer is older than what is running: a channel switch, not an update. */
-  older: boolean
+  /** The channel points at this version, and it is not newer: a switch. */
+  channelSwitch: string | null
 }
 
 type Phase = 'idle' | 'confirming' | 'working' | 'removed' | 'updated' | 'failed'
 
 /** The market's own row as `/dsh-market/updates` sends it. */
-interface RawUpdate { updateAvailable?: boolean; latest?: string; older?: boolean }
+interface RawUpdate { updateAvailable?: boolean; latest?: string; channelSwitch?: string }
 
 const CHANNELS: Channel[] = ['stable', 'beta', 'dev']
 const asChannel = (value: unknown): Channel | null =>
@@ -114,7 +114,7 @@ function readUpdate(own: RawUpdate): SelfUpdate {
   return {
     updateAvailable: own.updateAvailable === true,
     latest: own.latest ?? null,
-    older: own.older === true,
+    channelSwitch: own.channelSwitch ?? null,
   }
 }
 
@@ -304,15 +304,20 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
           // the user click "更新" to go backwards. It IS what picking an
           // earlier channel asked for, so it is offered — under its own name.
           update?.updateAvailable === true && update.latest !== null
-            ? `${t(update.older ? 'setChannelSwitch' : 'setSelfUpdateReady')} ${update.latest}`
-            : t('setSelfUpToDate'),
+            ? `${t('setSelfUpdateReady')} ${update.latest}`
+            : update?.channelSwitch != null
+              ? `${t('setChannelSwitch')} ${update.channelSwitch}`
+              : t('setSelfUpToDate'),
           phase === 'updated'
             ? t('setSelfUpdatedHint')
-            : update?.older === true ? t('setChannelSwitchHint') : t('setSelfUpdateHint'),
-          update?.updateAvailable === true && phase !== 'updated'
-            ? h(Button, { variant: 'primary', size: 'sm', disabled: busy, onClick: onUpdate },
-                t(update.older ? 'setChannelSwitch' : 'setSelfUpdate'))
-            : null,
+            : update?.channelSwitch != null ? t('setChannelSwitchHint') : t('setSelfUpdateHint'),
+          phase === 'updated'
+            ? null
+            : update?.updateAvailable === true
+              ? h(Button, { variant: 'primary', size: 'sm', disabled: busy, onClick: onUpdate }, t('setSelfUpdate'))
+              : update?.channelSwitch != null
+                ? h(Button, { variant: 'outline', size: 'sm', disabled: busy, onClick: onUpdate }, t('setChannelSwitch'))
+                : null,
         ),
         row(t('setChannel'), t(CHANNEL_HINT[status?.channel ?? 'stable']),
           h('div', { className: css.setSeg },

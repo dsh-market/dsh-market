@@ -21,7 +21,17 @@
    with a background and z-index above it that covered the input's lower
    edge — the control looked cut in half at rest, before any scrolling.
    Only the horizontal bleed is wanted; the vertical one was collateral. */
+/* The scroller (.body) carries padding-top:12px, and a sticky child cannot
+   rise above its containing block — the parent's CONTENT box. So this row
+   stops 12px short of the scrollport and the grid scrolls through the strip
+   above it: measured on a real host as cats.top=214 against scroller.top=203.
+   Reported twice, first as "a big gap above the sticky row" and then as a
+   card clipped into it.
+   ::before paints that strip in the same background and inherits the row's
+   z-index, so the row covers what it cannot reach. Fixing it by removing the
+   scroller's padding would re-space all five tabs to repair one. */
 .cats{position:sticky;top:-1px;z-index:5;background:var(--dsw-alias-bg-layer-2,#f7f8fa);padding:12px 4px 4px;margin:0 -4px 2px}
+.cats::before{content:'';position:absolute;left:0;right:0;bottom:100%;height:14px;background:inherit;pointer-events:none}
 .catsRow{display:flex;gap:8px;align-items:flex-start;position:relative}
 .star{font-size:11px;color:var(--dsw-alias-label-secondary,#9ca3af)}
 .top{position:absolute;right:18px;bottom:18px;z-index:20;display:inline-flex}

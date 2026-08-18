@@ -262,3 +262,62 @@ describe('checkUpdates — the channel is part of the cache key', () => {
     rmSync(dir, { recursive: true, force: true })
   })
 })
+
+describe('updateAvailable means NEWER, and only that', () => {
+  const bed = (installedVersion: string, tags: Record<string, string>) => {
+    const dir = join(mkdtempSync(join(tmpdir(), 'dshm-dir-')), 'profiles', 'web')
+    mkdirSync(join(dir, 'node_modules', 'dshmarket'), { recursive: true })
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ dependencies: { dshmarket: '^1.0.0' } }))
+    writeFileSync(join(dir, 'node_modules', 'dshmarket', 'package.json'), JSON.stringify({ name: 'dshmarket', version: installedVersion }))
+    vi.stubGlobal('fetch', vi.fn((url: unknown) => {
+      const tag = String(url).split('/').pop() ?? ''
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ version: tags[tag] }) })
+    }))
+    return dir
+  }
+
+  it('reports a backwards move as a channel switch, never as an update', async () => {
+    // Shipped broken for one build: `updateAvailable` was made true in BOTH
+    // directions so the card could offer the way back off a channel. The
+    // market page reads that flag in three places it was never taught about
+    // — the header banner, "update all", and the row button — and every one
+    // of them announced a downgrade as "a new version is available", on a
+    // dev build whose own channel had nothing newer in it.
+    const dir = bed('1.15.0-dev.202608181407-2fad14a', { latest: '1.13.1', beta: '1.14.0-beta.2' })
+    try {
+      const row = (await checkUpdates('web', true, dir, new Map([['dshmarket', 'stable' as const]])))['dshmarket']
+      expect(row?.updateAvailable, 'a downgrade was reported as an update').toBe(false)
+      expect(row?.channelSwitch).toBe('1.13.1')
+    } finally { vi.unstubAllGlobals(); rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('offers no switch when the channel already points at what is installed', async () => {
+    const dir = bed('1.14.0-beta.2', { latest: '1.13.1', beta: '1.14.0-beta.2' })
+    try {
+      const row = (await checkUpdates('web', true, dir, new Map([['dshmarket', 'beta' as const]])))['dshmarket']
+      expect(row?.updateAvailable).toBe(false)
+      expect(row?.channelSwitch).toBeUndefined()
+    } finally { vi.unstubAllGlobals(); rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('still calls a genuine upgrade an update, with no switch alongside it', async () => {
+    const dir = bed('1.13.1', { latest: '1.13.1', beta: '1.14.0-beta.2' })
+    try {
+      const row = (await checkUpdates('web', true, dir, new Map([['dshmarket', 'beta' as const]])))['dshmarket']
+      expect(row?.updateAvailable).toBe(true)
+      expect(row?.latest).toBe('1.14.0-beta.2')
+      expect(row?.channelSwitch).toBeUndefined()
+    } finally { vi.unstubAllGlobals(); rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('never offers a switch for a package that does not follow a channel', async () => {
+    // Only the market follows one. An ordinary plugin whose `latest` went
+    // backwards is #64's case, and its answer is to refuse, not to offer.
+    const dir = bed('2.0.0', { latest: '1.0.0' })
+    try {
+      const row = (await checkUpdates('web', true, dir))['dshmarket']
+      expect(row?.updateAvailable).toBe(false)
+      expect(row?.channelSwitch).toBeUndefined()
+    } finally { vi.unstubAllGlobals(); rmSync(dir, { recursive: true, force: true }) }
+  })
+})

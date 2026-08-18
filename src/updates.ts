@@ -13,20 +13,29 @@ export interface UpdateStatus {
   version: string | null
   current: string | null
   latest: string | null
+  /**
+   * A NEWER version exists. Forwards only, always — every caller reads it
+   * as "there is an upgrade" and labels a button accordingly.
+   */
   updateAvailable: boolean
   /**
-   * The offer is OLDER than what is running — a channel switch, not an
-   * update.
+   * The version this package's channel points at, when it differs from what
+   * is installed and is NOT newer.
+   *
+   * A separate field rather than a second meaning for `updateAvailable`,
+   * which was tried and leaked immediately: the market page has three
+   * consumers of that flag (the header banner, "update all", the row
+   * button) and all three announced a DOWNGRADE as "a new version is
+   * available". One field, one meaning; a caller that has not been taught
+   * about channel switches simply does not offer one.
    *
    * Only a channel-following package can be in this state, and it is the
-   * state that used to be silently unreachable: picking "stable" while a
-   * prerelease was installed compared 1.13.1 against 1.14.0-beta.1, found
-   * nothing newer, and answered "up to date" — so the market offered no way
-   * back off a channel the user had just left. A channel is a choice, not a
-   * version comparison, so the difference is what makes it actionable and
-   * the DIRECTION is what the wording has to change.
+   * state that used to be unreachable: picking "stable" while a prerelease
+   * was installed compared 1.13.1 against 1.14.0-beta.1, found nothing
+   * newer, and answered "up to date" — so there was no way back off a
+   * channel the user had just left.
    */
-  older?: boolean
+  channelSwitch?: string
 }
 
 const UPDATES_TTL_MS = 30 * 60 * 1000
@@ -238,14 +247,15 @@ export async function checkUpdates(
         const stable = typeof meta.version === 'string' ? meta.version : null
         const channel = channelFor.get(name)
         const latest = channel === undefined ? stable : await versionOnChannel(name, channel, stable)
-        // A package that follows a channel offers whatever that channel
-        // points at whenever it differs, in either direction. Everything
-        // else keeps the plain rule: only ever forwards.
-        const differs = channel !== undefined && version !== null && latest !== null && version !== latest
+        // Forwards is an update; a difference in the other direction is a
+        // channel switch and is reported as one, under its own field.
+        const upgrade = isUpgrade(version, latest)
+        const sideways = channel !== undefined && !upgrade
+          && version !== null && latest !== null && version !== latest
         result[name] = {
           kind: 'npm', version, current: version, latest,
-          updateAvailable: isUpgrade(version, latest) || differs,
-          ...(differs && !isUpgrade(version, latest) ? { older: true } : {}),
+          updateAvailable: upgrade,
+          ...(sideways ? { channelSwitch: latest } : {}),
         }
       }
     } catch {
