@@ -19,6 +19,7 @@
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { asChannel, type Channel } from './channels.ts'
 import { logEvent } from './log.ts'
 
 interface HotRow {
@@ -176,7 +177,15 @@ export interface MarketState {
    * choice is the answer — including "stable" while a beta is running, which
    * is how someone gets back off the channel.
    */
-  channel?: 'stable' | 'beta'
+  channel?: Channel
+  /**
+   * Whether the developer channel is offered at all, off until switched on.
+   *
+   * Stored with the profile rather than in the browser because it is not a
+   * display preference: the channel route REFUSES `dev` while this is off,
+   * so a hidden channel stays unreachable rather than merely unpainted.
+   */
+  devMode?: boolean
 }
 
 /** Unique non-empty strings in `value`, order preserved. */
@@ -205,6 +214,7 @@ export function readMarketState(profileDir: string): MarketState {
       groups?: unknown
       groupOrder?: unknown
       channel?: unknown
+      devMode?: unknown
     }
     const disabled = uniqueStrings(state.disabled !== undefined ? state.disabled : state.disabledSkins)
     const groups: Record<string, string[]> = {}
@@ -217,7 +227,8 @@ export function readMarketState(profileDir: string): MarketState {
       disabled: new Set(disabled),
       groups,
       groupOrder: uniqueStrings(state.groupOrder),
-      channel: state.channel === 'beta' || state.channel === 'stable' ? state.channel : undefined,
+      channel: asChannel(state.channel) ?? undefined,
+      devMode: state.devMode === true ? true : undefined,
     }
   } catch {
     return { disabled: new Set(), groups: {}, groupOrder: [] }
@@ -234,6 +245,10 @@ export function writeMarketState(profileDir: string, state: MarketState): void {
     // Omitted while unchosen, so "never picked" survives a round trip and
     // keeps deriving from the running build.
     ...(state.channel === undefined ? {} : { channel: state.channel }),
+    // Written only when ON. Off is the default and the absence of the field
+    // says so, which keeps a profile that never touched it from carrying a
+    // record of a decision nobody made.
+    ...(state.devMode === true ? { devMode: true } : {}),
   }))
 }
 

@@ -32,13 +32,21 @@ describe.skipIf(!HAS_DSH)('web e2e: release channel', () => {
     JSON.parse(readFileSync(statePath(), 'utf8')) as Record<string, unknown>
 
   /** POST as the market's own page does — the route requires a same origin. */
-  const setChannel = async (channel: string): Promise<number> => {
-    const res = await fetch(`${scaffold.baseUrl}/dsh-market/channel`, {
+  const post = async (path: string, payload: unknown): Promise<{ status: number; body: any }> => {
+    const res = await fetch(`${scaffold.baseUrl}${path}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', origin: scaffold.baseUrl },
-      body: JSON.stringify({ channel }),
+      body: JSON.stringify(payload),
     })
-    return res.status
+    return { status: res.status, body: await res.json().catch(() => ({})) }
+  }
+
+  const setChannel = async (channel: string): Promise<number> =>
+    (await post('/dsh-market/channel', { channel })).status
+
+  const statusNow = async (): Promise<any> => {
+    const res = await fetch(`${scaffold.baseUrl}/dsh-market/status`, { cache: 'no-store' })
+    return await res.json()
   }
 
   const channelNow = async (): Promise<unknown> => {
@@ -79,4 +87,68 @@ describe.skipIf(!HAS_DSH)('web e2e: release channel', () => {
     // rejected — the file is read back at every boot with no second check.
     expect(readState().channel).toBe('beta')
   })
+})
+
+describe.skipIf(!HAS_DSH)('web e2e: developer mode', () => {
+  let scaffold: WebScaffold
+
+  beforeAll(async () => { scaffold = await launchMarketScaffold() }, 300_000)
+  afterAll(async () => { await scaffold?.close() })
+
+  const statePath = (): string => join(scaffold.home, 'profiles', 'web', '.dsh-market', 'state.json')
+  const readState = (): Record<string, unknown> =>
+    existsSync(statePath()) ? JSON.parse(readFileSync(statePath(), 'utf8')) as Record<string, unknown> : {}
+
+  const post = async (path: string, payload: unknown): Promise<{ status: number; body: any }> => {
+    const res = await fetch(`${scaffold.baseUrl}${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: scaffold.baseUrl },
+      body: JSON.stringify(payload),
+    })
+    return { status: res.status, body: await res.json().catch(() => ({})) }
+  }
+  const statusNow = async (): Promise<any> =>
+    await (await fetch(`${scaffold.baseUrl}/dsh-market/status`, { cache: 'no-store' })).json()
+
+  it('refuses the dev channel on a profile that never enabled it', async () => {
+    // The whole feature in one assertion, and the reason it is asserted
+    // HERE: a control that simply omits an option is not a gate. This is a
+    // real host answering a real POST that no UI would have sent.
+    const status = await statusNow()
+    expect(status.devMode).toBe(false)
+    expect(status.channels).toEqual(['stable', 'beta'])
+
+    const refused = await post('/dsh-market/channel', { channel: 'dev' })
+    expect(refused.status).toBe(403)
+    expect(readState().channel).not.toBe('dev')
+  })
+
+  it('opens the channel, and both facts survive a real restart', async () => {
+    expect((await post('/dsh-market/dev-mode', { enabled: true })).status).toBe(200)
+    expect(readState().devMode).toBe(true)
+    expect((await post('/dsh-market/channel', { channel: 'dev' })).status).toBe(200)
+    expect(readState().channel).toBe('dev')
+
+    await scaffold.restart()
+    const status = await statusNow()
+    expect(status.devMode).toBe(true)
+    expect(status.channel).toBe('dev')
+    expect(status.channels).toEqual(['stable', 'beta', 'dev'])
+  }, 300_000)
+
+  it('does not strand a profile on dev when the mode is switched off', async () => {
+    // Turning the PROTECTION on is what would otherwise leave a profile
+    // following unreviewed builds with no control on screen able to say so.
+    await post('/dsh-market/dev-mode', { enabled: true })
+    await post('/dsh-market/channel', { channel: 'dev' })
+    expect(readState().channel).toBe('dev')
+
+    const off = await post('/dsh-market/dev-mode', { enabled: false })
+    expect(off.body.channel).not.toBe('dev')
+    expect(readState().channel).toBeUndefined()
+    expect(readState().devMode).toBeUndefined()
+
+    await scaffold.restart()
+    expect((await statusNow()).channel).not.toBe('dev')
+  }, 300_000)
 })

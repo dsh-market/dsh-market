@@ -4,6 +4,7 @@
  * dist-tag for registry installs — with a TTL cache.
  */
 
+import { DIST_TAG, type Channel } from './channels.ts'
 import { marketFetch } from './net.ts'
 import { profileDir, readInstalled, readInstalledVersion, readLockCommits } from './profile.ts'
 
@@ -13,6 +14,19 @@ export interface UpdateStatus {
   current: string | null
   latest: string | null
   updateAvailable: boolean
+  /**
+   * The offer is OLDER than what is running — a channel switch, not an
+   * update.
+   *
+   * Only a channel-following package can be in this state, and it is the
+   * state that used to be silently unreachable: picking "stable" while a
+   * prerelease was installed compared 1.13.1 against 1.14.0-beta.1, found
+   * nothing newer, and answered "up to date" — so the market offered no way
+   * back off a channel the user had just left. A channel is a choice, not a
+   * version comparison, so the difference is what makes it actionable and
+   * the DIRECTION is what the wording has to change.
+   */
+  older?: boolean
 }
 
 const UPDATES_TTL_MS = 30 * 60 * 1000
@@ -115,26 +129,57 @@ export async function latestPublishedRecently(name: string, windowMs = 26 * 60 *
 
 /** The registry's current `latest` version for a package, or null when it can't be read. */
 /**
- * The version a beta subscriber should be offered: whichever of the `beta`
- * and `latest` dist-tags is actually newer.
+ * The version a channel subscriber should be offered: the newest build in
+ * the set that channel is willing to receive.
  *
- * A beta tag is not automatically ahead. Once 1.14.0 ships, `beta` still
- * points at 1.14.0-beta.1 until someone publishes the next prerelease — and
- * offering that as an "update" would walk a subscriber backwards. Comparing
- * is the only correct reading of "give me the newest thing available to me".
+ * A channel is a SET, not a tag. Someone on beta has not stopped accepting
+ * releases — they accept releases and prereleases — so beta means
+ * {latest, beta} and dev means {latest, beta, dev}. Reading it as one tag
+ * gets a real case wrong: once 1.14.0 ships, `beta` still points at
+ * 1.14.0-beta.1 until the next prerelease is cut, and following that tag
+ * literally would walk a subscriber BACKWARDS onto a build their channel
+ * has already moved past.
+ *
+ * The nesting is also what makes a channel leavable. Going backwards is
+ * only ever offered when the user narrows the set — picking stable while a
+ * prerelease is installed drops `beta` out of it, so the answer becomes
+ * `latest` and the market can finally offer the way back. That case used to
+ * be unreachable: comparing 1.13.1 against an installed 1.14.0-beta.1 found
+ * nothing newer and answered "up to date", so the control the user had just
+ * used appeared to do nothing.
+ *
  * @param stable - the `latest` version, already fetched by the caller.
  */
-export async function preferBeta(name: string, stable: string | null): Promise<string | null> {
+export async function versionOnChannel(
+  name: string,
+  channel: Channel,
+  stable: string | null,
+): Promise<string | null> {
+  let best = stable
+  for (const tag of EXTRA_TAGS[channel]) {
+    const candidate = await tagVersion(name, tag)
+    if (candidate !== null && (best === null || isUpgrade(best, candidate))) best = candidate
+  }
+  return best
+}
+
+/** Tags a channel adds on top of `latest`, widest channel last. */
+const EXTRA_TAGS: Record<Channel, string[]> = {
+  stable: [],
+  beta: [DIST_TAG.beta],
+  dev: [DIST_TAG.beta, DIST_TAG.dev],
+}
+
+/** One dist-tag's version, or null when it isn't published or can't be read. */
+async function tagVersion(name: string, tag: string): Promise<string | null> {
   try {
-    const meta = (await fetchJson(`https://registry.npmjs.org/${encodeURIComponent(name)}/beta`)) as { version?: string }
-    const beta = typeof meta.version === 'string' ? meta.version : null
-    if (beta === null) return stable
-    if (stable === null) return beta
-    return isUpgrade(stable, beta) ? beta : stable
+    const meta = (await fetchJson(`https://registry.npmjs.org/${encodeURIComponent(name)}/${tag}`)) as { version?: string }
+    return typeof meta.version === 'string' ? meta.version : null
   } catch {
-    // No beta published yet is the normal case, and a registry hiccup must
-    // not take the ordinary update check down with it.
-    return stable
+    // An unpublished tag is the ordinary case for a channel nobody has cut
+    // a build on yet, and a registry hiccup must not take the whole update
+    // check down with it.
+    return null
   }
 }
 
@@ -153,18 +198,19 @@ export async function checkUpdates(
   force = false,
   explicitDir?: string,
   /**
-   * Packages whose updates may come from the `beta` dist-tag. Only ever the
-   * market itself: opting into prereleases is volunteering to try THIS
-   * plugin early, not a licence to pull every other author's unreleased work.
+   * Packages that follow a release channel instead of plain `latest`. Only
+   * ever the market itself: opting into early builds is volunteering to try
+   * THIS plugin early, not a licence to pull every other author's
+   * unreleased work.
    */
-  betaFor: ReadonlySet<string> = new Set(),
+  channelFor: ReadonlyMap<string, Channel> = new Map(),
 ): Promise<Record<string, UpdateStatus>> {
   const activeProfileDir = profileDir(profile, explicitDir)
   // The channel is part of the key: switching to betas has to change the
   // answer immediately, and a cache keyed on the profile alone would serve
   // the stable verdict for the rest of the TTL — reading as "the setting did
   // nothing".
-  const cacheKey = `${activeProfileDir}\u0000${[...betaFor].sort().join(',')}`
+  const cacheKey = `${activeProfileDir}\u0000${[...channelFor].map(([n, c]) => `${n}:${c}`).sort().join(',')}`
   if (!force && updatesCache?.key === cacheKey && Date.now() - updatesCache.at < UPDATES_TTL_MS) {
     return updatesCache.data
   }
@@ -190,10 +236,16 @@ export async function checkUpdates(
       } else {
         const meta = (await fetchJson(`https://registry.npmjs.org/${encodeURIComponent(name)}/latest`)) as { version?: string }
         const stable = typeof meta.version === 'string' ? meta.version : null
-        const latest = betaFor.has(name) ? await preferBeta(name, stable) : stable
+        const channel = channelFor.get(name)
+        const latest = channel === undefined ? stable : await versionOnChannel(name, channel, stable)
+        // A package that follows a channel offers whatever that channel
+        // points at whenever it differs, in either direction. Everything
+        // else keeps the plain rule: only ever forwards.
+        const differs = channel !== undefined && version !== null && latest !== null && version !== latest
         result[name] = {
           kind: 'npm', version, current: version, latest,
-          updateAvailable: isUpgrade(version, latest),
+          updateAvailable: isUpgrade(version, latest) || differs,
+          ...(differs && !isUpgrade(version, latest) ? { older: true } : {}),
         }
       }
     } catch {

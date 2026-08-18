@@ -12,7 +12,7 @@
  * stubbed at fetch.
  */
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SettingsCard, clearBrowserState } from '../../src/client/SettingsCard.tsx'
 import { en } from '../../src/client/locales.ts'
@@ -21,7 +21,10 @@ const t = (key: string): string => (en as Record<string, string>)[key] ?? key
 
 let calls: Array<{ path: string; body: unknown }> = []
 
-function stubFetch(options: { version?: string; restart?: boolean; latest?: string | null; removeOk?: boolean; error?: string } = {}): void {
+function stubFetch(options: {
+  version?: string; restart?: boolean; latest?: string | null; removeOk?: boolean; error?: string
+  devMode?: boolean; channel?: string; older?: boolean; channelError?: string
+} = {}): void {
   calls = []
   vi.stubGlobal('fetch', vi.fn((input: unknown, init?: RequestInit) => {
     const path = String(input)
@@ -29,10 +32,32 @@ function stubFetch(options: { version?: string; restart?: boolean; latest?: stri
     const json = (value: unknown): Promise<Response> =>
       Promise.resolve(new Response(JSON.stringify(value), { status: 200, headers: { 'content-type': 'application/json' } }))
     if (path.endsWith('/dsh-market/status')) {
-      return json({ version: options.version ?? '1.12.2', restart: options.restart !== false })
+      return json({
+        version: options.version ?? '1.12.2',
+        restart: options.restart !== false,
+        channel: options.channel ?? 'stable',
+        devMode: options.devMode === true,
+        channels: options.devMode === true ? ['stable', 'beta', 'dev'] : ['stable', 'beta'],
+      })
     }
-    if (path.endsWith('/dsh-market/updates')) {
-      return json({ updates: { dshmarket: { updateAvailable: options.latest != null, latest: options.latest ?? null } } })
+    if (path.includes('/dsh-market/updates')) {
+      return json({ updates: { dshmarket: {
+        updateAvailable: options.latest != null, latest: options.latest ?? null, older: options.older === true,
+      } } })
+    }
+    if (path.endsWith('/dsh-market/dev-mode')) {
+      const enabled = (init?.body === undefined ? {} : JSON.parse(String(init.body))) as { enabled?: boolean }
+      return json({
+        ok: true,
+        devMode: enabled.enabled === true,
+        channel: enabled.enabled === true ? 'stable' : 'stable',
+        channels: enabled.enabled === true ? ['stable', 'beta', 'dev'] : ['stable', 'beta'],
+      })
+    }
+    if (path.endsWith('/dsh-market/channel')) {
+      return options.channelError !== undefined
+        ? json({ ok: false, error: options.channelError })
+        : json({ ok: true, channel: (JSON.parse(String(init?.body)) as { channel: string }).channel })
     }
     if (path.endsWith('/dsh-market/self-uninstall')) {
       return options.removeOk === false
@@ -99,14 +124,14 @@ describe('SettingsCard', () => {
     // part a user cannot work out alone. It has to be on screen before the
     // choice, not after it.
     expect(screen.getByText(t('setSelfPurgeOff'))).toBeTruthy()
-    fireEvent.click(screen.getAllByRole('checkbox')[0]!) // purge is the first
+    fireEvent.click(screen.getByRole('checkbox', { name: t('setSelfPurge') }))
     expect(screen.getByText(t('setSelfPurgeOn'))).toBeTruthy()
   })
 
   it('sends the confirmation and the purge choice the user actually made', async () => {
     await open()
     fireEvent.click(screen.getByRole('button', { name: t('setSelfRemove') }))
-    fireEvent.click(screen.getAllByRole('checkbox')[0]!) // purge is the first
+    fireEvent.click(screen.getByRole('checkbox', { name: t('setSelfPurge') }))
     fireEvent.click(screen.getByRole('button', { name: t('setSelfRemoveConfirm') }))
     await waitFor(() => { expect(screen.getByText(t('setSelfRemoved'))).toBeTruthy() })
     const sent = calls.find(call => call.path.includes('self-uninstall'))
@@ -145,7 +170,10 @@ describe('SettingsCard', () => {
     // consequence gets STATED; only a real choice gets asked.
     await open()
     fireEvent.click(screen.getByRole('button', { name: t('setSelfRemove') }))
-    expect(screen.getAllByRole('checkbox')).toHaveLength(1)
+    // Scoped to the confirmation: the card has other checkboxes elsewhere,
+    // and what this asserts is that REMOVING asks one question.
+    const confirm = screen.getByText(t('setSelfConfirm')).parentElement!
+    expect(within(confirm).getAllByRole('checkbox')).toHaveLength(1)
     fireEvent.click(screen.getByRole('button', { name: t('setSelfRemoveConfirm') }))
     await waitFor(() => { expect(screen.getByText(t('setSelfRemoved'))).toBeTruthy() })
     expect(calls.find(call => call.path.includes('self-uninstall'))?.body)
@@ -230,5 +258,67 @@ describe('clearBrowserState', () => {
     expect(() => {
       clearBrowserState({ removeItem: () => { throw new Error('QuotaExceededError') } })
     }).not.toThrow()
+  })
+})
+
+describe('SettingsCard — developer mode', () => {
+  it('offers only stable and beta until developer mode is on', async () => {
+    await open()
+    await waitFor(() => { expect(screen.getByRole('button', { name: t('setChannelStable') })).toBeTruthy() })
+    // The dev channel is not a third degree of caution — it is builds
+    // published straight off a branch, possibly run by nobody. A user who
+    // never asked for that must not be able to wander into it.
+    expect(screen.queryByRole('button', { name: t('setChannelDev') })).toBeNull()
+    expect((screen.getByRole('checkbox', { name: t('setDevMode') }) as HTMLInputElement).checked).toBe(false)
+  })
+
+  it('reveals the dev channel once the switch is on', async () => {
+    await open()
+    await waitFor(() => { expect(screen.getByRole('checkbox', { name: t('setDevMode') })).toBeTruthy() })
+    fireEvent.click(screen.getByRole('checkbox', { name: t('setDevMode') }))
+    await waitFor(() => { expect(screen.getByRole('button', { name: t('setChannelDev') })).toBeTruthy() })
+    expect(calls.find(call => call.path.includes('dev-mode'))?.body).toEqual({ enabled: true })
+  })
+
+  it('takes the channel list from the server, not from its own idea of it', async () => {
+    // The route refuses `dev` while the mode is off, so a card drawing its
+    // own list could only ever disagree with the thing that says yes or no.
+    stubFetch({ devMode: true, channel: 'dev' })
+    await open()
+    await waitFor(() => { expect(screen.getByRole('button', { name: t('setChannelDev') })).toBeTruthy() })
+    expect((screen.getByRole('checkbox', { name: t('setDevMode') }) as HTMLInputElement).checked).toBe(true)
+  })
+
+  it('does not leave a refused channel looking selected', async () => {
+    // It used to move the control first and ignore the answer, which was
+    // harmless while every channel was permitted. A 403 would now have left
+    // the user looking at a channel their profile is not on.
+    stubFetch({ channelError: 'the dev channel needs developer mode' })
+    await open()
+    await waitFor(() => { expect(screen.getByRole('button', { name: t('setChannelBeta') })).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: t('setChannelBeta') }))
+    await waitFor(() => { expect(screen.getByText(/needs developer mode/)).toBeTruthy() })
+    expect(screen.getByRole('button', { name: t('setChannelStable') }).className).toMatch(/SegOn|setSegOn/)
+  })
+})
+
+describe('SettingsCard — a channel switch is not an update', () => {
+  it('names an older offer for what it is', async () => {
+    // Picking stable while a prerelease runs offers 1.13.1, which is older.
+    // Calling that "更新" would have the user click Update to go backwards;
+    // it IS what they asked for, so it is offered under its own name.
+    stubFetch({ version: '1.14.0-beta.1', channel: 'stable', latest: '1.13.1', older: true })
+    await open()
+    await waitFor(() => { expect(screen.getByText(`${t('setChannelSwitch')} 1.13.1`)).toBeTruthy() })
+    expect(screen.getByRole('button', { name: t('setChannelSwitch') })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: t('setSelfUpdate') })).toBeNull()
+    expect(screen.getByText(t('setChannelSwitchHint'))).toBeTruthy()
+  })
+
+  it('still calls a newer offer an update', async () => {
+    stubFetch({ version: '1.13.1', latest: '1.14.0' })
+    await open()
+    await waitFor(() => { expect(screen.getByText(`${t('setSelfUpdateReady')} 1.14.0`)).toBeTruthy() })
+    expect(screen.getByRole('button', { name: t('setSelfUpdate') })).toBeTruthy()
   })
 })

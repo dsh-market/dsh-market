@@ -175,12 +175,16 @@ describe('preferBeta (release channel)', () => {
     // ships, `beta` still points at 1.14.0-beta.1 until someone publishes the
     // next prerelease — and offering that as an update walks a subscriber
     // backwards, which is the opposite of what opting in asked for.
-    const { preferBeta } = await import('../src/updates.ts')
+    //
+    // This is why a channel is a SET rather than a tag: beta means
+    // {latest, beta} and you get the newest of them, so a lagging beta tag
+    // never drags anyone back.
+    const { versionOnChannel } = await import('../src/updates.ts')
     const answer = (beta: string | null) => {
       vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(
         JSON.stringify(beta === null ? {} : { version: beta }), { status: 200 },
       ))))
-      return preferBeta('dshmarket', '1.14.0')
+      return versionOnChannel('dshmarket', 'beta', '1.14.0')
     }
     await expect(answer('1.15.0-beta.1')).resolves.toBe('1.15.0-beta.1') // ahead → take it
     await expect(answer('1.14.0-beta.1')).resolves.toBe('1.14.0')        // behind → keep stable
@@ -190,11 +194,39 @@ describe('preferBeta (release channel)', () => {
   it('falls back to stable when the beta tag cannot be read', async () => {
     // A package with no beta tag 404s, which is the ordinary case, not an
     // error worth failing the whole update check over.
-    const { preferBeta } = await import('../src/updates.ts')
+    const { versionOnChannel } = await import('../src/updates.ts')
     vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('HTTP 404'))))
-    await expect(preferBeta('dshmarket', '1.14.0')).resolves.toBe('1.14.0')
+    await expect(versionOnChannel('dshmarket', 'beta', '1.14.0')).resolves.toBe('1.14.0')
     // ...and with nothing on either side it stays honest about knowing nothing.
-    await expect(preferBeta('dshmarket', null)).resolves.toBeNull()
+    await expect(versionOnChannel('dshmarket', 'beta', null)).resolves.toBeNull()
+  })
+
+  it('the stable channel is exactly latest, which is what makes it leavable', async () => {
+    // The narrow end of the nesting. On stable the beta tag is not in the
+    // set at all, so an installed prerelease is simply not what the channel
+    // points at — and THAT is the difference the market can act on. Reading
+    // "newest available" here instead would keep answering "up to date" and
+    // the user could never get back off beta.
+    const { versionOnChannel } = await import('../src/updates.ts')
+    const fetchSpy = vi.fn(() => Promise.resolve(new Response(JSON.stringify({ version: '9.9.9-beta.1' }), { status: 200 })))
+    vi.stubGlobal('fetch', fetchSpy)
+    await expect(versionOnChannel('dshmarket', 'stable', '1.13.1')).resolves.toBe('1.13.1')
+    expect(fetchSpy, 'the stable channel asked about a tag outside its own set').not.toHaveBeenCalled()
+  })
+
+  it('the dev channel takes the newest of latest, beta and dev', async () => {
+    const { versionOnChannel } = await import('../src/updates.ts')
+    const at: Record<string, string> = { beta: '1.14.0-beta.9', dev: '1.15.0-dev.20260818-abc1234' }
+    vi.stubGlobal('fetch', vi.fn((url: unknown) => {
+      const tag = String(url).split('/').pop() ?? ''
+      return Promise.resolve(new Response(JSON.stringify({ version: at[tag] }), { status: 200 }))
+    }))
+    await expect(versionOnChannel('dshmarket', 'dev', '1.13.1')).resolves.toBe('1.15.0-dev.20260818-abc1234')
+
+    // ...and a dev tag left behind by a merged branch must not drag anyone
+    // back either — the same rule that protects beta subscribers.
+    at.dev = '1.12.0-dev.20260101-0000000'
+    await expect(versionOnChannel('dshmarket', 'dev', '1.13.1')).resolves.toBe('1.14.0-beta.9')
   })
 })
 
@@ -222,7 +254,7 @@ describe('checkUpdates — the channel is part of the cache key', () => {
     expect(asked.some(url => url.endsWith('/beta'))).toBe(false)
 
     asked.length = 0
-    const beta = await checkUpdates('web', false, dir, new Set(['dshmarket']))
+    const beta = await checkUpdates('web', false, dir, new Map([['dshmarket', 'beta' as const]]))
     expect(asked.some(url => url.endsWith('/beta')), 'served the cached stable answer to a beta subscriber').toBe(true)
     expect(beta['dshmarket']?.latest).toBe('2.0.0-beta.1')
 

@@ -53,20 +53,70 @@ export interface SettingsCardProps {
   onRemoved?: () => void
 }
 
+type Channel = 'stable' | 'beta' | 'dev'
+
 /** What `/dsh-market/status` tells this card. */
 interface SelfStatus {
   version: string | null
   restart: boolean
-  channel: 'stable' | 'beta'
+  channel: Channel
+  /** Whether the dev channel is offered at all — off unless switched on. */
+  devMode: boolean
+  /** The channels this profile may pick, as the SERVER sees them. */
+  channels: Channel[]
 }
 
 /** What `/dsh-market/updates` says about the market's own row. */
 interface SelfUpdate {
   updateAvailable: boolean
   latest: string | null
+  /** The offer is older than what is running: a channel switch, not an update. */
+  older: boolean
 }
 
 type Phase = 'idle' | 'confirming' | 'working' | 'removed' | 'updated' | 'failed'
+
+/** The market's own row as `/dsh-market/updates` sends it. */
+interface RawUpdate { updateAvailable?: boolean; latest?: string; older?: boolean }
+
+const CHANNELS: Channel[] = ['stable', 'beta', 'dev']
+const asChannel = (value: unknown): Channel | null =>
+  CHANNELS.includes(value as Channel) ? (value as Channel) : null
+
+const CHANNEL_LABEL: Record<Channel, string> = {
+  stable: 'setChannelStable', beta: 'setChannelBeta', dev: 'setChannelDev',
+}
+const CHANNEL_HINT: Record<Channel, string> = {
+  stable: 'setChannelStableHint', beta: 'setChannelBetaHint', dev: 'setChannelDevHint',
+}
+
+/**
+ * Read the server's answer, taking the list of channels FROM it.
+ *
+ * The card does not decide which channels exist. Developer mode is enforced
+ * server-side — the channel route refuses `dev` while it is off — so a card
+ * that drew its own list could only ever disagree with the thing that
+ * actually says yes or no.
+ */
+function readStatus(body: { version?: string; restart?: boolean; channel?: string; devMode?: boolean; channels?: string[] }): SelfStatus {
+  const offered = (body.channels ?? []).map(asChannel).filter((c): c is Channel => c !== null)
+  return {
+    version: body.version ?? null,
+    restart: body.restart === true,
+    channel: asChannel(body.channel) ?? 'stable',
+    devMode: body.devMode === true,
+    // A host too old to send the list still gets the two that always exist.
+    channels: offered.length > 0 ? offered : ['stable', 'beta'],
+  }
+}
+
+function readUpdate(own: RawUpdate): SelfUpdate {
+  return {
+    updateAvailable: own.updateAvailable === true,
+    latest: own.latest ?? null,
+    older: own.older === true,
+  }
+}
 
 /**
  * Clear the market's browser-side leftovers.
@@ -107,14 +157,14 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
     void (async () => {
       try {
         const response = await fetch('/dsh-market/status', { cache: 'no-store' })
-        const body = (await response.json()) as { version?: string; restart?: boolean; channel?: string }
-        if (live) setStatus({ version: body.version ?? null, restart: body.restart === true, channel: body.channel === 'beta' ? 'beta' : 'stable' })
-      } catch { if (live) setStatus({ version: null, restart: false, channel: 'stable' }) }
+        const body = (await response.json()) as { version?: string; restart?: boolean; channel?: string; devMode?: boolean; channels?: string[] }
+        if (live) setStatus(readStatus(body))
+      } catch { if (live) setStatus({ version: null, restart: false, channel: 'stable', devMode: false, channels: ['stable', 'beta'] }) }
       try {
         const response = await fetch('/dsh-market/updates', { cache: 'no-store' })
-        const body = (await response.json()) as { updates?: Record<string, { updateAvailable?: boolean; latest?: string }> }
+        const body = (await response.json()) as { updates?: Record<string, RawUpdate> }
         const own = body.updates?.['dshmarket'] ?? body.updates?.['dsh-market']
-        if (live && own !== undefined) setUpdate({ updateAvailable: own.updateAvailable === true, latest: own.latest ?? null })
+        if (live && own !== undefined) setUpdate(readUpdate(own))
       } catch { /* an update check that fails leaves the row without an offer */ }
     })()
     return () => { live = false }
@@ -168,21 +218,70 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
   // consulted to know the running build is one.
   const prerelease = version !== null && version.includes('-')
 
-  const onChannel = useCallback((next: 'stable' | 'beta') => {
-    setStatus(current => (current === null ? current : { ...current, channel: next }))
+  /** Re-ask what this channel offers; the previous answer was for another one. */
+  const refreshUpdate = useCallback(async (): Promise<void> => {
+    const response = await fetch('/dsh-market/updates?force=1', { cache: 'no-store' })
+    const body = (await response.json()) as { updates?: Record<string, RawUpdate> }
+    const own = body.updates?.['dshmarket'] ?? body.updates?.['dsh-market']
+    setUpdate(own === undefined ? null : readUpdate(own))
+  }, [])
+
+  /**
+   * Select a channel — and show the one the SERVER accepted.
+   *
+   * This used to move the control first and ignore the answer, which was
+   * harmless while every channel was permitted. It stopped being harmless
+   * the moment one of them can be refused: a 403 would have left "dev"
+   * highlighted on a profile that is not on it.
+   */
+  const onChannel = useCallback((next: Channel) => {
+    setError(null)
     void (async () => {
       try {
-        await post('/dsh-market/channel', { channel: next })
-        // The offer on screen was computed for the old channel.
-        const response = await fetch('/dsh-market/updates?force=1', { cache: 'no-store' })
-        const body = (await response.json()) as { updates?: Record<string, { updateAvailable?: boolean; latest?: string }> }
-        const own = body.updates?.['dshmarket'] ?? body.updates?.['dsh-market']
-        setUpdate(own === undefined ? null : { updateAvailable: own.updateAvailable === true, latest: own.latest ?? null })
+        const body = await post('/dsh-market/channel', { channel: next }) as { ok?: boolean; error?: string; channel?: string }
+        if (body.ok !== true) { setError(body.error ?? t('setSelfFailed')); return }
+        setStatus(current => (current === null ? current : { ...current, channel: asChannel(body.channel) ?? next }))
+        await refreshUpdate()
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : String(cause))
       }
     })()
-  }, [post])
+  }, [post, refreshUpdate, t])
+
+  /**
+   * Turn developer mode on or off.
+   *
+   * The server owns the consequence: switching it off while dev is selected
+   * moves the channel too, and it answers with the channel and the list it
+   * now permits. So this takes the whole answer rather than flipping a
+   * local boolean — the card would otherwise keep showing "dev" selected
+   * for a channel the profile had just been moved off.
+   */
+  const onDevMode = useCallback((next: boolean) => {
+    setError(null)
+    void (async () => {
+      try {
+        const response = await fetch('/dsh-market/dev-mode', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ enabled: next }),
+        })
+        const body = (await response.json()) as { ok?: boolean; error?: string; devMode?: boolean; channel?: string; channels?: string[] }
+        if (body.ok !== true) { setError(body.error ?? t('setSelfFailed')); return }
+        setStatus(current => (current === null ? current : {
+          ...current,
+          devMode: body.devMode === true,
+          channel: asChannel(body.channel) ?? current.channel,
+          channels: (body.channels ?? []).map(asChannel).filter((c): c is Channel => c !== null),
+        }))
+        // The offer on screen was computed for the channel we may have just
+        // left. Same reason the channel control refreshes it.
+        await refreshUpdate()
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause))
+      }
+    })()
+  }, [refreshUpdate, t])
 
   /** One label + hint block with an optional action, the host's row shape. */
   const row = (label: string, hint: string, action: ReactElement | null): ReactElement =>
@@ -201,23 +300,45 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
     ? row(t('setSelfRemoved'), t('setSelfRemovedHint'), null)
     : h(Fragment, null,
         row(
+          // An older offer is not an update, and calling it one would have
+          // the user click "更新" to go backwards. It IS what picking an
+          // earlier channel asked for, so it is offered — under its own name.
           update?.updateAvailable === true && update.latest !== null
-            ? `${t('setSelfUpdateReady')} ${update.latest}`
+            ? `${t(update.older ? 'setChannelSwitch' : 'setSelfUpdateReady')} ${update.latest}`
             : t('setSelfUpToDate'),
-          phase === 'updated' ? t('setSelfUpdatedHint') : t('setSelfUpdateHint'),
+          phase === 'updated'
+            ? t('setSelfUpdatedHint')
+            : update?.older === true ? t('setChannelSwitchHint') : t('setSelfUpdateHint'),
           update?.updateAvailable === true && phase !== 'updated'
-            ? h(Button, { variant: 'primary', size: 'sm', disabled: busy, onClick: onUpdate }, t('setSelfUpdate'))
+            ? h(Button, { variant: 'primary', size: 'sm', disabled: busy, onClick: onUpdate },
+                t(update.older ? 'setChannelSwitch' : 'setSelfUpdate'))
             : null,
         ),
-        row(t('setChannel'), status?.channel === 'beta' ? t('setChannelBetaHint') : t('setChannelStableHint'),
+        row(t('setChannel'), t(CHANNEL_HINT[status?.channel ?? 'stable']),
           h('div', { className: css.setSeg },
-            (['stable', 'beta'] as const).map(id => h('button', {
+            // Drawn from what the SERVER says is available, so the control
+            // can never offer a channel the route would refuse.
+            (status?.channels ?? ['stable', 'beta']).map(id => h('button', {
               key: id,
               type: 'button',
               className: status?.channel === id ? `${css.setSegBtn} ${css.setSegOn}` : css.setSegBtn,
               disabled: busy || status === null,
               onClick: () => { onChannel(id) },
-            }, t(id === 'beta' ? 'setChannelBeta' : 'setChannelStable'))),
+            }, t(CHANNEL_LABEL[id]))),
+          )),
+        row(t('setDevMode'), t('setDevModeHint'),
+          h('label', { className: css.setCheck },
+            h('input', {
+              type: 'checkbox',
+              // Named for the row it belongs to. The label text sits in the
+              // row heading rather than beside the box, so without this the
+              // control has no accessible name at all — and the card now has
+              // two checkboxes that only position tells apart.
+              'aria-label': t('setDevMode'),
+              checked: status?.devMode === true,
+              disabled: busy || status === null,
+              onChange: () => { onDevMode(status?.devMode !== true) },
+            }),
           )),
         row(t('setSelfRemove'), t('setSelfRemoveHint'),
           phase === 'confirming' || busy

@@ -198,7 +198,8 @@ const hot = vi.hoisted(() => ({
   groups: {} as Record<string, string[]>,
   groupOrder: [] as string[],
   /** Stands in for the channel line of state.json; undefined = never chosen. */
-  channel: undefined as 'stable' | 'beta' | undefined,
+  channel: undefined as 'stable' | 'beta' | 'dev' | undefined,
+  devMode: undefined as boolean | undefined,
   failNext: false,
 }))
 vi.mock('../src/hot.ts', () => ({
@@ -207,16 +208,17 @@ vi.mock('../src/hot.ts', () => ({
   writeDisabledThemes: (_dir: string, set: Set<string>) => { hot.disabled = new Set(set) },
   readDisabled: () => hot.disabled,
   writeDisabled: (_dir: string, set: Set<string>) => { hot.disabled = new Set(set) },
-  readMarketState: () => ({ disabled: hot.disabled, groups: hot.groups, groupOrder: hot.groupOrder, channel: hot.channel }),
+  readMarketState: () => ({ disabled: hot.disabled, groups: hot.groups, groupOrder: hot.groupOrder, channel: hot.channel, devMode: hot.devMode }),
   // Carries `channel` because the real one does. A stand-in that silently
   // drops a field cannot fail when the code under test forgets to persist
   // it — which is exactly how the channel choice reached this suite with
   // zero coverage while four route tests passed.
-  writeMarketState: (_dir: string, state: { disabled: Set<string>; groups: Record<string, string[]>; groupOrder: string[]; channel?: 'stable' | 'beta' }) => {
+  writeMarketState: (_dir: string, state: { disabled: Set<string>; groups: Record<string, string[]>; groupOrder: string[]; channel?: 'stable' | 'beta' | 'dev'; devMode?: boolean }) => {
     hot.disabled = new Set(state.disabled)
     hot.groups = state.groups
     hot.groupOrder = state.groupOrder
     hot.channel = state.channel
+    hot.devMode = state.devMode
   },
   listHotMounts: () => [...hot.mounts],
   hotMount: (_ctx: unknown, _dir: string, name: string) => {
@@ -373,6 +375,7 @@ beforeEach(() => {
   hot.groups = {}
   hot.groupOrder = []
   hot.channel = undefined
+  hot.devMode = undefined
   hot.failNext = false
   bed = createTestbed()
 })
@@ -1745,26 +1748,6 @@ describe('catalog: one source, and a failure says so', () => {
   })
 })
 
-describe('resolveChannel', () => {
-  it('treats a prerelease BUILD as the beta channel, whatever the setting says', async () => {
-    // Reported while running 1.14.0-beta.1: the card showed "稳定版" selected,
-    // because the build had been installed by hand with @beta and the setting
-    // was never touched. That is not only confusing — it costs updates. On
-    // the stable channel `latest` (1.13.1) is not newer than an installed
-    // 1.14.0-beta.1, so the market answers "up to date" and the NEXT beta is
-    // never offered. Installing a beta IS the subscription.
-    const { resolveChannel } = await import('../src/routes.ts')
-    expect(resolveChannel(undefined, '1.14.0-beta.1')).toBe('beta')
-    // ...but a choice ON RECORD wins, including choosing stable while a beta
-    // runs — that is the only way back off the channel, and a setting the
-    // user cannot un-set is not a setting.
-    expect(resolveChannel('stable', '1.14.0-beta.1')).toBe('stable')
-    // An explicit opt-in still works on a stable build.
-    expect(resolveChannel('beta', '1.13.1')).toBe('beta')
-    expect(resolveChannel('stable', '1.13.1')).toBe('stable')
-    expect(resolveChannel(undefined, '1.13.1')).toBe('stable')
-  })
-})
 
 describe('the channel choice survives a restart', () => {
   it('is written down, not just held in memory', async () => {
@@ -1801,5 +1784,76 @@ describe('the channel choice survives a restart', () => {
       expect(hot.channel).toBeUndefined()
       expect((await fresh.dispatch('GET', '/dsh-market/status')).json.channel).toBe('beta')
     } finally { fresh.dispose() }
+  })
+})
+
+describe('developer mode gates the dev channel', () => {
+  it('is off by default, and the dev channel does not exist yet', async () => {
+    const status = (await bed.dispatch('GET', '/dsh-market/status')).json
+    expect(status.devMode).toBe(false)
+    expect(status.channels).toEqual(['stable', 'beta'])
+  })
+
+  it('REFUSES a dev selection while the mode is off', async () => {
+    // The point of the whole feature. A channel that is merely absent from
+    // the control is not hidden — anything that can POST can still select
+    // it, and the one thing developer mode has to guarantee is that a
+    // profile which never enabled it cannot end up following builds
+    // published straight off a branch.
+    const refused = await bed.dispatch('POST', '/dsh-market/channel', { channel: 'dev' })
+    expect(refused.status).toBe(403)
+    expect(String(refused.json.error)).toContain('developer mode')
+    // ...and nothing was written on the way to refusing.
+    expect(hot.channel).toBeUndefined()
+  })
+
+  it('opens the channel once the mode is on, and remembers both', async () => {
+    expect((await bed.dispatch('POST', '/dsh-market/dev-mode', { enabled: true })).json.channels)
+      .toEqual(['stable', 'beta', 'dev'])
+    expect((await bed.dispatch('POST', '/dsh-market/channel', { channel: 'dev' })).status).toBe(200)
+    expect(hot.devMode).toBe(true)
+    expect(hot.channel).toBe('dev')
+
+    const restarted = createTestbed({ profile: 'web' })
+    try {
+      const status = (await restarted.dispatch('GET', '/dsh-market/status')).json
+      expect(status.devMode).toBe(true)
+      expect(status.channel).toBe('dev')
+    } finally { restarted.dispose() }
+  })
+
+  it('leaves the dev channel when the mode is switched back off', async () => {
+    // Otherwise turning the protection ON is what strands a profile on
+    // unreviewed builds: the choice stays on record, the control that could
+    // change it is gone, and nothing on screen says which channel is live.
+    await bed.dispatch('POST', '/dsh-market/dev-mode', { enabled: true })
+    await bed.dispatch('POST', '/dsh-market/channel', { channel: 'dev' })
+    expect(hot.channel).toBe('dev')
+
+    const off = await bed.dispatch('POST', '/dsh-market/dev-mode', { enabled: false })
+    expect(off.json.channels).toEqual(['stable', 'beta'])
+    expect(hot.channel, 'a dev choice outlived the mode that permitted it').toBeUndefined()
+    expect(off.json.channel).not.toBe('dev')
+  })
+
+  it('keeps an ordinary channel choice when the mode is switched off', async () => {
+    // Only the unusable choice is dropped. Clearing a perfectly valid one
+    // would make developer mode a setting that silently resets others.
+    await bed.dispatch('POST', '/dsh-market/dev-mode', { enabled: true })
+    await bed.dispatch('POST', '/dsh-market/channel', { channel: 'stable' })
+    await bed.dispatch('POST', '/dsh-market/dev-mode', { enabled: false })
+    expect(hot.channel).toBe('stable')
+  })
+
+  it('rejects anything that is not a boolean rather than guessing', async () => {
+    for (const enabled of ['true', 1, null]) {
+      expect((await bed.dispatch('POST', '/dsh-market/dev-mode', { enabled })).status).toBe(400)
+    }
+    expect(hot.devMode).toBeUndefined()
+  })
+
+  it('refuses both routes from another origin', async () => {
+    expect((await bed.dispatch('POST', '/dsh-market/dev-mode', { enabled: true }, { crossOrigin: true })).status).toBe(403)
+    expect(hot.devMode).toBeUndefined()
   })
 })

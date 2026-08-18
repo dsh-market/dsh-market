@@ -29,7 +29,8 @@ import { applyBundleOrder, mergeOrder, readBundleRules, readBundleStack, validat
 import { trialValidate } from './trial.ts'
 import { findInstalledAlias, gitAllowBuildsKey, installTargetFor } from './sources.ts'
 import { isStaleUpdate, parseIgnoredBuilds, parsePrepareNotAllowed, RELEASE_AGE_OVERRIDE, retargetCollections, validateAddedPlugins, withHoistRecovery } from './install.ts'
-import { checkUpdates, fetchNpmLatest, invalidateUpdates, isUpgrade, latestPublishedRecently, preferBeta } from './updates.ts'
+import { asChannel, availableChannels, channelAllowed, DIST_TAG, resolveChannel, type Channel } from './channels.ts'
+import { checkUpdates, fetchNpmLatest, invalidateUpdates, isUpgrade, latestPublishedRecently, versionOnChannel } from './updates.ts'
 import { createThemeManager, type LoaderEntry } from './themes.ts'
 import { readJsonBody, sameOrigin, sendJson } from './http.ts'
 import { restartAllowed, scheduleRestart, servingPort, trustedRestartRequest, trustedDownloadRequest } from './restart.ts'
@@ -72,8 +73,8 @@ export interface MarketConfig {
   profileDirectory?: string
   /** Detached self-restart is unsafe under systemd/launchd/pm2; operators can disable it (#14). */
   allowRestart?: boolean
-  /** Which npm dist-tag the market offers ITSELF from; other plugins never follow it. */
-  channel?: 'stable' | 'beta'
+  /** Which release channel the market offers ITSELF from; other plugins never follow it. */
+  channel?: Channel
 }
 
 const PROFILE_RE = /^[A-Za-z0-9_-]+$/
@@ -97,29 +98,8 @@ export function marketVersion(): string {
   return cachedVersion
 }
 
-/**
- * Which release channel applies right now.
- *
- * A choice on record always wins — including "stable" while a beta build is
- * running, which is the only way back off the channel. Only the ABSENCE of a
- * choice is derived, and then from what is actually running: installing
- * `dshmarket@beta` by hand IS the subscription, and treating that as
- * "stable" costs updates rather than just clarity — on the stable channel
- * `latest` (1.13.1) is not newer than an installed 1.14.0-beta.1, so the
- * market answers "up to date" and the next beta is never offered.
- *
- * Which makes `undefined` load-bearing: it has to survive both the settings
- * schema (no `.default`) and state.json (field omitted) or "never chose"
- * silently becomes "chose stable".
- */
-export function resolveChannel(setting: 'stable' | 'beta' | undefined, version: string): 'stable' | 'beta' {
-  if (setting !== undefined) return setting
-  return version.includes('-') ? 'beta' : 'stable'
-}
-
-function activeChannel(config: MarketConfig): 'stable' | 'beta' {
-  return resolveChannel(config.channel, marketVersion())
-}
+/** The market's own package names, as they appear in a profile manifest. */
+const SELF_NAMES = new Set(['dshmarket', 'dsh-market'])
 
 /**
  * Whether an installed package declares a client part (`dsh.client`). Its UI
@@ -188,6 +168,11 @@ export function mountMarketRoutes(
   // A choice made in a previous session outranks whatever the entry layer
   // composed, which is only ever a default.
   if (marketState.channel !== undefined) config.channel = marketState.channel
+  // Developer mode gates the dev channel on the SERVER, not just in the UI:
+  // the channel route refuses `dev` while this is off, so a hidden channel
+  // is unreachable rather than merely unpainted.
+  let devMode = marketState.devMode === true
+  const activeChannel = (): Channel => resolveChannel(config.channel, marketVersion(), devMode)
   const themes = createThemeManager(host, config.profile, disabled, activeProfileDir)
 
   // Client-only packages (dsh.client without dsh.bundle) are invisible to the
@@ -1011,7 +996,9 @@ export function mountMarketRoutes(
           boot: BOOT_ID,
           // Shown in the page heading so screenshots carry it (#159).
           version: marketVersion(),
-          channel: activeChannel(config),
+          channel: activeChannel(),
+          devMode,
+          channels: availableChannels(devMode),
           restart: restartAllowed(config),
           installed: readInstalled(config.profile, activeProfileDir),
         })
@@ -1057,10 +1044,13 @@ export function mountMarketRoutes(
           // MarketSettings.channel): a user opting into betas is volunteering
           // to try THIS plugin early, not to be handed every other author's
           // unreleased work.
-          const betaFor = activeChannel(config) === 'beta'
-            ? new Set(Object.keys(readInstalled(config.profile, activeProfileDir)).filter(name => name === 'dshmarket' || name === 'dsh-market'))
-            : new Set<string>()
-          sendJson(response, 200, { updates: await checkUpdates(config.profile, force, activeProfileDir, betaFor) })
+          const channel = activeChannel()
+          const channelFor = new Map(
+            Object.keys(readInstalled(config.profile, activeProfileDir))
+              .filter(name => SELF_NAMES.has(name))
+              .map(name => [name, channel] as const),
+          )
+          sendJson(response, 200, { updates: await checkUpdates(config.profile, force, activeProfileDir, channelFor) })
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
         }
@@ -1101,17 +1091,31 @@ export function mountMarketRoutes(
             // `@latest` was hardcoded, so a beta subscriber would have been
             // told an update existed and then handed the stable build. The
             // dist-tag has to follow the same setting the offer came from.
-            const selfOnBeta = activeChannel(config) === 'beta' && (name === 'dshmarket' || name === 'dsh-market')
-            const target = isGit ? spec.replace(/#.*$/, '') : `${name}@${selfOnBeta ? 'beta' : 'latest'}`
+            // The market follows its channel; everything else is `latest`.
+            const selfChannel = SELF_NAMES.has(name) ? activeChannel() : null
+            const tag = selfChannel === null ? 'latest' : DIST_TAG[selfChannel]
+            const target = isGit ? spec.replace(/#.*$/, '') : `${name}@${tag}`
             // Never let `@latest` walk a profile BACKWARDS (#64 by @ZeroOrigin64):
             // a package whose latest dist-tag was left on an older release turns
             // this update into a downgrade that also rewrites an exact pin to
             // `@latest`. Detection already hides the button; this guards the
             // route itself. Unreadable versions fall through and update as before.
+            //
+            // A channel-following package is exempt from the DIRECTION, not
+            // from the check. Going backwards is exactly what "put me back on
+            // stable" means, and #64 is about a downgrade nobody asked for —
+            // so here the guard only refuses when the channel already points
+            // at what is installed, and it compares against the target tag
+            // rather than `latest`, which is not the tag being installed.
             if (!isGit) {
               const installedVersion = readInstalledVersion(config.profile, name, activeProfileDir)
-              const registryLatest = await fetchNpmLatest(name)
-              if (installedVersion !== null && registryLatest !== null && !isUpgrade(installedVersion, registryLatest)) {
+              const registryLatest = selfChannel === null
+                ? await fetchNpmLatest(name)
+                : await versionOnChannel(name, selfChannel, await fetchNpmLatest(name))
+              const refuse = selfChannel === null
+                ? installedVersion !== null && registryLatest !== null && !isUpgrade(installedVersion, registryLatest)
+                : installedVersion !== null && registryLatest !== null && installedVersion === registryLatest
+              if (refuse) {
                 logEvent('info', 'update', `${name} refused: latest=${registryLatest} is not newer than installed=${installedVersion}`)
                 sendJson(response, 400, {
                   error: `已是最新：registry 的 latest 是 ${registryLatest}，不高于已装的 ${installedVersion}，更新会造成降级。 / Already current: the registry's latest (${registryLatest}) is not newer than the installed ${installedVersion}, so updating would downgrade it.`,
@@ -1299,21 +1303,87 @@ export function mountMarketRoutes(
         }
         try {
           const body = (await readJsonBody(request)) as { channel?: unknown }
-          if (body.channel !== 'stable' && body.channel !== 'beta') {
-            sendJson(response, 400, { error: 'channel must be "stable" or "beta"' })
+          const wanted = asChannel(body.channel)
+          if (wanted === null) {
+            sendJson(response, 400, { error: 'channel must be "stable", "beta" or "dev"' })
             return
           }
-          config.channel = body.channel
+          // The gate is HERE, not only in the control that draws the
+          // options. A hidden channel that a hand-written POST can still
+          // select is not hidden, it is merely unlabelled — and the one
+          // thing developer mode has to guarantee is that a profile which
+          // never enabled it cannot end up following unreviewed builds.
+          if (!channelAllowed(wanted, devMode)) {
+            sendJson(response, 403, { error: `the ${wanted} channel needs developer mode` })
+            return
+          }
+          config.channel = wanted
           // Persisted with the market's own durable state, so the choice
           // survives a restart — a setting that forgets is a setting the
           // user has to make again every boot.
-          marketState.channel = body.channel
+          marketState.channel = wanted
           writeMarketState(activeProfileDir, marketState)
           // The cached listing was computed for the old channel, so the very
           // next check would answer for a setting that no longer applies.
           invalidateUpdates()
-          logEvent('info', 'channel', `release channel set to ${body.channel}`)
-          sendJson(response, 200, { ok: true, channel: body.channel })
+          logEvent('info', 'channel', `release channel set to ${wanted}`)
+          sendJson(response, 200, { ok: true, channel: wanted })
+        } catch (error) {
+          sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    }),
+
+    /**
+     * Developer mode: whether the dev channel exists for this profile.
+     *
+     * Off by default and stored with the profile, because it is not a
+     * display preference — the channel route consults it before accepting a
+     * selection. A dev build is published straight from a branch by whoever
+     * pressed the button, with no promise that anyone ran it first, so it
+     * has to be something a user opts into rather than something they can
+     * wander into from a control that looks like three degrees of caution.
+     */
+    host.webServer.register({
+      kind: 'exact',
+      path: '/dsh-market/dev-mode',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) {
+          sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        try {
+          const body = (await readJsonBody(request)) as { enabled?: unknown }
+          if (typeof body.enabled !== 'boolean') {
+            sendJson(response, 400, { error: 'enabled must be a boolean' })
+            return
+          }
+          devMode = body.enabled
+          marketState.devMode = body.enabled ? true : undefined
+          // Switching the mode off while the dev channel is selected has to
+          // move the channel too. Leaving `dev` on record would keep the
+          // profile following unreviewed builds with no control on screen
+          // that could say so — the exact state the mode exists to prevent,
+          // reached by turning the protection ON.
+          if (!devMode && marketState.channel === 'dev') {
+            marketState.channel = undefined
+            config.channel = undefined
+            logEvent('info', 'channel', 'left the dev channel: developer mode was switched off')
+          }
+          writeMarketState(activeProfileDir, marketState)
+          invalidateUpdates()
+          logEvent('info', 'channel', `developer mode ${devMode ? 'on' : 'off'}`)
+          sendJson(response, 200, {
+            ok: true,
+            devMode,
+            channel: activeChannel(),
+            channels: availableChannels(devMode),
+          })
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
         }

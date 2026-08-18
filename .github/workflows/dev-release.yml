@@ -1,0 +1,82 @@
+name: dev release
+
+# Publish a throwaway build from ANY branch, under the `dev` dist-tag.
+#
+# The point is that it leaves nothing behind. No commit, no git tag, no
+# GitHub Release — `npm version --no-git-tag-version` only rewrites
+# package.json inside the runner, which is discarded. So a dev build costs
+# a button press and cannot clutter the history however many you cut.
+#
+# It exists because the alternative was cutting a beta to test anything,
+# and a beta is supposed to be a build that already survived being used.
+# That got the order backwards: dev is where something is tried, beta is
+# what it is promoted TO. `latest` and `beta` still come only from a real
+# tag on main, via release.yml.
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: What is being tested (shown in the run list)
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  id-token: write # npm trusted publishing (OIDC)
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      # trusted publishing needs npm >= 11.5
+      - run: npm install -g npm@latest
+      - run: npm install
+      # A dev build is unreviewed, not unverified. Skipping the suite would
+      # make "it is broken on dev" mean nothing, and the whole reason to
+      # test a dev build is to learn something the suite cannot tell you.
+      - run: npm run check
+      - run: npm test
+      - run: node scripts/preflight.mjs
+
+      # Version: next MINOR of whatever main carries, plus a timestamp and
+      # the short SHA. The minor bump keeps a dev build ahead of every
+      # 1.14.x, so a tester is never offered a "downgrade" back to the beta
+      # they came from; the timestamp and SHA make it unique and traceable
+      # to one commit, and npm refuses a duplicate version outright.
+      - name: compute the dev version
+        id: v
+        run: |
+          BASE=$(node -p "require('./package.json').version.replace(/-.*/, '')")
+          NEXT=$(node -p "const [a,b]=process.argv[1].split('.'); \`\${a}.\${Number(b)+1}.0\`" "$BASE")
+          STAMP=$(date -u +%Y%m%d%H%M)
+          VERSION="$NEXT-dev.$STAMP-$(git rev-parse --short HEAD)"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "publishing $VERSION from ${GITHUB_REF_NAME}" >> "$GITHUB_STEP_SUMMARY"
+
+      # --no-git-tag-version is the whole design: package.json is rewritten
+      # in the runner and never committed anywhere.
+      - run: npm version "${{ steps.v.outputs.version }}" --no-git-tag-version
+      - run: npm publish --tag dev
+
+      - name: say how to install it
+        run: |
+          {
+            echo ''
+            echo '```sh'
+            echo "dsh plugin --profile web add dshmarket@${{ steps.v.outputs.version }}"
+            echo '```'
+            echo ''
+            echo "Or switch the market to the **dev** channel — it needs developer mode"
+            echo "on in the market's card under Settings → Plugins → Plugin configuration."
+            echo ''
+            echo "branch: \`${GITHUB_REF_NAME}\` · commit: \`$(git rev-parse --short HEAD)\`"
+            [ -n "${{ inputs.reason }}" ] && echo "reason: ${{ inputs.reason }}"
+          } >> "$GITHUB_STEP_SUMMARY"
