@@ -39,6 +39,22 @@ describe('MarketSettings schema', () => {
   it('accepts an explicit off', () => {
     expect(MarketSettings({ allowRestart: false }).allowRestart).toBe(false)
   })
+
+  it('claims only what this namespace actually stores', () => {
+    // The release channel was in here for one version, and it made this a
+    // SECOND writer for a value that lives in the market's state.json. The
+    // routes read the saved channel off disk at mount and `onChange` — which
+    // cannot see that file — assigned its own idea of the field straight
+    // back over it, so the user's choice survived until the next settings
+    // event and no further.
+    //
+    // A schema field is a claim of ownership, so this asserts the claim
+    // stays narrow — widening it silently is exactly how that happened.
+    // The consequence itself is caught in layer 3 (tests/web/channel.e2e.ts)
+    // against a real settings service, per this file's own rule about not
+    // hand-writing a stand-in for a contract we did not author.
+    expect(Object.keys(MarketSettings({}))).toEqual(['allowRestart'])
+  })
 })
 
 describe('installMarketSettings', () => {

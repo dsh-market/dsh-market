@@ -14,6 +14,19 @@
  * command line, and a running instance cannot switch to another one, so
  * offering it as a field would promise something the write cannot deliver.
  *
+ * The release channel is NOT here either, and that is a correction rather
+ * than an omission. It was, briefly, and it made this namespace a second
+ * writer for a value the market already stores in its own state.json: the
+ * mount read the user's saved channel off disk, then `onChange` assigned
+ * `source().channel` — which knows nothing about that file — straight back
+ * over it. The choice survived exactly until the next settings event.
+ *
+ * Only a real host could show that; the unit lane mounts the routes without
+ * this layer at all. `allowRestart` needs this door because its only other
+ * one is hand-edited YAML. The channel has a control of its own on the
+ * plugin configuration page, so a second door bought nothing and cost the
+ * setting its memory.
+ *
  * installSettingsSection rides the scoped fiber, so a host with no settings
  * service — every dsh before 0.1.0-rc.7 — simply never runs any of this and
  * the entry configuration stands as composed. That is why this needs no
@@ -30,23 +43,10 @@ export const MARKET_SETTINGS_NS = settingsNamespace('dsh-market')
 /** The market settings a user may edit at runtime. */
 export interface MarketSettings {
   allowRestart: boolean
-  channel?: 'stable' | 'beta'
 }
 
 export const MarketSettings: z<MarketSettings> = z.object({
   allowRestart: z.boolean().default(true),
-  /**
-   * Which npm dist-tag the market offers ITSELF from.
-   *
-   * Only the market's own updates follow this; other plugins are never
-   * pulled from a prerelease on the strength of a setting the user made
-   * about the market. Someone opting into betas is volunteering to try this
-   * plugin early, not to change what every author ships them.
-   */
-  // No default on purpose. "Never chosen" has to survive as absent, or it
-  // reads as "chose stable" and a hand-installed prerelease could never
-  // derive its own channel — see resolveChannel.
-  channel: z.union([z.const('stable'), z.const('beta')]),
 })
 
 /**
@@ -61,11 +61,11 @@ export const MarketSettings: z<MarketSettings> = z.object({
  * @param ctx - the plugin context owning the wiring.
  * @param resolved - the live config object the routes read.
  */
-export function installMarketSettings(ctx: Context, resolved: { allowRestart?: boolean; channel?: 'stable' | 'beta' }): void {
+export function installMarketSettings(ctx: Context, resolved: { allowRestart?: boolean }): void {
   // `!== false` is the routes' own reading: an absent value allows restart,
   // so the entry layer this registers must say the same thing rather than
   // presenting "unset" as "off".
-  const entry = { allowRestart: resolved.allowRestart !== false, channel: resolved.channel }
+  const entry = { allowRestart: resolved.allowRestart !== false }
   let source = (): MarketSettings => entry
   installSettingsSection(
     ctx,
@@ -74,10 +74,9 @@ export function installMarketSettings(ctx: Context, resolved: { allowRestart?: b
     entry,
     {
       setSource: (current) => { source = current },
-      onChange: () => {
-        resolved.allowRestart = source().allowRestart
-        resolved.channel = source().channel
-      },
+      // Assigns ONLY what this namespace owns. Writing back a field the
+      // market stores elsewhere is how the channel lost its memory.
+      onChange: () => { resolved.allowRestart = source().allowRestart },
     },
   )
 }
