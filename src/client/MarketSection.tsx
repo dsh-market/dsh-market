@@ -290,7 +290,7 @@ export function MarketSection(props: MarketSectionProps) {
     props.themeStore.getSnapshot,
   )
   const [data, setData] = useState<Registry | null>(cachedRegistry)
-  const [loadError, setLoadError] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [installed, setInstalledState] = useState<InstalledMap>(cachedInstalled ?? {})
   const setInstalled = useCallback((value: InstalledMap) => { cachedInstalled = value; setInstalledState(value) }, [])
   const [installedFiles, setInstalledFiles] = useState<string[]>([])
@@ -528,9 +528,22 @@ export function MarketSection(props: MarketSectionProps) {
 
   useEffect(() => {
     fetch('/dsh-market/registry', { cache: 'no-store' })
-      .then(res => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.json() })
-      .then(body => { cachedRegistry = body.registry; setData(body.registry) })
-      .catch(() => setLoadError(true))
+      .then(async (res) => {
+        const body = (await res.json().catch(() => ({}))) as { registry?: Registry; error?: string }
+        if (!res.ok) throw new Error(typeof body.error === 'string' ? body.error : `HTTP ${String(res.status)}`)
+        return body
+      })
+      .then((body) => {
+        if (body.registry === undefined) throw new Error('the catalog response carried no data')
+        cachedRegistry = body.registry
+        setData(body.registry)
+        setLoadError(null)
+      })
+      // Report WHY. An unreachable catalog used to be answered with a
+      // bundled copy, so "cannot reach the registry" and "the catalog is
+      // smaller today" looked identical on screen — and the second reading
+      // is the one users reached.
+      .catch((error: unknown) => { setLoadError(error instanceof Error ? error.message : String(error)) })
     fetch('/dsh-market/status', { cache: 'no-store' })
       .then(res => res.json())
       .then(status => {
@@ -1959,8 +1972,11 @@ export function MarketSection(props: MarketSectionProps) {
               </div>
             )
           : tab === 'discover'
-          ? loadError
-            ? <div className={css.empty}>{t('loadFail')}</div>
+          ? loadError !== null
+            ? <div className={css.empty}>
+                <div>{t('loadFail')}</div>
+                <div className={css.err}>{loadError}</div>
+              </div>
             : data === null
               ? <div className={css.loading}><span className={css.logoMark}><MarketLogo size={26} animated /></span>{t('loading')}</div>
               : (

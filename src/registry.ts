@@ -47,25 +47,38 @@ export interface Registry {
 const REGISTRY_URL = process.env.DSHM_REGISTRY_URL ?? 'https://awesome-dsh-plugin.com/plugins.json'
 const TTL_MS = 60 * 60 * 1000
 
-let cache: { at: number; data: Registry } | null = null
+/**
+ * How long to wait for the catalog.
+ *
+ * Generous on purpose. It used to be 4s with a bundled snapshot behind it,
+ * so a slow link quietly became a 39%-smaller catalog. Now that a failure is
+ * reported rather than papered over, cutting off a link that WOULD have
+ * answered is the expensive mistake — 282KB over TLS from a far-away network
+ * is not a 4-second job.
+ */
+const FETCH_TIMEOUT_MS = 15_000
 
-function snapshot(): Registry {
-  const path = fileURLToPath(new URL('../data/registry-snapshot.json', import.meta.url))
-  return JSON.parse(readFileSync(path, 'utf8')) as Registry
-}
-
-export async function loadRegistry(): Promise<{ registry: Registry; source: 'live' | 'cache' | 'snapshot' }> {
-  if (cache && Date.now() - cache.at < TTL_MS) {
-    return { registry: cache.data, source: 'cache' }
-  }
-  try {
-    const res = await fetch(REGISTRY_URL, { signal: AbortSignal.timeout(4000) })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    const data = (await res.json()) as Registry
-    if (!Array.isArray(data.plugins) || data.plugins.length === 0) throw new Error('empty registry')
-    cache = { at: Date.now(), data }
-    return { registry: data, source: 'live' }
-  } catch {
-    return { registry: cache?.data ?? snapshot(), source: cache ? 'cache' : 'snapshot' }
-  }
+/**
+ * The catalog, fetched every time it is asked for.
+ *
+ * There used to be three answers here — live, a one-hour in-memory cache,
+ * and a snapshot bundled into the npm package — and only the first was
+ * correct. The other two were indistinguishable from it on screen, so a
+ * machine that could not reach the registry browsed the publish-time file
+ * (839 entries against 1367 live, and frozen forever for anyone on an older
+ * release), while a machine that COULD reach it still saw an hour-old
+ * listing of a catalog that grows by ~250 entries a day.
+ *
+ * For a catalog, stale is not a degraded answer, it is a wrong one: a plugin
+ * published this morning reads as "does not exist". So there is one source
+ * now, and a failure is a failure — the caller reports it and offers a
+ * retry, which is a state the user can act on.
+ * @throws when the catalog cannot be fetched or does not look like one.
+ */
+export async function loadRegistry(): Promise<Registry> {
+  const res = await fetch(REGISTRY_URL, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const data = (await res.json()) as Registry
+  if (!Array.isArray(data.plugins) || data.plugins.length === 0) throw new Error('the catalog came back empty')
+  return data
 }

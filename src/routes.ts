@@ -548,8 +548,16 @@ export function mountMarketRoutes(
           return
         }
         try {
-          const { registry, source } = await loadRegistry()
-          sendJson(response, 200, { source, registry })
+          try {
+            sendJson(response, 200, { registry: await loadRegistry() })
+          } catch (error) {
+            // Say what went wrong. The market used to substitute a bundled
+            // copy here, so an unreachable registry looked exactly like a
+            // reachable one with fewer plugins in it.
+            const message = error instanceof Error ? error.message : String(error)
+            logEvent('warn', 'registry', `catalog fetch failed: ${message}`)
+            sendJson(response, 502, { error: message })
+          }
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
         }
@@ -1481,8 +1489,19 @@ export function mountMarketRoutes(
               continue
             }
             if (specs[name] !== undefined) continue
-            const { registry } = await loadRegistry()
-            const entry = registry.plugins.find(p => p.name === name || p.npm === name)
+            // The catalog can now FAIL rather than quietly serving a bundled
+            // copy, and this key is an optimisation, not a requirement: the
+            // bare name already authorizes the npm-sourced case, and a git
+            // source that misses its key simply prompts again. Losing the
+            // catalog must not turn "allow this build" into a 500.
+            let entry
+            try {
+              entry = (await loadRegistry()).plugins.find(p => p.name === name || p.npm === name)
+            } catch (error) {
+              logEvent('warn', 'approve-builds', `catalog unavailable, authorizing ${name} by name only: ${error instanceof Error ? error.message : String(error)}`)
+              packages.push(name)
+              continue
+            }
             const target = entry === undefined ? null : installTargetFor(entry)
             const key = target === null ? null : gitAllowBuildsKey(name, target)
             if (key !== null) {
@@ -1627,7 +1646,7 @@ export function mountMarketRoutes(
           await withMutationLock(response, 'install', async () => {
             const body = (await readJsonBody(request)) as { url?: unknown }
             const url = typeof body.url === 'string' ? body.url : ''
-            const { registry } = await loadRegistry()
+            const registry = await loadRegistry()
             const entry = registry.plugins.find(p => p.url.toLowerCase() === url.toLowerCase())
             if (entry === undefined) {
               logEvent('warn', 'install-rejected', `not in curated registry: ${url.slice(0, 120)}`)

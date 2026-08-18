@@ -47,7 +47,7 @@ export function createThemeManager(
   async function installedThemeNames(): Promise<Set<string>> {
     const names = new Set<string>()
     try {
-      const { registry } = await loadRegistry()
+      const registry = await loadRegistry()
       const themeEntries = registry.plugins.filter(p => p.category === 'theme')
       const themeNames = new Set(themeEntries.map(p => p.name))
       const themeRepos = new Set(

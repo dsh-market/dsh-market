@@ -271,9 +271,9 @@ const REGISTRY = {
     { name: 'mono#plug-b', owner: 'm', url: 'https://github.com/m/mono/tree/main/packages/plug-b', category: 'tool', npm: null, description: {}, install: '', added: '' },
   ],
 }
-vi.mock('../src/registry.ts', () => ({
-  loadRegistry: () => Promise.resolve({ registry: REGISTRY, source: 'snapshot' }),
-}))
+const registryModule = vi.hoisted(() => ({ loadRegistry: vi.fn() }))
+vi.mock('../src/registry.ts', () => registryModule)
+registryModule.loadRegistry.mockImplementation(() => Promise.resolve(REGISTRY))
 
 // ---------------------------------------------------------------- testbed
 import { mountMarketRoutes } from '../src/routes.ts'
@@ -1709,5 +1709,22 @@ describe('release channel', () => {
     seen.length = 0
     await bed.dispatch('GET', '/dsh-market/updates')
     expect(seen.some(url => url.endsWith('/beta')), 'the beta dist-tag was never queried').toBe(true)
+  })
+})
+
+describe('catalog: one source, and a failure says so', () => {
+  it('reports the reason instead of substituting a bundled copy', async () => {
+    // There used to be three answers here — live, a one-hour in-memory
+    // cache, and a snapshot frozen into the npm package — and only the first
+    // was correct. On screen they were indistinguishable, so an unreachable
+    // registry read as "the catalog has fewer plugins today": 839 entries
+    // against 1367 live, and frozen forever for anyone on an older release.
+    // For a catalog, stale is not degraded, it is WRONG — a plugin published
+    // this morning reads as "does not exist".
+    registryModule.loadRegistry.mockRejectedValueOnce(new Error('fetch failed: ENOTFOUND'))
+    const failed = await bed.dispatch('GET', '/dsh-market/registry')
+    expect(failed.status).toBe(502)
+    expect(String(failed.json.error)).toContain('ENOTFOUND')
+    expect(failed.json.registry, 'a failed catalog fetch must not carry data').toBeUndefined()
   })
 })

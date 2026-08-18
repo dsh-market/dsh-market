@@ -69,7 +69,6 @@
     "lib",
     "src",
     "client",
-    "data",
     "cordis.patch.yml",
     "LICENSE"
   ],

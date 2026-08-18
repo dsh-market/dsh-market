@@ -33,7 +33,7 @@ function stubFetch(overrides: Record<string, unknown> = {}) {
     const body = init?.body ? JSON.parse(String(init.body)) : undefined
     fetchCalls.push({ path, method, body })
     const payload =
-      path === '/dsh-market/registry' ? { source: 'snapshot', registry: REGISTRY }
+      path === '/dsh-market/registry' ? { source: 'live', registry: REGISTRY }
       : path === '/dsh-market/installed' ? { profile: 'web', installed: {}, live: [], disabled: [], groups: {}, groupOrder: [] }
       : path === '/dsh-market/status' ? { active: false, pnpm: true, boot: 'boot-1', restart: true, installed: {} }
       : path === '/dsh-market/updates' ? { updates: {} }
@@ -207,7 +207,7 @@ describe('MarketSection (jsdom)', () => {
     registry.plugins[0].screenshots = [CURATED, 'https://evil.example/track.png']
     vi.stubGlobal('fetch', vi.fn((url: string) => {
       const path = String(url).split('?')[0]
-      if (path === '/dsh-market/registry') return Promise.resolve(new Response(JSON.stringify({ source: 'snapshot', registry }), { status: 200 }))
+      if (path === '/dsh-market/registry') return Promise.resolve(new Response(JSON.stringify({ source: 'live', registry }), { status: 200 }))
       if (path === '/dsh-market/installed') return Promise.resolve(new Response(JSON.stringify({ profile: 'web', installed: {}, live: [] }), { status: 200 }))
       if (path === '/dsh-market/status') return Promise.resolve(new Response(JSON.stringify({ active: false, pnpm: true, boot: 'boot-1', installed: {} }), { status: 200 }))
       if (path === '/dsh-market/updates') return Promise.resolve(new Response(JSON.stringify({ updates: {} }), { status: 200 }))
@@ -934,7 +934,7 @@ describe('status-poll / install-response race (#73)', () => {
       vi.stubGlobal('fetch', (url: string) => {
         const path = String(url).split('?')[0]
         const payload =
-          path === '/dsh-market/registry' ? { source: 'snapshot', registry: REGISTRY }
+          path === '/dsh-market/registry' ? { source: 'live', registry: REGISTRY }
           : path === '/dsh-market/installed' ? { profile: 'web', installed: {}, live: [] }
           // Poll recovery precondition: host idle AND dsh-loop already installed.
           : path === '/dsh-market/status' ? { active: false, pnpm: true, boot: 'boot-1', restart: true, installed: { 'dsh-loop': '^1.0.0' } }
@@ -1146,7 +1146,7 @@ describe('lost install response (#100)', () => {
         const path = String(url).split('?')[0]
         if (path === '/dsh-market/install') return Promise.reject(new TypeError('network connection was lost'))
         const payload =
-          path === '/dsh-market/registry' ? { source: 'snapshot', registry: REGISTRY }
+          path === '/dsh-market/registry' ? { source: 'live', registry: REGISTRY }
           : path === '/dsh-market/installed' ? { profile: 'web', installed: installedNow, live: [] }
           : path === '/dsh-market/status' ? { active: false, busy: false, pnpm: true, boot: 'boot-1', restart: true, installed: installedNow }
           : path === '/dsh-market/updates' ? { updates: {} }
@@ -1192,7 +1192,7 @@ describe('standing restart notice for host-reported pending plugins', () => {
       const path = String(url).split('?')[0]
       const installed = { 'dsh-loop': '^1.0.0' }
       const payload =
-        path === '/dsh-market/registry' ? { source: 'snapshot', registry: REGISTRY }
+        path === '/dsh-market/registry' ? { source: 'live', registry: REGISTRY }
         : path === '/dsh-market/installed' ? {
             profile: 'web', installed, live: [],
             // The host says: installed, will activate on restart.

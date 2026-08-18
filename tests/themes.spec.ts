@@ -34,8 +34,6 @@ let home: string
 /** A catalog with one theme and one ordinary plugin, both GitHub-hosted. */
 function catalog(): void {
   registry.loadRegistry.mockResolvedValue({
-    source: 'snapshot',
-    registry: {
       updated: '2026-01-01',
       count: 2,
       categories: {},
@@ -50,8 +48,7 @@ function catalog(): void {
           url: 'https://github.com/someone/dsh-notify',
           description: { en: '', zh: '' }, install: '', added: '2026-01-01',
         },
-      ],
-    },
+    ],
   })
 }
 

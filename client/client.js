@@ -2420,7 +2420,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const lang = String(localeSnap.active).toLowerCase().startsWith("zh") ? "zh" : "en";
 			const themeSnap = (0, react.useSyncExternalStore)(props.themeStore.subscribe, props.themeStore.getSnapshot);
 			const [data, setData] = (0, react.useState)(cachedRegistry);
-			const [loadError, setLoadError] = (0, react.useState)(false);
+			const [loadError, setLoadError] = (0, react.useState)(null);
 			const [installed, setInstalledState] = (0, react.useState)(cachedInstalled ?? {});
 			const setInstalled = (0, react.useCallback)((value) => {
 				cachedInstalled = value;
@@ -2640,13 +2640,18 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			/** Effective switch state: market disable list ∪ user-patch-layer disables. */
 			const effectiveDisabledSet = (0, react.useMemo)(() => /* @__PURE__ */ new Set([...disabledNames, ...patchDisabledNames]), [disabledNames, patchDisabledNames]);
 			(0, react.useEffect)(() => {
-				fetch("/dsh-market/registry", { cache: "no-store" }).then((res) => {
-					if (!res.ok) throw new Error("HTTP " + res.status);
-					return res.json();
+				fetch("/dsh-market/registry", { cache: "no-store" }).then(async (res) => {
+					const body = await res.json().catch(() => ({}));
+					if (!res.ok) throw new Error(typeof body.error === "string" ? body.error : `HTTP ${String(res.status)}`);
+					return body;
 				}).then((body) => {
+					if (body.registry === void 0) throw new Error("the catalog response carried no data");
 					cachedRegistry = body.registry;
 					setData(body.registry);
-				}).catch(() => setLoadError(true));
+					setLoadError(null);
+				}).catch((error) => {
+					setLoadError(error instanceof Error ? error.message : String(error));
+				});
 				fetch("/dsh-market/status", { cache: "no-store" }).then((res) => res.json()).then((status) => {
 					setEnvReady(status.pnpm !== false);
 					if (typeof status.boot === "string") {
@@ -4403,9 +4408,12 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									]
 								})
 							]
-						}) : tab === "discover" ? loadError ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+						}) : tab === "discover" ? loadError !== null ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 							className: Market_module_css_default.empty,
-							children: t("loadFail")
+							children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", { children: t("loadFail") }), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+								className: Market_module_css_default.err,
+								children: loadError
+							})]
 						}) : data === null ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 							className: Market_module_css_default.loading,
 							children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
