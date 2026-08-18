@@ -123,6 +123,15 @@ describe('matchInstalledName / isInstalled', () => {
     expect(entryForDep(plugins, 'dsh-vision-bridge', installed['dsh-vision-bridge']!, [], hints['dsh-vision-bridge'])).toBe(plugins[0])
   })
 
+  it('keeps a unique loose name match when no repository identity exists', () => {
+    const installed = { 'dsh-vision-bridge': 'link:D:/src/dsh-vision-bridge' }
+    const only = plugin({ name: 'dsh-vision-bridge', url: 'https://github.com/other/dsh-vision-bridge' })
+
+    expect(matchInstalledName(only, installed, {}, [only])).toBe('dsh-vision-bridge')
+    expect(entryForDep([only], 'dsh-vision-bridge', installed['dsh-vision-bridge']!)).toBe(only)
+    expect(isInstalled(only, installed, {}, [only])).toBe(true)
+  })
+
   it('keeps the unique loose name match when a weak hint disagrees', () => {
     const installed = { 'dsh-vision-bridge': 'link:D:/src/dsh-vision-bridge' }
     const only = plugin({ name: 'dsh-vision-bridge', url: 'https://github.com/other/dsh-vision-bridge' })
