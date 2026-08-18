@@ -30,10 +30,20 @@ export const MARKET_SETTINGS_NS = settingsNamespace('dsh-market')
 /** The market settings a user may edit at runtime. */
 export interface MarketSettings {
   allowRestart: boolean
+  channel: 'stable' | 'beta'
 }
 
 export const MarketSettings: z<MarketSettings> = z.object({
   allowRestart: z.boolean().default(true),
+  /**
+   * Which npm dist-tag the market offers ITSELF from.
+   *
+   * Only the market's own updates follow this; other plugins are never
+   * pulled from a prerelease on the strength of a setting the user made
+   * about the market. Someone opting into betas is volunteering to try this
+   * plugin early, not to change what every author ships them.
+   */
+  channel: z.union([z.const('stable'), z.const('beta')]).default('stable'),
 })
 
 /**
@@ -48,11 +58,11 @@ export const MarketSettings: z<MarketSettings> = z.object({
  * @param ctx - the plugin context owning the wiring.
  * @param resolved - the live config object the routes read.
  */
-export function installMarketSettings(ctx: Context, resolved: { allowRestart?: boolean }): void {
+export function installMarketSettings(ctx: Context, resolved: { allowRestart?: boolean; channel?: 'stable' | 'beta' }): void {
   // `!== false` is the routes' own reading: an absent value allows restart,
   // so the entry layer this registers must say the same thing rather than
   // presenting "unset" as "off".
-  const entry = { allowRestart: resolved.allowRestart !== false }
+  const entry = { allowRestart: resolved.allowRestart !== false, channel: resolved.channel ?? 'stable' as const }
   let source = (): MarketSettings => entry
   installSettingsSection(
     ctx,
@@ -61,7 +71,10 @@ export function installMarketSettings(ctx: Context, resolved: { allowRestart?: b
     entry,
     {
       setSource: (current) => { source = current },
-      onChange: () => { resolved.allowRestart = source().allowRestart },
+      onChange: () => {
+        resolved.allowRestart = source().allowRestart
+        resolved.channel = source().channel
+      },
     },
   )
 }

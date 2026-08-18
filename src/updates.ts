@@ -110,6 +110,30 @@ export async function latestPublishedRecently(name: string, windowMs = 26 * 60 *
 }
 
 /** The registry's current `latest` version for a package, or null when it can't be read. */
+/**
+ * The version a beta subscriber should be offered: whichever of the `beta`
+ * and `latest` dist-tags is actually newer.
+ *
+ * A beta tag is not automatically ahead. Once 1.14.0 ships, `beta` still
+ * points at 1.14.0-beta.1 until someone publishes the next prerelease — and
+ * offering that as an "update" would walk a subscriber backwards. Comparing
+ * is the only correct reading of "give me the newest thing available to me".
+ * @param stable - the `latest` version, already fetched by the caller.
+ */
+export async function preferBeta(name: string, stable: string | null): Promise<string | null> {
+  try {
+    const meta = (await fetchJson(`https://registry.npmjs.org/${encodeURIComponent(name)}/beta`)) as { version?: string }
+    const beta = typeof meta.version === 'string' ? meta.version : null
+    if (beta === null) return stable
+    if (stable === null) return beta
+    return isUpgrade(stable, beta) ? beta : stable
+  } catch {
+    // No beta published yet is the normal case, and a registry hiccup must
+    // not take the ordinary update check down with it.
+    return stable
+  }
+}
+
 export async function fetchNpmLatest(name: string): Promise<string | null> {
   try {
     const meta = (await fetchJson(`https://registry.npmjs.org/${encodeURIComponent(name)}/latest`)) as { version?: string }
@@ -124,9 +148,20 @@ export async function checkUpdates(
   profile: string,
   force = false,
   explicitDir?: string,
+  /**
+   * Packages whose updates may come from the `beta` dist-tag. Only ever the
+   * market itself: opting into prereleases is volunteering to try THIS
+   * plugin early, not a licence to pull every other author's unreleased work.
+   */
+  betaFor: ReadonlySet<string> = new Set(),
 ): Promise<Record<string, UpdateStatus>> {
   const activeProfileDir = profileDir(profile, explicitDir)
-  if (!force && updatesCache?.key === activeProfileDir && Date.now() - updatesCache.at < UPDATES_TTL_MS) {
+  // The channel is part of the key: switching to betas has to change the
+  // answer immediately, and a cache keyed on the profile alone would serve
+  // the stable verdict for the rest of the TTL — reading as "the setting did
+  // nothing".
+  const cacheKey = `${activeProfileDir}\u0000${[...betaFor].sort().join(',')}`
+  if (!force && updatesCache?.key === cacheKey && Date.now() - updatesCache.at < UPDATES_TTL_MS) {
     return updatesCache.data
   }
   const installed = readInstalled(profile, activeProfileDir)
@@ -150,7 +185,8 @@ export async function checkUpdates(
         }
       } else {
         const meta = (await fetchJson(`https://registry.npmjs.org/${encodeURIComponent(name)}/latest`)) as { version?: string }
-        const latest = typeof meta.version === 'string' ? meta.version : null
+        const stable = typeof meta.version === 'string' ? meta.version : null
+        const latest = betaFor.has(name) ? await preferBeta(name, stable) : stable
         result[name] = {
           kind: 'npm', version, current: version, latest,
           updateAvailable: isUpgrade(version, latest),
@@ -160,6 +196,6 @@ export async function checkUpdates(
       result[name] = { kind: spec.startsWith('github:') ? 'github' : 'npm', version, current: null, latest: null, updateAvailable: false }
     }
   }))
-  updatesCache = { key: activeProfileDir, at: Date.now(), data: result }
+  updatesCache = { key: cacheKey, at: Date.now(), data: result }
   return result
 }

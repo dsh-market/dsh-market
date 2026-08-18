@@ -29,7 +29,7 @@ import { applyBundleOrder, mergeOrder, readBundleRules, readBundleStack, validat
 import { trialValidate } from './trial.ts'
 import { findInstalledAlias, gitAllowBuildsKey, installTargetFor } from './sources.ts'
 import { isStaleUpdate, parseIgnoredBuilds, parsePrepareNotAllowed, RELEASE_AGE_OVERRIDE, retargetCollections, validateAddedPlugins, withHoistRecovery } from './install.ts'
-import { checkUpdates, fetchNpmLatest, invalidateUpdates, isUpgrade, latestPublishedRecently } from './updates.ts'
+import { checkUpdates, fetchNpmLatest, invalidateUpdates, isUpgrade, latestPublishedRecently, preferBeta } from './updates.ts'
 import { createThemeManager, type LoaderEntry } from './themes.ts'
 import { readJsonBody, sameOrigin, sendJson } from './http.ts'
 import { restartAllowed, scheduleRestart, servingPort, trustedRestartRequest, trustedDownloadRequest } from './restart.ts'
@@ -72,6 +72,8 @@ export interface MarketConfig {
   profileDirectory?: string
   /** Detached self-restart is unsafe under systemd/launchd/pm2; operators can disable it (#14). */
   allowRestart?: boolean
+  /** Which npm dist-tag the market offers ITSELF from; other plugins never follow it. */
+  channel?: 'stable' | 'beta'
 }
 
 const PROFILE_RE = /^[A-Za-z0-9_-]+$/
@@ -974,6 +976,7 @@ export function mountMarketRoutes(
           boot: BOOT_ID,
           // Shown in the page heading so screenshots carry it (#159).
           version: marketVersion(),
+          channel: config.channel === 'beta' ? 'beta' : 'stable',
           restart: restartAllowed(config),
           installed: readInstalled(config.profile, activeProfileDir),
         })
@@ -1015,7 +1018,14 @@ export function mountMarketRoutes(
         }
         try {
           const force = (request.url ?? '').includes('force=1')
-          sendJson(response, 200, { updates: await checkUpdates(config.profile, force, activeProfileDir) })
+          // Only the market itself follows the channel setting (see
+          // MarketSettings.channel): a user opting into betas is volunteering
+          // to try THIS plugin early, not to be handed every other author's
+          // unreleased work.
+          const betaFor = config.channel === 'beta'
+            ? new Set(Object.keys(readInstalled(config.profile, activeProfileDir)).filter(name => name === 'dshmarket' || name === 'dsh-market'))
+            : new Set<string>()
+          sendJson(response, 200, { updates: await checkUpdates(config.profile, force, activeProfileDir, betaFor) })
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
         }
@@ -1053,7 +1063,11 @@ export function mountMarketRoutes(
             // Re-running add re-resolves the source: git HEAD for github specs,
             // dist-tag latest for registry installs.
             const isGit = spec.startsWith('github:')
-            const target = isGit ? spec.replace(/#.*$/, '') : `${name}@latest`
+            // `@latest` was hardcoded, so a beta subscriber would have been
+            // told an update existed and then handed the stable build. The
+            // dist-tag has to follow the same setting the offer came from.
+            const selfOnBeta = config.channel === 'beta' && (name === 'dshmarket' || name === 'dsh-market')
+            const target = isGit ? spec.replace(/#.*$/, '') : `${name}@${selfOnBeta ? 'beta' : 'latest'}`
             // Never let `@latest` walk a profile BACKWARDS (#64 by @ZeroOrigin64):
             // a package whose latest dist-tag was left on an older release turns
             // this update into a downgrade that also rewrites an exact pin to
@@ -1228,6 +1242,44 @@ export function mountMarketRoutes(
      * normally. The profile boots clean afterwards, with the market's rows
      * gone from `dependencies` and `dsh.profile.bundles`.
      */
+    /**
+     * Which release channel the market offers ITSELF from.
+     *
+     * Writable from the card because the settings scope is host-mode only —
+     * a browser that is not on loopback never gets one, and the choice would
+     * be unreachable there. Same-origin POST, like every other mutation.
+     */
+    host.webServer.register({
+      kind: 'exact',
+      path: '/dsh-market/channel',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) {
+          sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        try {
+          const body = (await readJsonBody(request)) as { channel?: unknown }
+          if (body.channel !== 'stable' && body.channel !== 'beta') {
+            sendJson(response, 400, { error: 'channel must be "stable" or "beta"' })
+            return
+          }
+          config.channel = body.channel
+          // The cached listing was computed for the old channel, so the very
+          // next check would answer for a setting that no longer applies.
+          invalidateUpdates()
+          logEvent('info', 'channel', `release channel set to ${body.channel}`)
+          sendJson(response, 200, { ok: true, channel: body.channel })
+        } catch (error) {
+          sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    }),
+
     host.webServer.register({
       kind: 'exact',
       path: '/dsh-market/self-uninstall',

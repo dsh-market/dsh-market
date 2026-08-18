@@ -168,3 +168,65 @@ describe('checkUpdates — github pins', () => {
     }
   })
 })
+
+describe('preferBeta (release channel)', () => {
+  it('offers the prerelease only when it is actually newer', async () => {
+    // The trap: a `beta` dist-tag is NOT automatically ahead. Once 1.14.0
+    // ships, `beta` still points at 1.14.0-beta.1 until someone publishes the
+    // next prerelease — and offering that as an update walks a subscriber
+    // backwards, which is the opposite of what opting in asked for.
+    const { preferBeta } = await import('../src/updates.ts')
+    const answer = (beta: string | null) => {
+      vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(
+        JSON.stringify(beta === null ? {} : { version: beta }), { status: 200 },
+      ))))
+      return preferBeta('dshmarket', '1.14.0')
+    }
+    await expect(answer('1.15.0-beta.1')).resolves.toBe('1.15.0-beta.1') // ahead → take it
+    await expect(answer('1.14.0-beta.1')).resolves.toBe('1.14.0')        // behind → keep stable
+    await expect(answer(null)).resolves.toBe('1.14.0')                   // none published yet
+  })
+
+  it('falls back to stable when the beta tag cannot be read', async () => {
+    // A package with no beta tag 404s, which is the ordinary case, not an
+    // error worth failing the whole update check over.
+    const { preferBeta } = await import('../src/updates.ts')
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('HTTP 404'))))
+    await expect(preferBeta('dshmarket', '1.14.0')).resolves.toBe('1.14.0')
+    // ...and with nothing on either side it stays honest about knowing nothing.
+    await expect(preferBeta('dshmarket', null)).resolves.toBeNull()
+  })
+})
+
+describe('checkUpdates — the channel is part of the cache key', () => {
+  it('re-resolves when the beta opt-in changes, without waiting out the TTL', async () => {
+    // The listing is cached per profile for minutes. The channel can change
+    // WITHOUT the route that clears that cache: the host's own settings page
+    // writes MarketSettings directly, and `onChange` updates the resolved
+    // config in place. Keyed on the profile alone, the market would keep
+    // answering for the previous channel until the TTL expired — a setting
+    // that appears to do nothing, which is the hardest kind to report.
+    const dir = join(mkdtempSync(join(tmpdir(), 'dshm-chan-')), 'profiles', 'web')
+    mkdirSync(join(dir, 'node_modules', 'dshmarket'), { recursive: true })
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ dependencies: { dshmarket: '^1.0.0' } }))
+    writeFileSync(join(dir, 'node_modules', 'dshmarket', 'package.json'), JSON.stringify({ name: 'dshmarket', version: '1.0.0' }))
+
+    const asked: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
+      asked.push(String(url))
+      return { ok: true, status: 200, json: async () => ({ version: String(url).endsWith('/beta') ? '2.0.0-beta.1' : '1.5.0' }) }
+    }))
+
+    const stable = await checkUpdates('web', false, dir)
+    expect(stable['dshmarket']?.latest).toBe('1.5.0')
+    expect(asked.some(url => url.endsWith('/beta'))).toBe(false)
+
+    asked.length = 0
+    const beta = await checkUpdates('web', false, dir, new Set(['dshmarket']))
+    expect(asked.some(url => url.endsWith('/beta')), 'served the cached stable answer to a beta subscriber').toBe(true)
+    expect(beta['dshmarket']?.latest).toBe('2.0.0-beta.1')
+
+    vi.unstubAllGlobals()
+    rmSync(dir, { recursive: true, force: true })
+  })
+})

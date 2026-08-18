@@ -57,6 +57,7 @@ export interface SettingsCardProps {
 interface SelfStatus {
   version: string | null
   restart: boolean
+  channel: 'stable' | 'beta'
 }
 
 /** What `/dsh-market/updates` says about the market's own row. */
@@ -106,9 +107,9 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
     void (async () => {
       try {
         const response = await fetch('/dsh-market/status', { cache: 'no-store' })
-        const body = (await response.json()) as { version?: string; restart?: boolean }
-        if (live) setStatus({ version: body.version ?? null, restart: body.restart === true })
-      } catch { if (live) setStatus({ version: null, restart: false }) }
+        const body = (await response.json()) as { version?: string; restart?: boolean; channel?: string }
+        if (live) setStatus({ version: body.version ?? null, restart: body.restart === true, channel: body.channel === 'beta' ? 'beta' : 'stable' })
+      } catch { if (live) setStatus({ version: null, restart: false, channel: 'stable' }) }
       try {
         const response = await fetch('/dsh-market/updates', { cache: 'no-store' })
         const body = (await response.json()) as { updates?: Record<string, { updateAvailable?: boolean; latest?: string }> }
@@ -163,6 +164,25 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
 
   const busy = phase === 'working'
   const version = status?.version ?? null
+  // A prerelease says so in its own version string; nothing else has to be
+  // consulted to know the running build is one.
+  const prerelease = version !== null && version.includes('-')
+
+  const onChannel = useCallback((next: 'stable' | 'beta') => {
+    setStatus(current => (current === null ? current : { ...current, channel: next }))
+    void (async () => {
+      try {
+        await post('/dsh-market/channel', { channel: next })
+        // The offer on screen was computed for the old channel.
+        const response = await fetch('/dsh-market/updates?force=1', { cache: 'no-store' })
+        const body = (await response.json()) as { updates?: Record<string, { updateAvailable?: boolean; latest?: string }> }
+        const own = body.updates?.['dshmarket'] ?? body.updates?.['dsh-market']
+        setUpdate(own === undefined ? null : { updateAvailable: own.updateAvailable === true, latest: own.latest ?? null })
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause))
+      }
+    })()
+  }, [post])
 
   /** One label + hint block with an optional action, the host's row shape. */
   const row = (label: string, hint: string, action: ReactElement | null): ReactElement =>
@@ -189,6 +209,16 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
             ? h(Button, { variant: 'primary', size: 'sm', disabled: busy, onClick: onUpdate }, t('setSelfUpdate'))
             : null,
         ),
+        row(t('setChannel'), status?.channel === 'beta' ? t('setChannelBetaHint') : t('setChannelStableHint'),
+          h('div', { className: css.setSeg },
+            (['stable', 'beta'] as const).map(id => h('button', {
+              key: id,
+              type: 'button',
+              className: status?.channel === id ? `${css.setSegBtn} ${css.setSegOn}` : css.setSegBtn,
+              disabled: busy || status === null,
+              onClick: () => { onChannel(id) },
+            }, t(id === 'beta' ? 'setChannelBeta' : 'setChannelStable'))),
+          )),
         row(t('setSelfRemove'), t('setSelfRemoveHint'),
           phase === 'confirming' || busy
             ? null
@@ -245,6 +275,7 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
         h('div', { className: css.setName },
           t('nav'),
           version !== null ? h('span', { className: css.version }, ` v${version}`) : null,
+          prerelease ? h('span', { className: css.setBetaTag }, t('setChannelBeta')) : null,
         ),
         h('div', { className: css.setDesc }, t('setCardDesc')),
       ),

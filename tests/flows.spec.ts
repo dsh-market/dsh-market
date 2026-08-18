@@ -248,6 +248,9 @@ const REGISTRY = {
   categories: { tool: { en: 'Tools' }, theme: { en: 'Themes' } },
   plugins: [
     { name: 'dsh-loop', owner: 'o', url: 'https://github.com/o/dsh-loop', category: 'tool', npm: 'dsh-loop', description: {}, install: '', added: '' },
+    // The market's own entry: the release-channel specs need it installed,
+    // because the channel applies to this package and no other.
+    { name: 'dshmarket', owner: 'o', url: 'https://github.com/o/dshmarket', category: 'tool', npm: 'dshmarket', description: {}, install: '', added: '' },
     { name: 'theme-a', owner: 'o', url: 'https://github.com/o/theme-a', category: 'theme', npm: null, description: {}, install: '', added: '' },
     { name: 'theme-b', owner: 'o', url: 'https://github.com/o/theme-b', category: 'theme', npm: null, description: {}, install: '', added: '' },
     { name: 'skin-pack', owner: 'o', url: 'https://github.com/o/skin-pack', category: 'theme', npm: null, description: {}, install: '', added: '' },
@@ -1642,5 +1645,69 @@ describe('self-uninstall — the market removing itself from its settings card',
     // Adding a way to remove the market must not quietly open the old one.
     const viaGeneric = await bed.dispatch('POST', '/dsh-market/uninstall', { name: 'dshmarket' })
     expect(viaGeneric.status).toBe(400)
+  })
+})
+
+describe('release channel', () => {
+  it('rejects anything but the two channels', async () => {
+    expect((await bed.dispatch('POST', '/dsh-market/channel', { channel: 'nightly' })).status).toBe(400)
+    expect((await bed.dispatch('POST', '/dsh-market/channel', {})).status).toBe(400)
+    expect((await bed.dispatch('POST', '/dsh-market/channel', { channel: 'beta' }, { crossOrigin: true })).status).toBe(403)
+  })
+
+  it('takes effect on the next check rather than after the cache expires', async () => {
+    const set = await bed.dispatch('POST', '/dsh-market/channel', { channel: 'beta' })
+    expect(set.status).toBe(200)
+    expect(set.json.channel).toBe('beta')
+    // /status is what the card reads back, so a setting it cannot see is a
+    // setting the user will think did nothing.
+    expect((await bed.dispatch('GET', '/dsh-market/status')).json.channel).toBe('beta')
+
+    const back = await bed.dispatch('POST', '/dsh-market/channel', { channel: 'stable' })
+    expect(back.status).toBe(200)
+    expect((await bed.dispatch('GET', '/dsh-market/status')).json.channel).toBe('stable')
+  })
+
+  it('installs from the channel it offered from, not from latest', async () => {
+    // The offer and the install have to agree. `@latest` was hardcoded, so a
+    // beta subscriber would be told an update existed and then handed the
+    // stable build — the setting would look like it did nothing.
+    fake.npm['dshmarket'] = { latest: '1.0.0', versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } } }
+    await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dshmarket' })
+    fake.npm['dshmarket'].latest = '9.0.0'
+    fake.npm['dshmarket'].versions['9.0.0'] = { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] }
+    await bed.dispatch('POST', '/dsh-market/channel', { channel: 'beta' })
+    fake.calls = []
+    await bed.dispatch('POST', '/dsh-market/update', { name: 'dshmarket' })
+    const added = fake.calls.find(call => call[0] === 'add')
+    expect(added?.join(' '), 'the update ran with the wrong dist-tag').toContain('dshmarket@beta')
+
+    await bed.dispatch('POST', '/dsh-market/channel', { channel: 'stable' })
+    fake.calls = []
+    await bed.dispatch('POST', '/dsh-market/update', { name: 'dshmarket' })
+    expect(fake.calls.find(call => call[0] === 'add')?.join(' ')).toContain('dshmarket@latest')
+  })
+
+  it('re-checks immediately when the channel changes', async () => {
+    // The listing is cached per profile for a while. Keyed on the profile
+    // alone, switching channels would keep serving the previous verdict for
+    // the rest of the TTL — indistinguishable, to the user, from a setting
+    // that does nothing.
+    fake.npm['dshmarket'] = { latest: '1.0.0', versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } } }
+    await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dshmarket' })
+    const seen: string[] = []
+    const realFetch = globalThis.fetch as typeof fetch
+    vi.stubGlobal('fetch', vi.fn((input: unknown, init?: RequestInit) => {
+      seen.push(String(input))
+      return realFetch(input as string, init)
+    }))
+    // Warm the cache on the stable channel FIRST — that is the state the
+    // bug needs. Without a prior listing there is nothing stale to serve,
+    // and the spec would pass with the channel left out of the cache key.
+    await bed.dispatch('GET', '/dsh-market/updates')
+    await bed.dispatch('POST', '/dsh-market/channel', { channel: 'beta' })
+    seen.length = 0
+    await bed.dispatch('GET', '/dsh-market/updates')
+    expect(seen.some(url => url.endsWith('/beta')), 'the beta dist-tag was never queried').toBe(true)
   })
 })

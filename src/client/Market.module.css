@@ -240,3 +240,11 @@
 .setCheck{display:flex;align-items:center;gap:8px;font-size:12px;line-height:18px;cursor:pointer}
 .setActions{border-top:1px solid var(--dsw-alias-border-l2,#e5e7eb);justify-content:flex-end;align-items:center;gap:8px;padding:12px 0 4px;display:flex}
 .setDanger{color:var(--dsw-alias-state-error-primary,#dc2626)}
+/* A two-state segmented control rather than a switch: "stable / beta" is a
+   choice between two named things, and a toggle would force one of them to
+   be the unlabelled "off". */
+.setSeg{display:inline-flex;flex-shrink:0;border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:8px;padding:2px;gap:2px}
+.setSegBtn{font:inherit;font-size:12px;line-height:18px;padding:3px 10px;border:none;border-radius:6px;background:0 0;color:var(--dsw-alias-label-secondary,#6b7280);cursor:pointer}
+.setSegBtn:disabled{cursor:default;opacity:.5}
+.setSegOn{background:var(--dsw-alias-bg-layer-2,#eef0f4);color:var(--dsw-alias-label-primary,#1f2328);font-weight:600}
+.setBetaTag{margin-left:6px;padding:0 6px;border-radius:9px;font-size:11px;font-weight:600;line-height:17px;background:var(--dsw-alias-bg-module-platform,#eef0f4);color:var(--dsw-alias-label-secondary,#6b7280)}
