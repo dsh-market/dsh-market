@@ -283,7 +283,8 @@ vi.mock('../src/registry.ts', () => registryModule)
 registryModule.loadRegistry.mockImplementation(() => Promise.resolve(REGISTRY))
 
 // ---------------------------------------------------------------- testbed
-import { mountMarketRoutes } from '../src/routes.ts'
+import { marketVersion, mountMarketRoutes } from '../src/routes.ts'
+import { resolveChannel } from '../src/channels.ts'
 import { profileDir } from '../src/profile.ts'
 
 type Handler = (request: unknown, response: unknown) => void | Promise<void>
@@ -1776,10 +1777,30 @@ describe('the channel choice survives a restart', () => {
     // Absent is not 'stable'. Installing a prerelease by hand should land
     // on the beta channel with no second step — that is what makes the
     // setting a memory of a CHOICE rather than a default with extra steps.
+    //
+    // The RULE ("a prerelease build derives beta") is independently and
+    // strongly covered in tests/channels.spec.ts, with literal version
+    // strings on both sides of the branch — that coverage does not depend
+    // on what this checkout happens to be.
+    //
+    // What THIS asserts is narrower than it looks: `resolveChannel(undefined,
+    // marketVersion())` rather than a hardcoded 'beta' — a literal was only
+    // ever true while this checkout happened to be a prerelease, and it
+    // broke on exactly the first stable cut (main tagged 1.14.0). Comparing
+    // against the same functions the route calls is honest about what that
+    // buys: mutation-tested on THIS checkout (a stable, non-prerelease
+    // version) and confirmed NOT to catch the route hardcoding 'stable' or
+    // dropping marketVersion() entirely — both derive 'stable' here too, the
+    // same as a correct implementation. It only regains bite on a prerelease
+    // checkout. What stays checked unconditionally either way: `hot.channel`
+    // really is undefined (nothing was accidentally persisted by an earlier
+    // test), and the route answers with SOME value derived from real
+    // functions rather than throwing or answering undefined.
     const fresh = createTestbed({ profile: 'web' })
     try {
       expect(hot.channel).toBeUndefined()
-      expect((await fresh.dispatch('GET', '/dsh-market/status')).json.channel).toBe('beta')
+      const expected = resolveChannel(undefined, marketVersion())
+      expect((await fresh.dispatch('GET', '/dsh-market/status')).json.channel).toBe(expected)
     } finally { fresh.dispose() }
   })
 })

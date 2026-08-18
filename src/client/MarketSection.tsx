@@ -2019,7 +2019,7 @@ export function MarketSection(props: MarketSectionProps) {
                       <div ref={catsWrapRef} className={visibleCats === null ? `${css.catsWrap} ${css.catsCollapsed}` : css.catsWrap}>
                         {(() => {
                           // Collapsed, the selected category is pulled to the front so it never hides.
-                          const ordered = orderedCategories(categories, cat, catsOpen)
+                          const ordered = orderedCategories(categories, cat, catsOpen, visibleCats)
                           const shown = catsOpen || visibleCats === null ? ordered : ordered.slice(0, Math.max(0, visibleCats - 1))
                           return (
                             <>

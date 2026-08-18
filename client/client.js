@@ -713,11 +713,30 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			return plugins.filter((p) => p.category === "theme").sort((a, b) => (b.stars || 0) - (a.stars || 0));
 		}
 		/**
-		* Category chip order: collapsed with an active non-'all' chip, the active
-		* one moves to the front so it stays visible inside the two-row clip.
+		* Category chip order: collapsed with an active non-'all' chip that would
+		* otherwise be clipped out of the two-row preview, the active one moves to
+		* the front so it stays visible.
+		*
+		* Reported as "点了某个分类，标签就跑到前面来了，好奇怪": the earlier version
+		* moved the active chip to the front unconditionally, so clicking a category
+		* that was ALREADY visible inside the two rows still reshuffled it — and
+		* every chip after it — for no reason, since nothing was at risk of being
+		* hidden. `visibleCount` is how many chips (the 'all' chip included) the
+		* two-row clip fits; a category already within that budget in its natural
+		* position is left exactly where it was.
+		*
+		* `visibleCount === null` (not yet measured, e.g. the very first collapsed
+		* render) keeps the old unconditional behaviour: with no measurement to
+		* check against, guaranteeing visibility is the safe default.
 		*/
-		function orderedCategories(categories, active, open) {
-			return open || active === "all" ? categories : [active, ...categories.filter((id) => id !== active)];
+		function orderedCategories(categories, active, open, visibleCount = null) {
+			if (open || active === "all") return categories;
+			if (visibleCount !== null) {
+				const budget = Math.max(0, visibleCount - 1);
+				const naturalIndex = categories.indexOf(active);
+				if (naturalIndex !== -1 && naturalIndex < budget) return categories;
+			}
+			return [active, ...categories.filter((id) => id !== active)];
 		}
 		/**
 		* Page-number list for the discover pager. With few pages it is simply
@@ -4488,7 +4507,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 										ref: catsWrapRef,
 										className: visibleCats === null ? `${Market_module_css_default.catsWrap} ${Market_module_css_default.catsCollapsed}` : Market_module_css_default.catsWrap,
 										children: (() => {
-											const ordered = orderedCategories(categories, cat, catsOpen);
+											const ordered = orderedCategories(categories, cat, catsOpen, visibleCats);
 											const shown = catsOpen || visibleCats === null ? ordered : ordered.slice(0, Math.max(0, visibleCats - 1));
 											return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
 												/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Pill, {

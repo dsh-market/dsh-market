@@ -245,11 +245,36 @@ export function themePlugins(plugins: RegistryPlugin[]): RegistryPlugin[] {
 }
 
 /**
- * Category chip order: collapsed with an active non-'all' chip, the active
- * one moves to the front so it stays visible inside the two-row clip.
+ * Category chip order: collapsed with an active non-'all' chip that would
+ * otherwise be clipped out of the two-row preview, the active one moves to
+ * the front so it stays visible.
+ *
+ * Reported as "点了某个分类，标签就跑到前面来了，好奇怪": the earlier version
+ * moved the active chip to the front unconditionally, so clicking a category
+ * that was ALREADY visible inside the two rows still reshuffled it — and
+ * every chip after it — for no reason, since nothing was at risk of being
+ * hidden. `visibleCount` is how many chips (the 'all' chip included) the
+ * two-row clip fits; a category already within that budget in its natural
+ * position is left exactly where it was.
+ *
+ * `visibleCount === null` (not yet measured, e.g. the very first collapsed
+ * render) keeps the old unconditional behaviour: with no measurement to
+ * check against, guaranteeing visibility is the safe default.
  */
-export function orderedCategories(categories: string[], active: string, open: boolean): string[] {
-  return open || active === 'all' ? categories : [active, ...categories.filter(id => id !== active)]
+export function orderedCategories(
+  categories: string[],
+  active: string,
+  open: boolean,
+  visibleCount: number | null = null,
+): string[] {
+  if (open || active === 'all') return categories
+  if (visibleCount !== null) {
+    // One slot of the budget is always the 'all' chip itself.
+    const budget = Math.max(0, visibleCount - 1)
+    const naturalIndex = categories.indexOf(active)
+    if (naturalIndex !== -1 && naturalIndex < budget) return categories
+  }
+  return [active, ...categories.filter(id => id !== active)]
 }
 
 /**

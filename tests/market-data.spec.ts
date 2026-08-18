@@ -139,9 +139,39 @@ describe('discover list (visiblePlugins)', () => {
 
   it('orderedCategories pulls the active chip forward only while collapsed', () => {
     const cats = ['tool', 'theme', 'memory']
+    // No visibleCount given: the conservative default, as if nothing had
+    // been measured yet.
     expect(orderedCategories(cats, 'memory', false)).toEqual(['memory', 'tool', 'theme'])
     expect(orderedCategories(cats, 'memory', true)).toEqual(cats)
     expect(orderedCategories(cats, 'all', false)).toEqual(cats)
+  })
+
+  it('orderedCategories leaves an already-visible chip exactly where it was', () => {
+    // Reported as "点了某个分类，标签就跑到前面来了，好奇怪": picking a
+    // category that the two-row clip already shows still reshuffled it (and
+    // every chip after it) for nothing — nothing was ever going to be
+    // hidden. visibleCount=3 means the clip fits 3 chips total, one of them
+    // the 'all' pill, leaving a budget of 2 real categories.
+    const cats = ['tool', 'theme', 'memory']
+    expect(orderedCategories(cats, 'tool', false, 3)).toEqual(cats) // index 0, in budget
+    expect(orderedCategories(cats, 'theme', false, 3)).toEqual(cats) // index 1, in budget
+  })
+
+  it('orderedCategories still rescues a chip the clip would hide', () => {
+    // 'memory' sits at natural index 2, outside a budget of 2 — without the
+    // rescue it would be invisible after collapsing, which is the whole
+    // reason this function exists.
+    const cats = ['tool', 'theme', 'memory']
+    expect(orderedCategories(cats, 'memory', false, 3)).toEqual(['memory', 'tool', 'theme'])
+  })
+
+  it('orderedCategories treats a zero or negative budget as fully clipped', () => {
+    // visibleCount of 0 or 1 leaves no room for any real category (the
+    // budget is visibleCount - 1, for the 'all' pill) — every pick must
+    // still be rescued to the front, never silently left off-screen.
+    const cats = ['tool', 'theme', 'memory']
+    expect(orderedCategories(cats, 'tool', false, 0)).toEqual(['tool', 'theme', 'memory'])
+    expect(orderedCategories(cats, 'tool', false, 1)).toEqual(['tool', 'theme', 'memory'])
   })
 
   it('filters by the published-within window', () => {
