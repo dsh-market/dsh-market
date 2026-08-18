@@ -147,18 +147,26 @@ describe('describeFetchFailure', () => {
 })
 
 describe('configuredProxy', () => {
-  it('resolves exactly the way EnvHttpProxyAgent does', () => {
-    // Not the order that reads best — the order undici actually uses, since
-    // this answer is what the failure message claims was tried. undici
-    // reads `https_proxy ?? HTTPS_PROXY`, so LOWERCASE wins; asserting the
-    // intuitive opposite would only have restated our own code.
-    process.env.http_proxy = 'http://four:4'
+  it('prefers the https proxy, which is what governs the catalog', () => {
     process.env.HTTP_PROXY = 'http://three:3'
-    expect(configuredProxy()).toBe('http://four:4')
+    expect(configuredProxy()).toBe('http://three:3')
     process.env.HTTPS_PROXY = 'http://two:2'
     expect(configuredProxy()).toBe('http://two:2')
-    process.env.https_proxy = 'http://one:1'
-    expect(configuredProxy()).toBe('http://one:1')
+  })
+
+  // Windows environment variables are case-INSENSITIVE: `https_proxy` and
+  // `HTTPS_PROXY` are one variable there, so the second assignment below is
+  // not a second variable and there is no precedence left to observe. CI
+  // caught this by failing on exactly that line — the distinction is real
+  // on POSIX and absent on Windows, and a test cannot assert both.
+  it.skipIf(process.platform === 'win32')('lets lowercase win, as undici does', () => {
+    // Not the order that reads best — the order undici actually uses
+    // (`https_proxy ?? HTTPS_PROXY`), since this answer is what the failure
+    // message claims was tried. Verified against a real CONNECT listener,
+    // not inferred: with both set, the lowercase one receives the connect.
+    process.env.HTTPS_PROXY = 'http://upper:1'
+    process.env.https_proxy = 'http://lower:2'
+    expect(configuredProxy()).toBe('http://lower:2')
   })
 
   it('falls back to the http proxy for the https catalog, as undici does', () => {
