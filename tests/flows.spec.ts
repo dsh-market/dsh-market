@@ -451,6 +451,30 @@ describe('host-provided profile and package-operation seams', () => {
     expect(cancel).toHaveBeenCalledOnce()
   })
 
+  it('returns strong repo identities for local link dependencies (#141)', async () => {
+    bed.dispose()
+    const explicitDir = join(home, 'linked-profile')
+    const target = join(home, 'dsh-vision-bridge')
+    mkdirSync(explicitDir, { recursive: true })
+    mkdirSync(target, { recursive: true })
+    writeFileSync(join(explicitDir, 'package.json'), JSON.stringify({ dependencies: {
+      'dsh-vision-bridge': `link:${target}`,
+    } }))
+    writeFileSync(join(target, 'package.json'), JSON.stringify({
+      name: 'dsh-vision-bridge',
+      repository: 'https://github.com/GXX182/dsh-vision-bridge.git',
+    }))
+    fake.profileDir = explicitDir
+    bed = createTestbed({ profile: 'web', profileDirectory: explicitDir })
+
+    const response = await bed.dispatch('GET', '/dsh-market/installed')
+    expect(response.status).toBe(200)
+    expect(response.json).toMatchObject({
+      installed: { 'dsh-vision-bridge': `link:${target}` },
+      repoIdentities: { 'dsh-vision-bridge': ['gxx182/dsh-vision-bridge'] },
+    })
+  })
+
   it('maps a generation-wide Desktop package-operation gate to conflict', async () => {
     bed.dispose()
     bed = createTestbed({}, {

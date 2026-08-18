@@ -41,6 +41,9 @@ export interface Registry {
 /** Profile dependency map: package name → install spec. */
 export type InstalledMap = Record<string, string>
 
+/** Strong repo identities discovered for local link:/file: dependencies (#141). */
+export type InstalledRepoIdentities = Record<string, string[]>
+
 /** Response of the /dsh-market/gist export action. */
 export interface GistExportResult {
   ok: boolean
@@ -96,6 +99,8 @@ export interface ActivationInfo {
 export interface InstalledPayload {
   profile?: string
   installed: InstalledMap
+  /** Strong source identities for local link:/file: dependencies (#141). */
+  repoIdentities?: InstalledRepoIdentities
   activation?: Record<string, ActivationInfo>
   diagnostics?: DiagnosticReportV1
   live?: string[]
@@ -320,7 +325,18 @@ function entryIdentities(plugin: RegistryPlugin): Set<string> {
   return ids
 }
 
-function depIdentities(name: string, spec: string): Set<string> {
+const REPO_ID_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:#path:\/[A-Za-z0-9_./-]+)?$/
+
+function addRepoIdentities(ids: Set<string>, values: readonly string[]): void {
+  for (const value of values) {
+    if (!REPO_ID_RE.test(value)) continue
+    const subpath = value.split('#path:/')[1]
+    if (subpath !== undefined && subpath.split('/').some(seg => seg === '' || seg === '.' || seg === '..')) continue
+    ids.add(value.toLowerCase())
+  }
+}
+
+function depIdentities(name: string, spec: string, repoIdentities: readonly string[] = []): Set<string> {
   const ids = new Set<string>([name.toLowerCase()])
   // A scoped npm key usually mirrors owner/repo — expose that identity so an
   // npm-installed plugin still matches an entry whose npm field is unset.
@@ -331,6 +347,7 @@ function depIdentities(name: string, spec: string): Set<string> {
     ids.add(match[1]!.toLowerCase())
     if (match[2] !== undefined) ids.add(`${match[1]!.toLowerCase()}#path:/${match[2].toLowerCase()}`)
   }
+  addRepoIdentities(ids, repoIdentities)
   return ids
 }
 
@@ -339,13 +356,14 @@ function depIdentities(name: string, spec: string): Set<string> {
  * hard evidence of where the package came from, unlike the name-derived
  * mirror in depIdentities, which is only a matching aid.
  */
-function depSpecRepoIds(spec: string): Set<string> {
+function depRepoIds(spec: string, repoIdentities: readonly string[] = []): Set<string> {
   const ids = new Set<string>()
   const m = /github:([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)(?:#path:\/([A-Za-z0-9_./-]+))?/i.exec(spec)
   if (m !== null) {
     ids.add(m[1]!.toLowerCase())
     if (m[2] !== undefined) ids.add(`${m[1]!.toLowerCase()}#path:/${m[2].toLowerCase()}`)
   }
+  addRepoIdentities(ids, repoIdentities)
   return ids
 }
 
@@ -367,20 +385,40 @@ function entryRepoIds(plugin: RegistryPlugin): Set<string> {
  * decide — the loose name/npm identities only apply when at least one side
  * carries no repo evidence (npm installs, non-github entries).
  */
-function sameSourceConflict(plugin: RegistryPlugin, spec: string): boolean {
+function sameSourceConflict(plugin: RegistryPlugin, spec: string, repoIdentities: readonly string[] = []): boolean {
   const entry = entryRepoIds(plugin)
-  const dep = depSpecRepoIds(spec)
+  const dep = depRepoIds(spec, repoIdentities)
   if (entry.size === 0 || dep.size === 0) return false
   for (const id of dep) if (entry.has(id)) return false
   return true
 }
 
+function looseMatchCount(plugins: RegistryPlugin[], name: string): number {
+  const dep = depIdentities(name, '')
+  let count = 0
+  for (const plugin of plugins) {
+    for (const id of entryIdentities(plugin)) {
+      if (!dep.has(id)) continue
+      count++
+      break
+    }
+  }
+  return count
+}
+
 /** The installed dependency name a registry entry corresponds to, or null. */
-export function matchInstalledName(plugin: RegistryPlugin, installed: InstalledMap): string | null {
+export function matchInstalledName(
+  plugin: RegistryPlugin,
+  installed: InstalledMap,
+  repoIdentities: InstalledRepoIdentities = {},
+  plugins?: RegistryPlugin[],
+): string | null {
   const ids = entryIdentities(plugin)
   for (const [name, spec] of Object.entries(installed)) {
-    if (sameSourceConflict(plugin, String(spec))) continue
-    for (const id of depIdentities(name, String(spec))) {
+    const repos = repoIdentities[name] ?? []
+    if (depRepoIds(String(spec), repos).size === 0 && plugins !== undefined && looseMatchCount(plugins, name) > 1) continue
+    if (sameSourceConflict(plugin, String(spec), repos)) continue
+    for (const id of depIdentities(name, String(spec), repos)) {
       if (ids.has(id)) return name
     }
   }
@@ -388,17 +426,28 @@ export function matchInstalledName(plugin: RegistryPlugin, installed: InstalledM
 }
 
 /** The registry entry an installed dependency corresponds to, or undefined. */
-export function entryForDep(plugins: RegistryPlugin[], name: string, spec: string): RegistryPlugin | undefined {
-  const ids = depIdentities(name, String(spec))
+export function entryForDep(
+  plugins: RegistryPlugin[],
+  name: string,
+  spec: string,
+  repoIdentities: readonly string[] = [],
+): RegistryPlugin | undefined {
+  if (depRepoIds(String(spec), repoIdentities).size === 0 && looseMatchCount(plugins, name) > 1) return undefined
+  const ids = depIdentities(name, String(spec), repoIdentities)
   return plugins.find((plugin) => {
-    if (sameSourceConflict(plugin, String(spec))) return false
+    if (sameSourceConflict(plugin, String(spec), repoIdentities)) return false
     for (const id of entryIdentities(plugin)) if (ids.has(id)) return true
     return false
   })
 }
 
-export function isInstalled(plugin: RegistryPlugin, installed: InstalledMap): boolean {
-  return matchInstalledName(plugin, installed) !== null
+export function isInstalled(
+  plugin: RegistryPlugin,
+  installed: InstalledMap,
+  repoIdentities: InstalledRepoIdentities = {},
+  plugins?: RegistryPlugin[],
+): boolean {
+  return matchInstalledName(plugin, installed, repoIdentities, plugins) !== null
 }
 
 /**

@@ -83,6 +83,52 @@ describe('matchInstalledName / isInstalled', () => {
       { 'dsh-usage-stats': '^1.0.0' },
     )).toBe('dsh-usage-stats')
   })
+
+  it('uses local repo evidence to disambiguate same-named link installs (#141)', () => {
+    const installed = { 'dsh-vision-bridge': 'link:D:/pro/dsh/dsh-vision-bridge' }
+    const repoIdentities = { 'dsh-vision-bridge': ['gxx182/dsh-vision-bridge'] }
+    const plugins = [
+      plugin({ name: 'dsh-vision-bridge', url: 'https://github.com/GXX182/dsh-vision-bridge' }),
+      plugin({ name: 'dsh-vision-bridge', url: 'https://github.com/ximengxiaolan/dsh-vision-bridge' }),
+    ]
+
+    expect(matchInstalledName(
+      plugins[0]!,
+      installed,
+      repoIdentities,
+    )).toBe('dsh-vision-bridge')
+    expect(matchInstalledName(
+      plugins[1]!,
+      installed,
+      repoIdentities,
+    )).toBeNull()
+
+    // With no strong identity the client admits ambiguity instead of marking
+    // every same-named catalog entry as installed.
+    expect(matchInstalledName(plugins[0]!, installed, {}, plugins)).toBeNull()
+    expect(matchInstalledName(plugins[1]!, installed, {}, plugins)).toBeNull()
+    expect(entryForDep(plugins, 'dsh-vision-bridge', installed['dsh-vision-bridge']!)).toBeUndefined()
+  })
+
+  it('matches local monorepo evidence the same way as a github:#path spec', () => {
+    const root = plugin({ name: 'collection', url: 'https://github.com/o/collection' })
+    const exact = plugin({
+      name: 'plugin-a',
+      url: 'https://github.com/o/collection/tree/main/packages/plugin-a',
+    })
+    const sibling = plugin({
+      name: 'plugin-b',
+      url: 'https://github.com/o/collection/tree/main/packages/plugin-b',
+    })
+    const installed = { 'plugin-a': 'link:D:/src/collection/packages/plugin-a' }
+    const repoIdentities = {
+      'plugin-a': ['o/collection', 'o/collection#path:/packages/plugin-a'],
+    }
+
+    expect(matchInstalledName(root, installed, repoIdentities)).toBe('plugin-a')
+    expect(matchInstalledName(exact, installed, repoIdentities)).toBe('plugin-a')
+    expect(matchInstalledName(sibling, installed, repoIdentities)).toBeNull()
+  })
 })
 
 describe('entryForDep', () => {

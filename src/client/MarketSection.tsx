@@ -39,7 +39,7 @@ import {
   pageItems, pluginName, pluginScreenshots, readSession, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
 } from './market-data.ts'
 import type {
-ActivationInfo, ActivationState, GistExportResult, InstalledMap, MarketStatus, Registry, RegistryPlugin,
+ActivationInfo, ActivationState, GistExportResult, InstalledMap, InstalledRepoIdentities, MarketStatus, Registry, RegistryPlugin,
   SharedHostPackageDependencyFinding, SortDir, SortField, ThemeSnapshot, TimeRange, Translate, UpdateStatus,
 } from './market-data.ts'
 
@@ -206,6 +206,7 @@ function MarketLogo({ size = 16, style, animated = false }: { size?: number; sty
  */
 let cachedRegistry: Registry | null = null
 let cachedInstalled: InstalledMap | null = null
+let cachedRepoIdentities: InstalledRepoIdentities | null = null
 
 /** Discover grid page-size choices — the catalog grows daily, so cap each page. */
 const PAGE_SIZES = [24, 48, 96]
@@ -242,6 +243,31 @@ function backupDependencies(value: unknown): InstalledMap {
   if (dependencies === null || typeof dependencies !== 'object' || Array.isArray(dependencies)) return {}
   if (!Object.values(dependencies).every(spec => typeof spec === 'string')) throw new Error('backup dependencies are invalid')
   return dependencies as InstalledMap
+}
+
+function installedRepoIdentities(value: unknown): InstalledRepoIdentities {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return {}
+  const identities: InstalledRepoIdentities = {}
+  for (const [name, ids] of Object.entries(value)) {
+    if (!Array.isArray(ids)) continue
+    const strings = ids.filter((id): id is string => typeof id === 'string')
+    if (strings.length > 0) identities[name] = strings
+  }
+  return identities
+}
+
+function installedMap(value: unknown): InstalledMap {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return {}
+  const installed: InstalledMap = {}
+  for (const [name, spec] of Object.entries(value)) {
+    if (typeof spec === 'string') installed[name] = spec
+  }
+  return installed
+}
+
+function sameInstalledMap(left: InstalledMap, right: InstalledMap): boolean {
+  const names = Object.keys(left)
+  return names.length === Object.keys(right).length && names.every(name => left[name] === right[name])
 }
 
 /** Sort field choices in the filter panel. */
@@ -293,6 +319,11 @@ export function MarketSection(props: MarketSectionProps) {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [installed, setInstalledState] = useState<InstalledMap>(cachedInstalled ?? {})
   const setInstalled = useCallback((value: InstalledMap) => { cachedInstalled = value; setInstalledState(value) }, [])
+  const [repoIdentities, setRepoIdentitiesState] = useState<InstalledRepoIdentities>(cachedRepoIdentities ?? {})
+  const setRepoIdentities = useCallback((value: InstalledRepoIdentities) => {
+    cachedRepoIdentities = value
+    setRepoIdentitiesState(value)
+  }, [])
   const [installedFiles, setInstalledFiles] = useState<string[]>([])
   const [skins, setSkins] = useState<string[]>([])
   const [tab, setTab] = useState(() => {
@@ -503,6 +534,7 @@ export function MarketSection(props: MarketSectionProps) {
       .then(res => res.json())
       .then(body => {
         setInstalled(body.installed || {})
+        setRepoIdentities(installedRepoIdentities(body.repoIdentities))
         setInstalledFiles(Array.isArray(body.present) ? body.present : Object.keys(body.installed || {}))
         setSkins(body.live || [])
         if (Array.isArray(body.disabled)) setDisabledNames(body.disabled)
@@ -673,7 +705,8 @@ export function MarketSection(props: MarketSectionProps) {
             setProgressCurrent(null)
             setProgressDone(0)
             setCancelling(false)
-            setInstalled(status.installed || {})
+            const statusInstalled = installedMap(status.installed)
+            if (!sameInstalledMap(installed, statusInstalled)) refreshInstalled()
             const pending = readSession('dshm-pending')
             // status.busy (#91): pnpm exited but the install route still
             // holds the operation lock (validation, hot-mount). Neither
@@ -681,7 +714,7 @@ export function MarketSection(props: MarketSectionProps) {
             // premature banner here invited a restart click into a 409.
             if (pending !== null && busyUrl !== null && status.busy !== true) {
               const nowInstalled = data !== null && data.plugins.some(p =>
-                p.url === busyUrl && isInstalled(p, status.installed || {}))
+                p.url === busyUrl && isInstalled(p, statusInstalled, repoIdentities, data.plugins))
               if (nowInstalled) {
                 idleStrikes.current = 0
                 sessionStorage.removeItem('dshm-pending')
@@ -702,7 +735,7 @@ export function MarketSection(props: MarketSectionProps) {
         .catch(() => {})
     }, 2000)
     return () => clearInterval(timer)
-  }, [busyUrl, updatingName, data])
+  }, [busyUrl, updatingName, data, installed, repoIdentities, refreshInstalled])
 
   const plugins = useMemo(
     () => (data === null ? [] : visiblePlugins(data.plugins, {
@@ -1483,7 +1516,7 @@ export function MarketSection(props: MarketSectionProps) {
   const pluginCard = (p: RegistryPlugin) => {
     const desc = (p.description && (p.description[lang] || p.description.en)) || ''
     const done = doneUrls.includes(p.url) || hotUrls.includes(p.url)
-    const already = isInstalled(p, installed)
+    const already = isInstalled(p, installed, repoIdentities, data?.plugins)
     const busy = busyUrl === p.url
     const replacement = replacementOf(p)
     return (
@@ -1574,7 +1607,7 @@ export function MarketSection(props: MarketSectionProps) {
     )
   }
 
-  const installedNameOf = (p: RegistryPlugin) => matchInstalledName(p, installed)
+  const installedNameOf = (p: RegistryPlugin) => matchInstalledName(p, installed, repoIdentities, data?.plugins)
 
   // Plugins loaded at boot (bundle-layer skins) aren't in the shim list but
   // are just as live; the boot manifest is the page's own record of them.
@@ -1711,11 +1744,11 @@ export function MarketSection(props: MarketSectionProps) {
     const names = new Set<string>()
     if (data === null) return names
     for (const [name, spec] of Object.entries(installed)) {
-      const entry = entryForDep(data.plugins, name, String(spec))
+      const entry = entryForDep(data.plugins, name, String(spec), repoIdentities[name])
       if (entry !== undefined && entry.category === 'theme') names.add(name)
     }
     return names
-  }, [data, installed])
+  }, [data, installed, repoIdentities])
 
   return (
     <div className={css.root}>
@@ -2347,7 +2380,7 @@ export function MarketSection(props: MarketSectionProps) {
                             {ungroupedNames.length === 0
                               ? <div className={css.empty}>{t('installedEmpty')}</div>
                               : ungroupedNames.map(name => {
-                                  const entry = data === null ? undefined : entryForDep(data.plugins, name, String(installed[name]))
+                                  const entry = data === null ? undefined : entryForDep(data.plugins, name, String(installed[name]), repoIdentities[name])
                                   const off = effectiveDisabledSet.has(name)
                                   return (
                                     <div className={css.irow} key={'ug-' + name}>
@@ -2389,7 +2422,7 @@ export function MarketSection(props: MarketSectionProps) {
                               if (needle === '') return true
                               if (name.toLowerCase().includes(needle)) return true
                               if (String(spec).toLowerCase().includes(needle)) return true
-                              const entry = data === null ? undefined : entryForDep(data.plugins, name, String(spec))
+                              const entry = data === null ? undefined : entryForDep(data.plugins, name, String(spec), repoIdentities[name])
                               if (entry !== undefined) {
                                 const desc = (entry.description && (entry.description[lang] || entry.description.en)) || ''
                                 if (desc.toLowerCase().includes(needle)) return true
@@ -2399,7 +2432,7 @@ export function MarketSection(props: MarketSectionProps) {
                             })
                             .map(([name, spec]) => {
                             const missing = pendingBackup !== null && !installedFiles.includes(name)
-                            const entry = data === null ? undefined : entryForDep(data.plugins, name, String(spec))
+                            const entry = data === null ? undefined : entryForDep(data.plugins, name, String(spec), repoIdentities[name])
                             const status = updates[name]
                             const act = activations[name]
                             const meta = act !== undefined ? activationMeta(act.state, t) : null
@@ -2531,7 +2564,7 @@ export function MarketSection(props: MarketSectionProps) {
                                   return (
                                     <>
                                       <Button variant="outline" size="sm" onClick={() => { setCat('all'); setQ(entry.replacement!); setTab('discover') }}>{t('viewReplacement')}</Button>
-                                      {!isInstalled(replacement, installed) && (
+                                      {!isInstalled(replacement, installed, repoIdentities, data?.plugins) && (
                                         <Button variant="outline" size="sm" onClick={() => setConfirming(replacement)}>{t('installReplacement')}</Button>
                                       )}
                                     </>

@@ -84,6 +84,34 @@ describe('MarketSection (jsdom)', () => {
     expect(screen.getAllByRole('button', { name: en.install }).length).toBeGreaterThanOrEqual(3)
   })
 
+  it('marks only the repository-matched card for a same-named local link (#141)', async () => {
+    const plugins = [
+      { name: 'dsh-vision-bridge', owner: 'ximengxiaolan', url: 'https://github.com/ximengxiaolan/dsh-vision-bridge', category: 'tools', npm: null, description: { en: 'Other bridge' }, install: '' },
+      { name: 'dsh-vision-bridge', owner: 'GXX182', url: 'https://github.com/GXX182/dsh-vision-bridge', category: 'tools', npm: null, description: { en: 'Local bridge' }, install: '' },
+    ]
+    stubFetch({
+      '/dsh-market/registry': {
+        source: 'snapshot',
+        registry: { updated: '', count: 2, categories: REGISTRY.categories, plugins },
+      },
+      '/dsh-market/installed': {
+        profile: 'web',
+        installed: { 'dsh-vision-bridge': 'link:D:/pro/dsh/dsh-vision-bridge' },
+        repoIdentities: { 'dsh-vision-bridge': ['gxx182/dsh-vision-bridge'] },
+        live: [],
+      },
+    })
+
+    render(<MarketSection {...props()} />)
+    const own = await screen.findByText('GXX182')
+    const other = await screen.findByText('ximengxiaolan')
+    const ownCard = own.closest('div[class*="card"]') as HTMLElement
+    const otherCard = other.closest('div[class*="card"]') as HTMLElement
+    expect(within(ownCard).getByText(en.alreadyInstalled)).toBeTruthy()
+    expect(within(otherCard).getByRole('button', { name: en.install })).toBeTruthy()
+    expect(within(otherCard).queryByText(en.alreadyInstalled)).toBeNull()
+  })
+
   it('shows shared host dependency findings from the installed snapshot', async () => {
     const findings = Array.from({ length: 7 }, (_, index) => ({
       code: 'shared-host-package-dependency',

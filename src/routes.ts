@@ -23,7 +23,7 @@ import {
   BOOT_ID, cancelActive, probePnpm, progress, provisionPnpm, runDshPlugin,
   type PluginCommandRuntime,
 } from './dsh-cli.ts'
-import { hasLoadableEntry, INBOX_BUNDLES, profileDir, readInstalled, readInstalledManifest, readInstalledVersion, readLockCommits, readManifestDeps, readProfileBundles, restoreManifestDeps, setAllowBuilds } from './profile.ts'
+import { hasLoadableEntry, INBOX_BUNDLES, profileDir, readInstalled, readInstalledManifest, readInstalledRepoIdentities, readInstalledVersion, readLockCommits, readManifestDeps, readProfileBundles, restoreManifestDeps, setAllowBuilds } from './profile.ts'
 import { assessProfile, introducedRisks, type CompatibilityRisk } from './compatibility.ts'
 import { runningAgentIds, type AgentsLookup } from './agents.ts'
 import { analyzeProfile } from './check.ts'
@@ -688,6 +688,11 @@ export function mountMarketRoutes(
         }
         await dropStaleHotMounts()
         const installed = readInstalled(config.profile, activeProfileDir)
+        const repoIdentities: Record<string, string[]> = {}
+        for (const [name, spec] of Object.entries(installed)) {
+          const identities = readInstalledRepoIdentities(config.profile, name, spec, activeProfileDir)
+          if (identities.length > 0) repoIdentities[name] = identities
+        }
         const present = Object.keys(installed).filter(
           name => readInstalledVersion(config.profile, name, activeProfileDir) !== null,
         )
@@ -710,6 +715,7 @@ export function mountMarketRoutes(
         sendJson(response, 200, {
           profile: config.profile,
           installed,
+          repoIdentities,
           present,
           activation,
           diagnostics,

@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   conflictingEntryIds, entryArtifactExists, hasDshManifest, pluginSubdirs, profileDir,
-  readInstalled, readInstalledManifest, readInstalledVersion, readLockCommits,
+  readInstalled, readInstalledManifest, readInstalledRepoIdentities, readInstalledVersion, readLockCommits,
 } from '../src/profile.ts'
 
 let home: string
@@ -72,6 +72,60 @@ describe('readInstalledManifest', () => {
       expect(readInstalledManifest('ignored', 'dsh-loop', explicitDir)).toBeNull()
     } finally {
       rmSync(explicitDir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('readInstalledRepoIdentities (#141)', () => {
+  it('reads package.json repository metadata, including monorepo directories', () => {
+    const target = mkdtempSync(join(tmpdir(), 'dshm-link-'))
+    try {
+      writeProfile({ dependencies: { 'local-plugin': `link:${target}` } })
+      writeFileSync(join(target, 'package.json'), JSON.stringify({
+        name: 'local-plugin',
+        repository: {
+          type: 'git',
+          url: 'git+https://github.com/Owner/Repo.git',
+          directory: 'packages/local-plugin',
+        },
+      }))
+      expect(readInstalledRepoIdentities('web', 'local-plugin', `link:${target}`))
+        .toEqual(['owner/repo', 'owner/repo#path:/packages/local-plugin'])
+    } finally {
+      rmSync(target, { recursive: true, force: true })
+    }
+  })
+
+  it('falls back to the linked checkout origin and derives its subpath', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'dshm-repo-'))
+    const target = join(repo, 'packages', 'local-plugin')
+    try {
+      writeProfile({ dependencies: { 'local-plugin': `link:${target}` } })
+      mkdirSync(join(repo, '.git'), { recursive: true })
+      mkdirSync(target, { recursive: true })
+      writeFileSync(join(repo, '.git', 'config'), [
+        '[core]',
+        '\trepositoryformatversion = 0',
+        '[remote "origin"]',
+        '\turl = git@github.com:GXX182/dsh-vision-bridge.git',
+      ].join('\n'))
+      writeFileSync(join(target, 'package.json'), JSON.stringify({ name: 'local-plugin' }))
+      expect(readInstalledRepoIdentities('web', 'local-plugin', `link:${target}`))
+        .toEqual(['gxx182/dsh-vision-bridge', 'gxx182/dsh-vision-bridge#path:/packages/local-plugin'])
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('fails open when neither manifest nor Git metadata identifies the source', () => {
+    const target = mkdtempSync(join(tmpdir(), 'dshm-plain-'))
+    try {
+      writeProfile({ dependencies: { 'local-plugin': `file:${target}` } })
+      writeFileSync(join(target, 'package.json'), JSON.stringify({ name: 'local-plugin' }))
+      expect(readInstalledRepoIdentities('web', 'local-plugin', `file:${target}`)).toEqual([])
+      expect(readInstalledRepoIdentities('web', 'local-plugin', '^1.0.0')).toEqual([])
+    } finally {
+      rmSync(target, { recursive: true, force: true })
     }
   })
 })

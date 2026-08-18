@@ -5,6 +5,11 @@
 
 const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
 
+function validSubpath(subpath: string): boolean {
+  if (!/^[A-Za-z0-9_./-]+$/.test(subpath)) return false
+  return !subpath.split('/').some(seg => seg === '' || seg === '.' || seg === '..')
+}
+
 /** Registry tarball names must be plain npm package names, nothing fancier. */
 const NPM_NAME_RE = /^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/
 
@@ -18,11 +23,48 @@ export function parseSourceUrl(url: string): { repo: string; subpath: string | n
   if (m === null || !REPO_RE.test(m[1])) return null
   const subpath = m[2] ?? null
   if (subpath !== null) {
-    if (!/^[A-Za-z0-9_./-]+$/.test(subpath)) return null
     // No empty/dot segments: `..` would escape the repo in the #path: selector.
-    if (subpath.split('/').some(seg => seg === '' || seg === '.' || seg === '..')) return null
+    if (!validSubpath(subpath)) return null
   }
   return { repo: m[1], subpath }
+}
+
+/**
+ * Parse the common GitHub remote forms found in package.json and .git/config.
+ * Credentials and transport details are deliberately discarded: callers only
+ * receive the public owner/repo identity used for catalog matching.
+ */
+export function parseGitHubRemote(url: string): { repo: string } | null {
+  const value = url.trim().replace(/^git\+/i, '')
+  const web = /^(?:https?|git|ssh):\/\/(?:git@)?github\.com\/([^/]+)\/([^/?#]+)\/?(?:[?#].*)?$/i.exec(value)
+  const scp = /^git@github\.com:([^/]+)\/([^/?#]+)$/i.exec(value)
+  const match = web ?? scp
+  if (match === null) return null
+  const repoName = match[2]!.replace(/\.git$/i, '')
+  const repo = `${match[1]!}/${repoName}`
+  return REPO_RE.test(repo) ? { repo } : null
+}
+
+/** Normalized repo identity shared by server discovery and client matching. */
+export function githubRepoIdentity(url: string, directory?: string | null): string | null {
+  const source = parseGitHubRemote(url)
+  if (source === null) return null
+  const repo = source.repo.toLowerCase()
+  if (directory === undefined || directory === null || directory.trim() === '') return repo
+  const subpath = directory.trim().replaceAll('\\', '/').replace(/^\/+|\/+$/g, '')
+  return validSubpath(subpath) ? `${repo}#path:/${subpath.toLowerCase()}` : null
+}
+
+/**
+ * Repository evidence used for installed-source matching. A monorepo package
+ * contributes both its collection root and exact subpath, mirroring the
+ * identities extracted from `github:owner/repo#path:/package` specs.
+ */
+export function githubRepoIdentities(url: string, directory?: string | null): string[] {
+  const identity = githubRepoIdentity(url, directory)
+  if (identity === null) return []
+  const pathAt = identity.indexOf('#path:/')
+  return pathAt === -1 ? [identity] : [identity.slice(0, pathAt), identity]
 }
 
 /** GitHub `owner/repo` for a registry URL, or null when it is not a GitHub repo URL. */
