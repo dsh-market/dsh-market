@@ -808,6 +808,11 @@ export function MarketSection(props: MarketSectionProps) {
           refreshInstalled()
         } else {
           if (status === 409) {
+            if (body.agentsBusy === true) {
+              const running = Array.isArray(body.runningAgents) && body.runningAgents.length > 0 ? ` (${body.runningAgents.join(', ')})` : ''
+              setInstallError(t('agentBusyInstall') + running)
+              return
+            }
             setInstallError(t('busyWait'))
             return
           }
@@ -920,7 +925,15 @@ export function MarketSection(props: MarketSectionProps) {
           }
           refreshInstalled()
         } else {
-          if (status === 409) { setInstallError(t('busyWait')); return }
+          if (status === 409) {
+            if (body.agentsBusy === true) {
+              const running = Array.isArray(body.runningAgents) && body.runningAgents.length > 0 ? ` (${body.runningAgents.join(', ')})` : ''
+              setInstallError(t('agentBusyUpdate') + running)
+              return
+            }
+            setInstallError(t('busyWait'))
+            return
+          }
           if (body.stale === true) setStaleName(name)
           // Blocked build scripts during an update (#69): same
           // approve-and-retry banner as the install flow, retrying the update.

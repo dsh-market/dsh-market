@@ -7,6 +7,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { createDesktopPluginRuntime, type DesktopPnpmLike } from './dsh-cli.ts'
 import { mountMarketRoutes, type MarketConfig, type MarketHost } from './routes.ts'
 import { installMarketSettings } from './settings.ts'
+import type { AgentsServiceLike } from './agents.ts'
 
 export const name = 'dsh-market'
 
@@ -45,6 +46,16 @@ function argvProfile(): string | undefined {
   return undefined
 }
 
+/**
+ * Resolve the host's `agents` inventory lazily — at request time, not at
+ * market startup, so the guard sees whichever agents exist by the time an
+ * update is asked for. Hosts without the service return undefined and the
+ * update route stays open (see src/agents.ts).
+ */
+function agentsLookupOf(ctx: Context): () => AgentsServiceLike | undefined {
+  return () => ctx.get('agents') as AgentsServiceLike | undefined
+}
+
 export function apply(ctx: Context, config?: Config): void {
   ctx.inject(['webServer', 'loader'], (hostCtx: Context) => {
     const host = hostCtx as unknown as MarketEffectHost
@@ -59,7 +70,7 @@ export function apply(ctx: Context, config?: Config): void {
       // lifecycle and the value is forced false, so it is not the user's to
       // choose. No-ops on a host without a settings service.
       installMarketSettings(ctx, resolved)
-      host.effect(() => mountMarketRoutes(host, resolved), 'dsh-market: http routes')
+      host.effect(() => mountMarketRoutes(host, resolved, undefined, agentsLookupOf(ctx)), 'dsh-market: http routes')
       return
     }
 
@@ -81,7 +92,7 @@ export function apply(ctx: Context, config?: Config): void {
       }
       const desktopHost = desktopCtx as unknown as MarketEffectHost
       desktopHost.effect(() => {
-        const disposeRoutes = mountMarketRoutes(host, resolved, runtime)
+        const disposeRoutes = mountMarketRoutes(host, resolved, runtime, agentsLookupOf(ctx))
         return async () => {
           disposeRoutes()
           await runtime.dispose()

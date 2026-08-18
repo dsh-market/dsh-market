@@ -43,7 +43,10 @@ function stubFetch(overrides: Record<string, unknown> = {}) {
     const merged = overrides[path] ?? payload
     if (merged === null) return Promise.reject(new Error(`unstubbed fetch: ${String(input)}`))
     const result = typeof merged === 'function' ? (merged as (requestBody?: unknown) => unknown)(body) : merged
-    return Promise.resolve(new Response(JSON.stringify(result), { status: 200 }))
+    const status = result !== null && typeof result === 'object' && '__status' in result && typeof (result as { __status?: unknown }).__status === 'number'
+      ? (result as { __status: number }).__status
+      : 200
+    return Promise.resolve(new Response(JSON.stringify(result), { status }))
   })
   vi.stubGlobal('fetch', mock)
   return mock
@@ -287,6 +290,27 @@ describe('MarketSection (jsdom)', () => {
     fireEvent.click(updateButton)
     // The 502-stale path surfaces the plain-words error plus the one-time bypass.
     expect(await screen.findByRole('button', { name: en.updateNow })).toBeTruthy()
+  })
+
+  it('a busy-agent update response names the running agent instead of the generic busy message', async () => {
+    stubFetch({
+      '/dsh-market/installed': { profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: [] },
+      '/dsh-market/updates': { updates: { 'dsh-loop': { kind: 'npm', version: '1.0.0', current: '1.0.0', latest: '1.2.0', updateAvailable: true } } },
+      '/dsh-market/update': {
+        ok: false,
+        agentsBusy: true,
+        runningAgents: ['main'],
+        error: 'agents are running',
+        __status: 409,
+      },
+    })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    const updateButton = await screen.findByRole('button', { name: en.update })
+    fireEvent.click(updateButton)
+    expect(await screen.findByText(`${en.agentBusyUpdate} (main)`)).toBeTruthy()
+    expect(screen.queryByText(en.busyWait)).toBeNull()
   })
 
   it('paginates the discover grid and navigates by page number', async () => {

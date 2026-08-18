@@ -286,6 +286,7 @@ registryModule.loadRegistry.mockImplementation(() => Promise.resolve(REGISTRY))
 import { marketVersion, mountMarketRoutes } from '../src/routes.ts'
 import { resolveChannel } from '../src/channels.ts'
 import { profileDir } from '../src/profile.ts'
+import type { AgentsServiceLike } from '../src/agents.ts'
 
 type Handler = (request: unknown, response: unknown) => void | Promise<void>
 
@@ -298,6 +299,7 @@ interface Testbed {
 function createTestbed(
   config: { profile?: string; allowRestart?: boolean; profileDirectory?: string } = {},
   runtime?: Parameters<typeof mountMarketRoutes>[2],
+  agents?: AgentsServiceLike,
 ): Testbed {
   const routes = new Map<string, Handler>()
   const loaderEntries: Testbed['loaderEntries'] = []
@@ -312,7 +314,7 @@ function createTestbed(
     plugin: () => ({ await: () => Promise.resolve(), dispose: () => {} }),
     on: () => () => {},
   }
-  const dispose = mountMarketRoutes(host as never, { profile: 'web', ...config }, runtime)
+  const dispose = mountMarketRoutes(host as never, { profile: 'web', ...config }, runtime, () => agents)
   async function dispatch(method: string, path: string, body?: unknown, options?: { crossOrigin?: boolean }) {
     const handler = routes.get(path.split('?')[0])
     if (handler === undefined) throw new Error(`no route: ${path}`)
@@ -821,6 +823,66 @@ describe('update flow — no npm publishing required', () => {
     // disk, `/dsh-market/status` still reporting 1.11.3, an unchanged boot
     // id, and this route calling it hot-loaded in the same response.
     expect(r.json.activation['dsh-loop']).toMatchObject({ state: 'restart', hot: false })
+  })
+
+  it('refuses an update while any agent is running, before pnpm is touched', async () => {
+    advanceNpmLatest('1.2.0')
+    const callsBefore = fake.calls.length
+    const busyBed = createTestbed({}, undefined, {
+      list: () => [
+        { id: 'main', status: 'running' },
+        { id: 'helper', status: 'idle' },
+      ],
+    })
+    const r = await busyBed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+    expect(r.status).toBe(409)
+    expect(r.json.agentsBusy).toBe(true)
+    expect(r.json.runningAgents).toEqual(['main'])
+    expect(String(r.json.error)).toMatch(/agent|main/)
+    expect(installedSpec('dsh-loop')).toBe('^1.0.0')
+    expect(fake.calls.length).toBe(callsBefore)
+    busyBed.dispose()
+  })
+
+  it('refuses install and uninstall while any agent is running, before pnpm is touched', async () => {
+    const callsBefore = fake.calls.length
+    const defaultStatus = await bed.dispatch('GET', '/dsh-market/status')
+    expect(defaultStatus.json.agentGuardAvailable).toBe(false)
+    const busyBed = createTestbed({}, undefined, {
+      list: () => [{ id: 'main', status: 'running' }],
+    })
+    const busyStatus = await busyBed.dispatch('GET', '/dsh-market/status')
+    expect(busyStatus.json.agentGuardAvailable).toBe(true)
+    const install = await busyBed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
+    expect(install.status).toBe(409)
+    expect(install.json.agentsBusy).toBe(true)
+    expect(install.json.runningAgents).toEqual(['main'])
+
+    const uninstall = await busyBed.dispatch('POST', '/dsh-market/uninstall', { name: 'dsh-loop' })
+    expect(uninstall.status).toBe(409)
+    expect(uninstall.json.agentsBusy).toBe(true)
+    expect(uninstall.json.runningAgents).toEqual(['main'])
+
+    expect(installedSpec('dsh-loop')).toBe('^1.0.0')
+    expect(fake.calls.length).toBe(callsBefore)
+    busyBed.dispose()
+  })
+
+  it('allows the same update when no agent reports running', async () => {
+    advanceNpmLatest('1.2.0')
+    const idleBed = createTestbed({}, undefined, {
+      list: () => [
+        { id: 'main', status: 'idle' },
+        { id: 'helper', status: 'maintenance' },
+        { id: 'mystery', status: undefined },
+      ],
+    })
+    const r = await idleBed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+    expect(r.status).toBe(200)
+    expect(r.json.ok).toBe(true)
+    expect(r.json.agentsBusy).toBeUndefined()
+    expect(installedSpec('dsh-loop')).toBe('^1.2.0')
+    idleBed.dispose()
   })
 
   it('refuses an update whose new version has no entry artifact (#159)', async () => {
