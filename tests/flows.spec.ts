@@ -27,7 +27,7 @@ const fake = vi.hoisted(() => ({
   /** name → { versions: v→{manifest, artifacts}, latest } */
   npm: {} as Record<string, { versions: Record<string, { manifest: unknown; artifacts?: string[]; artifactContents?: Record<string, string> }>; latest: string }>,
   /** github:owner/repo target → packages it installs (or a junk collection) */
-  repos: {} as Record<string, { name: string; manifest: unknown; artifacts?: string[]; junkChildren?: string[] }>,
+  repos: {} as Record<string, { name: string; manifest: unknown; artifacts?: string[]; junkChildren?: string[]; lockCommit?: string; byCommit?: Record<string, { manifest: unknown; artifacts?: string[] }> }>,
   /** Simulate pnpm minimumReleaseAge: adds resolve to the ALREADY INSTALLED version, exit 0. */
   staleUpdates: false,
   /** Fail the next N mutating commands with the hoist-pattern drift error. */
@@ -77,6 +77,14 @@ vi.mock('../src/dsh-cli.ts', () => {
   }
   function readManifest(): { dependencies?: Record<string, string> } {
     return JSON.parse(readFileSync(join(fake.profileDir, 'package.json'), 'utf8'))
+  }
+  function writeLockCommit(repo: string, commit: string): void {
+    const path = join(fake.profileDir, 'pnpm-lock.yaml')
+    const existing = existsSync(path) ? readFileSync(path, 'utf8') : ''
+    const replaced = existing.includes('codeload.github.com')
+      ? existing.replace(/codeload\.github\.com\/([^/\s]+\/[^/\s]+)\/tar\.gz\/[0-9a-f]{40}/g, `codeload.github.com/${repo}/tar.gz/${commit}`)
+      : `lockfileVersion: 9\n  resolution: {tarball: https://codeload.github.com/${repo}/tar.gz/${commit}}\n`
+    writeFileSync(path, replaced)
   }
   function writeDep(name: string, spec: string): void {
     const manifest = readManifest()
@@ -154,10 +162,16 @@ vi.mock('../src/dsh-cli.ts', () => {
       return { exitCode: 1, timedOut: false, stdout: '', stderr, cancelled: false }
     }
     if (target.startsWith('github:')) {
-      const repo = fake.repos[target]
+      const hash = target.indexOf('#')
+      const repoKey = hash === -1 ? target : target.slice(0, hash)
+      const commit = hash === -1 ? undefined : target.slice(hash + 1)
+      const repo = fake.repos[target] ?? (hash === -1 ? undefined : fake.repos[repoKey])
       if (repo === undefined) return { exitCode: 1, timedOut: false, stdout: '', stderr: `fake dsh: unknown repo ${target}`, cancelled: false }
-      writeDep(repo.name, target.split('#')[0])
-      writePkg(repo.name, repo.manifest, repo.artifacts)
+      const def = commit !== undefined ? repo.byCommit?.[commit] : undefined
+      writeDep(repo.name, target)
+      writePkg(repo.name, def?.manifest ?? repo.manifest, def?.artifacts ?? repo.artifacts)
+      const nextCommit = commit ?? repo.lockCommit
+      if (nextCommit !== undefined) writeLockCommit(repoKey.replace(/^github:/, ''), nextCommit)
       for (const child of repo.junkChildren ?? []) {
         mkdirSync(join(fake.profileDir, 'node_modules', repo.name, child), { recursive: true })
         writeFileSync(join(fake.profileDir, 'node_modules', repo.name, child, 'package.json'), '{"dsh":{}}')
@@ -1059,6 +1073,46 @@ describe('update flow — no npm publishing required', () => {
     expect(rollback.json.rolledBack).toBe(true)
     expect(installedSpec('dsh-loop')).toBeUndefined()
     expect(existsSync(join(fake.profileDir, 'node_modules', 'dsh-loop'))).toBe(false)
+  })
+
+  it('rolls a github update back to the captured commit (#195)', async () => {
+    const OLD = 'a'.repeat(40)
+    const NEW = 'b'.repeat(40)
+    await bed.dispatch('POST', '/dsh-market/uninstall', { name: 'dsh-loop' })
+
+    fake.repos['github:owner/dsh-loop'] = {
+      name: 'dsh-loop',
+      manifest: { dsh: {}, main: 'lib/index.js', peerDependencies: { '@deepseek-ai/dsh-settings': '^0.1.0-rc.7' } },
+      artifacts: ['lib/index.js'],
+      lockCommit: NEW,
+      byCommit: {
+        [OLD]: { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] },
+      },
+    }
+
+    const manifest = JSON.parse(readFileSync(join(fake.profileDir, 'package.json'), 'utf8')) as Record<string, unknown>
+    manifest.dependencies = { 'dsh-loop': 'github:owner/dsh-loop' }
+    writeFileSync(join(fake.profileDir, 'package.json'), JSON.stringify(manifest))
+    const pkgDir = join(fake.profileDir, 'node_modules', 'dsh-loop')
+    mkdirSync(join(pkgDir, 'lib'), { recursive: true })
+    writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: 'dsh-loop', version: '0.0.1', dsh: {}, main: 'lib/index.js' }))
+    writeFileSync(join(pkgDir, 'lib', 'index.js'), '')
+    const hostPeerDir = join(fake.profileDir, 'node_modules', '@deepseek-ai', 'dsh-settings')
+    mkdirSync(hostPeerDir, { recursive: true })
+    writeFileSync(join(hostPeerDir, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh-settings', version: '0.1.0-rc.6' }))
+    writeFileSync(join(fake.profileDir, 'pnpm-lock.yaml'), `lockfileVersion: 9\n  resolution: {tarball: https://codeload.github.com/owner/dsh-loop/tar.gz/${OLD}}\n`)
+
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+    expect(r.status).toBe(200)
+    expect(r.json.compatibility).toMatchObject({ code: 'soft-incompatible' })
+    expect(r.json.compatibility.risks[0]).toMatchObject({ direction: 'belowMin' })
+
+    const rollback = await bed.dispatch('POST', '/dsh-market/rollback', { rollbackId: r.json.compatibility.rollbackId })
+    expect(rollback.status).toBe(200)
+    expect(rollback.json.rolledBack).toBe(true)
+    expect(installedSpec('dsh-loop')).toBe('github:owner/dsh-loop')
+    const restored = JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf8')) as Record<string, unknown>
+    expect(restored.peerDependencies).toBeUndefined()
   })
 
   it('never offers or performs a downgrade when the latest dist-tag is older (#64 by @ZeroOrigin64)', async () => {
