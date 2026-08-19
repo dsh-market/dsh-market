@@ -698,6 +698,62 @@ describe('#60 enable/disable switches in the Installed tab', () => {
     // No restart banner — the toggle itself went live.
     expect(screen.queryAllByText(re(en.restartBanner)).length).toBe(0)
   })
+
+  it('merges a hot install and a toggle-refresh into ONE banner instead of stacking two ("三个状态横幅")', async () => {
+    stubFetch({
+      '/dsh-market/installed': {
+        profile: 'web',
+        installed: { 'dsh-notify': '^1.0.0' },
+        live: ['dsh-notify'],
+        disabled: [],
+        groups: {},
+        groupOrder: [],
+        activation: { 'dsh-notify': { state: 'live', reasons: [], bundle: true, hot: true } },
+      },
+      '/dsh-market/install': () => ({
+        ok: true,
+        hot: true,
+        installed: { 'dsh-notify': '^1.0.0', 'dsh-loop': '^1.0.0' },
+        activation: { 'dsh-loop': { state: 'live', reasons: [], bundle: true, hot: true } },
+      }),
+      '/dsh-market/toggle': () => ({
+        ok: true,
+        name: 'dsh-notify',
+        enabled: false,
+        disabled: ['dsh-notify'],
+        live: [],
+        restart: false,
+        refresh: true,
+        activation: { 'dsh-notify': { state: 'disabled', reasons: ['disabled'], bundle: true, hot: false } },
+      }),
+    })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+
+    const installButtonOf = (name: string) => {
+      let card: HTMLElement | null = screen.getByText(name)
+      while (card !== null && within(card).queryAllByRole('button', { name: en.install }).length === 0) {
+        card = card.parentElement
+      }
+      return within(card!).getAllByRole('button', { name: en.install })[0]!
+    }
+    fireEvent.click(installButtonOf('dsh-loop'))
+    await screen.findByRole('button', { name: en.confirm })
+    fireEvent.click(screen.getByRole('button', { name: en.confirm }))
+    await waitFor(() => expect(screen.getAllByText(re(en.refreshBanner)).length).toBeGreaterThan(0))
+
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    const sw = await screen.findByRole('switch', { name: en.disable + ' dsh-notify' })
+    fireEvent.click(sw)
+
+    await waitFor(() => {
+      // Both changes pending a reload, but ONE banner — the count reflects
+      // both plugins, not two separate near-identical strips stacked up.
+      const banners = screen.getAllByText(re(en.refreshBanner))
+      expect(banners.length).toBe(1)
+      expect(banners[0]!.textContent).toContain('2')
+    })
+  })
 })
 
 describe('#60 catalog deprecation', () => {
@@ -1062,8 +1118,8 @@ describe('status-poll / install-response race (#73)', () => {
         expect(screen.queryAllByText(re(en.restartBanner)).length).toBe(0)
         expect(sessionStorage.getItem('dshm-restart')).toBeNull()
       })
-      // Stable counterpart: the hot banner still shows the live mount.
-      expect(screen.getAllByText(re(en.hotBanner)).length).toBeGreaterThan(0)
+      // Stable counterpart: the (now-merged) refresh banner still shows the live mount.
+      expect(screen.getAllByText(re(en.refreshBanner)).length).toBeGreaterThan(0)
       // A same-boot remount must not resurrect the banner from stale storage.
       cleanup()
       sessionStorage.removeItem('dshm-tab')

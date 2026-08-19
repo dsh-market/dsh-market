@@ -87,7 +87,6 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			loadRetry: "重试",
 			installFail: "安装失败",
 			viewSource: "源码",
-			hotBanner: "个新插件已装好，刷新页面即可使用",
 			refreshBanner: "项变更需刷新页面生效",
 			refresh: "刷新页面",
 			update: "更新",
@@ -405,7 +404,6 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			loadRetry: "Retry",
 			installFail: "Install failed",
 			viewSource: "Source",
-			hotBanner: "new plugin(s) ready — refresh the page to use them",
 			refreshBanner: "change(s) applied — refresh the page to see them",
 			refresh: "Refresh",
 			update: "Update",
@@ -4249,6 +4247,16 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				return () => observer.disconnect();
 			}, [catsSentinel]);
 			const catsEffectivelyOpen = catsOpen && !catsStuck;
+			/**
+			* A fresh install (hotUrls/hotNames) and a toggle/group action
+			* (refreshNames) both end in the same place — "reload the page" — and
+			* used to render as two near-identical banners stacked on top of each
+			* other when both happened in one session (reported as "为啥有三个状态横幅
+			* 啊，太奇怪了"). They're merged into one count and one banner; only the
+			* restart banner (a full host restart, a different action entirely) stays
+			* separate.
+			*/
+			const pendingRefreshNames = (0, react.useMemo)(() => [.../* @__PURE__ */ new Set([...hotNames, ...refreshNames])], [hotNames, refreshNames]);
 			/** Installed plugins the market itself cannot group (#60). */
 			const groupableNames = Object.keys(installed).filter((name) => name !== "dsh-market" && name !== "dshmarket");
 			/** Names already inside some group; everything else shows under "ungrouped". */
@@ -4435,7 +4443,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									})
 								]
 							}),
-							hotUrls.length > 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+							pendingRefreshNames.length > 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 								className: Market_module_css_default.banner,
 								children: [
 									/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconSparkle16, {
@@ -4445,34 +4453,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
 										className: Market_module_css_default.grow,
 										children: [
-											/* @__PURE__ */ (0, react_jsx_runtime.jsx)("b", { children: hotUrls.length }),
-											" ",
-											t("hotBanner")
-										]
-									}),
-									/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-										variant: "primary",
-										size: "sm",
-										onClick: () => {
-											sessionStorage.setItem("dshm-toast", JSON.stringify(hotNames));
-											sessionStorage.setItem("dshm-tab", "installed");
-											location.reload();
-										},
-										children: t("refresh")
-									})
-								]
-							}),
-							refreshNames.length > 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-								className: Market_module_css_default.banner,
-								children: [
-									/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconRefreshOutline14, {
-										size: 14,
-										className: Market_module_css_default.bannerIcon
-									}),
-									/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
-										className: Market_module_css_default.grow,
-										children: [
-											/* @__PURE__ */ (0, react_jsx_runtime.jsx)("b", { children: refreshNames.length }),
+											/* @__PURE__ */ (0, react_jsx_runtime.jsx)("b", { children: pendingRefreshNames.length }),
 											" ",
 											t("refreshBanner")
 										]
@@ -4481,6 +4462,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 										variant: "primary",
 										size: "sm",
 										onClick: () => {
+											if (hotNames.length > 0) sessionStorage.setItem("dshm-toast", JSON.stringify(hotNames));
 											sessionStorage.setItem("dshm-tab", "installed");
 											location.reload();
 										},

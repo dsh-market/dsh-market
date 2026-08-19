@@ -1882,6 +1882,20 @@ export function MarketSection(props: MarketSectionProps) {
   // already-collapsed single row is nothing to restore later.
   const catsEffectivelyOpen = catsOpen && !catsStuck
 
+  /**
+   * A fresh install (hotUrls/hotNames) and a toggle/group action
+   * (refreshNames) both end in the same place — "reload the page" — and
+   * used to render as two near-identical banners stacked on top of each
+   * other when both happened in one session (reported as "为啥有三个状态横幅
+   * 啊，太奇怪了"). They're merged into one count and one banner; only the
+   * restart banner (a full host restart, a different action entirely) stays
+   * separate.
+   */
+  const pendingRefreshNames = useMemo(
+    () => [...new Set([...hotNames, ...refreshNames])],
+    [hotNames, refreshNames],
+  )
+
   /** Installed plugins the market itself cannot group (#60). */
   const groupableNames = Object.keys(installed).filter(name => name !== 'dsh-market' && name !== 'dshmarket')
   /** Names already inside some group; everything else shows under "ungrouped". */
@@ -1983,29 +1997,15 @@ export function MarketSection(props: MarketSectionProps) {
             </Button>
           </div>
         )}
-        {hotUrls.length > 0 && (
+        {pendingRefreshNames.length > 0 && (
           <div className={css.banner}>
             <IconSparkle16 size={14} className={css.bannerIcon} />
-            <span className={css.grow}><b>{hotUrls.length}</b> {t('hotBanner')}</span>
+            <span className={css.grow}><b>{pendingRefreshNames.length}</b> {t('refreshBanner')}</span>
             <Button
               variant="primary"
               size="sm"
               onClick={() => {
-                sessionStorage.setItem('dshm-toast', JSON.stringify(hotNames))
-                sessionStorage.setItem('dshm-tab', 'installed')
-                location.reload()
-              }}
-            >{t('refresh')}</Button>
-          </div>
-        )}
-        {refreshNames.length > 0 && (
-          <div className={css.banner}>
-            <IconRefreshOutline14 size={14} className={css.bannerIcon} />
-            <span className={css.grow}><b>{refreshNames.length}</b> {t('refreshBanner')}</span>
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={() => {
+                if (hotNames.length > 0) sessionStorage.setItem('dshm-toast', JSON.stringify(hotNames))
                 sessionStorage.setItem('dshm-tab', 'installed')
                 location.reload()
               }}
