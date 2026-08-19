@@ -311,6 +311,13 @@ export function MarketSection(props: MarketSectionProps) {
   const idleStrikes = useRef(0)
   const [doneUrls, setDoneUrls] = useState<string[]>([])
   const [installError, setInstallError] = useState<string | null>(null)
+  interface CompatibilityNotice {
+    code: 'soft-incompatible'
+    risks: Array<{ plugin: string; peer: string; range: string; resolved: string; direction: string }>
+    rollbackId: string
+  }
+  const [compatibilityNotice, setCompatibilityNotice] = useState<CompatibilityNotice | null>(null)
+  const [rollingBack, setRollingBack] = useState(false)
   /** Log export lifecycle for visible feedback (#84): idle → busy → done/fail. */
   const [exportState, setExportState] = useState<'idle' | 'busy' | 'done' | 'fail'>('idle')
 
@@ -756,6 +763,33 @@ export function MarketSection(props: MarketSectionProps) {
       .catch(error => setInstallError(String(error)))
   }, [])
 
+  const doRollback = useCallback((rollbackId: string) => {
+    setRollingBack(true)
+    setInstallError(null)
+    fetch('/dsh-market/rollback', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ rollbackId }),
+    })
+      .then(res => res.json().then(body => ({ status: res.status, body })))
+      .then(({ status, body }) => {
+        if (status === 200 && body.ok) {
+          setCompatibilityNotice(null)
+          refreshInstalled()
+        } else {
+          setInstallError(String(body.error || body.detail || 'rollback failed'))
+        }
+      })
+      .catch(error => setInstallError(String(error)))
+      .finally(() => setRollingBack(false))
+  }, [refreshInstalled])
+
+  const compatibilitySummary = (risks: CompatibilityNotice['risks']): string => {
+    if (risks.length === 0) return ''
+    const first = risks[0]
+    return `${first.plugin}: ${first.peer} ${first.range} vs ${first.resolved}`
+  }
+
   const doInstall = useCallback((plugin: RegistryPlugin) => {
     setBuildsSkipped(null)
     setConfirming(null)
@@ -804,6 +838,9 @@ export function MarketSection(props: MarketSectionProps) {
             setHotNames(names => names.includes(plugin.name) ? names : names.concat(plugin.name))
           } else {
             setDoneUrls(urls => urls.includes(plugin.url) ? urls : urls.concat(plugin.url))
+          }
+          if (body.compatibility?.code === 'soft-incompatible') {
+            setCompatibilityNotice(body.compatibility as CompatibilityNotice)
           }
           refreshInstalled()
         } else {
@@ -922,6 +959,9 @@ export function MarketSection(props: MarketSectionProps) {
           setUpdatedNames(names => names.concat(name))
           if (body.activation && typeof body.activation === 'object') {
             setActivations(prev => ({ ...prev, ...body.activation }))
+          }
+          if (body.compatibility?.code === 'soft-incompatible') {
+            setCompatibilityNotice(body.compatibility as CompatibilityNotice)
           }
           refreshInstalled()
         } else {
@@ -1856,6 +1896,17 @@ export function MarketSection(props: MarketSectionProps) {
                 .catch(error => setInstallError(String(error)))
             }}
           >{t('approveBuilds')}</Button>
+        </div>
+      )}
+      {compatibilityNotice !== null && (
+        <div className={css.banner}>
+          <span className={css.grow}>
+            <b>{t('compatRiskBanner')}</b> {compatibilitySummary(compatibilityNotice.risks)}
+          </span>
+          <Button variant="outline" size="sm" onClick={() => setTab('diagnostics')}>{t('goDiagnose')}</Button>
+          <Button variant="primary" size="sm" disabled={rollingBack} onClick={() => void doRollback(compatibilityNotice.rollbackId)}>
+            {rollingBack ? t('rollingBack') : t('rollbackNow')}
+          </Button>
         </div>
       )}
       {installError !== null && (

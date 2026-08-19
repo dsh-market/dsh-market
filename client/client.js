@@ -96,6 +96,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			busyWait: "已有操作正在进行，请等它结束（同一时间只执行一个安装/更新/卸载）",
 			agentBusyUpdate: "有 agent 正在运行，请等它完成或取消后再更新——更新会直接替换插件文件，工作中的 agent 可能中途报错或新旧版本混用。",
 			agentBusyInstall: "有 agent 正在运行，请等它完成或取消后再安装——安装会修改插件文件，工作中的 agent 可能中途报错。",
+			compatRiskBanner: "检测到兼容性风险，建议重启前到诊断页处理，或一键回滚本次操作。",
+			goDiagnose: "去诊断页修复",
+			rollbackNow: "一键回滚",
+			rollingBack: "回滚中…",
 			approveBuilds: "放行构建脚本并重试",
 			buildsSkipped: "该插件需要运行构建脚本才能工作，出于安全默认被拦下。点击下方按钮为它放行并重装：",
 			restartNow: "立即重启",
@@ -404,6 +408,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			busyWait: "Another operation is already running — please wait for it to finish (one install/update/uninstall at a time)",
 			agentBusyUpdate: "An agent is currently working — wait for it to finish (or cancel it) before updating. Updates replace plugin files in place, so a working agent can fail or mix versions mid-turn.",
 			agentBusyInstall: "An agent is currently working — wait for it to finish (or cancel it) before installing. Installing changes plugin files, so a working agent can fail mid-turn.",
+			compatRiskBanner: "Compatibility risk detected — open Diagnostics before restarting, or roll this operation back.",
+			goDiagnose: "Open Diagnostics",
+			rollbackNow: "Roll back",
+			rollingBack: "Rolling back…",
 			approveBuilds: "Allow build scripts and retry",
 			buildsSkipped: "This plugin needs its build scripts to run; they are blocked by default for safety. Click below to allow them and reinstall:",
 			restartNow: "Restart now",
@@ -2507,6 +2515,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const idleStrikes = (0, react.useRef)(0);
 			const [doneUrls, setDoneUrls] = (0, react.useState)([]);
 			const [installError, setInstallError] = (0, react.useState)(null);
+			const [compatibilityNotice, setCompatibilityNotice] = (0, react.useState)(null);
+			const [rollingBack, setRollingBack] = (0, react.useState)(false);
 			/** Log export lifecycle for visible feedback (#84): idle → busy → done/fail. */
 			const [exportState, setExportState] = (0, react.useState)("idle");
 			/**
@@ -2907,6 +2917,28 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					setTimeout(() => URL.revokeObjectURL(a.href), 2e3);
 				}).catch((error) => setInstallError(String(error)));
 			}, []);
+			const doRollback = (0, react.useCallback)((rollbackId) => {
+				setRollingBack(true);
+				setInstallError(null);
+				fetch("/dsh-market/rollback", {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({ rollbackId })
+				}).then((res) => res.json().then((body) => ({
+					status: res.status,
+					body
+				}))).then(({ status, body }) => {
+					if (status === 200 && body.ok) {
+						setCompatibilityNotice(null);
+						refreshInstalled();
+					} else setInstallError(String(body.error || body.detail || "rollback failed"));
+				}).catch((error) => setInstallError(String(error))).finally(() => setRollingBack(false));
+			}, [refreshInstalled]);
+			const compatibilitySummary = (risks) => {
+				if (risks.length === 0) return "";
+				const first = risks[0];
+				return `${first.plugin}: ${first.peer} ${first.range} vs ${first.resolved}`;
+			};
 			const doInstall = (0, react.useCallback)((plugin) => {
 				setBuildsSkipped(null);
 				setConfirming(null);
@@ -2953,6 +2985,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 							setHotUrls((urls) => urls.includes(plugin.url) ? urls : urls.concat(plugin.url));
 							setHotNames((names) => names.includes(plugin.name) ? names : names.concat(plugin.name));
 						} else setDoneUrls((urls) => urls.includes(plugin.url) ? urls : urls.concat(plugin.url));
+						if (body.compatibility?.code === "soft-incompatible") setCompatibilityNotice(body.compatibility);
 						refreshInstalled();
 					} else {
 						if (status === 409) {
@@ -3067,6 +3100,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 							...prev,
 							...body.activation
 						}));
+						if (body.compatibility?.code === "soft-incompatible") setCompatibilityNotice(body.compatibility);
 						refreshInstalled();
 					} else {
 						if (status === 409) {
@@ -4230,6 +4264,32 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									}).catch((error) => setInstallError(String(error)));
 								},
 								children: t("approveBuilds")
+							})
+						]
+					}),
+					compatibilityNotice !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+						className: Market_module_css_default.banner,
+						children: [
+							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
+								className: Market_module_css_default.grow,
+								children: [
+									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("b", { children: t("compatRiskBanner") }),
+									" ",
+									compatibilitySummary(compatibilityNotice.risks)
+								]
+							}),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+								variant: "outline",
+								size: "sm",
+								onClick: () => setTab("diagnostics"),
+								children: t("goDiagnose")
+							}),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+								variant: "primary",
+								size: "sm",
+								disabled: rollingBack,
+								onClick: () => void doRollback(compatibilityNotice.rollbackId),
+								children: rollingBack ? t("rollingBack") : t("rollbackNow")
 							})
 						]
 					}),

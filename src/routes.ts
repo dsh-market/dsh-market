@@ -24,6 +24,7 @@ import {
   type PluginCommandRuntime,
 } from './dsh-cli.ts'
 import { hasLoadableEntry, INBOX_BUNDLES, profileDir, readInstalled, readInstalledManifest, readInstalledVersion, readLockCommits, readManifestDeps, readProfileBundles, restoreManifestDeps, setAllowBuilds } from './profile.ts'
+import { assessProfile, introducedRisks, type CompatibilityRisk } from './compatibility.ts'
 import { runningAgentIds, type AgentsLookup } from './agents.ts'
 import { analyzeProfile } from './check.ts'
 import { applyBundleOrder, mergeOrder, readBundleRules, readBundleStack, validateOrder } from './order.ts'
@@ -372,6 +373,63 @@ export function mountMarketRoutes(
     const ok = reinstall.exitCode === 0 && !reinstall.timedOut && !reinstall.cancelled
     if (ok) logEvent('info', 'update', `${name}: previous build rematerialized (${rolledBack.join(', ')})`)
     return { ok, detail: ok ? null : (reinstall.stderr || reinstall.stdout).slice(-300) }
+  }
+
+  interface PendingRollback {
+    id: string
+    kind: 'update' | 'install'
+    names: string[]
+    manifestBefore?: Record<string, string>
+    /** github: updates must re-add the pre-update commit, not just reinstall. */
+    gitTarget?: string
+    beforeCommit?: string | null
+  }
+
+  const pendingRollbacks = new Map<string, PendingRollback>()
+  let rollbackSequence = 0
+
+  function savePendingRollback(record: Omit<PendingRollback, 'id'>): string {
+    const id = `rollback-${String(rollbackSequence++)}`
+    pendingRollbacks.set(id, { ...record, id })
+    return id
+  }
+
+  /** Restore a github: update by re-adding the commit captured before the update. */
+  async function rollbackGitBuild(
+    name: string,
+    manifestBefore: Record<string, string>,
+    target: string,
+    beforeCommit: string | null,
+  ): Promise<{ ok: boolean; detail: string | null }> {
+    if (beforeCommit === null) {
+      return { ok: false, detail: 'the previous commit is unknown; nothing to roll back to' }
+    }
+    restoreManifestDeps(config.profile, manifestBefore, activeProfileDir)
+    const add = await runPlugin(config.profile, ['add', RELEASE_AGE_OVERRIDE, `${target}#${beforeCommit}`])
+    if (add.exitCode !== 0 || add.timedOut || add.cancelled) {
+      return { ok: false, detail: (add.stderr || add.stdout).slice(-300) }
+    }
+    // pnpm wrote a commit-pinned spec; the profile's durable spec must stay
+    // the original `github:owner/repo` form. The lockfile keeps the restored
+    // commit resolution for the next boot.
+    restoreManifestDeps(config.profile, manifestBefore, activeProfileDir)
+    logEvent('info', 'update-rollback', `${name}: restored github build at ${beforeCommit}`)
+    return { ok: true, detail: null }
+  }
+
+  async function removeInstalledPackage(name: string): Promise<{ ok: boolean; hot: boolean; detail: string | null }> {
+    const result = await runPlugin(config.profile, ['remove', name])
+    if (result.exitCode !== 0 || result.timedOut || result.cancelled) {
+      return { ok: false, hot: false, detail: (result.stderr || result.stdout).slice(-300) }
+    }
+    let hot = false
+    hot = await hotUnmount(name)
+    if (!hot) hot = await themes.setEntryDisabled(name, true)
+    removeRowBlocks(userPatchPath, rowIdsForPackage(host, activeProfileDir, name))
+    disabled.delete(name)
+    removeFromGroups({ groups, groupOrder }, name)
+    writeMarketState(activeProfileDir, { disabled, groups, groupOrder })
+    return { ok: true, hot, detail: null }
   }
 
   async function restoreBackup(value: unknown): Promise<{ files: number; errors: { name: string; error: string }[] }> {
@@ -1200,6 +1258,8 @@ export function mountMarketRoutes(
             // RAW manifest snapshot for failure rollback (#65) — pnpm writes
             // package.json before it finishes, so a hard-failed add leaves
             // ghost/bumped entries that break every later pnpm run.
+            pendingRollbacks.clear()
+            const compatibilityBefore = assessProfile(config.profile, activeProfileDir)
             const manifestBefore = readManifestDeps(config.profile, activeProfileDir)
             const result = await runPlugin(config.profile, addArgs)
             const cancelled = result.cancelled
@@ -1267,6 +1327,7 @@ export function mountMarketRoutes(
                   `${name}: trial validation failed — ${first}${rollback.ok ? '; previous build restored' : `; could not restore previous files: ${rollback.detail ?? 'unknown'}`}`)
               }
             }
+            let compatibility: { code: 'soft-incompatible'; risks: CompatibilityRisk[]; rollbackId: string } | undefined
             if (ok) {
               invalidateUpdates()
               activation = {
@@ -1274,6 +1335,20 @@ export function mountMarketRoutes(
                   verifyActivation(config.profile, name, liveNames(), activeProfileDir, disabled.has(name)),
                   wasLive,
                 ),
+              }
+              const risks = introducedRisks(compatibilityBefore, assessProfile(config.profile, activeProfileDir))
+              if (risks.length > 0) {
+                compatibility = {
+                  code: 'soft-incompatible',
+                  risks,
+                  rollbackId: savePendingRollback({
+                    kind: 'update',
+                    names: [name],
+                    manifestBefore,
+                    ...(isGit ? { gitTarget: target, beforeCommit } : {}),
+                  }),
+                }
+                logEvent('warn', 'update-compat', `${name}: introduced host-compatibility risks — ${risks.map(risk => `${risk.peer}@${risk.range} vs ${risk.resolved}`).join('; ')}`)
               }
             }
             // Diagnose the stale outcome with EVIDENCE (#45 by @ayingQAQ):
@@ -1311,6 +1386,7 @@ export function mountMarketRoutes(
               partial: cancelDiff?.partial,
               changed: cancelDiff?.changed,
               activation,
+              compatibility,
               ignoredBuilds,
               staleReason: staleReason ?? undefined,
               error: trialError ?? brokenEntryError ?? staleError ?? undefined,
@@ -1702,6 +1778,7 @@ export function mountMarketRoutes(
               })
               return
             }
+            pendingRollbacks.clear()
             const beforeInstalled = readInstalled(config.profile, activeProfileDir)
             // isDisabled comes from the patch layer (#130) — keep it while the
             // lock moves into withMutationLock (#125).
@@ -1755,6 +1832,73 @@ export function mountMarketRoutes(
           const message = error instanceof Error ? error.message : String(error)
           host.logger?.warn(`[dsh-market] uninstall failed: ${message}`)
           logEvent('error', 'uninstall', `route error: ${message}`)
+          sendJson(response, 500, { error: message })
+        }
+      },
+    }),
+
+    host.webServer.register({
+      kind: 'exact',
+      path: '/dsh-market/rollback',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) {
+          sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        try {
+          await withMutationLock(response, 'install', async () => {
+            const body = (await readJsonBody(request)) as { rollbackId?: unknown }
+            const id = typeof body.rollbackId === 'string' ? body.rollbackId : ''
+            const pending = pendingRollbacks.get(id)
+            if (pending === undefined) {
+              sendJson(response, 400, { error: 'rollback is not available (it may have been superseded by another operation) / 回滚已不可用（可能已被后续操作覆盖）' })
+              return
+            }
+            let ok = true
+            let hot = false
+            let detail: string | null = null
+            if (pending.kind === 'update') {
+              const name = pending.names[0]!
+              const result = pending.gitTarget !== undefined
+                ? await rollbackGitBuild(name, pending.manifestBefore!, pending.gitTarget, pending.beforeCommit ?? null)
+                : await rollbackUpdateBuild(name, pending.manifestBefore!)
+              ok = result.ok
+              detail = result.detail
+            } else {
+              for (const name of pending.names) {
+                const result = await removeInstalledPackage(name)
+                hot ||= result.hot
+                if (!result.ok) {
+                  ok = false
+                  detail = result.detail
+                  break
+                }
+              }
+            }
+            if (ok) {
+              pendingRollbacks.delete(id)
+              invalidateUpdates()
+              logEvent('info', 'rollback', `${pending.kind}: ${pending.names.join(', ')} restored`)
+            } else {
+              logEvent('error', 'rollback', `${pending.kind}: ${pending.names.join(', ')} failed — ${detail ?? 'unknown'}`)
+            }
+            sendJson(response, ok ? 200 : 502, {
+              ok,
+              rolledBack: ok,
+              hot,
+              detail: detail ?? undefined,
+              installed: readInstalled(config.profile, activeProfileDir),
+            })
+          })
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          host.logger?.warn(`[dsh-market] rollback failed: ${message}`)
+          logEvent('error', 'rollback', `route error: ${message}`)
           sendJson(response, 500, { error: message })
         }
       },
@@ -1860,6 +2004,8 @@ export function mountMarketRoutes(
             const beforeSpecs = readInstalled(config.profile, activeProfileDir)
             const before = new Set(Object.keys(beforeSpecs))
             if (retryAlias !== null) before.delete(retryAlias)
+            pendingRollbacks.clear()
+            const compatibilityBefore = assessProfile(config.profile, activeProfileDir)
             // RAW manifest snapshot for failure rollback (#65): pnpm writes
             // package.json before the build-script check / registry fetches
             // run, so a hard-failed add leaves ghost dependencies that break
@@ -1907,8 +2053,11 @@ export function mountMarketRoutes(
             const installed = readInstalled(config.profile, activeProfileDir)
             let hot = false
             let activation: Record<string, ReturnType<typeof verifyActivation>> | undefined
+            let compatibility: { code: 'soft-incompatible'; risks: CompatibilityRisk[]; rollbackId: string } | undefined
+            let addedPackages: string[] = []
             if (ok) {
               const added = Object.keys(installed).filter(name => !before.has(name))
+              addedPackages = added
               if (added.length > 0) {
                 // Fresh installs start enabled: drop any stale disable flag
                 // (e.g. reinstall after an uninstall while this process kept
@@ -1931,6 +2080,17 @@ export function mountMarketRoutes(
                 }
               }
             }
+            if (ok && addedPackages.length > 0) {
+              const risks = introducedRisks(compatibilityBefore, assessProfile(config.profile, activeProfileDir))
+              if (risks.length > 0) {
+                compatibility = {
+                  code: 'soft-incompatible',
+                  risks,
+                  rollbackId: savePendingRollback({ kind: 'install', names: addedPackages }),
+                }
+                logEvent('warn', 'install-compat', `${addedPackages.join(', ')}: introduced host-compatibility risks — ${risks.map(risk => `${risk.peer}@${risk.range} vs ${risk.resolved}`).join('; ')}`)
+              }
+            }
             logEvent(ok || cancelled ? 'info' : 'error', 'install',
               `${target} exit=${String(result.exitCode)}${result.timedOut ? ' TIMEOUT' : ''}${cancelled ? ' CANCELLED' : ''}${ok ? ` hot=${String(hot)}` : cancelled ? '' : ` stderr=${result.stderr.slice(-300)}`}`)
             const ignoredBuilds = blockedBuilds(result)
@@ -1942,6 +2102,7 @@ export function mountMarketRoutes(
               partial: cancelDiff?.partial,
               changed: cancelDiff?.changed,
               activation,
+              compatibility,
               ignoredBuilds,
               // Blocked build scripts are expected (pnpm >= 10 blocks them by
               // default): surface the approve-builds banner instead of scaring

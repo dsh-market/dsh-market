@@ -1001,6 +1001,66 @@ describe('update flow — no npm publishing required', () => {
     expect(installedSpec('dsh-loop')).toBe('^1.0.0')
   })
 
+  it('flags a soft host-incompatible update and rolls back only that plugin (#195)', async () => {
+    const hostPeerDir = join(fake.profileDir, 'node_modules', '@deepseek-ai', 'dsh-settings')
+    mkdirSync(hostPeerDir, { recursive: true })
+    writeFileSync(join(hostPeerDir, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh-settings', version: '0.1.0-rc.6' }))
+    fake.npm['dsh-loop'].latest = '1.2.0'
+    fake.npm['dsh-loop'].versions['1.2.0'] = {
+      manifest: {
+        dsh: {},
+        main: 'lib/index.js',
+        peerDependencies: { '@deepseek-ai/dsh-settings': '^0.1.0-rc.7' },
+      },
+      artifacts: ['lib/index.js'],
+    }
+    vi.stubGlobal('fetch', () => Promise.resolve(new Response(JSON.stringify({ version: '1.2.0' }), { status: 200 })))
+
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+    expect(r.status).toBe(200)
+    expect(r.json.ok).toBe(true)
+    expect(r.json.compatibility).toMatchObject({
+      code: 'soft-incompatible',
+      risks: [{ plugin: 'dsh-loop', peer: '@deepseek-ai/dsh-settings', direction: 'belowMin' }],
+    })
+
+    const rollback = await bed.dispatch('POST', '/dsh-market/rollback', { rollbackId: r.json.compatibility.rollbackId })
+    expect(rollback.status).toBe(200)
+    expect(rollback.json.rolledBack).toBe(true)
+    expect(installedSpec('dsh-loop')).toBe('^1.0.0')
+    const manifest = JSON.parse(readFileSync(join(fake.profileDir, 'node_modules', 'dsh-loop', 'package.json'), 'utf8')) as { version?: string }
+    expect(manifest.version).toBe('1.0.0')
+  })
+
+  it('flags a soft host-incompatible install and rolls back the newly added plugin (#195)', async () => {
+    await bed.dispatch('POST', '/dsh-market/uninstall', { name: 'dsh-loop' })
+    const hostPeerDir = join(fake.profileDir, 'node_modules', '@deepseek-ai', 'dsh-settings')
+    mkdirSync(hostPeerDir, { recursive: true })
+    writeFileSync(join(hostPeerDir, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh-settings', version: '0.1.0-rc.6' }))
+    fake.npm['dsh-loop'] = {
+      latest: '1.0.0',
+      versions: {
+        '1.0.0': {
+          manifest: {
+            dsh: {},
+            main: 'lib/index.js',
+            peerDependencies: { '@deepseek-ai/dsh-settings': '^0.1.0-rc.7' },
+          },
+          artifacts: ['lib/index.js'],
+        },
+      },
+    }
+    const install = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
+    expect(install.status).toBe(200)
+    expect(install.json.compatibility).toMatchObject({ code: 'soft-incompatible' })
+
+    const rollback = await bed.dispatch('POST', '/dsh-market/rollback', { rollbackId: install.json.compatibility.rollbackId })
+    expect(rollback.status).toBe(200)
+    expect(rollback.json.rolledBack).toBe(true)
+    expect(installedSpec('dsh-loop')).toBeUndefined()
+    expect(existsSync(join(fake.profileDir, 'node_modules', 'dsh-loop'))).toBe(false)
+  })
+
   it('never offers or performs a downgrade when the latest dist-tag is older (#64 by @ZeroOrigin64)', async () => {
     // A package whose `latest` tag was left on its first release while newer
     // prereleases shipped: latest 0.0.1 is BELOW the installed 1.0.0.

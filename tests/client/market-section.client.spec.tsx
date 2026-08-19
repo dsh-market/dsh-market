@@ -313,6 +313,34 @@ describe('MarketSection (jsdom)', () => {
     expect(screen.queryByText(en.busyWait)).toBeNull()
   })
 
+  it('shows a compatibility-risk banner after an update and rolls back on demand (#195)', async () => {
+    const fetchMock = stubFetch({
+      '/dsh-market/installed': { profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: [] },
+      '/dsh-market/updates': { updates: { 'dsh-loop': { kind: 'npm', version: '1.0.0', current: '1.0.0', latest: '1.2.0', updateAvailable: true } } },
+      '/dsh-market/update': {
+        ok: true,
+        activation: { 'dsh-loop': { state: 'restart', hot: false, bundle: true, reasons: ['restart to apply'] } },
+        compatibility: {
+          code: 'soft-incompatible',
+          risks: [{ plugin: 'dsh-loop', peer: '@deepseek-ai/dsh-settings', range: '^0.1.0-rc.7', resolved: '0.1.0-rc.6', direction: 'belowMin' }],
+          rollbackId: 'rollback-1',
+        },
+      },
+      '/dsh-market/rollback': { ok: true, rolledBack: true },
+    })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    const updateButton = await screen.findByRole('button', { name: en.update })
+    fireEvent.click(updateButton)
+    expect(await screen.findByText(en.compatRiskBanner)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: en.rollbackNow }))
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([url]) => url === '/dsh-market/rollback')).toBe(true)
+    })
+    expect(screen.queryByText(en.compatRiskBanner)).toBeNull()
+  })
+
   it('paginates the discover grid and navigates by page number', async () => {
     const plugins = Array.from({ length: 30 }, (_, i) => ({
       name: 'dsh-p' + (i + 1),
