@@ -104,6 +104,29 @@ export interface OrphanRow {
   reason: string
 }
 
+/** Directional verdict for one confirmed peer mismatch (issue #201 diagnostics). */
+export interface PeerRisk {
+  plugin: string
+  peer: string
+  range: string
+  resolved: string
+  direction: 'belowMin' | 'aboveMax'
+}
+
+export interface PeerWarning {
+  plugin: string
+  peer: string
+  range: string
+  resolved: string
+  reason: 'aboveMax' | 'optional'
+}
+
+/** classifyPeer result: risk / warning / none — none means informational. */
+export type PeerVerdict =
+  | { kind: 'risk'; risk: PeerRisk }
+  | { kind: 'warning'; warning: PeerWarning }
+  | { kind: 'none' }
+
 /** A plugin peerDependencies range vs the resolved version. */
 export interface PeerMismatch {
   plugin: string
@@ -112,6 +135,10 @@ export interface PeerMismatch {
   resolved: string | null
   /** False = confirmed incompatible; null = could not be evaluated. */
   satisfied: boolean | null
+  /** Declared optional in peerDependenciesMeta (warning tier, not risk). */
+  optional: boolean
+  /** Attached by /dsh-market/check: classifyPeer verdict for `satisfied === false` rows. */
+  verdict?: PeerVerdict
 }
 
 /**
@@ -820,7 +847,7 @@ export function analyzeProfile(profileDirectory: string, options: CheckOptions =
   const peerMismatches: PeerMismatch[] = []
   const seenDeps = new Set<string>()
   for (const plugin of installedPackageNames(profileDirectory)) {
-    let pkg: { peerDependencies?: Record<string, string> }
+    let pkg: { peerDependencies?: Record<string, string>; peerDependenciesMeta?: Record<string, { optional?: unknown }> }
     try {
       pkg = JSON.parse(readFileSync(join(profileDirectory, 'node_modules', plugin, 'package.json'), 'utf8')) as typeof pkg
     } catch {
@@ -844,9 +871,11 @@ export function analyzeProfile(profileDirectory: string, options: CheckOptions =
       // plugin-to-plugin peer mismatches break runtime registration just as
       // hard (issue #98 optimization round).
       const satisfied = resolved !== null ? satisfiesRange(resolved, spec) : null
+      const optional = pkg.peerDependenciesMeta?.[name]?.optional === true
       peerMismatches.push({
         plugin, name, range: spec, resolved,
         satisfied: satisfied === null ? null : satisfied,
+        optional,
       })
     }
   }

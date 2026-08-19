@@ -17,24 +17,13 @@
  * unparseable ranges, and optional peers never produce a risk here.
  */
 
-import { analyzeProfile, compareSemver, type CheckOptions, type DuplicateName, type PeerMismatch } from './check.ts'
+import { analyzeProfile, compareSemver, type CheckOptions, type DuplicateName, type PeerMismatch, type PeerRisk, type PeerWarning, type PeerVerdict } from './check.ts'
 import { profileDir, readInstalledManifest } from './profile.ts'
 
-export interface CompatibilityRisk {
-  plugin: string
-  peer: string
-  range: string
-  resolved: string
-  direction: 'belowMin' | 'aboveMax'
-}
-
-export interface CompatibilityWarning {
-  plugin: string
-  peer: string
-  range: string
-  resolved: string
-  reason: 'aboveMax' | 'optional'
-}
+export type CompatibilityRisk = PeerRisk
+export type CompatibilityWarning = PeerWarning
+/** Re-exported so consumers can keep importing PeerVerdict from this module. */
+export type { PeerVerdict }
 
 export interface CompatibilityAssessment {
   risks: CompatibilityRisk[]
@@ -51,11 +40,6 @@ export interface CompatibilityAssessment {
    */
   duplicateNames: DuplicateName[]
 }
-
-export type PeerVerdict =
-  | { kind: 'risk'; risk: CompatibilityRisk }
-  | { kind: 'warning'; warning: CompatibilityWarning }
-  | { kind: 'none' }
 
 interface ParsedComparator {
   op: 'exact' | '^' | '~' | '>=' | '>' | '<=' | '<'
