@@ -2103,7 +2103,7 @@ export function MarketSection(props: MarketSectionProps) {
                   <>
                     <div className={css.stickyHead}>
                     <div className={css.tabSearchRow}>
-                      <Input className={css.tabSearch} icon={<IconSearchOutline16 size={14} />} placeholder={t('searchPh')} value={q} onChange={e => setQ(e.target.value)} />
+                      <Input className={css.tabSearchWide} icon={<IconSearchOutline16 size={14} />} placeholder={t('searchPh')} value={q} onChange={e => setQ(e.target.value)} />
                     </div>
                     <div className={css.cats}>
                       <div className={css.catsRow}>
@@ -2229,7 +2229,7 @@ export function MarketSection(props: MarketSectionProps) {
             ? (
                 <>
                   <div className={css.tabSearchRow}>
-                    <Input className={css.tabSearch} icon={<IconSearchOutline16 size={14} />} placeholder={t('searchPh')} value={qThemes} onChange={e => setQThemes(e.target.value)} />
+                    <Input className={css.tabSearchWide} icon={<IconSearchOutline16 size={14} />} placeholder={t('searchPh')} value={qThemes} onChange={e => setQThemes(e.target.value)} />
                   </div>
                   {/* Light/dark/system live in the official Appearance setting; this
                     tab only shows what that setting can't: registered third-party
@@ -2255,12 +2255,12 @@ export function MarketSection(props: MarketSectionProps) {
             ? <Diagnostics t={t} />
             : (
                 <>
+                  <div className={css.tabSearchRow}>
+                    <Input className={css.tabSearchWide} icon={<IconSearchOutline16 size={14} />} placeholder={t('searchPh')} value={qInstalled} onChange={e => setQInstalled(e.target.value)} />
+                  </div>
                   <div className={css.viewBar}>
                     <button type="button" className={installedView === 'list' ? `${css.viewBtn} ${css.viewOn}` : css.viewBtn} onClick={() => setInstalledView('list')}>{t('tabList')}</button>
                     <button type="button" className={installedView === 'groups' ? `${css.viewBtn} ${css.viewOn}` : css.viewBtn} onClick={() => setInstalledView('groups')}>{t('tabGroups')}</button>
-                  </div>
-                  <div className={css.tabSearchRow}>
-                    <Input className={css.tabSearch} icon={<IconSearchOutline16 size={14} />} placeholder={t('searchPh')} value={qInstalled} onChange={e => setQInstalled(e.target.value)} />
                   </div>
                   {installedView === 'groups'
                       ? (

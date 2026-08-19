@@ -6,7 +6,7 @@
  * primitive (progress bar, banners, tabs, swatches). */
 
 .root{height:100%;display:flex;flex-direction:column;min-width:0;color:var(--dsw-alias-label-primary,#1f2328);position:relative}
-.head{display:flex;flex-direction:column;gap:12px;padding:4px 4px 12px}
+.head{display:flex;flex-direction:column;gap:12px;padding:4px 4px 0}
 .title{font-size:16px;line-height:24px;font-weight:500;margin:0}
 .sub{display:flex;align-items:center;gap:8px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#8b93a1);margin:0}
 .tabs{display:flex;gap:2px;border-bottom:1px solid var(--dsw-alias-border-l2,#e5e7eb);align-items:flex-end}
@@ -15,7 +15,7 @@
 .banner{display:flex;align-items:center;gap:8px;background:var(--dsw-alias-bg-layer-2,#fdf3e3);border:1px solid var(--dsw-alias-border-l2,#f3e3c3);border-radius:8px;padding:8px 12px;font-size:12px;margin:0}
 .bannerIcon{flex-shrink:0;color:var(--dsw-alias-label-secondary,#6b7280)}
 .bannerHint{display:inline-flex;color:var(--dsw-alias-label-tertiary,#8b93a1);cursor:help}
-.body{flex:1;overflow-y:auto;padding:12px 4px 24px;overflow-x:hidden}
+.body{flex:1;overflow-y:auto;padding:4px 4px 24px;overflow-x:hidden}
 /* Sticky, so the search box and the category row both stay reachable while
    the grid scrolls — they used to stick separately (only .cats did), which
    left the search row to scroll away under .head's fixed title/tabs strip,
@@ -37,9 +37,9 @@
    ::before paints that strip in the same background and inherits the row's
    z-index, so the row covers what it cannot reach. Fixing it by removing the
    scroller's padding would re-space all five tabs to repair one. */
-.stickyHead{position:sticky;top:-1px;z-index:5;background:var(--dsw-alias-bg-layer-2,#f7f8fa)}
-.stickyHead::before{content:'';position:absolute;left:0;right:0;bottom:100%;height:14px;background:inherit;pointer-events:none}
-.cats{padding:12px 4px 4px;margin:0 -4px 2px}
+.stickyHead{position:sticky;top:0;z-index:5;background:var(--dsw-alias-bg-layer-2,#f7f8fa)}
+.stickyHead::before{content:'';position:absolute;left:0;right:0;bottom:100%;height:4px;background:inherit;pointer-events:none}
+.cats{padding:4px;margin:0 -4px 2px}
 .catsRow{display:flex;gap:8px;align-items:flex-start;position:relative}
 .star{font-size:11px;color:var(--dsw-alias-label-secondary,#9ca3af)}
 .top{position:absolute;right:18px;bottom:18px;z-index:20;display:inline-flex}
@@ -137,8 +137,10 @@
 .irowMissing{filter:grayscale(1);opacity:.5}
 .irow>.src,.irow>.owner{white-space:nowrap;flex-shrink:0}
 .irow button{white-space:nowrap;flex-shrink:0}
-.tabSearchRow{display:flex;padding:0 4px 10px}
-.tabSearch{width:260px}
+.tabSearchRow{display:flex;padding:8px 4px 8px}
+/* Discover, Themes & Installed: the search field spans the full row so its
+   left/right edges line up with the list below it. */
+.tabSearchWide{flex:1;min-width:0}
 /* Buttons sharing the row with a description must keep one line (#26, thanks @yanshuai2002) */
 .spec{font-size:11px;color:var(--dsw-alias-label-secondary,#9ca3af);font-family:ui-monospace,Menlo,monospace;overflow-wrap:anywhere;min-width:0}
 .specTag{display:inline-flex;align-items:center;height:16px;padding:0 5px;border-radius:4px;font-size:10px;font-weight:600;white-space:nowrap;flex-shrink:0}
@@ -164,7 +166,7 @@
 .switchKnob{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:99px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.25);transition:left .15s ease}
 .switchOn .switchKnob,.switchMixed .switchKnob{left:18px}
 .switch:disabled{opacity:.5;cursor:default}
-.viewBar{display:flex;gap:2px;align-items:center;border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:8px;padding:2px;margin-bottom:12px;width:fit-content}
+.viewBar{display:flex;gap:2px;align-items:center;border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:8px;padding:2px;margin:0 4px 12px auto;width:fit-content}
 .viewBtn{border:none;background:none;font:inherit;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#6b7280);padding:4px 10px;border-radius:6px;cursor:pointer;white-space:nowrap}
 .viewBtn:hover{color:var(--dsw-alias-brand-primary,#4f6ef7)}
 .viewOn{background:var(--dsw-alias-bg-layer-2,#eef0f4);color:var(--dsw-alias-label-primary,#1f2328);font-weight:600}
