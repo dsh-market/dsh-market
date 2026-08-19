@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from 'vitest'
 import {
-  entryForDep, extractReadmeImages, groupSwitchState, isInstalled, matchInstalledName, orderedCategories, pageItems, safeScreenshots, themePlugins, visiblePlugins, humanOutput} from '../src/client/market-data.ts'
+  entryForDep, extractReadmeImages, formatCount, groupSwitchState, isInstalled, isMarketItself, matchInstalledName, orderedCategories, pageItems, safeScreenshots, themePlugins, visiblePlugins, humanOutput} from '../src/client/market-data.ts'
 import type { RegistryPlugin } from '../src/client/market-data.ts'
 
 function plugin(partial: Partial<RegistryPlugin>): RegistryPlugin {
@@ -339,5 +339,40 @@ describe('humanOutput', () => {
   it('leaves ordinary output and malformed lines alone', () => {
     expect(humanOutput('plain error\n{not json\n')).toBe('plain error\n{not json')
     expect(humanOutput('')).toBe('')
+  })
+})
+
+describe('formatCount', () => {
+  it('shows the exact number under 1000, where precision is the point', () => {
+    expect(formatCount(0)).toBe('0')
+    expect(formatCount(999)).toBe('999')
+  })
+
+  it('abbreviates 1000 and above to one decimal, dropping a trailing .0', () => {
+    expect(formatCount(1000)).toBe('1k')
+    expect(formatCount(1086)).toBe('1.1k')
+    expect(formatCount(11862)).toBe('11.9k')
+    expect(formatCount(20006)).toBe('20k')
+    expect(formatCount(999_999)).toBe('1000k')
+  })
+})
+
+describe('isMarketItself / visiblePlugins excludes the market from Discover', () => {
+  it('matches the market by catalog name or npm package, not by owner or category', () => {
+    expect(isMarketItself(plugin({ name: 'dsh-market', npm: undefined }))).toBe(true)
+    expect(isMarketItself(plugin({ name: 'anything', npm: 'dshmarket' }))).toBe(true)
+    expect(isMarketItself(plugin({ name: 'dsh-market-clone', npm: 'not-dshmarket' }))).toBe(false)
+  })
+
+  it('never appears in the discover list, even with no filter applied at all', () => {
+    const withSelf = [
+      plugin({ name: 'dsh-market', npm: 'dshmarket', category: 'market' }),
+      plugin({ name: 'dsh-loop', category: 'tool' }),
+    ]
+    // A store has no reason to sell itself to someone already standing in
+    // it — this holds regardless of category/search, so no query is needed
+    // to prove it; the plain, unfiltered listing already excludes it.
+    expect(visiblePlugins(withSelf, { category: 'all', query: '', lang: 'en', sort: 'x' }).map(p => p.name))
+      .toEqual(['dsh-loop'])
   })
 })

@@ -36,7 +36,7 @@ import css from './Market.module.css'
 import { Diagnostics } from './Diagnostics.tsx'
 import {
   avatarColor, entryForDep, groupSwitchState, humanOutput, isInstalled, looksTerminal, matchInstalledName, orderedCategories,
-  pageItems, pluginName, pluginScreenshots, readSession, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
+  formatCount, pageItems, pluginName, pluginScreenshots, readSession, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
 } from './market-data.ts'
 import type {
 ActivationInfo, ActivationState, GistExportResult, InstalledMap, MarketStatus, Registry, RegistryPlugin,
@@ -1503,11 +1503,11 @@ export function MarketSection(props: MarketSectionProps) {
               <OwnerAvatar name={p.name} owner={p.owner || ''} />
               <span className={css.owner}>
                 {p.owner}
-                {typeof p.downloads === 'number' && <span className={css.star} title={t('sortDownloads')}>{' · ↓ ' + p.downloads}</span>}
-                {typeof p.stars === 'number' && <span className={css.star}>{' · ★ ' + p.stars}</span>}
-                {p.added && <span className={css.star}>{' · ' + t('published') + ' ' + p.added}</span>}
+                {typeof p.downloads === 'number' && <span className={css.star} title={String(p.downloads)}>{' · ↓ ' + formatCount(p.downloads)}</span>}
+                {typeof p.stars === 'number' && <span className={css.star} title={String(p.stars)}>{' · ★ ' + formatCount(p.stars)}</span>}
               </span>
             </div>
+            {p.added && <div className={css.meta}>{t('published') + ' ' + p.added}</div>}
           </div>
           <span className={css.grow} />
           {/* Ghost, not outline. A bordered button here read as the card's
@@ -1609,11 +1609,11 @@ export function MarketSection(props: MarketSectionProps) {
               <OwnerAvatar name={p.name} owner={p.owner || ''} />
               <span className={css.owner}>
                 {p.owner}
-                {typeof p.downloads === 'number' && <span className={css.star} title={t('sortDownloads')}>{' · ↓ ' + p.downloads}</span>}
-                {typeof p.stars === 'number' && <span className={css.star}>{' · ★ ' + p.stars}</span>}
-                {p.added && <span className={css.star}>{' · ' + t('published') + ' ' + p.added}</span>}
+                {typeof p.downloads === 'number' && <span className={css.star} title={String(p.downloads)}>{' · ↓ ' + formatCount(p.downloads)}</span>}
+                {typeof p.stars === 'number' && <span className={css.star} title={String(p.stars)}>{' · ★ ' + formatCount(p.stars)}</span>}
               </span>
             </div>
+            {p.added && <div className={css.meta}>{t('published') + ' ' + p.added}</div>}
           </div>
           <span className={css.grow} />
           {/* Ghost, not outline. A bordered button here read as the card's

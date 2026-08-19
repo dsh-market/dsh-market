@@ -214,6 +214,16 @@ export interface ListQuery {
 }
 
 /**
+ * Whether a catalog entry IS the market itself. The catalog still carries
+ * it — nothing about the data changes, and the Installed tab still shows it
+ * — this is purely "a store has no reason to sell itself to someone already
+ * standing in it."
+ */
+export function isMarketItself(plugin: Pick<RegistryPlugin, 'name' | 'npm'>): boolean {
+  return plugin.name === 'dsh-market' || plugin.npm === 'dshmarket'
+}
+
+/**
  * The discover list: category filter, then the published-within window, then
  * search across name / owner / localized description, then the selected sort.
  * Pure — the section renders exactly this.
@@ -221,6 +231,7 @@ export interface ListQuery {
 export function visiblePlugins(plugins: RegistryPlugin[], options: ListQuery): RegistryPlugin[] {
   const query = options.query.trim().toLowerCase()
   const list = plugins.filter((p) => {
+    if (isMarketItself(p)) return false
     if (options.category !== 'all' && p.category !== options.category) return false
     if (options.sinceDays !== undefined && !withinDays(p.added, options.sinceDays)) return false
     if (query === '') return true
@@ -621,4 +632,19 @@ export function pluginName(name: string): string {
   // A sub-path that is empty or trailing-slashed tells us nothing; the
   // repository half is a better answer than an empty title.
   return leaf === '' ? name.slice(0, hash) : leaf
+}
+
+/**
+ * Compact display for a count that can run into the tens of thousands
+ * (npm downloads, star counts): "11.9k" instead of "11862". Reported —
+ * the raw number made the card byline visibly cramped once downloads was
+ * added alongside stars.
+ *
+ * Below 1000 the exact number is shown; a small count is exactly the case
+ * where the precision matters and abbreviating it buys nothing.
+ */
+export function formatCount(n: number): string {
+  if (!Number.isFinite(n) || n < 1000) return String(n)
+  const k = Math.round(n / 100) / 10
+  return `${Number.isInteger(k) ? k.toFixed(0) : k.toFixed(1)}k`
 }
