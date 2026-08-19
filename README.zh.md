@@ -9,7 +9,7 @@
 [![npm](https://img.shields.io/npm/v/dshmarket)](https://www.npmjs.com/package/dshmarket)
 [![stars](https://img.shields.io/github/stars/dsh-market/dsh-market?style=flat)](https://github.com/dsh-market/dsh-market)
 
-> **不推荐、不支持 `anywhere-labs/deepseek-harness-desktop`，更不会刻意支持它单方面要求的强制协议，也不会要求本市场收录的插件适配这套协议。** 推荐使用已内嵌本插件市场的 [dsh-desktop](https://github.com/dataelement/dsh-desktop)、[deepseek-harness-desktop](https://github.com/hairyf/deepseek-harness-desktop)，以及其他优秀第三方客户端。
+> `dsh-market` 本身不依赖任何特定客户端，装在任意兼容 DeepSeek Harness 协议的宿主里都能用。我们正在与 `anywhere-labs/deepseek-harness-desktop` 沟通后续合作事宜，有进展会在这里同步。推荐使用已内嵌本插件市场的 [dsh-desktop](https://github.com/dataelement/dsh-desktop)、[deepseek-harness-desktop](https://github.com/hairyf/deepseek-harness-desktop)，以及其他优秀第三方客户端。
 
 装在 DeepSeek Harness 里的插件市场。打开设置 → **插件市场** → 逛一逛，点一下，装好。
 
@@ -33,8 +33,8 @@ dsh plugin --profile web add dshmarket
 
 ## 你会得到
 
-- **逛与搜**——完整社区目录（1250+ 插件，每天在涨），分类筛选、star 数、最热/最新排序，中英描述跟随界面语言
-- **截图展示**——安装弹窗内 App Store 式截图：作者可在 registry 里策展，没有则自动从 README 抽取；图片仅从 GitHub 图床加载，且只在你打开弹窗后才发请求
+- **逛与搜**——完整社区目录（1550+ 插件，每天在涨），分类筛选、star 数、最热/最新排序，中英描述跟随界面语言
+- **截图展示**——App Store 式截图，多图自动轮播，点开还能看大图；作者在 registry 里策展的截图列表卡片就直接显示（零额外请求），没有策展的插件则在打开安装弹窗时自动从 README 抽取；图片仅从 GitHub 图床加载
 - **主题**——独立主题页：装完立即生效，点一下切换（主题互斥、选择跨重启保留），卸载即恢复
 - **一键安装**——确认来源，实时进度；多数插件刷新页面即可用，无需重启
 - **备份与恢复**——把 profile 的插件清单与配置导出为可读 JSON，换机导入，存到 WebDAV 并每日自动备份，或通过私有 GitHub Gist 跨机器同步；恢复采用**合并**方式（备份之后新装的插件会保留），写入前校验、失败自动回滚
@@ -77,7 +77,7 @@ dsh plugin --profile web add dshmarket
 
 ## 数据源
 
-实时来自 [awesome-dsh-plugin.com/plugins.json](https://awesome-dsh-plugin.com/plugins.json)——精选条目、npm 映射、star 数由 CI 每日刷新——内置快照做离线兜底。
+每次打开都实时请求 [awesome-dsh-plugin.com/plugins.json](https://awesome-dsh-plugin.com/plugins.json)——精选条目、npm 映射、star 数由 CI 每日刷新，不使用过期缓存兜底；连不上时会给出具体原因和耗时，并提供「重试」按钮。
 
 ## 友情链接
 
