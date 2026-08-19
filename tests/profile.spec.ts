@@ -6,9 +6,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import {
-  conflictingEntryIds, entryArtifactExists, hasDshManifest, pluginSubdirs, profileDir,
+  conflictingEntryIds, entryArtifactExists, hasDshManifest, hasLoadableEntry, pluginSubdirs, profileDir,
   readInstalled, readInstalledManifest, readInstalledVersion, readLockCommits,
 } from '../src/profile.ts'
 
@@ -116,6 +116,70 @@ describe('hasDshManifest / entryArtifactExists (#18 boot-brick guards)', () => {
     expect(entryArtifactExists(pkg)).toBe(false)
     writeFileSync(join(pkg, 'index.js'), '')
     expect(entryArtifactExists(pkg)).toBe(true)
+  })
+})
+
+describe('hasLoadableEntry — carrier bundles (#203)', () => {
+  /** A minimal loadable package: name only, index.js falls back and exists. */
+  function writeLoadable(dir: string): void {
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'package.json'), '{"name":"x"}')
+    writeFileSync(join(dir, 'index.js'), '')
+  }
+
+  it('finds a mount target hoisted to the workspace root, one level above the profile', () => {
+    // Reported shape exactly: a carrier (config-only, no entry of its own)
+    // whose cordis.patch.yml names an in-box package that pnpm hoisted to
+    // `<profiles>/node_modules` — one directory above `profiles/web` — because
+    // the profile is a workspace member. Neither of the two locations this
+    // function checked before #203 (the profile's own node_modules, and
+    // nested under the carrier) is that directory.
+    const profile = writeProfile({})
+    const carrier = join(profile, 'node_modules', 'dsh-ouroboros')
+    mkdirSync(carrier, { recursive: true })
+    writeFileSync(join(carrier, 'package.json'), '{"dsh":{"bundle":{"patch":"cordis.patch.yml"}}}')
+    writeFileSync(
+      join(carrier, 'cordis.patch.yml'),
+      "- name: '@deepseek-ai/dsh-mcp-client'\n  config: {}\n",
+    )
+    // Not present in the profile's own node_modules or nested under the
+    // carrier — a real in-box install lives one level up.
+    writeLoadable(join(dirname(profile), 'node_modules', '@deepseek-ai', 'dsh-mcp-client'))
+
+    expect(hasLoadableEntry(profile, 'dsh-ouroboros')).toBe(true)
+  })
+
+  it('still finds a target the profile itself installed, unaffected by the fix', () => {
+    const profile = writeProfile({})
+    const carrier = join(profile, 'node_modules', 'carrier')
+    mkdirSync(carrier, { recursive: true })
+    writeFileSync(join(carrier, 'package.json'), '{"dsh":{"bundle":{"patch":"cordis.patch.yml"}}}')
+    writeFileSync(join(carrier, 'cordis.patch.yml'), "- name: 'sibling-plugin'\n  config: {}\n")
+    writeLoadable(join(profile, 'node_modules', 'sibling-plugin'))
+
+    expect(hasLoadableEntry(profile, 'carrier')).toBe(true)
+  })
+
+  it('still finds a target nested under the carrier itself, unaffected by the fix', () => {
+    const profile = writeProfile({})
+    const carrier = join(profile, 'node_modules', 'carrier')
+    mkdirSync(carrier, { recursive: true })
+    writeFileSync(join(carrier, 'package.json'), '{"dsh":{"bundle":{"patch":"cordis.patch.yml"}}}')
+    writeFileSync(join(carrier, 'cordis.patch.yml'), "- name: 'nested-dep'\n  config: {}\n")
+    writeLoadable(join(carrier, 'node_modules', 'nested-dep'))
+
+    expect(hasLoadableEntry(profile, 'carrier')).toBe(true)
+  })
+
+  it('refuses a carrier whose target genuinely does not exist anywhere', () => {
+    const profile = writeProfile({})
+    const carrier = join(profile, 'node_modules', 'carrier')
+    mkdirSync(carrier, { recursive: true })
+    writeFileSync(join(carrier, 'package.json'), '{"dsh":{"bundle":{"patch":"cordis.patch.yml"}}}')
+    writeFileSync(join(carrier, 'cordis.patch.yml'), "- name: 'nowhere-to-be-found'\n  config: {}\n")
+    // Nothing written for the target in any of the three locations.
+
+    expect(hasLoadableEntry(profile, 'carrier')).toBe(false)
   })
 })
 

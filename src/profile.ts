@@ -6,7 +6,7 @@
 
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 /**
  * Resolve a profile name to its directory under DSH_HOME (default ~/.dsh).
@@ -343,11 +343,20 @@ export function hasLoadableEntry(profileDirectory: string, name: string): boolea
   const dir = join(profileDirectory, 'node_modules', name)
   if (entryArtifactExists(dir)) return true
   // A carrier is only sound when something it mounts is itself loadable.
-  // Targets resolve hoisted (the dsh profile default) or nested under it.
+  // Targets resolve hoisted (the dsh profile default), nested under the
+  // carrier, or — #203 — one level up: pnpm hoists shared/in-box packages to
+  // `<profiles>/node_modules` when the profile is a workspace member, the
+  // same workspace-root fallback readProfileVisibleVersion (check.ts) already
+  // uses. A carrier naming an in-box package (@deepseek-ai/dsh-mcp-client and
+  // similar) resolves there and nowhere this function used to look, so pnpm
+  // exiting 0 was immediately followed by the market removing what it had
+  // just, correctly, installed.
+  const workspaceRoot = dirname(profileDirectory)
   return bundlePatchTargets(dir)
     .filter(target => target !== name)
     .some(target => entryArtifactExists(join(profileDirectory, 'node_modules', target))
-      || entryArtifactExists(join(dir, 'node_modules', target)))
+      || entryArtifactExists(join(dir, 'node_modules', target))
+      || entryArtifactExists(join(workspaceRoot, 'node_modules', target)))
 }
 
 /** Plugin subdirectories (depth 2) of a collection checkout, as relative paths. */
