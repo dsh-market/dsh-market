@@ -8,7 +8,7 @@
 .root{height:100%;display:flex;flex-direction:column;min-width:0;color:var(--dsw-alias-label-primary,#1f2328);position:relative}
 .head{display:flex;flex-direction:column;gap:12px;padding:4px 4px 12px}
 .title{font-size:16px;line-height:24px;font-weight:500;margin:0}
-.sub{display:flex;align-items:center;gap:8px;font-size:14px;line-height:22px;color:var(--dsw-alias-label-tertiary,#8b93a1);margin:0}
+.sub{display:flex;align-items:center;gap:8px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#8b93a1);margin:0}
 .tabs{display:flex;gap:2px;border-bottom:1px solid var(--dsw-alias-border-l2,#e5e7eb);align-items:flex-end}
 .tab{border:none;background:none;font:inherit;font-size:13px;color:var(--dsw-alias-label-secondary,#6b7280);padding:7px 12px;cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap}
 .tab.on{color:var(--dsw-alias-brand-primary,#4f6ef7);border-bottom-color:var(--dsw-alias-brand-primary,#4f6ef7);font-weight:600}
@@ -58,9 +58,16 @@
 .swatches{display:flex;gap:0;height:34px;border-radius:8px;overflow:hidden;border:1px solid var(--dsw-alias-border-l2,#e5e7eb)}
 .themesGrid{margin-bottom:12px}
 .swatches i{flex:1}
-.card{background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:12px;padding:12px 14px;display:flex;flex-direction:column;gap:12px}
+/* align-self:start so a short card doesn't stretch to match a tall
+   row-mate — CSS grid rows are equal-height by default, and a stretched
+   card with margin-top:auto on its footer used to fill that leftover
+   height as a blank band INSIDE the card, between the description and the
+   footer, reading as a layout bug rather than "this one's row-mate had a
+   longer description". Un-stretched, any leftover row height sits outside
+   the card as ordinary grid gutter instead. */
+.card{background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:12px;padding:12px 14px;display:flex;flex-direction:column;gap:12px;align-self:start}
 .row1{display:flex;align-items:center;gap:10px;min-width:0}
-.srcBtn.srcBtn{flex-shrink:0;align-self:flex-start;color:var(--dsw-alias-label-secondary,#9ca3af);font-weight:400}
+.installBtn.installBtn{min-width:92px}
 .av{width:16px;height:16px;border-radius:50%;display:grid;place-items:center;font-weight:700;color:#fff;font-size:9px;flex-shrink:0;object-fit:cover;background:var(--dsw-alias-bg-layer-2,#f3f4f6)}
 /* The plugin name carries the card, so it is the one thing sized up; the
    author sits under it as a signature. Same reading order as a post
@@ -75,13 +82,15 @@
 .metaInline{font-size:11px;color:var(--dsw-alias-label-secondary,#9ca3af)}
 .owner{font-size:11px;color:var(--dsw-alias-label-secondary,#9ca3af)}
 .desc{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#8b93a1);min-height:36px;margin:0}
-.foot{display:flex;align-items:center;gap:8px;margin-top:auto}
+.foot{display:flex;align-items:center;gap:8px}
 .grow{flex:1}
 .titleRow{display:flex;align-items:center;gap:10px}
 /* Sits beside the heading so a screenshot of the page carries the
    version — most reports arrive as a photo of the screen. Selectable
    (not user-select:none) so it can also be copied into an issue. */
 .version{font-size:12px;line-height:20px;color:var(--dsw-alias-label-tertiary,#8b93a1);font-variant-numeric:tabular-nums;flex-shrink:0}
+.repoLink{font-size:12px;line-height:20px;color:var(--dsw-alias-label-tertiary,#8b93a1);text-decoration:none;flex-shrink:0}
+.repoLink:hover{color:var(--dsw-alias-brand-primary,#4f6ef7)}
 .descTight{min-height:0}
 .src{font-size:11px;color:var(--dsw-alias-label-secondary,#9ca3af);text-decoration:none}
 .src:hover{color:var(--dsw-alias-brand-primary,#4f6ef7)}

@@ -190,7 +190,7 @@ describe('MarketSection (jsdom)', () => {
       expect(screen.queryByText('dsh-loop')).toBeNull()
       expect(screen.getByText('whale-skin')).toBeTruthy()
     })
-    fireEvent.click(screen.getByRole('button', { name: 'All' }))
+    fireEvent.click(screen.getByRole('button', { name: /^All \(\d/ }))
 
     // Default field is Stars → direction labels are Ascending/Descending.
     fireEvent.click(screen.getByRole('button', { name: en.filter }))
