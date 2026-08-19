@@ -1440,6 +1440,70 @@ describe('category row expansion', () => {
       expect(chipLabels, `${label} missing from: ${chipLabels.join(', ')}`).toContain(label)
     }
   })
+
+  it('shrinks the open, multi-row category list to one row while the sticky header is pinned by scroll, and restores it once unstuck (#188)', async () => {
+    // jsdom lays out nothing — every element reports offsetTop/offsetHeight
+    // 0, which is exactly why the sibling "renders every category" test above
+    // can only assert on the OPEN state, not on row counts. Here the one-row
+    // vs two-row split is the thing under test, so it has to be given real
+    // numbers to fit against: four ~32px rows of chips, simulated via a
+    // prototype override restored at the end of the test.
+    const offsetTopDesc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetTop')
+    const offsetHeightDesc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetHeight')
+    Object.defineProperty(HTMLElement.prototype, 'offsetTop', {
+      configurable: true,
+      get(this: HTMLElement) {
+        if (this.dataset.chip !== '1') return 0
+        const siblings = [...(this.parentElement?.children ?? [])]
+          .filter((el): el is HTMLElement => (el as HTMLElement).dataset?.chip === '1')
+        return Math.floor(siblings.indexOf(this) / 4) * 32
+      },
+    })
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', { configurable: true, get: () => 26 })
+
+    let onChange: ((entry: { isIntersecting: boolean }) => void) | null = null
+    class FakeIntersectionObserver {
+      constructor(cb: (entries: Array<{ isIntersecting: boolean }>) => void) {
+        onChange = entry => cb([entry])
+      }
+      observe(): void {}
+      disconnect(): void { onChange = null }
+    }
+    vi.stubGlobal('IntersectionObserver', FakeIntersectionObserver)
+
+    try {
+      stubFetch({ '/dsh-market/registry': { source: 'snapshot', registry: { ...REGISTRY, categories: CATS } } })
+      const { container } = render(<MarketSection {...props()} />)
+      await screen.findByText('dsh-loop')
+
+      const chipCount = () => container.querySelectorAll('[data-chip="1"]').length
+
+      fireEvent.click(screen.getByLabelText(re(en.catsMore)))
+      await waitFor(() => expect(screen.getByLabelText(re(en.catsLess))).toBeTruthy())
+      const openCount = chipCount()
+      expect(openCount).toBe(11) // "all" pill + 10 categories, fully open
+
+      expect(onChange, 'the sticky sentinel must be observed').not.toBeNull()
+
+      // Sentinel scrolled out of view above the scroll root: the header is now stuck.
+      onChange!({ isIntersecting: false })
+      await waitFor(() => expect(chipCount()).toBeLessThan(openCount))
+      // Squeezed to the one-row budget (2 categories, reserving a slot for
+      // the chevron), not the two-row budget (6) the plain collapsed state
+      // would use — proves the stuck path swapped budgets, not just re-ran
+      // the ordinary collapse.
+      expect(chipCount()).toBe(3) // "all" pill + 2 categories
+      // catsOpen itself must be untouched — this is a display-only squeeze.
+      expect(screen.getByLabelText(re(en.catsLess))).toBeTruthy()
+
+      // Scrolled back to the top: sentinel visible again, full row count returns.
+      onChange!({ isIntersecting: true })
+      await waitFor(() => expect(chipCount()).toBe(openCount))
+    } finally {
+      if (offsetTopDesc) Object.defineProperty(HTMLElement.prototype, 'offsetTop', offsetTopDesc)
+      if (offsetHeightDesc) Object.defineProperty(HTMLElement.prototype, 'offsetHeight', offsetHeightDesc)
+    }
+  })
 })
 
 describe('card thumbnail + lightbox (curated screenshots only)', () => {
@@ -1560,5 +1624,28 @@ describe('card thumbnail + lightbox (curated screenshots only)', () => {
     expect(screen.queryByText(installCmd)).toBeNull()
     fireEvent.click(screen.getByText(re(en.cmdDetails)))
     await waitFor(() => expect(screen.getByText(installCmd)).toBeTruthy())
+  })
+
+  it('offers a Retry button on a catalog load failure, which re-fetches and recovers (#188)', async () => {
+    let calls = 0
+    stubFetch({
+      '/dsh-market/registry': () => {
+        calls++
+        return calls === 1
+          ? { __status: 500, error: 'HTTP 500' }
+          : { source: 'live', registry: REGISTRY }
+      },
+    })
+    render(<MarketSection {...props()} />)
+
+    await screen.findByText(en.loadFail)
+    expect(screen.getByText('HTTP 500')).toBeTruthy()
+    expect(calls).toBe(1)
+
+    fireEvent.click(screen.getByRole('button', { name: en.loadRetry }))
+
+    await screen.findByText('dsh-loop')
+    expect(screen.queryByText(en.loadFail)).toBeNull()
+    expect(calls).toBe(2)
   })
 })

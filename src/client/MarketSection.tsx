@@ -651,7 +651,18 @@ export function MarketSection(props: MarketSectionProps) {
   // the settings panel width is fixed); null = measuring render with all
   // pills clamped, then slice so the chevron flows inline after the last one.
   const [visibleCats, setVisibleCats] = useState<number | null>(null)
+  /** Same idea as `visibleCats`, but how many fit in a single row — used to
+   *  shrink an expanded (2+ row) category list while the sticky header is
+   *  pinned during scroll, distinct from the two-row collapsed default. */
+  const [visibleCatsOneRow, setVisibleCatsOneRow] = useState<number | null>(null)
   const catsWrapRef = useRef<HTMLDivElement | null>(null)
+  // Whether the sticky header is currently pinned to the top of the scroll
+  // area. Tracked via a sentinel just above it rather than a scrollTop
+  // threshold: the threshold would have to hard-code the header's offset
+  // (padding, sticky `top`), which drifts silently whenever that CSS
+  // changes. The sentinel just reports what's actually true on screen.
+  const [catsStuck, setCatsStuck] = useState(false)
+  const [catsSentinel, setCatsSentinel] = useState<HTMLDivElement | null>(null)
 
   const refreshInstalled = useCallback((force?: boolean) => {
     fetch('/dsh-market/installed', { cache: 'no-store' })
@@ -690,8 +701,9 @@ export function MarketSection(props: MarketSectionProps) {
     [disabledNames, patchDisabledNames],
   )
 
-  useEffect(() => {
-    fetch('/dsh-market/registry', { cache: 'no-store' })
+  const loadCatalog = useCallback(() => {
+    setLoadError(null)
+    return fetch('/dsh-market/registry', { cache: 'no-store' })
       .then(async (res) => {
         const body = (await res.json().catch(() => ({}))) as { registry?: Registry; error?: string }
         if (!res.ok) throw new Error(typeof body.error === 'string' ? body.error : `HTTP ${String(res.status)}`)
@@ -708,6 +720,10 @@ export function MarketSection(props: MarketSectionProps) {
       // smaller today" looked identical on screen — and the second reading
       // is the one users reached.
       .catch((error: unknown) => { setLoadError(error instanceof Error ? error.message : String(error)) })
+  }, [])
+
+  useEffect(() => {
+    void loadCatalog()
     fetch('/dsh-market/status', { cache: 'no-store' })
       .then(res => res.json())
       .then(status => {
@@ -726,7 +742,7 @@ export function MarketSection(props: MarketSectionProps) {
       })
       .catch(() => {})
     refreshInstalled()
-  }, [refreshInstalled])
+  }, [refreshInstalled, loadCatalog])
 
   // Pending-restart flags survive tab switches and page reloads, scoped to
   // one host process: a different boot id means the restart happened and the
@@ -1830,7 +1846,7 @@ export function MarketSection(props: MarketSectionProps) {
 
   const categories = data === null ? [] : Object.keys(data.categories)
 
-  useLayoutEffect(() => { setVisibleCats(null) }, [lang, categories.length])
+  useLayoutEffect(() => { setVisibleCats(null); setVisibleCatsOneRow(null) }, [lang, categories.length])
   useLayoutEffect(() => {
     if (catsOpen || visibleCats !== null) return
     const el = catsWrapRef.current
@@ -1843,7 +1859,28 @@ export function MarketSection(props: MarketSectionProps) {
     for (const chip of chips) { if (chip.offsetTop < rowThreeTop) fits += 1 }
     // Reserve the tail slot of row two for the chevron itself.
     setVisibleCats(fits >= chips.length ? fits : Math.max(1, fits - 1))
+    // Same measuring pass, one row's worth instead of two — used only while
+    // the sticky header is pinned during scroll (#188-adjacent request), to
+    // shrink an OPEN multi-row category list down to its first row without
+    // touching the user's actual open/closed choice.
+    const rowTwoTop = first.offsetTop + first.offsetHeight + 6 - 3
+    let fitsOneRow = 0
+    for (const chip of chips) { if (chip.offsetTop < rowTwoTop) fitsOneRow += 1 }
+    setVisibleCatsOneRow(fitsOneRow >= chips.length ? fitsOneRow : Math.max(1, fitsOneRow - 1))
   }, [catsOpen, visibleCats, data])
+
+  useEffect(() => {
+    if (catsSentinel === null || typeof IntersectionObserver === 'undefined') return
+    const observer = new IntersectionObserver(
+      ([entry]) => setCatsStuck(entry !== undefined && !entry.isIntersecting),
+      { root: bodyRef.current, threshold: 0 },
+    )
+    observer.observe(catsSentinel)
+    return () => observer.disconnect()
+  }, [catsSentinel])
+  // Only meaningful while genuinely expanded: a stuck header showing its
+  // already-collapsed single row is nothing to restore later.
+  const catsEffectivelyOpen = catsOpen && !catsStuck
 
   /** Installed plugins the market itself cannot group (#60). */
   const groupableNames = Object.keys(installed).filter(name => name !== 'dsh-market' && name !== 'dshmarket')
@@ -2211,11 +2248,15 @@ export function MarketSection(props: MarketSectionProps) {
             ? <div className={css.empty}>
                 <div>{t('loadFail')}</div>
                 <div className={css.err}>{loadError}</div>
+                <Button variant="outline" size="sm" className={css.retryBtn} onClick={() => { void loadCatalog() }}>
+                  {t('loadRetry')}
+                </Button>
               </div>
             : data === null
               ? <div className={css.loading}><span className={css.logoMark}><MarketLogo size={26} animated /></span>{t('loading')}</div>
               : (
                   <>
+                    <div ref={setCatsSentinel} />
                     <div className={css.stickyHead}>
                     <div className={css.tabSearchRow}>
                       <Input className={css.tabSearch} icon={<IconSearchOutline16 size={14} />} placeholder={t('searchPh')} value={q} onChange={e => setQ(e.target.value)} />
@@ -2233,8 +2274,14 @@ export function MarketSection(props: MarketSectionProps) {
                       <div ref={catsWrapRef} className={visibleCats === null ? `${css.catsWrap} ${css.catsCollapsed}` : css.catsWrap}>
                         {(() => {
                           // Collapsed, the selected category is pulled to the front so it never hides.
-                          const ordered = orderedCategories(categories, cat, catsOpen, visibleCats)
-                          const shown = catsOpen || visibleCats === null ? ordered : ordered.slice(0, Math.max(0, visibleCats - 1))
+                          // A stuck header shrinks whatever is showing down to one row —
+                          // whether that's the open multi-row list or the already-collapsed
+                          // two-row default — using the one-row budget instead of the
+                          // two-row one. catsOpen itself is untouched, so scrolling back to
+                          // the top restores exactly what was showing before.
+                          const budget = catsStuck ? visibleCatsOneRow : visibleCats
+                          const ordered = orderedCategories(categories, cat, catsEffectivelyOpen, budget)
+                          const shown = catsEffectivelyOpen || budget === null ? ordered : ordered.slice(0, Math.max(0, budget - 1))
                           return (
                             <>
                               <Pill data-chip="1" active={cat === 'all'} onClick={() => setCat('all')}>{t('all') + ' (' + formatCount(data!.count) + ')'}</Pill>
