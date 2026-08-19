@@ -38,19 +38,18 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			setSelfUpToDate: "已是最新版本",
 			setSelfUpdateReady: "有新版本",
 			setSelfUpdateHint: "更新会下载新版本，重启后生效。",
+			setSelfUpToDateHint: "",
 			setSelfUpdate: "更新",
 			setSelfUpdatedHint: "已下载完成。重启 DeepSeek Harness 后新版本才会生效——页面本身会立即变新，服务端不会。",
 			setChannel: "更新通道",
 			setChannelStable: "稳定版",
 			setChannelBeta: "Beta",
-			setChannelStableHint: "只接收正式发布的版本。不确定时就用这个。",
-			setChannelBetaHint: "抢先拿到还在验证中的版本。新功能来得早，也更可能遇到问题。只影响插件市场自己，不影响你装的其它插件。",
+			setChannelStableHint: "仅接收正式发布版本。",
+			setChannelBetaHint: "提前获取待验证版本，可能不稳定。仅影响插件市场自身。",
 			setChannelDev: "开发版",
-			setChannelDevHint: "直接取开发分支上的构建，可能没有经过任何人试用，随时可能是坏的。给开发者自测用，不建议日常使用。",
-			setChannelSwitch: "切换到",
-			setChannelSwitchHint: "这个版本比你正在用的旧。切换通道就是这个意思，不是更新。",
-			setDevMode: "开发者模式",
-			setDevModeHint: "打开后，更新通道里会多出「开发版」。日常使用不需要。",
+			setChannelDevHint: "开发分支构建，未经验证，不建议普通用户使用。",
+			setChannelSwitch: "切换至",
+			setChannelSwitchHint: "该版本低于当前已安装版本。",
 			setSelfRemove: "移除插件市场",
 			setSelfRemoveHint: "从这个 profile 卸载市场。已装的其它插件不受影响。",
 			setSelfConfirm: "确定要移除插件市场吗？移除后需要用命令行才能装回来。",
@@ -63,8 +62,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			setSelfRemoved: "已移除",
 			setSelfRemovedHint: "重启 DeepSeek Harness 后完全清理。",
 			setSelfFailed: "操作失败",
-			versionHint: "插件市场版本 — 反馈问题时请把它一起截图",
-			subtitle: "发现社区为 DeepSeek Harness 打造的能力",
+			versionHint: "插件市场版本 — 反馈问题时请附上",
+			subtitle: "发现社区为 DeepSeek Harness 打造的插件",
 			searchPh: "搜索插件，比如：通知、终端、记忆…",
 			tabDiscover: "发现",
 			tabInstalled: "已安装",
@@ -96,6 +95,12 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			cancelOp: "取消",
 			cancelled: "已取消",
 			busyWait: "已有操作正在进行，请等它结束（同一时间只执行一个安装/更新/卸载）",
+			agentBusyUpdate: "有 agent 正在运行，请等它完成或取消后再更新——更新会直接替换插件文件，工作中的 agent 可能中途报错或新旧版本混用。",
+			agentBusyInstall: "有 agent 正在运行，请等它完成或取消后再安装——安装会修改插件文件，工作中的 agent 可能中途报错。",
+			compatRiskBanner: "检测到兼容性风险，建议重启前到诊断页处理，或一键回滚本次操作。",
+			goDiagnose: "去诊断页修复",
+			rollbackNow: "一键回滚",
+			rollingBack: "回滚中…",
 			approveBuilds: "放行构建脚本并重试",
 			buildsSkipped: "该插件需要运行构建脚本才能工作，出于安全默认被拦下。点击下方按钮为它放行并重装：",
 			restartNow: "立即重启",
@@ -114,10 +119,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			exportLogFail: "日志导出失败",
 			readme: "使用说明",
 			terminalWarn: "这看起来是终端/命令行插件：装进网页版可能无效，甚至导致 DeepSeek Harness 无法启动。建议先看它的使用说明，按说明装进对应的 profile。",
-			envMissing: "还差一个小组件才能安装插件",
-			envFix: "自动装好",
-			envFixing: "正在准备…",
-			envFixFail: "自动准备没成功，请点\"导出日志\"把文件发给我们反馈",
+			envMissing: "安装插件前需要先配置 pnpm 环境",
+			envFix: "自动配置",
+			envFixing: "正在配置…",
+			envFixFail: "自动配置失败，请点击\"导出日志\"，把文件附到 issue 里反馈",
 			loading: "正在加载插件目录…",
 			backTop: "回到顶部",
 			confirm: "确认",
@@ -128,6 +133,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			filterSort: "排序字段",
 			filterDir: "排序方向",
 			filterTime: "发布时间范围",
+			sortDownloads: "npm 下载量(近 30 天)",
 			sortStars: "Star 数",
 			sortAdded: "发布时间",
 			sortDesc: "降序",
@@ -147,7 +153,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			lastPage: "末页",
 			pageInfo: "第 {0} / {1} 页",
 			perPage: "每页",
-			marketUpdate: "市场有新版本，升级",
+			marketUpdate: "升级市场",
 			updateAll: "全部更新",
 			tabThemes: "主题",
 			tabBackup: "备份与恢复",
@@ -213,10 +219,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			toastReady: "已装好并已生效",
 			toastTheme: "已启用。到 设置 → 插件市场 → 主题 可随时切换",
 			gotIt: "知道了",
-			stateLive: "已生效（热加载）",
+			stateLive: "已生效",
 			stateRestart: "已安装，重启后生效",
-			stateInert: "已安装但未成为 profile 层",
-			stateBroken: "安装完成但校验失败",
+			stateInert: "已安装，未生效",
+			stateBroken: "已安装，校验未通过",
 			stateDisabled: "已停用",
 			phaseResolving: "解析依赖",
 			phaseDownloading: "下载中",
@@ -367,19 +373,18 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			setSelfUpToDate: "Up to date",
 			setSelfUpdateReady: "New version available:",
 			setSelfUpdateHint: "Updating downloads the new version; it takes effect after a restart.",
+			setSelfUpToDateHint: "",
 			setSelfUpdate: "Update",
 			setSelfUpdatedHint: "Downloaded. Restart DeepSeek Harness for it to take effect — the page itself updates at once, the server half does not.",
 			setChannel: "Update channel",
 			setChannelStable: "Stable",
 			setChannelBeta: "Beta",
-			setChannelStableHint: "Released versions only. Use this if you are unsure.",
-			setChannelBetaHint: "Get versions still being verified. New things arrive sooner and break more often. Affects the plugin market only — never the other plugins you installed.",
+			setChannelStableHint: "Released versions only.",
+			setChannelBetaHint: "Early access to unverified versions. Affects the plugin market only.",
 			setChannelDev: "Dev",
-			setChannelDevHint: "Builds taken straight off a development branch, possibly run by nobody, and broken whenever they are. Meant for developers testing their own work, not for everyday use.",
+			setChannelDevHint: "Unverified builds from a development branch. Not recommended for general use.",
 			setChannelSwitch: "Switch to",
-			setChannelSwitchHint: "This version is older than the one you are running. That is what changing channel means here — it is not an update.",
-			setDevMode: "Developer mode",
-			setDevModeHint: "Adds a \"Dev\" option to the update channel. Not needed for everyday use.",
+			setChannelSwitchHint: "This version is lower than the one installed.",
 			setSelfRemove: "Remove the plugin market",
 			setSelfRemoveHint: "Uninstall the market from this profile. Your other plugins are untouched.",
 			setSelfConfirm: "Remove the plugin market? Installing it again takes the command line.",
@@ -425,6 +430,12 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			cancelOp: "Cancel",
 			cancelled: "Cancelled",
 			busyWait: "Another operation is already running — please wait for it to finish (one install/update/uninstall at a time)",
+			agentBusyUpdate: "An agent is currently working — wait for it to finish (or cancel it) before updating. Updates replace plugin files in place, so a working agent can fail or mix versions mid-turn.",
+			agentBusyInstall: "An agent is currently working — wait for it to finish (or cancel it) before installing. Installing changes plugin files, so a working agent can fail mid-turn.",
+			compatRiskBanner: "Compatibility risk detected — open Diagnostics before restarting, or roll this operation back.",
+			goDiagnose: "Open Diagnostics",
+			rollbackNow: "Roll back",
+			rollingBack: "Rolling back…",
 			approveBuilds: "Allow build scripts and retry",
 			buildsSkipped: "This plugin needs its build scripts to run; they are blocked by default for safety. Click below to allow them and reinstall:",
 			restartNow: "Restart now",
@@ -443,10 +454,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			exportLogFail: "Log export failed",
 			readme: "README",
 			terminalWarn: "This looks like a terminal/CLI plugin: installing it into the web profile may do nothing, or even break DeepSeek Harness startup. Read its README and install it into the profile it targets.",
-			envMissing: "One small component is needed before installing plugins",
+			envMissing: "pnpm needs to be set up before installing plugins",
 			envFix: "Set up automatically",
 			envFixing: "Setting up…",
-			envFixFail: "Automatic setup failed — please use \"Export log\" and send us the file",
+			envFixFail: "Automatic setup failed — export the log and attach it to your issue",
 			loading: "Loading the catalog…",
 			backTop: "Back to top",
 			confirm: "Confirm",
@@ -457,6 +468,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			filterSort: "Sort field",
 			filterDir: "Order",
 			filterTime: "Released within",
+			sortDownloads: "npm downloads (30d)",
 			sortStars: "Stars",
 			sortAdded: "Release date",
 			sortDesc: "Descending",
@@ -476,7 +488,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			lastPage: "Last",
 			pageInfo: "Page {0} of {1}",
 			perPage: "Per page",
-			marketUpdate: "Market update available — upgrade",
+			marketUpdate: "Update market",
 			updateAll: "Update all",
 			tabThemes: "Themes",
 			tabBackup: "Backup & Restore",
@@ -542,10 +554,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			toastReady: "installed and live",
 			toastTheme: "is now active. Switch any time in Settings → Plugin Market → Themes",
 			gotIt: "Got it",
-			stateLive: "Live (hot-loaded)",
+			stateLive: "Active",
 			stateRestart: "Installed — restart to apply",
-			stateInert: "Installed but not a profile-layer plugin",
-			stateBroken: "Installed but failed validation",
+			stateInert: "Installed, not active",
+			stateBroken: "Installed, verification failed",
 			stateDisabled: "Disabled",
 			phaseResolving: "Resolving dependencies",
 			phaseDownloading: "Downloading",
@@ -735,6 +747,15 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			return age >= 0 && age <= days * 864e5;
 		}
 		/**
+		* Whether a catalog entry IS the market itself. The catalog still carries
+		* it — nothing about the data changes, and the Installed tab still shows it
+		* — this is purely "a store has no reason to sell itself to someone already
+		* standing in it."
+		*/
+		function isMarketItself(plugin) {
+			return plugin.name === "dsh-market" || plugin.npm === "dshmarket";
+		}
+		/**
 		* The discover list: category filter, then the published-within window, then
 		* search across name / owner / localized description, then the selected sort.
 		* Pure — the section renders exactly this.
@@ -742,11 +763,25 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		function visiblePlugins(plugins, options) {
 			const query = options.query.trim().toLowerCase();
 			const list = plugins.filter((p) => {
+				if (isMarketItself(p)) return false;
 				if (options.category !== "all" && p.category !== options.category) return false;
 				if (options.sinceDays !== void 0 && !withinDays(p.added, options.sinceDays)) return false;
 				if (query === "") return true;
 				const desc = p.description && (p.description[options.lang] || p.description.en) || "";
 				return p.name.toLowerCase().includes(query) || p.owner.toLowerCase().includes(query) || desc.toLowerCase().includes(query);
+			});
+			const hasDownloads = (p) => typeof p.downloads === "number";
+			if (options.sort === "downloads-desc") return [...list].sort((a, b) => {
+				if (hasDownloads(a) && hasDownloads(b)) return b.downloads - a.downloads;
+				if (hasDownloads(a)) return -1;
+				if (hasDownloads(b)) return 1;
+				return (b.stars ?? -1) - (a.stars ?? -1);
+			});
+			if (options.sort === "downloads-asc") return [...list].sort((a, b) => {
+				if (hasDownloads(a) && hasDownloads(b)) return a.downloads - b.downloads;
+				if (hasDownloads(a)) return -1;
+				if (hasDownloads(b)) return 1;
+				return (a.stars ?? -1) - (b.stars ?? -1);
 			});
 			if (options.sort === "stars-desc") return [...list].sort((a, b) => (b.stars ?? -1) - (a.stars ?? -1));
 			if (options.sort === "stars-asc") return [...list].sort((a, b) => (a.stars ?? -1) - (b.stars ?? -1));
@@ -759,11 +794,30 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			return plugins.filter((p) => p.category === "theme").sort((a, b) => (b.stars || 0) - (a.stars || 0));
 		}
 		/**
-		* Category chip order: collapsed with an active non-'all' chip, the active
-		* one moves to the front so it stays visible inside the two-row clip.
+		* Category chip order: collapsed with an active non-'all' chip that would
+		* otherwise be clipped out of the two-row preview, the active one moves to
+		* the front so it stays visible.
+		*
+		* Reported as "点了某个分类，标签就跑到前面来了，好奇怪": the earlier version
+		* moved the active chip to the front unconditionally, so clicking a category
+		* that was ALREADY visible inside the two rows still reshuffled it — and
+		* every chip after it — for no reason, since nothing was at risk of being
+		* hidden. `visibleCount` is how many chips (the 'all' chip included) the
+		* two-row clip fits; a category already within that budget in its natural
+		* position is left exactly where it was.
+		*
+		* `visibleCount === null` (not yet measured, e.g. the very first collapsed
+		* render) keeps the old unconditional behaviour: with no measurement to
+		* check against, guaranteeing visibility is the safe default.
 		*/
-		function orderedCategories(categories, active, open) {
-			return open || active === "all" ? categories : [active, ...categories.filter((id) => id !== active)];
+		function orderedCategories(categories, active, open, visibleCount = null) {
+			if (open || active === "all") return categories;
+			if (visibleCount !== null) {
+				const budget = Math.max(0, visibleCount - 1);
+				const naturalIndex = categories.indexOf(active);
+				if (naturalIndex !== -1 && naturalIndex < budget) return categories;
+			}
+			return [active, ...categories.filter((id) => id !== active)];
 		}
 		/**
 		* Page-number list for the discover pager. With few pages it is simply
@@ -802,7 +856,16 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			if (m !== null) ids.add(m[2] !== void 0 ? `${m[1].toLowerCase()}#path:/${m[2].toLowerCase()}` : m[1].toLowerCase());
 			return ids;
 		}
-		function depIdentities(name, spec) {
+		const REPO_ID_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:#path:\/[A-Za-z0-9_./-]+)?$/;
+		function addRepoIdentities(ids, values) {
+			for (const value of values) {
+				if (!REPO_ID_RE.test(value)) continue;
+				const subpath = value.split("#path:/")[1];
+				if (subpath !== void 0 && subpath.split("/").some((seg) => seg === "" || seg === "." || seg === "..")) continue;
+				ids.add(value.toLowerCase());
+			}
+		}
+		function depIdentities(name, spec, repoIdentities = []) {
 			const ids = /* @__PURE__ */ new Set([name.toLowerCase()]);
 			const scoped = /^@([^/]+)\/(.+)$/.exec(name);
 			if (scoped !== null) ids.add(`${scoped[1].toLowerCase()}/${scoped[2].toLowerCase()}`);
@@ -811,6 +874,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				ids.add(match[1].toLowerCase());
 				if (match[2] !== void 0) ids.add(`${match[1].toLowerCase()}#path:/${match[2].toLowerCase()}`);
 			}
+			addRepoIdentities(ids, repoIdentities);
 			return ids;
 		}
 		/**
@@ -818,13 +882,14 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		* hard evidence of where the package came from, unlike the name-derived
 		* mirror in depIdentities, which is only a matching aid.
 		*/
-		function depSpecRepoIds(spec) {
+		function depRepoIds(spec, repoIdentities = []) {
 			const ids = /* @__PURE__ */ new Set();
 			const m = /github:([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)(?:#path:\/([A-Za-z0-9_./-]+))?/i.exec(spec);
 			if (m !== null) {
 				ids.add(m[1].toLowerCase());
 				if (m[2] !== void 0) ids.add(`${m[1].toLowerCase()}#path:/${m[2].toLowerCase()}`);
 			}
+			addRepoIdentities(ids, repoIdentities);
 			return ids;
 		}
 		/** Repo identity of a registry entry's source url (repo or repo#path form). */
@@ -842,33 +907,53 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		* decide — the loose name/npm identities only apply when at least one side
 		* carries no repo evidence (npm installs, non-github entries).
 		*/
-		function sameSourceConflict(plugin, spec) {
+		function sameSourceConflict(plugin, spec, repoIdentities = []) {
 			const entry = entryRepoIds(plugin);
-			const dep = depSpecRepoIds(spec);
+			const dep = depRepoIds(spec, repoIdentities);
 			if (entry.size === 0 || dep.size === 0) return false;
 			for (const id of dep) if (entry.has(id)) return false;
 			return true;
 		}
+		function repoHintMatches(plugin, hints) {
+			const entry = entryRepoIds(plugin);
+			const values = /* @__PURE__ */ new Set();
+			addRepoIdentities(values, hints);
+			for (const id of values) if (entry.has(id)) return true;
+			return false;
+		}
+		function looseMatchCount(plugins, name) {
+			return plugins.filter((plugin) => looseMatches(plugin, name)).length;
+		}
+		function looseMatches(plugin, name) {
+			const dep = depIdentities(name, "");
+			for (const id of entryIdentities(plugin)) if (dep.has(id)) return true;
+			return false;
+		}
 		/** The installed dependency name a registry entry corresponds to, or null. */
-		function matchInstalledName(plugin, installed) {
+		function matchInstalledName(plugin, installed, repoIdentities = {}, plugins, repoHints = {}) {
 			const ids = entryIdentities(plugin);
 			for (const [name, spec] of Object.entries(installed)) {
-				if (sameSourceConflict(plugin, String(spec))) continue;
-				for (const id of depIdentities(name, String(spec))) if (ids.has(id)) return name;
+				const repos = repoIdentities[name] ?? [];
+				if (depRepoIds(String(spec), repos).size === 0 && plugins !== void 0 && looseMatchCount(plugins, name) > 1 && !repoHintMatches(plugin, repoHints[name] ?? [])) continue;
+				if (sameSourceConflict(plugin, String(spec), repos)) continue;
+				for (const id of depIdentities(name, String(spec), repos)) if (ids.has(id)) return name;
 			}
 			return null;
 		}
 		/** The registry entry an installed dependency corresponds to, or undefined. */
-		function entryForDep(plugins, name, spec) {
-			const ids = depIdentities(name, String(spec));
+		function entryForDep(plugins, name, spec, repoIdentities = [], repoHints = []) {
+			if (depRepoIds(String(spec), repoIdentities).size === 0 && looseMatchCount(plugins, name) > 1) {
+				if (plugins.find((plugin) => repoHintMatches(plugin, repoHints) && looseMatches(plugin, name)) === void 0) return void 0;
+			}
+			const ids = depIdentities(name, String(spec), repoIdentities);
 			return plugins.find((plugin) => {
-				if (sameSourceConflict(plugin, String(spec))) return false;
+				if (sameSourceConflict(plugin, String(spec), repoIdentities)) return false;
 				for (const id of entryIdentities(plugin)) if (ids.has(id)) return true;
 				return false;
 			});
 		}
-		function isInstalled(plugin, installed) {
-			return matchInstalledName(plugin, installed) !== null;
+		function isInstalled(plugin, installed, repoIdentities = {}, plugins, repoHints = {}) {
+			return matchInstalledName(plugin, installed, repoIdentities, plugins, repoHints) !== null;
 		}
 		/**
 		* The header brand mark now lives in MarketSection.tsx as an inline SVG
@@ -1021,6 +1106,51 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			}
 			return kept.join("\n").trim();
 		}
+		/**
+		* The plugin's own name, for display.
+		*
+		* The catalog's `name` is an IDENTITY, and for the 104 entries that live in
+		* a repository holding several plugins it is a compound one:
+		* `dsh-web-ui#packages/dsh-web-ui-all`. Shown verbatim it puts a repository
+		* path in front of a user who did not ask about repositories — and worse, it
+		* disagrees with the market's own installed list, which reads names out of
+		* the profile manifest and calls the same plugin `dsh-web-ui-all`. The same
+		* thing had two names either side of the Install button.
+		*
+		* A card answers two questions: who made it, and what is it called. The
+		* author is drawn beside their avatar as one unit, so the title is free to
+		* be just the plugin. Duplicate titles across authors are fine — the byline
+		* is what separates them — which is why this does not try to keep the
+		* repository as a qualifier.
+		*
+		* The repository name IS the plugin name in the ordinary case, because a
+		* repository holding one plugin is named after it. Only the compound form
+		* needs unpicking, and its last segment is the plugin's own directory.
+		*
+		* Not a substitute for the identity: every key, lookup and install still
+		* uses `name` unchanged.
+		*/
+		function pluginName(name) {
+			const hash = name.indexOf("#");
+			if (hash === -1) return name;
+			const sub = name.slice(hash + 1);
+			const leaf = sub.slice(sub.lastIndexOf("/") + 1);
+			return leaf === "" ? name.slice(0, hash) : leaf;
+		}
+		/**
+		* Compact display for a count that can run into the tens of thousands
+		* (npm downloads, star counts): "11.9k" instead of "11862". Reported —
+		* the raw number made the card byline visibly cramped once downloads was
+		* added alongside stars.
+		*
+		* Below 1000 the exact number is shown; a small count is exactly the case
+		* where the precision matters and abbreviating it buys nothing.
+		*/
+		function formatCount(n) {
+			if (!Number.isFinite(n) || n < 1e3) return String(n);
+			const k = Math.round(n / 100) / 10;
+			return `${Number.isInteger(k) ? k.toFixed(0) : k.toFixed(1)}k`;
+		}
 		//#endregion
 		//#region src/client/InstallToast.tsx
 		/**
@@ -1049,7 +1179,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		}
 		//#endregion
 		//#region \0dsh-css:src/client/Market.module.css.mjs
-		const css = ".P9NphG_root{min-width:0;height:100%;color:var(--dsw-alias-label-primary,#1f2328);flex-direction:column;display:flex;position:relative}.P9NphG_head{flex-direction:column;gap:12px;padding:4px 4px 12px;display:flex}.P9NphG_title{margin:0;font-size:16px;font-weight:500;line-height:24px}.P9NphG_sub{color:var(--dsw-alias-label-tertiary,#8b93a1);align-items:center;gap:8px;margin:0;font-size:14px;line-height:22px;display:flex}.P9NphG_tabs{border-bottom:1px solid var(--dsw-alias-border-l2,#e5e7eb);align-items:flex-end;gap:2px;display:flex}.P9NphG_tab{font:inherit;color:var(--dsw-alias-label-secondary,#6b7280);cursor:pointer;white-space:nowrap;background:0 0;border:none;border-bottom:2px solid #0000;padding:7px 12px;font-size:13px}.P9NphG_tab.P9NphG_on{color:var(--dsw-alias-brand-primary,#4f6ef7);border-bottom-color:var(--dsw-alias-brand-primary,#4f6ef7);font-weight:600}.P9NphG_banner{background:var(--dsw-alias-bg-layer-2,#fdf3e3);border:1px solid var(--dsw-alias-border-l2,#f3e3c3);border-radius:8px;align-items:center;gap:8px;margin:0;padding:8px 12px;font-size:12px;display:flex}.P9NphG_bannerIcon{color:var(--dsw-alias-label-secondary,#6b7280);flex-shrink:0}.P9NphG_bannerHint{color:var(--dsw-alias-label-tertiary,#8b93a1);cursor:help;display:inline-flex}.P9NphG_body{flex:1;padding:12px 4px 24px;overflow-x:hidden;overflow-y:auto}.P9NphG_cats{z-index:5;background:var(--dsw-alias-bg-layer-2,#f7f8fa);margin:0 -4px 2px;padding:12px 4px 4px;position:sticky;top:-1px}.P9NphG_catsRow{align-items:flex-start;gap:8px;display:flex;position:relative}.P9NphG_star{color:var(--dsw-alias-label-secondary,#9ca3af);font-size:11px}.P9NphG_top{z-index:20;display:inline-flex;position:absolute;bottom:18px;right:18px}.P9NphG_topBtn{border-radius:99px;width:38px;height:38px;padding:0}.P9NphG_tag{border:1px solid var(--dsw-alias-border-l3,#d9dde3);color:var(--dsw-alias-label-secondary,#6b7280);border-radius:4px;flex-shrink:0;padding:1px 6px;font-size:11px;line-height:16px}.P9NphG_okState{color:var(--dsw-alias-state-success-primary,#16a34a);white-space:nowrap;font-size:12px;font-weight:600}.P9NphG_catsWrap{flex-wrap:wrap;flex:1;align-items:center;gap:6px;min-width:0;display:flex}.P9NphG_catsCollapsed{max-height:62px;overflow:hidden}.P9NphG_catsToggle.P9NphG_catsToggle{height:26px;min-height:26px;color:var(--dsw-alias-label-secondary,#6b7280);padding:0 6px}.P9NphG_shots{-webkit-overflow-scrolling:touch;scrollbar-width:thin;gap:8px;margin:0 0 8px;padding:2px 0 6px;display:flex;overflow-x:auto}.P9NphG_shot{object-fit:cover;border:1px solid var(--dsw-alias-border-default,#e5e7eb);background:var(--dsw-alias-bg-layer-2,#f3f4f6);border-radius:8px;flex:none;max-width:260px;height:150px}.P9NphG_cmd{background:var(--dsw-alias-bg-layer-2,#f3f4f6);word-break:break-all;border-radius:6px;margin:8px 0 0;padding:8px 10px;font-family:ui-monospace,Menlo,monospace;font-size:11px;line-height:18px}.P9NphG_warnLine{color:var(--dsw-alias-state-warn-primary,#b45309);align-items:center;gap:4px;margin:0;font-size:12px;font-weight:600;line-height:18px;display:flex}.P9NphG_modalNote{color:var(--dsw-alias-label-tertiary,#8b93a1);align-items:center;gap:4px;margin:12px 0 0;font-size:12px;line-height:18px;display:flex}.P9NphG_grid{grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;display:grid}.P9NphG_swatches{border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:8px;gap:0;height:34px;display:flex;overflow:hidden}.P9NphG_themesGrid{margin-bottom:12px}.P9NphG_swatches i{flex:1}.P9NphG_card{background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:12px;flex-direction:column;gap:12px;padding:12px 14px;display:flex}.P9NphG_row1{align-items:center;gap:10px;min-width:0;display:flex}.P9NphG_srcBtn{flex-shrink:0;align-self:flex-start}.P9NphG_av{color:#fff;object-fit:cover;background:var(--dsw-alias-bg-layer-2,#f3f4f6);border-radius:8px;flex-shrink:0;place-items:center;width:32px;height:32px;font-size:14px;font-weight:700;display:grid}.P9NphG_nm{text-overflow:ellipsis;white-space:nowrap;font-size:14px;font-weight:500;line-height:22px;overflow:hidden}.P9NphG_owner{color:var(--dsw-alias-label-secondary,#9ca3af);font-size:11px}.P9NphG_desc{color:var(--dsw-alias-label-tertiary,#8b93a1);min-height:36px;margin:0;font-size:12px;line-height:18px}.P9NphG_foot{align-items:center;gap:8px;margin-top:auto;display:flex}.P9NphG_grow{flex:1}.P9NphG_titleRow{align-items:center;gap:10px;display:flex}.P9NphG_version{color:var(--dsw-alias-label-tertiary,#8b93a1);font-variant-numeric:tabular-nums;flex-shrink:0;font-size:12px;line-height:20px}.P9NphG_descTight{min-height:0}.P9NphG_src{color:var(--dsw-alias-label-secondary,#9ca3af);font-size:11px;text-decoration:none}.P9NphG_src:hover{color:var(--dsw-alias-brand-primary,#4f6ef7)}.P9NphG_dot{vertical-align:2px;margin-left:5px}.P9NphG_act{flex-wrap:wrap;align-items:center;gap:6px;margin-top:6px;font-size:11px;display:flex}.P9NphG_actLive{color:var(--dsw-alias-state-success-primary,#16a34a);align-items:center;gap:4px;font-weight:600;display:inline-flex}.P9NphG_actWarn{color:var(--dsw-alias-state-warn-primary,#b45309);align-items:center;gap:4px;font-weight:600;display:inline-flex}.P9NphG_actBroken{color:var(--dsw-alias-state-error-primary,#dc2626);align-items:center;gap:4px;font-weight:600;display:inline-flex}.P9NphG_actWhy{color:var(--dsw-alias-label-secondary,#6b7280);margin-top:2px}.P9NphG_loading{color:var(--dsw-alias-label-secondary,#9ca3af);flex-direction:column;align-items:center;gap:12px;padding:48px;font-size:13px;display:flex}.P9NphG_spin{color:var(--dsw-alias-brand-primary,#4f6ef7);flex-shrink:0;animation:.8s linear infinite P9NphG_sp;display:inline-flex}.P9NphG_logoMark{color:var(--dsw-alias-brand-primary,#4f6ef7);flex-shrink:0;display:inline-flex}.P9NphG_logoPlug{transform-box:fill-box;transform-origin:50%;animation:1.5s cubic-bezier(.4,0,.2,1) infinite P9NphG_dshmPlug}@keyframes P9NphG_dshmPlug{0%,12%{transform:rotate(9deg)}45%,62%{transform:translate(-1.28px,1.27px)rotate(0)}95%,to{transform:rotate(9deg)}}@media (prefers-reduced-motion:reduce){.P9NphG_logoPlug,.P9NphG_spin{animation:1.5s ease-in-out infinite P9NphG_dshmPlugFade}}@keyframes P9NphG_dshmPlugFade{0%,to{opacity:1}50%{opacity:.35}}@keyframes P9NphG_sp{to{transform:rotate(360deg)}}.P9NphG_progress{background:var(--dsw-alias-bg-layer-2,#f3f4f6);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);color:var(--dsw-alias-label-secondary,#6b7280);border-radius:8px;flex-wrap:wrap;align-items:center;gap:9px;margin:0;padding:8px 12px;font-size:12px;display:flex}.P9NphG_bar{background:var(--dsw-alias-border-l1,#e5e7eb);border-radius:99px;width:100%;height:4px;overflow:hidden}.P9NphG_barFill{background:var(--dsw-alias-brand-primary,#4f6ef7);border-radius:99px;height:100%;transition:width .6s}.P9NphG_barWave{width:30%;animation:1.2s ease-in-out infinite P9NphG_dshmSlide}@keyframes P9NphG_dshmSlide{0%{margin-left:-30%}to{margin-left:100%}}.P9NphG_irow .P9NphG_progress{margin-top:8px}.P9NphG_progress code{text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,Menlo,monospace;font-size:11px;overflow:hidden}.P9NphG_empty{color:var(--dsw-alias-label-secondary,#9ca3af);text-align:center;padding:32px;font-size:13px}.P9NphG_err{color:var(--dsw-alias-state-error-primary,#dc2626);white-space:pre-wrap;word-break:break-all;margin:8px 0;font-size:12px}.P9NphG_irow{background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:12px;align-items:center;gap:10px;margin-bottom:8px;padding:12px 14px;display:flex}.P9NphG_irowMissing{filter:grayscale();opacity:.5}.P9NphG_irow>.P9NphG_src,.P9NphG_irow>.P9NphG_owner,.P9NphG_irow button{white-space:nowrap;flex-shrink:0}.P9NphG_tabSearchRow{padding:0 4px 10px;display:flex}.P9NphG_tabSearch{width:260px}.P9NphG_spec{color:var(--dsw-alias-label-secondary,#9ca3af);overflow-wrap:anywhere;min-width:0;font-family:ui-monospace,Menlo,monospace;font-size:11px}.P9NphG_specTag{white-space:nowrap;border-radius:4px;flex-shrink:0;align-items:center;height:16px;padding:0 5px;font-size:10px;font-weight:600;display:inline-flex}.P9NphG_specTagGit{color:#0b7285;background:#12a3c41f}.P9NphG_specTagFile{color:#b07d1b;background:#f0b42924}.P9NphG_backupCheckList .P9NphG_grow{white-space:nowrap;text-overflow:ellipsis;flex:70%;min-width:0;overflow:hidden}.P9NphG_backupCheckList .P9NphG_spec{text-align:right;white-space:nowrap;text-overflow:ellipsis;flex:0 30%;max-width:30%;overflow:hidden}.P9NphG_staleAction{margin-top:8px}.P9NphG_pct{color:var(--dsw-alias-label-secondary,#6b7280);flex-shrink:0;font-size:11px;font-weight:600}.P9NphG_pager{flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;margin:16px 0 4px;display:flex}.P9NphG_pagerPages{flex-wrap:wrap;flex:1;justify-content:center;align-items:center;gap:6px;min-width:0;display:flex}.P9NphG_pageEllipsis{color:var(--dsw-alias-label-secondary,#9ca3af);padding:0 2px;font-size:12px}.P9NphG_pageInfo{color:var(--dsw-alias-label-secondary,#6b7280);white-space:nowrap;font-size:12px}.P9NphG_depBadge{border:1px solid var(--dsw-alias-state-warn-primary,#b45309);color:var(--dsw-alias-state-warn-primary,#b45309);white-space:nowrap;border-radius:4px;flex-shrink:0;margin-left:6px;padding:1px 6px;font-size:11px;font-weight:600;line-height:16px}.P9NphG_deprecate{color:var(--dsw-alias-state-warn-primary,#b45309);background:var(--dsw-alias-bg-layer-2,#fdf3e3);border:1px solid var(--dsw-alias-border-l2,#f3e3c3);border-radius:8px;margin:0;padding:8px 10px;font-size:12px;line-height:18px}.P9NphG_deprecate a{color:var(--dsw-alias-state-warn-primary,#b45309);text-decoration:underline}.P9NphG_deprecate .P9NphG_src{margin-left:8px}.P9NphG_depLine{flex-wrap:wrap;align-items:center;gap:8px;display:flex}.P9NphG_switch{border:1px solid var(--dsw-alias-border-l2,#d9dde3);background:var(--dsw-alias-bg-layer-2,#e5e7eb);cursor:pointer;border-radius:99px;flex-shrink:0;width:38px;height:22px;padding:0;transition:background .15s,border-color .15s;position:relative}.P9NphG_switchOn{background:var(--dsw-alias-state-success-primary,#16a34a);border-color:var(--dsw-alias-state-success-primary,#16a34a)}.P9NphG_switchMixed{background:var(--dsw-alias-state-warn-primary,#b45309);border-color:var(--dsw-alias-state-warn-primary,#b45309)}.P9NphG_switchKnob{background:#fff;border-radius:99px;width:16px;height:16px;transition:left .15s;position:absolute;top:2px;left:2px;box-shadow:0 1px 2px #00000040}.P9NphG_switchOn .P9NphG_switchKnob,.P9NphG_switchMixed .P9NphG_switchKnob{left:18px}.P9NphG_switch:disabled{opacity:.5;cursor:default}.P9NphG_viewBar{border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:8px;align-items:center;gap:2px;width:fit-content;margin-bottom:12px;padding:2px;display:flex}.P9NphG_viewBtn{font:inherit;color:var(--dsw-alias-label-secondary,#6b7280);cursor:pointer;white-space:nowrap;background:0 0;border:none;border-radius:6px;padding:4px 10px;font-size:12px;line-height:18px}.P9NphG_viewBtn:hover{color:var(--dsw-alias-brand-primary,#4f6ef7)}.P9NphG_viewOn{background:var(--dsw-alias-bg-layer-2,#eef0f4);color:var(--dsw-alias-label-primary,#1f2328);font-weight:600}.P9NphG_groupRow{background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:12px;margin-bottom:10px;padding:12px 14px}.P9NphG_groupHead{align-items:center;gap:10px;min-width:0;display:flex}.P9NphG_groupName{text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:600;line-height:20px;overflow:hidden}.P9NphG_groupActions{flex-shrink:0;align-items:center;gap:6px;display:flex}.P9NphG_groupMembers{flex-direction:column;gap:6px;margin-top:10px;display:flex}.P9NphG_groupMember{background:var(--dsw-alias-bg-layer-2,#f7f8fa);border-radius:8px;align-items:center;gap:8px;padding:6px 8px;font-size:12px;line-height:18px;display:flex}.P9NphG_groupMember .P9NphG_nm{flex:1;min-width:0;font-size:12px}.P9NphG_groupAddPanel{border-top:1px dashed var(--dsw-alias-border-l2,#e5e7eb);flex-direction:column;gap:6px;margin-top:10px;padding-top:10px;display:flex}.P9NphG_groupCreate{align-items:center;gap:8px;margin-bottom:10px;display:flex}.P9NphG_inlineInput{flex:1;min-width:120px}.P9NphG_assignRow{flex-wrap:wrap;align-items:center;gap:8px;display:flex}.P9NphG_assignSelect{border:1px solid var(--dsw-alias-border-l2,#e5e7eb);background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary,#1f2328);font:inherit;border-radius:6px;padding:3px 6px;font-size:12px;line-height:18px}.P9NphG_groupHint{color:var(--dsw-alias-label-tertiary,#8b93a1);font-size:11px}.P9NphG_sectAction{color:var(--dsw-alias-label-secondary,#6b7280);align-items:center;gap:8px;margin:14px 2px 8px;font-size:12px;font-weight:600;display:flex}.P9NphG_backupGrid{grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;display:grid}.P9NphG_backupCard{background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:12px;flex-direction:column;gap:10px;padding:16px;display:flex}.P9NphG_backupCard h3{margin:0;font-size:14px}.P9NphG_backupCard p{color:var(--dsw-alias-label-secondary,#6b7280);margin:0;font-size:12px;line-height:18px}.P9NphG_backupActions{flex-wrap:wrap;gap:8px;display:flex;position:relative}.P9NphG_hiddenFile{opacity:0;pointer-events:none;width:1px;height:1px;position:absolute}.P9NphG_backupInput{box-sizing:border-box;width:100%}.P9NphG_backupCheck{cursor:pointer;align-items:center;gap:6px;font-size:12px;display:flex}.P9NphG_backupWarn{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-state-warn-primary,#b45309)!important}.P9NphG_backupMessage{color:var(--dsw-alias-label-secondary,#6b7280);grid-column:1/-1;font-size:12px}.P9NphG_backupCheckList{flex-direction:column;gap:6px;max-height:260px;margin:10px 0 4px;padding-right:4px;display:flex;overflow-y:auto}.P9NphG_backupCheckList .P9NphG_backupCheck{justify-content:space-between;gap:8px}.P9NphG_diagPage{flex-direction:column;gap:12px;height:100%;min-height:0;display:flex;overflow-y:auto}.P9NphG_diagSummary{background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:12px;flex-wrap:wrap;align-items:center;gap:12px;padding:10px 14px;font-size:12px;display:flex}.P9NphG_diagSummaryItem{color:var(--dsw-alias-label-secondary,#6b7280);white-space:nowrap;align-items:center;gap:6px;display:inline-flex}.P9NphG_diagSummaryMeta{color:var(--dsw-alias-label-tertiary,#9ca3af);text-overflow:ellipsis;white-space:nowrap;max-width:320px;font-family:ui-monospace,Menlo,monospace;font-size:11px;overflow:hidden}.P9NphG_diagSection{background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:12px;flex-direction:column;gap:8px;padding:12px 14px;display:flex}.P9NphG_diagSection h3{color:var(--dsw-alias-label-primary,#1f2328);margin:0;font-size:13px;font-weight:600}.P9NphG_diagCount{color:var(--dsw-alias-label-tertiary,#9ca3af);font-size:11px;font-weight:400}.P9NphG_diagEmpty{color:var(--dsw-alias-label-secondary,#9ca3af);padding:8px 0;font-size:12px}.P9NphG_diagBundle{border-top:1px solid var(--dsw-alias-border-l2,#f0f1f3);flex-direction:column;gap:6px;padding-top:8px;display:flex}.P9NphG_diagBundle:first-of-type{border-top:none;padding-top:0}.P9NphG_diagRow{flex-wrap:wrap;align-items:center;gap:8px;min-width:0;font-size:12px;line-height:18px;display:flex}.P9NphG_diagMeta{align-items:baseline;gap:8px;min-width:0;font-size:12px;display:flex}.P9NphG_diagKey{color:var(--dsw-alias-label-tertiary,#9ca3af);flex-shrink:0;min-width:64px;font-size:11px}.P9NphG_diagVal{color:var(--dsw-alias-label-primary,#1f2328);overflow-wrap:anywhere;min-width:0;font-family:ui-monospace,Menlo,monospace;font-size:12px;font-weight:500}.P9NphG_diagIndex{background:var(--dsw-alias-bg-layer-2,#f3f4f6);min-width:18px;height:18px;color:var(--dsw-alias-label-secondary,#6b7280);border-radius:9px;flex-shrink:0;justify-content:center;align-items:center;font-size:11px;font-weight:600;display:inline-flex}.P9NphG_diagArrow{color:var(--dsw-alias-label-tertiary,#9ca3af);flex-shrink:0;font-size:12px}.P9NphG_diagBadgeOfficial{background:var(--dsw-alias-brand-primary,#4f6ef7);color:#fff;border-radius:9px;flex-shrink:0;align-items:center;height:18px;padding:0 8px;font-size:11px;font-weight:600;display:inline-flex}.P9NphG_diagBadgeCommunity{background:var(--dsw-alias-bg-layer-2,#f3f4f6);height:18px;color:var(--dsw-alias-label-secondary,#6b7280);border-radius:9px;flex-shrink:0;align-items:center;padding:0 8px;font-size:11px;display:inline-flex}.P9NphG_diagBadgeShadow{background:var(--dsw-alias-state-error-primary,#dc2626);color:#fff;border-radius:9px;flex-shrink:0;align-items:center;height:18px;padding:0 8px;font-size:11px;font-weight:600;display:inline-flex}.P9NphG_diagList{flex-direction:column;gap:6px;display:flex}.P9NphG_sectionOverview{color:var(--dsw-alias-label-tertiary,#8b93a1);text-overflow:ellipsis;white-space:nowrap;max-width:100%;padding:2px 0 6px;font-size:12px;line-height:18px;overflow:hidden}.P9NphG_diagAlert{color:var(--dsw-alias-state-warn-primary,#b45309)}.P9NphG_ovRow{background:var(--dsw-alias-bg-layer-2,#f7f8fa);border-radius:8px;flex-wrap:wrap;align-items:center;gap:8px;min-width:0;padding:6px 10px;font-size:12px;line-height:18px;display:flex}.P9NphG_ovArrow{color:var(--dsw-alias-label-tertiary,#9ca3af);flex-shrink:0;font-size:12px}.P9NphG_ovByTag{background:var(--dsw-alias-brand-primary,#4f6ef7);color:#fff;text-overflow:ellipsis;white-space:nowrap;border-radius:9px;flex-shrink:0;align-items:center;max-width:260px;height:18px;padding:0 8px;font-size:11px;font-weight:600;display:inline-flex;overflow:hidden}.P9NphG_ovFrom{color:var(--dsw-alias-label-secondary,#6b7280);text-overflow:ellipsis;white-space:nowrap;min-width:0;font-size:12px;overflow:hidden}.P9NphG_orphRow{background:var(--dsw-alias-bg-layer-2,#f7f8fa);border-radius:8px;flex-wrap:wrap;align-items:center;gap:8px;min-width:0;padding:6px 10px;font-size:12px;line-height:18px;display:flex}.P9NphG_orphBadge{background:var(--dsw-alias-state-warn-primary,#b45309);color:#fff;white-space:nowrap;border-radius:9px;flex-shrink:0;align-items:center;height:18px;padding:0 8px;font-size:11px;font-weight:600;display:inline-flex}.P9NphG_dragHandle{width:20px;height:20px;color:var(--dsw-alias-label-tertiary,#9ca3af);cursor:grab;-webkit-user-select:none;user-select:none;flex-shrink:0;justify-content:center;align-items:center;font-size:12px;line-height:20px;display:inline-flex}.P9NphG_dragOver{outline:2px dashed var(--dsw-alias-brand-primary,#4f6ef7);outline-offset:2px;background:var(--dsw-alias-bg-layer-2,#f0f2f8);border-radius:8px}.P9NphG_dragging{opacity:.45;background:var(--dsw-alias-bg-layer-2,#f3f4f6)}.P9NphG_collapseHead{font:inherit;color:var(--dsw-alias-label-primary,#1f2328);cursor:pointer;text-align:left;background:0 0;border:none;align-items:center;gap:8px;width:100%;padding:0;font-size:13px;font-weight:600;display:flex}.P9NphG_collapseIcon{color:var(--dsw-alias-label-secondary,#6b7280);flex-shrink:0;display:inline-flex}.P9NphG_collapseTitle{flex:1;min-width:0}.P9NphG_collapseBody{border-top:1px solid var(--dsw-alias-border-l2,#f0f1f3);overflow-wrap:anywhere;flex-direction:column;gap:10px;min-width:0;margin-top:8px;padding-top:10px;display:flex}.P9NphG_orderPanel{flex-direction:column;gap:10px;min-width:0;display:flex}.P9NphG_panelNote{color:var(--dsw-alias-label-secondary,#6b7280);margin:0;font-size:12px;line-height:18px}.P9NphG_panelActions{flex-wrap:wrap;align-items:center;gap:8px;display:flex}.P9NphG_snapList{flex-direction:column;gap:6px;min-width:0;display:flex}.P9NphG_snapRow{background:var(--dsw-alias-bg-layer-2,#f7f8fa);border-radius:8px;flex-direction:column;align-items:stretch;gap:8px;padding:10px 12px;font-size:12px;line-height:18px;display:flex}.P9NphG_snapMeta{flex-wrap:wrap;align-items:center;gap:8px;min-width:0;display:flex}.P9NphG_snapConfirmText{color:var(--dsw-alias-state-warn-primary,#b45309);margin:0;font-size:12px;line-height:18px}.P9NphG_confirmRow{flex-wrap:wrap;align-items:center;gap:6px;display:inline-flex}.P9NphG_fixFallback{flex-direction:column;gap:6px;margin:8px 0;display:flex}.P9NphG_fixFallbackText{box-sizing:border-box;width:100%;color:var(--dsw-alias-label-primary,#1f2328);background:var(--dsw-alias-bg-layer-2,#f3f4f6);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);resize:vertical;white-space:pre-wrap;word-break:break-all;border-radius:6px;padding:8px 10px;font-family:ui-monospace,Menlo,monospace;font-size:11px;line-height:16px}.P9NphG_setCard{border:1px solid var(--dsw-alias-border-l2,#e5e7eb);background:var(--dsw-alias-bg-layer-3,#fff);border-radius:12px;list-style:none;transition:border-color .16s,background .16s}.P9NphG_setCard:hover{border-color:var(--dsw-alias-label-dimmed,#c8ccd4)}.P9NphG_setCardOpen{background:var(--dsw-alias-bg-layer-2,#f7f8fa);border-color:var(--dsw-alias-label-dimmed,#c8ccd4)}.P9NphG_setHeader{-webkit-appearance:none;appearance:none;width:100%;font:inherit;color:inherit;text-align:left;cursor:pointer;background:0 0;border:0;border-radius:12px;align-items:center;gap:12px;padding:14px 16px;display:flex}.P9NphG_setHeader:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#4f6ef7);outline-offset:-2px}.P9NphG_setHeadText{flex-direction:column;flex:1;gap:4px;min-width:0;display:flex}.P9NphG_setName{color:var(--dsw-alias-label-primary,#1f2328);font-size:15px;font-weight:600;line-height:1.4}.P9NphG_setDesc{color:var(--dsw-alias-label-tertiary,#8b93a1);font-size:13px;line-height:1.5}.P9NphG_setChevron{color:var(--dsw-alias-label-tertiary,#8b93a1);flex:none;transition:transform .16s;display:inline-flex}.P9NphG_setChevronOpen{transform:rotate(180deg)}.P9NphG_setBody{border-top:1px solid var(--dsw-alias-border-l2,#e5e7eb);margin:0 16px;padding-bottom:8px}.P9NphG_setRow{align-items:center;gap:12px;padding:12px 0;display:flex}.P9NphG_setRow+.P9NphG_setRow{border-top:1px solid var(--dsw-alias-border-l2,#e5e7eb)}.P9NphG_setLabelBox{flex-direction:column;flex:1;gap:3px;min-width:0;display:flex}.P9NphG_setLabel{font-size:13px;line-height:20px}.P9NphG_setHint{color:var(--dsw-alias-label-tertiary,#8b93a1);font-size:12px;line-height:18px}.P9NphG_setConfirm{border-top:1px solid var(--dsw-alias-border-l2,#e5e7eb);flex-direction:column;gap:8px;padding:12px 0 4px;display:flex}.P9NphG_setCheck{cursor:pointer;align-items:center;gap:8px;font-size:12px;line-height:18px;display:flex}.P9NphG_setActions{border-top:1px solid var(--dsw-alias-border-l2,#e5e7eb);justify-content:flex-end;align-items:center;gap:8px;padding:12px 0 4px;display:flex}.P9NphG_setDanger{color:var(--dsw-alias-state-error-primary,#dc2626)}.P9NphG_setSeg{border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:8px;flex-shrink:0;gap:2px;padding:2px;display:inline-flex}.P9NphG_setSegBtn{font:inherit;color:var(--dsw-alias-label-secondary,#6b7280);cursor:pointer;background:0 0;border:none;border-radius:6px;padding:3px 10px;font-size:12px;line-height:18px}.P9NphG_setSegBtn:disabled{cursor:default;opacity:.5}.P9NphG_setSegOn{background:var(--dsw-alias-bg-layer-2,#eef0f4);color:var(--dsw-alias-label-primary,#1f2328);font-weight:600}.P9NphG_setBetaTag{background:var(--dsw-alias-bg-module-platform,#eef0f4);color:var(--dsw-alias-label-secondary,#6b7280);border-radius:9px;margin-left:6px;padding:0 6px;font-size:11px;font-weight:600;line-height:17px}";
+		const css = ".P9NphG_root{min-width:0;height:100%;color:var(--dsw-alias-label-primary,#1f2328);flex-direction:column;display:flex;position:relative}.P9NphG_head{flex-direction:column;gap:12px;padding:4px 4px 12px;display:flex}.P9NphG_title{margin:0;font-size:16px;font-weight:500;line-height:24px}.P9NphG_sub{color:var(--dsw-alias-label-tertiary,#8b93a1);align-items:center;gap:8px;margin:0;font-size:12px;line-height:18px;display:flex}.P9NphG_tabs{border-bottom:1px solid var(--dsw-alias-border-l2,#e5e7eb);align-items:flex-end;gap:2px;display:flex}.P9NphG_tab{font:inherit;color:var(--dsw-alias-label-secondary,#6b7280);cursor:pointer;white-space:nowrap;background:0 0;border:none;border-bottom:2px solid #0000;padding:7px 12px;font-size:13px}.P9NphG_tab.P9NphG_on{color:var(--dsw-alias-brand-primary,#4f6ef7);border-bottom-color:var(--dsw-alias-brand-primary,#4f6ef7);font-weight:600}.P9NphG_banner{background:var(--dsw-alias-bg-layer-2,#fdf3e3);border:1px solid var(--dsw-alias-border-l2,#f3e3c3);border-radius:8px;align-items:center;gap:8px;margin:0;padding:8px 12px;font-size:12px;display:flex}.P9NphG_bannerIcon{color:var(--dsw-alias-label-secondary,#6b7280);flex-shrink:0}.P9NphG_bannerHint{color:var(--dsw-alias-label-tertiary,#8b93a1);cursor:help;display:inline-flex}.P9NphG_body{flex:1;padding:12px 4px 24px;overflow-x:hidden;overflow-y:auto}.P9NphG_stickyHead{z-index:5;background:var(--dsw-alias-bg-layer-2,#f7f8fa);position:sticky;top:-1px}.P9NphG_stickyHead:before{content:\"\";background:inherit;pointer-events:none;height:14px;position:absolute;bottom:100%;left:0;right:0}.P9NphG_cats{margin:0 -4px 2px;padding:12px 4px 4px}.P9NphG_catsRow{align-items:flex-start;gap:8px;display:flex;position:relative}.P9NphG_star{color:var(--dsw-alias-label-secondary,#9ca3af);font-size:11px}.P9NphG_top{z-index:20;display:inline-flex;position:absolute;bottom:18px;right:18px}.P9NphG_topBtn{border-radius:99px;width:38px;height:38px;padding:0}.P9NphG_tag{border:1px solid var(--dsw-alias-border-l3,#d9dde3);color:var(--dsw-alias-label-secondary,#6b7280);border-radius:4px;flex-shrink:0;padding:1px 6px;font-size:11px;line-height:16px}.P9NphG_okState{color:var(--dsw-alias-state-success-primary,#16a34a);white-space:nowrap;font-size:12px;font-weight:600}.P9NphG_catsWrap{flex-wrap:wrap;flex:1;align-items:center;gap:6px;min-width:0;display:flex}.P9NphG_catsCollapsed{max-height:62px;overflow:hidden}.P9NphG_catsToggle.P9NphG_catsToggle{height:26px;min-height:26px;color:var(--dsw-alias-label-secondary,#6b7280);padding:0 6px}.P9NphG_shots{-webkit-overflow-scrolling:touch;scrollbar-width:thin;gap:8px;margin:0 0 8px;padding:2px 0 6px;display:flex;overflow-x:auto}.P9NphG_shot{object-fit:cover;border:1px solid var(--dsw-alias-border-default,#e5e7eb);background:var(--dsw-alias-bg-layer-2,#f3f4f6);border-radius:8px;flex:none;max-width:260px;height:150px}.P9NphG_cmd{background:var(--dsw-alias-bg-layer-2,#f3f4f6);word-break:break-all;border-radius:6px;margin:8px 0 0;padding:8px 10px;font-family:ui-monospace,Menlo,monospace;font-size:11px;line-height:18px}.P9NphG_warnLine{color:var(--dsw-alias-state-warn-primary,#b45309);align-items:center;gap:4px;margin:0;font-size:12px;font-weight:600;line-height:18px;display:flex}.P9NphG_modalNote{color:var(--dsw-alias-label-tertiary,#8b93a1);align-items:center;gap:4px;margin:12px 0 0;font-size:12px;line-height:18px;display:flex}.P9NphG_grid{grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;display:grid}.P9NphG_swatches{border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:8px;gap:0;height:34px;display:flex;overflow:hidden}.P9NphG_themesGrid{margin-bottom:12px}.P9NphG_swatches i{flex:1}.P9NphG_card{background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:12px;flex-direction:column;align-self:start;gap:12px;padding:12px 14px;display:flex}.P9NphG_row1{align-items:center;gap:10px;min-width:0;display:flex}.P9NphG_installBtn.P9NphG_installBtn{min-width:92px}.P9NphG_av{color:#fff;object-fit:cover;background:var(--dsw-alias-bg-layer-2,#f3f4f6);border-radius:50%;flex-shrink:0;place-items:center;width:16px;height:16px;font-size:9px;font-weight:700;display:grid}.P9NphG_nm{text-overflow:ellipsis;white-space:nowrap;font-size:15px;font-weight:600;line-height:22px;overflow:hidden}.P9NphG_byline{align-items:center;gap:6px;min-width:0;margin-top:2px;display:flex}.P9NphG_meta{color:var(--dsw-alias-label-secondary,#9ca3af);margin-top:2px;font-size:11px}.P9NphG_metaInline,.P9NphG_owner{color:var(--dsw-alias-label-secondary,#9ca3af);font-size:11px}.P9NphG_desc{color:var(--dsw-alias-label-tertiary,#8b93a1);min-height:36px;margin:0;font-size:12px;line-height:18px}.P9NphG_foot{align-items:center;gap:8px;display:flex}.P9NphG_grow{flex:1}.P9NphG_titleRow{align-items:center;gap:10px;display:flex}.P9NphG_version{color:var(--dsw-alias-label-tertiary,#8b93a1);font-variant-numeric:tabular-nums;flex-shrink:0;font-size:12px;line-height:20px}.P9NphG_repoLink{color:var(--dsw-alias-label-tertiary,#8b93a1);flex-shrink:0;font-size:12px;line-height:20px;text-decoration:none}.P9NphG_repoLink:hover{color:var(--dsw-alias-brand-primary,#4f6ef7)}.P9NphG_descTight{min-height:0}.P9NphG_src{color:var(--dsw-alias-label-secondary,#9ca3af);font-size:11px;text-decoration:none}.P9NphG_src:hover{color:var(--dsw-alias-brand-primary,#4f6ef7)}.P9NphG_dot{vertical-align:2px;margin-left:5px}.P9NphG_act{flex-wrap:wrap;align-items:center;gap:6px;margin-top:6px;font-size:11px;display:flex}.P9NphG_actLive{color:var(--dsw-alias-state-success-primary,#16a34a);align-items:center;gap:4px;font-weight:600;display:inline-flex}.P9NphG_actWarn{color:var(--dsw-alias-state-warn-primary,#b45309);align-items:center;gap:4px;font-weight:600;display:inline-flex}.P9NphG_actBroken{color:var(--dsw-alias-state-error-primary,#dc2626);align-items:center;gap:4px;font-weight:600;display:inline-flex}.P9NphG_actWhy{color:var(--dsw-alias-label-secondary,#6b7280);margin-top:2px}.P9NphG_loading{color:var(--dsw-alias-label-secondary,#9ca3af);flex-direction:column;align-items:center;gap:12px;padding:48px;font-size:13px;display:flex}.P9NphG_spin{color:var(--dsw-alias-brand-primary,#4f6ef7);flex-shrink:0;animation:.8s linear infinite P9NphG_sp;display:inline-flex}.P9NphG_logoMark{color:var(--dsw-alias-brand-primary,#4f6ef7);flex-shrink:0;display:inline-flex}.P9NphG_logoPlug{transform-box:fill-box;transform-origin:50%;animation:1.5s cubic-bezier(.4,0,.2,1) infinite P9NphG_dshmPlug}@keyframes P9NphG_dshmPlug{0%,12%{transform:rotate(9deg)}45%,62%{transform:translate(-1.28px,1.27px)rotate(0)}95%,to{transform:rotate(9deg)}}@media (prefers-reduced-motion:reduce){.P9NphG_logoPlug,.P9NphG_spin{animation:1.5s ease-in-out infinite P9NphG_dshmPlugFade}}@keyframes P9NphG_dshmPlugFade{0%,to{opacity:1}50%{opacity:.35}}@keyframes P9NphG_sp{to{transform:rotate(360deg)}}.P9NphG_progress{background:var(--dsw-alias-bg-layer-2,#f3f4f6);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);color:var(--dsw-alias-label-secondary,#6b7280);border-radius:8px;flex-wrap:wrap;align-items:center;gap:9px;margin:0;padding:8px 12px;font-size:12px;display:flex}.P9NphG_bar{background:var(--dsw-alias-border-l1,#e5e7eb);border-radius:99px;width:100%;height:4px;overflow:hidden}.P9NphG_barFill{background:var(--dsw-alias-brand-primary,#4f6ef7);border-radius:99px;height:100%;transition:width .6s}.P9NphG_barWave{width:30%;animation:1.2s ease-in-out infinite P9NphG_dshmSlide}@keyframes P9NphG_dshmSlide{0%{margin-left:-30%}to{margin-left:100%}}.P9NphG_irow .P9NphG_progress{margin-top:8px}.P9NphG_progress code{text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,Menlo,monospace;font-size:11px;overflow:hidden}.P9NphG_empty{color:var(--dsw-alias-label-secondary,#9ca3af);text-align:center;padding:32px;font-size:13px}.P9NphG_err{color:var(--dsw-alias-state-error-primary,#dc2626);white-space:pre-wrap;word-break:break-all;margin:8px 0;font-size:12px}.P9NphG_irow{background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:12px;align-items:center;gap:10px;margin-bottom:8px;padding:12px 14px;display:flex}.P9NphG_irowMissing{filter:grayscale();opacity:.5}.P9NphG_irow>.P9NphG_src,.P9NphG_irow>.P9NphG_owner,.P9NphG_irow button{white-space:nowrap;flex-shrink:0}.P9NphG_tabSearchRow{padding:0 4px 10px;display:flex}.P9NphG_tabSearch{width:260px}.P9NphG_spec{color:var(--dsw-alias-label-secondary,#9ca3af);overflow-wrap:anywhere;min-width:0;font-family:ui-monospace,Menlo,monospace;font-size:11px}.P9NphG_specTag{white-space:nowrap;border-radius:4px;flex-shrink:0;align-items:center;height:16px;padding:0 5px;font-size:10px;font-weight:600;display:inline-flex}.P9NphG_specTagGit{color:#0b7285;background:#12a3c41f}.P9NphG_specTagFile{color:#b07d1b;background:#f0b42924}.P9NphG_backupCheckList .P9NphG_grow{white-space:nowrap;text-overflow:ellipsis;flex:70%;min-width:0;overflow:hidden}.P9NphG_backupCheckList .P9NphG_spec{text-align:right;white-space:nowrap;text-overflow:ellipsis;flex:0 30%;max-width:30%;overflow:hidden}.P9NphG_staleAction{margin-top:8px}.P9NphG_pct{color:var(--dsw-alias-label-secondary,#6b7280);flex-shrink:0;font-size:11px;font-weight:600}.P9NphG_pager{flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;margin:16px 0 4px;display:flex}.P9NphG_pagerPages{flex-wrap:wrap;flex:1;justify-content:center;align-items:center;gap:6px;min-width:0;display:flex}.P9NphG_pageEllipsis{color:var(--dsw-alias-label-secondary,#9ca3af);padding:0 2px;font-size:12px}.P9NphG_pageInfo{color:var(--dsw-alias-label-secondary,#6b7280);white-space:nowrap;font-size:12px}.P9NphG_depBadge{border:1px solid var(--dsw-alias-state-warn-primary,#b45309);color:var(--dsw-alias-state-warn-primary,#b45309);white-space:nowrap;border-radius:4px;flex-shrink:0;margin-left:6px;padding:1px 6px;font-size:11px;font-weight:600;line-height:16px}.P9NphG_deprecate{color:var(--dsw-alias-state-warn-primary,#b45309);background:var(--dsw-alias-bg-layer-2,#fdf3e3);border:1px solid var(--dsw-alias-border-l2,#f3e3c3);border-radius:8px;margin:0;padding:8px 10px;font-size:12px;line-height:18px}.P9NphG_deprecate a{color:var(--dsw-alias-state-warn-primary,#b45309);text-decoration:underline}.P9NphG_deprecate .P9NphG_src{margin-left:8px}.P9NphG_depLine{flex-wrap:wrap;align-items:center;gap:8px;display:flex}.P9NphG_switch{border:1px solid var(--dsw-alias-border-l2,#d9dde3);background:var(--dsw-alias-bg-layer-2,#e5e7eb);cursor:pointer;border-radius:99px;flex-shrink:0;width:38px;height:22px;padding:0;transition:background .15s,border-color .15s;position:relative}.P9NphG_switchOn{background:var(--dsw-alias-state-success-primary,#16a34a);border-color:var(--dsw-alias-state-success-primary,#16a34a)}.P9NphG_switchMixed{background:var(--dsw-alias-state-warn-primary,#b45309);border-color:var(--dsw-alias-state-warn-primary,#b45309)}.P9NphG_switchKnob{background:#fff;border-radius:99px;width:16px;height:16px;transition:left .15s;position:absolute;top:2px;left:2px;box-shadow:0 1px 2px #00000040}.P9NphG_switchOn .P9NphG_switchKnob,.P9NphG_switchMixed .P9NphG_switchKnob{left:18px}.P9NphG_switch:disabled{opacity:.5;cursor:default}.P9NphG_viewBar{border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:8px;align-items:center;gap:2px;width:fit-content;margin-bottom:12px;padding:2px;display:flex}.P9NphG_viewBtn{font:inherit;color:var(--dsw-alias-label-secondary,#6b7280);cursor:pointer;white-space:nowrap;background:0 0;border:none;border-radius:6px;padding:4px 10px;font-size:12px;line-height:18px}.P9NphG_viewBtn:hover{color:var(--dsw-alias-brand-primary,#4f6ef7)}.P9NphG_viewOn{background:var(--dsw-alias-bg-layer-2,#eef0f4);color:var(--dsw-alias-label-primary,#1f2328);font-weight:600}.P9NphG_groupRow{background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:12px;margin-bottom:10px;padding:12px 14px}.P9NphG_groupHead{align-items:center;gap:10px;min-width:0;display:flex}.P9NphG_groupName{text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:600;line-height:20px;overflow:hidden}.P9NphG_groupActions{flex-shrink:0;align-items:center;gap:6px;display:flex}.P9NphG_groupMembers{flex-direction:column;gap:6px;margin-top:10px;display:flex}.P9NphG_groupMember{background:var(--dsw-alias-bg-layer-2,#f7f8fa);border-radius:8px;align-items:center;gap:8px;padding:6px 8px;font-size:12px;line-height:18px;display:flex}.P9NphG_groupMember .P9NphG_nm{flex:1;min-width:0;font-size:12px}.P9NphG_groupAddPanel{border-top:1px dashed var(--dsw-alias-border-l2,#e5e7eb);flex-direction:column;gap:6px;margin-top:10px;padding-top:10px;display:flex}.P9NphG_groupCreate{align-items:center;gap:8px;margin-bottom:10px;display:flex}.P9NphG_inlineInput{flex:1;min-width:120px}.P9NphG_assignRow{flex-wrap:wrap;align-items:center;gap:8px;display:flex}.P9NphG_assignSelect{border:1px solid var(--dsw-alias-border-l2,#e5e7eb);background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary,#1f2328);font:inherit;border-radius:6px;padding:3px 6px;font-size:12px;line-height:18px}.P9NphG_groupHint{color:var(--dsw-alias-label-tertiary,#8b93a1);font-size:11px}.P9NphG_sectAction{color:var(--dsw-alias-label-secondary,#6b7280);align-items:center;gap:8px;margin:14px 2px 8px;font-size:12px;font-weight:600;display:flex}.P9NphG_backupGrid{grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;display:grid}.P9NphG_backupCard{background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:12px;flex-direction:column;gap:10px;padding:16px;display:flex}.P9NphG_backupCard h3{margin:0;font-size:14px}.P9NphG_backupCard p{color:var(--dsw-alias-label-secondary,#6b7280);margin:0;font-size:12px;line-height:18px}.P9NphG_backupActions{flex-wrap:wrap;gap:8px;display:flex;position:relative}.P9NphG_hiddenFile{opacity:0;pointer-events:none;width:1px;height:1px;position:absolute}.P9NphG_backupInput{box-sizing:border-box;width:100%}.P9NphG_backupCheck{cursor:pointer;align-items:center;gap:6px;font-size:12px;display:flex}.P9NphG_backupWarn{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-state-warn-primary,#b45309)!important}.P9NphG_backupMessage{color:var(--dsw-alias-label-secondary,#6b7280);grid-column:1/-1;font-size:12px}.P9NphG_backupCheckList{flex-direction:column;gap:6px;max-height:260px;margin:10px 0 4px;padding-right:4px;display:flex;overflow-y:auto}.P9NphG_backupCheckList .P9NphG_backupCheck{justify-content:space-between;gap:8px}.P9NphG_diagPage{flex-direction:column;gap:12px;height:100%;min-height:0;display:flex;overflow-y:auto}.P9NphG_diagSummary{background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:12px;flex-wrap:wrap;align-items:center;gap:12px;padding:10px 14px;font-size:12px;display:flex}.P9NphG_diagSummaryItem{color:var(--dsw-alias-label-secondary,#6b7280);white-space:nowrap;align-items:center;gap:6px;display:inline-flex}.P9NphG_diagSummaryMeta{color:var(--dsw-alias-label-tertiary,#9ca3af);text-overflow:ellipsis;white-space:nowrap;max-width:320px;font-family:ui-monospace,Menlo,monospace;font-size:11px;overflow:hidden}.P9NphG_diagSection{background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:12px;flex-direction:column;gap:8px;padding:12px 14px;display:flex}.P9NphG_diagSection h3{color:var(--dsw-alias-label-primary,#1f2328);margin:0;font-size:13px;font-weight:600}.P9NphG_diagCount{color:var(--dsw-alias-label-tertiary,#9ca3af);font-size:11px;font-weight:400}.P9NphG_diagEmpty{color:var(--dsw-alias-label-secondary,#9ca3af);padding:8px 0;font-size:12px}.P9NphG_diagBundle{border-top:1px solid var(--dsw-alias-border-l2,#f0f1f3);flex-direction:column;gap:6px;padding-top:8px;display:flex}.P9NphG_diagBundle:first-of-type{border-top:none;padding-top:0}.P9NphG_diagRow{flex-wrap:wrap;align-items:center;gap:8px;min-width:0;font-size:12px;line-height:18px;display:flex}.P9NphG_diagMeta{align-items:baseline;gap:8px;min-width:0;font-size:12px;display:flex}.P9NphG_diagKey{color:var(--dsw-alias-label-tertiary,#9ca3af);flex-shrink:0;min-width:64px;font-size:11px}.P9NphG_diagVal{color:var(--dsw-alias-label-primary,#1f2328);overflow-wrap:anywhere;min-width:0;font-family:ui-monospace,Menlo,monospace;font-size:12px;font-weight:500}.P9NphG_diagIndex{background:var(--dsw-alias-bg-layer-2,#f3f4f6);min-width:18px;height:18px;color:var(--dsw-alias-label-secondary,#6b7280);border-radius:9px;flex-shrink:0;justify-content:center;align-items:center;font-size:11px;font-weight:600;display:inline-flex}.P9NphG_diagArrow{color:var(--dsw-alias-label-tertiary,#9ca3af);flex-shrink:0;font-size:12px}.P9NphG_diagBadgeOfficial{background:var(--dsw-alias-brand-primary,#4f6ef7);color:#fff;border-radius:9px;flex-shrink:0;align-items:center;height:18px;padding:0 8px;font-size:11px;font-weight:600;display:inline-flex}.P9NphG_diagBadgeCommunity{background:var(--dsw-alias-bg-layer-2,#f3f4f6);height:18px;color:var(--dsw-alias-label-secondary,#6b7280);border-radius:9px;flex-shrink:0;align-items:center;padding:0 8px;font-size:11px;display:inline-flex}.P9NphG_diagBadgeShadow{background:var(--dsw-alias-state-error-primary,#dc2626);color:#fff;border-radius:9px;flex-shrink:0;align-items:center;height:18px;padding:0 8px;font-size:11px;font-weight:600;display:inline-flex}.P9NphG_diagList{flex-direction:column;gap:6px;display:flex}.P9NphG_sectionOverview{color:var(--dsw-alias-label-tertiary,#8b93a1);text-overflow:ellipsis;white-space:nowrap;max-width:100%;padding:2px 0 6px;font-size:12px;line-height:18px;overflow:hidden}.P9NphG_diagAlert{color:var(--dsw-alias-state-warn-primary,#b45309)}.P9NphG_ovRow{background:var(--dsw-alias-bg-layer-2,#f7f8fa);border-radius:8px;flex-wrap:wrap;align-items:center;gap:8px;min-width:0;padding:6px 10px;font-size:12px;line-height:18px;display:flex}.P9NphG_ovArrow{color:var(--dsw-alias-label-tertiary,#9ca3af);flex-shrink:0;font-size:12px}.P9NphG_ovByTag{background:var(--dsw-alias-brand-primary,#4f6ef7);color:#fff;text-overflow:ellipsis;white-space:nowrap;border-radius:9px;flex-shrink:0;align-items:center;max-width:260px;height:18px;padding:0 8px;font-size:11px;font-weight:600;display:inline-flex;overflow:hidden}.P9NphG_ovFrom{color:var(--dsw-alias-label-secondary,#6b7280);text-overflow:ellipsis;white-space:nowrap;min-width:0;font-size:12px;overflow:hidden}.P9NphG_orphRow{background:var(--dsw-alias-bg-layer-2,#f7f8fa);border-radius:8px;flex-wrap:wrap;align-items:center;gap:8px;min-width:0;padding:6px 10px;font-size:12px;line-height:18px;display:flex}.P9NphG_orphBadge{background:var(--dsw-alias-state-warn-primary,#b45309);color:#fff;white-space:nowrap;border-radius:9px;flex-shrink:0;align-items:center;height:18px;padding:0 8px;font-size:11px;font-weight:600;display:inline-flex}.P9NphG_dragHandle{width:20px;height:20px;color:var(--dsw-alias-label-tertiary,#9ca3af);cursor:grab;-webkit-user-select:none;user-select:none;flex-shrink:0;justify-content:center;align-items:center;font-size:12px;line-height:20px;display:inline-flex}.P9NphG_dragOver{outline:2px dashed var(--dsw-alias-brand-primary,#4f6ef7);outline-offset:2px;background:var(--dsw-alias-bg-layer-2,#f0f2f8);border-radius:8px}.P9NphG_dragging{opacity:.45;background:var(--dsw-alias-bg-layer-2,#f3f4f6)}.P9NphG_collapseHead{font:inherit;color:var(--dsw-alias-label-primary,#1f2328);cursor:pointer;text-align:left;background:0 0;border:none;align-items:center;gap:8px;width:100%;padding:0;font-size:13px;font-weight:600;display:flex}.P9NphG_collapseIcon{color:var(--dsw-alias-label-secondary,#6b7280);flex-shrink:0;display:inline-flex}.P9NphG_collapseTitle{flex:1;min-width:0}.P9NphG_collapseBody{border-top:1px solid var(--dsw-alias-border-l2,#f0f1f3);overflow-wrap:anywhere;flex-direction:column;gap:10px;min-width:0;margin-top:8px;padding-top:10px;display:flex}.P9NphG_orderPanel{flex-direction:column;gap:10px;min-width:0;display:flex}.P9NphG_panelNote{color:var(--dsw-alias-label-secondary,#6b7280);margin:0;font-size:12px;line-height:18px}.P9NphG_panelActions{flex-wrap:wrap;align-items:center;gap:8px;display:flex}.P9NphG_snapList{flex-direction:column;gap:6px;min-width:0;display:flex}.P9NphG_snapRow{background:var(--dsw-alias-bg-layer-2,#f7f8fa);border-radius:8px;flex-direction:column;align-items:stretch;gap:8px;padding:10px 12px;font-size:12px;line-height:18px;display:flex}.P9NphG_snapMeta{flex-wrap:wrap;align-items:center;gap:8px;min-width:0;display:flex}.P9NphG_snapConfirmText{color:var(--dsw-alias-state-warn-primary,#b45309);margin:0;font-size:12px;line-height:18px}.P9NphG_confirmRow{flex-wrap:wrap;align-items:center;gap:6px;display:inline-flex}.P9NphG_fixFallback{flex-direction:column;gap:6px;margin:8px 0;display:flex}.P9NphG_fixFallbackText{box-sizing:border-box;width:100%;color:var(--dsw-alias-label-primary,#1f2328);background:var(--dsw-alias-bg-layer-2,#f3f4f6);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);resize:vertical;white-space:pre-wrap;word-break:break-all;border-radius:6px;padding:8px 10px;font-family:ui-monospace,Menlo,monospace;font-size:11px;line-height:16px}.P9NphG_setCard{border:1px solid var(--dsw-alias-border-l2,#e5e7eb);background:var(--dsw-alias-bg-layer-3,#fff);border-radius:12px;list-style:none;transition:border-color .16s,background .16s}.P9NphG_setCard:hover{border-color:var(--dsw-alias-label-dimmed,#c8ccd4)}.P9NphG_setCardOpen{background:var(--dsw-alias-bg-layer-2,#f7f8fa);border-color:var(--dsw-alias-label-dimmed,#c8ccd4)}.P9NphG_setHeader{-webkit-appearance:none;appearance:none;width:100%;font:inherit;color:inherit;text-align:left;cursor:pointer;background:0 0;border:0;border-radius:12px;align-items:center;gap:12px;padding:14px 16px;display:flex}.P9NphG_setHeader:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#4f6ef7);outline-offset:-2px}.P9NphG_setHeadText{flex-direction:column;flex:1;gap:4px;min-width:0;display:flex}.P9NphG_setName{color:var(--dsw-alias-label-primary,#1f2328);font-size:15px;font-weight:600;line-height:1.4}.P9NphG_setDesc{color:var(--dsw-alias-label-tertiary,#8b93a1);font-size:13px;line-height:1.5}.P9NphG_setChevron{color:var(--dsw-alias-label-tertiary,#8b93a1);flex:none;transition:transform .16s;display:inline-flex}.P9NphG_setChevronOpen{transform:rotate(180deg)}.P9NphG_setBody{border-top:1px solid var(--dsw-alias-border-l2,#e5e7eb);margin:0 16px;padding-bottom:8px}.P9NphG_setRow{align-items:center;gap:12px;padding:12px 0;display:flex}.P9NphG_setRow+.P9NphG_setRow{border-top:1px solid var(--dsw-alias-border-l2,#e5e7eb)}.P9NphG_setLabelBox{flex-direction:column;flex:1;gap:3px;min-width:0;display:flex}.P9NphG_setLabel{font-size:13px;line-height:20px}.P9NphG_setHint{color:var(--dsw-alias-label-tertiary,#8b93a1);font-size:12px;line-height:18px}.P9NphG_setConfirm{border-top:1px solid var(--dsw-alias-border-l2,#e5e7eb);flex-direction:column;gap:8px;padding:12px 0 4px;display:flex}.P9NphG_setCheck{cursor:pointer;align-items:center;gap:8px;font-size:12px;line-height:18px;display:flex}.P9NphG_setActions{border-top:1px solid var(--dsw-alias-border-l2,#e5e7eb);justify-content:flex-end;align-items:center;gap:8px;padding:12px 0 4px;display:flex}.P9NphG_setDanger{color:var(--dsw-alias-state-error-primary,#dc2626)}.P9NphG_setSeg{border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:8px;flex-shrink:0;gap:2px;padding:2px;display:inline-flex}.P9NphG_setSegBtn{font:inherit;color:var(--dsw-alias-label-secondary,#6b7280);cursor:pointer;background:0 0;border:none;border-radius:6px;padding:3px 10px;font-size:12px;line-height:18px}.P9NphG_setSegBtn:disabled{cursor:default;opacity:.5}.P9NphG_setSegOn{background:var(--dsw-alias-bg-layer-2,#eef0f4);color:var(--dsw-alias-label-primary,#1f2328);font-weight:600}.P9NphG_setBetaTag{background:var(--dsw-alias-bg-module-platform,#eef0f4);color:var(--dsw-alias-label-secondary,#6b7280);border-radius:9px;margin-left:6px;padding:0 6px;font-size:11px;font-weight:600;line-height:17px}";
 		const tagId = "dshmarket/Market.module.css";
 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId) + "]") === null) {
 			const tag = document.createElement("style");
@@ -1082,6 +1212,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			"barFill": "P9NphG_barFill",
 			"barWave": "P9NphG_barWave",
 			"body": "P9NphG_body",
+			"byline": "P9NphG_byline",
 			"card": "P9NphG_card",
 			"cats": "P9NphG_cats",
 			"catsCollapsed": "P9NphG_catsCollapsed",
@@ -1144,11 +1275,14 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			"head": "P9NphG_head",
 			"hiddenFile": "P9NphG_hiddenFile",
 			"inlineInput": "P9NphG_inlineInput",
+			"installBtn": "P9NphG_installBtn",
 			"irow": "P9NphG_irow",
 			"irowMissing": "P9NphG_irowMissing",
 			"loading": "P9NphG_loading",
 			"logoMark": "P9NphG_logoMark",
 			"logoPlug": "P9NphG_logoPlug",
+			"meta": "P9NphG_meta",
+			"metaInline": "P9NphG_metaInline",
 			"modalNote": "P9NphG_modalNote",
 			"nm": "P9NphG_nm",
 			"okState": "P9NphG_okState",
@@ -1169,6 +1303,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			"panelNote": "P9NphG_panelNote",
 			"pct": "P9NphG_pct",
 			"progress": "P9NphG_progress",
+			"repoLink": "P9NphG_repoLink",
 			"root": "P9NphG_root",
 			"row1": "P9NphG_row1",
 			"sectAction": "P9NphG_sectAction",
@@ -1207,9 +1342,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			"specTagGit": "P9NphG_specTagGit",
 			"spin": "P9NphG_spin",
 			"src": "P9NphG_src",
-			"srcBtn": "P9NphG_srcBtn",
 			"staleAction": "P9NphG_staleAction",
 			"star": "P9NphG_star",
+			"stickyHead": "P9NphG_stickyHead",
 			"sub": "P9NphG_sub",
 			"swatches": "P9NphG_swatches",
 			"switch": "P9NphG_switch",
@@ -2666,6 +2801,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		*/
 		let cachedRegistry = null;
 		let cachedInstalled = null;
+		let cachedRepoIdentities = null;
+		let cachedRepoHints = null;
 		/** Discover grid page-size choices — the catalog grows daily, so cap each page. */
 		const PAGE_SIZES = [
 			24,
@@ -2705,14 +2842,44 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			if (!Object.values(dependencies).every((spec) => typeof spec === "string")) throw new Error("backup dependencies are invalid");
 			return dependencies;
 		}
+		function installedRepoIdentities(value) {
+			if (value === null || typeof value !== "object" || Array.isArray(value)) return {};
+			const identities = {};
+			for (const [name, ids] of Object.entries(value)) {
+				if (!Array.isArray(ids)) continue;
+				const strings = ids.filter((id) => typeof id === "string");
+				if (strings.length > 0) identities[name] = strings;
+			}
+			return identities;
+		}
+		function installedRepoHints(value) {
+			return installedRepoIdentities(value);
+		}
+		function installedMap(value) {
+			if (value === null || typeof value !== "object" || Array.isArray(value)) return {};
+			const installed = {};
+			for (const [name, spec] of Object.entries(value)) if (typeof spec === "string") installed[name] = spec;
+			return installed;
+		}
+		function sameInstalledMap(left, right) {
+			const names = Object.keys(left);
+			return names.length === Object.keys(right).length && names.every((name) => left[name] === right[name]);
+		}
 		/** Sort field choices in the filter panel. */
-		const SORT_FIELD_OPTIONS = [{
-			key: "stars",
-			label: "sortStars"
-		}, {
-			key: "added",
-			label: "sortAdded"
-		}];
+		const SORT_FIELD_OPTIONS = [
+			{
+				key: "downloads",
+				label: "sortDownloads"
+			},
+			{
+				key: "stars",
+				label: "sortStars"
+			},
+			{
+				key: "added",
+				label: "sortAdded"
+			}
+		];
 		/** Sort direction choices in the filter panel (labels depend on the field). */
 		const SORT_DIR_OPTIONS = ["desc", "asc"];
 		/** Published-within choices in the filter panel. */
@@ -2755,6 +2922,16 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				cachedInstalled = value;
 				setInstalledState(value);
 			}, []);
+			const [repoIdentities, setRepoIdentitiesState] = (0, react.useState)(cachedRepoIdentities ?? {});
+			const setRepoIdentities = (0, react.useCallback)((value) => {
+				cachedRepoIdentities = value;
+				setRepoIdentitiesState(value);
+			}, []);
+			const [repoHints, setRepoHintsState] = (0, react.useState)(cachedRepoHints ?? {});
+			const setRepoHints = (0, react.useCallback)((value) => {
+				cachedRepoHints = value;
+				setRepoHintsState(value);
+			}, []);
 			const [installedFiles, setInstalledFiles] = (0, react.useState)([]);
 			const [skins, setSkins] = (0, react.useState)([]);
 			const [tab, setTab] = (0, react.useState)(() => {
@@ -2773,6 +2950,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const idleStrikes = (0, react.useRef)(0);
 			const [doneUrls, setDoneUrls] = (0, react.useState)([]);
 			const [installError, setInstallError] = (0, react.useState)(null);
+			const [compatibilityNotice, setCompatibilityNotice] = (0, react.useState)(null);
+			const [rollingBack, setRollingBack] = (0, react.useState)(false);
 			/** Log export lifecycle for visible feedback (#84): idle → busy → done/fail. */
 			const [exportState, setExportState] = (0, react.useState)("idle");
 			/**
@@ -2927,7 +3106,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const bodyRef = (0, react.useRef)(null);
 			/** Hidden file input behind the Import button (a Button can't host an <input>). */
 			const fileInputRef = (0, react.useRef)(null);
-			const [sortField, setSortField] = (0, react.useState)("stars");
+			const [sortField, setSortField] = (0, react.useState)("downloads");
 			const [sortDir, setSortDir] = (0, react.useState)("desc");
 			/** Direction labels adapt to the field: stars → asc/desc, added → oldest/newest. */
 			const sortDirLabel = (dir) => sortField === "added" ? dir === "desc" ? "sortNewest" : "sortOldest" : dir === "desc" ? "sortDesc" : "sortAsc";
@@ -2951,6 +3130,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const refreshInstalled = (0, react.useCallback)((force) => {
 				fetch("/dsh-market/installed", { cache: "no-store" }).then((res) => res.json()).then((body) => {
 					setInstalled(body.installed || {});
+					setRepoIdentities(installedRepoIdentities(body.repoIdentities));
+					setRepoHints(installedRepoHints(body.repoHints));
 					setInstalledFiles(Array.isArray(body.present) ? body.present : Object.keys(body.installed || {}));
 					setSkins(body.live || []);
 					if (Array.isArray(body.disabled)) setDisabledNames(body.disabled);
@@ -3084,9 +3265,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 							setProgressCurrent(null);
 							setProgressDone(0);
 							setCancelling(false);
-							setInstalled(status.installed || {});
+							const statusInstalled = installedMap(status.installed);
+							if (!sameInstalledMap(installed, statusInstalled)) refreshInstalled();
 							if (readSession("dshm-pending") !== null && busyUrl !== null && status.busy !== true) {
-								if (data !== null && data.plugins.some((p) => p.url === busyUrl && isInstalled(p, status.installed || {}))) {
+								if (data !== null && data.plugins.some((p) => p.url === busyUrl && isInstalled(p, statusInstalled, repoIdentities, data.plugins, repoHints))) {
 									idleStrikes.current = 0;
 									sessionStorage.removeItem("dshm-pending");
 									setDoneUrls((urls) => urls.includes(busyUrl) ? urls : urls.concat(busyUrl));
@@ -3105,7 +3287,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			}, [
 				busyUrl,
 				updatingName,
-				data
+				data,
+				installed,
+				repoIdentities,
+				repoHints,
+				refreshInstalled
 			]);
 			const plugins = (0, react.useMemo)(() => data === null ? [] : visiblePlugins(data.plugins, {
 				category: cat,
@@ -3173,6 +3359,28 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					setTimeout(() => URL.revokeObjectURL(a.href), 2e3);
 				}).catch((error) => setInstallError(String(error)));
 			}, []);
+			const doRollback = (0, react.useCallback)((rollbackId) => {
+				setRollingBack(true);
+				setInstallError(null);
+				fetch("/dsh-market/rollback", {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({ rollbackId })
+				}).then((res) => res.json().then((body) => ({
+					status: res.status,
+					body
+				}))).then(({ status, body }) => {
+					if (status === 200 && body.ok) {
+						setCompatibilityNotice(null);
+						refreshInstalled();
+					} else setInstallError(String(body.error || body.detail || "rollback failed"));
+				}).catch((error) => setInstallError(String(error))).finally(() => setRollingBack(false));
+			}, [refreshInstalled]);
+			const compatibilitySummary = (risks) => {
+				if (risks.length === 0) return "";
+				const first = risks[0];
+				return `${first.plugin}: ${first.peer} ${first.range} vs ${first.resolved}`;
+			};
 			const doInstall = (0, react.useCallback)((plugin) => {
 				setBuildsSkipped(null);
 				setConfirming(null);
@@ -3219,9 +3427,15 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 							setHotUrls((urls) => urls.includes(plugin.url) ? urls : urls.concat(plugin.url));
 							setHotNames((names) => names.includes(plugin.name) ? names : names.concat(plugin.name));
 						} else setDoneUrls((urls) => urls.includes(plugin.url) ? urls : urls.concat(plugin.url));
+						if (body.compatibility?.code === "soft-incompatible") setCompatibilityNotice(body.compatibility);
 						refreshInstalled();
 					} else {
 						if (status === 409) {
+							if (body.agentsBusy === true) {
+								const running = Array.isArray(body.runningAgents) && body.runningAgents.length > 0 ? ` (${body.runningAgents.join(", ")})` : "";
+								setInstallError(t("agentBusyInstall") + running);
+								return;
+							}
 							setInstallError(t("busyWait"));
 							return;
 						}
@@ -3328,9 +3542,15 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 							...prev,
 							...body.activation
 						}));
+						if (body.compatibility?.code === "soft-incompatible") setCompatibilityNotice(body.compatibility);
 						refreshInstalled();
 					} else {
 						if (status === 409) {
+							if (body.agentsBusy === true) {
+								const running = Array.isArray(body.runningAgents) && body.runningAgents.length > 0 ? ` (${body.runningAgents.join(", ")})` : "";
+								setInstallError(t("agentBusyUpdate") + running);
+								return;
+							}
 							setInstallError(t("busyWait"));
 							return;
 						}
@@ -3862,52 +4082,46 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const pluginCard = (p) => {
 				const desc = p.description && (p.description[lang] || p.description.en) || "";
 				const done = doneUrls.includes(p.url) || hotUrls.includes(p.url);
-				const already = isInstalled(p, installed);
+				const already = isInstalled(p, installed, repoIdentities, data?.plugins, repoHints);
 				const busy = busyUrl === p.url;
 				const replacement = replacementOf(p);
 				return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 					className: Market_module_css_default.card,
 					children: [
-						/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 							className: Market_module_css_default.row1,
-							children: [
-								/* @__PURE__ */ (0, react_jsx_runtime.jsx)(OwnerAvatar, {
-									name: p.name,
-									owner: p.owner || ""
-								}),
-								/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-									style: { minWidth: 0 },
-									children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-										className: Market_module_css_default.nm,
-										children: [p.name, p.deprecated === true && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-											className: Market_module_css_default.depBadge,
-											children: t("deprecatedBadge")
-										})]
-									}), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+							children: /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+								style: { minWidth: 0 },
+								children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+									className: Market_module_css_default.nm,
+									title: p.name,
+									children: [pluginName(p.name), p.deprecated === true && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+										className: Market_module_css_default.depBadge,
+										children: t("deprecatedBadge")
+									})]
+								}), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+									className: Market_module_css_default.byline,
+									children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(OwnerAvatar, {
+										name: p.name,
+										owner: p.owner || ""
+									}), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
 										className: Market_module_css_default.owner,
 										children: [
 											p.owner,
+											typeof p.downloads === "number" && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+												className: Market_module_css_default.star,
+												title: String(p.downloads),
+												children: " · ↓ " + formatCount(p.downloads)
+											}),
 											typeof p.stars === "number" && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 												className: Market_module_css_default.star,
-												children: " · ★ " + p.stars
-											}),
-											p.added && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-												className: Market_module_css_default.star,
-												children: " · " + t("published") + " " + p.added
+												title: String(p.stars),
+												children: " · ★ " + formatCount(p.stars)
 											})
 										]
 									})]
-								}),
-								/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { className: Market_module_css_default.grow }),
-								/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-									variant: "outline",
-									size: "sm",
-									className: Market_module_css_default.srcBtn,
-									icon: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconCodeOutline16, { size: 14 }),
-									onClick: () => window.open(p.url, "_blank", "noopener"),
-									children: t("viewSource")
-								})
-							]
+								})]
+							})
 						}),
 						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 							className: Market_module_css_default.desc,
@@ -3933,6 +4147,17 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									className: Market_module_css_default.tag,
 									children: data.categories[p.category] && (data.categories[p.category][lang] || data.categories[p.category].en) || p.category
 								}),
+								p.added && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+									className: Market_module_css_default.metaInline,
+									children: t("published") + " " + p.added
+								}),
+								/* @__PURE__ */ (0, react_jsx_runtime.jsx)("a", {
+									className: Market_module_css_default.src,
+									href: p.url,
+									target: "_blank",
+									rel: "noreferrer",
+									children: (p.added ? " · " : "") + t("viewSource")
+								}),
 								/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { className: Market_module_css_default.grow }),
 								done ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 									className: Market_module_css_default.okState,
@@ -3943,11 +4168,13 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 								}) : busy ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 									variant: "primary",
 									size: "sm",
+									className: Market_module_css_default.installBtn,
 									disabled: true,
 									children: t("installing")
 								}) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 									variant: "primary",
 									size: "sm",
+									className: Market_module_css_default.installBtn,
 									disabled: busyUrl !== null || !envReady,
 									onClick: () => setConfirming(p),
 									children: t("install")
@@ -3988,7 +4215,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					]
 				}, p.url);
 			};
-			const installedNameOf = (p) => matchInstalledName(p, installed);
+			const installedNameOf = (p) => matchInstalledName(p, installed, repoIdentities, data?.plugins, repoHints);
 			const bootEntries = typeof window !== "undefined" && window.__DSH_BOOT__ && Array.isArray(window.__DSH_BOOT__.entries) ? window.__DSH_BOOT__.entries : [];
 			const themePluginCard = (p) => {
 				const instName = installedNameOf(p);
@@ -3999,46 +4226,40 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 					className: Market_module_css_default.card,
 					children: [
-						/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 							className: Market_module_css_default.row1,
-							children: [
-								/* @__PURE__ */ (0, react_jsx_runtime.jsx)(OwnerAvatar, {
-									name: p.name,
-									owner: p.owner || ""
-								}),
-								/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-									style: { minWidth: 0 },
-									children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-										className: Market_module_css_default.nm,
-										children: [p.name, p.deprecated === true && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-											className: Market_module_css_default.depBadge,
-											children: t("deprecatedBadge")
-										})]
-									}), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+							children: /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+								style: { minWidth: 0 },
+								children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+									className: Market_module_css_default.nm,
+									title: p.name,
+									children: [pluginName(p.name), p.deprecated === true && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+										className: Market_module_css_default.depBadge,
+										children: t("deprecatedBadge")
+									})]
+								}), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+									className: Market_module_css_default.byline,
+									children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(OwnerAvatar, {
+										name: p.name,
+										owner: p.owner || ""
+									}), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
 										className: Market_module_css_default.owner,
 										children: [
 											p.owner,
+											typeof p.downloads === "number" && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+												className: Market_module_css_default.star,
+												title: String(p.downloads),
+												children: " · ↓ " + formatCount(p.downloads)
+											}),
 											typeof p.stars === "number" && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 												className: Market_module_css_default.star,
-												children: " · ★ " + p.stars
-											}),
-											p.added && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-												className: Market_module_css_default.star,
-												children: " · " + t("published") + " " + p.added
+												title: String(p.stars),
+												children: " · ★ " + formatCount(p.stars)
 											})
 										]
 									})]
-								}),
-								/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { className: Market_module_css_default.grow }),
-								/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-									variant: "outline",
-									size: "sm",
-									className: Market_module_css_default.srcBtn,
-									icon: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconCodeOutline16, { size: 14 }),
-									onClick: () => window.open(p.url, "_blank", "noopener"),
-									children: t("viewSource")
-								})
-							]
+								})]
+							})
 						}),
 						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 							className: Market_module_css_default.desc,
@@ -4060,6 +4281,17 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 							className: Market_module_css_default.foot,
 							children: [
+								p.added && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+									className: Market_module_css_default.metaInline,
+									children: t("published") + " " + p.added
+								}),
+								/* @__PURE__ */ (0, react_jsx_runtime.jsx)("a", {
+									className: Market_module_css_default.src,
+									href: p.url,
+									target: "_blank",
+									rel: "noreferrer",
+									children: (p.added ? " · " : "") + t("viewSource")
+								}),
 								/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { className: Market_module_css_default.grow }),
 								removingName === instName ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 									variant: "outline",
@@ -4161,11 +4393,16 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				const names = /* @__PURE__ */ new Set();
 				if (data === null) return names;
 				for (const [name, spec] of Object.entries(installed)) {
-					const entry = entryForDep(data.plugins, name, String(spec));
+					const entry = entryForDep(data.plugins, name, String(spec), repoIdentities[name], repoHints[name]);
 					if (entry !== void 0 && entry.category === "theme") names.add(name);
 				}
 				return names;
-			}, [data, installed]);
+			}, [
+				data,
+				installed,
+				repoIdentities,
+				repoHints
+			]);
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 				className: Market_module_css_default.root,
 				children: [
@@ -4182,6 +4419,14 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("h2", {
 										className: Market_module_css_default.title,
 										children: t("nav")
+									}),
+									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("a", {
+										className: Market_module_css_default.repoLink,
+										href: "https://github.com/dsh-market/dsh-market",
+										target: "_blank",
+										rel: "noreferrer",
+										title: "dsh-market · GitHub",
+										children: "dsh-market"
 									}),
 									version !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
 										className: Market_module_css_default.version,
@@ -4216,7 +4461,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 								className: Market_module_css_default.sub,
 								children: [
-									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: t("subtitle") + (data ? " · " + data.count : "") }),
+									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: t("subtitle") }),
 									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { className: Market_module_css_default.grow }),
 									/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 										variant: "outline",
@@ -4480,6 +4725,32 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									}).catch((error) => setInstallError(String(error)));
 								},
 								children: t("approveBuilds")
+							})
+						]
+					}),
+					compatibilityNotice !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+						className: Market_module_css_default.banner,
+						children: [
+							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
+								className: Market_module_css_default.grow,
+								children: [
+									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("b", { children: t("compatRiskBanner") }),
+									" ",
+									compatibilitySummary(compatibilityNotice.risks)
+								]
+							}),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+								variant: "outline",
+								size: "sm",
+								onClick: () => setTab("diagnostics"),
+								children: t("goDiagnose")
+							}),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+								variant: "primary",
+								size: "sm",
+								disabled: rollingBack,
+								onClick: () => void doRollback(compatibilityNotice.rollbackId),
+								children: rollingBack ? t("rollingBack") : t("rollbackNow")
 							})
 						]
 					}),
@@ -4752,8 +5023,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									animated: true
 								})
 							}), t("loading")]
-						}) : /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
-							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+						}) : /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+							className: Market_module_css_default.stickyHead,
+							children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 								className: Market_module_css_default.tabSearchRow,
 								children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
 									className: Market_module_css_default.tabSearch,
@@ -4762,8 +5034,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									value: q,
 									onChange: (e) => setQ(e.target.value)
 								})
-							}),
-							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+							}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 								className: Market_module_css_default.cats,
 								children: /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 									className: Market_module_css_default.catsRow,
@@ -4771,14 +5042,14 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 										ref: catsWrapRef,
 										className: visibleCats === null ? `${Market_module_css_default.catsWrap} ${Market_module_css_default.catsCollapsed}` : Market_module_css_default.catsWrap,
 										children: (() => {
-											const ordered = orderedCategories(categories, cat, catsOpen);
+											const ordered = orderedCategories(categories, cat, catsOpen, visibleCats);
 											const shown = catsOpen || visibleCats === null ? ordered : ordered.slice(0, Math.max(0, visibleCats - 1));
 											return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
 												/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Pill, {
 													"data-chip": "1",
 													active: cat === "all",
 													onClick: () => setCat("all"),
-													children: t("all")
+													children: t("all") + " (" + formatCount(data.count) + ")"
 												}),
 												shown.map((id) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Pill, {
 													"data-chip": "1",
@@ -4813,84 +5084,83 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 										items: filterItems
 									})]
 								})
-							}),
-							plugins.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
-								className: Market_module_css_default.empty,
-								children: t("empty")
-							}) : /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
-								className: Market_module_css_default.grid,
-								children: pagePlugins.map(pluginCard)
-							}), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-								className: Market_module_css_default.pager,
-								children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
-									className: Market_module_css_default.pagerPages,
-									children: totalPages > 1 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
-										/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-											variant: "outline",
-											size: "sm",
-											disabled: currentPage === 1,
-											onClick: () => goToPage(1),
-											"aria-label": t("firstPage"),
-											children: "«"
-										}),
-										/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-											variant: "outline",
-											size: "sm",
-											icon: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconChevronLeftOutline14, { size: 14 }),
-											disabled: currentPage === 1,
-											onClick: () => goToPage(currentPage - 1),
-											children: t("prevPage")
-										}),
-										pageItems(currentPage, totalPages).map((item, i) => item === "…" ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-											className: Market_module_css_default.pageEllipsis,
-											children: "…"
-										}, "e" + i) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-											variant: item === currentPage ? "primary" : "outline",
-											size: "sm",
-											onClick: () => goToPage(item),
-											children: item
-										}, item)),
-										/* @__PURE__ */ (0, react_jsx_runtime.jsxs)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-											variant: "outline",
-											size: "sm",
-											disabled: currentPage === totalPages,
-											onClick: () => goToPage(currentPage + 1),
-											children: [t("nextPage"), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconChevronRightOutline14, { size: 14 })]
-										}),
-										/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-											variant: "outline",
-											size: "sm",
-											disabled: currentPage === totalPages,
-											onClick: () => goToPage(totalPages),
-											"aria-label": t("lastPage"),
-											children: "»"
-										}),
-										/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-											className: Market_module_css_default.pageInfo,
-											children: t("pageInfo").replace("{0}", String(currentPage)).replace("{1}", String(totalPages))
-										})
-									] })
-								}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Menu, {
-									open: sizeOpen,
-									onClose: () => setSizeOpen(false),
-									onSelect: (id) => changePageSize(Number(id)),
-									selectedId: String(pageSize),
-									align: "end",
-									portal: true,
-									anchor: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+							})]
+						}), plugins.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+							className: Market_module_css_default.empty,
+							children: t("empty")
+						}) : /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+							className: Market_module_css_default.grid,
+							children: pagePlugins.map(pluginCard)
+						}), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+							className: Market_module_css_default.pager,
+							children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+								className: Market_module_css_default.pagerPages,
+								children: totalPages > 1 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
+									/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 										variant: "outline",
 										size: "sm",
-										icon: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconChevronDownOutline14, { size: 14 }),
-										onClick: () => setSizeOpen((o) => !o),
-										children: t("perPage") + " " + pageSize
+										disabled: currentPage === 1,
+										onClick: () => goToPage(1),
+										"aria-label": t("firstPage"),
+										children: "«"
 									}),
-									items: PAGE_SIZES.map((size) => ({
-										id: String(size),
-										label: String(size)
-									}))
-								})]
-							})] })
-						] }) : tab === "themes" && themeSnap !== null ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
+									/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+										variant: "outline",
+										size: "sm",
+										icon: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconChevronLeftOutline14, { size: 14 }),
+										disabled: currentPage === 1,
+										onClick: () => goToPage(currentPage - 1),
+										children: t("prevPage")
+									}),
+									pageItems(currentPage, totalPages).map((item, i) => item === "…" ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+										className: Market_module_css_default.pageEllipsis,
+										children: "…"
+									}, "e" + i) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+										variant: item === currentPage ? "primary" : "outline",
+										size: "sm",
+										onClick: () => goToPage(item),
+										children: item
+									}, item)),
+									/* @__PURE__ */ (0, react_jsx_runtime.jsxs)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+										variant: "outline",
+										size: "sm",
+										disabled: currentPage === totalPages,
+										onClick: () => goToPage(currentPage + 1),
+										children: [t("nextPage"), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconChevronRightOutline14, { size: 14 })]
+									}),
+									/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+										variant: "outline",
+										size: "sm",
+										disabled: currentPage === totalPages,
+										onClick: () => goToPage(totalPages),
+										"aria-label": t("lastPage"),
+										children: "»"
+									}),
+									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+										className: Market_module_css_default.pageInfo,
+										children: t("pageInfo").replace("{0}", String(currentPage)).replace("{1}", String(totalPages))
+									})
+								] })
+							}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Menu, {
+								open: sizeOpen,
+								onClose: () => setSizeOpen(false),
+								onSelect: (id) => changePageSize(Number(id)),
+								selectedId: String(pageSize),
+								align: "end",
+								portal: true,
+								anchor: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+									variant: "outline",
+									size: "sm",
+									icon: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconChevronDownOutline14, { size: 14 }),
+									onClick: () => setSizeOpen((o) => !o),
+									children: t("perPage") + " " + pageSize
+								}),
+								items: PAGE_SIZES.map((size) => ({
+									id: String(size),
+									label: String(size)
+								}))
+							})]
+						})] })] }) : tab === "themes" && themeSnap !== null ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
 							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 								className: Market_module_css_default.tabSearchRow,
 								children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
@@ -5173,7 +5443,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									className: Market_module_css_default.empty,
 									children: t("installedEmpty")
 								}) : ungroupedNames.map((name) => {
-									const entry = data === null ? void 0 : entryForDep(data.plugins, name, String(installed[name]));
+									const entry = data === null ? void 0 : entryForDep(data.plugins, name, String(installed[name]), repoIdentities[name], repoHints[name]);
 									const off = effectiveDisabledSet.has(name);
 									return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 										className: Market_module_css_default.irow,
@@ -5264,7 +5534,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 								if (needle === "") return true;
 								if (name.toLowerCase().includes(needle)) return true;
 								if (String(spec).toLowerCase().includes(needle)) return true;
-								const entry = data === null ? void 0 : entryForDep(data.plugins, name, String(spec));
+								const entry = data === null ? void 0 : entryForDep(data.plugins, name, String(spec), repoIdentities[name], repoHints[name]);
 								if (entry !== void 0) {
 									if ((entry.description && (entry.description[lang] || entry.description.en) || "").toLowerCase().includes(needle)) return true;
 									if ((entry.owner || "").toLowerCase().includes(needle)) return true;
@@ -5272,7 +5542,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 								return false;
 							}).map(([name, spec]) => {
 								const missing = pendingBackup !== null && !installedFiles.includes(name);
-								const entry = data === null ? void 0 : entryForDep(data.plugins, name, String(spec));
+								const entry = data === null ? void 0 : entryForDep(data.plugins, name, String(spec), repoIdentities[name], repoHints[name]);
 								const status = updates[name];
 								const act = activations[name];
 								const meta = act !== void 0 ? activationMeta(act.state, t) : null;
@@ -5448,7 +5718,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 													setTab("discover");
 												},
 												children: t("viewReplacement")
-											}), !isInstalled(replacement, installed) && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+											}), !isInstalled(replacement, installed, repoIdentities, data?.plugins, repoHints) && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 												variant: "outline",
 												size: "sm",
 												onClick: () => setConfirming(replacement),
@@ -5777,10 +6047,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		/**
 		* Read the server's answer, taking the list of channels FROM it.
 		*
-		* The card does not decide which channels exist. Developer mode is enforced
-		* server-side — the channel route refuses `dev` while it is off — so a card
-		* that drew its own list could only ever disagree with the thing that
-		* actually says yes or no.
+		* The card does not decide which channels exist: the server is what accepts
+		* or refuses a selection, so a card drawing its own list could only ever
+		* disagree with it.
 		*/
 		function readStatus(body) {
 			const offered = (body.channels ?? []).map(asChannel).filter((c) => c !== null);
@@ -5788,7 +6057,6 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				version: body.version ?? null,
 				restart: body.restart === true,
 				channel: asChannel(body.channel) ?? "stable",
-				devMode: body.devMode === true,
 				channels: offered.length > 0 ? offered : ["stable", "beta"]
 			};
 		}
@@ -5796,7 +6064,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			return {
 				updateAvailable: own.updateAvailable === true,
 				latest: own.latest ?? null,
-				older: own.older === true
+				channelSwitch: own.channelSwitch ?? null
 			};
 		}
 		/**
@@ -5834,7 +6102,6 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 							version: null,
 							restart: false,
 							channel: "stable",
-							devMode: false,
 							channels: ["stable", "beta"]
 						});
 					}
@@ -5940,64 +6207,28 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				refreshUpdate,
 				t
 			]);
-			/**
-			* Turn developer mode on or off.
-			*
-			* The server owns the consequence: switching it off while dev is selected
-			* moves the channel too, and it answers with the channel and the list it
-			* now permits. So this takes the whole answer rather than flipping a
-			* local boolean — the card would otherwise keep showing "dev" selected
-			* for a channel the profile had just been moved off.
-			*/
-			const onDevMode = (0, react.useCallback)((next) => {
-				setError(null);
-				(async () => {
-					try {
-						const body = await (await fetch("/dsh-market/dev-mode", {
-							method: "POST",
-							headers: { "content-type": "application/json" },
-							body: JSON.stringify({ enabled: next })
-						})).json();
-						if (body.ok !== true) {
-							setError(body.error ?? t("setSelfFailed"));
-							return;
-						}
-						setStatus((current) => current === null ? current : {
-							...current,
-							devMode: body.devMode === true,
-							channel: asChannel(body.channel) ?? current.channel,
-							channels: (body.channels ?? []).map(asChannel).filter((c) => c !== null)
-						});
-						await refreshUpdate();
-					} catch (cause) {
-						setError(cause instanceof Error ? cause.message : String(cause));
-					}
-				})();
-			}, [refreshUpdate, t]);
 			/** One label + hint block with an optional action, the host's row shape. */
 			const row = (label, hint, action) => (0, react.createElement)("div", { className: Market_module_css_default.setRow }, (0, react.createElement)("div", { className: Market_module_css_default.setLabelBox }, (0, react.createElement)("div", { className: Market_module_css_default.setLabel }, label), (0, react.createElement)("div", { className: Market_module_css_default.setHint }, hint)), action);
-			const body = phase === "removed" ? row(t("setSelfRemoved"), t("setSelfRemovedHint"), null) : (0, react.createElement)(react.Fragment, null, row(update?.updateAvailable === true && update.latest !== null ? `${t(update.older ? "setChannelSwitch" : "setSelfUpdateReady")} ${update.latest}` : t("setSelfUpToDate"), phase === "updated" ? t("setSelfUpdatedHint") : update?.older === true ? t("setChannelSwitchHint") : t("setSelfUpdateHint"), update?.updateAvailable === true && phase !== "updated" ? (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+			const body = phase === "removed" ? row(t("setSelfRemoved"), t("setSelfRemovedHint"), null) : (0, react.createElement)(react.Fragment, null, row(update?.updateAvailable === true && update.latest !== null ? `${t("setSelfUpdateReady")} ${update.latest}` : update?.channelSwitch != null ? `${t("setChannelSwitch")} ${update.channelSwitch}` : t("setSelfUpToDate"), phase === "updated" ? t("setSelfUpdatedHint") : update?.channelSwitch != null ? t("setChannelSwitchHint") : update?.updateAvailable === true ? t("setSelfUpdateHint") : t("setSelfUpToDateHint"), phase === "updated" ? null : update?.updateAvailable === true ? (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 				variant: "primary",
 				size: "sm",
 				disabled: busy,
 				onClick: onUpdate
-			}, t(update.older ? "setChannelSwitch" : "setSelfUpdate")) : null), row(t("setChannel"), t(CHANNEL_HINT[status?.channel ?? "stable"]), (0, react.createElement)("div", { className: Market_module_css_default.setSeg }, (status?.channels ?? ["stable", "beta"]).map((id) => (0, react.createElement)("button", {
+			}, t("setSelfUpdate")) : update?.channelSwitch != null ? (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+				variant: "outline",
+				size: "sm",
+				disabled: busy,
+				onClick: onUpdate
+			}, t("setChannelSwitch")) : null), row(t("setChannel"), t(CHANNEL_HINT[status?.channel ?? "stable"]), (0, react.createElement)("div", { className: Market_module_css_default.setSeg }, (status?.channels ?? ["stable", "beta"]).map((id) => (0, react.createElement)("button", {
 				key: id,
 				type: "button",
 				className: status?.channel === id ? `${Market_module_css_default.setSegBtn} ${Market_module_css_default.setSegOn}` : Market_module_css_default.setSegBtn,
 				disabled: busy || status === null,
+				title: id === "dev" ? t("setChannelDevHint") : void 0,
 				onClick: () => {
 					onChannel(id);
 				}
-			}, t(CHANNEL_LABEL[id]))))), row(t("setDevMode"), t("setDevModeHint"), (0, react.createElement)("label", { className: Market_module_css_default.setCheck }, (0, react.createElement)("input", {
-				type: "checkbox",
-				"aria-label": t("setDevMode"),
-				checked: status?.devMode === true,
-				disabled: busy || status === null,
-				onChange: () => {
-					onDevMode(status?.devMode !== true);
-				}
-			}))), row(t("setSelfRemove"), t("setSelfRemoveHint"), phase === "confirming" || busy ? null : (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+			}, t(CHANNEL_LABEL[id]))))), row(t("setSelfRemove"), t("setSelfRemoveHint"), phase === "confirming" || busy ? null : (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 				variant: "outline",
 				size: "sm",
 				className: Market_module_css_default.setDanger,
