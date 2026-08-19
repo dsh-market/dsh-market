@@ -246,6 +246,7 @@ function backupDependencies(value: unknown): InstalledMap {
 
 /** Sort field choices in the filter panel. */
 const SORT_FIELD_OPTIONS: ReadonlyArray<{ key: SortField; label: string }> = [
+  { key: 'downloads', label: 'sortDownloads' },
   { key: 'stars', label: 'sortStars' },
   { key: 'added', label: 'sortAdded' },
 ]
@@ -470,7 +471,7 @@ export function MarketSection(props: MarketSectionProps) {
   const bodyRef = useRef<HTMLDivElement | null>(null)
   /** Hidden file input behind the Import button (a Button can't host an <input>). */
   const fileInputRef = useRef<HTMLInputElement | null>(null)
-  const [sortField, setSortField] = useState<SortField>('stars')
+  const [sortField, setSortField] = useState<SortField>('downloads')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
   /** Direction labels adapt to the field: stars → asc/desc, added → oldest/newest. */
   const sortDirLabel = (dir: SortDir): string =>
@@ -1502,6 +1503,7 @@ export function MarketSection(props: MarketSectionProps) {
               <OwnerAvatar name={p.name} owner={p.owner || ''} />
               <span className={css.owner}>
                 {p.owner}
+                {typeof p.downloads === 'number' && <span className={css.star} title={t('sortDownloads')}>{' · ↓ ' + p.downloads}</span>}
                 {typeof p.stars === 'number' && <span className={css.star}>{' · ★ ' + p.stars}</span>}
                 {p.added && <span className={css.star}>{' · ' + t('published') + ' ' + p.added}</span>}
               </span>
@@ -1607,6 +1609,7 @@ export function MarketSection(props: MarketSectionProps) {
               <OwnerAvatar name={p.name} owner={p.owner || ''} />
               <span className={css.owner}>
                 {p.owner}
+                {typeof p.downloads === 'number' && <span className={css.star} title={t('sortDownloads')}>{' · ↓ ' + p.downloads}</span>}
                 {typeof p.stars === 'number' && <span className={css.star}>{' · ★ ' + p.stars}</span>}
                 {p.added && <span className={css.star}>{' · ' + t('published') + ' ' + p.added}</span>}
               </span>

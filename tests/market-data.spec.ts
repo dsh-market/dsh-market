@@ -132,6 +132,48 @@ describe('discover list (visiblePlugins)', () => {
       .toEqual(['no-stars', 'dsh-loop', 'dsh-notify', 'whale-skin'])
   })
 
+  it('sorts by npm downloads, with no-npm entries falling back to stars', () => {
+    // Mixed on purpose: some entries have a real download count, some have
+    // none at all (no npm package — awesome-dsh-plugin publishes `null` for
+    // those, never a fabricated 0). A github:-only plugin must never read as
+    // "less popular than a package with genuinely 0 downloads" — it sinks
+    // below every entry WITH a count, in both directions, and among itself
+    // and other no-download entries falls back to star count, the only
+    // signal that exists for them.
+    // Array order deliberately disagrees with the expected result on both
+    // axes (the no-download pair is listed fewer-stars-first, the opposite
+    // of the star order the fallback must produce) — a mutant that quietly
+    // stops re-sorting and just keeps original array order would otherwise
+    // pass by coincidence.
+    const mixed: RegistryPlugin[] = [
+      plugin({ name: 'no-npm-fewer-stars', stars: 20 }), // downloads absent
+      plugin({ name: 'few-downloads', stars: 900, downloads: 50 }),
+      plugin({ name: 'no-npm-more-stars', stars: 300 }), // downloads absent
+      plugin({ name: 'many-downloads', stars: 10, downloads: 5000 }),
+    ]
+    expect(visiblePlugins(mixed, { category: 'all', query: '', lang: 'en', sort: 'downloads-desc' }).map(p => p.name))
+      .toEqual(['many-downloads', 'few-downloads', 'no-npm-more-stars', 'no-npm-fewer-stars'])
+    expect(visiblePlugins(mixed, { category: 'all', query: '', lang: 'en', sort: 'downloads-asc' }).map(p => p.name))
+      .toEqual(['few-downloads', 'many-downloads', 'no-npm-fewer-stars', 'no-npm-more-stars'])
+  })
+
+  it('treats an npm package with genuinely zero downloads as real data, not as absent', () => {
+    // 0 is a fact this month taught us, not a coverage gap — it must rank
+    // BELOW a package with any real downloads, but still ABOVE a github:-only
+    // entry that was never eligible for a count at all.
+    // zero-downloads is given FEWER stars than no-npm-package on purpose: if
+    // 0 were ever treated as "no data" and fell back to the star ordering
+    // alongside no-npm-package, the higher-star no-npm-package would rank
+    // first — the opposite of what real data (even a real zero) must do.
+    const rows: RegistryPlugin[] = [
+      plugin({ name: 'has-downloads', stars: 1, downloads: 5 }),
+      plugin({ name: 'zero-downloads', stars: 10, downloads: 0 }),
+      plugin({ name: 'no-npm-package', stars: 500 }),
+    ]
+    expect(visiblePlugins(rows, { category: 'all', query: '', lang: 'en', sort: 'downloads-desc' }).map(p => p.name))
+      .toEqual(['has-downloads', 'zero-downloads', 'no-npm-package'])
+  })
+
   it('themePlugins lists only themes, most-starred first', () => {
     const themes = themePlugins([...CATALOG, plugin({ name: 'starless-theme', category: 'theme' })])
     expect(themes.map(p => p.name)).toEqual(['whale-skin', 'starless-theme'])

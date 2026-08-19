@@ -18,6 +18,11 @@ export interface RegistryPlugin {
   category: string
   description?: LocalizedText
   stars?: number
+  /**
+   * npm downloads in the last 30 days, when the entry has a published
+   * package. Absent means "no npm package" — a coverage gap, not a zero.
+   */
+  downloads?: number | null
   added?: string
   install?: string
   /**
@@ -167,7 +172,7 @@ export function looksTerminal(plugin: RegistryPlugin, lang: string): boolean {
 }
 
 /** Sortable field for the Discover list. */
-export type SortField = 'stars' | 'added'
+export type SortField = 'downloads' | 'stars' | 'added'
 /** Sort direction: desc = newest/most first, asc = oldest/least first. */
 export type SortDir = 'desc' | 'asc'
 /** Combined sort key sent to visiblePlugins. */
@@ -224,6 +229,29 @@ export function visiblePlugins(plugins: RegistryPlugin[], options: ListQuery): R
       || p.owner.toLowerCase().includes(query)
       || desc.toLowerCase().includes(query)
   })
+  // A github:-only entry has no npm package and therefore no download count
+  // at all — that is a coverage gap, not a "0 downloads" verdict, and must
+  // not be read as less popular than a package that genuinely has zero.
+  // Such entries always sort after every entry WITH a real count, in either
+  // direction, and are ordered against each other by star count — the only
+  // signal available for them — rather than left in an arbitrary tie.
+  const hasDownloads = (p: RegistryPlugin): p is RegistryPlugin & { downloads: number } => typeof p.downloads === 'number'
+  if (options.sort === 'downloads-desc') {
+    return [...list].sort((a, b) => {
+      if (hasDownloads(a) && hasDownloads(b)) return b.downloads - a.downloads
+      if (hasDownloads(a)) return -1
+      if (hasDownloads(b)) return 1
+      return (b.stars ?? -1) - (a.stars ?? -1)
+    })
+  }
+  if (options.sort === 'downloads-asc') {
+    return [...list].sort((a, b) => {
+      if (hasDownloads(a) && hasDownloads(b)) return a.downloads - b.downloads
+      if (hasDownloads(a)) return -1
+      if (hasDownloads(b)) return 1
+      return (a.stars ?? -1) - (b.stars ?? -1)
+    })
+  }
   if (options.sort === 'stars-desc') {
     return [...list].sort((a, b) => (b.stars ?? -1) - (a.stars ?? -1))
   }

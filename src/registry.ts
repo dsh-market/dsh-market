@@ -14,6 +14,12 @@ export interface RegistryPlugin {
   description: Record<string, string>
   npm?: string | null
   stars?: number | null
+  /**
+   * npm downloads in the last 30 days, when the entry has a published
+   * package. `null`/absent means "no npm package" — a coverage gap, not a
+   * zero — so sorting must not read it as "less popular than 0".
+   */
+  downloads?: number | null
   install: string
   added: string
   /**
