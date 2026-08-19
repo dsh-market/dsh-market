@@ -351,6 +351,8 @@ export function MarketSection(props: MarketSectionProps) {
   const [busyUrl, setBusyUrl] = useState<string | null>(null)
   /** Consecutive idle polls with a pending install that never landed (#32). */
   const idleStrikes = useRef(0)
+  /** Same idle-strike bookkeeping for an update whose response was lost. */
+  const updateIdleStrikes = useRef(0)
   const [doneUrls, setDoneUrls] = useState<string[]>([])
   const [installError, setInstallError] = useState<string | null>(null)
   interface CompatibilityNotice {
@@ -672,6 +674,12 @@ export function MarketSection(props: MarketSectionProps) {
   useEffect(() => {
     const pending = readSession('dshm-pending')
     if (pending !== null && typeof pending.url === 'string') setBusyUrl(pending.url)
+    // Same recovery for an update in flight: closing the config page unmounts
+    // this section and drops `updatingName` with it, so the running row's
+    // progress vanished on reopen. The marker restores the row and the poll
+    // below converges it from the host's ground truth.
+    const updating = readSession('dshm-updating')
+    if (updating !== null && typeof updating.name === 'string' && updating.name !== '') setUpdatingName(updating.name)
   }, [])
 
   useEffect(() => {
@@ -741,6 +749,23 @@ export function MarketSection(props: MarketSectionProps) {
                 setBusyUrl(null)
                 setInstallError(t('installFail') + ' — ' + t('exportLog'))
               }
+            }
+            // An update whose response was lost — the page was closed mid-run
+            // and reopened via the dshm-updating marker — converges the same
+            // way. Once the host reports the operation fully settled (pnpm
+            // exited AND the mutation lock released), hand the running row
+            // back to the refreshed listing instead of showing "updating"
+            // forever. Two idle polls guard the brief window before the host
+            // has actually started the command.
+            if (updatingName !== null && status.busy !== true) {
+              if (++updateIdleStrikes.current >= 2) {
+                updateIdleStrikes.current = 0
+                sessionStorage.removeItem('dshm-updating')
+                setUpdatingName(null)
+                refreshInstalled()
+              }
+            } else {
+              updateIdleStrikes.current = 0
             }
           }
         })
@@ -988,6 +1013,12 @@ export function MarketSection(props: MarketSectionProps) {
     setActivationWarnings([])
     setStaleName(null)
     setUpdatingName(name)
+    updateIdleStrikes.current = 0
+    // Mirror the install flow's dshm-pending marker: closing the config page
+    // unmounts this section and drops `updatingName`, so the running row's
+    // progress was lost on reopen. The marker survives the unmount and lets a
+    // reopen restore the row while the status poll converges the outcome.
+    sessionStorage.setItem('dshm-updating', JSON.stringify({ name }))
     return fetch('/dsh-market/update', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -995,6 +1026,11 @@ export function MarketSection(props: MarketSectionProps) {
     })
       .then(res => res.json().then(body => ({ status: res.status, body })))
       .then(({ status, body }) => {
+        // A response means the host settled the request (even a 4xx/5xx), so
+        // the running row can hand back now. Only a lost response keeps the
+        // marker + row for the poll to converge.
+        sessionStorage.removeItem('dshm-updating')
+        setUpdatingName(null)
         if (body.cancelled === true) {
           refreshInstalled()
           if (body.partial === true) setInstallError(t('partialNote'))
@@ -1030,8 +1066,12 @@ export function MarketSection(props: MarketSectionProps) {
           setInstallError(t('updateFail') + ': ' + name + ' — ' + detail.trim().slice(-600))
         }
       })
-      .catch(error => setInstallError(t('updateFail') + ': ' + String(error)))
-      .finally(() => setUpdatingName(null))
+      .catch(() => {
+        // A lost response does not mean the update stopped (the route holds
+        // its reply until pnpm finishes, #100): keep the marker AND the
+        // running row, and let the status poll converge the outcome instead
+        // of declaring a false failure — mirroring the install flow's catch.
+      })
   }, [refreshInstalled, t])
 
   const doUseSkin = useCallback((name: string) => {

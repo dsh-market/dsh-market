@@ -483,6 +483,50 @@ describe('stuck pending recovery (#32)', () => {
   })
 })
 
+describe('lost update progress (config page reopened)', () => {
+  it('restores the running update row from the marker and converges it once the host settles', async () => {
+    vi.useFakeTimers()
+    try {
+      // A previous page load started an update, then the config page closed
+      // before the response arrived. The marker survives the unmount, so a
+      // reopen restores the running row instead of losing its progress.
+      sessionStorage.setItem('dshm-updating', JSON.stringify({ name: 'dsh-loop' }))
+      let settled = false
+      vi.stubGlobal('fetch', vi.fn((url: string) => {
+        const path = String(url).split('?')[0]
+        const payload =
+          path === '/dsh-market/registry' ? { source: 'live', registry: REGISTRY }
+          : path === '/dsh-market/installed' ? { profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: [], disabled: [], groups: {}, groupOrder: [] }
+          : path === '/dsh-market/status' ? {
+              active: !settled, busy: !settled, pnpm: true, boot: 'boot-1', restart: true,
+              installed: { 'dsh-loop': '^1.0.0' },
+              phase: settled ? null : 'downloading', currentPackage: settled ? null : 'is-odd@3.0.1', done: settled ? 0 : 3,
+            }
+          : path === '/dsh-market/updates' ? { updates: {} }
+          : null
+        if (payload === null) return Promise.reject(new Error(`unstubbed fetch: ${String(url)}`))
+        return Promise.resolve(new Response(JSON.stringify(payload), { status: 200 }))
+      }))
+      render(<MarketSection {...props()} />)
+      fireEvent.click(screen.getByRole('button', { name: new RegExp(re(en.tabInstalled)) }))
+      // The restored marker re-renders the running row and its live progress.
+      await vi.waitFor(() => { screen.getByRole('button', { name: en.updating }) })
+      await vi.advanceTimersByTimeAsync(2100)
+      await vi.waitFor(() => { screen.getByText(/Downloading · is-odd@3\.0\.1 · 3 packages processed/) })
+      // The host finishes the update; two idle polls hand the row back.
+      settled = true
+      await vi.advanceTimersByTimeAsync(2100)
+      await vi.advanceTimersByTimeAsync(2100)
+      await vi.waitFor(() => {
+        expect(sessionStorage.getItem('dshm-updating')).toBeNull()
+        expect(screen.queryByRole('button', { name: en.updating })).toBeNull()
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
 describe('P1-6 structured progress', () => {
   it('shows the pnpm phase + package + count, and a disabled cancel button while cancelling', async () => {
     vi.useFakeTimers()
