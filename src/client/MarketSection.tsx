@@ -4,6 +4,7 @@
  * pending-restart bookkeeping in sessionStorage.
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
+import { createPortal } from 'react-dom'
 import {
   Button,
   DisclosureRow,
@@ -192,26 +193,38 @@ function useAutoCarousel(count: number, initial: number, intervalMs = 3500): [nu
 }
 
 /**
- * A card's own thumbnail — curated screenshots only (#61 supplement): this
- * data already rode along with the catalog fetch that drew the grid, so
- * showing it costs nothing extra. README-scraped fallback images stay
+ * A card's own thumbnail strip — curated screenshots only (#61 supplement):
+ * this data already rode along with the catalog fetch that drew the grid,
+ * so showing it costs nothing extra. README-scraped fallback images stay
  * dialog-only, where fetching one repo's README on click is a single
  * request instead of one per visible card.
+ *
+ * Horizontal scroll at each image's own aspect ratio, not an auto-cycling
+ * single crop: cropping every shot into one fixed box hid most of a tall
+ * screenshot, and cycling on a timer meant the card you were looking at
+ * kept changing under you. Scrolling is a gesture the user drives.
  */
 function CardShot({ plugin, onOpen }: { plugin: RegistryPlugin; onOpen: (shots: string[], index: number) => void }) {
   const shots = safeScreenshots(plugin.screenshots)
-  const [index, setIndex] = useAutoCarousel(shots.length, 0)
-  if (shots.length === 0) return null
+  const [broken, setBroken] = useState<string[]>([])
+  const visible = shots.filter(src => !broken.includes(src))
+  if (visible.length === 0) return null
   return (
-    <img
-      className={css.cardShot}
-      src={shots[index]}
-      alt=""
-      loading="lazy"
-      decoding="async"
-      referrerPolicy="no-referrer"
-      onClick={(e) => { e.stopPropagation(); onOpen(shots, index) }}
-    />
+    <div className={css.cardShots}>
+      {visible.map((src, i) => (
+        <img
+          key={src}
+          className={css.cardShot}
+          src={src}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          referrerPolicy="no-referrer"
+          onClick={(e) => { e.stopPropagation(); onOpen(visible, i) }}
+          onError={() => setBroken(prev => prev.includes(src) ? prev : prev.concat(src))}
+        />
+      ))}
+    </div>
   )
 }
 
@@ -240,7 +253,12 @@ function ScreenshotLightbox({ shots, startIndex, onClose, t }: { shots: string[]
     return () => window.removeEventListener('keydown', onKey, true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [index])
-  return (
+  // The primitives' own Modal (the confirm/settings dialog underneath)
+  // portals itself to document.body too, so plain in-tree rendering here
+  // put the lightbox BEHIND it regardless of z-index — a portal only wins a
+  // stacking tie against another portal by mounting later, not by CSS alone.
+  // Reported on a real host: "大的预览图层级不对，现在在弹窗的后面".
+  return createPortal(
     <div className={css.lightbox} onClick={onClose}>
       {/* A literal "×" rather than IconCloseOutline16: the primitives
           package's own Modal uses that icon at runtime, but this package
@@ -272,7 +290,8 @@ function ScreenshotLightbox({ shots, startIndex, onClose, t }: { shots: string[]
           </div>
         </>
       )}
-    </div>
+    </div>,
+    document.body,
   )
 }
 
@@ -1878,9 +1897,25 @@ export function MarketSection(props: MarketSectionProps) {
     observer.observe(catsSentinel)
     return () => observer.disconnect()
   }, [catsSentinel])
-  // Only meaningful while genuinely expanded: a stuck header showing its
-  // already-collapsed single row is nothing to restore later.
-  const catsEffectivelyOpen = catsOpen && !catsStuck
+  /**
+   * Becoming stuck auto-collapses an open row — a REAL `catsOpen` flip, not
+   * a display-only override. An earlier version faked this by computing a
+   * separate "effectively open" value for rendering while leaving `catsOpen`
+   * itself true; the chevron's own click handler only ever toggled the real
+   * `catsOpen`, so while stuck it flipped a value the render path had
+   * already stopped consulting — clicking "expand" did nothing visible
+   * (reported: "吸顶滚动了之后，展开没反应了"). Driving the same state the
+   * chevron drives means the chevron always works, stuck or not.
+   */
+  const catsAutoCollapsedRef = useRef(false)
+  useLayoutEffect(() => {
+    if (catsStuck) {
+      if (catsOpen) { setCatsOpen(false); catsAutoCollapsedRef.current = true }
+    } else if (catsAutoCollapsedRef.current) {
+      setCatsOpen(true)
+      catsAutoCollapsedRef.current = false
+    }
+  }, [catsStuck])
 
   /**
    * A fresh install (hotUrls/hotNames) and a toggle/group action
@@ -1947,6 +1982,7 @@ export function MarketSection(props: MarketSectionProps) {
         </div>
         <div className={css.sub}>
           <span>{t('subtitle')}</span>
+          <a className={css.submitLink} href="https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/blob/main/contributing.md" target="_blank" rel="noreferrer">{t('submitPlugin')}</a>
           <span className={css.grow} />
           <Button
             variant="outline"
@@ -2274,14 +2310,13 @@ export function MarketSection(props: MarketSectionProps) {
                       <div ref={catsWrapRef} className={visibleCats === null ? `${css.catsWrap} ${css.catsCollapsed}` : css.catsWrap}>
                         {(() => {
                           // Collapsed, the selected category is pulled to the front so it never hides.
-                          // A stuck header shrinks whatever is showing down to one row —
-                          // whether that's the open multi-row list or the already-collapsed
-                          // two-row default — using the one-row budget instead of the
-                          // two-row one. catsOpen itself is untouched, so scrolling back to
-                          // the top restores exactly what was showing before.
+                          // Whenever collapsed (default, or auto-collapsed by the sticky
+                          // header going stuck — see catsAutoCollapsedRef above), a stuck
+                          // header uses the one-row budget instead of the two-row one so an
+                          // already-open list that just got pinned shrinks further.
                           const budget = catsStuck ? visibleCatsOneRow : visibleCats
-                          const ordered = orderedCategories(categories, cat, catsEffectivelyOpen, budget)
-                          const shown = catsEffectivelyOpen || budget === null ? ordered : ordered.slice(0, Math.max(0, budget - 1))
+                          const ordered = orderedCategories(categories, cat, catsOpen, budget)
+                          const shown = catsOpen || budget === null ? ordered : ordered.slice(0, Math.max(0, budget - 1))
                           return (
                             <>
                               <Pill data-chip="1" active={cat === 'all'} onClick={() => setCat('all')}>{t('all') + ' (' + formatCount(data!.count) + ')'}</Pill>
@@ -2299,7 +2334,12 @@ export function MarketSection(props: MarketSectionProps) {
                                 className={css.catsToggle}
                                 icon={catsOpen ? <IconChevronUpOutline14 size={14} /> : <IconChevronDownOutline14 size={14} />}
                                 aria-label={catsOpen ? t('catsLess') : t('catsMore')}
-                                onClick={() => setCatsOpen(o => !o)}
+                                onClick={() => {
+                                  // An explicit click always wins — don't let the next
+                                  // stuck/unstuck transition second-guess it.
+                                  catsAutoCollapsedRef.current = false
+                                  setCatsOpen(o => !o)
+                                }}
                               />
                             </>
                           )

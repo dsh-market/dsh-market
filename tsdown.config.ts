@@ -23,7 +23,7 @@ const id = 'dshmarket'
  * platform seed entries this bundle actually requires; everything else
  * (nothing today) inlines.
  */
-const CLIENT_EXTERNALS = ['react', 'react/jsx-runtime', '@deepseek-ai/dsh-client-ui-primitives']
+const CLIENT_EXTERNALS = ['react', 'react/jsx-runtime', 'react-dom', '@deepseek-ai/dsh-client-ui-primitives']
 
 /**
  * Virtual-id wrapper keeping module CSS away from tsdown's own css pipeline

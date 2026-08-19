@@ -1549,12 +1549,23 @@ describe('category row expansion', () => {
       // would use — proves the stuck path swapped budgets, not just re-ran
       // the ordinary collapse.
       expect(chipCount()).toBe(3) // "all" pill + 2 categories
-      // catsOpen itself must be untouched — this is a display-only squeeze.
+      // The auto-collapse is a REAL catsOpen flip, so the chevron now reads
+      // "more" (collapsed), not "less" — and, critically, clicking it must
+      // still work. An earlier version computed a display-only "effectively
+      // open" value while leaving catsOpen genuinely true, so the chevron's
+      // click handler toggled a value the render path had stopped
+      // consulting — clicking it while stuck did nothing visible (reported:
+      // "吸顶滚动了之后，展开没反应了").
+      const moreButton = screen.getByLabelText(re(en.catsMore))
+      fireEvent.click(moreButton)
+      await waitFor(() => expect(chipCount()).toBe(openCount))
       expect(screen.getByLabelText(re(en.catsLess))).toBeTruthy()
 
-      // Scrolled back to the top: sentinel visible again, full row count returns.
+      // An explicit re-open while still stuck must survive scrolling back to
+      // the top — the auto-collapse must not fight the user's own choice.
       onChange!({ isIntersecting: true })
       await waitFor(() => expect(chipCount()).toBe(openCount))
+      expect(screen.getByLabelText(re(en.catsLess))).toBeTruthy()
     } finally {
       if (offsetTopDesc) Object.defineProperty(HTMLElement.prototype, 'offsetTop', offsetTopDesc)
       if (offsetHeightDesc) Object.defineProperty(HTMLElement.prototype, 'offsetHeight', offsetHeightDesc)
@@ -1574,15 +1585,18 @@ describe('card thumbnail + lightbox (curated screenshots only)', () => {
     return registry
   }
 
-  it('shows a thumbnail only on the card with curated screenshots', async () => {
+  it('shows a scrollable thumbnail strip only on the card with curated screenshots', async () => {
     stubFetch({ '/dsh-market/registry': { source: 'live', registry: registryWithShots() } })
     const { container } = render(<MarketSection {...props()} />)
     await screen.findByText('dsh-loop')
 
-    const shots = container.querySelectorAll('[class*="cardShot"]')
-    // dsh-loop has screenshots, dsh-notify and whale-skin do not — exactly one shot.
-    expect(shots.length).toBe(1)
+    const shots = container.querySelectorAll('img[class*="cardShot"]')
+    // dsh-loop has two curated screenshots, dsh-notify and whale-skin have
+    // none — both of dsh-loop's shots render (a scrollable strip, not a
+    // single cropped/cycling image), nothing from the other two cards.
+    expect(shots.length).toBe(2)
     expect(shots[0]?.getAttribute('src')).toBe(SHOT_A)
+    expect(shots[1]?.getAttribute('src')).toBe(SHOT_B)
   })
 
   it('opens a lightbox on click, at the clicked shot, and wraps prev/next around the ends', async () => {
@@ -1590,18 +1604,20 @@ describe('card thumbnail + lightbox (curated screenshots only)', () => {
     const { container } = render(<MarketSection {...props()} />)
     await screen.findByText('dsh-loop')
 
-    fireEvent.click(container.querySelector('[class*="cardShot"]')!)
-    await waitFor(() => expect(container.querySelector('[class*="lightboxImg"]')).toBeTruthy())
-    const img = () => container.querySelector('[class*="lightboxImg"]') as HTMLImageElement
+    fireEvent.click(container.querySelector('img[class*="cardShot"]')!)
+    // The lightbox portals to document.body (so it always stacks above the
+    // Settings Modal, which portals there too) — no longer inside `container`.
+    await waitFor(() => expect(document.querySelector('[class*="lightboxImg"]')).toBeTruthy())
+    const img = () => document.querySelector('[class*="lightboxImg"]') as HTMLImageElement
     expect(img().src).toBe(SHOT_A)
 
-    fireEvent.click(container.querySelector('[class*="lightboxNext"]')!)
+    fireEvent.click(document.querySelector('[class*="lightboxNext"]')!)
     expect(img().src).toBe(SHOT_B)
     // Two shots total — next again wraps back to the first, not off the end.
-    fireEvent.click(container.querySelector('[class*="lightboxNext"]')!)
+    fireEvent.click(document.querySelector('[class*="lightboxNext"]')!)
     expect(img().src).toBe(SHOT_A)
     // Prev from the first wraps to the last, the same way.
-    fireEvent.click(container.querySelector('[class*="lightboxPrev"]')!)
+    fireEvent.click(document.querySelector('[class*="lightboxPrev"]')!)
     expect(img().src).toBe(SHOT_B)
   })
 
@@ -1610,26 +1626,27 @@ describe('card thumbnail + lightbox (curated screenshots only)', () => {
     const { container } = render(<MarketSection {...props()} />)
     await screen.findByText('dsh-loop')
 
-    fireEvent.click(container.querySelector('[class*="cardShot"]')!)
-    await waitFor(() => expect(container.querySelector('[class*="lightboxImg"]')).toBeTruthy())
+    fireEvent.click(container.querySelector('img[class*="cardShot"]')!)
+    await waitFor(() => expect(document.querySelector('[class*="lightboxImg"]')).toBeTruthy())
     fireEvent.keyDown(window, { key: 'Escape' })
-    await waitFor(() => expect(container.querySelector('[class*="lightboxImg"]')).toBeNull())
+    await waitFor(() => expect(document.querySelector('[class*="lightboxImg"]')).toBeNull())
     // The market section itself (rendered before the click) is still there —
     // a real host regression had one Escape close both layers at once.
     expect(screen.getByText('dsh-loop')).toBeTruthy()
   })
 
-  it('auto-advances the card thumbnail while more than one screenshot is curated', async () => {
+  it('does not auto-cycle the card thumbnail strip — scrolling, not a timer, is how you see more than one', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     try {
       stubFetch({ '/dsh-market/registry': { source: 'live', registry: registryWithShots() } })
       const { container } = render(<MarketSection {...props()} />)
       await vi.waitFor(() => expect(screen.queryByText('dsh-loop')).toBeTruthy())
 
-      const shot = () => container.querySelector('[class*="cardShot"]') as HTMLImageElement
-      expect(shot().src).toBe(SHOT_A)
-      await vi.advanceTimersByTimeAsync(4000)
-      expect(shot().src).toBe(SHOT_B)
+      const srcs = () => [...container.querySelectorAll('img[class*="cardShot"]')].map(el => (el as HTMLImageElement).src)
+      expect(srcs()).toEqual([SHOT_A, SHOT_B])
+      await vi.advanceTimersByTimeAsync(10_000)
+      // Both shots are still there, in the same order — nothing cycled away.
+      expect(srcs()).toEqual([SHOT_A, SHOT_B])
     } finally {
       vi.useRealTimers()
     }

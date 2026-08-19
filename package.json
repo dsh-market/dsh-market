@@ -84,6 +84,7 @@
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^26.2.0",
     "@types/react": "~18.3.1",
+    "@types/react-dom": "~18.3.1",
     "jsdom": "^29.1.1",
     "lightningcss": "^1.33.0",
     "marked": "^18.0.10",
