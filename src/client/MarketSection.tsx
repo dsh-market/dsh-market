@@ -3025,7 +3025,7 @@ export function MarketSection(props: MarketSectionProps) {
           footer={(
             <>
               <Button variant="ghost" onClick={() => { setConfirming(null); setCmdOpen(false) }}>{t('cancel')}</Button>
-              <Button variant="primary" onClick={() => doInstall(confirming)}>{t('confirm')}</Button>
+              <Button variant="primary" onClick={() => doInstall(confirming)}>{t('confirmInstall')}</Button>
             </>
           )}
         >

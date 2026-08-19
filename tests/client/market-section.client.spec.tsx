@@ -238,9 +238,9 @@ describe('MarketSection (jsdom)', () => {
     render(<MarketSection {...props()} />)
     await screen.findByText('dsh-loop')
     fireEvent.click(screen.getAllByRole('button', { name: en.install })[0])
-    expect(await screen.findByRole('button', { name: en.confirm })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: en.confirmInstall })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: en.cancel }))
-    await waitFor(() => expect(screen.queryByRole('button', { name: en.confirm })).toBeNull())
+    await waitFor(() => expect(screen.queryByRole('button', { name: en.confirmInstall })).toBeNull())
   })
 
   it('export log is a real button with visible feedback (#84)', async () => {
@@ -284,18 +284,18 @@ describe('MarketSection (jsdom)', () => {
 
     // Curated: the allowlisted screenshot renders, the third-party host never does.
     fireEvent.click(installButtonOf('dsh-loop'))
-    await screen.findByRole('button', { name: en.confirm })
+    await screen.findByRole('button', { name: en.confirmInstall })
     await waitFor(() => {
       const srcs = [...document.querySelectorAll('img')].map(img => img.getAttribute('src'))
       expect(srcs).toContain(CURATED)
       expect(srcs).not.toContain('https://evil.example/track.png')
     })
     fireEvent.click(screen.getByRole('button', { name: en.cancel }))
-    await waitFor(() => expect(screen.queryByRole('button', { name: en.confirm })).toBeNull())
+    await waitFor(() => expect(screen.queryByRole('button', { name: en.confirmInstall })).toBeNull())
 
     // Fallback: dsh-notify's dialog extracts from its README, path resolved to raw.
     fireEvent.click(installButtonOf('dsh-notify'))
-    await screen.findByRole('button', { name: en.confirm })
+    await screen.findByRole('button', { name: en.confirmInstall })
     await waitFor(() => {
       const srcs = [...document.querySelectorAll('img')].map(img => img.getAttribute('src'))
       expect(srcs).toContain('https://raw.githubusercontent.com/bob/dsh-notify/HEAD/assets/notify.png')
@@ -1168,8 +1168,8 @@ describe('status-poll / install-response race (#73)', () => {
       }
       expect(card).not.toBeNull()
       fireEvent.click(within(card!).getByRole('button', { name: en.install }))
-      await vi.waitFor(() => { screen.getByRole('button', { name: en.confirm }) })
-      fireEvent.click(screen.getByRole('button', { name: en.confirm }))
+      await vi.waitFor(() => { screen.getByRole('button', { name: en.confirmInstall }) })
+      fireEvent.click(screen.getByRole('button', { name: en.confirmInstall }))
       // The /install response is still pending; the 2s status poll now sees
       // idle + installed and the recovery path counts dsh-loop as a pending
       // restart even though the mount may still come back hot.
@@ -1375,8 +1375,8 @@ describe('lost install response (#100)', () => {
         return within(card!).getAllByRole('button', { name: en.install })[0]!
       }
       fireEvent.click(installButtonOf('dsh-loop'))
-      await vi.waitFor(() => { screen.getByRole('button', { name: en.confirm }) })
-      fireEvent.click(screen.getByRole('button', { name: en.confirm }))
+      await vi.waitFor(() => { screen.getByRole('button', { name: en.confirmInstall }) })
+      fireEvent.click(screen.getByRole('button', { name: en.confirmInstall }))
       // The install fetch rejects; the old code showed "install failed" here.
       await vi.advanceTimersByTimeAsync(100)
       expect(screen.queryByText(new RegExp(en.installFail))).toBeNull()
@@ -1511,7 +1511,7 @@ describe('a failed install releases the UI and says why', () => {
     await screen.findByText('dsh-loop')
 
     fireEvent.click(screen.getAllByRole('button', { name: en.install })[0])
-    fireEvent.click(await screen.findByRole('button', { name: en.confirm }))
+    fireEvent.click(await screen.findByRole('button', { name: en.confirmInstall }))
 
     // The reason reaches the page verbatim — a resolver error names the spec
     // that was refused, which is the only clue the user has.

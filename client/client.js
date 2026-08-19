@@ -168,6 +168,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			loading: "正在加载插件目录…",
 			backTop: "回到顶部",
 			confirm: "确认",
+			confirmInstall: "确认安装",
 			cmdDetails: "安装命令",
 			catsMore: "更多分类",
 			catsLess: "收起",
@@ -521,6 +522,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			loading: "Loading the catalog…",
 			backTop: "Back to top",
 			confirm: "Confirm",
+			confirmInstall: "Confirm install",
 			cmdDetails: "Install command",
 			catsMore: "More",
 			catsLess: "Less",
@@ -6483,7 +6485,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 							variant: "primary",
 							onClick: () => doInstall(confirming),
-							children: t("confirm")
+							children: t("confirmInstall")
 						})] }),
 						children: [
 							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
