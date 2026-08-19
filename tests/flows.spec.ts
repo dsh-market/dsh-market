@@ -1263,6 +1263,98 @@ describe('theme flow', () => {
   })
 })
 
+describe('local-dev restore flow', () => {
+  it('refuses a plain update on a link: spec, and restore:true swaps it to the catalog', async () => {
+    fake.npm['dsh-loop'] = {
+      latest: '1.0.0',
+      versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } },
+    }
+    await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
+    fake.npm['dsh-loop'].latest = '1.2.0'
+    fake.npm['dsh-loop'].versions['1.2.0'] = { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] }
+    const manifestPath = join(fake.profileDir, 'package.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { dependencies: Record<string, string> }
+    manifest.dependencies['dsh-loop'] = 'link:../dsh-loop-dev'
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+
+    const blocked = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+    expect(blocked.status).toBe(400)
+    expect(String(blocked.json.error)).toMatch(/locally linked/)
+    expect(installedSpec('dsh-loop')).toBe('link:../dsh-loop-dev')
+
+    const restored = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop', restore: true })
+    expect(restored.status, String(restored.json.error ?? '')).toBe(200)
+    expect(restored.json.ok).toBe(true)
+    expect(installedSpec('dsh-loop')).toBe('^1.2.0')
+    expect(fake.calls.some(call => call[0] === 'add' && call.includes('dsh-loop@latest'))).toBe(true)
+  })
+
+  it('keeps #path: when restoring a monorepo checkout onto a collection-root catalog row', async () => {
+    fake.repos['github:o/theme-a'] = { name: 'theme-a', manifest: { dsh: {}, main: 'index.js' }, artifacts: ['index.js'] }
+    const checkout = join(fake.profileDir, '..', 'theme-a-dev')
+    mkdirSync(checkout, { recursive: true })
+    writeFileSync(join(checkout, 'package.json'), JSON.stringify({
+      name: 'theme-a',
+      version: '1.0.0',
+      main: 'index.js',
+      dsh: {},
+      repository: { type: 'git', url: 'https://github.com/o/theme-a.git', directory: 'packages/skin' },
+    }))
+    writeFileSync(join(checkout, 'index.js'), '')
+    const manifestPath = join(fake.profileDir, 'package.json')
+    writeFileSync(manifestPath, JSON.stringify({
+      dependencies: { 'theme-a': `link:${checkout}` },
+      dsh: { profile: { bundles: ['theme-a'] } },
+    }))
+    mkdirSync(join(fake.profileDir, 'node_modules', 'theme-a'), { recursive: true })
+    writeFileSync(join(fake.profileDir, 'node_modules', 'theme-a', 'package.json'), JSON.stringify({
+      name: 'theme-a', version: '1.0.0', main: 'index.js', dsh: {},
+      repository: { type: 'git', url: 'https://github.com/o/theme-a.git', directory: 'packages/skin' },
+    }))
+
+    await bed.dispatch('POST', '/dsh-market/update', { name: 'theme-a', restore: true })
+    expect(fake.calls.some(call => call[0] === 'add' && call.some(arg => String(arg).includes('github:o/theme-a#path:/packages/skin')))).toBe(true)
+  })
+
+  it('refuses restore when the checkout still uses workspace: dependencies', async () => {
+    fake.repos['github:o/theme-a'] = { name: 'theme-a', manifest: { dsh: {}, main: 'index.js' }, artifacts: ['index.js'] }
+    const checkout = join(fake.profileDir, '..', 'theme-a-ws')
+    mkdirSync(checkout, { recursive: true })
+    writeFileSync(join(checkout, 'package.json'), JSON.stringify({
+      name: 'theme-a',
+      version: '1.0.0',
+      main: 'index.js',
+      dsh: {},
+      dependencies: { '@dsh-cowork/core': 'workspace:^' },
+      repository: { type: 'git', url: 'https://github.com/o/theme-a.git', directory: 'packages/skin' },
+    }))
+    writeFileSync(join(fake.profileDir, 'package.json'), JSON.stringify({
+      dependencies: { 'theme-a': `link:${checkout}` },
+      dsh: { profile: { bundles: ['theme-a'] } },
+    }))
+    mkdirSync(join(fake.profileDir, 'node_modules', 'theme-a'), { recursive: true })
+    writeFileSync(join(fake.profileDir, 'node_modules', 'theme-a', 'package.json'), JSON.stringify({
+      name: 'theme-a',
+      version: '1.0.0',
+      dependencies: { '@dsh-cowork/core': 'workspace:^' },
+      repository: { type: 'git', url: 'https://github.com/o/theme-a.git', directory: 'packages/skin' },
+    }))
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'theme-a', restore: true })
+    expect(r.status).toBe(400)
+    expect(String(r.json.error)).toMatch(/workspace/)
+    expect(installedSpec('theme-a')).toBe(`link:${checkout}`)
+  })
+
+  it('returns 400 when restore cannot find a catalog entry', async () => {
+    writeFileSync(join(fake.profileDir, 'package.json'), JSON.stringify({
+      dependencies: { 'mystery-plug': 'link:../mystery' },
+    }))
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'mystery-plug', restore: true })
+    expect(r.status).toBe(400)
+    expect(String(r.json.error)).toMatch(/No catalog entry/)
+  })
+})
+
 describe('uninstall flow', () => {
   it('removes the plugin (live when hot mounted) and protects the market itself', async () => {
     fake.npm['dsh-loop'] = { latest: '1.0.0', versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } } }

@@ -29,7 +29,7 @@ import { runningAgentIds, type AgentsLookup } from './agents.ts'
 import { analyzeProfile, type DuplicateName } from './check.ts'
 import { applyBundleOrder, mergeOrder, readBundleRules, readBundleStack, validateOrder } from './order.ts'
 import { trialValidate } from './trial.ts'
-import { findInstalledAlias, gitAllowBuildsKey, installTargetFor } from './sources.ts'
+import { findCatalogEntryForLocal, findInstalledAlias, gitAllowBuildsKey, installTargetFor, isLocalSpec, restoreBlockedByWorkspace, restoreTargetForLocal, workspaceProtocolDeps } from './sources.ts'
 import { groupConflictsByOwner, isStaleUpdate, parseIgnoredBuilds, parsePrepareNotAllowed, RELEASE_AGE_OVERRIDE, retargetCollections, validateAddedPlugins, withHoistRecovery } from './install.ts'
 import { asChannel, CHANNELS, DIST_TAG, resolveChannel, type Channel } from './channels.ts'
 import { checkUpdates, fetchNpmLatest, invalidateUpdates, isUpgrade, latestPublishedRecently, versionOnChannel } from './updates.ts'
@@ -1215,17 +1215,46 @@ export function mountMarketRoutes(
         }
         try {
           await withMutationLock(response, 'install', async () => {
-            const body = (await readJsonBody(request)) as { name?: unknown; force?: unknown }
+            const body = (await readJsonBody(request)) as { name?: unknown; force?: unknown; restore?: unknown }
             const name = typeof body.name === 'string' ? body.name : ''
             const force = body.force === true
-            const spec = readInstalled(config.profile, activeProfileDir)[name]
+            const restore = body.restore === true
+            let spec = readInstalled(config.profile, activeProfileDir)[name]
             if (spec === undefined) {
               sendJson(response, 400, { error: 'plugin is not installed' })
               return
             }
-            if (spec.startsWith('link:') || spec.startsWith('file:')) {
-              sendJson(response, 400, { error: 'locally linked plugins update from their checkout' })
-              return
+            if (isLocalSpec(spec)) {
+              if (!restore) {
+                sendJson(response, 400, { error: 'locally linked plugins update from their checkout' })
+                return
+              }
+              // Restore replaces the local checkout with the curated source
+              // so the ordinary update check can see it again. Same add path
+              // as a registry update — only the resolved target changes.
+              let catalogTarget: string | null = null
+              try {
+                const registry = await loadRegistry()
+                const evidence = readInstalledRepoEvidence(config.profile, name, spec, activeProfileDir)
+                const entry = findCatalogEntryForLocal(registry.plugins, name, evidence.identities, evidence.hints)
+                catalogTarget = entry === null ? null : restoreTargetForLocal(entry, evidence.identities)
+                const workspaceDeps = workspaceProtocolDeps(readInstalledManifest(config.profile, name, activeProfileDir))
+                if (catalogTarget !== null && restoreBlockedByWorkspace(catalogTarget, workspaceDeps)) {
+                  sendJson(response, 400, {
+                    error: `该插件依赖 monorepo workspace 包（${workspaceDeps.join(', ')}），无法从 Git 子目录单独恢复。请继续用本地开发，或等作者发布 npm 后再恢复。 / This plugin depends on monorepo workspace packages (${workspaceDeps.join(', ')}); a git subdirectory install cannot resolve workspace: protocol. Keep the local checkout, or restore after the author publishes to npm.`,
+                  })
+                  return
+                }
+              } catch (error) {
+                logEvent('warn', 'update', `${name}: restore catalog lookup failed — ${error instanceof Error ? error.message : String(error)}`)
+              }
+              if (catalogTarget === null) {
+                sendJson(response, 400, {
+                  error: '目录里找不到对应的线上版本，无法从本地开发恢复。 / No catalog entry matches this local plugin, so it cannot be restored to a registry install.',
+                })
+                return
+              }
+              spec = catalogTarget
             }
             // Replacing a package on disk under a live agent is a mixed-state
             // hazard the "restart" verdict cannot fix: the running module keeps
@@ -1252,7 +1281,11 @@ export function mountMarketRoutes(
             // The market follows its channel; everything else is `latest`.
             const selfChannel = SELF_NAMES.has(name) ? activeChannel() : null
             const tag = selfChannel === null ? 'latest' : DIST_TAG[selfChannel]
-            const target = isGit ? spec.replace(/#.*$/, '') : `${name}@${tag}`
+            // Ordinary git updates drop `#commit`/`#branch` so HEAD re-resolves.
+            // Restore must keep `#path:` — that selector is the package, not a pin.
+            const target = isGit
+              ? (restore ? spec : spec.replace(/#.*$/, ''))
+              : `${restore ? spec : name}@${tag}`
             // Never let `@latest` walk a profile BACKWARDS (#64 by @ZeroOrigin64):
             // a package whose latest dist-tag was left on an older release turns
             // this update into a downgrade that also rewrites an exact pin to
@@ -1265,7 +1298,7 @@ export function mountMarketRoutes(
             // so here the guard only refuses when the channel already points
             // at what is installed, and it compares against the target tag
             // rather than `latest`, which is not the tag being installed.
-            if (!isGit) {
+            if (!isGit && !restore) {
               const installedVersion = readInstalledVersion(config.profile, name, activeProfileDir)
               const registryLatest = selfChannel === null
                 ? await fetchNpmLatest(name)
@@ -1313,16 +1346,24 @@ export function mountMarketRoutes(
             let stale = false
             let activation: Record<string, ReturnType<typeof verifyActivation>> | undefined
             if (ok) {
-              stale = isStaleUpdate({
-                isGit,
-                beforeVersion,
-                afterVersion: readInstalledVersion(config.profile, name, activeProfileDir),
-                beforeCommit,
-                afterCommit: repoKey !== null
-                  ? readLockCommits(config.profile, activeProfileDir).get(repoKey) ?? null
-                  : null,
-              })
-              if (stale) ok = false
+              if (restore) {
+                // Restore succeeds when the spec is no longer local, even if
+                // the checkout already sat on the same version as latest.
+                const afterSpec = readInstalled(config.profile, activeProfileDir)[name]
+                const stillLocal = afterSpec !== undefined && isLocalSpec(afterSpec)
+                if (stillLocal) ok = false
+              } else {
+                stale = isStaleUpdate({
+                  isGit,
+                  beforeVersion,
+                  afterVersion: readInstalledVersion(config.profile, name, activeProfileDir),
+                  beforeCommit,
+                  afterCommit: repoKey !== null
+                    ? readLockCommits(config.profile, activeProfileDir).get(repoKey) ?? null
+                    : null,
+                })
+                if (stale) ok = false
+              }
             }
             // The new build has to be loadable (#159). pnpm exits 0 for any
             // tarball it can extract, and the version really did change, so

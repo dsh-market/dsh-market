@@ -1287,6 +1287,70 @@ describe('uninstall confirmation Modal', () => {
   })
 })
 
+describe('local-dev restore', () => {
+  it('asks in the red banner before swapping a linked plugin to the catalog', async () => {
+    stubFetch({
+      '/dsh-market/installed': { profile: 'web', installed: { 'dsh-loop': 'link:../dsh-loop' }, live: [] },
+      '/dsh-market/updates': { updates: { 'dsh-loop': { kind: 'linked', version: '1.0.0', updateAvailable: false } } },
+      '/dsh-market/update': { ok: true },
+    })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    expect(await screen.findByRole('button', { name: en.uninstall })).toBeTruthy()
+    expect(await screen.findByText(en.linkedDev)).toBeTruthy()
+    fireEvent.click(await screen.findByRole('button', { name: en.restore }))
+    expect(await screen.findByText(en.restoreHint)).toBeTruthy()
+    expect(fetchCalls.some(call => call.path === '/dsh-market/update')).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: en.restoreContinue }))
+    await waitFor(() => {
+      expect(fetchCalls.some(call =>
+        call.path === '/dsh-market/update' && call.body?.name === 'dsh-loop' && call.body?.restore === true,
+      )).toBe(true)
+    })
+  })
+
+  it('does not arm continue when the linked plugin is not in the catalog', async () => {
+    stubFetch({
+      '/dsh-market/installed': { profile: 'web', installed: { 'mystery-plug': 'link:../mystery' }, live: [] },
+      '/dsh-market/updates': { updates: { 'mystery-plug': { kind: 'linked', updateAvailable: false } } },
+    })
+    render(<MarketSection {...props()} />)
+    fireEvent.click(await screen.findByRole('button', { name: /Installed/ }))
+    expect(await screen.findByText('mystery-plug')).toBeTruthy()
+    fireEvent.click(await screen.findByRole('button', { name: en.restore }))
+    expect(await screen.findByText(en.restoreNoCatalog)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: en.restoreContinue })).toBeNull()
+    expect(fetchCalls.some(call => call.path === '/dsh-market/update')).toBe(false)
+    expect(screen.getByRole('button', { name: en.uninstall })).toBeTruthy()
+  })
+
+  it('retries a blocked restore with restore:true after approving builds', async () => {
+    stubFetch({
+      '/dsh-market/installed': { profile: 'web', installed: { 'dsh-loop': 'link:../dsh-loop' }, live: [] },
+      '/dsh-market/updates': { updates: { 'dsh-loop': { kind: 'linked', updateAvailable: false } } },
+      '/dsh-market/update': {
+        ok: false,
+        ignoredBuilds: ['dsh-cowork'],
+        error: 'not in the allowBuilds allowlist',
+        __status: 502,
+      },
+      '/dsh-market/approve-builds': { ok: true, approved: ['dsh-cowork'] },
+    })
+    render(<MarketSection {...props()} />)
+    fireEvent.click(await screen.findByRole('button', { name: /Installed/ }))
+    fireEvent.click(await screen.findByRole('button', { name: en.restore }))
+    fireEvent.click(await screen.findByRole('button', { name: en.restoreContinue }))
+    expect(await screen.findByText(re(en.buildsSkipped))).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: en.approveBuilds }))
+    await waitFor(() => {
+      const retries = fetchCalls.filter(call => call.path === '/dsh-market/update')
+      expect(retries.length).toBeGreaterThanOrEqual(2)
+      expect(retries.at(-1)?.body).toMatchObject({ name: 'dsh-loop', restore: true })
+    })
+  })
+})
+
 describe('per-tab search boxes', () => {
   it('the installed tab has its own search that narrows the list', async () => {
     stubFetch({
