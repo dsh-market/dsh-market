@@ -4,7 +4,10 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { findInstalledAlias, gitAllowBuildsKey, installTargetFor, parseSourceUrl, repoOf } from '../src/sources.ts'
+import {
+  findInstalledAlias, gitAllowBuildsKey, githubRemoteIdentities, githubRepoIdentities, githubRepoIdentity,
+  installTargetFor, parseGitHubRemote, parseGitHubRepository, parseSourceUrl, repoOf,
+} from '../src/sources.ts'
 
 describe('parseSourceUrl', () => {
   it('accepts github repo urls, plain or with a /tree/<branch>/<subpath> suffix', () => {
@@ -22,6 +25,42 @@ describe('parseSourceUrl', () => {
     expect(parseSourceUrl('https://github.com/o/r/tree/main/pkg%20name')).toBeNull()
     expect(parseSourceUrl('https://github.com/o/r/tree/main/pkg;rm')).toBeNull()
     expect(repoOf('nonsense')).toBeNull()
+  })
+})
+
+describe('local GitHub source identity (#141)', () => {
+  it('normalizes package and git remote forms without exposing transport details', () => {
+    expect(parseGitHubRemote('https://github.com/GXX182/dsh-vision-bridge.git'))
+      .toEqual({ repo: 'GXX182/dsh-vision-bridge' })
+    expect(parseGitHubRemote('git+https://github.com/GXX182/dsh-vision-bridge.git'))
+      .toEqual({ repo: 'GXX182/dsh-vision-bridge' })
+    expect(parseGitHubRemote('git@github.com:GXX182/dsh-vision-bridge.git'))
+      .toEqual({ repo: 'GXX182/dsh-vision-bridge' })
+    expect(parseGitHubRemote('ssh://git@github.com/GXX182/dsh-vision-bridge.git'))
+      .toEqual({ repo: 'GXX182/dsh-vision-bridge' })
+    expect(parseGitHubRepository('owner/repo')).toEqual({ repo: 'owner/repo' })
+    expect(parseGitHubRepository('github:owner/repo')).toEqual({ repo: 'owner/repo' })
+    expect(parseGitHubRepository('git+ssh://git@github.com/Owner/Repo.git'))
+      .toEqual({ repo: 'Owner/Repo' })
+    expect(parseGitHubRemote('https://ghfast.top/https://github.com/Owner/Repo.git'))
+      .toEqual({ repo: 'Owner/Repo' })
+    expect(parseGitHubRemote('https://gitlab.com/GXX182/dsh-vision-bridge.git')).toBeNull()
+  })
+
+  it('builds lowercase, subpath-aware identities and rejects unsafe directories', () => {
+    expect(githubRepoIdentity('https://github.com/Owner/Repo.git')).toBe('owner/repo')
+    expect(githubRepoIdentity('git@github.com:Owner/Repo.git', 'packages\\Plugin'))
+      .toBe('owner/repo#path:/packages/plugin')
+    expect(githubRepoIdentity('https://github.com/o/r', '../escape')).toBeNull()
+  })
+
+  it('mirrors github:#path matching evidence for local monorepo packages', () => {
+    expect(githubRepoIdentities('https://github.com/Owner/Repo.git'))
+      .toEqual(['owner/repo'])
+    expect(githubRepoIdentities('https://github.com/Owner/Repo.git', 'packages/plugin'))
+      .toEqual(['owner/repo', 'owner/repo#path:/packages/plugin'])
+    expect(githubRemoteIdentities('git@github.com:Owner/Repo.git', 'packages/plugin'))
+      .toEqual(['owner/repo', 'owner/repo#path:/packages/plugin'])
   })
 })
 

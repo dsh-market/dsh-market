@@ -4,9 +4,10 @@
  * functions of the directory contents; no processes, no network.
  */
 
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { githubRemoteIdentities, githubRepoIdentities } from './sources.ts'
 
 /**
  * Resolve a profile name to its directory under DSH_HOME (default ~/.dsh).
@@ -114,6 +115,166 @@ export function readInstalledManifest(profile: string, name: string, explicitDir
   } catch {
     return null
   }
+}
+
+const PACKAGE_NAME_RE = /^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/i
+
+function localSpecDirectory(root: string, spec: string): string | null {
+  const match = /^(?:link|file):(.+)$/i.exec(spec)
+  if (match === null) return null
+  let path = match[1]!
+  try { path = decodeURIComponent(path) } catch { /* keep the literal pnpm path */ }
+  // file:// URLs are uncommon in profile manifests; reject them rather than
+  // guessing across platforms. Normal pnpm link:/file: directory specs reach
+  // this code as absolute or profile-relative filesystem paths.
+  if (path.startsWith('//')) return null
+  const candidate = isAbsolute(path) ? path : resolve(root, path)
+  try {
+    return statSync(candidate).isDirectory() ? realpathSync(candidate) : null
+  } catch {
+    return null
+  }
+}
+
+function installedPackageDirectory(root: string, name: string): string | null {
+  try {
+    const candidate = join(root, 'node_modules', name)
+    return statSync(candidate).isDirectory() ? realpathSync(candidate) : null
+  } catch {
+    return null
+  }
+}
+
+function manifestAt(dir: string): Record<string, unknown> | null {
+  try {
+    const value = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as unknown
+    return typeof value === 'object' && value !== null ? value as Record<string, unknown> : null
+  } catch {
+    return null
+  }
+}
+
+function manifestRepository(manifest: Record<string, unknown> | null): { url: string; directory: string | null } | null {
+  const repository = manifest?.repository
+  if (typeof repository === 'string') return { url: repository, directory: null }
+  if (typeof repository !== 'object' || repository === null) return null
+  const value = repository as Record<string, unknown>
+  if (typeof value.url !== 'string') return null
+  return { url: value.url, directory: typeof value.directory === 'string' ? value.directory : null }
+}
+
+function gitConfigPath(marker: string, worktreeRoot: string): string | null {
+  try {
+    if (statSync(marker).isDirectory()) {
+      const direct = join(marker, 'config')
+      return existsSync(direct) ? direct : null
+    }
+    const pointer = /^gitdir:\s*(.+)$/im.exec(readFileSync(marker, 'utf8'))
+    if (pointer === null) return null
+    const gitDir = resolve(worktreeRoot, pointer[1]!.trim())
+    const direct = join(gitDir, 'config')
+    if (existsSync(direct)) return direct
+    const commonDir = readFileSync(join(gitDir, 'commondir'), 'utf8').trim()
+    const common = join(resolve(gitDir, commonDir), 'config')
+    return existsSync(common) ? common : null
+  } catch {
+    return null
+  }
+}
+
+function originFromConfig(file: string): string | null {
+  try {
+    let origin = false
+    for (const line of readFileSync(file, 'utf8').split(/\r?\n/)) {
+      const section = /^\s*\[remote\s+"([^"]+)"\]\s*$/.exec(line)
+      if (section !== null) {
+        origin = section[1] === 'origin'
+        continue
+      }
+      if (!origin) continue
+      const url = /^\s*url\s*=\s*(.+?)\s*$/.exec(line)
+      if (url !== null) return url[1]!
+    }
+  } catch { /* unreadable git metadata carries no identity */ }
+  return null
+}
+
+function gitCheckout(start: string): { root: string; origin: string } | null {
+  let current = start
+  while (true) {
+    const marker = join(current, '.git')
+    if (existsSync(marker)) {
+      const config = gitConfigPath(marker, current)
+      const origin = config === null ? null : originFromConfig(config)
+      return origin === null ? null : { root: current, origin }
+    }
+    const parent = dirname(current)
+    if (parent === current) return null
+    current = parent
+  }
+}
+
+function checkoutSubpath(root: string, packageDir: string): string | null {
+  const value = relative(root, packageDir).replaceAll('\\', '/')
+  return value === '' || value === '.' || value.startsWith('../') ? null : value
+}
+
+/**
+ * Strong repository identities for a locally linked dependency (#141).
+ * Explicit github: specs already carry this evidence; only link:/file: need
+ * filesystem discovery. This compatibility wrapper returns only declared
+ * package.json identities; Git origins are exposed separately as hints.
+ */
+export function readInstalledRepoIdentities(
+  profile: string,
+  name: string,
+  spec: string,
+  explicitDir?: string,
+): string[] {
+  return readInstalledRepoEvidence(profile, name, spec, explicitDir).identities
+}
+
+export interface InstalledRepoEvidence {
+  identities: string[]
+  hints: string[]
+}
+
+/**
+ * Discover declared repository identities and weaker local-origin hints. A
+ * package.json repository declaration is authoritative; Git origin is only a
+ * disambiguation hint because a checkout may legitimately point at a fork.
+ */
+export function readInstalledRepoEvidence(
+  profile: string,
+  name: string,
+  spec: string,
+  explicitDir?: string,
+): InstalledRepoEvidence {
+  if (!PACKAGE_NAME_RE.test(name) || !/^(?:link|file):/i.test(spec)) return { identities: [], hints: [] }
+  const root = profileDir(profile, explicitDir)
+  const sourceDir = localSpecDirectory(root, spec)
+  const installedDir = installedPackageDirectory(root, name)
+  const manifestDir = installedDir ?? sourceDir
+  const manifest = manifestDir === null ? readInstalledManifest(profile, name, explicitDir) : manifestAt(manifestDir)
+  const repository = manifestRepository(
+    typeof manifest === 'object' && manifest !== null ? manifest as Record<string, unknown> : null,
+  )
+  const checkoutDir = sourceDir ?? (installedDir !== null && /^(?:link):/i.test(spec) ? installedDir : null)
+  const checkout = checkoutDir === null ? null : gitCheckout(checkoutDir)
+
+  if (repository !== null) {
+    const identities = githubRepoIdentities(repository.url, repository.directory)
+    if (identities.length > 0) return { identities, hints: [] }
+  }
+
+  if (checkout !== null) {
+    return { identities: [], hints: githubRemoteIdentities(checkout.origin, checkoutSubpath(checkout.root, checkoutDir!)) }
+  }
+
+  // node_modules is intentionally not searched upward for .git: a copied
+  // file: package may sit inside an unrelated profile checkout. Only the
+  // explicit local source directory is valid Git-origin evidence.
+  return { identities: [], hints: [] }
 }
 
 /** Pinned commit per `owner/repo` from the profile lockfile's codeload tarball URLs. */

@@ -348,6 +348,28 @@ describe('GET /dsh-market/check — report contract', () => {
   })
 })
 
+describe('GET /dsh-market/installed — local repository evidence', () => {
+  it('returns package repository identities without changing the installed map', async () => {
+    const target = join(tmp, 'dsh-vision-bridge')
+    mkdirSync(target, { recursive: true })
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ dependencies: {
+      'dsh-vision-bridge': `link:${target}`,
+    } }))
+    writeFileSync(join(target, 'package.json'), JSON.stringify({
+      name: 'dsh-vision-bridge',
+      repository: 'github:GXX182/dsh-vision-bridge',
+    }))
+
+    const res = await hit(routes, '/dsh-market/installed', { method: 'GET', url: '/dsh-market/installed' })
+    expect(res.status).toBe(200)
+    expect(jsonBody(res)).toMatchObject({
+      installed: { 'dsh-vision-bridge': `link:${target}` },
+      repoIdentities: { 'dsh-vision-bridge': ['gxx182/dsh-vision-bridge'] },
+      repoHints: {},
+    })
+  })
+})
+
 describe('POST /dsh-market/bundle-order', () => {
   it('applies a valid community reorder: 200 with the merged stack, manifest rewritten', async () => {
     writeStandardProfile()

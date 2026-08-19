@@ -83,6 +83,109 @@ describe('matchInstalledName / isInstalled', () => {
       { 'dsh-usage-stats': '^1.0.0' },
     )).toBe('dsh-usage-stats')
   })
+
+  it('uses local repo evidence to disambiguate same-named link installs (#141)', () => {
+    const installed = { 'dsh-vision-bridge': 'link:D:/pro/dsh/dsh-vision-bridge' }
+    const repoIdentities = { 'dsh-vision-bridge': ['gxx182/dsh-vision-bridge'] }
+    const plugins = [
+      plugin({ name: 'dsh-vision-bridge', url: 'https://github.com/GXX182/dsh-vision-bridge' }),
+      plugin({ name: 'dsh-vision-bridge', url: 'https://github.com/ximengxiaolan/dsh-vision-bridge' }),
+    ]
+
+    expect(matchInstalledName(
+      plugins[0]!,
+      installed,
+      repoIdentities,
+    )).toBe('dsh-vision-bridge')
+    expect(matchInstalledName(
+      plugins[1]!,
+      installed,
+      repoIdentities,
+    )).toBeNull()
+
+    // With no strong identity the client admits ambiguity instead of marking
+    // every same-named catalog entry as installed.
+    expect(matchInstalledName(plugins[0]!, installed, {}, plugins)).toBeNull()
+    expect(matchInstalledName(plugins[1]!, installed, {}, plugins)).toBeNull()
+    expect(entryForDep(plugins, 'dsh-vision-bridge', installed['dsh-vision-bridge']!)).toBeUndefined()
+  })
+
+  it('uses a weak Git-origin hint only among duplicate candidates', () => {
+    const installed = { 'dsh-vision-bridge': 'link:D:/src/dsh-vision-bridge' }
+    const plugins = [
+      plugin({ name: 'dsh-vision-bridge', url: 'https://github.com/gxx182/dsh-vision-bridge' }),
+      plugin({ name: 'dsh-vision-bridge', url: 'https://github.com/other/dsh-vision-bridge' }),
+    ]
+    const hints = { 'dsh-vision-bridge': ['gxx182/dsh-vision-bridge'] }
+
+    expect(matchInstalledName(plugins[0]!, installed, {}, plugins, hints)).toBe('dsh-vision-bridge')
+    expect(matchInstalledName(plugins[1]!, installed, {}, plugins, hints)).toBeNull()
+    expect(entryForDep(plugins, 'dsh-vision-bridge', installed['dsh-vision-bridge']!, [], hints['dsh-vision-bridge'])).toBe(plugins[0])
+  })
+
+  it('keeps a unique loose name match when no repository identity exists', () => {
+    const installed = { 'dsh-vision-bridge': 'link:D:/src/dsh-vision-bridge' }
+    const only = plugin({ name: 'dsh-vision-bridge', url: 'https://github.com/other/dsh-vision-bridge' })
+
+    expect(matchInstalledName(only, installed, {}, [only])).toBe('dsh-vision-bridge')
+    expect(entryForDep([only], 'dsh-vision-bridge', installed['dsh-vision-bridge']!)).toBe(only)
+    expect(isInstalled(only, installed, {}, [only])).toBe(true)
+  })
+
+  it('keeps the unique loose name match when a weak hint disagrees', () => {
+    const installed = { 'dsh-vision-bridge': 'link:D:/src/dsh-vision-bridge' }
+    const only = plugin({ name: 'dsh-vision-bridge', url: 'https://github.com/other/dsh-vision-bridge' })
+    const hints = { 'dsh-vision-bridge': ['gxx182/dsh-vision-bridge'] }
+
+    expect(matchInstalledName(only, installed, {}, [only], hints)).toBe('dsh-vision-bridge')
+    expect(entryForDep([only], 'dsh-vision-bridge', installed['dsh-vision-bridge']!, [], hints['dsh-vision-bridge'])).toBe(only)
+  })
+
+  it('rejects malformed repository identities from local package metadata', () => {
+    const name = 'dsh-vision-bridge'
+    const installed = { [name]: 'link:D:/src/dsh-vision-bridge' }
+    const plugins = [
+      plugin({ name, url: 'https://example.invalid/first' }),
+      plugin({ name, url: 'https://example.invalid/second' }),
+    ]
+    const repoIdentities = { [name]: ['not a repo id', 'a/b/c/d'] }
+
+    expect(matchInstalledName(plugins[0]!, installed, repoIdentities, plugins)).toBeNull()
+    expect(entryForDep(plugins, name, installed[name]!, repoIdentities[name])).toBeUndefined()
+  })
+
+  it('rejects repository identities with traversal segments', () => {
+    const name = 'dsh-vision-bridge'
+    const installed = { [name]: 'link:D:/src/dsh-vision-bridge' }
+    const plugins = [
+      plugin({ name, url: 'https://example.invalid/first' }),
+      plugin({ name, url: 'https://example.invalid/second' }),
+    ]
+    const repoIdentities = { [name]: ['owner/repo#path:/../../x'] }
+
+    expect(matchInstalledName(plugins[0]!, installed, repoIdentities, plugins)).toBeNull()
+    expect(entryForDep(plugins, name, installed[name]!, repoIdentities[name])).toBeUndefined()
+  })
+
+  it('matches local monorepo evidence the same way as a github:#path spec', () => {
+    const root = plugin({ name: 'collection', url: 'https://github.com/o/collection' })
+    const exact = plugin({
+      name: 'plugin-a',
+      url: 'https://github.com/o/collection/tree/main/packages/plugin-a',
+    })
+    const sibling = plugin({
+      name: 'plugin-b',
+      url: 'https://github.com/o/collection/tree/main/packages/plugin-b',
+    })
+    const installed = { 'plugin-a': 'link:D:/src/collection/packages/plugin-a' }
+    const repoIdentities = {
+      'plugin-a': ['o/collection', 'o/collection#path:/packages/plugin-a'],
+    }
+
+    expect(matchInstalledName(root, installed, repoIdentities)).toBe('plugin-a')
+    expect(matchInstalledName(exact, installed, repoIdentities)).toBe('plugin-a')
+    expect(matchInstalledName(sibling, installed, repoIdentities)).toBeNull()
+  })
 })
 
 describe('entryForDep', () => {

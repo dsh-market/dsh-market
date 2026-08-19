@@ -812,7 +812,16 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			if (m !== null) ids.add(m[2] !== void 0 ? `${m[1].toLowerCase()}#path:/${m[2].toLowerCase()}` : m[1].toLowerCase());
 			return ids;
 		}
-		function depIdentities(name, spec) {
+		const REPO_ID_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:#path:\/[A-Za-z0-9_./-]+)?$/;
+		function addRepoIdentities(ids, values) {
+			for (const value of values) {
+				if (!REPO_ID_RE.test(value)) continue;
+				const subpath = value.split("#path:/")[1];
+				if (subpath !== void 0 && subpath.split("/").some((seg) => seg === "" || seg === "." || seg === "..")) continue;
+				ids.add(value.toLowerCase());
+			}
+		}
+		function depIdentities(name, spec, repoIdentities = []) {
 			const ids = /* @__PURE__ */ new Set([name.toLowerCase()]);
 			const scoped = /^@([^/]+)\/(.+)$/.exec(name);
 			if (scoped !== null) ids.add(`${scoped[1].toLowerCase()}/${scoped[2].toLowerCase()}`);
@@ -821,6 +830,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				ids.add(match[1].toLowerCase());
 				if (match[2] !== void 0) ids.add(`${match[1].toLowerCase()}#path:/${match[2].toLowerCase()}`);
 			}
+			addRepoIdentities(ids, repoIdentities);
 			return ids;
 		}
 		/**
@@ -828,13 +838,14 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		* hard evidence of where the package came from, unlike the name-derived
 		* mirror in depIdentities, which is only a matching aid.
 		*/
-		function depSpecRepoIds(spec) {
+		function depRepoIds(spec, repoIdentities = []) {
 			const ids = /* @__PURE__ */ new Set();
 			const m = /github:([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)(?:#path:\/([A-Za-z0-9_./-]+))?/i.exec(spec);
 			if (m !== null) {
 				ids.add(m[1].toLowerCase());
 				if (m[2] !== void 0) ids.add(`${m[1].toLowerCase()}#path:/${m[2].toLowerCase()}`);
 			}
+			addRepoIdentities(ids, repoIdentities);
 			return ids;
 		}
 		/** Repo identity of a registry entry's source url (repo or repo#path form). */
@@ -852,33 +863,53 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		* decide — the loose name/npm identities only apply when at least one side
 		* carries no repo evidence (npm installs, non-github entries).
 		*/
-		function sameSourceConflict(plugin, spec) {
+		function sameSourceConflict(plugin, spec, repoIdentities = []) {
 			const entry = entryRepoIds(plugin);
-			const dep = depSpecRepoIds(spec);
+			const dep = depRepoIds(spec, repoIdentities);
 			if (entry.size === 0 || dep.size === 0) return false;
 			for (const id of dep) if (entry.has(id)) return false;
 			return true;
 		}
+		function repoHintMatches(plugin, hints) {
+			const entry = entryRepoIds(plugin);
+			const values = /* @__PURE__ */ new Set();
+			addRepoIdentities(values, hints);
+			for (const id of values) if (entry.has(id)) return true;
+			return false;
+		}
+		function looseMatchCount(plugins, name) {
+			return plugins.filter((plugin) => looseMatches(plugin, name)).length;
+		}
+		function looseMatches(plugin, name) {
+			const dep = depIdentities(name, "");
+			for (const id of entryIdentities(plugin)) if (dep.has(id)) return true;
+			return false;
+		}
 		/** The installed dependency name a registry entry corresponds to, or null. */
-		function matchInstalledName(plugin, installed) {
+		function matchInstalledName(plugin, installed, repoIdentities = {}, plugins, repoHints = {}) {
 			const ids = entryIdentities(plugin);
 			for (const [name, spec] of Object.entries(installed)) {
-				if (sameSourceConflict(plugin, String(spec))) continue;
-				for (const id of depIdentities(name, String(spec))) if (ids.has(id)) return name;
+				const repos = repoIdentities[name] ?? [];
+				if (depRepoIds(String(spec), repos).size === 0 && plugins !== void 0 && looseMatchCount(plugins, name) > 1 && !repoHintMatches(plugin, repoHints[name] ?? [])) continue;
+				if (sameSourceConflict(plugin, String(spec), repos)) continue;
+				for (const id of depIdentities(name, String(spec), repos)) if (ids.has(id)) return name;
 			}
 			return null;
 		}
 		/** The registry entry an installed dependency corresponds to, or undefined. */
-		function entryForDep(plugins, name, spec) {
-			const ids = depIdentities(name, String(spec));
+		function entryForDep(plugins, name, spec, repoIdentities = [], repoHints = []) {
+			if (depRepoIds(String(spec), repoIdentities).size === 0 && looseMatchCount(plugins, name) > 1) {
+				if (plugins.find((plugin) => repoHintMatches(plugin, repoHints) && looseMatches(plugin, name)) === void 0) return void 0;
+			}
+			const ids = depIdentities(name, String(spec), repoIdentities);
 			return plugins.find((plugin) => {
-				if (sameSourceConflict(plugin, String(spec))) return false;
+				if (sameSourceConflict(plugin, String(spec), repoIdentities)) return false;
 				for (const id of entryIdentities(plugin)) if (ids.has(id)) return true;
 				return false;
 			});
 		}
-		function isInstalled(plugin, installed) {
-			return matchInstalledName(plugin, installed) !== null;
+		function isInstalled(plugin, installed, repoIdentities = {}, plugins, repoHints = {}) {
+			return matchInstalledName(plugin, installed, repoIdentities, plugins, repoHints) !== null;
 		}
 		/**
 		* The header brand mark now lives in MarketSection.tsx as an inline SVG
@@ -2449,6 +2480,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		*/
 		let cachedRegistry = null;
 		let cachedInstalled = null;
+		let cachedRepoIdentities = null;
+		let cachedRepoHints = null;
 		/** Discover grid page-size choices — the catalog grows daily, so cap each page. */
 		const PAGE_SIZES = [
 			24,
@@ -2487,6 +2520,29 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			if (dependencies === null || typeof dependencies !== "object" || Array.isArray(dependencies)) return {};
 			if (!Object.values(dependencies).every((spec) => typeof spec === "string")) throw new Error("backup dependencies are invalid");
 			return dependencies;
+		}
+		function installedRepoIdentities(value) {
+			if (value === null || typeof value !== "object" || Array.isArray(value)) return {};
+			const identities = {};
+			for (const [name, ids] of Object.entries(value)) {
+				if (!Array.isArray(ids)) continue;
+				const strings = ids.filter((id) => typeof id === "string");
+				if (strings.length > 0) identities[name] = strings;
+			}
+			return identities;
+		}
+		function installedRepoHints(value) {
+			return installedRepoIdentities(value);
+		}
+		function installedMap(value) {
+			if (value === null || typeof value !== "object" || Array.isArray(value)) return {};
+			const installed = {};
+			for (const [name, spec] of Object.entries(value)) if (typeof spec === "string") installed[name] = spec;
+			return installed;
+		}
+		function sameInstalledMap(left, right) {
+			const names = Object.keys(left);
+			return names.length === Object.keys(right).length && names.every((name) => left[name] === right[name]);
 		}
 		/** Sort field choices in the filter panel. */
 		const SORT_FIELD_OPTIONS = [
@@ -2544,6 +2600,16 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const setInstalled = (0, react.useCallback)((value) => {
 				cachedInstalled = value;
 				setInstalledState(value);
+			}, []);
+			const [repoIdentities, setRepoIdentitiesState] = (0, react.useState)(cachedRepoIdentities ?? {});
+			const setRepoIdentities = (0, react.useCallback)((value) => {
+				cachedRepoIdentities = value;
+				setRepoIdentitiesState(value);
+			}, []);
+			const [repoHints, setRepoHintsState] = (0, react.useState)(cachedRepoHints ?? {});
+			const setRepoHints = (0, react.useCallback)((value) => {
+				cachedRepoHints = value;
+				setRepoHintsState(value);
 			}, []);
 			const [installedFiles, setInstalledFiles] = (0, react.useState)([]);
 			const [skins, setSkins] = (0, react.useState)([]);
@@ -2743,6 +2809,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const refreshInstalled = (0, react.useCallback)((force) => {
 				fetch("/dsh-market/installed", { cache: "no-store" }).then((res) => res.json()).then((body) => {
 					setInstalled(body.installed || {});
+					setRepoIdentities(installedRepoIdentities(body.repoIdentities));
+					setRepoHints(installedRepoHints(body.repoHints));
 					setInstalledFiles(Array.isArray(body.present) ? body.present : Object.keys(body.installed || {}));
 					setSkins(body.live || []);
 					if (Array.isArray(body.disabled)) setDisabledNames(body.disabled);
@@ -2876,9 +2944,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 							setProgressCurrent(null);
 							setProgressDone(0);
 							setCancelling(false);
-							setInstalled(status.installed || {});
+							const statusInstalled = installedMap(status.installed);
+							if (!sameInstalledMap(installed, statusInstalled)) refreshInstalled();
 							if (readSession("dshm-pending") !== null && busyUrl !== null && status.busy !== true) {
-								if (data !== null && data.plugins.some((p) => p.url === busyUrl && isInstalled(p, status.installed || {}))) {
+								if (data !== null && data.plugins.some((p) => p.url === busyUrl && isInstalled(p, statusInstalled, repoIdentities, data.plugins, repoHints))) {
 									idleStrikes.current = 0;
 									sessionStorage.removeItem("dshm-pending");
 									setDoneUrls((urls) => urls.includes(busyUrl) ? urls : urls.concat(busyUrl));
@@ -2897,7 +2966,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			}, [
 				busyUrl,
 				updatingName,
-				data
+				data,
+				installed,
+				repoIdentities,
+				repoHints,
+				refreshInstalled
 			]);
 			const plugins = (0, react.useMemo)(() => data === null ? [] : visiblePlugins(data.plugins, {
 				category: cat,
@@ -3688,7 +3761,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const pluginCard = (p) => {
 				const desc = p.description && (p.description[lang] || p.description.en) || "";
 				const done = doneUrls.includes(p.url) || hotUrls.includes(p.url);
-				const already = isInstalled(p, installed);
+				const already = isInstalled(p, installed, repoIdentities, data?.plugins, repoHints);
 				const busy = busyUrl === p.url;
 				const replacement = replacementOf(p);
 				return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
@@ -3823,7 +3896,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					]
 				}, p.url);
 			};
-			const installedNameOf = (p) => matchInstalledName(p, installed);
+			const installedNameOf = (p) => matchInstalledName(p, installed, repoIdentities, data?.plugins, repoHints);
 			const bootEntries = typeof window !== "undefined" && window.__DSH_BOOT__ && Array.isArray(window.__DSH_BOOT__.entries) ? window.__DSH_BOOT__.entries : [];
 			const themePluginCard = (p) => {
 				const instName = installedNameOf(p);
@@ -4005,11 +4078,16 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				const names = /* @__PURE__ */ new Set();
 				if (data === null) return names;
 				for (const [name, spec] of Object.entries(installed)) {
-					const entry = entryForDep(data.plugins, name, String(spec));
+					const entry = entryForDep(data.plugins, name, String(spec), repoIdentities[name], repoHints[name]);
 					if (entry !== void 0 && entry.category === "theme") names.add(name);
 				}
 				return names;
-			}, [data, installed]);
+			}, [
+				data,
+				installed,
+				repoIdentities,
+				repoHints
+			]);
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 				className: Market_module_css_default.root,
 				children: [
@@ -5043,7 +5121,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									className: Market_module_css_default.empty,
 									children: t("installedEmpty")
 								}) : ungroupedNames.map((name) => {
-									const entry = data === null ? void 0 : entryForDep(data.plugins, name, String(installed[name]));
+									const entry = data === null ? void 0 : entryForDep(data.plugins, name, String(installed[name]), repoIdentities[name], repoHints[name]);
 									const off = effectiveDisabledSet.has(name);
 									return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 										className: Market_module_css_default.irow,
@@ -5134,7 +5212,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 								if (needle === "") return true;
 								if (name.toLowerCase().includes(needle)) return true;
 								if (String(spec).toLowerCase().includes(needle)) return true;
-								const entry = data === null ? void 0 : entryForDep(data.plugins, name, String(spec));
+								const entry = data === null ? void 0 : entryForDep(data.plugins, name, String(spec), repoIdentities[name], repoHints[name]);
 								if (entry !== void 0) {
 									if ((entry.description && (entry.description[lang] || entry.description.en) || "").toLowerCase().includes(needle)) return true;
 									if ((entry.owner || "").toLowerCase().includes(needle)) return true;
@@ -5142,7 +5220,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 								return false;
 							}).map(([name, spec]) => {
 								const missing = pendingBackup !== null && !installedFiles.includes(name);
-								const entry = data === null ? void 0 : entryForDep(data.plugins, name, String(spec));
+								const entry = data === null ? void 0 : entryForDep(data.plugins, name, String(spec), repoIdentities[name], repoHints[name]);
 								const status = updates[name];
 								const act = activations[name];
 								const meta = act !== void 0 ? activationMeta(act.state, t) : null;
@@ -5318,7 +5396,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 													setTab("discover");
 												},
 												children: t("viewReplacement")
-											}), !isInstalled(replacement, installed) && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+											}), !isInstalled(replacement, installed, repoIdentities, data?.plugins, repoHints) && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 												variant: "outline",
 												size: "sm",
 												onClick: () => setConfirming(replacement),

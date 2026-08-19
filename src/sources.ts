@@ -5,6 +5,11 @@
 
 const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
 
+function validSubpath(subpath: string): boolean {
+  if (!/^[A-Za-z0-9_./-]+$/.test(subpath)) return false
+  return !subpath.split('/').some(seg => seg === '' || seg === '.' || seg === '..')
+}
+
 /** Registry tarball names must be plain npm package names, nothing fancier. */
 const NPM_NAME_RE = /^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/
 
@@ -18,11 +23,71 @@ export function parseSourceUrl(url: string): { repo: string; subpath: string | n
   if (m === null || !REPO_RE.test(m[1])) return null
   const subpath = m[2] ?? null
   if (subpath !== null) {
-    if (!/^[A-Za-z0-9_./-]+$/.test(subpath)) return null
     // No empty/dot segments: `..` would escape the repo in the #path: selector.
-    if (subpath.split('/').some(seg => seg === '' || seg === '.' || seg === '..')) return null
+    if (!validSubpath(subpath)) return null
   }
   return { repo: m[1], subpath }
+}
+
+function repoFromParts(owner: string, name: string): { repo: string } | null {
+  const repoName = name.replace(/\.git$/i, '')
+  const repo = `${owner}/${repoName}`
+  return REPO_RE.test(repo) ? { repo } : null
+}
+
+/** Parse repository forms accepted by package.json.repository. */
+export function parseGitHubRepository(value: string): { repo: string } | null {
+  const input = value.trim()
+  const shortcut = /^(?:github:)?([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?(?:#.*)?$/i.exec(input)
+  if (shortcut !== null) return repoFromParts(shortcut[1]!, shortcut[2]!)
+
+  const remote = input.replace(/^git\+/i, '')
+  const web = /^(?:https?|git|ssh):\/\/(?:git@)?github\.com[/:]([^/]+)\/([^/?#]+)\/?(?:[?#].*)?$/i.exec(remote)
+  const scp = /^git@github\.com:([^/]+)\/([^/?#]+)$/i.exec(remote)
+  const match = web ?? scp
+  return match === null ? null : repoFromParts(match[1]!, match[2]!)
+}
+
+/**
+ * Parse a Git remote. Unlike package metadata, a local origin may contain a
+ * proxy prefix (for example `https://proxy/https://github.com/o/r.git`). In
+ * that case only the last GitHub occurrence is considered.
+ */
+export function parseGitHubRemote(url: string): { repo: string } | null {
+  const exact = parseGitHubRepository(url)
+  if (exact !== null) return exact
+  const matches = [...url.matchAll(/github\.com[/:]([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?(?=$|[/?#])/ig)]
+  const match = matches.at(-1)
+  return match === undefined ? null : repoFromParts(match[1]!, match[2]!)
+}
+
+/** Normalized repo identity shared by server discovery and client matching. */
+export function githubRepoIdentity(url: string, directory?: string | null): string | null {
+  const source = parseGitHubRepository(url)
+  if (source === null) return null
+  const repo = source.repo.toLowerCase()
+  if (directory === undefined || directory === null || directory.trim() === '') return repo
+  const subpath = directory.trim().replaceAll('\\', '/').replace(/^\/+|\/+$/g, '')
+  return validSubpath(subpath) ? `${repo}#path:/${subpath.toLowerCase()}` : null
+}
+
+/**
+ * Repository evidence used for installed-source matching. A monorepo package
+ * contributes both its collection root and exact subpath, mirroring the
+ * identities extracted from `github:owner/repo#path:/package` specs.
+ */
+export function githubRepoIdentities(url: string, directory?: string | null): string[] {
+  const identity = githubRepoIdentity(url, directory)
+  if (identity === null) return []
+  const pathAt = identity.indexOf('#path:/')
+  return pathAt === -1 ? [identity] : [identity.slice(0, pathAt), identity]
+}
+
+/** Weak identity hints from a local Git origin; never used to reject a unique match. */
+export function githubRemoteIdentities(url: string, directory?: string | null): string[] {
+  const source = parseGitHubRemote(url)
+  if (source === null) return []
+  return githubRepoIdentities(`https://github.com/${source.repo}`, directory)
 }
 
 /** GitHub `owner/repo` for a registry URL, or null when it is not a GitHub repo URL. */
