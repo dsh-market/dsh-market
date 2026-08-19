@@ -52,8 +52,12 @@ describe.skipIf(!HAS_DSH)('web e2e: plugin market', () => {
   it('opens Settings → Plugin Market and renders the catalog paginated', async () => {
     await page.getByRole('button', { name: /^(设置|Settings)$/ }).first().click()
     await page.getByRole('button', { name: /插件市场|Plugin Market/ }).click()
-    await page.waitForSelector('[class*="grid"] [class*="card"]', { timeout: 30_000 })
-    const cards = await page.locator('[class*="grid"] [class*="card"]').count()
+    await page.waitForSelector('[class*="grid"] > [class*="card"]', { timeout: 30_000 })
+    // Direct children only: a card with curated screenshots nests a
+    // `.cardShots`/`.cardShot` thumbnail strip, and both class names also
+    // match the loose `[class*="card"]` substring — counting descendants
+    // inflated the total by however many thumbnails were on screen.
+    const cards = await page.locator('[class*="grid"] > [class*="card"]').count()
     // Pagination: a bounded first page (24) instead of the full 400+ catalog,
     // with a numbered pager underneath.
     expect(cards).toBe(24)
@@ -117,12 +121,10 @@ describe.skipIf(!HAS_DSH)('web e2e: plugin market', () => {
     expect(await pages()).toBe(allPages)
   })
 
-  it('the installed tab lists the market itself', async () => {
+  it('never lists the market itself in the Installed tab — it manages itself from its own settings card', async () => {
     await page.getByRole('button', { name: /已安装|Installed/ }).click()
-    await expect.poll(
-      async () => page.locator('[class*="irow"]', { hasText: 'dshmarket' }).count(),
-      { timeout: 15_000 },
-    ).toBeGreaterThanOrEqual(1)
+    await page.waitForTimeout(1000)
+    expect(await page.locator('[class*="irow"]', { hasText: 'dshmarket' }).count()).toBe(0)
   })
 
   it('the install dialog opens and cancels cleanly', async () => {
