@@ -4,7 +4,7 @@
  * functions of the directory contents; no processes, no network.
  */
 
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { githubRemoteIdentities, githubRepoIdentities } from './sources.ts'
@@ -450,6 +450,69 @@ export function readProfileBundles(profileDirectory: string): string[] {
   } catch {
     return []
   }
+}
+
+/**
+ * Write the profile manifest atomically: a temp file in the same directory is
+ * written first, then renamed over package.json, so a crash mid-toggle never
+ * leaves a half-written manifest (the same guarantee order.ts's writer gives
+ * the reorder path). The trailing newline + 2-space indent match how every
+ * other writer in this repo serializes the manifest.
+ */
+function writeManifestAtomic(manifestPath: string, manifest: unknown): void {
+  const temp = `${manifestPath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  writeFileSync(temp, `${JSON.stringify(manifest, null, 2)}\n`)
+  renameSync(temp, manifestPath)
+}
+
+/**
+ * Drop one bundle from the profile manifest's `dsh.profile.bundles`, leaving
+ * the package installed as a dependency. This is the carrier-bundle half of a
+ * toggle-off (#224): a bundle whose patch reconfigures plugins it does NOT own
+ * (dsh-postgres-backends disables session-persistence-jsonl and reroutes
+ * storage-domain) keeps applying those side-effect rows on every boot while it
+ * stays in the stack, and the #147 ownership rule deliberately never writes
+ * them — so removing the bundle from the stack is the only thing that stops
+ * them all at once. The package itself stays installed; enabling re-adds it.
+ * @returns true when the bundle was present and removed.
+ */
+export function removeProfileBundle(profileDirectory: string, name: string): boolean {
+  const manifestPath = join(profileDirectory, 'package.json')
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+    dsh?: { profile?: { bundles?: unknown } }
+  }
+  const bundles = manifest.dsh?.profile?.bundles
+  if (!Array.isArray(bundles)) return false
+  const next = bundles.filter((entry): entry is string => typeof entry !== 'string' || entry !== name)
+  if (next.length === bundles.length) return false
+  manifest.dsh ??= {}
+  manifest.dsh.profile ??= {}
+  manifest.dsh.profile.bundles = next
+  writeManifestAtomic(manifestPath, manifest)
+  return true
+}
+
+/**
+ * Re-add a bundle to `dsh.profile.bundles` after a carrier toggle-off (#224).
+ * Idempotent: a bundle already present is left untouched. The name is appended
+ * (the install flow appends too); the loader re-validates ordering on the next
+ * composition, so a declared before/after rule surfaces there rather than here.
+ * @returns true when the bundle was added, false when it was already present.
+ */
+export function addProfileBundle(profileDirectory: string, name: string): boolean {
+  const manifestPath = join(profileDirectory, 'package.json')
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+    dsh?: { profile?: { bundles?: unknown } }
+  }
+  manifest.dsh ??= {}
+  manifest.dsh.profile ??= {}
+  const existing = manifest.dsh.profile.bundles
+  const bundles = Array.isArray(existing) ? existing.filter((entry): entry is string => typeof entry === 'string') : []
+  if (bundles.includes(name)) return false
+  bundles.push(name)
+  manifest.dsh.profile.bundles = bundles
+  writeManifestAtomic(manifestPath, manifest)
+  return true
 }
 
 /**

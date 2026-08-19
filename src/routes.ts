@@ -23,7 +23,7 @@ import {
   BOOT_ID, cancelActive, probePnpm, progress, provisionPnpm, runDshPlugin,
   type PluginCommandRuntime,
 } from './dsh-cli.ts'
-import { hasLoadableEntry, INBOX_BUNDLES, profileDir, readInstalled, readInstalledManifest, readInstalledRepoEvidence, readInstalledVersion, readLockCommits, readManifestDeps, readProfileBundles, restoreManifestDeps, setAllowBuilds } from './profile.ts'
+import { addProfileBundle, hasLoadableEntry, INBOX_BUNDLES, profileDir, readInstalled, readInstalledManifest, readInstalledRepoEvidence, readInstalledVersion, readLockCommits, readManifestDeps, readProfileBundles, removeProfileBundle, restoreManifestDeps, setAllowBuilds } from './profile.ts'
 import { assessProfile, introducedRisks, type CompatibilityRisk } from './compatibility.ts'
 import { runningAgentIds, type AgentsLookup } from './agents.ts'
 import { analyzeProfile } from './check.ts'
@@ -38,7 +38,7 @@ import { readJsonBody, sameOrigin, sendJson } from './http.ts'
 import { restartAllowed, scheduleRestart, servingPort, trustedRestartRequest, trustedDownloadRequest } from './restart.ts'
 import { activationAfterReplace, hasHostHalf, verifyActivation } from './verify.ts'
 import {
-  disableRow, enableRow, findUserPatchPath, isProtectedModule, packagePatchFlags,
+  carrierSideEffectIds, disableRow, enableRow, findUserPatchPath, isProtectedModule, packagePatchFlags,
   readUserPatchState, removeRowBlocks, rowIdsForPackage,
 } from './patch.ts'
 import {
@@ -932,6 +932,26 @@ export function mountMarketRoutes(
           // every boot. Client-only packages have no bundle rows — the
           // market's own state.json replay covers those.
           const patchRows = rowIdsForPackage(host, activeProfileDir, name)
+          // Carrier bundle (#224): a package whose patch reconfigures plugins it
+          // does NOT own (dsh-postgres-backends disables session-persistence-jsonl
+          // and reroutes storage-domain). Disabling only its inserted rows leaves
+          // those side effects applying on every boot — the bundle stays in the
+          // stack — so drop it from dsh.profile.bundles entirely, which stops ALL
+          // its patch rows at once. Enabling re-adds it. A pure-insert plugin has
+          // no side effects and keeps the fast HMR path (user-patch rows only).
+          const carrierRows = carrierSideEffectIds(activeProfileDir, name)
+          const isCarrier = carrierRows.length > 0
+          let bundleSwitch: { ok: boolean; reason: string | null } = { ok: true, reason: null }
+          if (isCarrier) {
+            try {
+              if (enabled) addProfileBundle(activeProfileDir, name)
+              else removeProfileBundle(activeProfileDir, name)
+              logEvent('info', 'toggle', `${name}: carrier bundle ${enabled ? 're-added to' : 'removed from'} dsh.profile.bundles (side effects: ${carrierRows.join(', ')})`)
+            } catch (error) {
+              bundleSwitch = { ok: false, reason: error instanceof Error ? error.message : String(error) }
+              logEvent('warn', 'toggle', `${name}: carrier bundle switch failed — ${bundleSwitch.reason}`)
+            }
+          }
           let patchWrite: { ok: boolean; reason: string | null } | null = null
           if (patchRows.length > 0) {
             for (const rowId of patchRows) {
@@ -955,7 +975,10 @@ export function mountMarketRoutes(
           // change lands on the next boot via the patch layer + state.json —
           // the client reuses the market's pending-restart banner for it.
           const liveAfter = liveNames().has(name)
-          const restart = enabled ? !liveAfter : liveAfter
+          // A carrier toggle moves the bundle in/out of dsh.profile.bundles,
+          // which only takes effect on the next composition — always a restart.
+          // Non-carrier plugins keep the live-mount based decision.
+          const restart = isCarrier ? true : enabled ? !liveAfter : liveAfter
           // A client-part plugin's UI is in the page already — toggling it
           // needs a browser refresh to show the change (same signal the
           // install flow uses for the hot banner).
@@ -970,6 +993,8 @@ export function mountMarketRoutes(
             reason,
             patchRows,
             patchWrite: patchWrite ?? { ok: true, reason: null },
+            carrier: carrierRows,
+            bundleSwitch,
             restart,
             refresh,
           })

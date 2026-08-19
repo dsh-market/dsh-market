@@ -8,8 +8,9 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import {
-  conflictingEntryIds, entryArtifactExists, hasDshManifest, hasLoadableEntry, pluginSubdirs, profileDir,
+  addProfileBundle, conflictingEntryIds, entryArtifactExists, hasDshManifest, hasLoadableEntry, pluginSubdirs, profileDir,
   readInstalled, readInstalledManifest, readInstalledRepoEvidence, readInstalledRepoIdentities, readInstalledVersion, readLockCommits,
+  removeProfileBundle,
 } from '../src/profile.ts'
 
 let home: string
@@ -445,5 +446,51 @@ describe('conflictingEntryIds (#122)', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+})
+
+describe('removeProfileBundle / addProfileBundle', () => {
+  function readBundles(dir: string): string[] {
+    const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as {
+      dsh?: { profile?: { bundles?: string[] } }
+    }
+    return manifest.dsh?.profile?.bundles ?? []
+  }
+
+  it('drops a carrier bundle from dsh.profile.bundles, keeping the rest (#224)', () => {
+    const dir = writeProfile({ dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', 'dsh-postgres-backends', 'dshmarket'] } } })
+    expect(removeProfileBundle(dir, 'dsh-postgres-backends')).toBe(true)
+    expect(readBundles(dir)).toEqual(['@deepseek-ai/dsh-base', 'dshmarket'])
+  })
+
+  it('returns false and leaves the manifest byte-for-byte untouched when the bundle is absent', () => {
+    const dir = writeProfile({ dsh: { profile: { bundles: ['@deepseek-ai/dsh-base'] } } })
+    const before = readFileSync(join(dir, 'package.json'), 'utf8')
+    expect(removeProfileBundle(dir, 'dsh-postgres-backends')).toBe(false)
+    expect(readFileSync(join(dir, 'package.json'), 'utf8')).toBe(before)
+  })
+
+  it('re-adds a bundle on enable and is idempotent (#224)', () => {
+    const dir = writeProfile({ dsh: { profile: { bundles: ['@deepseek-ai/dsh-base'] } } })
+    expect(addProfileBundle(dir, 'dsh-postgres-backends')).toBe(true)
+    expect(addProfileBundle(dir, 'dsh-postgres-backends')).toBe(false)
+    expect(readBundles(dir)).toEqual(['@deepseek-ai/dsh-base', 'dsh-postgres-backends'])
+  })
+
+  it('preserves unrelated manifest fields across a removal', () => {
+    const dir = writeProfile({
+      name: 'dsh-profile-web',
+      dependencies: { dshmarket: '^1.0.0' },
+      dsh: { profile: { bundles: ['dshmarket', 'dsh-postgres-backends'] } },
+    })
+    expect(removeProfileBundle(dir, 'dsh-postgres-backends')).toBe(true)
+    const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as {
+      name: string
+      dependencies: Record<string, string>
+      dsh: { profile: { bundles: string[] } }
+    }
+    expect(manifest.name).toBe('dsh-profile-web')
+    expect(manifest.dependencies).toEqual({ dshmarket: '^1.0.0' })
+    expect(manifest.dsh.profile.bundles).toEqual(['dshmarket'])
   })
 })

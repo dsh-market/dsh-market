@@ -30,7 +30,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { logEvent } from './log.ts'
 import { parsePatchFile } from './check.ts'
-import { bundlePatchInsertedIds, parsePatchRows } from './profile.ts'
+import { bundlePatchEntryIds, bundlePatchInsertedIds, parsePatchRows } from './profile.ts'
 
 /** The slice of the loader tree this module needs. */
 export interface PatchHost {
@@ -224,6 +224,39 @@ export function rowIdsForPackage(host: PatchHost, profileDirectory: string, pack
     ids.add(id)
   }
   return [...ids]
+}
+
+/**
+ * The OTHER-plugin row ids a package's bundle patch reconfigures: every entry
+ * id the patch carries minus the rows it INSERTS (the #147 ownership set).
+ * Non-empty exactly for a "carrier bundle" — one that disables or reconfigures
+ * plugins it does not own. dsh-postgres-backends, for instance, disables
+ * session-persistence-jsonl and reroutes storage-domain while inserting its own
+ * three backends.
+ *
+ * Toggling such a bundle off must drop it from dsh.profile.bundles (#224):
+ * these side-effect rows keep applying on every boot while the bundle stays in
+ * the stack, and the #147 rule deliberately never writes `disabled: true` for
+ * them, so nothing else rolls them back. Reads both patch sources exactly like
+ * rowIdsForPackage — the declared dsh.bundle.patch and the conventional root
+ * cordis.patch.yml — so a package shipping either form is detected the same way.
+ */
+export function carrierSideEffectIds(profileDirectory: string, packageName: string): string[] {
+  const packageDir = join(profileDirectory, 'node_modules', packageName)
+  const sideEffects = new Set<string>()
+  const collect = (ids: readonly string[], inserted: readonly string[]): void => {
+    for (const id of ids) {
+      if (!inserted.includes(id)) sideEffects.add(id)
+    }
+  }
+  try {
+    collect(bundlePatchEntryIds(packageDir), bundlePatchInsertedIds(packageDir))
+  } catch { /* package not installed — nothing to attribute */ }
+  try {
+    const rows = parsePatchRows(readFileSync(join(packageDir, 'cordis.patch.yml'), 'utf8'))
+    collect(rows.ids, rows.insertedIds)
+  } catch { /* no conventional patch — nothing more to add */ }
+  return [...sideEffects]
 }
 
 /**

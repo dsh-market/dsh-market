@@ -17,7 +17,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  disableRow, enableRow, findUserPatchPath, isProtectedModule, packagePatchFlags,
+  carrierSideEffectIds, disableRow, enableRow, findUserPatchPath, isProtectedModule, packagePatchFlags,
   readUserPatchState, removeRowBlocks, rowIdsForPackage, type PatchHost,
 } from '../src/patch.ts'
 
@@ -487,6 +487,66 @@ describe('the patch file always stays a top-level array', () => {
       removeRowBlocks(file, ['going-away'])
       expect(readPatch(dir)).not.toContain('going-away')
       expect(bootWouldAccept(readPatch(dir))).toBe(true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('carrierSideEffectIds', () => {
+  function installedBundle(dir: string, name: string, patch: string): void {
+    mkdirSync(join(dir, 'node_modules', name), { recursive: true })
+    writeFileSync(join(dir, 'node_modules', name, 'cordis.patch.yml'), patch)
+  }
+
+  it('returns the OTHER-plugin rows a carrier bundle reconfigures (#224)', () => {
+    const dir = patchDir()
+    try {
+      // Real shape of dsh-postgres-backends: it inserts its own three backends,
+      // disables the official JSONL session backend, and reroutes storage-domain
+      // onto postgres. Disabling it through the market used to leave those two
+      // side-effect rows applying on every boot — JSONL stayed disabled while
+      // the postgres backends were turned off, so nothing provided
+      // sessionPersistence and the tree failed to activate.
+      installedBundle(dir, 'dsh-postgres-backends', [
+        '- id: session-persistence-jsonl',
+        '  disabled: true',
+        '- insert:',
+        '    - id: session-persistence-postgres',
+        "      name: 'dsh-postgres-backends'",
+        '    - id: storage-postgres',
+        "      name: 'dsh-postgres-backends/storage'",
+        '    - id: pg-console',
+        "      name: 'dsh-postgres-backends/console'",
+        '- id: storage-domain',
+        '  config:',
+        '    backend: postgres',
+        '',
+      ].join('\n'))
+      writeFileSync(
+        join(dir, 'node_modules', 'dsh-postgres-backends', 'package.json'),
+        JSON.stringify({ name: 'dsh-postgres-backends', dsh: { bundle: { patch: './cordis.patch.yml' } } }),
+      )
+      expect(carrierSideEffectIds(dir, 'dsh-postgres-backends')).toEqual(['session-persistence-jsonl', 'storage-domain'])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('is empty for a pure-insert plugin, which is not a carrier', () => {
+    const dir = patchDir()
+    try {
+      installedBundle(dir, 'dsh-loop', '- insert:\n    - id: loop-main\n      name: dsh-loop\n')
+      expect(carrierSideEffectIds(dir, 'dsh-loop')).toEqual([])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('is empty for a package that is not installed', () => {
+    const dir = patchDir()
+    try {
+      expect(carrierSideEffectIds(dir, 'not-installed')).toEqual([])
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
