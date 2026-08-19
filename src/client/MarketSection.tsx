@@ -36,7 +36,7 @@ import css from './Market.module.css'
 import { Diagnostics } from './Diagnostics.tsx'
 import {
   avatarColor, entryForDep, groupSwitchState, humanOutput, isInstalled, looksTerminal, matchInstalledName, orderedCategories,
-  formatCount, pageItems, pluginName, pluginScreenshots, readSession, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
+  formatCount, pageItems, pluginName, pluginScreenshots, readSession, safeScreenshots, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
 } from './market-data.ts'
 import type {
 ActivationInfo, ActivationState, GistExportResult, InstalledMap, InstalledRepoHints, InstalledRepoIdentities, MarketStatus, Registry, RegistryPlugin,
@@ -136,7 +136,7 @@ function OwnerAvatar({ name, owner }: { name: string; owner: string }) {
  * repo README. Requests start only once the dialog opens; failures — no
  * README, no images, broken links — degrade to rendering nothing at all.
  */
-function ScreenshotStrip({ plugin }: { plugin: RegistryPlugin }) {
+function ScreenshotStrip({ plugin, onOpen }: { plugin: RegistryPlugin; onOpen: (shots: string[], index: number) => void }) {
   const [shots, setShots] = useState<string[]>([])
   const [broken, setBroken] = useState<string[]>([])
   useEffect(() => {
@@ -150,7 +150,7 @@ function ScreenshotStrip({ plugin }: { plugin: RegistryPlugin }) {
   if (visible.length === 0) return null
   return (
     <div className={css.shots}>
-      {visible.map(src => (
+      {visible.map((src, i) => (
         <img
           key={src}
           className={css.shot}
@@ -159,9 +159,119 @@ function ScreenshotStrip({ plugin }: { plugin: RegistryPlugin }) {
           loading="lazy"
           decoding="async"
           referrerPolicy="no-referrer"
+          onClick={() => onOpen(visible, i)}
           onError={() => setBroken(prev => prev.includes(src) ? prev : prev.concat(src))}
         />
       ))}
+    </div>
+  )
+}
+
+/**
+ * Advances an index every `intervalMs` while `count > 1` — the shared clock
+ * behind both a card's auto-cycling thumbnail and the lightbox. A manual
+ * jump (clicking a dot, an arrow, opening on a specific shot) restarts the
+ * clock instead of letting it fire again moments later: without that, a
+ * deliberate "go back one" reads as broken when it auto-advances right past
+ * where the user just navigated to.
+ */
+function useAutoCarousel(count: number, initial: number, intervalMs = 3500): [number, (i: number) => void] {
+  const [index, setIndexState] = useState(initial)
+  const [resetTick, setResetTick] = useState(0)
+  useEffect(() => {
+    if (count <= 1) return
+    const timer = setInterval(() => { setIndexState(i => (i + 1) % count) }, intervalMs)
+    return () => clearInterval(timer)
+  }, [count, intervalMs, resetTick])
+  const setIndex = (i: number): void => {
+    if (count <= 0) return
+    setIndexState(((i % count) + count) % count)
+    setResetTick(t => t + 1)
+  }
+  return [index, setIndex]
+}
+
+/**
+ * A card's own thumbnail — curated screenshots only (#61 supplement): this
+ * data already rode along with the catalog fetch that drew the grid, so
+ * showing it costs nothing extra. README-scraped fallback images stay
+ * dialog-only, where fetching one repo's README on click is a single
+ * request instead of one per visible card.
+ */
+function CardShot({ plugin, onOpen }: { plugin: RegistryPlugin; onOpen: (shots: string[], index: number) => void }) {
+  const shots = safeScreenshots(plugin.screenshots)
+  const [index, setIndex] = useAutoCarousel(shots.length, 0)
+  if (shots.length === 0) return null
+  return (
+    <img
+      className={css.cardShot}
+      src={shots[index]}
+      alt=""
+      loading="lazy"
+      decoding="async"
+      referrerPolicy="no-referrer"
+      onClick={(e) => { e.stopPropagation(); onOpen(shots, index) }}
+    />
+  )
+}
+
+/**
+ * Full-bleed image preview, opened from a card thumbnail or a dialog's
+ * screenshot strip. Not the shared Modal primitive: Modal is chrome for a
+ * decision (title, description, footer actions); this is just the same
+ * already-downloaded image shown bigger — there is no separate "thumbnail"
+ * vs "full size" asset to fetch.
+ */
+function ScreenshotLightbox({ shots, startIndex, onClose, t }: { shots: string[]; startIndex: number; onClose: () => void; t: Translate }) {
+  const [index, setIndex] = useAutoCarousel(shots.length, startIndex, 4000)
+  useEffect(() => {
+    // Capture phase + stopPropagation: the Settings dialog underneath is a
+    // Modal with its own Escape-to-close handling, also on window/document.
+    // Without this, one Escape press closed both layers at once — verified
+    // on a real host — because the modal's bubble-phase listener still fired
+    // after this one. Capture runs first and this stops it from reaching
+    // bubble phase at all, so only the top layer responds to one press.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.stopPropagation(); onClose() }
+      else if (e.key === 'ArrowLeft') { e.stopPropagation(); setIndex(index - 1) }
+      else if (e.key === 'ArrowRight') { e.stopPropagation(); setIndex(index + 1) }
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [index])
+  return (
+    <div className={css.lightbox} onClick={onClose}>
+      {/* A literal "×" rather than IconCloseOutline16: the primitives
+          package's own Modal uses that icon at runtime, but this package
+          version's public type surface doesn't resolve it — `tsc` reports
+          "no exported member" even though icons/index.d.ts declares it.
+          Not worth a type-check suppression for one close glyph. */}
+      <button className={css.lightboxClose} aria-label={t('lightboxClose')} onClick={onClose}>×</button>
+      <img className={css.lightboxImg} src={shots[index]} alt="" onClick={e => e.stopPropagation()} />
+      {shots.length > 1 && (
+        <>
+          <button
+            className={`${css.lightboxNav} ${css.lightboxPrev}`}
+            aria-label={t('lightboxPrev')}
+            onClick={(e) => { e.stopPropagation(); setIndex(index - 1) }}
+          ><IconChevronLeftOutline14 size={18} /></button>
+          <button
+            className={`${css.lightboxNav} ${css.lightboxNext}`}
+            aria-label={t('lightboxNext')}
+            onClick={(e) => { e.stopPropagation(); setIndex(index + 1) }}
+          ><IconChevronRightOutline14 size={18} /></button>
+          <div className={css.lightboxDots} onClick={e => e.stopPropagation()}>
+            {shots.map((src, i) => (
+              <span
+                key={src}
+                className={i === index ? `${css.lightboxDot} ${css.lightboxDotOn}` : css.lightboxDot}
+                onClick={() => setIndex(i)}
+              />
+            ))}
+          </div>
+        </>
+      )}
     </div>
   )
 }
@@ -348,6 +458,9 @@ export function MarketSection(props: MarketSectionProps) {
   const [qInstalled, setQInstalled] = useState('')
   const [cat, setCat] = useState('all')
   const [confirming, setConfirming] = useState<RegistryPlugin | null>(null)
+  /** Shared by every screenshot source (card thumbnail, dialog strip). */
+  const [lightbox, setLightbox] = useState<{ shots: string[]; index: number } | null>(null)
+  const openLightbox = (shots: string[], index: number): void => setLightbox({ shots, index })
   const [busyUrl, setBusyUrl] = useState<string | null>(null)
   /** Consecutive idle polls with a pending install that never landed (#32). */
   const idleStrikes = useRef(0)
@@ -1554,6 +1667,7 @@ export function MarketSection(props: MarketSectionProps) {
           </div>
         </div>
         <div className={css.desc}>{desc}</div>
+        <CardShot plugin={p} onOpen={openLightbox} />
         {p.deprecated === true && (
           <div className={css.deprecate}>
             <div className={css.depLine}>
@@ -1652,6 +1766,7 @@ export function MarketSection(props: MarketSectionProps) {
           </div>
         </div>
         <div className={css.desc}>{desc}</div>
+        <CardShot plugin={p} onOpen={openLightbox} />
         {p.deprecated === true && (
           <div className={css.deprecate}>
             <div className={css.depLine}>
@@ -2491,6 +2606,7 @@ export function MarketSection(props: MarketSectionProps) {
                                               title={t('actWhy')}
                                               open={whyOpen === name}
                                               expandable
+                                              expandOnRowClick
                                               onToggle={() => setWhyOpen(whyOpen === name ? null : name)}
                                               className={css.actWhy}
                                             >
@@ -2636,19 +2752,37 @@ export function MarketSection(props: MarketSectionProps) {
             </>
           )}
         >
-          <ScreenshotStrip plugin={confirming} />
+          {/* The detail dialog has to show at LEAST what the card already
+              does — owner, downloads, stars, published date, category — a
+              "detail" view that shows less than the summary it opened from
+              is backwards. */}
+          <div className={css.byline}>
+            <OwnerAvatar name={confirming.name} owner={confirming.owner || ''} />
+            <span className={css.owner}>
+              {confirming.owner}
+              {typeof confirming.downloads === 'number' && <span className={css.star} title={String(confirming.downloads)}>{' · ↓ ' + formatCount(confirming.downloads)}</span>}
+              {typeof confirming.stars === 'number' && <span className={css.star} title={String(confirming.stars)}>{' · ★ ' + formatCount(confirming.stars)}</span>}
+            </span>
+            <span className={css.grow} />
+            <span className={css.tag}>
+              {(data!.categories[confirming.category] && (data!.categories[confirming.category]![lang] || data!.categories[confirming.category]!.en)) || confirming.category}
+            </span>
+          </div>
+          {confirming.added && <div className={css.metaInline}>{t('published') + ' ' + confirming.added}</div>}
+          <ScreenshotStrip plugin={confirming} onOpen={openLightbox} />
           <DisclosureRow
             icon={<IconCodeOutline16 size={16} />}
             title={t('cmdDetails')}
             open={cmdOpen}
             expandable
+            expandOnRowClick
             onToggle={() => setCmdOpen(o => !o)}
           >
             <div className={css.cmd}>{confirming.install}</div>
           </DisclosureRow>
           {looksTerminal(confirming, lang) && (
             <p className={css.warnLine}>
-              <IconCodeOutline16 size={14} className={css.bannerIcon} />
+              <IconWarningOutline16 size={14} className={css.bannerIcon} />
               {' ' + t('terminalWarn') + ' '}
               <a className={css.src} href={confirming.url + '#readme'} target="_blank" rel="noreferrer">{t('readme')}</a>
             </p>
@@ -2670,6 +2804,14 @@ export function MarketSection(props: MarketSectionProps) {
           })()}
           <p className={css.modalNote}><IconWarningOutline16 size={14} className={css.bannerIcon} />{' ' + t('confirmWarn')}</p>
         </Modal>
+      )}
+      {lightbox !== null && (
+        <ScreenshotLightbox
+          shots={lightbox.shots}
+          startIndex={lightbox.index}
+          onClose={() => setLightbox(null)}
+          t={t}
+        />
       )}
       {removeConfirm !== null && (
         <Modal

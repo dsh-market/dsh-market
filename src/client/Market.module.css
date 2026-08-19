@@ -50,9 +50,32 @@
 .catsCollapsed{max-height:62px;overflow:hidden}
 .catsToggle.catsToggle{height:26px;min-height:26px;padding:0 6px;color:var(--dsw-alias-label-secondary,#6b7280)}
 .shots{display:flex;gap:8px;overflow-x:auto;padding:2px 0 6px;margin:0 0 8px;-webkit-overflow-scrolling:touch;scrollbar-width:thin}
-.shot{height:150px;max-width:260px;flex:0 0 auto;object-fit:cover;border-radius:8px;border:1px solid var(--dsw-alias-border-default,#e5e7eb);background:var(--dsw-alias-bg-layer-2,#f3f4f6)}
+/* width, not just max-width — a slot with only a height reservation still
+   collapses to zero width until the image loads, so the strip snaps wider
+   the instant each one arrives instead of holding its place from the start. */
+.shot{width:220px;height:150px;flex:0 0 auto;object-fit:cover;border-radius:8px;border:1px solid var(--dsw-alias-border-default,#e5e7eb);background:var(--dsw-alias-bg-layer-2,#f3f4f6);cursor:pointer}
+.cardShot{width:100%;height:120px;object-fit:cover;border-radius:8px;border:1px solid var(--dsw-alias-border-default,#e5e7eb);background:var(--dsw-alias-bg-layer-2,#f3f4f6);cursor:pointer;display:block}
+/* Full-bleed overlay, not the Modal primitive — Modal is sized chrome
+   (title/description/footer) for making a decision, this is just an image
+   the user came to look at, no decision to make. */
+.lightbox{position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.85);display:flex;align-items:center;justify-content:center;cursor:zoom-out}
+.lightboxImg{max-width:90vw;max-height:85vh;object-fit:contain;border-radius:4px;cursor:default}
+.lightboxClose{position:absolute;top:16px;right:16px;width:36px;height:36px;border-radius:99px;border:none;background:rgba(255,255,255,.12);color:#fff;font-size:22px;line-height:1;display:grid;place-items:center;cursor:pointer}
+.lightboxClose:hover{background:rgba(255,255,255,.22)}
+.lightboxNav{position:absolute;top:50%;transform:translateY(-50%);width:44px;height:44px;border-radius:99px;border:none;background:rgba(255,255,255,.12);color:#fff;display:grid;place-items:center;cursor:pointer}
+.lightboxNav:hover{background:rgba(255,255,255,.22)}
+.lightboxPrev{left:16px}
+.lightboxNext{right:16px}
+.lightboxDots{position:absolute;bottom:20px;left:50%;transform:translateX(-50%);display:flex;gap:8px}
+.lightboxDot{width:7px;height:7px;border-radius:99px;background:rgba(255,255,255,.4);cursor:pointer}
+.lightboxDotOn{background:#fff}
 .cmd{font-size:11px;line-height:18px;background:var(--dsw-alias-bg-layer-2,#f3f4f6);border-radius:6px;padding:8px 10px;font-family:ui-monospace,Menlo,monospace;margin:8px 0 0;word-break:break-all}
-.warnLine{color:var(--dsw-alias-state-warn-primary,#b45309);font-weight:600;font-size:12px;line-height:18px;margin:0;display:flex;align-items:center;gap:4px}
+/* flex-wrap so a long warning + trailing link wraps like normal text — the
+   deprecated-plugin warning below (.depLine) is the same icon+text+link
+   shape and already gets this right; without it the trailing link is the
+   one flex item left with no room once the paragraph text wraps, and gets
+   squeezed into a vertical stack instead of dropping to its own line. */
+.warnLine{color:var(--dsw-alias-state-warn-primary,#b45309);font-weight:600;font-size:12px;line-height:18px;margin:0;display:flex;align-items:center;gap:4px;flex-wrap:wrap}
 .modalNote{font-size:12px;color:var(--dsw-alias-label-tertiary,#8b93a1);line-height:18px;margin:12px 0 0;display:flex;align-items:center;gap:4px}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
 .swatches{display:flex;gap:0;height:34px;border-radius:8px;overflow:hidden;border:1px solid var(--dsw-alias-border-l2,#e5e7eb)}

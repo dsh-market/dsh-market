@@ -1441,3 +1441,124 @@ describe('category row expansion', () => {
     }
   })
 })
+
+describe('card thumbnail + lightbox (curated screenshots only)', () => {
+  const SHOT_A = 'https://raw.githubusercontent.com/alice/dsh-loop/main/assets/a.png'
+  const SHOT_B = 'https://raw.githubusercontent.com/alice/dsh-loop/main/assets/b.png'
+
+  function registryWithShots() {
+    const registry = JSON.parse(JSON.stringify(REGISTRY))
+    registry.plugins[0].screenshots = [SHOT_A, SHOT_B]
+    registry.plugins[0].downloads = 4200
+    registry.plugins[0].install = 'dsh plugin --profile web add github:alice/dsh-loop'
+    return registry
+  }
+
+  it('shows a thumbnail only on the card with curated screenshots', async () => {
+    stubFetch({ '/dsh-market/registry': { source: 'live', registry: registryWithShots() } })
+    const { container } = render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+
+    const shots = container.querySelectorAll('[class*="cardShot"]')
+    // dsh-loop has screenshots, dsh-notify and whale-skin do not — exactly one shot.
+    expect(shots.length).toBe(1)
+    expect(shots[0]?.getAttribute('src')).toBe(SHOT_A)
+  })
+
+  it('opens a lightbox on click, at the clicked shot, and wraps prev/next around the ends', async () => {
+    stubFetch({ '/dsh-market/registry': { source: 'live', registry: registryWithShots() } })
+    const { container } = render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+
+    fireEvent.click(container.querySelector('[class*="cardShot"]')!)
+    await waitFor(() => expect(container.querySelector('[class*="lightboxImg"]')).toBeTruthy())
+    const img = () => container.querySelector('[class*="lightboxImg"]') as HTMLImageElement
+    expect(img().src).toBe(SHOT_A)
+
+    fireEvent.click(container.querySelector('[class*="lightboxNext"]')!)
+    expect(img().src).toBe(SHOT_B)
+    // Two shots total — next again wraps back to the first, not off the end.
+    fireEvent.click(container.querySelector('[class*="lightboxNext"]')!)
+    expect(img().src).toBe(SHOT_A)
+    // Prev from the first wraps to the last, the same way.
+    fireEvent.click(container.querySelector('[class*="lightboxPrev"]')!)
+    expect(img().src).toBe(SHOT_B)
+  })
+
+  it('closes only the lightbox on Escape, leaving the dialog underneath open', async () => {
+    stubFetch({ '/dsh-market/registry': { source: 'live', registry: registryWithShots() } })
+    const { container } = render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+
+    fireEvent.click(container.querySelector('[class*="cardShot"]')!)
+    await waitFor(() => expect(container.querySelector('[class*="lightboxImg"]')).toBeTruthy())
+    fireEvent.keyDown(window, { key: 'Escape' })
+    await waitFor(() => expect(container.querySelector('[class*="lightboxImg"]')).toBeNull())
+    // The market section itself (rendered before the click) is still there —
+    // a real host regression had one Escape close both layers at once.
+    expect(screen.getByText('dsh-loop')).toBeTruthy()
+  })
+
+  it('auto-advances the card thumbnail while more than one screenshot is curated', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      stubFetch({ '/dsh-market/registry': { source: 'live', registry: registryWithShots() } })
+      const { container } = render(<MarketSection {...props()} />)
+      await vi.waitFor(() => expect(screen.queryByText('dsh-loop')).toBeTruthy())
+
+      const shot = () => container.querySelector('[class*="cardShot"]') as HTMLImageElement
+      expect(shot().src).toBe(SHOT_A)
+      await vi.advanceTimersByTimeAsync(4000)
+      expect(shot().src).toBe(SHOT_B)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('the confirm dialog shows the card\'s own byline — owner, downloads, stars, date, category', async () => {
+    stubFetch({ '/dsh-market/registry': { source: 'live', registry: registryWithShots() } })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+
+    const installButtonOf = (name: string) => {
+      let card: HTMLElement | null = screen.getByText(name)
+      while (card !== null && within(card).queryAllByRole('button', { name: en.install }).length === 0) {
+        card = card.parentElement
+      }
+      return within(card!).getAllByRole('button', { name: en.install })[0]!
+    }
+    fireEvent.click(installButtonOf('dsh-loop'))
+    await screen.findByRole('button', { name: en.confirm })
+
+    // The card behind the dialog carries the same fields — scope to the
+    // dialog so this proves the MODAL shows them, not just the grid.
+    const dialog = within(screen.getByRole('dialog'))
+    expect(dialog.getByText('alice')).toBeTruthy()
+    expect(dialog.getByText(/4\.2k/)).toBeTruthy()
+    expect(dialog.getByText(/50/)).toBeTruthy()
+    expect(dialog.getByText(/2026-08-01/)).toBeTruthy()
+    expect(dialog.getByText('Tools')).toBeTruthy()
+  })
+
+  it('lets the "Install command" row expand by clicking its title text, not only its icon (expandOnRowClick)', async () => {
+    const registry = registryWithShots()
+    const installCmd = registry.plugins[0].install as string
+    stubFetch({ '/dsh-market/registry': { source: 'live', registry } })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+
+    const installButtonOf = (name: string) => {
+      let card: HTMLElement | null = screen.getByText(name)
+      while (card !== null && within(card).queryAllByRole('button', { name: en.install }).length === 0) {
+        card = card.parentElement
+      }
+      return within(card!).getAllByRole('button', { name: en.install })[0]!
+    }
+    fireEvent.click(installButtonOf('dsh-loop'))
+    await screen.findByRole('button', { name: en.confirm })
+
+    expect(screen.queryByText(installCmd)).toBeNull()
+    fireEvent.click(screen.getByText(re(en.cmdDetails)))
+    await waitFor(() => expect(screen.getByText(installCmd)).toBeTruthy())
+  })
+})
