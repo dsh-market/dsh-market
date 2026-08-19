@@ -84,6 +84,28 @@ describe('MarketSection (jsdom)', () => {
     expect(screen.getAllByRole('button', { name: en.install }).length).toBeGreaterThanOrEqual(3)
   })
 
+  it('groups Backup & Restore and Diagnostics under an Advanced tab, not as top-level peers', async () => {
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+
+    // Not top-level anymore.
+    expect(screen.queryByRole('button', { name: en.tabBackup })).toBeNull()
+    expect(screen.queryByRole('button', { name: en.tabDiagnostics })).toBeNull()
+
+    // Clicking Advanced defaults to the first sub-tab (Backup & Restore).
+    fireEvent.click(screen.getByRole('button', { name: en.tabAdvanced }))
+    expect(screen.getByRole('button', { name: en.tabAdvanced }).className).toMatch(/\bon\b|_on_/)
+    const backupSubTab = screen.getByRole('button', { name: en.tabBackup })
+    expect(backupSubTab.className).toMatch(/\bon\b|_on_/)
+    screen.getByText(en.backupLocal)
+
+    // Switching the sub-tab keeps Advanced itself active.
+    fireEvent.click(screen.getByRole('button', { name: en.tabDiagnostics }))
+    expect(screen.getByRole('button', { name: en.tabAdvanced }).className).toMatch(/\bon\b|_on_/)
+    expect(screen.getByRole('button', { name: en.tabDiagnostics }).className).toMatch(/\bon\b|_on_/)
+    expect(screen.getByRole('button', { name: en.tabBackup }).className).not.toMatch(/\bon\b|_on_/)
+  })
+
   it('marks only the repository-matched card for a same-named local link (#141)', async () => {
     const plugins = [
       { name: 'dsh-vision-bridge', owner: 'ximengxiaolan', url: 'https://github.com/ximengxiaolan/dsh-vision-bridge', category: 'tools', npm: null, description: { en: 'Other bridge' }, install: '' },
@@ -288,7 +310,8 @@ describe('MarketSection (jsdom)', () => {
     })
     const { container } = render(<MarketSection {...props()} />)
     await screen.findByText('dsh-loop')
-    fireEvent.click(screen.getByRole('button', { name: en.tabBackup }))
+    // Backup & Restore lives under the Advanced tab, defaulting to it on entry.
+    fireEvent.click(screen.getByRole('button', { name: en.tabAdvanced }))
     const backup = {
       format: 'dsh-profile-backup', version: 0.2, files: [
         { path: 'package.json', json: { dependencies: { 'already-here': '^1.0.0', 'ghost-dependency': '^1.0.0', 'missing-backup': '^2.0.0' } } },
@@ -607,7 +630,32 @@ describe('#60 enable/disable switches in the Installed tab', () => {
     expect(screen.queryByRole('switch')).toBeNull()
   })
 
-  it('the market row shows a disabled switch with an explanation instead of calling the API', async () => {
+  it('never lists the market itself in the Installed tab — it manages itself from its own settings card', async () => {
+    stubFetch({
+      '/dsh-market/installed': {
+        profile: 'web',
+        installed: { dshmarket: '^1.5.0', 'dsh-loop': '^1.0.0' },
+        live: ['dshmarket', 'dsh-loop'],
+        disabled: [],
+        groups: {},
+        groupOrder: [],
+        activation: {
+          dshmarket: { state: 'live', reasons: [], bundle: true, hot: true },
+          'dsh-loop': { state: 'live', reasons: [], bundle: true, hot: true },
+        },
+      },
+    })
+    render(<MarketSection {...props()} />)
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    // A real plugin is installed alongside the market — its row shows,
+    // proving the list isn't just empty, but the market's own row does not.
+    await screen.findByText('dsh-loop')
+    expect(screen.queryByText('dshmarket')).toBeNull()
+    // The tab's own count badge counts the one real plugin, not the market too.
+    expect(screen.getByRole('button', { name: /^Installed \(1\)/ })).toBeTruthy()
+  })
+
+  it('shows the Installed empty state when the market is the only thing "installed"', async () => {
     stubFetch({
       '/dsh-market/installed': {
         profile: 'web',
@@ -621,13 +669,9 @@ describe('#60 enable/disable switches in the Installed tab', () => {
     })
     render(<MarketSection {...props()} />)
     fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
-    const sw = await screen.findByRole('switch', { name: en.marketNoToggle })
-    expect(screen.getByText('dshmarket')).toBeTruthy()
-    expect((sw as HTMLButtonElement).disabled).toBe(true)
-    expect(sw.getAttribute('aria-checked')).toBe('true')
-    fireEvent.click(sw)
-    // A disabled control never bounces a rejected request off the server.
-    expect(fetchCalls.some(c => c.path === '/dsh-market/toggle')).toBe(false)
+    expect(await screen.findByText(en.installedEmpty)).toBeTruthy()
+    expect(screen.queryByText('dshmarket')).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Installed \(\d/ })).toBeNull()
   })
 
   it('shows the pending-restart banner when a toggle needs a boot to apply', async () => {

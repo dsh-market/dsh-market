@@ -14,6 +14,11 @@
 .tabs{display:flex;gap:2px;border-bottom:1px solid var(--dsw-alias-border-l2,#e5e7eb);align-items:flex-end}
 .tab{border:none;background:none;font:inherit;font-size:13px;color:var(--dsw-alias-label-secondary,#6b7280);padding:7px 12px;cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap}
 .tab.on{color:var(--dsw-alias-brand-primary,#4f6ef7);border-bottom-color:var(--dsw-alias-brand-primary,#4f6ef7);font-weight:600}
+/* Second-level tabs under "Advanced" — same button styling as .tabs so the
+   two read as one family, but no full-width bottom border of its own: that
+   border is what visually says "top-level tab row", and having two of them
+   stacked read as two unrelated tab bars rather than a parent/child pair. */
+.subTabs{display:flex;gap:2px;align-items:flex-end;margin:-4px 0 4px}
 .banner{display:flex;align-items:center;gap:8px;background:var(--dsw-alias-bg-layer-2,#fdf3e3);border:1px solid var(--dsw-alias-border-l2,#f3e3c3);border-radius:8px;padding:8px 12px;font-size:12px;margin:0}
 .bannerIcon{flex-shrink:0;color:var(--dsw-alias-label-secondary,#6b7280)}
 .bannerHint{display:inline-flex;color:var(--dsw-alias-label-tertiary,#8b93a1);cursor:help}

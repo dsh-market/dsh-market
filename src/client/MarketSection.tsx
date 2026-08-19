@@ -1392,6 +1392,10 @@ export function MarketSection(props: MarketSectionProps) {
   const updatableNames = Object.keys(installed).filter(
     name => name !== selfName && !updatedNames.includes(name) && updates[name] && updates[name].updateAvailable,
   )
+  // The market manages itself from its own settings card (Settings → Plugins
+  // → Plugin configuration), not as a row here — listing it in both places
+  // read as two different controls for the same thing.
+  const installedOtherCount = Object.keys(installed).filter(name => name !== selfName).length
 
   const doUpdateAll = useCallback(() => {
     const names = updatableNames.slice()
@@ -1620,8 +1624,11 @@ export function MarketSection(props: MarketSectionProps) {
   const pendingRestart = sessionPendingRestart > 0 ? sessionPendingRestart : (showHostPending ? hostPendingNames.length : 0)
   const displayedInstalled = pendingBackup === null ? installed : { ...pendingDependencies, ...installed }
   const missingRestoreCount = Object.keys(pendingDependencies).filter(name => !installedFiles.includes(name)).length
+  // Self-update lives in the header button and the settings card, not this
+  // tab's row list (the market itself is filtered out below) — so a pending
+  // self-update alone must not light up a dot pointing at an empty-looking tab.
   const hasUpdates = Object.keys(installed).some(
-    name => !updatedNames.includes(name) && updates[name] && updates[name].updateAvailable,
+    name => name !== selfName && !updatedNames.includes(name) && updates[name] && updates[name].updateAvailable,
   )
 
   /** Live status line: structured phase, or the human-line fallback. */
@@ -1996,13 +2003,25 @@ export function MarketSection(props: MarketSectionProps) {
           <button className={tab === 'discover' ? `${css.tab} ${css.on}` : css.tab} onClick={() => setTab('discover')}>{t('tabDiscover')}</button>
           {themeSnap !== null && <button className={tab === 'themes' ? `${css.tab} ${css.on}` : css.tab} onClick={() => setTab('themes')}>{t('tabThemes')}</button>}
           <button className={tab === 'installed' ? `${css.tab} ${css.on}` : css.tab} onClick={() => { setTab('installed'); refreshInstalled(true) }}>
-            {t('tabInstalled') + (Object.keys(installed).length > 0 ? ' (' + Object.keys(installed).length + ')' : '')}
+            {t('tabInstalled') + (installedOtherCount > 0 ? ' (' + installedOtherCount + ')' : '')}
             {hasUpdates && <StateDot state="error" size={7} className={css.dot} />}
           </button>
-          <button className={tab === 'backup' ? `${css.tab} ${css.on}` : css.tab} onClick={() => setTab('backup')}>{t('tabBackup')}</button>
-          <button className={tab === 'diagnostics' ? `${css.tab} ${css.on}` : css.tab} onClick={() => setTab('diagnostics')}>{t('tabDiagnostics')}</button>
+          <button
+            className={(tab === 'backup' || tab === 'diagnostics') ? `${css.tab} ${css.on}` : css.tab}
+            onClick={() => { if (tab !== 'backup' && tab !== 'diagnostics') setTab('backup') }}
+          >{t('tabAdvanced')}</button>
           <span className={css.grow} />
         </div>
+        {/* Backup & Restore and Diagnostics sit under Advanced rather than as
+            their own top-level tabs — most users never need either, and having
+            five peers up top buried the ones people actually reach for. */}
+        {(tab === 'backup' || tab === 'diagnostics') && (
+          <div className={css.subTabs}>
+            <button className={tab === 'backup' ? `${css.tab} ${css.on}` : css.tab} onClick={() => setTab('backup')}>{t('tabBackup')}</button>
+            <button className={tab === 'diagnostics' ? `${css.tab} ${css.on}` : css.tab} onClick={() => setTab('diagnostics')}>{t('tabDiagnostics')}</button>
+            <span className={css.grow} />
+          </div>
+        )}
         {!envReady && (
           <div className={css.banner}>
             <IconCordisPluginOutline14 size={14} className={css.bannerIcon} />
@@ -2619,10 +2638,13 @@ export function MarketSection(props: MarketSectionProps) {
                                 })}
                           </>
                         )
-                      : Object.keys(displayedInstalled).length === 0
+                      : Object.keys(displayedInstalled).filter(name => name !== selfName).length === 0
                         ? <div className={css.empty}>{t('installedEmpty')}</div>
                         : Object.entries(displayedInstalled)
                             .filter(([name, spec]) => {
+                              // The market manages itself from its own settings
+                              // card, not as a row in this list (#188-adjacent).
+                              if (name === selfName) return false
                               const needle = qInstalled.trim().toLowerCase()
                               if (needle === '') return true
                               if (name.toLowerCase().includes(needle)) return true
@@ -2730,39 +2752,22 @@ export function MarketSection(props: MarketSectionProps) {
                                   )}
                                 </div>
                                 <span className={css.grow} />
-                                {toggleable && (name === 'dsh-market' || name === 'dshmarket'
-                                  ? (
-                                      // The market itself never toggles: show a
-                                      // disabled switch with an explanation instead
-                                      // of bouncing a rejected request off the API.
-                                      <Tooltip label={t('marketNoToggle')} side="top">
-                                        <span>
-                                          <button
-                                            type="button"
-                                            role="switch"
-                                            aria-checked={true}
-                                            aria-label={t('marketNoToggle')}
-                                            className={`${css.switch} ${css.switchOn}`}
-                                            disabled
-                                          >
-                                            <span className={css.switchKnob} />
-                                          </button>
-                                        </span>
-                                      </Tooltip>
-                                    )
-                                  : (
-                                      <button
-                                        type="button"
-                                        role="switch"
-                                        aria-checked={!off}
-                                        aria-label={(off ? t('enable') : t('disable')) + ' ' + name}
-                                        className={off ? css.switch : `${css.switch} ${css.switchOn}`}
-                                        disabled={togglingName !== null || busyUrl !== null || updatingName !== null || removingName !== null}
-                                        onClick={() => doToggle(name, off)}
-                                      >
-                                        <span className={css.switchKnob} />
-                                      </button>
-                                    ))}
+                                {/* The market itself never reaches this row (filtered
+                                    out above — it manages itself from its own settings
+                                    card), so no self-toggle special case is needed here. */}
+                                {toggleable && (
+                                  <button
+                                    type="button"
+                                    role="switch"
+                                    aria-checked={!off}
+                                    aria-label={(off ? t('enable') : t('disable')) + ' ' + name}
+                                    className={off ? css.switch : `${css.switch} ${css.switchOn}`}
+                                    disabled={togglingName !== null || busyUrl !== null || updatingName !== null || removingName !== null}
+                                    onClick={() => doToggle(name, off)}
+                                  >
+                                    <span className={css.switchKnob} />
+                                  </button>
+                                )}
                                 {repoUrl !== null && <a className={css.src} href={repoUrl + '#readme'} target="_blank" rel="noreferrer">{t('readme')}</a>}
                                 {entry !== undefined && entry.deprecated === true && entry.replacement !== undefined && (() => {
                                   const replacement = data?.plugins.find(r => r.name === entry.replacement)
