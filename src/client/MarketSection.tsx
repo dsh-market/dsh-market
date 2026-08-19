@@ -1507,7 +1507,6 @@ export function MarketSection(props: MarketSectionProps) {
                 {typeof p.stars === 'number' && <span className={css.star} title={String(p.stars)}>{' · ★ ' + formatCount(p.stars)}</span>}
               </span>
             </div>
-            {p.added && <div className={css.meta}>{t('published') + ' ' + p.added}</div>}
           </div>
           <span className={css.grow} />
           {/* Ghost, not outline. A bordered button here read as the card's
@@ -1540,6 +1539,7 @@ export function MarketSection(props: MarketSectionProps) {
           <span className={css.tag}>
             {(data!.categories[p.category] && (data!.categories[p.category]![lang] || data!.categories[p.category]!.en)) || p.category}
           </span>
+          {p.added && <span className={css.metaInline}>{t('published') + ' ' + p.added}</span>}
           <span className={css.grow} />
           {done
             ? <span className={css.okState}>{t('installedBadge')}</span>
@@ -1613,7 +1613,6 @@ export function MarketSection(props: MarketSectionProps) {
                 {typeof p.stars === 'number' && <span className={css.star} title={String(p.stars)}>{' · ★ ' + formatCount(p.stars)}</span>}
               </span>
             </div>
-            {p.added && <div className={css.meta}>{t('published') + ' ' + p.added}</div>}
           </div>
           <span className={css.grow} />
           {/* Ghost, not outline. A bordered button here read as the card's
@@ -1643,6 +1642,7 @@ export function MarketSection(props: MarketSectionProps) {
           </div>
         )}
         <div className={css.foot}>
+          {p.added && <span className={css.metaInline}>{t('published') + ' ' + p.added}</span>}
           <span className={css.grow} />
           {removingName === instName
             ? <Button variant="outline" size="sm" disabled>{t('uninstalling')}</Button>
