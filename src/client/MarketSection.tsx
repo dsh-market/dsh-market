@@ -2114,6 +2114,7 @@ export function MarketSection(props: MarketSectionProps) {
               ? <div className={css.loading}><span className={css.logoMark}><MarketLogo size={26} animated /></span>{t('loading')}</div>
               : (
                   <>
+                    <div className={css.stickyHead}>
                     <div className={css.tabSearchRow}>
                       <Input className={css.tabSearch} icon={<IconSearchOutline16 size={14} />} placeholder={t('searchPh')} value={q} onChange={e => setQ(e.target.value)} />
                     </div>
@@ -2173,6 +2174,7 @@ export function MarketSection(props: MarketSectionProps) {
                         items={filterItems}
                       />
                       </div>
+                    </div>
                     </div>
                     {plugins.length === 0
                       ? <div className={css.empty}>{t('empty')}</div>
