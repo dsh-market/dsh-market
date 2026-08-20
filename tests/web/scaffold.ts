@@ -115,9 +115,14 @@ export async function launchMarketScaffold(options: ScaffoldOptions = {}): Promi
   const port = 3200 + Math.floor(Math.random() * 500)
   const baseUrl = `http://127.0.0.1:${String(port)}`
 
-  /** Spawn dsh and wait until the market answers, or explain why it never did. */
+  /** Spawn dsh and wait until the market answers, or explain why it never did.
+   * `--no-open` (dsh >= 0.1.0-rc.8) is required here: without it, boot tries
+   * to launch a system browser, which on a headless CI runner (confirmed on
+   * Windows) left orphaned browser processes and the status endpoint never
+   * answering — surfacing as a "dsh boot timeout" with nothing actually
+   * wrong in this repo. */
   const boot = async (): Promise<ChildProcess> => {
-    const process_ = spawn(`${command} --profile web --port ${String(port)}`, {
+    const process_ = spawn(`${command} --profile web --port ${String(port)} --no-open`, {
       shell: true,
       cwd: DSH_CWD,
       env,

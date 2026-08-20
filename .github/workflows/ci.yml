@@ -60,7 +60,13 @@ jobs:
         with:
           version: 10
       - run: npm install
-      - run: npm install -g @deepseek-ai/dsh@0.1.0-rc.7
+      # rc.8+: earlier CLIs unconditionally launched a system browser on
+      # `dsh web` boot, which on the Windows runner left orphaned msedge
+      # processes and the status endpoint never answering — read as a
+      # flaky "dsh boot timeout" (and, on longer specs, an hours-long stuck
+      # job) with nothing wrong in this repo's own code. rc.8 added
+      # `--no-open`, which tests/web/scaffold.ts now passes.
+      - run: npm install -g @deepseek-ai/dsh@0.1.0-rc.8
       # --with-deps installs system libraries and is Linux-only.
       - run: npx playwright install --with-deps chromium
         if: runner.os == 'Linux'
