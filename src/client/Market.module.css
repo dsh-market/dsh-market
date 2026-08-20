@@ -432,12 +432,19 @@
 .dragOver{outline:2px dashed var(--dsw-alias-brand-primary,#4f6ef7);outline-offset:2px;border-radius:8px;background:var(--dsw-alias-bg-layer-2,#f0f2f8)}
 .dragging{opacity:.45;background:var(--dsw-alias-bg-layer-2,#f3f4f6)}
 
-/* #98: collapsible report sections + ordering drag styles */
+/* #98 phase 3: collapsible snapshots & rollback panel */
 .collapseHead{display:flex;align-items:center;gap:8px;border:none;background:none;font:inherit;font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary,#1f2328);padding:0;cursor:pointer;text-align:left;width:100%}
 .collapseIcon{display:inline-flex;flex-shrink:0;color:var(--dsw-alias-label-secondary,#6b7280)}
 .collapseTitle{flex:1;min-width:0}
 .collapseBody{display:flex;flex-direction:column;gap:10px;padding-top:10px;border-top:1px solid var(--dsw-alias-border-l2,#f0f1f3);margin-top:8px;min-width:0;overflow-wrap:anywhere}
+.orderPanel{display:flex;flex-direction:column;gap:10px;min-width:0}
 .panelNote{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#6b7280);margin:0}
+.panelActions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.snapList{display:flex;flex-direction:column;gap:6px;min-width:0}
+.snapRow{display:flex;flex-direction:column;align-items:stretch;gap:8px;background:var(--dsw-alias-bg-layer-2,#f7f8fa);border-radius:8px;padding:10px 12px;font-size:12px;line-height:18px}
+.snapMeta{display:flex;flex-wrap:wrap;align-items:center;gap:8px;min-width:0}
+.snapConfirmText{font-size:12px;line-height:18px;color:var(--dsw-alias-state-warn-primary,#b45309);margin:0}
+.confirmRow{display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap}
 
 /* #98: AI-fix clipboard failure fallback — the built prompt as a selectable
    text block, so the user can still copy it by hand. */

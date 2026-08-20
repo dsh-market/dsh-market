@@ -12,7 +12,7 @@ import type { AgentsServiceLike } from './agents.ts'
 export const name = 'dsh-market'
 
 /** Optional cordis.yml configuration; profile defaults to `web`. */
-export type Config = Partial<Pick<MarketConfig, 'profile' | 'allowRestart'>>
+export type Config = Partial<Pick<MarketConfig, 'profile' | 'allowRestart' | 'maxSnapshots'>>
 
 /** Structural subset of DSH Desktop's public `desktopProfiles` contract. */
 interface DesktopProfilesLike {
@@ -64,6 +64,7 @@ export function apply(ctx: Context, config?: Config): void {
       const resolved: MarketConfig = {
         profile: config?.profile ?? argvProfile() ?? 'web',
         allowRestart: config?.allowRestart ?? true,
+        maxSnapshots: config?.maxSnapshots,
       }
       // Offer allowRestart as a switch on the settings page. Deliberately
       // NOT in the Desktop branch below: there the shell owns the process
@@ -89,6 +90,7 @@ export function apply(ctx: Context, config?: Config): void {
         // Relaunching a raw Electron process would bypass Desktop's launcher
         // lifecycle. The shell remains responsible for restart in this mode.
         allowRestart: false,
+        maxSnapshots: config?.maxSnapshots,
       }
       const desktopHost = desktopCtx as unknown as MarketEffectHost
       desktopHost.effect(() => {
