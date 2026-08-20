@@ -770,8 +770,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		}
 		/** Heuristic: plugins that target a terminal surface rather than the web UI. */
 		function looksTerminal(plugin, lang) {
-			const desc = plugin.description && (plugin.description[lang] || plugin.description.en) || "";
-			return /\b(tui|cli|tty|terminal)\b|终端|命令行/i.test(plugin.name + " " + desc);
+			const positiveDesc = (plugin.description && (plugin.description[lang] || plugin.description.en) || "").replace(/\b(?:no|without)\b[^.!?;:，。！？；\n]{0,80}\b(?:tui|cli|tty|terminal)\b/gi, "").replace(/(?:无需|无须|不需要|不用)[^。！？；\n]{0,48}(?:tui|cli|tty|terminal|终端|命令行)/gi, "");
+			return /\b(tui|cli|tty|terminal)\b|终端|命令行/i.test(plugin.name + " " + positiveDesc);
 		}
 		/** Days per TimeRange (`all` has no cutoff and is handled by the caller). */
 		const TIME_RANGE_DAYS = {
@@ -3719,6 +3719,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const [busyUrl, setBusyUrl] = (0, react.useState)(null);
 			/** Consecutive idle polls with a pending install that never landed (#32). */
 			const idleStrikes = (0, react.useRef)(0);
+			/** Same idle-strike bookkeeping for an update whose response was lost. */
+			const updateIdleStrikes = (0, react.useRef)(0);
 			const [doneUrls, setDoneUrls] = (0, react.useState)([]);
 			const [installError, setInstallError] = (0, react.useState)(null);
 			const [compatibilityNotice, setCompatibilityNotice] = (0, react.useState)(null);
@@ -4001,6 +4003,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			(0, react.useEffect)(() => {
 				const pending = readSession("dshm-pending");
 				if (pending !== null && typeof pending.url === "string") setBusyUrl(pending.url);
+				const updating = readSession("dshm-updating");
+				if (updating !== null && typeof updating.name === "string" && updating.name !== "") setUpdatingName(updating.name);
 			}, []);
 			(0, react.useEffect)(() => {
 				if (busyUrl === null && updatingName === null) {
@@ -4055,6 +4059,14 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									setInstallError(t("installFail") + " — " + t("exportLog"));
 								}
 							}
+							if (updatingName !== null && status.busy !== true) {
+								if (++updateIdleStrikes.current >= 2) {
+									updateIdleStrikes.current = 0;
+									sessionStorage.removeItem("dshm-updating");
+									setUpdatingName(null);
+									refreshInstalled();
+								}
+							} else updateIdleStrikes.current = 0;
 						}
 					}).catch(() => {});
 				}, 2e3);
@@ -4404,6 +4416,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				setActivationWarnings([]);
 				setStaleName(null);
 				setUpdatingName(name);
+				updateIdleStrikes.current = 0;
+				sessionStorage.setItem("dshm-updating", JSON.stringify({ name }));
 				return fetch("/dsh-market/update", {
 					method: "POST",
 					headers: { "content-type": "application/json" },
@@ -4415,6 +4429,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					status: res.status,
 					body
 				}))).then(({ status, body }) => {
+					sessionStorage.removeItem("dshm-updating");
+					setUpdatingName(null);
 					if (body.cancelled === true) {
 						refreshInstalled();
 						if (body.partial === true) setInstallError(t("partialNote"));
@@ -4447,7 +4463,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						const detail = text(body.error) || humanOutput([text(body.stderr), text(body.stdout)].filter(Boolean).join("\n")) || "exit " + body.exitCode;
 						setInstallError(t("updateFail") + ": " + name + " — " + detail.trim().slice(-600));
 					}
-				}).catch((error) => setInstallError(t("updateFail") + ": " + String(error))).finally(() => setUpdatingName(null));
+				}).catch(() => {});
 			}, [refreshInstalled, t]);
 			const doUseSkin = (0, react.useCallback)((name) => {
 				setInstallError(null);

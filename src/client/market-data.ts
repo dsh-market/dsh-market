@@ -178,7 +178,14 @@ export function readSession(key: string): any {
 /** Heuristic: plugins that target a terminal surface rather than the web UI. */
 export function looksTerminal(plugin: RegistryPlugin, lang: string): boolean {
   const desc = (plugin.description && (plugin.description[lang] || plugin.description.en)) || ''
-  return /\b(tui|cli|tty|terminal)\b|终端|命令行/i.test(plugin.name + ' ' + desc)
+  // A description can mention a CLI only to say it is NOT required. Treating
+  // that as positive evidence labels web plugins as terminal-only. Strip
+  // bounded negated clauses before applying the deliberately broad heuristic;
+  // the package name remains untouched and therefore stays strong evidence.
+  const positiveDesc = desc
+    .replace(/\b(?:no|without)\b[^.!?;:，。！？；\n]{0,80}\b(?:tui|cli|tty|terminal)\b/gi, '')
+    .replace(/(?:无需|无须|不需要|不用)[^。！？；\n]{0,48}(?:tui|cli|tty|terminal|终端|命令行)/gi, '')
+  return /\b(tui|cli|tty|terminal)\b|终端|命令行/i.test(plugin.name + ' ' + positiveDesc)
 }
 
 /** Sortable field for the Discover list. */

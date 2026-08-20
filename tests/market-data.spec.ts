@@ -8,12 +8,31 @@
 
 import { describe, expect, it } from 'vitest'
 import {
-  entryForDep, extractReadmeImages, formatCount, groupSwitchState, isInstalled, isMarketItself, matchInstalledName, orderedCategories, pageItems, safeScreenshots, themePlugins, visiblePlugins, humanOutput} from '../src/client/market-data.ts'
+  entryForDep, extractReadmeImages, formatCount, groupSwitchState, isInstalled, isMarketItself, looksTerminal, matchInstalledName, orderedCategories, pageItems, safeScreenshots, themePlugins, visiblePlugins, humanOutput} from '../src/client/market-data.ts'
 import type { RegistryPlugin } from '../src/client/market-data.ts'
 
 function plugin(partial: Partial<RegistryPlugin>): RegistryPlugin {
   return { name: 'x', owner: 'o', url: 'https://github.com/o/x', category: 'tool', ...partial }
 }
+
+describe('looksTerminal', () => {
+  it('does not label a web plugin as terminal-only when the description says a CLI is not required', () => {
+    expect(looksTerminal(plugin({
+      name: 'dsh-codex-subscription',
+      description: { en: 'ChatGPT OAuth provider for DSH; no API key or Codex CLI required.' },
+    }), 'en')).toBe(false)
+
+    expect(looksTerminal(plugin({
+      name: 'dsh-codex-subscription',
+      description: { zh: '在 DSH 网页版中使用 Codex；无需 API Key 或 Codex CLI。' },
+    }), 'zh')).toBe(false)
+  })
+
+  it('still warns for plugins that positively target a terminal surface', () => {
+    expect(looksTerminal(plugin({ name: 'dsh-tui' }), 'en')).toBe(true)
+    expect(looksTerminal(plugin({ description: { zh: '为 DSH 提供命令行界面。' } }), 'zh')).toBe(true)
+  })
+})
 
 describe('matchInstalledName / isInstalled', () => {
   it('matches through each identity path exclusively; never by prefix', () => {
