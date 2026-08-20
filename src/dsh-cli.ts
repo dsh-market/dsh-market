@@ -64,6 +64,49 @@ export function nodeExecutable(argv0: string | undefined = process.argv0, execPa
  */
 export const nodeBinDir = dirname(nodeExecutable())
 
+/**
+ * Translate the machine's proxy environment into the ONE form pnpm reads.
+ *
+ * `HTTPS_PROXY` / `http_proxy` are what every other tool honours, and what
+ * `net.ts` already routes the market's own catalog fetches through — but
+ * pnpm ignores them completely. It reads npm config, so a proxy reaches it
+ * only as `npm_config_https_proxy` / `npm_config_proxy` (or an .npmrc entry,
+ * which is the user's file and not ours to rewrite).
+ *
+ * That gap is why the market could load its catalog through a proxy and
+ * then hang installing anything at all — reported four separate times
+ * (#148, #161, #188, #232), always from a network that needs one.
+ *
+ * An `npm_config_*` value the caller already set always wins: it is the more
+ * specific statement of intent, and on Windows env keys are case-insensitive
+ * so the check has to be too. NO_PROXY is forwarded verbatim because pnpm
+ * reads `npm_config_noproxy` and a host excluding its own registry mirror
+ * must keep excluding it.
+ */
+export function proxyEnvForPnpm(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const has = (name: string): boolean => {
+    const wanted = name.toLowerCase()
+    return Object.keys(env).some(key => key.toLowerCase() === wanted && (env[key] ?? '').trim() !== '')
+  }
+  const pick = (...names: string[]): string | null => {
+    for (const name of names) {
+      const raw = env[name]
+      if (raw !== undefined && raw.trim() !== '') return raw.trim()
+    }
+    return null
+  }
+  const out: NodeJS.ProcessEnv = {}
+  // Same precedence as undici's EnvHttpProxyAgent (lowercase over uppercase,
+  // https falling back to http), so pnpm goes where the catalog fetch went.
+  const https = pick('https_proxy', 'HTTPS_PROXY') ?? pick('http_proxy', 'HTTP_PROXY')
+  const http = pick('http_proxy', 'HTTP_PROXY') ?? https
+  if (https !== null && !has('npm_config_https_proxy')) out.npm_config_https_proxy = https
+  if (http !== null && !has('npm_config_proxy')) out.npm_config_proxy = http
+  const noProxy = pick('no_proxy', 'NO_PROXY')
+  if (noProxy !== null && !has('npm_config_noproxy')) out.npm_config_noproxy = noProxy
+  return out
+}
+
 function spawnEnv(): NodeJS.ProcessEnv {
   // pnpm v10+ blocks forever on a silent interactive prompt without a TTY;
   // CI mode forces it to act or fail instead of asking.
@@ -75,7 +118,7 @@ function spawnEnv(): NodeJS.ProcessEnv {
   for (const bin of candidates) {
     if (!parts.includes(bin)) parts.push(bin)
   }
-  return { ...process.env, CI: 'true', PATH: parts.join(separator) }
+  return { ...process.env, ...proxyEnvForPnpm(), CI: 'true', PATH: parts.join(separator) }
 }
 
 const INSTALL_TIMEOUT_MS = Number(process.env.DSH_MARKET_INSTALL_TIMEOUT_MS) || 15 * 60 * 1000

@@ -368,6 +368,45 @@ describe('setAllowBuilds (#6)', () => {
     setAllowBuilds('web', ['pkg-a'])
     expect(readFileSync(join(dir, 'pnpm-workspace.yaml'), 'utf8')).toMatch(/packages:[\s\S]*allowBuilds:\n  pkg-a: true/)
   })
+
+  it('merges into a CRLF file instead of appending a second block (#231)', async () => {
+    // Every Windows editor, and git with core.autocrlf=true, writes CRLF.
+    // The old pattern required `allowBuilds:` to be followed immediately by
+    // \n, so it never saw the existing block and appended another — two
+    // top-level keys, invalid YAML, and pnpm then refused EVERY install in
+    // the profile, not just the one that triggered it.
+    const { setAllowBuilds } = await import('../src/profile.ts')
+    const dir = writeProfile({})
+    writeFileSync(join(dir, 'pnpm-workspace.yaml'),
+      'packages:\r\n  - .\r\n\r\nallowBuilds:\r\n  existing-pkg: true\r\n')
+    const approved = setAllowBuilds('web', ['ssh2'])
+    expect(approved).toContain('existing-pkg')
+    expect(approved).toContain('ssh2')
+    const yaml = readFileSync(join(dir, 'pnpm-workspace.yaml'), 'utf8')
+    // Exactly one allowBuilds key — the whole point.
+    expect(yaml.match(/^allowBuilds:/gmu)?.length).toBe(1)
+    expect(yaml).toContain('existing-pkg: true')
+    expect(yaml).toContain('ssh2: true')
+    // ...and the file stays CRLF rather than becoming mixed.
+    expect(yaml).toContain('\r\n')
+    expect(/[^\r]\n/.test(yaml)).toBe(false)
+  })
+
+  it('repairs a profile already broken by the duplicate-block bug, keeping both blocks\' entries (#231)', async () => {
+    // What a Windows user's file looks like after the bug bit: the approval
+    // that triggered it went into a SECOND block. Merging is what repairs
+    // it — dropping the extra outright would silently revoke those entries.
+    const { setAllowBuilds } = await import('../src/profile.ts')
+    const dir = writeProfile({})
+    writeFileSync(join(dir, 'pnpm-workspace.yaml'),
+      'packages:\r\n  - .\r\n\r\nallowBuilds:\r\n  first-pkg: true\r\n'
+      + 'allowBuilds:\r\n  second-pkg: true\r\n')
+    const approved = setAllowBuilds('web', ['third-pkg'])
+    expect(approved).toEqual(expect.arrayContaining(['first-pkg', 'second-pkg', 'third-pkg']))
+    const yaml = readFileSync(join(dir, 'pnpm-workspace.yaml'), 'utf8')
+    expect(yaml.match(/^allowBuilds:/gmu)?.length).toBe(1)
+    for (const pkg of ['first-pkg', 'second-pkg', 'third-pkg']) expect(yaml).toContain(`${pkg}: true`)
+  })
 })
 
 describe('conflictingEntryIds (#122)', () => {

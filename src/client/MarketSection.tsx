@@ -3170,8 +3170,8 @@ export function MarketSection(props: MarketSectionProps) {
                                             >{t('update')}</Button>
                                           )
                                         : status && status.kind === 'linked'
-                                          ? <span className={css.metaTag}>{t('linkedDev')}</span>
-                                          : <span className={css.metaTag}>{t('upToDate')}</span>}
+                                          ? <span className={css.metaTag} title={t('linkedDev')}>{t('linkedDev')}</span>
+                                          : <span className={css.metaTag} title={t('upToDate')}>{t('upToDate')}</span>}
                                 {!missing && name !== 'dsh-market' && name !== 'dshmarket' && (
                                   removingName === name
                                     ? <Button variant="outline" size="sm" className={css.dangerBtn} disabled>{t('uninstalling')}</Button>

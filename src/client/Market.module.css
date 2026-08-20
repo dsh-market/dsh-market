@@ -274,8 +274,15 @@
 .stateDot[data-on='true']{background:var(--dsw-alias-state-success-primary,#16a34a)}
 /* The update slot: a tag when there is nothing to do, a button when there is.
    Bare text here left the slot shorter than its neighbour's button. */
-.metaTag{display:inline-flex;align-items:center;flex-shrink:0;min-height:20px;border-radius:5px;
-         padding:1px 7px;font-size:11px;line-height:16px;white-space:nowrap;
+/* Shrinkable, unlike the buttons beside it: this slot holds the row's only
+   variable-length copy ("本地开发链接" / "Local dev link" is three times the
+   width of "已是最新"), and as an unshrinkable nowrap tag it pushed Uninstall
+   onto a second line (#234 by @Ztyss). The tag is the informational half of
+   the row and the buttons are the actionable half, so the tag is what gives
+   way — ellipsized, with the full text on hover. */
+.metaTag{display:inline-block;flex-shrink:1;min-width:0;max-width:100%;overflow:hidden;
+         text-overflow:ellipsis;min-height:20px;border-radius:5px;
+         padding:1px 7px;font-size:11px;line-height:18px;white-space:nowrap;
          background:var(--dsw-alias-bg-layer-2,#f3f4f6);color:var(--dsw-alias-label-tertiary,#8b93a1)}
 .metaTagOk{color:var(--dsw-alias-state-success-primary,#16a34a);
            background:color-mix(in srgb, var(--dsw-alias-state-success-primary,#16a34a) 10%, transparent)}

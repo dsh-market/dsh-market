@@ -59,7 +59,16 @@ dsh plugin --profile web add dshmarket
 - 安装接口只接受同源 POST;市场不会向任何地方上报数据
 - 备份可能包含 profile 配置里的密钥——导出与上传前 UI 会明确提醒;WebDAV 同步仅限 https、拒绝内网地址,且密码永不落盘浏览器
 - 重启接口还要求客户端直接来自环回地址（拒绝代理转发请求），并使用原入口、参数、环境和工作目录重新启动 DSH
-- 一键重启会启动脱离终端的替代进程。若 DSH 由 systemd、launchd、pm2 等进程管理器托管，请设置插件选项 `allowRestart: false`，交由管理器负责重启；待重启提示仍会显示，但按钮会隐藏
+- 一键重启会启动脱离终端的替代进程。若 DSH 由 systemd、launchd、pm2 等进程管理器托管，请关掉重启按钮，交由管理器负责重启；待重启提示仍会显示，但按钮会隐藏。两种做法：在**设置 → 插件 → 插件配置**里关掉「允许重启」，或者写进 profile 补丁——注意必须嵌在 `config:` 下面，因为 loader 只把这个子对象传给插件，写在顶层会静默失效（#227，感谢 @Fantasymax）：
+
+  ```yaml
+  - id: dsh-market
+    name: dshmarket
+    config:
+      allowRestart: false   # 不要和 `name:` 并排写在顶层
+  ```
+
+  生效后 `GET /dsh-market/status` 会返回 `"restart": false`。
 - 从终端启动时，替代进程脱离原终端，关闭原终端后仍会继续运行
 - 收录 ≠ 背书:插件是第三方代码,请只安装你信任的来源
 

@@ -62,7 +62,16 @@ Installs prefer npm tarballs over full-repo GitHub downloads whenever a plugin p
 - The install endpoint accepts same-origin POST only; the market never phones home
 - Backups can contain credentials from your profile config — the UI warns before export and upload; WebDAV sync is https-only, refuses private-network targets, and never stores your password in the browser
 - The restart endpoint additionally requires a direct loopback client (forwarded requests are rejected) and relaunches the exact DSH entry, arguments, environment, and working directory
-- One-click restart launches a detached replacement. If DSH is managed by systemd, launchd, pm2, or another supervisor, set the plugin option `allowRestart: false` and let the supervisor own restarts instead; the pending-change notice remains visible but the button is hidden
+- One-click restart launches a detached replacement. If DSH is managed by systemd, launchd, pm2, or another supervisor, turn the restart button off and let the supervisor own restarts instead; the pending-change notice remains visible but the button is hidden. Either flip **Allow restart** off in **Settings → Plugins → Plugin configuration**, or write it into the profile patch — where it has to sit under `config:`, because the loader passes only that sub-object to a plugin and a top-level `allowRestart:` is silently ignored (#227 by @Fantasymax):
+
+  ```yaml
+  - id: dsh-market
+    name: dshmarket
+    config:
+      allowRestart: false   # NOT at the top level beside `name:`
+  ```
+
+  `GET /dsh-market/status` reports `"restart": false` once it has taken effect.
 - For terminal-attached launches, the detached replacement keeps running after the original terminal closes
 - Listing ≠ endorsement: plugins are third-party code, install sources you trust
 

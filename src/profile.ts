@@ -580,11 +580,21 @@ export function setAllowBuilds(profile: string, packages: string[], explicitDir?
   const file = join(profileDir(profile, explicitDir), 'pnpm-workspace.yaml')
   let yaml = ''
   try { yaml = readFileSync(file, 'utf8') } catch { /* created below */ }
-  const blockRe = /allowBuilds:\n((?:[ \t]+[^\n]*\n?)*)/
+  // `\r?\n`, not `\n`: a CRLF pnpm-workspace.yaml (every Windows editor, and
+  // git with core.autocrlf=true) put a `\r` between `allowBuilds:` and the
+  // newline, so the old pattern never matched an EXISTING block and appended
+  // a second one. Two top-level `allowBuilds:` keys is invalid YAML, and pnpm
+  // then refuses every install in that profile — not just the one that
+  // triggered it (#231 by @MichengAI).
+  const blockRe = /allowBuilds:[ \t]*\r?\n((?:[ \t]+[^\r\n]*\r?\n?)*)/g
   const map: Record<string, string> = {}
-  const blockMatch = blockRe.exec(yaml)
-  if (blockMatch !== null) {
-    for (const line of blockMatch[1].split(/\r?\n/)) {
+  // Every block, not just the first: a profile already broken by the bug
+  // above carries two, and merging them is what repairs it — dropping the
+  // extra silently would also drop whatever approvals it held.
+  const blockMatches = [...yaml.matchAll(blockRe)]
+  const blockMatch = blockMatches[0] ?? null
+  for (const match of blockMatches) {
+    for (const line of match[1].split(/\r?\n/)) {
       // The key itself may contain colons: git-hosted deps are only matched
       // by a `name@git+https://…` key (#68). The anchored boolean tail makes
       // the split land on the LAST colon, never inside a `://` — and doubles
@@ -611,8 +621,22 @@ export function setAllowBuilds(profile: string, packages: string[], explicitDir?
   for (const pkg of packages) {
     if (/^[A-Za-z0-9@/_.-]+$/.test(pkg) || GIT_KEY_RE.test(pkg)) map[pkg] = 'true'
   }
-  const block = Object.entries(map).map(([k, v]) => `  ${quoteYamlKey(k)}: ${v}`).join('\n')
-  const blockText = `allowBuilds:\n${block}\n`
-  writeFileSync(file, blockMatch !== null ? yaml.replace(blockRe, blockText) : `${yaml.replace(/\n?$/, '\n')}${blockText}`)
+  // Write back in the file's OWN line ending. Rewriting a CRLF workspace
+  // file with LF would leave it mixed, which is the same class of mess this
+  // fix exists to clean up.
+  const eol = /\r\n/.test(yaml) ? '\r\n' : '\n'
+  const block = Object.entries(map).map(([k, v]) => `  ${quoteYamlKey(k)}: ${v}`).join(eol)
+  const blockText = `allowBuilds:${eol}${block}${eol}`
+  let next: string
+  if (blockMatch === null) {
+    next = `${yaml.replace(/\r?\n?$/, eol)}${blockText}`
+  } else {
+    // The merged block replaces the first occurrence; any further ones are
+    // the duplicates this bug created and are dropped — their entries are
+    // already folded into `map` above, so nothing is lost.
+    let seen = 0
+    next = yaml.replace(blockRe, () => (seen++ === 0 ? blockText : ''))
+  }
+  writeFileSync(file, next)
   return Object.keys(map)
 }
