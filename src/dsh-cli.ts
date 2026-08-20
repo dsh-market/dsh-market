@@ -498,7 +498,7 @@ export const BOOT_ID = `${String(process.pid)}-${String(Date.now())}`
  * mistaken for shell injection (whitespace and shell metacharacters remain
  * rejected — the win32 bare-dsh fallback is the reason to keep them out).
  */
-const TARGET_RE = /^[A-Za-z0-9@:./_#+~^=-]+$/
+export const TARGET_RE = /^[A-Za-z0-9@:./_#+~^=-]+$/
 
 /** Mutating pnpm commands get the structured reporter appended. */
 const NDJSON_COMMANDS = new Set(['add', 'remove', 'install'])

@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { describe, expect, it, vi } from 'vitest'
-import { cmdCommandLine, nodeExecutable, proxyEnvForPnpm, quoteCmdArg } from '../src/dsh-cli.ts'
+import { cmdCommandLine, nodeExecutable, proxyEnvForPnpm, quoteCmdArg, TARGET_RE } from '../src/dsh-cli.ts'
 
 describe('cmd.exe command line building (DEP0190 shim)', () => {
   it('keeps simple tokens unquoted', () => {
@@ -147,6 +147,37 @@ describe('the proxy translation actually reaches spawned pnpm (#148)', () => {
       else process.env.HTTPS_PROXY = previous
       vi.doUnmock('node:child_process')
       vi.resetModules()
+    }
+  })
+})
+
+describe('TARGET_RE plugin target allowlist', () => {
+  it('accepts semver range prefixes that restore/install flows produce', () => {
+    // Regression: carets/tildes from manifest specs (name@^x.y.z) were rejected
+    // as "unsafe plugin target", breaking every gist restore on the caret.
+    for (const target of [
+      '@linxin666/dsh-tool-describe-image@^0.2.2',
+      'dsh-better-sidebar@^0.14.0',
+      'dsh-dream-skin@~0.3.0',
+      'dsh-free-search@^0.4.7',
+      'dshmarket@^1.14.1',
+      'dsh-market@=1.2.3',
+      'dshmarket@1.14.0',
+      'github:Ychris12138/dsh-usage-stats',
+    ]) {
+      expect(TARGET_RE.test(target)).toBe(true)
+    }
+  })
+
+  it('still rejects targets that could inject through a shell', () => {
+    for (const target of [
+      'dsh; rm -rf /',
+      'dsh-better-sidebar@^0.14.0 --reporter=ndjson',
+      'x|y',
+      '$(pwd)',
+      'dsh-better-sidebar &',
+    ]) {
+      expect(TARGET_RE.test(target)).toBe(false)
     }
   })
 })
