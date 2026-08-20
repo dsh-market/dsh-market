@@ -812,8 +812,8 @@ describe('#60 enable/disable switches in the Installed tab', () => {
       return within(card!).getAllByRole('button', { name: en.install })[0]!
     }
     fireEvent.click(installButtonOf('dsh-loop'))
-    await screen.findByRole('button', { name: en.confirm })
-    fireEvent.click(screen.getByRole('button', { name: en.confirm }))
+    await screen.findByRole('button', { name: en.confirmInstall })
+    fireEvent.click(screen.getByRole('button', { name: en.confirmInstall }))
     await waitFor(() => expect(screen.getAllByText(re(en.refreshBanner)).length).toBeGreaterThan(0))
 
     fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
@@ -1540,7 +1540,7 @@ describe('a loader-id clash becomes a decision in the activity panel', () => {
     render(<MarketSection {...props()} />)
     await screen.findByText('dsh-loop')
     fireEvent.click(screen.getAllByRole('button', { name: en.install })[0])
-    fireEvent.click(await screen.findByRole('button', { name: en.confirm }))
+    fireEvent.click(await screen.findByRole('button', { name: en.confirmInstall }))
     // The card must say something: one that looks untouched invites pressing
     // Install again, which is how the same clash gets hit twice.
     fireEvent.click(await screen.findByRole('button', { name: re(en.opBlockedCard) }))
@@ -1906,7 +1906,7 @@ describe('card thumbnail + lightbox (curated screenshots only)', () => {
       return within(card!).getAllByRole('button', { name: en.install })[0]!
     }
     fireEvent.click(installButtonOf('dsh-loop'))
-    await screen.findByRole('button', { name: en.confirm })
+    await screen.findByRole('button', { name: en.confirmInstall })
 
     // The card behind the dialog carries the same fields — scope to the
     // dialog so this proves the MODAL shows them, not just the grid.
@@ -1933,7 +1933,7 @@ describe('card thumbnail + lightbox (curated screenshots only)', () => {
       return within(card!).getAllByRole('button', { name: en.install })[0]!
     }
     fireEvent.click(installButtonOf('dsh-loop'))
-    await screen.findByRole('button', { name: en.confirm })
+    await screen.findByRole('button', { name: en.confirmInstall })
 
     expect(screen.queryByText(installCmd)).toBeNull()
     fireEvent.click(screen.getByText(re(en.cmdDetails)))
