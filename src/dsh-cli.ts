@@ -491,8 +491,14 @@ export const BOOT_ID = `${String(process.pid)}-${String(Date.now())}`
  * Central allowlist for every spawn target, regardless of which route built
  * it (defense in depth on top of per-route validation — the win32 bare-dsh
  * fallback runs through a shell). Suggested in #16 by @anupamme.
+ *
+ * `^`, `~` and `=` are intentionally allowed: restore/install flows turn
+ * manifest specs such as "dsh-better-sidebar": "^0.14.0" into targets like
+ * `dsh-better-sidebar@^0.14.0`, and regex-valid semver ranges must not be
+ * mistaken for shell injection (whitespace and shell metacharacters remain
+ * rejected — the win32 bare-dsh fallback is the reason to keep them out).
  */
-const TARGET_RE = /^[A-Za-z0-9@:./_#+-]+$/
+const TARGET_RE = /^[A-Za-z0-9@:./_#+~^=-]+$/
 
 /** Mutating pnpm commands get the structured reporter appended. */
 const NDJSON_COMMANDS = new Set(['add', 'remove', 'install'])
