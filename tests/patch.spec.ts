@@ -17,7 +17,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  carrierSideEffectIds, disableRow, enableRow, findUserPatchPath, isProtectedModule, packagePatchFlags,
+  carrierDisableIds, disableRow, enableRow, findUserPatchPath, isProtectedModule, packagePatchFlags,
   readUserPatchState, removeRowBlocks, rowIdsForPackage, type PatchHost,
 } from '../src/patch.ts'
 
@@ -493,21 +493,22 @@ describe('the patch file always stays a top-level array', () => {
   })
 })
 
-describe('carrierSideEffectIds', () => {
+describe('carrierDisableIds', () => {
   function installedBundle(dir: string, name: string, patch: string): void {
     mkdirSync(join(dir, 'node_modules', name), { recursive: true })
     writeFileSync(join(dir, 'node_modules', name, 'cordis.patch.yml'), patch)
   }
 
-  it('returns the OTHER-plugin rows a carrier bundle reconfigures (#224)', () => {
+  it('returns the OTHER plugins a bundle DISABLES (#224)', () => {
     const dir = patchDir()
     try {
       // Real shape of dsh-postgres-backends: it inserts its own three backends,
       // disables the official JSONL session backend, and reroutes storage-domain
-      // onto postgres. Disabling it through the market used to leave those two
-      // side-effect rows applying on every boot — JSONL stayed disabled while
-      // the postgres backends were turned off, so nothing provided
-      // sessionPersistence and the tree failed to activate.
+      // onto postgres. Only the foreign DISABLE counts — that is what bricks the
+      // boot once the postgres backends are also toggled off (nothing left to
+      // provide sessionPersistence). The storage-domain row is a config tweak,
+      // not a disable, so it is NOT reported here (though removing the bundle
+      // still neutralizes it).
       installedBundle(dir, 'dsh-postgres-backends', [
         '- id: session-persistence-jsonl',
         '  disabled: true',
@@ -527,7 +528,30 @@ describe('carrierSideEffectIds', () => {
         join(dir, 'node_modules', 'dsh-postgres-backends', 'package.json'),
         JSON.stringify({ name: 'dsh-postgres-backends', dsh: { bundle: { patch: './cordis.patch.yml' } } }),
       )
-      expect(carrierSideEffectIds(dir, 'dsh-postgres-backends')).toEqual(['session-persistence-jsonl', 'storage-domain'])
+      expect(carrierDisableIds(dir, 'dsh-postgres-backends')).toEqual(['session-persistence-jsonl'])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('ignores a config-only neighbour tweak so its re-enable keeps working (#147 e2e)', () => {
+    const dir = patchDir()
+    try {
+      // Shape of the e2e fixture-cross: inserts its own row and tweaks a
+      // DIFFERENT plugin's config — no `disabled: true`. Treating this as a
+      // disable-carrier dropped it from the bundle stack and broke re-enabling
+      // it in the web e2e; #147 requires disabling it to leave the neighbour
+      // live, which the plain ownership path already guarantees.
+      installedBundle(dir, 'dshm-e2e-fixture-cross', [
+        '- insert:',
+        '    - id: dshm-fixture-cross',
+        "      name: 'dshm-e2e-fixture-cross'",
+        '- id: dshm-fixture-b',
+        '  config:',
+        '    tweakedByCross: true',
+        '',
+      ].join('\n'))
+      expect(carrierDisableIds(dir, 'dshm-e2e-fixture-cross')).toEqual([])
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -537,7 +561,7 @@ describe('carrierSideEffectIds', () => {
     const dir = patchDir()
     try {
       installedBundle(dir, 'dsh-loop', '- insert:\n    - id: loop-main\n      name: dsh-loop\n')
-      expect(carrierSideEffectIds(dir, 'dsh-loop')).toEqual([])
+      expect(carrierDisableIds(dir, 'dsh-loop')).toEqual([])
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -546,7 +570,7 @@ describe('carrierSideEffectIds', () => {
   it('is empty for a package that is not installed', () => {
     const dir = patchDir()
     try {
-      expect(carrierSideEffectIds(dir, 'not-installed')).toEqual([])
+      expect(carrierDisableIds(dir, 'not-installed')).toEqual([])
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

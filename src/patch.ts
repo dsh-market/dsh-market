@@ -30,7 +30,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { logEvent } from './log.ts'
 import { parsePatchFile } from './check.ts'
-import { bundlePatchEntryIds, bundlePatchInsertedIds, parsePatchRows } from './profile.ts'
+import { bundlePatchInsertedIds, parsePatchRows } from './profile.ts'
 
 /** The slice of the loader tree this module needs. */
 export interface PatchHost {
@@ -227,36 +227,57 @@ export function rowIdsForPackage(host: PatchHost, profileDirectory: string, pack
 }
 
 /**
- * The OTHER-plugin row ids a package's bundle patch reconfigures: every entry
- * id the patch carries minus the rows it INSERTS (the #147 ownership set).
- * Non-empty exactly for a "carrier bundle" — one that disables or reconfigures
- * plugins it does not own. dsh-postgres-backends, for instance, disables
- * session-persistence-jsonl and reroutes storage-domain while inserting its own
- * three backends.
- *
- * Toggling such a bundle off must drop it from dsh.profile.bundles (#224):
- * these side-effect rows keep applying on every boot while the bundle stays in
- * the stack, and the #147 rule deliberately never writes `disabled: true` for
- * them, so nothing else rolls them back. Reads both patch sources exactly like
- * rowIdsForPackage — the declared dsh.bundle.patch and the conventional root
- * cordis.patch.yml — so a package shipping either form is detected the same way.
+ * Top-level patch rows that DISABLE another plugin: a row carrying both an
+ * `id` and `disabled: true`. Rows nested under an `insert:` block are separate
+ * array elements shaped `{ insert: [...] }`, so anything here is by definition
+ * a sibling row targeting a plugin this package does not own.
  */
-export function carrierSideEffectIds(profileDirectory: string, packageName: string): string[] {
+function foreignDisableIds(rows: unknown[]): string[] {
+  const ids: string[] = []
+  for (const row of rows) {
+    if (row === null || typeof row !== 'object' || Array.isArray(row)) continue
+    const record = row as Record<string, unknown>
+    const id = record.id
+    if (typeof id === 'string' && record.disabled === true && !ids.includes(id)) ids.push(id)
+  }
+  return ids
+}
+
+/**
+ * The ids of OTHER plugins a package's bundle patch DISABLES — top-level
+ * `- id: X` + `disabled: true` rows targeting plugins it does not own. This is
+ * the precise marker of a bundle whose toggle-off can brick the boot (#224):
+ * dsh-postgres-backends disables session-persistence-jsonl, so once the market
+ * also disables the postgres backends nothing provides sessionPersistence.
+ *
+ * A bundle that merely RECONFIGURES a neighbour is deliberately NOT counted:
+ * the e2e fixture-cross tweaks dshm-fixture-b's config, and #147 requires
+ * disabling it to leave that neighbour live — dropping such a bundle from the
+ * stack broke its re-enable. Config-only side effects stay on the normal #147
+ * path; only a foreign `disabled: true` triggers the bundle removal. Removing
+ * the bundle still neutralizes any config side effects it carries, since its
+ * whole patch stops applying.
+ *
+ * Reads both patch sources like rowIdsForPackage — the declared dsh.bundle.patch
+ * and the conventional root cordis.patch.yml — so either form is detected.
+ */
+export function carrierDisableIds(profileDirectory: string, packageName: string): string[] {
   const packageDir = join(profileDirectory, 'node_modules', packageName)
-  const sideEffects = new Set<string>()
-  const collect = (ids: readonly string[], inserted: readonly string[]): void => {
-    for (const id of ids) {
-      if (!inserted.includes(id)) sideEffects.add(id)
-    }
+  const disabled = new Set<string>()
+  const collectFromFile = (patchPath: string): void => {
+    const rows = parsePatchFile(patchPath)
+    if (rows === null) return
+    for (const id of foreignDisableIds(rows)) disabled.add(id)
   }
   try {
-    collect(bundlePatchEntryIds(packageDir), bundlePatchInsertedIds(packageDir))
+    const manifest = JSON.parse(readFileSync(join(packageDir, 'package.json'), 'utf8')) as {
+      dsh?: { bundle?: { patch?: unknown } }
+    }
+    const declared = manifest.dsh?.bundle?.patch
+    if (typeof declared === 'string' && declared !== '') collectFromFile(join(packageDir, declared))
   } catch { /* package not installed — nothing to attribute */ }
-  try {
-    const rows = parsePatchRows(readFileSync(join(packageDir, 'cordis.patch.yml'), 'utf8'))
-    collect(rows.ids, rows.insertedIds)
-  } catch { /* no conventional patch — nothing more to add */ }
-  return [...sideEffects]
+  collectFromFile(join(packageDir, 'cordis.patch.yml'))
+  return [...disabled]
 }
 
 /**
