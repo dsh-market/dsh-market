@@ -149,8 +149,11 @@ function catalogMatchKeys(url: string): { path: string | null; repo: string | nu
 /**
  * The catalog entry a locally linked / file: install should restore to.
  * Exact `#path:` identities win, then collection-root identities against
- * root-only catalog rows, then a unique name/npm match. Same-named forks
- * without identities or a matching hint stay unmatched rather than guessing.
+ * root-only catalog rows, then a unique name/npm match. A bare repo identity
+ * never selects a root row while `/tree/` siblings exist for that repo —
+ * the checkout did not say which package it is, and guessing wrong installs
+ * a different plugin. Same-named forks without identities or a matching hint
+ * stay unmatched rather than guessing.
  */
 export function findCatalogEntryForLocal<T extends { name: string; npm?: string | null; url: string }>(
   plugins: readonly T[],
@@ -165,6 +168,11 @@ export function findCatalogEntryForLocal<T extends { name: string; npm?: string 
   )
   const identitySet = new Set(identities.map(value => value.toLowerCase()))
   const hintSet = new Set(hints.map(value => value.toLowerCase()))
+  const treeRepos = new Set<string>()
+  for (const plugin of plugins) {
+    const keys = catalogMatchKeys(plugin.url)
+    if (keys.path !== null) treeRepos.add(keys.path.slice(0, keys.path.indexOf('#path:/')))
+  }
   if (identitySet.size > 0) {
     const pathHit = plugins.find(plugin => {
       const keys = catalogMatchKeys(plugin.url)
@@ -173,7 +181,8 @@ export function findCatalogEntryForLocal<T extends { name: string; npm?: string 
     if (pathHit !== undefined) return pathHit
     const rootHit = plugins.find(plugin => {
       const keys = catalogMatchKeys(plugin.url)
-      return keys.repo !== null && identitySet.has(keys.repo)
+      if (keys.repo === null || !identitySet.has(keys.repo)) return false
+      return !treeRepos.has(keys.repo) || byName.includes(plugin)
     })
     if (rootHit !== undefined) return rootHit
   }
@@ -215,15 +224,23 @@ export function restoreTargetForLocal(
 /**
  * Dependency names that use pnpm's `workspace:` protocol.
  * Those specs only resolve inside the author's monorepo; a git `#path:`
- * install into a profile cannot see the sibling packages.
+ * install into a profile cannot see the sibling packages. pnpm installs
+ * optional dependencies and auto-installs peers too, so all three maps are
+ * scanned; devDependencies are never installed and stay out.
  */
 export function workspaceProtocolDeps(manifest: unknown): string[] {
   if (typeof manifest !== 'object' || manifest === null) return []
-  const deps = (manifest as { dependencies?: unknown }).dependencies
-  if (typeof deps !== 'object' || deps === null) return []
+  const seen = new Set<string>()
   const names: string[] = []
-  for (const [name, spec] of Object.entries(deps as Record<string, unknown>)) {
-    if (typeof spec === 'string' && spec.startsWith('workspace:')) names.push(name)
+  for (const field of ['dependencies', 'optionalDependencies', 'peerDependencies'] as const) {
+    const deps = (manifest as Partial<Record<typeof field, unknown>>)[field]
+    if (typeof deps !== 'object' || deps === null) continue
+    for (const [name, spec] of Object.entries(deps as Record<string, unknown>)) {
+      if (typeof spec === 'string' && spec.startsWith('workspace:') && !seen.has(name)) {
+        seen.add(name)
+        names.push(name)
+      }
+    }
   }
   return names
 }

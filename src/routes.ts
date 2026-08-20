@@ -1224,6 +1224,14 @@ export function mountMarketRoutes(
               sendJson(response, 400, { error: 'plugin is not installed' })
               return
             }
+            if (restore && !isLocalSpec(spec)) {
+              sendJson(response, 400, { error: 'restore 只适用于 link:/file: 的本地开发安装。 / Restore only applies to locally developed link:/file: installs.' })
+              return
+            }
+            if (restore && SELF_NAMES.has(name)) {
+              sendJson(response, 400, { error: '市场自身不做恢复，请继续用 dsh plugin add <tgz> 安装市场。 / The market never restores itself; keep installing it via dsh plugin add <tgz>.' })
+              return
+            }
             if (isLocalSpec(spec)) {
               if (!restore) {
                 sendJson(response, 400, { error: 'locally linked plugins update from their checkout' })
@@ -1434,7 +1442,11 @@ export function mountMarketRoutes(
                     kind: 'update',
                     names: [name],
                     manifestBefore,
-                    ...(isGit ? { gitTarget: target, beforeCommit } : {}),
+                    // Restore must NOT go through rollbackGitBuild: its target
+                    // carries #path: (a second # would corrupt the selector),
+                    // and the pre-restore state is the local link:/file: spec
+                    // that rollbackUpdateBuild rematerializes with pnpm install.
+                    ...(isGit && !restore ? { gitTarget: target, beforeCommit } : {}),
                   }),
                 }
                 if (risks.length > 0) {

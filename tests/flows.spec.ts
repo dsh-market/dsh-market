@@ -1353,6 +1353,62 @@ describe('local-dev restore flow', () => {
     expect(r.status).toBe(400)
     expect(String(r.json.error)).toMatch(/No catalog entry/)
   })
+
+  it('refuses restore:true when the installed spec is not local', async () => {
+    writeFileSync(join(fake.profileDir, 'package.json'), JSON.stringify({
+      dependencies: { 'dsh-loop': '^1.0.0' },
+    }))
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop', restore: true })
+    expect(r.status).toBe(400)
+    expect(String(r.json.error)).toMatch(/Restore only applies/)
+    expect(installedSpec('dsh-loop')).toBe('^1.0.0')
+  })
+
+  it('refuses restore for the market itself even when locally linked', async () => {
+    writeFileSync(join(fake.profileDir, 'package.json'), JSON.stringify({
+      dependencies: { dshmarket: 'link:../dshmarket-dev' },
+    }))
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'dshmarket', restore: true })
+    expect(r.status).toBe(400)
+    expect(String(r.json.error)).toMatch(/never restores itself/)
+    expect(installedSpec('dshmarket')).toBe('link:../dshmarket-dev')
+  })
+
+  it('rolls a #path: restore back to the local spec when the catalog build introduces risks', async () => {
+    fake.repos['github:o/theme-a'] = {
+      name: 'theme-a',
+      manifest: { dsh: {}, main: 'index.js', peerDependencies: { '@deepseek-ai/dsh-settings': '^0.1.0-rc.7' } },
+      artifacts: ['index.js'],
+    }
+    const checkout = join(fake.profileDir, '..', 'theme-a-risk')
+    mkdirSync(checkout, { recursive: true })
+    writeFileSync(join(checkout, 'package.json'), JSON.stringify({
+      name: 'theme-a', version: '1.0.0', main: 'index.js', dsh: {},
+      repository: { type: 'git', url: 'https://github.com/o/theme-a.git', directory: 'packages/skin' },
+    }))
+    writeFileSync(join(checkout, 'index.js'), '')
+    writeFileSync(join(fake.profileDir, 'package.json'), JSON.stringify({
+      dependencies: { 'theme-a': `link:${checkout}` },
+    }))
+    mkdirSync(join(fake.profileDir, 'node_modules', 'theme-a'), { recursive: true })
+    writeFileSync(join(fake.profileDir, 'node_modules', 'theme-a', 'package.json'), JSON.stringify({
+      name: 'theme-a', version: '1.0.0', main: 'index.js', dsh: {},
+      repository: { type: 'git', url: 'https://github.com/o/theme-a.git', directory: 'packages/skin' },
+    }))
+    const hostPeerDir = join(fake.profileDir, 'node_modules', '@deepseek-ai', 'dsh-settings')
+    mkdirSync(hostPeerDir, { recursive: true })
+    writeFileSync(join(hostPeerDir, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh-settings', version: '0.1.0-rc.6' }))
+
+    const restored = await bed.dispatch('POST', '/dsh-market/update', { name: 'theme-a', restore: true })
+    expect(restored.status, String(restored.json.error ?? '')).toBe(200)
+    expect(restored.json.compatibility).toMatchObject({ code: 'soft-incompatible' })
+    expect(installedSpec('theme-a')).toContain('#path:/packages/skin')
+
+    const rollback = await bed.dispatch('POST', '/dsh-market/rollback', { rollbackId: restored.json.compatibility.rollbackId })
+    expect(rollback.status).toBe(200)
+    expect(rollback.json.rolledBack).toBe(true)
+    expect(installedSpec('theme-a')).toBe(`link:${checkout}`)
+  })
 })
 
 describe('uninstall flow', () => {

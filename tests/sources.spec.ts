@@ -124,9 +124,20 @@ describe('findCatalogEntryForLocal', () => {
       { name: 'mono#plug-b', npm: null, url: 'https://github.com/m/mono/tree/main/packages/plug-b' },
       { name: 'mono', npm: null, url: 'https://github.com/m/mono' },
     ]
-    expect(findCatalogEntryForLocal(mono, 'plug-a', ['m/mono'])?.name).toBe('mono')
+    // A bare root identity cannot say WHICH package the checkout is, so it
+    // must not fall through to the collection-root row while /tree/ siblings
+    // exist — guessing would install the wrong plugin.
+    expect(findCatalogEntryForLocal(mono, 'plug-a', ['m/mono'])).toBeNull()
     expect(findCatalogEntryForLocal(mono, 'plug-a', ['m/mono#path:/packages/plug-b'])?.name).toBe('mono#plug-b')
     expect(findCatalogEntryForLocal(mono, 'plug-a', ['m/mono', 'm/mono#path:/packages/plug-a'])?.name).toBe('mono#plug-a')
+  })
+
+  it('lets a bare root identity select a root row whose name matches the checkout', () => {
+    const mono = [
+      { name: 'mono#plug-a', npm: null, url: 'https://github.com/m/mono/tree/main/packages/plug-a' },
+      { name: 'mono-cli', npm: null, url: 'https://github.com/m/mono' },
+    ]
+    expect(findCatalogEntryForLocal(mono, 'mono-cli', ['m/mono'])?.name).toBe('mono-cli')
   })
 })
 
@@ -150,6 +161,11 @@ describe('restoreTargetForLocal', () => {
 
   it('blocks git restores when the checkout still has workspace: dependencies', () => {
     expect(workspaceProtocolDeps({ dependencies: { '@dsh-cowork/core': 'workspace:^' } })).toEqual(['@dsh-cowork/core'])
+    expect(workspaceProtocolDeps({
+      optionalDependencies: { 'optional-peer': 'workspace:*' },
+      peerDependencies: { 'peer-peer': 'workspace:^1.0.0' },
+    })).toEqual(['optional-peer', 'peer-peer'])
+    expect(workspaceProtocolDeps({ dependencies: {}, devDependencies: { dev: 'workspace:*' } })).toEqual([])
     expect(restoreBlockedByWorkspace('github:Jesse-njx/dsh-cowork#path:/packages/dsh', ['@dsh-cowork/core'])).toBe(true)
     expect(restoreBlockedByWorkspace('@dsh-cowork/plugin', ['@dsh-cowork/core'])).toBe(false)
   })
