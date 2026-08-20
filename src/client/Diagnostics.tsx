@@ -411,8 +411,9 @@ export function Diagnostics(props: { t: Translate }) {
   const catRisk = peerRisk.length
   const catWarn = peerWarning.length
   const catInfo = peerInfo.length
+  const catMulti = report.multiVersion.length
   const catOrder = report.orderConflicts?.length ?? 0
-  const anyIssue = catConflict + catRisk + catWarn + catInfo + catOrder > 0
+  const anyIssue = catConflict + catRisk + catWarn + catInfo + catMulti + catOrder > 0
   // AI-fix only shows for HARD issues — boot errors, duplicate entries, or a
   // directional peer RISK. Optional peers, aboveMax without an explicit
   // bound, and unknown rows are warning/info and never nudge an agent into
@@ -500,6 +501,9 @@ export function Diagnostics(props: { t: Translate }) {
         </span>
         <span className={css.diagSummaryItem} title={t('checkPeerInfoTier')}>
           <StateDot state="ongoing" size={8} />{t('catInfo')}: {catInfo}
+        </span>
+        <span className={css.diagSummaryItem} title={t('checkMultiVersion')}>
+          <StateDot state="warning" size={8} />{t('checkMultiVersion')}: {catMulti}
         </span>
         <span className={css.diagSummaryItem} title={t('checkOrderTip')}>
           <StateDot state="warning" size={8} />{t('catOrder')}: {catOrder}
@@ -680,6 +684,7 @@ export function Diagnostics(props: { t: Translate }) {
         title={t('checkPeerInfoTier')}
         count={peerInfo.length}
         empty={t('checkPeerInfoTierEmpty')}
+        problem={false}
         overview={peerInfo.length > 0
           ? `${peerInfo[0].plugin} → ${peerInfo[0].name}@${peerInfo[0].range}`
           : undefined}
@@ -703,6 +708,7 @@ export function Diagnostics(props: { t: Translate }) {
         title={t('checkPeerSatisfied')}
         count={peerSatisfied.length}
         empty={t('checkPeerSatisfiedEmpty')}
+        problem={false}
         overview={peerSatisfied.length > 0
           ? `${peerSatisfied[0].plugin} → ${peerSatisfied[0].name}@${peerSatisfied[0].range}`
           : undefined}

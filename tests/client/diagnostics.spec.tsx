@@ -139,6 +139,7 @@ describe('Diagnostics (jsdom)', () => {
     expect(screen.getByText(new RegExp(`^${t('catRisk')}:\\s*1$`))).toBeTruthy()
     expect(screen.getByText(new RegExp(`^${t('catWarn')}:\\s*1$`))).toBeTruthy()
     expect(screen.getByText(new RegExp(`^${t('catInfo')}:\\s*2$`))).toBeTruthy()
+    expect(screen.getByText(new RegExp(`^${t('checkMultiVersion')}:\\s*1$`))).toBeTruthy()
     expect(screen.getByText(`${t('checkProfile')}: /synthetic/profiles/web`)).toBeTruthy()
 
     // Every section heading renders with its count (scoped to the section).
@@ -283,9 +284,29 @@ describe('Diagnostics (jsdom)', () => {
     expect(within(infoSection).getByText(t('checkUnknown'))).toBeTruthy()
     const okSection = assertSection(t('checkPeerSatisfied'), 1)
     expect(within(okSection).getByText(t('checkSatisfied'))).toBeTruthy()
+    // Neutral tiers never carry the section alert: satisfied/info rows are
+    // not problems (#201 follow-up).
+    expect(within(infoSection).queryByText('⚠')).toBeNull()
+    expect(within(okSection).queryByText('⚠')).toBeNull()
     // Summary strip reflects the tier split: info 1, risk/warn 0.
     expect(screen.getByText(new RegExp(`^${t('catInfo')}:\\s*1$`))).toBeTruthy()
     expect(screen.getByText(new RegExp(`^${t('catRisk')}:\\s*0$`))).toBeTruthy()
     expect(screen.getByText(new RegExp(`^${t('catWarn')}:\\s*0$`))).toBeTruthy()
+  })
+
+  it('counts multiVersion in the summary strip and never calls a warning-only report all-good', async () => {
+    // Regression for the #201 tier split: multiVersion stopped being part of
+    // anyIssue, so a warning-only report could claim "all good".
+    stubCheckReport({
+      ...CLEAN_REPORT,
+      multiVersion: [{ name: 'shared-helper', versions: ['1.0.0', '2.0.0'], hoisted: '1.0.0' }],
+      summary: { ok: true, errors: [], warnings: ['multiple versions of shared-helper: 1.0.0 / 2.0.0'] },
+    })
+    render(<Diagnostics t={t} />)
+    await waitFor(() => expect(screen.queryByText(t('checkLoading'))).toBeNull())
+
+    expect(screen.queryByText(t('diagOkAll'))).toBeNull()
+    expect(screen.getByText(t('checkIssues'))).toBeTruthy()
+    expect(screen.getByText(new RegExp(`^${t('checkMultiVersion')}:\\s*1$`))).toBeTruthy()
   })
 })
