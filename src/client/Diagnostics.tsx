@@ -1,10 +1,11 @@
 /**
  * Diagnostics tab — issue #98: renders the profile composition check report
  * served by the host route /dsh-market/check (see src/check.ts). Below the
- * report sits the phase 2 action panel: community-bundle ordering (reorder
- * locally with ↑/↓ or drag, POST to /dsh-market/bundle-order) plus the AI-fix
- * clipboard prompt for HARD issues. The phase 3 snapshots & rollback and
- * plugin presets panels ship in later stacked PRs.
+ * report sit the phase 2/3 action panels: a community-bundle ordering block
+ * (reorder locally with ↑/↓, POST to /dsh-market/bundle-order), a snapshots
+ * & rollback panel (snapshot-panel.tsx) and a plugin presets panel
+ * (preset-panel.tsx) — the latter two are collapsible, default collapsed,
+ * and lazy-fetch on first expand.
  *
  * Read-only view of the loading-layer stack and the conflict surface: bundle
  * order (official vs community), duplicate loader entry ids, peer dependency
@@ -17,6 +18,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type
 import { Button, DisclosureRow, IconChevronDownOutline14, IconChevronRightOutline14, IconLoadingOutline16, IconRefreshOutline14, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
 import css from './Market.module.css'
 import type { Translate } from './market-data.ts'
+import { PresetPanel } from './preset-panel.tsx'
+import { SnapshotPanel } from './snapshot-panel.tsx'
 
 /** Mirrors BundleLayer in src/check.ts. */
 interface BundleLayer {
@@ -142,8 +145,9 @@ function Section(props: {
 }
 
 /** A collapsible section that KEEPS its children mounted (hidden via CSS when
- * collapsed) so the ordering panel below retains its loaded data and
- * in-progress edits across collapses.
+ * collapsed) so the phase 3 panels below retain their loaded data and
+ * in-progress edits across collapses. Children mount from the start, but the
+ * panels only fetch when `open` first becomes true.
  */
 function CollapsibleSection(props: { title: string; count?: number; open: boolean; onToggle: () => void; children: ReactNode }) {
   const { title, count, open, onToggle, children } = props
@@ -163,7 +167,6 @@ function CollapsibleSection(props: { title: string; count?: number; open: boolea
     </section>
   )
 }
-
 /** Map an orphan patch reason (src/check.ts) to a locale key for its badge. */
 function orphanKindLabel(reason: string): string {
   if (reason === 'insert is not an array') return 'orphanInsertNotArray'
@@ -178,7 +181,7 @@ function orphanKindLabel(reason: string): string {
 /**
  * Fetch and render the profile check report. Refetches on every mount, so
  * switching tabs away and back re-runs the (cheap, read-only) analysis; the
- * ordering panel calls `refresh()` after applying an order.
+ * phase 3 panels below call `refresh()` after applying changes.
  */
 export function Diagnostics(props: { t: Translate }) {
   const { t } = props
@@ -187,11 +190,13 @@ export function Diagnostics(props: { t: Translate }) {
   const [orderOpen, setOrderOpen] = useState(false)
   const [explainOpen, setExplainOpen] = useState(false)
   const [peerInfoOpen, setPeerInfoOpen] = useState(false)
+  const [snapOpen, setSnapOpen] = useState(false)
+  const [presetOpen, setPresetOpen] = useState(false)
   const [fixMsg, setFixMsg] = useState<string | null>(null)
   /** The built AI-fix prompt when the clipboard path failed — rendered as a
    * selectable text block so the user can still copy it manually. */
   const [fixFallback, setFixFallback] = useState<string | null>(null)
-  /** Bump to re-run the /dsh-market/check fetch after an order apply. */
+  /** Bump to re-run the /dsh-market/check fetch after an order/preset/restore apply. */
   const [version, setVersion] = useState(0)
   const refresh = useCallback(() => setVersion(v => v + 1), [])
 
@@ -214,8 +219,8 @@ export function Diagnostics(props: { t: Translate }) {
    * refresh() refetch returns a NEW array even when the order is unchanged,
    * so a naive `setOrder(communityNames)` effect would wipe the user's
    * in-progress drag/↑↓ edits on every unrelated re-check. Only resync when
-   * the report's community order actually CHANGED (apply order) — an
-   * identical refetch keeps the draft (review M2).
+   * the report's community order actually CHANGED (apply order / preset /
+   * restore) — an identical refetch keeps the draft (review M2).
    */
   const syncedOrderRef = useRef<string[] | null>(null)
   useEffect(() => {
@@ -328,7 +333,7 @@ export function Diagnostics(props: { t: Translate }) {
         setOrderDiff(null)
         setOrderMsg(t('orderApplied'))
         // Refetch the report so communityNames / the ordering draft reflect
-        // the applied order.
+        // the applied order before anything is saved as a preset.
         refresh()
       })
       .catch((err: unknown) => setOrderErr(err instanceof Error ? err.message : String(err)))
@@ -338,9 +343,9 @@ export function Diagnostics(props: { t: Translate }) {
   useEffect(() => {
     let live = true
     // Do NOT null the report here: a refresh() (manual re-check, or after an
-    // order apply) must keep the previous data visible and must not clobber
-    // the in-progress ordering draft, which re-syncs from communityNames only
-    // when the report actually changes (review M2).
+    // order/preset/restore apply) must keep the previous data visible and
+    // must not clobber the in-progress ordering draft, which re-syncs from
+    // communityNames only when the report actually changes (review M2).
     setError(null)
     fetch('/dsh-market/check', { cache: 'no-store' })
       .then(async (res) => {
@@ -780,6 +785,18 @@ export function Diagnostics(props: { t: Translate }) {
                 ))}
               </div>
             )}
+      </CollapsibleSection>
+
+      {/* issue #98 phase 3: snapshots & rollback / plugin presets */}
+      <CollapsibleSection title={t('snapSection')} open={snapOpen} onToggle={() => setSnapOpen(o => !o)}>
+        <SnapshotPanel t={t} open={snapOpen} onRefresh={refresh} />
+      </CollapsibleSection>
+
+      <CollapsibleSection title={t('presetSection')} open={presetOpen} onToggle={() => setPresetOpen(o => !o)}>
+        {/* Save the ordering DRAFT, not the last-reported order: a preset must
+          capture the order the user is currently editing (↑/↓ or drag), even
+          before "应用顺序 / Apply order" is clicked. */}
+        <PresetPanel t={t} open={presetOpen} bundleOrder={order} onRefresh={refresh} />
       </CollapsibleSection>
     </div>
   )

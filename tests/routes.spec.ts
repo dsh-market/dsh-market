@@ -4,16 +4,16 @@
  * plus a temp profile fixture, then drives the captured handlers with fake
  * IncomingMessage / ServerResponse objects. No server socket, no pnpm, no
  * network — the same surface the real harness host provides, so the method /
- * Allow, origin, body-validation, 422 and write-lock contracts of the new
+ * Allow, origin, body-validation, 422 and write-lock contracts of the 8 new
  * routes are pinned without spawning a process.
  *
- * The new routes (vs. the PR-A branch base): /dsh-market/check (PR-A) and
- * /dsh-market/bundle-order (PR-B). The snapshots & presets routes ship in
- * later stacked PRs.
+ * The 8 new routes (vs. the branch base): /dsh-market/check, /bundle-order,
+ * /snapshots, /restore-snapshot, /delete-snapshot, /presets, /presets-export,
+ * /presets-import.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -137,9 +137,9 @@ function post(path: string, body: unknown): RequestOpts {
 
 /**
  * A request whose body stream never ends until `finish()` is called. Used to
- * hold the direct-write lock deterministically: bundle-order acquires the
- * lock BEFORE awaiting the body, so a pending body keeps `writing` true until
- * the test releases it.
+ * hold the direct-write lock deterministically: restore-snapshot /
+ * delete-snapshot / presets-import acquire the lock BEFORE awaiting the body,
+ * so a pending body keeps `writing` true until the test releases it.
  */
 function makePendingRequest(path: string): { request: IncomingMessage; finish: () => void } {
   let finish!: () => void
@@ -217,10 +217,16 @@ function writeStandardProfile(): void {
 
 // --- tests ------------------------------------------------------------------
 
-describe('method & Allow contract (new routes)', () => {
+describe('method & Allow contract (8 new routes)', () => {
   it.each([
     ['/dsh-market/check', 'POST', 'GET'],
     ['/dsh-market/bundle-order', 'GET', 'POST'],
+    ['/dsh-market/snapshots', 'DELETE', 'GET, POST'],
+    ['/dsh-market/restore-snapshot', 'GET', 'POST'],
+    ['/dsh-market/delete-snapshot', 'GET', 'POST'],
+    ['/dsh-market/presets', 'PUT', 'GET, POST'],
+    ['/dsh-market/presets-export', 'POST', 'GET'],
+    ['/dsh-market/presets-import', 'GET', 'POST'],
   ])('answers 405 with an Allow header on %s', async (path, method, allow) => {
     const res = await hit(routes, path as string, { method: method as string, url: path as string })
     expect(res.status).toBe(405)
@@ -231,6 +237,11 @@ describe('method & Allow contract (new routes)', () => {
 describe('origin enforcement (mutating routes)', () => {
   const mutating: Array<[string, unknown]> = [
     ['/dsh-market/bundle-order', { order: ['beta', 'alpha'] }],
+    ['/dsh-market/snapshots', undefined],
+    ['/dsh-market/restore-snapshot', { snapshot: 'snapshot-x' }],
+    ['/dsh-market/delete-snapshot', { snapshot: 'snapshot-x' }],
+    ['/dsh-market/presets', { action: 'save', name: 'x', bundleOrder: ['alpha', 'beta'], disabled: [] }],
+    ['/dsh-market/presets-import', { presets: [] }],
   ]
 
   it.each(mutating)('rejects a cross-origin POST %s with 403', async (path, body) => {
@@ -277,6 +288,53 @@ describe('body validation — 400 contracts', () => {
     // …while a non-permutation STRING array is refused by the trial gate (422).
     const incomplete = await hit(routes, '/dsh-market/bundle-order', post('/dsh-market/bundle-order', { order: ['alpha'] }))
     expect(incomplete.status).toBe(422)
+  })
+
+  it('restore-snapshot refuses a missing / empty / non-string snapshot id', async () => {
+    const cases: Array<[unknown, RegExp]> = [
+      [null, /snapshot id is required/],
+      [{}, /snapshot id is required/],
+      [{ snapshot: '' }, /snapshot id is required/],
+      [{ snapshot: 42 }, /snapshot id is required/],
+    ]
+    for (const [body, pattern] of cases) {
+      const res = await hit(routes, '/dsh-market/restore-snapshot', post('/dsh-market/restore-snapshot', body))
+      expect(res.status, `body ${JSON.stringify(body)}`).toBe(400)
+      expect(String(jsonBody(res).error)).toMatch(pattern)
+    }
+  })
+
+  it('delete-snapshot refuses a missing id and a traversal-shaped id', async () => {
+    const missing = await hit(routes, '/dsh-market/delete-snapshot', post('/dsh-market/delete-snapshot', {}))
+    expect(missing.status).toBe(400)
+    // The traversal-shaped id passes the route's string check but is refused
+    // by deleteSnapshot's id validation BEFORE touching the filesystem — the
+    // route reports it as a plain not-found (ok:false, 400).
+    const traversal = await hit(routes, '/dsh-market/delete-snapshot', post('/dsh-market/delete-snapshot', { snapshot: '../escape' }))
+    expect(traversal.status).toBe(400)
+    expect(jsonBody(traversal)).toMatchObject({ ok: false, error: 'snapshot not found / 快照不存在' })
+    const traversal2 = await hit(routes, '/dsh-market/delete-snapshot', post('/dsh-market/delete-snapshot', { snapshot: 'snapshot-../../etc/passwd' }))
+    expect(traversal2.status).toBe(400)
+  })
+
+  it('presets refuses a null body, an unknown action and a missing action', async () => {
+    const nullBody = await hit(routes, '/dsh-market/presets', post('/dsh-market/presets', null))
+    expect(nullBody.status).toBe(400)
+    expect(String(jsonBody(nullBody).error)).toMatch(/JSON body is required/)
+
+    const noAction = await hit(routes, '/dsh-market/presets', post('/dsh-market/presets', {}))
+    expect(noAction.status).toBe(400)
+
+    const badAction = await hit(routes, '/dsh-market/presets', post('/dsh-market/presets', { action: 'explode' }))
+    expect(badAction.status).toBe(400)
+    expect(String(jsonBody(badAction).error)).toMatch(/action must be save \| preview \| apply \| delete/)
+  })
+
+  it('presets-import refuses a null payload and a non-list document', async () => {
+    const nullBody = await hit(routes, '/dsh-market/presets-import', post('/dsh-market/presets-import', null))
+    expect(nullBody.status).toBe(400)
+    const garbage = await hit(routes, '/dsh-market/presets-import', post('/dsh-market/presets-import', { presets: 'nope' }))
+    expect(garbage.status).toBe(400)
   })
 
   it('an unparseable byte stream is refused without touching the profile (500 — parse error)', async () => {
@@ -372,6 +430,8 @@ describe('GET /dsh-market/installed — local repository evidence', () => {
 
 describe('POST /dsh-market/bundle-order', () => {
   it('applies a valid community reorder: 200 with the merged stack, manifest rewritten', async () => {
+    // #125/#126: the in-route pre-write safety net is the profile backup, and
+    // a persistent snapshot is auto-created before the write (issue #126).
     writeStandardProfile()
     const res = await hit(routes, '/dsh-market/bundle-order', post('/dsh-market/bundle-order', { order: ['beta', 'alpha'] }))
     expect(res.status).toBe(200)
@@ -381,6 +441,25 @@ describe('POST /dsh-market/bundle-order', () => {
 
     const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as { dsh: { profile: { bundles: string[] } } }
     expect(manifest.dsh.profile.bundles).toEqual(['@deepseek-ai/dsh-base', 'beta', 'alpha'])
+  })
+
+  it('persists a profile snapshot BEFORE the write (issue #126: recoverable reorder)', async () => {
+    writeStandardProfile()
+    const res = await hit(routes, '/dsh-market/bundle-order', post('/dsh-market/bundle-order', { order: ['beta', 'alpha'] }))
+    expect(res.status).toBe(200)
+    const body = jsonBody(res)
+    expect(body.ok).toBe(true)
+    // The response carries the pre-write snapshot id.
+    expect(typeof body.snapshot).toBe('string')
+    expect(String(body.snapshot)).toMatch(/^snapshot-/)
+    // The snapshot was persisted BEFORE the write: it captures the ORIGINAL
+    // order [alpha, beta], so restoring it reverts the reorder.
+    const snapDir = join(dir, '.dsh-market', 'snapshots')
+    const snapFiles = readdirSync(snapDir).filter(f => f.endsWith('.json'))
+    expect(snapFiles).toHaveLength(1)
+    const snap = JSON.parse(readFileSync(join(snapDir, snapFiles[0]!), 'utf8')) as { files: Array<{ path: string; json: { dsh?: { profile?: { bundles?: string[] } } } }> }
+    const manifestJson = snap.files.find(f => f.path === 'package.json')
+    expect(manifestJson?.json.dsh?.profile?.bundles).toEqual(['@deepseek-ai/dsh-base', 'alpha', 'beta'])
   })
 
   it('refuses a rule-violating order with 422 + conflicts', async () => {
@@ -395,8 +474,9 @@ describe('POST /dsh-market/bundle-order', () => {
     const body = jsonBody(res)
     expect(String(body.error)).toMatch(/violates declared before\/after rules/)
     expect(Array.isArray(body.conflicts)).toBe(true)
-    // Refused BEFORE the write: manifest untouched.
+    // Refused BEFORE the write: manifest and snapshot dir untouched.
     expect(readFileSync(join(dir, 'package.json'), 'utf8')).toBe(before)
+    expect(existsSync(join(dir, '.dsh-market', 'snapshots'))).toBe(false)
   })
 
   it('refuses an order that would not boot with 422 + trial errors', async () => {
@@ -418,29 +498,39 @@ describe('POST /dsh-market/bundle-order', () => {
 
   it('answers 409 while another write holds the direct-write lock, then succeeds after release', async () => {
     writeStandardProfile()
-    // bundle-order takes the lock BEFORE reading the body — a pending body
+    // restore-snapshot takes the lock BEFORE reading the body — a pending body
     // pins `writing` until the test releases it.
-    const pending = makePendingRequest('/dsh-market/bundle-order')
-    const inflight = routes.get('/dsh-market/bundle-order')!
+    const pending = makePendingRequest('/dsh-market/restore-snapshot')
+    const inflight = routes.get('/dsh-market/restore-snapshot')!
     const captured = makeResponse()
     const pendingRun = inflight(pending.request, captured.response)
 
     // Synchronous up to the first await → the lock is already held.
-    const concurrent = await hit(routes, '/dsh-market/bundle-order', post('/dsh-market/bundle-order', { order: ['beta', 'alpha'] }))
-    expect(concurrent.status).toBe(409)
-    expect(jsonBody(concurrent)).toEqual({ error: 'another plugin operation is running' })
+    const snap = await hit(routes, '/dsh-market/snapshots', post('/dsh-market/snapshots', undefined))
+    expect(snap.status).toBe(409)
+    expect(jsonBody(snap)).toEqual({ error: 'another plugin operation is running' })
+
+    const order = await hit(routes, '/dsh-market/bundle-order', post('/dsh-market/bundle-order', { order: ['beta', 'alpha'] }))
+    expect(order.status).toBe(409)
+
+    const imp = await hit(routes, '/dsh-market/presets-import', post('/dsh-market/presets-import', { presets: [] }))
+    expect(imp.status).toBe(409)
+
+    // Non-write routes stay available while a write is in flight: preview is a
+    // pure read and answers 422 (missing preset), not 409.
+    const preview = await hit(routes, '/dsh-market/presets', post('/dsh-market/presets', { action: 'preview', name: 'ghost' }))
+    expect(preview.status).toBe(422)
 
     // The update route gained the same `writing` guard (issue #98 analysis).
     const upd = await hit(routes, '/dsh-market/update', post('/dsh-market/update', { name: 'alpha' }))
     expect(upd.status).toBe(409)
 
-    // Release the lock → the pending request completes with its '{}' body,
-    // which is missing the order → 400.
+    // Release the lock → the same write succeeds.
     pending.finish()
     await pendingRun
-    expect(captured.captured().status).toBe(400)
+    expect(captured.captured().status).toBe(400) // the released body {} → missing snapshot id
 
-    const after = await hit(routes, '/dsh-market/bundle-order', post('/dsh-market/bundle-order', { order: ['beta', 'alpha'] }))
+    const after = await hit(routes, '/dsh-market/snapshots', post('/dsh-market/snapshots', undefined))
     expect(after.status).toBe(200)
   })
 
@@ -460,9 +550,12 @@ describe('POST /dsh-market/bundle-order', () => {
     void uninstallRun
     await tick() // flush the microtasks up to the hanging runPlugin
 
+    const snap = await hit(routes, '/dsh-market/snapshots', post('/dsh-market/snapshots', undefined))
+    expect(snap.status).toBe(409)
+    expect(jsonBody(snap)).toEqual({ error: 'another plugin operation is running' })
+
     const order = await hit(routes, '/dsh-market/bundle-order', post('/dsh-market/bundle-order', { order: ['beta', 'alpha'] }))
     expect(order.status).toBe(409)
-    expect(jsonBody(order)).toEqual({ error: 'another plugin operation is running' })
 
     // update distinguishes the two locks in its message.
     const upd = await hit(routes, '/dsh-market/update', post('/dsh-market/update', { name: 'alpha' }))
@@ -529,3 +622,203 @@ describe('sameOrigin', () => {
     }
   })
 })
+describe('GET/POST /dsh-market/snapshots', () => {
+  it('lists an empty snapshot set, creates one, lists it again', async () => {
+    writeStandardProfile()
+    const empty = await hit(routes, '/dsh-market/snapshots', { method: 'GET', url: '/dsh-market/snapshots' })
+    expect(empty.status).toBe(200)
+    expect(jsonBody(empty)).toEqual({ snapshots: [] })
+
+    const created = await hit(routes, '/dsh-market/snapshots', post('/dsh-market/snapshots', undefined))
+    expect(created.status).toBe(200)
+    const body = jsonBody(created)
+    expect(body.ok).toBe(true)
+    const snapshot = (body.snapshot ?? {}) as { id: string; createdAt: number; files: unknown[] }
+    expect(snapshot.id).toMatch(/^snapshot-/)
+    expect(typeof snapshot.createdAt).toBe('number')
+    expect(snapshot.files.map((f: { path: string }) => f.path)).toEqual(['package.json'])
+
+    const listed = await hit(routes, '/dsh-market/snapshots', { method: 'GET', url: '/dsh-market/snapshots' })
+    expect((jsonBody(listed).snapshots as unknown[]).length).toBe(1)
+  })
+
+  it('answers 400 when the profile has no package.json', async () => {
+    // No fixture at all: createProfileSnapshot cannot snapshot a manifest-less dir.
+    const res = await hit(routes, '/dsh-market/snapshots', post('/dsh-market/snapshots', undefined))
+    expect(res.status).toBe(400)
+    expect(String(jsonBody(res).error)).toMatch(/package\.json is missing/)
+  })
+})
+
+describe('POST /dsh-market/restore-snapshot & /dsh-market/delete-snapshot', () => {
+  it('round-trips: create → corrupt the order → restore → delete', async () => {
+    writeStandardProfile()
+    const created = await hit(routes, '/dsh-market/snapshots', post('/dsh-market/snapshots', undefined))
+    const id = (jsonBody(created).snapshot as { id: string }).id
+
+    // Corrupt the manifest (swap the community order by hand).
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({
+      name: 'web-profile',
+      dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', 'beta', 'alpha'] } },
+    }, null, 2))
+
+    const restored = await hit(routes, '/dsh-market/restore-snapshot', post('/dsh-market/restore-snapshot', { snapshot: id }))
+    expect(restored.status).toBe(200)
+    const restoredBody = jsonBody(restored)
+    expect(restoredBody.ok).toBe(true)
+    expect(restoredBody.restored).toContain('package.json')
+    const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as { dsh: { profile: { bundles: string[] } } }
+    expect(manifest.dsh.profile.bundles).toEqual(['@deepseek-ai/dsh-base', 'alpha', 'beta'])
+
+    const deleted = await hit(routes, '/dsh-market/delete-snapshot', post('/dsh-market/delete-snapshot', { snapshot: id }))
+    expect(deleted.status).toBe(200)
+    expect(jsonBody(deleted)).toMatchObject({ ok: true, snapshot: id })
+
+    const listed = await hit(routes, '/dsh-market/snapshots', { method: 'GET', url: '/dsh-market/snapshots' })
+    expect(jsonBody(listed)).toEqual({ snapshots: [] })
+  })
+
+  it('restore of an unknown snapshot answers 400', async () => {
+    const res = await hit(routes, '/dsh-market/restore-snapshot', post('/dsh-market/restore-snapshot', { snapshot: 'snapshot-does-not-exist' }))
+    expect(res.status).toBe(400)
+    expect(String(jsonBody(res).error)).toMatch(/snapshot not found/)
+  })
+
+  it('delete of an unknown snapshot answers 400', async () => {
+    const res = await hit(routes, '/dsh-market/delete-snapshot', post('/dsh-market/delete-snapshot', { snapshot: 'snapshot-does-not-exist' }))
+    expect(res.status).toBe(400)
+    expect(String(jsonBody(res).error)).toMatch(/snapshot not found/)
+  })
+})
+
+
+describe('GET/POST /dsh-market/presets', () => {
+  it('saves, lists and applies a preset, then deletes it', async () => {
+    writeStandardProfile()
+    const empty = await hit(routes, '/dsh-market/presets', { method: 'GET', url: '/dsh-market/presets' })
+    expect(empty.status).toBe(200)
+    expect(jsonBody(empty)).toEqual({ presets: [] })
+
+    const saved = await hit(routes, '/dsh-market/presets', post('/dsh-market/presets', {
+      action: 'save',
+      name: 'combo',
+      bundleOrder: ['beta', 'alpha'],
+      disabled: ['x'],
+    }))
+    expect(saved.status).toBe(200)
+    expect(jsonBody(saved)).toEqual({ ok: true })
+
+    const listed = await hit(routes, '/dsh-market/presets', { method: 'GET', url: '/dsh-market/presets' })
+    const presets = (jsonBody(listed).presets as Array<{ name: string; bundleOrder: string[]; disabled: string[] }>)
+    expect(presets).toHaveLength(1)
+    expect(presets[0]).toMatchObject({ name: 'combo', bundleOrder: ['beta', 'alpha'], disabled: ['x'] })
+
+    const applied = await hit(routes, '/dsh-market/presets', post('/dsh-market/presets', { action: 'apply', name: 'combo' }))
+    expect(applied.status).toBe(200)
+    const appliedBody = jsonBody(applied)
+    expect(appliedBody.ok).toBe(true)
+    expect(String(appliedBody.snapshot)).toMatch(/^snapshot-/)
+    const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as { dsh: { profile: { bundles: string[] } } }
+    expect(manifest.dsh.profile.bundles).toEqual(['@deepseek-ai/dsh-base', 'beta', 'alpha'])
+
+    const deleted = await hit(routes, '/dsh-market/presets', post('/dsh-market/presets', { action: 'delete', name: 'combo' }))
+    expect(deleted.status).toBe(200)
+    const after = await hit(routes, '/dsh-market/presets', { method: 'GET', url: '/dsh-market/presets' })
+    expect(jsonBody(after)).toEqual({ presets: [] })
+  })
+
+  it('previews an existing preset (200) and a missing one (422)', async () => {
+    writeStandardProfile()
+    await hit(routes, '/dsh-market/presets', post('/dsh-market/presets', {
+      action: 'save', name: 'combo', bundleOrder: ['beta', 'alpha'], disabled: [],
+    }))
+
+    const preview = await hit(routes, '/dsh-market/presets', post('/dsh-market/presets', { action: 'preview', name: 'combo' }))
+    expect(preview.status).toBe(200)
+    const body = jsonBody(preview)
+    expect(body.ok).toBe(true)
+    expect((body.changes as { reordered: string[] }).reordered).toEqual(['alpha', 'beta'])
+
+    const missing = await hit(routes, '/dsh-market/presets', post('/dsh-market/presets', { action: 'preview', name: 'ghost' }))
+    expect(missing.status).toBe(422)
+  })
+
+  it('apply refuses a boot-breaking preset with 422 and writes nothing', async () => {
+    // The preset's order is valid as a permutation but the composed tree would
+    // fail to boot (duplicate loader entry id) → apply is refused.
+    writeProfile(['@deepseek-ai/dsh-base', 'alpha', 'beta'])
+    writeBundle('@deepseek-ai/dsh-base')
+    writeBundle('alpha', { entries: [{ id: 'dup-entry', name: 'alpha' }] })
+    writeBundle('beta', { entries: [{ id: 'dup-entry', name: 'beta' }] })
+    await hit(routes, '/dsh-market/presets', post('/dsh-market/presets', {
+      action: 'save', name: 'broken', bundleOrder: ['beta', 'alpha'], disabled: [],
+    }))
+    const before = readFileSync(join(dir, 'package.json'), 'utf8')
+
+    const res = await hit(routes, '/dsh-market/presets', post('/dsh-market/presets', { action: 'apply', name: 'broken' }))
+    expect(res.status).toBe(422)
+    expect(String(jsonBody(res).error)).toMatch(/trial validation failed/)
+    expect(readFileSync(join(dir, 'package.json'), 'utf8')).toBe(before)
+  })
+
+  it('apply refuses a rule-violating preset with 422', async () => {
+    writeProfile(['@deepseek-ai/dsh-base', 'alpha', 'beta'])
+    writeBundle('@deepseek-ai/dsh-base')
+    writeBundle('alpha', { order: { after: ['beta'] } })
+    writeBundle('beta')
+    await hit(routes, '/dsh-market/presets', post('/dsh-market/presets', {
+      action: 'save', name: 'bad', bundleOrder: ['alpha', 'beta'], disabled: [],
+    }))
+
+    const res = await hit(routes, '/dsh-market/presets', post('/dsh-market/presets', { action: 'apply', name: 'bad' }))
+    expect(res.status).toBe(422)
+    expect(String(jsonBody(res).error)).toMatch(/violates declared before\/after rules/)
+  })
+
+  it('apply of a missing preset answers 422', async () => {
+    const res = await hit(routes, '/dsh-market/presets', post('/dsh-market/presets', { action: 'apply', name: 'ghost' }))
+    expect(res.status).toBe(422)
+    expect(String(jsonBody(res).error)).toMatch(/preset not found/)
+  })
+})
+
+describe('GET /dsh-market/presets-export & POST /dsh-market/presets-import', () => {
+  it('export returns the downloadable envelope (content-type + content-disposition)', async () => {
+    writeStandardProfile()
+    await hit(routes, '/dsh-market/presets', post('/dsh-market/presets', {
+      action: 'save', name: 'combo', bundleOrder: ['beta', 'alpha'], disabled: [],
+    }))
+
+    const res = await hit(routes, '/dsh-market/presets-export', { method: 'GET', url: '/dsh-market/presets-export' })
+    expect(res.status).toBe(200)
+    expect(res.headers['content-type']).toContain('application/json')
+    expect(res.headers['content-disposition']).toContain('attachment; filename="dsh-market-presets-')
+    expect(res.headers['cache-control']).toBe('no-store')
+    const doc = res.json() as { format: string; version: number; exportedAt: number; presets: unknown[] }
+    expect(doc.format).toBe('dsh-market-presets')
+    expect(doc.version).toBe(1)
+    expect(typeof doc.exportedAt).toBe('number')
+    expect((doc.presets as Array<{ name: string }>).map(p => p.name)).toEqual(['combo'])
+  })
+
+  it('import merges a document and reports imported/added/updated/skipped counts', async () => {
+    writeStandardProfile()
+    const res = await hit(routes, '/dsh-market/presets-import', post('/dsh-market/presets-import', {
+      format: 'dsh-market-presets',
+      version: 1,
+      exportedAt: Date.now(),
+      presets: [
+        { name: 'a', bundleOrder: ['beta', 'alpha'], disabled: [], createdAt: 1 },
+        { name: 'b', bundleOrder: ['alpha', 'beta'], disabled: ['x'], createdAt: 2 },
+        { name: 'bad/name', bundleOrder: ['alpha', 'beta'], disabled: [], createdAt: 3 },
+      ],
+    }))
+    expect(res.status).toBe(200)
+    expect(jsonBody(res)).toMatchObject({ ok: true, imported: 2, added: 2, updated: 0, skipped: 1, names: ['a', 'b'] })
+
+    const listed = await hit(routes, '/dsh-market/presets', { method: 'GET', url: '/dsh-market/presets' })
+    const presets = (jsonBody(listed).presets as Array<{ name: string }>).map(p => p.name)
+    expect(presets.sort()).toEqual(['a', 'b'])
+  })
+})
+
