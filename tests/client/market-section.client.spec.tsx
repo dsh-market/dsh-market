@@ -287,8 +287,11 @@ describe('MarketSection (jsdom)', () => {
     await screen.findByRole('button', { name: en.confirmInstall })
     await waitFor(() => {
       const srcs = [...document.querySelectorAll('img')].map(img => img.getAttribute('src'))
-      expect(srcs).toContain(CURATED)
+      // The strip proxies through images.weserv.nl for a resized render —
+      // the ORIGINAL curated url is embedded as its `url` query param.
+      expect(srcs.some(src => src?.includes(encodeURIComponent(CURATED.replace(/^https?:\/\//, ''))))).toBe(true)
       expect(srcs).not.toContain('https://evil.example/track.png')
+      expect(srcs.some(src => src?.includes('evil.example'))).toBe(false)
     })
     fireEvent.click(screen.getByRole('button', { name: en.cancel }))
     await waitFor(() => expect(screen.queryByRole('button', { name: en.confirmInstall })).toBeNull())
@@ -298,7 +301,8 @@ describe('MarketSection (jsdom)', () => {
     await screen.findByRole('button', { name: en.confirmInstall })
     await waitFor(() => {
       const srcs = [...document.querySelectorAll('img')].map(img => img.getAttribute('src'))
-      expect(srcs).toContain('https://raw.githubusercontent.com/bob/dsh-notify/HEAD/assets/notify.png')
+      const extracted = 'https://raw.githubusercontent.com/bob/dsh-notify/HEAD/assets/notify.png'
+      expect(srcs.some(src => src?.includes(encodeURIComponent(extracted.replace(/^https?:\/\//, ''))))).toBe(true)
     })
   })
 
@@ -1276,6 +1280,87 @@ describe('per-tab search boxes', () => {
     expect(screen.getByText(en.empty)).toBeTruthy()
   })
 
+  it('the themes tab sorts through the same filter menu as Discover, on its own independent state', async () => {
+    // Three themes with a deliberate stars-vs-downloads inversion, so a
+    // default (downloads-desc) order and a stars-desc order cannot pass for
+    // each other — a sort that silently did nothing would look identical
+    // under a single-signal fixture.
+    const registry = JSON.parse(JSON.stringify(REGISTRY))
+    registry.plugins = [
+      // Both tabs get their own downloads-vs-stars inversion, so each tab's
+      // order is a distinct observable fact rather than one shared ranking.
+      { name: 'tool-a', owner: 'x', url: 'https://github.com/x/tool-a', category: 'tools', npm: 'tool-a', stars: 5, downloads: 900, added: '2026-08-01', description: { en: 'A', zh: 'A' }, install: '' },
+      { name: 'tool-b', owner: 'y', url: 'https://github.com/y/tool-b', category: 'tools', npm: 'tool-b', stars: 500, downloads: 10, added: '2026-08-02', description: { en: 'B', zh: 'B' }, install: '' },
+      { name: 'theme-a', owner: 'x', url: 'https://github.com/x/theme-a', category: 'theme', npm: 'theme-a', stars: 5, downloads: 900, added: '2026-08-01', description: { en: 'A', zh: 'A' }, install: '' },
+      { name: 'theme-b', owner: 'y', url: 'https://github.com/y/theme-b', category: 'theme', npm: 'theme-b', stars: 500, downloads: 10, added: '2026-08-02', description: { en: 'B', zh: 'B' }, install: '' },
+    ]
+    stubFetch({ '/dsh-market/registry': { source: 'live', registry } })
+    const THEME_SNAPSHOT = { preference: 'light', themes: [] as Array<{ id: string }> }
+    const { container } = render(<MarketSection {...{
+      ...props(),
+      themeStore: { subscribe: () => () => {}, getSnapshot: () => THEME_SNAPSHOT },
+    }} />)
+    const names = () => [...container.querySelectorAll('[class*="grid"] [class*="nm"]')].map(el => el.textContent?.trim())
+
+    await screen.findByText('tool-a')
+    // Discover's own default (downloads-desc; equal counts keep registry
+    // order). Discover's category is 'all', so the themes appear here too —
+    // this is the full expected ordering, not a tools-only subset.
+    expect(names()).toEqual(['tool-a', 'theme-a', 'tool-b', 'theme-b'])
+
+    fireEvent.click(screen.getAllByRole('button', { name: en.tabThemes })[0])
+    await screen.findByText('theme-a')
+    // Same default here, and the tools-category entries stay out entirely.
+    expect(names()).toEqual(['theme-a', 'theme-b'])
+
+    // The Themes tab has its own Filter button (the Discover tab is unmounted).
+    fireEvent.click(screen.getByRole('button', { name: en.filter }))
+    fireEvent.click(screen.getByRole('menuitem', { name: en.sortStars }))
+    // Stars invert the order — proof the menu drives THIS tab's list.
+    await waitFor(() => expect(names()).toEqual(['theme-b', 'theme-a']))
+
+    // ...and Discover is untouched by that choice: separate state, not shared.
+    fireEvent.click(screen.getByRole('button', { name: en.tabDiscover }))
+    await screen.findByText('tool-a')
+    expect(names()).toEqual(['tool-a', 'theme-a', 'tool-b', 'theme-b'])
+  })
+
+  it('the themes tab paginates once the theme list outgrows one page', async () => {
+    // 30 themes against the 24-per-page default: page 1 holds exactly 24 and
+    // page 2 the remaining 6, which a single un-paged grid could not produce.
+    const registry = JSON.parse(JSON.stringify(REGISTRY))
+    registry.plugins = Array.from({ length: 30 }, (_, i) => ({
+      name: `theme-${String(i).padStart(2, '0')}`,
+      owner: 'x',
+      url: `https://github.com/x/theme-${String(i).padStart(2, '0')}`,
+      category: 'theme',
+      npm: `theme-${String(i).padStart(2, '0')}`,
+      // Descending downloads so the default sort matches the name order.
+      stars: 0, downloads: 1000 - i, added: '2026-08-01',
+      description: { en: 'T', zh: 'T' }, install: '',
+    }))
+    stubFetch({ '/dsh-market/registry': { source: 'live', registry } })
+    const THEME_SNAPSHOT = { preference: 'light', themes: [] as Array<{ id: string }> }
+    const { container } = render(<MarketSection {...{
+      ...props(),
+      themeStore: { subscribe: () => () => {}, getSnapshot: () => THEME_SNAPSHOT },
+    }} />)
+    // No non-theme entry to wait on here, so wait for the tab button itself
+    // (the Themes tab only renders once the catalog resolved).
+    await waitFor(() => expect(screen.getAllByRole('button', { name: en.tabThemes }).length).toBeGreaterThan(0))
+    fireEvent.click(screen.getAllByRole('button', { name: en.tabThemes })[0])
+    await screen.findByText('theme-00')
+
+    const names = () => [...container.querySelectorAll('[class*="grid"] [class*="nm"]')].map(el => el.textContent?.trim())
+    expect(names().length).toBe(24)
+    expect(names()[0]).toBe('theme-00')
+    expect(screen.getByText(en.pageInfo.replace('{0}', '1').replace('{1}', '2'))).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: re(en.nextPage) }))
+    await waitFor(() => expect(names().length).toBe(6))
+    expect(names()[0]).toBe('theme-24')
+  })
+
   it('themes tab: an active theme card offers Deactivate and posts the disable toggle', async () => {
     // jsdom navigations are not implemented and its location is
     // non-configurable — swap in a plain object so the auto-refresh path
@@ -1817,6 +1902,8 @@ describe('category row expansion', () => {
 describe('card thumbnail + lightbox (curated screenshots only)', () => {
   const SHOT_A = 'https://raw.githubusercontent.com/alice/dsh-loop/main/assets/a.png'
   const SHOT_B = 'https://raw.githubusercontent.com/alice/dsh-loop/main/assets/b.png'
+  /** Mirrors CardShot's own thumbUrl(): the card renders a resized proxy, not the original. */
+  const cardThumb = (src: string) => `https://images.weserv.nl/?url=${encodeURIComponent(src.replace(/^https?:\/\//, ''))}&h=200&fit=inside&we=1`
 
   function registryWithShots() {
     const registry = JSON.parse(JSON.stringify(REGISTRY))
@@ -1836,8 +1923,8 @@ describe('card thumbnail + lightbox (curated screenshots only)', () => {
     // none — both of dsh-loop's shots render (a scrollable strip, not a
     // single cropped/cycling image), nothing from the other two cards.
     expect(shots.length).toBe(2)
-    expect(shots[0]?.getAttribute('src')).toBe(SHOT_A)
-    expect(shots[1]?.getAttribute('src')).toBe(SHOT_B)
+    expect(shots[0]?.getAttribute('src')).toBe(cardThumb(SHOT_A))
+    expect(shots[1]?.getAttribute('src')).toBe(cardThumb(SHOT_B))
   })
 
   it('opens a lightbox on click, at the clicked shot, and wraps prev/next around the ends', async () => {
@@ -1884,13 +1971,49 @@ describe('card thumbnail + lightbox (curated screenshots only)', () => {
       await vi.waitFor(() => expect(screen.queryByText('dsh-loop')).toBeTruthy())
 
       const srcs = () => [...container.querySelectorAll('img[class*="cardShot"]')].map(el => (el as HTMLImageElement).src)
-      expect(srcs()).toEqual([SHOT_A, SHOT_B])
+      expect(srcs()).toEqual([cardThumb(SHOT_A), cardThumb(SHOT_B)])
       await vi.advanceTimersByTimeAsync(10_000)
       // Both shots are still there, in the same order — nothing cycled away.
-      expect(srcs()).toEqual([SHOT_A, SHOT_B])
+      expect(srcs()).toEqual([cardThumb(SHOT_A), cardThumb(SHOT_B)])
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('sets no thumbnail src at all until the card scrolls near the viewport, then loads the resized proxy', async () => {
+    // jsdom has no real IntersectionObserver, and CardShot's hook falls back
+    // to eager (near=true) rather than fail closed when one is unavailable —
+    // exactly right for jsdom itself, but it means every OTHER test in this
+    // file only proves "renders once visible", never "withholds until then".
+    // This is the one test that supplies a controllable observer to prove
+    // the gate itself: a card scrolled off-screen must not even set `src`
+    // (no request queued), and must load the small proxy once it does.
+    // The sticky category header observes its own sentinel with a real
+    // IntersectionObserver too, so a single "last constructed wins" fake
+    // would just as easily capture THAT one instead of CardShot's — key by
+    // the observed element instead, found once `observe` is actually called.
+    let onCardShotsChange: ((entries: Array<{ isIntersecting: boolean }>) => void) | null = null
+    class FakeIntersectionObserver {
+      #cb: (entries: Array<{ isIntersecting: boolean }>) => void
+      constructor(cb: (entries: Array<{ isIntersecting: boolean }>) => void) { this.#cb = cb }
+      observe(target: Element): void {
+        if (target.className.toString().includes('cardShots')) onCardShotsChange = this.#cb
+      }
+      disconnect(): void {}
+    }
+    vi.stubGlobal('IntersectionObserver', FakeIntersectionObserver)
+
+    stubFetch({ '/dsh-market/registry': { source: 'live', registry: registryWithShots() } })
+    const { container } = render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+
+    const shots = () => [...container.querySelectorAll('img[class*="cardShot"]')]
+    expect(shots().every(el => el.getAttribute('src') === null)).toBe(true)
+
+    expect(onCardShotsChange, 'CardShot must observe its own strip element').not.toBeNull()
+    onCardShotsChange!([{ isIntersecting: true }])
+    await waitFor(() => expect(shots()[0]?.getAttribute('src')).toBe(cardThumb(SHOT_A)))
+    expect(shots()[1]?.getAttribute('src')).toBe(cardThumb(SHOT_B))
   })
 
   it('the confirm dialog shows the card\'s own byline — owner, downloads, stars, date, category', async () => {
@@ -1961,5 +2084,61 @@ describe('card thumbnail + lightbox (curated screenshots only)', () => {
     await screen.findByText('dsh-loop')
     expect(screen.queryByText(en.loadFail)).toBeNull()
     expect(calls).toBe(2)
+  })
+})
+
+describe('card owner name and description overflow', () => {
+  it('carries the full owner name in a title attribute, even once CSS ellipsizes it', async () => {
+    stubFetch({ '/dsh-market/registry': { source: 'live', registry: REGISTRY } })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+
+    const card = screen.getByText('dsh-loop').closest('[class*="card"]') as HTMLElement
+    const owner = within(card).getByText('alice')
+    expect(owner.getAttribute('title')).toBe('alice')
+  })
+
+  it('clamps a long description by default and shows nothing to expand for a short one', async () => {
+    stubFetch({ '/dsh-market/registry': { source: 'live', registry: REGISTRY } })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+
+    // jsdom never lays anything out, so scrollHeight === clientHeight (both
+    // 0) for every element — the real "does this overflow 5 lines" check
+    // can only be exercised with the two properties stubbed, done below.
+    expect(screen.queryByLabelText(re(en.descExpand))).toBeNull()
+  })
+
+  it('offers an expand/collapse toggle only once the clamped text actually overflows, and it flips the clamp', async () => {
+    const scrollHeightDesc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollHeight')
+    const clientHeightDesc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientHeight')
+    Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
+      configurable: true,
+      get(this: HTMLElement) { return this.className.includes('desc') ? 90 : 0 },
+    })
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+      configurable: true,
+      get(this: HTMLElement) { return this.className.includes('desc') ? 54 : 0 },
+    })
+    try {
+      stubFetch({ '/dsh-market/registry': { source: 'live', registry: REGISTRY } })
+      const { container } = render(<MarketSection {...props()} />)
+      await screen.findByText('dsh-loop')
+
+      const toggle = screen.getAllByLabelText(re(en.descExpand))[0]!
+      const desc = () => container.querySelector('[class*="desc"]:not([class*="descTight"])')
+      expect(desc()?.className).toMatch(/descClamp/)
+
+      fireEvent.click(toggle)
+      await waitFor(() => expect(screen.queryAllByLabelText(re(en.descCollapse)).length).toBeGreaterThan(0))
+      expect(desc()?.className).not.toMatch(/descClamp/)
+
+      fireEvent.click(screen.getAllByLabelText(re(en.descCollapse))[0]!)
+      await waitFor(() => expect(screen.queryAllByLabelText(re(en.descExpand)).length).toBeGreaterThan(0))
+      expect(desc()?.className).toMatch(/descClamp/)
+    } finally {
+      if (scrollHeightDesc) Object.defineProperty(HTMLElement.prototype, 'scrollHeight', scrollHeightDesc)
+      if (clientHeightDesc) Object.defineProperty(HTMLElement.prototype, 'clientHeight', clientHeightDesc)
+    }
   })
 })

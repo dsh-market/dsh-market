@@ -111,6 +111,172 @@ function phaseLabel(phase: NonNullable<MarketStatus['phase']>, t: Translate): st
 }
 
 /**
+ * Page/page-size state shared by every paged list in this file (Discover,
+ * Themes) — each caller owns its OWN instance (their filters are
+ * independent, a search in one tab has no business resetting the other's
+ * page), but the mechanics (clamp against a shrinking list, reset to page 1
+ * when the filters that produced `count` change, scroll back to the top of
+ * the shared body on any page move) are one implementation, not two.
+ */
+function usePagination(count: number, resetDeps: readonly unknown[], scrollToTop: () => void): {
+  currentPage: number
+  totalPages: number
+  pageSize: number
+  goToPage: (next: number) => void
+  changePageSize: (size: number) => void
+} {
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE)
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- resetDeps IS the intended dependency list, supplied by the caller.
+  useEffect(() => { setPage(1) }, resetDeps)
+  const totalPages = Math.max(1, Math.ceil(count / pageSize))
+  // Clamp in case the list shrank while the user was on a later page.
+  const currentPage = Math.min(page, totalPages)
+  const goToPage = (next: number) => {
+    setPage(Math.max(1, Math.min(next, totalPages)))
+    scrollToTop()
+  }
+  const changePageSize = (size: number) => {
+    setPageSize(size)
+    setPage(1)
+    scrollToTop()
+  }
+  return { currentPage, totalPages, pageSize, goToPage, changePageSize }
+}
+
+/**
+ * The sort/time-range dropdown (primitives Menu): three independent option
+ * groups, ids namespaced so one onSelect routes by prefix. Owns its own
+ * open state — a caller wires only the sort VALUES, not the dropdown's UI
+ * state, so Discover and Themes can each mount one without threading an
+ * extra `filterOpen`/`setFilterOpen` pair through their own state.
+ */
+function FilterMenu({ sortField, sortDir, timeRange, onSortField, onSortDir, onTimeRange, t }: {
+  sortField: SortField
+  sortDir: SortDir
+  timeRange: TimeRange
+  onSortField: (field: SortField) => void
+  onSortDir: (dir: SortDir) => void
+  onTimeRange: (range: TimeRange) => void
+  t: Translate
+}) {
+  const [open, setOpen] = useState(false)
+  // Direction labels adapt to the field: stars → asc/desc, added → oldest/newest.
+  const sortDirLabel = (dir: SortDir): string =>
+    sortField === 'added'
+      ? dir === 'desc' ? 'sortNewest' : 'sortOldest'
+      : dir === 'desc' ? 'sortDesc' : 'sortAsc'
+  const items = useMemo<MenuEntry[]>(() => [
+    { type: 'label', id: 'f-sort', text: t('filterSort') },
+    ...SORT_FIELD_OPTIONS.map(opt => ({ id: 'field:' + opt.key, label: t(opt.label) })),
+    { type: 'separator', id: 'f-sep1' },
+    { type: 'label', id: 'f-dir', text: t('filterDir') },
+    ...SORT_DIR_OPTIONS.map(dir => ({ id: 'dir:' + dir, label: t(sortDirLabel(dir)) })),
+    { type: 'separator', id: 'f-sep2' },
+    { type: 'label', id: 'f-time', text: t('filterTime') },
+    ...TIME_OPTIONS.map(opt => ({ id: 'time:' + opt.key, label: t(opt.label) })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sortDirLabel closes only over sortField, already a dep.
+  ], [t, sortField])
+  const selectedIds = useMemo(
+    () => ['field:' + sortField, 'dir:' + sortDir, 'time:' + timeRange],
+    [sortField, sortDir, timeRange])
+  const onSelect = (id: string) => {
+    if (id.startsWith('field:')) onSortField(id.slice(6) as SortField)
+    else if (id.startsWith('dir:')) onSortDir(id.slice(4) as SortDir)
+    else if (id.startsWith('time:')) onTimeRange(id.slice(5) as TimeRange)
+  }
+  return (
+    <Menu
+      open={open}
+      onClose={() => setOpen(false)}
+      onSelect={onSelect}
+      selectedIds={selectedIds}
+      align="end"
+      portal
+      anchor={(
+        <Button
+          variant="outline"
+          size="sm"
+          icon={open ? <IconChevronUpOutline14 size={14} /> : <IconChevronDownOutline14 size={14} />}
+          onClick={() => setOpen(o => !o)}
+        >{t('filter')}</Button>
+      )}
+      items={items}
+    />
+  )
+}
+
+/** First/prev/numbered/next/last controls plus a per-page-size menu — one
+ * implementation for every paged list, driven entirely by `usePagination`'s
+ * return value. Owns its own page-size dropdown open state for the same
+ * reason `FilterMenu` owns its own. */
+function Pager({ currentPage, totalPages, pageSize, onGoToPage, onChangePageSize, t }: {
+  currentPage: number
+  totalPages: number
+  pageSize: number
+  onGoToPage: (page: number) => void
+  onChangePageSize: (size: number) => void
+  t: Translate
+}) {
+  const [sizeOpen, setSizeOpen] = useState(false)
+  return (
+    <div className={css.pager}>
+      <div className={css.pagerPages}>
+        {totalPages > 1 && (
+          <>
+            <Button variant="outline" size="sm" disabled={currentPage === 1} onClick={() => onGoToPage(1)} aria-label={t('firstPage')}>«</Button>
+            <Button
+              variant="outline"
+              size="sm"
+              icon={<IconChevronLeftOutline14 size={14} />}
+              disabled={currentPage === 1}
+              onClick={() => onGoToPage(currentPage - 1)}
+            >{t('prevPage')}</Button>
+            {pageItems(currentPage, totalPages).map((item, i) => (
+              item === '…'
+                ? <span key={'e' + i} className={css.pageEllipsis}>…</span>
+                : (
+                    <Button
+                      key={item}
+                      variant={item === currentPage ? 'primary' : 'outline'}
+                      size="sm"
+                      onClick={() => onGoToPage(item)}
+                    >{item}</Button>
+                  )
+            ))}
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={currentPage === totalPages}
+              onClick={() => onGoToPage(currentPage + 1)}
+            >{t('nextPage')}<IconChevronRightOutline14 size={14} /></Button>
+            <Button variant="outline" size="sm" disabled={currentPage === totalPages} onClick={() => onGoToPage(totalPages)} aria-label={t('lastPage')}>»</Button>
+            <span className={css.pageInfo}>{t('pageInfo').replace('{0}', String(currentPage)).replace('{1}', String(totalPages))}</span>
+          </>
+        )}
+      </div>
+      <Menu
+        open={sizeOpen}
+        onClose={() => setSizeOpen(false)}
+        onSelect={id => onChangePageSize(Number(id))}
+        selectedId={String(pageSize)}
+        align="end"
+        portal
+        anchor={(
+          <Button
+            variant="outline"
+            size="sm"
+            icon={<IconChevronDownOutline14 size={14} />}
+            onClick={() => setSizeOpen(o => !o)}
+          >{t('perPage') + ' ' + pageSize}</Button>
+        )}
+        items={PAGE_SIZES.map(size => ({ id: String(size), label: String(size) }))}
+      />
+    </div>
+  )
+}
+
+/**
  * Card avatar: the plugin owner's GitHub avatar (no API, browser-cached),
  * falling back to the initial-letter tile when it can't load.
  */
@@ -158,7 +324,7 @@ function ScreenshotStrip({ plugin, onOpen }: { plugin: RegistryPlugin; onOpen: (
         <img
           key={src}
           className={css.shot}
-          src={src}
+          src={thumbUrl(src, 300)}
           alt=""
           loading="lazy"
           decoding="async"
@@ -196,6 +362,48 @@ function useAutoCarousel(count: number, initial: number, intervalMs = 3500): [nu
 }
 
 /**
+ * A card thumbnail (or dialog strip image) renders at well under 150px on
+ * screen; the curated screenshot behind it can be a full-resolution PNG
+ * several hundred KB to a few MB — GitHub's own hosts offer no resized
+ * variant, so rendering the original meant downloading full-size images for
+ * a strip nobody asked to see full-size. images.weserv.nl resizes
+ * server-side (by decoded HEIGHT, `fit=inside` so it never crops, `we=1` so
+ * it never upscales something already smaller) before the bytes reach the
+ * browser. The lightbox — an explicit "show me this big" — still requests
+ * the ORIGINAL directly: proxying that one too would add a hop with nothing
+ * left to save, and once the thumbnail is genuinely smaller it can no longer
+ * share a cache entry with the full-size open anyway.
+ */
+function thumbUrl(src: string, height: number): string {
+  return `https://images.weserv.nl/?url=${encodeURIComponent(src.replace(/^https?:\/\//, ''))}&h=${String(height)}&fit=inside&we=1`
+}
+
+/**
+ * True once the wrapped element has scrolled within `rootMargin` of the
+ * viewport. Falls back to true immediately where IntersectionObserver is
+ * unavailable (old browsers, jsdom without a stub) — a missing observer
+ * should degrade to eager loading, not a permanently empty thumbnail.
+ * Native `img loading="lazy"` already defers the network fetch on its own,
+ * but its trigger distance isn't ours to tune, and scrolling a 400+ entry
+ * catalog queues every off-screen card's request the instant the browser
+ * decides to start prefetching — this hook is what lets CardShot not even
+ * SET `src` until a card is actually close.
+ */
+function useNearViewport<T extends Element>(rootMargin = '200px'): [(node: T | null) => void, boolean] {
+  const [near, setNear] = useState(typeof IntersectionObserver === 'undefined')
+  const [node, setNode] = useState<T | null>(null)
+  useEffect(() => {
+    if (near || node === null) return
+    const obs = new IntersectionObserver((entries) => {
+      if (entries.some(entry => entry.isIntersecting)) setNear(true)
+    }, { rootMargin })
+    obs.observe(node)
+    return () => obs.disconnect()
+  }, [near, node, rootMargin])
+  return [setNode, near]
+}
+
+/**
  * A card's own thumbnail strip — curated screenshots only (#61 supplement):
  * this data already rode along with the catalog fetch that drew the grid,
  * so showing it costs nothing extra. README-scraped fallback images stay
@@ -212,21 +420,18 @@ function useAutoCarousel(count: number, initial: number, intervalMs = 3500): [nu
 const CARD_SHOT_LIMIT = 3
 
 function CardShot({ plugin, onOpen }: { plugin: RegistryPlugin; onOpen: (shots: string[], index: number) => void }) {
-  // The card and the lightbox share one asset: the allowlist is GitHub's own
-  // image hosts, none of which resize, so there is no smaller variant to ask
-  // for. What the card can do is want fewer of them and want them late — the
-  // dialog strip still offers the full set.
   const shots = safeScreenshots(plugin.screenshots)
   const [broken, setBroken] = useState<string[]>([])
   const visible = shots.filter(src => !broken.includes(src)).slice(0, CARD_SHOT_LIMIT)
+  const [setStripRef, near] = useNearViewport<HTMLDivElement>()
   if (visible.length === 0) return null
   return (
-    <div className={css.cardShots}>
+    <div ref={setStripRef} className={css.cardShots}>
       {visible.map((src, i) => (
         <img
           key={src}
           className={css.cardShot}
-          src={src}
+          src={near ? thumbUrl(src, 200) : undefined}
           alt=""
           loading="lazy"
           decoding="async"
@@ -236,6 +441,40 @@ function CardShot({ plugin, onOpen }: { plugin: RegistryPlugin; onOpen: (shots: 
           onError={() => setBroken(prev => prev.includes(src) ? prev : prev.concat(src))}
         />
       ))}
+    </div>
+  )
+}
+
+/**
+ * A card's description, clamped to 5 lines so one wordy entry doesn't blow
+ * the two-up grid's row height out for whatever sits beside it — the grid
+ * already tolerates SOME height variance by design (`.card`'s `align-self:
+ * start`), just not an unbounded one. The toggle only renders when the text
+ * actually overflows the clamp: a two-line description has nothing to
+ * "expand", so no button beats a button that does nothing.
+ */
+function CardDesc({ text, t }: { text: string; t: Translate }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [expanded, setExpanded] = useState(false)
+  const [canExpand, setCanExpand] = useState(false)
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (el === null) return
+    setCanExpand(el.scrollHeight > el.clientHeight + 1)
+  }, [text])
+  return (
+    <div>
+      <div ref={ref} className={expanded ? css.desc : `${css.desc} ${css.descClamp}`}>{text}</div>
+      {canExpand && (
+        <button
+          type="button"
+          className={css.descToggle}
+          aria-label={expanded ? t('descCollapse') : t('descExpand')}
+          onClick={() => setExpanded(e => !e)}
+        >
+          {expanded ? <IconChevronUpOutline14 size={14} /> : <IconChevronDownOutline14 size={14} />}
+        </button>
+      )}
     </div>
   )
 }
@@ -578,10 +817,6 @@ export function MarketSection(props: MarketSectionProps) {
   const [updatingName, setUpdatingName] = useState<string | null>(null)
   // Plugin blocked by pnpm's fresh-release safety wait; arms the update-now button.
   const [staleName, setStaleName] = useState<string | null>(null)
-  /** 1-based discover page; reset to 1 whenever the list shape changes. */
-  const [page, setPage] = useState(1)
-  /** Cards per discover page; changing it jumps back to page 1. */
-  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE)
 
   /** Determinate percent parsed from pnpm's Progress line, when available. */
   const [progressPct, setProgressPct] = useState<number | null>(null)
@@ -696,16 +931,13 @@ export function MarketSection(props: MarketSectionProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [sortField, setSortField] = useState<SortField>('downloads')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
-  /** Direction labels adapt to the field: stars → asc/desc, added → oldest/newest. */
-  const sortDirLabel = (dir: SortDir): string =>
-    sortField === 'added'
-      ? dir === 'desc' ? 'sortNewest' : 'sortOldest'
-      : dir === 'desc' ? 'sortDesc' : 'sortAsc'
   const [timeRange, setTimeRange] = useState<TimeRange>('all')
-  const [filterOpen, setFilterOpen] = useState(false)
   const [catsOpen, setCatsOpen] = useState(false)
-  /** Page-size switcher dropdown (primitives Menu). */
-  const [sizeOpen, setSizeOpen] = useState(false)
+  /** Themes tab: independent from Discover's sort/time state above — a
+   * search or sort choice in one tab has no business resetting the other. */
+  const [themeSortField, setThemeSortField] = useState<SortField>('downloads')
+  const [themeSortDir, setThemeSortDir] = useState<SortDir>('desc')
+  const [themeTimeRange, setThemeTimeRange] = useState<TimeRange>('all')
   /** WebDAV provider-preset dropdown (primitives Menu). */
   const [presetOpen, setPresetOpen] = useState(false)
   /** Install-command disclosure inside the confirm dialog. */
@@ -946,21 +1178,6 @@ export function MarketSection(props: MarketSectionProps) {
     return () => clearInterval(timer)
   }, [busyUrl, updatingName, data, installed, repoIdentities, repoHints, refreshInstalled])
 
-  const plugins = useMemo(
-    () => (data === null ? [] : visiblePlugins(data.plugins, {
-      category: cat, query: q, lang,
-      sort: `${sortField}-${sortDir}`,
-      sinceDays: timeRange === 'all' ? undefined : TIME_RANGE_DAYS[timeRange],
-    })),
-    [data, q, cat, lang, sortField, sortDir, timeRange])
-
-  useEffect(() => { setPage(1) }, [q, cat, sortField, sortDir, timeRange])
-
-  const totalPages = Math.max(1, Math.ceil(plugins.length / pageSize))
-  // Clamp in case the list shrank while the user was on a later page.
-  const currentPage = Math.min(page, totalPages)
-  const pagePlugins = plugins.slice((currentPage - 1) * pageSize, currentPage * pageSize)
-
   const scrollToTop = () => {
     const el = bodyRef.current
     if (el) {
@@ -970,16 +1187,28 @@ export function MarketSection(props: MarketSectionProps) {
     }
   }
 
-  const goToPage = (next: number) => {
-    setPage(Math.max(1, Math.min(next, totalPages)))
-    scrollToTop()
-  }
+  const plugins = useMemo(
+    () => (data === null ? [] : visiblePlugins(data.plugins, {
+      category: cat, query: q, lang,
+      sort: `${sortField}-${sortDir}`,
+      sinceDays: timeRange === 'all' ? undefined : TIME_RANGE_DAYS[timeRange],
+    })),
+    [data, q, cat, lang, sortField, sortDir, timeRange])
+  const { currentPage, totalPages, pageSize, goToPage, changePageSize } =
+    usePagination(plugins.length, [q, cat, sortField, sortDir, timeRange], scrollToTop)
+  const pagePlugins = plugins.slice((currentPage - 1) * pageSize, currentPage * pageSize)
 
-  const changePageSize = (size: number) => {
-    setPageSize(size)
-    setPage(1)
-    scrollToTop()
-  }
+  const themePlugins = useMemo(
+    () => (data === null ? [] : visiblePlugins(data.plugins, {
+      category: 'theme', query: qThemes, lang,
+      sort: `${themeSortField}-${themeSortDir}`,
+      sinceDays: themeTimeRange === 'all' ? undefined : TIME_RANGE_DAYS[themeTimeRange],
+    })),
+    [data, qThemes, lang, themeSortField, themeSortDir, themeTimeRange])
+  const themePagination = usePagination(
+    themePlugins.length, [qThemes, themeSortField, themeSortDir, themeTimeRange], scrollToTop)
+  const themePagePlugins = themePlugins.slice(
+    (themePagination.currentPage - 1) * themePagination.pageSize, themePagination.currentPage * themePagination.pageSize)
 
   /** Download a host endpoint as a file — primitives Button can't be an <a download>.
    * Prefers the server's Content-Disposition filename (e.g. the timestamped
@@ -1773,40 +2002,11 @@ export function MarketSection(props: MarketSectionProps) {
     : progressLine || t('progressHint')
   const progressText = cancelling ? t('cancelling') + ' · ' + phasePart : phasePart
 
-  // Filter dropdown (primitives Menu): three independent option groups, ids
-  // namespaced so one onSelect routes by prefix. The menu stays open across
-  // selections — outside click / Escape close it (Menu's own behavior).
-  const filterItems = useMemo<MenuEntry[]>(() => [
-    { type: 'label', id: 'f-sort', text: t('filterSort') },
-    ...SORT_FIELD_OPTIONS.map(opt => ({ id: 'field:' + opt.key, label: t(opt.label) })),
-    { type: 'separator', id: 'f-sep1' },
-    { type: 'label', id: 'f-dir', text: t('filterDir') },
-    ...SORT_DIR_OPTIONS.map(dir => ({ id: 'dir:' + dir, label: t(sortDirLabel(dir)) })),
-    { type: 'separator', id: 'f-sep2' },
-    { type: 'label', id: 'f-time', text: t('filterTime') },
-    ...TIME_OPTIONS.map(opt => ({ id: 'time:' + opt.key, label: t(opt.label) })),
-  ], [t, sortField])
-  const filterSelectedIds = useMemo(
-    () => ['field:' + sortField, 'dir:' + sortDir, 'time:' + timeRange],
-    [sortField, sortDir, timeRange])
-  const onFilterSelect = (id: string) => {
-    if (id.startsWith('field:')) setSortField(id.slice(6) as SortField)
-    else if (id.startsWith('dir:')) setSortDir(id.slice(4) as SortDir)
-    else if (id.startsWith('time:')) setTimeRange(id.slice(5) as TimeRange)
-  }
-
-  const themePlugins = data === null ? [] : themePluginsOf(data.plugins)
-  /** Themes-tab search narrows by name/owner/description. */
-  const filteredThemePlugins = useMemo(() => {
-    const needle = qThemes.trim().toLowerCase()
-    if (needle === '') return themePlugins
-    return themePlugins.filter(p => {
-      const desc = (p.description && (p.description[lang] || p.description.en)) || ''
-      return p.name.toLowerCase().includes(needle)
-        || (p.owner || '').toLowerCase().includes(needle)
-        || desc.toLowerCase().includes(needle)
-    })
-  }, [themePlugins, qThemes, lang])
+  /** Whether the catalog carries ANY theme-category entry at all — distinct
+   * from `themePlugins.length === 0` above (which also fires the instant a
+   * search/sort/time filter matches nothing) so the two empty states read
+   * differently: "there's nothing here yet" vs "nothing matches your filter". */
+  const anyThemePlugins = data === null ? [] : themePluginsOf(data.plugins)
 
   /** The catalog entry a deprecated plugin's `replacement` names, if any. */
   const replacementOf = (p: RegistryPlugin): RegistryPlugin | undefined =>
@@ -1833,15 +2033,23 @@ export function MarketSection(props: MarketSectionProps) {
               to be just the plugin — and lets two authors ship a plugin of
               the same name without either card needing a qualifier. */}
           <div style={{ minWidth: 0 }}>
-            <div className={css.nm} title={p.name}>
+            <a className={`${css.nm} ${css.nmLink}`} href={p.url} target="_blank" rel="noreferrer" title={p.name}>
               {pluginName(p.name)}
               {p.deprecated === true && <span className={css.depBadge}>{t('deprecatedBadge')}</span>}
-            </div>
+            </a>
             <div className={css.byline}>
               <OwnerAvatar name={p.name} owner={p.owner || ''} />
-              <span className={css.owner}>{p.owner}</span>
-              {typeof p.downloads === 'number' && <span className={css.star} title={String(p.downloads)}>{'· ↓ ' + formatCount(p.downloads)}</span>}
-              {typeof p.stars === 'number' && <span className={css.star} title={String(p.stars)}>{'· ★ ' + formatCount(p.stars)}</span>}
+              <span className={css.owner} title={p.owner}>{p.owner}</span>
+              {typeof p.downloads === 'number' && (
+                <Tooltip label={String(p.downloads)} side="top">
+                  <span className={css.star}>{'· ↓ ' + formatCount(p.downloads)}</span>
+                </Tooltip>
+              )}
+              {typeof p.stars === 'number' && (
+                <Tooltip label={String(p.stars)} side="top">
+                  <span className={css.star}>{'· ★ ' + formatCount(p.stars)}</span>
+                </Tooltip>
+              )}
             </div>
           </div>
           {/* Top right, at its natural size: in the footer it needed a row of
@@ -1873,7 +2081,7 @@ export function MarketSection(props: MarketSectionProps) {
                       )}
           </div>
         </div>
-        <div className={css.desc}>{desc}</div>
+        <CardDesc text={desc} t={t} />
         <CardShot plugin={p} onOpen={openLightbox} />
         {p.deprecated === true && (
           <div className={css.deprecate}>
@@ -1891,11 +2099,10 @@ export function MarketSection(props: MarketSectionProps) {
           <span className={css.tag}>
             {(data!.categories[p.category] && (data!.categories[p.category]![lang] || data!.categories[p.category]!.en)) || p.category}
           </span>
-          {p.added && <span className={css.metaInline}>{t('published') + ' ' + p.added}</span>}
-          {/* De-emphasized on purpose: almost nobody opens the source
-              before installing, so it rides along with the date instead of
-              claiming a button of its own beside Install. */}
-          <a className={css.src} href={p.url} target="_blank" rel="noreferrer">{(p.added ? ' · ' : '') + t('viewSource')}</a>
+          {/* Published date and a source link used to live here too — both
+              redundant now that the title itself opens the repo, and the
+              date/tag pair alone was long enough in English to wrap onto its
+              own line, splitting one card's footer into two visual rows. */}
           <span className={css.grow} />
         </div>
         {busy && (
@@ -1943,19 +2150,27 @@ export function MarketSection(props: MarketSectionProps) {
               so a different title here would name one plugin two ways in
               one product. */}
           <div style={{ minWidth: 0 }}>
-            <div className={css.nm} title={p.name}>
+            <a className={`${css.nm} ${css.nmLink}`} href={p.url} target="_blank" rel="noreferrer" title={p.name}>
               {pluginName(p.name)}
               {p.deprecated === true && <span className={css.depBadge}>{t('deprecatedBadge')}</span>}
-            </div>
+            </a>
             <div className={css.byline}>
               <OwnerAvatar name={p.name} owner={p.owner || ''} />
-              <span className={css.owner}>{p.owner}</span>
-              {typeof p.downloads === 'number' && <span className={css.star} title={String(p.downloads)}>{'· ↓ ' + formatCount(p.downloads)}</span>}
-              {typeof p.stars === 'number' && <span className={css.star} title={String(p.stars)}>{'· ★ ' + formatCount(p.stars)}</span>}
+              <span className={css.owner} title={p.owner}>{p.owner}</span>
+              {typeof p.downloads === 'number' && (
+                <Tooltip label={String(p.downloads)} side="top">
+                  <span className={css.star}>{'· ↓ ' + formatCount(p.downloads)}</span>
+                </Tooltip>
+              )}
+              {typeof p.stars === 'number' && (
+                <Tooltip label={String(p.stars)} side="top">
+                  <span className={css.star}>{'· ★ ' + formatCount(p.stars)}</span>
+                </Tooltip>
+              )}
             </div>
           </div>
         </div>
-        <div className={css.desc}>{desc}</div>
+        <CardDesc text={desc} t={t} />
         <CardShot plugin={p} onOpen={openLightbox} />
         {p.deprecated === true && (
           <div className={css.deprecate}>
@@ -1970,11 +2185,10 @@ export function MarketSection(props: MarketSectionProps) {
           </div>
         )}
         <div className={css.foot}>
-          {p.added && <span className={css.metaInline}>{t('published') + ' ' + p.added}</span>}
-          {/* De-emphasized on purpose: almost nobody opens the source
-              before installing, so it rides along with the date instead of
-              claiming a button of its own beside Install. */}
-          <a className={css.src} href={p.url} target="_blank" rel="noreferrer">{(p.added ? ' · ' : '') + t('viewSource')}</a>
+          {/* Published date and a source link used to live here too — both
+              redundant now that the title itself opens the repo, and the
+              date/tag pair alone was long enough in English to wrap onto its
+              own line, splitting one card's footer into two visual rows. */}
           <span className={css.grow} />
           {removingName === instName
             ? <Button variant="outline" size="sm" disabled>{t('uninstalling')}</Button>
@@ -2528,22 +2742,14 @@ export function MarketSection(props: MarketSectionProps) {
                           )
                         })()}
                       </div>
-                      <Menu
-                        open={filterOpen}
-                        onClose={() => setFilterOpen(false)}
-                        onSelect={onFilterSelect}
-                        selectedIds={filterSelectedIds}
-                        align="end"
-                        portal
-                        anchor={(
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            icon={filterOpen ? <IconChevronUpOutline14 size={14} /> : <IconChevronDownOutline14 size={14} />}
-                            onClick={() => setFilterOpen(o => !o)}
-                          >{t('filter')}</Button>
-                        )}
-                        items={filterItems}
+                      <FilterMenu
+                        sortField={sortField}
+                        sortDir={sortDir}
+                        timeRange={timeRange}
+                        onSortField={setSortField}
+                        onSortDir={setSortDir}
+                        onTimeRange={setTimeRange}
+                        t={t}
                       />
                       </div>
                     </div>
@@ -2553,59 +2759,14 @@ export function MarketSection(props: MarketSectionProps) {
                       : (
                           <>
                             <div className={css.grid}>{pagePlugins.map(pluginCard)}</div>
-                            <div className={css.pager}>
-                              <div className={css.pagerPages}>
-                                {totalPages > 1 && (
-                                  <>
-                                    <Button variant="outline" size="sm" disabled={currentPage === 1} onClick={() => goToPage(1)} aria-label={t('firstPage')}>«</Button>
-                                    <Button
-                                      variant="outline"
-                                      size="sm"
-                                      icon={<IconChevronLeftOutline14 size={14} />}
-                                      disabled={currentPage === 1}
-                                      onClick={() => goToPage(currentPage - 1)}
-                                    >{t('prevPage')}</Button>
-                                    {pageItems(currentPage, totalPages).map((item, i) => (
-                                      item === '…'
-                                        ? <span key={'e' + i} className={css.pageEllipsis}>…</span>
-                                        : (
-                                            <Button
-                                              key={item}
-                                              variant={item === currentPage ? 'primary' : 'outline'}
-                                              size="sm"
-                                              onClick={() => goToPage(item)}
-                                            >{item}</Button>
-                                          )
-                                    ))}
-                                    <Button
-                                      variant="outline"
-                                      size="sm"
-                                      disabled={currentPage === totalPages}
-                                      onClick={() => goToPage(currentPage + 1)}
-                                    >{t('nextPage')}<IconChevronRightOutline14 size={14} /></Button>
-                                    <Button variant="outline" size="sm" disabled={currentPage === totalPages} onClick={() => goToPage(totalPages)} aria-label={t('lastPage')}>»</Button>
-                                    <span className={css.pageInfo}>{t('pageInfo').replace('{0}', String(currentPage)).replace('{1}', String(totalPages))}</span>
-                                  </>
-                                )}
-                              </div>
-                              <Menu
-                                open={sizeOpen}
-                                onClose={() => setSizeOpen(false)}
-                                onSelect={id => changePageSize(Number(id))}
-                                selectedId={String(pageSize)}
-                                align="end"
-                                portal
-                                anchor={(
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    icon={<IconChevronDownOutline14 size={14} />}
-                                    onClick={() => setSizeOpen(o => !o)}
-                                  >{t('perPage') + ' ' + pageSize}</Button>
-                                )}
-                                items={PAGE_SIZES.map(size => ({ id: String(size), label: String(size) }))}
-                              />
-                            </div>
+                            <Pager
+                              currentPage={currentPage}
+                              totalPages={totalPages}
+                              pageSize={pageSize}
+                              onGoToPage={goToPage}
+                              onChangePageSize={changePageSize}
+                              t={t}
+                            />
                           </>
                         )}
                   </>
@@ -2627,13 +2788,42 @@ export function MarketSection(props: MarketSectionProps) {
                       </div>
                     )
                   })()}
+                  {/* No category row: every entry here already IS the 'theme'
+                    category, so there is nothing left to narrow by — just the
+                    same sort/time-range menu Discover uses, right-aligned. */}
+                  <div className={css.cats}>
+                    <div className={css.catsRow}>
+                      <span className={css.grow} />
+                      <FilterMenu
+                        sortField={themeSortField}
+                        sortDir={themeSortDir}
+                        timeRange={themeTimeRange}
+                        onSortField={setThemeSortField}
+                        onSortDir={setThemeSortDir}
+                        onTimeRange={setThemeTimeRange}
+                        t={t}
+                      />
+                    </div>
+                  </div>
                   {data === null
                     ? <div className={css.loading}><span className={css.logoMark}><MarketLogo size={26} animated /></span>{t('loading')}</div>
-                    : themePlugins.length === 0
+                    : anyThemePlugins.length === 0
                       ? <div className={css.empty}>{t('themeEmpty')}</div>
-                      : filteredThemePlugins.length === 0
+                      : themePlugins.length === 0
                         ? <div className={css.empty}>{t('empty')}</div>
-                        : <div className={css.grid}>{filteredThemePlugins.map(themePluginCard)}</div>}
+                        : (
+                            <>
+                              <div className={css.grid}>{themePagePlugins.map(themePluginCard)}</div>
+                              <Pager
+                                currentPage={themePagination.currentPage}
+                                totalPages={themePagination.totalPages}
+                                pageSize={themePagination.pageSize}
+                                onGoToPage={themePagination.goToPage}
+                                onChangePageSize={themePagination.changePageSize}
+                                t={t}
+                              />
+                            </>
+                          )}
                 </>
               )
             : tab === 'diagnostics'
@@ -3021,7 +3211,6 @@ export function MarketSection(props: MarketSectionProps) {
           open
           onClose={() => { setConfirming(null); setCmdOpen(false) }}
           title={t('confirmTitle') + ' ' + confirming.name + '?'}
-          description={(confirming.description && (confirming.description[lang] || confirming.description.en)) || ''}
           footer={(
             <>
               <Button variant="ghost" onClick={() => { setConfirming(null); setCmdOpen(false) }}>{t('cancel')}</Button>
@@ -3035,15 +3224,30 @@ export function MarketSection(props: MarketSectionProps) {
               is backwards. */}
           <div className={css.byline}>
             <OwnerAvatar name={confirming.name} owner={confirming.owner || ''} />
-            <span className={css.owner}>{confirming.owner}</span>
-            {typeof confirming.downloads === 'number' && <span className={css.star} title={String(confirming.downloads)}>{'· ↓ ' + formatCount(confirming.downloads)}</span>}
-            {typeof confirming.stars === 'number' && <span className={css.star} title={String(confirming.stars)}>{'· ★ ' + formatCount(confirming.stars)}</span>}
+            <span className={css.owner} title={confirming.owner}>{confirming.owner}</span>
+            {typeof confirming.downloads === 'number' && (
+              <Tooltip label={String(confirming.downloads)} side="top">
+                <span className={css.star}>{'· ↓ ' + formatCount(confirming.downloads)}</span>
+              </Tooltip>
+            )}
+            {typeof confirming.stars === 'number' && (
+              <Tooltip label={String(confirming.stars)} side="top">
+                <span className={css.star}>{'· ★ ' + formatCount(confirming.stars)}</span>
+              </Tooltip>
+            )}
             <span className={css.grow} />
             <span className={css.tag}>
               {(data!.categories[confirming.category] && (data!.categories[confirming.category]![lang] || data!.categories[confirming.category]!.en)) || confirming.category}
             </span>
           </div>
           {confirming.added && <div className={css.metaInline}>{t('published') + ' ' + confirming.added}</div>}
+          {/* The Modal primitive's own `description` prop is sized for a
+              one-line subtitle under the title — a full plugin description
+              rendered there read as an oversized heading, not body text
+              (reported on a real host). Rendering it here, at the card's own
+              size, also matches the card's own reading order: name, byline,
+              description, then screenshots. */}
+          <CardDesc text={(confirming.description && (confirming.description[lang] || confirming.description.en)) || ''} t={t} />
           <ScreenshotStrip plugin={confirming} onOpen={openLightbox} />
           <DisclosureRow
             icon={<IconCodeOutline16 size={16} />}

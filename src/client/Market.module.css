@@ -6,7 +6,7 @@
  * primitive (progress bar, banners, tabs, swatches). */
 
 .root{height:100%;display:flex;flex-direction:column;min-width:0;color:var(--dsw-alias-label-primary,#1f2328);position:relative}
-.head{display:flex;flex-direction:column;gap:12px;padding:4px 4px 12px}
+.head{display:flex;flex-direction:column;gap:12px;padding:4px 4px 6px}
 .title{font-size:16px;line-height:24px;font-weight:500;margin:0}
 .sub{display:flex;align-items:center;gap:8px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#8b93a1);margin:0}
 .submitLink{font-size:11px;line-height:18px;color:var(--dsw-alias-label-tertiary,#8b93a1);text-decoration:none;white-space:nowrap}
@@ -56,7 +56,7 @@
 .catsWrap{display:flex;gap:6px;flex-wrap:wrap;flex:1;min-width:0;align-items:center}
 .catsCollapsed{max-height:62px;overflow:hidden}
 .catsToggle.catsToggle{height:26px;min-height:26px;padding:0 6px;color:var(--dsw-alias-label-secondary,#6b7280)}
-.shots{display:flex;gap:8px;overflow-x:auto;padding:2px 0 6px;margin:0 0 8px;-webkit-overflow-scrolling:touch;scrollbar-width:thin}
+.shots{display:flex;gap:8px;overflow-x:auto;padding:2px 0 6px;margin:6px 0 8px;-webkit-overflow-scrolling:touch;scrollbar-width:thin}
 /* width, not just max-width — a slot with only a height reservation still
    collapses to zero width until the image loads, so the strip snaps wider
    the instant each one arrives instead of holding its place from the start. */
@@ -124,7 +124,15 @@
    header — you take in who wrote it in one glance and spend the rest on
    what it is. */
 .nm{font-weight:600;font-size:15px;line-height:22px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.byline{display:flex;align-items:center;gap:6px;min-width:0;margin-top:2px}
+.nmLink{color:inherit;text-decoration:none}
+.nmLink:hover{color:var(--dsw-alias-brand-primary,#4f6ef7);text-decoration:underline}
+/* flex-wrap so a long owner name pushes the download/star counts to a
+   second line instead of squeezing the name itself toward unreadable: an
+   ellipsized span's own min-content width is 0 (overflow:hidden zeroes the
+   automatic minimum), so without `.owner`'s explicit min-width below, the
+   row never wraps — it just keeps shrinking the name past legibility while
+   the fixed-width counts stay whole. */
+.byline{display:flex;align-items:center;gap:6px;min-width:0;margin-top:2px;flex-wrap:wrap}
 /* Second line under the byline: the publish date, moved off the crowded
    owner/downloads/stars row for visual balance (reported once downloads
    joined stars on that line). */
@@ -132,9 +140,20 @@
 .metaInline{font-size:11px;color:var(--dsw-alias-label-secondary,#9ca3af)}
 /* The author name is the only variable-length part, so it is the only part
    that shrinks; the counts stay whole because a truncated one is not a fact. */
-.owner{font-size:11px;color:var(--dsw-alias-label-secondary,#9ca3af);flex:0 1 auto;min-width:0;
+.owner{font-size:11px;color:var(--dsw-alias-label-secondary,#9ca3af);flex:0 1 auto;min-width:44px;
        overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.desc{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#8b93a1);min-height:36px;margin:0}
+.desc{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#8b93a1);margin:0}
+/* A FIXED 5-line slot (not just a cap): a one-line description reserves the
+   same 90px as a five-line one, so every card in a row starts its thumbnail
+   strip/footer at the same y — a clamp with no floor still let a short card
+   end early and a long one run to five lines, which read as the grid itself
+   being uneven (reported on a real host: several cards mid-row landing at
+   visibly different heights). The toggle in CardDesc removes this class, so
+   nothing here caps the expanded height. */
+.descClamp{display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden;height:90px}
+.descToggle{display:flex;align-items:center;justify-content:center;width:20px;height:16px;margin-top:2px;
+            color:var(--dsw-alias-label-tertiary,#8b93a1);background:none;border:none;padding:0;cursor:pointer}
+.descToggle:hover{color:var(--dsw-alias-brand-primary,#4f6ef7)}
 .foot{display:flex;align-items:center;gap:8px;flex-wrap:wrap;row-gap:8px}
 .foot .metaInline,.foot .src{white-space:nowrap}
 .grow{flex:1}
@@ -334,7 +353,7 @@
 .irowMissing{filter:grayscale(1);opacity:.5}
 .irow>.src,.irow>.owner{white-space:nowrap;flex-shrink:0}
 .irow button{white-space:nowrap;flex-shrink:0}
-.tabSearchRow{display:flex;padding:0 4px 10px}
+.tabSearchRow{display:flex;padding:0 4px 6px}
 .tabSearch{width:100%}
 /* Buttons sharing the row with a description must keep one line (#26, thanks @yanshuai2002) */
 .spec{font-size:11px;color:var(--dsw-alias-label-secondary,#9ca3af);font-family:ui-monospace,Menlo,monospace;overflow-wrap:anywhere;min-width:0}
