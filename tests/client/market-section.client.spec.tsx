@@ -103,6 +103,18 @@ describe('MarketSection (jsdom)', () => {
     expect(screen.getAllByRole('button', { name: en.install }).length).toBeGreaterThanOrEqual(3)
   })
 
+  it('gives every plugin card a repo link in its top-right corner', async () => {
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    for (const p of REGISTRY.plugins) {
+      const card = screen.getByText(p.name).closest('div[class*="card"]') as HTMLElement
+      const link = within(card).getByRole('link', { name: en.repoLink }) as HTMLAnchorElement
+      expect(link.href).toBe(p.url)
+      expect(link.target).toBe('_blank')
+      expect(link.rel).toContain('noreferrer')
+    }
+  })
+
   it('groups Backup & Restore and Diagnostics under an Advanced tab, not as top-level peers', async () => {
     render(<MarketSection {...props()} />)
     await screen.findByText('dsh-loop')
