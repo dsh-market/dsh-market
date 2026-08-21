@@ -145,6 +145,12 @@
 .card{background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:12px;padding:12px 14px;display:flex;flex-direction:column;gap:12px;align-self:start}
 .row1{display:flex;align-items:flex-start;gap:10px;min-width:0}
 .cardAction{flex-shrink:0;display:inline-flex;align-items:center}
+/* The card head's right side stacks the quiet repo link above the action:
+   in one row the 11px link and the button fought for a shared baseline, and
+   the taller button pushed the link off the card's top edge. */
+.cardHeadRight{display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0}
+.cardRepoLink{font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary,#9ca3af);text-decoration:none}
+.cardRepoLink:hover{color:var(--dsw-alias-brand-primary,#4f6ef7)}
 .installBtn.installBtn{min-width:64px}
 .av{width:16px;height:16px;border-radius:50%;display:grid;place-items:center;font-weight:700;color:#fff;font-size:9px;flex-shrink:0;object-fit:cover;background:var(--dsw-alias-bg-layer-2,#f3f4f6)}
 /* The plugin name carries the card, so it is the one thing sized up; the

@@ -2174,31 +2174,37 @@ export function MarketSection(props: MarketSectionProps) {
           </div>
           {/* Top right, at its natural size: in the footer it needed a row of
               its own once the cards went two-up, which cost every card that
-              height whether or not it had anything else to say. */}
+              height whether or not it had anything else to say. The repo link
+              stacks above the action: in one row the 11px text and the button
+              fought for a shared baseline. The title opens the repo too, but a
+              link that only shows under the cursor is easy to never find. */}
           <span className={css.grow} />
-          <div className={css.cardAction}>
-            {done
-              ? <span className={css.okState}>{t('installedBadge')}</span>
-              : already
-                ? <span className={css.okState}>{t('alreadyInstalled')}</span>
-                : busy
-                  ? <Button variant="primary" size="sm" className={css.installBtn} disabled>{t('installing')}</Button>
-                  : blocked
-                    ? (
-                        <button type="button" className={css.cardBlockedMark} onClick={openOperations}>
-                          <IconWarningOutline16 size={13} />
-                          {t('opBlockedCard')}
-                        </button>
-                      )
-                    : (
-                        <Button
-                          variant="primary"
-                          size="sm"
-                          className={css.installBtn}
-                          disabled={busyUrl !== null || !envReady}
-                          onClick={() => setConfirming(p)}
-                        >{t('install')}</Button>
-                      )}
+          <div className={css.cardHeadRight}>
+            <a className={css.cardRepoLink} href={p.url} target="_blank" rel="noreferrer" title={p.url}>{t('repoLink')}</a>
+            <div className={css.cardAction}>
+              {done
+                ? <span className={css.okState}>{t('installedBadge')}</span>
+                : already
+                  ? <span className={css.okState}>{t('alreadyInstalled')}</span>
+                  : busy
+                    ? <Button variant="primary" size="sm" className={css.installBtn} disabled>{t('installing')}</Button>
+                    : blocked
+                      ? (
+                          <button type="button" className={css.cardBlockedMark} onClick={openOperations}>
+                            <IconWarningOutline16 size={13} />
+                            {t('opBlockedCard')}
+                          </button>
+                        )
+                      : (
+                          <Button
+                            variant="primary"
+                            size="sm"
+                            className={css.installBtn}
+                            disabled={busyUrl !== null || !envReady}
+                            onClick={() => setConfirming(p)}
+                          >{t('install')}</Button>
+                        )}
+            </div>
           </div>
         </div>
         <CardDesc text={desc} t={t} />
@@ -2268,7 +2274,9 @@ export function MarketSection(props: MarketSectionProps) {
           {/* Same header as the discover card, and it has to stay that way:
               the themes tab lists the same plugins from the same catalog,
               so a different title here would name one plugin two ways in
-              one product. */}
+              one product. Including the repo link: the themes tab's card is
+              a plugin card first, so its top-right corner says where the
+              plugin comes from just like the discover card does. */}
           <div style={{ minWidth: 0 }}>
             <a className={`${css.nm} ${css.nmLink}`} href={p.url} target="_blank" rel="noreferrer" title={p.name}>
               {pluginName(p.name)}
@@ -2288,6 +2296,10 @@ export function MarketSection(props: MarketSectionProps) {
                 </Tooltip>
               )}
             </div>
+          </div>
+          <span className={css.grow} />
+          <div className={css.cardHeadRight}>
+            <a className={css.cardRepoLink} href={p.url} target="_blank" rel="noreferrer" title={p.url}>{t('repoLink')}</a>
           </div>
         </div>
         <CardDesc text={desc} t={t} />
