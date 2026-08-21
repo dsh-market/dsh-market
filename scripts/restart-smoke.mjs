@@ -18,9 +18,18 @@ assert.equal(trustedRestartRequest({
   headers: { ...request('127.0.0.1').headers, 'x-forwarded-for': '127.0.0.1' },
 }), false)
 
-assert.equal(restartAllowed({}), true)
-assert.equal(restartAllowed({ allowRestart: true }), true)
-assert.equal(restartAllowed({ allowRestart: false }), false)
+// Explicitly parameterised rather than reading the ambient environment:
+// this script runs on CI runners, which ARE systemd units, so their jobs
+// inherit INVOCATION_ID. An ambient `restartAllowed({})` therefore asserts
+// something different on a runner than on a laptop — which is exactly how
+// this caught the first, too-loose version of the detection (#229).
+assert.equal(restartAllowed({}, {}, 4242), true)
+assert.equal(restartAllowed({ allowRestart: true }, {}, 4242), true)
+assert.equal(restartAllowed({ allowRestart: false }, {}, 4242), false)
+// Supervised: marker AND being the unit's own main process (ppid 1).
+assert.equal(restartAllowed({}, { INVOCATION_ID: 'x' }, 1), false)
+// Inherited marker under an ordinary parent must NOT read as supervised.
+assert.equal(restartAllowed({}, { INVOCATION_ID: 'x' }, 4242), true)
 
 const originalArgv = [...process.argv]
 try {

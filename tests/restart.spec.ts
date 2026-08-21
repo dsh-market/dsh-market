@@ -128,27 +128,40 @@ describe('supervisor detection gates self-restart (#229)', () => {
   // the market killed a production service and nothing came back.
   // allowRestart:false was always the answer, but it was opt-in and nothing
   // told the operator to opt in until after they had lost the service.
-  it('names the supervisor from the marker each one sets for its own children', () => {
-    expect(detectedSupervisor({ INVOCATION_ID: 'abc123' })).toBe('systemd')
-    expect(detectedSupervisor({ JOURNAL_STREAM: '8:12345' })).toBe('systemd')
-    expect(detectedSupervisor({ pm_id: '0' })).toBe('pm2')
-    expect(detectedSupervisor({})).toBeNull()
+  it('names systemd only when this process IS the unit, not merely descended from one', () => {
+    // ppid 1 = systemd forked us as a service's main process.
+    expect(detectedSupervisor({ INVOCATION_ID: 'abc123' }, 1)).toBe('systemd')
+    expect(detectedSupervisor({ JOURNAL_STREAM: '8:12345' }, 1)).toBe('systemd')
+    expect(detectedSupervisor({}, 1)).toBeNull()
     // Present-but-empty is not a marker: an exported-and-cleared variable
     // must not read as "supervised".
-    expect(detectedSupervisor({ INVOCATION_ID: '' })).toBeNull()
+    expect(detectedSupervisor({ INVOCATION_ID: '' }, 1)).toBeNull()
+  })
+
+  it('does NOT claim systemd for a mere descendant of a unit — the env var is inherited', () => {
+    // The failure this guards is the one this repo's own restart smoke test
+    // caught: a CI runner is a systemd unit, so its jobs inherit
+    // INVOCATION_ID, as does any terminal descended from a user-session
+    // unit. Reading inheritance as ownership would hide the button on a
+    // large population of hosts where restart works fine — a worse bug than
+    // the one being fixed.
+    expect(detectedSupervisor({ INVOCATION_ID: 'abc123' }, 4242)).toBeNull()
+    expect(detectedSupervisor({ JOURNAL_STREAM: '8:12345' }, 4242)).toBeNull()
   })
 
   it('defaults restart OFF under a detected supervisor and ON without one', () => {
-    expect(restartAllowed({}, {})).toBe(true)
-    expect(restartAllowed({}, { INVOCATION_ID: 'abc123' })).toBe(false)
+    expect(restartAllowed({}, {}, 1)).toBe(true)
+    expect(restartAllowed({}, { INVOCATION_ID: 'abc123' }, 1)).toBe(false)
+    // Inherited marker, ordinary parent: still allowed.
+    expect(restartAllowed({}, { INVOCATION_ID: 'abc123' }, 4242)).toBe(true)
   })
 
   it('lets an explicit setting win in BOTH directions', () => {
     // An operator whose unit is configured for it (KillMode=process, or a
     // wrapper that survives) is describing their own deployment; detection
     // is a default, not an override.
-    expect(restartAllowed({ allowRestart: true }, { INVOCATION_ID: 'abc123' })).toBe(true)
+    expect(restartAllowed({ allowRestart: true }, { INVOCATION_ID: 'abc123' }, 1)).toBe(true)
     // ...and the documented opt-out still works with no supervisor detected.
-    expect(restartAllowed({ allowRestart: false }, {})).toBe(false)
+    expect(restartAllowed({ allowRestart: false }, {}, 4242)).toBe(false)
   })
 })
