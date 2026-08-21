@@ -51,7 +51,7 @@ dsh plugin --profile web add dshmarket
 
 ## 速度
 
-只要插件发布了 npm 包（registry 会校验其 repository 指回同一仓库,防冒名）,安装即走 npm tarball 而非整仓 GitHub 下载——通常秒级;仅 GitHub 分发的插件取决于你到 GitHub 的网络。
+安装依次优先使用经仓库验证的 npm 包、作者提供的 GitHub Release 预构建 tarball，最后才回退到整仓 GitHub 源码下载。预构建安装通常只需数秒且无需执行本地构建脚本；仅提供源码的插件仍取决于你到 GitHub 的网络。
 
 ## 安全
 

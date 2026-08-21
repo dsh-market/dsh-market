@@ -65,15 +65,33 @@ describe('local GitHub source identity (#141)', () => {
 })
 
 describe('installTargetFor', () => {
-  it('prefers curated npm, targets subpaths via #path:, falls back to github, refuses the rest', () => {
-    expect(installTargetFor({ url: 'https://github.com/o/r', npm: 'dsh-loop' })).toBe('dsh-loop')
+  const tarball = 'https://github.com/o/r/releases/download/v1.2.3/dsh-loop-1.2.3.tgz'
+
+  it('prefers curated npm, then a prebuilt release tarball, before github source', () => {
+    expect(installTargetFor({ url: 'https://github.com/o/r', npm: 'dsh-loop', tarball })).toBe('dsh-loop')
     expect(installTargetFor({ url: 'https://github.com/o/r', npm: '@scope/pkg' })).toBe('@scope/pkg')
-    // A malformed npm name never reaches pnpm — fall back to the repo.
-    expect(installTargetFor({ url: 'https://github.com/o/r', npm: 'evil;rm -rf' })).toBe('github:o/r')
+    expect(installTargetFor({ url: 'https://github.com/o/r', tarball })).toBe(tarball)
+    expect(installTargetFor({
+      url: 'https://github.com/o/r',
+      npm: 'evil;rm -rf',
+      tarball: 'https://release-assets.githubusercontent.com/github-production-release-asset/file.tar.gz',
+    })).toBe('https://release-assets.githubusercontent.com/github-production-release-asset/file.tar.gz')
     expect(installTargetFor({ url: 'https://github.com/o/r/tree/main/packages/x' }))
       .toBe('github:o/r#path:/packages/x')
     expect(installTargetFor({ url: 'https://github.com/o/r' })).toBe('github:o/r')
-    expect(installTargetFor({ url: 'https://gitlab.com/o/r' })).toBeNull()
+    expect(installTargetFor({ url: 'https://gitlab.com/o/r', tarball })).toBeNull()
+  })
+
+  it('refuses non-release, foreign, insecure, and malformed tarball targets', () => {
+    for (const rejected of [
+      'https://github.com/o/r/archive/main.tar.gz',
+      'https://example.com/dsh-loop.tgz',
+      'http://github.com/o/r/releases/download/v1/dsh-loop.tgz',
+      'https://github.com/o/r/releases/download/v1/dsh-loop.zip',
+      '--config.ignore-scripts=false',
+    ]) {
+      expect(installTargetFor({ url: 'https://github.com/o/r', tarball: rejected })).toBe('github:o/r')
+    }
   })
 })
 

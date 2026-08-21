@@ -15,6 +15,7 @@ export interface RegistryPlugin {
   owner: string
   url: string
   npm?: string
+  tarball?: string | null
   category: string
   description?: LocalizedText
   stars?: number
