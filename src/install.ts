@@ -92,9 +92,37 @@ export async function withHoistRecovery(run: PluginRunner, profile: string, plug
     // gone (the name carries it), so a live download is never touched.
     await cleanOrphanedStore(run, profile)
     const failure = classifyPnpmFailure(`${result.stderr}\n${result.stdout}`)
-    if (failure !== null) result = { ...result, stderr: `${result.stderr}\n\n${failure.message}` }
+    if (failure !== null) {
+      result = { ...result, stderr: `${result.stderr}\n\n${failure.message}` }
+    } else if (result.pnpmError !== undefined && result.pnpmError !== '') {
+      // Nothing matched, but pnpm DID say what went wrong — in its ndjson
+      // stream, which never reaches stderr. Without this the user is shown
+      // the tail of dsh's wrapper output ("pnpm failed in profile
+      // directory …"), which is byte-identical for every possible cause and
+      // is why #244, #192 and #138 all read as "the UI shows a stack tail".
+      //
+      // An unrecognized error is exactly the case where the raw text is
+      // worth the most: a classified one has a written explanation, this one
+      // has only pnpm's own words, and hiding them leaves nothing at all.
+      const code = result.pnpmErrorCode === undefined ? '' : `${result.pnpmErrorCode}: `
+      result = { ...result, stderr: `${result.stderr}\n\n${code}${result.pnpmError}` }
+    }
   }
   return result
+}
+
+/**
+ * The most specific description of a failed run available, for logs.
+ *
+ * pnpm's structured error beats the stderr tail whenever there is one — see
+ * withHoistRecovery above for why the tail is nearly worthless here.
+ */
+export function failureDetail(result: InstallResult, limit = 300): string {
+  if (result.pnpmError !== undefined && result.pnpmError !== '') {
+    const code = result.pnpmErrorCode === undefined ? '' : `${result.pnpmErrorCode}: `
+    return `${code}${result.pnpmError}`.slice(0, limit)
+  }
+  return (result.stderr || result.stdout).slice(-limit)
 }
 
 /**

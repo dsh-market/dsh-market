@@ -210,6 +210,20 @@ export interface InstallResult {
   busy?: boolean
   /** Package names pnpm reported as having ignored build scripts (ndjson). */
   ignoredBuilds?: string[]
+  /**
+   * pnpm's OWN error message and code, from its structured ndjson stream
+   * (#244).
+   *
+   * Without this the only thing a failure could report was the tail of
+   * stderr — which for a market install is dsh's wrapper line, "pnpm failed
+   * in profile directory …", identical for every possible cause. pnpm's
+   * real error never went to stderr at all; it goes to the ndjson stdout
+   * this already parses for progress, and was being thrown away on the way
+   * out. Three separate reports (#244, #192, #138) are all "the UI shows a
+   * stack tail and nothing else".
+   */
+  pnpmError?: string
+  pnpmErrorCode?: string
 }
 
 /** The shape every orchestration function takes to run plugin commands (injectable in tests). */
@@ -617,12 +631,15 @@ export function runDshPlugin(profile: string, pluginArgs: string[]): Promise<Ins
       const failed = code !== 0 || timedOut
       if (failed) progress.error = tracker.snapshot.error
       const ignoredBuilds = tracker.snapshot.ignoredBuilds
+      const { error: pnpmError, errorCode: pnpmErrorCode } = tracker.snapshot
       resolvePromise({
         exitCode: code,
         timedOut,
         stdout,
         stderr,
         cancelled: cancelRequested,
+        ...(pnpmError !== null ? { pnpmError } : {}),
+        ...(pnpmErrorCode !== null ? { pnpmErrorCode } : {}),
         ...(ignoredBuilds.length > 0 ? { ignoredBuilds } : {}),
       })
     })
@@ -710,6 +727,7 @@ export function createDesktopPluginRuntime(
         const failed = outcome.exitCode !== 0 || outcome.signal !== null || timedOut
         if (failed) progress.error = tracker.snapshot.error
         const ignoredBuilds = tracker.snapshot.ignoredBuilds
+        const { error: pnpmError, errorCode: pnpmErrorCode } = tracker.snapshot
         return {
           exitCode: outcome.exitCode,
           timedOut,
@@ -717,6 +735,8 @@ export function createDesktopPluginRuntime(
           stderr,
           cancelled: active.userCancelled,
           ...(ignoredBuilds.length > 0 ? { ignoredBuilds } : {}),
+          ...(pnpmError !== null ? { pnpmError } : {}),
+          ...(pnpmErrorCode !== null ? { pnpmErrorCode } : {}),
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)

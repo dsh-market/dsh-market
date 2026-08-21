@@ -394,6 +394,10 @@
    sat at a different x on every row. Packed left, state and switch land at
    the same place regardless of what follows them. */
 .irowActions{display:flex;align-items:center;justify-content:flex-start;gap:8px;flex-wrap:wrap;min-width:0}
+/* The status tag and Uninstall travel together: nowrap so they never split
+   across lines, min-width:0 so the group can still shrink (the tag inside
+   ellipsizes) rather than forcing the whole row wider (#242). */
+.irowTrailing{display:inline-flex;align-items:center;gap:8px;flex-wrap:nowrap;min-width:0}
 .irowMissing{filter:grayscale(1);opacity:.5}
 .irow>.src,.irow>.owner{white-space:nowrap;flex-shrink:0}
 .irow button{white-space:nowrap;flex-shrink:0}

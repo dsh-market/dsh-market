@@ -89,6 +89,14 @@ Installs prefer npm tarballs over full-repo GitHub downloads whenever a plugin p
 
 Fetched live on every open from [awesome-dsh-plugin.com/plugins.json](https://awesome-dsh-plugin.com/plugins.json) — curated entries, npm mapping, and star counts refreshed daily by CI, with no stale cache behind it. A failure reports the actual reason and elapsed time, with a Retry button.
 
+There is deliberately no bundled snapshot to fall back on: for a catalog that grows daily, a stale answer is not a degraded one but a wrong one — a plugin published this morning would read as "does not exist".
+
+**If that host is unreachable from your network**, point the market at a mirror instead. Set `DSHM_REGISTRY_URL` in the environment dsh runs in, to anything serving the same `plugins.json` shape:
+
+```sh
+DSHM_REGISTRY_URL=https://your-mirror.example/plugins.json dsh web
+```
+
 ## Friends
 
 ### DSH Desktop (dataelement)

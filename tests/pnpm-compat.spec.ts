@@ -122,3 +122,32 @@ describe('provisionHint (#142 / #108 / #32)', () => {
     expect(provisionHint('', 'some unknown failure')).toBeUndefined()
   })
 })
+
+describe('ERR_PNPM_UNEXPECTED_STORE (#244)', () => {
+  const OUTPUT = ` ERR_PNPM_UNEXPECTED_STORE  Unexpected store location
+The dependencies at "C:\\Users\\lenovo\\.dsh\\profiles\\web\\node_modules" are currently linked from the store at "C:\\Users\\lenovo\\.pnpm-store\\v11".
+pnpm now wants to use the store at "C:\\Users\\lenovo\\AppData\\Local\\pnpm\\store\\v11" to link dependencies.`
+
+  it('recognizes it and names BOTH store paths, which is what the user has to act on', () => {
+    const failure = classifyPnpmFailure(OUTPUT)
+    expect(failure?.code).toBe('unexpected-store')
+    // The linked store comes first: it is the one to pass to --store-dir.
+    expect(failure?.message).toContain('C:\\Users\\lenovo\\.pnpm-store\\v11')
+    expect(failure?.message).toContain('C:\\Users\\lenovo\\AppData\\Local\\pnpm\\store\\v11')
+    expect(failure?.message).toContain('--store-dir')
+  })
+
+  it('is NOT marked recoverable — the market must not relink a whole node_modules on a guess', () => {
+    // `recoverable` drives an automatic `pnpm install` retry. On pnpm 11 the
+    // store can only be set by CLI flag, so self-healing would mean adopting
+    // whatever path .modules.yaml names — possibly stale, or on a drive that
+    // is gone — and relinking everything to do it.
+    expect(classifyPnpmFailure(OUTPUT)?.recoverable).toBe(false)
+  })
+
+  it('still classifies when the paths cannot be parsed, rather than falling through', () => {
+    const failure = classifyPnpmFailure('ERR_PNPM_UNEXPECTED_STORE something reworded upstream')
+    expect(failure?.code).toBe('unexpected-store')
+    expect(failure?.message).toContain('--store-dir')
+  })
+})

@@ -30,7 +30,7 @@ import { analyzeProfile, type DuplicateName } from './check.ts'
 import { applyBundleOrder, mergeOrder, readBundleRules, readBundleStack, validateOrder } from './order.ts'
 import { trialValidate } from './trial.ts'
 import { findInstalledAlias, gitAllowBuildsKey, installTargetFor } from './sources.ts'
-import { groupConflictsByOwner, isStaleUpdate, parseIgnoredBuilds, parsePrepareNotAllowed, RELEASE_AGE_OVERRIDE, retargetCollections, validateAddedPlugins, withHoistRecovery } from './install.ts'
+import { failureDetail, groupConflictsByOwner, isStaleUpdate, parseIgnoredBuilds, parsePrepareNotAllowed, RELEASE_AGE_OVERRIDE, retargetCollections, validateAddedPlugins, withHoistRecovery } from './install.ts'
 import { asChannel, CHANNELS, DIST_TAG, resolveChannel, type Channel } from './channels.ts'
 import { checkUpdates, fetchNpmLatest, invalidateUpdates, isUpgrade, latestPublishedRecently, versionOnChannel } from './updates.ts'
 import { createThemeManager, type LoaderEntry } from './themes.ts'
@@ -372,7 +372,7 @@ export function mountMarketRoutes(
     const reinstall = await runPlugin(config.profile, ['--no-frozen-lockfile', RELEASE_AGE_OVERRIDE, 'install'])
     const ok = reinstall.exitCode === 0 && !reinstall.timedOut && !reinstall.cancelled
     if (ok) logEvent('info', 'update', `${name}: previous build rematerialized (${rolledBack.join(', ')})`)
-    return { ok, detail: ok ? null : (reinstall.stderr || reinstall.stdout).slice(-300) }
+    return { ok, detail: ok ? null : failureDetail(reinstall) }
   }
 
   interface PendingRollback {
@@ -407,7 +407,7 @@ export function mountMarketRoutes(
     restoreManifestDeps(config.profile, manifestBefore, activeProfileDir)
     const add = await runPlugin(config.profile, ['add', RELEASE_AGE_OVERRIDE, `${target}#${beforeCommit}`])
     if (add.exitCode !== 0 || add.timedOut || add.cancelled) {
-      return { ok: false, detail: (add.stderr || add.stdout).slice(-300) }
+      return { ok: false, detail: failureDetail(add) }
     }
     // pnpm wrote a commit-pinned spec; the profile's durable spec must stay
     // the original `github:owner/repo` form. The lockfile keeps the restored
@@ -420,7 +420,7 @@ export function mountMarketRoutes(
   async function removeInstalledPackage(name: string): Promise<{ ok: boolean; hot: boolean; detail: string | null }> {
     const result = await runPlugin(config.profile, ['remove', name])
     if (result.exitCode !== 0 || result.timedOut || result.cancelled) {
-      return { ok: false, hot: false, detail: (result.stderr || result.stdout).slice(-300) }
+      return { ok: false, hot: false, detail: failureDetail(result) }
     }
     // Both cleanups run — see the uninstall route's note on #213: a package
     // with two activation sources must not have the second one skipped
@@ -503,7 +503,7 @@ export function mountMarketRoutes(
             }
             continue
           }
-          errors.push({ name, error: (item.stderr || item.stdout || 'pnpm failed').trim().slice(-300) })
+          errors.push({ name, error: failureDetail(item).trim() || 'pnpm failed' })
         } catch (error) {
           errors.push({ name, error: error instanceof Error ? error.message : String(error) })
         }
@@ -1445,7 +1445,7 @@ export function mountMarketRoutes(
             // approve-and-retry banner the install flow has had since #6.
             const ignoredBuilds = ok || cancelled ? undefined : blockedBuilds(result)
             logEvent(ok || cancelled ? 'info' : 'error', 'update',
-              `${name} -> ${target} exit=${String(result.exitCode)}${result.timedOut ? ' TIMEOUT' : ''}${cancelled ? ' CANCELLED' : ''}${stale ? ` STALE(${staleReason ?? 'unknown'})` : ''}${ok || cancelled ? '' : ` stderr=${result.stderr.slice(-300)}`}`)
+              `${name} -> ${target} exit=${String(result.exitCode)}${result.timedOut ? ' TIMEOUT' : ''}${cancelled ? ' CANCELLED' : ''}${stale ? ` STALE(${staleReason ?? 'unknown'})` : ''}${ok || cancelled ? '' : ` err=${failureDetail(result)}`}`)
             // A user-cancelled run is a quiet outcome, not an error.
             sendJson(response, ok || cancelled ? 200 : result.busy === true ? 409 : 502, {
               ok,
@@ -1891,7 +1891,7 @@ export function mountMarketRoutes(
               writeMarketState(activeProfileDir, { disabled, groups, groupOrder })
             }
             logEvent(ok || cancelled ? 'info' : 'error', 'uninstall',
-              `${name} exit=${String(result.exitCode)}${cancelled ? ' CANCELLED' : ''}${ok ? ` live-removed=${String(hot)}` : cancelled ? '' : ` stderr=${result.stderr.slice(-300)}`}`)
+              `${name} exit=${String(result.exitCode)}${cancelled ? ' CANCELLED' : ''}${ok ? ` live-removed=${String(hot)}` : cancelled ? '' : ` err=${failureDetail(result)}`}`)
             sendJson(response, ok || cancelled ? 200 : result.busy === true ? 409 : 502, {
               ok,
               cancelled: cancelled || undefined,
@@ -2195,7 +2195,7 @@ export function mountMarketRoutes(
               }
             }
             logEvent(ok || cancelled ? 'info' : 'error', 'install',
-              `${target} exit=${String(result.exitCode)}${result.timedOut ? ' TIMEOUT' : ''}${cancelled ? ' CANCELLED' : ''}${ok ? ` hot=${String(hot)}` : cancelled ? '' : ` stderr=${result.stderr.slice(-300)}`}`)
+              `${target} exit=${String(result.exitCode)}${result.timedOut ? ' TIMEOUT' : ''}${cancelled ? ' CANCELLED' : ''}${ok ? ` hot=${String(hot)}` : cancelled ? '' : ` err=${failureDetail(result)}`}`)
             const ignoredBuilds = blockedBuilds(result)
             sendJson(response, ok || cancelled ? 200 : result.busy === true ? 409 : 502, {
               ok,

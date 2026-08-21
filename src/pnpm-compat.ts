@@ -37,6 +37,7 @@ export function pluginArgsFor(profileDir: string, pluginArgs: string[]): string[
 export interface PnpmFailure {
   code: 'adding-to-root' | 'not-a-workspace' | 'hoist-pattern-diff' | 'pnpm-missing' | 'release-age-violation'
     | 'ignored-builds' | 'git-prepare-not-allowed' | 'fetch-404' | 'transient-network' | 'fetch-timeout'
+    | 'unexpected-store'
   /** Bilingual, actionable message shown to the user instead of the raw wall of text. */
   message: string
   /** True when re-running `pnpm install` in the profile is the documented recovery. */
@@ -81,6 +82,34 @@ export function classifyPnpmFailure(output: string): PnpmFailure | null {
       code: 'hoist-pattern-diff',
       recoverable: true,
       message: 'profile 的 node_modules 是旧版 pnpm 创建的，与当前 pnpm 的默认配置不兼容，需要重建后重试 / this profile\'s node_modules was created by a different pnpm major; it must be rebuilt (pnpm install) before changes can be applied',
+    }
+  }
+  // #244: the store recorded in node_modules/.modules.yaml is not the one
+  // this pnpm resolves by default (a pnpm upgrade, or a machine where
+  // ~/.pnpm-store predates the %LOCALAPPDATA% default). pnpm 11's
+  // checkCompatibility then refuses EVERY add and remove, so nothing in the
+  // market works until the profile is relinked.
+  //
+  // No automatic recovery, deliberately. The reporter established that on
+  // pnpm 11 `store-dir` is honoured from NOTHING but the CLI flag — not the
+  // project .npmrc, not the user .npmrc, not pnpm-workspace.yaml in either
+  // casing — so the only self-heal available is to re-run with
+  // --store-dir pointed at whatever .modules.yaml happens to name. That
+  // silently adopts a store path which may be stale, wrong, or on a drive
+  // that no longer exists, and it relinks the entire node_modules to do it:
+  // a repair that goes wrong here leaves a profile in worse shape than the
+  // clear error it replaced. The paths are in the message; the choice is
+  // the user's.
+  if (output.includes('ERR_PNPM_UNEXPECTED_STORE')) {
+    const linked = /currently linked from the store at "([^"]+)"/.exec(output)?.[1]
+    const wanted = /wants to use the store at "([^"]+)"/.exec(output)?.[1]
+    const detail = linked !== undefined && wanted !== undefined
+      ? `\n  node_modules → ${linked}\n  pnpm 现在想用 / pnpm now wants → ${wanted}`
+      : ''
+    return {
+      code: 'unexpected-store',
+      recoverable: false,
+      message: `这个 profile 的 node_modules 链接到的 pnpm store，和当前 pnpm 默认使用的 store 不是同一个，pnpm 因此拒绝所有安装与卸载。${detail}\n在 profile 目录里执行一次 \`pnpm install --store-dir <上面第一个路径>\` 重新链接即可（dsh 运行时可能占用文件，必要时先退出 dsh）/ this profile's node_modules is linked to a different pnpm store than the one pnpm now resolves, so pnpm refuses every install and uninstall.${detail}\nRelink by running \`pnpm install --store-dir <the first path above>\` once in the profile directory (stop dsh first if files are locked)`,
     }
   }
   if (output.includes('ERR_PNPM_ADDING_TO_ROOT')) {

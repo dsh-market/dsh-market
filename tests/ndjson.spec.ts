@@ -108,7 +108,35 @@ describe('pnpm ndjson progress parser', () => {
     tracker.reset()
     expect(tracker.snapshot).toEqual({
       phase: null, done: 0, total: null, currentPackage: null,
-      downloaded: null, size: null, seen: false, error: null, ignoredBuilds: [],
+      downloaded: null, size: null, seen: false, error: null, errorCode: null, ignoredBuilds: [],
     })
+  })
+})
+
+describe("pnpm's structured error event (#244)", () => {
+  it('keeps the error CODE alongside the message', () => {
+    const tracker = createProgressTracker()
+    tracker.feed(JSON.stringify({
+      time: 1, level: 'error', name: 'pnpm',
+      err: { code: 'ERR_PNPM_UNEXPECTED_STORE', message: 'Unexpected store location' },
+    }))
+    expect(tracker.snapshot.errorCode).toBe('ERR_PNPM_UNEXPECTED_STORE')
+    expect(tracker.snapshot.error).toBe('Unexpected store location')
+  })
+
+  it('keeps a long message intact — the store paths ARE the actionable part', () => {
+    // The old 400-char cap cut exactly the two absolute paths a user needs to
+    // repair this by hand.
+    const long = `Unexpected store location. ${'path/segment/'.repeat(60)} end-marker`
+    const tracker = createProgressTracker()
+    tracker.feed(JSON.stringify({ time: 1, level: 'error', name: 'pnpm', err: { message: long } }))
+    expect(tracker.snapshot.error).toContain('end-marker')
+  })
+
+  it('tolerates an error event with no code', () => {
+    const tracker = createProgressTracker()
+    tracker.feed(JSON.stringify({ time: 1, level: 'error', name: 'pnpm', err: { message: 'plain' } }))
+    expect(tracker.snapshot.error).toBe('plain')
+    expect(tracker.snapshot.errorCode).toBeNull()
   })
 })

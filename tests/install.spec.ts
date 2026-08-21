@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { InstallResult } from '../src/dsh-cli.ts'
 import {
-  FETCH_TIMEOUT_OVERRIDE, groupConflictsByOwner, isStaleUpdate, parseIgnoredBuilds,
+  failureDetail, FETCH_TIMEOUT_OVERRIDE, groupConflictsByOwner, isStaleUpdate, parseIgnoredBuilds,
   parsePrepareNotAllowed, retargetCollections, validateAddedPlugins, withHoistRecovery,
 } from '../src/install.ts'
 import { profileDir } from '../src/profile.ts'
@@ -298,5 +298,59 @@ describe('parsePrepareNotAllowed (#68)', () => {
     const ndjson = String.raw`{"name":"pnpm","level":"error","err":{"message":"Failed to prepare git-hosted package fetched from \"https://codeload.github.com/s/r/tar.gz/abc\": The git-hosted package \"dsh-queue-plus@0.3.0\" needs to execute build scripts but is not in the \"allowBuilds\" allowlist."}}`
     expect(parsePrepareNotAllowed(ndjson, '')).toBe('dsh-queue-plus')
     expect(parsePrepareNotAllowed('', ndjson.replace('dsh-queue-plus@0.3.0', '@scope/pkg@1.0.0'))).toBe('@scope/pkg')
+  })
+})
+
+describe("pnpm's own error survives to the surface (#244/#192/#138)", () => {
+  const base: InstallResult = {
+    exitCode: 1, timedOut: false, cancelled: false,
+    // What the market actually gets on stderr: dsh's wrapper line, byte-for-byte
+    // identical for every possible cause. This is the "stack tail" three
+    // separate reports describe seeing in the UI.
+    stderr: 'dsh: pnpm failed in profile directory ~/.dsh/profiles/web',
+    stdout: '',
+  }
+
+  it('prefers pnpm\'s structured error over the useless wrapper tail', () => {
+    expect(failureDetail({
+      ...base,
+      pnpmError: 'Unexpected store location',
+      pnpmErrorCode: 'ERR_PNPM_UNEXPECTED_STORE',
+    })).toBe('ERR_PNPM_UNEXPECTED_STORE: Unexpected store location')
+  })
+
+  it('falls back to the stderr tail when pnpm gave no structured error', () => {
+    expect(failureDetail(base)).toContain('pnpm failed in profile directory')
+  })
+
+  it('uses stdout when stderr is empty, as before', () => {
+    expect(failureDetail({ ...base, stderr: '', stdout: 'something on stdout' }))
+      .toBe('something on stdout')
+  })
+
+  it('appends pnpm\'s own words when nothing classified the failure', async () => {
+    // The whole point: an UNRECOGNIZED error is where the raw text is worth
+    // the most, because there is no written explanation to show instead.
+    const run = async (): Promise<InstallResult> => ({
+      ...base,
+      pnpmError: 'Something upstream has never seen before',
+      pnpmErrorCode: 'ERR_PNPM_BRAND_NEW',
+    })
+    const result = await withHoistRecovery(run, 'web', ['add', 'x'])
+    expect(result.stderr).toContain('ERR_PNPM_BRAND_NEW: Something upstream has never seen before')
+  })
+
+  it('leaves a CLASSIFIED failure to its written explanation, not the raw text', async () => {
+    // A recognized error already has an actionable bilingual message; pasting
+    // pnpm's raw prose after it would just make the banner longer.
+    const run = async (): Promise<InstallResult> => ({
+      ...base,
+      stdout: 'ERR_PNPM_ADDING_TO_ROOT some raw pnpm prose',
+      pnpmError: 'some raw pnpm prose',
+      pnpmErrorCode: 'ERR_PNPM_ADDING_TO_ROOT',
+    })
+    const result = await withHoistRecovery(run, 'web', ['add', 'x'])
+    expect(result.stderr).toContain('this is a market bug')
+    expect(result.stderr).not.toContain('ERR_PNPM_ADDING_TO_ROOT: some raw pnpm prose')
   })
 })

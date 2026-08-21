@@ -3296,6 +3296,14 @@ export function MarketSection(props: MarketSectionProps) {
                                     </>
                                   )
                                 })()}
+                                {/* Status slot and Uninstall wrap as ONE unit. As
+                                    sibling children of a wrapping flex row they broke
+                                    apart independently, leaving the tag on one line and
+                                    the button on the next (#242 by @Ztyss). Nested,
+                                    the pair either fits or moves together, and the tag
+                                    — already ellipsizing since #234 — is what gives up
+                                    width first. */}
+                                <span className={css.irowTrailing}>
                                 {missing
                                   ? <span className={css.metaTag}>{t('notInstalled')}</span>
                                   : updatedNames.includes(name)
@@ -3328,6 +3336,7 @@ export function MarketSection(props: MarketSectionProps) {
                                         >{t('uninstall')}</Button>
                                       )
                                 )}
+                                </span>
                                 </div>
                               </div>
                             )

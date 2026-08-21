@@ -86,6 +86,14 @@ dsh plugin --profile web add dshmarket
 
 每次打开都实时请求 [awesome-dsh-plugin.com/plugins.json](https://awesome-dsh-plugin.com/plugins.json)——精选条目、npm 映射、star 数由 CI 每日刷新，不使用过期缓存兜底；连不上时会给出具体原因和耗时，并提供「重试」按钮。
 
+刻意不做本地快照兜底：目录每天都在增长，过期的答案不是「差一点」而是「错的」——今早刚发布的插件会显示成「不存在」。
+
+**如果你的网络访问不了这个域名**，可以改指到镜像：在 dsh 运行的环境里设置 `DSHM_REGISTRY_URL`，指向任何提供相同 `plugins.json` 结构的地址：
+
+```sh
+DSHM_REGISTRY_URL=https://your-mirror.example/plugins.json dsh web
+```
+
 ## 友情链接
 
 ### DSH Desktop（dataelement）
