@@ -127,6 +127,129 @@ export function installTargetFor(entry: { url: string; npm?: unknown }): string 
     : `github:${source.repo}`
 }
 
+/** True for profile specs that are a local checkout or tarball, not a registry pin. */
+export function isLocalSpec(spec: string): boolean {
+  return /^(?:link|file):/i.test(spec)
+}
+
+/**
+ * Keys a catalog URL contributes to restore matching.
+ * A `/tree/` entry is ONLY its exact `#path:` id — never the bare repo —
+ * so a collection-root identity cannot select a sibling subpackage.
+ */
+function catalogMatchKeys(url: string): { path: string | null; repo: string | null } {
+  const source = parseSourceUrl(url)
+  if (source === null) return { path: null, repo: null }
+  const repo = source.repo.toLowerCase()
+  return source.subpath === null
+    ? { path: null, repo }
+    : { path: `${repo}#path:/${source.subpath.toLowerCase()}`, repo: null }
+}
+
+/**
+ * The catalog entry a locally linked / file: install should restore to.
+ * Exact `#path:` identities win, then collection-root identities against
+ * root-only catalog rows, then a unique name/npm match. A bare repo identity
+ * never selects a root row while `/tree/` siblings exist for that repo —
+ * the checkout did not say which package it is, and guessing wrong installs
+ * a different plugin. Same-named forks without identities or a matching hint
+ * stay unmatched rather than guessing.
+ */
+export function findCatalogEntryForLocal<T extends { name: string; npm?: string | null; url: string }>(
+  plugins: readonly T[],
+  name: string,
+  identities: readonly string[] = [],
+  hints: readonly string[] = [],
+): T | null {
+  const nameKey = name.toLowerCase()
+  const byName = plugins.filter(plugin =>
+    plugin.name.toLowerCase() === nameKey
+    || (typeof plugin.npm === 'string' && plugin.npm.toLowerCase() === nameKey),
+  )
+  const identitySet = new Set(identities.map(value => value.toLowerCase()))
+  const hintSet = new Set(hints.map(value => value.toLowerCase()))
+  const treeRepos = new Set<string>()
+  for (const plugin of plugins) {
+    const keys = catalogMatchKeys(plugin.url)
+    if (keys.path !== null) treeRepos.add(keys.path.slice(0, keys.path.indexOf('#path:/')))
+  }
+  if (identitySet.size > 0) {
+    const pathHit = plugins.find(plugin => {
+      const keys = catalogMatchKeys(plugin.url)
+      return keys.path !== null && identitySet.has(keys.path)
+    })
+    if (pathHit !== undefined) return pathHit
+    const rootHit = plugins.find(plugin => {
+      const keys = catalogMatchKeys(plugin.url)
+      if (keys.repo === null || !identitySet.has(keys.repo)) return false
+      return !treeRepos.has(keys.repo) || byName.includes(plugin)
+    })
+    if (rootHit !== undefined) return rootHit
+  }
+  if (byName.length === 1) return byName[0]!
+  if (byName.length > 1 && hintSet.size > 0) {
+    const hinted = byName.find((plugin) => {
+      const keys = catalogMatchKeys(plugin.url)
+      return (keys.path !== null && hintSet.has(keys.path)) || (keys.repo !== null && hintSet.has(keys.repo))
+    })
+    if (hinted !== undefined) return hinted
+  }
+  return null
+}
+
+/**
+ * pnpm add target for restoring a local checkout onto a catalog entry.
+ * When the catalog only lists the collection root but the checkout declared
+ * `repository.directory`, keep that subdirectory — otherwise we install the
+ * repo tarball and get the wrong package name (and its build scripts).
+ */
+export function restoreTargetForLocal(
+  entry: { url: string; npm?: unknown },
+  identities: readonly string[] = [],
+): string | null {
+  const base = installTargetFor(entry)
+  if (base === null) return null
+  if (!base.startsWith('github:') || base.includes('#path:/')) return base
+  const repo = base.slice('github:'.length).toLowerCase()
+  for (const raw of identities) {
+    const id = raw.toLowerCase()
+    const prefix = `${repo}#path:/`
+    if (!id.startsWith(prefix)) continue
+    const subpath = id.slice(prefix.length)
+    if (validSubpath(subpath)) return `github:${base.slice('github:'.length)}#path:/${subpath}`
+  }
+  return base
+}
+
+/**
+ * Dependency names that use pnpm's `workspace:` protocol.
+ * Those specs only resolve inside the author's monorepo; a git `#path:`
+ * install into a profile cannot see the sibling packages. pnpm installs
+ * optional dependencies and auto-installs peers too, so all three maps are
+ * scanned; devDependencies are never installed and stay out.
+ */
+export function workspaceProtocolDeps(manifest: unknown): string[] {
+  if (typeof manifest !== 'object' || manifest === null) return []
+  const seen = new Set<string>()
+  const names: string[] = []
+  for (const field of ['dependencies', 'optionalDependencies', 'peerDependencies'] as const) {
+    const deps = (manifest as Partial<Record<typeof field, unknown>>)[field]
+    if (typeof deps !== 'object' || deps === null) continue
+    for (const [name, spec] of Object.entries(deps as Record<string, unknown>)) {
+      if (typeof spec === 'string' && spec.startsWith('workspace:') && !seen.has(name)) {
+        seen.add(name)
+        names.push(name)
+      }
+    }
+  }
+  return names
+}
+
+/** Git subdirectory restores cannot satisfy `workspace:` dependencies. npm can. */
+export function restoreBlockedByWorkspace(target: string, workspaceDeps: readonly string[]): boolean {
+  return workspaceDeps.length > 0 && target.startsWith('github:')
+}
+
 /**
  * The name an entry is ALREADY installed under, or null — the server-side
  * duplicate guard (#27): the same plugin listed under an alias entry must
