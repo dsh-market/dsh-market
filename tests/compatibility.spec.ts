@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   classifyPeer,
+  introducedDuplicateNames,
   introducedRisks,
   type CompatibilityAssessment,
 } from '../src/compatibility.ts'
@@ -64,10 +65,11 @@ describe('classifyPeer', () => {
 
 describe('introducedRisks', () => {
   it('returns only risks that appear after the mutation', () => {
-    const before: CompatibilityAssessment = { risks: [], warnings: [] }
+    const before: CompatibilityAssessment = { risks: [], warnings: [], duplicateNames: [] }
     const after: CompatibilityAssessment = {
       risks: [risk('belowMin')],
       warnings: [],
+      duplicateNames: [],
     }
     expect(introducedRisks(before, after)).toHaveLength(1)
     expect(introducedRisks(after, after)).toHaveLength(0)
@@ -77,5 +79,45 @@ describe('introducedRisks', () => {
     const before: CompatibilityAssessment = { risks: [risk('belowMin', { range: '^0.1.0-rc.7' })], warnings: [] }
     const after: CompatibilityAssessment = { risks: [risk('belowMin', { range: '^0.1.0-rc.7' })], warnings: [] }
     expect(introducedRisks(before, after)).toHaveLength(0)
+  })
+})
+
+describe('introducedDuplicateNames (#230)', () => {
+  const dup = (name: string, layers: string[], count = 2) => ({ name, layers, count })
+  const assessment = (duplicateNames: ReturnType<typeof dup>[]): CompatibilityAssessment =>
+    ({ risks: [], warnings: [], duplicateNames })
+
+  it('reports a collision the operation introduced', () => {
+    const before = assessment([])
+    const after = assessment([dup('memory-evolve', ['bundle:dsh-web-app', 'user-patch'])])
+    expect(introducedDuplicateNames(before, after)).toEqual([
+      dup('memory-evolve', ['bundle:dsh-web-app', 'user-patch']),
+    ])
+  })
+
+  it('stays silent about a collision the profile already had', () => {
+    // duplicateNames is informational precisely because a messy-but-working
+    // profile can carry these indefinitely. Re-reporting a pre-existing one
+    // would put the operator in front of a problem they did not just cause
+    // — and offer a rollback that would not remove it.
+    const existing = assessment([dup('memory-evolve', ['bundle:a', 'user-patch'])])
+    expect(introducedDuplicateNames(existing, existing)).toEqual([])
+  })
+
+  it('keys on the NAME, so a pre-existing collision spreading to another layer stays silent', () => {
+    // Same collision, now across three layers. It is worse, but it is not
+    // new, and rolling back this operation would not clear it.
+    const before = assessment([dup('memory-evolve', ['bundle:a', 'user-patch'], 2)])
+    const after = assessment([dup('memory-evolve', ['bundle:a', 'bundle:b', 'user-patch'], 3)])
+    expect(introducedDuplicateNames(before, after)).toEqual([])
+  })
+
+  it('separates a newly introduced name from pre-existing ones in the same profile', () => {
+    const before = assessment([dup('old-clash', ['bundle:a', 'user-patch'])])
+    const after = assessment([
+      dup('old-clash', ['bundle:a', 'user-patch']),
+      dup('new-clash', ['bundle:b', 'user-patch']),
+    ])
+    expect(introducedDuplicateNames(before, after).map(entry => entry.name)).toEqual(['new-clash'])
   })
 })

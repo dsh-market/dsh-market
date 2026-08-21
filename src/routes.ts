@@ -24,9 +24,9 @@ import {
   type PluginCommandRuntime,
 } from './dsh-cli.ts'
 import { addProfileBundle, hasLoadableEntry, INBOX_BUNDLES, profileDir, readInstalled, readInstalledManifest, readInstalledRepoEvidence, readInstalledVersion, readLockCommits, readManifestDeps, readProfileBundles, removeProfileBundle, restoreManifestDeps, setAllowBuilds } from './profile.ts'
-import { assessProfile, introducedRisks, type CompatibilityRisk } from './compatibility.ts'
+import { assessProfile, introducedDuplicateNames, introducedRisks, type CompatibilityRisk } from './compatibility.ts'
 import { runningAgentIds, type AgentsLookup } from './agents.ts'
-import { analyzeProfile } from './check.ts'
+import { analyzeProfile, type DuplicateName } from './check.ts'
 import { applyBundleOrder, mergeOrder, readBundleRules, readBundleStack, validateOrder } from './order.ts'
 import { trialValidate } from './trial.ts'
 import { findInstalledAlias, gitAllowBuildsKey, installTargetFor } from './sources.ts'
@@ -1369,7 +1369,7 @@ export function mountMarketRoutes(
                   `${name}: trial validation failed — ${first}${rollback.ok ? '; previous build restored' : `; could not restore previous files: ${rollback.detail ?? 'unknown'}`}`)
               }
             }
-            let compatibility: { code: 'soft-incompatible'; risks: CompatibilityRisk[]; rollbackId: string } | undefined
+            let compatibility: { code: 'soft-incompatible'; risks: CompatibilityRisk[]; shadowedNames?: DuplicateName[]; rollbackId: string } | undefined
             if (ok) {
               invalidateUpdates()
               activation = {
@@ -1378,11 +1378,17 @@ export function mountMarketRoutes(
                   wasLive,
                 ),
               }
-              const risks = introducedRisks(compatibilityBefore, assessProfile(config.profile, activeProfileDir))
-              if (risks.length > 0) {
+              const after = assessProfile(config.profile, activeProfileDir)
+              const risks = introducedRisks(compatibilityBefore, after)
+              // An update can introduce shadowing too: a bundle migration
+              // moves a plugin between layers, which is exactly the shape
+              // #230 reported (bundle layer vs user patch layer).
+              const shadowed = introducedDuplicateNames(compatibilityBefore, after)
+              if (risks.length > 0 || shadowed.length > 0) {
                 compatibility = {
                   code: 'soft-incompatible',
                   risks,
+                  shadowedNames: shadowed.length > 0 ? shadowed : undefined,
                   rollbackId: savePendingRollback({
                     kind: 'update',
                     names: [name],
@@ -1390,7 +1396,12 @@ export function mountMarketRoutes(
                     ...(isGit ? { gitTarget: target, beforeCommit } : {}),
                   }),
                 }
-                logEvent('warn', 'update-compat', `${name}: introduced host-compatibility risks — ${risks.map(risk => `${risk.peer}@${risk.range} vs ${risk.resolved}`).join('; ')}`)
+                if (risks.length > 0) {
+                  logEvent('warn', 'update-compat', `${name}: introduced host-compatibility risks — ${risks.map(risk => `${risk.peer}@${risk.range} vs ${risk.resolved}`).join('; ')}`)
+                }
+                if (shadowed.length > 0) {
+                  logEvent('warn', 'update-shadow', `${name}: introduced cross-layer duplicate loader names — ${shadowed.map(entry => `${entry.name} (${entry.layers.join(' + ')})`).join('; ')}`)
+                }
               }
             }
             // Diagnose the stale outcome with EVIDENCE (#45 by @ayingQAQ):
@@ -2106,7 +2117,7 @@ export function mountMarketRoutes(
             const installed = readInstalled(config.profile, activeProfileDir)
             let hot = false
             let activation: Record<string, ReturnType<typeof verifyActivation>> | undefined
-            let compatibility: { code: 'soft-incompatible'; risks: CompatibilityRisk[]; rollbackId: string } | undefined
+            let compatibility: { code: 'soft-incompatible'; risks: CompatibilityRisk[]; shadowedNames?: DuplicateName[]; rollbackId: string } | undefined
             let addedPackages: string[] = []
             if (ok) {
               const added = Object.keys(installed).filter(name => !before.has(name))
@@ -2134,14 +2145,25 @@ export function mountMarketRoutes(
               }
             }
             if (ok && addedPackages.length > 0) {
-              const risks = introducedRisks(compatibilityBefore, assessProfile(config.profile, activeProfileDir))
-              if (risks.length > 0) {
+              const after = assessProfile(config.profile, activeProfileDir)
+              const risks = introducedRisks(compatibilityBefore, after)
+              // Cross-layer name shadowing this install introduced (#230).
+              // Shares the rollback id with the peer risks when both fire:
+              // one operation, one thing to undo.
+              const shadowed = introducedDuplicateNames(compatibilityBefore, after)
+              if (risks.length > 0 || shadowed.length > 0) {
                 compatibility = {
                   code: 'soft-incompatible',
                   risks,
+                  shadowedNames: shadowed.length > 0 ? shadowed : undefined,
                   rollbackId: savePendingRollback({ kind: 'install', names: addedPackages }),
                 }
-                logEvent('warn', 'install-compat', `${addedPackages.join(', ')}: introduced host-compatibility risks — ${risks.map(risk => `${risk.peer}@${risk.range} vs ${risk.resolved}`).join('; ')}`)
+                if (risks.length > 0) {
+                  logEvent('warn', 'install-compat', `${addedPackages.join(', ')}: introduced host-compatibility risks — ${risks.map(risk => `${risk.peer}@${risk.range} vs ${risk.resolved}`).join('; ')}`)
+                }
+                if (shadowed.length > 0) {
+                  logEvent('warn', 'install-shadow', `${addedPackages.join(', ')}: introduced cross-layer duplicate loader names — ${shadowed.map(entry => `${entry.name} (${entry.layers.join(' + ')})`).join('; ')}`)
+                }
               }
             }
             logEvent(ok || cancelled ? 'info' : 'error', 'install',

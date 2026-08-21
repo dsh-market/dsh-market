@@ -104,6 +104,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			agentBusyUpdate: "有 agent 正在运行，请等待其完成或将其取消后再更新——更新会直接替换插件文件，运行中的 agent 可能中途报错或新旧版本混用。",
 			agentBusyInstall: "有 agent 正在运行，请等待其完成或将其取消后再安装——安装会修改插件文件，运行中的 agent 可能中途报错。",
 			compatRiskBanner: "检测到兼容性风险，建议重启前到诊断页处理，或一键回滚本次操作。",
+			shadowNameBanner: "本次操作让同一个插件名在两个层里同时存在，重启后只有一个会生效：",
 			goDiagnose: "去诊断页修复",
 			rollbackNow: "一键回滚",
 			rollingBack: "回滚中…",
@@ -461,6 +462,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			agentBusyUpdate: "An agent is currently working — wait for it to finish (or cancel it) before updating. Updates replace plugin files in place, so a working agent can fail or mix versions mid-turn.",
 			agentBusyInstall: "An agent is currently working — wait for it to finish (or cancel it) before installing. Installing changes plugin files, so a working agent can fail mid-turn.",
 			compatRiskBanner: "Compatibility risk detected — open Diagnostics before restarting, or roll this operation back.",
+			shadowNameBanner: "This operation left one plugin name defined in two layers; only one will load after a restart:",
 			goDiagnose: "Open Diagnostics",
 			rollbackNow: "Roll back",
 			rollingBack: "Rolling back…",
@@ -4181,6 +4183,13 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				const first = risks[0];
 				return `${first.plugin}: ${first.peer} ${first.range} vs ${first.resolved}`;
 			};
+			/** Which name now resolves from two layers, and which layers those are. */
+			const shadowSummary = (entries) => {
+				if (entries.length === 0) return "";
+				const first = entries[0];
+				const rest = entries.length > 1 ? ` (+${entries.length - 1})` : "";
+				return `${first.name} — ${first.layers.join(" / ")}${rest}`;
+			};
 			const doInstall = (0, react.useCallback)((plugin) => {
 				setBuildsSkipped(null);
 				setConfirming(null);
@@ -5651,11 +5660,16 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						children: [
 							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
 								className: Market_module_css_default.grow,
-								children: [
+								children: [compatibilityNotice.risks.length > 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
 									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("b", { children: t("compatRiskBanner") }),
 									" ",
 									compatibilitySummary(compatibilityNotice.risks)
-								]
+								] }), compatibilityNotice.shadowedNames !== void 0 && compatibilityNotice.shadowedNames.length > 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
+									compatibilityNotice.risks.length > 0 && " · ",
+									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("b", { children: t("shadowNameBanner") }),
+									" ",
+									shadowSummary(compatibilityNotice.shadowedNames)
+								] })]
 							}),
 							/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 								variant: "outline",

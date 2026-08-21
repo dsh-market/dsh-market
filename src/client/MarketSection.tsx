@@ -780,6 +780,8 @@ export function MarketSection(props: MarketSectionProps) {
   interface CompatibilityNotice {
     code: 'soft-incompatible'
     risks: Array<{ plugin: string; peer: string; range: string; resolved: string; direction: string }>
+    /** Cross-layer loader-name collisions this operation introduced (#230). */
+    shadowedNames?: Array<{ name: string; layers: string[]; count: number }>
     rollbackId: string
   }
   const [compatibilityNotice, setCompatibilityNotice] = useState<CompatibilityNotice | null>(null)
@@ -1287,6 +1289,14 @@ export function MarketSection(props: MarketSectionProps) {
     if (risks.length === 0) return ''
     const first = risks[0]
     return `${first.plugin}: ${first.peer} ${first.range} vs ${first.resolved}`
+  }
+
+  /** Which name now resolves from two layers, and which layers those are. */
+  const shadowSummary = (entries: NonNullable<CompatibilityNotice['shadowedNames']>): string => {
+    if (entries.length === 0) return ''
+    const first = entries[0]
+    const rest = entries.length > 1 ? ` (+${entries.length - 1})` : ''
+    return `${first.name} — ${first.layers.join(' / ')}${rest}`
   }
 
   const doInstall = useCallback((plugin: RegistryPlugin) => {
@@ -2566,7 +2576,19 @@ export function MarketSection(props: MarketSectionProps) {
       {compatibilityNotice !== null && (
         <div className={css.banner}>
           <span className={css.grow}>
-            <b>{t('compatRiskBanner')}</b> {compatibilitySummary(compatibilityNotice.risks)}
+            {/* Two independent findings share one banner and one rollback,
+                because they came from one operation. Each is named for what
+                it actually is: a peer-version risk and a loader-name
+                collision are not the same problem and must not read as one. */}
+            {compatibilityNotice.risks.length > 0 && (
+              <><b>{t('compatRiskBanner')}</b> {compatibilitySummary(compatibilityNotice.risks)}</>
+            )}
+            {compatibilityNotice.shadowedNames !== undefined && compatibilityNotice.shadowedNames.length > 0 && (
+              <>
+                {compatibilityNotice.risks.length > 0 && ' · '}
+                <b>{t('shadowNameBanner')}</b> {shadowSummary(compatibilityNotice.shadowedNames)}
+              </>
+            )}
           </span>
           <Button variant="outline" size="sm" onClick={() => setTab('diagnostics')}>{t('goDiagnose')}</Button>
           <Button variant="primary" size="sm" disabled={rollingBack} onClick={() => void doRollback(compatibilityNotice.rollbackId)}>

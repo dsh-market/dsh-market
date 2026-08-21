@@ -17,7 +17,7 @@
  * unparseable ranges, and optional peers never produce a risk here.
  */
 
-import { analyzeProfile, compareSemver, type CheckOptions, type PeerMismatch } from './check.ts'
+import { analyzeProfile, compareSemver, type CheckOptions, type DuplicateName, type PeerMismatch } from './check.ts'
 import { profileDir, readInstalledManifest } from './profile.ts'
 
 export interface CompatibilityRisk {
@@ -39,6 +39,17 @@ export interface CompatibilityWarning {
 export interface CompatibilityAssessment {
   risks: CompatibilityRisk[]
   warnings: CompatibilityWarning[]
+  /**
+   * Cross-layer duplicate loader NAMES, carried through from the same
+   * `analyzeProfile` run the peer checks already pay for (#230).
+   *
+   * The report has always computed these and deliberately kept them out of
+   * `summary.warnings`, because flagging an already-messy but working
+   * profile is a false positive nobody can act on. Diffing before against
+   * after is what makes them actionable: a collision this operation
+   * INTRODUCED is one the operation can also undo.
+   */
+  duplicateNames: DuplicateName[]
 }
 
 export type PeerVerdict =
@@ -200,7 +211,7 @@ export function assessCompatibility(profileDirectory: string, options?: CheckOpt
     if (verdict.kind === 'risk') risks.push(verdict.risk)
     else if (verdict.kind === 'warning') warnings.push(verdict.warning)
   }
-  return { risks, warnings }
+  return { risks, warnings, duplicateNames: report.duplicateNames }
 }
 
 function riskId(risk: CompatibilityRisk): string {
@@ -211,6 +222,29 @@ function riskId(risk: CompatibilityRisk): string {
 export function introducedRisks(before: CompatibilityAssessment, after: CompatibilityAssessment): CompatibilityRisk[] {
   const seen = new Set(before.risks.map(riskId))
   return after.risks.filter(risk => !seen.has(riskId(risk)))
+}
+
+/**
+ * Cross-layer name collisions present after a mutation but absent before it
+ * (#230 by @dxc-dxc).
+ *
+ * Keyed by NAME alone, not by the layer set: a collision the operation made
+ * worse — same name, now shadowing across one more layer — is still the same
+ * collision the profile already had, and re-reporting it would put the
+ * operator back in front of a problem they did not just cause.
+ *
+ * This is what makes surfacing these safe at all. The underlying
+ * `duplicateNames` is informational precisely because a healthy-but-messy
+ * profile can carry collisions indefinitely; only the newly introduced ones
+ * are attributable to the install that just ran, and therefore undoable by
+ * rolling it back.
+ */
+export function introducedDuplicateNames(
+  before: CompatibilityAssessment,
+  after: CompatibilityAssessment,
+): DuplicateName[] {
+  const seen = new Set(before.duplicateNames.map(entry => entry.name))
+  return after.duplicateNames.filter(entry => !seen.has(entry.name))
 }
 
 /** Convenience wrapper matching the profile helper signature. */

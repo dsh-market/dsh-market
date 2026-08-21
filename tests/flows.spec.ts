@@ -1046,6 +1046,54 @@ describe('update flow — no npm publishing required', () => {
     expect(manifest.version).toBe('1.0.0')
   })
 
+  it('flags a cross-layer duplicate loader NAME the install introduced, and offers the same rollback (#230)', async () => {
+    // The reported shape: a plugin the user already loads from their own
+    // cordis.patch.yml, then installed as a bundle. The loader ids DIFFER
+    // (`user-memory-evolve` vs `bundle-memory-evolve`), so the existing
+    // duplicate-ID guard has nothing to catch — but the NAME now resolves
+    // from two layers and only one wins after a restart.
+    await bed.dispatch('POST', '/dsh-market/uninstall', { name: 'dsh-loop' })
+    writeFileSync(
+      join(fake.profileDir, 'cordis.patch.yml'),
+      '- insert:\n    - id: user-memory-evolve\n      name: memory-evolve\n',
+    )
+    fake.npm['dsh-loop'] = {
+      latest: '1.0.0',
+      versions: {
+        '1.0.0': {
+          manifest: { dsh: { bundle: { patch: './cordis.patch.yml' } }, main: 'lib/index.js' },
+          artifacts: ['lib/index.js', 'cordis.patch.yml'],
+          artifactContents: {
+            'cordis.patch.yml': '- insert:\n    - id: bundle-memory-evolve\n      name: memory-evolve\n',
+          },
+        },
+      },
+    }
+
+    // FakeDsh does not reconcile the bundle stack (see the sibling
+    // duplicate-id test), so register it up front. The package itself is
+    // still absent, so the BEFORE snapshot has no bundle rows to compose —
+    // the collision only exists once the install lands the patch file.
+    const preManifest = JSON.parse(readFileSync(join(fake.profileDir, 'package.json'), 'utf8')) as Record<string, unknown>
+    preManifest.dsh = { profile: { bundles: ['dsh-loop'] } }
+    writeFileSync(join(fake.profileDir, 'package.json'), JSON.stringify(preManifest))
+
+    const r = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
+    expect(r.status).toBe(200)
+    expect(r.json.ok).toBe(true)
+    // No duplicate-ID conflict — the ids are distinct, which is exactly why
+    // this went unreported before.
+    expect(r.json.conflictGroups).toBeUndefined()
+    expect(r.json.compatibility).toMatchObject({ code: 'soft-incompatible' })
+    expect(r.json.compatibility.shadowedNames).toEqual([
+      expect.objectContaining({ name: 'memory-evolve' }),
+    ])
+    // Two layers, named, so the banner can say which.
+    expect(r.json.compatibility.shadowedNames[0].layers.length).toBeGreaterThanOrEqual(2)
+    // The same rollback that undoes a peer risk undoes this.
+    expect(typeof r.json.compatibility.rollbackId).toBe('string')
+  })
+
   it('flags a soft host-incompatible install and rolls back the newly added plugin (#195)', async () => {
     await bed.dispatch('POST', '/dsh-market/uninstall', { name: 'dsh-loop' })
     const hostPeerDir = join(fake.profileDir, 'node_modules', '@deepseek-ai', 'dsh-settings')
