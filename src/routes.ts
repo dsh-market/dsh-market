@@ -422,9 +422,12 @@ export function mountMarketRoutes(
     if (result.exitCode !== 0 || result.timedOut || result.cancelled) {
       return { ok: false, hot: false, detail: (result.stderr || result.stdout).slice(-300) }
     }
-    let hot = false
-    hot = await hotUnmount(name)
-    if (!hot) hot = await themes.setEntryDisabled(name, true)
+    // Both cleanups run — see the uninstall route's note on #213: a package
+    // with two activation sources must not have the second one skipped
+    // because the first succeeded.
+    const unmounted = await hotUnmount(name)
+    const entryDisabled = await themes.setEntryDisabled(name, true)
+    const hot = unmounted || entryDisabled
     removeRowBlocks(userPatchPath, rowIdsForPackage(host, activeProfileDir, name))
     disabled.delete(name)
     removeFromGroups({ groups, groupOrder }, name)
@@ -1838,7 +1841,17 @@ export function mountMarketRoutes(
               // wedge the whole page until a dsh restart (#37 by
               // @1123762794). Live-disable the entry so the refresh composes
               // without it; after a real restart the entry is gone anyway.
-              if (!hot) hot = await themes.setEntryDisabled(name, true)
+              //
+              // Both run, unconditionally. This used to short-circuit on the
+              // hot unmount, which is right only while a package has ONE
+              // activation source — a package that is both hot-mounted AND
+              // reachable through the bundle layer got half its cleanup, and
+              // the surviving half is exactly the 404-on-refresh wedge above
+              // (#213). setEntryDisabled just scans entries by name and
+              // returns false when none match, so calling it after a
+              // successful unmount costs a lookup and nothing else.
+              const entryDisabled = await themes.setEntryDisabled(name, true)
+              hot = hot || entryDisabled
               // Patch-layer rows must not survive the remove either: a
               // `- id: X` + `disabled: true` row for a package that no longer
               // mounts is a boot-time orphan (port of dsh-plugin-hub).

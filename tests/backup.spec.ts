@@ -90,6 +90,27 @@ describe('profile backup and restore', () => {
     expect(existsSync(join(dir, 'node_modules', 'plugin', 'large.bin'))).toBe(true)
   })
 
+  it('excludes every .bak shape, not just the numeric suffix this repo writes (#205)', () => {
+    // A restore that carried these put the wreckage back: the reporter's
+    // profile came back with the very leftovers that made it need repairing.
+    // The shapes are real — recovery and the host's own repair paths write
+    // `.bak-asm` and `.rp-merged.bak`, neither of which the old
+    // `/\.bak-\d+$/` filter matched.
+    const dir = profileDir('web')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'package.json'), '{"dependencies":{}}')
+    writeFileSync(join(dir, 'package.json.bak-1234'), '{"old":true}')
+    writeFileSync(join(dir, 'package.json.bak-asm'), '{"old":true}')
+    writeFileSync(join(dir, 'cordis.patch.yml.rp-merged.bak'), '- stale: true')
+    // ...while a file that merely CONTAINS "bak" is ordinary config and
+    // must survive: over-filtering silently drops a user's real settings.
+    writeFileSync(join(dir, 'bakery.yml'), 'keep: me')
+    writeFileSync(join(dir, 'my.backup.yml'), 'keep: me too')
+
+    const paths = createProfileBackup('web').files.map(file => file.path)
+    expect(paths).toEqual(['bakery.yml', 'my.backup.yml', 'package.json'])
+  })
+
   it('rejects traversal paths without touching the profile', () => {
     const dir = profileDir('web')
     mkdirSync(dir, { recursive: true })

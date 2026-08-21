@@ -49,7 +49,12 @@ export interface ProfileBackup {
 function profileFiles(root: string, dir = root): string[] {
   const files: string[] = []
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (SKIP_NAMES.has(entry.name) || /\.bak-\d+$/.test(entry.name)) continue
+    // Any .bak marker, not just the numeric-suffixed one this codebase
+    // writes. Recovery and the host's own repair paths leave other shapes —
+    // `package.json.bak-asm`, `cordis.patch.yml.rp-merged.bak` — and a
+    // backup that carried them restored them too, so the profile came back
+    // with the wreckage that made it need repairing (#205 by @Rudyy898).
+    if (SKIP_NAMES.has(entry.name) || /\.bak\b/.test(entry.name)) continue
     const path = resolve(dir, entry.name)
     if (entry.isSymbolicLink()) continue
     if (entry.isDirectory()) files.push(...profileFiles(root, path))
