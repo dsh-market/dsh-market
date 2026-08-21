@@ -25,6 +25,7 @@
  */
 
 import { readFileSync } from 'node:fs'
+import { Script } from 'node:vm'
 import { join } from 'node:path'
 import { listHotMounts, parseSimplePatch } from './hot.ts'
 import { bundlePatchInsertedIds, hasDshManifest, hasLoadableEntry, profileDir } from './profile.ts'
@@ -306,4 +307,93 @@ export function hasHostHalf(profile: string, name: string, explicitDir?: string)
   // the bundle layer still loads) as client-only, and quietly disable the
   // correction for it.
   return !(dsh.bundle === undefined && dsh.client !== undefined)
+}
+
+/**
+ * The client bundle path a package's `exports["./client"]` names, relative
+ * to the package root — or `null` when it cannot be resolved CONFIDENTLY.
+ *
+ * Returning null is the important half. This feeds a post-install check
+ * whose only job is to catch a corrupt bundle, and a resolver that guessed
+ * wrong would report a healthy plugin as broken — worse than the silence it
+ * replaces. So every shape this does not fully understand resolves to null
+ * and the check simply does not run: unresolvable is not evidence of damage.
+ *
+ * Handles the two shapes real plugins ship: a plain string, and a
+ * conditional object. For the object, only `browser` and `default` are
+ * consulted — those are the conditions the host's client loader actually
+ * activates; `import`/`require` describe a Node resolution this file is not
+ * modelling, and picking one of those could name a different artifact.
+ * Nested conditions recurse; anything else (arrays, non-relative targets)
+ * gives up.
+ */
+export function clientBundlePath(exportsField: unknown, depth = 0): string | null {
+  if (depth > 4) return null
+  if (typeof exportsField === 'string') {
+    // Only a relative in-package path. A bare specifier or URL is a shape
+    // this resolver does not model.
+    return exportsField.startsWith('./') ? exportsField : null
+  }
+  if (exportsField === null || typeof exportsField !== 'object' || Array.isArray(exportsField)) return null
+  const conditions = exportsField as Record<string, unknown>
+  for (const key of ['browser', 'default']) {
+    if (conditions[key] === undefined) continue
+    const resolved = clientBundlePath(conditions[key], depth + 1)
+    if (resolved !== null) return resolved
+  }
+  return null
+}
+
+/** What a bundle check concluded. `ok` covers "fine" AND "could not tell". */
+export interface BundleCheck {
+  ok: boolean
+  /** Populated only when the file was found AND failed to parse. */
+  reason: string | null
+}
+
+/**
+ * Whether a package's client bundle still parses as JavaScript (#222).
+ *
+ * pnpm can leave a half-written or patch-mangled bundle behind — the report
+ * describes a profile whose client bundle was broken after an update. The
+ * browser is where that surfaces today, as a blank settings page long after
+ * the operation reported success, with nothing connecting the two.
+ *
+ * `vm.Script` COMPILES without executing: it catches the syntax damage this
+ * is looking for and never runs plugin code, so a hostile bundle gains
+ * nothing. A missing `dsh.client`, an unresolvable exports field, or a file
+ * that is simply absent all return ok — this check only ever fires on a file
+ * it actually read and actually failed to parse. Everything ambiguous stays
+ * silent, because a false "your plugin is corrupt" is the one outcome worse
+ * than not checking.
+ */
+export function checkClientBundle(profile: string, name: string, explicitDir?: string): BundleCheck {
+  const root = join(profileDir(profile, explicitDir), 'node_modules', name)
+  let manifest: { dsh?: { client?: unknown }; exports?: unknown }
+  try {
+    manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as typeof manifest
+  } catch {
+    return { ok: true, reason: null }
+  }
+  if (manifest.dsh?.client === undefined) return { ok: true, reason: null }
+  const exportsField = manifest.exports
+  const relative = exportsField !== null && typeof exportsField === 'object' && !Array.isArray(exportsField)
+    ? clientBundlePath((exportsField as Record<string, unknown>)['./client'])
+    : null
+  if (relative === null) return { ok: true, reason: null }
+  let source: string
+  try {
+    source = readFileSync(join(root, relative), 'utf8')
+  } catch {
+    // Declared but absent is verifyActivation's territory (a missing entry
+    // artifact is already `broken` there); duplicating it here would report
+    // one problem twice in two different vocabularies.
+    return { ok: true, reason: null }
+  }
+  try {
+    new Script(source, { filename: relative })
+    return { ok: true, reason: null }
+  } catch (error) {
+    return { ok: false, reason: error instanceof Error ? error.message : String(error) }
+  }
 }

@@ -782,6 +782,8 @@ export function MarketSection(props: MarketSectionProps) {
     risks: Array<{ plugin: string; peer: string; range: string; resolved: string; direction: string }>
     /** Cross-layer loader-name collisions this operation introduced (#230). */
     shadowedNames?: Array<{ name: string; layers: string[]; count: number }>
+    /** Client bundles that no longer parse after the operation (#222). */
+    brokenBundles?: Array<{ name: string; reason: string }>
     rollbackId: string
   }
   const [compatibilityNotice, setCompatibilityNotice] = useState<CompatibilityNotice | null>(null)
@@ -1827,11 +1829,20 @@ export function MarketSection(props: MarketSectionProps) {
     next()
   }, [updatableNames, doUpdate])
 
-  const finishRestore = useCallback((body: { errors?: unknown }) => {
+  const finishRestore = useCallback((body: { errors?: unknown; unportable?: unknown }) => {
     const errors = Array.isArray(body.errors) ? body.errors as { name?: unknown; error?: unknown }[] : []
+    // Machine-specific dependency paths (#205): a `link:/Users/…` spec from
+    // the machine that wrote the backup names a directory that does not
+    // exist here, so pnpm cannot satisfy it. Listed with the other restore
+    // problems rather than in a banner of its own — from the operator's
+    // side it is one question ("what went wrong with my restore?").
+    const unportable = Array.isArray(body.unportable) ? body.unportable as { name?: unknown; spec?: unknown }[] : []
     // Partial failures surface inline in the Backup tab (previously a
     // window.alert); the restore itself still completes.
-    setRestoreErrors(errors.map(item => `${String(item.name)}: ${String(item.error)}`))
+    setRestoreErrors([
+      ...errors.map(item => `${String(item.name)}: ${String(item.error)}`),
+      ...unportable.map(item => `${String(item.name)}: ${t('restoreUnportable')} (${String(item.spec)})`),
+    ])
     setBackupRestored(true)
     setBackupMessage(t('restoreDone'))
     if (errors.length === 0) {
@@ -2587,6 +2598,14 @@ export function MarketSection(props: MarketSectionProps) {
               <>
                 {compatibilityNotice.risks.length > 0 && ' · '}
                 <b>{t('shadowNameBanner')}</b> {shadowSummary(compatibilityNotice.shadowedNames)}
+              </>
+            )}
+            {compatibilityNotice.brokenBundles !== undefined && compatibilityNotice.brokenBundles.length > 0 && (
+              <>
+                {(compatibilityNotice.risks.length > 0
+                  || (compatibilityNotice.shadowedNames?.length ?? 0) > 0) && ' · '}
+                <b>{t('brokenBundleBanner')}</b>{' '}
+                {compatibilityNotice.brokenBundles.map(entry => entry.name).join(', ')}
               </>
             )}
           </span>

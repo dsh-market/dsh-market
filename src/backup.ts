@@ -456,6 +456,41 @@ export function extractPluginSelection(backup: ProfileBackup, includeDeps: strin
  * backup specs win on name conflicts; bundle lists are unioned. When
  * `selection` is given, only the selected plugins are merged in.
  */
+/**
+ * Dependencies whose spec points at an absolute local path — `link:/Users/…`
+ * or `file:/home/…` (#205 by @Rudyy898).
+ *
+ * These are perfectly valid on the machine that wrote them and meaningless
+ * anywhere else, so a backup carrying one restores a manifest that `pnpm
+ * install` cannot satisfy: the path does not exist on the new machine and
+ * the whole restore fails on it.
+ *
+ * Reported, NOT rewritten. Turning `link:/Users/me/dev/plugin` into
+ * something portable means deciding where those files should live and
+ * whether to carry them at all, which is a design question and not
+ * something a restore should answer on the user's behalf. Naming them lets
+ * the operator decide before the install runs — which is the part that was
+ * missing.
+ *
+ * Relative `file:./vendor/x` specs are left alone: they resolve against the
+ * profile directory, which the restore recreates, so they travel fine.
+ */
+export function unportableDeps(dependencies: unknown): Array<{ name: string; spec: string }> {
+  if (dependencies === null || typeof dependencies !== 'object' || Array.isArray(dependencies)) return []
+  const found: Array<{ name: string; spec: string }> = []
+  for (const [name, raw] of Object.entries(dependencies as Record<string, unknown>)) {
+    if (typeof raw !== 'string') continue
+    const match = /^(?:link|file):(.+)$/i.exec(raw)
+    if (match === null) continue
+    let path = match[1]
+    try { path = decodeURIComponent(path) } catch { /* keep the literal spec */ }
+    // POSIX absolute, Windows drive-letter, or UNC — every shape that names
+    // a location outside this profile.
+    if (/^\//.test(path) || /^[A-Za-z]:[\\/]/.test(path) || /^\\\\/.test(path)) found.push({ name, spec: raw })
+  }
+  return found
+}
+
 export function mergeRestoreManifest(
   backupManifest: Record<string, unknown>,
   current: Record<string, unknown>,

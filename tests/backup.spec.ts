@@ -14,7 +14,7 @@ vi.mock('node:dns/promises', () => ({ lookup: network.lookup }))
 vi.mock('node:https', () => ({ request: network.request }))
 
 import {
-  createProfileBackup, downloadWebdav, isPublicTarget, restoreProfileBackup, uploadWebdav,
+  createProfileBackup, downloadWebdav, isPublicTarget, restoreProfileBackup, unportableDeps, uploadWebdav,
 } from '../src/backup.ts'
 import { profileDir } from '../src/profile.ts'
 
@@ -267,5 +267,42 @@ describe('private-network guard boundaries', () => {
 
   it('still allows the addresses immediately outside those ranges', () => {
     for (const [ip, why] of allowed) expect(isPublicTarget(ip), `${ip} (${why})`).toBe(true)
+  })
+})
+
+describe('unportableDeps (#205)', () => {
+  it('names link:/file: specs pointing outside this machine\'s profile', () => {
+    expect(unportableDeps({
+      'dev-plugin': 'link:/Users/rudy/dev/dev-plugin',
+      'tarball-plugin': 'file:/home/rudy/pkgs/x.tgz',
+      'win-plugin': 'link:C:\\dev\\win-plugin',
+      'unc-plugin': 'file:\\\\\\\\server\\\\share\\\\p',
+    }).map(dep => dep.name).sort()).toEqual(['dev-plugin', 'tarball-plugin', 'unc-plugin', 'win-plugin'])
+  })
+
+  it('leaves portable specs alone, including RELATIVE local paths', () => {
+    // A relative file:/link: resolves against the profile directory, which
+    // the restore recreates — those travel fine and flagging them would be
+    // a false alarm on a working setup.
+    expect(unportableDeps({
+      'ranged': '^1.2.3',
+      'exact': '1.2.3',
+      'from-git': 'github:owner/repo',
+      'relative-link': 'link:./vendor/plugin',
+      'relative-file': 'file:../sibling',
+      'tagged': 'latest',
+    })).toEqual([])
+  })
+
+  it('is defensive about shapes a hand-edited manifest can produce', () => {
+    expect(unportableDeps(undefined)).toEqual([])
+    expect(unportableDeps(null)).toEqual([])
+    expect(unportableDeps([])).toEqual([])
+    expect(unportableDeps({ weird: 42 })).toEqual([])
+  })
+
+  it('carries the offending spec, so the message can name what to repoint', () => {
+    expect(unportableDeps({ 'dev-plugin': 'link:/Users/rudy/dev/dev-plugin' }))
+      .toEqual([{ name: 'dev-plugin', spec: 'link:/Users/rudy/dev/dev-plugin' }])
   })
 })

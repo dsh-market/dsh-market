@@ -9,7 +9,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { profileDir } from '../src/profile.ts'
-import { verifyActivation } from '../src/verify.ts'
+import { checkClientBundle, clientBundlePath, verifyActivation } from '../src/verify.ts'
 
 let home: string
 beforeEach(() => {
@@ -265,5 +265,72 @@ describe('hasHostHalf (client-only updates need a refresh, not a restart)', () =
 
     // A package that is not installed cannot have a stale host half either.
     expect(hasHostHalf('web', 'absent', dir)).toBe(false)
+  })
+})
+
+describe('clientBundlePath', () => {
+  it('resolves the two shapes real plugins ship', () => {
+    expect(clientBundlePath('./client/client.js')).toBe('./client/client.js')
+    expect(clientBundlePath({ default: './client/client.js' })).toBe('./client/client.js')
+    // browser wins over default: it is the condition the host's client
+    // loader actually activates.
+    expect(clientBundlePath({ browser: './b.js', default: './d.js' })).toBe('./b.js')
+    expect(clientBundlePath({ browser: { default: './nested.js' } })).toBe('./nested.js')
+  })
+
+  it('gives up on anything it does not fully model, rather than guessing', () => {
+    // Guessing wrong here means reporting a HEALTHY plugin as corrupt,
+    // which is worse than the silence this replaces — so every unmodelled
+    // shape must resolve to null and skip the check entirely.
+    expect(clientBundlePath(undefined)).toBeNull()
+    expect(clientBundlePath(null)).toBeNull()
+    expect(clientBundlePath(['./a.js'])).toBeNull()
+    expect(clientBundlePath('client/client.js')).toBeNull()       // not relative
+    expect(clientBundlePath('https://cdn.example/x.js')).toBeNull()
+    // import/require describe a Node resolution this does not model, and
+    // could name a different artifact than the browser gets.
+    expect(clientBundlePath({ import: './esm.js', require: './cjs.js' })).toBeNull()
+    // Cyclic-ish nesting terminates instead of recursing forever.
+    const deep = { default: { default: { default: { default: { default: './x.js' } } } } }
+    expect(clientBundlePath(deep)).toBeNull()
+  })
+})
+
+describe('checkClientBundle (#222)', () => {
+  it('reports a client bundle that no longer parses', () => {
+    profile([])
+    pkg('broken-ui', {
+      name: 'broken-ui', dsh: { client: {} }, exports: { './client': './client/client.js' },
+    }, { 'client/client.js': 'function ( { syntax error' })
+    const result = checkClientBundle('web', 'broken-ui')
+    expect(result.ok).toBe(false)
+    expect(result.reason).toBeTruthy()
+  })
+
+  it('passes a bundle that parses, without executing it', () => {
+    profile([])
+    // If this were EXECUTED the throw would escape and fail the test — the
+    // whole point of compiling rather than running is that plugin code never
+    // gets a turn.
+    pkg('good-ui', {
+      name: 'good-ui', dsh: { client: {} }, exports: { './client': './client/client.js' },
+    }, { 'client/client.js': 'throw new Error("must never run")' })
+    expect(checkClientBundle('web', 'good-ui')).toEqual({ ok: true, reason: null })
+  })
+
+  it('stays silent for everything it cannot judge', () => {
+    profile([])
+    // No dsh.client at all — a host-only plugin has no bundle to check.
+    pkg('host-only', { name: 'host-only', dsh: { bundle: {} }, exports: { '.': './lib/index.js' } })
+    expect(checkClientBundle('web', 'host-only').ok).toBe(true)
+    // dsh.client but an exports shape this resolver does not model.
+    pkg('odd-exports', { name: 'odd-exports', dsh: { client: {} }, exports: { './client': ['./a.js'] } })
+    expect(checkClientBundle('web', 'odd-exports').ok).toBe(true)
+    // Declared but absent: verifyActivation already calls a missing entry
+    // artifact `broken`; reporting it twice in two vocabularies helps nobody.
+    pkg('absent', { name: 'absent', dsh: { client: {} }, exports: { './client': './client/gone.js' } })
+    expect(checkClientBundle('web', 'absent').ok).toBe(true)
+    // Not installed at all.
+    expect(checkClientBundle('web', 'nope').ok).toBe(true)
   })
 })

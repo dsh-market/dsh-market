@@ -105,6 +105,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			agentBusyInstall: "有 agent 正在运行，请等待其完成或将其取消后再安装——安装会修改插件文件，运行中的 agent 可能中途报错。",
 			compatRiskBanner: "检测到兼容性风险，建议重启前到诊断页处理，或一键回滚本次操作。",
 			shadowNameBanner: "本次操作让同一个插件名在两个层里同时存在，重启后只有一个会生效：",
+			brokenBundleBanner: "下列插件的前端文件已损坏、无法解析，刷新后界面可能空白，建议回滚：",
 			goDiagnose: "去诊断页修复",
 			rollbackNow: "一键回滚",
 			rollingBack: "回滚中…",
@@ -253,6 +254,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			backupDone: "备份已上传",
 			restoreDone: "恢复完成，请重启 DeepSeek Harness",
 			restorePartial: "恢复已完成，但下列插件安装失败：",
+			restoreUnportable: "依赖指向了另一台机器上的绝对路径，本机不存在，需要手动改成本机路径或重新安装",
 			restoreConfirm: "恢复将覆盖当前 profile 配置并重新安装插件，确定继续吗？",
 			restorePreviewDone: "备份已导入，请在「已安装」中确认后开始恢复",
 			restoreMissing: "备份中有 {0} 个插件尚未安装",
@@ -463,6 +465,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			agentBusyInstall: "An agent is currently working — wait for it to finish (or cancel it) before installing. Installing changes plugin files, so a working agent can fail mid-turn.",
 			compatRiskBanner: "Compatibility risk detected — open Diagnostics before restarting, or roll this operation back.",
 			shadowNameBanner: "This operation left one plugin name defined in two layers; only one will load after a restart:",
+			brokenBundleBanner: "These plugins now have a client bundle that will not parse; the page may come up blank after a refresh — rolling back is recommended:",
 			goDiagnose: "Open Diagnostics",
 			rollbackNow: "Roll back",
 			rollingBack: "Rolling back…",
@@ -611,6 +614,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			backupDone: "Backup uploaded",
 			restoreDone: "Restore complete — restart DeepSeek Harness",
 			restorePartial: "Restore completed, but these plugins failed to install:",
+			restoreUnportable: "points at an absolute path from another machine that does not exist here — repoint it locally or reinstall the plugin",
 			restoreConfirm: "Restore will overwrite this profile configuration and reinstall plugins. Continue?",
 			restorePreviewDone: "Backup imported. Review Installed, then start restore.",
 			restoreMissing: "{0} plugins from this backup are not installed",
@@ -4702,7 +4706,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			}, [updatableNames, doUpdate]);
 			const finishRestore = (0, react.useCallback)((body) => {
 				const errors = Array.isArray(body.errors) ? body.errors : [];
-				setRestoreErrors(errors.map((item) => `${String(item.name)}: ${String(item.error)}`));
+				const unportable = Array.isArray(body.unportable) ? body.unportable : [];
+				setRestoreErrors([...errors.map((item) => `${String(item.name)}: ${String(item.error)}`), ...unportable.map((item) => `${String(item.name)}: ${t("restoreUnportable")} (${String(item.spec)})`)]);
 				setBackupRestored(true);
 				setBackupMessage(t("restoreDone"));
 				if (errors.length === 0) {
@@ -5660,16 +5665,25 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						children: [
 							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
 								className: Market_module_css_default.grow,
-								children: [compatibilityNotice.risks.length > 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
-									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("b", { children: t("compatRiskBanner") }),
-									" ",
-									compatibilitySummary(compatibilityNotice.risks)
-								] }), compatibilityNotice.shadowedNames !== void 0 && compatibilityNotice.shadowedNames.length > 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
-									compatibilityNotice.risks.length > 0 && " · ",
-									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("b", { children: t("shadowNameBanner") }),
-									" ",
-									shadowSummary(compatibilityNotice.shadowedNames)
-								] })]
+								children: [
+									compatibilityNotice.risks.length > 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
+										/* @__PURE__ */ (0, react_jsx_runtime.jsx)("b", { children: t("compatRiskBanner") }),
+										" ",
+										compatibilitySummary(compatibilityNotice.risks)
+									] }),
+									compatibilityNotice.shadowedNames !== void 0 && compatibilityNotice.shadowedNames.length > 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
+										compatibilityNotice.risks.length > 0 && " · ",
+										/* @__PURE__ */ (0, react_jsx_runtime.jsx)("b", { children: t("shadowNameBanner") }),
+										" ",
+										shadowSummary(compatibilityNotice.shadowedNames)
+									] }),
+									compatibilityNotice.brokenBundles !== void 0 && compatibilityNotice.brokenBundles.length > 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
+										(compatibilityNotice.risks.length > 0 || (compatibilityNotice.shadowedNames?.length ?? 0) > 0) && " · ",
+										/* @__PURE__ */ (0, react_jsx_runtime.jsx)("b", { children: t("brokenBundleBanner") }),
+										" ",
+										compatibilityNotice.brokenBundles.map((entry) => entry.name).join(", ")
+									] })
+								]
 							}),
 							/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 								variant: "outline",

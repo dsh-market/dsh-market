@@ -36,13 +36,13 @@ import { checkUpdates, fetchNpmLatest, invalidateUpdates, isUpgrade, latestPubli
 import { createThemeManager, type LoaderEntry } from './themes.ts'
 import { readJsonBody, sameOrigin, sendJson } from './http.ts'
 import { detectedSupervisor, restartAllowed, scheduleRestart, servingPort, trustedRestartRequest, trustedDownloadRequest } from './restart.ts'
-import { activationAfterReplace, hasHostHalf, verifyActivation } from './verify.ts'
+import { activationAfterReplace, checkClientBundle, hasHostHalf, verifyActivation } from './verify.ts'
 import {
   carrierDisableIds, disableRow, enableRow, findUserPatchPath, isProtectedModule, packagePatchFlags,
   readUserPatchState, removeRowBlocks, rowIdsForPackage,
 } from './patch.ts'
 import {
-  createProfileBackup, downloadWebdav, MAX_BACKUP_BYTES, mergeRestoreManifest, restoreProfileBackup, secretFileCount, uploadWebdav,
+  createProfileBackup, downloadWebdav, MAX_BACKUP_BYTES, mergeRestoreManifest, restoreProfileBackup, secretFileCount, unportableDeps, uploadWebdav,
   type ProfileBackup,
 } from './backup.ts'
 import {
@@ -435,7 +435,7 @@ export function mountMarketRoutes(
     return { ok: true, hot, detail: null }
   }
 
-  async function restoreBackup(value: unknown): Promise<{ files: number; errors: { name: string; error: string }[] }> {
+  async function restoreBackup(value: unknown): Promise<{ files: number; errors: { name: string; error: string }[]; unportable?: Array<{ name: string; spec: string }> }> {
     if (!await probePnpm()) throw new Error('pnpm is required to restore plugins')
     // Snapshot the target's manifest BEFORE the backup files overwrite it, so
     // the restore can merge rather than replace: plugins the target already
@@ -452,10 +452,18 @@ export function mountMarketRoutes(
         manifestBefore,
       )
       writeFileSync(join(activeProfileDir, 'package.json'), `${JSON.stringify(mergedManifest, null, 2)}\n`)
+      // Named BEFORE the install runs, because that is the install this
+      // will make fail: a `link:/Users/…` spec from another machine points
+      // at a path that does not exist here (#205). Reported rather than
+      // rewritten — where those files should live is the operator's call.
+      const unportable = unportableDeps(mergedManifest.dependencies)
+      if (unportable.length > 0) {
+        logEvent('warn', 'restore', `machine-specific dependency paths in the restored manifest — ${unportable.map(dep => `${dep.name}: ${dep.spec}`).join('; ')}`)
+      }
       const result = await runPlugin(config.profile, ['install'])
       if (result.exitCode === 0 && !result.timedOut && !result.cancelled) {
         invalidateUpdates()
-        return { files: restored.files, errors: [] }
+        return { files: restored.files, errors: [], unportable }
       }
 
       // A bad dependency makes pnpm abort the whole install. Retry from an
@@ -507,7 +515,7 @@ export function mountMarketRoutes(
         restored.rollback()
       }
       invalidateUpdates()
-      return { files: restored.files, errors }
+      return { files: restored.files, errors, unportable: unportableDeps(manifest.dependencies) }
     } catch (error) {
       restored.rollback()
       throw error
@@ -1369,7 +1377,7 @@ export function mountMarketRoutes(
                   `${name}: trial validation failed — ${first}${rollback.ok ? '; previous build restored' : `; could not restore previous files: ${rollback.detail ?? 'unknown'}`}`)
               }
             }
-            let compatibility: { code: 'soft-incompatible'; risks: CompatibilityRisk[]; shadowedNames?: DuplicateName[]; rollbackId: string } | undefined
+            let compatibility: { code: 'soft-incompatible'; risks: CompatibilityRisk[]; shadowedNames?: DuplicateName[]; brokenBundles?: Array<{ name: string; reason: string }>; rollbackId: string } | undefined
             if (ok) {
               invalidateUpdates()
               activation = {
@@ -1384,17 +1392,25 @@ export function mountMarketRoutes(
               // moves a plugin between layers, which is exactly the shape
               // #230 reported (bundle layer vs user patch layer).
               const shadowed = introducedDuplicateNames(compatibilityBefore, after)
-              if (risks.length > 0 || shadowed.length > 0) {
+              // See the install route: an update is the operation the #222
+              // report actually hit.
+              const bundleCheck = checkClientBundle(config.profile, name, activeProfileDir)
+              const brokenBundles = bundleCheck.ok ? [] : [{ name, reason: bundleCheck.reason ?? 'parse failed' }]
+              if (risks.length > 0 || shadowed.length > 0 || brokenBundles.length > 0) {
                 compatibility = {
                   code: 'soft-incompatible',
                   risks,
                   shadowedNames: shadowed.length > 0 ? shadowed : undefined,
+                  brokenBundles: brokenBundles.length > 0 ? brokenBundles : undefined,
                   rollbackId: savePendingRollback({
                     kind: 'update',
                     names: [name],
                     manifestBefore,
                     ...(isGit ? { gitTarget: target, beforeCommit } : {}),
                   }),
+                }
+                if (brokenBundles.length > 0) {
+                  logEvent('error', 'update-bundle', `${brokenBundles.map(entry => `${entry.name}: ${entry.reason}`).join('; ')}`)
                 }
                 if (risks.length > 0) {
                   logEvent('warn', 'update-compat', `${name}: introduced host-compatibility risks — ${risks.map(risk => `${risk.peer}@${risk.range} vs ${risk.resolved}`).join('; ')}`)
@@ -2117,7 +2133,7 @@ export function mountMarketRoutes(
             const installed = readInstalled(config.profile, activeProfileDir)
             let hot = false
             let activation: Record<string, ReturnType<typeof verifyActivation>> | undefined
-            let compatibility: { code: 'soft-incompatible'; risks: CompatibilityRisk[]; shadowedNames?: DuplicateName[]; rollbackId: string } | undefined
+            let compatibility: { code: 'soft-incompatible'; risks: CompatibilityRisk[]; shadowedNames?: DuplicateName[]; brokenBundles?: Array<{ name: string; reason: string }>; rollbackId: string } | undefined
             let addedPackages: string[] = []
             if (ok) {
               const added = Object.keys(installed).filter(name => !before.has(name))
@@ -2151,12 +2167,24 @@ export function mountMarketRoutes(
               // Shares the rollback id with the peer risks when both fire:
               // one operation, one thing to undo.
               const shadowed = introducedDuplicateNames(compatibilityBefore, after)
-              if (risks.length > 0 || shadowed.length > 0) {
+              // A client bundle that no longer parses (#222): pnpm can leave
+              // one half-written or patch-mangled, and today that surfaces
+              // as a blank settings page long after the install reported
+              // success, with nothing connecting the two.
+              const brokenBundles = addedPackages
+                .map(pkg => ({ name: pkg, check: checkClientBundle(config.profile, pkg, activeProfileDir) }))
+                .filter(entry => !entry.check.ok)
+                .map(entry => ({ name: entry.name, reason: entry.check.reason ?? 'parse failed' }))
+              if (risks.length > 0 || shadowed.length > 0 || brokenBundles.length > 0) {
                 compatibility = {
                   code: 'soft-incompatible',
                   risks,
                   shadowedNames: shadowed.length > 0 ? shadowed : undefined,
+                  brokenBundles: brokenBundles.length > 0 ? brokenBundles : undefined,
                   rollbackId: savePendingRollback({ kind: 'install', names: addedPackages }),
+                }
+                if (brokenBundles.length > 0) {
+                  logEvent('error', 'install-bundle', `${brokenBundles.map(entry => `${entry.name}: ${entry.reason}`).join('; ')}`)
                 }
                 if (risks.length > 0) {
                   logEvent('warn', 'install-compat', `${addedPackages.join(', ')}: introduced host-compatibility risks — ${risks.map(risk => `${risk.peer}@${risk.range} vs ${risk.resolved}`).join('; ')}`)
