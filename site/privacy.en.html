@@ -65,7 +65,7 @@ footer a:hover{color:var(--accent)}
 <p class="updated">Last updated 2026-08-21. This page describes this website and the dsh-market plugin. It is written from the code, not from intent — every claim below is checkable in <a href="https://github.com/dsh-market/dsh-market">the repository</a>.</p>
 
 <h2>The short version</h2>
-<p>The plugin sends nothing about you anywhere. It downloads what you ask it to download. This website counts visits and is adding one advertisement per page — both without cookies and without identifying you.</p>
+<p>The plugin sends nothing about you anywhere. It downloads what you ask it to download. This website counts visits without cookies and without identifying you, and is adding advertising — which, if the network turns out to be Google, does involve cookies. The page below says exactly which.</p>
 
 <h2>This website (dshmarket.com)</h2>
 
@@ -73,13 +73,13 @@ footer a:hover{color:var(--accent)}
 <p>We use <strong>Cloudflare Web Analytics</strong>. It is cookie-less and does not fingerprint or track you across sites. It records page views and coarse technical facts — referrer, country, browser and device class — which Cloudflare aggregates. We see counts, never individuals. See <a href="https://www.cloudflare.com/web-analytics/">Cloudflare Web Analytics</a>.</p>
 
 <h3>What the page loads</h3>
-<p>One request to <code>awesome-dsh-plugin.com</code>, to display the current number of plugins in the catalog. Nothing about you is included in it. Plugin screenshots on the front page are loaded from <code>raw.githubusercontent.com</code>, the same host they live on in their own repositories. When the ad placement described below is active, the advertisement is loaded from <code>media.ethicalads.io</code>. There are no social widgets, no third-party fonts, and no other scripts.</p>
+<p>One request to <code>awesome-dsh-plugin.com</code>, to display the current number of plugins in the catalog. Nothing about you is included in it. Plugin screenshots on the front page are loaded from <code>raw.githubusercontent.com</code>, the same host they live on in their own repositories. When an ad placement described below is active, the advertisement is loaded from <code>media.ethicalads.io</code> or from <code>pagead2.googlesyndication.com</code>, depending on which network is running. There are no social widgets, no third-party fonts, and no other scripts.</p>
 
 <h3>Hosting</h3>
 <p>The site is served by <strong>GitHub Pages</strong>. Like any web server, GitHub receives your IP address in order to answer the request. See the <a href="https://docs.github.com/site-policy/privacy-policies/github-privacy-statement">GitHub Privacy Statement</a>.</p>
 
 <h3>Cookies</h3>
-<p>This site sets none.</p>
+<p>This site sets none of its own. If the Google AdSense placement described below is active, Google sets cookies for advertising; no other cookie is set by anything here.</p>
 
 <h2>The dsh-market plugin</h2>
 <p>The plugin runs inside your own DeepSeek Harness, on your machine. There is no dsh-market account, no server we operate, and no telemetry. We cannot see what you install.</p>
@@ -105,9 +105,16 @@ footer a:hover{color:var(--accent)}
 
 <h2>Advertising</h2>
 <p>Earlier versions of this page promised that if advertising were ever introduced, this page would say so before it happened. This is that notice.</p>
-<p>This website is adding <strong>one advertisement per page</strong>, served by <a href="https://www.ethicalads.io/">EthicalAds</a>, a network for developer-focused sites. It appears above or beside the content, never inside it, and there is never more than one on a page.</p>
-<p>The placement ships in the site's build script and stays inert until a publisher id is configured. While it is inert no ad script is requested and nothing third-party loads — you can tell which state this site is in by viewing source and searching for <code>ethicalads</code>.</p>
+<p>This website is adding advertising. Two networks have been applied to and at most one of them will ever run here, because the first of them requires that it be the only ad on the page:</p>
+<ul>
+<li><strong><a href="https://www.ethicalads.io/">EthicalAds</a></strong> — a network for developer-focused sites. One ad per page, above or beside the content, never inside it.</li>
+<li><strong>Google AdSense</strong> — <strong>this one uses cookies</strong>, which nothing else on this site does. See the section below.</li>
+</ul>
+<p>Both placements ship in the site's build script and stay inert until the corresponding publisher id is configured; the build refuses to run with both configured at once. While inert, no ad script is requested and nothing third-party loads. You can tell which state this site is in by viewing source and searching for <code>ethicalads</code> or <code>adsbygoogle</code>.</p>
 <p>EthicalAds states that it sets no cookies and uses no local-storage identifiers, runs no advertiser code, hosts every ad asset on its own servers, and does no behavioral targeting: ads are selected from the content of the page and a coarse location worked out from your IP address at request time. It records browser type, language, referring site and the time of the request, and says logs containing IP addresses are deleted within ten days. That is their account of their own system, not something this repository can verify — see the <a href="https://www.ethicalads.io/privacy-policy/">EthicalAds privacy policy</a>.</p>
+<h3>If the ad is Google AdSense</h3>
+<p>AdSense is not cookie-free, and saying otherwise would make the rest of this page worth less. Google and its partners set cookies to serve and measure ads, and — where you have consented to it — to personalise them from your activity on other sites. Google also receives your IP address as part of any ad request. This is a real difference from Cloudflare Web Analytics, which is described above and does none of it.</p>
+<p>Visitors in the EEA, the UK and Switzerland are shown a consent dialog before any personalised ad is served, and may refuse; refusing means non-personalised ads, not a broken page. Everyone can review and change what Google does with their data at <a href="https://myadcenter.google.com/">My Ad Center</a> and <a href="https://policies.google.com/technologies/ads">Google's advertising page</a>. <code>/ads.txt</code> on this domain lists who is authorised to sell ad space here.</p>
 <p><strong>The dsh-market plugin carries no advertising.</strong> Nothing described in this section runs inside DeepSeek Harness; it applies to this website only.</p>
 
 <h2>Contact</h2>

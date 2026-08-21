@@ -65,7 +65,7 @@ footer a:hover{color:var(--accent)}
 <p class="updated">最后更新 2026-08-21。本页说明本网站与 dsh-market 插件的数据处理方式。内容依据代码写成，而非依据意图——下面每一条都可以在<a href="https://github.com/dsh-market/dsh-market">代码仓库</a>里核对。</p>
 
 <h2>一句话版本</h2>
-<p>插件不会把关于你的任何信息发到任何地方，它只下载你让它下载的东西。本网站会统计访问量，并正在引入每页一条广告——两者都不使用 cookie，也都不识别你的身份。</p>
+<p>插件不会把关于你的任何信息发到任何地方，它只下载你让它下载的东西。本网站统计访问量的部分不使用 cookie、也不识别你的身份；同时正在引入广告——如果最终接的是 Google，那部分会用到 cookie。下面写明了到底是哪种。</p>
 
 <h2>本网站（dshmarket.com）</h2>
 
@@ -73,13 +73,13 @@ footer a:hover{color:var(--accent)}
 <p>我们使用 <strong>Cloudflare Web Analytics</strong>。它不使用 cookie，也不做指纹识别或跨站跟踪，记录的是页面访问量和粗粒度的技术信息——来源页、国家/地区、浏览器与设备类型——由 Cloudflare 汇总。我们看到的是数字，不是个人。详见 <a href="https://www.cloudflare.com/web-analytics/">Cloudflare Web Analytics</a>。</p>
 
 <h3>页面会加载什么</h3>
-<p>一个到 <code>awesome-dsh-plugin.com</code> 的请求，用于显示目录里当前的插件数量，其中不包含关于你的任何信息。首页上的插件截图从 <code>raw.githubusercontent.com</code> 加载，也就是它们在各自仓库里原本所在的位置。当下面所述的广告位启用时，广告从 <code>media.ethicalads.io</code> 加载。没有社交插件，没有第三方字体，也没有其它脚本。</p>
+<p>一个到 <code>awesome-dsh-plugin.com</code> 的请求，用于显示目录里当前的插件数量，其中不包含关于你的任何信息。首页上的插件截图从 <code>raw.githubusercontent.com</code> 加载，也就是它们在各自仓库里原本所在的位置。当下面所述的某个广告位启用时，广告会从 <code>media.ethicalads.io</code> 或 <code>pagead2.googlesyndication.com</code> 加载，取决于当时跑的是哪一家。没有社交插件，没有第三方字体，也没有其它脚本。</p>
 
 <h3>托管</h3>
 <p>本站由 <strong>GitHub Pages</strong> 提供服务。和任何网页服务器一样，GitHub 会为了响应请求而收到你的 IP 地址。详见 <a href="https://docs.github.com/site-policy/privacy-policies/github-privacy-statement">GitHub 隐私声明</a>。</p>
 
 <h3>Cookie</h3>
-<p>本站不设置任何 cookie。</p>
+<p>本站自身不设置任何 cookie。若下面所述的 Google AdSense 广告位启用，Google 会为广告设置 cookie；除此之外这里没有任何东西设置 cookie。</p>
 
 <h2>dsh-market 插件</h2>
 <p>插件运行在你自己的 DeepSeek Harness 里，在你自己的机器上。没有 dsh-market 账号，没有我们运营的服务器，也没有任何遥测。<strong>我们无法知道你装了什么。</strong></p>
@@ -105,9 +105,16 @@ footer a:hover{color:var(--accent)}
 
 <h2>广告</h2>
 <p>本页此前的版本承诺过：若将来引入广告，本页会在变化发生之前说明。这就是那份说明。</p>
-<p>本网站正在引入<strong>每页一条广告</strong>，由面向开发者站点的广告网络 <a href="https://www.ethicalads.io/">EthicalAds</a> 投放。广告位于内容的上方或侧边，绝不插在内容中间，且每页至多一条。</p>
-<p>该广告位已随站点构建脚本发布，但在配置 publisher id 之前保持惰性。惰性状态下不会请求任何广告脚本，也不会加载任何第三方资源——你可以查看网页源代码、搜索 <code>ethicalads</code> 来判断本站当前处于哪种状态。</p>
+<p>本网站正在引入广告。已经向两家申请，但最终最多只会跑其中一家，因为第一家要求页面上只能有它一个广告：</p>
+<ul>
+<li><strong><a href="https://www.ethicalads.io/">EthicalAds</a></strong>——面向开发者站点的广告网络。每页一条，位于内容上方或侧边，绝不插在内容中间。</li>
+<li><strong>Google AdSense</strong>——<strong>这一家会用 cookie</strong>，本站其它任何部分都不用。见下面单独一节。</li>
+</ul>
+<p>两个广告位都已随站点构建脚本发布，但在配置对应的 publisher id 之前保持惰性；同时配置两家会让构建直接失败。惰性状态下不请求任何广告脚本，也不加载任何第三方资源——你可以查看网页源代码、搜索 <code>ethicalads</code> 或 <code>adsbygoogle</code> 来判断本站当前处于哪种状态。</p>
 <p>EthicalAds 声明：不设置 cookie，不使用 localStorage 类标识符，不运行广告主提供的代码，所有广告素材托管在自己的服务器上，也不做行为定向——广告只根据页面内容和请求时由 IP 推算出的粗略地理位置来选择。它会记录浏览器类型、语言、来源站点和请求时间，并称含 IP 地址的日志会在十天内删除。这是它对自身系统的说明，不是本仓库能够核验的内容，详见 <a href="https://www.ethicalads.io/privacy-policy/">EthicalAds 隐私政策</a>。</p>
+<h3>如果跑的是 Google AdSense</h3>
+<p>AdSense 不是无 cookie 的，含糊其辞会让本页其余部分一起贬值。Google 及其合作方会设置 cookie 用于投放和衡量广告，并在你同意的前提下，根据你在其它网站上的活动做个性化。Google 也会在广告请求中收到你的 IP 地址。这和上面写的 Cloudflare Web Analytics 有实质区别——后者这些都不做。</p>
+<p>欧洲经济区、英国和瑞士的访客在看到任何个性化广告之前会先看到同意弹窗，可以拒绝；拒绝的结果是投放非个性化广告，而不是页面出错。任何人都可以在 <a href="https://myadcenter.google.com/">我的广告中心</a> 和 <a href="https://policies.google.com/technologies/ads">Google 广告说明页</a> 查看并更改 Google 对你数据的使用。本域名下的 <code>/ads.txt</code> 列出了谁有权出售这里的广告位。</p>
 <p><strong>dsh-market 插件本身没有任何广告。</strong>本节描述的一切都不在 DeepSeek Harness 内运行，只适用于本网站。</p>
 
 <h2>联系方式</h2>

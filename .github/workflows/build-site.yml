@@ -63,6 +63,9 @@ jobs:
       - run: node scripts/build-site.mjs
         env:
           EA_PUBLISHER: ${{ vars.EA_PUBLISHER }}
+          # The other network. Setting both fails the build on purpose —
+          # EthicalAds requires being the only ad on the page.
+          ADSENSE_CLIENT: ${{ vars.ADSENSE_CLIENT }}
 
       - uses: actions/upload-pages-artifact@v3
         with:

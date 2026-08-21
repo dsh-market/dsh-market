@@ -39,8 +39,23 @@ const ldSafe = (s) => s.replaceAll('<', '\\u003c')
 // front so a late arrival never shifts the page; the frame paints only once
 // the slot is filled, so an unfilled request (most non-EU/NA traffic, which is
 // over half of ours) leaves plain whitespace instead of an empty box.
+//
+// Two networks, never at once. EthicalAds' terms require it to be the only ad
+// on the page, so setting both is a configuration error rather than a doubling
+// of revenue — fail the build instead of quietly violating one of them.
 const EA_PUBLISHER = process.env.EA_PUBLISHER || ''
-const adCss = () =>
+const ADSENSE_CLIENT = process.env.ADSENSE_CLIENT || ''
+if (EA_PUBLISHER && ADSENSE_CLIENT) {
+  console.error('EA_PUBLISHER and ADSENSE_CLIENT are both set — EthicalAds must be the only ad on the page. Pick one.')
+  process.exit(1)
+}
+// AdSense places its own units (Auto ads) from this one tag, so there is no
+// slot markup to emit — unlike EthicalAds it needs nothing but the head script.
+const adsenseHead = () =>
+  ADSENSE_CLIENT
+    ? `<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${esc(ADSENSE_CLIENT)}" crossorigin="anonymous"></script>`
+    : ''
+const eaCss = () =>
   EA_PUBLISHER
     ? `<style>
 .adband{margin:1.4rem 0}
@@ -55,6 +70,8 @@ const adSlot = () =>
     : ''
 const adScript = () =>
   EA_PUBLISHER ? `<script async src="https://media.ethicalads.io/media/client/ethicalads.min.js"></script>` : ''
+// Whichever network is configured, everything that belongs in <head>.
+const adHead = () => eaCss() + adsenseHead()
 
 if (!fs.existsSync(REGISTRY_FILE)) {
   console.error(`${REGISTRY_FILE} is missing — run \`npm run snapshot\` first`)
@@ -98,7 +115,11 @@ for (const f of fs.readdirSync('site/assets')) {
   fs.mkdirSync(`${OUT}/assets`, { recursive: true })
   fs.copyFileSync(`site/assets/${f}`, `${OUT}/assets/${f}`)
 }
-for (const f of ['CNAME', 'robots.txt']) fs.copyFileSync(`site/${f}`, `${OUT}/${f}`)
+// ads.txt ships unconditionally, unlike the ad code. It is a claim about who
+// is allowed to sell this domain's inventory, which stays true whether or not
+// a slot is currently live, and AdSense verifies site ownership from it — so
+// it has to exist before the review, not after.
+for (const f of ['CNAME', 'robots.txt', 'ads.txt']) fs.copyFileSync(`site/${f}`, `${OUT}/${f}`)
 
 // ── README rendering ────────────────────────────────────────────────────────
 // Same image policy as the catalog site, for the same reason: a README is
@@ -299,7 +320,7 @@ for (const loc of LOCALES) {
       .replaceAll('__BROWSE__', () => loc.browsePath)
       .replaceAll('__HOME_CSS__', () => (landing ? homeCss() : ''))
       .replaceAll('__HOME_CATALOG__', () => (landing ? homeCatalog(loc) : ''))
-      .replaceAll('__AD_CSS__', () => (landing ? adCss() : ''))
+      .replaceAll('__AD_HEAD__', () => (landing ? adHead() : ''))
       .replaceAll('__AD_SLOT__', () => (landing ? adSlot() : ''))
       .replaceAll('__AD_SCRIPT__', () => (landing ? adScript() : ''))
     page = applyStrings(page, loc)
@@ -336,7 +357,7 @@ ${c.items.map((p) => `    <li><a href="${pluginPath(loc, p.slug)}"><span class="
     .replaceAll('__LOCALE_LINKS__', () => localeLinks(loc, (l) => l.browsePath))
     .replaceAll('__JUMP__', () => jump)
     .replaceAll('__SECTIONS__', () => sections)
-    .replaceAll('__AD_CSS__', () => adCss())
+    .replaceAll('__AD_HEAD__', () => adHead())
     .replaceAll('__AD_SLOT__', () => adSlot())
     .replaceAll('__AD_SCRIPT__', () => adScript())
   write(loc.browsePath, applyStrings(page, loc))
@@ -465,7 +486,7 @@ ${readmeHtml}
       .replaceAll('__P_SHOTS__', () => shotSection)
       .replaceAll('__P_LINKS__', () => links)
       .replaceAll('__P_RELATED__', () => relSection)
-      .replaceAll('__AD_CSS__', () => adCss())
+      .replaceAll('__AD_HEAD__', () => adHead())
       .replaceAll('__AD_SLOT__', () => adSlot())
       .replaceAll('__AD_SCRIPT__', () => adScript())
     write(pluginPath(loc, p.slug), applyStrings(page, loc))
