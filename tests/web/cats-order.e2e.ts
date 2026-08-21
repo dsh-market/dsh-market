@@ -24,7 +24,7 @@ describe.skipIf(!dshAvailable())('web e2e: category chip order stays put', () =>
   it('leaves an already-visible chip where it was; still rescues a hidden one', async () => {
     await page.getByRole('button', { name: /^(设置|Settings)$/ }).first().click()
     await page.getByRole('button', { name: /插件市场|Plugin Market/ }).click()
-    await page.waitForSelector('[class*="grid"] [class*="card"]', { timeout: 60_000 })
+    await page.waitForSelector('[class*="masonryCol"] [class*="card"]', { timeout: 60_000 })
 
     const chipTexts = async (): Promise<string[]> =>
       page.locator('[class*="catsWrap"] [class*="pill"], [class*="catsWrap"] button').allInnerTexts()

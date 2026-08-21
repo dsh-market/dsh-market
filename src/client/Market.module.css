@@ -98,6 +98,34 @@
 .warnLine{color:var(--dsw-alias-state-warn-primary,#b45309);font-weight:600;font-size:12px;line-height:18px;margin:0;display:flex;align-items:center;gap:4px;flex-wrap:wrap}
 .modalNote{font-size:12px;color:var(--dsw-alias-label-tertiary,#8b93a1);line-height:18px;margin:12px 0 0;display:flex;align-items:center;gap:4px}
 .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:start;gap:10px}
+/* Masonry: two independent columns, each packing its own cards tight.
+   A CSS grid cannot do this — its rows are as tall as their tallest cell, so
+   a card with screenshots left a matching hole beside a card without them,
+   and `align-items:start` turned that hole into visible dead space rather
+   than a stretched card. Column-major `column-count` would pack just as
+   well but reorders the list down one column and then the other, which
+   destroys the ranking the sort just produced. Dealing the cards
+   alternately into two flex columns keeps rank reading left-to-right,
+   top-to-bottom, and lets each column close its own gaps. */
+.masonry{display:flex;align-items:flex-start;gap:10px}
+.masonryCol{flex:1;min-width:0;display:flex;flex-direction:column;gap:10px}
+/* `.card` carries `align-self:start`, which under CSS grid means "do not
+   stretch VERTICALLY to match a taller row-mate". In a flex COLUMN the same
+   declaration addresses the other axis: it stops the card stretching
+   HORIZONTALLY, so its width becomes max-content and a card with a long
+   name grew to 444px inside a 273px column and covered the neighbouring
+   column's buttons. Same property, opposite meaning, silent either way.
+   Masonry needs the vertical freedom it already gets from the column stack,
+   so cards stretch to the column width here. min-width:0 is the flex
+   equivalent of the grid's `minmax(0, 1fr)`: without it a card's
+   min-content floor would push the column wide again. */
+/* Two class names, not one: `.card` sets `align-self:start` and is declared
+   later in this file, so a single-class selector here would tie on
+   specificity and lose to source order. */
+.masonry > .masonryCol > *{align-self:stretch;min-width:0}
+@media (max-width:680px){
+  .masonry{flex-direction:column}
+}
 /* The Installed list is the same two-up grid: one list that reads as rows and
    another as cards made the two tabs look like different products. */
 .pairGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:start;gap:10px}
@@ -124,7 +152,13 @@
    header — you take in who wrote it in one glance and spend the rest on
    what it is. */
 .nm{font-weight:600;font-size:15px;line-height:22px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.nmLink{color:inherit;text-decoration:none}
+/* display:block is load-bearing, not cosmetic. `.nm` clips with
+   overflow:hidden + text-overflow:ellipsis, and neither applies to an
+   INLINE box — so once the title became an <a> (it links to the repo), a
+   long name stopped ellipsizing and overflowed the card instead, landing on
+   top of the Install button and swallowing its clicks. Caught by the e2e
+   suite as "the name link intercepts pointer events". */
+.nmLink{display:block;color:inherit;text-decoration:none}
 .nmLink:hover{color:var(--dsw-alias-brand-primary,#4f6ef7);text-decoration:underline}
 /* flex-wrap so a long owner name pushes the download/star counts to a
    second line instead of squeezing the name itself toward unreadable: an
@@ -150,7 +184,10 @@
    being uneven (reported on a real host: several cards mid-row landing at
    visibly different heights). The toggle in CardDesc removes this class, so
    nothing here caps the expanded height. */
-.descClamp{display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden;height:90px}
+/* A ceiling, not a fixed slot. The 90px floor existed to make CSS-grid rows
+   line up; masonry packs each column independently, so reserving five lines
+   for a one-line description now just wastes the space it was buying. */
+.descClamp{display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden}
 .descToggle{display:flex;align-items:center;justify-content:center;width:20px;height:16px;margin-top:2px;
             color:var(--dsw-alias-label-tertiary,#8b93a1);background:none;border:none;padding:0;cursor:pointer}
 .descToggle:hover{color:var(--dsw-alias-brand-primary,#4f6ef7)}

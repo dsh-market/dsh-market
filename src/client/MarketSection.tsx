@@ -3,7 +3,7 @@
  * /dsh-market/* host routes, with install/update/uninstall flows and the
  * pending-restart bookkeeping in sessionStorage.
  */
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import {
   Button,
@@ -442,6 +442,62 @@ function CardShot({ plugin, onOpen }: { plugin: RegistryPlugin; onOpen: (shots: 
         />
       ))}
     </div>
+  )
+}
+
+/**
+ * Two masonry columns holding the cards in ranked order.
+ *
+ * Cards are dealt alternately (0,2,4… left; 1,3,5… right) rather than split
+ * down the middle, so the sort order still reads left-to-right then down —
+ * the ranking is the whole point of the sort menu above it. Each column is
+ * its own flex stack, so a tall card only pushes down the cards beneath IT
+ * instead of leaving a hole beside its shorter neighbour.
+ *
+ * Below the two-up breakpoint the CSS collapses to one column, and dealing
+ * alternately would then interleave the list wrongly — so at one column the
+ * cards stay in a single stack in their original order.
+ */
+function Masonry({ items, render, columns = 2 }: {
+  items: RegistryPlugin[]
+  render: (plugin: RegistryPlugin) => ReactNode
+  columns?: number
+}) {
+  const wide = useMediaWide()
+  if (!wide || columns < 2) {
+    return <div className={css.masonry}><div className={css.masonryCol}>{items.map(render)}</div></div>
+  }
+  const buckets: RegistryPlugin[][] = Array.from({ length: columns }, () => [])
+  items.forEach((item, index) => { buckets[index % columns]!.push(item) })
+  return (
+    <div className={css.masonry}>
+      {buckets.map((bucket, index) => (
+        <div key={index} className={css.masonryCol}>{bucket.map(render)}</div>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * Whether the layout is at its two-up width. Matches the CSS breakpoint
+ * exactly: the column split is decided in JS but rendered by CSS, and the
+ * two disagreeing would deal cards into columns the stylesheet has already
+ * stacked.
+ */
+function useMediaWide(): boolean {
+  const query = '(min-width: 681px)'
+  const subscribe = useCallback((notify: () => void) => {
+    if (typeof matchMedia !== 'function') return () => {}
+    const list = matchMedia(query)
+    list.addEventListener('change', notify)
+    return () => list.removeEventListener('change', notify)
+  }, [])
+  return useSyncExternalStore(
+    subscribe,
+    () => (typeof matchMedia === 'function' ? matchMedia(query).matches : true),
+    // Server/jsdom without matchMedia: assume the two-up layout, which is
+    // what the stylesheet defaults to before any media query applies.
+    () => true,
   )
 }
 
@@ -2845,7 +2901,7 @@ export function MarketSection(props: MarketSectionProps) {
                       ? <div className={css.empty}>{t('empty')}</div>
                       : (
                           <>
-                            <div className={css.grid}>{pagePlugins.map(pluginCard)}</div>
+                            <Masonry items={pagePlugins} render={pluginCard} />
                             <Pager
                               currentPage={currentPage}
                               totalPages={totalPages}
@@ -2900,7 +2956,7 @@ export function MarketSection(props: MarketSectionProps) {
                         ? <div className={css.empty}>{t('empty')}</div>
                         : (
                             <>
-                              <div className={css.grid}>{themePagePlugins.map(themePluginCard)}</div>
+                              <Masonry items={themePagePlugins} render={themePluginCard} />
                               <Pager
                                 currentPage={themePagination.currentPage}
                                 totalPages={themePagination.totalPages}

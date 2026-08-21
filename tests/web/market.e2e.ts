@@ -52,12 +52,12 @@ describe.skipIf(!HAS_DSH)('web e2e: plugin market', () => {
   it('opens Settings → Plugin Market and renders the catalog paginated', async () => {
     await page.getByRole('button', { name: /^(设置|Settings)$/ }).first().click()
     await page.getByRole('button', { name: /插件市场|Plugin Market/ }).click()
-    await page.waitForSelector('[class*="grid"] > [class*="card"]', { timeout: 30_000 })
+    await page.waitForSelector('[class*="masonryCol"] > [class*="card"]', { timeout: 30_000 })
     // Direct children only: a card with curated screenshots nests a
     // `.cardShots`/`.cardShot` thumbnail strip, and both class names also
     // match the loose `[class*="card"]` substring — counting descendants
     // inflated the total by however many thumbnails were on screen.
-    const cards = await page.locator('[class*="grid"] > [class*="card"]').count()
+    const cards = await page.locator('[class*="masonryCol"] > [class*="card"]').count()
     // Pagination: a bounded first page (24) instead of the full 400+ catalog,
     // with a numbered pager underneath.
     expect(cards).toBe(24)
@@ -76,7 +76,7 @@ describe.skipIf(!HAS_DSH)('web e2e: plugin market', () => {
 
   it('search and category filter the grid', async () => {
     const search = page.getByPlaceholder(/搜索插件|Search plugins/)
-    const gridNames = () => page.locator('[class*="grid"] [class*="nm"]').allTextContents()
+    const gridNames = () => page.locator('[class*="masonryCol"] [class*="nm"]').allTextContents()
 
     const beforeSearch = await gridNames()
     await search.fill('memory')
@@ -130,7 +130,7 @@ describe.skipIf(!HAS_DSH)('web e2e: plugin market', () => {
   it('the install dialog opens and cancels cleanly', async () => {
     // Independent of the previous test's final tab.
     await page.getByRole('button', { name: /^(发现|Discover)$/ }).click()
-    await page.waitForSelector('[class*="grid"] [class*="card"]', { timeout: 15_000 })
+    await page.waitForSelector('[class*="masonryCol"] [class*="card"]', { timeout: 15_000 })
     await page.getByRole('button', { name: /^(安装|Install)$/ }).first().click()
     const cancel = page.getByRole('button', { name: /^(取消|Cancel)$/ }).first()
     await cancel.waitFor({ timeout: 5000 })

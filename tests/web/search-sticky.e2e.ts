@@ -29,7 +29,7 @@ describe.skipIf(!dshAvailable())('web e2e: search box stays with the sticky head
   it('parks at a stable y once stuck, and is never partially covered while scrolling', async () => {
     await page.getByRole('button', { name: /^(设置|Settings)$/ }).first().click()
     await page.getByRole('button', { name: /插件市场|Plugin Market/ }).click()
-    await page.waitForSelector('[class*="grid"] [class*="card"]', { timeout: 60_000 })
+    await page.waitForSelector('[class*="masonryCol"] [class*="card"]', { timeout: 60_000 })
 
     const search = page.locator('[class*="tabSearchRow"] input').first()
     const scroller = page.locator('[class*="_body"]').first()

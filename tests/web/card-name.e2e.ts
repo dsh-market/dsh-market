@@ -34,7 +34,7 @@ describe.skipIf(!dshAvailable())('web e2e: card header', () => {
   it('shows author-and-avatar as one byline under the plugin name', async () => {
     await page.getByRole('button', { name: /^(设置|Settings)$/ }).first().click()
     await page.getByText(/插件市场|Plugin Market/).last().click()
-    await page.waitForSelector('[class*="grid"] [class*="card"]', { timeout: 60_000 })
+    await page.waitForSelector('[class*="masonryCol"] [class*="card"]', { timeout: 60_000 })
     // Walk the grid until a compound identity appears. The title attribute
     // keeps the raw catalog name, so this compares what the card SHOWS
     // against what it is — no dependence on driving the search box.
@@ -43,7 +43,7 @@ describe.skipIf(!dshAvailable())('web e2e: card header', () => {
       // Locators rather than page.evaluate: the callback of evaluate runs
       // in the browser but is type-checked against the Node lib, where
       // `document` does not exist.
-      const names = page.locator('[class*="grid"] [class*="nm"]')
+      const names = page.locator('[class*="masonryCol"] [class*="nm"]')
       for (let i = 0; i < await names.count(); i++) {
         const identity = (await names.nth(i).getAttribute('title')) ?? ''
         if (identity.includes('#')) {

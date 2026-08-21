@@ -68,6 +68,25 @@ function props() {
   }
 }
 
+/**
+ * Card names in VISUAL (ranked) order, reassembled from the masonry columns.
+ *
+ * Masonry deals cards alternately into two flex columns, so DOM order is
+ * column-major (0,2,4… then 1,3,5…) while what the user reads is still
+ * left-to-right, top-to-bottom. Ranking is what these tests are about, so
+ * they assert the visual order and this puts it back together — walking the
+ * raw DOM would assert the layout's implementation instead of its result.
+ */
+function rankedNames(container: HTMLElement): Array<string | undefined> {
+  const columns = [...container.querySelectorAll('[class*="masonryCol"]')]
+    .map(col => [...col.querySelectorAll('[class*="nm"]')].map(el => el.textContent?.trim()))
+  const out: Array<string | undefined> = []
+  for (let row = 0; row < Math.max(0, ...columns.map(col => col.length)); row++) {
+    for (const col of columns) if (row < col.length) out.push(col[row])
+  }
+  return out
+}
+
 beforeEach(() => { stubFetch(); resetScreenshotsCache() })
 afterEach(() => {
   cleanup()
@@ -1344,7 +1363,7 @@ describe('per-tab search boxes', () => {
       ...props(),
       themeStore: { subscribe: () => () => {}, getSnapshot: () => THEME_SNAPSHOT },
     }} />)
-    const names = () => [...container.querySelectorAll('[class*="grid"] [class*="nm"]')].map(el => el.textContent?.trim())
+    const names = () => rankedNames(container)
 
     await screen.findByText('tool-a')
     // Discover's own default (downloads-desc; equal counts keep registry
@@ -1395,7 +1414,7 @@ describe('per-tab search boxes', () => {
     fireEvent.click(screen.getAllByRole('button', { name: en.tabThemes })[0])
     await screen.findByText('theme-00')
 
-    const names = () => [...container.querySelectorAll('[class*="grid"] [class*="nm"]')].map(el => el.textContent?.trim())
+    const names = () => rankedNames(container)
     expect(names().length).toBe(24)
     expect(names()[0]).toBe('theme-00')
     expect(screen.getByText(en.pageInfo.replace('{0}', '1').replace('{1}', '2'))).toBeTruthy()
