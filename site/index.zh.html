@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>dsh-market — 装在 DeepSeek Harness 里的插件市场</title>
-<meta name="description" content="1200+ 社区插件，逛一逛，点一下，装好。多数插件免重启即刻生效。更新、卸载、实时进度，零遥测。">
+<meta name="description" content="__COUNT__ 个社区插件，逛一逛，点一下，装好。多数插件免重启即刻生效。更新、卸载、实时进度，零遥测。">
 <link rel="sitemap" type="application/xml" href="https://dshmarket.com/sitemap.xml">
     <link rel="canonical" href="https://dshmarket.com/zh/">
 <link rel="alternate" hreflang="en" href="https://dshmarket.com/">
@@ -25,7 +25,7 @@ header img{height:34px}
 header .grow{flex:1}
 header a{color:var(--ink2);text-decoration:none;font-size:.9rem;margin-left:1.2rem}
 header a:hover{color:var(--accent)}
-.hero{text-align:center;padding:3.5rem 0 2.5rem}
+.hero{text-align:center;padding:2.2rem 0 1.4rem}
 .hero h1{font-size:clamp(1.9rem,5vw,3rem);font-weight:800;letter-spacing:-.02em;line-height:1.2}
 .hero h1 em{font-style:normal;color:var(--accent)}
 .hero p{font-size:1.1rem;color:var(--ink2);margin:1rem auto 0;max-width:34rem}
@@ -33,9 +33,11 @@ header a:hover{color:var(--accent)}
 .install button{border:none;background:var(--accent);color:#fff;border-radius:8px;padding:.4rem .9rem;font-size:.8rem;cursor:pointer;font-weight:600}
 .install button:hover{filter:brightness(1.1)}
 .sub{margin-top:.8rem;font-size:.85rem;color:var(--ink3)}
-.shot{margin:3rem auto 0;max-width:56rem;border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:0 24px 70px rgba(16,23,34,.12)}
-.shot img{display:block;width:100%}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:1rem;margin:4rem 0}
+.about{margin-top:3.5rem;border-top:1px solid var(--line);padding-top:2.5rem}
+.about h2{font-size:1.15rem;text-align:center}
+.demo{margin:1.4rem auto 0;max-width:52rem;border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:0 24px 70px rgba(16,23,34,.12)}
+.demo img{display:block;width:100%}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:1rem;margin:2rem 0 0}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:1.3rem 1.4rem}
 .card .ic{font-size:1.4rem}
 .card h3{font-size:1rem;margin:.6rem 0 .3rem}
@@ -45,6 +47,8 @@ footer a{color:var(--ink2);text-decoration:none}
 footer a:hover{color:var(--accent)}
 @media(max-width:640px){.install{flex-direction:column;font-size:.8rem}}
 </style>
+__HOME_CSS__
+__AD_CSS__
 <!-- Cloudflare Web Analytics --><script type='module' src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "6fdc1fdb390e417599a363e3109357b2"}'></script><!-- End Cloudflare Web Analytics -->
 </head>
 <body>
@@ -60,19 +64,26 @@ footer a:hover{color:var(--accent)}
 
 <section class="hero">
   <h1>装在 DeepSeek Harness <em>里面</em>的插件市场</h1>
-  <p><b><span id="count">300</span>+ 社区插件</b>，逛一逛，点一下，装好——多数插件连重启都不用。更新、卸载、实时安装进度，零遥测。</p>
+  <p><b><span id="count">__COUNT__</span> 个社区插件</b>，逛一逛，点一下，装好——多数插件连重启都不用。更新、卸载、实时安装进度，零遥测。</p>
   <div class="install"><code>dsh plugin --profile web add dshmarket</code><button onclick="navigator.clipboard.writeText('dsh plugin --profile web add dshmarket');this.textContent='已复制!';setTimeout(()=>this.textContent='复制',1500)">复制</button></div>
   <div class="sub">然后重启 <code>dsh web</code> → 设置 → <b>插件市场</b>，就这么多。</div>
-  <div class="shot"><img src="../assets/demo-zh.png" alt="dsh-market 截图" loading="lazy"></div>
 </section>
 
-<section class="grid">
+__AD_SLOT__
+
+__HOME_CATALOG__
+
+<section class="about">
+  <h2>dsh-market 是什么</h2>
+  <div class="demo"><img src="../assets/demo-zh.png" alt="dsh-market 截图" loading="lazy"></div>
+  <div class="grid">
   <div class="card"><div class="ic">🛒</div><h3>一站逛全</h3><p>awesome-dsh-plugin 精选目录全量收录——分类、star 数、最热/最新排序、中英双语描述。</p></div>
   <div class="card"><div class="ic">⚡</div><h3>装得快</h3><p>发过 npm 的插件优先走 npm 包而非整仓 GitHub 下载,通常秒级装好。</p></div>
   <div class="card"><div class="ic">✨</div><h3>基本免重启</h3><p>多数插件刷新页面即刻生效;更新、卸载同样一键,市场连自己都能这样升级。</p></div>
   <div class="card"><div class="ic">🧩</div><h3>零术语</h3><p>缺组件?市场自己发现、一键装好。你全程见不到终端。</p></div>
   <div class="card"><div class="ic">🔒</div><h3>有护栏</h3><p>只允许安装精选列表内的来源,构建脚本默认禁止执行,终端类插件装错位置前会被提醒。</p></div>
   <div class="card"><div class="ic">🕊️</div><h3>默认隐私</h3><p>市场不向任何地方上报数据;连反馈用的日志导出都已脱敏,且只存在你机器上。</p></div>
+  </div>
 </section>
 
 <footer>
@@ -84,5 +95,6 @@ footer a:hover{color:var(--accent)}
 <script>
 fetch('https://awesome-dsh-plugin.com/plugins.json').then(r=>r.json()).then(d=>{if(d.count)document.getElementById('count').textContent=d.count}).catch(()=>{})
 </script>
+__AD_SCRIPT__
 </body>
 </html>

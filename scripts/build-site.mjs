@@ -27,6 +27,35 @@ const OUT = 'docs'
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 const ldSafe = (s) => s.replaceAll('<', '\\u003c')
 
+// ── sponsor slot ────────────────────────────────────────────────────────────
+// Unset (the default) emits no markup, no CSS and no third-party script, so
+// the build is byte-identical to an ad-free one until EA_PUBLISHER is set.
+// Generated from here rather than pasted into each template: the :root blocks
+// are already kept in sync by hand across six files, and this doesn't add a
+// seventh thing to remember.
+//
+// EthicalAds serves one ad per page and wants it above the fold, beside or
+// outside the main content — never interleaved with it. Height is reserved up
+// front so a late arrival never shifts the page; the frame paints only once
+// the slot is filled, so an unfilled request (most non-EU/NA traffic, which is
+// over half of ours) leaves plain whitespace instead of an empty box.
+const EA_PUBLISHER = process.env.EA_PUBLISHER || ''
+const adCss = () =>
+  EA_PUBLISHER
+    ? `<style>
+.adband{margin:1.4rem 0}
+.adslot{min-height:104px;display:flex;align-items:center;padding:.9rem 1.1rem;border:1px solid transparent;border-radius:12px}
+.adslot:not(:empty){background:var(--card);border-color:var(--line)}
+@media (max-width:640px){.adslot{min-height:172px}}
+</style>`
+    : ''
+const adSlot = () =>
+  EA_PUBLISHER
+    ? `<div class="adband"><div class="adslot" data-ea-publisher="${esc(EA_PUBLISHER)}" data-ea-type="image"></div></div>`
+    : ''
+const adScript = () =>
+  EA_PUBLISHER ? `<script async src="https://media.ethicalads.io/media/client/ethicalads.min.js"></script>` : ''
+
 if (!fs.existsSync(REGISTRY_FILE)) {
   console.error(`${REGISTRY_FILE} is missing — run \`npm run snapshot\` first`)
   process.exit(1)
@@ -140,13 +169,139 @@ const write = (urlPath, html) => {
 
 const pluginPath = (loc, slug) => `${loc.urlPath}p/${slug}/`
 
+// ── landing-page catalog ────────────────────────────────────────────────────
+// The front door used to be a 1.4 KB marketing page while /browse/ carried the
+// whole index; 83% of visits landed on the thin one. This puts a real slice of
+// the catalog on it — categories, what people actually install, what shipped
+// recently — and leaves /browse/ as the complete flat index it already is.
+//
+// Only a slice: rendering all 1,700 entries here would just be a second copy
+// of /browse/ at half a megabyte.
+const POPULAR_N = 48
+const SHOTS_N = 12
+const FRESH_N = 24
+// Our own listing tops the download chart. Ranking ourselves first on our own
+// site reads as self-promotion rather than data, so it sits out both grids.
+const SELF_URL = 'https://github.com/dsh-market/dsh-market'
+
+const num = (n) => new Intl.NumberFormat('en-US').format(n)
+const descOf = (p, loc) => esc(p.description?.[loc.code] ?? p.description?.en ?? '')
+
+const metaRow = (p, loc) => {
+  const bits = []
+  if (p.stars) bits.push(`<span>★ ${num(p.stars)}</span>`)
+  if (p.downloads) bits.push(`<span>${num(p.downloads)}${esc(loc.strings.HOME_WEEK)}</span>`)
+  bits.push(`<span class="pc">${esc(catName(p.category, loc))}</span>`)
+  return `<div class="pmeta">${bits.join('')}</div>`
+}
+
+const textCard = (p, loc) =>
+  `    <li class="pcard"><a class="pname" href="${pluginPath(loc, p.slug)}"><span class="owner">${esc(p.owner)}/</span>${esc(p.name)}</a><p>${descOf(p, loc)}</p>${metaRow(p, loc)}</li>`
+
+// Screenshots are third-party URLs from the catalog, so they go through the
+// same allowlist the README images do. aspect-ratio reserves the box before
+// the image lands, which is why these cards carry no width/height: the source
+// dimensions are unknown and vary per plugin.
+const shotCard = (p, loc) => {
+  const src = (p.screenshots ?? []).find(imgAllowed)
+  return `    <li class="scard"><a href="${pluginPath(loc, p.slug)}"><span class="shot"><img src="${esc(src)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer"></span><span class="pname"><span class="owner">${esc(p.owner)}/</span>${esc(p.name)}</span></a><p>${descOf(p, loc)}</p>${metaRow(p, loc)}</li>`
+}
+
+const homeSection = (id, title, lead, cls, cards) => `<section class="hs" id="${id}">
+  <h2>${esc(title)}</h2>
+  <p class="lead">${esc(lead)}</p>
+  <ul class="${cls}">
+${cards.join('\n')}
+  </ul>
+</section>`
+
+function homeCatalog(loc) {
+  const s = loc.strings
+  const counts = CATS
+    .map((id) => ({ id, name: catName(id, loc), n: plugins.filter((p) => p.category === id).length }))
+    .filter((c) => c.n)
+
+  const popular = plugins
+    .filter((p) => p.downloads && p.url !== SELF_URL)
+    .sort((a, b) => b.downloads - a.downloads)
+    .slice(0, POPULAR_N)
+  const shots = plugins
+    .filter((p) => p.url !== SELF_URL && (p.screenshots ?? []).some(imgAllowed))
+    .sort((a, b) => (b.downloads ?? 0) - (a.downloads ?? 0))
+    .slice(0, SHOTS_N)
+  const fresh = [...plugins]
+    .sort((a, b) => String(b.added ?? '').localeCompare(String(a.added ?? '')))
+    .slice(0, FRESH_N)
+
+  const out = [
+    `<nav class="cats" aria-label="${esc(s.HOME_CATS)}">${counts
+      .map((c) => `<a href="${loc.browsePath}#${c.id}">${esc(c.name)}<small>${c.n}</small></a>`)
+      .join('')}</nav>`,
+  ]
+  // Every section is conditional on having rows. `downloads` and `screenshots`
+  // are newer catalog fields, and a snapshot that predates either one (or a
+  // catalog that stops publishing them) should drop the section rather than
+  // render a heading over an empty list.
+  if (popular.length) out.push(homeSection('popular', s.HOME_POPULAR, s.HOME_POPULAR_LEAD, 'cards', popular.map((p) => textCard(p, loc))))
+  // A gallery only looks like one when every card has an image; 228 of 1,733
+  // plugins ship screenshots, so this is its own section rather than a ragged
+  // mix inside the grid above.
+  if (shots.length) out.push(homeSection('shots', s.HOME_SHOTS, s.HOME_SHOTS_LEAD, 'shots', shots.map((p) => shotCard(p, loc))))
+  if (fresh.length) out.push(homeSection('fresh', s.HOME_NEW, s.HOME_NEW_LEAD, 'cards', fresh.map((p) => textCard(p, loc))))
+  out.push(`<p class="allmore"><a href="${loc.browsePath}">${esc(s.HOME_ALL.replace('{N}', num(plugins.length)))}</a></p>`)
+  return out.join('\n')
+}
+
+const homeCss = () => `<style>
+/* The base sheet only clears underlines on header/footer links, so every new
+   link here has to opt out explicitly. */
+.cats a,.pcard a,.scard a,.allmore a{text-decoration:none;color:inherit}
+.cats{display:flex;flex-wrap:wrap;gap:.4rem;margin:.6rem 0 0}
+.cats a{display:inline-flex;align-items:baseline;gap:.35rem;font-size:.82rem;color:var(--ink2);background:var(--card);border:1px solid var(--line);border-radius:999px;padding:.3rem .8rem}
+.cats a:hover{border-color:var(--accent);color:var(--accent)}
+.cats small{color:var(--ink3);font-size:.72rem}
+.hs{margin-top:2.4rem}
+.hs h2{font-size:1.15rem;margin:0}
+.hs .lead{color:var(--ink2);font-size:.88rem;margin:.25rem 0 1rem}
+ul.cards,ul.shots{list-style:none;padding:0;margin:0;display:grid;gap:.85rem}
+ul.cards{grid-template-columns:repeat(auto-fill,minmax(17rem,1fr))}
+ul.shots{grid-template-columns:repeat(auto-fill,minmax(20rem,1fr))}
+.pcard,.scard{background:var(--card);border:1px solid var(--line);border-radius:10px}
+.pcard{padding:.85rem .95rem}
+.scard{overflow:hidden}
+.pname{font-weight:650;font-size:.92rem}
+.pcard a.pname:hover,.scard a:hover .pname{color:var(--accent)}
+.owner{color:var(--ink3);font-weight:400}
+.pcard p,.scard p{color:var(--ink2);font-size:.84rem;line-height:1.45}
+.pcard p{margin:.35rem 0 .5rem}
+.scard .shot{display:block;aspect-ratio:16/9;background:var(--bg);overflow:hidden}
+.scard .shot img{width:100%;height:100%;object-fit:cover;display:block}
+.scard .pname{display:block;padding:.7rem .95rem 0}
+.scard p{margin:.3rem 0 .5rem;padding:0 .95rem}
+.pmeta{display:flex;flex-wrap:wrap;gap:.5rem;font-size:.75rem;color:var(--ink3)}
+.scard .pmeta{padding:0 .95rem .85rem}
+.pmeta .pc{color:var(--accent)}
+.allmore{margin-top:1.6rem;font-weight:600}
+.allmore a{color:var(--accent)}
+</style>`
+
 // ── landing + privacy pages (hand-written, copied with the count synced) ────
 for (const loc of LOCALES) {
   for (const [src, urlPath] of [[loc.index, loc.urlPath], [loc.privacy, loc.privacyPath]]) {
     if (!fs.existsSync(src)) { console.error(`${src} is missing`); process.exit(1) }
+    // The privacy page carries no catalog and no ad — it is the page that
+    // describes what the other pages load, so it stays plain. Resolving the
+    // tokens to '' there (rather than leaving them unhandled) means a token
+    // pasted into it by mistake renders as nothing instead of an ad.
+    const landing = src === loc.index
     let page = fs.readFileSync(src, 'utf8')
       .replaceAll('__COUNT__', () => String(plugins.length))
       .replaceAll('__BROWSE__', () => loc.browsePath)
+      .replaceAll('__HOME_CSS__', () => (landing ? homeCss() : ''))
+      .replaceAll('__HOME_CATALOG__', () => (landing ? homeCatalog(loc) : ''))
+      .replaceAll('__AD_CSS__', () => (landing ? adCss() : ''))
+      .replaceAll('__AD_SLOT__', () => (landing ? adSlot() : ''))
+      .replaceAll('__AD_SCRIPT__', () => (landing ? adScript() : ''))
     page = applyStrings(page, loc)
     if (urlPath === '/') fs.writeFileSync(`${OUT}/index.html`, page)
     else write(urlPath, page)
@@ -181,6 +336,9 @@ ${c.items.map((p) => `    <li><a href="${pluginPath(loc, p.slug)}"><span class="
     .replaceAll('__LOCALE_LINKS__', () => localeLinks(loc, (l) => l.browsePath))
     .replaceAll('__JUMP__', () => jump)
     .replaceAll('__SECTIONS__', () => sections)
+    .replaceAll('__AD_CSS__', () => adCss())
+    .replaceAll('__AD_SLOT__', () => adSlot())
+    .replaceAll('__AD_SCRIPT__', () => adScript())
   write(loc.browsePath, applyStrings(page, loc))
 }
 
@@ -307,6 +465,9 @@ ${readmeHtml}
       .replaceAll('__P_SHOTS__', () => shotSection)
       .replaceAll('__P_LINKS__', () => links)
       .replaceAll('__P_RELATED__', () => relSection)
+      .replaceAll('__AD_CSS__', () => adCss())
+      .replaceAll('__AD_SLOT__', () => adSlot())
+      .replaceAll('__AD_SCRIPT__', () => adScript())
     write(pluginPath(loc, p.slug), applyStrings(page, loc))
   }
 }

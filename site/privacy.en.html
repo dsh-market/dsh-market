@@ -62,10 +62,10 @@ footer a:hover{color:var(--accent)}
 </header>
 <main class="prose">
 <h1>Privacy</h1>
-<p class="updated">Last updated 2026-08-18. This page describes this website and the dsh-market plugin. It is written from the code, not from intent — every claim below is checkable in <a href="https://github.com/dsh-market/dsh-market">the repository</a>.</p>
+<p class="updated">Last updated 2026-08-21. This page describes this website and the dsh-market plugin. It is written from the code, not from intent — every claim below is checkable in <a href="https://github.com/dsh-market/dsh-market">the repository</a>.</p>
 
 <h2>The short version</h2>
-<p>The plugin sends nothing about you anywhere. It downloads what you ask it to download. This website counts visits, without cookies and without identifying you.</p>
+<p>The plugin sends nothing about you anywhere. It downloads what you ask it to download. This website counts visits and is adding one advertisement per page — both without cookies and without identifying you.</p>
 
 <h2>This website (dshmarket.com)</h2>
 
@@ -73,7 +73,7 @@ footer a:hover{color:var(--accent)}
 <p>We use <strong>Cloudflare Web Analytics</strong>. It is cookie-less and does not fingerprint or track you across sites. It records page views and coarse technical facts — referrer, country, browser and device class — which Cloudflare aggregates. We see counts, never individuals. See <a href="https://www.cloudflare.com/web-analytics/">Cloudflare Web Analytics</a>.</p>
 
 <h3>What the page loads</h3>
-<p>One request to <code>awesome-dsh-plugin.com</code>, to display the current number of plugins in the catalog. Nothing about you is included in it. There are no ad networks, no social widgets, no third-party fonts, and no other scripts.</p>
+<p>One request to <code>awesome-dsh-plugin.com</code>, to display the current number of plugins in the catalog. Nothing about you is included in it. Plugin screenshots on the front page are loaded from <code>raw.githubusercontent.com</code>, the same host they live on in their own repositories. When the ad placement described below is active, the advertisement is loaded from <code>media.ethicalads.io</code>. There are no social widgets, no third-party fonts, and no other scripts.</p>
 
 <h3>Hosting</h3>
 <p>The site is served by <strong>GitHub Pages</strong>. Like any web server, GitHub receives your IP address in order to answer the request. See the <a href="https://docs.github.com/site-policy/privacy-policies/github-privacy-statement">GitHub Privacy Statement</a>.</p>
@@ -104,7 +104,11 @@ footer a:hover{color:var(--accent)}
 </ul>
 
 <h2>Advertising</h2>
-<p>There is none, and there is no arrangement to introduce any. Should that ever change, this page will say so before it happens, and the change will be visible in this repository's history.</p>
+<p>Earlier versions of this page promised that if advertising were ever introduced, this page would say so before it happened. This is that notice.</p>
+<p>This website is adding <strong>one advertisement per page</strong>, served by <a href="https://www.ethicalads.io/">EthicalAds</a>, a network for developer-focused sites. It appears above or beside the content, never inside it, and there is never more than one on a page.</p>
+<p>The placement ships in the site's build script and stays inert until a publisher id is configured. While it is inert no ad script is requested and nothing third-party loads — you can tell which state this site is in by viewing source and searching for <code>ethicalads</code>.</p>
+<p>EthicalAds states that it sets no cookies and uses no local-storage identifiers, runs no advertiser code, hosts every ad asset on its own servers, and does no behavioral targeting: ads are selected from the content of the page and a coarse location worked out from your IP address at request time. It records browser type, language, referring site and the time of the request, and says logs containing IP addresses are deleted within ten days. That is their account of their own system, not something this repository can verify — see the <a href="https://www.ethicalads.io/privacy-policy/">EthicalAds privacy policy</a>.</p>
+<p><strong>The dsh-market plugin carries no advertising.</strong> Nothing described in this section runs inside DeepSeek Harness; it applies to this website only.</p>
 
 <h2>Contact</h2>
 <p>Corrections and questions: <a href="https://github.com/dsh-market/dsh-market/issues">open an issue</a>. If something on this page does not match the code, that is a bug and we want to hear about it.</p>
