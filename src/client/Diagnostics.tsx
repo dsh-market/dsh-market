@@ -14,7 +14,7 @@
  * host tree.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react'
-import { Button, DisclosureRow, IconChevronDownOutline14, IconChevronRightOutline14, IconLoadingOutline16, IconRefreshOutline14, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconChevronDownOutline14, IconChevronRightOutline14, IconLoadingOutline16, IconRefreshOutline14, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
 import css from './Market.module.css'
 import type { Translate } from './market-data.ts'
 
@@ -51,6 +51,18 @@ interface OrphanRow {
   reason: string
 }
 
+/** Mirrors PeerVerdict in src/check.ts. */
+type PeerVerdict =
+  | {
+      kind: 'risk'
+      risk: { plugin: string; peer: string; range: string; resolved: string; direction: 'belowMin' | 'aboveMax' }
+    }
+  | {
+      kind: 'warning'
+      warning: { plugin: string; peer: string; range: string; resolved: string; reason: 'aboveMax' | 'optional' }
+    }
+  | { kind: 'none' }
+
 /** Mirrors PeerMismatch in src/check.ts. */
 interface PeerMismatch {
   plugin: string
@@ -58,6 +70,8 @@ interface PeerMismatch {
   range: string
   resolved: string | null
   satisfied: boolean | null
+  optional?: boolean
+  verdict?: PeerVerdict
 }
 
 /** Mirrors MultiVersion in src/check.ts. */
@@ -175,6 +189,19 @@ function orphanKindLabel(reason: string): string {
   return 'orphanReasonOther'
 }
 
+/** Badge label for one risk-tier peer row (#201). */
+function peerRiskLabel(peer: PeerMismatch, t: Translate): string {
+  return peer.verdict?.kind === 'risk' && peer.verdict.risk.direction === 'aboveMax'
+    ? t('peerRiskAboveMax')
+    : t('peerRiskBelowMin')
+}
+
+/** Badge label for one warning-tier peer row (optional / aboveMax / legacy). */
+function peerWarningLabel(peer: PeerMismatch, t: Translate): string {
+  if (peer.verdict?.kind !== 'warning') return t('checkUnsatisfied')
+  return peer.verdict.warning.reason === 'optional' ? t('peerWarnOptional') : t('peerWarnAboveMax')
+}
+
 /**
  * Fetch and render the profile check report. Refetches on every mount, so
  * switching tabs away and back re-runs the (cheap, read-only) analysis; the
@@ -186,7 +213,6 @@ export function Diagnostics(props: { t: Translate }) {
   const [error, setError] = useState<string | null>(null)
   const [orderOpen, setOrderOpen] = useState(false)
   const [explainOpen, setExplainOpen] = useState(false)
-  const [peerInfoOpen, setPeerInfoOpen] = useState(false)
   const [fixMsg, setFixMsg] = useState<string | null>(null)
   /** The built AI-fix prompt when the clipboard path failed — rendered as a
    * selectable text block so the user can still copy it manually. */
@@ -368,30 +394,39 @@ export function Diagnostics(props: { t: Translate }) {
 
   const summary = report.summary
   const suggested = report.suggestedOrder ?? null
-  // Confirmed mismatches vs informational entries (satisfied / unknown).
-  const peerConfirmed = report.peerMismatches.filter(peer => peer.satisfied === false)
-  const peerInfo = report.peerMismatches.filter(peer => peer.satisfied !== false)
-  // Category counts for the overview strip: conflicts / dependencies / order.
+  // #201: confirmed mismatches are tiered by the server-side classifyPeer
+  // verdict instead of the old binary `satisfied === false` split. A missing
+  // verdict (older host) keeps the legacy behavior: confirmed = warning tier.
+  const peerRisk = report.peerMismatches.filter(peer => peer.satisfied === false && peer.verdict?.kind === 'risk')
+  const peerWarning = report.peerMismatches.filter(peer => peer.satisfied === false && (peer.verdict === undefined || peer.verdict.kind === 'warning'))
+  // Classifier `none` (unparseable / * prerelease artifacts) and unevaluable
+  // rows share the informational display tier; true rows stay satisfied.
+  const peerInfo = report.peerMismatches.filter(peer =>
+    (peer.satisfied === false && peer.verdict?.kind === 'none') || peer.satisfied === null)
+  const peerSatisfied = report.peerMismatches.filter(peer => peer.satisfied === true)
+  // Category counts for the overview strip: conflicts / peer tiers / order.
   // Conflicts = HARD duplicate loader entries only; same-name rows are
   // informational and stay out of the conflict count (review #109).
   const catConflict = report.duplicates.length
-  const catDeps = report.peerMismatches.length + report.multiVersion.length
+  const catRisk = peerRisk.length
+  const catWarn = peerWarning.length
+  const catInfo = peerInfo.length
+  const catMulti = report.multiVersion.length
   const catOrder = report.orderConflicts?.length ?? 0
-  const anyIssue = catConflict + catDeps + catOrder > 0
-  // AI-fix only shows for HARD issues — things that actually break the
-  // profile (boot errors, duplicate entries, confirmed peer mismatches).
-  // Purely informational/warning states stay quiet so the agent is not
-  // nudged into risky changes without a clear problem (conservative UX).
-  // duplicateNames (same-name rows) is informational only and never counts
-  // as a hard issue (review #109).
+  const anyIssue = catConflict + catRisk + catWarn + catInfo + catMulti + catOrder > 0
+  // AI-fix only shows for HARD issues — boot errors, duplicate entries, or a
+  // directional peer RISK. Optional peers, aboveMax without an explicit
+  // bound, and unknown rows are warning/info and never nudge an agent into
+  // risky changes without a clear problem (#201, conservative UX).
   const hasHardIssues = summary.errors.length > 0
     || report.duplicates.length > 0
-    || report.peerMismatches.some(peer => peer.satisfied === false)
+    || catRisk > 0
 
   /**
-   * Build the AI-fix prompt (errors/warnings/order conflicts + scope) and
-   * copy it to the clipboard. The user pastes it into a new conversation
-   * and decides whether to send — the agent never runs automatically.
+   * Build the AI-fix prompt (structured errors / duplicates / peer risks /
+   * order conflicts + scope) and copy it to the clipboard. The user pastes it
+   * into a new conversation and decides whether to send — the agent never runs
+   * automatically.
    * (A previous auto-open/prefill attempt was dropped: it was unreliable
    * across host versions, so plain copy + toast is the contract.)
    */
@@ -399,14 +434,28 @@ export function Diagnostics(props: { t: Translate }) {
     const lines: string[] = []
     lines.push(t('aiFixIntro').replace('{0}', report.profile))
     lines.push('')
-    if (summary.errors.length > 0) {
+    // Structured prompt only (#201): boot errors, duplicate loader ids and
+    // directional peer RISK rows. summary.warnings is no longer dumped — its
+    // peer lines contain the whole 30+ warning/info noise this issue untangles.
+    const errorLines = summary.errors.filter(line => !line.startsWith('duplicate loader entry id'))
+    if (errorLines.length > 0) {
       lines.push(`${t('checkErrors')}:`)
-      for (const e of summary.errors) lines.push(`- ${e}`)
+      for (const e of errorLines) lines.push(`- ${e}`)
       lines.push('')
     }
-    if (summary.warnings.length > 0) {
-      lines.push(`${t('checkWarnings')}:`)
-      for (const w of summary.warnings) lines.push(`- ${w}`)
+    if (report.duplicates.length > 0) {
+      lines.push(`${t('checkDuplicates')}:`)
+      for (const dup of report.duplicates) lines.push(`- ${dup.id} × ${dup.count} (${dup.layers.join(' / ')})`)
+      lines.push('')
+    }
+    if (peerRisk.length > 0) {
+      lines.push(`${t('checkPeerRisk')}:`)
+      for (const peer of peerRisk) {
+        const direction = peer.verdict?.kind === 'risk' && peer.verdict.risk.direction === 'aboveMax'
+          ? t('peerRiskAboveMax')
+          : t('peerRiskBelowMin')
+        lines.push(`- ${peer.plugin} → ${peer.name}@${peer.range} (${t('checkResolved')}: ${peer.resolved ?? '—'}, ${direction})`)
+      }
       lines.push('')
     }
     if ((report.orderConflicts ?? []).length > 0) {
@@ -444,8 +493,17 @@ export function Diagnostics(props: { t: Translate }) {
         <span className={css.diagSummaryItem} title={t('checkDuplicates')}>
           <StateDot state="error" size={8} />{t('catConflict')}: {catConflict}
         </span>
-        <span className={css.diagSummaryItem} title={t('checkPeerMismatches')}>
-          <StateDot state="warning" size={8} />{t('catDeps')}: {catDeps}
+        <span className={css.diagSummaryItem} title={t('checkPeerRisk')}>
+          <StateDot state="error" size={8} />{t('catRisk')}: {catRisk}
+        </span>
+        <span className={css.diagSummaryItem} title={t('checkPeerWarning')}>
+          <StateDot state="warning" size={8} />{t('catWarn')}: {catWarn}
+        </span>
+        <span className={css.diagSummaryItem} title={t('checkPeerInfoTier')}>
+          <StateDot state="ongoing" size={8} />{t('catInfo')}: {catInfo}
+        </span>
+        <span className={css.diagSummaryItem} title={t('checkMultiVersion')}>
+          <StateDot state="warning" size={8} />{t('checkMultiVersion')}: {catMulti}
         </span>
         <span className={css.diagSummaryItem} title={t('checkOrderTip')}>
           <StateDot state="warning" size={8} />{t('catOrder')}: {catOrder}
@@ -581,57 +639,91 @@ export function Diagnostics(props: { t: Translate }) {
       </Section>
 
       <Section
-        title={t('checkPeerMismatches')}
-        count={peerConfirmed.length}
-        empty={t('checkPeerEmpty')}
-        overview={report.peerMismatches.length > 0
-          ? t('checkPeerOverview')
-            .replace('{0}', String(peerConfirmed.length))
-            .replace('{1}', String(peerInfo.length))
+        title={t('checkPeerRisk')}
+        count={peerRisk.length}
+        empty={t('checkPeerRiskEmpty')}
+        overview={peerRisk.length > 0
+          ? `${peerRisk[0].plugin} → ${peerRisk[0].name}@${peerRisk[0].range}（${t('checkResolved')}: ${peerRisk[0].resolved ?? '—'}）`
           : undefined}
-        // The body must render even with zero CONFIRMED mismatches when
-        // informational entries exist — otherwise the disclosure holding them
-        // would be unreachable (count-0 sections render only the empty text).
-        alwaysShowBody={peerInfo.length > 0}
       >
-        {peerConfirmed.length === 0 ? (
-          <div className={css.diagEmpty}>{t('checkPeerEmpty')}</div>
-        ) : (
-          <div className={css.diagList}>
-            {peerConfirmed.map((peer, i) => (
-              <div key={i} className={css.diagRow}>
-                <code className={css.diagVal}>{peer.name}</code>
-                <span className={css.nm}>{peer.plugin}</span>
-                <span className={css.spec}>{t('checkRange')}: {peer.range}</span>
-                <span className={css.spec}>{t('checkResolved')}: {peer.resolved ?? '—'}</span>
-                <span className={css.diagBadgeShadow}>{t('checkUnsatisfied')}</span>
-              </div>
-            ))}
-          </div>
-        )}
-        {peerInfo.length > 0 && (
-          <DisclosureRow
-            icon={<IconChevronDownOutline14 size={14} />}
-            title={`${t('checkPeerInfo').replace('{0}', String(peerInfo.length))} (${peerInfo.length})`}
-            expandable
-            open={peerInfoOpen}
-            onToggle={() => setPeerInfoOpen(o => !o)}
-          >
-            <div className={css.diagList}>
-              {peerInfo.map((peer, i) => (
-                <div key={i} className={css.diagRow}>
-                  <code className={css.diagVal}>{peer.name}</code>
-                  <span className={css.nm}>{peer.plugin}</span>
-                  <span className={css.spec}>{t('checkRange')}: {peer.range}</span>
-                  <span className={css.spec}>{t('checkResolved')}: {peer.resolved ?? '—'}</span>
-                  {peer.satisfied === true
-                    ? <span className={css.okState}>{t('checkSatisfied')}</span>
-                    : <span className={css.spec}>{t('checkUnknown')}</span>}
-                </div>
-              ))}
+        <div className={css.diagList}>
+          {peerRisk.map((peer, i) => (
+            <div key={i} className={css.diagRow}>
+              <code className={css.diagVal}>{peer.name}</code>
+              <span className={css.nm}>{peer.plugin}</span>
+              <span className={css.spec}>{t('checkRange')}: {peer.range}</span>
+              <span className={css.spec}>{t('checkResolved')}: {peer.resolved ?? '—'}</span>
+              <span className={css.diagBadgeShadow}>{peerRiskLabel(peer, t)}</span>
             </div>
-          </DisclosureRow>
-        )}
+          ))}
+        </div>
+      </Section>
+
+      <Section
+        title={t('checkPeerWarning')}
+        count={peerWarning.length}
+        empty={t('checkPeerWarningEmpty')}
+        overview={peerWarning.length > 0
+          ? `${peerWarning[0].plugin} → ${peerWarning[0].name}@${peerWarning[0].range}（${peerWarningLabel(peerWarning[0], t)}）`
+          : undefined}
+      >
+        <div className={css.diagList}>
+          {peerWarning.map((peer, i) => (
+            <div key={i} className={css.diagRow}>
+              <code className={css.diagVal}>{peer.name}</code>
+              <span className={css.nm}>{peer.plugin}</span>
+              <span className={css.spec}>{t('checkRange')}: {peer.range}</span>
+              <span className={css.spec}>{t('checkResolved')}: {peer.resolved ?? '—'}</span>
+              <span className={css.diagBadgeWarn}>{peerWarningLabel(peer, t)}</span>
+            </div>
+          ))}
+        </div>
+      </Section>
+
+      <Section
+        title={t('checkPeerInfoTier')}
+        count={peerInfo.length}
+        empty={t('checkPeerInfoTierEmpty')}
+        problem={false}
+        overview={peerInfo.length > 0
+          ? `${peerInfo[0].plugin} → ${peerInfo[0].name}@${peerInfo[0].range}`
+          : undefined}
+      >
+        <div className={css.diagList}>
+          {peerInfo.map((peer, i) => (
+            <div key={i} className={css.diagRow}>
+              <code className={css.diagVal}>{peer.name}</code>
+              <span className={css.nm}>{peer.plugin}</span>
+              <span className={css.spec}>{t('checkRange')}: {peer.range}</span>
+              <span className={css.spec}>{t('checkResolved')}: {peer.resolved ?? '—'}</span>
+              {peer.satisfied === null
+                ? <span className={css.diagBadgeInfo}>{t('checkUnknown')}</span>
+                : <span className={css.diagBadgeInfo}>{t('peerInfoUnverified')}</span>}
+            </div>
+          ))}
+        </div>
+      </Section>
+
+      <Section
+        title={t('checkPeerSatisfied')}
+        count={peerSatisfied.length}
+        empty={t('checkPeerSatisfiedEmpty')}
+        problem={false}
+        overview={peerSatisfied.length > 0
+          ? `${peerSatisfied[0].plugin} → ${peerSatisfied[0].name}@${peerSatisfied[0].range}`
+          : undefined}
+      >
+        <div className={css.diagList}>
+          {peerSatisfied.map((peer, i) => (
+            <div key={i} className={css.diagRow}>
+              <code className={css.diagVal}>{peer.name}</code>
+              <span className={css.nm}>{peer.plugin}</span>
+              <span className={css.spec}>{t('checkRange')}: {peer.range}</span>
+              <span className={css.spec}>{t('checkResolved')}: {peer.resolved ?? '—'}</span>
+              <span className={css.okState}>{t('checkSatisfied')}</span>
+            </div>
+          ))}
+        </div>
       </Section>
 
       <Section
