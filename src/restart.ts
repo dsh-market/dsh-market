@@ -15,9 +15,48 @@ import { join } from 'node:path'
 import type { IncomingMessage } from 'node:http'
 import { dshArgv, nodeExecutable } from './dsh-cli.ts'
 
-/** Self-restart is enabled by default and disabled only by an explicit false. */
-export function restartAllowed(config: { allowRestart?: boolean }): boolean {
-  return config.allowRestart !== false
+/**
+ * The process supervisor running this host, when one can be identified from
+ * the environment it handed us — `null` when nothing says so.
+ *
+ * This exists because the failure it prevents is the worst one the market
+ * can cause. Under systemd's default `KillMode=control-group`, everything in
+ * the unit's cgroup dies with the main process — including the detached
+ * helper that was supposed to bring the replacement up. So "restart" killed
+ * a production service and nothing came back (#229 by @SkillBase-Al: "杀死了
+ * 服务但是无法重复启动服务"). `allowRestart: false` was always the documented
+ * answer, but it is opt-in, and nothing told the operator to opt in until
+ * after they had already lost the service.
+ *
+ * Markers, each set by the supervisor itself for its own children:
+ *   - systemd sets INVOCATION_ID for every unit it starts (>= v232), and
+ *     JOURNAL_STREAM whenever output goes to the journal.
+ *   - pm2 sets pm_id on processes it manages.
+ * launchd has no distinctive marker, so a launchd deployment still needs the
+ * explicit config — detection here is a safety net, not a replacement for it.
+ */
+export function detectedSupervisor(env: NodeJS.ProcessEnv = process.env): string | null {
+  const set = (name: string): boolean => (env[name] ?? '') !== ''
+  if (set('INVOCATION_ID') || set('JOURNAL_STREAM')) return 'systemd'
+  if (set('pm_id') || set('PM2_JSON_PROCESSING')) return 'pm2'
+  return null
+}
+
+/**
+ * Self-restart is enabled by default, disabled by an explicit false — and
+ * disabled by DEFAULT under a detected supervisor, which owns restarts and
+ * whose process group would take the replacement helper down with it.
+ *
+ * An explicit `true` still wins: an operator who has configured their unit
+ * for it (`KillMode=process`, or a wrapper that survives) is making a
+ * statement about their own deployment, and this should not overrule it.
+ */
+export function restartAllowed(
+  config: { allowRestart?: boolean },
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  if (config.allowRestart !== undefined) return config.allowRestart
+  return detectedSupervisor(env) === null
 }
 
 /**

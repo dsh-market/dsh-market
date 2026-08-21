@@ -123,3 +123,27 @@ describe('host adaptation', () => {
     expect(state.factoryArgs).toEqual([])
   })
 })
+
+describe('unconfigured allowRestart stays undefined so detection can decide (#229)', () => {
+  it('does not collapse an absent allowRestart into an explicit true', () => {
+    // restartAllowed() distinguishes "the operator said nothing" (where a
+    // detected supervisor turns restart off) from "the operator said yes"
+    // (which overrules detection). A `?? true` here would erase that
+    // distinction before it ever reached the check — the whole detection
+    // would silently no-op on exactly the hosts it exists for.
+    const ctx = new FakeContext({ webServer: {}, loader: {} })
+    apply(ctx as never)
+
+    expect(state.mounts).toHaveLength(1)
+    expect(state.mounts[0].config.allowRestart).toBeUndefined()
+  })
+
+  it('still forwards an explicit setting verbatim, either way', () => {
+    for (const allowRestart of [true, false]) {
+      state.mounts = []
+      const ctx = new FakeContext({ webServer: {}, loader: {} })
+      apply(ctx as never, { allowRestart })
+      expect(state.mounts[0].config.allowRestart).toBe(allowRestart)
+    }
+  })
+})

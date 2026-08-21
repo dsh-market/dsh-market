@@ -91,6 +91,12 @@ export interface MarketStatus {
    * Restart must not be offered while it is held.
    */
   busy?: boolean
+  /**
+   * The process supervisor the host detected around itself (systemd, pm2),
+   * or null/absent when none. Present so the UI can explain WHY the restart
+   * button is missing instead of just omitting it (#229).
+   */
+  supervisor?: string | null
 }
 
 /** Post-install activation state (P0-2), per installed package. */

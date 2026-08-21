@@ -35,7 +35,7 @@ import { asChannel, CHANNELS, DIST_TAG, resolveChannel, type Channel } from './c
 import { checkUpdates, fetchNpmLatest, invalidateUpdates, isUpgrade, latestPublishedRecently, versionOnChannel } from './updates.ts'
 import { createThemeManager, type LoaderEntry } from './themes.ts'
 import { readJsonBody, sameOrigin, sendJson } from './http.ts'
-import { restartAllowed, scheduleRestart, servingPort, trustedRestartRequest, trustedDownloadRequest } from './restart.ts'
+import { detectedSupervisor, restartAllowed, scheduleRestart, servingPort, trustedRestartRequest, trustedDownloadRequest } from './restart.ts'
 import { activationAfterReplace, hasHostHalf, verifyActivation } from './verify.ts'
 import {
   disableRow, enableRow, findUserPatchPath, isProtectedModule, packagePatchFlags,
@@ -1110,6 +1110,9 @@ export function mountMarketRoutes(
           channel: activeChannel(),
           channels: CHANNELS,
           restart: restartAllowed(config),
+          // Named so the UI can say WHY the button is gone. A blank
+          // "no restart button" is the state #229 reported as broken.
+          supervisor: detectedSupervisor(),
           installed: readInstalled(config.profile, activeProfileDir),
         })
       },

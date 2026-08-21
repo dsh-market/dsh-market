@@ -83,6 +83,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			uninstalling: "卸载中…",
 			uninstallConfirmDesc: "将从当前 profile 中移除该插件。",
 			restartHint: "重启方式：关闭当前 dsh 进程后重新运行（例如 dsh web）",
+			restartHintSupervised: "检测到本机由 {0} 托管，重启交给它负责——市场自己重启会连带杀掉进程组里的接管进程，服务将起不来。请执行 systemctl restart（或对应的管理器命令）。确认你的配置能承受市场自行重启，可在本插件配置里手动打开「允许重启」。",
 			confirmTitle: "安装",
 			confirmWarn: "插件是社区第三方代码。安装即表示你信任该来源；构建脚本默认被禁止执行。",
 			cancel: "取消",
@@ -439,6 +440,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			uninstalling: "Removing…",
 			uninstallConfirmDesc: "This removes the plugin from the current profile.",
 			restartHint: "To restart: stop the current dsh process and run it again (e.g. dsh web)",
+			restartHintSupervised: "This host looks {0}-managed, so restarts belong to it — restarting from here would kill the takeover process along with the process group and the service would not come back. Use systemctl restart (or your supervisor's equivalent). If your unit can survive a self-restart, turn Allow restart on in this plugin's configuration.",
 			confirmTitle: "Install",
 			confirmWarn: "Plugins are third-party community code. Installing means you trust this source; build scripts are blocked by default.",
 			cancel: "Cancel",
@@ -3830,6 +3832,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const [bootId, setBootId] = (0, react.useState)(null);
 			/** One-click restart (#14 by @ysyyhhh): server capability + in-flight state. */
 			const [restartEnabled, setRestartEnabled] = (0, react.useState)(false);
+			/** Supervisor the host detected around itself, when it named one (#229). */
+			const [supervisor, setSupervisor] = (0, react.useState)(null);
 			const [restarting, setRestarting] = (0, react.useState)(false);
 			const [showTop, setShowTop] = (0, react.useState)(false);
 			const [backupBusy, setBackupBusy] = (0, react.useState)(false);
@@ -3948,6 +3952,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						} catch {}
 					}
 					setRestartEnabled(status.restart === true);
+					setSupervisor(typeof status.supervisor === "string" ? status.supervisor : null);
 					if (typeof status.version === "string" && status.version !== "") setVersion(status.version);
 				}).catch(() => {});
 				refreshInstalled();
@@ -5550,7 +5555,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 										]
 									}),
 									/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {
-										label: t("restartHint"),
+										label: supervisor === null ? t("restartHint") : t("restartHintSupervised").replace("{0}", supervisor),
 										side: "bottom",
 										children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 											className: Market_module_css_default.bannerHint,

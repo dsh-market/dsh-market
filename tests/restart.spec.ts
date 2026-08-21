@@ -9,7 +9,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { respawnInvocation, trustedDownloadRequest, trustedRestartRequest } from '../src/restart.ts'
+import { detectedSupervisor, respawnInvocation, restartAllowed, trustedDownloadRequest, trustedRestartRequest } from '../src/restart.ts'
 
 const LAUNCH = { file: 'C:\\Program Files\\nodejs\\node.exe', args: ['--import', 'tsx/esm', 'bin.ts', '--profile', 'web'], viaShell: false }
 
@@ -118,5 +118,37 @@ describe('trustedRestartRequest', () => {
 
   it('refuses when the Host header is absent', () => {
     expect(trustedRestartRequest(req({ origin: 'http://127.0.0.1:3080' }))).toBe(false)
+  })
+})
+
+describe('supervisor detection gates self-restart (#229)', () => {
+  // Under systemd's default KillMode=control-group the whole cgroup dies
+  // with the main process — including the detached helper that was meant to
+  // bring the replacement up. Reported as "杀死了服务但是无法重复启动服务":
+  // the market killed a production service and nothing came back.
+  // allowRestart:false was always the answer, but it was opt-in and nothing
+  // told the operator to opt in until after they had lost the service.
+  it('names the supervisor from the marker each one sets for its own children', () => {
+    expect(detectedSupervisor({ INVOCATION_ID: 'abc123' })).toBe('systemd')
+    expect(detectedSupervisor({ JOURNAL_STREAM: '8:12345' })).toBe('systemd')
+    expect(detectedSupervisor({ pm_id: '0' })).toBe('pm2')
+    expect(detectedSupervisor({})).toBeNull()
+    // Present-but-empty is not a marker: an exported-and-cleared variable
+    // must not read as "supervised".
+    expect(detectedSupervisor({ INVOCATION_ID: '' })).toBeNull()
+  })
+
+  it('defaults restart OFF under a detected supervisor and ON without one', () => {
+    expect(restartAllowed({}, {})).toBe(true)
+    expect(restartAllowed({}, { INVOCATION_ID: 'abc123' })).toBe(false)
+  })
+
+  it('lets an explicit setting win in BOTH directions', () => {
+    // An operator whose unit is configured for it (KillMode=process, or a
+    // wrapper that survives) is describing their own deployment; detection
+    // is a default, not an override.
+    expect(restartAllowed({ allowRestart: true }, { INVOCATION_ID: 'abc123' })).toBe(true)
+    // ...and the documented opt-out still works with no supervisor detected.
+    expect(restartAllowed({ allowRestart: false }, {})).toBe(false)
   })
 })

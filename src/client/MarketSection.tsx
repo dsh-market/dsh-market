@@ -895,6 +895,8 @@ export function MarketSection(props: MarketSectionProps) {
   const [bootId, setBootId] = useState<string | null>(null)
   /** One-click restart (#14 by @ysyyhhh): server capability + in-flight state. */
   const [restartEnabled, setRestartEnabled] = useState(false)
+  /** Supervisor the host detected around itself, when it named one (#229). */
+  const [supervisor, setSupervisor] = useState<string | null>(null)
   const [restarting, setRestarting] = useState(false)
   const [showTop, setShowTop] = useState(false)
   const [backupBusy, setBackupBusy] = useState(false)
@@ -1040,6 +1042,7 @@ export function MarketSection(props: MarketSectionProps) {
           } catch { /* storage unavailable */ }
         }
         setRestartEnabled(status.restart === true)
+        setSupervisor(typeof status.supervisor === 'string' ? status.supervisor : null)
         if (typeof status.version === 'string' && status.version !== '') setVersion(status.version)
       })
       .catch(() => {})
@@ -2489,7 +2492,10 @@ export function MarketSection(props: MarketSectionProps) {
           <div className={css.banner}>
             <IconRefreshOutline14 size={14} className={css.bannerIcon} />
             <span className={css.grow}><b>{pendingRestart}</b> {t('restartBanner')}</span>
-            <Tooltip label={t('restartHint')} side="bottom">
+            <Tooltip
+              label={supervisor === null ? t('restartHint') : t('restartHintSupervised').replace('{0}', supervisor)}
+              side="bottom"
+            >
               <span className={css.bannerHint}><IconQuestionOutline14 size={14} /></span>
             </Tooltip>
             {restartEnabled && (

@@ -63,7 +63,11 @@ export function apply(ctx: Context, config?: Config): void {
     if (desktopProfiles === undefined) {
       const resolved: MarketConfig = {
         profile: config?.profile ?? argvProfile() ?? 'web',
-        allowRestart: config?.allowRestart ?? true,
+        // Left UNDEFINED when unconfigured, deliberately: `?? true` here
+        // would turn "the operator said nothing" into "the operator said
+        // yes", and restartAllowed() could no longer tell them apart — which
+        // is exactly the distinction supervisor detection needs (#229).
+        allowRestart: config?.allowRestart,
       }
       // Offer allowRestart as a switch on the settings page. Deliberately
       // NOT in the Desktop branch below: there the shell owns the process

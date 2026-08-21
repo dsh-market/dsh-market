@@ -36,6 +36,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
 import z from '@deepseek-ai/schemastery'
+import { restartAllowed } from './restart.ts'
 
 /** Namespace the card on the browser side keys itself to. */
 export const MARKET_SETTINGS_NS = settingsNamespace('dsh-market')
@@ -62,10 +63,13 @@ export const MarketSettings: z<MarketSettings> = z.object({
  * @param resolved - the live config object the routes read.
  */
 export function installMarketSettings(ctx: Context, resolved: { allowRestart?: boolean }): void {
-  // `!== false` is the routes' own reading: an absent value allows restart,
-  // so the entry layer this registers must say the same thing rather than
-  // presenting "unset" as "off".
-  const entry = { allowRestart: resolved.allowRestart !== false }
+  // The switch must show what the routes will actually DO, which since #229
+  // is not simply "unset means on": under a detected supervisor an unset
+  // value means off, because the supervisor owns restarts. Asking
+  // restartAllowed() rather than re-deriving it here is what keeps the two
+  // from drifting — a switch showing On beside a hidden button is the same
+  // class of confusion the detection exists to end.
+  const entry = { allowRestart: restartAllowed(resolved) }
   let source = (): MarketSettings => entry
   installSettingsSection(
     ctx,
