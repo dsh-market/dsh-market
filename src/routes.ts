@@ -23,7 +23,7 @@ import {
   BOOT_ID, cancelActive, probePnpm, progress, provisionPnpm, runDshPlugin,
   type PluginCommandRuntime,
 } from './dsh-cli.ts'
-import { addProfileBundle, hasLoadableEntry, INBOX_BUNDLES, profileDir, readInstalled, readInstalledManifest, readInstalledRepoEvidence, readInstalledVersion, readLockCommits, readManifestDeps, readProfileBundles, removeProfileBundle, restoreManifestDeps, setAllowBuilds } from './profile.ts'
+import { addProfileBundle, hasLoadableEntry, INBOX_BUNDLES, isDshProfileName, profileDir, readInstalled, readInstalledManifest, readInstalledRepoEvidence, readInstalledVersion, readLockCommits, readManifestDeps, readProfileBundles, removeProfileBundle, restoreManifestDeps, setAllowBuilds } from './profile.ts'
 import { assessProfile, introducedDuplicateNames, introducedRisks, type CompatibilityRisk } from './compatibility.ts'
 import { runningAgentIds, type AgentsLookup } from './agents.ts'
 import { analyzeProfile, type DuplicateName } from './check.ts'
@@ -83,8 +83,6 @@ export interface MarketConfig {
   /** Which mirrors every outbound request uses; undefined until decided. */
   region?: Region
 }
-
-const PROFILE_RE = /^[A-Za-z0-9_-]+$/
 
 /**
  * The market's own version, read once from its installed package.json.
@@ -151,17 +149,17 @@ export function mountMarketRoutes(
   commandRuntime?: PluginCommandRuntime,
   agentsLookup?: AgentsLookup,
 ): () => void {
-  // Ordinary DSH profile names cross the CLI boundary and keep the legacy
-  // allowlist. A host-authoritative explicit directory (DSH Desktop) may
-  // legitimately pair with a Unicode or spaced display/profile name.
-  if (config.profileDirectory === undefined && !PROFILE_RE.test(config.profile)) {
+  // An ordinary profile must resolve under DSH_HOME by the same rules as the
+  // DSH CLI. A host-authoritative explicit directory (DSH Desktop) does not
+  // derive a path from this display/profile name.
+  if (config.profileDirectory === undefined && !isDshProfileName(config.profile)) {
     // Loud on the way out. This throw happens inside a cordis effect, which
     // swallows it: the routes silently never mount and EVERY /dsh-market/*
     // request answers 404 with nothing anywhere saying why — the market
     // simply looks broken (#260 by @realguan). The log line is the only
     // thing that turns that into something diagnosable, so it is written
     // before the throw rather than left to a handler that never runs.
-    const message = `dsh-market: profile name ${JSON.stringify(config.profile)} contains characters outside [A-Za-z0-9_-], so the market's routes were not mounted and every /dsh-market/* request will answer 404. Rename the profile, or pass an explicit profile directory.`
+    const message = `dsh-market: invalid profile name ${JSON.stringify(config.profile)}; the market's routes were not mounted and every /dsh-market/* request will answer 404. Use the same non-empty, non-traversal profile name accepted by DSH, or pass an explicit profile directory.`
     host.logger?.warn(`[dsh-market] ${message}`)
     logEvent('error', 'mount', message)
     throw new Error(message)

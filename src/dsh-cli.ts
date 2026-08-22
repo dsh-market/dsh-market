@@ -15,7 +15,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { logEvent } from './log.ts'
 import { createProgressTracker, type ProgressPhase } from './ndjson.ts'
 import { pluginArgsFor } from './pnpm-compat.ts'
-import { profileDir } from './profile.ts'
+import { isDshProfileName, profileDir } from './profile.ts'
 import { activeRegion, DEFAULT_NPM_REGISTRY, routesFor, type Region } from './regions.ts'
 
 // 15 min default (slow networks + git installs), overridable for CI/tests.
@@ -186,6 +186,18 @@ export function quoteCmdArg(arg: string): string {
  */
 export function cmdCommandLine(argv: readonly string[]): string {
   return argv.map(quoteCmdArg).join(' ')
+}
+
+/**
+ * Whether a profile name can cross the rare Windows `dsh.cmd` fallback.
+ *
+ * cmd.exe expands percent-delimited environment variables even inside a
+ * quoted argument. Keep that fallback to names made only of letters, marks,
+ * numbers, spaces, dots, underscores, and hyphens. The normal direct-Node
+ * launcher remains argv-safe and accepts every DSH-valid profile name.
+ */
+export function isCmdSafeProfileName(profile: string): boolean {
+  return isDshProfileName(profile) && /^[\p{L}\p{M}\p{N}._ -]+$/u.test(profile)
 }
 
 /** cmd.exe resolved once; the Windows shim path only. */
@@ -611,6 +623,11 @@ function makeProgressFeeder(tracker: ReturnType<typeof createProgressTracker>): 
 /** Run one `dsh plugin --profile <p> …` command with timeout and progress tracking. */
 export function runDshPlugin(profile: string, pluginArgs: string[]): Promise<InstallResult> {
   const { file, args, cwd, viaShell } = dshArgv()
+  if (viaShell && !isCmdSafeProfileName(profile)) {
+    const error = `dsh-market: profile name ${JSON.stringify(profile)} cannot cross the Windows cmd.exe fallback safely; relaunch DSH through its Node entry point, or use a profile name containing only letters, numbers, spaces, dots, underscores, and hyphens`
+    logEvent('error', 'install', error)
+    return Promise.resolve({ exitCode: 1, timedOut: false, stdout: '', stderr: error, cancelled: false })
+  }
   const prepared = preparePluginArgs(profileDir(profile), pluginArgs)
   if ('error' in prepared) {
     logEvent('error', 'install', prepared.error)

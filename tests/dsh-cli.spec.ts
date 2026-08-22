@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { describe, expect, it, vi } from 'vitest'
-import { cmdCommandLine, nodeExecutable, proxyEnvForPnpm, quoteCmdArg, TARGET_RE } from '../src/dsh-cli.ts'
+import { cmdCommandLine, isCmdSafeProfileName, nodeExecutable, proxyEnvForPnpm, quoteCmdArg, TARGET_RE } from '../src/dsh-cli.ts'
 import { routesFor } from '../src/regions.ts'
 
 describe('cmd.exe command line building (DEP0190 shim)', () => {
@@ -25,6 +25,17 @@ describe('cmd.exe command line building (DEP0190 shim)', () => {
     expect(cmdCommandLine(['dsh', 'plugin', '--profile', 'web', 'add', '@scope/pkg'])).toBe(
       'dsh plugin --profile web add @scope/pkg',
     )
+  })
+
+  it('admits common DSH profile names without admitting cmd expansion syntax', () => {
+    for (const profile of ['web', '011-rc.2', '测试001', '工作 profile', 'Профиль-2']) {
+      expect(isCmdSafeProfileName(profile)).toBe(true)
+    }
+    for (const profile of [
+      '%USERPROFILE%', 'name!VAR!', 'a&b', 'a|b', 'a^b', 'a<b', 'a>b', 'a(b)', 'say"hi"', 'line\nbreak',
+    ]) {
+      expect(isCmdSafeProfileName(profile)).toBe(false)
+    }
   })
 })
 

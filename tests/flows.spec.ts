@@ -419,6 +419,21 @@ function installedSpec(name: string): string | undefined {
 }
 
 describe('host-provided profile and package-operation seams', () => {
+  it('mounts ordinary routes for a dotted, Unicode, spaced DSH profile name (#260)', async () => {
+    bed.dispose()
+    const profile = '测试 profile.011-rc.2'
+    const ordinaryDir = profileDir(profile)
+    mkdirSync(ordinaryDir, { recursive: true })
+    writeFileSync(join(ordinaryDir, 'package.json'), '{"dependencies":{}}')
+    writeFileSync(join(ordinaryDir, 'pnpm-workspace.yaml'), 'packages:\n  - .\n')
+    fake.profileDir = ordinaryDir
+    bed = createTestbed({ profile })
+
+    const installed = await bed.dispatch('GET', '/dsh-market/installed')
+    expect(installed.status).toBe(200)
+    expect(installed.json).toMatchObject({ profile, installed: {} })
+  })
+
   it('uses the explicit profile directory and injected status/setup/cancel operations', async () => {
     bed.dispose()
     const explicitDir = join(home, 'desktop-owned-profile')

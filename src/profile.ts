@@ -10,12 +10,31 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { githubRemoteIdentities, githubRepoIdentities } from './sources.ts'
 
 /**
+ * Whether a profile name follows DSH's own directory-name contract.
+ *
+ * Keep this aligned with `@deepseek-ai/dsh-app-boot`'s
+ * `resolveProfileDir`: dots, spaces, and Unicode are ordinary name
+ * characters; only empty, traversal-shaped, launcher-owned, or
+ * separator-bearing names are refused.
+ */
+export function isDshProfileName(profile: string): boolean {
+  return profile !== ''
+    && profile !== '.'
+    && profile !== '..'
+    && profile !== 'node_modules'
+    && !profile.includes('/')
+    && !profile.includes('\\')
+    && !profile.includes('\0')
+}
+
+/**
  * Resolve a profile name to its directory under DSH_HOME (default ~/.dsh).
  * An explicit directory is used by hosts, such as DSH Desktop, that own the
  * active profile location rather than deriving it from process environment.
  */
 export function profileDir(profile: string, explicitDir?: string): string {
   if (explicitDir !== undefined) return explicitDir
+  if (!isDshProfileName(profile)) throw new Error(`dsh-market: invalid profile name ${JSON.stringify(profile)}`)
   const home = process.env.DSH_HOME ?? join(homedir(), '.dsh')
   return join(home, 'profiles', profile)
 }

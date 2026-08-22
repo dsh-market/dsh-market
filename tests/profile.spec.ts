@@ -8,7 +8,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import {
-  addProfileBundle, conflictingEntryIds, entryArtifactExists, hasDshManifest, hasLoadableEntry, pluginSubdirs, profileDir,
+  addProfileBundle, conflictingEntryIds, entryArtifactExists, hasDshManifest, hasLoadableEntry, isDshProfileName, pluginSubdirs, profileDir,
   readInstalled, readInstalledManifest, readInstalledRepoEvidence, readInstalledRepoIdentities, readInstalledVersion, readLockCommits,
   removeProfileBundle,
 } from '../src/profile.ts'
@@ -29,6 +29,27 @@ function writeProfile(manifest: unknown): string {
   writeFileSync(join(dir, 'package.json'), JSON.stringify(manifest))
   return dir
 }
+
+describe('profile names (#260)', () => {
+  it('matches the DSH profile directory contract instead of an ASCII-only subset', () => {
+    for (const name of ['web', '011-rc.2', '测试001', '工作 profile', 'Профиль-2']) {
+      expect(isDshProfileName(name)).toBe(true)
+      expect(profileDir(name)).toBe(join(home, 'profiles', name))
+    }
+  })
+
+  it('still rejects every traversal-shaped or launcher-owned name DSH rejects', () => {
+    for (const name of ['', '.', '..', 'node_modules', 'a/b', 'a\\b', 'a\0b']) {
+      expect(isDshProfileName(name)).toBe(false)
+      expect(() => profileDir(name)).toThrow('invalid profile name')
+    }
+  })
+
+  it('keeps a host-authoritative Desktop directory independent of its display name', () => {
+    const explicit = join(home, 'desktop-owned')
+    expect(profileDir('../display-only', explicit)).toBe(explicit)
+  })
+})
 
 describe('readInstalled', () => {
   it('filters exactly the in-box bundles — scoped COMMUNITY plugins stay (#28)', () => {
