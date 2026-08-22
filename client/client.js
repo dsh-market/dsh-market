@@ -900,11 +900,24 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		* spec — and any exact intersection counts. Exact equality, not substrings,
 		* so prefix-related repo names cannot cross-match.
 		*/
+		/**
+		* Memo for entryIdentities, keyed on the catalog entry object itself.
+		*
+		* Catalog entries are parsed once and never mutated, so the identity set is
+		* a pure function of an object that outlives every call — a WeakMap holds
+		* it for exactly as long as the catalog is alive and not one render longer.
+		* Worth caching because this is the innermost step of the installed-state
+		* matching that runs for every card on screen (#262).
+		*/
+		const entryIdCache = /* @__PURE__ */ new WeakMap();
 		function entryIdentities(plugin) {
+			const cached = entryIdCache.get(plugin);
+			if (cached !== void 0) return cached;
 			const ids = /* @__PURE__ */ new Set([plugin.name.toLowerCase()]);
 			if (plugin.npm) ids.add(plugin.npm.toLowerCase());
 			const m = /^https:\/\/github\.com\/([^/]+\/[^/]+?)(?:\/tree\/[^/]+\/(.+?))?\/?$/.exec(plugin.url);
 			if (m !== null) ids.add(m[2] !== void 0 ? `${m[1].toLowerCase()}#path:/${m[2].toLowerCase()}` : m[1].toLowerCase());
+			entryIdCache.set(plugin, ids);
 			return ids;
 		}
 		const REPO_ID_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:#path:\/[A-Za-z0-9_./-]+)?$/;
@@ -972,8 +985,39 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			for (const id of values) if (entry.has(id)) return true;
 			return false;
 		}
+		/**
+		* Memo for looseMatchCount, keyed on the catalog array then the dep name.
+		*
+		* This is THE hot path behind "the plugin list is very laggy" (#262). The
+		* count answers "how many catalog entries could this installed dependency
+		* be?", which depends only on the catalog and the name — not on the card
+		* being drawn. But it was called from matchInstalledName, which runs once
+		* per installed dependency, which runs once per rendered card: a full scan
+		* of ~1800 entries, repeated cards × installed times, on every single
+		* render. A profile from the reporter put it at 2.9 seconds, 28% of the
+		* whole trace, and a local benchmark measured 48ms per render at 24 cards
+		* and 224ms at 96 against a smaller 839-entry catalog.
+		*
+		* Keyed on the array identity so a refetched catalog gets a fresh map for
+		* free — a new parse is a new array, and the old one is collectable.
+		*/
+		const looseMatchCountCache = /* @__PURE__ */ new WeakMap();
 		function looseMatchCount(plugins, name) {
-			return plugins.filter((plugin) => looseMatches(plugin, name)).length;
+			let byName = looseMatchCountCache.get(plugins);
+			if (byName === void 0) {
+				byName = /* @__PURE__ */ new Map();
+				looseMatchCountCache.set(plugins, byName);
+			}
+			const hit = byName.get(name);
+			if (hit !== void 0) return hit;
+			const dep = depIdentities(name, "");
+			let count = 0;
+			for (const plugin of plugins) for (const id of entryIdentities(plugin)) if (dep.has(id)) {
+				count += 1;
+				break;
+			}
+			byName.set(name, count);
+			return count;
 		}
 		function looseMatches(plugin, name) {
 			const dep = depIdentities(name, "");

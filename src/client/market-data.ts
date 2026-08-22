@@ -370,7 +370,20 @@ export function pageItems(current: number, total: number): Array<number | '…'>
  * spec — and any exact intersection counts. Exact equality, not substrings,
  * so prefix-related repo names cannot cross-match.
  */
+/**
+ * Memo for entryIdentities, keyed on the catalog entry object itself.
+ *
+ * Catalog entries are parsed once and never mutated, so the identity set is
+ * a pure function of an object that outlives every call — a WeakMap holds
+ * it for exactly as long as the catalog is alive and not one render longer.
+ * Worth caching because this is the innermost step of the installed-state
+ * matching that runs for every card on screen (#262).
+ */
+const entryIdCache = new WeakMap<RegistryPlugin, Set<string>>()
+
 function entryIdentities(plugin: RegistryPlugin): Set<string> {
+  const cached = entryIdCache.get(plugin)
+  if (cached !== undefined) return cached
   const ids = new Set<string>([plugin.name.toLowerCase()])
   if (plugin.npm) ids.add(plugin.npm.toLowerCase())
   // Subpath-aware: a /tree/ entry identifies as repo#path:/sub, never the
@@ -379,6 +392,7 @@ function entryIdentities(plugin: RegistryPlugin): Set<string> {
   if (m !== null) {
     ids.add(m[2] !== undefined ? `${m[1]!.toLowerCase()}#path:/${m[2].toLowerCase()}` : m[1]!.toLowerCase())
   }
+  entryIdCache.set(plugin, ids)
   return ids
 }
 
@@ -458,8 +472,44 @@ function repoHintMatches(plugin: RegistryPlugin, hints: readonly string[]): bool
   return false
 }
 
+/**
+ * Memo for looseMatchCount, keyed on the catalog array then the dep name.
+ *
+ * This is THE hot path behind "the plugin list is very laggy" (#262). The
+ * count answers "how many catalog entries could this installed dependency
+ * be?", which depends only on the catalog and the name — not on the card
+ * being drawn. But it was called from matchInstalledName, which runs once
+ * per installed dependency, which runs once per rendered card: a full scan
+ * of ~1800 entries, repeated cards × installed times, on every single
+ * render. A profile from the reporter put it at 2.9 seconds, 28% of the
+ * whole trace, and a local benchmark measured 48ms per render at 24 cards
+ * and 224ms at 96 against a smaller 839-entry catalog.
+ *
+ * Keyed on the array identity so a refetched catalog gets a fresh map for
+ * free — a new parse is a new array, and the old one is collectable.
+ */
+const looseMatchCountCache = new WeakMap<RegistryPlugin[], Map<string, number>>()
+
 function looseMatchCount(plugins: RegistryPlugin[], name: string): number {
-  return plugins.filter(plugin => looseMatches(plugin, name)).length
+  let byName = looseMatchCountCache.get(plugins)
+  if (byName === undefined) {
+    byName = new Map<string, number>()
+    looseMatchCountCache.set(plugins, byName)
+  }
+  const hit = byName.get(name)
+  if (hit !== undefined) return hit
+  // Built once for the whole scan. looseMatches() rebuilt this identity set
+  // for every entry it tested, so the allocation alone ran ~1800 times per
+  // call before this.
+  const dep = depIdentities(name, '')
+  let count = 0
+  for (const plugin of plugins) {
+    for (const id of entryIdentities(plugin)) {
+      if (dep.has(id)) { count += 1; break }
+    }
+  }
+  byName.set(name, count)
+  return count
 }
 
 function looseMatches(plugin: RegistryPlugin, name: string): boolean {
