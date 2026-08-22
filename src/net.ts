@@ -25,11 +25,16 @@ import { EnvHttpProxyAgent, fetch as undiciFetch } from 'undici'
 /**
  * The proxy this process would use for the catalog, if any.
  *
- * This mirrors `EnvHttpProxyAgent`'s own resolution deliberately, rather
- * than picking the order that reads best, because the same answer does two
- * jobs: it decides whether to route through undici at all, and it is what
- * the failure message CLAIMS was tried. A helper that named a proxy undici
- * would not have used would put a false statement in every bug report.
+ * The standard variables mirror `EnvHttpProxyAgent`'s own resolution
+ * deliberately, rather than picking the order that reads best, because the
+ * same answer does two jobs: it decides whether to route through undici at
+ * all, and it is what the failure message CLAIMS was tried. A helper that
+ * named a proxy undici would not have used would put a false statement in
+ * every bug report. `npm_config_*` is an additional source on top of that:
+ * npm holds its proxy in its own config namespace (a machine set up with
+ * `npm config set proxy` has the proxy in `npm_config_proxy` and nowhere
+ * else), and undici does not read it — so it is resolved here and handed to
+ * the agent explicitly in `marketFetch`.
  *
  * Three details are undici's, not ours (env-http-proxy-agent.js):
  *   - lowercase wins over uppercase (`https_proxy ?? HTTPS_PROXY`)
@@ -41,10 +46,27 @@ import { EnvHttpProxyAgent, fetch as undiciFetch } from 'undici'
  * whitespace-only value to `new URL()` and throw out of the constructor.
  */
 export function configuredProxy(): string | null {
+  const { http, https } = proxyFromEnv()
+  return https ?? http
+}
+
+/**
+ * Proxy URLs resolved from the process environment, standard variables
+ * first and npm's own config (`npm_config_https_proxy` / `npm_config_proxy`)
+ * as the fallback. npm's config is the second source, not a preference: a
+ * standard variable always wins over npm's, and npm's https proxy falls
+ * back to npm's http proxy the same way undici's does.
+ */
+function proxyFromEnv(): { http: string | null; https: string | null } {
   const pick = (raw: string | undefined): string | null =>
     raw === undefined || raw.trim() === '' ? null : raw.trim()
-  const https = pick(process.env.https_proxy ?? process.env.HTTPS_PROXY)
-  return https ?? pick(process.env.http_proxy ?? process.env.HTTP_PROXY)
+  const https =
+    pick(process.env.https_proxy ?? process.env.HTTPS_PROXY) ??
+    pick(process.env.npm_config_https_proxy)
+  const http =
+    pick(process.env.http_proxy ?? process.env.HTTP_PROXY) ??
+    pick(process.env.npm_config_proxy)
+  return { http, https }
 }
 
 /**
@@ -65,7 +87,15 @@ export async function marketFetch(
   url: string,
   init?: { signal?: AbortSignal; headers?: Record<string, string> },
 ): Promise<Response> {
-  if (configuredProxy() === null) return await fetch(url, init)
-  agent ??= new EnvHttpProxyAgent()
+  const { http, https } = proxyFromEnv()
+  if (http === null && https === null) return await fetch(url, init)
+  // Pass the resolved proxies explicitly. EnvHttpProxyAgent itself reads
+  // only http(s)_proxy out of the environment, so a proxy that lives in
+  // npm_config_* must be handed over directly — otherwise the agent would
+  // silently go direct while configuredProxy() claims a proxy was used.
+  agent ??= new EnvHttpProxyAgent({
+    httpProxy: http ?? undefined,
+    httpsProxy: https ?? undefined,
+  })
   return await undiciFetch(url, { ...init, dispatcher: agent }) as unknown as Response
 }

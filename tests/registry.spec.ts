@@ -14,7 +14,27 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { describeFetchFailure, forgetCatalog, loadRegistry } from '../src/registry.ts'
-import { configuredProxy } from '../src/net.ts'
+import { configuredProxy, marketFetch } from '../src/net.ts'
+
+/**
+ * undici stands in for the real outbound path. `marketFetch` routes through
+ * EnvHttpProxyAgent only when a proxy is configured, and the assertion that
+ * matters is exactly which proxy URLs the agent was built with —
+ * npm_config_* is invisible to EnvHttpProxyAgent, so the explicit handoff
+ * is what makes the npm fallback real instead of a name the failure message
+ * claims was tried.
+ */
+const undici = vi.hoisted(() => ({
+  fetch: vi.fn(async () => new Response('ok', { status: 200 })),
+  EnvHttpProxyAgent: vi.fn(function (this: unknown, opts?: unknown) {
+    return { opts }
+  }),
+}))
+
+vi.mock('undici', () => ({
+  fetch: undici.fetch,
+  EnvHttpProxyAgent: undici.EnvHttpProxyAgent,
+}))
 
 const CATALOG = {
   updated: '2026-08-18',
@@ -26,8 +46,8 @@ const CATALOG = {
   }],
 }
 
-/** Every proxy variable, so one test's environment cannot leak into another. */
-const PROXY_VARS = ['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy'] as const
+/** Every proxy variable — standard and npm's own config — so one test's environment cannot leak into another. */
+const PROXY_VARS = ['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'npm_config_https_proxy', 'npm_config_proxy', 'npm_config_noproxy'] as const
 let savedProxy: Record<string, string | undefined> = {}
 
 beforeEach(() => {
@@ -292,5 +312,66 @@ describe('configuredProxy', () => {
   it('trims a stray newline, which a shell heredoc leaves behind', () => {
     process.env.HTTPS_PROXY = 'http://127.0.0.1:7897\n'
     expect(configuredProxy()).toBe('http://127.0.0.1:7897')
+  })
+
+  it('uses npm_config_https_proxy when the standard variables are not set', () => {
+    // The machine that reported this: its proxy was configured with
+    // `npm config set proxy` (common on Windows), so it exists as
+    // npm_config_* and nowhere else. Every npm-based tool works; the
+    // catalog fetch still tried the direct route and timed out.
+    process.env.npm_config_https_proxy = 'http://npm:1'
+    expect(configuredProxy()).toBe('http://npm:1')
+  })
+
+  it('falls back to npm_config_proxy for the https catalog, as undici does', () => {
+    // npm's https-proxy falls back to its plain proxy value; report the
+    // proxy that is actually in use rather than "no proxy" while one is
+    // plainly configured.
+    process.env.npm_config_proxy = 'http://npm:2'
+    expect(configuredProxy()).toBe('http://npm:2')
+  })
+
+  it('prefers a standard proxy over npm config', () => {
+    // npm_config_* is a fallback source, never an override: a process
+    // whose environment carries http_proxy has decided, and the market
+    // must not second-guess it with the machine's npm config.
+    process.env.HTTPS_PROXY = 'http://std:1'
+    process.env.npm_config_https_proxy = 'http://npm:1'
+    expect(configuredProxy()).toBe('http://std:1')
+  })
+
+  it('treats empty npm proxy values as unset, like the standard ones', () => {
+    process.env.npm_config_https_proxy = ''
+    process.env.npm_config_proxy = ''
+    expect(configuredProxy()).toBeNull()
+  })
+})
+
+describe('marketFetch', () => {
+  beforeEach(() => {
+    undici.fetch.mockClear()
+    undici.EnvHttpProxyAgent.mockClear()
+  })
+
+  it('hands npm-config proxies to the agent explicitly — EnvHttpProxyAgent cannot see them', async () => {
+    // The trap this guards: configuredProxy() alone would make the failure
+    // message claim a proxy was tried while `new EnvHttpProxyAgent()` with
+    // no arguments still reads only http(s)_proxy and goes direct.
+    process.env.npm_config_https_proxy = 'http://npm:1'
+    await marketFetch('https://catalog.example/plugins.json')
+    expect(undici.EnvHttpProxyAgent).toHaveBeenCalledWith({
+      httpProxy: undefined,
+      httpsProxy: 'http://npm:1',
+    })
+    expect(undici.fetch).toHaveBeenCalledWith(
+      'https://catalog.example/plugins.json',
+      expect.objectContaining({ dispatcher: expect.any(Object) }),
+    )
+  })
+
+  it('stays on the global fetch when there is no proxy anywhere', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('ok', { status: 200 })))
+    await marketFetch('https://catalog.example/plugins.json')
+    expect(undici.fetch).not.toHaveBeenCalled()
   })
 })
