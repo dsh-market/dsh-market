@@ -5365,7 +5365,15 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			]);
 			(0, react.useEffect)(() => {
 				if (catsSentinel === null || typeof IntersectionObserver === "undefined") return;
-				const observer = new IntersectionObserver(([entry]) => setCatsStuck(entry !== void 0 && !entry.isIntersecting), {
+				const observer = new IntersectionObserver(([entry]) => {
+					const leftView = entry !== void 0 && !entry.isIntersecting;
+					const root = bodyRef.current;
+					const wrap = catsWrapRef.current;
+					if (leftView && root !== null && wrap !== null) {
+						if (root.scrollHeight - root.clientHeight <= wrap.offsetHeight) return;
+					}
+					setCatsStuck(leftView);
+				}, {
 					root: bodyRef.current,
 					threshold: 0
 				});

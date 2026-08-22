@@ -2384,7 +2384,32 @@ export function MarketSection(props: MarketSectionProps) {
   useEffect(() => {
     if (catsSentinel === null || typeof IntersectionObserver === 'undefined') return
     const observer = new IntersectionObserver(
-      ([entry]) => setCatsStuck(entry !== undefined && !entry.isIntersecting),
+      ([entry]) => {
+        const leftView = entry !== undefined && !entry.isIntersecting
+        // Collapsing shrinks the sticky header, which shrinks the scrollable
+        // content. When there is barely more content than viewport, that
+        // makes scrollHeight drop below the current scroll position, the
+        // browser CLAMPS scrollTop, the sentinel slides back into view, and
+        // the row expands again — which grows the content, restores the
+        // scroll, and starts over. Reported as the category bar flapping and
+        // the list refusing to scroll (#266 by @hidge123), and reproduced
+        // here: a filtered list went scrollTop 78 → 0 and snapped straight
+        // back from one row to four.
+        //
+        // The guard is not a tuning constant, it is the feature's own
+        // precondition: collapsing exists to reclaim vertical space while
+        // scrolling a LONG list. If the scroller has less overflow than the
+        // category row could give back, collapsing buys nothing and can only
+        // start the loop, so it does not happen. Long lists — the case this
+        // was built for — are unaffected.
+        const root = bodyRef.current
+        const wrap = catsWrapRef.current
+        if (leftView && root !== null && wrap !== null) {
+          const overflow = root.scrollHeight - root.clientHeight
+          if (overflow <= wrap.offsetHeight) return
+        }
+        setCatsStuck(leftView)
+      },
       { root: bodyRef.current, threshold: 0 },
     )
     observer.observe(catsSentinel)
