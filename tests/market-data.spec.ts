@@ -512,24 +512,31 @@ describe('installed-state matching stays cheap as the catalog grows (#262)', () 
     }))
 
   it('makes a RE-render cheap, which is what scrolling actually costs', () => {
-    // The property to pin is not "fast" (a slow CI box would flake) but
-    // "the catalog is scanned once, not once per render". Scrolling
-    // re-renders the list repeatedly; before the memo every one of those
-    // repeated the full cards × installed × catalog scan, so the second
+    // The property to pin is not "fast" (a wall-clock budget would flake on
+    // a slow box) but "the catalog is scanned once, not once per render".
+    // Scrolling re-renders the list repeatedly; before the memo every one of
+    // those repeated the full cards × installed × catalog scan, so a second
     // render cost exactly as much as the first.
-    const plugins = catalog(2000)
+    //
+    // Sized and sampled for a noisy CI machine: a big catalog so the first
+    // render's work dwarfs fixed overhead, and the FASTEST of several warm
+    // renders, so one unlucky GC pause cannot decide the verdict. A first
+    // attempt at 2000 entries and a single sample measured 50x locally and
+    // 4.7x on CI — the signal was real, the sampling was not.
+    const plugins = catalog(8000)
     const installed: Record<string, string> = {}
-    for (let i = 0; i < 12; i++) installed[`pkg-${i}`] = '^1.0.0'
+    for (let i = 0; i < 24; i++) installed[`pkg-${i}`] = '^1.0.0'
     const render = (): number => {
       const t0 = performance.now()
       for (const p of plugins.slice(0, 48)) isInstalled(p, installed, {}, plugins, {})
       return performance.now() - t0
     }
     const first = render()
-    const second = Math.max(render(), 0.01)
-    // Generous by design: the real ratio here is ~50x, and anything under
-    // 5x means the per-render catalog scan is back.
-    expect(first / second).toBeGreaterThan(5)
+    let warm = Infinity
+    for (let i = 0; i < 5; i++) warm = Math.min(warm, render())
+    // Real ratio is in the hundreds; anything under 10x means the
+    // per-render catalog scan is back.
+    expect(first / Math.max(warm, 0.001)).toBeGreaterThan(10)
   })
 
   it('still answers identically for an ambiguous name, memo or not', () => {
