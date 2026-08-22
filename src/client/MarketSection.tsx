@@ -456,28 +456,32 @@ function CardShot({ plugin, onOpen }: { plugin: RegistryPlugin; onOpen: (shots: 
 }
 
 /**
- * Two masonry columns holding the cards in ranked order.
+ * Masonry columns holding items in their input order.
  *
- * Cards are dealt alternately (0,2,4… left; 1,3,5… right) rather than split
+ * Items are dealt alternately (0,2,4… left; 1,3,5… right) rather than split
  * down the middle, so the sort order still reads left-to-right then down —
  * the ranking is the whole point of the sort menu above it. Each column is
- * its own flex stack, so a tall card only pushes down the cards beneath IT
+ * its own flex stack, so a tall item only pushes down the items beneath IT
  * instead of leaving a hole beside its shorter neighbour.
  *
  * Below the two-up breakpoint the CSS collapses to one column, and dealing
  * alternately would then interleave the list wrongly — so at one column the
- * cards stay in a single stack in their original order.
+ * items stay in a single stack in their original order.
  */
-function Masonry({ items, render, columns = 2 }: {
-  items: RegistryPlugin[]
-  render: (plugin: RegistryPlugin) => ReactNode
+function Masonry<T>({ items, render, columns = 2 }: {
+  items: T[]
+  render: (item: T) => ReactNode
   columns?: number
 }) {
   const wide = useMediaWide()
   if (!wide || columns < 2) {
-    return <div className={css.masonry}><div className={css.masonryCol}>{items.map(render)}</div></div>
+    return (
+      <div className={css.masonry}>
+        <div className={css.masonryCol} style={{ width: '100%' }}>{items.map(render)}</div>
+      </div>
+    )
   }
-  const buckets: RegistryPlugin[][] = Array.from({ length: columns }, () => [])
+  const buckets: T[][] = Array.from({ length: columns }, () => [])
   items.forEach((item, index) => { buckets[index % columns]!.push(item) })
   return (
     <div className={css.masonry}>
@@ -3180,8 +3184,8 @@ export function MarketSection(props: MarketSectionProps) {
                       : Object.keys(displayedInstalled).filter(name => name !== selfName).length === 0
                         ? <div className={css.empty}>{t('installedEmpty')}</div>
                         : (
-                          <div className={css.pairGrid}>
-                          {Object.entries(displayedInstalled)
+                          <Masonry
+                            items={Object.entries(displayedInstalled)
                             .filter(([name, spec]) => {
                               // The market manages itself from its own settings
                               // card, not as a row in this list (#188-adjacent).
@@ -3197,8 +3201,8 @@ export function MarketSection(props: MarketSectionProps) {
                                 if ((entry.owner || '').toLowerCase().includes(needle)) return true
                               }
                               return false
-                            })
-                            .map(([name, spec]) => {
+                            })}
+                            render={([name, spec]) => {
                             const missing = pendingBackup !== null && !installedFiles.includes(name)
                             const entry = data === null ? undefined : entryForDep(data.plugins, name, String(spec), repoIdentities[name], repoHints[name])
                             const status = updates[name]
@@ -3396,8 +3400,8 @@ export function MarketSection(props: MarketSectionProps) {
                                 </div>
                               </div>
                             )
-                          })}
-                          </div>
+                          }}
+                          />
                         )}
                 </>
               )}

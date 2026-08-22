@@ -126,11 +126,8 @@
 @media (max-width:680px){
   .masonry{flex-direction:column}
 }
-/* The Installed list is the same two-up grid: one list that reads as rows and
-   another as cards made the two tabs look like different products. */
-.pairGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:start;gap:10px}
 @media (max-width:680px){
-  .grid,.pairGrid{grid-template-columns:minmax(0,1fr)}
+  .grid{grid-template-columns:minmax(0,1fr)}
 }
 .swatches{display:flex;gap:0;height:34px;border-radius:8px;overflow:hidden;border:1px solid var(--dsw-alias-border-l2,#e5e7eb)}
 .themesGrid{margin-bottom:12px}
