@@ -376,6 +376,31 @@ describe('peer range mismatch', () => {
     expect(mismatch?.satisfied).toBe(false)
     expect(report.summary.warnings.some(w => w.includes('does not match'))).toBe(true)
   })
+
+  it('does not WARN about an optional peer that does not match (#275)', () => {
+    // `peerDependenciesMeta.optional` is the plugin saying "I work without
+    // this". classifyPeer already treats those as non-risk; the summary
+    // disagreeing meant a scary warning line for a plugin that is fine —
+    // including the market's own optional peer, on every profile that
+    // installs it.
+    const dir = pdir()
+    writeProfile(dir, { name: 'web-profile', dependencies: {} })
+    writePackage(dir, 'plugin-opt', {
+      name: 'plugin-opt',
+      version: '1.0.0',
+      peerDependencies: { '@deepseek-ai/dsh-llm': '^0.1.0' },
+      peerDependenciesMeta: { '@deepseek-ai/dsh-llm': { optional: true } },
+    })
+    writePackage(dir, '@deepseek-ai/dsh-llm', { name: '@deepseek-ai/dsh-llm', version: '0.2.0' })
+
+    const report = analyzeProfile(dir)
+    const mismatch = report.peerMismatches.find(m => m.plugin === 'plugin-opt')
+    // Still REPORTED — the diagnostics page shows it, and classifyPeer
+    // decides what it means. Only the summary warning is suppressed.
+    expect(mismatch?.satisfied).toBe(false)
+    expect(mismatch?.optional).toBe(true)
+    expect(report.summary.warnings.some(w => w.includes('plugin-opt'))).toBe(false)
+  })
 })
 
 describe('pnpm-lock.yaml multi-version core packages', () => {

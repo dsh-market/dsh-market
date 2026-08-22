@@ -63,15 +63,20 @@ describe('nodeExecutable (Android linker64 execPath)', () => {
   })
 })
 
-describe('proxy env translated for pnpm (#148/#161/#188/#232)', () => {
-  // The market's own catalog fetches go through undici's EnvHttpProxyAgent,
-  // which reads HTTPS_PROXY/http_proxy. pnpm reads NONE of those — it reads
-  // npm config — so on a proxied network the catalog loaded and every
-  // install then hung. These assert the translation, and its precedence.
-  it('translates https_proxy/http_proxy into the npm_config_* names pnpm reads', () => {
+describe('proxy env translated for the pnpm subprocess (#148/#161/#188/#232/#274)', () => {
+  // Three consumers, three vocabularies. The market's own fetch reads the
+  // standard vars; pnpm reads ONLY npm config; `git` — which pnpm shells
+  // out to for every git-hosted plugin — reads only the standard vars.
+  it('fills the npm_config_* names pnpm reads AND the standard names git reads', () => {
     expect(proxyEnvForPnpm({ HTTPS_PROXY: 'http://proxy:8080' })).toEqual({
       npm_config_https_proxy: 'http://proxy:8080',
       npm_config_proxy: 'http://proxy:8080',
+    })
+    // A proxy known ONLY to npm config is the case that stranded git:
+    // registry installs went through it, git installs went direct (#274).
+    expect(proxyEnvForPnpm({ npm_config_proxy: 'http://p:1' })).toEqual({
+      HTTPS_PROXY: 'http://p:1',
+      HTTP_PROXY: 'http://p:1',
     })
   })
 
@@ -91,22 +96,30 @@ describe('proxy env translated for pnpm (#148/#161/#188/#232)', () => {
     })
   })
 
-  it('forwards NO_PROXY, so a host excluding its own registry mirror keeps excluding it', () => {
+  it('forwards NO_PROXY both ways, so an excluded mirror stays excluded for git too', () => {
     expect(proxyEnvForPnpm({ HTTPS_PROXY: 'http://p:1', NO_PROXY: 'registry.local,10.0.0.0/8' }))
       .toEqual({
         npm_config_https_proxy: 'http://p:1',
         npm_config_proxy: 'http://p:1',
         npm_config_noproxy: 'registry.local,10.0.0.0/8',
       })
+    expect(proxyEnvForPnpm({ npm_config_proxy: 'http://p:1', npm_config_noproxy: 'registry.local' }))
+      .toEqual({ HTTPS_PROXY: 'http://p:1', HTTP_PROXY: 'http://p:1', NO_PROXY: 'registry.local' })
   })
 
-  it('never overrides an npm_config_* the caller already set, case-insensitively (Windows env keys)', () => {
+  it('never overrides a value the caller already set, case-insensitively (Windows env keys)', () => {
     // The more specific statement of intent wins — including when Windows
     // hands the key back in a different case than we would have written.
     expect(proxyEnvForPnpm({ HTTPS_PROXY: 'http://env:1', npm_config_https_proxy: 'http://explicit:2' }))
       .toEqual({ npm_config_proxy: 'http://env:1' })
     expect(proxyEnvForPnpm({ HTTPS_PROXY: 'http://env:1', NPM_CONFIG_HTTPS_PROXY: 'http://explicit:2' }))
       .toEqual({ npm_config_proxy: 'http://env:1' })
+    // ...and the reverse direction never fires at all when the standard
+    // vocabulary says anything: copying npm's answer over it would invent a
+    // setting the caller did not make (an HTTP_PROXY for someone who
+    // deliberately proxied https only).
+    expect(proxyEnvForPnpm({ npm_config_proxy: 'http://npm:1', HTTPS_PROXY: 'http://std:2' }))
+      .toEqual({ npm_config_https_proxy: 'http://std:2' })
   })
 
   it('adds nothing when no proxy is configured, or when the value is blank', () => {

@@ -96,14 +96,37 @@ export function proxyEnvForPnpm(env: NodeJS.ProcessEnv = process.env): NodeJS.Pr
     return null
   }
   const out: NodeJS.ProcessEnv = {}
-  // Same precedence as undici's EnvHttpProxyAgent (lowercase over uppercase,
-  // https falling back to http), so pnpm goes where the catalog fetch went.
-  const https = pick('https_proxy', 'HTTPS_PROXY') ?? pick('http_proxy', 'HTTP_PROXY')
-  const http = pick('http_proxy', 'HTTP_PROXY') ?? https
-  if (https !== null && !has('npm_config_https_proxy')) out.npm_config_https_proxy = https
-  if (http !== null && !has('npm_config_proxy')) out.npm_config_proxy = http
-  const noProxy = pick('no_proxy', 'NO_PROXY')
-  if (noProxy !== null && !has('npm_config_noproxy')) out.npm_config_noproxy = noProxy
+  // Three consumers, three vocabularies, one proxy. The market's own fetch
+  // reads the standard vars (and, since #263, npm config too); pnpm reads
+  // ONLY npm config; and `git` — which pnpm shells out to for every
+  // git-hosted plugin — reads only the standard vars and never npm config.
+  // Translating one direction left the third out: registry installs went
+  // through the proxy while git installs went direct and failed with
+  // "Failed to connect to github.com:443" (#274 by @rucsocial).
+  //
+  // Same precedence as undici's EnvHttpProxyAgent (lowercase over
+  // uppercase, https falling back to http).
+  const stdHttps = pick('https_proxy', 'HTTPS_PROXY') ?? pick('http_proxy', 'HTTP_PROXY')
+  const stdHttp = pick('http_proxy', 'HTTP_PROXY') ?? stdHttps
+  if (stdHttps !== null && !has('npm_config_https_proxy')) out.npm_config_https_proxy = stdHttps
+  if (stdHttp !== null && !has('npm_config_proxy')) out.npm_config_proxy = stdHttp
+  const stdNoProxy = pick('no_proxy', 'NO_PROXY')
+  if (stdNoProxy !== null && !has('npm_config_noproxy')) out.npm_config_noproxy = stdNoProxy
+
+  // The other direction, and ONLY when the standard vocabulary is empty.
+  // A proxy known solely to npm config is the case that stranded git; if
+  // the caller has said anything in the standard vars, that is their
+  // statement about what git should do and copying npm's answer over it
+  // would invent a setting they did not make — notably an HTTP_PROXY for
+  // someone who deliberately proxied https only.
+  if (stdHttps === null && stdHttp === null) {
+    const npmHttps = pick('npm_config_https_proxy') ?? pick('npm_config_proxy')
+    const npmHttp = pick('npm_config_proxy') ?? npmHttps
+    if (npmHttps !== null) out.HTTPS_PROXY = npmHttps
+    if (npmHttp !== null) out.HTTP_PROXY = npmHttp
+    const npmNoProxy = pick('npm_config_noproxy')
+    if (npmNoProxy !== null && stdNoProxy === null) out.NO_PROXY = npmNoProxy
+  }
   return out
 }
 
