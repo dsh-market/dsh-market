@@ -1593,7 +1593,11 @@ export function MarketSection(props: MarketSectionProps) {
   const doUpdate = useCallback((name: string, force = false) => {
     setInstallError(null)
     setActivationWarnings([])
-    setStaleName(null)
+    // Only THIS row's stale marker is cleared. "Update all" walks the list
+    // calling straight into here, so an unconditional reset meant every
+    // earlier release-age failure lost its retry button and only the last
+    // one kept it — the rest failed silently with no way forward (#255).
+    setStaleName(prev => (prev === name ? null : prev))
     setUpdatingName(name)
     updateIdleStrikes.current = 0
     // Mirror the install flow's dshm-pending marker: closing the config page
@@ -3178,14 +3182,26 @@ export function MarketSection(props: MarketSectionProps) {
                             return (
                               <div key={name} className={missing ? `${css.irow} ${css.irowMissing}` : css.irow}>
                                 <div style={{ minWidth: 0 }}>
-                                  <div className={css.nm}>
+                                  {/* Row-scoped, NOT `.nm` alone: `.nm` clips with
+                                      overflow+ellipsis as one block, so with the name and
+                                      the version as inline siblings the ellipsis landed at
+                                      the end of the LINE and ate the version — a long
+                                      scoped package name hid the one fact this row exists
+                                      to state (#257 by @HualuozhE). Laying the row out as
+                                      flex lets the name be the only thing that truncates.
+                                      `.nm` is shared by six other places (discover titles,
+                                      group rows, theme cards); changing it there would
+                                      reflow all of them. */}
+                                  <div className={`${css.nm} ${css.irowName}`}>
                                     {/* The name is the link to the README. A separate button
                                         beside it pointed at the same page. */}
-                                    {repoUrl !== null
-                                      ? <a className={css.nameLink} href={repoUrl + '#readme'} target="_blank" rel="noreferrer" title={t('readme')}>{name}</a>
-                                      : name}
+                                    <span className={css.irowNameText}>
+                                      {repoUrl !== null
+                                        ? <a className={css.nameLink} href={repoUrl + '#readme'} target="_blank" rel="noreferrer" title={t('readme')}>{name}</a>
+                                        : name}
+                                    </span>
                                     {entry?.deprecated === true && <span className={css.depBadge}>{t('deprecatedBadge')}</span>}
-                                    {version && <span className={css.owner}>{' ' + version}</span>}
+                                    {version && <span className={css.owner} title={version}>{version}</span>}
                                   </div>
                                   {specRedundant
                                     ? null

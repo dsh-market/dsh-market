@@ -324,6 +324,13 @@
 .metaTagOk{color:var(--dsw-alias-state-success-primary,#16a34a);
            background:color-mix(in srgb, var(--dsw-alias-state-success-primary,#16a34a) 10%, transparent)}
 .nameLink{color:inherit;text-decoration:none}
+/* Installed-row title only. The version is a fact the row exists to state,
+   so it never truncates; the name is the variable-length part and is the
+   only thing allowed to shrink and ellipsize (#257). Scoped to this row
+   rather than added to `.nm`, which six other surfaces share. */
+.irowName{display:flex;align-items:baseline;gap:6px;min-width:0;overflow:visible;text-overflow:clip}
+.irowNameText{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.irowName>.owner{flex:0 0 auto}
 .nameLink:hover{color:var(--dsw-alias-brand-primary,#4f6ef7);text-decoration:underline}
 .opWrap{position:relative;display:inline-flex;flex-shrink:0}
 .opEntry{display:inline-flex;align-items:center;gap:6px;font:inherit;font-size:12px;

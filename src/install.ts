@@ -177,11 +177,16 @@ export async function retargetCollections(
  * a web profile (both declare `id: storage`) leaves DSH unable to START —
  * an error naming neither plugin, from which the market's own page is
  * unreachable. Such a package is removed like any other bricking piece.
- * @returns names kept, names removed as broken, and the id conflicts found.
+ * @returns names added by this run, names kept, names removed as broken,
+ * and the id conflicts found. `added` is reported separately from `keep`
+ * because an EMPTY `added` is a different failure from "everything added was
+ * unloadable": it means the install reported success without touching the
+ * profile at all, which is a broken plugin-command channel rather than
+ * anything wrong with the plugin (#258).
  */
 export async function validateAddedPlugins(
   run: PluginRunner, profile: string, before: Set<string>, explicitDir?: string,
-): Promise<{ keep: string[]; removedBroken: string[]; conflicts: { name: string; id: string; owner: string }[] }> {
+): Promise<{ added: string[]; keep: string[]; removedBroken: string[]; conflicts: { name: string; id: string; owner: string }[] }> {
   const dir = profileDir(profile, explicitDir)
   const addedNow = Object.keys(readInstalled(profile, dir)).filter(n => !before.has(n))
   const keep: string[] = []
@@ -211,7 +216,7 @@ export async function validateAddedPlugins(
     }
     keep.push(n)
   }
-  return { keep, removedBroken, conflicts }
+  return { added: addedNow, keep, removedBroken, conflicts }
 }
 
 /**

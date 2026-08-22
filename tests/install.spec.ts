@@ -354,3 +354,42 @@ describe("pnpm's own error survives to the surface (#244/#192/#138)", () => {
     expect(result.stderr).not.toContain('ERR_PNPM_ADDING_TO_ROOT: some raw pnpm prose')
   })
 })
+
+describe('validateAddedPlugins separates "added nothing" from "added junk" (#258)', () => {
+  it('reports an empty `added` when the plugin command changed nothing', async () => {
+    // The Desktop channel in the report exited 0 without touching the
+    // profile. Blaming the plugin ("needs a build step / ships no
+    // artifacts") sent the reporter chasing allowBuilds for a plugin that
+    // ships a complete lib/.
+    const dir = profileDir('web')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ dependencies: { existing: '^1.0.0' } }))
+    const run = async (): Promise<InstallResult> => ({
+      exitCode: 0, timedOut: false, cancelled: false, stdout: '', stderr: '',
+    })
+    const result = await validateAddedPlugins(run, 'web', new Set(['existing']))
+    expect(result.added).toEqual([])
+    expect(result.keep).toEqual([])
+    // No removals either — nothing arrived to remove. That pairing is what
+    // distinguishes this from "everything added was unloadable".
+    expect(result.removedBroken).toEqual([])
+  })
+
+  it('reports what arrived when the additions were unloadable', async () => {
+    const dir = profileDir('web')
+    mkdirSync(join(dir, 'node_modules', 'junk'), { recursive: true })
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ dependencies: { junk: '^1.0.0' } }))
+    // No dsh manifest → removed as broken.
+    writeFileSync(join(dir, 'node_modules', 'junk', 'package.json'), JSON.stringify({ name: 'junk' }))
+    const removed: string[] = []
+    const run = async (_p: string, args: string[]): Promise<InstallResult> => {
+      if (args[0] === 'remove') removed.push(args[1]!)
+      return { exitCode: 0, timedOut: false, cancelled: false, stdout: '', stderr: '' }
+    }
+    const result = await validateAddedPlugins(run, 'web', new Set())
+    expect(result.added).toEqual(['junk'])
+    expect(result.keep).toEqual([])
+    expect(result.removedBroken).toEqual(['junk'])
+    expect(removed).toEqual(['junk'])
+  })
+})

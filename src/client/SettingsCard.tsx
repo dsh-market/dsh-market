@@ -136,6 +136,13 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
   const [phase, setPhase] = useState<Phase>('idle')
   const [purge, setPurge] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  /**
+   * The last self-update was refused by pnpm's fresh-release safety wait
+   * (#39). Only the market's own card can update the market, so without a
+   * retry here there is NO way to take a just-published version — the
+   * discover list's retry button covers every plugin except this one (#255).
+   */
+  const [stale, setStale] = useState(false)
 
   // Only once the row is opened: the plugin configuration page renders every
   // card at once, and an update check costs a registry round trip.
@@ -175,14 +182,21 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
     return (await response.json()) as { ok?: boolean; error?: string }
   }, [])
 
-  const onUpdate = useCallback(() => {
+  const onUpdate = useCallback((force = false) => {
     setPhase('working')
     setError(null)
+    setStale(false)
     void (async () => {
       try {
-        const body = await post('/dsh-market/update', { name: 'dshmarket' })
+        const body = await post('/dsh-market/update', { name: 'dshmarket', ...(force ? { force: true } : {}) }) as {
+          ok?: boolean; error?: string; stale?: boolean
+        }
         if (body.ok === true) setPhase('updated')
-        else { setError(body.error ?? t('setSelfFailed')); setPhase('failed') }
+        else {
+          setStale(body.stale === true)
+          setError(body.error ?? t('setSelfFailed'))
+          setPhase('failed')
+        }
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : String(cause))
         setPhase('failed')
@@ -280,9 +294,9 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
           phase === 'updated'
             ? null
             : update?.updateAvailable === true
-              ? h(Button, { variant: 'primary', size: 'sm', disabled: busy, onClick: onUpdate }, t('setSelfUpdate'))
+              ? h(Button, { variant: 'primary', size: 'sm', disabled: busy, onClick: () => onUpdate() }, t('setSelfUpdate'))
               : update?.channelSwitch != null
-                ? h(Button, { variant: 'outline', size: 'sm', disabled: busy, onClick: onUpdate }, t('setChannelSwitch'))
+                ? h(Button, { variant: 'outline', size: 'sm', disabled: busy, onClick: () => onUpdate() }, t('setChannelSwitch'))
                 : null,
         ),
         row(t('setChannel'), t(CHANNEL_HINT[status?.channel ?? 'stable']),
@@ -345,6 +359,14 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
             )
           : null,
         error !== null ? h('div', { className: css.err }, error) : null,
+        // The one place the market can be forced past pnpm's fresh-release
+        // wait. Shown only after that specific refusal, never as a default:
+        // the wait exists because a version published minutes ago can still
+        // be unpublished (#39).
+        stale
+          ? h('div', { className: css.setActions },
+              h(Button, { variant: 'primary', size: 'sm', onClick: () => onUpdate(true) }, t('updateNow')))
+          : null,
       )
 
   return h('div', { className: open ? `${css.setCard} ${css.setCardOpen}` : css.setCard },

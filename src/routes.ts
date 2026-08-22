@@ -150,7 +150,16 @@ export function mountMarketRoutes(
   // allowlist. A host-authoritative explicit directory (DSH Desktop) may
   // legitimately pair with a Unicode or spaced display/profile name.
   if (config.profileDirectory === undefined && !PROFILE_RE.test(config.profile)) {
-    throw new Error(`dsh-market: invalid profile name: ${config.profile}`)
+    // Loud on the way out. This throw happens inside a cordis effect, which
+    // swallows it: the routes silently never mount and EVERY /dsh-market/*
+    // request answers 404 with nothing anywhere saying why — the market
+    // simply looks broken (#260 by @realguan). The log line is the only
+    // thing that turns that into something diagnosable, so it is written
+    // before the throw rather than left to a handler that never runs.
+    const message = `dsh-market: profile name ${JSON.stringify(config.profile)} contains characters outside [A-Za-z0-9_-], so the market's routes were not mounted and every /dsh-market/* request will answer 404. Rename the profile, or pass an explicit profile directory.`
+    host.logger?.warn(`[dsh-market] ${message}`)
+    logEvent('error', 'mount', message)
+    throw new Error(message)
   }
   const activeProfileDir = profileDir(config.profile, config.profileDirectory)
   let agentGuardUnavailableLogged = false
@@ -2111,6 +2120,9 @@ export function mountMarketRoutes(
             // retargeting partially failed — a broken piece that slipped in
             // must never survive to brick the next boot.
             let notAPlugin = false
+            // pnpm exited 0 and the profile did not change at all — a
+            // different failure from "what it added was unusable" (#258).
+            let addedNothing = false
             let removedBroken: string[] = []
             let conflicts: { name: string; id: string; owner: string }[] = []
             if (result.exitCode === 0 && !result.timedOut && !cancelled) {
@@ -2123,7 +2135,10 @@ export function mountMarketRoutes(
               if (validated.keep.length === 0) {
                 ok = false
                 notAPlugin = true
-                logEvent('error', 'install', `${target}: nothing installable survived validation`)
+                addedNothing = validated.added.length === 0
+                logEvent('error', 'install', addedNothing
+                  ? `${target}: the plugin command reported success but added nothing to the profile`
+                  : `${target}: nothing installable survived validation (added: ${validated.added.join(', ')})`)
               } else {
                 // Partial success across a collection still counts as success.
                 ok = true
@@ -2221,8 +2236,15 @@ export function mountMarketRoutes(
               conflictGroups: conflictGroups.length > 0 ? conflictGroups : undefined,
               error: conflictGroups.length > 0
                 ? `「${conflicts[0].name}」与已安装的 ${conflictGroups.map(group => `「${group.owner}」（${group.ids.join('、')}）`).join('、')} 占用相同的 loader 条目 id，无法在同一环境中共存——保留会导致 DeepSeek Harness 下次启动失败，因此已自动移除。 / "${conflicts[0].name}" declares the same loader entry id(s) as the installed ${conflictGroups.map(group => `"${group.owner}" (${group.ids.join(', ')})`).join(', ')}; they cannot coexist in one environment — keeping it would stop DeepSeek Harness from starting, so it was removed.`
-                : notAPlugin
-                  ? 'nothing installable: the plugin(s) need a build step (blocked by default, see allowBuilds) or ship no prebuilt artifacts / 没有可安装的内容：插件需要构建授权（allowBuilds，默认拦截）或未附带构建产物，详见导出日志'
+                : addedNothing
+                  // Blaming allowBuilds here sent a reporter chasing a build
+                  // step for a plugin that ships a complete lib/ (#258). If
+                  // the profile did not change, the plugin is not the thing
+                  // that failed — the command that should have installed it
+                  // is.
+                  ? '安装命令报告成功，但 profile 没有任何变化——插件本身没问题，是执行安装的通道没有真正运行。若使用桌面端，请改用命令行 dsh plugin add 验证，并把导出日志附在 issue 中 / the install command reported success but the profile did not change — the plugin is not at fault, the channel that should have installed it did not actually run. On a desktop build, verify with `dsh plugin add` from a terminal and attach the exported log'
+                  : notAPlugin
+                    ? 'nothing installable: the plugin(s) need a build step (blocked by default, see allowBuilds) or ship no prebuilt artifacts / 没有可安装的内容：插件需要构建授权（allowBuilds，默认拦截）或未附带构建产物，详见导出日志'
                   : Array.isArray(ignoredBuilds) && ignoredBuilds.length > 0
                   ? `构建脚本被 pnpm 默认拦截（${ignoredBuilds.join(', ')}），请点击上方按钮放行后重试 / build scripts are blocked by pnpm by default (${ignoredBuilds.join(', ')}); click "Allow build scripts and retry" above`
                   : undefined,
