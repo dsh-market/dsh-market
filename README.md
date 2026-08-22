@@ -52,7 +52,7 @@ its own dsh: it may be older than the one `npm` would give you (#139).
 
 ## Speed
 
-Installs prefer npm tarballs over full-repo GitHub downloads whenever a plugin publishes to npm (registry-verified against the repo to prevent name squatting). Registry installs are typically seconds; GitHub-only plugins depend on your connection to GitHub.
+Installs prefer repo-verified npm packages, then author-supplied prebuilt GitHub Release tarballs, before falling back to full-repo GitHub source downloads. Prebuilt installs are typically seconds and do not need local build scripts; source-only plugins depend on your connection to GitHub.
 
 ## Security
 

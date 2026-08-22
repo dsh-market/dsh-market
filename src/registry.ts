@@ -13,6 +13,7 @@ export interface RegistryPlugin {
   category: string
   description: Record<string, string>
   npm?: string | null
+  tarball?: string | null
   stars?: number | null
   /**
    * npm downloads in the last 30 days, when the entry has a published

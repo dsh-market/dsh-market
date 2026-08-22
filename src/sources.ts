@@ -13,6 +13,23 @@ function validSubpath(subpath: string): boolean {
 /** Registry tarball names must be plain npm package names, nothing fancier. */
 const NPM_NAME_RE = /^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/
 
+const TARBALL_HOSTS = new Set(['github.com', 'objects.githubusercontent.com', 'release-assets.githubusercontent.com'])
+
+/** A curated, prebuilt GitHub Release archive accepted as a pnpm target. */
+function releaseTarballTarget(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const target = value.trim()
+  let url: URL
+  try {
+    url = new URL(target)
+  } catch {
+    return null
+  }
+  if (url.protocol !== 'https:' || !TARBALL_HOSTS.has(url.hostname)) return null
+  if (url.hostname === 'github.com' && !url.pathname.includes('/releases/')) return null
+  return url.pathname.endsWith('.tgz') || url.pathname.endsWith('.tar.gz') ? target : null
+}
+
 /**
  * Parse a registry source url: a github repo, optionally with a
  * `/tree/<branch>/<subpath>` suffix (how the curated list links monorepo
@@ -112,16 +129,17 @@ export function gitAllowBuildsKey(name: string, spec: string): string | null {
 }
 
 /**
- * The pnpm install target for a registry entry. Registry tarballs beat
- * full-repo GitHub downloads: smaller, prebuilt, and CDN/mirror served. The
- * npm name comes from our curated registry, which only maps repo-verified
- * packages (name-squatting protection).
+ * The pnpm install target for a registry entry. Repo-verified npm packages
+ * win, followed by author-supplied prebuilt GitHub Release tarballs; both avoid
+ * full-repo downloads and local build scripts.
  * @returns the target spec, or null when the source url is unsupported.
  */
-export function installTargetFor(entry: { url: string; npm?: unknown }): string | null {
+export function installTargetFor(entry: { url: string; npm?: unknown; tarball?: unknown }): string | null {
   const source = parseSourceUrl(entry.url)
   if (source === null) return null
   if (typeof entry.npm === 'string' && NPM_NAME_RE.test(entry.npm)) return entry.npm
+  const tarball = releaseTarballTarget(entry.tarball)
+  if (tarball !== null) return tarball
   return source.subpath !== null
     ? `github:${source.repo}#path:/${source.subpath}`
     : `github:${source.repo}`
