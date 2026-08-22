@@ -276,6 +276,12 @@ describe('Diagnostics panels (jsdom, #98 phase 2)', () => {
     expect(prompt).toContain('alpha')
     expect(prompt).toContain('must load after beta')
     expect(prompt).toContain(t('aiFixConservative').slice(0, 20))
+    // The self-identification guard is present: the prompt tells the agent to
+    // detect whether it is itself the target harness, and to hard-forbid
+    // mutating / upgrade / restart / reinstall actions (plan-only output) when
+    // it is — the fix that prevents the harness from being killed mid-fix.
+    expect(prompt).toContain(t('aiFixDetect'))
+    expect(prompt).toContain(t('aiFixIfSelf'))
     await waitFor(() => expect(screen.getByText(t('aiFixCopied'))).toBeTruthy())
   })
 
