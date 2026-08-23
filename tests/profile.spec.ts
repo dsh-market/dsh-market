@@ -8,7 +8,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import {
-  addProfileBundle, conflictingEntryIds, entryArtifactExists, hasDshManifest, hasLoadableEntry, pluginSubdirs, profileDir,
+  addProfileBundle, conflictingEntryIds, entryArtifactExists, hasDshManifest, hasLoadableEntry, isDshProfileName, pluginSubdirs, profileDir,
   readInstalled, readInstalledManifest, readInstalledRepoEvidence, readInstalledRepoIdentities, readInstalledVersion, readLockCommits,
   removeProfileBundle,
 } from '../src/profile.ts'
@@ -29,6 +29,27 @@ function writeProfile(manifest: unknown): string {
   writeFileSync(join(dir, 'package.json'), JSON.stringify(manifest))
   return dir
 }
+
+describe('profile names (#260)', () => {
+  it('matches the DSH profile directory contract instead of an ASCII-only subset', () => {
+    for (const name of ['web', '011-rc.2', '测试001', '工作 profile', 'Профиль-2']) {
+      expect(isDshProfileName(name)).toBe(true)
+      expect(profileDir(name)).toBe(join(home, 'profiles', name))
+    }
+  })
+
+  it('still rejects every traversal-shaped or launcher-owned name DSH rejects', () => {
+    for (const name of ['', '.', '..', 'node_modules', 'a/b', 'a\\b', 'a\0b']) {
+      expect(isDshProfileName(name)).toBe(false)
+      expect(() => profileDir(name)).toThrow('invalid profile name')
+    }
+  })
+
+  it('keeps a host-authoritative Desktop directory independent of its display name', () => {
+    const explicit = join(home, 'desktop-owned')
+    expect(profileDir('../display-only', explicit)).toBe(explicit)
+  })
+})
 
 describe('readInstalled', () => {
   it('filters exactly the in-box bundles — scoped COMMUNITY plugins stay (#28)', () => {
@@ -287,6 +308,29 @@ describe('manifest rollback (#65)', () => {
 })
 
 describe('setAllowBuilds (#6)', () => {
+  it('accepts the commit-pinned codeload key, and only in that exact shape (#285)', async () => {
+    // The allowlist is what stops a caller writing arbitrary text into a
+    // file pnpm parses. Widening it for pnpm <11.21 must not widen it into
+    // "anything containing a URL" — so the near-misses are asserted too.
+    const { setAllowBuilds } = await import('../src/profile.ts')
+    writeProfile({})
+    const sha = 'b0e6c57ebeeb4796017864f5cd5c66e6ba0899ec'
+    const approved = setAllowBuilds('web', [
+      `p@https://codeload.github.com/o/r/tar.gz/${sha}`,
+      // A different host wearing the same shape.
+      `p@https://evil.example.com/o/r/tar.gz/${sha}`,
+      // The right host with no commit pin: matches nothing, and an entry
+      // that matches nothing is indistinguishable from one that worked.
+      'p@https://codeload.github.com/o/r/tar.gz/HEAD',
+      // A path traversal dressed as a repo.
+      `p@https://codeload.github.com/../../etc/tar.gz/${sha}`,
+      // Something else entirely, smuggled through a newline.
+      `p@https://codeload.github.com/o/r/tar.gz/${sha}\n  evil: true`,
+    ])
+    expect(approved).toContain(`p@https://codeload.github.com/o/r/tar.gz/${sha}`)
+    expect(approved).toHaveLength(1)
+  })
+
   it('merges into an existing allowBuilds block and preserves the rest of the yaml', async () => {
     const { setAllowBuilds } = await import('../src/profile.ts')
     const dir = writeProfile({})

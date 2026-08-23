@@ -10,12 +10,31 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { githubRemoteIdentities, githubRepoIdentities } from './sources.ts'
 
 /**
+ * Whether a profile name follows DSH's own directory-name contract.
+ *
+ * Keep this aligned with `@deepseek-ai/dsh-app-boot`'s
+ * `resolveProfileDir`: dots, spaces, and Unicode are ordinary name
+ * characters; only empty, traversal-shaped, launcher-owned, or
+ * separator-bearing names are refused.
+ */
+export function isDshProfileName(profile: string): boolean {
+  return profile !== ''
+    && profile !== '.'
+    && profile !== '..'
+    && profile !== 'node_modules'
+    && !profile.includes('/')
+    && !profile.includes('\\')
+    && !profile.includes('\0')
+}
+
+/**
  * Resolve a profile name to its directory under DSH_HOME (default ~/.dsh).
  * An explicit directory is used by hosts, such as DSH Desktop, that own the
  * active profile location rather than deriving it from process environment.
  */
 export function profileDir(profile: string, explicitDir?: string): string {
   if (explicitDir !== undefined) return explicitDir
+  if (!isDshProfileName(profile)) throw new Error(`dsh-market: invalid profile name ${JSON.stringify(profile)}`)
   const home = process.env.DSH_HOME ?? join(homedir(), '.dsh')
   return join(home, 'profiles', profile)
 }
@@ -681,8 +700,14 @@ export function setAllowBuilds(profile: string, packages: string[], explicitDir?
   // Bare package names, or the server-derived stable git form
   // `name@git+https://github.com/owner/repo.git` (#68) — nothing else.
   const GIT_KEY_RE = /^[A-Za-z0-9@/_.-]+@git\+https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\.git$/
+  // The commit-pinned form pnpm below 11.21 matches instead (#285). Held to
+  // the same shape as the one above rather than loosened into "anything with
+  // a URL in it": this list is what stops a caller writing arbitrary text
+  // into a file pnpm parses, and a wider pattern would spend that guarantee
+  // to save a line.
+  const CODELOAD_KEY_RE = /^[A-Za-z0-9@/_.-]+@https:\/\/codeload\.github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/tar\.gz\/[0-9a-f]{40}$/
   for (const pkg of packages) {
-    if (/^[A-Za-z0-9@/_.-]+$/.test(pkg) || GIT_KEY_RE.test(pkg)) map[pkg] = 'true'
+    if (/^[A-Za-z0-9@/_.-]+$/.test(pkg) || GIT_KEY_RE.test(pkg) || CODELOAD_KEY_RE.test(pkg)) map[pkg] = 'true'
   }
   // Write back in the file's OWN line ending. Rewriting a CRLF workspace
   // file with LF would leave it mixed, which is the same class of mess this

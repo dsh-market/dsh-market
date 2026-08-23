@@ -35,6 +35,7 @@ import { createElement as h, Fragment, useCallback, useEffect, useRef, useState 
 import type { ReactElement } from 'react'
 import { Button, IconChevronDownOutline14, IconLoadingOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import css from './Market.module.css'
+import { setGithubProxy } from './market-data.ts'
 import type { Translate } from './market-data.ts'
 
 /** Keys the market leaves in the browser; cleared when the user purges. */
@@ -54,6 +55,7 @@ export interface SettingsCardProps {
 }
 
 type Channel = 'stable' | 'beta' | 'dev'
+type Region = 'global' | 'china'
 
 /** What `/dsh-market/status` tells this card. */
 interface SelfStatus {
@@ -62,6 +64,24 @@ interface SelfStatus {
   channel: Channel
   /** The channels the SERVER offers; the card never invents its own list. */
   channels: Channel[]
+  /** Which mirrors every outbound request uses. */
+  region: Region
+  /** The regions the SERVER offers, on the same principle as `channels`. */
+  regions: Region[]
+  /** The region came from the network check, not from the user. */
+  regionAuto: boolean
+}
+
+/** The subset of `/dsh-market/status` this card reads. */
+interface StatusBody {
+  version?: string
+  restart?: boolean
+  channel?: string
+  channels?: string[]
+  region?: string
+  regions?: string[]
+  regionAuto?: boolean
+  githubProxy?: string | null
 }
 
 /** What `/dsh-market/updates` says about the market's own row. */
@@ -88,6 +108,17 @@ const CHANNEL_HINT: Record<Channel, string> = {
   stable: 'setChannelStableHint', beta: 'setChannelBetaHint', dev: 'setChannelDevHint',
 }
 
+const REGIONS: Region[] = ['global', 'china']
+const asRegion = (value: unknown): Region | null =>
+  REGIONS.includes(value as Region) ? (value as Region) : null
+
+const REGION_LABEL: Record<Region, string> = {
+  global: 'setRegionGlobal', china: 'setRegionChina',
+}
+const REGION_HINT: Record<Region, string> = {
+  global: 'setRegionGlobalHint', china: 'setRegionChinaHint',
+}
+
 /**
  * Read the server's answer, taking the list of channels FROM it.
  *
@@ -95,14 +126,21 @@ const CHANNEL_HINT: Record<Channel, string> = {
  * or refuses a selection, so a card drawing its own list could only ever
  * disagree with it.
  */
-function readStatus(body: { version?: string; restart?: boolean; channel?: string; channels?: string[] }): SelfStatus {
+function readStatus(body: StatusBody): SelfStatus {
   const offered = (body.channels ?? []).map(asChannel).filter((c): c is Channel => c !== null)
+  const regions = (body.regions ?? []).map(asRegion).filter((r): r is Region => r !== null)
   return {
     version: body.version ?? null,
     restart: body.restart === true,
     channel: asChannel(body.channel) ?? 'stable',
     // A host too old to send the list still gets the two that predate it.
     channels: offered.length > 0 ? offered : ['stable', 'beta'],
+    region: asRegion(body.region) ?? 'global',
+    // A host with no region at all is a host from before this existed. It
+    // downloads from the official sources, which is what `global` means, so
+    // the row tells the truth about that host rather than hiding.
+    regions: regions.length > 0 ? regions : REGIONS,
+    regionAuto: body.regionAuto === true,
   }
 }
 
@@ -160,9 +198,17 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
     void (async () => {
       try {
         const response = await fetch('/dsh-market/status', { cache: 'no-store' })
-        const body = (await response.json()) as { version?: string; restart?: boolean; channel?: string; channels?: string[] }
+        const body = (await response.json()) as StatusBody
         if (live) setStatus(readStatus(body))
-      } catch { if (live) setStatus({ version: null, restart: false, channel: 'stable', channels: ['stable', 'beta'] }) }
+        setGithubProxy(typeof body.githubProxy === 'string' ? body.githubProxy : null)
+      } catch {
+        if (live) {
+          setStatus({
+            version: null, restart: false, channel: 'stable', channels: ['stable', 'beta'],
+            region: 'global', regions: REGIONS, regionAuto: false,
+          })
+        }
+      }
       try {
         const response = await fetch('/dsh-market/updates', { cache: 'no-store' })
         const body = (await response.json()) as { updates?: Record<string, RawUpdate> }
@@ -258,6 +304,36 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
     })()
   }, [post, refreshUpdate, t])
 
+  /**
+   * Select a download region — and show the one the SERVER accepted, on the
+   * same reasoning as the channel above.
+   *
+   * A hand-made choice retires the one-time notice: the market no longer has
+   * anything to explain once the user has answered for themselves.
+   */
+  const onRegion = useCallback((next: Region) => {
+    setError(null)
+    void (async () => {
+      try {
+        const body = await post('/dsh-market/region', { region: next }) as { ok?: boolean; error?: string; region?: string }
+        if (body.ok !== true) { setError(body.error ?? t('setSelfFailed')); return }
+        const accepted = asRegion(body.region) ?? next
+        setStatus(current => (current === null ? current : { ...current, region: accepted, regionAuto: false }))
+        // Re-read the resolved proxy rather than deriving it here. The card
+        // knows which regions exist because the server told it; it must not
+        // start knowing what each one RESOLVES to, or the routing table would
+        // have a second copy that can disagree with the first.
+        try {
+          const fresh = await fetch('/dsh-market/status', { cache: 'no-store' })
+          const status = (await fresh.json()) as StatusBody
+          setGithubProxy(typeof status.githubProxy === 'string' ? status.githubProxy : null)
+        } catch { /* images keep the previous route until the next load */ }
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause))
+      }
+    })()
+  }, [post, t])
+
   /** One label + hint block with an optional action, the host's row shape. */
   const row = (label: string, hint: string, action: ReactElement | null): ReactElement =>
     h('div', { className: css.setRow },
@@ -315,6 +391,28 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
               title: id === 'dev' ? t('setChannelDevHint') : undefined,
               onClick: () => { onChannel(id) },
             }, t(CHANNEL_LABEL[id]))),
+          )),
+        // Above the channel row and below the update row: this is about
+        // getting plugins at all, which is the market's whole job, while the
+        // channel is about which build of the market itself arrives.
+        row(
+          t('setRegion'),
+          // The hint carries the explanation of an automatic choice when
+          // there is one to make, and the plain description of the selected
+          // region otherwise. One line either way — a notice that pushes the
+          // description off screen would trade a permanent answer for a
+          // temporary one.
+          status?.regionAuto === true
+            ? `${t(REGION_HINT[status.region])} ${t('setRegionAuto')}`
+            : t(REGION_HINT[status?.region ?? 'global']),
+          h('div', { className: css.setSeg },
+            (status?.regions ?? REGIONS).map(id => h('button', {
+              key: id,
+              type: 'button',
+              className: status?.region === id ? `${css.setSegBtn} ${css.setSegOn}` : css.setSegBtn,
+              disabled: busy || status === null,
+              onClick: () => { onRegion(id) },
+            }, t(REGION_LABEL[id]))),
           )),
         row(t('setSelfRemove'), t('setSelfRemoveHint'),
           phase === 'confirming' || busy

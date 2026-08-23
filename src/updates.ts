@@ -7,6 +7,7 @@
 import { DIST_TAG, type Channel } from './channels.ts'
 import { marketFetch } from './net.ts'
 import { profileDir, readInstalled, readInstalledVersion, readLockCommits } from './profile.ts'
+import { repoOfTarget } from './sources.ts'
 
 export interface UpdateStatus {
   kind: 'github' | 'npm' | 'linked'
@@ -99,6 +100,38 @@ export function invalidateUpdates(): void {
   updatesCache = null
 }
 
+/**
+ * The npm registry update checks read, no trailing slash.
+ *
+ * Module state driven from the routes, like `updatesCache` beside it, rather
+ * than a parameter on all five call sites: the registry is a property of the
+ * running market, not of any one question asked of it, and threading it
+ * through would put the same value in five signatures and every test that
+ * calls them.
+ */
+let registryBase = 'https://registry.npmjs.org'
+
+/**
+ * Point update checks at a registry. Called when the download region
+ * resolves and whenever it changes.
+ *
+ * Dropping the cache is the load-bearing half. A mirror can lag the official
+ * registry by minutes, so answers gathered from one are not answers from the
+ * other — keeping them across a switch would report a version this registry
+ * cannot yet serve.
+ */
+export function setUpdateRegistry(base: string): void {
+  const next = base.replace(/\/+$/, '')
+  if (next === registryBase) return
+  registryBase = next
+  updatesCache = null
+}
+
+/** A registry URL for `path`, on whichever registry is currently in force. */
+function npmUrl(path: string): string {
+  return `${registryBase}/${path}`
+}
+
 async function fetchJson(url: string): Promise<unknown> {
   // Through the proxy when one is configured: Node's global fetch ignores
   // HTTP_PROXY, so on a machine whose route out is a local proxy every
@@ -122,7 +155,7 @@ async function fetchJson(url: string): Promise<unknown> {
  */
 export async function latestPublishedRecently(name: string, windowMs = 26 * 60 * 60 * 1000): Promise<boolean | null> {
   try {
-    const doc = (await fetchJson(`https://registry.npmjs.org/${encodeURIComponent(name)}`)) as {
+    const doc = (await fetchJson(npmUrl(`${encodeURIComponent(name)}`))) as {
       'dist-tags'?: Record<string, string>
       time?: Record<string, string>
     }
@@ -182,7 +215,7 @@ const EXTRA_TAGS: Record<Channel, string[]> = {
 /** One dist-tag's version, or null when it isn't published or can't be read. */
 async function tagVersion(name: string, tag: string): Promise<string | null> {
   try {
-    const meta = (await fetchJson(`https://registry.npmjs.org/${encodeURIComponent(name)}/${tag}`)) as { version?: string }
+    const meta = (await fetchJson(npmUrl(`${encodeURIComponent(name)}/${tag}`))) as { version?: string }
     return typeof meta.version === 'string' ? meta.version : null
   } catch {
     // An unpublished tag is the ordinary case for a channel nobody has cut
@@ -194,7 +227,7 @@ async function tagVersion(name: string, tag: string): Promise<string | null> {
 
 export async function fetchNpmLatest(name: string): Promise<string | null> {
   try {
-    const meta = (await fetchJson(`https://registry.npmjs.org/${encodeURIComponent(name)}/latest`)) as { version?: string }
+    const meta = (await fetchJson(npmUrl(`${encodeURIComponent(name)}/latest`))) as { version?: string }
     return typeof meta.version === 'string' ? meta.version : null
   } catch {
     return null
@@ -232,18 +265,28 @@ export async function checkUpdates(
       result[name] = { kind: 'linked', version, current: null, latest: null, updateAvailable: false }
       return
     }
-    const gh = /^(?:github:)?([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:#.*)?$/.exec(spec)
+    // The repo behind the spec, in EITHER spelling. A plugin installed under
+    // a download region that mirrors GitHub carries a proxied codeload URL
+    // rather than the `github:` shortcut, and asking only about the shortcut
+    // sent those through the npm branch below — where a GitHub-only plugin
+    // either 404s or, far worse, matches an unrelated package that happens
+    // to share its name.
+    const repo = repoOfTarget(spec)?.split('#')[0] ?? null
     try {
-      if (spec.startsWith('github:') && gh !== null) {
-        const current = lockCommits.get(gh[1].toLowerCase()) ?? null
-        const head = (await fetchJson(`https://api.github.com/repos/${gh[1]}/commits/HEAD`)) as { sha?: string }
+      if (repo !== null) {
+        // The pinned commit is in the spec itself for a proxied install, and
+        // in the lockfile for a `github:` one. Prefer the spec: it is the
+        // exact thing that was fetched, with no lookup in between.
+        const pinned = /codeload\.github\.com\/[^/\s]+\/[^/\s]+\/tar\.gz\/([0-9a-f]{40})/.exec(spec)
+        const current = pinned?.[1] ?? lockCommits.get(repo) ?? null
+        const head = (await fetchJson(`https://api.github.com/repos/${repo}/commits/HEAD`)) as { sha?: string }
         const latest = typeof head.sha === 'string' ? head.sha : null
         result[name] = {
           kind: 'github', version, current, latest,
           updateAvailable: current !== null && latest !== null && current !== latest,
         }
       } else {
-        const meta = (await fetchJson(`https://registry.npmjs.org/${encodeURIComponent(name)}/latest`)) as { version?: string }
+        const meta = (await fetchJson(npmUrl(`${encodeURIComponent(name)}/latest`))) as { version?: string }
         const stable = typeof meta.version === 'string' ? meta.version : null
         const channel = channelFor.get(name)
         const latest = channel === undefined ? stable : await versionOnChannel(name, channel, stable)

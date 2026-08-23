@@ -124,13 +124,15 @@
    specificity and lose to source order. */
 .masonry > .masonryCol > *{align-self:stretch;min-width:0}
 @media (max-width:680px){
+  /* Stacked, the cross axis is horizontal and `.masonry`'s align-items keeps
+     the column shrink-to-fit — so the single column has to claim the width
+     explicitly. Both tabs render through the same component, so this belongs
+     here rather than as an inline style on one of them. */
   .masonry{flex-direction:column}
+  .masonryCol{width:100%}
 }
-/* The Installed list is the same two-up grid: one list that reads as rows and
-   another as cards made the two tabs look like different products. */
-.pairGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:start;gap:10px}
 @media (max-width:680px){
-  .grid,.pairGrid{grid-template-columns:minmax(0,1fr)}
+  .grid{grid-template-columns:minmax(0,1fr)}
 }
 .swatches{display:flex;gap:0;height:34px;border-radius:8px;overflow:hidden;border:1px solid var(--dsw-alias-border-l2,#e5e7eb)}
 .themesGrid{margin-bottom:12px}

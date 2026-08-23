@@ -11,7 +11,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { loadRegistry } from './registry.ts'
+import { forgetCatalog, loadRegistry } from './registry.ts'
 import {
   cleanHotDir, hotMount, hotUnmount, listHotMounts,
   mountClientOnlyDeps, purgeMarketState, readMarketState, writeMarketState,
@@ -23,16 +23,19 @@ import {
   BOOT_ID, cancelActive, probePnpm, progress, provisionPnpm, runDshPlugin,
   type PluginCommandRuntime,
 } from './dsh-cli.ts'
-import { addProfileBundle, hasLoadableEntry, INBOX_BUNDLES, profileDir, readInstalled, readInstalledManifest, readInstalledRepoEvidence, readInstalledVersion, readLockCommits, readManifestDeps, readProfileBundles, removeProfileBundle, restoreManifestDeps, setAllowBuilds } from './profile.ts'
+import { addProfileBundle, hasLoadableEntry, INBOX_BUNDLES, isDshProfileName, profileDir, readInstalled, readInstalledManifest, readInstalledRepoEvidence, readInstalledVersion, readLockCommits, readManifestDeps, readProfileBundles, removeProfileBundle, restoreManifestDeps, setAllowBuilds } from './profile.ts'
 import { assessProfile, introducedDuplicateNames, introducedRisks, type CompatibilityRisk } from './compatibility.ts'
 import { runningAgentIds, type AgentsLookup } from './agents.ts'
 import { analyzeProfile, type DuplicateName } from './check.ts'
 import { applyBundleOrder, mergeOrder, readBundleRules, readBundleStack, validateOrder } from './order.ts'
 import { trialValidate } from './trial.ts'
-import { findInstalledAlias, gitAllowBuildsKey, installTargetFor } from './sources.ts'
+import { codeloadAllowBuildsKey, findInstalledAlias, gitAllowBuildsKey, installTargetFor, repoOfTarget } from './sources.ts'
 import { failureDetail, groupConflictsByOwner, isStaleUpdate, parseIgnoredBuilds, parsePrepareNotAllowed, RELEASE_AGE_OVERRIDE, retargetCollections, validateAddedPlugins, withHoistRecovery } from './install.ts'
 import { asChannel, CHANNELS, DIST_TAG, resolveChannel, type Channel } from './channels.ts'
-import { checkUpdates, fetchNpmLatest, invalidateUpdates, isUpgrade, latestPublishedRecently, versionOnChannel } from './updates.ts'
+import { asRegion, REGIONS, routesFor, setActiveRegion, type Region } from './regions.ts'
+import { resolveRegion } from './region-probe.ts'
+import { acceleratedTarget, resolveHeadCommit } from './accelerate.ts'
+import { checkUpdates, fetchNpmLatest, invalidateUpdates, isUpgrade, latestPublishedRecently, setUpdateRegistry, versionOnChannel } from './updates.ts'
 import { createThemeManager, type LoaderEntry } from './themes.ts'
 import { readJsonBody, sameOrigin, sendJson } from './http.ts'
 import { detectedSupervisor, restartAllowed, scheduleRestart, servingPort, trustedRestartRequest, trustedDownloadRequest } from './restart.ts'
@@ -77,9 +80,9 @@ export interface MarketConfig {
   allowRestart?: boolean
   /** Which release channel the market offers ITSELF from; other plugins never follow it. */
   channel?: Channel
+  /** Which mirrors every outbound request uses; undefined until decided. */
+  region?: Region
 }
-
-const PROFILE_RE = /^[A-Za-z0-9_-]+$/
 
 /**
  * The market's own version, read once from its installed package.json.
@@ -102,6 +105,30 @@ export function marketVersion(): string {
 
 /** The market's own package names, as they appear in a profile manifest. */
 const SELF_NAMES = new Set(['dshmarket', 'dsh-market'])
+
+/**
+ * Rebuild a GitHub target for an update: revision selectors are deliberately
+ * dropped so pnpm resolves the repository again, while one valid `path:`
+ * selector is kept because it identifies the package inside a monorepo.
+ * pnpm permits both in one fragment (`#main&path:/packages/plugin`).
+ */
+function githubUpdateTarget(spec: string): string {
+  const fragmentAt = spec.indexOf('#')
+  if (fragmentAt === -1) return spec
+  const repo = spec.slice(0, fragmentAt)
+  let subpath: string | null = null
+  for (const selector of spec.slice(fragmentAt + 1).split('&')) {
+    if (!selector.startsWith('path:/')) continue
+    const candidate = selector.slice('path:/'.length)
+    const valid = /^[A-Za-z0-9_./-]+$/.test(candidate)
+      && !candidate.split('/').some(segment => segment === '' || segment === '.' || segment === '..')
+    // Multiple path selectors are ambiguous; an invalid selector is never
+    // forwarded to the package manager from a hand-edited profile.
+    if (subpath !== null || !valid) return repo
+    subpath = candidate
+  }
+  return subpath === null ? repo : `${repo}#path:/${subpath}`
+}
 
 /**
  * Whether an installed package declares a client part (`dsh.client`). Its UI
@@ -146,17 +173,17 @@ export function mountMarketRoutes(
   commandRuntime?: PluginCommandRuntime,
   agentsLookup?: AgentsLookup,
 ): () => void {
-  // Ordinary DSH profile names cross the CLI boundary and keep the legacy
-  // allowlist. A host-authoritative explicit directory (DSH Desktop) may
-  // legitimately pair with a Unicode or spaced display/profile name.
-  if (config.profileDirectory === undefined && !PROFILE_RE.test(config.profile)) {
+  // An ordinary profile must resolve under DSH_HOME by the same rules as the
+  // DSH CLI. A host-authoritative explicit directory (DSH Desktop) does not
+  // derive a path from this display/profile name.
+  if (config.profileDirectory === undefined && !isDshProfileName(config.profile)) {
     // Loud on the way out. This throw happens inside a cordis effect, which
     // swallows it: the routes silently never mount and EVERY /dsh-market/*
     // request answers 404 with nothing anywhere saying why — the market
     // simply looks broken (#260 by @realguan). The log line is the only
     // thing that turns that into something diagnosable, so it is written
     // before the throw rather than left to a handler that never runs.
-    const message = `dsh-market: profile name ${JSON.stringify(config.profile)} contains characters outside [A-Za-z0-9_-], so the market's routes were not mounted and every /dsh-market/* request will answer 404. Rename the profile, or pass an explicit profile directory.`
+    const message = `dsh-market: invalid profile name ${JSON.stringify(config.profile)}; the market's routes were not mounted and every /dsh-market/* request will answer 404. Use the same non-empty, non-traversal profile name accepted by DSH, or pass an explicit profile directory.`
     host.logger?.warn(`[dsh-market] ${message}`)
     logEvent('error', 'mount', message)
     throw new Error(message)
@@ -202,6 +229,46 @@ export function mountMarketRoutes(
   // composed, which is only ever a default.
   if (marketState.channel !== undefined) config.channel = marketState.channel
   const activeChannel = (): Channel => resolveChannel(config.channel, marketVersion())
+
+  // The download region: which mirrors every outbound request uses.
+  //
+  // `global` until something decides otherwise, so nothing waits on the
+  // network to start serving. A machine with no region on record gets one
+  // probed in the background below; a machine that already has one is
+  // routed immediately.
+  if (marketState.region !== undefined) config.region = marketState.region
+  let region: Region = config.region ?? 'global'
+  let regionAuto = marketState.regionAuto === true
+  const applyRegion = (next: Region): void => {
+    region = next
+    // The shared holder every reader consults, plus the one consumer that
+    // must also DROP state on a change: update answers gathered from the
+    // other registry are not this registry's answers.
+    setActiveRegion(next)
+    setUpdateRegistry(routesFor(next).npmRegistry)
+  }
+  applyRegion(region)
+  // Probe only when NOTHING has decided a region — not the saved state, and
+  // not the composition either. An operator who wrote `region:` into their
+  // profile has answered the question the probe exists to ask, and measuring
+  // over the top of that answer would quietly override a deliberate choice a
+  // few seconds after boot.
+  if (config.region === undefined) {
+    void resolveRegion(undefined).then(({ region: probed }) => {
+      applyRegion(probed)
+      regionAuto = true
+      // Persisted as the decision, not re-probed each boot: a market that
+      // silently changes routes between runs makes "it was fast yesterday"
+      // impossible to investigate.
+      marketState.region = probed
+      marketState.regionAuto = true
+      config.region = probed
+      writeMarketState(activeProfileDir, marketState)
+      // The listing was fetched before the region was known.
+      forgetCatalog()
+      invalidateUpdates()
+    }).catch(() => { /* an undecided region simply stays global */ })
+  }
   const themes = createThemeManager(host, config.profile, disabled, activeProfileDir)
 
   // Client-only packages (dsh.client without dsh.bundle) are invisible to the
@@ -1156,6 +1223,17 @@ export function mountMarketRoutes(
           version: marketVersion(),
           channel: activeChannel(),
           channels: CHANNELS,
+          region,
+          regions: REGIONS,
+          // The prefix the BROWSER should put in front of github.com URLs
+          // (avatars, README images). Sent resolved rather than derived from
+          // `region` on the client, so the routing table has one home and a
+          // change to it cannot leave the two halves disagreeing.
+          githubProxy: routesFor(region).githubProxy,
+          // Whether the region was decided by the network check rather than
+          // by the user — the card explains a choice it made on their behalf
+          // exactly once, so nobody has to wonder why downloads moved.
+          regionAuto,
           restart: restartAllowed(config),
           // Named so the UI can say WHY the button is gone. A blank
           // "no restart button" is the state #229 reported as broken.
@@ -1262,14 +1340,40 @@ export function mountMarketRoutes(
             const beforeInstalled = readInstalled(config.profile, activeProfileDir)
             // Re-running add re-resolves the source: git HEAD for github specs,
             // dist-tag latest for registry installs.
-            const isGit = spec.startsWith('github:')
+            // A GitHub source in EITHER spelling. Under a download region
+            // that mirrors GitHub, an installed plugin carries a proxied
+            // codeload URL rather than the `github:` shortcut, and asking
+            // only about the shortcut sent those down the npm path below —
+            // where `name@latest` either fails or, far worse, installs an
+            // unrelated package that happens to share the plugin's name.
+            // The `github:` shortcut keeps its own handling, fragments and
+            // all — `githubUpdateTarget` is what preserves a monorepo
+            // `#path:` while dropping revision selectors (#281).
+            //
+            // A proxied codeload URL is the OTHER spelling of the same
+            // source, carried by anything installed under a region that
+            // mirrors GitHub. It has no fragment to preserve (subpath entries
+            // are never accelerated), so the canonical shortcut is rebuilt
+            // from it. Without this branch these fell through to the npm path
+            // below, where `name@latest` either fails or — far worse —
+            // installs an unrelated package that shares the plugin's name.
+            const codeloadRepo = spec.startsWith('github:') ? null : repoOfTarget(spec)
+            const gitSpec = spec.startsWith('github:')
+              ? githubUpdateTarget(spec)
+              : codeloadRepo === null ? null : `github:${codeloadRepo}`
+            const isGit = gitSpec !== null
             // `@latest` was hardcoded, so a beta subscriber would have been
             // told an update existed and then handed the stable build. The
             // dist-tag has to follow the same setting the offer came from.
             // The market follows its channel; everything else is `latest`.
             const selfChannel = SELF_NAMES.has(name) ? activeChannel() : null
             const tag = selfChannel === null ? 'latest' : DIST_TAG[selfChannel]
-            const target = isGit ? spec.replace(/#.*$/, '') : `${name}@${tag}`
+            // Re-accelerated from the unpinned shortcut, never from the
+            // installed URL: that one names the commit already on disk, so
+            // reusing it would be an update that can never move.
+            const target = gitSpec === null
+              ? `${name}@${tag}`
+              : await acceleratedTarget(gitSpec, region)
             // Never let `@latest` walk a profile BACKWARDS (#64 by @ZeroOrigin64):
             // a package whose latest dist-tag was left on an older release turns
             // this update into a downgrade that also rewrites an exact pin to
@@ -1563,6 +1667,55 @@ export function mountMarketRoutes(
       },
     }),
 
+    /**
+     * Which mirrors every outbound request uses.
+     *
+     * Beside the channel route rather than in the settings namespace, and
+     * for the reason recorded there: a value the market stores in its own
+     * state.json cannot also be owned by the settings schema without the two
+     * writing over each other.
+     */
+    host.webServer.register({
+      kind: 'exact',
+      path: '/dsh-market/region',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) {
+          sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        try {
+          const body = (await readJsonBody(request)) as { region?: unknown }
+          const wanted = asRegion(body.region)
+          if (wanted === null) {
+            sendJson(response, 400, { error: 'region must be "global" or "china"' })
+            return
+          }
+          applyRegion(wanted)
+          config.region = wanted
+          marketState.region = wanted
+          // A choice made by hand is no longer the probe's choice, so the
+          // one-time explanation stops being offered.
+          marketState.regionAuto = undefined
+          regionAuto = false
+          writeMarketState(activeProfileDir, marketState)
+          // Both caches were filled from the other region's origins. The
+          // catalog validator in particular is scoped to the URL that issued
+          // it and would be meaningless against the new one.
+          forgetCatalog()
+          invalidateUpdates()
+          logEvent('info', 'region', `download region set to ${wanted}`)
+          sendJson(response, 200, { ok: true, region: wanted })
+        } catch (error) {
+          sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    }),
+
     host.webServer.register({
       kind: 'exact',
       path: '/dsh-market/self-uninstall',
@@ -1756,11 +1909,36 @@ export function mountMarketRoutes(
           // is kept alongside — it authorizes the npm-sourced case.
           const specs = readInstalled(config.profile, activeProfileDir)
           const packages: string[] = []
+          /**
+           * Both key forms for one github source (#285).
+           *
+           * pnpm 11.21+ matches the stable `git+https://…` key; 11.7.0 — what
+           * DSH Desktop bundles — matches only a commit-pinned codeload URL,
+           * so on those versions the approval button wrote a key pnpm would
+           * never read and could never work. The pin is resolved here rather
+           * than assumed: `github:owner/repo` names no commit, and the one
+           * pnpm will fetch is whatever HEAD is at install time.
+           *
+           * A pin that cannot be resolved is simply omitted. The stable key
+           * still covers modern pnpm, and an approval that authorizes less
+           * than hoped is better than one that fails.
+           */
+          const buildKeys = async (name: string, spec: string): Promise<string[]> => {
+            const stable = gitAllowBuildsKey(name, spec)
+            if (stable === null) return []
+            const repo = repoOfTarget(spec)?.split('#')[0] ?? null
+            // A proxied install already carries its commit; only a bare
+            // shortcut has to go and ask.
+            const pinned = /codeload\.github\.com\/[^/\s]+\/[^/\s]+\/tar\.gz\/([0-9a-f]{40})/.exec(spec)?.[1]
+              ?? (repo === null ? null : await resolveHeadCommit(repo, region))
+            const codeload = pinned === null || pinned === undefined
+              ? null
+              : codeloadAllowBuildsKey(name, spec, pinned)
+            return codeload === null ? [stable] : [stable, codeload]
+          }
           for (const name of requested) {
             if (installed.includes(name)) {
-              packages.push(name)
-              const key = gitAllowBuildsKey(name, String(specs[name] ?? ''))
-              if (key !== null) packages.push(key)
+              packages.push(name, ...await buildKeys(name, String(specs[name] ?? '')))
               continue
             }
             if (specs[name] !== undefined) continue
@@ -1778,9 +1956,9 @@ export function mountMarketRoutes(
               continue
             }
             const target = entry === undefined ? null : installTargetFor(entry)
-            const key = target === null ? null : gitAllowBuildsKey(name, target)
-            if (key !== null) {
-              packages.push(name, key)
+            const keys = target === null ? [] : await buildKeys(name, target)
+            if (keys.length > 0) {
+              packages.push(name, ...keys)
             }
           }
           if (packages.length === 0) {
@@ -2026,10 +2204,20 @@ export function mountMarketRoutes(
               sendJson(response, 400, { error: 'plugin is not in the curated registry' })
               return
             }
-            const target = installTargetFor(entry)
-            if (target === null) {
+            const plainTarget = installTargetFor(entry)
+            if (plainTarget === null) {
               sendJson(response, 400, { error: 'unsupported source url' })
               return
+            }
+            // Route a GitHub download through the region's mirror, when there
+            // is one and the target can express it. Applied HERE, before the
+            // guards below, so every step downstream reasons about the spec
+            // that will actually be installed — the duplicate guard and the
+            // build-script key both read targets, and both understand either
+            // spelling. Returns the original on any failure (see accelerate.ts).
+            const target = await acceleratedTarget(plainTarget, region)
+            if (target !== plainTarget) {
+              logEvent('info', 'region', `${entry.name}: downloading through the ${region} mirror`)
             }
             // Duplicate guard (#27): the same plugin listed under another name
             // (an alias entry pointing at the same repo) must never install
@@ -2053,8 +2241,20 @@ export function mountMarketRoutes(
               // Same install? The leftover's own name/spec must match what we
               // are about to add — an npm entry retries under its npm name; a
               // github entry's package.json spec equals the target.
+              // Compared as IDENTITIES, not as strings. One GitHub plugin has
+              // two spellings depending on the download region — the
+              // `github:` shortcut and a proxied codeload tarball — so a
+              // literal comparison would call a leftover from before a region
+              // switch "a different source" and refuse the retry it exists to
+              // allow. `repoOfTarget` returns null for npm names and file
+              // links, which fall through to the string comparison below.
+              const installedSpec = String(installedNow[aliasOf] ?? '').replace(/^file:/, '')
+              const wantedSpec = String(target).replace(/^file:/, '')
+              const installedRepo = repoOfTarget(installedSpec)
+              const wantedRepo = repoOfTarget(wantedSpec)
               const sameSource = aliasOf.toLowerCase() === (entry.npm ?? '').toLowerCase()
-                || String(installedNow[aliasOf] ?? '').replace(/^file:/, '').toLowerCase() === String(target).replace(/^file:/, '').toLowerCase()
+                || (installedRepo !== null && installedRepo === wantedRepo)
+                || installedSpec.toLowerCase() === wantedSpec.toLowerCase()
               let active = false
               try {
                 const manifest = JSON.parse(readFileSync(join(activeProfileDir, 'package.json'), 'utf8')) as { dsh?: { profile?: { bundles?: string[] } } }

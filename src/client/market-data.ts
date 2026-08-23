@@ -70,6 +70,11 @@ export interface UpdateStatus {
 export interface MarketStatus {
   /** The market's own version — rendered in the heading so screenshots carry it. */
   version?: string
+  /**
+   * Prefix to put in front of github.com URLs the BROWSER loads, or null to
+   * address them directly. Resolved by the server from the download region.
+   */
+  githubProxy?: string | null
   active?: boolean
   lastLine?: string
   seconds?: number
@@ -591,6 +596,36 @@ export function themeSwatch(def: ThemeDef): string[] {
 // ------------------------------------------------------------- screenshots
 
 /**
+ * Prefix for github.com URLs this page loads, or null to address them
+ * directly. Set from the status poll, which gets it from the download region.
+ *
+ * Module state rather than a prop: the URLs it applies to are built in four
+ * places across two files (avatars, README fetches, screenshot thumbnails),
+ * and threading one string through every card would put it in signatures
+ * that have no other reason to know about networking.
+ *
+ * Applied at the LAST moment, never stored. Extracted image URLs stay
+ * canonical, so changing region re-renders against the new route instead of
+ * leaving a page full of links to a proxy the user just switched away from.
+ */
+let githubProxy: string | null = null
+
+/** Point browser-side github.com requests at a proxy, or null for direct. */
+export function setGithubProxy(proxy: string | null): void {
+  githubProxy = proxy
+}
+
+/** The proxy in force, for callers that must decide between two URL shapes. */
+export function githubProxyInUse(): string | null {
+  return githubProxy
+}
+
+/** `url` through the proxy in force, or unchanged when there is none. */
+export function githubUrl(url: string): string {
+  return githubProxy === null ? url : `${githubProxy}/${url}`
+}
+
+/**
  * Image hosts screenshots may load from (#61) — GitHub's own hosting only.
  * Any other host is dropped BEFORE an <img> is created: a screenshot URL is
  * a request carrying the user's IP, so registry data and README content are
@@ -675,7 +710,7 @@ export function pluginScreenshots(plugin: RegistryPlugin): Promise<string[]> {
   if (cached !== undefined) return cached
   const fetchReadme = async (path: string | null): Promise<string | null> => {
     try {
-      const res = await fetch(`https://raw.githubusercontent.com/${owner}/${repo}/HEAD/${path === null ? '' : path + '/'}README.md`)
+      const res = await fetch(githubUrl(`https://raw.githubusercontent.com/${owner}/${repo}/HEAD/${path === null ? '' : path + '/'}README.md`))
       return res.ok ? await res.text() : null
     } catch {
       return null

@@ -15,7 +15,8 @@ import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { logEvent } from './log.ts'
 import { createProgressTracker, type ProgressPhase } from './ndjson.ts'
 import { pluginArgsFor } from './pnpm-compat.ts'
-import { profileDir } from './profile.ts'
+import { isDshProfileName, profileDir } from './profile.ts'
+import { activeRegion, DEFAULT_NPM_REGISTRY, routesFor, type Region } from './regions.ts'
 
 // 15 min default (slow networks + git installs), overridable for CI/tests.
 // (#6 by @qichuang321.)
@@ -83,7 +84,7 @@ export const nodeBinDir = dirname(nodeExecutable())
  * reads `npm_config_noproxy` and a host excluding its own registry mirror
  * must keep excluding it.
  */
-export function proxyEnvForPnpm(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+export function proxyEnvForPnpm(env: NodeJS.ProcessEnv = process.env, region: Region = 'global'): NodeJS.ProcessEnv {
   const has = (name: string): boolean => {
     const wanted = name.toLowerCase()
     return Object.keys(env).some(key => key.toLowerCase() === wanted && (env[key] ?? '').trim() !== '')
@@ -96,14 +97,50 @@ export function proxyEnvForPnpm(env: NodeJS.ProcessEnv = process.env): NodeJS.Pr
     return null
   }
   const out: NodeJS.ProcessEnv = {}
-  // Same precedence as undici's EnvHttpProxyAgent (lowercase over uppercase,
-  // https falling back to http), so pnpm goes where the catalog fetch went.
-  const https = pick('https_proxy', 'HTTPS_PROXY') ?? pick('http_proxy', 'HTTP_PROXY')
-  const http = pick('http_proxy', 'HTTP_PROXY') ?? https
-  if (https !== null && !has('npm_config_https_proxy')) out.npm_config_https_proxy = https
-  if (http !== null && !has('npm_config_proxy')) out.npm_config_proxy = http
-  const noProxy = pick('no_proxy', 'NO_PROXY')
-  if (noProxy !== null && !has('npm_config_noproxy')) out.npm_config_noproxy = noProxy
+  // Three consumers, three vocabularies, one proxy. The market's own fetch
+  // reads the standard vars (and, since #263, npm config too); pnpm reads
+  // ONLY npm config; and `git` — which pnpm shells out to for every
+  // git-hosted plugin — reads only the standard vars and never npm config.
+  // Translating one direction left the third out: registry installs went
+  // through the proxy while git installs went direct and failed with
+  // "Failed to connect to github.com:443" (#274 by @rucsocial).
+  //
+  // Same precedence as undici's EnvHttpProxyAgent (lowercase over
+  // uppercase, https falling back to http).
+  const stdHttps = pick('https_proxy', 'HTTPS_PROXY') ?? pick('http_proxy', 'HTTP_PROXY')
+  const stdHttp = pick('http_proxy', 'HTTP_PROXY') ?? stdHttps
+  if (stdHttps !== null && !has('npm_config_https_proxy')) out.npm_config_https_proxy = stdHttps
+  if (stdHttp !== null && !has('npm_config_proxy')) out.npm_config_proxy = stdHttp
+  const stdNoProxy = pick('no_proxy', 'NO_PROXY')
+  if (stdNoProxy !== null && !has('npm_config_noproxy')) out.npm_config_noproxy = stdNoProxy
+
+  // The other direction, and ONLY when the standard vocabulary is empty.
+  // A proxy known solely to npm config is the case that stranded git; if
+  // the caller has said anything in the standard vars, that is their
+  // statement about what git should do and copying npm's answer over it
+  // would invent a setting they did not make — notably an HTTP_PROXY for
+  // someone who deliberately proxied https only.
+  if (stdHttps === null && stdHttp === null) {
+    const npmHttps = pick('npm_config_https_proxy') ?? pick('npm_config_proxy')
+    const npmHttp = pick('npm_config_proxy') ?? npmHttps
+    if (npmHttps !== null) out.HTTPS_PROXY = npmHttps
+    if (npmHttp !== null) out.HTTP_PROXY = npmHttp
+    const npmNoProxy = pick('npm_config_noproxy')
+    if (npmNoProxy !== null && stdNoProxy === null) out.NO_PROXY = npmNoProxy
+  }
+  // The download region's npm mirror, when it has one.
+  //
+  // Last, and conditionally: a registry the caller already named is their
+  // statement about where packages come from, and a region setting must not
+  // overrule it. Same rule the proxy translation above follows, for the same
+  // reason — this function's job is to fill silence, not to overwrite speech.
+  const mirror = routesFor(region).npmRegistry
+  if (mirror !== DEFAULT_NPM_REGISTRY && !has('npm_config_registry')) {
+    // npm's own config convention terminates the registry with a slash;
+    // pnpm accepts either, but writing it the conventional way keeps the
+    // value recognizable to anyone reading the spawned process's env.
+    out.npm_config_registry = `${mirror}/`
+  }
   return out
 }
 
@@ -118,7 +155,7 @@ function spawnEnv(): NodeJS.ProcessEnv {
   for (const bin of candidates) {
     if (!parts.includes(bin)) parts.push(bin)
   }
-  return { ...process.env, ...proxyEnvForPnpm(), CI: 'true', PATH: parts.join(separator) }
+  return { ...process.env, ...proxyEnvForPnpm(process.env, activeRegion()), CI: 'true', PATH: parts.join(separator) }
 }
 
 const INSTALL_TIMEOUT_MS = Number(process.env.DSH_MARKET_INSTALL_TIMEOUT_MS) || 15 * 60 * 1000
@@ -149,6 +186,18 @@ export function quoteCmdArg(arg: string): string {
  */
 export function cmdCommandLine(argv: readonly string[]): string {
   return argv.map(quoteCmdArg).join(' ')
+}
+
+/**
+ * Whether a profile name can cross the rare Windows `dsh.cmd` fallback.
+ *
+ * cmd.exe expands percent-delimited environment variables even inside a
+ * quoted argument. Keep that fallback to names made only of letters, marks,
+ * numbers, spaces, dots, underscores, and hyphens. The normal direct-Node
+ * launcher remains argv-safe and accepts every DSH-valid profile name.
+ */
+export function isCmdSafeProfileName(profile: string): boolean {
+  return isDshProfileName(profile) && /^[\p{L}\p{M}\p{N}._ -]+$/u.test(profile)
 }
 
 /** cmd.exe resolved once; the Windows shim path only. */
@@ -574,6 +623,11 @@ function makeProgressFeeder(tracker: ReturnType<typeof createProgressTracker>): 
 /** Run one `dsh plugin --profile <p> …` command with timeout and progress tracking. */
 export function runDshPlugin(profile: string, pluginArgs: string[]): Promise<InstallResult> {
   const { file, args, cwd, viaShell } = dshArgv()
+  if (viaShell && !isCmdSafeProfileName(profile)) {
+    const error = `dsh-market: profile name ${JSON.stringify(profile)} cannot cross the Windows cmd.exe fallback safely; relaunch DSH through its Node entry point, or use a profile name containing only letters, numbers, spaces, dots, underscores, and hyphens`
+    logEvent('error', 'install', error)
+    return Promise.resolve({ exitCode: 1, timedOut: false, stdout: '', stderr: error, cancelled: false })
+  }
   const prepared = preparePluginArgs(profileDir(profile), pluginArgs)
   if ('error' in prepared) {
     logEvent('error', 'install', prepared.error)

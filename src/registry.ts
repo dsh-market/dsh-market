@@ -5,6 +5,8 @@
  */
 
 import { configuredProxy, marketFetch } from './net.ts'
+import { catalogFromPackage } from './catalog-npm.ts'
+import { activeRegion, routesFor, type CatalogSource, type Region } from './regions.ts'
 
 export interface RegistryPlugin {
   name: string
@@ -40,9 +42,14 @@ export interface Registry {
 }
 
 /**
- * Where the curated list comes from. Overridable through the process
- * environment ONLY — the layer-3 e2e points it at a local fixture catalog so
- * the install route can be driven end to end without publishing anything.
+ * Where the curated list comes from now lives in the region routing table
+ * (src/regions.ts), because it is one of several addresses that move
+ * together when a user changes download region.
+ *
+ * `DSHM_REGISTRY_URL` keeps its meaning there, unchanged: overridable
+ * through the process environment ONLY — the layer-3 e2e points it at a
+ * local fixture catalog so the install route can be driven end to end
+ * without publishing anything.
  *
  * This does not weaken the install route's registry check. That check exists
  * to stop a malicious PAGE from POSTing an arbitrary source at the local
@@ -50,7 +57,6 @@ export interface Registry {
  * this process's environment already controls the process. What the override
  * changes is WHICH list is curated, never WHETHER the check runs.
  */
-const REGISTRY_URL = process.env.DSHM_REGISTRY_URL ?? 'https://awesome-dsh-plugin.com/plugins.json'
 
 /**
  * How long to wait for the catalog.
@@ -83,7 +89,27 @@ const FETCH_TIMEOUT_MS = 15_000
  * 0 bytes and 0.5s for a 304. The reporter whose fetch took 9.9s was
  * downloading the full 1.07 MB every time they opened the market.
  */
-let served: { etag: string | null; modified: string | null; data: Registry } | null = null
+let served: {
+  /** Which source issued this, so a validator is never sent to another one. */
+  key: string
+  etag: string | null
+  modified: string | null
+  /** The published version, for the npm route — its equivalent of an ETag. */
+  version: string | null
+  data: Registry
+} | null = null
+
+/** Identity of a catalog source, for scoping the validator to its origin. */
+function sourceKey(source: CatalogSource): string {
+  return source.kind === 'npm' ? `npm:${source.registry}/${source.pkg}` : `url:${source.url}`
+}
+
+/** A parsed catalog, or a thrown explanation of why it is not one. */
+function asRegistry(value: unknown): Registry {
+  const data = value as Registry
+  if (!Array.isArray(data.plugins) || data.plugins.length === 0) throw new Error('the catalog came back empty')
+  return data
+}
 
 /**
  * Drop what we remember, so the next call is unconditional.
@@ -115,41 +141,66 @@ export function forgetCatalog(): void {
  * would rebuild exactly the fallback this replaced.
  * @throws when the catalog cannot be fetched or does not look like one.
  */
-export async function loadRegistry(): Promise<Registry> {
+export async function loadRegistry(region: Region = activeRegion()): Promise<Registry> {
   const started = Date.now()
   let last: unknown
-  // Two attempts. A catalog fetch crossing a long, lossy path fails
-  // transiently often enough that one retry is worth more than the second
-  // or two it costs — and with nothing behind this call any more, a
-  // transient failure is a market with no plugins in it.
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      // ETag first: it is exact, while a date has one-second resolution and
-      // a catalog republished twice within the same second would validate
-      // as unchanged. Only one is sent — an origin given both must satisfy
-      // both, which turns a weak ETag match into an unnecessary 200.
-      const headers: Record<string, string> = {}
-      if (served?.etag != null) headers['if-none-match'] = served.etag
-      else if (served?.modified != null) headers['if-modified-since'] = served.modified
+  let attempts = 0
+  // Sources in order, each a fallback for the one before it. The catalog is
+  // the FIRST request the market makes, so a mirror that has gone down must
+  // mean a slow market rather than an empty one — the list ends at the
+  // address that has always worked.
+  for (const source of routesFor(region).catalog) {
+    const key = sourceKey(source)
+    // Two attempts each. A catalog fetch crossing a long, lossy path fails
+    // transiently often enough that one retry is worth more than the second
+    // or two it costs — and with nothing behind this call any more, a
+    // transient failure is a market with no plugins in it.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      attempts += 1
+      try {
+        // A validator only ever goes back to the source that issued it.
+        // Carried across a region switch it could earn a "not modified" from
+        // an origin whose body we have never seen.
+        const reusable = served?.key === key ? served : null
+        if (source.kind === 'npm') {
+          const { version, data } = await catalogFromPackage(
+            source.registry, source.pkg, reusable?.version ?? undefined,
+          )
+          // `data === null` means the published version is the one in hand.
+          if (data === null && reusable !== null) return reusable.data
+          if (data === null) throw new Error('the catalog package reported no change with nothing to reuse')
+          const parsed = asRegistry(data)
+          served = { key, etag: null, modified: null, version, data: parsed }
+          return parsed
+        }
+        // ETag first: it is exact, while a date has one-second resolution and
+        // a catalog republished twice within the same second would validate
+        // as unchanged. Only one is sent — an origin given both must satisfy
+        // both, which turns a weak ETag match into an unnecessary 200.
+        const headers: Record<string, string> = {}
+        if (reusable?.etag != null) headers['if-none-match'] = reusable.etag
+        else if (reusable?.modified != null) headers['if-modified-since'] = reusable.modified
 
-      const res = await marketFetch(REGISTRY_URL, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS), headers })
-      if (res.status === 304) {
-        // Only reachable when we sent a validator, so `served` is present.
-        // Guarded anyway: answering a 304 with nothing to reuse would
-        // otherwise surface as a confusing parse error on an empty body.
-        if (served === null) throw new Error('the catalog answered "not modified" with nothing to revalidate')
-        return served.data
+        const res = await marketFetch(source.url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS), headers })
+        if (res.status === 304) {
+          // Only reachable when we sent a validator, so `reusable` is present.
+          // Guarded anyway: answering a 304 with nothing to reuse would
+          // otherwise surface as a confusing parse error on an empty body.
+          if (reusable === null) throw new Error('the catalog answered "not modified" with nothing to revalidate')
+          return reusable.data
+        }
+        if (!res.ok) throw new Error(`HTTP ${String(res.status)}`)
+        const data = asRegistry(await res.json())
+        served = {
+          key, etag: res.headers.get('etag'), modified: res.headers.get('last-modified'), version: null, data,
+        }
+        return data
+      } catch (error) {
+        last = error
       }
-      if (!res.ok) throw new Error(`HTTP ${String(res.status)}`)
-      const data = (await res.json()) as Registry
-      if (!Array.isArray(data.plugins) || data.plugins.length === 0) throw new Error('the catalog came back empty')
-      served = { etag: res.headers.get('etag'), modified: res.headers.get('last-modified'), data }
-      return data
-    } catch (error) {
-      last = error
     }
   }
-  throw new Error(describeFetchFailure(last, Date.now() - started))
+  throw new Error(describeFetchFailure(last, Date.now() - started, attempts))
 }
 
 /**
@@ -163,10 +214,10 @@ export async function loadRegistry(): Promise<Registry> {
  * entirely (measured on Node 25), so a machine whose only route out is a
  * proxy fails here every time while every other tool on it works.
  */
-export function describeFetchFailure(error: unknown, elapsedMs: number): string {
+export function describeFetchFailure(error: unknown, elapsedMs: number, attempts = 2): string {
   const reason = error instanceof Error ? error.message : String(error)
   const proxy = configuredProxy()
-  const parts = [`${reason} (${String(Math.round(elapsedMs / 1000))}s, 2 attempts)`]
+  const parts = [`${reason} (${String(Math.round(elapsedMs / 1000))}s, ${String(attempts)} attempts)`]
   if (proxy !== null) {
     parts.push(`tried through the configured proxy ${proxy.replace(/\/\/[^@]*@/u, '//***@')}`)
   }

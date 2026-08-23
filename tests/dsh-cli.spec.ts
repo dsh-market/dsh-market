@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { describe, expect, it, vi } from 'vitest'
-import { cmdCommandLine, nodeExecutable, proxyEnvForPnpm, quoteCmdArg, TARGET_RE } from '../src/dsh-cli.ts'
+import { cmdCommandLine, isCmdSafeProfileName, nodeExecutable, proxyEnvForPnpm, quoteCmdArg, TARGET_RE } from '../src/dsh-cli.ts'
+import { routesFor } from '../src/regions.ts'
 
 describe('cmd.exe command line building (DEP0190 shim)', () => {
   it('keeps simple tokens unquoted', () => {
@@ -24,6 +25,17 @@ describe('cmd.exe command line building (DEP0190 shim)', () => {
     expect(cmdCommandLine(['dsh', 'plugin', '--profile', 'web', 'add', '@scope/pkg'])).toBe(
       'dsh plugin --profile web add @scope/pkg',
     )
+  })
+
+  it('admits common DSH profile names without admitting cmd expansion syntax', () => {
+    for (const profile of ['web', '011-rc.2', '测试001', '工作 profile', 'Профиль-2']) {
+      expect(isCmdSafeProfileName(profile)).toBe(true)
+    }
+    for (const profile of [
+      '%USERPROFILE%', 'name!VAR!', 'a&b', 'a|b', 'a^b', 'a<b', 'a>b', 'a(b)', 'say"hi"', 'line\nbreak',
+    ]) {
+      expect(isCmdSafeProfileName(profile)).toBe(false)
+    }
   })
 })
 
@@ -63,15 +75,20 @@ describe('nodeExecutable (Android linker64 execPath)', () => {
   })
 })
 
-describe('proxy env translated for pnpm (#148/#161/#188/#232)', () => {
-  // The market's own catalog fetches go through undici's EnvHttpProxyAgent,
-  // which reads HTTPS_PROXY/http_proxy. pnpm reads NONE of those — it reads
-  // npm config — so on a proxied network the catalog loaded and every
-  // install then hung. These assert the translation, and its precedence.
-  it('translates https_proxy/http_proxy into the npm_config_* names pnpm reads', () => {
+describe('proxy env translated for the pnpm subprocess (#148/#161/#188/#232/#274)', () => {
+  // Three consumers, three vocabularies. The market's own fetch reads the
+  // standard vars; pnpm reads ONLY npm config; `git` — which pnpm shells
+  // out to for every git-hosted plugin — reads only the standard vars.
+  it('fills the npm_config_* names pnpm reads AND the standard names git reads', () => {
     expect(proxyEnvForPnpm({ HTTPS_PROXY: 'http://proxy:8080' })).toEqual({
       npm_config_https_proxy: 'http://proxy:8080',
       npm_config_proxy: 'http://proxy:8080',
+    })
+    // A proxy known ONLY to npm config is the case that stranded git:
+    // registry installs went through it, git installs went direct (#274).
+    expect(proxyEnvForPnpm({ npm_config_proxy: 'http://p:1' })).toEqual({
+      HTTPS_PROXY: 'http://p:1',
+      HTTP_PROXY: 'http://p:1',
     })
   })
 
@@ -91,22 +108,30 @@ describe('proxy env translated for pnpm (#148/#161/#188/#232)', () => {
     })
   })
 
-  it('forwards NO_PROXY, so a host excluding its own registry mirror keeps excluding it', () => {
+  it('forwards NO_PROXY both ways, so an excluded mirror stays excluded for git too', () => {
     expect(proxyEnvForPnpm({ HTTPS_PROXY: 'http://p:1', NO_PROXY: 'registry.local,10.0.0.0/8' }))
       .toEqual({
         npm_config_https_proxy: 'http://p:1',
         npm_config_proxy: 'http://p:1',
         npm_config_noproxy: 'registry.local,10.0.0.0/8',
       })
+    expect(proxyEnvForPnpm({ npm_config_proxy: 'http://p:1', npm_config_noproxy: 'registry.local' }))
+      .toEqual({ HTTPS_PROXY: 'http://p:1', HTTP_PROXY: 'http://p:1', NO_PROXY: 'registry.local' })
   })
 
-  it('never overrides an npm_config_* the caller already set, case-insensitively (Windows env keys)', () => {
+  it('never overrides a value the caller already set, case-insensitively (Windows env keys)', () => {
     // The more specific statement of intent wins — including when Windows
     // hands the key back in a different case than we would have written.
     expect(proxyEnvForPnpm({ HTTPS_PROXY: 'http://env:1', npm_config_https_proxy: 'http://explicit:2' }))
       .toEqual({ npm_config_proxy: 'http://env:1' })
     expect(proxyEnvForPnpm({ HTTPS_PROXY: 'http://env:1', NPM_CONFIG_HTTPS_PROXY: 'http://explicit:2' }))
       .toEqual({ npm_config_proxy: 'http://env:1' })
+    // ...and the reverse direction never fires at all when the standard
+    // vocabulary says anything: copying npm's answer over it would invent a
+    // setting the caller did not make (an HTTP_PROXY for someone who
+    // deliberately proxied https only).
+    expect(proxyEnvForPnpm({ npm_config_proxy: 'http://npm:1', HTTPS_PROXY: 'http://std:2' }))
+      .toEqual({ npm_config_https_proxy: 'http://std:2' })
   })
 
   it('adds nothing when no proxy is configured, or when the value is blank', () => {
@@ -118,6 +143,36 @@ describe('proxy env translated for pnpm (#148/#161/#188/#232)', () => {
 })
 
 describe('the proxy translation actually reaches spawned pnpm (#148)', () => {
+  it('points pnpm at the region mirror, and only when the region has one', () => {
+    const mirror = routesFor('china', {}).npmRegistry
+    expect(proxyEnvForPnpm({}, 'china')).toEqual({ npm_config_registry: `${mirror}/` })
+    // The global region names the default registry, so there is nothing to
+    // say — an explicit registry equal to the default is noise in the env.
+    expect(proxyEnvForPnpm({}, 'global')).toEqual({})
+  })
+
+  it('never overrules a registry the caller already named', () => {
+    // Same rule the proxy translation follows: fill silence, do not overwrite
+    // speech. Someone pointing pnpm at a company registry has said where
+    // packages come from, and a region setting is not an argument with that.
+    expect(proxyEnvForPnpm({ npm_config_registry: 'https://npm.corp/' }, 'china')).toEqual({})
+    // Windows env keys are case-insensitive, so the check has to be too.
+    expect(proxyEnvForPnpm({ NPM_CONFIG_REGISTRY: 'https://npm.corp/' }, 'china')).toEqual({})
+    // A blank value is not a statement about anything.
+    expect(proxyEnvForPnpm({ npm_config_registry: '  ' }, 'china'))
+      .toEqual({ npm_config_registry: `${routesFor('china', {}).npmRegistry}/` })
+  })
+
+  it('carries the mirror alongside a proxy rather than instead of one', () => {
+    // A user can need both: a proxy to leave their network at all, and a
+    // mirror because the origin is far away once they have.
+    expect(proxyEnvForPnpm({ HTTPS_PROXY: 'http://p:1' }, 'china')).toEqual({
+      npm_config_https_proxy: 'http://p:1',
+      npm_config_proxy: 'http://p:1',
+      npm_config_registry: `${routesFor('china', {}).npmRegistry}/`,
+    })
+  })
+
   // proxyEnvForPnpm being correct is worth nothing if spawnEnv never calls
   // it — that wiring IS the bug being fixed, so it gets its own assertion
   // against a real spawn call rather than the pure function alone.

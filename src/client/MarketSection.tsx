@@ -39,8 +39,8 @@ import { clearSettled, drop, enqueue, patch as patchRecord, recordForUrl } from 
 import type { OperationRecord } from './operations.ts'
 import { Diagnostics } from './Diagnostics.tsx'
 import {
-  avatarColor, entryForDep, groupSwitchState, humanOutput, isInstalled, looksTerminal, matchInstalledName, orderedCategories,
-  formatCount, pageItems, pluginName, pluginScreenshots, readSession, safeScreenshots, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
+  avatarColor, entryForDep, githubProxyInUse, githubUrl, groupSwitchState, humanOutput, isInstalled, looksTerminal, matchInstalledName, orderedCategories,
+  formatCount, pageItems, pluginName, pluginScreenshots, readSession, safeScreenshots, setGithubProxy, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
 } from './market-data.ts'
 import type {
 ActivationInfo, ActivationState, GistExportResult, InstalledMap, InstalledRepoHints, InstalledRepoIdentities, MarketStatus, Registry, RegistryPlugin,
@@ -292,7 +292,7 @@ function OwnerAvatar({ name, owner }: { name: string; owner: string }) {
   return (
     <img
       className={css.av}
-      src={`https://github.com/${encodeURIComponent(owner)}.png?size=96`}
+      src={avatarUrl(owner)}
       alt=""
       loading="lazy"
       onError={() => setFailed(true)}
@@ -375,7 +375,35 @@ function useAutoCarousel(count: number, initial: number, intervalMs = 3500): [nu
  * share a cache entry with the full-size open anyway.
  */
 function thumbUrl(src: string, height: number): string {
+  // The resizer stays in every region, including China.
+  //
+  // It was briefly bypassed there on the assumption that a service in the
+  // Netherlands would be one more far-away host in the way. Measured from an
+  // unproxied mainland connection, that was wrong twice over: weserv answers
+  // in 1.39s, and it answers with 23KB where the original is 41KB. Routing
+  // around it would have traded a working request for a bigger one, on a
+  // page that makes dozens of them.
   return `https://images.weserv.nl/?url=${encodeURIComponent(src.replace(/^https?:\/\//, ''))}&h=${String(height)}&fit=inside&we=1`
+}
+
+/**
+ * The owner's GitHub avatar, addressed so the region's proxy can serve it.
+ *
+ * `github.com/<owner>.png` is a redirect to the avatar host, and gh-proxy
+ * does not follow it — measured from an unproxied mainland connection, that
+ * URL hangs until the client gives up (60s), while naming the avatar host
+ * directly through the same proxy answers in 1.07s. So a proxied region
+ * addresses the destination itself.
+ *
+ * The redirect is left in place when there is no proxy: it is the form that
+ * has always worked, and this is not the release to change it on a path
+ * nobody has reported a problem with.
+ */
+function avatarUrl(owner: string): string {
+  const name = encodeURIComponent(owner)
+  return githubProxyInUse() === null
+    ? `https://github.com/${name}.png?size=96`
+    : githubUrl(`https://avatars.githubusercontent.com/${name}?size=96`)
 }
 
 /**
@@ -446,28 +474,28 @@ function CardShot({ plugin, onOpen }: { plugin: RegistryPlugin; onOpen: (shots: 
 }
 
 /**
- * Two masonry columns holding the cards in ranked order.
+ * Masonry columns holding items in their input order.
  *
- * Cards are dealt alternately (0,2,4… left; 1,3,5… right) rather than split
+ * Items are dealt alternately (0,2,4… left; 1,3,5… right) rather than split
  * down the middle, so the sort order still reads left-to-right then down —
  * the ranking is the whole point of the sort menu above it. Each column is
- * its own flex stack, so a tall card only pushes down the cards beneath IT
+ * its own flex stack, so a tall item only pushes down the items beneath IT
  * instead of leaving a hole beside its shorter neighbour.
  *
  * Below the two-up breakpoint the CSS collapses to one column, and dealing
  * alternately would then interleave the list wrongly — so at one column the
- * cards stay in a single stack in their original order.
+ * items stay in a single stack in their original order.
  */
-function Masonry({ items, render, columns = 2 }: {
-  items: RegistryPlugin[]
-  render: (plugin: RegistryPlugin) => ReactNode
+function Masonry<T>({ items, render, columns = 2 }: {
+  items: T[]
+  render: (item: T) => ReactNode
   columns?: number
 }) {
   const wide = useMediaWide()
   if (!wide || columns < 2) {
     return <div className={css.masonry}><div className={css.masonryCol}>{items.map(render)}</div></div>
   }
-  const buckets: RegistryPlugin[][] = Array.from({ length: columns }, () => [])
+  const buckets: T[][] = Array.from({ length: columns }, () => [])
   items.forEach((item, index) => { buckets[index % columns]!.push(item) })
   return (
     <div className={css.masonry}>
@@ -1092,6 +1120,11 @@ export function MarketSection(props: MarketSectionProps) {
       .then(res => res.json())
       .then(status => {
         setEnvReady(status.pnpm !== false)
+        // Applied before anything renders a github.com URL. The catalog this
+        // page draws from is a larger request through the same server, so it
+        // lands later; and if it ever did not, the status poll re-renders
+        // within seconds and the images correct themselves.
+        setGithubProxy(typeof status.githubProxy === 'string' ? status.githubProxy : null)
         if (typeof status.boot === 'string') {
           setBootId(status.boot)
           // A dismissal only silences the notice for the boot it was made
@@ -2384,7 +2417,32 @@ export function MarketSection(props: MarketSectionProps) {
   useEffect(() => {
     if (catsSentinel === null || typeof IntersectionObserver === 'undefined') return
     const observer = new IntersectionObserver(
-      ([entry]) => setCatsStuck(entry !== undefined && !entry.isIntersecting),
+      ([entry]) => {
+        const leftView = entry !== undefined && !entry.isIntersecting
+        // Collapsing shrinks the sticky header, which shrinks the scrollable
+        // content. When there is barely more content than viewport, that
+        // makes scrollHeight drop below the current scroll position, the
+        // browser CLAMPS scrollTop, the sentinel slides back into view, and
+        // the row expands again — which grows the content, restores the
+        // scroll, and starts over. Reported as the category bar flapping and
+        // the list refusing to scroll (#266 by @hidge123), and reproduced
+        // here: a filtered list went scrollTop 78 → 0 and snapped straight
+        // back from one row to four.
+        //
+        // The guard is not a tuning constant, it is the feature's own
+        // precondition: collapsing exists to reclaim vertical space while
+        // scrolling a LONG list. If the scroller has less overflow than the
+        // category row could give back, collapsing buys nothing and can only
+        // start the loop, so it does not happen. Long lists — the case this
+        // was built for — are unaffected.
+        const root = bodyRef.current
+        const wrap = catsWrapRef.current
+        if (leftView && root !== null && wrap !== null) {
+          const overflow = root.scrollHeight - root.clientHeight
+          if (overflow <= wrap.offsetHeight) return
+        }
+        setCatsStuck(leftView)
+      },
       { root: bodyRef.current, threshold: 0 },
     )
     observer.observe(catsSentinel)
@@ -3140,8 +3198,8 @@ export function MarketSection(props: MarketSectionProps) {
                       : Object.keys(displayedInstalled).filter(name => name !== selfName).length === 0
                         ? <div className={css.empty}>{t('installedEmpty')}</div>
                         : (
-                          <div className={css.pairGrid}>
-                          {Object.entries(displayedInstalled)
+                          <Masonry
+                            items={Object.entries(displayedInstalled)
                             .filter(([name, spec]) => {
                               // The market manages itself from its own settings
                               // card, not as a row in this list (#188-adjacent).
@@ -3157,8 +3215,8 @@ export function MarketSection(props: MarketSectionProps) {
                                 if ((entry.owner || '').toLowerCase().includes(needle)) return true
                               }
                               return false
-                            })
-                            .map(([name, spec]) => {
+                            })}
+                            render={([name, spec]) => {
                             const missing = pendingBackup !== null && !installedFiles.includes(name)
                             const entry = data === null ? undefined : entryForDep(data.plugins, name, String(spec), repoIdentities[name], repoHints[name])
                             const status = updates[name]
@@ -3356,8 +3414,8 @@ export function MarketSection(props: MarketSectionProps) {
                                 </div>
                               </div>
                             )
-                          })}
-                          </div>
+                          }}
+                          />
                         )}
                 </>
               )}

@@ -153,6 +153,79 @@ describe('loadRegistry', () => {
   })
 })
 
+describe('loadRegistry download regions', () => {
+  /** A fetch that answers per-URL rather than per-call. */
+  function byUrl(plan: Array<[RegExp, Response | Error]>): ReturnType<typeof vi.fn> {
+    const stub = vi.fn((url: unknown) => {
+      const entry = plan.find(([pattern]) => pattern.test(String(url)))
+      if (entry === undefined) return Promise.reject(new Error(`unexpected request: ${String(url)}`))
+      const answer = entry[1]
+      return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer.clone())
+    })
+    vi.stubGlobal('fetch', stub)
+    return stub
+  }
+
+  it('reads the catalog from the official domain in the global region', async () => {
+    const stub = byUrl([[/awesome-dsh-plugin\.com/, ok(CATALOG)]])
+    await loadRegistry('global')
+    expect(String(stub.mock.calls[0]?.[0])).toContain('awesome-dsh-plugin.com')
+  })
+
+  it('asks the published package first in the china region', async () => {
+    // It rides the same mirror as the plugins themselves, so it needs no
+    // service that did not already have to work.
+    const stub = byUrl([[/mirrors\.cloud\.tencent\.com/, new Error('fetch failed')], [/./, ok(CATALOG)]])
+    await loadRegistry('china')
+    expect(String(stub.mock.calls[0]?.[0])).toContain('mirrors.cloud.tencent.com')
+    expect(String(stub.mock.calls[0]?.[0])).toContain('dsh-plugin-catalog')
+  })
+
+  it('walks the whole list rather than giving up at the first dead source', async () => {
+    // The catalog is the FIRST request the market makes. A mirror going down
+    // must mean a slow market, not an empty one.
+    const stub = byUrl([
+      [/mirrors\.cloud\.tencent\.com/, new Error('fetch failed')],
+      [/awesome-dsh-plugin\.com/, ok(CATALOG)],
+    ])
+    const registry = await loadRegistry('china')
+    expect(registry.plugins).toHaveLength(1)
+    // Two attempts at the package, then the origin.
+    expect(stub).toHaveBeenCalledTimes(3)
+  })
+
+  it('reports every attempt it made when the whole list fails', async () => {
+    byUrl([[/./, new Error('fetch failed')]])
+    await expect(loadRegistry('china')).rejects.toThrow(/4 attempts/)
+  })
+
+  it('never sends one origin the validator another one issued', async () => {
+    // A validator is scoped to the URL that issued it. Carried across a
+    // region switch it could earn a 304 from an origin whose body we have
+    // never seen, and the market would render a catalog it never received.
+    byUrl([[/awesome-dsh-plugin\.com/, okTagged(CATALOG, 'W/"one"')]])
+    await loadRegistry('global')
+    const stub = byUrl([
+      [/mirrors\.cloud\.tencent\.com/, new Error('fetch failed')],
+      [/awesome-dsh-plugin\.com/, ok(CATALOG)],
+    ])
+    await loadRegistry('china')
+    const etagOf = (call: unknown[]): string | undefined =>
+      ((call[1] ?? {}) as { headers?: Record<string, string> }).headers?.['if-none-match']
+    // The package is a DIFFERENT source, so the origin's ETag must not ride
+    // along on it — that is the request that could earn a "not modified"
+    // from something whose body we have never seen.
+    for (const call of stub.mock.calls.filter(c => String(c[0]).includes('mirrors.cloud.tencent.com'))) {
+      expect(etagOf(call)).toBeUndefined()
+    }
+    // The origin, though, is the same URL in both regions. Re-sending the
+    // validator it issued is exactly what it is for; withholding it would
+    // re-download a megabyte to be told nothing changed.
+    const originCall = stub.mock.calls.find(c => String(c[0]).includes('awesome-dsh-plugin.com'))
+    expect(etagOf(originCall!)).toBe('W/"one"')
+  })
+})
+
 describe('loadRegistry revalidation', () => {
   // Always ASK, never re-download what has not changed. This is not the
   // cache that was removed: that one skipped the request and answered from

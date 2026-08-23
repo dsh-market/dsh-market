@@ -24,6 +24,7 @@ let calls: Array<{ path: string; body: unknown }> = []
 function stubFetch(options: {
   version?: string; restart?: boolean; latest?: string | null; removeOk?: boolean; error?: string
   channel?: string; channelSwitch?: string; channelError?: string
+  region?: string; regionAuto?: boolean; regionError?: string; githubProxy?: string | null
 } = {}): void {
   calls = []
   vi.stubGlobal('fetch', vi.fn((input: unknown, init?: RequestInit) => {
@@ -37,6 +38,10 @@ function stubFetch(options: {
         restart: options.restart !== false,
         channel: options.channel ?? 'stable',
         channels: ['stable', 'beta', 'dev'],
+        region: options.region ?? 'global',
+        regions: ['global', 'china'],
+        regionAuto: options.regionAuto === true,
+        githubProxy: options.githubProxy ?? null,
       })
     }
     if (path.includes('/dsh-market/updates')) {
@@ -48,6 +53,11 @@ function stubFetch(options: {
       return options.channelError !== undefined
         ? json({ ok: false, error: options.channelError })
         : json({ ok: true, channel: (JSON.parse(String(init?.body)) as { channel: string }).channel })
+    }
+    if (path.endsWith('/dsh-market/region')) {
+      return options.regionError !== undefined
+        ? json({ ok: false, error: options.regionError })
+        : json({ ok: true, region: (JSON.parse(String(init?.body)) as { region: string }).region })
     }
     if (path.endsWith('/dsh-market/self-uninstall')) {
       return options.removeOk === false
@@ -297,6 +307,64 @@ describe('SettingsCard — channels', () => {
     fireEvent.click(screen.getByRole('button', { name: t('setChannelBeta') }))
     await waitFor(() => { expect(screen.getByText(/no such channel/)).toBeTruthy() })
     expect(screen.getByRole('button', { name: t('setChannelStable') }).className).toMatch(/SegOn|setSegOn/)
+  })
+})
+
+describe('SettingsCard — download region', () => {
+  it('offers the two regions the server named, with the current one selected', async () => {
+    await open()
+    await waitFor(() => { expect(screen.getByRole('button', { name: t('setRegionGlobal') })).toBeTruthy() })
+    expect(screen.getByRole('button', { name: t('setRegionChina') })).toBeTruthy()
+    expect(screen.getByRole('button', { name: t('setRegionGlobal') }).className).toMatch(/SegOn|setSegOn/)
+  })
+
+  it('describes what the selected region actually does', async () => {
+    stubFetch({ region: 'china' })
+    await open()
+    // The second sentence is the one that matters: a user handed a mirror
+    // needs to know the plugin is still the author's, only the route changed.
+    await waitFor(() => { expect(screen.getByText(t('setRegionChinaHint'))).toBeTruthy() })
+  })
+
+  it('sends the region the user picked', async () => {
+    await open()
+    await waitFor(() => { expect(screen.getByRole('button', { name: t('setRegionChina') })).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: t('setRegionChina') }))
+    await waitFor(() => {
+      expect(calls.find(call => call.path.endsWith('/dsh-market/region'))?.body).toEqual({ region: 'china' })
+    })
+  })
+
+  it('does not leave a refused region looking selected', async () => {
+    stubFetch({ regionError: 'no such region' })
+    await open()
+    await waitFor(() => { expect(screen.getByRole('button', { name: t('setRegionChina') })).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: t('setRegionChina') }))
+    await waitFor(() => { expect(screen.getByText(/no such region/)).toBeTruthy() })
+    expect(screen.getByRole('button', { name: t('setRegionGlobal') }).className).toMatch(/SegOn|setSegOn/)
+  })
+
+  it('explains an automatic choice, and stops once the user has made one', async () => {
+    stubFetch({ region: 'china', regionAuto: true })
+    await open()
+    // A user who never learns a route was chosen for them has no reason to
+    // look for the setting when something downloads oddly.
+    await waitFor(() => { expect(screen.getByText(new RegExp(t('setRegionAuto')))).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: t('setRegionGlobal') }))
+    await waitFor(() => { expect(screen.queryByText(new RegExp(t('setRegionAuto')))).toBeNull() })
+  })
+
+  it('re-reads the resolved proxy from the server instead of deriving it', async () => {
+    // The card knows which regions exist because the server said so. It must
+    // not also know what each one resolves TO, or the routing table would
+    // have a second copy that can disagree with the first.
+    await open()
+    await waitFor(() => { expect(screen.getByRole('button', { name: t('setRegionChina') })).toBeTruthy() })
+    calls.length = 0
+    fireEvent.click(screen.getByRole('button', { name: t('setRegionChina') }))
+    await waitFor(() => {
+      expect(calls.filter(call => call.path.endsWith('/dsh-market/status'))).toHaveLength(1)
+    })
   })
 })
 

@@ -1306,6 +1306,67 @@ describe('uninstall confirmation Modal', () => {
   })
 })
 
+describe('installed masonry layout (#273)', () => {
+  it('packs installed rows into independent masonry columns (#273)', async () => {
+    stubFetch({
+      '/dsh-market/installed': {
+        profile: 'web',
+        installed: { alpha: '^1.0.0', beta: '^1.0.0', gamma: '^1.0.0', delta: '^1.0.0' },
+        live: [],
+      },
+      '/dsh-market/updates': { updates: {} },
+    })
+    const { container } = render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    await screen.findByText('delta')
+
+    const columns = [...container.querySelectorAll('[class*="masonryCol"]')]
+    expect(columns).toHaveLength(2)
+    expect(columns[0]?.textContent).toContain('alpha')
+    expect(columns[0]?.textContent).toContain('gamma')
+    expect(columns[0]?.textContent).not.toContain('beta')
+    expect(columns[1]?.textContent).toContain('beta')
+    expect(columns[1]?.textContent).toContain('delta')
+    expect(columns[1]?.textContent).not.toContain('alpha')
+  })
+
+  it('keeps the mobile layout full-width and in source order (#273)', async () => {
+    const media = {
+      matches: false,
+      media: '(min-width: 681px)',
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(() => true),
+    }
+    vi.stubGlobal('matchMedia', vi.fn(() => media))
+    stubFetch({
+      '/dsh-market/installed': {
+        profile: 'web',
+        installed: { alpha: '^1.0.0', beta: '^1.0.0', gamma: '^1.0.0', delta: '^1.0.0' },
+        live: [],
+      },
+      '/dsh-market/updates': { updates: {} },
+    })
+
+    const { container } = render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    await screen.findByText('delta')
+
+    const columns = [...container.querySelectorAll('[class*="masonryCol"]')] as HTMLElement[]
+    expect(columns).toHaveLength(1)
+    // The width is a stylesheet rule now, not an inline style, so there is
+    // nothing here for jsdom to read — the order assertion below is the part
+    // that would actually break if the single-column path regressed.
+    expect([...columns[0]!.querySelectorAll('[class*="irowNameText"]')].map(row => row.textContent?.trim()))
+      .toEqual(['alpha', 'beta', 'gamma', 'delta'])
+  })
+})
+
 describe('per-tab search boxes', () => {
   it('the installed tab has its own search that narrows the list', async () => {
     stubFetch({
@@ -1886,6 +1947,75 @@ describe('category row expansion', () => {
     }
   })
 
+  it('does not auto-collapse when there is too little to scroll for the collapse to hold (#266)', async () => {
+    // The loop this prevents: collapsing shrinks the sticky header, which
+    // shrinks the scrollable content; with barely more content than
+    // viewport that drops scrollHeight below the scroll position, the
+    // browser clamps scrollTop, the sentinel slides back into view, the row
+    // re-expands, the content grows back — and it starts over. Reported as
+    // the category bar flapping and the list refusing to scroll, and
+    // reproduced in a browser as scrollTop 78 → 0 snapping one row back to
+    // four.
+    const offsetTopDesc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetTop')
+    const offsetHeightDesc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetHeight')
+    Object.defineProperty(HTMLElement.prototype, 'offsetTop', {
+      configurable: true,
+      get(this: HTMLElement) {
+        if (this.dataset.chip !== '1') return 0
+        const siblings = [...(this.parentElement?.children ?? [])]
+          .filter((el): el is HTMLElement => (el as HTMLElement).dataset?.chip === '1')
+        return Math.floor(siblings.indexOf(this) / 4) * 32
+      },
+    })
+    // The category wrap reports a real height; the scroller reports barely
+    // any overflow. That pairing is exactly the unstable case.
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+      configurable: true,
+      get(this: HTMLElement) { return this.className.includes('catsWrap') ? 90 : 26 },
+    })
+    const scrollHeightDesc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollHeight')
+    const clientHeightDesc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientHeight')
+    Object.defineProperty(HTMLElement.prototype, 'scrollHeight', { configurable: true, get: () => 560 })
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', { configurable: true, get: () => 520 })
+
+    let onChange: ((entry: { isIntersecting: boolean }) => void) | null = null
+    class FakeIntersectionObserver {
+      constructor(cb: (entries: Array<{ isIntersecting: boolean }>) => void) { onChange = entry => cb([entry]) }
+      observe(): void {}
+      disconnect(): void { onChange = null }
+    }
+    vi.stubGlobal('IntersectionObserver', FakeIntersectionObserver)
+
+    try {
+      stubFetch({ '/dsh-market/registry': { source: 'snapshot', registry: { ...REGISTRY, categories: CATS } } })
+      const { container } = render(<MarketSection {...props()} />)
+      await screen.findByText('dsh-loop')
+      const chipCount = () => container.querySelectorAll('[data-chip="1"]').length
+
+      fireEvent.click(screen.getByLabelText(re(en.catsMore)))
+      await waitFor(() => expect(screen.getByLabelText(re(en.catsLess))).toBeTruthy())
+      const openCount = chipCount()
+      expect(openCount).toBe(11)
+
+      // Scrolled past the sentinel — but only 40px of overflow against a
+      // 90px category row, so collapsing could not survive its own effect.
+      onChange!({ isIntersecting: false })
+      await waitFor(() => expect(screen.getByLabelText(re(en.catsLess))).toBeTruthy())
+      expect(chipCount(), 'a collapse that cannot hold must not happen at all').toBe(openCount)
+    } finally {
+      if (offsetTopDesc) Object.defineProperty(HTMLElement.prototype, 'offsetTop', offsetTopDesc)
+      if (offsetHeightDesc) Object.defineProperty(HTMLElement.prototype, 'offsetHeight', offsetHeightDesc)
+      // DELETE when there was no own descriptor, don't just skip: jsdom
+      // defines these on Element.prototype, so getOwnPropertyDescriptor on
+      // HTMLElement.prototype returns undefined and a `if (desc)` restore
+      // leaves the stub in place — poisoning every later test in the file.
+      if (scrollHeightDesc) Object.defineProperty(HTMLElement.prototype, 'scrollHeight', scrollHeightDesc)
+      else Reflect.deleteProperty(HTMLElement.prototype, 'scrollHeight')
+      if (clientHeightDesc) Object.defineProperty(HTMLElement.prototype, 'clientHeight', clientHeightDesc)
+      else Reflect.deleteProperty(HTMLElement.prototype, 'clientHeight')
+    }
+  })
+
   it('shrinks the open, multi-row category list to one row while the sticky header is pinned by scroll, and restores it once unstuck (#188)', async () => {
     // jsdom lays out nothing — every element reports offsetTop/offsetHeight
     // 0, which is exactly why the sibling "renders every category" test above
@@ -1904,7 +2034,18 @@ describe('category row expansion', () => {
         return Math.floor(siblings.indexOf(this) / 4) * 32
       },
     })
-    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', { configurable: true, get: () => 26 })
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+      configurable: true,
+      get(this: HTMLElement) { return this.className.includes('catsWrap') ? 90 : 26 },
+    })
+    // A genuinely long list. jsdom lays nothing out, so without these the
+    // scroller reports zero overflow — which the #266 guard correctly reads
+    // as "collapsing here could not hold" and skips, making this test about
+    // a case that no longer exists.
+    const scrollHeightDesc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollHeight')
+    const clientHeightDesc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientHeight')
+    Object.defineProperty(HTMLElement.prototype, 'scrollHeight', { configurable: true, get: () => 4000 })
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', { configurable: true, get: () => 520 })
 
     let onChange: ((entry: { isIntersecting: boolean }) => void) | null = null
     class FakeIntersectionObserver {
@@ -1958,6 +2099,10 @@ describe('category row expansion', () => {
     } finally {
       if (offsetTopDesc) Object.defineProperty(HTMLElement.prototype, 'offsetTop', offsetTopDesc)
       if (offsetHeightDesc) Object.defineProperty(HTMLElement.prototype, 'offsetHeight', offsetHeightDesc)
+      if (scrollHeightDesc) Object.defineProperty(HTMLElement.prototype, 'scrollHeight', scrollHeightDesc)
+      else Reflect.deleteProperty(HTMLElement.prototype, 'scrollHeight')
+      if (clientHeightDesc) Object.defineProperty(HTMLElement.prototype, 'clientHeight', clientHeightDesc)
+      else Reflect.deleteProperty(HTMLElement.prototype, 'clientHeight')
     }
   })
 })
