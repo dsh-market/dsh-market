@@ -221,6 +221,7 @@ describe('method & Allow contract (new routes)', () => {
   it.each([
     ['/dsh-market/check', 'POST', 'GET'],
     ['/dsh-market/bundle-order', 'GET', 'POST'],
+    ['/dsh-market/compatibility-evidence', 'POST', 'GET'],
   ])('answers 405 with an Allow header on %s', async (path, method, allow) => {
     const res = await hit(routes, path as string, { method: method as string, url: path as string })
     expect(res.status).toBe(405)

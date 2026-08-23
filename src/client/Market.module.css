@@ -53,6 +53,13 @@
 .topBtn{width:38px;height:38px;border-radius:99px;padding:0}
 .tag{border:1px solid var(--dsw-alias-border-l3,#d9dde3);color:var(--dsw-alias-label-secondary,#6b7280);border-radius:4px;flex-shrink:0;padding:1px 6px;font-size:11px;line-height:16px}
 .okState{font-size:12px;font-weight:600;color:var(--dsw-alias-state-success-primary,#16a34a);white-space:nowrap}
+.compatBadge{border:1px solid currentColor;border-radius:4px;flex-shrink:0;padding:1px 6px;font-size:11px;line-height:16px;font-weight:600;white-space:nowrap}
+.compatPass{color:var(--dsw-alias-state-success-primary,#16a34a)}
+.compatFail{color:var(--dsw-alias-state-error-primary,#dc2626)}
+.compatReview{color:var(--dsw-alias-label-secondary,#6b7280)}
+.compatDetail{display:flex;flex-direction:column;gap:4px;border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:8px;padding:9px 10px;margin-top:8px}
+.compatDetailHead{display:flex;align-items:center;gap:8px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#6b7280);flex-wrap:wrap}
+.compatBoundary{font-size:11px;line-height:17px;color:var(--dsw-alias-label-tertiary,#8b93a1)}
 .catsWrap{display:flex;gap:6px;flex-wrap:wrap;flex:1;min-width:0;align-items:center}
 .catsCollapsed{max-height:62px;overflow:hidden}
 .catsToggle.catsToggle{height:26px;min-height:26px;padding:0 6px;color:var(--dsw-alias-label-secondary,#6b7280)}

@@ -4,7 +4,9 @@
  */
 
 import type { DiagnosticReportV1 } from '../diagnostics.ts'
+import { normalizeCatalogUrl } from '../catalog-identity.ts'
 export type { SharedHostPackageDependencyFinding } from '../diagnostics.ts'
+export { normalizeCatalogUrl } from '../catalog-identity.ts'
 
 /** Localized text keyed by language ('zh' / 'en'). */
 export type LocalizedText = Record<string, string | undefined>
@@ -41,6 +43,94 @@ export interface Registry {
   count: number
   categories: Record<string, LocalizedText>
   plugins: RegistryPlugin[]
+}
+
+/** One non-stale exact environment observation from the optional Radar feed. */
+export interface CompatibilityEvidenceCell {
+  artifact: string
+  dshVersion: string
+  nodeMajor: number
+  executionPlane: string
+  profile: string
+  status: 'observed-compatible' | 'observed-incompatible' | 'needs-review'
+  observedAt: string
+  recheckDueAt: string
+  reason: string
+}
+
+/** Evidence attached to one exact catalog URL (including monorepo subpaths). */
+export interface CompatibilityEvidenceEntry {
+  catalogUrl: string
+  status: CompatibilityEvidenceCell['status']
+  cells: CompatibilityEvidenceCell[]
+  evidenceUrl: string
+}
+
+export interface CompatibilityEvidencePayload {
+  schema: 'dsh-market/compatibility-evidence/v1'
+  generatedAt: string
+  boundary: string
+  entries: CompatibilityEvidenceEntry[]
+}
+
+/** Strictly parse the host's already-filtered payload; bad optional data disappears. */
+export function compatibilityEvidenceEntries(value: unknown): CompatibilityEvidenceEntry[] {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return []
+  const payload = value as Partial<CompatibilityEvidencePayload>
+  if (payload.schema !== 'dsh-market/compatibility-evidence/v1' || !Array.isArray(payload.entries)) return []
+  const entries: CompatibilityEvidenceEntry[] = []
+  const identities = new Set<string>()
+  for (const candidate of payload.entries) {
+    if (candidate === null || typeof candidate !== 'object' || Array.isArray(candidate)) continue
+    const entry = candidate as Partial<CompatibilityEvidenceEntry>
+    if (typeof entry.catalogUrl !== 'string' || typeof entry.evidenceUrl !== 'string' || !Array.isArray(entry.cells)) continue
+    const catalogUrl = normalizeCatalogUrl(entry.catalogUrl)
+    if (catalogUrl === null || identities.has(catalogUrl)) continue
+    if (entry.status !== 'observed-compatible' && entry.status !== 'observed-incompatible' && entry.status !== 'needs-review') continue
+    const cells = entry.cells.filter((cell): cell is CompatibilityEvidenceCell => {
+      if (cell === null || typeof cell !== 'object') return false
+      if (typeof cell.observedAt !== 'string' || typeof cell.recheckDueAt !== 'string') return false
+      const observedAt = Date.parse(cell.observedAt)
+      const recheckDueAt = Date.parse(cell.recheckDueAt)
+      return typeof cell.artifact === 'string'
+        && typeof cell.dshVersion === 'string'
+        && Number.isSafeInteger(cell.nodeMajor)
+        && typeof cell.executionPlane === 'string'
+        && typeof cell.profile === 'string'
+        && (cell.status === 'observed-compatible' || cell.status === 'observed-incompatible' || cell.status === 'needs-review')
+        && Number.isFinite(observedAt)
+        && recheckDueAt > Date.now()
+        && observedAt <= recheckDueAt
+        && typeof cell.reason === 'string'
+    })
+    if (cells.length === 0) continue
+    try {
+      const evidence = new URL(entry.evidenceUrl)
+      const parts = evidence.pathname.split('/').filter(Boolean)
+      if (evidence.protocol !== 'https:' || evidence.hostname.toLowerCase() !== 'github.com'
+        || evidence.username !== '' || evidence.password !== ''
+        || parts[0]?.toLowerCase() !== 'micromilo' || parts[1]?.toLowerCase() !== 'upstream-radar') continue
+    } catch {
+      continue
+    }
+    const status = cells.some(cell => cell.status === 'observed-incompatible')
+      ? 'observed-incompatible'
+      : cells.some(cell => cell.status === 'needs-review')
+        ? 'needs-review'
+        : 'observed-compatible'
+    identities.add(catalogUrl)
+    entries.push({ catalogUrl, status, cells, evidenceUrl: entry.evidenceUrl })
+  }
+  return entries
+}
+
+/** Exact-only join; a repository root cannot inherit a monorepo child's result. */
+export function compatibilityForPlugin(
+  plugin: Pick<RegistryPlugin, 'url'>,
+  entries: readonly CompatibilityEvidenceEntry[],
+): CompatibilityEvidenceEntry | undefined {
+  const identity = normalizeCatalogUrl(plugin.url)
+  return identity === null ? undefined : entries.find(entry => entry.catalogUrl === identity)
 }
 
 /** Profile dependency map: package name → install spec. */

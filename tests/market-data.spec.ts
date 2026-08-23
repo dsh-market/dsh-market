@@ -8,12 +8,50 @@
 
 import { describe, expect, it } from 'vitest'
 import {
-  entryForDep, extractReadmeImages, formatCount, groupSwitchState, isInstalled, isMarketItself, looksTerminal, matchInstalledName, orderedCategories, pageItems, safeScreenshots, themePlugins, visiblePlugins, humanOutput} from '../src/client/market-data.ts'
-import type { RegistryPlugin } from '../src/client/market-data.ts'
+  compatibilityEvidenceEntries, compatibilityForPlugin, entryForDep, extractReadmeImages, formatCount, groupSwitchState, isInstalled, isMarketItself, looksTerminal, matchInstalledName, orderedCategories, pageItems, safeScreenshots, themePlugins, visiblePlugins, humanOutput} from '../src/client/market-data.ts'
+import type { CompatibilityEvidenceEntry, RegistryPlugin } from '../src/client/market-data.ts'
 
 function plugin(partial: Partial<RegistryPlugin>): RegistryPlugin {
   return { name: 'x', owner: 'o', url: 'https://github.com/o/x', category: 'tool', ...partial }
 }
+
+describe('compatibility evidence catalog identity', () => {
+  const cell = {
+    artifact: 'child@1.0.0', dshVersion: '0.1.1-rc.2', nodeMajor: 22,
+    executionPlane: 'headless', profile: 'headless', status: 'observed-compatible' as const,
+    observedAt: '2026-08-23T00:00:00.000Z', recheckDueAt: '2099-08-30T00:00:00.000Z', reason: 'loaded',
+  }
+  const entry: CompatibilityEvidenceEntry = {
+    catalogUrl: 'https://github.com/example/mono/tree/main/packages/child',
+    status: 'observed-compatible', cells: [cell],
+    evidenceUrl: 'https://github.com/MicroMilo/upstream-radar/blob/main/feeds/dsh-plugin-compatibility.md',
+  }
+
+  it('joins the exact monorepo child and never its root or sibling', () => {
+    expect(compatibilityForPlugin(plugin({ url: 'https://github.com/Example/Mono/tree/main/packages/child/' }), [entry])).toBe(entry)
+    expect(compatibilityForPlugin(plugin({ url: 'https://github.com/example/mono' }), [entry])).toBeUndefined()
+    expect(compatibilityForPlugin(plugin({ url: 'https://github.com/example/mono/tree/main/packages/sibling' }), [entry])).toBeUndefined()
+  })
+
+  it('drops stale host payloads before a badge can be rendered', () => {
+    const stale = { ...entry, cells: [{ ...cell, recheckDueAt: '2020-01-01T00:00:00.000Z' }] }
+    expect(compatibilityEvidenceEntries({
+      schema: 'dsh-market/compatibility-evidence/v1', entries: [stale], generatedAt: '', boundary: '',
+    })).toEqual([])
+  })
+
+  it('recomputes status after a cell expires instead of preserving a stale failure', () => {
+    const mixed = {
+      ...entry,
+      status: 'observed-incompatible' as const,
+      cells: [cell, { ...cell, status: 'observed-incompatible' as const, recheckDueAt: '2020-01-01T00:00:00.000Z' }],
+    }
+    const parsed = compatibilityEvidenceEntries({
+      schema: 'dsh-market/compatibility-evidence/v1', entries: [mixed], generatedAt: '', boundary: '',
+    })
+    expect(parsed[0]?.status).toBe('observed-compatible')
+  })
+})
 
 describe('looksTerminal', () => {
   it('does not label a web plugin as terminal-only when the description says a CLI is not required', () => {

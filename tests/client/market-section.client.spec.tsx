@@ -34,6 +34,9 @@ function stubFetch(overrides: Record<string, unknown> = {}) {
     fetchCalls.push({ path, method, body })
     const payload =
       path === '/dsh-market/registry' ? { source: 'live', registry: REGISTRY }
+      : path === '/dsh-market/compatibility-evidence' ? {
+          compatibility: { schema: 'dsh-market/compatibility-evidence/v1', generatedAt: '', boundary: '', entries: [] },
+        }
       : path === '/dsh-market/installed' ? { profile: 'web', installed: {}, live: [], disabled: [], groups: {}, groupOrder: [] }
       : path === '/dsh-market/status' ? { active: false, pnpm: true, boot: 'boot-1', restart: true, installed: {} }
       : path === '/dsh-market/updates' ? { updates: {} }
@@ -101,6 +104,47 @@ describe('MarketSection (jsdom)', () => {
     expect(screen.getByText('dsh-notify')).toBeTruthy()
     // Theme entries carry an Install button too (discover tab shows all).
     expect(screen.getAllByRole('button', { name: en.install }).length).toBeGreaterThanOrEqual(3)
+  })
+
+  it('shows non-blocking exact compatibility evidence on the matching card and install detail', async () => {
+    stubFetch({
+      '/dsh-market/compatibility-evidence': {
+        compatibility: {
+          schema: 'dsh-market/compatibility-evidence/v1',
+          generatedAt: '2026-08-23T00:00:00.000Z',
+          boundary: 'not a security review',
+          entries: [{
+            catalogUrl: 'https://github.com/ALICE/dsh-loop/',
+            status: 'observed-compatible',
+            evidenceUrl: 'https://github.com/MicroMilo/upstream-radar/blob/main/feeds/dsh-plugin-compatibility.md',
+            cells: [{
+              artifact: 'dsh-loop@1.2.3', dshVersion: '0.1.1-rc.2', nodeMajor: 22,
+              executionPlane: 'headless', profile: 'headless', status: 'observed-compatible',
+              observedAt: '2026-08-23T00:00:00.000Z', recheckDueAt: '2099-08-30T00:00:00.000Z',
+              reason: 'installed and loaded in a disposable runner',
+            }],
+          }],
+        },
+      },
+    })
+
+    render(<MarketSection {...props()} />)
+    const name = await screen.findByText('dsh-loop')
+    const card = name.closest('div[class*="card"]') as HTMLElement
+    expect(await within(card).findByText(en.compatObserved)).toBeTruthy()
+
+    fireEvent.click(within(card).getByRole('button', { name: en.install }))
+    expect(await screen.findByText('Observed on DSH 0.1.1-rc.2 / Node 22')).toBeTruthy()
+    expect(screen.getByText(en.compatBoundary)).toBeTruthy()
+    expect(screen.getByRole('link', { name: en.compatEvidence }).getAttribute('href')).toContain('upstream-radar')
+  })
+
+  it('keeps the catalog usable when optional compatibility evidence fails', async () => {
+    stubFetch({ '/dsh-market/compatibility-evidence': { __status: 502, error: 'offline' } })
+    render(<MarketSection {...props()} />)
+    expect(await screen.findByText('dsh-loop')).toBeTruthy()
+    expect(screen.getAllByRole('button', { name: en.install }).length).toBeGreaterThanOrEqual(3)
+    expect(screen.queryByText(en.compatObserved)).toBeNull()
   })
 
   it('groups Backup & Restore and Diagnostics under an Advanced tab, not as top-level peers', async () => {

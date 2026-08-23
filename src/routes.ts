@@ -12,6 +12,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { forgetCatalog, loadRegistry } from './registry.ts'
+import { loadCompatibilityEvidence } from './compatibility-evidence.ts'
 import {
   cleanHotDir, hotMount, hotUnmount, listHotMounts,
   mountClientOnlyDeps, purgeMarketState, readMarketState, writeMarketState,
@@ -760,6 +761,27 @@ export function mountMarketRoutes(
           }
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    }),
+
+    host.webServer.register({
+      kind: 'exact',
+      path: '/dsh-market/compatibility-evidence',
+      handler: async (request, response) => {
+        if (request.method !== 'GET') {
+          response.writeHead(405, { allow: 'GET' })
+          response.end()
+          return
+        }
+        try {
+          sendJson(response, 200, { compatibility: await loadCompatibilityEvidence() })
+        } catch (error) {
+          // Optional and intentionally separate from /registry: Radar being
+          // slow or unavailable cannot empty the market or gate an install.
+          const message = error instanceof Error ? error.message : String(error)
+          logEvent('warn', 'compatibility-evidence', `optional feed unavailable: ${message}`)
+          sendJson(response, 502, { error: message })
         }
       },
     }),

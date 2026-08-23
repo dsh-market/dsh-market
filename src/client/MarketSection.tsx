@@ -39,11 +39,11 @@ import { clearSettled, drop, enqueue, patch as patchRecord, recordForUrl } from 
 import type { OperationRecord } from './operations.ts'
 import { Diagnostics } from './Diagnostics.tsx'
 import {
-  avatarColor, entryForDep, githubProxyInUse, githubUrl, groupSwitchState, humanOutput, isInstalled, looksTerminal, matchInstalledName, orderedCategories,
+  avatarColor, compatibilityEvidenceEntries, compatibilityForPlugin, entryForDep, githubProxyInUse, githubUrl, groupSwitchState, humanOutput, isInstalled, looksTerminal, matchInstalledName, orderedCategories,
   formatCount, pageItems, pluginName, pluginScreenshots, readSession, safeScreenshots, setGithubProxy, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
 } from './market-data.ts'
 import type {
-ActivationInfo, ActivationState, GistExportResult, InstalledMap, InstalledRepoHints, InstalledRepoIdentities, MarketStatus, Registry, RegistryPlugin,
+ActivationInfo, ActivationState, CompatibilityEvidenceEntry, GistExportResult, InstalledMap, InstalledRepoHints, InstalledRepoIdentities, MarketStatus, Registry, RegistryPlugin,
   SharedHostPackageDependencyFinding, SortDir, SortField, ThemeSnapshot, TimeRange, Translate, UpdateStatus,
 } from './market-data.ts'
 
@@ -101,6 +101,50 @@ function activationMeta(state: ActivationState, t: Translate): { label: string; 
   if (state === 'broken') return { label: t('stateBroken'), dot: 'error' }
   if (state === 'disabled') return { label: t('stateDisabled'), dot: 'warning' }
   return { label: '—', dot: 'warning' }
+}
+
+function evidenceLabel(entry: CompatibilityEvidenceEntry, t: Translate): string {
+  if (entry.status === 'observed-compatible') return t('compatObserved')
+  if (entry.status === 'observed-incompatible') return t('compatIncompatible')
+  return t('compatReview')
+}
+
+function CompatibilityEvidenceBadge({ entry, t }: { entry: CompatibilityEvidenceEntry; t: Translate }) {
+  const cell = entry.cells.find(item => item.status === entry.status) ?? entry.cells[0]!
+  const className = entry.status === 'observed-compatible'
+    ? `${css.compatBadge} ${css.compatPass}`
+    : entry.status === 'observed-incompatible'
+      ? `${css.compatBadge} ${css.compatFail}`
+      : `${css.compatBadge} ${css.compatReview}`
+  const detail = t('compatObservedOn')
+    .replace('{0}', cell.dshVersion)
+    .replace('{1}', String(cell.nodeMajor))
+  return (
+    <Tooltip label={detail} side="top">
+      <span className={className}>{evidenceLabel(entry, t)}</span>
+    </Tooltip>
+  )
+}
+
+function CompatibilityEvidenceDetail({ entry, t }: { entry: CompatibilityEvidenceEntry; t: Translate }) {
+  const cell = entry.cells.find(item => item.status === entry.status) ?? entry.cells[0]!
+  return (
+    <div className={css.compatDetail}>
+      <div className={css.compatDetailHead}>
+        <CompatibilityEvidenceBadge entry={entry} t={t} />
+        <span>{t('compatObservedOn').replace('{0}', cell.dshVersion).replace('{1}', String(cell.nodeMajor))}</span>
+      </div>
+      <div className={css.spec}>{cell.artifact} · {cell.profile}/{cell.executionPlane}</div>
+      <div className={css.spec}>
+        {t('compatObservedAt').replace('{0}', cell.observedAt.slice(0, 10)).replace('{1}', cell.recheckDueAt.slice(0, 10))}
+      </div>
+      <div className={css.spec}>{cell.reason}</div>
+      <div className={css.compatBoundary}>
+        {t('compatBoundary')}{' '}
+        <a className={css.src} href={entry.evidenceUrl} target="_blank" rel="noreferrer">{t('compatEvidence')}</a>
+      </div>
+    </div>
+  )
 }
 
 function phaseLabel(phase: NonNullable<MarketStatus['phase']>, t: Translate): string {
@@ -788,6 +832,7 @@ export function MarketSection(props: MarketSectionProps) {
   )
   const [data, setData] = useState<Registry | null>(cachedRegistry)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [compatibilityEvidence, setCompatibilityEvidence] = useState<CompatibilityEvidenceEntry[]>([])
   const [installed, setInstalledState] = useState<InstalledMap>(cachedInstalled ?? {})
   const setInstalled = useCallback((value: InstalledMap) => { cachedInstalled = value; setInstalledState(value) }, [])
   const [repoIdentities, setRepoIdentitiesState] = useState<InstalledRepoIdentities>(cachedRepoIdentities ?? {})
@@ -1116,6 +1161,17 @@ export function MarketSection(props: MarketSectionProps) {
 
   useEffect(() => {
     void loadCatalog()
+    // Independent of the curated registry. Failure is intentionally silent:
+    // optional evidence must never turn a healthy catalog into an empty one.
+    fetch('/dsh-market/compatibility-evidence', { cache: 'no-store' })
+      .then(async (res) => res.ok ? await res.json() as unknown : null)
+      .then((body) => {
+        const wrapped = body !== null && typeof body === 'object' && !Array.isArray(body)
+          ? (body as { compatibility?: unknown }).compatibility
+          : undefined
+        setCompatibilityEvidence(compatibilityEvidenceEntries(wrapped))
+      })
+      .catch(() => {})
     fetch('/dsh-market/status', { cache: 'no-store' })
       .then(res => res.json())
       .then(status => {
@@ -2171,12 +2227,17 @@ export function MarketSection(props: MarketSectionProps) {
       ? data?.plugins.find(r => r.name === p.replacement)
       : undefined
 
+  /** Exact catalog URL only — repository-root fallback breaks monorepos. */
+  const evidenceOf = (plugin: RegistryPlugin): CompatibilityEvidenceEntry | undefined =>
+    compatibilityForPlugin(plugin, compatibilityEvidence)
+
   const pluginCard = (p: RegistryPlugin) => {
     const desc = (p.description && (p.description[lang] || p.description.en)) || ''
     const done = doneUrls.includes(p.url) || hotUrls.includes(p.url)
     const already = isInstalled(p, installed, repoIdentities, data?.plugins, repoHints)
     const busy = busyUrl === p.url
     const replacement = replacementOf(p)
+    const evidence = evidenceOf(p)
     // The card reflects its own latest operation. Without this a rejected
     // install leaves the card looking untouched, and pressing Install again
     // is the obvious next move — which is how the same clash gets hit twice.
@@ -2256,6 +2317,7 @@ export function MarketSection(props: MarketSectionProps) {
           <span className={css.tag}>
             {(data!.categories[p.category] && (data!.categories[p.category]![lang] || data!.categories[p.category]!.en)) || p.category}
           </span>
+          {evidence !== undefined && <CompatibilityEvidenceBadge entry={evidence} t={t} />}
           {/* Published date and a source link used to live here too — both
               redundant now that the title itself opens the repo, and the
               date/tag pair alone was long enough in English to wrap onto its
@@ -2299,6 +2361,7 @@ export function MarketSection(props: MarketSectionProps) {
     const mounted = (skins.includes(instName) || bootEntries.some(e => e.id === instName)) && !effectiveDisabledSet.has(instName)
     const desc = (p.description && (p.description[lang] || p.description.en)) || ''
     const replacement = replacementOf(p)
+    const evidence = evidenceOf(p)
     return (
       <div key={p.url} className={css.card}>
         <div className={css.row1}>
@@ -2346,6 +2409,7 @@ export function MarketSection(props: MarketSectionProps) {
               redundant now that the title itself opens the repo, and the
               date/tag pair alone was long enough in English to wrap onto its
               own line, splitting one card's footer into two visual rows. */}
+          {evidence !== undefined && <CompatibilityEvidenceBadge entry={evidence} t={t} />}
           <span className={css.grow} />
           {removingName === instName
             ? <Button variant="outline" size="sm" disabled>{t('uninstalling')}</Button>
@@ -3467,6 +3531,10 @@ export function MarketSection(props: MarketSectionProps) {
             </span>
           </div>
           {confirming.added && <div className={css.metaInline}>{t('published') + ' ' + confirming.added}</div>}
+          {(() => {
+            const evidence = evidenceOf(confirming)
+            return evidence === undefined ? null : <CompatibilityEvidenceDetail entry={evidence} t={t} />
+          })()}
           {/* The Modal primitive's own `description` prop is sized for a
               one-line subtitle under the title — a full plugin description
               rendered there read as an oversized heading, not body text
