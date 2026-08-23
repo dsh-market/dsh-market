@@ -16,7 +16,10 @@ export const RADAR_FEED_SCHEMA = 'upstream-radar.dsh-directory-compatibility-fee
 export const RADAR_FEED_URL = 'https://raw.githubusercontent.com/MicroMilo/upstream-radar/main/feeds/dsh-plugin-compatibility.json'
 export const RADAR_PROJECT_URL = 'https://github.com/MicroMilo/upstream-radar'
 
-const FETCH_TIMEOUT_MS = 3_000
+// Separate from the catalog request, so waiting here never delays browsing or
+// installing. Eight seconds survived the same long-path connection where a
+// measured 3-second cap intermittently hid a healthy 15 KB feed.
+const FETCH_TIMEOUT_MS = 8_000
 const MAX_FEED_BYTES = 1_000_000
 const MAX_PLUGINS = 5_000
 const MAX_CELLS_PER_PLUGIN = 32
