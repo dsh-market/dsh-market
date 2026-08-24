@@ -18,6 +18,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type
 import { Button, IconChevronDownOutline14, IconChevronRightOutline14, IconLoadingOutline16, IconRefreshOutline14, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
 import css from './Market.module.css'
 import type { Translate } from './market-data.ts'
+import { PresetPanel } from './preset-panel.tsx'
 import { SnapshotPanel } from './snapshot-panel.tsx'
 
 /** Mirrors BundleLayer in src/check.ts. */
@@ -216,6 +217,7 @@ export function Diagnostics(props: { t: Translate }) {
   const [orderOpen, setOrderOpen] = useState(false)
   const [explainOpen, setExplainOpen] = useState(false)
   const [snapOpen, setSnapOpen] = useState(false)
+  const [presetOpen, setPresetOpen] = useState(false)
   const [fixMsg, setFixMsg] = useState<string | null>(null)
   /** The built AI-fix prompt when the clipboard path failed — rendered as a
    * selectable text block so the user can still copy it manually. */
@@ -889,6 +891,13 @@ export function Diagnostics(props: { t: Translate }) {
       </CollapsibleSection>
 
       {/* issue #98 phase 3: snapshots & rollback */}
+      <CollapsibleSection title={t('presetSection')} open={presetOpen} onToggle={() => setPresetOpen(o => !o)}>
+        {/* The ordering DRAFT, not the last-reported order: a preset must
+            capture the arrangement on screen, or saving right after a reorder
+            stores the composition the user just moved away from. */}
+        <PresetPanel t={t} open={presetOpen} bundleOrder={order} onRefresh={refresh} />
+      </CollapsibleSection>
+
       <CollapsibleSection title={t('snapSection')} open={snapOpen} onToggle={() => setSnapOpen(o => !o)}>
         <SnapshotPanel t={t} open={snapOpen} onRefresh={refresh} />
       </CollapsibleSection>

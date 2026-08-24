@@ -28,6 +28,7 @@ import { assessProfile, classifyPeer, introducedDuplicateNames, introducedRisks,
 import { runningAgentIds, type AgentsLookup } from './agents.ts'
 import { analyzeProfile, type DuplicateName } from './check.ts'
 import { applyBundleOrder, mergeOrder, readBundleRules, readBundleStack, validateOrder } from './order.ts'
+import { applyPreset, deletePreset, listPresets, previewPreset, savePreset } from './presets.ts'
 import { createProfileSnapshot, DEFAULT_MAX_SNAPSHOTS, deleteSnapshot, listSnapshots, restoreSnapshot } from './snapshot.ts'
 import { trialValidate } from './trial.ts'
 import { codeloadAllowBuildsKey, findCatalogEntryForLocal, findInstalledAlias, gitAllowBuildsKey, installTargetFor, isLocalSpec, NPM_NAME_RE, repoOfTarget, restoreBlockedByWorkspace, restoreTargetForLocal, workspaceProtocolDeps } from './sources.ts'
@@ -971,6 +972,73 @@ export function mountMarketRoutes(
               logEvent('error', 'bundle-order', 'write failed AND automatic rollback failed')
             }
           }
+          sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    }),
+
+    // Issue #98 phase 3: named plugin presets (bundle order + disable list).
+    host.webServer.register({
+      kind: 'exact',
+      path: '/dsh-market/presets',
+      handler: async (request, response) => {
+        if (request.method === 'GET') {
+          sendJson(response, 200, { presets: listPresets(activeProfileDir) })
+          return
+        }
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'GET, POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) {
+          sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        try {
+          // save carries the FULL community order + disabled list, which can
+          // exceed the 4KiB default (CJK names are 3 bytes/char).
+          const body = (await readJsonBody(request, 256 * 1024)) as { action?: unknown; name?: unknown; bundleOrder?: unknown; disabled?: unknown } | null
+          if (body === null || typeof body !== 'object') {
+            sendJson(response, 400, { error: 'JSON body is required / 需要 JSON body' })
+            return
+          }
+          const name = body.name
+          // Preview is a pure read; save/apply/delete write presets.json,
+          // package.json and state.json, so they take the direct-write lock —
+          // a concurrent pnpm run or another direct write must not interleave
+          // (issue #98 analysis: write-route mutual exclusion).
+          if (body.action === 'preview') {
+            const previewed = previewPreset(activeProfileDir, name)
+            sendJson(response, previewed.ok ? 200 : 422, previewed)
+            return
+          }
+          await withMutationLock(response, 'write', async () => {
+            switch (body.action) {
+              case 'save': {
+                const saved = savePreset(activeProfileDir, name, body.bundleOrder, body.disabled)
+                sendJson(response, saved.ok ? 200 : 400, saved)
+                return
+              }
+              case 'apply': {
+                const applied = applyPreset(activeProfileDir, name, maxSnapshots)
+                if (applied.ok) {
+                  invalidateUpdates()
+                  refreshMarketState()
+                }
+                sendJson(response, applied.ok ? 200 : 422, applied)
+                return
+              }
+              case 'delete': {
+                const deleted = deletePreset(activeProfileDir, name)
+                sendJson(response, deleted.ok ? 200 : 400, deleted)
+                return
+              }
+              default:
+                sendJson(response, 400, { error: 'action must be save | preview | apply | delete / action 必须是 save | preview | apply | delete' })
+            }
+          })
+        } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
         }
       },

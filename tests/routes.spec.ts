@@ -7,9 +7,11 @@
  * Allow, origin, body-validation, 422 and write-lock contracts of the 5 new
  * routes are pinned without spawning a process.
  *
- * The 5 new routes (vs. the branch base): /dsh-market/check, /bundle-order,
- * /snapshots, /restore-snapshot, /delete-snapshot. The presets routes ship in
- * a later stacked PR.
+ * The 6 routes covered here: /dsh-market/check, /bundle-order, /snapshots,
+ * /restore-snapshot, /delete-snapshot and /presets. Presets have no import
+ * or export of their own — Backup & Restore already carries a profile off
+ * the machine, and a second export in another tab would only make the user
+ * choose between two overlapping file formats.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -217,13 +219,14 @@ function writeStandardProfile(): void {
 
 // --- tests ------------------------------------------------------------------
 
-describe('method & Allow contract (5 new routes)', () => {
+describe('method & Allow contract (6 new routes)', () => {
   it.each([
     ['/dsh-market/check', 'POST', 'GET'],
     ['/dsh-market/bundle-order', 'GET', 'POST'],
     ['/dsh-market/snapshots', 'DELETE', 'GET, POST'],
     ['/dsh-market/restore-snapshot', 'GET', 'POST'],
     ['/dsh-market/delete-snapshot', 'GET', 'POST'],
+    ['/dsh-market/presets', 'DELETE', 'GET, POST'],
   ])('answers 405 with an Allow header on %s', async (path, method, allow) => {
     const res = await hit(routes, path as string, { method: method as string, url: path as string })
     expect(res.status).toBe(405)
@@ -237,6 +240,7 @@ describe('origin enforcement (mutating routes)', () => {
     ['/dsh-market/snapshots', undefined],
     ['/dsh-market/restore-snapshot', { snapshot: 'snapshot-x' }],
     ['/dsh-market/delete-snapshot', { snapshot: 'snapshot-x' }],
+    ['/dsh-market/presets', { action: 'save', name: 'p' }],
   ]
 
   it.each(mutating)('rejects a cross-origin POST %s with 403', async (path, body) => {
@@ -297,6 +301,22 @@ describe('body validation — 400 contracts', () => {
       expect(res.status, `body ${JSON.stringify(body)}`).toBe(400)
       expect(String(jsonBody(res).error)).toMatch(pattern)
     }
+  })
+
+  it('presets refuses a null body, a missing action and an unknown action', async () => {
+    const nullBody = await hit(routes, '/dsh-market/presets', post('/dsh-market/presets', null))
+    expect(nullBody.status).toBe(400)
+    const noAction = await hit(routes, '/dsh-market/presets', post('/dsh-market/presets', {}))
+    expect(noAction.status).toBe(400)
+    const badAction = await hit(routes, '/dsh-market/presets', post('/dsh-market/presets', { action: 'explode' }))
+    expect(badAction.status).toBe(400)
+    expect(String(jsonBody(badAction).error)).toMatch(/save \| preview \| apply \| delete/)
+  })
+
+  it('previewing a preset that does not exist is 422, not a 500', async () => {
+    const res = await hit(routes, '/dsh-market/presets', post('/dsh-market/presets', { action: 'preview', name: 'ghost' }))
+    expect(res.status).toBe(422)
+    expect(jsonBody(res)).toMatchObject({ ok: false })
   })
 
   it('delete-snapshot refuses a missing id and a traversal-shaped id', async () => {
