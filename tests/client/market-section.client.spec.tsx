@@ -107,6 +107,29 @@ describe('MarketSection (jsdom)', () => {
     expect(screen.getAllByRole('button', { name: en.install }).length).toBeGreaterThanOrEqual(3)
   })
 
+  /** #256: the title has always opened the repo, but `color:inherit` with no
+   * underline meant nothing said so until the cursor was already on it. The
+   * link now carries a standing mark and names its destination, so it is
+   * findable without hovering every card to look for one. */
+  it('gives every card title a visible, named link to its repository', async () => {
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    const links = screen.getAllByTitle(en.repoLink)
+    for (const plugin of REGISTRY.plugins) {
+      const own = links.filter(link => link.getAttribute('href') === plugin.url)
+      expect(own.length).toBeGreaterThan(0)
+      for (const link of own) {
+        expect(link.getAttribute('target')).toBe('_blank')
+        expect(link.getAttribute('rel')).toBe('noreferrer')
+        // The mark rides the title's own line — a second link on a row of
+        // its own would cost every card head the height the grid was tuned
+        // for.
+        expect(link.querySelector('svg')).toBeTruthy()
+        expect(link.textContent).toContain(plugin.name)
+      }
+    }
+  })
+
   it('groups Backup & Restore and Diagnostics under an Advanced tab, not as top-level peers', async () => {
     render(<MarketSection {...props()} />)
     await screen.findByText('dsh-loop')

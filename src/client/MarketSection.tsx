@@ -2437,8 +2437,9 @@ export function MarketSection(props: MarketSectionProps) {
               to be just the plugin — and lets two authors ship a plugin of
               the same name without either card needing a qualifier. */}
           <div style={{ minWidth: 0 }}>
-            <a className={`${css.nm} ${css.nmLink}`} href={p.url} target="_blank" rel="noreferrer" title={p.name}>
+            <a className={`${css.nm} ${css.nmLink}`} href={p.url} target="_blank" rel="noreferrer" title={t('repoLink')}>
               {pluginName(p.name)}
+              <IconLinkOutline14 size={12} className={css.repoMark} />
               {p.deprecated === true && <span className={css.depBadge}>{t('deprecatedBadge')}</span>}
             </a>
             <div className={css.byline}>
@@ -2560,8 +2561,9 @@ export function MarketSection(props: MarketSectionProps) {
         <div className={css.themeCardBody}>
           <div className={css.themeCardHead}>
             <div className={css.themeIdentity}>
-              <a className={`${css.nm} ${css.nmLink}`} href={p.url} target="_blank" rel="noreferrer" title={p.name}>
+              <a className={`${css.nm} ${css.nmLink}`} href={p.url} target="_blank" rel="noreferrer" title={t('repoLink')}>
                 {pluginName(p.name)}
+                <IconLinkOutline14 size={12} className={css.repoMark} />
               </a>
               <div className={css.byline}>
                 <OwnerAvatar name={p.name} owner={p.owner || ''} />
