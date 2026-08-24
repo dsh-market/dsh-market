@@ -296,6 +296,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			packagesDone: "已处理 {0} 个包",
 			updatedLive: "✓ 已更新，已生效",
 			partialNote: "已取消，部分变更已写入",
+			reconciledNote: "已移除，但 pnpm 收尾时报错（通常是文件被占用）；配置已同步，无需重试",
 			actWhy: "为什么未生效？",
 			tabList: "列表",
 			tabGroups: "分组",
@@ -671,6 +672,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			packagesDone: "{0} packages processed",
 			updatedLive: "✓ Updated — live",
 			partialNote: "Cancelled — some changes were applied",
+			reconciledNote: "Removed, but pnpm reported an error while finishing up (usually a locked file). The profile is already reconciled — no retry needed.",
 			actWhy: "Why not live?",
 			tabList: "List",
 			tabGroups: "Groups",
@@ -5034,6 +5036,12 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						if (body.cancelled === true) {
 							refreshInstalled();
 							if (body.partial === true) setInstallError(t("partialNote"));
+							return;
+						}
+						if (body.reconciled === true) {
+							if (!body.hot) setRemovedCount((n) => n + 1);
+							refreshInstalled();
+							setInstallError(t("reconciledNote"));
 							return;
 						}
 						const text = (v) => typeof v === "string" ? v : v && typeof v.text === "string" ? v.text : v == null ? "" : JSON.stringify(v);

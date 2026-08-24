@@ -122,6 +122,11 @@ export function restoreManifestDeps(profile: string, snapshot: Record<string, st
  * no longer exists on disk. The next boot then fails to activate the ghost
  * dependency. When disk truth says the package is gone, this finishes the
  * removal the CLI could not. Every other manifest field is untouched.
+ *
+ * Written atomically, unlike restoreManifestDeps above. This one runs only
+ * after something already went wrong mid-uninstall, so it is the worst place
+ * in the codebase to leave a half-written package.json: the profile would go
+ * from "one ghost dependency" to "will not parse".
  * @returns true when either list still mentioned the package.
  */
 export function dropFromManifest(profile: string, name: string, explicitDir?: string): boolean {
@@ -143,7 +148,7 @@ export function dropFromManifest(profile: string, name: string, explicitDir?: st
     touched = true
   }
   if (!touched) return false
-  writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`)
+  writeManifestAtomic(file, manifest)
   return true
 }
 
