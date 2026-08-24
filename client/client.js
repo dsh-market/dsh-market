@@ -5496,7 +5496,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 										href: p.url,
 										target: "_blank",
 										rel: "noreferrer",
-										title: t("repoLink"),
+										title: p.name,
+										"aria-label": `${p.name} — ${t("repoLink")}`,
 										children: [
 											pluginName(p.name),
 											/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconLinkOutline14, {
@@ -5662,7 +5663,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 											href: p.url,
 											target: "_blank",
 											rel: "noreferrer",
-											title: t("repoLink"),
+											title: p.name,
+											"aria-label": `${p.name} — ${t("repoLink")}`,
 											children: [pluginName(p.name), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconLinkOutline14, {
 												size: 12,
 												className: Market_module_css_default.repoMark

@@ -114,9 +114,8 @@ describe('MarketSection (jsdom)', () => {
   it('gives every card title a visible, named link to its repository', async () => {
     render(<MarketSection {...props()} />)
     await screen.findByText('dsh-loop')
-    const links = screen.getAllByTitle(en.repoLink)
     for (const plugin of REGISTRY.plugins) {
-      const own = links.filter(link => link.getAttribute('href') === plugin.url)
+      const own = screen.getAllByLabelText(`${plugin.name} — ${en.repoLink}`)
       expect(own.length).toBeGreaterThan(0)
       for (const link of own) {
         expect(link.getAttribute('target')).toBe('_blank')
@@ -126,6 +125,12 @@ describe('MarketSection (jsdom)', () => {
         // for.
         expect(link.querySelector('svg')).toBeTruthy()
         expect(link.textContent).toContain(plugin.name)
+        // The tooltip still carries the RAW catalog identity. For a compound
+        // entry (owner#packages/x) the card shows only the short name, so
+        // this attribute is the one place the full identity is readable —
+        // 1.23.0 replaced it with the link wording and lost it.
+        expect(link.getAttribute('title')).toBe(plugin.name)
+        expect(link.getAttribute('href')).toBe(plugin.url)
       }
     }
   })
