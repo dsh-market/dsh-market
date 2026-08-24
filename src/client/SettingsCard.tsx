@@ -1,8 +1,10 @@
 /**
  * The market's card on the plugin configuration page (dsh >= 0.1.0-rc.7).
  *
- * It manages the market ITSELF — version, update, remove. That is the whole
- * scope on purpose: this page is where a user goes to deal with a plugin,
+ * It manages the market ITSELF — version, update, remove — when the current
+ * profile owns the dependency. A host-provided market keeps only its version
+ * display and download-region controls. This page is where a user goes to deal
+ * with a plugin,
  * and "which version am I on / update it / get rid of it" is the part of
  * that anybody can act on without knowing how DSH is put together.
  *
@@ -70,6 +72,8 @@ interface SelfStatus {
   regions: Region[]
   /** The region came from the network check, not from the user. */
   regionAuto: boolean
+  /** Whether the profile package manager owns this market installation. */
+  selfManaged: boolean
 }
 
 /** The subset of `/dsh-market/status` this card reads. */
@@ -82,6 +86,7 @@ interface StatusBody {
   regions?: string[]
   regionAuto?: boolean
   githubProxy?: string | null
+  selfManaged?: boolean
 }
 
 /** What `/dsh-market/updates` says about the market's own row. */
@@ -141,6 +146,7 @@ function readStatus(body: StatusBody): SelfStatus {
     // the row tells the truth about that host rather than hiding.
     regions: regions.length > 0 ? regions : REGIONS,
     regionAuto: body.regionAuto === true,
+    selfManaged: body.selfManaged !== false,
   }
 }
 
@@ -205,7 +211,7 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
         if (live) {
           setStatus({
             version: null, restart: false, channel: 'stable', channels: ['stable', 'beta'],
-            region: 'global', regions: REGIONS, regionAuto: false,
+            region: 'global', regions: REGIONS, regionAuto: false, selfManaged: true,
           })
         }
       }
@@ -350,7 +356,7 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
   const body = phase === 'removed'
     ? row(t('setSelfRemoved'), t('setSelfRemovedHint'), null)
     : h(Fragment, null,
-        row(
+        status?.selfManaged === true ? row(
           // An older offer is not an update, and calling it one would have
           // the user click "更新" to go backwards. It IS what picking an
           // earlier channel asked for, so it is offered — under its own name.
@@ -374,8 +380,8 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
               : update?.channelSwitch != null
                 ? h(Button, { variant: 'outline', size: 'sm', disabled: busy, onClick: () => onUpdate() }, t('setChannelSwitch'))
                 : null,
-        ),
-        row(t('setChannel'), t(CHANNEL_HINT[status?.channel ?? 'stable']),
+        ) : null,
+        status?.selfManaged === true ? row(t('setChannel'), t(CHANNEL_HINT[status.channel]),
           h('div', { className: css.setSeg },
             // Drawn from what the SERVER says is available, so the control
             // can never offer a channel the route would refuse.
@@ -391,7 +397,7 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
               title: id === 'dev' ? t('setChannelDevHint') : undefined,
               onClick: () => { onChannel(id) },
             }, t(CHANNEL_LABEL[id]))),
-          )),
+          )) : null,
         // Above the channel row and below the update row: this is about
         // getting plugins at all, which is the market's whole job, while the
         // channel is about which build of the market itself arrives.
@@ -414,7 +420,7 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
               onClick: () => { onRegion(id) },
             }, t(REGION_LABEL[id]))),
           )),
-        row(t('setSelfRemove'), t('setSelfRemoveHint'),
+        status?.selfManaged === true ? row(t('setSelfRemove'), t('setSelfRemoveHint'),
           phase === 'confirming' || busy
             ? null
             : h(Button, {
@@ -423,8 +429,8 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
                 className: css.setDanger,
                 disabled: busy,
                 onClick: () => { setPhase('confirming') },
-              }, t('setSelfRemove'))),
-        phase === 'confirming' || busy
+              }, t('setSelfRemove'))) : null,
+        status?.selfManaged === true && (phase === 'confirming' || busy)
           ? h('div', { className: css.setConfirm },
               h('div', { className: css.setHint }, t('setSelfConfirm')),
               h('label', { className: css.setCheck },

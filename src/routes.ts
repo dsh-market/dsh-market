@@ -1414,6 +1414,7 @@ export function mountMarketRoutes(
           return
         }
         await dropStaleHotMounts()
+        const installed = readInstalled(config.profile, activeProfileDir)
         sendJson(response, 200, {
           active: progress.active,
           target: progress.target,
@@ -1455,7 +1456,8 @@ export function mountMarketRoutes(
           // Named so the UI can say WHY the button is gone. A blank
           // "no restart button" is the state #229 reported as broken.
           supervisor: detectedSupervisor(),
-          installed: readInstalled(config.profile, activeProfileDir),
+          selfManaged: installed.dshmarket !== undefined || installed['dsh-market'] !== undefined,
+          installed,
         })
       },
     }),

@@ -47,6 +47,20 @@ export interface Registry {
 /** Profile dependency map: package name → install spec. */
 export type InstalledMap = Record<string, string>
 
+/**
+ * Add active profile Bundles as presence-only catalog entries.
+ *
+ * The returned map is for catalog matching only. Update and uninstall flows
+ * must keep using the dependency-only map because a Bundle supplied by the
+ * dsh installation is not owned by the profile package manager.
+ */
+export function installedForCatalog(installed: InstalledMap, bundles: readonly string[]): InstalledMap {
+  return Object.fromEntries([
+    ...bundles.map(name => [name, '*'] as const),
+    ...Object.entries(installed),
+  ])
+}
+
 /** Strong repo identities discovered for local link:/file: dependencies (#141). */
 export type InstalledRepoIdentities = Record<string, string[]>
 
@@ -71,6 +85,8 @@ export interface UpdateStatus {
 export interface MarketStatus {
   /** The market's own version — rendered in the heading so screenshots carry it. */
   version?: string
+  /** Whether the profile package manager owns the market dependency. */
+  selfManaged?: boolean
   /**
    * Prefix to put in front of github.com URLs the BROWSER loads, or null to
    * address them directly. Resolved by the server from the download region.
