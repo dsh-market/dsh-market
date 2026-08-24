@@ -71,11 +71,9 @@ describe('installTargetFor', () => {
     expect(installTargetFor({ url: 'https://github.com/o/r', npm: 'dsh-loop', tarball })).toBe('dsh-loop')
     expect(installTargetFor({ url: 'https://github.com/o/r', npm: '@scope/pkg' })).toBe('@scope/pkg')
     expect(installTargetFor({ url: 'https://github.com/o/r', tarball })).toBe(tarball)
-    expect(installTargetFor({
-      url: 'https://github.com/o/r',
-      npm: 'evil;rm -rf',
-      tarball: 'https://release-assets.githubusercontent.com/github-production-release-asset/file.tar.gz',
-    })).toBe('https://release-assets.githubusercontent.com/github-production-release-asset/file.tar.gz')
+    // A malformed npm name is not a way past the tarball rules: it fails the
+    // name check, and the archive still has to be this repo's own.
+    expect(installTargetFor({ url: 'https://github.com/o/r', npm: 'evil;rm -rf', tarball })).toBe(tarball)
     expect(installTargetFor({ url: 'https://github.com/o/r/tree/main/packages/x' }))
       .toBe('github:o/r#path:/packages/x')
     expect(installTargetFor({ url: 'https://github.com/o/r' })).toBe('github:o/r')
@@ -92,6 +90,31 @@ describe('installTargetFor', () => {
     ]) {
       expect(installTargetFor({ url: 'https://github.com/o/r', tarball: rejected })).toBe('github:o/r')
     }
+  })
+
+  /** The npm branch is repo-verified against name squatting; the tarball
+   * branch has to be too, or a trusted-looking entry installs a stranger's
+   * archive. Each of these is a real archive at a real GitHub Release — the
+   * only thing wrong with it is whose. */
+  it('refuses a release archive that is not the entry repo own', () => {
+    for (const foreign of [
+      'https://github.com/evil/repo/releases/download/v1/p.tgz',
+      'https://github.com/o/other/releases/download/v1/p.tgz',
+      'https://github.com/evil/r/releases/download/v1/p.tgz',
+      // No owner or repo anywhere in the path, so nothing to bind to.
+      'https://objects.githubusercontent.com/whatever/x.tgz',
+      'https://release-assets.githubusercontent.com/github-production-release-asset/file.tar.gz',
+    ]) {
+      expect(installTargetFor({ url: 'https://github.com/o/r', tarball: foreign })).toBe('github:o/r')
+    }
+  })
+
+  it('accepts the entry own release archive whatever the case, as GitHub does', () => {
+    const mixed = 'https://github.com/O/R/releases/download/v1/p.tgz'
+    expect(installTargetFor({ url: 'https://github.com/o/r', tarball: mixed })).toBe(mixed)
+    // A monorepo entry still binds on the repo, not the subpath.
+    const own = 'https://github.com/o/r/releases/latest/download/x.tgz'
+    expect(installTargetFor({ url: 'https://github.com/o/r/tree/main/packages/x', tarball: own })).toBe(own)
   })
 })
 
