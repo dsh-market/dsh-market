@@ -1107,6 +1107,8 @@ export function MarketSection(props: MarketSectionProps) {
   const [updatingName, setUpdatingName] = useState<string | null>(null)
   // Plugin blocked by pnpm's fresh-release safety wait; arms the update-now button.
   const [staleName, setStaleName] = useState<string | null>(null)
+  // Local link:/file: restore: the red banner asks before swapping to the catalog.
+  const [restoreName, setRestoreName] = useState<string | null>(null)
 
   /** Determinate percent parsed from pnpm's Progress line, when available. */
   const [progressPct, setProgressPct] = useState<number | null>(null)
@@ -1115,7 +1117,7 @@ export function MarketSection(props: MarketSectionProps) {
    * approve-and-retry (#6; updates in #69). Exactly one of `plugin`
    * (retry installs it) / `updateName` (retry re-runs the update) is set.
    */
-  const [buildsSkipped, setBuildsSkipped] = useState<{ plugin?: RegistryPlugin; updateName?: string; names: string[] } | null>(null)
+  const [buildsSkipped, setBuildsSkipped] = useState<{ plugin?: RegistryPlugin; updateName?: string; names: string[]; restore?: boolean } | null>(null)
   const [updatingAll, setUpdatingAll] = useState(false)
   const [updatedNames, setUpdatedNames] = useState<string[]>([])
   const [hotUrls, setHotUrls] = useState<string[]>([])
@@ -1844,7 +1846,7 @@ export function MarketSection(props: MarketSectionProps) {
       .catch(() => {})
   }, [])
 
-  const doUpdate = useCallback((name: string, force = false) => {
+  const doUpdate = useCallback((name: string, force = false, restore = false) => {
     setInstallError(null)
     setActivationWarnings([])
     // Only THIS row's stale marker is cleared. "Update all" walks the list
@@ -1852,6 +1854,7 @@ export function MarketSection(props: MarketSectionProps) {
     // earlier release-age failure lost its retry button and only the last
     // one kept it — the rest failed silently with no way forward (#255).
     setStaleName(prev => (prev === name ? null : prev))
+    setRestoreName(prev => (prev === name ? null : prev))
     setUpdatingName(name)
     updateIdleStrikes.current = 0
     // Mirror the install flow's dshm-pending marker: closing the config page
@@ -1869,7 +1872,7 @@ export function MarketSection(props: MarketSectionProps) {
     return fetch('/dsh-market/update', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(force ? { name, force: true } : { name }),
+      body: JSON.stringify({ name, ...(force ? { force: true } : {}), ...(restore ? { restore: true } : {}) }),
     })
       .then(res => res.json().then(body => ({ status: res.status, body })))
       .then(({ status, body }) => {
@@ -1910,12 +1913,12 @@ export function MarketSection(props: MarketSectionProps) {
           // Blocked build scripts during an update (#69): same
           // approve-and-retry banner as the install flow, retrying the update.
           if (Array.isArray(body.ignoredBuilds) && body.ignoredBuilds.length > 0) {
-            setBuildsSkipped({ updateName: name, names: body.ignoredBuilds.map(String) })
+            setBuildsSkipped({ updateName: name, names: body.ignoredBuilds.map(String), restore })
           }
           const text = (v: unknown) => typeof v === 'string' ? v : (v && typeof (v as any).text === 'string') ? (v as any).text : v == null ? '' : JSON.stringify(v)
           const detail = text(body.error) || humanOutput([text(body.stderr), text(body.stdout)].filter(Boolean).join('\n')) || ('exit ' + body.exitCode)
           setRecords(list => patchRecord(list, updateRecordId, { state: 'failed', reason: detail.trim().slice(-600) }))
-          setInstallError(t('updateFail') + ': ' + name + ' — ' + detail.trim().slice(-600))
+          setInstallError((restore ? t('restoreFail') : t('updateFail')) + ': ' + name + ' — ' + detail.trim().slice(-600))
         }
       })
       .catch(() => {
@@ -1925,6 +1928,21 @@ export function MarketSection(props: MarketSectionProps) {
         // of declaring a false failure — mirroring the install flow's catch.
       })
   }, [refreshInstalled, t])
+
+  const askRestore = useCallback((name: string) => {
+    const spec = installed[name]
+    const entry = data === null || spec === undefined
+      ? undefined
+      : entryForDep(data.plugins, name, String(spec), repoIdentities[name], repoHints[name])
+    setStaleName(null)
+    if (entry === undefined) {
+      setRestoreName(null)
+      setInstallError(t('restoreNoCatalog'))
+      return
+    }
+    setRestoreName(name)
+    setInstallError(t('restoreHint'))
+  }, [data, installed, repoHints, repoIdentities, t])
 
   const doUseSkin = useCallback((name: string) => {
     setInstallError(null)
@@ -2994,7 +3012,7 @@ export function MarketSection(props: MarketSectionProps) {
             size="sm"
             disabled={busyUrl !== null}
             onClick={() => {
-              const { plugin, updateName, names } = buildsSkipped
+              const { plugin, updateName, names, restore } = buildsSkipped
               setBuildsSkipped(null)
               fetch('/dsh-market/approve-builds', {
                 method: 'POST',
@@ -3005,7 +3023,7 @@ export function MarketSection(props: MarketSectionProps) {
                 .then((body) => {
                   if (!body.ok) setInstallError(String(body.error || 'approve failed'))
                   else if (plugin !== undefined) doInstall(plugin)
-                  else if (updateName !== undefined) doUpdate(updateName)
+                  else if (updateName !== undefined) doUpdate(updateName, false, restore === true)
                 })
                 .catch(error => setInstallError(String(error)))
             }}
@@ -3049,6 +3067,9 @@ export function MarketSection(props: MarketSectionProps) {
           <div className={css.staleAction}>
             {staleName !== null && (
               <Button size="sm" onClick={() => doUpdate(staleName, true)}>{t('updateNow')}</Button>
+            )}
+            {restoreName !== null && (
+              <Button size="sm" onClick={() => doUpdate(restoreName, false, true)}>{t('restoreContinue')}</Button>
             )}
             {/* The banner text told users to export the log; now it IS the button (#84). */}
             <Button
@@ -3540,6 +3561,7 @@ export function MarketSection(props: MarketSectionProps) {
                             const missing = pendingBackup !== null && !installedFiles.includes(name)
                             const entry = data === null ? undefined : entryForDep(data.plugins, name, String(spec), repoIdentities[name], repoHints[name])
                             const status = updates[name]
+                            const localDev = /^(?:link|file):/i.test(String(spec)) || status?.kind === 'linked'
                             const act = activations[name]
                             const meta = act !== undefined ? activationMeta(act.state, t) : null
                             const version = status && status.version ? 'v' + status.version : ''
@@ -3714,20 +3736,30 @@ export function MarketSection(props: MarketSectionProps) {
                                               onClick={() => doUpdate(name)}
                                             >{t('update')}</Button>
                                           )
-                                        : status && status.kind === 'linked'
+                                        : localDev
                                           ? <span className={css.metaTag} title={t('linkedDev')}>{t('linkedDev')}</span>
                                           : <span className={css.metaTag} title={t('upToDate')}>{t('upToDate')}</span>}
                                 {!missing && name !== 'dsh-market' && name !== 'dshmarket' && (
                                   removingName === name
                                     ? <Button variant="outline" size="sm" className={css.dangerBtn} disabled>{t('uninstalling')}</Button>
                                     : (
-                                        <Button
-                                          variant="outline"
-                                          size="sm"
-                                          className={css.dangerBtn}
-                                          disabled={removingName !== null || busyUrl !== null || updatingName !== null}
-                                          onClick={() => setRemoveConfirm(name)}
-                                        >{t('uninstall')}</Button>
+                                        <>
+                                          {localDev && (
+                                            <Button
+                                              variant="outline"
+                                              size="sm"
+                                              disabled={removingName !== null || busyUrl !== null || updatingName !== null}
+                                              onClick={() => askRestore(name)}
+                                            >{t('restore')}</Button>
+                                          )}
+                                          <Button
+                                            variant="outline"
+                                            size="sm"
+                                            className={css.dangerBtn}
+                                            disabled={removingName !== null || busyUrl !== null || updatingName !== null}
+                                            onClick={() => setRemoveConfirm(name)}
+                                          >{t('uninstall')}</Button>
+                                        </>
                                       )
                                 )}
                                 </span>

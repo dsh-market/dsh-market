@@ -28,6 +28,10 @@ const fake = vi.hoisted(() => ({
   npm: {} as Record<string, { versions: Record<string, { manifest: unknown; artifacts?: string[]; artifactContents?: Record<string, string> }>; latest: string }>,
   /** github:owner/repo target → packages it installs (or a junk collection) */
   repos: {} as Record<string, { name: string; manifest: unknown; artifacts?: string[]; junkChildren?: string[]; lockCommit?: string; byCommit?: Record<string, { manifest: unknown; artifacts?: string[] }> }>,
+  /** Prebuilt Release archive URL → the package it installs (#250). A third
+   * target shape beside npm names and github: shortcuts, and the only one
+   * that must never have a dist-tag appended to it. */
+  tarballs: {} as Record<string, { name: string; manifest: unknown; artifacts?: string[] }>,
   /** Simulate pnpm minimumReleaseAge: adds resolve to the ALREADY INSTALLED version, exit 0. */
   staleUpdates: false,
   /** Fail the next N mutating commands with the hoist-pattern drift error. */
@@ -200,6 +204,15 @@ vi.mock('../src/dsh-cli.ts', () => {
       }
       return ok
     }
+    if (/^https?:/.test(target)) {
+      const prebuilt = fake.tarballs[target]
+      if (prebuilt === undefined) {
+        return { exitCode: 1, timedOut: false, stdout: '', stderr: `fake dsh: unknown archive ${target}`, cancelled: false }
+      }
+      writeDep(prebuilt.name, target)
+      writePkg(prebuilt.name, prebuilt.manifest, prebuilt.artifacts)
+      return ok
+    }
     const name = target.replace(/@(latest|[\d^~].*)$/, '')
     const pkg = fake.npm[name]
     if (pkg === undefined) return { exitCode: 1, timedOut: false, stdout: '', stderr: `fake dsh: unknown npm package ${name}`, cancelled: false }
@@ -322,6 +335,9 @@ const REGISTRY = {
     { name: 'dsh-usage-stats', owner: 'a2', url: 'https://github.com/a2/dsh-usage-stats', category: 'tool', npm: null, description: {}, install: '', added: '' },
     { name: 'dsh-blue-whale', owner: 'o', url: 'https://github.com/o/blue-whale', category: 'tool', npm: null, description: {}, install: '', added: '' },
     { name: 'dsh-patchy', owner: 'o', url: 'https://github.com/o/dsh-patchy', category: 'tool', npm: null, description: {}, install: '', added: '' },
+    // Carries a prebuilt Release archive (#250): its install target is a
+    // URL, not an npm name and not a github: shortcut.
+    { name: 'dsh-prebuilt', owner: 'o', url: 'https://github.com/o/dsh-prebuilt', category: 'tool', npm: null, tarball: 'https://github.com/o/dsh-prebuilt/releases/download/v1.0.0/dsh-prebuilt.tgz', description: {}, install: '', added: '' },
     // Monorepo siblings: distinct plugins sharing one repo.
     { name: 'mono#plug-a', owner: 'm', url: 'https://github.com/m/mono/tree/main/packages/plug-a', category: 'tool', npm: null, description: {}, install: '', added: '' },
     { name: 'mono#plug-b', owner: 'm', url: 'https://github.com/m/mono/tree/main/packages/plug-b', category: 'tool', npm: null, description: {}, install: '', added: '' },
@@ -1389,6 +1405,179 @@ describe('theme flow', () => {
   it('rejects use-skin for non-theme or uninstalled packages', async () => {
     expect((await bed.dispatch('POST', '/dsh-market/use-skin', { name: 'dsh-loop' })).status).toBe(400)
     expect((await bed.dispatch('POST', '/dsh-market/use-skin', { name: 'ghost' })).status).toBe(400)
+  })
+})
+
+describe('local-dev restore flow', () => {
+  it('refuses a plain update on a link: spec, and restore:true swaps it to the catalog', async () => {
+    fake.npm['dsh-loop'] = {
+      latest: '1.0.0',
+      versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } },
+    }
+    await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
+    fake.npm['dsh-loop'].latest = '1.2.0'
+    fake.npm['dsh-loop'].versions['1.2.0'] = { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] }
+    const manifestPath = join(fake.profileDir, 'package.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { dependencies: Record<string, string> }
+    manifest.dependencies['dsh-loop'] = 'link:../dsh-loop-dev'
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+
+    const blocked = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+    expect(blocked.status).toBe(400)
+    expect(String(blocked.json.error)).toMatch(/locally linked/)
+    expect(installedSpec('dsh-loop')).toBe('link:../dsh-loop-dev')
+
+    const restored = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop', restore: true })
+    expect(restored.status, String(restored.json.error ?? '')).toBe(200)
+    expect(restored.json.ok).toBe(true)
+    expect(installedSpec('dsh-loop')).toBe('^1.2.0')
+    expect(fake.calls.some(call => call[0] === 'add' && call.includes('dsh-loop@latest'))).toBe(true)
+  })
+
+  it('keeps #path: when restoring a monorepo checkout onto a collection-root catalog row', async () => {
+    fake.repos['github:o/theme-a'] = { name: 'theme-a', manifest: { dsh: {}, main: 'index.js' }, artifacts: ['index.js'] }
+    const checkout = join(fake.profileDir, '..', 'theme-a-dev')
+    mkdirSync(checkout, { recursive: true })
+    writeFileSync(join(checkout, 'package.json'), JSON.stringify({
+      name: 'theme-a',
+      version: '1.0.0',
+      main: 'index.js',
+      dsh: {},
+      repository: { type: 'git', url: 'https://github.com/o/theme-a.git', directory: 'packages/skin' },
+    }))
+    writeFileSync(join(checkout, 'index.js'), '')
+    const manifestPath = join(fake.profileDir, 'package.json')
+    writeFileSync(manifestPath, JSON.stringify({
+      dependencies: { 'theme-a': `link:${checkout}` },
+      dsh: { profile: { bundles: ['theme-a'] } },
+    }))
+    mkdirSync(join(fake.profileDir, 'node_modules', 'theme-a'), { recursive: true })
+    writeFileSync(join(fake.profileDir, 'node_modules', 'theme-a', 'package.json'), JSON.stringify({
+      name: 'theme-a', version: '1.0.0', main: 'index.js', dsh: {},
+      repository: { type: 'git', url: 'https://github.com/o/theme-a.git', directory: 'packages/skin' },
+    }))
+
+    await bed.dispatch('POST', '/dsh-market/update', { name: 'theme-a', restore: true })
+    expect(fake.calls.some(call => call[0] === 'add' && call.some(arg => String(arg).includes('github:o/theme-a#path:/packages/skin')))).toBe(true)
+  })
+
+  it('refuses restore when the checkout still uses workspace: dependencies', async () => {
+    fake.repos['github:o/theme-a'] = { name: 'theme-a', manifest: { dsh: {}, main: 'index.js' }, artifacts: ['index.js'] }
+    const checkout = join(fake.profileDir, '..', 'theme-a-ws')
+    mkdirSync(checkout, { recursive: true })
+    writeFileSync(join(checkout, 'package.json'), JSON.stringify({
+      name: 'theme-a',
+      version: '1.0.0',
+      main: 'index.js',
+      dsh: {},
+      dependencies: { '@dsh-cowork/core': 'workspace:^' },
+      repository: { type: 'git', url: 'https://github.com/o/theme-a.git', directory: 'packages/skin' },
+    }))
+    writeFileSync(join(fake.profileDir, 'package.json'), JSON.stringify({
+      dependencies: { 'theme-a': `link:${checkout}` },
+      dsh: { profile: { bundles: ['theme-a'] } },
+    }))
+    mkdirSync(join(fake.profileDir, 'node_modules', 'theme-a'), { recursive: true })
+    writeFileSync(join(fake.profileDir, 'node_modules', 'theme-a', 'package.json'), JSON.stringify({
+      name: 'theme-a',
+      version: '1.0.0',
+      dependencies: { '@dsh-cowork/core': 'workspace:^' },
+      repository: { type: 'git', url: 'https://github.com/o/theme-a.git', directory: 'packages/skin' },
+    }))
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'theme-a', restore: true })
+    expect(r.status).toBe(400)
+    expect(String(r.json.error)).toMatch(/workspace/)
+    expect(installedSpec('theme-a')).toBe(`link:${checkout}`)
+  })
+
+  it('returns 400 when restore cannot find a catalog entry', async () => {
+    writeFileSync(join(fake.profileDir, 'package.json'), JSON.stringify({
+      dependencies: { 'mystery-plug': 'link:../mystery' },
+    }))
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'mystery-plug', restore: true })
+    expect(r.status).toBe(400)
+    expect(String(r.json.error)).toMatch(/No catalog entry/)
+  })
+
+  /** #250 landed a third target shape — a prebuilt Release archive URL —
+   * after this restore path was written. It is neither an npm name nor a
+   * `github:` shortcut, so the dist-tag branch would have handed pnpm
+   * `https://…/dsh-prebuilt.tgz@latest`. Only a bare npm name takes a tag. */
+  it('restores onto a prebuilt Release tarball without gluing a dist-tag to the URL', async () => {
+    writeFileSync(join(fake.profileDir, 'package.json'), JSON.stringify({
+      dependencies: { 'dsh-prebuilt': 'link:../dsh-prebuilt-dev' },
+    }))
+    mkdirSync(join(fake.profileDir, 'node_modules', 'dsh-prebuilt'), { recursive: true })
+    writeFileSync(join(fake.profileDir, 'node_modules', 'dsh-prebuilt', 'package.json'), JSON.stringify({
+      name: 'dsh-prebuilt', version: '1.0.0', main: 'index.js', dsh: {},
+      repository: { type: 'git', url: 'https://github.com/o/dsh-prebuilt.git' },
+    }))
+    fake.tarballs['https://github.com/o/dsh-prebuilt/releases/download/v1.0.0/dsh-prebuilt.tgz'] = {
+      name: 'dsh-prebuilt',
+      manifest: { name: 'dsh-prebuilt', version: '1.0.0', main: 'index.js', dsh: {} },
+      artifacts: ['index.js'],
+    }
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-prebuilt', restore: true })
+    expect(r.status, String(r.json.error ?? '')).toBe(200)
+    const added = fake.calls.filter(call => call[0] === 'add').flat().map(String)
+    expect(added.some(arg => arg === 'https://github.com/o/dsh-prebuilt/releases/download/v1.0.0/dsh-prebuilt.tgz')).toBe(true)
+    expect(added.some(arg => arg.includes('.tgz@'))).toBe(false)
+  })
+
+  it('refuses restore:true when the installed spec is not local', async () => {
+    writeFileSync(join(fake.profileDir, 'package.json'), JSON.stringify({
+      dependencies: { 'dsh-loop': '^1.0.0' },
+    }))
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop', restore: true })
+    expect(r.status).toBe(400)
+    expect(String(r.json.error)).toMatch(/Restore only applies/)
+    expect(installedSpec('dsh-loop')).toBe('^1.0.0')
+  })
+
+  it('refuses restore for the market itself even when locally linked', async () => {
+    writeFileSync(join(fake.profileDir, 'package.json'), JSON.stringify({
+      dependencies: { dshmarket: 'link:../dshmarket-dev' },
+    }))
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'dshmarket', restore: true })
+    expect(r.status).toBe(400)
+    expect(String(r.json.error)).toMatch(/never restores itself/)
+    expect(installedSpec('dshmarket')).toBe('link:../dshmarket-dev')
+  })
+
+  it('rolls a #path: restore back to the local spec when the catalog build introduces risks', async () => {
+    fake.repos['github:o/theme-a'] = {
+      name: 'theme-a',
+      manifest: { dsh: {}, main: 'index.js', peerDependencies: { '@deepseek-ai/dsh-settings': '^0.1.0-rc.7' } },
+      artifacts: ['index.js'],
+    }
+    const checkout = join(fake.profileDir, '..', 'theme-a-risk')
+    mkdirSync(checkout, { recursive: true })
+    writeFileSync(join(checkout, 'package.json'), JSON.stringify({
+      name: 'theme-a', version: '1.0.0', main: 'index.js', dsh: {},
+      repository: { type: 'git', url: 'https://github.com/o/theme-a.git', directory: 'packages/skin' },
+    }))
+    writeFileSync(join(checkout, 'index.js'), '')
+    writeFileSync(join(fake.profileDir, 'package.json'), JSON.stringify({
+      dependencies: { 'theme-a': `link:${checkout}` },
+    }))
+    mkdirSync(join(fake.profileDir, 'node_modules', 'theme-a'), { recursive: true })
+    writeFileSync(join(fake.profileDir, 'node_modules', 'theme-a', 'package.json'), JSON.stringify({
+      name: 'theme-a', version: '1.0.0', main: 'index.js', dsh: {},
+      repository: { type: 'git', url: 'https://github.com/o/theme-a.git', directory: 'packages/skin' },
+    }))
+    const hostPeerDir = join(fake.profileDir, 'node_modules', '@deepseek-ai', 'dsh-settings')
+    mkdirSync(hostPeerDir, { recursive: true })
+    writeFileSync(join(hostPeerDir, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh-settings', version: '0.1.0-rc.6' }))
+
+    const restored = await bed.dispatch('POST', '/dsh-market/update', { name: 'theme-a', restore: true })
+    expect(restored.status, String(restored.json.error ?? '')).toBe(200)
+    expect(restored.json.compatibility).toMatchObject({ code: 'soft-incompatible' })
+    expect(installedSpec('theme-a')).toContain('#path:/packages/skin')
+
+    const rollback = await bed.dispatch('POST', '/dsh-market/rollback', { rollbackId: restored.json.compatibility.rollbackId })
+    expect(rollback.status).toBe(200)
+    expect(rollback.json.rolledBack).toBe(true)
+    expect(installedSpec('theme-a')).toBe(`link:${checkout}`)
   })
 })
 

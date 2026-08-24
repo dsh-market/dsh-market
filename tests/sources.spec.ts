@@ -5,8 +5,8 @@
 
 import { describe, expect, it } from 'vitest'
 import {
-  findInstalledAlias, gitAllowBuildsKey, githubRemoteIdentities, githubRepoIdentities, githubRepoIdentity,
-  installTargetFor, parseGitHubRemote, parseGitHubRepository, parseSourceUrl, repoOf,
+  findCatalogEntryForLocal, findInstalledAlias, gitAllowBuildsKey, githubRemoteIdentities, githubRepoIdentities, githubRepoIdentity,
+  installTargetFor, isLocalSpec, parseGitHubRemote, parseGitHubRepository, parseSourceUrl, repoOf, restoreBlockedByWorkspace, restoreTargetForLocal, workspaceProtocolDeps,
 } from '../src/sources.ts'
 
 describe('parseSourceUrl', () => {
@@ -131,6 +131,84 @@ describe('gitAllowBuildsKey (#68/#69)', () => {
     expect(gitAllowBuildsKey('dsh-loop', '^1.2.0')).toBeNull()
     expect(gitAllowBuildsKey('dsh-loop', 'link:../dev')).toBeNull()
     expect(gitAllowBuildsKey('dsh-loop', '')).toBeNull()
+  })
+})
+
+describe('findCatalogEntryForLocal', () => {
+  const plugins = [
+    { name: 'dsh-loop', npm: 'dsh-loop', url: 'https://github.com/o/dsh-loop' },
+    { name: 'dsh-vision-bridge', npm: null, url: 'https://github.com/ximengxiaolan/dsh-vision-bridge' },
+    { name: 'dsh-vision-bridge', npm: null, url: 'https://github.com/GXX182/dsh-vision-bridge' },
+  ]
+
+  it('matches a unique name when there is no repo evidence', () => {
+    expect(findCatalogEntryForLocal(plugins, 'dsh-loop')?.url).toBe('https://github.com/o/dsh-loop')
+  })
+
+  it('lets a declared repo identity pick the right same-named fork', () => {
+    expect(findCatalogEntryForLocal(plugins, 'dsh-vision-bridge', ['gxx182/dsh-vision-bridge'])?.url)
+      .toBe('https://github.com/GXX182/dsh-vision-bridge')
+  })
+
+  it('does not guess among same-named forks without identities or a matching hint', () => {
+    expect(findCatalogEntryForLocal(plugins, 'dsh-vision-bridge')).toBeNull()
+  })
+
+  it('uses a git-origin hint only to break a same-name tie', () => {
+    expect(findCatalogEntryForLocal(plugins, 'dsh-vision-bridge', [], ['ximengxiaolan/dsh-vision-bridge'])?.url)
+      .toBe('https://github.com/ximengxiaolan/dsh-vision-bridge')
+  })
+
+  it('does not let a collection-root identity select a sibling /tree/ entry', () => {
+    const mono = [
+      { name: 'mono#plug-a', npm: null, url: 'https://github.com/m/mono/tree/main/packages/plug-a' },
+      { name: 'mono#plug-b', npm: null, url: 'https://github.com/m/mono/tree/main/packages/plug-b' },
+      { name: 'mono', npm: null, url: 'https://github.com/m/mono' },
+    ]
+    // A bare root identity cannot say WHICH package the checkout is, so it
+    // must not fall through to the collection-root row while /tree/ siblings
+    // exist — guessing would install the wrong plugin.
+    expect(findCatalogEntryForLocal(mono, 'plug-a', ['m/mono'])).toBeNull()
+    expect(findCatalogEntryForLocal(mono, 'plug-a', ['m/mono#path:/packages/plug-b'])?.name).toBe('mono#plug-b')
+    expect(findCatalogEntryForLocal(mono, 'plug-a', ['m/mono', 'm/mono#path:/packages/plug-a'])?.name).toBe('mono#plug-a')
+  })
+
+  it('lets a bare root identity select a root row whose name matches the checkout', () => {
+    const mono = [
+      { name: 'mono#plug-a', npm: null, url: 'https://github.com/m/mono/tree/main/packages/plug-a' },
+      { name: 'mono-cli', npm: null, url: 'https://github.com/m/mono' },
+    ]
+    expect(findCatalogEntryForLocal(mono, 'mono-cli', ['m/mono'])?.name).toBe('mono-cli')
+  })
+})
+
+describe('restoreTargetForLocal', () => {
+  it('appends repository.directory onto a collection-root catalog target', () => {
+    const entry = { url: 'https://github.com/Jesse-njx/dsh-cowork', npm: null }
+    expect(restoreTargetForLocal(entry, ['jesse-njx/dsh-cowork', 'jesse-njx/dsh-cowork#path:/packages/dsh']))
+      .toBe('github:Jesse-njx/dsh-cowork#path:/packages/dsh')
+  })
+
+  it('does not invent a path for a single-package catalog row', () => {
+    expect(restoreTargetForLocal({ url: 'https://github.com/o/dsh-loop', npm: 'dsh-loop' }, ['o/dsh-loop']))
+      .toBe('dsh-loop')
+  })
+
+  it('treats Link:/FILE: as local specs', () => {
+    expect(isLocalSpec('link:../x')).toBe(true)
+    expect(isLocalSpec('FILE:/tmp/x.tgz')).toBe(true)
+    expect(isLocalSpec('^1.0.0')).toBe(false)
+  })
+
+  it('blocks git restores when the checkout still has workspace: dependencies', () => {
+    expect(workspaceProtocolDeps({ dependencies: { '@dsh-cowork/core': 'workspace:^' } })).toEqual(['@dsh-cowork/core'])
+    expect(workspaceProtocolDeps({
+      optionalDependencies: { 'optional-peer': 'workspace:*' },
+      peerDependencies: { 'peer-peer': 'workspace:^1.0.0' },
+    })).toEqual(['optional-peer', 'peer-peer'])
+    expect(workspaceProtocolDeps({ dependencies: {}, devDependencies: { dev: 'workspace:*' } })).toEqual([])
+    expect(restoreBlockedByWorkspace('github:Jesse-njx/dsh-cowork#path:/packages/dsh', ['@dsh-cowork/core'])).toBe(true)
+    expect(restoreBlockedByWorkspace('@dsh-cowork/plugin', ['@dsh-cowork/core'])).toBe(false)
   })
 })
 

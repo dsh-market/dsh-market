@@ -126,7 +126,12 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			updateNow: "立即更新",
 			updateFail: "更新失败",
 			upToDate: "已是最新",
-			linkedDev: "本地开发链接",
+			linkedDev: "本地开发",
+			restore: "恢复",
+			restoreHint: "会卸载本地版本，重新安装线上版本，并保持更新检测。无法回退，请二次确认。",
+			restoreContinue: "继续更新",
+			restoreNoCatalog: "精选目录里没有这个插件，无法恢复到线上版本。可以卸载本地版，或继续用本地开发。",
+			restoreFail: "恢复失败",
 			exportLog: "导出日志",
 			exportingLog: "导出中…",
 			exportedLog: "日志已导出：dsh-market-log.txt，请将其附在 issue 中",
@@ -521,7 +526,12 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			updateNow: "Update now",
 			updateFail: "Update failed",
 			upToDate: "Up to date",
-			linkedDev: "linked (dev)",
+			linkedDev: "local",
+			restore: "Restore",
+			restoreHint: "This will uninstall the local version, reinstall the catalog version, and keep update checks. This cannot be undone — please confirm again.",
+			restoreContinue: "Continue update",
+			restoreNoCatalog: "This plugin is not in the curated catalog, so it cannot be restored. Uninstall the local copy, or keep developing it locally.",
+			restoreFail: "Restore failed",
 			exportLog: "Export log",
 			exportingLog: "Exporting…",
 			exportedLog: "Log exported: dsh-market-log.txt — please attach it to your issue",
@@ -4427,6 +4437,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const [updates, setUpdates] = (0, react.useState)({});
 			const [updatingName, setUpdatingName] = (0, react.useState)(null);
 			const [staleName, setStaleName] = (0, react.useState)(null);
+			const [restoreName, setRestoreName] = (0, react.useState)(null);
 			/** Determinate percent parsed from pnpm's Progress line, when available. */
 			const [progressPct, setProgressPct] = (0, react.useState)(null);
 			/**
@@ -5112,10 +5123,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					body: "{}"
 				}).catch(() => {});
 			}, []);
-			const doUpdate = (0, react.useCallback)((name, force = false) => {
+			const doUpdate = (0, react.useCallback)((name, force = false, restore = false) => {
 				setInstallError(null);
 				setActivationWarnings([]);
 				setStaleName((prev) => prev === name ? null : prev);
+				setRestoreName((prev) => prev === name ? null : prev);
 				setUpdatingName(name);
 				updateIdleStrikes.current = 0;
 				sessionStorage.setItem("dshm-updating", JSON.stringify({ name }));
@@ -5129,10 +5141,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				return fetch("/dsh-market/update", {
 					method: "POST",
 					headers: { "content-type": "application/json" },
-					body: JSON.stringify(force ? {
+					body: JSON.stringify({
 						name,
-						force: true
-					} : { name })
+						...force ? { force: true } : {},
+						...restore ? { restore: true } : {}
+					})
 				}).then((res) => res.json().then((body) => ({
 					status: res.status,
 					body
@@ -5175,7 +5188,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						if (body.stale === true) setStaleName(name);
 						if (Array.isArray(body.ignoredBuilds) && body.ignoredBuilds.length > 0) setBuildsSkipped({
 							updateName: name,
-							names: body.ignoredBuilds.map(String)
+							names: body.ignoredBuilds.map(String),
+							restore
 						});
 						const text = (v) => typeof v === "string" ? v : v && typeof v.text === "string" ? v.text : v == null ? "" : JSON.stringify(v);
 						const detail = text(body.error) || humanOutput([text(body.stderr), text(body.stdout)].filter(Boolean).join("\n")) || "exit " + body.exitCode;
@@ -5183,10 +5197,28 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 							state: "failed",
 							reason: detail.trim().slice(-600)
 						}));
-						setInstallError(t("updateFail") + ": " + name + " — " + detail.trim().slice(-600));
+						setInstallError((restore ? t("restoreFail") : t("updateFail")) + ": " + name + " — " + detail.trim().slice(-600));
 					}
 				}).catch(() => {});
 			}, [refreshInstalled, t]);
+			const askRestore = (0, react.useCallback)((name) => {
+				const spec = installed[name];
+				const entry = data === null || spec === void 0 ? void 0 : entryForDep(data.plugins, name, String(spec), repoIdentities[name], repoHints[name]);
+				setStaleName(null);
+				if (entry === void 0) {
+					setRestoreName(null);
+					setInstallError(t("restoreNoCatalog"));
+					return;
+				}
+				setRestoreName(name);
+				setInstallError(t("restoreHint"));
+			}, [
+				data,
+				installed,
+				repoHints,
+				repoIdentities,
+				t
+			]);
 			const doUseSkin = (0, react.useCallback)((name) => {
 				setInstallError(null);
 				fetch("/dsh-market/use-skin", {
@@ -6447,7 +6479,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 								size: "sm",
 								disabled: busyUrl !== null,
 								onClick: () => {
-									const { plugin, updateName, names } = buildsSkipped;
+									const { plugin, updateName, names, restore } = buildsSkipped;
 									setBuildsSkipped(null);
 									fetch("/dsh-market/approve-builds", {
 										method: "POST",
@@ -6456,7 +6488,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									}).then((res) => res.json()).then((body) => {
 										if (!body.ok) setInstallError(String(body.error || "approve failed"));
 										else if (plugin !== void 0) doInstall(plugin);
-										else if (updateName !== void 0) doUpdate(updateName);
+										else if (updateName !== void 0) doUpdate(updateName, false, restore === true);
 									}).catch((error) => setInstallError(String(error)));
 								},
 								children: t("approveBuilds")
@@ -6507,18 +6539,26 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						className: Market_module_css_default.err,
 						children: [installError, /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 							className: Market_module_css_default.staleAction,
-							children: [staleName !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-								size: "sm",
-								onClick: () => doUpdate(staleName, true),
-								children: t("updateNow")
-							}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-								size: "sm",
-								variant: "outline",
-								icon: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconDownloadOutline16, { size: 14 }),
-								disabled: exportState === "busy",
-								onClick: doExportLog,
-								children: exportState === "busy" ? t("exportingLog") : t("exportLog")
-							})]
+							children: [
+								staleName !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+									size: "sm",
+									onClick: () => doUpdate(staleName, true),
+									children: t("updateNow")
+								}),
+								restoreName !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+									size: "sm",
+									onClick: () => doUpdate(restoreName, false, true),
+									children: t("restoreContinue")
+								}),
+								/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+									size: "sm",
+									variant: "outline",
+									icon: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconDownloadOutline16, { size: 14 }),
+									disabled: exportState === "busy",
+									onClick: doExportLog,
+									children: exportState === "busy" ? t("exportingLog") : t("exportLog")
+								})
+							]
 						})]
 					}),
 					/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
@@ -7273,6 +7313,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									const missing = pendingBackup !== null && !installedFiles.includes(name);
 									const entry = data === null ? void 0 : entryForDep(data.plugins, name, String(spec), repoIdentities[name], repoHints[name]);
 									const status = updates[name];
+									const localDev = /^(?:link|file):/i.test(String(spec)) || status?.kind === "linked";
 									const act = activations[name];
 									const meta = act !== void 0 ? activationMeta(act.state, t) : null;
 									const version = status && status.version ? "v" + status.version : "";
@@ -7454,7 +7495,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 														disabled: updatingName !== null,
 														onClick: () => doUpdate(name),
 														children: t("update")
-													}) : status && status.kind === "linked" ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+													}) : localDev ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 														className: Market_module_css_default.metaTag,
 														title: t("linkedDev"),
 														children: t("linkedDev")
@@ -7468,14 +7509,20 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 														className: Market_module_css_default.dangerBtn,
 														disabled: true,
 														children: t("uninstalling")
-													}) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+													}) : /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [localDev && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+														variant: "outline",
+														size: "sm",
+														disabled: removingName !== null || busyUrl !== null || updatingName !== null,
+														onClick: () => askRestore(name),
+														children: t("restore")
+													}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 														variant: "outline",
 														size: "sm",
 														className: Market_module_css_default.dangerBtn,
 														disabled: removingName !== null || busyUrl !== null || updatingName !== null,
 														onClick: () => setRemoveConfirm(name),
 														children: t("uninstall")
-													}))]
+													})] }))]
 												})
 											]
 										})]

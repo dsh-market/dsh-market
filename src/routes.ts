@@ -29,7 +29,7 @@ import { runningAgentIds, type AgentsLookup } from './agents.ts'
 import { analyzeProfile, type DuplicateName } from './check.ts'
 import { applyBundleOrder, mergeOrder, readBundleRules, readBundleStack, validateOrder } from './order.ts'
 import { trialValidate } from './trial.ts'
-import { codeloadAllowBuildsKey, findInstalledAlias, gitAllowBuildsKey, installTargetFor, repoOfTarget } from './sources.ts'
+import { codeloadAllowBuildsKey, findCatalogEntryForLocal, findInstalledAlias, gitAllowBuildsKey, installTargetFor, isLocalSpec, NPM_NAME_RE, repoOfTarget, restoreBlockedByWorkspace, restoreTargetForLocal, workspaceProtocolDeps } from './sources.ts'
 import { failureDetail, groupConflictsByOwner, isStaleUpdate, parseIgnoredBuilds, parsePrepareNotAllowed, RELEASE_AGE_OVERRIDE, retargetCollections, validateAddedPlugins, withHoistRecovery } from './install.ts'
 import { asChannel, CHANNELS, DIST_TAG, resolveChannel, type Channel } from './channels.ts'
 import { asRegion, REGIONS, routesFor, setActiveRegion, type Region } from './regions.ts'
@@ -1320,17 +1320,54 @@ export function mountMarketRoutes(
         }
         try {
           await withMutationLock(response, 'install', async () => {
-            const body = (await readJsonBody(request)) as { name?: unknown; force?: unknown }
+            const body = (await readJsonBody(request)) as { name?: unknown; force?: unknown; restore?: unknown }
             const name = typeof body.name === 'string' ? body.name : ''
             const force = body.force === true
-            const spec = readInstalled(config.profile, activeProfileDir)[name]
+            const restore = body.restore === true
+            let spec = readInstalled(config.profile, activeProfileDir)[name]
             if (spec === undefined) {
               sendJson(response, 400, { error: 'plugin is not installed' })
               return
             }
-            if (spec.startsWith('link:') || spec.startsWith('file:')) {
-              sendJson(response, 400, { error: 'locally linked plugins update from their checkout' })
+            if (restore && !isLocalSpec(spec)) {
+              sendJson(response, 400, { error: 'restore 只适用于 link:/file: 的本地开发安装。 / Restore only applies to locally developed link:/file: installs.' })
               return
+            }
+            if (restore && SELF_NAMES.has(name)) {
+              sendJson(response, 400, { error: '市场自身不做恢复，请继续用 dsh plugin add <tgz> 安装市场。 / The market never restores itself; keep installing it via dsh plugin add <tgz>.' })
+              return
+            }
+            if (isLocalSpec(spec)) {
+              if (!restore) {
+                sendJson(response, 400, { error: 'locally linked plugins update from their checkout' })
+                return
+              }
+              // Restore replaces the local checkout with the curated source
+              // so the ordinary update check can see it again. Same add path
+              // as a registry update — only the resolved target changes.
+              let catalogTarget: string | null = null
+              try {
+                const registry = await loadRegistry()
+                const evidence = readInstalledRepoEvidence(config.profile, name, spec, activeProfileDir)
+                const entry = findCatalogEntryForLocal(registry.plugins, name, evidence.identities, evidence.hints)
+                catalogTarget = entry === null ? null : restoreTargetForLocal(entry, evidence.identities)
+                const workspaceDeps = workspaceProtocolDeps(readInstalledManifest(config.profile, name, activeProfileDir))
+                if (catalogTarget !== null && restoreBlockedByWorkspace(catalogTarget, workspaceDeps)) {
+                  sendJson(response, 400, {
+                    error: `该插件依赖 monorepo workspace 包（${workspaceDeps.join(', ')}），无法从 Git 子目录单独恢复。请继续用本地开发，或等作者发布 npm 后再恢复。 / This plugin depends on monorepo workspace packages (${workspaceDeps.join(', ')}); a git subdirectory install cannot resolve workspace: protocol. Keep the local checkout, or restore after the author publishes to npm.`,
+                  })
+                  return
+                }
+              } catch (error) {
+                logEvent('warn', 'update', `${name}: restore catalog lookup failed — ${error instanceof Error ? error.message : String(error)}`)
+              }
+              if (catalogTarget === null) {
+                sendJson(response, 400, {
+                  error: '目录里找不到对应的线上版本，无法从本地开发恢复。 / No catalog entry matches this local plugin, so it cannot be restored to a registry install.',
+                })
+                return
+              }
+              spec = catalogTarget
             }
             // Replacing a package on disk under a live agent is a mixed-state
             // hazard the "restart" verdict cannot fix: the running module keeps
@@ -1381,9 +1418,21 @@ export function mountMarketRoutes(
             // Re-accelerated from the unpinned shortcut, never from the
             // installed URL: that one names the commit already on disk, so
             // reusing it would be an update that can never move.
-            const target = gitSpec === null
-              ? `${name}@${tag}`
-              : await acceleratedTarget(gitSpec, region)
+            //
+            // A restore is not an update. `spec` by now IS the catalog target
+            // the checkout is being put back onto, and it is already exact: a
+            // `#path:` on it selects which package, not which version, and a
+            // prebuilt Release tarball (#250) is a URL that `@latest` must not
+            // be glued onto — only a bare npm name wants the dist-tag.
+            // acceleratedTarget returns anything that is not a bare
+            // `github:owner/repo` untouched, so passing a restore through it
+            // still gets a China-region mirror where one applies and changes
+            // nothing where one does not.
+            const target = restore
+              ? (NPM_NAME_RE.test(spec) ? `${spec}@${tag}` : await acceleratedTarget(spec, region))
+              : gitSpec === null
+                ? `${name}@${tag}`
+                : await acceleratedTarget(gitSpec, region)
             // Never let `@latest` walk a profile BACKWARDS (#64 by @ZeroOrigin64):
             // a package whose latest dist-tag was left on an older release turns
             // this update into a downgrade that also rewrites an exact pin to
@@ -1396,7 +1445,7 @@ export function mountMarketRoutes(
             // so here the guard only refuses when the channel already points
             // at what is installed, and it compares against the target tag
             // rather than `latest`, which is not the tag being installed.
-            if (!isGit) {
+            if (!isGit && !restore) {
               const installedVersion = readInstalledVersion(config.profile, name, activeProfileDir)
               const registryLatest = selfChannel === null
                 ? await fetchNpmLatest(name)
@@ -1450,16 +1499,24 @@ export function mountMarketRoutes(
             let stale = false
             let activation: Record<string, ReturnType<typeof verifyActivation>> | undefined
             if (ok) {
-              stale = isStaleUpdate({
-                isGit,
-                beforeVersion,
-                afterVersion: readInstalledVersion(config.profile, name, activeProfileDir),
-                beforeCommit,
-                afterCommit: repoKey !== null
-                  ? readLockCommits(config.profile, activeProfileDir).get(repoKey) ?? null
-                  : null,
-              })
-              if (stale) ok = false
+              if (restore) {
+                // Restore succeeds when the spec is no longer local, even if
+                // the checkout already sat on the same version as latest.
+                const afterSpec = readInstalled(config.profile, activeProfileDir)[name]
+                const stillLocal = afterSpec !== undefined && isLocalSpec(afterSpec)
+                if (stillLocal) ok = false
+              } else {
+                stale = isStaleUpdate({
+                  isGit,
+                  beforeVersion,
+                  afterVersion: readInstalledVersion(config.profile, name, activeProfileDir),
+                  beforeCommit,
+                  afterCommit: repoKey !== null
+                    ? readLockCommits(config.profile, activeProfileDir).get(repoKey) ?? null
+                    : null,
+                })
+                if (stale) ok = false
+              }
             }
             // The new build has to be loadable (#159). pnpm exits 0 for any
             // tarball it can extract, and the version really did change, so
@@ -1541,7 +1598,11 @@ export function mountMarketRoutes(
                     kind: 'update',
                     names: [name],
                     manifestBefore,
-                    ...(isGit ? { gitTarget: target, beforeCommit } : {}),
+                    // Restore must NOT go through rollbackGitBuild: its target
+                    // carries #path: (a second # would corrupt the selector),
+                    // and the pre-restore state is the local link:/file: spec
+                    // that rollbackUpdateBuild rematerializes with pnpm install.
+                    ...(isGit && !restore ? { gitTarget: target, beforeCommit } : {}),
                   }),
                 }
                 if (brokenBundles.length > 0) {
