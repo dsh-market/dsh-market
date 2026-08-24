@@ -12656,7 +12656,7 @@
       },
       "npm": "dsh-instance-backup",
       "stars": 0,
-      "install": "dsh plugin --profile web add github:weisanju/dsh-instance-backup",
+      "install": "dsh plugin --profile web add dsh-instance-backup",
       "added": "2026-08-24"
     }
   ]
