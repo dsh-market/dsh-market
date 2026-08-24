@@ -399,6 +399,17 @@ export function Diagnostics(props: { t: Translate }) {
     const lines: string[] = []
     lines.push(t('aiFixIntro').replace('{0}', report.profile))
     lines.push('')
+    // Self-identification guard FIRST: the prompt must make the receiving
+    // agent detect whether it is itself the harness running this profile.
+    // If it is, mutating the live composition — or upgrading/restarting the
+    // harness or core packages, or reinstalling deps — would kill the very
+    // session doing the fix, so those actions are forbidden and only a plan
+    // to run externally is produced. When the agent is NOT the target harness
+    // (a separate process), the conservative in-place scope below applies.
+    lines.push(t('aiFixDetect'))
+    lines.push('')
+    lines.push(t('aiFixIfSelf'))
+    lines.push('')
     if (summary.errors.length > 0) {
       lines.push(`${t('checkErrors')}:`)
       for (const e of summary.errors) lines.push(`- ${e}`)

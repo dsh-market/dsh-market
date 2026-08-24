@@ -46,7 +46,7 @@ its own dsh: it may be older than the one `npm` would give you (#139).
 - **Diagnostics** — the plugin load order and conflict surface, one page: bundle stack with official/community badges, duplicate loader entries, dependency version mismatches, multi-version core packages, overrides and invalid config entries. Plain-language terms, problem blocks highlighted, everything collapsible
 
 - **Load order** — drag community bundles into the order you want, or take the suggested one derived from the plugins' own before/after rules. Nothing is written until a trial composition passes, and the panel tells you what the new order would change (overrides, invalid or duplicate entries) before you apply it
-- **AI fix** — one click copies a diagnostics-driven fix prompt (errors/warnings/order conflicts + conservative scope instructions) to the clipboard; you paste it into a new conversation and decide whether to send
+- **AI fix** — one click copies a diagnostics-driven fix prompt (errors/warnings/order conflicts + conservative scope instructions) to the clipboard; you paste it into a new conversation and decide whether to send. The prompt first asks the agent to detect whether it is itself the harness running this profile — if so it hard-forbids mutating the live composition, upgrading/restarting the harness or core packages, or reinstalling deps, and instead has it write an idempotent `apply` script plus a `rollback` script, have you run them in an external terminal, and paste the output back
 
 ## Speed
 

@@ -397,7 +397,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			aiFix: "AI 修复",
 			aiFixHint: "将诊断问题交由新对话中的 Agent 修复（内容已复制到剪贴板，由你决定是否发送）",
 			aiFixIntro: "请帮我修复 DeepSeek Harness 的插件问题（profile：{0}）。诊断发现如下：",
-			aiFixScope: "你可以修改 profile 的 dsh.profile.bundles 顺序、停用/启用插件、调整 cordis.patch.yml。注意：官方 bundle 不可移动；动手前先说明计划。",
+			aiFixDetect: "【第一步·先判断身份】动手前先判断：当前 Agent 所运行的进程，是否就是这个 profile 对应的 DeepSeek Harness 本机实例（即：诊断出的这套组合，就是你现在运行中的组合）？判断依据：当前工作目录 / $DSH_HOME / 进程命令行是否指向该 profile，或你是否运行在 deepseek-harness 进程内。若无法确定，一律按【是你】处理（更安全）。",
+			aiFixIfSelf: "【是 → 你就是这个 harness】严禁原地改动组合、harness 或核心包：不写 cordis.patch.yml、不动 bundle 顺序/启停、不装/卸/升级插件、不重装依赖、不升级/重启 dsh。三步：① 先只读分析，不改任何东西；② 给出 apply.sh/.bat（本次修复的改动）与 rollback.sh/.bat（完整撤销 apply）；两者都幂等——apply 仅在无已有快照时才创建快照（否则不覆盖；已存在说明 apply 跑过，先回滚或确认再重跑），rollback 从这份快照恢复，因此 apply 跑到一半失败也能回滚、重复回滚也安全；③ 让我在外部终端跑 apply，并拷回 stdout/stderr 给你判断。每步先说明理由、等我确认；绝不自行执行。",
+			aiFixScope: "【否 → 保守执行】你要是判定自己并非运行在目标 harness 内（独立进程），才可考虑：修改 dsh.profile.bundles 顺序、停用/启用插件、调整 cordis.patch.yml。注意：官方 bundle 不可移动；动手前先说明计划。",
 			aiFixConservative: "请保持保守：只修复上面列出的明确错误（启动失败/重复条目/确认不匹配的依赖）。警告和信息级问题（如未确认的依赖范围）仅在它们与明确错误相关时处理。不要做不必要的升级或重新排序；每项改动前说明理由并等待确认。",
 			aiFixCopied: "已复制修复提示词，请粘贴到新对话后发送",
 			aiFixFail: "无法访问剪贴板，请手动复制下面的诊断内容",
@@ -774,7 +776,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			aiFix: "AI fix",
 			aiFixHint: "Hand the diagnostics to a new Agent session (copied to the clipboard; you decide whether to send)",
 			aiFixIntro: "Please help me fix the plugin issues of DeepSeek Harness (profile: {0}). Diagnostics found:",
-			aiFixScope: "You may reorder dsh.profile.bundles, disable/enable plugins, or adjust cordis.patch.yml. Note: official bundles are fixed; state your plan before changing anything.",
+			aiFixDetect: "Step 1 — identify yourself first. Before touching anything, determine whether the process you are running in IS the DeepSeek Harness instance this profile belongs to (i.e. this diagnosed composition is the one you are running in right now). Check whether the cwd / $DSH_HOME / command line points at this profile, or whether you are running inside a deepseek-harness process. If you cannot tell, assume the answer is \"yes\" (the safe choice).",
+			aiFixIfSelf: "If YES — you are this harness: never change the live composition, the harness or core packages in place (don't edit cordis.patch.yml, don't reorder/enable/disable bundles, don't install/remove/upgrade a plugin, don't reinstall deps, don't upgrade/restart dsh). Three steps: 1) read-only analysis only, change nothing; 2) produce apply.sh/.bat (this fix's changes) and rollback.sh/.bat (fully reverts it); both are idempotent — apply snapshots only when none exists yet and never overwrites an existing snapshot (an existing one means apply already ran, so roll back or confirm before re-running), while rollback restores from that snapshot, so a half-run apply can still be rolled back and repeated rollback is safe; 3) have me run apply in an external terminal and paste the stdout/stderr back to you. State the reason and wait for my confirmation at each step — never run these yourself.",
+			aiFixScope: "If NO — you are a process outside the target harness: you may then consider reordering dsh.profile.bundles, disabling / enabling plugins, or adjusting cordis.patch.yml. Note: official bundles are fixed; state your plan before changing anything.",
 			aiFixConservative: "Be conservative: only fix the clear errors listed above (boot failures / duplicate entries / confirmed dependency mismatches). Treat warnings and informational entries (e.g. unconfirmed peer ranges) only when they relate to a clear error. Do not perform unnecessary upgrades or reordering; explain each change and wait for confirmation.",
 			aiFixCopied: "Fix prompt copied — paste it into a new conversation and send when ready",
 			aiFixFail: "Clipboard unavailable — copy the diagnostics below manually",
@@ -2509,6 +2513,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const startAgentFix = () => {
 				const lines = [];
 				lines.push(t("aiFixIntro").replace("{0}", report.profile));
+				lines.push("");
+				lines.push(t("aiFixDetect"));
+				lines.push("");
+				lines.push(t("aiFixIfSelf"));
 				lines.push("");
 				if (summary.errors.length > 0) {
 					lines.push(`${t("checkErrors")}:`);
