@@ -104,6 +104,29 @@ export interface OrphanRow {
   reason: string
 }
 
+/** Directional verdict for one confirmed peer mismatch (issue #201 diagnostics). */
+export interface PeerRisk {
+  plugin: string
+  peer: string
+  range: string
+  resolved: string
+  direction: 'belowMin' | 'aboveMax'
+}
+
+export interface PeerWarning {
+  plugin: string
+  peer: string
+  range: string
+  resolved: string
+  reason: 'aboveMax' | 'optional'
+}
+
+/** classifyPeer result: risk / warning / none — none means informational. */
+export type PeerVerdict =
+  | { kind: 'risk'; risk: PeerRisk }
+  | { kind: 'warning'; warning: PeerWarning }
+  | { kind: 'none' }
+
 /** A plugin peerDependencies range vs the resolved version. */
 export interface PeerMismatch {
   plugin: string
@@ -119,6 +142,13 @@ export interface PeerMismatch {
    * the plugin saying "I work without this", not a broken install (#275).
    */
   optional?: boolean
+  /**
+   * The directional verdict, attached by `/dsh-market/check` for rows that
+   * did not match. It is computed on the server because the client cannot
+   * read `peerDependenciesMeta` off disk, and the tiering would otherwise
+   * have to be guessed from the range string (#201).
+   */
+  verdict?: PeerVerdict
 }
 
 /**

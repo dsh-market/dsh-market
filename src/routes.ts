@@ -24,7 +24,7 @@ import {
   type PluginCommandRuntime,
 } from './dsh-cli.ts'
 import { addProfileBundle, dropFromManifest, hasLoadableEntry, INBOX_BUNDLES, isDshProfileName, profileDir, readInstalled, readInstalledManifest, readInstalledRepoEvidence, readInstalledVersion, readLockCommits, readManifestDeps, readProfileBundles, removeProfileBundle, restoreManifestDeps, setAllowBuilds } from './profile.ts'
-import { assessProfile, introducedDuplicateNames, introducedRisks, type CompatibilityRisk } from './compatibility.ts'
+import { assessProfile, classifyPeer, introducedDuplicateNames, introducedRisks, type CompatibilityRisk } from './compatibility.ts'
 import { runningAgentIds, type AgentsLookup } from './agents.ts'
 import { analyzeProfile, type DuplicateName } from './check.ts'
 import { applyBundleOrder, mergeOrder, readBundleRules, readBundleStack, validateOrder } from './order.ts'
@@ -832,6 +832,16 @@ export function mountMarketRoutes(
         }
         try {
           const report = analyzeProfile(activeProfileDir)
+          // #201: attach the #200 directional verdict to every peer row so the
+          // diagnostics UI can tier risk / warning / info without recomputing
+          // (the client cannot see peerDependenciesMeta on disk).
+          for (const row of report.peerMismatches) {
+            row.verdict = row.satisfied === false
+              // `optional` is absent rather than false on a row the plugin
+              // did not mark (#275), and absent means not optional.
+              ? classifyPeer(row.plugin, row.name, row.range, row.resolved, row.optional === true)
+              : { kind: 'none' }
+          }
           sendJson(response, 200, report)
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })

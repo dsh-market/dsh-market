@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 /**
- * Portable render tests for the Diagnostics tab (issue #98, phase 1). The
- * host boundary is the single /dsh-market/check fetch, stubbed with a
- * synthetic fixture CheckReport (mirroring src/check.ts) — no real profile,
- * no absolute machine paths, so this runs on any environment/CI.
+ * Portable render tests for the Diagnostics tab (issue #98, phase 1, updated
+ * for #201 tiering). The host boundary is the single /dsh-market/check fetch,
+ * stubbed with a synthetic fixture CheckReport (mirroring src/check.ts) — no
+ * real profile, no absolute machine paths, so this runs on any environment/CI.
  */
 
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
@@ -41,9 +41,29 @@ const REPORT = {
   overrides: [{ id: 'shared-entry', layer: 'user-patch', overriddenLayers: ['@deepseek-ai/dsh-base'] }],
   orphans: [{ id: 'ghost-entry', layer: 'user-patch', reason: 'patch target not found' }],
   peerMismatches: [
-    { plugin: 'plugin-x', name: '@deepseek-ai/dsh-llm', range: '^0.1.0', resolved: '0.2.0', satisfied: false },
-    { plugin: 'plugin-y', name: '@deepseek-ai/cordis', range: '^4.0.1', resolved: '4.0.1', satisfied: true },
-    { plugin: 'plugin-z', name: '@deepseek-ai/dsh-agent', range: '^0.1.0-rc.6', resolved: null, satisfied: null },
+    {
+      plugin: 'plugin-risk', name: '@deepseek-ai/dsh-settings', range: '^0.1.0-rc.7',
+      resolved: '0.1.0-rc.6', satisfied: false, optional: false,
+      verdict: {
+        kind: 'risk',
+        risk: { plugin: 'plugin-risk', peer: '@deepseek-ai/dsh-settings', range: '^0.1.0-rc.7', resolved: '0.1.0-rc.6', direction: 'belowMin' },
+      },
+    },
+    {
+      plugin: 'plugin-warn', name: '@deepseek-ai/dsh-llm', range: '^0.1.0',
+      resolved: '0.2.0', satisfied: false, optional: false,
+      verdict: {
+        kind: 'warning',
+        warning: { plugin: 'plugin-warn', peer: '@deepseek-ai/dsh-llm', range: '^0.1.0', resolved: '0.2.0', reason: 'aboveMax' },
+      },
+    },
+    {
+      plugin: 'plugin-none', name: '@deepseek-ai/dsh-tools', range: '>=0.0.1-rc <2',
+      resolved: '0.1.0-rc.6', satisfied: false, optional: false,
+      verdict: { kind: 'none' },
+    },
+    { plugin: 'plugin-ok', name: '@deepseek-ai/cordis', range: '^4.0.1', resolved: '4.0.1', satisfied: true, optional: false, verdict: { kind: 'none' } },
+    { plugin: 'plugin-unknown', name: '@deepseek-ai/dsh-agent', range: '^0.1.0-rc.6', resolved: null, satisfied: null, optional: false, verdict: { kind: 'none' } },
   ],
   multiVersion: [{ name: '@deepseek-ai/dsh-tools', versions: ['0.0.1-rc.1', '0.1.0-rc.6'], hoisted: '0.0.1-rc.1' }],
   summary: {
@@ -52,7 +72,11 @@ const REPORT = {
       'bundle broken-bundle: bundle package is not installed — the profile will fail to boot',
       'duplicate loader entry id "shared-entry" (2 rows: @deepseek-ai/dsh-base, user-patch)',
     ],
-    warnings: ['plugin-x peer range @deepseek-ai/dsh-llm@^0.1.0 does not match resolved 0.2.0'],
+    warnings: [
+      'plugin-risk peer range @deepseek-ai/dsh-settings@^0.1.0-rc.7 does not match resolved 0.1.0-rc.6',
+      'plugin-warn peer range @deepseek-ai/dsh-llm@^0.1.0 does not match resolved 0.2.0',
+      'plugin-none peer range @deepseek-ai/dsh-tools@>=0.0.1-rc <2 does not match resolved 0.1.0-rc.6',
+    ],
   },
 }
 
@@ -112,15 +136,21 @@ describe('Diagnostics (jsdom)', () => {
     // Summary strip: status badge, category counts, profile meta.
     expect(screen.getByText(t('checkIssues'))).toBeTruthy()
     expect(screen.getByText(new RegExp(`^${t('catConflict')}:\\s*1$`))).toBeTruthy()
-    expect(screen.getByText(new RegExp(`^${t('catDeps')}:\\s*4$`))).toBeTruthy()
+    expect(screen.getByText(new RegExp(`^${t('catRisk')}:\\s*1$`))).toBeTruthy()
+    expect(screen.getByText(new RegExp(`^${t('catWarn')}:\\s*1$`))).toBeTruthy()
+    expect(screen.getByText(new RegExp(`^${t('catInfo')}:\\s*2$`))).toBeTruthy()
+    expect(screen.getByText(new RegExp(`^${t('checkMultiVersion')}:\\s*1$`))).toBeTruthy()
     expect(screen.getByText(`${t('checkProfile')}: /synthetic/profiles/web`)).toBeTruthy()
 
     // Every section heading renders with its count (scoped to the section).
     assertSection(t('checkErrors'), 2)
-    assertSection(t('checkWarnings'), 1)
+    assertSection(t('checkWarnings'), 3)
     assertSection(t('checkBundles'), 3)
     assertSection(t('checkDuplicates'), 1)
-    assertSection(t('checkPeerMismatches'), 1)
+    assertSection(t('checkPeerRisk'), 1)
+    assertSection(t('checkPeerWarning'), 1)
+    assertSection(t('checkPeerInfoTier'), 2)
+    assertSection(t('checkPeerSatisfied'), 1)
     assertSection(t('checkMultiVersion'), 1)
     // Overrides/orphans now use the same collapsible Section style as the
     // other blocks (title and count split across nodes).
@@ -157,13 +187,21 @@ describe('Diagnostics (jsdom)', () => {
     expect(within(dupSection).getByText('× 2')).toBeTruthy()
     expect(within(dupSection).getByText('@deepseek-ai/dsh-base / user-patch')).toBeTruthy()
 
-    // Peer block counts only CONFIRMED mismatches; informational entries
-    // (satisfied / unknown) sit in a collapsed disclosure.
-    assertSection(t('checkPeerMismatches'), 1)
-    expect(screen.getByText(t('checkUnsatisfied'))).toBeTruthy()
-    // Informational (satisfied/unknown) peer entries are collapsed behind a
-    // disclosure to keep the page compact — the disclosure title is present.
-    expect(screen.getByText(/informational entries/)).toBeTruthy()
+    // Peer tiers (#201): risk / warning / info(display) / satisfied each get
+    // their own section, driven by the server-side verdict.
+    const riskSection = assertSection(t('checkPeerRisk'), 1)
+    expect(within(riskSection).getByText('@deepseek-ai/dsh-settings')).toBeTruthy()
+    expect(within(riskSection).getByText(t('checkRange') + ': ^0.1.0-rc.7')).toBeTruthy()
+    expect(within(riskSection).getByText(t('peerRiskBelowMin'))).toBeTruthy()
+    const warnSection = assertSection(t('checkPeerWarning'), 1)
+    expect(within(warnSection).getByText('@deepseek-ai/dsh-llm')).toBeTruthy()
+    expect(within(warnSection).getByText(t('peerWarnAboveMax'))).toBeTruthy()
+    const infoSection = assertSection(t('checkPeerInfoTier'), 2)
+    expect(within(infoSection).getByText(t('peerInfoUnverified'))).toBeTruthy()
+    expect(within(infoSection).getByText(t('checkUnknown'))).toBeTruthy()
+    const okSection = assertSection(t('checkPeerSatisfied'), 1)
+    expect(within(okSection).getByText('@deepseek-ai/cordis')).toBeTruthy()
+    expect(within(okSection).getByText(t('checkSatisfied'))).toBeTruthy()
 
     // Multi-version row, scoped to its section.
     const mvSection = assertSection(t('checkMultiVersion'), 1)
@@ -198,12 +236,15 @@ describe('Diagnostics (jsdom)', () => {
 
     expect(screen.getByText(t('diagOkAll'))).toBeTruthy()
     expect(screen.getByText(new RegExp(`^${t('catConflict')}:\\s*0$`))).toBeTruthy()
-    expect(screen.getByText(new RegExp(`^${t('catDeps')}:\\s*0$`))).toBeTruthy()
+    expect(screen.getByText(new RegExp(`^${t('catRisk')}:\\s*0$`))).toBeTruthy()
+    expect(screen.getByText(new RegExp(`^${t('catWarn')}:\\s*0$`))).toBeTruthy()
+    expect(screen.getByText(new RegExp(`^${t('catInfo')}:\\s*0$`))).toBeTruthy()
     expect(screen.getByText(new RegExp(`^${t('catOrder')}:\\s*0$`))).toBeTruthy()
 
     for (const key of [
       'checkErrorsEmpty', 'checkWarningsEmpty', 'checkBundlesEmpty',
-      'checkDuplicatesEmpty', 'checkPeerEmpty',
+      'checkDuplicatesEmpty',
+      'checkPeerRiskEmpty', 'checkPeerWarningEmpty', 'checkPeerInfoTierEmpty', 'checkPeerSatisfiedEmpty',
       'checkMultiEmpty', 'checkOverridesEmpty', 'checkOrphansEmpty',
     ]) {
       expect(screen.getByText(t(key)), t(key)).toBeTruthy()
@@ -223,41 +264,49 @@ describe('Diagnostics (jsdom)', () => {
     expect(screen.queryByText(t('checkLoading'))).toBeNull()
   })
 
-  it('renders the informational peer disclosure even with zero CONFIRMED mismatches', async () => {
-    // Regression for the #98 peer-drawer fix: with 0 confirmed mismatches the
-    // section used to render only the count-0 empty text, making the
-    // informational entries (satisfied / unknown) unreachable. alwaysShowBody
-    // keeps the disclosure visible whenever info entries exist.
+  it('renders satisfied and unknown peers in their own sections with zero risk/warning rows', async () => {
+    // Regression for #201: satisfied:true and satisfied:null no longer share
+    // one disclosure, and zero risk/warning rows must keep both reachable.
     const report = {
       ...CLEAN_REPORT,
       peerMismatches: [
-        { plugin: 'plugin-y', name: '@deepseek-ai/cordis', range: '^4.0.1', resolved: '4.0.1', satisfied: true },
-        { plugin: 'plugin-z', name: '@deepseek-ai/dsh-agent', range: '^0.1.0-rc.6', resolved: null, satisfied: null },
+        { plugin: 'plugin-ok', name: '@deepseek-ai/cordis', range: '^4.0.1', resolved: '4.0.1', satisfied: true, optional: false, verdict: { kind: 'none' } },
+        { plugin: 'plugin-unknown', name: '@deepseek-ai/dsh-agent', range: '^0.1.0-rc.6', resolved: null, satisfied: null, optional: false, verdict: { kind: 'none' } },
       ],
     }
     stubCheckReport(report)
     render(<Diagnostics t={t} />)
     await waitFor(() => expect(screen.queryByText(t('checkLoading'))).toBeNull())
 
-    // Section count is 0 (no CONFIRMED mismatches)…
-    const section = assertSection(t('checkPeerMismatches'), 0)
-    // …the overview line shows "0 mismatch(es) · 2 informational"…
-    expect(screen.getByText(t('checkPeerOverview').replace('{0}', '0').replace('{1}', '2'))).toBeTruthy()
-    // …and the body still renders (empty text + the reachable disclosure).
-    expect(within(section).getByText(t('checkPeerEmpty'))).toBeTruthy()
-    const disclosure = within(section).getByText(/informational entries/)
-    expect(disclosure).toBeTruthy()
+    assertSection(t('checkPeerRisk'), 0)
+    assertSection(t('checkPeerWarning'), 0)
+    const infoSection = assertSection(t('checkPeerInfoTier'), 1)
+    expect(within(infoSection).getByText(t('checkUnknown'))).toBeTruthy()
+    const okSection = assertSection(t('checkPeerSatisfied'), 1)
+    expect(within(okSection).getByText(t('checkSatisfied'))).toBeTruthy()
+    // Neutral tiers never carry the section alert: satisfied/info rows are
+    // not problems (#201 follow-up).
+    expect(within(infoSection).queryByText('⚠')).toBeNull()
+    expect(within(okSection).queryByText('⚠')).toBeNull()
+    // Summary strip reflects the tier split: info 1, risk/warn 0.
+    expect(screen.getByText(new RegExp(`^${t('catInfo')}:\\s*1$`))).toBeTruthy()
+    expect(screen.getByText(new RegExp(`^${t('catRisk')}:\\s*0$`))).toBeTruthy()
+    expect(screen.getByText(new RegExp(`^${t('catWarn')}:\\s*0$`))).toBeTruthy()
+  })
 
-    // The disclosure's leading chevron button is the toggle (the title span
-    // itself is inert). Expanding it reveals both informational rows.
-    const row = disclosure.closest('[data-disclosure-row]') as HTMLElement | null
-    expect(row).not.toBeNull()
-    const toggle = row?.querySelector('button') as HTMLButtonElement | null
-    expect(toggle).not.toBeNull()
-    expect(toggle?.getAttribute('aria-expanded')).toBe('false')
-    fireEvent.click(toggle!)
-    expect(toggle?.getAttribute('aria-expanded')).toBe('true')
-    expect(within(section).getByText(t('checkSatisfied'))).toBeTruthy()
-    expect(within(section).getByText(t('checkUnknown'))).toBeTruthy()
+  it('counts multiVersion in the summary strip and never calls a warning-only report all-good', async () => {
+    // Regression for the #201 tier split: multiVersion stopped being part of
+    // anyIssue, so a warning-only report could claim "all good".
+    stubCheckReport({
+      ...CLEAN_REPORT,
+      multiVersion: [{ name: 'shared-helper', versions: ['1.0.0', '2.0.0'], hoisted: '1.0.0' }],
+      summary: { ok: true, errors: [], warnings: ['multiple versions of shared-helper: 1.0.0 / 2.0.0'] },
+    })
+    render(<Diagnostics t={t} />)
+    await waitFor(() => expect(screen.queryByText(t('checkLoading'))).toBeNull())
+
+    expect(screen.queryByText(t('diagOkAll'))).toBeNull()
+    expect(screen.getByText(t('checkIssues'))).toBeTruthy()
+    expect(screen.getByText(new RegExp(`^${t('checkMultiVersion')}:\\s*1$`))).toBeTruthy()
   })
 })

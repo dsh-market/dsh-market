@@ -330,6 +330,85 @@ describe('Diagnostics panels (jsdom, #98 phase 2)', () => {
     expect(screen.queryByText(t('aiFixCopied'))).toBeNull()
   })
 
+  it('#201: peer warnings / info alone never show the AI-fix button', async () => {
+    // The old #125 gate treated ANY satisfied===false as a hard issue. #201
+    // tightens it: only a directional RISK opens the button; optional peers,
+    // aboveMax without an explicit bound, classifier `none` and legacy rows
+    // without a verdict stay in the warning/info tiers and stay quiet.
+    stubApi({
+      check: {
+        ...CHECK_REPORT,
+        orderConflicts: [],
+        peerMismatches: [
+          {
+            plugin: 'plugin-warn', name: '@deepseek-ai/dsh-llm', range: '^0.1.0',
+            resolved: '0.2.0', satisfied: false, optional: false,
+            verdict: { kind: 'warning', warning: { plugin: 'plugin-warn', peer: '@deepseek-ai/dsh-llm', range: '^0.1.0', resolved: '0.2.0', reason: 'aboveMax' } },
+          },
+          {
+            plugin: 'plugin-opt', name: '@deepseek-ai/cordis', range: '^4.0.1',
+            resolved: '4.0.1', satisfied: false, optional: true,
+            verdict: { kind: 'warning', warning: { plugin: 'plugin-opt', peer: '@deepseek-ai/cordis', range: '^4.0.1', resolved: '4.0.1', reason: 'optional' } },
+          },
+          { plugin: 'legacy-row', name: '@deepseek-ai/dsh-session', range: '^0.1.0', resolved: '0.2.0', satisfied: false, optional: false },
+        ],
+        summary: {
+          ok: true,
+          errors: [],
+          warnings: ['plugin-warn peer range @deepseek-ai/dsh-llm@^0.1.0 does not match resolved 0.2.0'],
+        },
+      },
+    })
+    render(<Diagnostics t={t} />)
+    await waitFor(() => expect(screen.queryByText(t('checkLoading'))).toBeNull())
+
+    expect(screen.queryByRole('button', { name: t('aiFix') })).toBeNull()
+    expect(screen.getByText(new RegExp(`^${t('catRisk')}:\\s*0$`))).toBeTruthy()
+    expect(screen.getByText(new RegExp(`^${t('catWarn')}:\\s*3$`))).toBeTruthy()
+  })
+
+  it('#201: a risk peer opens AI fix and the prompt carries the risk row, not summary.warnings', async () => {
+    const writeText = vi.fn(() => Promise.resolve())
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } })
+    stubApi({
+      check: {
+        ...CHECK_REPORT,
+        orderConflicts: [],
+        peerMismatches: [
+          {
+            plugin: 'plugin-risk', name: '@deepseek-ai/dsh-settings', range: '^0.1.0-rc.7',
+            resolved: '0.1.0-rc.6', satisfied: false, optional: false,
+            verdict: {
+              kind: 'risk',
+              risk: { plugin: 'plugin-risk', peer: '@deepseek-ai/dsh-settings', range: '^0.1.0-rc.7', resolved: '0.1.0-rc.6', direction: 'belowMin' },
+            },
+          },
+        ],
+        summary: {
+          ok: true,
+          errors: [],
+          warnings: [
+            'plugin-risk peer range @deepseek-ai/dsh-settings@^0.1.0-rc.7 does not match resolved 0.1.0-rc.6',
+            'noise-warning that must not reach the agent prompt',
+          ],
+        },
+      },
+    })
+    render(<Diagnostics t={t} />)
+    await waitFor(() => expect(screen.queryByText(t('checkLoading'))).toBeNull())
+
+    fireEvent.click(screen.getByRole('button', { name: t('aiFix') }))
+    await waitFor(() => expect(writeText).toHaveBeenCalled())
+    const prompt = String(writeText.mock.calls[0]?.[0])
+    expect(prompt).toContain('/synthetic/profiles/web')
+    expect(prompt).toContain('@deepseek-ai/dsh-settings')
+    expect(prompt).toContain('^0.1.0-rc.7')
+    expect(prompt).toContain(t('peerRiskBelowMin'))
+    // The structured prompt no longer dumps summary.warnings.
+    expect(prompt).not.toContain('noise-warning')
+    expect(prompt).not.toContain('does not match resolved')
+  })
+
   it('AI-fix works without the removed workspaces prop (clipboard-only contract)', async () => {
     // Diagnostics previously took a workspaces.startSession prop for the AI-fix
     // button; the #98 change removed it (clipboard-first flow). Rendering with

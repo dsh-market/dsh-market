@@ -332,6 +332,56 @@ describe('GET /dsh-market/check — report contract', () => {
     expect(report.summary).toEqual({ ok: true, errors: [], warnings: [] })
   })
 
+  it('#201: attaches optional + classifyPeer verdict to every peer row', async () => {
+    writeProfile(['@deepseek-ai/dsh-base', 'alpha'])
+    writeBundle('@deepseek-ai/dsh-base')
+    writeBundle('alpha')
+    // alpha declares three peers: a belowMin risk, an optional mismatch and
+    // one that cannot be resolved from anywhere (host-only package, absent).
+    const alphaDir = join(dir, 'node_modules', 'alpha')
+    writeFileSync(join(alphaDir, 'package.json'), JSON.stringify({
+      name: 'alpha', version: '1.0.0', dsh: { bundle: { patch: './cordis.patch.yml' } },
+      peerDependencies: {
+        '@deepseek-ai/dsh-tools': '^0.1.0-rc.7',
+        '@deepseek-ai/cordis': '^4.0.2',
+        '@deepseek-ai/absent-host-only': '^0.1.0',
+      },
+      peerDependenciesMeta: {
+        '@deepseek-ai/cordis': { optional: true },
+      },
+    }, null, 2))
+    const writeResolved = (name: string, version: string) => {
+      const pkgDir = join(dir, 'node_modules', name)
+      mkdirSync(pkgDir, { recursive: true })
+      writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name, version }, null, 2))
+    }
+    writeResolved('@deepseek-ai/dsh-tools', '0.1.0-rc.6')
+    writeResolved('@deepseek-ai/cordis', '4.0.1')
+
+    const res = await hit(routes, '/dsh-market/check', { method: 'GET', url: '/dsh-market/check' })
+    expect(res.status).toBe(200)
+    const report = res.json() as {
+      peerMismatches: Array<{
+        plugin: string; name: string; resolved: string | null; satisfied: boolean | null
+        optional?: boolean
+        verdict: { kind: string; risk?: { direction: string }; warning?: { reason: string } }
+      }>
+    }
+    expect(report.peerMismatches).toHaveLength(3)
+    const risk = report.peerMismatches.find(row => row.name === '@deepseek-ai/dsh-tools')
+    // `optional` is OMITTED rather than false on a row the plugin did not
+    // mark (#275), so absence is the assertion — the verdict beside it is
+    // what proves the row was classified as non-optional and not skipped.
+    expect(risk?.optional).toBeUndefined()
+    expect(risk?.verdict).toMatchObject({ kind: 'risk', risk: { direction: 'belowMin' } })
+    const optional = report.peerMismatches.find(row => row.name === '@deepseek-ai/cordis')
+    expect(optional?.optional).toBe(true)
+    expect(optional?.verdict).toMatchObject({ kind: 'warning', warning: { reason: 'optional' } })
+    const absent = report.peerMismatches.find(row => row.name === '@deepseek-ai/absent-host-only')
+    expect(absent?.satisfied).toBeNull()
+    expect(absent?.verdict).toMatchObject({ kind: 'none' })
+  })
+
   it('reports bundle-order rule violations in orderConflicts', async () => {
     writeProfile(['@deepseek-ai/dsh-base', 'alpha', 'beta'])
     writeBundle('@deepseek-ai/dsh-base')
