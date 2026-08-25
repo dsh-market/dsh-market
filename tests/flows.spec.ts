@@ -344,7 +344,10 @@ const REGISTRY = {
   ],
 }
 const registryModule = vi.hoisted(() => ({ loadRegistry: vi.fn(), forgetCatalog: vi.fn() }))
-vi.mock('../src/registry.ts', () => registryModule)
+vi.mock('../src/registry.ts', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../src/registry.ts')>(),
+  ...registryModule,
+}))
 registryModule.loadRegistry.mockImplementation(() => Promise.resolve(REGISTRY))
 
 // ---------------------------------------------------------------- testbed

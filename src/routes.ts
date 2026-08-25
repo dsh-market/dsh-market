@@ -11,7 +11,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { forgetCatalog, loadRegistry } from './registry.ts'
+import { forgetCatalog, loadRegistry, pluginCategories } from './registry.ts'
 import {
   cleanHotDir, hotMount, hotUnmount, listHotMounts,
   mountClientOnlyDeps, purgeMarketState, readMarketState, writeMarketState,
@@ -2678,7 +2678,7 @@ export function mountMarketRoutes(
                 // theme) so the result is visible right after the refresh.
                 hot = true
                 for (const name of added) {
-                  const live = entry.category === 'theme'
+                  const live = pluginCategories(entry).includes('theme')
                     ? await themes.activateTheme(name)
                     : (await hotMount(host, activeProfileDir, name)).ok
                   if (!live) hot = false

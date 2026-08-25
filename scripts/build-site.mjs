@@ -48,6 +48,8 @@ if (!plugins.length) {
 // upstream appears here without a code change on this side.
 const CATS = Object.keys(registry.categories ?? {})
 const catName = (id, loc) => registry.categories?.[id]?.[loc.code] ?? id
+const categoriesOf = (plugin) => [...new Set((Array.isArray(plugin.category) ? plugin.category : [plugin.category])
+  .filter((category) => typeof category === 'string' && category !== ''))]
 
 // Slug matches awesome-dsh-plugin's, derived from the same repo path. Keeping
 // them identical means /p/<slug>/ on either host is the same plugin — which is
@@ -162,7 +164,7 @@ const metaRow = (p, loc) => {
   const bits = []
   if (p.stars) bits.push(`<span>★ ${num(p.stars)}</span>`)
   if (p.downloads) bits.push(`<span>${num(p.downloads)}${esc(loc.strings.HOME_WEEK)}</span>`)
-  bits.push(`<span class="pc">${esc(catName(p.category, loc))}</span>`)
+  bits.push(...categoriesOf(p).map(category => `<span class="pc">${esc(catName(category, loc))}</span>`))
   return `<div class="pmeta">${bits.join('')}</div>`
 }
 
@@ -189,7 +191,7 @@ ${cards.join('\n')}
 function homeCatalog(loc) {
   const s = loc.strings
   const counts = CATS
-    .map((id) => ({ id, name: catName(id, loc), n: plugins.filter((p) => p.category === id).length }))
+    .map((id) => ({ id, name: catName(id, loc), n: plugins.filter((p) => categoriesOf(p).includes(id)).length }))
     .filter((c) => c.n)
 
   const popular = plugins
@@ -281,7 +283,7 @@ for (const loc of LOCALES) {
   const byCat = CATS.map((id) => ({
     id,
     name: catName(id, loc),
-    items: plugins.filter((p) => p.category === id).sort((a, b) => (b.stars ?? -1) - (a.stars ?? -1)),
+    items: plugins.filter((p) => categoriesOf(p).includes(id)).sort((a, b) => (b.stars ?? -1) - (a.stars ?? -1)),
   })).filter((c) => c.items.length)
 
   const jump = byCat.map((c) => `<a href="#${c.id}">${esc(c.name)}<small>${c.items.length}</small></a>`).join('\n    ')
@@ -319,7 +321,7 @@ for (const loc of LOCALES) {
 
     const facts = [
       p.stars != null ? `<span>${loc.strings.P_STARS} <b>★ ${p.stars}</b></span>` : '',
-      `<span>${loc.strings.P_CAT} <b>${esc(catName(p.category, loc))}</b></span>`,
+      `<span>${loc.strings.P_CAT} <b>${categoriesOf(p).map(category => esc(catName(category, loc))).join(' · ')}</b></span>`,
       p.added ? `<span>${loc.strings.P_ADDED} <b>${esc(p.added)}</b></span>` : '',
       p.npm ? `<span>${loc.strings.P_NPM} <b>${esc(p.npm)}</b></span>` : '',
     ].filter(Boolean).join('\n    ')
@@ -355,7 +357,7 @@ ${shots.map((s) => `        <img src="${esc(s)}" alt="" loading="lazy" decoding=
       return (sp > n * 0.6 ? head.slice(0, sp) : head).trimEnd() + '…'
     }
     const related = plugins
-      .filter((r) => r.category === p.category && r.url !== p.url)
+      .filter((r) => r.url !== p.url && categoriesOf(r).some(category => categoriesOf(p).includes(category)))
       .sort((a, b) => (b.stars ?? -1) - (a.stars ?? -1))
       .slice(0, 6)
     const relSection = related.length ? `<section class="panel">

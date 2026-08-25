@@ -67,7 +67,7 @@ function main() {
   }
 
   const categories = new Set(Object.keys((raw && raw.categories) || {}))
-  const requiredStrings = ['name', 'owner', 'url', 'page', 'category', 'install', 'added']
+  const requiredStrings = ['name', 'owner', 'url', 'page', 'install', 'added']
 
   const identSeen = new Map() // true install identity -> first entry name
   const nameToEntries = new Map() // display name -> [owners]
@@ -115,9 +115,16 @@ function main() {
       fail(errors, p, 'E6', `owner "${p.owner}" does not match url owner "${um[1]}"`)
     }
 
-    // E7 — category whitelist
-    if (!categories.has(p.category)) {
-      fail(errors, p, 'E7', `category "${p.category}" is not in the declared whitelist`)
+    // E7 — one legacy category or several categories, all from the whitelist
+    const entryCategories = Array.isArray(p.category) ? p.category : [p.category]
+    if (entryCategories.length === 0 || entryCategories.some(category => typeof category !== 'string' || category.length === 0)) {
+      fail(errors, p, 'E7', 'category must be a non-empty string or array of non-empty strings')
+    } else {
+      for (const category of new Set(entryCategories)) {
+        if (!categories.has(category)) {
+          fail(errors, p, 'E7', `category "${category}" is not in the declared whitelist`)
+        }
+      }
     }
 
     // E8 — page url
