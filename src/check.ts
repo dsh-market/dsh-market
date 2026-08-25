@@ -18,16 +18,18 @@
  *     version (tool calls die, minimal preset fails to mount)?
  *  4. Are there multiple versions of one core package in the lockfile, and
  *     do plugin peerDependencies ranges match the resolved core version?
+ *  5. Do effective user/home patch entries reference npm package roots that
+ *     are installed in the profile-visible node_modules ancestry?
  *
  * The composition step mirrors @deepseek-ai/dsh-app-boot's applyEntryPatches
  * (same js-yaml dialect incl. `!!js` scalars), so the rows reported here are
  * what actually mounts at boot.
  */
 
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
-import { createRequire } from 'node:module'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { createRequire, isBuiltin } from 'node:module'
 import { homedir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { JSON_SCHEMA, Type, load } from 'js-yaml'
 import { INBOX_BUNDLES, readBundleRules, suggestOrder, validateOrder } from './order.ts'
 
@@ -223,6 +225,52 @@ export function parsePatchFile(path: string): unknown[] | null {
   }
 }
 
+/** Whether `name` goes through the Loader's bare-module resolver. */
+function isBareLoaderSpecifier(name: string): boolean {
+  return !name.startsWith('.')
+    && !name.startsWith('#')
+    && !isAbsolute(name)
+    && !/^[a-z][a-z\d+.-]*:/i.test(name)
+}
+
+/** Npm package root owning one bare Loader specifier. */
+function packageRoot(specifier: string): string | null {
+  const parts = specifier.split('/')
+  const segments = specifier.startsWith('@') ? parts.slice(0, 2) : parts.slice(0, 1)
+  if (segments.length !== (specifier.startsWith('@') ? 2 : 1)) return null
+  if (segments.some(segment => segment === '' || segment === '.' || segment === '..'
+    || segment.includes('%') || segment.includes('\\'))) return null
+  if (specifier.startsWith('@') && (segments[0]?.length ?? 0) <= 1) return null
+  return segments.join('/')
+}
+
+/**
+ * Package-root presence from the Loader-visible profile ancestry only.
+ * An explicit walk avoids CommonJS global lookup directories that
+ * `createRequire(...).resolve.paths()` appends but Node ESM does not search.
+ */
+function profilePackageInstalled(profileDirectory: string, name: string): boolean {
+  try {
+    const profile = JSON.parse(readFileSync(join(profileDirectory, 'package.json'), 'utf8')) as unknown
+    if (isRecord(profile) && profile.name === name
+      && profile.exports !== undefined && profile.exports !== null) return true
+  } catch { /* not a self-referencing profile package */ }
+  let directory = resolve(profileDirectory)
+  while (true) {
+    const packageDirectory = join(directory, 'node_modules', name)
+    // Node stops at the nearest matching package directory. A partial install
+    // there shadows any healthy parent copy and must not be accepted.
+    try {
+      if (statSync(packageDirectory).isDirectory()) {
+        return existsSync(join(packageDirectory, 'package.json'))
+      }
+    } catch { /* keep walking */ }
+    const parent = dirname(directory)
+    if (parent === directory) return false
+    directory = parent
+  }
+}
+
 /** Every id in one patch row's insert list, recursively (group configs included). */
 function collectInsertIds(rows: unknown[]): string[] {
   const ids: string[] = []
@@ -318,14 +366,14 @@ function readNodeModulesVersion(base: string, name: string): string | null {
 }
 
 /**
- * Resolve one bundle package's directory the way the dsh boot does
+ * Resolve one package's directory the way the dsh boot does
  * (dsh-app-boot's resolveBundleDir): probe Node's own node_modules search
  * paths from the installation anchor first, then the profile directory.
  * Node resolution walks upward, so this also finds pnpm's workspace-root
  * hoisting (`<profiles>/node_modules/…` when the profile lives under
- * `<profiles>/<name>`) and matches exactly what the Loader would import.
+ * `<profiles>/<name>`) and mirrors the Loader's package search roots.
  */
-function resolveBundleDir(anchorPackageJson: string, name: string): string | null {
+function resolvePackageDir(anchorPackageJson: string, name: string): string | null {
   let paths: string[] = []
   try {
     paths = createRequire(anchorPackageJson).resolve.paths(name) ?? []
@@ -575,18 +623,78 @@ export function satisfiesRange(version: string, range: string): boolean | null {
 interface EntryNode {
   id: string
   name?: string
-  layer: string
+  layer?: string
   group?: boolean
   config?: unknown
+  disabled?: unknown
 }
 
 /** Flatten a tree of entries (group configs included) into row records. */
 function flattenEntries(nodes: EntryNode[]): LoaderRow[] {
   const rows: LoaderRow[] = []
-  const walk = (list: EntryNode[]): void => {
+  const walk = (list: EntryNode[], inheritedLayer?: string): void => {
     for (const node of list) {
-      rows.push({ id: node.id, layer: node.layer, kind: 'insert', name: node.name })
-      if (node.group === true && Array.isArray(node.config)) walk(node.config as EntryNode[])
+      // Nested group configs come straight from the parsed patch and do not
+      // carry the synthetic layer metadata attached to their parent insert.
+      const layer = typeof node.layer === 'string' ? node.layer : inheritedLayer
+      if (layer === undefined) continue
+      rows.push({ id: node.id, layer, kind: 'insert', name: node.name })
+      if (node.group === true && Array.isArray(node.config)) {
+        walk(node.config as EntryNode[], layer)
+      }
+    }
+  }
+  walk(nodes)
+  return rows
+}
+
+type DisabledState = 'active' | 'disabled' | 'conditional'
+
+interface ResolvableLoaderRow extends LoaderRow {
+  activation: 'required' | 'conditional'
+}
+
+/** Literal values use Loader Boolean semantics; `!!js` stays indeterminate. */
+function disabledState(value: unknown): DisabledState {
+  if (isRecord(value) && typeof value.__jsExpr === 'string') return 'conditional'
+  return Boolean(value) ? 'disabled' : 'active'
+}
+
+function combineDisabled(parent: DisabledState, own: DisabledState): DisabledState {
+  if (parent === 'disabled' || own === 'disabled') return 'disabled'
+  if (parent === 'conditional' || own === 'conditional') return 'conditional'
+  return 'active'
+}
+
+/**
+ * Rows whose specifiers the Loader can attempt to import. Group rows are
+ * always imported even when disabled (their disabled state gates children),
+ * while expression-gated non-group rows are retained as conditional.
+ */
+function resolvableEntries(nodes: EntryNode[]): ResolvableLoaderRow[] {
+  const rows: ResolvableLoaderRow[] = []
+  const walk = (
+    list: EntryNode[],
+    inheritedLayer?: string,
+    parentDisabled: DisabledState = 'active',
+  ): void => {
+    for (const node of list) {
+      const layer = typeof node.layer === 'string' ? node.layer : inheritedLayer
+      if (layer === undefined) continue
+      const descendantsDisabled = combineDisabled(parentDisabled, disabledState(node.disabled))
+      const activation = node.group === true ? 'required' : descendantsDisabled
+      if (activation !== 'disabled') {
+        rows.push({
+          id: node.id,
+          layer,
+          kind: 'insert',
+          name: node.name,
+          activation: activation === 'conditional' ? 'conditional' : 'required',
+        })
+      }
+      if (node.group === true && Array.isArray(node.config)) {
+        walk(node.config as EntryNode[], layer, descendantsDisabled)
+      }
     }
   }
   walk(nodes)
@@ -602,6 +710,7 @@ export interface LayerInput {
 
 interface Composed {
   rows: LoaderRow[]
+  resolvableRows: ResolvableLoaderRow[]
   duplicates: DuplicateId[]
   overrides: OverrideRow[]
   orphans: OrphanRow[]
@@ -653,6 +762,7 @@ export function composeLayers(layers: LayerInput[]): Composed {
             layer: layer.label,
             group: entry.group === true,
             config: Array.isArray(entry.config) ? entry.config : undefined,
+            disabled: entry.disabled,
           }
         }).filter((n): n is EntryNode => n !== null)
         if (hasId) {
@@ -704,6 +814,7 @@ export function composeLayers(layers: LayerInput[]): Composed {
     }
   }
   const rows = flattenEntries(tree)
+  const resolvableRows = resolvableEntries(tree)
   const byId = new Map<string, string[]>()
   for (const row of rows) {
     const layers = byId.get(row.id) ?? []
@@ -718,7 +829,7 @@ export function composeLayers(layers: LayerInput[]): Composed {
     duplicates.push({ id, layers: byId.get(id) ?? [], count })
   }
   duplicates.sort((a, b) => a.id.localeCompare(b.id))
-  return { rows, duplicates, overrides, orphans }
+  return { rows, resolvableRows, duplicates, overrides, orphans }
 }
 
 /** Distinct versions of `@deepseek-ai/{dsh,cordis}*` packages in the lockfile. */
@@ -774,7 +885,7 @@ export function buildBundleLayers(
     let directory: string | null = null
     for (const anchor of anchors) {
       if (anchor === null) continue
-      directory = resolveBundleDir(anchor, name)
+      directory = resolvePackageDir(anchor, name)
       if (directory !== null) break
     }
     const layer: BundleLayer = {
@@ -939,6 +1050,48 @@ export function analyzeProfile(profileDirectory: string, options: CheckOptions =
   }
   for (const layer of layers) {
     if (layer.parseError !== null && layer.kind !== 'bundle') errors.push(`${layer.label}: ${layer.parseError}`)
+  }
+  // User and home patches can insert packages independently of a bundle.
+  // Only check rows that survived composition: an insert targeting a missing
+  // group is skipped by the boot and therefore cannot cause module loading to
+  // fail. Normalize package subpaths to their npm root and check the profile's
+  // node_modules ancestry; exact exports/subpath validation and relative,
+  // absolute, URL, builtin, package-import (#), or cordis: specifiers are
+  // outside this check.
+  const userLayerLabels = new Set(
+    layers
+      .filter(layer => layer.kind === 'user' || layer.kind === 'home')
+      .map(layer => layer.label),
+  )
+  const candidates = new Map<string, { row: ResolvableLoaderRow, packageName: string }>()
+  for (const row of composed.resolvableRows) {
+    if (row.kind !== 'insert' || !userLayerLabels.has(row.layer)) continue
+    if (row.name === undefined || row.name === '') {
+      const message = `${row.layer}: loader entry ${JSON.stringify(row.id)} has no module name`
+      if (row.activation === 'required') errors.push(`${message} — the profile will fail to boot`)
+      else warnings.push(`${message} — boot will fail if its disabled expression enables the entry`)
+      continue
+    }
+    if (!isBareLoaderSpecifier(row.name)) continue
+    if (isBuiltin(row.name)) continue
+    const packageName = packageRoot(row.name)
+    if (packageName === null) {
+      const message = `${row.layer}: loader specifier ${JSON.stringify(row.name)} is not a valid bare package name`
+      if (row.activation === 'required') errors.push(`${message} — the profile will fail to boot`)
+      else warnings.push(`${message} — boot will fail if its disabled expression enables the entry`)
+      continue
+    }
+    const key = `${row.layer}\u0000${packageName}`
+    const previous = candidates.get(key)
+    if (previous === undefined || previous.row.activation === 'conditional' && row.activation === 'required') {
+      candidates.set(key, { row, packageName })
+    }
+  }
+  for (const { row, packageName } of candidates.values()) {
+    if (profilePackageInstalled(profileDirectory, packageName)) continue
+    const message = `${row.layer}: loader package ${packageName} is not installed in the profile`
+    if (row.activation === 'required') errors.push(`${message} — the profile will fail to boot`)
+    else warnings.push(`${message} — boot will fail if its disabled expression enables the entry`)
   }
   for (const dup of composed.duplicates) {
     errors.push(`duplicate loader entry id ${JSON.stringify(dup.id)} (${dup.count} rows: ${dup.layers.join(', ')})`)
