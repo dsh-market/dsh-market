@@ -642,6 +642,37 @@ describe('backup and restore (#55)', () => {
     expect(fake.calls.at(-1)?.[0]).toBe('install')
   })
 
+  /** #205: a restored composition can reference a package that is not on
+   * this machine — the reporter's case was a user patch inserting @dsh-rp/*.
+   * That used to surface only at the NEXT boot, as a Loader
+   * ERR_MODULE_NOT_FOUND with nothing connecting it to the restore. The
+   * restore still completes: undoing it halfway can leave someone worse off
+   * than the state they were escaping, and naming the packages is the part
+   * they cannot do themselves. */
+  it('names what the restored profile still cannot boot without', async () => {
+    const exported = await bed.dispatch('GET', '/dsh-market/backup')
+    // A user patch that loads a package no one installed here.
+    writeFileSync(
+      join(profileDir('web'), 'cordis.patch.yml'),
+      '- insert:\n    - id: from-the-other-machine\n      name: "@dsh-rp/missing-plugin"\n',
+    )
+    const restored = await bed.dispatch('POST', '/dsh-market/restore', { backup: exported.json })
+
+    expect(restored.status).toBe(200)
+    expect(restored.json.ok, 'the restore itself still succeeds').toBe(true)
+    const boot = (restored.json.bootErrors ?? []) as string[]
+    expect(boot.join('\n')).toContain('@dsh-rp/missing-plugin')
+    // The patch file is left exactly as restored — reported, not rewritten.
+    expect(readFileSync(join(profileDir('web'), 'cordis.patch.yml'), 'utf8')).toContain('@dsh-rp/missing-plugin')
+  })
+
+  it('says nothing about booting when the restored profile is fine', async () => {
+    const exported = await bed.dispatch('GET', '/dsh-market/backup')
+    const restored = await bed.dispatch('POST', '/dsh-market/restore', { backup: exported.json })
+    expect(restored.status).toBe(200)
+    expect(restored.json.bootErrors).toBeUndefined()
+  })
+
   it('rejects cross-origin restore requests', async () => {
     expect((await bed.dispatch('POST', '/dsh-market/restore', { backup: {} }, { crossOrigin: true })).status).toBe(403)
   })

@@ -266,6 +266,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			restoreDone: "恢复完成，请重启 DeepSeek Harness",
 			restorePartial: "恢复已完成，但下列插件安装失败：",
 			restoreUnportable: "依赖指向了另一台机器上的绝对路径，本机不存在，需要手动改成本机路径或重新安装",
+			restoreBootError: "恢复后仍无法启动：",
 			restoreConfirm: "恢复将覆盖当前 profile 配置并重新安装插件，确定继续吗？",
 			restorePreviewDone: "备份已导入，请在「已安装」中确认后开始恢复",
 			restoreMissing: "备份中有 {0} 个插件尚未安装",
@@ -710,6 +711,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			restoreDone: "Restore complete — restart DeepSeek Harness",
 			restorePartial: "Restore completed, but these plugins failed to install:",
 			restoreUnportable: "points at an absolute path from another machine that does not exist here — repoint it locally or reinstall the plugin",
+			restoreBootError: "Still cannot boot after the restore:",
 			restoreConfirm: "Restore will overwrite this profile configuration and reinstall plugins. Continue?",
 			restorePreviewDone: "Backup imported. Review Installed, then start restore.",
 			restoreMissing: "{0} plugins from this backup are not installed",
@@ -6173,7 +6175,12 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const finishRestore = (0, react.useCallback)((body) => {
 				const errors = Array.isArray(body.errors) ? body.errors : [];
 				const unportable = Array.isArray(body.unportable) ? body.unportable : [];
-				setRestoreErrors([...errors.map((item) => `${String(item.name)}: ${String(item.error)}`), ...unportable.map((item) => `${String(item.name)}: ${t("restoreUnportable")} (${String(item.spec)})`)]);
+				const bootErrors = Array.isArray(body.bootErrors) ? body.bootErrors.map(String) : [];
+				setRestoreErrors([
+					...errors.map((item) => `${String(item.name)}: ${String(item.error)}`),
+					...unportable.map((item) => `${String(item.name)}: ${t("restoreUnportable")} (${String(item.spec)})`),
+					...bootErrors.map((line) => `${t("restoreBootError")} ${line}`)
+				]);
 				setBackupRestored(true);
 				setBackupMessage(t("restoreDone"));
 				if (errors.length === 0) {

@@ -539,7 +539,30 @@ export function mountMarketRoutes(
     return { ok: true, hot, detail: null }
   }
 
-  async function restoreBackup(value: unknown): Promise<{ files: number; errors: { name: string; error: string }[]; unportable?: Array<{ name: string; spec: string }> }> {
+  /**
+   * Errors the profile analysis reports about the restored composition —
+   * a bundle or a user-patch insert naming a package that is not in
+   * node_modules. #205: those surfaced only at the NEXT boot, as a Loader
+   * ERR_MODULE_NOT_FOUND with nothing tying it to the restore that caused it.
+   *
+   * Reported, never rolled back. A restore undone halfway can leave someone
+   * worse off than the state they were trying to leave, and after a
+   * cross-machine restore they still have the old machine to compare against.
+   * Naming the packages is what they cannot do for themselves.
+   *
+   * An analysis that throws is not allowed to fail a restore that already
+   * succeeded — the profile is on disk either way.
+   */
+  function restoredBootErrors(): string[] {
+    try {
+      return analyzeProfile(activeProfileDir).summary.errors
+    } catch (error) {
+      logEvent('warn', 'restore', `post-restore analysis failed: ${error instanceof Error ? error.message : String(error)}`)
+      return []
+    }
+  }
+
+  async function restoreBackup(value: unknown): Promise<{ files: number; errors: { name: string; error: string }[]; unportable?: Array<{ name: string; spec: string }>; bootErrors?: string[] }> {
     if (!await probePnpm()) throw new Error('pnpm is required to restore plugins')
     // Snapshot the target's manifest BEFORE the backup files overwrite it, so
     // the restore can merge rather than replace: plugins the target already
@@ -567,7 +590,11 @@ export function mountMarketRoutes(
       const result = await runPlugin(config.profile, ['install'])
       if (result.exitCode === 0 && !result.timedOut && !result.cancelled) {
         invalidateUpdates()
-        return { files: restored.files, errors: [], unportable }
+        const bootErrors = restoredBootErrors()
+        if (bootErrors.length > 0) {
+          logEvent('warn', 'restore', `restored profile will not boot as-is — ${bootErrors.join('; ')}`)
+        }
+        return { files: restored.files, errors: [], unportable, ...(bootErrors.length > 0 ? { bootErrors } : {}) }
       }
 
       // A bad dependency makes pnpm abort the whole install. Retry from an
@@ -619,7 +646,16 @@ export function mountMarketRoutes(
         restored.rollback()
       }
       invalidateUpdates()
-      return { files: restored.files, errors, unportable: unportableDeps(manifest.dependencies) }
+      const bootErrors = restoredBootErrors()
+      if (bootErrors.length > 0) {
+        logEvent('warn', 'restore', `restored profile will not boot as-is — ${bootErrors.join('; ')}`)
+      }
+      return {
+        files: restored.files,
+        errors,
+        unportable: unportableDeps(manifest.dependencies),
+        ...(bootErrors.length > 0 ? { bootErrors } : {}),
+      }
     } catch (error) {
       restored.rollback()
       throw error

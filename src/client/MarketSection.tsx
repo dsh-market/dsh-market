@@ -2215,7 +2215,7 @@ export function MarketSection(props: MarketSectionProps) {
     next()
   }, [updatableNames, doUpdate])
 
-  const finishRestore = useCallback((body: { errors?: unknown; unportable?: unknown }) => {
+  const finishRestore = useCallback((body: { errors?: unknown; unportable?: unknown; bootErrors?: unknown }) => {
     const errors = Array.isArray(body.errors) ? body.errors as { name?: unknown; error?: unknown }[] : []
     // Machine-specific dependency paths (#205): a `link:/Users/…` spec from
     // the machine that wrote the backup names a directory that does not
@@ -2225,9 +2225,15 @@ export function MarketSection(props: MarketSectionProps) {
     const unportable = Array.isArray(body.unportable) ? body.unportable as { name?: unknown; spec?: unknown }[] : []
     // Partial failures surface inline in the Backup tab (previously a
     // window.alert); the restore itself still completes.
+    // What the profile analysis says about the composition that just landed
+    // (#205). The restore itself succeeded; these are the packages the
+    // composition still needs, which otherwise surfaced only at the NEXT
+    // boot, as a Loader error with nothing tying it back to the restore.
+    const bootErrors = Array.isArray(body.bootErrors) ? body.bootErrors.map(String) : []
     setRestoreErrors([
       ...errors.map(item => `${String(item.name)}: ${String(item.error)}`),
       ...unportable.map(item => `${String(item.name)}: ${t('restoreUnportable')} (${String(item.spec)})`),
+      ...bootErrors.map(line => `${t('restoreBootError')} ${line}`),
     ])
     setBackupRestored(true)
     setBackupMessage(t('restoreDone'))
