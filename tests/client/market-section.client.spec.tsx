@@ -597,12 +597,58 @@ describe('stuck pending recovery (#32)', () => {
       sessionStorage.setItem('dshm-pending', JSON.stringify({ url: 'https://github.com/alice/dsh-loop' }))
       render(<MarketSection {...props()} />)
       await vi.waitFor(() => { screen.getByText('dsh-loop') })
+      await vi.waitFor(() => { screen.getByRole('button', { name: `${en.opInstalling} 1/1` }) })
+      fireEvent.click(screen.getByRole('button', { name: `${en.opInstalling} 1/1` }))
+      const panel = document.querySelector('[class*="opPanel"]')
+      expect(panel?.textContent).toContain('dsh-loop')
       // Host stays idle and the plugin never appears in installed: two polls
       // (2s apart) must conclude the install died and release the button.
       await vi.advanceTimersByTimeAsync(2100)
       await vi.advanceTimersByTimeAsync(2100)
       expect(sessionStorage.getItem('dshm-pending')).toBeNull()
       expect(screen.getByText(new RegExp(en.installFail))).toBeTruthy()
+      expect(panel?.textContent).not.toContain('dsh-loop')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('lost install progress (config page reopened)', () => {
+  it('keeps the recovered install task aligned with the host lifecycle', async () => {
+    vi.useFakeTimers()
+    try {
+      // Keep the original URL-only marker shape so updates from an older
+      // client recover too; the catalog supplies the task's display name.
+      sessionStorage.setItem('dshm-pending', JSON.stringify({ url: 'https://github.com/alice/dsh-loop' }))
+      let settled = false
+      vi.stubGlobal('fetch', vi.fn((url: string) => {
+        const path = String(url).split('?')[0]
+        const payload =
+          path === '/dsh-market/registry' ? { source: 'live', registry: REGISTRY }
+          : path === '/dsh-market/installed' ? { profile: 'web', installed: {}, live: [], disabled: [], groups: {}, groupOrder: [] }
+          : path === '/dsh-market/status' ? {
+              active: !settled, busy: !settled, pnpm: true, boot: 'boot-1', restart: true,
+              installed: settled ? { 'dsh-loop': '^1.0.0' } : {},
+            }
+          : path === '/dsh-market/updates' ? { updates: {} }
+          : null
+        if (payload === null) return Promise.reject(new Error(`unstubbed fetch: ${String(url)}`))
+        return Promise.resolve(new Response(JSON.stringify(payload), { status: 200 }))
+      }))
+      render(<MarketSection {...props()} />)
+      await vi.waitFor(() => { screen.getByRole('button', { name: en.installing }) })
+      fireEvent.click(screen.getByRole('button', { name: `${en.opInstalling} 1/1` }))
+      const panel = document.querySelector('[class*="opPanel"]')
+      expect(panel, 'the Tasks panel did not open').toBeTruthy()
+      expect(panel!.textContent).toContain('dsh-loop')
+
+      settled = true
+      await vi.advanceTimersByTimeAsync(2100)
+      await vi.waitFor(() => {
+        expect(sessionStorage.getItem('dshm-pending')).toBeNull()
+        expect(panel!.textContent).not.toContain('dsh-loop')
+      })
     } finally {
       vi.useRealTimers()
     }
@@ -610,7 +656,7 @@ describe('stuck pending recovery (#32)', () => {
 })
 
 describe('lost update progress (config page reopened)', () => {
-  it('restores the running update row from the marker and converges it once the host settles', async () => {
+  it('keeps the recovered update task aligned with the host lifecycle', async () => {
     vi.useFakeTimers()
     try {
       // A previous page load started an update, then the config page closed
@@ -637,6 +683,10 @@ describe('lost update progress (config page reopened)', () => {
       fireEvent.click(screen.getByRole('button', { name: new RegExp(re(en.tabInstalled)) }))
       // The restored marker re-renders the running row and its live progress.
       await vi.waitFor(() => { screen.getByRole('button', { name: en.updating }) })
+      fireEvent.click(screen.getByRole('button', { name: re(en.opInstalling) }))
+      const panel = document.querySelector('[class*="opPanel"]')
+      expect(panel, 'the Tasks panel did not open').toBeTruthy()
+      expect(panel!.textContent).toContain('dsh-loop')
       await vi.advanceTimersByTimeAsync(2100)
       await vi.waitFor(() => { screen.getByText(/Downloading · is-odd@3\.0\.1 · 3 packages processed/) })
       // The host finishes the update; two idle polls hand the row back.
@@ -646,6 +696,7 @@ describe('lost update progress (config page reopened)', () => {
       await vi.waitFor(() => {
         expect(sessionStorage.getItem('dshm-updating')).toBeNull()
         expect(screen.queryByRole('button', { name: en.updating })).toBeNull()
+        expect(panel!.textContent).not.toContain('dsh-loop')
       })
     } finally {
       vi.useRealTimers()
