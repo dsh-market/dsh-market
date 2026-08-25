@@ -461,6 +461,25 @@ export function satisfiesRange(version: string, range: string): boolean | null {
   if (v === null) return null
   const versionHasPre = v.pre.length > 0
 
+  // Mirror pnpm's peer-dependency publish transform. Unlike ordinary
+  // dependency specs, a workspace token may sit inside a larger peer range.
+  // Operator-only (or bare) tokens receive the linked sibling's version;
+  // explicit versions only lose the protocol prefix. Unsupported alias/path
+  // forms become an unknown range below rather than a definite mismatch.
+  const workspaceSemver = /workspace:([\^~*]|>=|>|<=|<)?((\d+|[xX*])(\.(\d+|[xX*])){0,2})?/
+  let normalizedRange = range
+  if (range.includes('workspace:')) {
+    const match = workspaceSemver.exec(range)
+    if (match === null) {
+      normalizedRange = range.replace('workspace:', '')
+    } else if (match[2] !== undefined) {
+      normalizedRange = range.replace('workspace:', '')
+    } else {
+      const operator = match[1] === '*' ? '' : (match[1] ?? '')
+      normalizedRange = range.replace(workspaceSemver, `${operator}${semverStr(v)}`)
+    }
+  }
+
   const single = (part: string): boolean | null => {
     const p = part.trim()
     if (p === '' || p === '*' || p === 'x' || p === 'X') return true
@@ -508,7 +527,13 @@ export function satisfiesRange(version: string, range: string): boolean | null {
     if (p === '' || p === '*' || p === 'x' || p === 'X') return { op: '', target: '' }
     const m = /^(\^|~|>=|<=|>|<)?(.*)$/.exec(p)
     if (m === null) return null
-    return { op: m[1] ?? '', target: (m[2] ?? '').trim() }
+    const target = (m[2] ?? '').trim()
+    // Enforce this function's documented unknown-range contract before the
+    // prerelease admission gate. Otherwise an unknown protocol such as
+    // `workspace:^` or `catalog:default` is misreported as a definite false
+    // whenever the resolved version happens to carry a prerelease tag.
+    if (parseSemver(target) === null) return null
+    return { op: m[1] ?? '', target }
   }
 
   /** Evaluate ONE comparator set (a `||` alternative) as a conjunction. */
@@ -533,12 +558,13 @@ export function satisfiesRange(version: string, range: string): boolean | null {
     return results.every(r => r === true)
   }
 
-  if (range.includes('||')) {
-    const outcomes = range.split('||').map(part => evaluateSet(part))
+  if (normalizedRange.includes('||')) {
+    const outcomes = normalizedRange.split('||').map(part => evaluateSet(part))
     if (outcomes.some(out => out === true)) return true
-    return outcomes.every(out => out === null) ? null : false
+    if (outcomes.some(out => out === null)) return null
+    return false
   }
-  return evaluateSet(range)
+  return evaluateSet(normalizedRange)
 }
 
 // --- composition (mirrors dsh-app-boot applyEntryPatches) ---

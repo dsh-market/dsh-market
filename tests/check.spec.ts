@@ -401,6 +401,33 @@ describe('peer range mismatch', () => {
     expect(mismatch?.optional).toBe(true)
     expect(report.summary.warnings.some(w => w.includes('plugin-opt'))).toBe(false)
   })
+
+  it('accepts a rolling workspace peer resolved to its prerelease sibling (#317)', () => {
+    const dir = pdir()
+    writeProfile(dir, { name: 'web-profile', dependencies: {} })
+    writePackage(dir, 'workspace-plugin', {
+      name: 'workspace-plugin',
+      version: '0.1.1-rc.2',
+      peerDependencies: { '@deepseek-ai/dsh-invariants': 'workspace:^' },
+    })
+    writePackage(dir, '@deepseek-ai/dsh-invariants', {
+      name: '@deepseek-ai/dsh-invariants',
+      version: '0.1.1-rc.2',
+    })
+
+    const report = analyzeProfile(dir)
+    const peer = report.peerMismatches.find(
+      mismatch => mismatch.plugin === 'workspace-plugin'
+        && mismatch.name === '@deepseek-ai/dsh-invariants',
+    )
+
+    expect(peer).toMatchObject({
+      range: 'workspace:^',
+      resolved: '0.1.1-rc.2',
+      satisfied: true,
+    })
+    expect(report.summary.warnings.some(w => w.includes('workspace-plugin'))).toBe(false)
+  })
 })
 
 describe('pnpm-lock.yaml multi-version core packages', () => {
@@ -502,7 +529,26 @@ describe('satisfiesRange', () => {
     expect(satisfiesRange('2.1.0', '>=1.2.0 <2.0.0')).toBe(false)
     expect(satisfiesRange('2.0.0', '^1.0.0 || ^2.0.0')).toBe(true)
     expect(satisfiesRange('0.5.0', '^1.0.0 || ^2.0.0')).toBe(false)
-    expect(satisfiesRange('1.2.3', 'workspace:*')).toBeNull()
+    expect(satisfiesRange('1.2.3', 'catalog:default')).toBeNull()
+    expect(satisfiesRange('1.2.3-rc.1', 'catalog:default')).toBeNull()
+    expect(satisfiesRange('1.2.3', 'catalog:default || ^3.0.0')).toBeNull()
+    expect(satisfiesRange('3.1.0', 'catalog:default || ^3.0.0')).toBe(true)
+  })
+
+  it('materializes pnpm workspace protocol ranges against the resolved sibling (#317)', () => {
+    expect(satisfiesRange('0.1.1-rc.2', 'workspace:')).toBe(true)
+    expect(satisfiesRange('0.1.1-rc.2', 'workspace:*')).toBe(true)
+    expect(satisfiesRange('0.1.1-rc.2', 'workspace:^')).toBe(true)
+    expect(satisfiesRange('0.1.1-rc.2', 'workspace:~')).toBe(true)
+    expect(satisfiesRange('0.1.1-rc.2', 'workspace:^0.1.1-rc.1')).toBe(true)
+    expect(satisfiesRange('0.1.1-rc.2', 'workspace:^0.1.2-rc.1')).toBe(false)
+    expect(satisfiesRange('4.5.6', 'workspace:>= || ^3.9.0')).toBe(true)
+    expect(satisfiesRange('1.2.3', '^3.0.0 || workspace:>=')).toBe(true)
+    expect(satisfiesRange('1.2.3', 'workspace:>')).toBe(false)
+    expect(satisfiesRange('1.2.3', 'workspace:<')).toBe(false)
+    expect(satisfiesRange('1.2.3', 'workspace:<=')).toBe(true)
+    expect(satisfiesRange('1.2.3', 'workspace:1.2.x || ^3.0.0')).toBeNull()
+    expect(satisfiesRange('0.1.1-rc.2', 'workspace:../sibling')).toBeNull()
   })
 })
 
