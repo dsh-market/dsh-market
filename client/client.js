@@ -923,6 +923,18 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		};
 		//#endregion
 		//#region src/client/market-data.ts
+		/** Category ids for one entry, de-duplicated in declaration order. */
+		function pluginCategories(plugin) {
+			const values = Array.isArray(plugin.category) ? plugin.category : [plugin.category];
+			const categories = [];
+			const seen = /* @__PURE__ */ new Set();
+			for (const value of values) {
+				if (typeof value !== "string" || value === "" || seen.has(value)) continue;
+				seen.add(value);
+				categories.push(value);
+			}
+			return categories;
+		}
 		/**
 		* Add active profile Bundles as presence-only catalog entries.
 		*
@@ -986,18 +998,24 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		}
 		/**
 		* The discover list: category filter, then the published-within window, then
-		* search across name / owner / localized description, then the selected sort.
+		* search across name / owner / localized description / category ids and
+		* localized category labels, then the selected sort.
 		* Pure — the section renders exactly this.
 		*/
 		function visiblePlugins(plugins, options) {
 			const query = options.query.trim().toLowerCase();
 			const list = plugins.filter((p) => {
 				if (isMarketItself(p)) return false;
-				if (options.category !== "all" && p.category !== options.category) return false;
+				const categories = pluginCategories(p);
+				if (options.category !== "all" && !categories.includes(options.category)) return false;
 				if (options.sinceDays !== void 0 && !withinDays(p.added, options.sinceDays)) return false;
 				if (query === "") return true;
 				const desc = p.description && (p.description[options.lang] || p.description.en) || "";
-				return p.name.toLowerCase().includes(query) || p.owner.toLowerCase().includes(query) || desc.toLowerCase().includes(query);
+				const categoryMatches = categories.some((category) => {
+					if (category.toLowerCase().includes(query)) return true;
+					return Object.values(options.categories?.[category] ?? {}).some((label) => typeof label === "string" && label.toLowerCase().includes(query));
+				});
+				return p.name.toLowerCase().includes(query) || p.owner.toLowerCase().includes(query) || desc.toLowerCase().includes(query) || categoryMatches;
 			});
 			const hasDownloads = (p) => typeof p.downloads === "number";
 			if (options.sort === "downloads-desc") return [...list].sort((a, b) => {
@@ -1020,7 +1038,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		}
 		/** The themes tab listing: theme category only, most-starred first. */
 		function themePlugins(plugins) {
-			return plugins.filter((p) => p.category === "theme").sort((a, b) => (b.stars || 0) - (a.stars || 0));
+			return plugins.filter((p) => pluginCategories(p).includes("theme")).sort((a, b) => (b.stars || 0) - (a.stars || 0));
 		}
 		/**
 		* Category chip order: collapsed with an active non-'all' chip that would
@@ -5480,6 +5498,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				category: cat,
 				query: q,
 				lang,
+				categories: data.categories,
 				sort: `${sortField}-${sortDir}`,
 				sinceDays: timeRange === "all" ? void 0 : TIME_RANGE_DAYS[timeRange]
 			}), [
@@ -5503,6 +5522,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				category: "theme",
 				query: qThemes,
 				lang,
+				categories: data.categories,
 				sort: `${themeSortField}-${themeSortDir}`,
 				sinceDays: themeTimeRange === "all" ? void 0 : TIME_RANGE_DAYS[themeTimeRange]
 			}), [
@@ -5594,7 +5614,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				}))).then(({ status, body }) => {
 					setBusyUrl(null);
 					sessionStorage.removeItem("dshm-pending");
-					if (status === 200 && body.ok && body.hot && plugin.category === "theme") {
+					if (status === 200 && body.ok && body.hot && pluginCategories(plugin).includes("theme")) {
 						sessionStorage.setItem("dshm-toast", JSON.stringify([plugin.name]));
 						sessionStorage.setItem("dshm-tab", "themes");
 						location.reload();
@@ -6485,10 +6505,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						}),
 						/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 							className: Market_module_css_default.foot,
-							children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+							children: [pluginCategories(p).map((category) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 								className: Market_module_css_default.tag,
-								children: data.categories[p.category] && (data.categories[p.category][lang] || data.categories[p.category].en) || p.category
-							}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { className: Market_module_css_default.grow })]
+								children: data.categories[category] && (data.categories[category][lang] || data.categories[category].en) || category
+							}, category)), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { className: Market_module_css_default.grow })]
 						}),
 						busy && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 							className: Market_module_css_default.progress,
@@ -6830,7 +6850,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				if (data === null) return names;
 				for (const [name, spec] of Object.entries(installed)) {
 					const entry = entryForDep(data.plugins, name, String(spec), repoIdentities[name], repoHints[name]);
-					if (entry !== void 0 && entry.category === "theme") names.add(name);
+					if (entry !== void 0 && pluginCategories(entry).includes("theme")) names.add(name);
 				}
 				return names;
 			}, [
@@ -8281,10 +8301,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 										})
 									}),
 									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { className: Market_module_css_default.grow }),
-									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+									pluginCategories(confirming).map((category) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 										className: Market_module_css_default.tag,
-										children: data.categories[confirming.category] && (data.categories[confirming.category][lang] || data.categories[confirming.category].en) || confirming.category
-									})
+										children: data.categories[category] && (data.categories[category][lang] || data.categories[category].en) || category
+									}, category))
 								]
 							}),
 							confirming.added && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {

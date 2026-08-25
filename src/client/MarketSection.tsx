@@ -40,7 +40,7 @@ import { clearSettled, drop, enqueue, patch as patchRecord, recordForUrl } from 
 import type { OperationRecord } from './operations.ts'
 import { Diagnostics } from './Diagnostics.tsx'
 import {
-  avatarColor, entryForDep, githubProxyInUse, githubUrl, groupSwitchState, humanOutput, installedForCatalog, isInstalled, looksTerminal, matchInstalledName, orderedCategories,
+  avatarColor, entryForDep, githubProxyInUse, githubUrl, groupSwitchState, humanOutput, installedForCatalog, isInstalled, looksTerminal, matchInstalledName, orderedCategories, pluginCategories,
   formatCount, pageItems, pluginName, pluginScreenshotCandidates, pluginScreenshots, rankThemeScreenshots, readSession, safeScreenshots, setGithubProxy, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
 } from './market-data.ts'
 import type {
@@ -1538,7 +1538,7 @@ export function MarketSection(props: MarketSectionProps) {
 
   const plugins = useMemo(
     () => (data === null ? [] : visiblePlugins(data.plugins, {
-      category: cat, query: q, lang,
+      category: cat, query: q, lang, categories: data.categories,
       sort: `${sortField}-${sortDir}`,
       sinceDays: timeRange === 'all' ? undefined : TIME_RANGE_DAYS[timeRange],
     })),
@@ -1549,7 +1549,7 @@ export function MarketSection(props: MarketSectionProps) {
 
   const themePlugins = useMemo(
     () => (data === null ? [] : visiblePlugins(data.plugins, {
-      category: 'theme', query: qThemes, lang,
+      category: 'theme', query: qThemes, lang, categories: data.categories,
       sort: `${themeSortField}-${themeSortDir}`,
       sinceDays: themeTimeRange === 'all' ? undefined : TIME_RANGE_DAYS[themeTimeRange],
     })),
@@ -1640,7 +1640,7 @@ export function MarketSection(props: MarketSectionProps) {
       .then(({ status, body }) => {
         setBusyUrl(null)
         sessionStorage.removeItem('dshm-pending')
-        if (status === 200 && body.ok && body.hot && plugin.category === 'theme') {
+        if (status === 200 && body.ok && body.hot && pluginCategories(plugin).includes('theme')) {
           // Themes auto-activate on install; reload straight into the Themes
           // tab so the new look is on screen immediately.
           sessionStorage.setItem('dshm-toast', JSON.stringify([plugin.name]))
@@ -2524,9 +2524,11 @@ export function MarketSection(props: MarketSectionProps) {
           </div>
         )}
         <div className={css.foot}>
-          <span className={css.tag}>
-            {(data!.categories[p.category] && (data!.categories[p.category]![lang] || data!.categories[p.category]!.en)) || p.category}
-          </span>
+          {pluginCategories(p).map(category => (
+            <span key={category} className={css.tag}>
+              {(data!.categories[category] && (data!.categories[category]![lang] || data!.categories[category]!.en)) || category}
+            </span>
+          ))}
           {/* Published date and a source link used to live here too — both
               redundant now that the title itself opens the repo, and the
               date/tag pair alone was long enough in English to wrap onto its
@@ -2821,7 +2823,7 @@ export function MarketSection(props: MarketSectionProps) {
     if (data === null) return names
     for (const [name, spec] of Object.entries(installed)) {
       const entry = entryForDep(data.plugins, name, String(spec), repoIdentities[name], repoHints[name])
-      if (entry !== undefined && entry.category === 'theme') names.add(name)
+      if (entry !== undefined && pluginCategories(entry).includes('theme')) names.add(name)
     }
     return names
   }, [data, installed, repoIdentities, repoHints])
@@ -3819,9 +3821,11 @@ export function MarketSection(props: MarketSectionProps) {
               </Tooltip>
             )}
             <span className={css.grow} />
-            <span className={css.tag}>
-              {(data!.categories[confirming.category] && (data!.categories[confirming.category]![lang] || data!.categories[confirming.category]!.en)) || confirming.category}
-            </span>
+            {pluginCategories(confirming).map(category => (
+              <span key={category} className={css.tag}>
+                {(data!.categories[category] && (data!.categories[category]![lang] || data!.categories[category]!.en)) || category}
+              </span>
+            ))}
           </div>
           {confirming.added && <div className={css.metaInline}>{t('published') + ' ' + confirming.added}</div>}
           {/* The Modal primitive's own `description` prop is sized for a

@@ -14,9 +14,9 @@ import { en } from '../../src/client/locales.ts'
 
 const REGISTRY = {
   updated: '', count: 4,
-  categories: { tools: { en: 'Tools', zh: '工具' }, theme: { en: 'Themes', zh: '主题' } },
+  categories: { tools: { en: 'Tools', zh: '工具' }, skill: { en: 'Skills', zh: '技能包' }, theme: { en: 'Themes', zh: '主题' } },
   plugins: [
-    { name: 'dsh-loop', owner: 'alice', url: 'https://github.com/alice/dsh-loop', category: 'tools', npm: 'dsh-loop', stars: 50, added: '2026-08-01', description: { en: 'Loop task runner', zh: '循环执行' }, install: '' },
+    { name: 'dsh-loop', owner: 'alice', url: 'https://github.com/alice/dsh-loop', category: ['tools', 'skill'], npm: 'dsh-loop', stars: 50, added: '2026-08-01', description: { en: 'Loop task runner', zh: '循环执行' }, install: '' },
     { name: 'dsh-notify', owner: 'bob', url: 'https://github.com/bob/dsh-notify', category: 'tools', npm: null, stars: 120, added: '2026-08-10', description: { en: 'Desktop notifications', zh: '桌面通知' }, install: '' },
     { name: 'whale-skin', owner: 'carol', url: 'https://github.com/carol/whale-skin', category: 'theme', npm: null, stars: 80, added: '2026-08-14', description: { en: 'Whale theme', zh: '鲸鱼主题' }, install: '' },
   ],
@@ -252,6 +252,30 @@ describe('MarketSection (jsdom)', () => {
     await waitFor(() => {
       expect(screen.queryByText('dsh-loop')).toBeNull()
       expect(screen.getByText('dsh-notify')).toBeTruthy()
+    })
+  })
+
+  it('renders every category and finds a plugin through its second category', async () => {
+    render(<MarketSection {...props()} />)
+    const name = await screen.findByText('dsh-loop')
+    let card: HTMLElement | null = name
+    while (card !== null && within(card).queryAllByRole('button', { name: en.install }).length === 0) {
+      card = card.parentElement
+    }
+    card = card?.parentElement ?? null
+    expect(within(card!).getByText('Tools')).toBeTruthy()
+    expect(within(card!).getByText('Skills')).toBeTruthy()
+
+    fireEvent.change(screen.getByPlaceholderText(en.searchPh), { target: { value: 'Skills' } })
+    await waitFor(() => {
+      expect(screen.getByText('dsh-loop')).toBeTruthy()
+      expect(screen.queryByText('dsh-notify')).toBeNull()
+    })
+    fireEvent.change(screen.getByPlaceholderText(en.searchPh), { target: { value: '' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Skills' }))
+    await waitFor(() => {
+      expect(screen.getByText('dsh-loop')).toBeTruthy()
+      expect(screen.queryByText('dsh-notify')).toBeNull()
     })
   })
 

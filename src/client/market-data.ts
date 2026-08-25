@@ -16,7 +16,8 @@ export interface RegistryPlugin {
   url: string
   npm?: string
   tarball?: string | null
-  category: string
+  /** One legacy category id or several category ids. */
+  category: string | string[]
   description?: LocalizedText
   stars?: number
   /**
@@ -35,6 +36,19 @@ export interface RegistryPlugin {
   replacement?: string
   /** Author-curated screenshot URLs from the registry (#61); optional. */
   screenshots?: string[]
+}
+
+/** Category ids for one entry, de-duplicated in declaration order. */
+export function pluginCategories(plugin: Pick<RegistryPlugin, 'category'>): string[] {
+  const values: unknown[] = Array.isArray(plugin.category) ? plugin.category : [plugin.category]
+  const categories: string[] = []
+  const seen = new Set<string>()
+  for (const value of values) {
+    if (typeof value !== 'string' || value === '' || seen.has(value)) continue
+    seen.add(value)
+    categories.push(value)
+  }
+  return categories
 }
 
 /** The catalog payload under `registry` in /dsh-market/registry. */
@@ -252,6 +266,8 @@ export interface ListQuery {
   query: string
   /** UI language for description matching ('zh' / 'en'). */
   lang: string
+  /** Category labels indexed by id; omitted by callers that do not need label search. */
+  categories?: Record<string, LocalizedText>
   /** 'stars-desc' | 'stars-asc' | 'added-desc' | 'added-asc'; anything else keeps registry order. */
   sort: string
   /** Keep only plugins published within the last N days; undefined = any time. */
@@ -270,20 +286,29 @@ export function isMarketItself(plugin: Pick<RegistryPlugin, 'name' | 'npm'>): bo
 
 /**
  * The discover list: category filter, then the published-within window, then
- * search across name / owner / localized description, then the selected sort.
+ * search across name / owner / localized description / category ids and
+ * localized category labels, then the selected sort.
  * Pure — the section renders exactly this.
  */
 export function visiblePlugins(plugins: RegistryPlugin[], options: ListQuery): RegistryPlugin[] {
   const query = options.query.trim().toLowerCase()
   const list = plugins.filter((p) => {
     if (isMarketItself(p)) return false
-    if (options.category !== 'all' && p.category !== options.category) return false
+    const categories = pluginCategories(p)
+    if (options.category !== 'all' && !categories.includes(options.category)) return false
     if (options.sinceDays !== undefined && !withinDays(p.added, options.sinceDays)) return false
     if (query === '') return true
     const desc = (p.description && (p.description[options.lang] || p.description.en)) || ''
+    const categoryMatches = categories.some((category) => {
+      if (category.toLowerCase().includes(query)) return true
+      return Object.values(options.categories?.[category] ?? {}).some(
+        label => typeof label === 'string' && label.toLowerCase().includes(query),
+      )
+    })
     return p.name.toLowerCase().includes(query)
       || p.owner.toLowerCase().includes(query)
       || desc.toLowerCase().includes(query)
+      || categoryMatches
   })
   // A github:-only entry has no npm package and therefore no download count
   // at all — that is a coverage gap, not a "0 downloads" verdict, and must
@@ -325,7 +350,7 @@ export function visiblePlugins(plugins: RegistryPlugin[], options: ListQuery): R
 
 /** The themes tab listing: theme category only, most-starred first. */
 export function themePlugins(plugins: RegistryPlugin[]): RegistryPlugin[] {
-  return plugins.filter(p => p.category === 'theme').sort((a, b) => (b.stars || 0) - (a.stars || 0))
+  return plugins.filter(p => pluginCategories(p).includes('theme')).sort((a, b) => (b.stars || 0) - (a.stars || 0))
 }
 
 /**

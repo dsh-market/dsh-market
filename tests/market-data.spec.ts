@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from 'vitest'
 import {
-  entryForDep, extractReadmeImageCandidates, extractReadmeImages, formatCount, groupSwitchState, installedForCatalog, isInstalled, isMarketItself, looksTerminal, matchInstalledName, orderedCategories, pageItems, previewDimensionScore, rankThemeScreenshots, safeScreenshots, themePlugins, visiblePlugins, humanOutput} from '../src/client/market-data.ts'
+  entryForDep, extractReadmeImageCandidates, extractReadmeImages, formatCount, groupSwitchState, installedForCatalog, isInstalled, isMarketItself, looksTerminal, matchInstalledName, orderedCategories, pageItems, pluginCategories, previewDimensionScore, rankThemeScreenshots, safeScreenshots, themePlugins, visiblePlugins, humanOutput} from '../src/client/market-data.ts'
 import type { RegistryPlugin, ScreenshotCandidate } from '../src/client/market-data.ts'
 
 function plugin(partial: Partial<RegistryPlugin>): RegistryPlugin {
@@ -234,7 +234,7 @@ describe('entryForDep', () => {
 
 describe('discover list (visiblePlugins)', () => {
   const CATALOG: RegistryPlugin[] = [
-    plugin({ name: 'dsh-loop', owner: 'alice', category: 'tool', stars: 50, added: '2026-08-01', description: { zh: '循环执行任务', en: 'Loop task runner' } }),
+    plugin({ name: 'dsh-loop', owner: 'alice', category: ['tool', 'skill', 'tool'], stars: 50, added: '2026-08-01', description: { zh: '循环执行任务', en: 'Loop task runner' } }),
     plugin({ name: 'dsh-notify', owner: 'bob', category: 'tool', stars: 120, added: '2026-08-10', description: { zh: '桌面通知', en: 'Desktop notifications' } }),
     plugin({ name: 'whale-skin', owner: 'carol', category: 'theme', stars: 80, added: '2026-08-14', description: { zh: '鲸鱼主题', en: 'Whale theme' } }),
     plugin({ name: 'no-stars', owner: 'dave', category: 'memory', added: '2026-07-01', description: { en: 'Vector memory store' } }),
@@ -250,10 +250,20 @@ describe('discover list (visiblePlugins)', () => {
     expect(visiblePlugins(CATALOG, { category: 'all', query: '  ', lang: 'en', sort: 'x' })).toHaveLength(4)
   })
 
-  it('filters by category and combines with search', () => {
+  it('filters by any category and keeps legacy string categories working', () => {
+    expect(pluginCategories(CATALOG[0]!)).toEqual(['tool', 'skill'])
+    expect(pluginCategories(CATALOG[1]!)).toEqual(['tool'])
     expect(visiblePlugins(CATALOG, { category: 'tool', query: '', lang: 'en', sort: 'x' }).map(p => p.name)).toEqual(['dsh-loop', 'dsh-notify'])
+    expect(visiblePlugins(CATALOG, { category: 'skill', query: '', lang: 'en', sort: 'x' }).map(p => p.name)).toEqual(['dsh-loop'])
     expect(visiblePlugins(CATALOG, { category: 'tool', query: 'notify', lang: 'en', sort: 'x' }).map(p => p.name)).toEqual(['dsh-notify'])
     expect(visiblePlugins(CATALOG, { category: 'ghost-cat', query: '', lang: 'en', sort: 'x' })).toEqual([])
+  })
+
+  it('searches category ids and every localized category label', () => {
+    const categories = { skill: { en: 'Skills', zh: '技能包' } }
+    expect(visiblePlugins(CATALOG, { category: 'all', query: 'skill', lang: 'en', categories, sort: 'x' }).map(p => p.name)).toEqual(['dsh-loop'])
+    expect(visiblePlugins(CATALOG, { category: 'all', query: 'Skills', lang: 'en', categories, sort: 'x' }).map(p => p.name)).toEqual(['dsh-loop'])
+    expect(visiblePlugins(CATALOG, { category: 'all', query: '技能包', lang: 'en', categories, sort: 'x' }).map(p => p.name)).toEqual(['dsh-loop'])
   })
 
   it('sorts by stars or publish date, ascending and descending', () => {

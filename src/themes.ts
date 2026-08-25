@@ -5,7 +5,7 @@
  * persisted across restarts.
  */
 
-import { loadRegistry } from './registry.ts'
+import { loadRegistry, pluginCategories } from './registry.ts'
 import { hotMount, hotUnmount, listHotMounts, writeDisabled } from './hot.ts'
 import { logEvent } from './log.ts'
 import { profileDir, readInstalled } from './profile.ts'
@@ -48,7 +48,7 @@ export function createThemeManager(
     const names = new Set<string>()
     try {
       const registry = await loadRegistry()
-      const themeEntries = registry.plugins.filter(p => p.category === 'theme')
+      const themeEntries = registry.plugins.filter(p => pluginCategories(p).includes('theme'))
       const themeNames = new Set(themeEntries.map(p => p.name))
       const themeRepos = new Set(
         themeEntries.map(p => repoOf(p.url)).filter((r): r is string => r !== null).map(r => r.toLowerCase()),

@@ -109,6 +109,25 @@ describe('loadRegistry', () => {
     expect(stub).toHaveBeenCalledTimes(3)
   })
 
+  it('normalizes legacy and multi-value categories in declaration order', async () => {
+    const catalog = {
+      ...CATALOG,
+      count: 2,
+      categories: { tools: { en: 'Tools' }, skill: { en: 'Skills' } },
+      plugins: [
+        CATALOG.plugins[0],
+        { ...CATALOG.plugins[0], name: 'dsh-skills', category: [null, 'skill', 'tools', 'skill'] },
+      ],
+    }
+    scriptedFetch(ok(catalog))
+
+    const registry = await loadRegistry()
+    expect(registry.plugins.map(plugin => plugin.category)).toEqual([
+      ['tools'],
+      ['skill', 'tools'],
+    ])
+  })
+
   it('retries once before giving up', async () => {
     const stub = scriptedFetch(new Error('fetch failed'), ok(CATALOG))
     const registry = await loadRegistry()
@@ -141,6 +160,14 @@ describe('loadRegistry', () => {
     // it would replace the catalog with nothing and call that success.
     scriptedFetch(ok({ ...CATALOG, plugins: [] }))
     await expect(loadRegistry()).rejects.toThrow(/came back empty/)
+  })
+
+  it('refuses a plugin with no usable category', async () => {
+    scriptedFetch(ok({
+      ...CATALOG,
+      plugins: [{ ...CATALOG.plugins[0], category: [null, '', 42] }],
+    }))
+    await expect(loadRegistry()).rejects.toThrow(/no usable category/)
   })
 
   it('carries the reason, the elapsed time and the attempt count', async () => {

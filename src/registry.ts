@@ -12,7 +12,8 @@ export interface RegistryPlugin {
   name: string
   owner: string
   url: string
-  category: string
+  /** One legacy category id or several category ids. */
+  category: string | string[]
   description: Record<string, string>
   npm?: string | null
   tarball?: string | null
@@ -33,6 +34,24 @@ export interface RegistryPlugin {
   deprecated?: boolean
   /** Catalog name of the suggested replacement plugin, when deprecated. */
   replacement?: string
+}
+
+/**
+ * Category ids for one catalog entry, de-duplicated in declaration order.
+ *
+ * Catalog JSON is an external input, so malformed array members are omitted
+ * here and an entry with no usable category is rejected by `asRegistry`.
+ */
+export function pluginCategories(plugin: Pick<RegistryPlugin, 'category'>): string[] {
+  const values: unknown[] = Array.isArray(plugin.category) ? plugin.category : [plugin.category]
+  const categories: string[] = []
+  const seen = new Set<string>()
+  for (const value of values) {
+    if (typeof value !== 'string' || value === '' || seen.has(value)) continue
+    seen.add(value)
+    categories.push(value)
+  }
+  return categories
 }
 
 export interface Registry {
@@ -109,7 +128,12 @@ function sourceKey(source: CatalogSource): string {
 function asRegistry(value: unknown): Registry {
   const data = value as Registry
   if (!Array.isArray(data.plugins) || data.plugins.length === 0) throw new Error('the catalog came back empty')
-  return data
+  const plugins = data.plugins.map((plugin, index) => {
+    const category = pluginCategories(plugin)
+    if (category.length === 0) throw new Error(`catalog plugin ${String(index)} carries no usable category`)
+    return { ...plugin, category }
+  })
+  return { ...data, plugins }
 }
 
 /**
