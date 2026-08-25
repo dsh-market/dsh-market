@@ -28,6 +28,7 @@ import { readFileSync } from 'node:fs'
 import { Script } from 'node:vm'
 import { join } from 'node:path'
 import { listHotMounts, parseSimplePatch } from './hot.ts'
+import { userPatchPackageReferences } from './patch.ts'
 import { bundlePatchInsertedIds, hasDshManifest, hasLoadableEntry, profileDir, readInstalled } from './profile.ts'
 
 export type ActivationState = 'live' | 'restart' | 'inert' | 'broken' | 'missing' | 'disabled'
@@ -124,6 +125,25 @@ function patchTextOf(profile: string, name: string, explicitDir?: string): strin
  * @param live - names live in the current composition; defaults to the
  * market's hot-mount table (injectable for tests).
  */
+/**
+ * Whether the profile's OWN `cordis.patch.yml` inserts this package by name.
+ *
+ * A third evidence source beside the loader inventory and the package's own
+ * manifest, and the one that was missing (#165): a plugin the user wired up
+ * themselves declares nothing, is not hot-mounted until the next boot, and so
+ * fell through to `broken` — the market told them the install had failed
+ * verification while the plugin was, in fact, working.
+ *
+ * Read with the same parser the uninstall guard uses. Unreadable returns
+ * null, which is treated here as NO evidence rather than as evidence: this
+ * only ever upgrades a verdict away from `broken`, so being unsure has to
+ * leave the stricter answer standing.
+ */
+function patchLoads(activeProfileDir: string, name: string): boolean {
+  const references = userPatchPackageReferences(join(activeProfileDir, 'cordis.patch.yml'), name)
+  return references !== null && references.length > 0
+}
+
 export function verifyActivation(
   profile: string,
   name: string,
@@ -172,10 +192,18 @@ export function verifyActivation(
     // Not live and no dsh surface: for a package the profile lists as a
     // BUNDLE this is a real defect; for a plain dependency it is normal —
     // most dependencies are libraries, not plugins (#135).
+    if (inBundles && !patchLoads(activeProfileDir, name)) {
+      return {
+        state: 'broken',
+        reasons: ['已列入 profile bundle 层但未声明 dsh 元数据,加载会失败 / listed in the profile bundle layer but declares no dsh metadata — loading it fails'],
+        bundle: true,
+        hot: false,
+      }
+    }
     return inBundles
       ? {
-          state: 'broken',
-          reasons: ['已列入 profile bundle 层但未声明 dsh 元数据,加载会失败 / listed in the profile bundle layer but declares no dsh metadata — loading it fails'],
+          state: 'restart',
+          reasons: ['由你自己的 cordis.patch.yml 按名加载,重启后生效 / loaded by name from your own cordis.patch.yml — live after a restart'],
           bundle: true,
           hot: false,
         }
@@ -189,7 +217,7 @@ export function verifyActivation(
   // Carrier bundles (#103) ship no entry of their own — what they mount is
   // the point — so judge by "is anything loadable", not by this package's
   // own artifact.
-  if (!loaderLive && !hasLoadableEntry(activeProfileDir, name)) {
+  if (!loaderLive && !hasLoadableEntry(activeProfileDir, name) && !patchLoads(activeProfileDir, name)) {
     return {
       state: 'broken',
       reasons: [

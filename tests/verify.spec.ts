@@ -56,6 +56,39 @@ describe('verifyActivation (P0-2)', () => {
     expect(verifyActivation('web', 'client-a', new Set(['client-a']))).toMatchObject({ state: 'live', hot: true, bundle: false })
   })
 
+  /** #165: a plugin the user wired into their OWN cordis.patch.yml declares
+   * nothing, is not hot-mounted until the next boot, and so read as `broken`
+   * — the market said the install failed verification while the plugin was
+   * working. The profile's patch is a third evidence source beside the loader
+   * inventory and the package's own manifest. */
+  it('reads a package the user own patch loads as restart, not broken', () => {
+    const dir = profile(['@vincent-guo/dsh-web-search-openai'])
+    pkg('@vincent-guo/dsh-web-search-openai', { main: 'index.js' }, { 'index.js': '' })
+    // Without the patch it is what it looks like: bundled, no dsh metadata.
+    expect(verifyActivation('web', '@vincent-guo/dsh-web-search-openai', new Set()))
+      .toMatchObject({ state: 'broken' })
+
+    writeFileSync(
+      join(dir, 'cordis.patch.yml'),
+      '- insert:\n    - id: mine\n      name: "@vincent-guo/dsh-web-search-openai"\n',
+    )
+    expect(verifyActivation('web', '@vincent-guo/dsh-web-search-openai', new Set()))
+      .toMatchObject({ state: 'restart', bundle: true })
+  })
+
+  it('does not let an unrelated or unreadable patch soften a real defect', () => {
+    const dir = profile(['dsh-broken'])
+    pkg('dsh-broken', { main: 'index.js' }, { 'index.js': '' })
+    // Names a DIFFERENT package: no evidence about this one.
+    writeFileSync(join(dir, 'cordis.patch.yml'), '- insert:\n    - id: other\n      name: somebody-else\n')
+    expect(verifyActivation('web', 'dsh-broken', new Set())).toMatchObject({ state: 'broken' })
+
+    // Unparseable: unsure has to leave the stricter verdict standing, since
+    // this evidence only ever moves a verdict AWAY from broken.
+    writeFileSync(join(dir, 'cordis.patch.yml'), '- insert:\n    - id: broken\n      name: [\n')
+    expect(verifyActivation('web', 'dsh-broken', new Set())).toMatchObject({ state: 'broken' })
+  })
+
   it('disabled when the user switched it off — never "restart to apply"', () => {
     profile(['dsh-loop'])
     pkg('dsh-loop', { dsh: { bundle: { patch: './cordis.patch.yml' } }, main: 'index.js' }, { 'index.js': '', 'cordis.patch.yml': SIMPLE_PATCH })
