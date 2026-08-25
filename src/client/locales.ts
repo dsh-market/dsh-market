@@ -2,7 +2,7 @@
 
 export const zh = {
   nav: '插件市场',
-  setCardDesc: '查看版本、更新或移除插件市场。',
+  setCardDesc: '查看插件市场版本与设置。',
   setSelfUpToDate: '已是最新版本',
   setSelfUpdateReady: '有新版本',
   setSelfUpdateHint: '更新会下载新版本，重启后生效。',
@@ -454,7 +454,7 @@ export type MarketKey = keyof typeof zh
 
 export const en: Record<MarketKey, string> = {
   nav: 'Plugin Market',
-  setCardDesc: 'See the version, update, or remove the plugin market.',
+  setCardDesc: 'View the plugin market version and settings.',
   setSelfUpToDate: 'Up to date',
   setSelfUpdateReady: 'New version available:',
   setSelfUpdateHint: 'Updating downloads the new version; it takes effect after a restart.',

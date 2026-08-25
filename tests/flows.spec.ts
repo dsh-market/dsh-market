@@ -501,8 +501,12 @@ describe('host-provided profile and package-operation seams', () => {
     const exportedManifest = exported.json.files.find((file: { path: string }) => file.path === 'package.json')
     expect(exportedManifest.json.dependencies).toEqual({ 'desktop-only': '1.0.0' })
     const status = await bed.dispatch('GET', '/dsh-market/status')
-    expect(status.json).toMatchObject({ pnpm: true, restart: false, installed: { 'desktop-only': '1.0.0' } })
-    expect(probe).toHaveBeenCalledOnce()
+    expect(status.json).toMatchObject({
+      pnpm: true, restart: false, selfManaged: false, installed: { 'desktop-only': '1.0.0' },
+    })
+    writeFileSync(join(explicitDir, 'package.json'), '{"dependencies":{"desktop-only":"1.0.0","dshmarket":"1.26.0"}}')
+    expect((await bed.dispatch('GET', '/dsh-market/status')).json.selfManaged).toBe(true)
+    expect(probe).toHaveBeenCalledTimes(2)
     expect((await bed.dispatch('POST', '/dsh-market/setup-pnpm', {})).json.ok).toBe(true)
     expect(provision).toHaveBeenCalledOnce()
     expect((await bed.dispatch('POST', '/dsh-market/cancel', {})).status).toBe(200)

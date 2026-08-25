@@ -35,7 +35,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		/** zh/en dictionaries for the Market settings section and install toast. */
 		const zh = {
 			nav: "插件市场",
-			setCardDesc: "查看版本、更新或移除插件市场。",
+			setCardDesc: "查看插件市场版本与设置。",
 			setSelfUpToDate: "已是最新版本",
 			setSelfUpdateReady: "有新版本",
 			setSelfUpdateHint: "更新会下载新版本，重启后生效。",
@@ -479,7 +479,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		};
 		const en = {
 			nav: "Plugin Market",
-			setCardDesc: "See the version, update, or remove the plugin market.",
+			setCardDesc: "View the plugin market version and settings.",
 			setSelfUpToDate: "Up to date",
 			setSelfUpdateReady: "New version available:",
 			setSelfUpdateHint: "Updating downloads the new version; it takes effect after a restart.",
@@ -923,6 +923,16 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		};
 		//#endregion
 		//#region src/client/market-data.ts
+		/**
+		* Add active profile Bundles as presence-only catalog entries.
+		*
+		* The returned map is for catalog matching only. Update and uninstall flows
+		* must keep using the dependency-only map because a Bundle supplied by the
+		* dsh installation is not owned by the profile package manager.
+		*/
+		function installedForCatalog(installed, bundles) {
+			return Object.fromEntries([...bundles.map((name) => [name, "*"]), ...Object.entries(installed)]);
+		}
 		function groupSwitchState(members, disabled) {
 			const list = members ?? [];
 			if (list.length === 0) return "empty";
@@ -5278,6 +5288,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				}).catch(() => {});
 				fetch("/dsh-market/updates" + (force === true ? "?force=1" : ""), { cache: "no-store" }).then((res) => res.json()).then((body) => setUpdates(body.updates || {})).catch(() => {});
 			}, []);
+			/** Active Bundles count as installed in Discover without becoming package-manager targets. */
+			const catalogInstalled = (0, react.useMemo)(() => installedForCatalog(installed, installedBundles), [installed, installedBundles]);
 			(0, react.useMemo)(() => new Set(disabledNames), [disabledNames]);
 			/** Effective switch state: market disable list ∪ user-patch-layer disables. */
 			const effectiveDisabledSet = (0, react.useMemo)(() => /* @__PURE__ */ new Set([...disabledNames, ...patchDisabledNames]), [disabledNames, patchDisabledNames]);
@@ -6357,7 +6369,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const pluginCard = (p) => {
 				const desc = p.description && (p.description[lang] || p.description.en) || "";
 				const done = doneUrls.includes(p.url) || hotUrls.includes(p.url);
-				const already = isInstalled(p, installed, repoIdentities, data?.plugins, repoHints);
+				const already = isInstalled(p, catalogInstalled, repoIdentities, data?.plugins, repoHints);
 				const busy = busyUrl === p.url;
 				const replacement = replacementOf(p);
 				const record = recordForUrl(records, p.url);
@@ -8136,7 +8148,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 															setTab("discover");
 														},
 														children: t("viewReplacement")
-													}), !isInstalled(replacement, installed, repoIdentities, data?.plugins, repoHints) && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+													}), !isInstalled(replacement, catalogInstalled, repoIdentities, data?.plugins, repoHints) && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 														variant: "outline",
 														size: "sm",
 														onClick: () => setConfirming(replacement),
@@ -8484,8 +8496,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		/**
 		* The market's card on the plugin configuration page (dsh >= 0.1.0-rc.7).
 		*
-		* It manages the market ITSELF — version, update, remove. That is the whole
-		* scope on purpose: this page is where a user goes to deal with a plugin,
+		* It manages the market ITSELF — version, update, remove — when the current
+		* profile owns the dependency. A host-provided market keeps only its version
+		* display and download-region controls. This page is where a user goes to deal
+		* with a plugin,
 		* and "which version am I on / update it / get rid of it" is the part of
 		* that anybody can act on without knowing how DSH is put together.
 		*
@@ -8558,7 +8572,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				channels: offered.length > 0 ? offered : ["stable", "beta"],
 				region: asRegion(body.region) ?? "global",
 				regions: regions.length > 0 ? regions : REGIONS,
-				regionAuto: body.regionAuto === true
+				regionAuto: body.regionAuto === true,
+				selfManaged: body.selfManaged !== false
 			};
 		}
 		function readUpdate(own) {
@@ -8614,7 +8629,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 							channels: ["stable", "beta"],
 							region: "global",
 							regions: REGIONS,
-							regionAuto: false
+							regionAuto: false,
+							selfManaged: true
 						});
 					}
 					try {
@@ -8757,7 +8773,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			}, [post, t]);
 			/** One label + hint block with an optional action, the host's row shape. */
 			const row = (label, hint, action) => (0, react.createElement)("div", { className: Market_module_css_default.setRow }, (0, react.createElement)("div", { className: Market_module_css_default.setLabelBox }, (0, react.createElement)("div", { className: Market_module_css_default.setLabel }, label), (0, react.createElement)("div", { className: Market_module_css_default.setHint }, hint)), action);
-			const body = phase === "removed" ? row(t("setSelfRemoved"), t("setSelfRemovedHint"), null) : (0, react.createElement)(react.Fragment, null, row(update?.updateAvailable === true && update.latest !== null ? `${t("setSelfUpdateReady")} ${update.latest}` : update?.channelSwitch != null ? `${t("setChannelSwitch")} ${update.channelSwitch}` : t("setSelfUpToDate"), phase === "updated" ? t("setSelfUpdatedHint") : update?.channelSwitch != null ? t("setChannelSwitchHint") : update?.updateAvailable === true ? t("setSelfUpdateHint") : t("setSelfUpToDateHint"), phase === "updated" ? null : update?.updateAvailable === true ? (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+			const body = phase === "removed" ? row(t("setSelfRemoved"), t("setSelfRemovedHint"), null) : (0, react.createElement)(react.Fragment, null, status?.selfManaged === true ? row(update?.updateAvailable === true && update.latest !== null ? `${t("setSelfUpdateReady")} ${update.latest}` : update?.channelSwitch != null ? `${t("setChannelSwitch")} ${update.channelSwitch}` : t("setSelfUpToDate"), phase === "updated" ? t("setSelfUpdatedHint") : update?.channelSwitch != null ? t("setChannelSwitchHint") : update?.updateAvailable === true ? t("setSelfUpdateHint") : t("setSelfUpToDateHint"), phase === "updated" ? null : update?.updateAvailable === true ? (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 				variant: "primary",
 				size: "sm",
 				disabled: busy,
@@ -8767,7 +8783,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				size: "sm",
 				disabled: busy,
 				onClick: () => onUpdate()
-			}, t("setChannelSwitch")) : null), row(t("setChannel"), t(CHANNEL_HINT[status?.channel ?? "stable"]), (0, react.createElement)("div", { className: Market_module_css_default.setSeg }, (status?.channels ?? ["stable", "beta"]).map((id) => (0, react.createElement)("button", {
+			}, t("setChannelSwitch")) : null) : null, status?.selfManaged === true ? row(t("setChannel"), t(CHANNEL_HINT[status.channel]), (0, react.createElement)("div", { className: Market_module_css_default.setSeg }, (status?.channels ?? ["stable", "beta"]).map((id) => (0, react.createElement)("button", {
 				key: id,
 				type: "button",
 				className: status?.channel === id ? `${Market_module_css_default.setSegBtn} ${Market_module_css_default.setSegOn}` : Market_module_css_default.setSegBtn,
@@ -8776,7 +8792,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				onClick: () => {
 					onChannel(id);
 				}
-			}, t(CHANNEL_LABEL[id]))))), row(t("setRegion"), status?.regionAuto === true ? `${t(REGION_HINT[status.region])} ${t("setRegionAuto")}` : t(REGION_HINT[status?.region ?? "global"]), (0, react.createElement)("div", { className: Market_module_css_default.setSeg }, (status?.regions ?? REGIONS).map((id) => (0, react.createElement)("button", {
+			}, t(CHANNEL_LABEL[id]))))) : null, row(t("setRegion"), status?.regionAuto === true ? `${t(REGION_HINT[status.region])} ${t("setRegionAuto")}` : t(REGION_HINT[status?.region ?? "global"]), (0, react.createElement)("div", { className: Market_module_css_default.setSeg }, (status?.regions ?? REGIONS).map((id) => (0, react.createElement)("button", {
 				key: id,
 				type: "button",
 				className: status?.region === id ? `${Market_module_css_default.setSegBtn} ${Market_module_css_default.setSegOn}` : Market_module_css_default.setSegBtn,
@@ -8784,7 +8800,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				onClick: () => {
 					onRegion(id);
 				}
-			}, t(REGION_LABEL[id]))))), row(t("setSelfRemove"), t("setSelfRemoveHint"), phase === "confirming" || busy ? null : (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+			}, t(REGION_LABEL[id]))))), status?.selfManaged === true ? row(t("setSelfRemove"), t("setSelfRemoveHint"), phase === "confirming" || busy ? null : (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 				variant: "outline",
 				size: "sm",
 				className: Market_module_css_default.setDanger,
@@ -8792,7 +8808,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				onClick: () => {
 					setPhase("confirming");
 				}
-			}, t("setSelfRemove"))), phase === "confirming" || busy ? (0, react.createElement)("div", { className: Market_module_css_default.setConfirm }, (0, react.createElement)("div", { className: Market_module_css_default.setHint }, t("setSelfConfirm")), (0, react.createElement)("label", { className: Market_module_css_default.setCheck }, (0, react.createElement)("input", {
+			}, t("setSelfRemove"))) : null, status?.selfManaged === true && (phase === "confirming" || busy) ? (0, react.createElement)("div", { className: Market_module_css_default.setConfirm }, (0, react.createElement)("div", { className: Market_module_css_default.setHint }, t("setSelfConfirm")), (0, react.createElement)("label", { className: Market_module_css_default.setCheck }, (0, react.createElement)("input", {
 				type: "checkbox",
 				checked: purge,
 				onChange: () => {

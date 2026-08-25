@@ -22,7 +22,7 @@ const t = (key: string): string => (en as Record<string, string>)[key] ?? key
 let calls: Array<{ path: string; body: unknown }> = []
 
 function stubFetch(options: {
-  version?: string; restart?: boolean; latest?: string | null; removeOk?: boolean; error?: string
+  version?: string; restart?: boolean; latest?: string | null; removeOk?: boolean; error?: string; selfManaged?: boolean
   channel?: string; channelSwitch?: string; channelError?: string
   region?: string; regionAuto?: boolean; regionError?: string; githubProxy?: string | null
 } = {}): void {
@@ -42,6 +42,7 @@ function stubFetch(options: {
         regions: ['global', 'china'],
         regionAuto: options.regionAuto === true,
         githubProxy: options.githubProxy ?? null,
+        selfManaged: options.selfManaged !== false,
       })
     }
     if (path.includes('/dsh-market/updates')) {
@@ -91,6 +92,17 @@ describe('SettingsCard', () => {
   it('shows the running version once opened', async () => {
     await open()
     await waitFor(() => { expect(screen.getByText(/v1\.12\.2/)).toBeTruthy() })
+  })
+
+  it('keeps host-provided installations out of profile package controls', async () => {
+    stubFetch({ selfManaged: false, latest: '1.13.0' })
+    render(<SettingsCard t={t} />)
+    fireEvent.click(screen.getByRole('button', { expanded: false }))
+    await waitFor(() => { expect(screen.getByText(t('setRegion'), { selector: 'div' })).toBeTruthy() })
+    expect(screen.queryByText(t('setSelfUpToDate'))).toBeNull()
+    expect(screen.queryByText(t('setChannel'), { selector: 'div' })).toBeNull()
+    expect(screen.queryByRole('button', { name: t('setSelfUpdate') })).toBeNull()
+    expect(screen.queryByRole('button', { name: t('setSelfRemove') })).toBeNull()
   })
 
   it('offers an update only when one exists', async () => {

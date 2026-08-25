@@ -40,7 +40,7 @@ import { clearSettled, drop, enqueue, patch as patchRecord, recordForUrl } from 
 import type { OperationRecord } from './operations.ts'
 import { Diagnostics } from './Diagnostics.tsx'
 import {
-  avatarColor, entryForDep, githubProxyInUse, githubUrl, groupSwitchState, humanOutput, isInstalled, looksTerminal, matchInstalledName, orderedCategories,
+  avatarColor, entryForDep, githubProxyInUse, githubUrl, groupSwitchState, humanOutput, installedForCatalog, isInstalled, looksTerminal, matchInstalledName, orderedCategories,
   formatCount, pageItems, pluginName, pluginScreenshotCandidates, pluginScreenshots, rankThemeScreenshots, readSession, safeScreenshots, setGithubProxy, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
 } from './market-data.ts'
 import type {
@@ -1293,6 +1293,11 @@ export function MarketSection(props: MarketSectionProps) {
       .catch(() => {})
   }, [])
 
+  /** Active Bundles count as installed in Discover without becoming package-manager targets. */
+  const catalogInstalled = useMemo(
+    () => installedForCatalog(installed, installedBundles),
+    [installed, installedBundles],
+  )
   /** Lookup set for the persisted disable list (#60). */
   const disabledSet = useMemo(() => new Set(disabledNames), [disabledNames])
   /** Effective switch state: market disable list ∪ user-patch-layer disables. */
@@ -2439,7 +2444,7 @@ export function MarketSection(props: MarketSectionProps) {
   const pluginCard = (p: RegistryPlugin) => {
     const desc = (p.description && (p.description[lang] || p.description.en)) || ''
     const done = doneUrls.includes(p.url) || hotUrls.includes(p.url)
-    const already = isInstalled(p, installed, repoIdentities, data?.plugins, repoHints)
+    const already = isInstalled(p, catalogInstalled, repoIdentities, data?.plugins, repoHints)
     const busy = busyUrl === p.url
     const replacement = replacementOf(p)
     // The card reflects its own latest operation. Without this a rejected
@@ -3706,7 +3711,7 @@ export function MarketSection(props: MarketSectionProps) {
                                   return (
                                     <>
                                       <Button variant="outline" size="sm" onClick={() => { setCat('all'); setQ(entry.replacement!); setTab('discover') }}>{t('viewReplacement')}</Button>
-                                      {!isInstalled(replacement, installed, repoIdentities, data?.plugins, repoHints) && (
+                                      {!isInstalled(replacement, catalogInstalled, repoIdentities, data?.plugins, repoHints) && (
                                         <Button variant="outline" size="sm" onClick={() => setConfirming(replacement)}>{t('installReplacement')}</Button>
                                       )}
                                     </>

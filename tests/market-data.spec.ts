@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from 'vitest'
 import {
-  entryForDep, extractReadmeImageCandidates, extractReadmeImages, formatCount, groupSwitchState, isInstalled, isMarketItself, looksTerminal, matchInstalledName, orderedCategories, pageItems, previewDimensionScore, rankThemeScreenshots, safeScreenshots, themePlugins, visiblePlugins, humanOutput} from '../src/client/market-data.ts'
+  entryForDep, extractReadmeImageCandidates, extractReadmeImages, formatCount, groupSwitchState, installedForCatalog, isInstalled, isMarketItself, looksTerminal, matchInstalledName, orderedCategories, pageItems, previewDimensionScore, rankThemeScreenshots, safeScreenshots, themePlugins, visiblePlugins, humanOutput} from '../src/client/market-data.ts'
 import type { RegistryPlugin, ScreenshotCandidate } from '../src/client/market-data.ts'
 
 function plugin(partial: Partial<RegistryPlugin>): RegistryPlugin {
@@ -31,6 +31,19 @@ describe('looksTerminal', () => {
   it('still warns for plugins that positively target a terminal surface', () => {
     expect(looksTerminal(plugin({ name: 'dsh-tui' }), 'en')).toBe(true)
     expect(looksTerminal(plugin({ description: { zh: '为 DSH 提供命令行界面。' } }), 'zh')).toBe(true)
+  })
+})
+
+describe('installedForCatalog', () => {
+  it('adds Bundle presence without replacing dependency specs', () => {
+    expect(installedForCatalog(
+      { managed: '^2.0.0', shared: 'workspace:*' },
+      ['host-provided', 'shared'],
+    )).toEqual({
+      'host-provided': '*',
+      shared: 'workspace:*',
+      managed: '^2.0.0',
+    })
   })
 })
 
