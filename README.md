@@ -117,6 +117,10 @@ DSHM_REGISTRY_URL=https://your-mirror.example/plugins.json dsh web
 
 [modlens](https://github.com/liustack/modlens) — the first vision plugin for DeepSeek Harness: bolts visual understanding onto text-only models like DeepSeek and GLM. Paste an image, get structured JSON evidence back — OCR, layout, semantics. Available right in this market:
 
+### DSH App
+
+[DSH App](https://github.com/RyensX/dsh-app) - DSH App is a lightweight, stable, and easy-to-use deepseek-harness desktop client, developed based on Tauri2.
+
 ```sh
 dsh plugin --profile web add @liustack/modlens
 ```

@@ -114,6 +114,10 @@ DSHM_REGISTRY_URL=https://your-mirror.example/plugins.json dsh web
 
 [modlens](https://github.com/liustack/modlens)——全网第一个 DeepSeek Harness 视觉插件，为 DeepSeek、GLM 等纯文本模型外挂视觉能力，粘贴图片即得结构化 JSON 证据（OCR、版面、语义）。本市场内即可直接安装：
 
+### DSH App
+
+[DSH App](https://github.com/RyensX/dsh-app)——DSH App 是轻量、稳定、易用的deepseek-harness 桌面客户端， 基于Tauri2开发。
+
 ```sh
 dsh plugin --profile web add @liustack/modlens
 ```
