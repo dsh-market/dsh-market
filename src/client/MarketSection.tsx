@@ -1704,12 +1704,17 @@ export function MarketSection(props: MarketSectionProps) {
             setOperationsOpen(true)
             return
           }
-          if (Array.isArray(body.ignoredBuilds) && body.ignoredBuilds.length > 0) {
-            setBuildsSkipped({ plugin, names: body.ignoredBuilds.map(String) })
-          }
+          const blocked = Array.isArray(body.ignoredBuilds) ? body.ignoredBuilds.map(String) : []
+          if (blocked.length > 0) setBuildsSkipped({ plugin, names: blocked })
           const text = (v: unknown) => typeof v === 'string' ? v : (v && typeof (v as any).text === 'string') ? (v as any).text : v == null ? '' : JSON.stringify(v)
           const detail = text(body.error) || humanOutput([text(body.stderr), text(body.stdout)].filter(Boolean).join('\n')) || ('exit ' + body.exitCode)
-          setRecords(list => patchRecord(list, recordId, { state: 'failed', reason: detail.trim().slice(-600) }))
+          // Carry the blocked names onto the record too: the panel is where
+          // this failure is read, so it is where the one-click way out has to
+          // be (#314).
+          setRecords(list => patchRecord(list, recordId, {
+            state: 'failed', reason: detail.trim().slice(-600),
+            ...(blocked.length > 0 ? { blockedBuilds: blocked } : {}),
+          }))
           setOperationsOpen(true)
         }
       })
@@ -2108,6 +2113,24 @@ export function MarketSection(props: MarketSectionProps) {
       })
       .catch(error => { setInstallError(String(error)); return false })
   }, [refreshInstalled, setGroupPayload, t])
+
+  /** Approve the build scripts pnpm refused, then rerun what was blocked. */
+  const approveAndRetry = useCallback((
+    names: string[],
+    resume: () => void,
+  ) => {
+    fetch('/dsh-market/approve-builds', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ packages: names }),
+    })
+      .then(res => res.json())
+      .then((body) => {
+        if (!body.ok) setInstallError(String(body.error || 'approve failed'))
+        else resume()
+      })
+      .catch(error => setInstallError(String(error)))
+  }, [])
 
   const doGroupToggle = useCallback((name: string, enabled: boolean) => {
     return doGroupAction({ action: 'toggle', name, enabled })
@@ -2905,6 +2928,16 @@ export function MarketSection(props: MarketSectionProps) {
             onDismiss={record => setRecords(list => drop(list, record.id))}
             onRefresh={() => location.reload()}
             onResolveConflict={resolveConflict}
+            onApproveBuilds={(record) => {
+              const names = record.blockedBuilds ?? []
+              if (names.length === 0) return
+              setRecords(list => drop(list, record.id))
+              const plugin = record.url === undefined ? undefined : data?.plugins.find(p => p.url === record.url)
+              approveAndRetry(names, () => {
+                if (plugin !== undefined) doInstall(plugin)
+                else doUpdate(record.name, false, false)
+              })
+            }}
           />
         </div>
         {/* Backup & Restore and Diagnostics sit under Advanced rather than as
@@ -3021,18 +3054,10 @@ export function MarketSection(props: MarketSectionProps) {
             onClick={() => {
               const { plugin, updateName, names, restore } = buildsSkipped
               setBuildsSkipped(null)
-              fetch('/dsh-market/approve-builds', {
-                method: 'POST',
-                headers: { 'content-type': 'application/json' },
-                body: JSON.stringify({ packages: names }),
+              approveAndRetry(names, () => {
+                if (plugin !== undefined) doInstall(plugin)
+                else if (updateName !== undefined) doUpdate(updateName, false, restore === true)
               })
-                .then(res => res.json())
-                .then((body) => {
-                  if (!body.ok) setInstallError(String(body.error || 'approve failed'))
-                  else if (plugin !== undefined) doInstall(plugin)
-                  else if (updateName !== undefined) doUpdate(updateName, false, restore === true)
-                })
-                .catch(error => setInstallError(String(error)))
             }}
           >{t('approveBuilds')}</Button>
         </div>

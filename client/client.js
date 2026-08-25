@@ -2367,7 +2367,13 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 												onClick: props.onRefresh,
 												children: t("refresh")
 											}),
-											record.state === "failed" && props.onRetry !== void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+											record.state === "failed" && (record.blockedBuilds ?? []).length > 0 && props.onApproveBuilds !== void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+												variant: "primary",
+												size: "sm",
+												onClick: () => props.onApproveBuilds?.(record),
+												children: t("approveBuilds")
+											}),
+											record.state === "failed" && (record.blockedBuilds ?? []).length === 0 && props.onRetry !== void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 												variant: "outline",
 												size: "sm",
 												onClick: () => props.onRetry?.(record),
@@ -5671,15 +5677,17 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 							setOperationsOpen(true);
 							return;
 						}
-						if (Array.isArray(body.ignoredBuilds) && body.ignoredBuilds.length > 0) setBuildsSkipped({
+						const blocked = Array.isArray(body.ignoredBuilds) ? body.ignoredBuilds.map(String) : [];
+						if (blocked.length > 0) setBuildsSkipped({
 							plugin,
-							names: body.ignoredBuilds.map(String)
+							names: blocked
 						});
 						const text = (v) => typeof v === "string" ? v : v && typeof v.text === "string" ? v.text : v == null ? "" : JSON.stringify(v);
 						const detail = text(body.error) || humanOutput([text(body.stderr), text(body.stdout)].filter(Boolean).join("\n")) || "exit " + body.exitCode;
 						setRecords((list) => patch(list, recordId, {
 							state: "failed",
-							reason: detail.trim().slice(-600)
+							reason: detail.trim().slice(-600),
+							...blocked.length > 0 ? { blockedBuilds: blocked } : {}
 						}));
 						setOperationsOpen(true);
 					}
@@ -6054,6 +6062,17 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				setGroupPayload,
 				t
 			]);
+			/** Approve the build scripts pnpm refused, then rerun what was blocked. */
+			const approveAndRetry = (0, react.useCallback)((names, resume) => {
+				fetch("/dsh-market/approve-builds", {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({ packages: names })
+				}).then((res) => res.json()).then((body) => {
+					if (!body.ok) setInstallError(String(body.error || "approve failed"));
+					else resume();
+				}).catch((error) => setInstallError(String(error)));
+			}, []);
 			const doGroupToggle = (0, react.useCallback)((name, enabled) => {
 				return doGroupAction({
 					action: "toggle",
@@ -6985,7 +7004,17 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 										onCancel: () => doCancel(),
 										onDismiss: (record) => setRecords((list) => drop(list, record.id)),
 										onRefresh: () => location.reload(),
-										onResolveConflict: resolveConflict
+										onResolveConflict: resolveConflict,
+										onApproveBuilds: (record) => {
+											const names = record.blockedBuilds ?? [];
+											if (names.length === 0) return;
+											setRecords((list) => drop(list, record.id));
+											const plugin = record.url === void 0 ? void 0 : data?.plugins.find((p) => p.url === record.url);
+											approveAndRetry(names, () => {
+												if (plugin !== void 0) doInstall(plugin);
+												else doUpdate(record.name, false, false);
+											});
+										}
 									})
 								]
 							}),
@@ -7182,15 +7211,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 								onClick: () => {
 									const { plugin, updateName, names, restore } = buildsSkipped;
 									setBuildsSkipped(null);
-									fetch("/dsh-market/approve-builds", {
-										method: "POST",
-										headers: { "content-type": "application/json" },
-										body: JSON.stringify({ packages: names })
-									}).then((res) => res.json()).then((body) => {
-										if (!body.ok) setInstallError(String(body.error || "approve failed"));
-										else if (plugin !== void 0) doInstall(plugin);
+									approveAndRetry(names, () => {
+										if (plugin !== void 0) doInstall(plugin);
 										else if (updateName !== void 0) doUpdate(updateName, false, restore === true);
-									}).catch((error) => setInstallError(String(error)));
+									});
 								},
 								children: t("approveBuilds")
 							})

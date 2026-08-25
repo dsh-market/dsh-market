@@ -49,6 +49,13 @@ export interface OperationRecord {
   conflicts?: ConflictGroup[]
   /** Set with `warned` or `failed`: one sentence naming what went wrong. */
   reason?: string
+  /**
+   * Set with `failed` when pnpm refused to run a dependency's build scripts.
+   * The way out is one click, so it belongs on the record that reports the
+   * failure — the approval banner lives elsewhere on the page, and a reader
+   * looking at this row was told to press a button they could not see (#314).
+   */
+  blockedBuilds?: string[]
   /** Set with `done` when the change needs a page refresh to be visible. */
   needsRefresh?: boolean
 }

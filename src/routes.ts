@@ -2803,7 +2803,12 @@ export function mountMarketRoutes(
                   : notAPlugin
                     ? 'nothing installable: the plugin(s) need a build step (blocked by default, see allowBuilds) or ship no prebuilt artifacts / 没有可安装的内容：插件需要构建授权（allowBuilds，默认拦截）或未附带构建产物，详见导出日志'
                   : Array.isArray(ignoredBuilds) && ignoredBuilds.length > 0
-                  ? `构建脚本被 pnpm 默认拦截（${ignoredBuilds.join(', ')}），请点击上方按钮放行后重试 / build scripts are blocked by pnpm by default (${ignoredBuilds.join(', ')}); click "Allow build scripts and retry" above`
+                  // Names the button but NOT where it is: it was "above",
+                  // and this sentence is read inside the operations panel
+                  // where the button is not (#314). The panel now carries
+                  // the action on this very row, so the text can just say
+                  // what to press.
+                  ? `构建脚本被 pnpm 默认拦截（${ignoredBuilds.join(', ')}），点击「放行构建脚本并重试」即可放行并重装 / build scripts are blocked by pnpm by default (${ignoredBuilds.join(', ')}); use "Allow build scripts and retry" to approve and reinstall`
                   : undefined,
               exitCode: result.exitCode,
               timedOut: result.timedOut,

@@ -59,6 +59,10 @@ export interface OperationsPanelProps {
   onResolveConflict: (record: OperationRecord, choice: 'keep' | 'swap') => void
   /** Retry an operation the host refused for a fixable reason. */
   onRetry?: ((record: OperationRecord) => void) | undefined
+  /** Approve the build scripts pnpm blocked, then retry — replaces the plain
+   * retry on a record that failed for that reason, so the fix sits next to
+   * the sentence describing the problem. */
+  onApproveBuilds?: ((record: OperationRecord) => void) | undefined
 }
 
 /**
@@ -341,7 +345,10 @@ export function OperationsPanel(props: OperationsPanelProps) {
                   {record.state === 'done' && record.needsRefresh === true && (
                     <Button variant="primary" size="sm" onClick={props.onRefresh}>{t('refresh')}</Button>
                   )}
-                  {record.state === 'failed' && props.onRetry !== undefined && (
+                  {record.state === 'failed' && (record.blockedBuilds ?? []).length > 0 && props.onApproveBuilds !== undefined && (
+                    <Button variant="primary" size="sm" onClick={() => props.onApproveBuilds?.(record)}>{t('approveBuilds')}</Button>
+                  )}
+                  {record.state === 'failed' && (record.blockedBuilds ?? []).length === 0 && props.onRetry !== undefined && (
                     <Button variant="outline" size="sm" onClick={() => props.onRetry?.(record)}>{t('opRetry')}</Button>
                   )}
                   {isSettled(record) && (

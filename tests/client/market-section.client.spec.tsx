@@ -1508,6 +1508,41 @@ describe('local-dev restore', () => {
     expect(screen.getByRole('button', { name: en.uninstall })).toBeTruthy()
   })
 
+  /** #314: the failure is read in the operations panel, and the way out was a
+   * banner elsewhere on the page — the message said "click the button above"
+   * to someone who could not see one. The record that reports the block now
+   * carries the approval itself. */
+  it('puts the build approval on the failed record, not only in a banner', async () => {
+    stubFetch({
+      '/dsh-market/install': {
+        ok: false,
+        ignoredBuilds: ['node-pty'],
+        error: 'blocked by pnpm',
+        __status: 502,
+      },
+      '/dsh-market/approve-builds': { ok: true, approved: ['node-pty'] },
+    })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getAllByRole('button', { name: en.install })[0])
+    fireEvent.click(await screen.findByRole('button', { name: en.confirmInstall }))
+
+    // Two of them now: the banner, and the one on the record in the panel.
+    // The panel one is the point — it sits beside the sentence naming it.
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: en.approveBuilds }).length).toBeGreaterThan(1)
+    })
+    // A blocked build offers approval INSTEAD of a bare retry, which would
+    // just hit the same wall.
+    expect(screen.queryByRole('button', { name: en.opRetry })).toBeNull()
+
+    fireEvent.click(screen.getAllByRole('button', { name: en.approveBuilds }).at(-1)!)
+    await waitFor(() => {
+      expect(fetchCalls.some(call => call.path === '/dsh-market/approve-builds')).toBe(true)
+      expect(fetchCalls.filter(call => call.path === '/dsh-market/install').length).toBeGreaterThanOrEqual(2)
+    })
+  })
+
   it('retries a blocked restore with restore:true after approving builds', async () => {
     stubFetch({
       '/dsh-market/installed': { profile: 'web', installed: { 'dsh-loop': 'link:../dsh-loop' }, live: [] },
