@@ -526,14 +526,42 @@ export function cancelActive(): boolean {
 /** Whether `pnpm` resolves on PATH; success is cached, absence is re-probed. */
 let pnpmReady = false
 
+/**
+ * Why the last probe said no.
+ *
+ * `missing` and `failed` are different problems with different fixes, and
+ * collapsing both into `false` made the market give one answer to both: it
+ * told a user whose pnpm ran perfectly from their shell to go set PNPM_HOME
+ * (#228). A binary that IS on the path and exits non-zero — a corepack shim
+ * that cannot reach the network to fetch pnpm itself is the common one —
+ * needs its own output shown, not a path to fix that is already right.
+ */
+let pnpmProbeFailure: { kind: 'missing' | 'failed'; output: string } | null = null
+
+/** Why `pnpm --version` last failed, or null when it has not failed. */
+export function lastPnpmProbeFailure(): { kind: 'missing' | 'failed'; output: string } | null {
+  return pnpmProbeFailure
+}
+
 /** Probe `pnpm --version` on PATH. */
 export function probePnpm(): Promise<boolean> {
   if (pnpmReady) return Promise.resolve(true)
   return new Promise((resolvePromise) => {
-    const child = spawnShim('pnpm', ['--version'], { stdio: 'ignore', viaShell: winCmdShim, env: spawnEnv() })
-    child.on('error', () => resolvePromise(false))
+    // Piped, not ignored: the output of a pnpm that exists but will not run
+    // IS the explanation, and throwing it away is what left #228 with a
+    // failure nobody could act on.
+    const child = spawnShim('pnpm', ['--version'], { stdio: ['ignore', 'pipe', 'pipe'], viaShell: winCmdShim, env: spawnEnv() })
+    let output = ''
+    const collect = (chunk: Buffer): void => { output = (output + chunk.toString()).slice(-2000) }
+    child.stdout?.on('data', collect)
+    child.stderr?.on('data', collect)
+    child.on('error', (error) => {
+      pnpmProbeFailure = { kind: 'missing', output: error.message }
+      resolvePromise(false)
+    })
     child.on('close', (code) => {
       pnpmReady = code === 0
+      pnpmProbeFailure = pnpmReady ? null : { kind: 'failed', output: output.trim() }
       resolvePromise(pnpmReady)
     })
   })
@@ -585,7 +613,7 @@ export async function provisionPnpm(): Promise<{ ok: boolean; hint?: string }> {
   }
   const npmFound = toolOnPath('npm')
   if (!npmFound) logEvent('warn', 'setup-pnpm', `npm is not on any searched path (node lives in ${nodeBinDir})`)
-  return { ok: false, hint: provisionHint(corepack.output, npm.output, npmFound) }
+  return { ok: false, hint: provisionHint(corepack.output, npm.output, npmFound, lastPnpmProbeFailure()) }
 }
 
 /** Executable suffixes a bare command name can carry on this platform. */
@@ -626,7 +654,12 @@ export function toolOnPath(name: string): boolean {
  * a GUI launch with no Node on PATH at all).
  * @returns a bilingual, actionable hint, or undefined when unrecognized.
  */
-export function provisionHint(corepackOutput: string, npmOutput: string, npmFound = true): string | undefined {
+export function provisionHint(
+  corepackOutput: string,
+  npmOutput: string,
+  npmFound = true,
+  probeFailure: { kind: 'missing' | 'failed'; output: string } | null = null,
+): string | undefined {
   // Node itself unreachable: pointing the user back at this same button
   // would be a dead end (#32). `npmFound` answers this from disk, so it
   // holds on a Windows console that reports the same thing in a codepage we
@@ -661,6 +694,13 @@ export function provisionHint(corepackOutput: string, npmOutput: string, npmFoun
   // they can see succeeded, and their complaint was exactly that — "又不告诉
   // 我怎么手动配置". Whatever the cause, the actionable question is the same
   // one, so ask it: where is pnpm, and is that anywhere this process looks?
+  // pnpm IS on the path and exits non-zero. Telling this user to fix PNPM_HOME
+  // would be advice for the opposite problem — theirs runs fine from a shell,
+  // which is exactly what #228 reported. Its own output is the explanation.
+  if (probeFailure?.kind === 'failed') {
+    const detail = probeFailure.output === '' ? '' : `\n\n${probeFailure.output}`
+    return `找到 pnpm 了，但运行 \`pnpm --version\` 失败——所以问题不在路径上，设 PNPM_HOME 没有用。最常见的原因是 corepack 的 shim 需要联网下载 pnpm 本体，而这台机器下不到。请在终端执行一次 \`pnpm --version\`：如果同样失败，按它的提示修（受限网络可用 \`brew install pnpm\` 或 \`npm i -g pnpm --registry <你的镜像>\` 装一个完整的 pnpm，绕开 shim）；如果在终端里正常，说明 dsh 进程的环境和你的终端不同，请从该终端启动 dsh。pnpm 的原始输出：${detail} / pnpm was found, but \`pnpm --version\` fails — so this is not a path problem and PNPM_HOME will not help. The usual cause is a corepack shim that has to download pnpm itself and cannot reach the network. Run \`pnpm --version\` in a terminal: if it fails the same way, follow what it says (on a restricted network install a real pnpm with \`brew install pnpm\` or \`npm i -g pnpm --registry <your mirror>\` to bypass the shim); if it works there, the dsh process has a different environment than your shell — start dsh from that terminal. pnpm's own output:${detail}`
+  }
   const searched = toolSearchDirs().join(process.platform === 'win32' ? ' ; ' : ' : ')
   const locate = process.platform === 'win32' ? 'where pnpm' : 'which pnpm'
   return `pnpm 装好了，但这个 dsh 进程仍然启动不了它——安装步骤都成功，只是装到的位置不在它搜索的范围内。已找过：${searched}。请在终端执行 \`${locate}\` 看 pnpm 实际在哪：如果它不在上面这些目录里，把该目录设为 PNPM_HOME 后重启 dsh（\`export PNPM_HOME=<那个目录>\`），或者干脆从一个能直接运行 pnpm 的终端里启动 dsh。注意必须重启——正在运行的进程读不到新设的环境变量 / pnpm is installed but this dsh process still cannot start it: every step succeeded, the binary just landed somewhere this process does not look. Searched: ${searched}. Run \`${locate}\` in a terminal to see where pnpm actually is; if that directory is not in the list above, set PNPM_HOME to it and restart dsh (\`export PNPM_HOME=<that directory>\`), or simply start dsh from a terminal where \`pnpm\` already runs. The restart matters — a running process cannot see a newly set variable`

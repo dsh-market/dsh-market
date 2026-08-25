@@ -142,6 +142,28 @@ describe('provisionHint (#142 / #108 / #32)', () => {
     expect(fallback).not.toContain('找不到 npm/corepack')
     expect(fallback).not.toContain('镜像')
   })
+
+  /** #228 again, the other half: "我是有 pnpm 的，可以正常使用". A binary that
+   * IS on the path and exits non-zero is a different problem from one that
+   * is not there, and the fix for it is not a path. Sending that user to set
+   * PNPM_HOME is advice for the opposite situation. */
+  it('does not blame the path when pnpm is found and simply fails to run', async () => {
+    const { provisionHint } = await import('../src/dsh-cli.ts')
+    const failing = provisionHint('', 'some unknown failure', true, {
+      kind: 'failed',
+      output: 'Error: Cannot find matching keyid: {"signatures":[...]}',
+    })
+    // Its own output is the explanation, so it is shown.
+    expect(failing).toContain('Cannot find matching keyid')
+    // And the advice for the OTHER problem is explicitly absent.
+    expect(failing).not.toContain('PNPM_HOME=<')
+    expect(failing).toContain('PNPM_HOME 没有用')
+
+    // A probe that found nothing keeps the original path-shaped advice.
+    const absent = provisionHint('', 'some unknown failure', true, { kind: 'missing', output: 'spawn pnpm ENOENT' })
+    expect(absent).toMatch(/which pnpm|where pnpm/)
+    expect(absent).toContain('PNPM_HOME')
+  })
 })
 
 describe('ERR_PNPM_UNEXPECTED_STORE (#244)', () => {
