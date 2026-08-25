@@ -1595,6 +1595,96 @@ describe('uninstall flow', () => {
     expect((await bed.dispatch('POST', '/dsh-market/uninstall', { name: 'ghost' })).status).toBe(400)
   })
 
+  it('refuses to remove a package still inserted by the user patch (#165)', async () => {
+    fake.npm['dsh-loop'] = { latest: '1.0.0', versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } } }
+    await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
+    const patch = join(fake.profileDir, 'cordis.patch.yml')
+    const patchText = [
+      '- insert:',
+      '    - id: user-loop',
+      "      name: 'dsh-loop/runtime'",
+      '',
+    ].join('\n')
+    writeFileSync(patch, patchText)
+    const callsBefore = fake.calls.length
+
+    const r = await bed.dispatch('POST', '/dsh-market/uninstall', { name: 'dsh-loop' })
+
+    expect(r.status).toBe(409)
+    expect(r.json).toMatchObject({
+      userPatchReferenced: true,
+      patchReferences: ['dsh-loop/runtime'],
+    })
+    expect(String(r.json.error)).toContain('cordis.patch.yml')
+    expect(installedSpec('dsh-loop')).toBeDefined()
+    expect(readFileSync(patch, 'utf8')).toBe(patchText)
+    expect(fake.calls.slice(callsBefore).some(call => call[0] === 'remove')).toBe(false)
+  })
+
+  it('does not confuse a neighbouring package name for a user-patch reference (#165)', async () => {
+    fake.npm['dsh-loop'] = { latest: '1.0.0', versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } } }
+    await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
+    writeFileSync(join(fake.profileDir, 'cordis.patch.yml'), [
+      '- insert:',
+      '    - id: neighbour',
+      '      name: dsh-loop-extra',
+      '',
+    ].join('\n'))
+
+    const r = await bed.dispatch('POST', '/dsh-market/uninstall', { name: 'dsh-loop' })
+
+    expect(r.status).toBe(200)
+    expect(r.json.ok).toBe(true)
+    expect(installedSpec('dsh-loop')).toBeUndefined()
+  })
+
+  it('refuses to uninstall when the user patch cannot be inspected safely (#165)', async () => {
+    fake.npm['dsh-loop'] = { latest: '1.0.0', versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } } }
+    await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
+    const patch = join(fake.profileDir, 'cordis.patch.yml')
+    const patchText = '- insert:\n    - id: broken\n      name: [\n'
+    writeFileSync(patch, patchText)
+    const callsBefore = fake.calls.length
+
+    const r = await bed.dispatch('POST', '/dsh-market/uninstall', { name: 'dsh-loop' })
+
+    expect(r.status).toBe(409)
+    expect(r.json.userPatchInspectionFailed).toBe(true)
+    expect(String(r.json.error)).toContain('cordis.patch.yml')
+    expect(installedSpec('dsh-loop')).toBeDefined()
+    expect(readFileSync(patch, 'utf8')).toBe(patchText)
+    expect(fake.calls.slice(callsBefore).some(call => call[0] === 'remove')).toBe(false)
+    // Refusing is right, but refusing with no way through is not: the market
+    // cannot name a row to fix here, and wanting to uninstall usually means
+    // something is already broken. The refusal advertises the escape.
+    expect(r.json.forceable).toBe(true)
+  })
+
+  it('lets an unreadable user patch be forced past, but never a definite reference (#165)', async () => {
+    fake.npm['dsh-loop'] = { latest: '1.0.0', versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } } }
+    await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
+    const patch = join(fake.profileDir, 'cordis.patch.yml')
+
+    // Unreadable: forceable, and the user patch is still left untouched.
+    const unreadable = '- insert:\n    - id: broken\n      name: [\n'
+    writeFileSync(patch, unreadable)
+    const forced = await bed.dispatch('POST', '/dsh-market/uninstall', { name: 'dsh-loop', force: true })
+    expect(forced.status, String(forced.json.error ?? '')).toBe(200)
+    expect(installedSpec('dsh-loop')).toBeUndefined()
+    expect(readFileSync(patch, 'utf8')).toBe(unreadable)
+
+    // A patch that DEFINITELY names the package is not forceable: there the
+    // user has a concrete row to remove, so an override would only help them
+    // break the next boot.
+    await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
+    writeFileSync(patch, '- insert:\n    - id: mine\n      name: dsh-loop\n')
+    const refused = await bed.dispatch('POST', '/dsh-market/uninstall', { name: 'dsh-loop', force: true })
+    expect(refused.status).toBe(409)
+    expect(refused.json.userPatchReferenced).toBe(true)
+    expect(refused.json.forceable).toBeUndefined()
+    expect(installedSpec('dsh-loop')).toBeDefined()
+  })
+
   it('uninstall succeeds even when the lockfile holds a too-young release (#39)', async () => {
     fake.npm['dsh-loop'] = { latest: '1.0.0', versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } } }
     await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })

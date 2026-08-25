@@ -18,7 +18,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   carrierDisableIds, disableRow, enableRow, findUserPatchPath, isProtectedModule, packagePatchFlags,
-  readUserPatchState, removeRowBlocks, rowIdsForPackage, type PatchHost,
+  readUserPatchState, removeRowBlocks, rowIdsForPackage, userPatchPackageReferences, type PatchHost,
 } from '../src/patch.ts'
 
 function patchDir(): string {
@@ -59,6 +59,138 @@ describe('readUserPatchState', () => {
     const dir = patchDir()
     try {
       expect(readUserPatchState(join(dir, 'cordis.patch.yml'))).toEqual({ disables: [], forced: [], inserts: [] })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('userPatchPackageReferences', () => {
+  it('finds exact package and exported-subpath inserts without prefix collisions', () => {
+    const dir = patchDir()
+    try {
+      const patch = join(dir, 'cordis.patch.yml')
+      writeFileSync(patch, [
+        '- insert:',
+        '    - id: exact',
+        '      name: dsh-loop',
+        '    - id: subpath',
+        "      name: 'dsh-loop/runtime'",
+        '    - id: scoped',
+        '      name: "@scope/plugin/client"',
+        '    - id: neighbour',
+        '      name: dsh-loop-extra',
+        '',
+      ].join('\n'))
+
+      expect(userPatchPackageReferences(patch, 'dsh-loop')).toEqual(['dsh-loop', 'dsh-loop/runtime'])
+      expect(userPatchPackageReferences(patch, '@scope/plugin')).toEqual(['@scope/plugin/client'])
+      expect(userPatchPackageReferences(patch, 'missing')).toEqual([])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('ignores nested config names and rows after the insert block', () => {
+    const dir = patchDir()
+    try {
+      const patch = join(dir, 'cordis.patch.yml')
+      writeFileSync(patch, [
+        '- insert:',
+        '  - id: workbench',
+        '    name: real-plugin',
+        '    config:',
+        '      name: nested-config-value',
+        '  - id: array-options',
+        '    name: options-plugin',
+        '    config:',
+        '      - name: nested-array-value',
+        '- config:',
+        '    name: later-top-level-value',
+        '',
+      ].join('\n'))
+
+      expect(userPatchPackageReferences(patch, 'real-plugin')).toEqual(['real-plugin'])
+      expect(userPatchPackageReferences(patch, 'nested-config-value')).toEqual([])
+      expect(userPatchPackageReferences(patch, 'nested-array-value')).toEqual([])
+      expect(userPatchPackageReferences(patch, 'later-top-level-value')).toEqual([])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('recognizes flow-style inserts and loader entries nested in a group', () => {
+    const dir = patchDir()
+    try {
+      const patch = join(dir, 'cordis.patch.yml')
+      writeFileSync(patch, '[{ insert: [{ id: flow, name: dsh-loop/runtime }] }]\n')
+      expect(userPatchPackageReferences(patch, 'dsh-loop')).toEqual(['dsh-loop/runtime'])
+
+      writeFileSync(patch, [
+        '- insert:',
+        '    - id: group',
+        '      name: cordis:group',
+        '      group: true',
+        '      config:',
+        '        - id: child',
+        '          name: dsh-loop/child',
+        '',
+      ].join('\n'))
+      expect(userPatchPackageReferences(patch, 'dsh-loop')).toEqual(['dsh-loop/child'])
+
+      writeFileSync(patch, '- insert:\n    - id: empty-group\n      name: cordis:group\n      group: true\n')
+      expect(userPatchPackageReferences(patch, 'dsh-loop')).toEqual([])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('reports an existing malformed patch as indeterminate', () => {
+    const dir = patchDir()
+    try {
+      const patch = join(dir, 'cordis.patch.yml')
+      writeFileSync(patch, '- insert:\n    - id: broken\n      name: [\n')
+      expect(userPatchPackageReferences(patch, 'dsh-loop')).toBeNull()
+      writeFileSync(patch, '- insert: { id: wrong-shape, name: dsh-loop }\n')
+      expect(userPatchPackageReferences(patch, 'dsh-loop')).toBeNull()
+      writeFileSync(patch, '- dsh-loop\n')
+      expect(userPatchPackageReferences(patch, 'dsh-loop')).toBeNull()
+      writeFileSync(patch, '')
+      expect(userPatchPackageReferences(patch, 'dsh-loop')).toBeNull()
+      writeFileSync(patch, '# no valid top-level list yet\n')
+      expect(userPatchPackageReferences(patch, 'dsh-loop')).toBeNull()
+      writeFileSync(patch, [
+        '- insert: &entries',
+        '    - id: cyclic-group',
+        '      name: cordis:group',
+        '      group: true',
+        '      config: *entries',
+        '',
+      ].join('\n'))
+      expect(userPatchPackageReferences(patch, 'dsh-loop')).toBeNull()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('treats a missing patch and the template [] placeholder as no references', () => {
+    const dir = patchDir()
+    try {
+      const patch = join(dir, 'cordis.patch.yml')
+      expect(userPatchPackageReferences(patch, 'dsh-loop')).toEqual([])
+      writeFileSync(patch, '# no user entries yet\n[]\n')
+      expect(userPatchPackageReferences(patch, 'dsh-loop')).toEqual([])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('reports a non-file patch path as unreadable', () => {
+    const dir = patchDir()
+    try {
+      const patch = join(dir, 'cordis.patch.yml')
+      mkdirSync(patch)
+      expect(userPatchPackageReferences(patch, 'dsh-loop')).toBeNull()
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

@@ -204,17 +204,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
-/** Parse one entry-list patch file with the dsh dialect; null when unreadable. */
-export function parsePatchFile(path: string): unknown[] | null {
-  let text: string
-  try {
-    text = readFileSync(path, 'utf8')
-  } catch {
-    return null
-  }
+/** Parse entry-list source with the DSH dialect; null when it is not a list. */
+export function parsePatchText(text: string): unknown[] | null {
   try {
     const value = load(text, { schema: entrySchema })
     return Array.isArray(value) ? value : null
+  } catch {
+    return null
+  }
+}
+
+/** Parse one entry-list patch file with the DSH dialect; null when unreadable. */
+export function parsePatchFile(path: string): unknown[] | null {
+  try {
+    return parsePatchText(readFileSync(path, 'utf8'))
   } catch {
     return null
   }
