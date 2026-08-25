@@ -413,6 +413,19 @@ const EXACT_NPM_TARGET_RE = /^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~
  * ordinary path, which on that host reports their own refusal — an accurate
  * message about their contract, rather than one this package invented.
  */
+/**
+ * Added to a refusal from a host whose install boundary only takes
+ * `name@exact.version`. Their message is accurate and stays first; this says
+ * which property of the plugin put it out of reach, because the user picked a
+ * card and has no way to know the difference from the outside (#138).
+ */
+const NPM_ONLY_HOST_NOTE
+  = '这个桌面客户端只能安装已发布到 npm 的插件，而该插件仅提供 GitHub 源，因此装不了——这是客户端的安装边界，不是插件或市场的问题。'
+  + '可以改用普通 dsh web 安装，或请插件作者发布 npm 包。 / '
+  + 'This desktop client can only install plugins published to npm, and this one is GitHub-only, so it cannot be installed here. '
+  + 'That is the client\'s install boundary, not a fault in the plugin or the market. '
+  + 'Install it from plain dsh web instead, or ask the author to publish to npm.'
+
 async function exactNpmArgs(args: readonly string[]): Promise<string[] | null> {
   const targets = args.slice(1).filter(argument => !argument.startsWith('-'))
   const target = targets[0]
@@ -883,6 +896,8 @@ export function createDesktopPluginRuntime(
 
     const abort = new AbortController()
     let handle: DesktopPnpmHandleLike
+    /** Set when this host only installs npm packages and the target is not one. */
+    let boundaryRefusesTarget = false
     try {
       // `add` goes through Anywhere Labs' install boundary when that host
       // publishes one, because their Desktop rejects `add` on `runPlugin`
@@ -891,6 +906,13 @@ export function createDesktopPluginRuntime(
       // in #292 — the ordinary call below is what runs, unchanged.
       const boundary = prepared.args[0] === 'add' ? service.runExternalMarketPluginInstall : undefined
       const viaBoundary = boundary === undefined ? null : await exactNpmArgs(prepared.args)
+      // A host that publishes the boundary accepts ONLY `name@exact.version`
+      // through it, so a github-sourced plugin has nowhere to go: the
+      // fallback below is a call that host refuses outright. Their refusal is
+      // accurate but says nothing about why THIS plugin, and roughly half the
+      // catalog has no npm package — reported in #138 after the user found
+      // out by clicking Install and reading `exit 127`.
+      boundaryRefusesTarget = boundary !== undefined && viaBoundary === null
       handle = boundary === undefined || viaBoundary === null
         ? service.runPlugin(prepared.args, invokingDir, abort.signal)
         : boundary.call(service, viaBoundary, invokingDir, abort.signal)
@@ -901,7 +923,7 @@ export function createDesktopPluginRuntime(
         exitCode: 127,
         timedOut: false,
         stdout: '',
-        stderr: message,
+        stderr: boundaryRefusesTarget ? `${message}\n${NPM_ONLY_HOST_NOTE}` : message,
         cancelled: false,
         ...(busy ? { busy: true } : {}),
       }
@@ -949,11 +971,12 @@ export function createDesktopPluginRuntime(
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         progress.error = tracker.snapshot.error
+        const detail = `${stderr}${stderr === '' ? '' : '\n'}${message}`
         return {
           exitCode: 127,
           timedOut,
           stdout,
-          stderr: `${stderr}${stderr === '' ? '' : '\n'}${message}`,
+          stderr: boundaryRefusesTarget ? `${detail}\n${NPM_ONLY_HOST_NOTE}` : detail,
           cancelled: active.userCancelled,
         }
       } finally {

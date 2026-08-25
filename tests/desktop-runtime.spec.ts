@@ -204,6 +204,43 @@ describe('Anywhere Labs install boundary (#215, #219, #272)', () => {
     await runtime.dispose()
   })
 
+  /** #138: falling back is right, but their refusal ("must use the
+   * recoverable install boundary", exit 127) is accurate about their contract
+   * and silent about why THIS plugin. Roughly half the catalog has no npm
+   * package, and a card gives the user no way to tell from the outside. */
+  it('says why a github-only plugin is out of reach on an npm-only host', async () => {
+    const plain: { args: readonly string[] }[] = []
+    const service: DesktopPnpmLike = {
+      runPlugin(args) {
+        plain.push({ args })
+        throw new Error('plugin add must use the recoverable install boundary')
+      },
+      runExternalMarketPluginInstall() { throw new Error('should not be reached') },
+    }
+    const runtime = createDesktopPluginRuntime(service, profileFixture(), '/tmp', 10_000)
+    const result = await runtime.runPlugin('web', ['add', 'github:owner/repo'])
+    expect(result.exitCode).toBe(127)
+    // Their sentence stays, and stays first.
+    expect(result.stderr).toContain('recoverable install boundary')
+    // Ours names the property that put the plugin out of reach, and where to
+    // go instead — neither of which their message can know.
+    expect(result.stderr).toContain('npm')
+    expect(result.stderr).toContain('dsh web')
+    await runtime.dispose()
+  })
+
+  it('adds nothing when the ordinary path is all there ever was', async () => {
+    // No boundary published: this is every other client, and a failure there
+    // must not acquire an explanation about a contract they do not have.
+    const service: DesktopPnpmLike = {
+      runPlugin() { throw new Error('some unrelated desktop failure') },
+    }
+    const runtime = createDesktopPluginRuntime(service, profileFixture(), '/tmp', 10_000)
+    const result = await runtime.runPlugin('web', ['add', 'github:owner/repo'])
+    expect(result.stderr).toBe('some unrelated desktop failure')
+    await runtime.dispose()
+  })
+
   it('leaves every other command on the ordinary path', async () => {
     const { service, plain, boundary } = boundaryService()
     const runtime = createDesktopPluginRuntime(service, profileFixture(), '/tmp', 10_000)
