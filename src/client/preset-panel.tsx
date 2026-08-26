@@ -16,6 +16,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button, Input } from '@deepseek-ai/dsh-client-ui-primitives'
 import css from './Market.module.css'
+import { api } from './market-data.ts'
 import type { Translate } from './market-data.ts'
 
 /** One preset from GET /dsh-market/presets. */
@@ -72,7 +73,7 @@ export function PresetPanel(props: PresetPanelProps) {
   const loaded = useRef(false)
 
   const load = useCallback(() => {
-    fetch('/dsh-market/presets', { cache: 'no-store' })
+    fetch(api('/dsh-market/presets'), { cache: 'no-store' })
       .then(res => res.json())
       .then(body => {
         const list: unknown[] = Array.isArray(body) ? body : Array.isArray(body.presets) ? body.presets : []
@@ -110,9 +111,9 @@ export function PresetPanel(props: PresetPanelProps) {
     setError(null)
     // Save the CURRENT disable list too — applying a preset restores it, so
     // saving an empty list would silently re-enable every disabled plugin.
-    fetch('/dsh-market/installed', { cache: 'no-store' })
+    fetch(api('/dsh-market/installed'), { cache: 'no-store' })
       .then(res => res.json())
-      .then((installed: { disabled?: unknown }) => postJson('/dsh-market/presets', {
+      .then((installed: { disabled?: unknown }) => postJson(api('/dsh-market/presets'), {
         action: 'save',
         name: presetName,
         bundleOrder,
@@ -136,7 +137,7 @@ export function PresetPanel(props: PresetPanelProps) {
     setBusy('apply')
     setMsg(null)
     setError(null)
-    postJson('/dsh-market/presets', { action: 'apply', name: presetName })
+    postJson(api('/dsh-market/presets'), { action: 'apply', name: presetName })
       .then(({ status, body }) => {
         if (status >= 200 && status < 300 && body?.ok === true) {
           setMsg(t('presetApplied'))
@@ -154,7 +155,7 @@ export function PresetPanel(props: PresetPanelProps) {
     setBusy('delete')
     setMsg(null)
     setError(null)
-    postJson('/dsh-market/presets', { action: 'delete', name: presetName })
+    postJson(api('/dsh-market/presets'), { action: 'delete', name: presetName })
       .then(({ status, body }) => {
         if (status >= 200 && status < 300 && body?.ok === true) {
           setConfirmDelete(null)
@@ -180,7 +181,7 @@ export function PresetPanel(props: PresetPanelProps) {
       setBusy(null)
       return
     }
-    postJson('/dsh-market/presets', { action: 'preview', name: presetName })
+    postJson(api('/dsh-market/presets'), { action: 'preview', name: presetName })
       .then(({ status, body }) => {
         if (status >= 200 && status < 300 && body?.ok === true && body.changes !== null && typeof body.changes === 'object') {
           const changes = body.changes as { reordered?: unknown; enabled?: unknown; disabled?: unknown; noop?: unknown }

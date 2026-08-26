@@ -37,7 +37,7 @@ import { createElement as h, Fragment, useCallback, useEffect, useRef, useState 
 import type { ReactElement } from 'react'
 import { Button, IconChevronDownOutline14, IconLoadingOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import css from './Market.module.css'
-import { setGithubProxy } from './market-data.ts'
+import { api, setGithubProxy } from './market-data.ts'
 import type { Translate } from './market-data.ts'
 
 /** Keys the market leaves in the browser; cleared when the user purges. */
@@ -59,7 +59,7 @@ export interface SettingsCardProps {
 type Channel = 'stable' | 'beta' | 'dev'
 type Region = 'global' | 'china'
 
-/** What `/dsh-market/status` tells this card. */
+/** What api('/dsh-market/status') tells this card. */
 interface SelfStatus {
   version: string | null
   restart: boolean
@@ -76,7 +76,7 @@ interface SelfStatus {
   selfManaged: boolean
 }
 
-/** The subset of `/dsh-market/status` this card reads. */
+/** The subset of api('/dsh-market/status') this card reads. */
 interface StatusBody {
   version?: string
   restart?: boolean
@@ -89,7 +89,7 @@ interface StatusBody {
   selfManaged?: boolean
 }
 
-/** What `/dsh-market/updates` says about the market's own row. */
+/** What api('/dsh-market/updates') says about the market's own row. */
 interface SelfUpdate {
   updateAvailable: boolean
   latest: string | null
@@ -99,7 +99,7 @@ interface SelfUpdate {
 
 type Phase = 'idle' | 'confirming' | 'working' | 'removed' | 'updated' | 'failed'
 
-/** The market's own row as `/dsh-market/updates` sends it. */
+/** The market's own row as api('/dsh-market/updates') sends it. */
 interface RawUpdate { updateAvailable?: boolean; latest?: string; channelSwitch?: string }
 
 const CHANNELS: Channel[] = ['stable', 'beta', 'dev']
@@ -203,7 +203,7 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
     let live = true
     void (async () => {
       try {
-        const response = await fetch('/dsh-market/status', { cache: 'no-store' })
+        const response = await fetch(api('/dsh-market/status'), { cache: 'no-store' })
         const body = (await response.json()) as StatusBody
         if (live) setStatus(readStatus(body))
         setGithubProxy(typeof body.githubProxy === 'string' ? body.githubProxy : null)
@@ -216,7 +216,7 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
         }
       }
       try {
-        const response = await fetch('/dsh-market/updates', { cache: 'no-store' })
+        const response = await fetch(api('/dsh-market/updates'), { cache: 'no-store' })
         const body = (await response.json()) as { updates?: Record<string, RawUpdate> }
         const own = body.updates?.['dshmarket'] ?? body.updates?.['dsh-market']
         if (live && own !== undefined) setUpdate(readUpdate(own))
@@ -240,7 +240,7 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
     setStale(false)
     void (async () => {
       try {
-        const body = await post('/dsh-market/update', { name: 'dshmarket', ...(force ? { force: true } : {}) }) as {
+        const body = await post(api('/dsh-market/update'), { name: 'dshmarket', ...(force ? { force: true } : {}) }) as {
           ok?: boolean; error?: string; stale?: boolean
         }
         if (body.ok === true) setPhase('updated')
@@ -261,7 +261,7 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
     setError(null)
     void (async () => {
       try {
-        const body = await post('/dsh-market/self-uninstall', { confirm: true, purge })
+        const body = await post(api('/dsh-market/self-uninstall'), { confirm: true, purge })
         if (body.ok === true) {
           if (purge) clearBrowserState(localStorage)
           setPhase('removed')
@@ -282,7 +282,7 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
 
   /** Re-ask what this channel offers; the previous answer was for another one. */
   const refreshUpdate = useCallback(async (): Promise<void> => {
-    const response = await fetch('/dsh-market/updates?force=1', { cache: 'no-store' })
+    const response = await fetch(api('/dsh-market/updates') + '?force=1', { cache: 'no-store' })
     const body = (await response.json()) as { updates?: Record<string, RawUpdate> }
     const own = body.updates?.['dshmarket'] ?? body.updates?.['dsh-market']
     setUpdate(own === undefined ? null : readUpdate(own))
@@ -300,7 +300,7 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
     setError(null)
     void (async () => {
       try {
-        const body = await post('/dsh-market/channel', { channel: next }) as { ok?: boolean; error?: string; channel?: string }
+        const body = await post(api('/dsh-market/channel'), { channel: next }) as { ok?: boolean; error?: string; channel?: string }
         if (body.ok !== true) { setError(body.error ?? t('setSelfFailed')); return }
         setStatus(current => (current === null ? current : { ...current, channel: asChannel(body.channel) ?? next }))
         await refreshUpdate()
@@ -321,7 +321,7 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
     setError(null)
     void (async () => {
       try {
-        const body = await post('/dsh-market/region', { region: next }) as { ok?: boolean; error?: string; region?: string }
+        const body = await post(api('/dsh-market/region'), { region: next }) as { ok?: boolean; error?: string; region?: string }
         if (body.ok !== true) { setError(body.error ?? t('setSelfFailed')); return }
         const accepted = asRegion(body.region) ?? next
         setStatus(current => (current === null ? current : { ...current, region: accepted, regionAuto: false }))
@@ -330,7 +330,7 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
         // start knowing what each one RESOLVES to, or the routing table would
         // have a second copy that can disagree with the first.
         try {
-          const fresh = await fetch('/dsh-market/status', { cache: 'no-store' })
+          const fresh = await fetch(api('/dsh-market/status'), { cache: 'no-store' })
           const status = (await fresh.json()) as StatusBody
           setGithubProxy(typeof status.githubProxy === 'string' ? status.githubProxy : null)
         } catch { /* images keep the previous route until the next load */ }

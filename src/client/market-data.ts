@@ -10,6 +10,28 @@ export type { SharedHostPackageDependencyFinding } from '../diagnostics.ts'
 export type LocalizedText = Record<string, string | undefined>
 
 /** One registry entry from /dsh-market/registry. */
+/**
+ * Resolve a market API path against the page the UI is served from.
+ *
+ * Every call used to be root-absolute (`/dsh-market/…`), which the browser
+ * resolves against the ORIGIN — so behind a reverse proxy that mounts dsh
+ * under a prefix (`https://host/app/my-dsh/`), the panel rendered and then
+ * every request in it went to `https://host/dsh-market/…`, missed the prefix
+ * rule entirely, and 404'd (#345).
+ *
+ * Anchored on `document.baseURI`, which is the directory the host serves its
+ * UI from. Safe for root deployments because that directory is `/` there, and
+ * safe generally because the dsh web UI does not use path routing — measured
+ * against a real dsh: `location.pathname` is `/` on the market page, not
+ * `/settings/...`, so the directory really is the mount point rather than
+ * wherever the user happens to have navigated.
+ */
+export function api(path: string): string {
+  const relative = path.replace(/^\/+/, '')
+  if (typeof document === 'undefined') return `/${relative}`
+  return new URL(relative, document.baseURI).pathname
+}
+
 export interface RegistryPlugin {
   name: string
   owner: string

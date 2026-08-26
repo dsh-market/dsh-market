@@ -40,7 +40,7 @@ import { clearSettled, drop, enqueue, patch as patchRecord, recordForUrl } from 
 import type { OperationRecord } from './operations.ts'
 import { Diagnostics } from './Diagnostics.tsx'
 import {
-  avatarColor, entryForDep, githubProxyInUse, githubUrl, groupSwitchState, humanOutput, installedForCatalog, isInstalled, looksTerminal, matchInstalledName, orderedCategories, pluginCategories,
+  api, avatarColor, entryForDep, githubProxyInUse, githubUrl, groupSwitchState, humanOutput, installedForCatalog, isInstalled, looksTerminal, matchInstalledName, orderedCategories, pluginCategories,
   formatCount, pageItems, pluginName, pluginScreenshotCandidates, pluginScreenshots, rankThemeScreenshots, readSession, safeScreenshots, setGithubProxy, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
 } from './market-data.ts'
 import type {
@@ -1088,7 +1088,7 @@ export function MarketSection(props: MarketSectionProps) {
    */
   const doExportLog = useCallback(() => {
     setExportState('busy')
-    fetch('/dsh-market/logs')
+    fetch(api('/dsh-market/logs'))
       .then(async (res) => {
         if (!res.ok) throw new Error(`HTTP ${String(res.status)}`)
         const blob = await res.blob()
@@ -1270,7 +1270,7 @@ export function MarketSection(props: MarketSectionProps) {
   const [catsSentinel, setCatsSentinel] = useState<HTMLDivElement | null>(null)
 
   const refreshInstalled = useCallback((force?: boolean) => {
-    fetch('/dsh-market/installed', { cache: 'no-store' })
+    fetch(api('/dsh-market/installed'), { cache: 'no-store' })
       .then(res => res.json())
       .then(body => {
         setInstalled(body.installed || {})
@@ -1291,7 +1291,7 @@ export function MarketSection(props: MarketSectionProps) {
         setHostDependencyFindings(findings)
       })
       .catch(() => {})
-    fetch('/dsh-market/updates' + (force === true ? '?force=1' : ''), { cache: 'no-store' })
+    fetch(api('/dsh-market/updates') + (force === true ? '?force=1' : ''), { cache: 'no-store' })
       .then(res => res.json())
       .then(body => setUpdates(body.updates || {}))
       .catch(() => {})
@@ -1327,7 +1327,7 @@ export function MarketSection(props: MarketSectionProps) {
 
   const loadCatalog = useCallback(() => {
     setLoadError(null)
-    return fetch('/dsh-market/registry', { cache: 'no-store' })
+    return fetch(api('/dsh-market/registry'), { cache: 'no-store' })
       .then(async (res) => {
         const body = (await res.json().catch(() => ({}))) as { registry?: Registry; error?: string }
         if (!res.ok) throw new Error(typeof body.error === 'string' ? body.error : `HTTP ${String(res.status)}`)
@@ -1348,7 +1348,7 @@ export function MarketSection(props: MarketSectionProps) {
 
   useEffect(() => {
     void loadCatalog()
-    fetch('/dsh-market/status', { cache: 'no-store' })
+    fetch(api('/dsh-market/status'), { cache: 'no-store' })
       .then(res => res.json())
       .then(status => {
         setEnvReady(status.pnpm !== false)
@@ -1411,7 +1411,7 @@ export function MarketSection(props: MarketSectionProps) {
   const fixEnv = useCallback(() => {
     setEnvFixing(true)
     setEnvFailed(false)
-    fetch('/dsh-market/setup-pnpm', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
+    fetch(api('/dsh-market/setup-pnpm'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
       .then(res => res.json())
       .then(body => {
         if (body.ok) {
@@ -1479,7 +1479,7 @@ export function MarketSection(props: MarketSectionProps) {
       return
     }
     const timer = setInterval(() => {
-      fetch('/dsh-market/status', { cache: 'no-store' })
+      fetch(api('/dsh-market/status'), { cache: 'no-store' })
         .then(res => res.json())
         .then(status => {
           setHostBusy(status.busy === true)
@@ -1635,7 +1635,7 @@ export function MarketSection(props: MarketSectionProps) {
   const doRollback = useCallback((rollbackId: string) => {
     setRollingBack(true)
     setInstallError(null)
-    fetch('/dsh-market/rollback', {
+    fetch(api('/dsh-market/rollback'), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ rollbackId }),
@@ -1680,7 +1680,7 @@ export function MarketSection(props: MarketSectionProps) {
       id: recordId, kind: 'install', name: plugin.name, url: plugin.url, state: 'running',
     }))
     sessionStorage.setItem('dshm-pending', JSON.stringify({ url: plugin.url, name: plugin.name }))
-    fetch('/dsh-market/install', {
+    fetch(api('/dsh-market/install'), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ url: plugin.url }),
@@ -1803,7 +1803,7 @@ export function MarketSection(props: MarketSectionProps) {
     const removed: string[] = []
     try {
       for (const group of record.conflicts ?? []) {
-        const response = await fetch('/dsh-market/uninstall', {
+        const response = await fetch(api('/dsh-market/uninstall'), {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ name: group.owner }),
@@ -1861,7 +1861,7 @@ export function MarketSection(props: MarketSectionProps) {
     const awaitNewBoot = () => {
       const deadline = Date.now() + 60000
       const poll = () => {
-        fetch('/dsh-market/status', { cache: 'no-store' })
+        fetch(api('/dsh-market/status'), { cache: 'no-store' })
           .then(res => res.json())
           .then((next) => {
             if (typeof next.boot === 'string' && next.boot !== previousBoot) {
@@ -1883,7 +1883,7 @@ export function MarketSection(props: MarketSectionProps) {
       poll()
     }
     const requestRestart = (attemptsLeft: number) => {
-      fetch('/dsh-market/restart', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
+      fetch(api('/dsh-market/restart'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
         .then(res => res.json().then(body => ({ status: res.status, body })))
         .then(({ status, body }) => {
           if (status === 202 && body.ok === true) {
@@ -1908,7 +1908,7 @@ export function MarketSection(props: MarketSectionProps) {
 
   /** Cancel the running plugin command (#6 by @qichuang321). */
   const doCancel = useCallback(() => {
-    fetch('/dsh-market/cancel', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
+    fetch(api('/dsh-market/cancel'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
       .catch(() => {})
   }, [])
 
@@ -1935,7 +1935,7 @@ export function MarketSection(props: MarketSectionProps) {
     // (#295 by @sanyecao88). One record per attempt, like the install flow.
     const updateRecordId = nextRecordId()
     setRecords(list => enqueue(list, { id: updateRecordId, kind: 'update', name, state: 'running' }))
-    return fetch('/dsh-market/update', {
+    return fetch(api('/dsh-market/update'), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ name, ...(force ? { force: true } : {}), ...(restore ? { restore: true } : {}) }),
@@ -2019,7 +2019,7 @@ export function MarketSection(props: MarketSectionProps) {
 
   const doUseSkin = useCallback((name: string) => {
     setInstallError(null)
-    fetch('/dsh-market/use-skin', {
+    fetch(api('/dsh-market/use-skin'), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ name }),
@@ -2043,7 +2043,7 @@ export function MarketSection(props: MarketSectionProps) {
     setInstallError(null)
     setActivationWarnings([])
     setRemovingName(name)
-    return fetch('/dsh-market/uninstall', {
+    return fetch(api('/dsh-market/uninstall'), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ name }),
@@ -2084,7 +2084,7 @@ export function MarketSection(props: MarketSectionProps) {
   const doToggle = useCallback((name: string, enabled: boolean, reload = false) => {
     setTogglingName(name)
     setInstallError(null)
-    return fetch('/dsh-market/toggle', {
+    return fetch(api('/dsh-market/toggle'), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ name, enabled }),
@@ -2144,7 +2144,7 @@ export function MarketSection(props: MarketSectionProps) {
   /** One POST /dsh-market/groups round trip (create/rename/delete/members/toggle). */
   const doGroupAction = useCallback((payload: Record<string, unknown>): Promise<boolean> => {
     setInstallError(null)
-    return fetch('/dsh-market/groups', {
+    return fetch(api('/dsh-market/groups'), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload),
@@ -2182,7 +2182,7 @@ export function MarketSection(props: MarketSectionProps) {
     names: string[],
     resume: () => void,
   ) => {
-    fetch('/dsh-market/approve-builds', {
+    fetch(api('/dsh-market/approve-builds'), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ packages: names }),
@@ -2323,7 +2323,7 @@ export function MarketSection(props: MarketSectionProps) {
     setBackupBusy(true)
     setBackupMessage(null)
     setRestoreErrors([])
-    return fetch('/dsh-market/restore', {
+    return fetch(api('/dsh-market/restore'), {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ backup: pendingBackup }),
     }).then(async response => {
       const body = await response.json()
@@ -2337,7 +2337,7 @@ export function MarketSection(props: MarketSectionProps) {
     setBackupBusy(true)
     setBackupMessage(null)
     setRestoreErrors([])
-    fetch('/dsh-market/webdav', {
+    fetch(api('/dsh-market/webdav'), {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ action, url: webdavUrl.trim(), username: webdavUser, password: webdavPassword }),
     }).then(async response => {
@@ -2407,7 +2407,7 @@ export function MarketSection(props: MarketSectionProps) {
         if (exportIncludeConfig) body.includeConfig = true
       }
     }
-    fetch('/dsh-market/gist', {
+    fetch(api('/dsh-market/gist'), {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
       // Fallback ceiling only — the server answers structured errors (with a
       // code) within 25 s, so a wedged host cannot leave the user staring at
@@ -3203,7 +3203,7 @@ export function MarketSection(props: MarketSectionProps) {
                       size="sm"
                       icon={<IconDownloadOutline16 size={14} />}
                       disabled={backupBusy}
-                      onClick={() => downloadFile('/dsh-market/backup', 'dsh-profile-backup.json')}
+                      onClick={() => downloadFile(api('/dsh-market/backup'), 'dsh-profile-backup.json')}
                     >{backupBusy ? t('backupWorking') : t('backupDownload')}</Button>
                     <Button
                       variant="outline"

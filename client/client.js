@@ -927,6 +927,28 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		};
 		//#endregion
 		//#region src/client/market-data.ts
+		/** One registry entry from /dsh-market/registry. */
+		/**
+		* Resolve a market API path against the page the UI is served from.
+		*
+		* Every call used to be root-absolute (`/dsh-market/…`), which the browser
+		* resolves against the ORIGIN — so behind a reverse proxy that mounts dsh
+		* under a prefix (`https://host/app/my-dsh/`), the panel rendered and then
+		* every request in it went to `https://host/dsh-market/…`, missed the prefix
+		* rule entirely, and 404'd (#345).
+		*
+		* Anchored on `document.baseURI`, which is the directory the host serves its
+		* UI from. Safe for root deployments because that directory is `/` there, and
+		* safe generally because the dsh web UI does not use path routing — measured
+		* against a real dsh: `location.pathname` is `/` on the market page, not
+		* `/settings/...`, so the directory really is the mount point rather than
+		* wherever the user happens to have navigated.
+		*/
+		function api(path) {
+			const relative = path.replace(/^\/+/, "");
+			if (typeof document === "undefined") return `/${relative}`;
+			return new URL(relative, document.baseURI).pathname;
+		}
 		/** Category ids for one entry, de-duplicated in declaration order. */
 		function pluginCategories(plugin) {
 			const values = Array.isArray(plugin.category) ? plugin.category : [plugin.category];
@@ -2451,7 +2473,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			/** Hidden <input type="file"> for the import action. */
 			const loaded = (0, react.useRef)(false);
 			const load = (0, react.useCallback)(() => {
-				fetch("/dsh-market/presets", { cache: "no-store" }).then((res) => res.json()).then((body) => {
+				fetch(api("/dsh-market/presets"), { cache: "no-store" }).then((res) => res.json()).then((body) => {
 					const list = Array.isArray(body) ? body : Array.isArray(body.presets) ? body.presets : [];
 					setPresets(list.map((item) => {
 						const preset = item ?? {};
@@ -2478,7 +2500,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				setBusy("save");
 				setMsg(null);
 				setError(null);
-				fetch("/dsh-market/installed", { cache: "no-store" }).then((res) => res.json()).then((installed) => postJson$1("/dsh-market/presets", {
+				fetch(api("/dsh-market/installed"), { cache: "no-store" }).then((res) => res.json()).then((installed) => postJson$1(api("/dsh-market/presets"), {
 					action: "save",
 					name: presetName,
 					bundleOrder,
@@ -2502,7 +2524,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				setBusy("apply");
 				setMsg(null);
 				setError(null);
-				postJson$1("/dsh-market/presets", {
+				postJson$1(api("/dsh-market/presets"), {
 					action: "apply",
 					name: presetName
 				}).then(({ status, body }) => {
@@ -2521,7 +2543,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				setBusy("delete");
 				setMsg(null);
 				setError(null);
-				postJson$1("/dsh-market/presets", {
+				postJson$1(api("/dsh-market/presets"), {
 					action: "delete",
 					name: presetName
 				}).then(({ status, body }) => {
@@ -2548,7 +2570,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					setBusy(null);
 					return;
 				}
-				postJson$1("/dsh-market/presets", {
+				postJson$1(api("/dsh-market/presets"), {
 					action: "preview",
 					name: presetName
 				}).then(({ status, body }) => {
@@ -2765,7 +2787,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const [confirmDeleteId, setConfirmDeleteId] = (0, react.useState)(null);
 			const loaded = (0, react.useRef)(false);
 			const load = (0, react.useCallback)(() => {
-				fetch("/dsh-market/snapshots", { cache: "no-store" }).then((res) => res.json()).then((body) => {
+				fetch(api("/dsh-market/snapshots"), { cache: "no-store" }).then((res) => res.json()).then((body) => {
 					const list = Array.isArray(body) ? body : Array.isArray(body.snapshots) ? body.snapshots : [];
 					setSnapshots(list.map(snapshotOf).filter((snap) => snap !== null));
 					setError(null);
@@ -2780,7 +2802,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				setBusy("create");
 				setMsg(null);
 				setError(null);
-				postJson("/dsh-market/snapshots", {}).then(({ status, body }) => {
+				postJson(api("/dsh-market/snapshots"), {}).then(({ status, body }) => {
 					if (status >= 200 && status < 300 && body?.ok === true) {
 						setMsg(t("snapCreated"));
 						load();
@@ -2799,7 +2821,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				setBusy("restore");
 				setMsg(null);
 				setError(null);
-				postJson("/dsh-market/restore-snapshot", { snapshot: id }).then(({ status, body }) => {
+				postJson(api("/dsh-market/restore-snapshot"), { snapshot: id }).then(({ status, body }) => {
 					if (status >= 200 && status < 300 && body?.ok === true) {
 						setConfirmId(null);
 						setMsg(t("snapRestored"));
@@ -2820,7 +2842,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				setBusy("delete");
 				setMsg(null);
 				setError(null);
-				postJson("/dsh-market/delete-snapshot", { snapshot: id }).then(({ status, body }) => {
+				postJson(api("/dsh-market/delete-snapshot"), { snapshot: id }).then(({ status, body }) => {
 					if (status >= 200 && status < 300 && body?.ok === true) {
 						setConfirmDeleteId(null);
 						setMsg(t("snapDeleted"));
@@ -3182,7 +3204,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				setOrderMsg(null);
 				setOrderErr(null);
 				setOrderDiff(null);
-				fetch("/dsh-market/bundle-order", {
+				fetch(api("/dsh-market/bundle-order"), {
 					method: "POST",
 					headers: { "content-type": "application/json" },
 					body: JSON.stringify({ order: target ?? order })
@@ -3210,7 +3232,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			(0, react.useEffect)(() => {
 				let live = true;
 				setError(null);
-				fetch("/dsh-market/check", { cache: "no-store" }).then(async (res) => {
+				fetch(api("/dsh-market/check"), { cache: "no-store" }).then(async (res) => {
 					if (!res.ok) throw new Error(`HTTP ${String(res.status)}`);
 					const body = await res.json();
 					if (live) setReport(body);
@@ -5128,7 +5150,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			*/
 			const doExportLog = (0, react.useCallback)(() => {
 				setExportState("busy");
-				fetch("/dsh-market/logs").then(async (res) => {
+				fetch(api("/dsh-market/logs")).then(async (res) => {
 					if (!res.ok) throw new Error(`HTTP ${String(res.status)}`);
 					const blob = await res.blob();
 					const url = URL.createObjectURL(blob);
@@ -5303,7 +5325,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const [catsStuck, setCatsStuck] = (0, react.useState)(false);
 			const [catsSentinel, setCatsSentinel] = (0, react.useState)(null);
 			const refreshInstalled = (0, react.useCallback)((force) => {
-				fetch("/dsh-market/installed", { cache: "no-store" }).then((res) => res.json()).then((body) => {
+				fetch(api("/dsh-market/installed"), { cache: "no-store" }).then((res) => res.json()).then((body) => {
 					setInstalled(body.installed || {});
 					setRepoIdentities(installedRepoIdentities(body.repoIdentities));
 					setRepoHints(installedRepoHints(body.repoHints));
@@ -5318,7 +5340,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					const findings = body.diagnostics?.schema === "dsh-market/diagnostics/v1" && Array.isArray(body.diagnostics.findings) ? body.diagnostics.findings.filter(isHostDependencyFinding) : [];
 					setHostDependencyFindings(findings);
 				}).catch(() => {});
-				fetch("/dsh-market/updates" + (force === true ? "?force=1" : ""), { cache: "no-store" }).then((res) => res.json()).then((body) => setUpdates(body.updates || {})).catch(() => {});
+				fetch(api("/dsh-market/updates") + (force === true ? "?force=1" : ""), { cache: "no-store" }).then((res) => res.json()).then((body) => setUpdates(body.updates || {})).catch(() => {});
 			}, []);
 			/** Active Bundles count as installed in Discover without becoming package-manager targets. */
 			const catalogInstalled = (0, react.useMemo)(() => installedForCatalog(installed, installedBundles), [installed, installedBundles]);
@@ -5340,7 +5362,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			}, [lightbox, themesFullscreen]);
 			const loadCatalog = (0, react.useCallback)(() => {
 				setLoadError(null);
-				return fetch("/dsh-market/registry", { cache: "no-store" }).then(async (res) => {
+				return fetch(api("/dsh-market/registry"), { cache: "no-store" }).then(async (res) => {
 					const body = await res.json().catch(() => ({}));
 					if (!res.ok) throw new Error(typeof body.error === "string" ? body.error : `HTTP ${String(res.status)}`);
 					return body;
@@ -5355,7 +5377,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			}, []);
 			(0, react.useEffect)(() => {
 				loadCatalog();
-				fetch("/dsh-market/status", { cache: "no-store" }).then((res) => res.json()).then((status) => {
+				fetch(api("/dsh-market/status"), { cache: "no-store" }).then((res) => res.json()).then((status) => {
 					setEnvReady(status.pnpm !== false);
 					setGithubProxy(typeof status.githubProxy === "string" ? status.githubProxy : null);
 					if (typeof status.boot === "string") {
@@ -5406,7 +5428,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const fixEnv = (0, react.useCallback)(() => {
 				setEnvFixing(true);
 				setEnvFailed(false);
-				fetch("/dsh-market/setup-pnpm", {
+				fetch(api("/dsh-market/setup-pnpm"), {
 					method: "POST",
 					headers: { "content-type": "application/json" },
 					body: "{}"
@@ -5465,7 +5487,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					return;
 				}
 				const timer = setInterval(() => {
-					fetch("/dsh-market/status", { cache: "no-store" }).then((res) => res.json()).then((status) => {
+					fetch(api("/dsh-market/status"), { cache: "no-store" }).then((res) => res.json()).then((status) => {
 						setHostBusy(status.busy === true);
 						if (status.active) {
 							setCancelling(status.cancelling === true);
@@ -5623,7 +5645,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const doRollback = (0, react.useCallback)((rollbackId) => {
 				setRollingBack(true);
 				setInstallError(null);
-				fetch("/dsh-market/rollback", {
+				fetch(api("/dsh-market/rollback"), {
 					method: "POST",
 					headers: { "content-type": "application/json" },
 					body: JSON.stringify({ rollbackId })
@@ -5667,7 +5689,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					url: plugin.url,
 					name: plugin.name
 				}));
-				fetch("/dsh-market/install", {
+				fetch(api("/dsh-market/install"), {
 					method: "POST",
 					headers: { "content-type": "application/json" },
 					body: JSON.stringify({ url: plugin.url })
@@ -5772,7 +5794,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				const removed = [];
 				try {
 					for (const group of record.conflicts ?? []) {
-						const response = await fetch("/dsh-market/uninstall", {
+						const response = await fetch(api("/dsh-market/uninstall"), {
 							method: "POST",
 							headers: { "content-type": "application/json" },
 							body: JSON.stringify({ name: group.owner })
@@ -5838,7 +5860,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				const awaitNewBoot = () => {
 					const deadline = Date.now() + 6e4;
 					const poll = () => {
-						fetch("/dsh-market/status", { cache: "no-store" }).then((res) => res.json()).then((next) => {
+						fetch(api("/dsh-market/status"), { cache: "no-store" }).then((res) => res.json()).then((next) => {
 							if (typeof next.boot === "string" && next.boot !== previousBoot) {
 								location.reload();
 								return;
@@ -5857,7 +5879,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					poll();
 				};
 				const requestRestart = (attemptsLeft) => {
-					fetch("/dsh-market/restart", {
+					fetch(api("/dsh-market/restart"), {
 						method: "POST",
 						headers: { "content-type": "application/json" },
 						body: "{}"
@@ -5885,7 +5907,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			]);
 			/** Cancel the running plugin command (#6 by @qichuang321). */
 			const doCancel = (0, react.useCallback)(() => {
-				fetch("/dsh-market/cancel", {
+				fetch(api("/dsh-market/cancel"), {
 					method: "POST",
 					headers: { "content-type": "application/json" },
 					body: "{}"
@@ -5906,7 +5928,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					name,
 					state: "running"
 				}));
-				return fetch("/dsh-market/update", {
+				return fetch(api("/dsh-market/update"), {
 					method: "POST",
 					headers: { "content-type": "application/json" },
 					body: JSON.stringify({
@@ -5991,7 +6013,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			]);
 			const doUseSkin = (0, react.useCallback)((name) => {
 				setInstallError(null);
-				fetch("/dsh-market/use-skin", {
+				fetch(api("/dsh-market/use-skin"), {
 					method: "POST",
 					headers: { "content-type": "application/json" },
 					body: JSON.stringify({ name })
@@ -6012,7 +6034,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				setInstallError(null);
 				setActivationWarnings([]);
 				setRemovingName(name);
-				return fetch("/dsh-market/uninstall", {
+				return fetch(api("/dsh-market/uninstall"), {
 					method: "POST",
 					headers: { "content-type": "application/json" },
 					body: JSON.stringify({ name })
@@ -6046,7 +6068,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const doToggle = (0, react.useCallback)((name, enabled, reload = false) => {
 				setTogglingName(name);
 				setInstallError(null);
-				return fetch("/dsh-market/toggle", {
+				return fetch(api("/dsh-market/toggle"), {
 					method: "POST",
 					headers: { "content-type": "application/json" },
 					body: JSON.stringify({
@@ -6094,7 +6116,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			/** One POST /dsh-market/groups round trip (create/rename/delete/members/toggle). */
 			const doGroupAction = (0, react.useCallback)((payload) => {
 				setInstallError(null);
-				return fetch("/dsh-market/groups", {
+				return fetch(api("/dsh-market/groups"), {
 					method: "POST",
 					headers: { "content-type": "application/json" },
 					body: JSON.stringify(payload)
@@ -6125,7 +6147,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			]);
 			/** Approve the build scripts pnpm refused, then rerun what was blocked. */
 			const approveAndRetry = (0, react.useCallback)((names, resume) => {
-				fetch("/dsh-market/approve-builds", {
+				fetch(api("/dsh-market/approve-builds"), {
 					method: "POST",
 					headers: { "content-type": "application/json" },
 					body: JSON.stringify({ packages: names })
@@ -6263,7 +6285,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				setBackupBusy(true);
 				setBackupMessage(null);
 				setRestoreErrors([]);
-				return fetch("/dsh-market/restore", {
+				return fetch(api("/dsh-market/restore"), {
 					method: "POST",
 					headers: { "content-type": "application/json" },
 					body: JSON.stringify({ backup: pendingBackup })
@@ -6278,7 +6300,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				setBackupBusy(true);
 				setBackupMessage(null);
 				setRestoreErrors([]);
-				fetch("/dsh-market/webdav", {
+				fetch(api("/dsh-market/webdav"), {
 					method: "POST",
 					headers: { "content-type": "application/json" },
 					body: JSON.stringify({
@@ -6354,7 +6376,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						if (exportIncludeConfig) body.includeConfig = true;
 					}
 				}
-				fetch("/dsh-market/gist", {
+				fetch(api("/dsh-market/gist"), {
 					method: "POST",
 					headers: { "content-type": "application/json" },
 					body: JSON.stringify(body),
@@ -7376,7 +7398,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 													size: "sm",
 													icon: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconDownloadOutline16, { size: 14 }),
 													disabled: backupBusy,
-													onClick: () => downloadFile("/dsh-market/backup", "dsh-profile-backup.json"),
+													onClick: () => downloadFile(api("/dsh-market/backup"), "dsh-profile-backup.json"),
 													children: backupBusy ? t("backupWorking") : t("backupDownload")
 												}),
 												/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
@@ -8728,7 +8750,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				let live = true;
 				(async () => {
 					try {
-						const body = await (await fetch("/dsh-market/status", { cache: "no-store" })).json();
+						const body = await (await fetch(api("/dsh-market/status"), { cache: "no-store" })).json();
 						if (live) setStatus(readStatus(body));
 						setGithubProxy(typeof body.githubProxy === "string" ? body.githubProxy : null);
 					} catch {
@@ -8744,7 +8766,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						});
 					}
 					try {
-						const body = await (await fetch("/dsh-market/updates", { cache: "no-store" })).json();
+						const body = await (await fetch(api("/dsh-market/updates"), { cache: "no-store" })).json();
 						const own = body.updates?.["dshmarket"] ?? body.updates?.["dsh-market"];
 						if (live && own !== void 0) setUpdate(readUpdate(own));
 					} catch {}
@@ -8766,7 +8788,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				setStale(false);
 				(async () => {
 					try {
-						const body = await post("/dsh-market/update", {
+						const body = await post(api("/dsh-market/update"), {
 							name: "dshmarket",
 							...force ? { force: true } : {}
 						});
@@ -8787,7 +8809,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				setError(null);
 				(async () => {
 					try {
-						const body = await post("/dsh-market/self-uninstall", {
+						const body = await post(api("/dsh-market/self-uninstall"), {
 							confirm: true,
 							purge
 						});
@@ -8815,7 +8837,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const prerelease = version !== null && version.includes("-");
 			/** Re-ask what this channel offers; the previous answer was for another one. */
 			const refreshUpdate = (0, react.useCallback)(async () => {
-				const body = await (await fetch("/dsh-market/updates?force=1", { cache: "no-store" })).json();
+				const body = await (await fetch(api("/dsh-market/updates") + "?force=1", { cache: "no-store" })).json();
 				const own = body.updates?.["dshmarket"] ?? body.updates?.["dsh-market"];
 				setUpdate(own === void 0 ? null : readUpdate(own));
 			}, []);
@@ -8831,7 +8853,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				setError(null);
 				(async () => {
 					try {
-						const body = await post("/dsh-market/channel", { channel: next });
+						const body = await post(api("/dsh-market/channel"), { channel: next });
 						if (body.ok !== true) {
 							setError(body.error ?? t("setSelfFailed"));
 							return;
@@ -8861,7 +8883,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				setError(null);
 				(async () => {
 					try {
-						const body = await post("/dsh-market/region", { region: next });
+						const body = await post(api("/dsh-market/region"), { region: next });
 						if (body.ok !== true) {
 							setError(body.error ?? t("setSelfFailed"));
 							return;
@@ -8873,7 +8895,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 							regionAuto: false
 						});
 						try {
-							const status = await (await fetch("/dsh-market/status", { cache: "no-store" })).json();
+							const status = await (await fetch(api("/dsh-market/status"), { cache: "no-store" })).json();
 							setGithubProxy(typeof status.githubProxy === "string" ? status.githubProxy : null);
 						} catch {}
 					} catch (cause) {

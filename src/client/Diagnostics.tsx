@@ -17,6 +17,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import { Button, IconChevronDownOutline14, IconChevronRightOutline14, IconLoadingOutline16, IconRefreshOutline14, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
 import css from './Market.module.css'
+import { api } from './market-data.ts'
 import type { Translate } from './market-data.ts'
 import { PresetPanel } from './preset-panel.tsx'
 import { SnapshotPanel } from './snapshot-panel.tsx'
@@ -326,7 +327,7 @@ export function Diagnostics(props: { t: Translate }) {
     setOrderMsg(null)
     setOrderErr(null)
     setOrderDiff(null)
-    fetch('/dsh-market/bundle-order', {
+    fetch(api('/dsh-market/bundle-order'), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ order: target ?? order }),
@@ -373,7 +374,7 @@ export function Diagnostics(props: { t: Translate }) {
     // must not clobber the in-progress ordering draft, which re-syncs from
     // communityNames only when the report actually changes (review M2).
     setError(null)
-    fetch('/dsh-market/check', { cache: 'no-store' })
+    fetch(api('/dsh-market/check'), { cache: 'no-store' })
       .then(async (res) => {
         if (!res.ok) throw new Error(`HTTP ${String(res.status)}`)
         const body = (await res.json()) as CheckReport

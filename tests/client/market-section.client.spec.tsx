@@ -98,6 +98,33 @@ afterEach(() => {
   sessionStorage.clear()
 })
 
+describe('api() base resolution (#345)', () => {
+  /** Behind a reverse proxy that mounts dsh under a prefix, a root-absolute
+   * `/dsh-market/...` resolves against the ORIGIN and misses the prefix rule,
+   * so the panel rendered and every request in it 404'd. Anchoring on the
+   * document directory fixes that WITHOUT changing anything at the root,
+   * which is where nearly everyone runs. */
+  const base = () => document.querySelector('base')
+
+  afterEach(() => { base()?.remove() })
+
+  it('is unchanged at the root, which must not regress', async () => {
+    const { api } = await import('../../src/client/market-data.ts')
+    expect(api('/dsh-market/installed')).toBe('/dsh-market/installed')
+  })
+
+  it('follows the prefix the page is served under', async () => {
+    const { api } = await import('../../src/client/market-data.ts')
+    const tag = document.createElement('base')
+    tag.setAttribute('href', 'http://host.example/app/my-dsh/')
+    document.head.appendChild(tag)
+    expect(api('/dsh-market/installed')).toBe('/app/my-dsh/dsh-market/installed')
+    // Arbitrary depth, and a leading slash in the argument is not special.
+    tag.setAttribute('href', 'http://host.example/user/a/b/')
+    expect(api('dsh-market/status')).toBe('/user/a/b/dsh-market/status')
+  })
+})
+
 describe('MarketSection (jsdom)', () => {
   it('renders the catalog with install buttons once the registry loads', async () => {
     render(<MarketSection {...props()} />)

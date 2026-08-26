@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import css from './Market.module.css'
+import { api } from './market-data.ts'
 import type { Translate } from './market-data.ts'
 
 /** One snapshot from GET /dsh-market/snapshots. */
@@ -90,7 +91,7 @@ export function SnapshotPanel(props: SnapshotPanelProps) {
   const loaded = useRef(false)
 
   const load = useCallback(() => {
-    fetch('/dsh-market/snapshots', { cache: 'no-store' })
+    fetch(api('/dsh-market/snapshots'), { cache: 'no-store' })
       .then(res => res.json())
       .then(body => {
         const list: unknown[] = Array.isArray(body) ? body : Array.isArray(body.snapshots) ? body.snapshots : []
@@ -114,7 +115,7 @@ export function SnapshotPanel(props: SnapshotPanelProps) {
     setBusy('create')
     setMsg(null)
     setError(null)
-    postJson('/dsh-market/snapshots', {})
+    postJson(api('/dsh-market/snapshots'), {})
       .then(({ status, body }) => {
         if (status >= 200 && status < 300 && body?.ok === true) {
           setMsg(t('snapCreated'))
@@ -135,7 +136,7 @@ export function SnapshotPanel(props: SnapshotPanelProps) {
     setBusy('restore')
     setMsg(null)
     setError(null)
-    postJson('/dsh-market/restore-snapshot', { snapshot: id })
+    postJson(api('/dsh-market/restore-snapshot'), { snapshot: id })
       .then(({ status, body }) => {
         if (status >= 200 && status < 300 && body?.ok === true) {
           setConfirmId(null)
@@ -158,7 +159,7 @@ export function SnapshotPanel(props: SnapshotPanelProps) {
     setBusy('delete')
     setMsg(null)
     setError(null)
-    postJson('/dsh-market/delete-snapshot', { snapshot: id })
+    postJson(api('/dsh-market/delete-snapshot'), { snapshot: id })
       .then(({ status, body }) => {
         if (status >= 200 && status < 300 && body?.ok === true) {
           setConfirmDeleteId(null)
