@@ -1593,6 +1593,15 @@ export function MarketSection(props: MarketSectionProps) {
     }
   }
 
+  // Tabs share one .body scroller. Leaving scrollTop in place opens the next
+  // list mid-page — or, when the new tab is shorter, at its clamped bottom.
+  // Instant (layout effect, no smooth) so the jump happens before paint.
+  useLayoutEffect(() => {
+    const el = bodyRef.current
+    if (el !== null) el.scrollTop = 0
+    setShowTop(false)
+  }, [tab])
+
   const plugins = useMemo(
     () => (data === null ? [] : visiblePlugins(data.plugins, {
       category: cat, query: q, lang, categories: data.categories,

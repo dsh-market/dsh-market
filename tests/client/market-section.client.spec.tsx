@@ -184,6 +184,25 @@ describe('MarketSection (jsdom)', () => {
     expect(screen.getByRole('button', { name: en.tabBackup }).className).not.toMatch(/\bon\b|_on_/)
   })
 
+  it('scrolls the shared body back to the top when switching tabs', async () => {
+    const { container } = render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    const scroller = container.querySelector('[data-dsh-market-root] > [class*="body"]') as HTMLElement
+    expect(scroller).toBeTruthy()
+
+    scroller.scrollTop = 800
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    expect(scroller.scrollTop).toBe(0)
+
+    scroller.scrollTop = 800
+    fireEvent.click(screen.getByRole('button', { name: en.tabDiscover }))
+    expect(scroller.scrollTop).toBe(0)
+
+    scroller.scrollTop = 800
+    fireEvent.click(screen.getByRole('button', { name: en.tabAdvanced }))
+    expect(scroller.scrollTop).toBe(0)
+  })
+
   it('marks only the repository-matched card for a same-named local link (#141)', async () => {
     const plugins = [
       { name: 'dsh-vision-bridge', owner: 'ximengxiaolan', url: 'https://github.com/ximengxiaolan/dsh-vision-bridge', category: 'tools', npm: null, description: { en: 'Other bridge' }, install: '' },
