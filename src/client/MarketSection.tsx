@@ -1593,14 +1593,16 @@ export function MarketSection(props: MarketSectionProps) {
     }
   }
 
-  // Tabs share one .body scroller. Leaving scrollTop in place opens the next
-  // list mid-page — or, when the new tab is shorter, at its clamped bottom.
-  // Instant (layout effect, no smooth) so the jump happens before paint.
+  // The .body scroller is shared across top tabs AND in-tab list replacements
+  // (Discover/Themes category, search, sort; Installed search and list/groups).
+  // Leaving scrollTop in place opens the next list mid-page — or, when it is
+  // shorter, at its clamped bottom. Instant (not the smooth scrollToTop used
+  // for pagination) so the jump happens before paint.
   useLayoutEffect(() => {
     const el = bodyRef.current
     if (el !== null) el.scrollTop = 0
     setShowTop(false)
-  }, [tab])
+  }, [tab, q, cat, sortField, sortDir, timeRange, qThemes, themeSortField, themeSortDir, themeTimeRange, qInstalled, installedView])
 
   const plugins = useMemo(
     () => (data === null ? [] : visiblePlugins(data.plugins, {

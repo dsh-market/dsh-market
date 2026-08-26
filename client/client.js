@@ -5585,7 +5585,20 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				const el = bodyRef.current;
 				if (el !== null) el.scrollTop = 0;
 				setShowTop(false);
-			}, [tab]);
+			}, [
+				tab,
+				q,
+				cat,
+				sortField,
+				sortDir,
+				timeRange,
+				qThemes,
+				themeSortField,
+				themeSortDir,
+				themeTimeRange,
+				qInstalled,
+				installedView
+			]);
 			const plugins = (0, react.useMemo)(() => data === null ? [] : visiblePlugins(data.plugins, {
 				category: cat,
 				query: q,
