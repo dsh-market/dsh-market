@@ -7,6 +7,7 @@
 import { existsSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 import { githubRemoteIdentities, githubRepoIdentities } from './sources.ts'
 
 /**
@@ -84,38 +85,125 @@ export function readManifestDeps(profile: string, explicitDir?: string): Record<
   }
 }
 
+/** Exact rollback state owned by one profile package operation. */
+export interface ProfileManifestSnapshot {
+  dependencies: Record<string, string>
+  profileBundles: { present: false } | { present: true; value: unknown }
+}
+
+function objectRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined
+}
+
+/** Read dependencies and the exact `dsh.profile.bundles` field before a package operation. */
+export function readProfileManifestSnapshot(profile: string, explicitDir?: string): ProfileManifestSnapshot {
+  try {
+    const manifest = JSON.parse(readFileSync(join(profileDir(profile, explicitDir), 'package.json'), 'utf8')) as {
+      dependencies?: Record<string, string>
+      dsh?: { profile?: unknown }
+    }
+    const profileManifest = objectRecord(manifest.dsh?.profile)
+    const present = profileManifest !== undefined && Object.hasOwn(profileManifest, 'bundles')
+    return {
+      dependencies: { ...manifest.dependencies },
+      profileBundles: present
+        ? { present: true, value: structuredClone(profileManifest.bundles) }
+        : { present: false },
+    }
+  } catch {
+    return { dependencies: {}, profileBundles: { present: false } }
+  }
+}
+
+/** String package names carried by one valid bundle-list value. */
+function bundleNames(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((name): name is string => typeof name === 'string') : []
+}
+
 /**
- * Restore the profile manifest's dependency map to a pre-operation snapshot,
- * leaving every other manifest field untouched. pnpm writes package.json
- * BEFORE it finishes installing (#65, #69: a 404/blocked-build failure lands
- * after the write), so a failed add leaves ghost dependencies that break
- * every later pnpm run — and pnpm itself can no longer remove them (the same
- * failure re-fires on any mutation). Direct manifest surgery is the only
- * reliable rollback; the lockfile is left as-is (pnpm reconciles it from the
- * manifest on the next run).
+ * Restore the profile manifest fields a package operation may mutate:
+ * `dependencies` and `dsh.profile.bundles`. pnpm and `dsh plugin add` can
+ * write both before a later fetch or build-script failure (#65, #69, #339),
+ * leaving either an unresolvable dependency or a bundle the next boot cannot
+ * activate. Every unrelated manifest field remains untouched. The lockfile is
+ * left as-is; pnpm reconciles it from the manifest on the next run.
+ *
+ * The write is atomic because rollback runs after another operation already
+ * failed; a partial repair must not turn a valid profile into invalid JSON.
  * @returns names whose entries were dropped or reverted, empty when nothing changed.
  */
-export function restoreManifestDeps(profile: string, snapshot: Record<string, string>, explicitDir?: string): string[] {
+export function restoreProfileManifest(
+  profile: string,
+  snapshot: ProfileManifestSnapshot,
+  explicitDir?: string,
+): string[] {
   const file = join(profileDir(profile, explicitDir), 'package.json')
-  let manifest: { dependencies?: Record<string, string> }
+  let manifest: {
+    dependencies?: Record<string, string>
+    dsh?: unknown
+  }
   try {
-    manifest = JSON.parse(readFileSync(file, 'utf8')) as { dependencies?: Record<string, string> }
+    manifest = JSON.parse(readFileSync(file, 'utf8')) as typeof manifest
   } catch {
     return []
   }
   const current = manifest.dependencies ?? {}
   const touched = new Set<string>()
-  for (const name of Object.keys(current)) if (current[name] !== snapshot[name]) touched.add(name)
-  for (const name of Object.keys(snapshot)) if (current[name] !== snapshot[name]) touched.add(name)
+  for (const name of Object.keys(current)) {
+    if (current[name] !== snapshot.dependencies[name]) touched.add(name)
+  }
+  for (const name of Object.keys(snapshot.dependencies)) {
+    if (current[name] !== snapshot.dependencies[name]) touched.add(name)
+  }
+
+  const currentDsh = objectRecord(manifest.dsh)
+  const currentProfile = objectRecord(currentDsh?.profile)
+  const currentBundles = currentProfile !== undefined && Object.hasOwn(currentProfile, 'bundles')
+    ? { present: true as const, value: currentProfile.bundles }
+    : { present: false as const }
+  const bundlesChanged = currentBundles.present !== snapshot.profileBundles.present
+    || (currentBundles.present && snapshot.profileBundles.present
+      && !isDeepStrictEqual(currentBundles.value, snapshot.profileBundles.value))
+  if (bundlesChanged) {
+    const currentNames = new Set(currentBundles.present ? bundleNames(currentBundles.value) : [])
+    const snapshotNames = new Set(snapshot.profileBundles.present ? bundleNames(snapshot.profileBundles.value) : [])
+    let namedBundleChange = false
+    for (const name of currentNames) {
+      if (!snapshotNames.has(name)) {
+        touched.add(name)
+        namedBundleChange = true
+      }
+    }
+    for (const name of snapshotNames) {
+      if (!currentNames.has(name)) {
+        touched.add(name)
+        namedBundleChange = true
+      }
+    }
+    // Presence, order, duplicates, or a malformed non-array value can differ
+    // without changing the set of package names. Still report that rollback.
+    if (!namedBundleChange) touched.add('dsh.profile.bundles')
+  }
   if (touched.size === 0) return []
-  manifest.dependencies = { ...snapshot }
-  writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`)
+  manifest.dependencies = { ...snapshot.dependencies }
+  if (snapshot.profileBundles.present) {
+    const dsh = currentDsh ?? {}
+    const profileManifest = currentProfile ?? {}
+    manifest.dsh = dsh
+    dsh.profile = profileManifest
+    profileManifest.bundles = structuredClone(snapshot.profileBundles.value)
+  } else if (currentProfile !== undefined) {
+    delete currentProfile.bundles
+  }
+  writeManifestAtomic(file, manifest)
   return [...touched]
 }
 
 /**
  * Remove a package from BOTH manifest lists — dependencies and
- * dsh.profile.bundles. The uninstall counterpart of restoreManifestDeps:
+ * dsh.profile.bundles. The uninstall counterpart of restoreProfileManifest:
  * pnpm can fail a remove after deleting node_modules but before saving
  * package.json (the #65 write-order's mirror image — a file locked mid-
  * unlink aborts the run), leaving the manifest pointing at a package that
@@ -123,10 +211,8 @@ export function restoreManifestDeps(profile: string, snapshot: Record<string, st
  * dependency. When disk truth says the package is gone, this finishes the
  * removal the CLI could not. Every other manifest field is untouched.
  *
- * Written atomically, unlike restoreManifestDeps above. This one runs only
- * after something already went wrong mid-uninstall, so it is the worst place
- * in the codebase to leave a half-written package.json: the profile would go
- * from "one ghost dependency" to "will not parse".
+ * Written atomically because it runs only after something already went wrong
+ * mid-uninstall, so it is the worst place to leave a half-written manifest.
  * @returns true when either list still mentioned the package.
  */
 export function dropFromManifest(profile: string, name: string, explicitDir?: string): boolean {

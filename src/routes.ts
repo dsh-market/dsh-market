@@ -23,7 +23,7 @@ import {
   BOOT_ID, cancelActive, probePnpm, progress, provisionPnpm, runDshPlugin,
   type PluginCommandRuntime,
 } from './dsh-cli.ts'
-import { addProfileBundle, dropFromManifest, hasLoadableEntry, INBOX_BUNDLES, isDshProfileName, profileDir, readInstalled, readInstalledManifest, readInstalledRepoEvidence, readInstalledVersion, readLockCommits, readManifestDeps, readProfileBundles, removeProfileBundle, restoreManifestDeps, setAllowBuilds } from './profile.ts'
+import { addProfileBundle, dropFromManifest, hasLoadableEntry, INBOX_BUNDLES, isDshProfileName, profileDir, readInstalled, readInstalledManifest, readInstalledRepoEvidence, readInstalledVersion, readLockCommits, readProfileBundles, readProfileManifestSnapshot, removeProfileBundle, restoreProfileManifest, setAllowBuilds, type ProfileManifestSnapshot } from './profile.ts'
 import { assessProfile, classifyPeer, introducedDuplicateNames, introducedRisks, type CompatibilityRisk } from './compatibility.ts'
 import { runningAgentIds, type AgentsLookup } from './agents.ts'
 import { analyzeProfile, type DuplicateName } from './check.ts'
@@ -462,8 +462,8 @@ export function mountMarketRoutes(
    * next start still fails. Re-run pnpm install against the restored
    * manifest to rematerialize the previous build's files.
    */
-  async function rollbackUpdateBuild(name: string, manifestBefore: Record<string, string>): Promise<{ ok: boolean; detail: string | null }> {
-    const rolledBack = restoreManifestDeps(config.profile, manifestBefore, activeProfileDir)
+  async function rollbackUpdateBuild(name: string, manifestBefore: ProfileManifestSnapshot): Promise<{ ok: boolean; detail: string | null }> {
+    const rolledBack = restoreProfileManifest(config.profile, manifestBefore, activeProfileDir)
     if (rolledBack.length === 0) return { ok: true, detail: null }
     // CI=true (the market always runs pnpm that way) turns frozen-lockfile
     // on, and the restored manifest pin now disagrees with the lockfile the
@@ -483,7 +483,7 @@ export function mountMarketRoutes(
     id: string
     kind: 'update' | 'install'
     names: string[]
-    manifestBefore?: Record<string, string>
+    manifestBefore?: ProfileManifestSnapshot
     /** github: updates must re-add the pre-update commit, not just reinstall. */
     gitTarget?: string
     beforeCommit?: string | null
@@ -501,14 +501,14 @@ export function mountMarketRoutes(
   /** Restore a github: update by re-adding the commit captured before the update. */
   async function rollbackGitBuild(
     name: string,
-    manifestBefore: Record<string, string>,
+    manifestBefore: ProfileManifestSnapshot,
     target: string,
     beforeCommit: string | null,
   ): Promise<{ ok: boolean; detail: string | null }> {
     if (beforeCommit === null) {
       return { ok: false, detail: 'the previous commit is unknown; nothing to roll back to' }
     }
-    restoreManifestDeps(config.profile, manifestBefore, activeProfileDir)
+    restoreProfileManifest(config.profile, manifestBefore, activeProfileDir)
     const add = await runPlugin(config.profile, ['add', RELEASE_AGE_OVERRIDE, `${target}#${beforeCommit}`])
     if (add.exitCode !== 0 || add.timedOut || add.cancelled) {
       return { ok: false, detail: failureDetail(add) }
@@ -516,7 +516,7 @@ export function mountMarketRoutes(
     // pnpm wrote a commit-pinned spec; the profile's durable spec must stay
     // the original `github:owner/repo` form. The lockfile keeps the restored
     // commit resolution for the next boot.
-    restoreManifestDeps(config.profile, manifestBefore, activeProfileDir)
+    restoreProfileManifest(config.profile, manifestBefore, activeProfileDir)
     logEvent('info', 'update-rollback', `${name}: restored github build at ${beforeCommit}`)
     return { ok: true, detail: null }
   }
@@ -1722,9 +1722,9 @@ export function mountMarketRoutes(
             // force: the user chose to install a fresh release without the
             // default one-day safety wait; scoped to this single command.
             const addArgs = force ? ['add', RELEASE_AGE_OVERRIDE, target] : ['add', target]
-            // RAW manifest snapshot for failure rollback (#65) — pnpm writes
-            // package.json before it finishes, so a hard-failed add leaves
-            // ghost/bumped entries that break every later pnpm run.
+            // Exact manifest snapshot for failure rollback (#65, #339) — the
+            // host can write dependencies AND dsh.profile.bundles before a
+            // hard-failed add, leaving residue that breaks the next boot.
             pendingRollbacks.clear()
             const compatibilityBefore = assessProfile(config.profile, activeProfileDir)
             // pnpm re-extracts the whole tree on any operation, so a plugin
@@ -1733,11 +1733,11 @@ export function mountMarketRoutes(
             // broke is attributable to it, so the profile is swept before as
             // well as after.
             const bundlesBefore = brokenClientBundles(config.profile, activeProfileDir)
-            const manifestBefore = readManifestDeps(config.profile, activeProfileDir)
+            const manifestBefore = readProfileManifestSnapshot(config.profile, activeProfileDir)
             const result = await runPlugin(config.profile, addArgs)
             const cancelled = result.cancelled
             if ((result.exitCode !== 0 || result.timedOut) && !cancelled) {
-              const rolledBack = restoreManifestDeps(config.profile, manifestBefore, activeProfileDir)
+              const rolledBack = restoreProfileManifest(config.profile, manifestBefore, activeProfileDir)
               if (rolledBack.length > 0) logEvent('warn', 'update', `${name}: rolled back manifest residue of the failed run: ${rolledBack.join(', ')}`)
             }
             let ok = result.exitCode === 0 && !result.timedOut && !cancelled
@@ -2681,16 +2681,17 @@ export function mountMarketRoutes(
             // broke is attributable to it, so the profile is swept before as
             // well as after.
             const bundlesBefore = brokenClientBundles(config.profile, activeProfileDir)
-            // RAW manifest snapshot for failure rollback (#65): pnpm writes
-            // package.json before the build-script check / registry fetches
-            // run, so a hard-failed add leaves ghost dependencies that break
-            // every later pnpm run — of anything. Cancelled runs keep their
-            // partial state on purpose (the user sees the diff and decides).
-            const manifestBefore = readManifestDeps(config.profile, activeProfileDir)
+            // Exact manifest snapshot for failure rollback (#65, #339): the
+            // host writes dependencies and dsh.profile.bundles before the
+            // build-script check / registry fetches run. Either residue can
+            // break every later operation or the next boot. Cancelled runs
+            // keep their partial state on purpose (the user sees the diff
+            // and decides).
+            const manifestBefore = readProfileManifestSnapshot(config.profile, activeProfileDir)
             const result = await runPlugin(config.profile, ['add', target])
             const cancelled = result.cancelled
             if ((result.exitCode !== 0 || result.timedOut) && !cancelled) {
-              const rolledBack = restoreManifestDeps(config.profile, manifestBefore, activeProfileDir)
+              const rolledBack = restoreProfileManifest(config.profile, manifestBefore, activeProfileDir)
               if (rolledBack.length > 0) logEvent('warn', 'install', `${target}: rolled back manifest residue of the failed run: ${rolledBack.join(', ')}`)
             }
             let ok = result.exitCode === 0 && !result.timedOut && !cancelled

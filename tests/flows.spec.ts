@@ -67,6 +67,8 @@ const fake = vi.hoisted(() => ({
    * is written before registry fetches and the build-script check run.
    */
   failAfterWriteStderrOnce: '',
+  /** Simulate dsh adding a profile bundle before that same add later fails (#339). */
+  profileBundleOnNextAdd: null as string | null,
   /** Make restore's bulk install fail so its per-plugin fallback is exercised. */
   failInstallOnce: false,
   captureBundlesOnNextAdd: false,
@@ -91,7 +93,10 @@ vi.mock('../src/dsh-cli.ts', () => {
       writeFileSync(join(root, rel), artifactContents[rel] ?? '')
     }
   }
-  function readManifest(): { dependencies?: Record<string, string> } {
+  function readManifest(): {
+    dependencies?: Record<string, string>
+    dsh?: { profile?: { bundles?: string[] } }
+  } {
     return JSON.parse(readFileSync(join(fake.profileDir, 'package.json'), 'utf8'))
   }
   function writeLockCommit(repo: string, commit: string): void {
@@ -105,6 +110,14 @@ vi.mock('../src/dsh-cli.ts', () => {
   function writeDep(name: string, spec: string): void {
     const manifest = readManifest()
     manifest.dependencies = { ...manifest.dependencies, [name]: spec }
+    writeFileSync(join(fake.profileDir, 'package.json'), JSON.stringify(manifest))
+  }
+  function appendProfileBundle(name: string): void {
+    const manifest = readManifest()
+    manifest.dsh ??= {}
+    manifest.dsh.profile ??= {}
+    const bundles = manifest.dsh.profile.bundles ?? []
+    if (!bundles.includes(name)) manifest.dsh.profile.bundles = [...bundles, name]
     writeFileSync(join(fake.profileDir, 'package.json'), JSON.stringify(manifest))
   }
   function removeDep(name: string): void {
@@ -198,6 +211,19 @@ vi.mock('../src/dsh-cli.ts', () => {
       writePkg(repo.name, def?.manifest ?? repo.manifest, def?.artifacts ?? repo.artifacts)
       const nextCommit = commit ?? repo.lockCommit
       if (nextCommit !== undefined) writeLockCommit(repoKey.replace(/^github:/, ''), nextCommit)
+      // `dsh plugin add` writes the bundle row on this path too — that is
+      // where #339 came from, a github-sourced install whose build was
+      // blocked. Consuming the flag only in the npm branch below let the
+      // regression test pass without ever creating the orphan it asserts on.
+      if (fake.profileBundleOnNextAdd !== null) {
+        appendProfileBundle(fake.profileBundleOnNextAdd)
+        fake.profileBundleOnNextAdd = null
+      }
+      if (fake.failAfterWriteStderrOnce !== '') {
+        const stderr = fake.failAfterWriteStderrOnce
+        fake.failAfterWriteStderrOnce = ''
+        return { exitCode: 1, timedOut: false, stdout: '', stderr, cancelled: false }
+      }
       for (const child of repo.junkChildren ?? []) {
         mkdirSync(join(fake.profileDir, 'node_modules', repo.name, child), { recursive: true })
         writeFileSync(join(fake.profileDir, 'node_modules', repo.name, child, 'package.json'), '{"dsh":{}}')
@@ -224,6 +250,10 @@ vi.mock('../src/dsh-cli.ts', () => {
     const version = pkg.latest
     writeDep(name, `^${version}`)
     writePkg(name, { version, ...(pkg.versions[version].manifest as object) }, pkg.versions[version].artifacts, pkg.versions[version].artifactContents)
+    if (fake.profileBundleOnNextAdd !== null) {
+      appendProfileBundle(fake.profileBundleOnNextAdd)
+      fake.profileBundleOnNextAdd = null
+    }
     if (fake.failAfterWriteStderrOnce !== '') {
       const stderr = fake.failAfterWriteStderrOnce
       fake.failAfterWriteStderrOnce = ''
@@ -438,6 +468,7 @@ beforeEach(() => {
   fake.buildScriptOutputOnce = ''
   fake.failNextAddStderrOnce = ''
   fake.failAfterWriteStderrOnce = ''
+  fake.profileBundleOnNextAdd = null
   fake.failInstallOnce = false
   fake.captureBundlesOnNextAdd = false
   fake.bundlesBeforeFallbackAdd = null
@@ -845,13 +876,18 @@ describe('install flow', () => {
     const ghostPath = join(profileDir('web'), 'package.json')
     const ghosted = JSON.parse(readFileSync(ghostPath, 'utf8'))
     ghosted.dependencies = { ...ghosted.dependencies, '@deepseek-ai/dsh-client-ui-theme-toggle': '^1.0.0' }
+    ghosted.dsh = { profile: { bundles: ['@deepseek-ai/dsh-base'] } }
     writeFileSync(ghostPath, JSON.stringify(ghosted))
+    fake.profileBundleOnNextAdd = 'dsh-loop'
     fake.failAfterWriteStderrOnce = '[ERR_PNPM_FETCH_404] GET https://registry.npmjs.org/@deepseek-ai%2Fdsh-client-ui-theme-toggle: Not Found - 404'
     const r = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
     expect(r.status).toBe(502)
     // The failed run's manifest write is rolled back — no ghost entry left
     // to break every later pnpm operation.
     expect(installedSpec('dsh-loop')).toBeUndefined()
+    expect(installedSpec('@deepseek-ai/dsh-client-ui-theme-toggle')).toBe('^1.0.0')
+    const rolledBackManifest = JSON.parse(readFileSync(ghostPath, 'utf8'))
+    expect(rolledBackManifest.dsh.profile.bundles).toEqual(['@deepseek-ai/dsh-base'])
     // The classification names the unresolvable package, decoded.
     expect(String(r.json.stderr)).toContain('@deepseek-ai/dsh-client-ui-theme-toggle')
     expect(String(r.json.stderr)).toContain('幽灵依赖')

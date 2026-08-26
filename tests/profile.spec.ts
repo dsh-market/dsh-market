@@ -303,30 +303,71 @@ describe('manifest rollback (#65)', () => {
     expect(readManifestDeps('web')).toEqual({ 'dsh-loop': '^1.0.0', '@deepseek-ai/dsh-base': 'latest' })
   })
 
-  it('restoreManifestDeps drops ghost entries and reverts bumped specs, preserving other fields', async () => {
-    const { readManifestDeps, restoreManifestDeps } = await import('../src/profile.ts')
+  it('restoreProfileManifest drops ghost entries from both manifest lists and preserves other fields', async () => {
+    const { readProfileManifestSnapshot, restoreProfileManifest } = await import('../src/profile.ts')
     const dir = writeProfile({
       name: 'web-profile',
-      dsh: { profile: { bundles: ['@deepseek-ai/dsh-base'] } },
+      dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', 'dsh-loop'], mode: 'manual' } },
       dependencies: { 'dsh-loop': '^1.0.0', '@deepseek-ai/dsh-base': 'latest' },
     })
-    const snapshot = readManifestDeps('web')
-    // Simulate pnpm's partial write of a failed run: a ghost dep appears
-    // and an existing pin is bumped.
+    const snapshot = readProfileManifestSnapshot('web')
+    // Simulate the host's partial write of a failed run: a ghost dep and
+    // bundle appear, and an existing pin is bumped. An unrelated field also
+    // changes after the snapshot and must not be rolled back.
     writeFileSync(join(dir, 'package.json'), JSON.stringify({
       name: 'web-profile',
-      dsh: { profile: { bundles: ['@deepseek-ai/dsh-base'] } },
+      dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', 'dsh-loop', 'ghost-pkg'], mode: 'manual', future: true } },
       dependencies: { 'dsh-loop': '^1.2.0', '@deepseek-ai/dsh-base': 'latest', 'ghost-pkg': '0.1.0-rc.6' },
     }))
-    const rolledBack = restoreManifestDeps('web', snapshot)
+    const rolledBack = restoreProfileManifest('web', snapshot)
     expect(rolledBack.sort()).toEqual(['dsh-loop', 'ghost-pkg'])
     const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'))
     expect(manifest.dependencies).toEqual({ 'dsh-loop': '^1.0.0', '@deepseek-ai/dsh-base': 'latest' })
-    // The in-box bundle survived, and non-dependency fields are untouched.
-    expect(manifest.dsh).toEqual({ profile: { bundles: ['@deepseek-ai/dsh-base'] } })
+    expect(manifest.dsh).toEqual({
+      profile: {
+        bundles: ['@deepseek-ai/dsh-base', 'dsh-loop'],
+        mode: 'manual',
+        future: true,
+      },
+    })
     expect(manifest.name).toBe('web-profile')
     // A second restore is a no-op.
-    expect(restoreManifestDeps('web', snapshot)).toEqual([])
+    expect(restoreProfileManifest('web', snapshot)).toEqual([])
+  })
+
+  it('restoreProfileManifest removes a newly-created bundle field without deleting its parent objects', async () => {
+    const { readProfileManifestSnapshot, restoreProfileManifest } = await import('../src/profile.ts')
+    const dir = writeProfile({ name: 'web-profile', dsh: { profile: { mode: 'manual' } }, dependencies: {} })
+    const snapshot = readProfileManifestSnapshot('web')
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({
+      name: 'web-profile',
+      dsh: { profile: { mode: 'manual', bundles: ['ghost-pkg'] } },
+      dependencies: {},
+    }))
+
+    expect(restoreProfileManifest('web', snapshot)).toEqual(['ghost-pkg'])
+    const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'))
+    expect(manifest.dsh).toEqual({ profile: { mode: 'manual' } })
+  })
+
+  it('still snapshots dependencies when a parseable profile field is malformed', async () => {
+    const { readProfileManifestSnapshot, restoreProfileManifest } = await import('../src/profile.ts')
+    const dir = writeProfile({
+      name: 'web-profile',
+      dsh: { profile: null },
+      dependencies: { 'kept-pkg': '^1.0.0' },
+    })
+    const snapshot = readProfileManifestSnapshot('web')
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({
+      name: 'web-profile',
+      dsh: { profile: null },
+      dependencies: { 'kept-pkg': '^1.0.0', 'ghost-pkg': '^2.0.0' },
+    }))
+
+    expect(restoreProfileManifest('web', snapshot)).toEqual(['ghost-pkg'])
+    const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'))
+    expect(manifest.dependencies).toEqual({ 'kept-pkg': '^1.0.0' })
+    expect(manifest.dsh).toEqual({ profile: null })
   })
 })
 
