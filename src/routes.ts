@@ -1539,12 +1539,34 @@ export function mountMarketRoutes(
           'content-type': 'text/plain; charset=utf-8',
           'content-disposition': 'attachment; filename="dsh-market-log.txt"',
         })
+        // Built here, not in log.ts: this is the composition, and the log
+        // module deliberately knows nothing about profiles. Each declared
+        // bundle is marked with whether it actually resolves, because an
+        // unresolvable one is what stops the next boot (#339, #341) and it
+        // is invisible in a manifest listing on its own.
+        const snapshot: string[] = []
+        try {
+          const report = analyzeProfile(activeProfileDir)
+          const installed = readInstalled(config.profile, activeProfileDir)
+          snapshot.push(`dependencies (${String(Object.keys(installed).length)}):`)
+          for (const [name, spec] of Object.entries(installed)) snapshot.push(`  ${name}: ${spec}`)
+          snapshot.push(`bundles (${String(report.bundles.length)}):`)
+          for (const layer of report.bundles) {
+            snapshot.push(`  ${layer.name}: ${layer.directory === null ? 'NOT RESOLVED — the next start fails here' : 'ok'}`)
+          }
+          if (report.summary.errors.length > 0) {
+            snapshot.push('errors:')
+            for (const line of report.summary.errors) snapshot.push(`  ${line}`)
+          }
+        } catch (error) {
+          snapshot.push(`profile state unavailable: ${error instanceof Error ? error.message : String(error)}`)
+        }
         response.end(exportLogs({
           'dsh-market': version,
           platform: `${process.platform} ${process.arch}`,
           node: process.version,
           profile: config.profile,
-        }))
+        }, snapshot))
       },
     }),
 

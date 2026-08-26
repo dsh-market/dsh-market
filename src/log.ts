@@ -61,14 +61,21 @@ export function logEvent(level: LogLevel, event: string, detail: string): void {
  * @param header - environment lines to prepend (version, platform — no paths).
  * @returns plain text, newest entry last.
  */
-export function exportLogs(header: Record<string, string>): string {
+export function exportLogs(header: Record<string, string>, snapshot: string[] = []): string {
   const head = Object.entries(header).map(([key, value]) => `${key}: ${sanitize(value)}`)
   const lines = entries.map(e => `${e.at} [${e.level}] ${e.event}: ${e.detail}`)
   return [
     '# dsh-market log export',
     ...head,
     '',
-    ...(lines.length > 0 ? lines : ['(no events this session)']),
+    // The state of the profile RIGHT NOW, which does not depend on anything
+    // having been recorded this session (#341). The buffer dies with the
+    // process, so the failures worth reporting most — the ones that only
+    // appear after a restart — were exactly the ones whose export said
+    // "(no events this session)". This part still answers.
+    ...(snapshot.length > 0 ? ['## profile state', ...snapshot.map(line => sanitize(line)), ''] : []),
+    '## events this session',
+    ...(lines.length > 0 ? lines : ['(none — the buffer starts empty on every start)']),
     '',
   ].join('\n')
 }

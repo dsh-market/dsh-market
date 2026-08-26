@@ -441,7 +441,7 @@ function createTestbed(
     await handler(request, response)
     let json: any = null
     try { json = JSON.parse(payload) } catch { /* non-JSON (logs route) */ }
-    return { status, json }
+    return { status, json, text: payload }
   }
   return { dispatch, loaderEntries, dispose }
 }
@@ -702,6 +702,26 @@ describe('backup and restore (#55)', () => {
     const restored = await bed.dispatch('POST', '/dsh-market/restore', { backup: exported.json })
     expect(restored.status).toBe(200)
     expect(restored.json.bootErrors).toBeUndefined()
+  })
+
+  /** #341: the log buffer dies with the process, so a failure that only
+   * appears after a restart exported "(no events this session)" — the class
+   * of bug that most needs a log is exactly the class whose log is gone. The
+   * export now also states what the profile looks like right now, which does
+   * not depend on anything having been recorded. */
+  it('exports the profile state even when nothing happened this session', async () => {
+    const manifestPath = join(profileDir('web'), 'package.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    manifest.dsh = { profile: { bundles: [...(manifest.dsh?.profile?.bundles ?? []), 'ghost-bundle'] } }
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+
+    const r = await bed.dispatch('GET', '/dsh-market/logs')
+    expect(r.status).toBe(200)
+    const text = r.text
+    expect(text).toContain('## profile state')
+    // The unresolvable row is called out, because that is the thing that
+    // stops the next boot and a plain manifest listing does not show it.
+    expect(text).toMatch(/ghost-bundle: NOT RESOLVED/)
   })
 
   it('rejects cross-origin restore requests', async () => {
