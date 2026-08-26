@@ -2671,6 +2671,26 @@ describe('card thumbnail + lightbox (curated screenshots only)', () => {
     expect(img().src).toBe(SHOT_B)
   })
 
+  it('does not auto-advance the lightbox — a full-bleed preview stays put until the viewer moves on', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      stubFetch({ '/dsh-market/registry': { source: 'live', registry: registryWithShots() } })
+      const { container } = render(<MarketSection {...props()} />)
+      await vi.waitFor(() => expect(screen.queryByText('dsh-loop')).toBeTruthy())
+
+      fireEvent.click(container.querySelector('img[class*="cardShot"]')!)
+      await vi.waitFor(() => expect(document.querySelector('[class*="lightboxImg"]')).toBeTruthy())
+      const img = () => document.querySelector('[class*="lightboxImg"]') as HTMLImageElement
+      expect(img().src).toBe(SHOT_A)
+      await vi.advanceTimersByTimeAsync(10_000)
+      // The preview is on demand: nothing may page past the shot the viewer
+      // is reading. Manual navigation (arrows/dots/keys) is what moves it.
+      expect(img().src).toBe(SHOT_A)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('closes only the lightbox on Escape, leaving the dialog underneath open', async () => {
     stubFetch({ '/dsh-market/registry': { source: 'live', registry: registryWithShots() } })
     const { container } = render(<MarketSection {...props()} />)

@@ -345,12 +345,16 @@ function ScreenshotStrip({ plugin, onOpen }: { plugin: RegistryPlugin; onOpen: (
  * clock instead of letting it fire again moments later: without that, a
  * deliberate "go back one" reads as broken when it auto-advances right past
  * where the user just navigated to.
+ *
+ * `intervalMs <= 0` disables the timer entirely (no auto-advance at all);
+ * manual jumps still work. The lightbox uses this: a full-bleed image needs
+ * to stay put until the viewer moves on, so it must never page itself.
  */
 function useAutoCarousel(count: number, initial: number, intervalMs = 3500): [number, (i: number) => void] {
   const [index, setIndexState] = useState(initial)
   const [resetTick, setResetTick] = useState(0)
   useEffect(() => {
-    if (count <= 1) return
+    if (count <= 1 || intervalMs <= 0) return
     const timer = setInterval(() => { setIndexState(i => (i + 1) % count) }, intervalMs)
     return () => clearInterval(timer)
   }, [count, intervalMs, resetTick])
@@ -718,7 +722,11 @@ function CardDesc({ text, t }: { text: string; t: Translate }) {
  * vs "full size" asset to fetch.
  */
 function ScreenshotLightbox({ shots, startIndex, onClose, t }: { shots: string[]; startIndex: number; onClose: () => void; t: Translate }) {
-  const [index, setIndex] = useAutoCarousel(shots.length, startIndex, 4000)
+  // Full-bleed previews must not auto-advance: a chart or a screenshot needs
+  // to stay readable until the viewer moves on, so the carousel timer is
+  // disabled with intervalMs = 0. Arrows, dots, and the keyboard still
+  // navigate manually.
+  const [index, setIndex] = useAutoCarousel(shots.length, startIndex, 0)
   useEffect(() => {
     // Capture phase + stopPropagation: the Settings dialog underneath is a
     // Modal with its own Escape-to-close handling, also on window/document.
