@@ -1131,6 +1131,8 @@ export function MarketSection(props: MarketSectionProps) {
   const [activations, setActivations] = useState<Record<string, ActivationInfo>>({})
   /** #60: persisted disable list + custom groups, straight from /installed. */
   const [disabledNames, setDisabledNames] = useState<string[]>([])
+  /** The disable set as of the first load; null until it arrives. */
+  const loadedDisabled = useRef<Set<string> | null>(null)
   /**
    * Patch-layer flags (port of dsh-plugin-hub): packages whose bundle rows
    * the user patch layer disables / force-enables. The UI treats them as the
@@ -1278,7 +1280,13 @@ export function MarketSection(props: MarketSectionProps) {
         setRepoHints(installedRepoHints(body.repoHints))
         setInstalledFiles(Array.isArray(body.present) ? body.present : Object.keys(body.installed || {}))
         setSkins(body.live || [])
-        if (Array.isArray(body.disabled)) setDisabledNames(body.disabled)
+        if (Array.isArray(body.disabled)) {
+          setDisabledNames(body.disabled)
+          // The switch positions this page was BUILT with. A toggle away from
+          // them needs a refresh; a toggle back to them does not, and the
+          // banner has to be able to say so (#340).
+          if (loadedDisabled.current === null) loadedDisabled.current = new Set(body.disabled as string[])
+        }
         if (Array.isArray(body.patchDisabled)) setPatchDisabledNames(body.patchDisabled)
         if (body.groups && typeof body.groups === 'object') setGroups(body.groups)
         if (Array.isArray(body.groupOrder)) setGroupOrder(body.groupOrder)
@@ -2038,6 +2046,20 @@ export function MarketSection(props: MarketSectionProps) {
       .catch(error => setInstallError(String(error)))
   }, [])
 
+  /**
+   * Forget a pending page-refresh for a plugin that is no longer here.
+   *
+   * The banner counts what the page has not caught up with. Install then
+   * uninstall and the page is level again — there is nothing left to load —
+   * but both sets were append-only, so it kept asking for a refresh that
+   * would show nothing (#340). It conflated "something needs doing" with
+   * "something happened in this session".
+   */
+  const clearPendingRefresh = useCallback((name: string) => {
+    setHotNames(names => names.filter(entry => entry !== name))
+    setRefreshNames(names => names.filter(entry => entry !== name))
+  }, [])
+
   const doUninstall = useCallback((name: string) => {
     setRemoveConfirm(null)
     setInstallError(null)
@@ -2052,6 +2074,7 @@ export function MarketSection(props: MarketSectionProps) {
       .then(({ status, body }) => {
         if (status === 200 && body.ok) {
           if (!body.hot) setRemovedCount(n => n + 1)
+          clearPendingRefresh(name)
           refreshInstalled()
         } else {
           if (body.cancelled === true) {
@@ -2066,6 +2089,7 @@ export function MarketSection(props: MarketSectionProps) {
           // (removed, profile synced) from the process (pnpm errored).
           if (body.reconciled === true) {
             if (!body.hot) setRemovedCount(n => n + 1)
+            clearPendingRefresh(name)
             refreshInstalled()
             setInstallError(t('reconciledNote'))
             return
@@ -2102,7 +2126,14 @@ export function MarketSection(props: MarketSectionProps) {
           if (body.restart === true) setToggleRestart(n => n + 1)
           // A client-part plugin's UI is already in the page — refresh to
           // show the change (mirrors the install hot banner).
-          if (body.refresh === true) setRefreshNames(names => names.includes(name) ? names : names.concat(name))
+          // Back to the position the page was rendered with means there is
+          // nothing left for a refresh to show, so the banner drops it
+          // instead of counting the round trip as a pending change (#340).
+          if (body.refresh === true) {
+            const wasDisabled = loadedDisabled.current?.has(name) ?? false
+            if (wasDisabled === !enabled) clearPendingRefresh(name)
+            else setRefreshNames(names => names.includes(name) ? names : names.concat(name))
+          }
           // Not on the reload path: the page is about to go away, and the
           // theme flow lands its own toast on the other side.
           if (!reload) setToggled({ name, enabled })
@@ -2128,7 +2159,7 @@ export function MarketSection(props: MarketSectionProps) {
       })
       .catch(error => setInstallError(String(error)))
       .finally(() => setTogglingName(null))
-  }, [refreshInstalled, t])
+  }, [clearPendingRefresh, refreshInstalled, t])
 
   /** Adopt the groups payload returned by POST /dsh-market/groups. */
   const setGroupPayload = useCallback((body: {

@@ -1078,6 +1078,71 @@ describe('#60 enable/disable switches in the Installed tab', () => {
   })
 })
 
+/** #340: the banner counts what the page has not caught up with, and both
+ * of its sets were append-only — nothing anywhere removed a name. Install
+ * then uninstall and the page is level again, with nothing left for a
+ * refresh to show, yet it kept asking. It was reporting session history,
+ * not pending work. */
+describe('refresh banner falls back when the change is undone (#340)', () => {
+  it('stops asking after the installed plugin is uninstalled again', async () => {
+    let present: Record<string, string> = {}
+    stubFetch({
+      '/dsh-market/installed': () => ({
+        profile: 'web', installed: present, live: Object.keys(present), disabled: [],
+        activation: { 'dsh-loop': { state: 'live', reasons: [], bundle: true, hot: true } },
+      }),
+      '/dsh-market/install': () => {
+        present = { 'dsh-loop': '^1.0.0' }
+        return { ok: true, hot: true, installed: present }
+      },
+      '/dsh-market/uninstall': () => { present = {}; return { ok: true, hot: true } },
+    })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    // The card for THIS plugin, not whichever Install button sorts first —
+    // installing one plugin and uninstalling another would prove nothing.
+    let card: HTMLElement | null = screen.getByText('dsh-loop')
+    while (card !== null && within(card).queryAllByRole('button', { name: en.install }).length === 0) {
+      card = card.parentElement
+    }
+    fireEvent.click(within(card!).getAllByRole('button', { name: en.install })[0]!)
+    fireEvent.click(await screen.findByRole('button', { name: en.confirmInstall }))
+    await waitFor(() => expect(screen.getAllByText(re(en.refreshBanner)).length).toBe(1))
+
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    fireEvent.click((await screen.findAllByRole('button', { name: en.uninstall }))[0]!)
+    await screen.findByText(re(en.uninstallConfirmDesc))
+    // The modal's confirm carries the same label as the row's trigger, so it
+    // is the LAST one on screen once the dialog is open.
+    fireEvent.click(screen.getAllByRole('button', { name: en.uninstall }).at(-1)!)
+
+    await waitFor(() => expect(screen.queryAllByText(re(en.refreshBanner))).toHaveLength(0))
+  })
+
+  it('stops asking when a switch is put back where the page found it', async () => {
+    let disabled: string[] = []
+    stubFetch({
+      '/dsh-market/installed': () => ({
+        profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: ['dsh-loop'], disabled,
+        activation: { 'dsh-loop': { state: 'live', reasons: [], bundle: true, hot: true } },
+      }),
+      '/dsh-market/toggle': (body: any) => {
+        disabled = body.enabled ? [] : ['dsh-loop']
+        return { ok: true, disabled, live: body.enabled ? ['dsh-loop'] : [], refresh: true }
+      },
+    })
+    render(<MarketSection {...props()} />)
+    fireEvent.click(await screen.findByRole('button', { name: /Installed/ }))
+
+    fireEvent.click(await screen.findByRole('switch', { name: en.disable + ' dsh-loop' }))
+    await waitFor(() => expect(screen.getAllByText(re(en.refreshBanner)).length).toBe(1))
+
+    // Back to the position the page was rendered with: nothing to show.
+    fireEvent.click(await screen.findByRole('switch', { name: en.enable + ' dsh-loop' }))
+    await waitFor(() => expect(screen.queryAllByText(re(en.refreshBanner))).toHaveLength(0))
+  })
+})
+
 describe('#60 catalog deprecation', () => {
   const DEPRECATED_REGISTRY = {
     updated: '', count: 3,

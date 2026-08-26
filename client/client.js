@@ -5188,6 +5188,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const [activations, setActivations] = (0, react.useState)({});
 			/** #60: persisted disable list + custom groups, straight from /installed. */
 			const [disabledNames, setDisabledNames] = (0, react.useState)([]);
+			/** The disable set as of the first load; null until it arrives. */
+			const loadedDisabled = (0, react.useRef)(null);
 			/**
 			* Patch-layer flags (port of dsh-plugin-hub): packages whose bundle rows
 			* the user patch layer disables / force-enables. The UI treats them as the
@@ -5331,7 +5333,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					setRepoHints(installedRepoHints(body.repoHints));
 					setInstalledFiles(Array.isArray(body.present) ? body.present : Object.keys(body.installed || {}));
 					setSkins(body.live || []);
-					if (Array.isArray(body.disabled)) setDisabledNames(body.disabled);
+					if (Array.isArray(body.disabled)) {
+						setDisabledNames(body.disabled);
+						if (loadedDisabled.current === null) loadedDisabled.current = new Set(body.disabled);
+					}
 					if (Array.isArray(body.patchDisabled)) setPatchDisabledNames(body.patchDisabled);
 					if (body.groups && typeof body.groups === "object") setGroups(body.groups);
 					if (Array.isArray(body.groupOrder)) setGroupOrder(body.groupOrder);
@@ -6029,6 +6034,19 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					} else setInstallError(String(body.error || "failed"));
 				}).catch((error) => setInstallError(String(error)));
 			}, []);
+			/**
+			* Forget a pending page-refresh for a plugin that is no longer here.
+			*
+			* The banner counts what the page has not caught up with. Install then
+			* uninstall and the page is level again — there is nothing left to load —
+			* but both sets were append-only, so it kept asking for a refresh that
+			* would show nothing (#340). It conflated "something needs doing" with
+			* "something happened in this session".
+			*/
+			const clearPendingRefresh = (0, react.useCallback)((name) => {
+				setHotNames((names) => names.filter((entry) => entry !== name));
+				setRefreshNames((names) => names.filter((entry) => entry !== name));
+			}, []);
 			const doUninstall = (0, react.useCallback)((name) => {
 				setRemoveConfirm(null);
 				setInstallError(null);
@@ -6044,6 +6062,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				}))).then(({ status, body }) => {
 					if (status === 200 && body.ok) {
 						if (!body.hot) setRemovedCount((n) => n + 1);
+						clearPendingRefresh(name);
 						refreshInstalled();
 					} else {
 						if (body.cancelled === true) {
@@ -6053,6 +6072,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						}
 						if (body.reconciled === true) {
 							if (!body.hot) setRemovedCount((n) => n + 1);
+							clearPendingRefresh(name);
 							refreshInstalled();
 							setInstallError(t("reconciledNote"));
 							return;
@@ -6087,7 +6107,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 							...body.activation
 						}));
 						if (body.restart === true) setToggleRestart((n) => n + 1);
-						if (body.refresh === true) setRefreshNames((names) => names.includes(name) ? names : names.concat(name));
+						if (body.refresh === true) {
+							if ((loadedDisabled.current?.has(name) ?? false) === !enabled) clearPendingRefresh(name);
+							else setRefreshNames((names) => names.includes(name) ? names : names.concat(name));
+						}
 						if (!reload) setToggled({
 							name,
 							enabled
@@ -6106,7 +6129,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						if (body.refresh === true) setRefreshNames((names) => names.includes(name) ? names : names.concat(name));
 					}
 				}).catch((error) => setInstallError(String(error))).finally(() => setTogglingName(null));
-			}, [refreshInstalled, t]);
+			}, [
+				clearPendingRefresh,
+				refreshInstalled,
+				t
+			]);
 			/** Adopt the groups payload returned by POST /dsh-market/groups. */
 			const setGroupPayload = (0, react.useCallback)((body) => {
 				if (body.groups && typeof body.groups === "object") setGroups(body.groups);
