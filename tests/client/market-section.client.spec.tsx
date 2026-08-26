@@ -191,8 +191,12 @@ describe('MarketSection (jsdom)', () => {
     expect(scroller).toBeTruthy()
 
     scroller.scrollTop = 800
+    fireEvent.scroll(scroller)
+    expect(screen.getByRole('button', { name: en.backTop })).toBeTruthy()
+
     fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
     expect(scroller.scrollTop).toBe(0)
+    expect(screen.queryByRole('button', { name: en.backTop })).toBeNull()
 
     scroller.scrollTop = 800
     fireEvent.click(screen.getByRole('button', { name: en.tabDiscover }))
