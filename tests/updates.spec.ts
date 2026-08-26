@@ -113,8 +113,18 @@ describe('checkUpdates — github pins', () => {
 
   beforeEach(() => {
     home = mkdtempSync(join(tmpdir(), 'dshm-updhome-'))
-    vi.stubGlobal('fetch', vi.fn(async () => ({
-      ok: true, status: 200, json: async () => ({ sha: HEAD }),
+    // The github branch reads git's own ref advertisement rather than the
+    // REST API, whose 60/hour unauthenticated quota is shared across every
+    // plugin and every check (#349). The stub answers in that wire format —
+    // `<sha> HEAD\0<capabilities>` — so the parsing is pinned too, and a
+    // regression back to a JSON `{sha}` endpoint fails here.
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ sha: HEAD }),
+      text: async () => String(url).includes('info/refs')
+        ? `001e# service=git-upload-pack\n00000155${HEAD} HEAD\0multi_ack symref=HEAD:refs/heads/main\n`
+        : '',
     })))
   })
 

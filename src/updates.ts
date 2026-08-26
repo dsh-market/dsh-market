@@ -5,7 +5,9 @@
  */
 
 import { DIST_TAG, type Channel } from './channels.ts'
+import { headCommit } from './accelerate.ts'
 import { marketFetch } from './net.ts'
+import { activeRegion, routesFor } from './regions.ts'
 import { profileDir, readInstalled, readInstalledVersion, readLockCommits } from './profile.ts'
 import { repoOfTarget } from './sources.ts'
 
@@ -279,8 +281,14 @@ export async function checkUpdates(
         // exact thing that was fetched, with no lookup in between.
         const pinned = /codeload\.github\.com\/[^/\s]+\/[^/\s]+\/tar\.gz\/([0-9a-f]{40})/.exec(spec)
         const current = pinned?.[1] ?? lockCommits.get(repo) ?? null
-        const head = (await fetchJson(`https://api.github.com/repos/${repo}/commits/HEAD`)) as { sha?: string }
-        const latest = typeof head.sha === 'string' ? head.sha : null
+        // git's own ref advertisement, NOT api.github.com/repos/…/commits.
+        // The REST API allows 60 requests an hour per IP unauthenticated,
+        // shared across every plugin AND every check — a handful of
+        // github-installed plugins exhausts it and the whole list silently
+        // stops reporting updates (#349). The ref endpoint git itself uses
+        // has no such quota; this is the same call `acceleratedTarget`
+        // already makes to resolve a commit for the China region.
+        const latest = await headCommit(repo, routesFor(activeRegion()).githubProxy)
         result[name] = {
           kind: 'github', version, current, latest,
           updateAvailable: current !== null && latest !== null && current !== latest,
