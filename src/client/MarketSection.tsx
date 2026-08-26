@@ -3729,7 +3729,7 @@ export function MarketSection(props: MarketSectionProps) {
                                         beside it pointed at the same page. */}
                                     <span className={css.irowNameText}>
                                       {repoUrl !== null
-                                        ? <a className={css.nameLink} href={repoUrl + '#readme'} target="_blank" rel="noreferrer" title={t('readme')}>{name}</a>
+                                        ? <a className={css.nameLink} href={repoUrl + '#readme'} target="_blank" rel="noreferrer" title={name} aria-label={`${name} — ${t('readme')}`}>{name}</a>
                                         : name}
                                     </span>
                                     {entry?.deprecated === true && <span className={css.depBadge}>{t('deprecatedBadge')}</span>}

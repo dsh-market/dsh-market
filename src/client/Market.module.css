@@ -414,8 +414,16 @@
    so it never truncates; the name is the variable-length part and is the
    only thing allowed to shrink and ellipsize (#257). Scoped to this row
    rather than added to `.nm`, which six other surfaces share. */
-.irowName{display:flex;align-items:baseline;gap:6px;min-width:0;overflow:visible;text-overflow:clip}
-.irowNameText{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Wraps rather than truncates (#342, #343). A scoped package name is the
+   thing that tells two installed plugins apart — `@deepseek-ai/dsh-client-ui-…`
+   and `@dsh-external/dsh-sessi…` are both just prefixes — and an ellipsis
+   removes exactly the end that distinguishes them. Wrapping costs a line only
+   on the names long enough to need one, and the installed list is a masonry,
+   so a taller row does not push its neighbours around.
+   `anywhere` rather than `break-word`: these names have long unbroken runs
+   between the slash and the dashes, which `break-word` leaves overflowing. */
+.irowName{display:flex;align-items:baseline;gap:6px;min-width:0;overflow:visible;text-overflow:clip;flex-wrap:wrap}
+.irowNameText{min-width:0;overflow-wrap:anywhere;white-space:normal}
 .irowName>.owner{flex:0 0 auto}
 .nameLink:hover{color:var(--dsw-alias-brand-primary,#4f6ef7);text-decoration:underline}
 .opWrap{position:relative;display:inline-flex;flex-shrink:0}

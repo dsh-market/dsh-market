@@ -1078,6 +1078,7 @@ describe('#60 enable/disable switches in the Installed tab', () => {
   })
 })
 
+<<<<<<< HEAD
 /** #340: the banner counts what the page has not caught up with, and both
  * of its sets were append-only — nothing anywhere removed a name. Install
  * then uninstall and the page is level again, with nothing left for a
@@ -1140,6 +1141,29 @@ describe('refresh banner falls back when the change is undone (#340)', () => {
     // Back to the position the page was rendered with: nothing to show.
     fireEvent.click(await screen.findByRole('switch', { name: en.enable + ' dsh-loop' }))
     await waitFor(() => expect(screen.queryAllByText(re(en.refreshBanner))).toHaveLength(0))
+=======
+/** #342 / #343: a scoped package name is what tells two installed plugins
+ * apart, and the ellipsis removed exactly the end that distinguishes them —
+ * `@deepseek-ai/dsh-client-ui-…` next to `@dsh-external/dsh-sessi…` are both
+ * just prefixes. */
+describe('long installed names stay readable (#342, #343)', () => {
+  const LONG = '@deepseek-ai/dsh-client-ui-settings-plugins-extended'
+
+  it('does not truncate, and names itself on hover either way', async () => {
+    stubFetch({
+      '/dsh-market/installed': {
+        profile: 'web', installed: { [LONG]: '^1.0.0' }, live: [LONG], disabled: [],
+      },
+    })
+    const { container } = render(<MarketSection {...props()} />)
+    fireEvent.click(await screen.findByRole('button', { name: /Installed/ }))
+    await screen.findByText(LONG)
+
+    const cell = container.querySelector('[class*="irowNameText"]')!
+    expect(cell.textContent).toBe(LONG)
+    const link = cell.querySelector('a')
+    if (link !== null) expect(link.getAttribute('title')).toBe(LONG)
+>>>>>>> d771b57 (fix: let a long installed plugin name wrap instead of truncating)
   })
 })
 
