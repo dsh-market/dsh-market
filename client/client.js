@@ -267,6 +267,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			restorePartial: "恢复已完成，但下列插件安装失败：",
 			restoreUnportable: "依赖指向了另一台机器上的绝对路径，本机不存在，需要手动改成本机路径或重新安装",
 			restoreBootError: "恢复后仍无法启动：",
+			orphanBundle: "⚠️ 下次启动会失败：profile 声明了这些 bundle，但它们没有安装。请重新安装，或从 profile 的 package.json 的 dsh.profile.bundles 里删掉：",
 			restoreConfirm: "恢复将覆盖当前 profile 配置并重新安装插件，确定继续吗？",
 			restorePreviewDone: "备份已导入，请在「已安装」中确认后开始恢复",
 			restoreMissing: "备份中有 {0} 个插件尚未安装",
@@ -712,6 +713,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			restorePartial: "Restore completed, but these plugins failed to install:",
 			restoreUnportable: "points at an absolute path from another machine that does not exist here — repoint it locally or reinstall the plugin",
 			restoreBootError: "Still cannot boot after the restore:",
+			orphanBundle: "⚠️ The next start will fail: the profile declares these bundles but they are not installed. Reinstall them, or remove them from dsh.profile.bundles in the profile package.json:",
 			restoreConfirm: "Restore will overwrite this profile configuration and reinstall plugins. Continue?",
 			restorePreviewDone: "Backup imported. Review Installed, then start restore.",
 			restoreMissing: "{0} plugins from this backup are not installed",
@@ -5685,7 +5687,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 							names: blocked
 						});
 						const text = (v) => typeof v === "string" ? v : v && typeof v.text === "string" ? v.text : v == null ? "" : JSON.stringify(v);
-						const detail = text(body.error) || humanOutput([text(body.stderr), text(body.stdout)].filter(Boolean).join("\n")) || "exit " + body.exitCode;
+						const orphans = Array.isArray(body.orphanBundles) ? body.orphanBundles.map(String) : [];
+						const failure = text(body.error) || humanOutput([text(body.stderr), text(body.stdout)].filter(Boolean).join("\n")) || "exit " + body.exitCode;
+						const detail = orphans.length > 0 ? `${t("orphanBundle")} ${orphans.join(", ")}\n${failure}` : failure;
 						setRecords((list) => patch(list, recordId, {
 							state: "failed",
 							reason: detail.trim().slice(-600),
@@ -5903,7 +5907,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 							restore
 						});
 						const text = (v) => typeof v === "string" ? v : v && typeof v.text === "string" ? v.text : v == null ? "" : JSON.stringify(v);
-						const detail = text(body.error) || humanOutput([text(body.stderr), text(body.stdout)].filter(Boolean).join("\n")) || "exit " + body.exitCode;
+						const orphans = Array.isArray(body.orphanBundles) ? body.orphanBundles.map(String) : [];
+						const failure = text(body.error) || humanOutput([text(body.stderr), text(body.stdout)].filter(Boolean).join("\n")) || "exit " + body.exitCode;
+						const detail = orphans.length > 0 ? `${t("orphanBundle")} ${orphans.join(", ")}\n${failure}` : failure;
 						setRecords((list) => patch(list, updateRecordId, {
 							state: "failed",
 							reason: detail.trim().slice(-600)

@@ -1707,7 +1707,14 @@ export function MarketSection(props: MarketSectionProps) {
           const blocked = Array.isArray(body.ignoredBuilds) ? body.ignoredBuilds.map(String) : []
           if (blocked.length > 0) setBuildsSkipped({ plugin, names: blocked })
           const text = (v: unknown) => typeof v === 'string' ? v : (v && typeof (v as any).text === 'string') ? (v as any).text : v == null ? '' : JSON.stringify(v)
-          const detail = text(body.error) || humanOutput([text(body.stderr), text(body.stdout)].filter(Boolean).join('\n')) || ('exit ' + body.exitCode)
+          const orphans = Array.isArray(body.orphanBundles) ? body.orphanBundles.map(String) : []
+          const failure = text(body.error) || humanOutput([text(body.stderr), text(body.stdout)].filter(Boolean).join('\n')) || ('exit ' + body.exitCode)
+          // The profile will not boot as it stands (#339). Said FIRST, because
+          // it outranks whatever else went wrong: a plugin that failed to
+          // install is recoverable, a profile that cannot start is not — and
+          // the user would otherwise meet it as a Node stack trace after the
+          // next restart, with nothing linking it to this operation.
+          const detail = orphans.length > 0 ? `${t('orphanBundle')} ${orphans.join(', ')}\n${failure}` : failure
           // Carry the blocked names onto the record too: the panel is where
           // this failure is read, so it is where the one-click way out has to
           // be (#314).
@@ -1926,7 +1933,14 @@ export function MarketSection(props: MarketSectionProps) {
             setBuildsSkipped({ updateName: name, names: body.ignoredBuilds.map(String), restore })
           }
           const text = (v: unknown) => typeof v === 'string' ? v : (v && typeof (v as any).text === 'string') ? (v as any).text : v == null ? '' : JSON.stringify(v)
-          const detail = text(body.error) || humanOutput([text(body.stderr), text(body.stdout)].filter(Boolean).join('\n')) || ('exit ' + body.exitCode)
+          const orphans = Array.isArray(body.orphanBundles) ? body.orphanBundles.map(String) : []
+          const failure = text(body.error) || humanOutput([text(body.stderr), text(body.stdout)].filter(Boolean).join('\n')) || ('exit ' + body.exitCode)
+          // The profile will not boot as it stands (#339). Said FIRST, because
+          // it outranks whatever else went wrong: a plugin that failed to
+          // install is recoverable, a profile that cannot start is not — and
+          // the user would otherwise meet it as a Node stack trace after the
+          // next restart, with nothing linking it to this operation.
+          const detail = orphans.length > 0 ? `${t('orphanBundle')} ${orphans.join(', ')}\n${failure}` : failure
           setRecords(list => patchRecord(list, updateRecordId, { state: 'failed', reason: detail.trim().slice(-600) }))
           setInstallError((restore ? t('restoreFail') : t('updateFail')) + ': ' + name + ' — ' + detail.trim().slice(-600))
         }

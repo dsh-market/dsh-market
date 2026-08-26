@@ -893,6 +893,29 @@ describe('install flow', () => {
     expect(String(r.json.stderr)).toContain('幽灵依赖')
   })
 
+  /** #339's safety net. The rollback that leaves an orphan bundle is fixed,
+   * but the market issues one call and the HOST owns both writes, so any
+   * future write path could do the same. Checking at the end of the operation
+   * means the next restart is not the thing that discovers it. */
+  it('names a bundle the profile declares but cannot resolve, before the next boot does', async () => {
+    fake.npm['dsh-loop'] = { latest: '1.0.0', versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } } }
+    const manifestPath = join(profileDir('web'), 'package.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    // A bundle row with nothing behind it: neither a dependency nor a package
+    // on disk — exactly what a half-failed add used to leave.
+    manifest.dsh = { profile: { bundles: [...(manifest.dsh?.profile?.bundles ?? []), 'ghost-bundle'] } }
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+
+    const r = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
+    expect((r.json.orphanBundles ?? []) as string[]).toContain('ghost-bundle')
+  })
+
+  it('says nothing about orphan bundles when every declared bundle resolves', async () => {
+    fake.npm['dsh-loop'] = { latest: '1.0.0', versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } } }
+    const r = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
+    expect(r.json.orphanBundles).toBeUndefined()
+  })
+
   it('auto-recovers when the modules dir was built by another pnpm major (#20)', async () => {
     fake.npm['dsh-loop'] = { latest: '1.0.0', versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } } }
     fake.hoistDiffTimes = 1

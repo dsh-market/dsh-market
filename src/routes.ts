@@ -562,6 +562,32 @@ export function mountMarketRoutes(
     }
   }
 
+  /**
+   * Bundles the profile declares that will not resolve at boot.
+   *
+   * The boot loader reads `dsh.profile.bundles` and dies on the first name it
+   * cannot resolve — the whole profile, not just that plugin (#339). The
+   * rollback that leaves such a row behind is fixed, but the market issues
+   * one call and the host owns both writes, so this is the net under any
+   * write path that does the same thing next: check at the end of an
+   * operation instead of letting the next restart be the one to find out.
+   *
+   * Judged by the SAME analysis the diagnostics page uses, deliberately. A
+   * bundle can legitimately live in the dsh installation rather than the
+   * profile's node_modules (#316), and reimplementing that resolution here
+   * would call those orphans.
+   */
+  function orphanBundles(): string[] {
+    try {
+      return analyzeProfile(activeProfileDir).bundles
+        .filter(layer => layer.directory === null)
+        .map(layer => layer.name)
+    } catch (error) {
+      logEvent('warn', 'install', `bundle resolution check failed: ${error instanceof Error ? error.message : String(error)}`)
+      return []
+    }
+  }
+
   async function restoreBackup(value: unknown): Promise<{ files: number; errors: { name: string; error: string }[]; unportable?: Array<{ name: string; spec: string }>; bootErrors?: string[] }> {
     if (!await probePnpm()) throw new Error('pnpm is required to restore plugins')
     // Snapshot the target's manifest BEFORE the backup files overwrite it, so
@@ -1898,6 +1924,10 @@ export function mountMarketRoutes(
               activation,
               compatibility,
               ignoredBuilds,
+              // Named here rather than left for the next restart to find
+              // (#339). Empty on every healthy operation, so the client only
+              // ever sees this when something really is unbootable.
+              ...(() => { const orphans = orphanBundles(); return orphans.length > 0 ? { orphanBundles: orphans } : {} })(),
               staleReason: staleReason ?? undefined,
               error: trialError ?? brokenEntryError ?? staleError ?? undefined,
               exitCode: result.exitCode,
@@ -2816,6 +2846,10 @@ export function mountMarketRoutes(
               activation,
               compatibility,
               ignoredBuilds,
+              // Named here rather than left for the next restart to find
+              // (#339). Empty on every healthy operation, so the client only
+              // ever sees this when something really is unbootable.
+              ...(() => { const orphans = orphanBundles(); return orphans.length > 0 ? { orphanBundles: orphans } : {} })(),
               // Blocked build scripts are expected (pnpm >= 10 blocks them by
               // default): surface the approve-builds banner instead of scaring
               // the user with pnpm's raw stack.
