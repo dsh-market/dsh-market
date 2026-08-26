@@ -5069,6 +5069,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			*/
 			const [records, setRecords] = (0, react.useState)([]);
 			const recordSeq = (0, react.useRef)(0);
+			/** The synthetic install task rebuilt from dshm-pending after a remount. */
+			const recoveredInstall = (0, react.useRef)(null);
+			/** The synthetic task rebuilt from dshm-updating after this section remounts. */
+			const recoveredUpdateRecordId = (0, react.useRef)(null);
 			/** Raised by the card marker, so "查看详情" lands on the record itself. */
 			const [operationsOpen, setOperationsOpen] = (0, react.useState)(false);
 			const openOperations = (0, react.useCallback)(() => setOperationsOpen(true), []);
@@ -5416,10 +5420,41 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			}, []);
 			(0, react.useEffect)(() => {
 				const pending = readSession("dshm-pending");
-				if (pending !== null && typeof pending.url === "string") setBusyUrl(pending.url);
+				if (pending !== null && typeof pending.url === "string") {
+					setBusyUrl(pending.url);
+					recoveredInstall.current = {
+						id: `recovered-install:${pending.url}`,
+						url: pending.url,
+						...typeof pending.name === "string" && pending.name !== "" ? { name: pending.name } : {}
+					};
+				}
 				const updating = readSession("dshm-updating");
-				if (updating !== null && typeof updating.name === "string" && updating.name !== "") setUpdatingName(updating.name);
+				if (updating !== null && typeof updating.name === "string" && updating.name !== "") {
+					setUpdatingName(updating.name);
+					const id = `recovered-update:${updating.name}`;
+					recoveredUpdateRecordId.current = id;
+					setRecords((list) => list.some((record) => record.kind === "update" && record.name === updating.name && record.state === "running") ? list : enqueue(list, {
+						id,
+						kind: "update",
+						name: updating.name,
+						state: "running"
+					}));
+				}
 			}, []);
+			(0, react.useEffect)(() => {
+				const recovered = recoveredInstall.current;
+				if (recovered === null) return;
+				const name = recovered.name ?? data?.plugins.find((plugin) => plugin.url === recovered.url)?.name;
+				if (name === void 0) return;
+				recovered.name = name;
+				setRecords((list) => list.some((record) => record.id === recovered.id) ? list : enqueue(list, {
+					id: recovered.id,
+					kind: "install",
+					name,
+					url: recovered.url,
+					state: "running"
+				}));
+			}, [data]);
 			(0, react.useEffect)(() => {
 				if (busyUrl === null && updatingName === null) {
 					setProgressLine(null);
@@ -5464,11 +5499,21 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 								if (data !== null && data.plugins.some((p) => p.url === busyUrl && isInstalled(p, statusInstalled, repoIdentities, data.plugins, repoHints))) {
 									idleStrikes.current = 0;
 									sessionStorage.removeItem("dshm-pending");
+									const recovered = recoveredInstall.current;
+									if (recovered !== null) {
+										setRecords((list) => drop(list, recovered.id));
+										recoveredInstall.current = null;
+									}
 									setDoneUrls((urls) => urls.includes(busyUrl) ? urls : urls.concat(busyUrl));
 									setBusyUrl(null);
 								} else if (++idleStrikes.current >= 2) {
 									idleStrikes.current = 0;
 									sessionStorage.removeItem("dshm-pending");
+									const recovered = recoveredInstall.current;
+									if (recovered !== null) {
+										setRecords((list) => drop(list, recovered.id));
+										recoveredInstall.current = null;
+									}
 									setBusyUrl(null);
 									setInstallError(t("installFail") + " — " + t("exportLog"));
 								}
@@ -5477,6 +5522,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 								if (++updateIdleStrikes.current >= 2) {
 									updateIdleStrikes.current = 0;
 									sessionStorage.removeItem("dshm-updating");
+									const recoveredId = recoveredUpdateRecordId.current;
+									if (recoveredId !== null) {
+										setRecords((list) => drop(list, recoveredId));
+										recoveredUpdateRecordId.current = null;
+									}
 									setUpdatingName(null);
 									refreshInstalled();
 								}
@@ -5613,7 +5663,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					url: plugin.url,
 					state: "running"
 				}));
-				sessionStorage.setItem("dshm-pending", JSON.stringify({ url: plugin.url }));
+				sessionStorage.setItem("dshm-pending", JSON.stringify({
+					url: plugin.url,
+					name: plugin.name
+				}));
 				fetch("/dsh-market/install", {
 					method: "POST",
 					headers: { "content-type": "application/json" },

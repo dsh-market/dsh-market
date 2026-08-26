@@ -1025,6 +1025,10 @@ export function MarketSection(props: MarketSectionProps) {
    */
   const [records, setRecords] = useState<OperationRecord[]>([])
   const recordSeq = useRef(0)
+  /** The synthetic install task rebuilt from dshm-pending after a remount. */
+  const recoveredInstall = useRef<{ id: string; url: string; name?: string } | null>(null)
+  /** The synthetic task rebuilt from dshm-updating after this section remounts. */
+  const recoveredUpdateRecordId = useRef<string | null>(null)
   /** Raised by the card marker, so "查看详情" lands on the record itself. */
   const [operationsOpen, setOperationsOpen] = useState(false)
   const openOperations = useCallback(() => setOperationsOpen(true), [])
@@ -1426,14 +1430,44 @@ export function MarketSection(props: MarketSectionProps) {
   // the poll below converges the button state from the host's ground truth.
   useEffect(() => {
     const pending = readSession('dshm-pending')
-    if (pending !== null && typeof pending.url === 'string') setBusyUrl(pending.url)
+    if (pending !== null && typeof pending.url === 'string') {
+      setBusyUrl(pending.url)
+      recoveredInstall.current = {
+        id: `recovered-install:${pending.url}`,
+        url: pending.url,
+        ...(typeof pending.name === 'string' && pending.name !== '' ? { name: pending.name } : {}),
+      }
+    }
     // Same recovery for an update in flight: closing the config page unmounts
     // this section and drops `updatingName` with it, so the running row's
     // progress vanished on reopen. The marker restores the row and the poll
     // below converges it from the host's ground truth.
     const updating = readSession('dshm-updating')
-    if (updating !== null && typeof updating.name === 'string' && updating.name !== '') setUpdatingName(updating.name)
+    if (updating !== null && typeof updating.name === 'string' && updating.name !== '') {
+      setUpdatingName(updating.name)
+      const id = `recovered-update:${updating.name}`
+      recoveredUpdateRecordId.current = id
+      setRecords(list => list.some(record =>
+        record.kind === 'update' && record.name === updating.name && record.state === 'running')
+        ? list
+        : enqueue(list, { id, kind: 'update', name: updating.name, state: 'running' }))
+    }
   }, [])
+
+  // New markers carry the name and recover immediately. Older markers only
+  // carried the URL, so wait for the catalog and resolve the same task from it.
+  useEffect(() => {
+    const recovered = recoveredInstall.current
+    if (recovered === null) return
+    const name = recovered.name ?? data?.plugins.find(plugin => plugin.url === recovered.url)?.name
+    if (name === undefined) return
+    recovered.name = name
+    setRecords(list => list.some(record => record.id === recovered.id)
+      ? list
+      : enqueue(list, {
+          id: recovered.id, kind: 'install', name, url: recovered.url, state: 'running',
+        }))
+  }, [data])
 
   useEffect(() => {
     if (busyUrl === null && updatingName === null) {
@@ -1491,6 +1525,11 @@ export function MarketSection(props: MarketSectionProps) {
               if (nowInstalled) {
                 idleStrikes.current = 0
                 sessionStorage.removeItem('dshm-pending')
+                const recovered = recoveredInstall.current
+                if (recovered !== null) {
+                  setRecords(list => drop(list, recovered.id))
+                  recoveredInstall.current = null
+                }
                 setDoneUrls(urls => urls.includes(busyUrl) ? urls : urls.concat(busyUrl))
                 setBusyUrl(null)
               } else if (++idleStrikes.current >= 2) {
@@ -1499,6 +1538,11 @@ export function MarketSection(props: MarketSectionProps) {
                 // button says "installing" forever — across reloads (#32).
                 idleStrikes.current = 0
                 sessionStorage.removeItem('dshm-pending')
+                const recovered = recoveredInstall.current
+                if (recovered !== null) {
+                  setRecords(list => drop(list, recovered.id))
+                  recoveredInstall.current = null
+                }
                 setBusyUrl(null)
                 setInstallError(t('installFail') + ' — ' + t('exportLog'))
               }
@@ -1514,6 +1558,11 @@ export function MarketSection(props: MarketSectionProps) {
               if (++updateIdleStrikes.current >= 2) {
                 updateIdleStrikes.current = 0
                 sessionStorage.removeItem('dshm-updating')
+                const recoveredId = recoveredUpdateRecordId.current
+                if (recoveredId !== null) {
+                  setRecords(list => drop(list, recoveredId))
+                  recoveredUpdateRecordId.current = null
+                }
                 setUpdatingName(null)
                 refreshInstalled()
               }
@@ -1630,7 +1679,7 @@ export function MarketSection(props: MarketSectionProps) {
     setRecords(list => enqueue(list, {
       id: recordId, kind: 'install', name: plugin.name, url: plugin.url, state: 'running',
     }))
-    sessionStorage.setItem('dshm-pending', JSON.stringify({ url: plugin.url }))
+    sessionStorage.setItem('dshm-pending', JSON.stringify({ url: plugin.url, name: plugin.name }))
     fetch('/dsh-market/install', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
