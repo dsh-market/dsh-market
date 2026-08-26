@@ -109,6 +109,10 @@ DSHM_REGISTRY_URL=https://your-mirror.example/plugins.json dsh web
 
 [deepseek-harness-desktop](https://github.com/anywhere-labs/deepseek-harness-desktop) — an Electron desktop app for DeepSeek Harness built around the idea that everything is a plugin, including the desktop itself: profile switching, a bundled Node and pnpm, and a recoverable install path that snapshots the profile before a change. [dshdesktop.cn](https://dshdesktop.cn)
 
+### DSH App
+
+[dsh-app](https://github.com/RyensX/dsh-app) — a DeepSeek Harness desktop client built on Tauri 2 rather than Electron, so it ships a much smaller binary and uses the system webview. AGPL-3.0.
+
 ### DSH Get
 
 [DSH Get](https://www.dshget.com/) — a searchable web directory for discovering DeepSeek Harness plugins: category filters, bilingual descriptions, install commands and per-plugin detail pages. Its normalized catalog snapshot is public at [bobby-sheng/dshget-data](https://github.com/bobby-sheng/dshget-data).
