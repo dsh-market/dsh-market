@@ -1782,7 +1782,14 @@ export function MarketSection(props: MarketSectionProps) {
           // install is recoverable, a profile that cannot start is not — and
           // the user would otherwise meet it as a Node stack trace after the
           // next restart, with nothing linking it to this operation.
-          const detail = orphans.length > 0 ? `${t('orphanBundle')} ${orphans.join(', ')}\n${failure}` : failure
+          // A stale catalog entry (#346) is said before pnpm's own wording,
+          // which for that failure reads like the user broke something.
+          const staleEntry = typeof body.staleEntry === 'string' ? body.staleEntry : null
+          const detail = [
+            orphans.length > 0 ? `${t('orphanBundle')} ${orphans.join(', ')}` : null,
+            staleEntry,
+            failure,
+          ].filter(Boolean).join('\n')
           // Carry the blocked names onto the record too: the panel is where
           // this failure is read, so it is where the one-click way out has to
           // be (#314).
@@ -2008,7 +2015,14 @@ export function MarketSection(props: MarketSectionProps) {
           // install is recoverable, a profile that cannot start is not — and
           // the user would otherwise meet it as a Node stack trace after the
           // next restart, with nothing linking it to this operation.
-          const detail = orphans.length > 0 ? `${t('orphanBundle')} ${orphans.join(', ')}\n${failure}` : failure
+          // A stale catalog entry (#346) is said before pnpm's own wording,
+          // which for that failure reads like the user broke something.
+          const staleEntry = typeof body.staleEntry === 'string' ? body.staleEntry : null
+          const detail = [
+            orphans.length > 0 ? `${t('orphanBundle')} ${orphans.join(', ')}` : null,
+            staleEntry,
+            failure,
+          ].filter(Boolean).join('\n')
           setRecords(list => patchRecord(list, updateRecordId, { state: 'failed', reason: detail.trim().slice(-600) }))
           setInstallError((restore ? t('restoreFail') : t('updateFail')) + ': ' + name + ' — ' + detail.trim().slice(-600))
         }

@@ -724,6 +724,36 @@ describe('backup and restore (#55)', () => {
     expect(text).toMatch(/ghost-bundle: NOT RESOLVED/)
   })
 
+  /** #346: a catalog entry can name a monorepo subpackage its author has
+   * since moved. pnpm's failure for that is unrecognisable — the user sees a
+   * resolver error with no reason to suspect the entry rather than their own
+   * machine. Audited the live catalog: 8 of 224 subpath entries point at a
+   * directory that is gone, 3 of them with no npm package to fall back on. */
+  it('says a subpath entry is stale rather than letting pnpm look like the user fault', async () => {
+    const calls: string[] = []
+    const realFetch = globalThis.fetch
+    vi.stubGlobal('fetch', vi.fn(async (url: any, init: any) => {
+      const href = String(url)
+      if (href.includes('raw.githubusercontent.com')) {
+        calls.push(href)
+        return new Response('not found', { status: 404 })
+      }
+      return realFetch(url, init)
+    }))
+    try {
+      fake.failNextAddStderrOnce = 'ERR_PNPM_FETCH_404 some unhelpful resolver message'
+      const r = await bed.dispatch('POST', '/dsh-market/install', {
+        url: 'https://github.com/m/mono/tree/main/packages/plug-a',
+      })
+      expect(r.status).toBe(502)
+      expect(String(r.json.staleEntry)).toContain('packages/plug-a')
+      // Probed only on the failure path, and only for the subpath form.
+      expect(calls.some(href => href.includes('m/mono/HEAD/packages/plug-a/package.json'))).toBe(true)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('rejects cross-origin restore requests', async () => {
     expect((await bed.dispatch('POST', '/dsh-market/restore', { backup: {} }, { crossOrigin: true })).status).toBe(403)
   })

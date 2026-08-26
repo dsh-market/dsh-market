@@ -5787,7 +5787,12 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						const text = (v) => typeof v === "string" ? v : v && typeof v.text === "string" ? v.text : v == null ? "" : JSON.stringify(v);
 						const orphans = Array.isArray(body.orphanBundles) ? body.orphanBundles.map(String) : [];
 						const failure = text(body.error) || humanOutput([text(body.stderr), text(body.stdout)].filter(Boolean).join("\n")) || "exit " + body.exitCode;
-						const detail = orphans.length > 0 ? `${t("orphanBundle")} ${orphans.join(", ")}\n${failure}` : failure;
+						const staleEntry = typeof body.staleEntry === "string" ? body.staleEntry : null;
+						const detail = [
+							orphans.length > 0 ? `${t("orphanBundle")} ${orphans.join(", ")}` : null,
+							staleEntry,
+							failure
+						].filter(Boolean).join("\n");
 						setRecords((list) => patch(list, recordId, {
 							state: "failed",
 							reason: detail.trim().slice(-600),
@@ -6007,7 +6012,12 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						const text = (v) => typeof v === "string" ? v : v && typeof v.text === "string" ? v.text : v == null ? "" : JSON.stringify(v);
 						const orphans = Array.isArray(body.orphanBundles) ? body.orphanBundles.map(String) : [];
 						const failure = text(body.error) || humanOutput([text(body.stderr), text(body.stdout)].filter(Boolean).join("\n")) || "exit " + body.exitCode;
-						const detail = orphans.length > 0 ? `${t("orphanBundle")} ${orphans.join(", ")}\n${failure}` : failure;
+						const staleEntry = typeof body.staleEntry === "string" ? body.staleEntry : null;
+						const detail = [
+							orphans.length > 0 ? `${t("orphanBundle")} ${orphans.join(", ")}` : null,
+							staleEntry,
+							failure
+						].filter(Boolean).join("\n");
 						setRecords((list) => patch(list, updateRecordId, {
 							state: "failed",
 							reason: detail.trim().slice(-600)

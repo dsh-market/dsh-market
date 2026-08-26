@@ -18,6 +18,7 @@ import {
 } from './hot.ts'
 import { createGroup, deleteGroup, removeFromGroups, renameGroup, setGroupMembers } from './groups.ts'
 import { exportLogs, logEvent } from './log.ts'
+import { marketFetch } from './net.ts'
 import { diagnosePackageManifests } from './diagnostics.ts'
 import {
   BOOT_ID, cancelActive, probePnpm, progress, provisionPnpm, runDshPlugin,
@@ -586,6 +587,35 @@ export function mountMarketRoutes(
       logEvent('warn', 'install', `bundle resolution check failed: ${error instanceof Error ? error.message : String(error)}`)
       return []
     }
+  }
+
+  /**
+   * Whether a `#path:` target still points at a directory that exists.
+   *
+   * A catalog entry can name a monorepo subpackage that the author has since
+   * moved or renamed. pnpm's failure for that is unrecognisable — the user
+   * sees a resolver error and no reason to suspect the entry rather than
+   * their own machine (#346). Audited the live catalog while looking into
+   * it: 8 of the 224 subpath entries point at a directory that is gone.
+   *
+   * Only ever called AFTER an install has already failed, so the happy path
+   * pays nothing, and a network problem here just means no extra sentence.
+   */
+  async function staleSubpath(target: string): Promise<string | null> {
+    const match = /^github:([^#]+)#path:\/(.+)$/.exec(target)
+    if (match === null) return null
+    const [, repo, subpath] = match
+    try {
+      const res = await marketFetch(
+        `https://raw.githubusercontent.com/${repo!}/HEAD/${subpath!}/package.json`,
+        { signal: AbortSignal.timeout(6000) },
+      )
+      if (res.ok) return null
+      if (res.status !== 404) return null
+    } catch {
+      return null
+    }
+    return `目录条目指向的子目录在仓库里已不存在（${repo!} 的 ${subpath!}），多半是作者改名或移动了它——这不是你的环境的问题。请到 awesome-dsh-plugin 反馈这条收录已失效。 / This catalog entry points at a subdirectory that no longer exists in the repository (${subpath!} in ${repo!}); the author most likely renamed or moved it. Nothing is wrong with your setup — please report the stale entry to awesome-dsh-plugin.`
   }
 
   async function restoreBackup(value: unknown): Promise<{ files: number; errors: { name: string; error: string }[]; unportable?: Array<{ name: string; spec: string }>; bootErrors?: string[] }> {
@@ -2872,6 +2902,13 @@ export function mountMarketRoutes(
               // (#339). Empty on every healthy operation, so the client only
               // ever sees this when something really is unbootable.
               ...(() => { const orphans = orphanBundles(); return orphans.length > 0 ? { orphanBundles: orphans } : {} })(),
+              // Only on a failure, and only for a subpath target: a stale
+              // catalog entry produces a pnpm error that reads like the
+              // user's fault (#346).
+              ...(ok || cancelled ? {} : await (async () => {
+                const stale = await staleSubpath(plainTarget ?? '')
+                return stale === null ? {} : { staleEntry: stale }
+              })()),
               // Blocked build scripts are expected (pnpm >= 10 blocks them by
               // default): surface the approve-builds banner instead of scaring
               // the user with pnpm's raw stack.
