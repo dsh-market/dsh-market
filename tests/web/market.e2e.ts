@@ -100,9 +100,18 @@ describe.skipIf(!HAS_DSH)('web e2e: plugin market', () => {
     // narrowing to one category of several must leave fewer pages than "All",
     // whatever today's catalog looks like and whichever chip is second.
     const pages = async (): Promise<number> => {
-      const label = await page.locator('[class*="pageInfo"]').first().textContent()
+      // No pagination control means the result fits on ONE page, which is a
+      // real answer and not a failure. The catalog now carries categories of
+      // four entries and of one (`identity`, `agi`), so whichever chip sits
+      // second is no longer guaranteed to span pages — waiting for a control
+      // that will never render just spent the 30s timeout and read as a bug
+      // in whatever change happened to be under test.
+      const info = page.locator('[class*="pageInfo"]').first()
+      if (await info.count() === 0) return 1
+      const label = await info.textContent({ timeout: 5000 }).catch(() => null)
+      if (label === null) return 1
       // "第 3 / 56 页" / "Page 3 of 56" — the last number is the total.
-      const numbers = (label ?? '').match(/\d+/gu) ?? []
+      const numbers = label.match(/\d+/gu) ?? []
       return Number(numbers[numbers.length - 1] ?? 0)
     }
 
