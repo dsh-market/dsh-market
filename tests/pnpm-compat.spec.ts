@@ -83,6 +83,49 @@ describe('classifyPnpmFailure', () => {
     expect(failed?.message).toContain('patchedDependencies')
   })
 
+  it('names the tarball dependency whose lockfile entry has no integrity (#367)', () => {
+    const failed = classifyPnpmFailure(`[ERR_PNPM_MISSING_TARBALL_INTEGRITY] Cannot install package
+"dsh-think-translate@https://gh-proxy.com/https://codeload.github.com/UncleK/dsh-think-translate/tar.gz/ba71a9bb88f52bc7bbf42225cfb69f7ef8d16900": its lockfile entry has no "integrity" field,
+so pnpm cannot verify the downloaded tarball.`)
+
+    expect(failed?.code).toBe('missing-tarball-integrity')
+    expect(failed?.recoverable).toBe(false)
+    expect(failed?.pkg).toBe('dsh-think-translate')
+    expect(failed?.message).toContain('dsh-think-translate')
+    expect(failed?.message).toContain('pnpm-lock.yaml')
+    expect(failed?.message).toContain('sha512')
+    expect(failed?.message).toContain('拒绝所有安装和卸载')
+
+    const scoped = classifyPnpmFailure(`ERR_PNPM_MISSING_TARBALL_INTEGRITY Cannot fetch package "@scope/plugin@https://example.test/plugin.tgz" from the lockfile: it has no "integrity" field, so the downloaded tarball cannot be verified.`)
+    expect(scoped?.pkg).toBe('@scope/plugin')
+  })
+
+  it('extracts the package from the escaped NDJSON form used in production (#367)', () => {
+    const ndjson = String.raw`{"name":"pnpm","level":"error","err":{"code":"ERR_PNPM_MISSING_TARBALL_INTEGRITY","message":"Cannot install package\n\"dsh-think-translate@https://gh-proxy.com/https://codeload.github.com/UncleK/dsh-think-translate/tar.gz/ba71a9bb88f52bc7bbf42225cfb69f7ef8d16900\": its lockfile entry has no \"integrity\" field, so pnpm cannot verify the downloaded tarball."}}`
+    expect(classifyPnpmFailure(ndjson)?.pkg).toBe('dsh-think-translate')
+
+    const scoped = ndjson.replace('dsh-think-translate@https://', '@scope/plugin@https://')
+    expect(classifyPnpmFailure(scoped)?.pkg).toBe('@scope/plugin')
+  })
+
+  it('classifies missing tarball integrity without guessing a package from ambiguous prose (#367)', () => {
+    const generic = classifyPnpmFailure(`ERR_PNPM_MISSING_TARBALL_INTEGRITY 1 lockfile entries failed verification:
+  a rewritten diagnostic whose package shape is not stable`)
+    expect(generic?.code).toBe('missing-tarball-integrity')
+    expect(generic?.recoverable).toBe(false)
+    expect(generic?.pkg).toBeUndefined()
+    expect(generic?.message).not.toContain('undefined')
+
+    // The prose alone is not enough: another tool quoting pnpm's message in
+    // a log or help page must not be classified as the active pnpm failure.
+    expect(classifyPnpmFailure('Cannot install package "dsh-fake@https://example.test/fake.tgz": its lockfile entry has no "integrity" field')).toBeNull()
+
+    // Even with the code, only the canonical name@https-url shape is safe to
+    // expose as `pkg`; do not mistake a bare URL or npm alias for a name.
+    expect(classifyPnpmFailure('ERR_PNPM_MISSING_TARBALL_INTEGRITY Cannot install package "https://example.test/fake.tgz": its lockfile entry has no "integrity" field')?.pkg).toBeUndefined()
+    expect(classifyPnpmFailure('ERR_PNPM_MISSING_TARBALL_INTEGRITY Cannot install package "alias@npm:real@1.0.0": its lockfile entry has no "integrity" field')?.pkg).toBeUndefined()
+  })
+
   it('recognizes momentary network failures — and only those — as transient (#83)', () => {
     const flake = classifyPnpmFailure('FetchError: request to https://codeload.github.com/o/r/tar.gz/abc failed, reason: socket hang up')
     expect(flake?.code).toBe('transient-network')

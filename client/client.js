@@ -4428,12 +4428,16 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		* clock instead of letting it fire again moments later: without that, a
 		* deliberate "go back one" reads as broken when it auto-advances right past
 		* where the user just navigated to.
+		*
+		* `intervalMs <= 0` disables the timer entirely (no auto-advance at all);
+		* manual jumps still work. The lightbox uses this: a full-bleed image needs
+		* to stay put until the viewer moves on, so it must never page itself.
 		*/
 		function useAutoCarousel(count, initial, intervalMs = 3500) {
 			const [index, setIndexState] = (0, react.useState)(initial);
 			const [resetTick, setResetTick] = (0, react.useState)(0);
 			(0, react.useEffect)(() => {
-				if (count <= 1) return;
+				if (count <= 1 || intervalMs <= 0) return;
 				const timer = setInterval(() => {
 					setIndexState((i) => (i + 1) % count);
 				}, intervalMs);
@@ -4779,7 +4783,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		* vs "full size" asset to fetch.
 		*/
 		function ScreenshotLightbox({ shots, startIndex, onClose, t }) {
-			const [index, setIndex] = useAutoCarousel(shots.length, startIndex, 4e3);
+			const [index, setIndex] = useAutoCarousel(shots.length, startIndex, 0);
 			(0, react.useEffect)(() => {
 				const onKey = (e) => {
 					if (e.key === "Escape") {
@@ -5610,6 +5614,24 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					else el.scrollTop = 0;
 				}
 			};
+			(0, react.useLayoutEffect)(() => {
+				const el = bodyRef.current;
+				if (el !== null) el.scrollTop = 0;
+				setShowTop(false);
+			}, [
+				tab,
+				q,
+				cat,
+				sortField,
+				sortDir,
+				timeRange,
+				qThemes,
+				themeSortField,
+				themeSortDir,
+				themeTimeRange,
+				qInstalled,
+				installedView
+			]);
 			const plugins = (0, react.useMemo)(() => data === null ? [] : visiblePlugins(data.plugins, {
 				category: cat,
 				query: q,

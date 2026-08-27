@@ -184,6 +184,45 @@ describe('MarketSection (jsdom)', () => {
     expect(screen.getByRole('button', { name: en.tabBackup }).className).not.toMatch(/\bon\b|_on_/)
   })
 
+  it('scrolls the shared body back to the top when switching tabs', async () => {
+    const { container } = render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    const scroller = container.querySelector('[data-dsh-market-root] > [class*="body"]') as HTMLElement
+    expect(scroller).toBeTruthy()
+
+    scroller.scrollTop = 800
+    fireEvent.scroll(scroller)
+    expect(screen.getByRole('button', { name: en.backTop })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    expect(scroller.scrollTop).toBe(0)
+    expect(screen.queryByRole('button', { name: en.backTop })).toBeNull()
+
+    scroller.scrollTop = 800
+    fireEvent.click(screen.getByRole('button', { name: en.tabDiscover }))
+    expect(scroller.scrollTop).toBe(0)
+
+    scroller.scrollTop = 800
+    fireEvent.click(screen.getByRole('button', { name: en.tabAdvanced }))
+    expect(scroller.scrollTop).toBe(0)
+  })
+
+  it('scrolls the shared body back to the top when switching Discover categories', async () => {
+    const { container } = render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    const scroller = container.querySelector('[data-dsh-market-root] > [class*="body"]') as HTMLElement
+    expect(scroller).toBeTruthy()
+
+    scroller.scrollTop = 800
+    fireEvent.scroll(scroller)
+    expect(screen.getByRole('button', { name: en.backTop })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Tools' }))
+    expect(scroller.scrollTop).toBe(0)
+    expect(screen.queryByRole('button', { name: en.backTop })).toBeNull()
+    await waitFor(() => expect(screen.queryByText('whale-skin')).toBeNull())
+  })
+
   it('marks only the repository-matched card for a same-named local link (#141)', async () => {
     const plugins = [
       { name: 'dsh-vision-bridge', owner: 'ximengxiaolan', url: 'https://github.com/ximengxiaolan/dsh-vision-bridge', category: 'tools', npm: null, description: { en: 'Other bridge' }, install: '' },
@@ -2726,6 +2765,26 @@ describe('card thumbnail + lightbox (curated screenshots only)', () => {
     // Prev from the first wraps to the last, the same way.
     fireEvent.click(document.querySelector('[class*="lightboxPrev"]')!)
     expect(img().src).toBe(SHOT_B)
+  })
+
+  it('does not auto-advance the lightbox — a full-bleed preview stays put until the viewer moves on', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      stubFetch({ '/dsh-market/registry': { source: 'live', registry: registryWithShots() } })
+      const { container } = render(<MarketSection {...props()} />)
+      await vi.waitFor(() => expect(screen.queryByText('dsh-loop')).toBeTruthy())
+
+      fireEvent.click(container.querySelector('img[class*="cardShot"]')!)
+      await vi.waitFor(() => expect(document.querySelector('[class*="lightboxImg"]')).toBeTruthy())
+      const img = () => document.querySelector('[class*="lightboxImg"]') as HTMLImageElement
+      expect(img().src).toBe(SHOT_A)
+      await vi.advanceTimersByTimeAsync(10_000)
+      // The preview is on demand: nothing may page past the shot the viewer
+      // is reading. Manual navigation (arrows/dots/keys) is what moves it.
+      expect(img().src).toBe(SHOT_A)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('closes only the lightbox on Escape, leaving the dialog underneath open', async () => {

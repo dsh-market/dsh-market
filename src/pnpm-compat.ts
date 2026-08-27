@@ -45,7 +45,7 @@ export const HOST_NAMESPACE_RE = /^@deepseek-ai\//
 export interface PnpmFailure {
   code: 'adding-to-root' | 'not-a-workspace' | 'hoist-pattern-diff' | 'pnpm-missing' | 'release-age-violation'
     | 'ignored-builds' | 'git-prepare-not-allowed' | 'fetch-404' | 'transient-network' | 'fetch-timeout'
-    | 'unexpected-store' | 'patch-failed'
+    | 'unexpected-store' | 'patch-failed' | 'missing-tarball-integrity'
   /** Bilingual, actionable message shown to the user instead of the raw wall of text. */
   message: string
   /** True when re-running `pnpm install` in the profile is the documented recovery. */
@@ -85,6 +85,33 @@ export function isTransientPnpmFailure(output: string): boolean {
  */
 export function isFetchTimeoutFailure(output: string): boolean {
   return /operation was aborted due to timeout|TimeoutError|error \(23\)/i.test(output)
+}
+
+/**
+ * Add human diagnostics decoded from pnpm's NDJSON reporter to its raw output.
+ *
+ * Mutating market commands always use `--reporter=ndjson`, so an error's
+ * message normally arrives as a JSON string: quotes are escaped and embedded
+ * newlines are `\n`. Matching only the raw stream therefore misses the exact
+ * production form even when it works against pnpm's pretty reporter.
+ */
+function withDecodedPnpmDiagnostics(output: string): string {
+  const messages: string[] = []
+  for (const line of output.split(/\r?\n/)) {
+    const trimmed = line.trim()
+    if (!trimmed.startsWith('{')) continue
+    try {
+      const event = JSON.parse(trimmed) as { message?: unknown; err?: unknown }
+      if (typeof event.message === 'string') messages.push(event.message)
+      if (typeof event.err === 'object' && event.err !== null) {
+        const message = (event.err as Record<string, unknown>).message
+        if (typeof message === 'string') messages.push(message)
+      }
+    } catch {
+      // Human reporter output and truncated NDJSON remain available verbatim.
+    }
+  }
+  return messages.length === 0 ? output : `${output}\n${messages.join('\n')}`
 }
 
 /**
@@ -129,6 +156,28 @@ export function classifyPnpmFailure(output: string): PnpmFailure | null {
       code: 'unexpected-store',
       recoverable: false,
       message: `这个 profile 的 node_modules 链接到的 pnpm store，和当前 pnpm 默认使用的 store 不是同一个，pnpm 因此拒绝所有安装与卸载。${detail}\n在 profile 目录里执行一次 \`pnpm install --store-dir <上面第一个路径>\` 重新链接即可（dsh 运行时可能占用文件，必要时先退出 dsh）/ this profile's node_modules is linked to a different pnpm store than the one pnpm now resolves, so pnpm refuses every install and uninstall.${detail}\nRelink by running \`pnpm install --store-dir <the first path above>\` once in the profile directory (stop dsh first if files are locked)`,
+    }
+  }
+  // #367: pnpm verifies every tarball resolution in the lockfile before it
+  // performs ANY add/remove. One old or half-written entry without an
+  // integrity hash therefore blocks unrelated plugin operations too.
+  //
+  // Do not auto-repair this. Computing and writing a hash means choosing to
+  // trust the bytes currently served by the URL, which is a supply-chain
+  // decision the market cannot safely make for the user. We only name the
+  // package when pnpm emits its canonical quoted `name@https-url` shape;
+  // aggregate or reworded diagnostics get the generic message rather than a
+  // guessed package name.
+  if (output.includes('ERR_PNPM_MISSING_TARBALL_INTEGRITY')) {
+    const diagnostic = withDecodedPnpmDiagnostics(output)
+    const pkg = /Cannot (?:install|fetch) package\s+"((?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*)@https?:\/\/[^"\s]+"(?: from the lockfile)?:\s*(?:its lockfile entry|it) has no "integrity" field/i.exec(diagnostic)?.[1]
+    const zh = pkg === undefined ? '' : `（${pkg}）`
+    const en = pkg === undefined ? '' : ` (${pkg})`
+    return {
+      code: 'missing-tarball-integrity',
+      recoverable: false,
+      pkg,
+      message: `profile 的 pnpm-lock.yaml 里有一个 tarball 依赖${zh}缺少 integrity，pnpm 因此拒绝所有安装和卸载。请先确认 URL 和 tarball 可信，再重新解析/下载该依赖以写入 sha512 integrity，或从可信的 lockfile 版本恢复该字段，然后重试；市场不会自动为未验证的字节生成校验值 / a tarball dependency${en} in this profile's pnpm-lock.yaml has no integrity, so pnpm refuses every install and uninstall. Verify the URL and tarball first, then re-resolve/download that dependency to record a sha512 integrity, or restore the field from a trusted lockfile version before retrying; the market will not generate a checksum for unverified bytes automatically`,
     }
   }
   // #222 by @MicroMilo: a patch in the profile that no longer applies.
