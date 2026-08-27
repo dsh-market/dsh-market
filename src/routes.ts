@@ -39,7 +39,7 @@ import { asChannel, CHANNELS, DIST_TAG, resolveChannel, type Channel } from './c
 import { asRegion, REGIONS, routesFor, setActiveRegion, type Region } from './regions.ts'
 import { resolveRegion } from './region-probe.ts'
 import { acceleratedTarget, resolveHeadCommit } from './accelerate.ts'
-import { checkUpdates, fetchNpmLatest, invalidateUpdates, isUpgrade, latestPublishedRecently, setUpdateRegistry, versionOnChannel } from './updates.ts'
+import { checkUpdates, compareVersions, fetchNpmLatest, invalidateUpdates, isUpgrade, latestPublishedRecently, setUpdateRegistry, versionOnChannel } from './updates.ts'
 import { createThemeManager, type LoaderEntry } from './themes.ts'
 import { readJsonBody, sameOrigin, sendJson } from './http.ts'
 import { detectedSupervisor, restartAllowed, scheduleRestart, servingPort, trustedRestartRequest, trustedDownloadRequest } from './restart.ts'
@@ -2066,6 +2066,7 @@ export function mountMarketRoutes(
             // The market follows its channel; everything else is `latest`.
             const selfChannel = SELF_NAMES.has(name) ? activeChannel() : null
             const tag = selfChannel === null ? 'latest' : DIST_TAG[selfChannel]
+            let expectedNpmVersion: string | null = null
             // Re-accelerated from the unpinned shortcut, never from the
             // installed URL: that one names the commit already on disk, so
             // reusing it would be an update that can never move.
@@ -2101,6 +2102,7 @@ export function mountMarketRoutes(
               const registryLatest = selfChannel === null
                 ? await fetchNpmLatest(name)
                 : await versionOnChannel(name, selfChannel, await fetchNpmLatest(name))
+              expectedNpmVersion = registryLatest
               const refuse = selfChannel === null
                 ? installedVersion !== null && registryLatest !== null && !isUpgrade(installedVersion, registryLatest)
                 : installedVersion !== null && registryLatest !== null && installedVersion === registryLatest
@@ -2148,6 +2150,10 @@ export function mountMarketRoutes(
             }
             let ok = result.exitCode === 0 && !result.timedOut && !cancelled
             let stale = false
+            let versionFailureCode: 'DOWNGRADE_DETECTED' | 'RESOLVED_VERSION_MISMATCH' | null = null
+            let versionFailureError: string | null = null
+            let rollbackOk = true
+            let rollbackDetail: string | null = null
             let activation: Record<string, ReturnType<typeof verifyActivation>> | undefined
             if (ok) {
               if (restore) {
@@ -2169,6 +2175,35 @@ export function mountMarketRoutes(
                 if (stale) ok = false
               }
             }
+            // pnpm's minimumReleaseAge can silently resolve `@latest` to an
+            // OLDER release and still exit 0. The old stale check only caught
+            // "same version"; a real 0.2.24 -> 0.2.23 regression therefore
+            // looked like a successful update. Verify the bytes that actually
+            // landed against both the pre-update version and the registry
+            // target, then rematerialize the previous build on any mismatch.
+            if (ok && !isGit && !restore) {
+              const afterVersion = readInstalledVersion(config.profile, name, activeProfileDir)
+              const direction = beforeVersion !== null && afterVersion !== null
+                ? compareVersions(afterVersion, beforeVersion)
+                : null
+              const unexpectedDowngrade = selfChannel === null && direction !== null && direction < 0
+              const targetMismatch = expectedNpmVersion !== null && afterVersion !== expectedNpmVersion
+              if (unexpectedDowngrade || targetMismatch) {
+                versionFailureCode = unexpectedDowngrade ? 'DOWNGRADE_DETECTED' : 'RESOLVED_VERSION_MISMATCH'
+                versionFailureError = unexpectedDowngrade
+                  ? `${name} 更新实际解析为 v${afterVersion ?? 'unknown'}，低于更新前的 v${beforeVersion ?? 'unknown'}；已拒绝降级并自动恢复原版本。 / ${name} resolved to v${afterVersion ?? 'unknown'}, below the installed v${beforeVersion ?? 'unknown'}; the downgrade was rejected and the previous build was restored.`
+                  : `${name} 更新目标为 v${expectedNpmVersion ?? 'unknown'}，但实际安装为 v${afterVersion ?? 'unknown'}；已自动恢复原版本。 / ${name} targeted v${expectedNpmVersion ?? 'unknown'} but installed v${afterVersion ?? 'unknown'}; the previous build was restored.`
+                ok = false
+                const rollback = await rollbackUpdateBuild(name, manifestBefore)
+                rollbackOk = rollback.ok
+                rollbackDetail = rollback.detail
+                if (!rollback.ok) {
+                  versionFailureError += ` 回滚未能恢复原版本文件：${rollback.detail ?? 'unknown'} / Rollback could not restore the previous build: ${rollback.detail ?? 'unknown'}`
+                }
+                logEvent('error', 'update-version',
+                  `${name}: ${versionFailureCode} before=${beforeVersion ?? 'unknown'} expected=${expectedNpmVersion ?? 'unknown'} actual=${afterVersion ?? 'unknown'}${rollback.ok ? '; previous build restored' : `; rollback failed: ${rollback.detail ?? 'unknown'}`}`)
+              }
+            }
             // The new build has to be loadable (#159). pnpm exits 0 for any
             // tarball it can extract, and the version really did change, so
             // nothing above notices a package that arrived without its entry
@@ -2181,8 +2216,6 @@ export function mountMarketRoutes(
             // the OLD code that is already in memory. The failure only
             // surfaces on the next boot, as a profile that will not start.
             let brokenEntry = false
-            let rollbackOk = true
-            let rollbackDetail: string | null = null
             if (ok && !hasLoadableEntry(activeProfileDir, name)) {
               brokenEntry = true
               ok = false
@@ -2309,7 +2342,8 @@ export function mountMarketRoutes(
               // ever sees this when something really is unbootable.
               ...(() => { const orphans = orphanBundles(); return orphans.length > 0 ? { orphanBundles: orphans } : {} })(),
               staleReason: staleReason ?? undefined,
-              error: trialError ?? brokenEntryError ?? staleError ?? undefined,
+              failureCode: versionFailureCode ?? undefined,
+              error: versionFailureError ?? trialError ?? brokenEntryError ?? staleError ?? undefined,
               exitCode: result.exitCode,
               timedOut: result.timedOut,
               stdout: result.stdout,

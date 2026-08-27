@@ -77,6 +77,8 @@ function bool(value: unknown): boolean {
 }
 
 function failureCode(status: number, body: Record<string, unknown>): string {
+  const explicit = text(body.failureCode)
+  if (explicit === 'DOWNGRADE_DETECTED' || explicit === 'RESOLVED_VERSION_MISMATCH') return explicit
   if (body.agentsBusy === true) return 'AGENTS_RUNNING'
   if (body.busy === true || status === 409) return 'OPERATION_BUSY'
   if (body.stale === true && body.staleReason === 'release-age') return 'RELEASE_TOO_FRESH'
@@ -100,6 +102,7 @@ function failureOf(status: number, body: Record<string, unknown>): UpdateFailure
       || code === 'OPERATION_BUSY'
       || code === 'RELEASE_TOO_FRESH'
       || code === 'VERSION_UNCHANGED'
+      || code === 'RESOLVED_VERSION_MISMATCH'
       || code === 'UPDATE_TIMEOUT',
   }
 }

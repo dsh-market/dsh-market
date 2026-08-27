@@ -34,6 +34,8 @@ const fake = vi.hoisted(() => ({
   tarballs: {} as Record<string, { name: string; manifest: unknown; artifacts?: string[] }>,
   /** Simulate pnpm minimumReleaseAge: adds resolve to the ALREADY INSTALLED version, exit 0. */
   staleUpdates: false,
+  /** Resolve the next npm add to this version even though the dist-tag points elsewhere. */
+  resolvedNpmVersionOnce: null as string | null,
   /** Fail the next N mutating commands with the hoist-pattern drift error. */
   hoistDiffTimes: 0,
   /** Simulate a too-young release in the lockfile (#39): every mutation
@@ -247,7 +249,8 @@ vi.mock('../src/dsh-cli.ts', () => {
       // pnpm minimumReleaseAge: "Already up to date", old version kept, exit 0.
       return ok
     }
-    const version = pkg.latest
+    const version = fake.resolvedNpmVersionOnce ?? pkg.latest
+    fake.resolvedNpmVersionOnce = null
     writeDep(name, `^${version}`)
     writePkg(name, { version, ...(pkg.versions[version].manifest as object) }, pkg.versions[version].artifacts, pkg.versions[version].artifactContents)
     if (fake.profileBundleOnNextAdd !== null) {
@@ -461,6 +464,7 @@ beforeEach(() => {
   fake.npm = {}
   fake.repos = {}
   fake.staleUpdates = false
+  fake.resolvedNpmVersionOnce = null
   fake.hoistDiffTimes = 0
   fake.youngLockfile = false
   fake.gate = null
@@ -1082,6 +1086,36 @@ describe('update flow — no npm publishing required', () => {
     // disk, `/dsh-market/status` still reporting 1.11.3, an unchanged boot
     // id, and this route calling it hot-loaded in the same response.
     expect(r.json.activation['dsh-loop']).toMatchObject({ state: 'restart', hot: false })
+  })
+
+  it('rejects and rolls back when pnpm silently resolves latest to an older release', async () => {
+    advanceNpmLatest('1.2.0')
+    fake.npm['dsh-loop'].versions['0.9.0'] = { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] }
+    fake.resolvedNpmVersionOnce = '0.9.0'
+
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+
+    expect(r.status).toBe(502)
+    expect(r.json).toMatchObject({ ok: false, failureCode: 'DOWNGRADE_DETECTED' })
+    expect(String(r.json.error)).toMatch(/拒绝降级|downgrade was rejected/)
+    expect(installedSpec('dsh-loop')).toBe('^1.0.0')
+    const installed = JSON.parse(readFileSync(join(fake.profileDir, 'node_modules', 'dsh-loop', 'package.json'), 'utf8')) as { version?: string }
+    expect(installed.version).toBe('1.0.0')
+  })
+
+  it('rejects and rolls back when pnpm resolves a newer but unexpected release', async () => {
+    advanceNpmLatest('1.2.0')
+    fake.npm['dsh-loop'].versions['1.1.0'] = { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] }
+    fake.resolvedNpmVersionOnce = '1.1.0'
+
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+
+    expect(r.status).toBe(502)
+    expect(r.json).toMatchObject({ ok: false, failureCode: 'RESOLVED_VERSION_MISMATCH' })
+    expect(String(r.json.error)).toMatch(/目标为 v1\.2\.0|targeted v1\.2\.0/)
+    expect(installedSpec('dsh-loop')).toBe('^1.0.0')
+    const installed = JSON.parse(readFileSync(join(fake.profileDir, 'node_modules', 'dsh-loop', 'package.json'), 'utf8')) as { version?: string }
+    expect(installed.version).toBe('1.0.0')
   })
 
   it('exposes a versioned capability and update-check contract for plugin-owned UIs', async () => {

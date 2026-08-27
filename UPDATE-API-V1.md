@@ -74,6 +74,22 @@ pnpm provides it. Terminal operations include:
 - a stable failure code, bounded user-facing message and retryability;
 - whether a compatibility rollback is currently available.
 
+For npm updates, Market verifies the package version that pnpm actually placed
+on disk before reporting success. This prevents pnpm's release-age policy or a
+lagging registry mirror from silently turning `@latest` into an older or
+unexpected build. A mismatch is restored from the pre-update recovery point
+and reported as one of these stable failures:
+
+- `DOWNGRADE_DETECTED`: the resolved version is older than the version present
+  before the operation; not retryable without a new target.
+- `RESOLVED_VERSION_MISMATCH`: the resolved version differs from the registry
+  target checked immediately before installation; retryable after registry or
+  mirror convergence.
+
+Provider clients should still compare `beforeVersion`, the target they showed
+to the user, and `installedVersion` before offering restart. That independent
+check protects clients connected to another compatible provider implementation.
+
 Up to 50 operation records live in the current Host process. A boot id is
 embedded in every operation id, so a client never mistakes a stale browser
 record for a task belonging to the replacement process.

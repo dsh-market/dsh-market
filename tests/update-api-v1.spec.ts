@@ -149,4 +149,27 @@ describe('public update API v1 operation model', () => {
       failure: { code: 'VERSION_UNCHANGED', retryable: true },
     })
   })
+
+  it('preserves post-install version-integrity failures for provider clients', () => {
+    const store = new UpdateOperationStoreV1('boot-version-integrity')
+    const downgrade = store.create('dsh-mcp-connector', '0.2.24')
+    store.start(downgrade.operationId)
+    expect(store.finish(downgrade.operationId, 502, {
+      failureCode: 'DOWNGRADE_DETECTED',
+      error: 'resolved to 0.2.23; previous build restored',
+    }, '0.2.24')).toMatchObject({
+      state: 'failed',
+      installedVersion: '0.2.24',
+      failure: { code: 'DOWNGRADE_DETECTED', retryable: false },
+    })
+
+    const mismatch = store.create('dsh-mcp-connector', '0.2.24')
+    store.start(mismatch.operationId)
+    expect(store.finish(mismatch.operationId, 502, {
+      failureCode: 'RESOLVED_VERSION_MISMATCH',
+      error: 'targeted 0.2.25 but installed 0.2.24; previous build restored',
+    }, '0.2.24')).toMatchObject({
+      failure: { code: 'RESOLVED_VERSION_MISMATCH', retryable: true },
+    })
+  })
 })
