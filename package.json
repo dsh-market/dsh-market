@@ -63,6 +63,10 @@
       "types": "./lib/types/index.d.ts",
       "default": "./lib/index.js"
     },
+    "./update-api-v1": {
+      "types": "./lib/types/update-api-v1.d.ts",
+      "default": "./lib/update-api-v1.js"
+    },
     "./client": "./client/client.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
@@ -71,6 +75,7 @@
     "lib",
     "src",
     "client",
+    "UPDATE-API-V1.md",
     "cordis.patch.yml",
     "LICENSE"
   ],
