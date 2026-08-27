@@ -59,6 +59,12 @@ export interface BundleLayer {
   directory: string | null
   /** Absolute path of the layer's patch file; null when undeclared/missing. */
   patchPath: string | null
+  /**
+   * An in-box bundle whose directory could not be located — a gap in what
+   * this process can see, not a defect in the profile (#369). Distinct from
+   * `error`, which asserts the profile will not boot.
+   */
+  unresolvedInbox?: boolean
   /** Why this layer cannot load at boot (missing dir / no dsh.bundle / …). */
   error: string | null
   /** Loader entry ids this bundle's patch inserts. */
@@ -899,6 +905,22 @@ export function buildBundleLayers(
       parseError: null,
     }
     if (directory === null) {
+      // An in-box bundle is supplied by the dsh INSTALLATION, not by the
+      // profile — that is what makes it in-box. So failing to find one says
+      // we could not locate the installation, not that the profile is
+      // broken: on DSH Desktop dsh lives inside the app bundle and
+      // findDshInstallDir() walks up from process.argv[1], which is
+      // Electron's entry and leads nowhere near it.
+      //
+      // Calling that "will fail to boot" turned a working composition into a
+      // fatal verdict and rolled back a good update (#369) — while `dsh
+      // --dump-config` on the same profile exited 0. Unknown has to read as
+      // unknown; the profile's own bundles are still judged normally.
+      if (INBOX_BUNDLES.has(name)) {
+        layer.error = null
+        layer.unresolvedInbox = true
+        return layer
+      }
       layer.error = 'bundle package is not installed — the profile will fail to boot'
       return layer
     }

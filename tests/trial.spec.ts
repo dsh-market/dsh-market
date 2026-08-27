@@ -50,6 +50,41 @@ function writeBundle(base: string, name: string, version: string, patch: unknown
   return dir
 }
 
+/** #369: on DSH Desktop the in-box bundles come from the app bundle, and the
+ * install directory is not discoverable from process.argv[1]. Trial
+ * validation then judged the profile unbootable and the update route rolled
+ * a good build back — the reporter's own `dsh --dump-config` exited 0 on the
+ * same profile, with the files already updated on disk. */
+describe('an unlocatable in-box bundle must not fail the trial (#369)', () => {
+  it('passes the trial, so a legitimate update is not rolled back', () => {
+    const dir = pdir()
+    writeProfile(dir, ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', 'dsh-smooth-stream'])
+    // Only the community plugin is on disk — the Desktop shape exactly.
+    writeBundle(dir, 'dsh-smooth-stream', '0.4.1', [{ insert: [{ id: 'smooth', name: 'dsh-smooth-stream' }] }])
+
+    const result = trialValidate(dir, ['dsh-smooth-stream'], {
+      dshInstallDir: null,
+      homeDir: join(tmp, 'empty-home'),
+    })
+
+    expect(result.errors.map(e => e.message).join('\n')).not.toMatch(/is not installed/)
+    expect(result.ok, 'a passing composition was called unbootable').toBe(true)
+  })
+
+  it('still fails the trial for a COMMUNITY bundle that really is absent', () => {
+    const dir = pdir()
+    writeProfile(dir, ['@deepseek-ai/dsh-base', 'ghost-bundle'])
+
+    const result = trialValidate(dir, ['ghost-bundle'], {
+      dshInstallDir: null,
+      homeDir: join(tmp, 'empty-home'),
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.errors.some(e => e.layer === 'ghost-bundle')).toBe(true)
+  })
+})
+
 describe('trialValidate (#98 trial boot)', () => {
   it('flags a candidate order where two bundles insert the same loader entry id', () => {
     const dir = pdir()

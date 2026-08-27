@@ -581,7 +581,11 @@ export function mountMarketRoutes(
   function orphanBundles(): string[] {
     try {
       return analyzeProfile(activeProfileDir).bundles
-        .filter(layer => layer.directory === null)
+        // Not an in-box bundle we merely could not locate (#369): those are
+        // supplied by the dsh installation, and failing to find one is a gap
+        // in what this process can see rather than a profile that will not
+        // start. Reporting them here rolled back a good update.
+        .filter(layer => layer.directory === null && layer.unresolvedInbox !== true)
         .map(layer => layer.name)
     } catch (error) {
       logEvent('warn', 'install', `bundle resolution check failed: ${error instanceof Error ? error.message : String(error)}`)
@@ -1621,7 +1625,12 @@ export function mountMarketRoutes(
           for (const [name, spec] of Object.entries(installed)) snapshot.push(`  ${name}: ${spec}`)
           snapshot.push(`bundles (${String(report.bundles.length)}):`)
           for (const layer of report.bundles) {
-            snapshot.push(`  ${layer.name}: ${layer.directory === null ? 'NOT RESOLVED — the next start fails here' : 'ok'}`)
+            const state = layer.directory !== null
+          ? 'ok'
+          : layer.unresolvedInbox === true
+            ? 'supplied by the dsh installation (not locatable from here)'
+            : 'NOT RESOLVED — the next start fails here'
+        snapshot.push(`  ${layer.name}: ${state}`)
           }
           if (report.summary.errors.length > 0) {
             snapshot.push('errors:')

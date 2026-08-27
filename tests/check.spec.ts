@@ -769,6 +769,51 @@ describe('suggestedOrder (#98 opt: LOOT-style auto-fix)', () => {
 
 })
 
+/** #369: on DSH Desktop the dsh installation lives inside the Electron app
+ * bundle, and findDshInstallDir walks up from process.argv[1] — Electron's
+ * entry, nowhere near it. Both anchors then miss the in-box bundles, which
+ * are supplied by that installation by definition, and the composition was
+ * declared unbootable. `dsh --dump-config` on the same profile exited 0. */
+describe('in-box bundles that cannot be located (#369)', () => {
+  /** `tmp` is assigned per test, so this has to be read inside one. */
+  const desktop = () => ({ dshInstallDir: null, homeDir: join(tmp, 'empty-home') })
+
+  it('does not call an unlocatable in-box bundle a boot failure', () => {
+    const dir = pdir()
+    // The default profile template, and nothing in node_modules: the shape
+    // of every Desktop profile.
+    writeProfile(dir, {
+      name: 'web-profile',
+      dependencies: {},
+      dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'] } },
+    })
+
+    const report = analyzeProfile(dir, desktop())
+
+    for (const layer of report.bundles) {
+      expect(layer.kind).toBe('official')
+      expect(layer.error, `${layer.name} was called broken`).toBeNull()
+      expect(layer.unresolvedInbox).toBe(true)
+    }
+    expect(report.summary.errors.join('\n')).not.toMatch(/is not installed/)
+  })
+
+  it('still calls a COMMUNITY bundle missing, which is a real defect', () => {
+    const dir = pdir()
+    writeProfile(dir, {
+      name: 'web-profile',
+      dependencies: {},
+      dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', 'some-community-bundle'] } },
+    })
+
+    const report = analyzeProfile(dir, desktop())
+
+    const community = report.bundles.find(layer => layer.name === 'some-community-bundle')
+    expect(community?.error).toMatch(/not installed/)
+    expect(community?.unresolvedInbox).toBeUndefined()
+  })
+})
+
 describe('peer range mismatch', () => {
   // ^0.1.0 := >=0.1.0 <0.2.0 (exclusive upper bound), so resolved 0.2.0
   // must be reported as unsatisfied.
