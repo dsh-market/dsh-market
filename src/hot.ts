@@ -170,6 +170,26 @@ export interface MarketState {
   /** Display order of group names; "ungrouped" is implicit and never listed. */
   groupOrder: string[]
   /**
+   * The user's own one-line note per installed plugin (#347).
+   *
+   * A catalog description answers "what is this", written by its author for
+   * strangers and often in a language the reader did not pick. It cannot
+   * answer "why did I install this" — which is the question someone with
+   * forty plugins is actually asking. So a note REPLACES the description on
+   * that row, and the original stays one click away.
+   *
+   * Local state like the disable list and the groups beside it: never sent
+   * anywhere, and carried by a backup because it is part of how this profile
+   * is set up.
+   *
+   * Optional on the way IN: several callers build a state object from the
+   * few fields they own and hand it to writeMarketState. Requiring this one
+   * would make every such call a silent way to erase every note — the exact
+   * shape of #339, where a partial snapshot dropped a field nobody was
+   * thinking about. Omitting it means "leave them alone" instead.
+   */
+  notes?: Record<string, string>
+  /**
    * The release channel the user PICKED, absent until they pick one.
    *
    * Absent is not the same as 'stable': with no choice on record the channel
@@ -217,6 +237,10 @@ function uniqueStrings(value: unknown): string[] {
  * theme-only key) still loads; every new write uses the generic `disabled`
  * key (#60).
  */
+/** A note is a label, not a document: one line, bounded so state.json cannot
+ * grow without limit from a paste. */
+export const MAX_NOTE = 200
+
 export function readMarketState(profileDir: string): MarketState {
   try {
     const state = JSON.parse(readFileSync(stateFile(profileDir), 'utf8')) as {
@@ -227,6 +251,7 @@ export function readMarketState(profileDir: string): MarketState {
       channel?: unknown
       region?: unknown
       regionAuto?: unknown
+      notes?: unknown
     }
     const disabled = uniqueStrings(state.disabled !== undefined ? state.disabled : state.disabledSkins)
     const groups: Record<string, string[]> = {}
@@ -235,9 +260,18 @@ export function readMarketState(profileDir: string): MarketState {
         groups[name] = uniqueStrings(members)
       }
     }
+    const notes: Record<string, string> = {}
+    if (state.notes !== null && typeof state.notes === 'object' && !Array.isArray(state.notes)) {
+      for (const [name, text] of Object.entries(state.notes)) {
+        // Empty is the same as absent: clearing a note must not leave a row
+        // claiming to carry one.
+        if (typeof text === 'string' && text.trim() !== '') notes[name] = text.slice(0, MAX_NOTE)
+      }
+    }
     return {
       disabled: new Set(disabled),
       groups,
+      notes,
       groupOrder: uniqueStrings(state.groupOrder),
       channel: asChannel(state.channel) ?? undefined,
       region: asRegion(state.region) ?? undefined,
@@ -246,17 +280,21 @@ export function readMarketState(profileDir: string): MarketState {
       regionAuto: state.regionAuto === true && asRegion(state.region) !== null ? true : undefined,
     }
   } catch {
-    return { disabled: new Set(), groups: {}, groupOrder: [] }
+    return { disabled: new Set(), groups: {}, groupOrder: [], notes: {} }
   }
 }
 
 /** Persist the whole market state; `disabled` is the single written key. */
 export function writeMarketState(profileDir: string, state: MarketState): void {
   mkdirSync(join(profileDir, HOT_DIR), { recursive: true, mode: 0o700 })
+  // Absent means "keep what is on disk", not "clear it". Only an explicit
+  // empty object erases every note.
+  const notes = state.notes ?? readMarketState(profileDir).notes ?? {}
   writeFileSync(stateFile(profileDir), JSON.stringify({
     disabled: [...state.disabled],
     groups: state.groups,
     groupOrder: state.groupOrder,
+    ...(Object.keys(notes).length > 0 ? { notes } : {}),
     // Omitted while unchosen, so "never picked" survives a round trip and
     // keeps deriving from the running build.
     ...(state.channel === undefined ? {} : { channel: state.channel }),

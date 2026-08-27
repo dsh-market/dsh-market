@@ -64,11 +64,37 @@ describe('market state.json (#60)', () => {
     }
   })
 
+  /** #347. Several callers build a state object from the few fields they own
+   * and hand it to writeMarketState. If notes were required there, every such
+   * call would silently erase all of them — the exact shape of #339, where a
+   * partial snapshot dropped a field nobody was thinking about. */
+  it('a partial write keeps notes that the caller never mentioned', () => {
+    const dir = stateDir()
+    writeMarketState(dir, { disabled: new Set(['a']), groups: {}, groupOrder: [], notes: { 'dsh-loop': 'mine' } })
+    expect(readMarketState(dir).notes).toEqual({ 'dsh-loop': 'mine' })
+
+    // A caller that knows nothing about notes.
+    writeMarketState(dir, { disabled: new Set(['a', 'b']), groups: {}, groupOrder: [] })
+    expect(readMarketState(dir).notes).toEqual({ 'dsh-loop': 'mine' })
+
+    // Only an explicit empty object clears them.
+    writeMarketState(dir, { disabled: new Set(), groups: {}, groupOrder: [], notes: {} })
+    expect(readMarketState(dir).notes).toEqual({})
+  })
+
+  it('drops a blank note rather than storing an empty label', () => {
+    const dir = stateDir()
+    writeFileSync(join(dir, '.dsh-market', 'state.json'), JSON.stringify({
+      notes: { a: '  ', b: 'real', c: 7 },
+    }))
+    expect(readMarketState(dir).notes).toEqual({ b: 'real' })
+  })
+
   it('readMarketState normalizes malformed payloads to empty state', () => {
     const dir = stateDir()
     try {
       writeFileSync(join(dir, '.dsh-market', 'state.json'), 'not json')
-      expect(readMarketState(dir)).toEqual({ disabled: new Set(), groups: {}, groupOrder: [] })
+      expect(readMarketState(dir)).toEqual({ disabled: new Set(), groups: {}, groupOrder: [], notes: {} })
       writeFileSync(join(dir, '.dsh-market', 'state.json'), JSON.stringify({
         disabled: ['a', 'a', '', 7],
         groups: { work: ['x', 'x', 3] },

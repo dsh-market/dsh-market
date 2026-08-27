@@ -13,7 +13,7 @@ import { join } from 'node:path'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { forgetCatalog, loadRegistry, pluginCategories } from './registry.ts'
 import {
-  cleanHotDir, hotMount, hotUnmount, listHotMounts,
+  cleanHotDir, hotMount, hotUnmount, listHotMounts, MAX_NOTE,
   mountClientOnlyDeps, purgeMarketState, readMarketState, writeMarketState,
 } from './hot.ts'
 import { createGroup, deleteGroup, removeFromGroups, renameGroup, setGroupMembers } from './groups.ts'
@@ -933,6 +933,7 @@ export function mountMarketRoutes(
           disabled: [...disabled],
           groups,
           groupOrder,
+          notes: readMarketState(activeProfileDir).notes ?? {},
           patch: { disables: patch.disables, forced: patch.forced, inserts: patch.inserts },
           patchDisabled: patchFlags.disabled,
           patchForced: patchFlags.forced,
@@ -1400,6 +1401,44 @@ export function mountMarketRoutes(
           const message = error instanceof Error ? error.message : String(error)
           logEvent('error', 'toggle', `route error: ${message}`)
           sendJson(response, 500, { error: message })
+        }
+      },
+    }),
+
+    host.webServer.register({
+      kind: 'exact',
+      path: '/dsh-market/note',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) {
+          sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        try {
+          await withMutationLock(response, 'write', async () => {
+            const body = (await readJsonBody(request)) as { name?: unknown; text?: unknown } | null
+            const name = typeof body?.name === 'string' ? body.name : ''
+            if (name === '') {
+              sendJson(response, 400, { error: 'name is required / 需要 name' })
+              return
+            }
+            const state = readMarketState(activeProfileDir)
+            const notes = { ...state.notes }
+            const text = typeof body?.text === 'string' ? body.text.trim().slice(0, MAX_NOTE) : ''
+            // Empty clears rather than storing a blank: a row must not claim
+            // to carry a note the user just erased.
+            if (text === '') delete notes[name]
+            else notes[name] = text
+            writeMarketState(activeProfileDir, { ...state, notes })
+            refreshMarketState()
+            sendJson(response, 200, { ok: true, notes })
+          })
+        } catch (error) {
+          sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
         }
       },
     }),

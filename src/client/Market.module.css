@@ -287,6 +287,17 @@
 .version{font-size:12px;line-height:20px;color:var(--dsw-alias-label-tertiary,#8b93a1);font-variant-numeric:tabular-nums;flex-shrink:0}
 .repoLink{font-size:12px;line-height:20px;color:var(--dsw-alias-label-tertiary,#8b93a1);text-decoration:none;flex-shrink:0}
 .repoLink:hover{color:var(--dsw-alias-brand-primary,#4f6ef7)}
+/* The note row (#347). The user's own text reads as theirs — slightly
+   stronger than a catalog blurb, which is the point: it is the line they
+   wrote for themselves. The two affordances are quiet text rather than
+   icons because the icon set this package can actually resolve carries no
+   edit or view glyph, and a wrong icon is worse than a short word. */
+.noteRow{display:flex;align-items:baseline;gap:6px;min-width:0;flex-wrap:wrap}
+.noteMine{color:var(--dsw-alias-label-primary,#1f2328)}
+.noteToggle{font:inherit;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#8b93a1);background:0 0;border:none;padding:0;cursor:pointer;flex-shrink:0;white-space:nowrap}
+.noteToggle:hover{color:var(--dsw-alias-brand-primary,#4f6ef7);text-decoration:underline}
+.noteEdit{display:flex;align-items:center;gap:6px;min-width:0;flex-wrap:wrap;margin-top:2px}
+.noteInput{flex:1;min-width:160px}
 .descTight{min-height:0}
 .src{font-size:11px;color:var(--dsw-alias-label-secondary,#9ca3af);text-decoration:none}
 .src:hover{color:var(--dsw-alias-brand-primary,#4f6ef7)}

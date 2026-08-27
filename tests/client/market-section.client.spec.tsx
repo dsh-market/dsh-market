@@ -1167,6 +1167,63 @@ describe('long installed names stay readable (#342, #343)', () => {
   })
 })
 
+/** #347: a catalog description answers "what is this", written by its author
+ * for strangers and often not in the reader's language. It cannot answer "why
+ * did I install this", which is what someone with forty plugins is asking. */
+describe('plugin notes (#347)', () => {
+  const installedStub = (notes: Record<string, string> = {}) => stubFetch({
+    '/dsh-market/installed': () => ({
+      profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: ['dsh-loop'], disabled: [], notes,
+    }),
+    '/dsh-market/note': (body: any) => ({
+      ok: true,
+      // Mirrors the route: trimmed, and empty clears rather than storing blank.
+      notes: String(body.text).trim() === '' ? {} : { [body.name]: String(body.text).trim() },
+    }),
+  })
+
+  it('shows the author description until a note replaces it', async () => {
+    installedStub()
+    render(<MarketSection {...props()} />)
+    fireEvent.click(await screen.findByRole('button', { name: /Installed/ }))
+    expect(await screen.findByText('Loop task runner')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: en.noteAdd }))
+    fireEvent.change(screen.getByPlaceholderText(en.notePlaceholder), { target: { value: 'for project A' } })
+    fireEvent.click(screen.getByRole('button', { name: en.noteSave }))
+
+    // The note takes the description's place rather than sitting beside it.
+    expect(await screen.findByText('for project A')).toBeTruthy()
+    await waitFor(() => expect(screen.queryByText('Loop task runner')).toBeNull())
+  })
+
+  it('keeps the original one click away, and puts it back', async () => {
+    installedStub({ 'dsh-loop': 'for project A' })
+    render(<MarketSection {...props()} />)
+    fireEvent.click(await screen.findByRole('button', { name: /Installed/ }))
+    await screen.findByText('for project A')
+
+    fireEvent.click(screen.getByRole('button', { name: en.noteSeeTheirs }))
+    expect(await screen.findByText('Loop task runner')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: en.noteSeeMine }))
+    expect(await screen.findByText('for project A')).toBeTruthy()
+  })
+
+  it('clearing a note restores the author description', async () => {
+    installedStub({ 'dsh-loop': 'for project A' })
+    render(<MarketSection {...props()} />)
+    fireEvent.click(await screen.findByRole('button', { name: /Installed/ }))
+    await screen.findByText('for project A')
+
+    fireEvent.click(screen.getByRole('button', { name: en.noteEdit }))
+    fireEvent.change(screen.getByPlaceholderText(en.notePlaceholder), { target: { value: '   ' } })
+    fireEvent.click(screen.getByRole('button', { name: en.noteSave }))
+
+    expect(await screen.findByText('Loop task runner')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: en.noteSeeTheirs })).toBeNull()
+  })
+})
+
 describe('#60 catalog deprecation', () => {
   const DEPRECATED_REGISTRY = {
     updated: '', count: 3,

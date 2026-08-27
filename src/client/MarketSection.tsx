@@ -1131,6 +1131,13 @@ export function MarketSection(props: MarketSectionProps) {
   const [activations, setActivations] = useState<Record<string, ActivationInfo>>({})
   /** #60: persisted disable list + custom groups, straight from /installed. */
   const [disabledNames, setDisabledNames] = useState<string[]>([])
+  /** The user's own note per plugin (#347): package name → text. */
+  const [notes, setNotes] = useState<Record<string, string>>({})
+  /** Rows the user asked to show the AUTHOR's description on, despite a note. */
+  const [showTheirs, setShowTheirs] = useState<string[]>([])
+  /** The row whose note is being edited, and the text in the box. */
+  const [notingName, setNotingName] = useState<string | null>(null)
+  const [noteDraft, setNoteDraft] = useState('')
   /** The disable set as of the first load; null until it arrives. */
   const loadedDisabled = useRef<Set<string> | null>(null)
   /**
@@ -1286,6 +1293,9 @@ export function MarketSection(props: MarketSectionProps) {
           // them needs a refresh; a toggle back to them does not, and the
           // banner has to be able to say so (#340).
           if (loadedDisabled.current === null) loadedDisabled.current = new Set(body.disabled as string[])
+        }
+        if (body.notes !== null && typeof body.notes === 'object' && !Array.isArray(body.notes)) {
+          setNotes(body.notes as Record<string, string>)
         }
         if (Array.isArray(body.patchDisabled)) setPatchDisabledNames(body.patchDisabled)
         if (body.groups && typeof body.groups === 'object') setGroups(body.groups)
@@ -2069,6 +2079,23 @@ export function MarketSection(props: MarketSectionProps) {
    * would show nothing (#340). It conflated "something needs doing" with
    * "something happened in this session".
    */
+  /** Write (or clear, when empty) this plugin's note. */
+  const saveNote = useCallback((name: string, text: string) => {
+    setNotingName(null)
+    fetch('/dsh-market/note', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name, text }),
+    })
+      .then(res => res.json())
+      .then((body) => {
+        if (body.ok && body.notes !== null && typeof body.notes === 'object') {
+          setNotes(body.notes as Record<string, string>)
+        } else setInstallError(String(body.error || 'note failed'))
+      })
+      .catch(error => setInstallError(String(error)))
+  }, [])
+
   const clearPendingRefresh = useCallback((name: string) => {
     setHotNames(names => names.filter(entry => entry !== name))
     setRefreshNames(names => names.filter(entry => entry !== name))
@@ -3754,11 +3781,61 @@ export function MarketSection(props: MarketSectionProps) {
                                     : repoUrl !== null
                                       ? <a className={`${css.spec} ${css.src}`} href={repoUrl} target="_blank" rel="noreferrer" style={{ display: 'inline-block' }}>{specText}</a>
                                       : <div className={css.spec}>{specText}</div>}
-                                  {entry !== undefined && (
-                                    <div className={`${css.desc} ${css.descTight}`}>
-                                      {(entry.description && (entry.description[lang] || entry.description.en)) || ''}
-                                    </div>
-                                  )}
+                                  {/* The user's own note REPLACES the author's
+                                      description (#347): a catalog blurb answers
+                                      "what is this", written for strangers and
+                                      often not in the reader's language, and
+                                      cannot answer "why did I install this" —
+                                      which is what someone with forty plugins
+                                      is asking. The original stays one click
+                                      away rather than being lost. */}
+                                  {notingName === name
+                                    ? (
+                                        <div className={css.noteEdit}>
+                                          <Input
+                                            className={css.noteInput}
+                                            value={noteDraft}
+                                            maxLength={200}
+                                            autoFocus
+                                            placeholder={t('notePlaceholder')}
+                                            onChange={e => setNoteDraft(e.target.value)}
+                                            onKeyDown={(e) => {
+                                              if (e.key === 'Enter') saveNote(name, noteDraft)
+                                              if (e.key === 'Escape') setNotingName(null)
+                                            }}
+                                          />
+                                          <Button variant="outline" size="sm" onClick={() => saveNote(name, noteDraft)}>{t('noteSave')}</Button>
+                                          <Button variant="ghost" size="sm" onClick={() => setNotingName(null)}>{t('cancel')}</Button>
+                                        </div>
+                                      )
+                                    : (() => {
+                                        const note = notes[name]
+                                        const authored = (entry?.description && (entry.description[lang] || entry.description.en)) || ''
+                                        const theirs = showTheirs.includes(name)
+                                        const shown = note !== undefined && !theirs ? note : authored
+                                        if (shown === '' && note === undefined) return null
+                                        return (
+                                          <div className={`${css.desc} ${css.descTight} ${css.noteRow}`}>
+                                            <span className={note !== undefined && !theirs ? css.noteMine : undefined}>{shown}</span>
+                                            {note !== undefined && authored !== '' && (
+                                              <button
+                                                type="button"
+                                                className={css.noteToggle}
+                                                title={theirs ? t('noteSeeMine') : t('noteSeeTheirs')}
+                                                aria-label={theirs ? t('noteSeeMine') : t('noteSeeTheirs')}
+                                                onClick={() => setShowTheirs(list => theirs ? list.filter(n => n !== name) : list.concat(name))}
+                                              >{theirs ? t('noteMine') : t('noteTheirs')}</button>
+                                            )}
+                                            <button
+                                              type="button"
+                                              className={css.noteToggle}
+                                              title={note === undefined ? t('noteAdd') : t('noteEdit')}
+                                              aria-label={note === undefined ? t('noteAdd') : t('noteEdit')}
+                                              onClick={() => { setNoteDraft(note ?? ''); setNotingName(name) }}
+                                            >{note === undefined ? t('noteAdd') : t('noteEdit')}</button>
+                                          </div>
+                                        )
+                                      })()}
                                   {!off && act !== undefined && meta !== null && (
                                         <div className={css.act}>
                                           {/* Only a state the switch does NOT already show earns a
