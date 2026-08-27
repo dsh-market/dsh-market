@@ -82,9 +82,10 @@ and reported as one of these stable failures:
 
 - `DOWNGRADE_DETECTED`: the resolved version is older than the version present
   before the operation; not retryable without a new target.
-- `RESOLVED_VERSION_MISMATCH`: the resolved version differs from the registry
+- `RESOLVED_VERSION_MISMATCH`: the resolved version is BELOW the registry
   target checked immediately before installation; retryable after registry or
-  mirror convergence.
+  mirror convergence. A version above that target is accepted — `latest` can
+  move forward while the install is still running.
 
 Provider clients should still compare `beforeVersion`, the target they showed
 to the user, and `installedVersion` before offering restart. That independent

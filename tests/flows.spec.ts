@@ -1103,6 +1103,21 @@ describe('update flow — no npm publishing required', () => {
     expect(installed.version).toBe('1.0.0')
   })
 
+  it('accepts a release published while the install was still running', async () => {
+    advanceNpmLatest('1.2.0')
+    fake.npm['dsh-loop'].versions['1.2.1'] = { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] }
+    // The author publishes 1.2.1 while pnpm is still downloading 1.2.0. A big
+    // plugin leaves minutes of window for that, and rolling the update back
+    // would report a good, newer build as a failure.
+    fake.resolvedNpmVersionOnce = '1.2.1'
+
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+
+    expect(r.json).toMatchObject({ ok: true })
+    const installed = JSON.parse(readFileSync(join(fake.profileDir, 'node_modules', 'dsh-loop', 'package.json'), 'utf8')) as { version?: string }
+    expect(installed.version).toBe('1.2.1')
+  })
+
   it('rejects and rolls back when pnpm resolves a newer but unexpected release', async () => {
     advanceNpmLatest('1.2.0')
     fake.npm['dsh-loop'].versions['1.1.0'] = { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] }

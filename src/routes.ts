@@ -2187,7 +2187,26 @@ export function mountMarketRoutes(
                 ? compareVersions(afterVersion, beforeVersion)
                 : null
               const unexpectedDowngrade = selfChannel === null && direction !== null && direction < 0
-              const targetMismatch = expectedNpmVersion !== null && afterVersion !== expectedNpmVersion
+              // Only a version BELOW the target is a mismatch. `latest` can move
+              // forward while pnpm is still downloading — a large plugin gives
+              // the author minutes of window — and rejecting the newer release
+              // that arrives would roll back a good update and report it as a
+              // failure. Getting less than we asked for is the actual symptom.
+              const target = expectedNpmVersion
+              const targetOrder = target !== null && afterVersion !== null
+                ? compareVersions(afterVersion, target)
+                : null
+              const targetMismatch = target !== null && (
+                afterVersion === null
+                || (targetOrder !== null
+                  // Comparable: getting LESS than we asked for is the symptom.
+                  // A version above the target is `latest` moving forward while
+                  // pnpm was still downloading, which is a good update.
+                  ? targetOrder < 0
+                  // Not comparable as semver. With no way to tell forward from
+                  // back, keep the exact check this replaced.
+                  : afterVersion !== target)
+              )
               if (unexpectedDowngrade || targetMismatch) {
                 versionFailureCode = unexpectedDowngrade ? 'DOWNGRADE_DETECTED' : 'RESOLVED_VERSION_MISMATCH'
                 versionFailureError = unexpectedDowngrade
