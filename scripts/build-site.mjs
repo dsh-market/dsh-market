@@ -17,6 +17,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { Marked } from 'marked'
 import LOCALES from '../site/locales.mjs'
+import COMMENTS from '../site/comments.mjs'
 
 const ORIGIN = 'https://dshmarket.com'
 const CATALOG = 'https://awesome-dsh-plugin.com'
@@ -26,6 +27,22 @@ const OUT = 'docs'
 
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 const ldSafe = (s) => s.replaceAll('<', '\\u003c')
+
+// A missing id here does not fail the build, it ships 1884 pages whose comment
+// box silently talks to the wrong repository — so check the shape up front and
+// stop, rather than discovering it from a user's report.
+if (typeof COMMENTS.enabled !== 'boolean') {
+  console.error('site/comments.mjs: `enabled` must be a boolean')
+  process.exit(1)
+}
+if (COMMENTS.enabled) {
+  for (const key of ['repo', 'repoId', 'category', 'categoryId']) {
+    if (typeof COMMENTS[key] !== 'string' || !COMMENTS[key]) {
+      console.error(`site/comments.mjs: \`${key}\` must be a non-empty string when comments are enabled`)
+      process.exit(1)
+    }
+  }
+}
 
 if (!fs.existsSync(REGISTRY_FILE)) {
   console.error(`${REGISTRY_FILE} is missing — run \`npm run snapshot\` first`)
@@ -389,6 +406,27 @@ ${readmeHtml}
       <p class="note"><a href="${esc(rm.htmlUrl)}" rel="noopener">${loc.strings.P_README_SRC}</a></p>
     </section>` : ''
 
+    // `mapping: specific` with the shared slug is what makes this page, the
+    // catalog's page and the market's drawer land on one discussion instead of
+    // three. `strict` hashes the term, so a slug that merely contains another
+    // cannot collide with it.
+    const commentsId = `comments-${p.slug.replace(/[^a-z0-9-]/gi, '-')}`
+    const commentsConfig = {
+      repo: COMMENTS.repo,
+      repoId: COMMENTS.repoId,
+      category: COMMENTS.category,
+      categoryId: COMMENTS.categoryId,
+      term: `plugin:${p.slug}`,
+      lang: loc.giscusLang,
+    }
+    const commentsSection = COMMENTS.enabled ? `<section class="panel" aria-labelledby="${commentsId}-title">
+      <h2 id="${commentsId}-title">${loc.strings.P_COMMENTS}</h2>
+      <p class="note">${loc.strings.P_COMMENTS_NOTE}</p>
+      <p class="comments-status" role="status" aria-live="polite"></p>
+      <div class="comments-mount giscus" id="${commentsId}-mount" data-comments="${esc(JSON.stringify(commentsConfig))}" data-loading="${esc(loc.strings.P_COMMENTS_LOADING)}" data-ready="${esc(loc.strings.P_COMMENTS_READY)}" data-error="${esc(loc.strings.P_COMMENTS_ERROR)}" data-retry="${esc(loc.strings.P_COMMENTS_RETRY)}"></div>
+      <noscript><p class="note"><a href="https://github.com/${COMMENTS.repo}/discussions" rel="noopener">${loc.strings.P_COMMENTS_FALLBACK}</a></p></noscript>
+    </section>` : ''
+
     const jsonld = JSON.stringify([{
       '@context': 'https://schema.org',
       '@type': 'SoftwareApplication',
@@ -411,6 +449,7 @@ ${readmeHtml}
 
     let page = pluginMaster
       .replaceAll('__P_README_SECTION__', () => readmeSection)
+      .replaceAll('__P_COMMENTS__', () => commentsSection)
       .replaceAll('__LANG__', () => loc.htmlLang)
       .replaceAll('__TITLE__', () => esc(loc.P_TITLE.replace('{NAME}', p.displayName)))
       .replaceAll('__DESC__', () => esc(metaDesc))

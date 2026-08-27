@@ -47,6 +47,14 @@ header a:hover{color:var(--accent);text-decoration:none}
 .panel{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:1.2rem 1.3rem;margin-bottom:1.2rem}
 .panel h2{font-size:1rem;font-weight:700;margin-bottom:.7rem}
 .note{font-size:.82rem;color:var(--ink3);margin:.5rem 0}
+.comments-status{font-size:.82rem;color:var(--ink3);margin:.6rem 0 0}
+.comments-status:empty{display:none}
+.comments-retry{display:inline-flex;align-items:center;justify-content:center;min-height:40px;margin-top:.6rem;border:1px solid var(--accent);border-radius:8px;padding:.45rem .9rem;background:var(--accent);color:#fff;font:inherit;font-size:.82rem;font-weight:650;cursor:pointer}
+.comments-retry:hover{opacity:.9}
+/* The iframe reports its own height, but only after giscus has fetched the
+   thread. Reserving room while it is empty keeps the footer from jumping up
+   and then back down on every plugin page. */
+.comments-mount:empty,.comments-mount:has(iframe){min-height:12rem}
 .cmd{display:flex;align-items:center;gap:.6rem;background:var(--ink);color:#e8ecf4;border-radius:10px;padding:.65rem .8rem;font-family:ui-monospace,Menlo,monospace;font-size:.84rem;margin:.35rem 0 .8rem;overflow-x:auto}
 .cmd pre{flex:1;margin:0;white-space:pre;overflow-x:auto}
 .cmd button{flex:none;border:none;background:var(--accent);color:#fff;border-radius:7px;padding:.32rem .7rem;font-size:.76rem;cursor:pointer;font-weight:600}
@@ -105,6 +113,7 @@ footer a{color:var(--ink2)}
     </section>
     __P_SHOTS__
     __P_README_SECTION__
+    __P_COMMENTS__
   </div>
   <aside>
     <section class="panel">
@@ -131,6 +140,72 @@ document.addEventListener('click', (ev) => {
     setTimeout(() => { b.textContent = was }, 1400)
   })
 })
+
+// Comments load on their own — arriving on the page is the request. They are
+// still deferred until the section is close to the viewport, because giscus is
+// a third-party iframe and most visitors never scroll past the README: paying
+// for that connection on every page view would slow down the common case to
+// serve the rare one. The button below only ever appears after a failure.
+;(() => {
+  const mount = document.querySelector('.comments-mount')
+  if (!mount) return
+  const status = document.querySelector('.comments-status')
+  const d = mount.dataset
+  let config
+  try { config = JSON.parse(d.comments) } catch { status.textContent = d.error; return }
+
+  const load = () => {
+    status.textContent = d.loading
+    mount.setAttribute('aria-busy', 'true')
+    const s = document.createElement('script')
+    s.src = 'https://giscus.app/client.js'
+    s.async = true
+    s.crossOrigin = 'anonymous'
+    Object.assign(s.dataset, {
+      repo: config.repo,
+      repoId: config.repoId,
+      category: config.category,
+      categoryId: config.categoryId,
+      mapping: 'specific',
+      term: config.term,
+      strict: '1',
+      reactionsEnabled: '1',
+      emitMetadata: '0',
+      inputPosition: 'bottom',
+      theme: 'preferred_color_scheme',
+      lang: config.lang,
+      loading: 'lazy',
+    })
+    s.onload = () => {
+      mount.removeAttribute('aria-busy')
+      // Sighted readers can see the thread arrive, so the confirmation is only
+      // here to be announced; leaving it on screen is a line of noise stapled
+      // under every plugin page forever.
+      status.textContent = d.ready
+      setTimeout(() => { if (status.textContent === d.ready) status.textContent = '' }, 2500)
+    }
+    s.onerror = () => {
+      mount.removeAttribute('aria-busy')
+      s.remove()
+      status.textContent = d.error
+      const retry = document.createElement('button')
+      retry.type = 'button'
+      retry.className = 'comments-retry'
+      retry.textContent = d.retry
+      retry.addEventListener('click', () => { retry.remove(); load() }, { once: true })
+      status.after(retry)
+    }
+    mount.append(s)
+  }
+
+  if (!('IntersectionObserver' in window)) { load(); return }
+  const io = new IntersectionObserver((entries) => {
+    if (!entries.some((e) => e.isIntersecting)) return
+    io.disconnect()
+    load()
+  }, { rootMargin: '400px' })
+  io.observe(mount)
+})()
 </script>
 </body>
 </html>
