@@ -1084,6 +1084,146 @@ describe('update flow — no npm publishing required', () => {
     expect(r.json.activation['dsh-loop']).toMatchObject({ state: 'restart', hot: false })
   })
 
+  it('exposes a versioned capability and update-check contract for plugin-owned UIs', async () => {
+    advanceNpmLatest('1.2.0')
+    const capabilities = await bed.dispatch('GET', '/dsh-market/api/v1/capabilities')
+    expect(capabilities.status).toBe(200)
+    expect(capabilities.json).toMatchObject({
+      schema: 'dsh-market/update-api/v1',
+      apiVersion: 1,
+      // The compatibility promise is machine-readable, because one that lives
+      // only in a markdown file is one no client ever reads. A release that
+      // means to make this stable has to change it here, deliberately.
+      stability: 'beta',
+      profile: 'web',
+      runtime: 'web',
+      features: { check: true, update: true, progress: true, rollback: true, restart: true },
+      restart: { supported: true, managedBy: 'market' },
+      operationRetention: 'current-process',
+      operationLimit: 50,
+    })
+
+    const check = await bed.dispatch('GET', '/dsh-market/api/v1/updates?name=dsh-loop&force=1')
+    expect(check.status).toBe(200)
+    expect(check.json).toMatchObject({
+      schema: 'dsh-market/update-api/v1',
+      package: {
+        name: 'dsh-loop',
+        source: 'npm',
+        installedVersion: '1.0.0',
+        latestVersion: '1.2.0',
+        updateAvailable: true,
+      },
+    })
+  })
+
+  it('returns an operation id immediately and exposes progress until the update settles', async () => {
+    advanceNpmLatest('1.2.0')
+    let release!: () => void
+    fake.gate = new Promise<void>((resolvePromise) => { release = resolvePromise })
+
+    const accepted = await bed.dispatch('POST', '/dsh-market/api/v1/updates', {
+      packageName: 'dsh-loop',
+    })
+    expect(accepted.status).toBe(202)
+    expect(accepted.json.operation).toMatchObject({
+      schema: 'dsh-market/update-api/v1',
+      packageName: 'dsh-loop',
+      state: 'running',
+      beforeVersion: '1.0.0',
+    })
+    const operationId = String(accepted.json.operation.operationId)
+
+    const concurrent = await bed.dispatch('POST', '/dsh-market/api/v1/updates', {
+      packageName: 'dsh-loop',
+    })
+    expect(concurrent.status).toBe(409)
+    expect(concurrent.json.failure).toMatchObject({ code: 'OPERATION_BUSY', retryable: true })
+
+    const during = await bed.dispatch('GET', `/dsh-market/api/v1/operations?operationId=${operationId}`)
+    expect(during.status).toBe(200)
+    expect(during.json.operation.state).toBe('running')
+
+    release()
+    fake.gate = null
+    let completed = during
+    for (let attempt = 0; attempt < 30 && completed.json.operation.state === 'running'; attempt += 1) {
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 5))
+      completed = await bed.dispatch('GET', `/dsh-market/api/v1/operations?operationId=${operationId}`)
+    }
+    expect(completed.json.operation).toMatchObject({
+      state: 'succeeded',
+      beforeVersion: '1.0.0',
+      installedVersion: '1.2.0',
+      outcome: { restartRequired: true },
+      failure: null,
+    })
+  })
+
+  it('normalizes an agent guard refusal as a terminal operation failure', async () => {
+    advanceNpmLatest('1.2.0')
+    const guarded = createTestbed({}, undefined, {
+      list: () => [{ id: 'main', status: 'running' }],
+    })
+    const accepted = await guarded.dispatch('POST', '/dsh-market/api/v1/updates', {
+      packageName: 'dsh-loop',
+    })
+    expect(accepted.status).toBe(202)
+    const operationId = String(accepted.json.operation.operationId)
+    let completed = await guarded.dispatch('GET', `/dsh-market/api/v1/operations?operationId=${operationId}`)
+    for (let attempt = 0; attempt < 30 && completed.json.operation.state === 'running'; attempt += 1) {
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 5))
+      completed = await guarded.dispatch('GET', `/dsh-market/api/v1/operations?operationId=${operationId}`)
+    }
+    expect(completed.json.operation).toMatchObject({
+      state: 'failed',
+      installedVersion: '1.0.0',
+      failure: { code: 'AGENTS_RUNNING', retryable: true },
+    })
+    guarded.dispose()
+  })
+
+  it('keeps compatibility rollback private while exposing operation-scoped rollback', async () => {
+    const hostPeerDir = join(fake.profileDir, 'node_modules', '@deepseek-ai', 'dsh-settings')
+    mkdirSync(hostPeerDir, { recursive: true })
+    writeFileSync(join(hostPeerDir, 'package.json'), JSON.stringify({
+      name: '@deepseek-ai/dsh-settings',
+      version: '0.1.0-rc.6',
+    }))
+    fake.npm['dsh-loop'].latest = '1.2.0'
+    fake.npm['dsh-loop'].versions['1.2.0'] = {
+      manifest: {
+        dsh: {},
+        main: 'lib/index.js',
+        peerDependencies: { '@deepseek-ai/dsh-settings': '^0.1.0-rc.7' },
+      },
+      artifacts: ['lib/index.js'],
+    }
+    vi.stubGlobal('fetch', () => Promise.resolve(new Response(JSON.stringify({ version: '1.2.0' }), { status: 200 })))
+
+    const accepted = await bed.dispatch('POST', '/dsh-market/api/v1/updates', { packageName: 'dsh-loop' })
+    const operationId = String(accepted.json.operation.operationId)
+    let completed = await bed.dispatch('GET', `/dsh-market/api/v1/operations?operationId=${operationId}`)
+    for (let attempt = 0; attempt < 30 && completed.json.operation.state === 'running'; attempt += 1) {
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 5))
+      completed = await bed.dispatch('GET', `/dsh-market/api/v1/operations?operationId=${operationId}`)
+    }
+    expect(completed.json.operation).toMatchObject({
+      state: 'succeeded',
+      installedVersion: '1.2.0',
+      outcome: { rollback: { available: true, state: 'available' } },
+    })
+    expect(JSON.stringify(completed.json)).not.toContain('rollbackId')
+
+    const rolledBack = await bed.dispatch('POST', '/dsh-market/api/v1/rollback', { operationId })
+    expect(rolledBack.status).toBe(200)
+    expect(rolledBack.json.operation).toMatchObject({
+      state: 'rolled-back',
+      outcome: { restartRequired: true, rollback: { available: false, state: 'succeeded' } },
+    })
+    expect(installedSpec('dsh-loop')).toBe('^1.0.0')
+  })
+
   it('updates a mirror-installed plugin from GitHub, not from a same-named npm package', async () => {
     // The spelling a plugin carries under a download region that mirrors
     // GitHub is a proxied codeload URL, not the `github:` shortcut. The
@@ -2160,6 +2300,16 @@ describe('externally removed hot mounts (#29)', () => {
 })
 
 describe('one-click restart guards (#14)', () => {
+  it('delegates the public v1 restart route to the guarded restart executor', async () => {
+    const result = await bed.dispatch('POST', '/dsh-market/api/v1/restart', {})
+    expect(result.status).toBe(202)
+    expect(result.json).toMatchObject({
+      schema: 'dsh-market/update-api/v1',
+      result: { ok: true },
+    })
+    expect(restartCalls.count).toBe(1)
+  })
+
   it('schedules exactly once for a trusted loopback request; repeat is 409', async () => {
     const r = await bed.dispatch('POST', '/dsh-market/restart', {})
     expect(r.status).toBe(202)

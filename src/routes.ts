@@ -10,6 +10,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { Readable } from 'node:stream'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { forgetCatalog, loadRegistry, pluginCategories } from './registry.ts'
 import {
@@ -54,6 +55,7 @@ import {
 import {
   createGist, fitsGistLimit, GistError, gistErrorCode, parseGistId, readGist, resolveGistTokenSource, updateGist, verifyGistToken,
 } from './gist.ts'
+import { MAX_UPDATE_OPERATIONS_V1, UpdateOperationStoreV1, UPDATE_API_V1_SCHEMA } from './update-api-v1.ts'
 
 export type { LoaderEntry } from './themes.ts'
 export type { UpdateStatus } from './updates.ts'
@@ -722,7 +724,285 @@ export function mountMarketRoutes(
   }
   }
 
+  type RouteHandler = (request: IncomingMessage, response: ServerResponse) => void | Promise<void>
+  type RouteDefinition = { kind: 'exact' | 'prefix'; path: string; handler: RouteHandler }
+  const legacyHandlers = new Map<string, RouteHandler>()
+  const captureLegacy = (path: string, route: RouteDefinition): RouteDefinition => {
+    legacyHandlers.set(path, route.handler)
+    return route
+  }
+  const operationsV1 = new UpdateOperationStoreV1(BOOT_ID)
+
+  /** Invoke one existing route in memory so v1 reuses the battle-tested executor. */
+  async function invokeLegacy(
+    path: string,
+    source: IncomingMessage,
+    method: 'GET' | 'POST',
+    body?: unknown,
+    url = path,
+  ): Promise<{ status: number; payload: unknown }> {
+    const handler = legacyHandlers.get(path)
+    if (handler === undefined) throw new Error(`legacy route is unavailable: ${path}`)
+    const chunks = body === undefined ? [] : [Buffer.from(JSON.stringify(body))]
+    const replay = Readable.from(chunks) as unknown as IncomingMessage
+    Object.assign(replay, {
+      method,
+      url,
+      headers: { ...source.headers },
+      socket: source.socket,
+    })
+    let status = 200
+    let text = ''
+    const captured = {
+      writeHead(code: number) { status = code; return this },
+      end(chunk?: string | Buffer) {
+        if (chunk !== undefined) text += Buffer.isBuffer(chunk) ? chunk.toString('utf8') : chunk
+        return this
+      },
+    } as unknown as ServerResponse
+    await handler(replay, captured)
+    let payload: unknown = null
+    try { payload = text === '' ? null : JSON.parse(text) as unknown } catch { payload = { error: text } }
+    return { status, payload }
+  }
+
+  const packageNameFrom = (request: IncomingMessage): string => {
+    try { return new URL(request.url ?? '', 'http://localhost').searchParams.get('name') ?? '' } catch { return '' }
+  }
+
+  const operationIdFrom = (request: IncomingMessage): string => {
+    try { return new URL(request.url ?? '', 'http://localhost').searchParams.get('operationId') ?? '' } catch { return '' }
+  }
+
+  const forceCheckFrom = (request: IncomingMessage): boolean => {
+    try { return new URL(request.url ?? '', 'http://localhost').searchParams.get('force') === '1' } catch { return false }
+  }
+
   const disposers = [
+    host.webServer.register({
+      kind: 'exact',
+      path: '/dsh-market/api/v1/capabilities',
+      handler: (request, response) => {
+        if (request.method !== 'GET') {
+          response.writeHead(405, { allow: 'GET' })
+          response.end()
+          return
+        }
+        const canRestart = restartAllowed(config)
+        sendJson(response, 200, {
+          schema: UPDATE_API_V1_SCHEMA,
+          apiVersion: 1,
+          // Machine-readable, because a policy that lives only in a markdown
+          // file is one a client never reads. `beta` says the shape may still
+          // change; it becomes `stable` once a release stops moving it, and
+          // that is the point at which the compatibility promise starts.
+          stability: 'beta',
+          marketVersion: marketVersion(),
+          profile: config.profile,
+          bootId: BOOT_ID,
+          runtime: config.profileDirectory === undefined ? 'web' : 'desktop',
+          features: {
+            check: true,
+            update: true,
+            progress: true,
+            rollback: true,
+            restart: canRestart,
+          },
+          restart: {
+            supported: canRestart,
+            managedBy: canRestart ? 'market' : config.profileDirectory === undefined ? 'operator' : 'desktop-host',
+            supervisor: detectedSupervisor(),
+          },
+          operationRetention: 'current-process',
+          operationLimit: MAX_UPDATE_OPERATIONS_V1,
+          endpoints: {
+            updates: '/dsh-market/api/v1/updates',
+            operations: '/dsh-market/api/v1/operations',
+            rollback: '/dsh-market/api/v1/rollback',
+            restart: '/dsh-market/api/v1/restart',
+          },
+        })
+      },
+    }),
+
+    host.webServer.register({
+      kind: 'exact',
+      path: '/dsh-market/api/v1/updates',
+      handler: async (request, response) => {
+        if (request.method === 'GET') {
+          const name = packageNameFrom(request)
+          if (!NPM_NAME_RE.test(name)) {
+            sendJson(response, 400, { schema: UPDATE_API_V1_SCHEMA, error: 'a valid package name is required' })
+            return
+          }
+          try {
+            const force = forceCheckFrom(request)
+            const channel = activeChannel()
+            const channelFor = SELF_NAMES.has(name) ? new Map([[name, channel]]) : undefined
+            const update = (await checkUpdates(config.profile, force, activeProfileDir, channelFor))[name]
+            if (update === undefined) {
+              sendJson(response, 404, { schema: UPDATE_API_V1_SCHEMA, error: 'plugin is not installed' })
+              return
+            }
+            sendJson(response, 200, {
+              schema: UPDATE_API_V1_SCHEMA,
+              package: {
+                name,
+                source: update.kind,
+                installedVersion: update.current ?? update.version,
+                latestVersion: update.latest,
+                updateAvailable: update.updateAvailable,
+                channelSwitch: update.channelSwitch ?? null,
+              },
+            })
+          } catch (error) {
+            sendJson(response, 500, {
+              schema: UPDATE_API_V1_SCHEMA,
+              error: error instanceof Error ? error.message : String(error),
+            })
+          }
+          return
+        }
+
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'GET, POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) {
+          sendJson(response, 403, { schema: UPDATE_API_V1_SCHEMA, error: 'untrusted origin' })
+          return
+        }
+        try {
+          const body = (await readJsonBody(request)) as { packageName?: unknown; force?: unknown }
+          const packageName = typeof body.packageName === 'string' ? body.packageName : ''
+          if (!NPM_NAME_RE.test(packageName)) {
+            sendJson(response, 400, { schema: UPDATE_API_V1_SCHEMA, error: 'a valid package name is required' })
+            return
+          }
+          if (operationsV1.hasActive()) {
+            sendJson(response, 409, {
+              schema: UPDATE_API_V1_SCHEMA,
+              error: 'another public update operation is already running',
+              failure: {
+                code: 'OPERATION_BUSY',
+                message: 'another public update operation is already running',
+                retryable: true,
+              },
+            })
+            return
+          }
+          const installedVersion = readInstalledVersion(config.profile, packageName, activeProfileDir)
+          if (installedVersion === null) {
+            sendJson(response, 404, {
+              schema: UPDATE_API_V1_SCHEMA,
+              error: 'plugin is not installed',
+              failure: {
+                code: 'PLUGIN_NOT_INSTALLED',
+                message: 'plugin is not installed in this profile',
+                retryable: false,
+              },
+            })
+            return
+          }
+          const operation = operationsV1.create(packageName, installedVersion)
+          operationsV1.start(operation.operationId)
+          void invokeLegacy('/dsh-market/update', request, 'POST', {
+            name: packageName,
+            ...(body.force === true ? { force: true } : {}),
+          }).then(({ status, payload }) => {
+            operationsV1.finish(
+              operation.operationId,
+              status,
+              payload,
+              readInstalledVersion(config.profile, packageName, activeProfileDir),
+            )
+          }).catch((error) => {
+            operationsV1.finish(
+              operation.operationId,
+              500,
+              { error: error instanceof Error ? error.message : String(error) },
+              readInstalledVersion(config.profile, packageName, activeProfileDir),
+            )
+          })
+          sendJson(response, 202, {
+            schema: UPDATE_API_V1_SCHEMA,
+            operation: operationsV1.get(operation.operationId),
+          })
+        } catch (error) {
+          sendJson(response, 400, {
+            schema: UPDATE_API_V1_SCHEMA,
+            error: error instanceof Error ? error.message : String(error),
+          })
+        }
+      },
+    }),
+
+    host.webServer.register({
+      kind: 'exact',
+      path: '/dsh-market/api/v1/operations',
+      handler: (request, response) => {
+        if (request.method !== 'GET') {
+          response.writeHead(405, { allow: 'GET' })
+          response.end()
+          return
+        }
+        const operation = operationsV1.get(operationIdFrom(request), progress)
+        if (operation === null) {
+          sendJson(response, 404, { schema: UPDATE_API_V1_SCHEMA, error: 'operation not found in this host process' })
+          return
+        }
+        sendJson(response, 200, { schema: UPDATE_API_V1_SCHEMA, operation })
+      },
+    }),
+
+    host.webServer.register({
+      kind: 'exact',
+      path: '/dsh-market/api/v1/rollback',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) {
+          sendJson(response, 403, { schema: UPDATE_API_V1_SCHEMA, error: 'untrusted origin' })
+          return
+        }
+        try {
+          const body = (await readJsonBody(request)) as { operationId?: unknown }
+          const operationId = typeof body.operationId === 'string' ? body.operationId : ''
+          const legacyRollbackId = operationsV1.beginRollback(operationId)
+          if (legacyRollbackId === null) {
+            sendJson(response, 409, { schema: UPDATE_API_V1_SCHEMA, error: 'rollback is not available for this operation' })
+            return
+          }
+          const result = await invokeLegacy('/dsh-market/rollback', request, 'POST', { rollbackId: legacyRollbackId })
+          const operation = operationsV1.finishRollback(operationId, result.status, result.payload)
+          sendJson(response, 200, { schema: UPDATE_API_V1_SCHEMA, operation })
+        } catch (error) {
+          sendJson(response, 400, {
+            schema: UPDATE_API_V1_SCHEMA,
+            error: error instanceof Error ? error.message : String(error),
+          })
+        }
+      },
+    }),
+
+    host.webServer.register({
+      kind: 'exact',
+      path: '/dsh-market/api/v1/restart',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'POST' })
+          response.end()
+          return
+        }
+        const result = await invokeLegacy('/dsh-market/restart', request, 'POST', {})
+        sendJson(response, result.status, { schema: UPDATE_API_V1_SCHEMA, result: result.payload })
+      },
+    }),
+
     host.webServer.register({
       kind: 'exact',
       path: '/dsh-market/backup',
@@ -1676,7 +1956,7 @@ export function mountMarketRoutes(
       },
     }),
 
-    host.webServer.register({
+    host.webServer.register(captureLegacy('/dsh-market/update', {
       kind: 'exact',
       path: '/dsh-market/update',
       handler: async (request, response) => {
@@ -2044,7 +2324,7 @@ export function mountMarketRoutes(
           sendJson(response, 500, { error: message })
         }
       },
-    }),
+    })),
 
     host.webServer.register({
       kind: 'exact',
@@ -2280,7 +2560,7 @@ export function mountMarketRoutes(
       },
     }),
 
-    host.webServer.register({
+    host.webServer.register(captureLegacy('/dsh-market/restart', {
       kind: 'exact',
       path: '/dsh-market/restart',
       handler: (request, response) => {
@@ -2318,7 +2598,7 @@ export function mountMarketRoutes(
           sendJson(response, 500, { error: message })
         }
       },
-    }),
+    })),
 
     host.webServer.register({
       kind: 'exact',
@@ -2614,7 +2894,7 @@ export function mountMarketRoutes(
       },
     }),
 
-    host.webServer.register({
+    host.webServer.register(captureLegacy('/dsh-market/rollback', {
       kind: 'exact',
       path: '/dsh-market/rollback',
       handler: async (request, response) => {
@@ -2679,7 +2959,7 @@ export function mountMarketRoutes(
           sendJson(response, 500, { error: message })
         }
       },
-    }),
+    })),
 
     host.webServer.register({
       kind: 'exact',
