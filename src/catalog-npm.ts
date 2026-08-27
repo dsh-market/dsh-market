@@ -92,6 +92,8 @@ export async function catalogFromPackage(
   registry: string,
   pkg: string,
   known?: string,
+  /** The entry to extract; the catalog package carries `plugins.json`, companions theirs. */
+  file = 'package/plugins.json',
 ): Promise<{ version: string; data: unknown | null }> {
   const metaRes = await marketFetch(`${registry}/${encodeURIComponent(pkg)}/latest`, {
     signal: AbortSignal.timeout(TIMEOUT_MS),
@@ -112,7 +114,7 @@ export async function catalogFromPackage(
   // back to the origin registry the region exists to avoid.
   const tarRes = await marketFetch(tarball, { signal: AbortSignal.timeout(TIMEOUT_MS) })
   if (!tarRes.ok) throw new Error(`HTTP ${String(tarRes.status)} reading ${pkg} tarball`)
-  const file = fileFromTarball(Buffer.from(await tarRes.arrayBuffer()), 'package/plugins.json')
-  if (file === null) throw new Error(`${pkg}@${version} carries no plugins.json`)
-  return { version, data: JSON.parse(file.toString('utf8')) as unknown }
+  const bytes = fileFromTarball(Buffer.from(await tarRes.arrayBuffer()), file)
+  if (bytes === null) throw new Error(`${pkg}@${version} carries no ${file}`)
+  return { version, data: JSON.parse(bytes.toString('utf8')) as unknown }
 }

@@ -115,6 +115,11 @@ export interface UpdateStatus {
   updateAvailable?: boolean
   version?: string
   kind?: string
+  /** What is installed and what the source of truth offers — versions for npm
+      packages, commit shas for github installs; the notes dialog (#294) shows
+      the range between them in whichever form reads best. */
+  current?: string | null
+  latest?: string | null
 }
 
 /** Poll payload from /dsh-market/status. */

@@ -282,6 +282,55 @@ function Pager({ currentPage, totalPages, pageSize, onGoToPage, onChangePageSize
  * Card avatar: the plugin owner's GitHub avatar (no API, browser-cached),
  * falling back to the initial-letter tile when it can't load.
  */
+/** Inline pass: `code` spans and **bold**, everything else plain text. */
+function mdInline(text: string): Array<string | JSX.Element> {
+  return text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).map((part, i) => {
+    if (part.startsWith('**') && part.endsWith('**') && part.length > 4) {
+      return <strong key={i}>{part.slice(2, -2)}</strong>
+    }
+    if (part.startsWith('`') && part.endsWith('`') && part.length > 2) {
+      return <code key={i} className={css.notesCode}>{part.slice(1, -1)}</code>
+    }
+    return part
+  })
+}
+
+/**
+ * Release-body markdown, reduced to what a reading dialog needs: headings,
+ * bullets, paragraphs, bold, inline code. Every character arrives as a React
+ * text child (auto-escaped) — nothing from the repo is ever interpreted as
+ * markup, so this stays free of the HTML surface real markdown parsers open.
+ */
+function renderMarkdown(md: string): Array<JSX.Element | string> {
+  const out: Array<JSX.Element | string> = []
+  let bullets: string[] | null = null
+  const flushList = (): void => {
+    if (bullets === null) return
+    const items = bullets
+    out.push(<ul key={`l${out.length}`} className={css.notesList}>{items.map((item, i) => <li key={i}>{mdInline(item)}</li>)}</ul>)
+    bullets = null
+  }
+  for (const line of md.split('\n')) {
+    const trimmed = line.trim()
+    if (trimmed === '') { flushList(); continue }
+    const heading = /^#{1,6}\s+(.*)$/.exec(trimmed)
+    if (heading !== null) {
+      flushList()
+      out.push(<div key={`h${out.length}`} className={css.notesH}>{mdInline(heading[1])}</div>)
+      continue
+    }
+    const bullet = /^[-*]\s+(.*)$/.exec(trimmed)
+    if (bullet !== null) {
+      ;(bullets ??= []).push(bullet[1])
+      continue
+    }
+    flushList()
+    out.push(<div key={`p${out.length}`} className={css.notesP}>{mdInline(line)}</div>)
+  }
+  flushList()
+  return out
+}
+
 function OwnerAvatar({ name, owner }: { name: string; owner: string }) {
   const [failed, setFailed] = useState(false)
   if (failed || owner === '') {
@@ -1076,6 +1125,20 @@ export function MarketSection(props: MarketSectionProps) {
   const updateIdleStrikes = useRef(0)
   const [doneUrls, setDoneUrls] = useState<string[]>([])
   const [installError, setInstallError] = useState<string | null>(null)
+  /** The notes payload the server answers with, verbatim (see /changelog). */
+  type NoteRelease = { tag: string | null; name: string | null; publishedAt: string | null; url: string | null; body: string }
+  type NoteCommit = { sha: string; message: string; date: string | null }
+  interface UpdateNotes {
+    kind: 'release' | 'commits' | 'npm' | 'none'
+    release?: NoteRelease
+    commits?: { items: NoteCommit[]; found: boolean }
+    npmTimes?: Array<{ version: string; date: string }>
+  }
+  type ResolvedNotes =
+    | { kind: 'release'; release: NoteRelease }
+    | { kind: 'commits'; commits: { items: NoteCommit[]; found: boolean } }
+    | { kind: 'npm'; npmTimes: Array<{ version: string; date: string }> }
+    | { kind: 'none' }
   interface CompatibilityNotice {
     code: 'soft-incompatible'
     risks: Array<{ plugin: string; peer: string; range: string; resolved: string; direction: string }>
@@ -1120,6 +1183,10 @@ export function MarketSection(props: MarketSectionProps) {
   const exportToastDone = useCallback(() => setExportState('idle'), [])
   const [updates, setUpdates] = useState<Record<string, UpdateStatus>>({})
   const [updatingName, setUpdatingName] = useState<string | null>(null)
+  /** Update-notes dialog (#294): which row opened it, and what it resolved to. */
+  const [notesFor, setNotesFor] = useState<{ name: string; current: string | null; latest: string | null; repoUrl: string | null } | null>(null)
+  const [updateNotes, setUpdateNotes] = useState<ResolvedNotes | null>(null)
+  const [notesState, setNotesState] = useState<'loading' | 'ready' | 'fail'>('loading')
   // Plugin blocked by pnpm's fresh-release safety wait; arms the update-now button.
   const [staleName, setStaleName] = useState<string | null>(null)
   // Local link:/file: restore: the red banner asks before swapping to the catalog.
@@ -2071,8 +2138,21 @@ export function MarketSection(props: MarketSectionProps) {
     setInstallError(t('restoreHint'))
   }, [data, installed, repoHints, repoIdentities, t])
 
-  const doUseSkin = useCallback((name: string) => {
-    setInstallError(null)
+  /** Open the update-notes dialog and start its fetch. Lazy: the request only
+      exists while a user is actually looking at one plugin's notes, and
+      closing the dialog abandons the render — the server side caches the
+      payload, so reopening is cheap. */
+  const openNotes = useCallback((name: string, current: string | null, latest: string | null, repoUrl: string | null) => {
+    setNotesFor({ name, current, latest, repoUrl })
+    setUpdateNotes(null)
+    setNotesState('loading')
+    fetch(`/dsh-market/changelog?name=${encodeURIComponent(name)}`)
+      .then(res => res.json())
+      .then(body => { setUpdateNotes(body as ResolvedNotes); setNotesState('ready') })
+      .catch(() => setNotesState('fail'))
+  }, [])
+
+  const doUseSkin = useCallback((name: string) => {    setInstallError(null)
     fetch(api('/dsh-market/use-skin'), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -3865,6 +3945,19 @@ export function MarketSection(props: MarketSectionProps) {
                                           </div>
                                         )
                                       })()}
+                                  {/* Update-notes entry (#294). Only a row with an
+                                      update pending renders it — a plugin that is
+                                      up to date has nothing to preview — and it is
+                                      one quiet line in the flow the row already
+                                      reserves for conditional content, so rows
+                                      without it are pixel-identical to before. */}
+                                  {status !== undefined && status.updateAvailable && (
+                                    <button
+                                      type="button"
+                                      className={css.notesLink}
+                                      onClick={() => openNotes(name, status.current ?? null, status.latest ?? null, repoUrl)}
+                                    >{`▸ ${t('notesLink')}`}</button>
+                                  )}
                                   {!off && act !== undefined && meta !== null && (
                                         <div className={css.act}>
                                           {/* Only a state the switch does NOT already show earns a
@@ -4147,6 +4240,92 @@ export function MarketSection(props: MarketSectionProps) {
             </>
           )}
         />
+      )}
+      {notesFor !== null && (
+        <Modal
+          open
+          onClose={() => setNotesFor(null)}
+          /* The host's Modal renders its title node verbatim; the hand-written
+             primitives.d.ts narrows the prop to string, so this cast documents
+             intent rather than defeating a runtime check. */
+          title={(notesFor.repoUrl !== null
+            ? <a className={css.nameLink} href={notesFor.repoUrl + '#readme'} target="_blank" rel="noreferrer">{notesFor.name}</a>
+            : notesFor.name) as unknown as string}
+          footer={(
+            <Button variant="ghost" onClick={() => setNotesFor(null)}>{t('cancel')}</Button>
+          )}
+        >
+          {/* The version line reads as versions when both ends are semver and
+              as short shas when the plugin updates from git — a 40-char sha
+              pair wraps the dialog into nonsense. */}
+          {(notesFor.current !== null || notesFor.latest !== null) && (
+            <div className={css.notesRange}>
+              <span className={css.spec}>{notesFor.current !== null && notesFor.current.length === 40
+                ? notesFor.current.slice(0, 7)
+                : notesFor.current}</span>
+              <span className={css.notesArrow}>→</span>
+              <span className={css.spec}>{notesFor.latest !== null && notesFor.latest.length === 40
+                ? notesFor.latest.slice(0, 7)
+                : notesFor.latest}</span>
+            </div>
+          )}
+          {notesState === 'loading' && <div className={css.spec}>{t('loading')}</div>}
+          {notesState === 'fail' && <div className={css.spec}>{t('notesLoadFail')}</div>}
+          {notesState === 'ready' && updateNotes !== null && (
+            updateNotes.kind === 'release' ? (
+              <div className={css.notesBody}>
+                <div className={css.notesMeta}>
+                  <strong>{t('notesRelease')}</strong>
+                  {updateNotes.release.tag !== null && <span>{' ' + updateNotes.release.tag}</span>}
+                  {updateNotes.release.publishedAt !== null && <span>{' · ' + updateNotes.release.publishedAt.slice(0, 10)}</span>}
+                </div>
+                {/* Author-written markdown, rendered through a deliberately
+                    tiny converter: everything lands as React text children
+                    (auto-escaped), so no HTML from the repo can ever become
+                    markup — headings, bullets, bold and inline code only. */}
+                <div className={css.notesRendered}>{renderMarkdown(updateNotes.release.body || t('notesNone'))}</div>
+              </div>
+            )
+            : updateNotes.kind === 'commits' ? (
+              <div className={css.notesBody}>
+                <div className={css.notesMeta}><strong>{t('notesCommits')}</strong></div>
+                {!updateNotes.commits.found && <div className={css.notesMeta}>{t('notesCommitsRecent')}</div>}
+                <ul className={css.notesList}>
+                  {updateNotes.commits.items.map(c => (
+                    <li key={c.sha} className={css.notesRow}>
+                      <span className={css.notesDate}>{c.date !== null ? c.date.slice(0, 10) : ''}</span>
+                      <span className={css.notesMsg}>{mdInline(c.message)}</span>
+                      {notesFor.repoUrl !== null && (
+                        /* The commit itself on GitHub — the escape hatch when
+                           two lines of clamp hide exactly the detail wanted. */
+                        <a className={css.notesSha}
+                          href={notesFor.repoUrl + '/commit/' + c.sha}
+                          target="_blank" rel="noreferrer"
+                          title={c.message}>{c.sha.slice(0, 7)}</a>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )
+            : updateNotes.kind === 'npm' ? (
+              <div className={css.notesBody}>
+                <div className={css.notesMeta}><strong>{t('notesNpm')}</strong></div>
+                <ul className={css.notesList}>
+                  {updateNotes.npmTimes.map(v => (
+                    <li key={v.version} className={css.notesRow}>
+                      <span className={css.notesDate}>{v.date.slice(0, 10)}</span>
+                      <a className={css.notesVer}
+                        href={`https://www.npmjs.com/package/${encodeURIComponent(notesFor.name)}/v/${encodeURIComponent(v.version)}`}
+                        target="_blank" rel="noreferrer">{v.version}</a>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )
+            : <div className={css.spec}>{t('notesNone')}</div>
+          )}
+        </Modal>
       )}
       {restoreConfirmOpen && pendingBackup !== null && (
         <Modal

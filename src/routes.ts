@@ -39,6 +39,7 @@ import { asChannel, CHANNELS, DIST_TAG, resolveChannel, type Channel } from './c
 import { asRegion, REGIONS, routesFor, setActiveRegion, type Region } from './regions.ts'
 import { resolveRegion } from './region-probe.ts'
 import { acceleratedTarget, resolveHeadCommit } from './accelerate.ts'
+import { updateNotesFor } from './changelog.ts'
 import { checkUpdates, compareVersions, fetchNpmLatest, invalidateUpdates, isUpgrade, latestPublishedRecently, setUpdateRegistry, versionOnChannel } from './updates.ts'
 import { createThemeManager, type LoaderEntry } from './themes.ts'
 import { readJsonBody, sameOrigin, sendJson } from './http.ts'
@@ -1950,6 +1951,34 @@ export function mountMarketRoutes(
               .map(name => [name, channel] as const),
           )
           sendJson(response, 200, { updates: await checkUpdates(config.profile, force, activeProfileDir, channelFor) })
+        } catch (error) {
+          sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    }),
+
+    // Read-only notes for the update dialog (#294): release body and/or a
+    // commit tail sliced at the installed sha, resolved from the catalog
+    // side's daily probe — no GitHub API call is made here, ever. The handler
+    // itself does not throw (every failure degrades to `kind: 'none'`), so a
+    // dialog that cannot load its data shows a neutral statement rather than
+    // an error banner.
+    host.webServer.register({
+      kind: 'exact',
+      path: '/dsh-market/changelog',
+      handler: async (request, response) => {
+        if (request.method !== 'GET') {
+          response.writeHead(405, { allow: 'GET' })
+          response.end()
+          return
+        }
+        try {
+          const name = new URL(request.url ?? '/', 'http://localhost').searchParams.get('name') ?? ''
+          if (name === '') {
+            sendJson(response, 400, { error: 'name query parameter is required' })
+            return
+          }
+          sendJson(response, 200, await updateNotesFor(config.profile, activeProfileDir, name))
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
         }
