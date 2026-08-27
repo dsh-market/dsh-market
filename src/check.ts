@@ -379,15 +379,29 @@ function readNodeModulesVersion(base: string, name: string): string | null {
  * hoisting (`<profiles>/node_modules/…` when the profile lives under
  * `<profiles>/<name>`) and mirrors the Loader's package search roots.
  */
-function resolvePackageDir(anchorPackageJson: string, name: string): string | null {
+function resolvePackageDir(
+  anchorPackageJson: string,
+  name: string,
+  ignoredPackageDirectory?: string,
+): string | null {
   let paths: string[] = []
   try {
     paths = createRequire(anchorPackageJson).resolve.paths(name) ?? []
   } catch {
     return null
   }
+  const ignored = ignoredPackageDirectory === undefined
+    ? null
+    : resolve(ignoredPackageDirectory)
   for (const searchPath of paths) {
     const candidate = join(searchPath, name)
+    if (ignored !== null) {
+      const resolvedCandidate = resolve(candidate)
+      const matchesIgnored = process.platform === 'win32'
+        ? resolvedCandidate.toLowerCase() === ignored.toLowerCase()
+        : resolvedCandidate === ignored
+      if (matchesIgnored) continue
+    }
     if (existsSync(join(candidate, 'package.json'))) return candidate
   }
   return null
@@ -884,14 +898,26 @@ export function buildBundleLayers(
   dshInstallDir: string | null,
 ): { bundles: BundleLayer[]; layers: LayerInput[] } {
   const bundles: BundleLayer[] = bundleNames.map((name) => {
-    const anchors = [
-      dshInstallDir !== null ? join(dshInstallDir, 'package.json') : null,
-      join(profileDirectory, 'package.json'),
+    // The real loader gives the DSH installation first refusal for in-box
+    // bundles. Desktop keeps that installation private from plugins, so a
+    // DIRECT profile-local copy with the same official name is only a stale
+    // shadow, never evidence for the layer the running host loaded (#371).
+    // Keep walking the profile anchor's parent search paths: Desktop heals an
+    // authoritative host fallback at <profiles>/node_modules.
+    const ignoredProfilePackage = dshInstallDir === null && INBOX_BUNDLES.has(name)
+      ? join(profileDirectory, 'node_modules', name)
+      : undefined
+    const anchors: Array<{ anchor: string | null; ignoredPackageDirectory?: string }> = [
+      { anchor: dshInstallDir !== null ? join(dshInstallDir, 'package.json') : null },
+      {
+        anchor: join(profileDirectory, 'package.json'),
+        ignoredPackageDirectory: ignoredProfilePackage,
+      },
     ]
     let directory: string | null = null
-    for (const anchor of anchors) {
+    for (const { anchor, ignoredPackageDirectory } of anchors) {
       if (anchor === null) continue
-      directory = resolvePackageDir(anchor, name)
+      directory = resolvePackageDir(anchor, name, ignoredPackageDirectory)
       if (directory !== null) break
     }
     const layer: BundleLayer = {

@@ -71,6 +71,62 @@ describe('an unlocatable in-box bundle must not fail the trial (#369)', () => {
     expect(result.ok, 'a passing composition was called unbootable').toBe(true)
   })
 
+  it('ignores a stale profile copy that the hidden in-box host outranks', () => {
+    const dir = pdir()
+    writeProfile(dir, ['@deepseek-ai/dsh-base', 'dsh-smooth-stream'])
+    const stale = join(dir, 'node_modules', '@deepseek-ai', 'dsh-base')
+    mkdirSync(stale, { recursive: true })
+    writeFileSync(join(stale, 'package.json'), JSON.stringify({
+      name: '@deepseek-ai/dsh-base',
+      version: '0.0.1',
+      dsh: {},
+    }))
+    writeBundle(dir, 'dsh-smooth-stream', '0.4.1', [{ insert: [{ id: 'smooth' }] }])
+
+    const result = trialValidate(dir, ['dsh-smooth-stream'], {
+      dshInstallDir: null,
+      homeDir: join(tmp, 'empty-home'),
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.errors).toEqual([])
+  })
+
+  it('detects conflicts through the healed parent fallback behind a stale direct shadow', () => {
+    const dir = pdir('profiles/web')
+    writeProfile(dir, ['@deepseek-ai/dsh-base', 'dsh-smooth-stream'])
+    const stale = join(dir, 'node_modules', '@deepseek-ai', 'dsh-base')
+    mkdirSync(stale, { recursive: true })
+    writeFileSync(join(stale, 'package.json'), JSON.stringify({
+      name: '@deepseek-ai/dsh-base',
+      version: '0.0.1',
+      dsh: {},
+    }))
+    writeBundle(
+      join(tmp, 'profiles'),
+      '@deepseek-ai/dsh-base',
+      '4.0.1',
+      [{ insert: [{ id: 'shared-entry', name: 'host-base' }] }],
+    )
+    writeBundle(dir, 'dsh-smooth-stream', '0.4.1', [
+      { insert: [{ id: 'shared-entry', name: 'smooth' }] },
+    ])
+
+    const result = trialValidate(dir, ['dsh-smooth-stream'], {
+      dshInstallDir: null,
+      homeDir: join(tmp, 'empty-home'),
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.errors.some(issue => issue.message.includes('duplicate'))).toBe(true)
+    expect(result.duplicates).toHaveLength(1)
+    expect(result.duplicates[0]).toMatchObject({
+      id: 'shared-entry',
+      count: 2,
+      layers: ['@deepseek-ai/dsh-base', 'dsh-smooth-stream'],
+    })
+  })
+
   it('still fails the trial for a COMMUNITY bundle that really is absent', () => {
     const dir = pdir()
     writeProfile(dir, ['@deepseek-ai/dsh-base', 'ghost-bundle'])
@@ -194,7 +250,7 @@ describe('trialValidate (#98 trial boot)', () => {
     writeBundle(dir, 'alpha', '1.0.0', [{ insert: [{ id: 'alpha-entry', name: 'alpha' }] }])
     writeBundle(dir, 'beta', '1.0.0', [{ insert: [{ id: 'beta-entry', name: 'beta' }] }])
 
-    const result = trialValidate(dir, ['beta', 'alpha'])
+    const result = trialValidate(dir, ['beta', 'alpha'], { dshInstallDir: dir })
     expect(result.ok).toBe(true)
     expect(result.rows.map(r => r.id)).toEqual(['base-entry', 'beta-entry', 'alpha-entry'])
   })

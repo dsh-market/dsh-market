@@ -85,7 +85,8 @@ describe('bundle stack (#98 diagnostics)', () => {
       { insert: [{ id: 'dsh-market', name: 'dshmarket' }] },
     ])
 
-    const report = analyzeProfile(dir)
+    // This fixture deliberately models a visible DSH installation anchor.
+    const report = analyzeProfile(dir, { dshInstallDir: dir })
 
     // Order comes straight from dsh.profile.bundles.
     expect(report.bundles.map(b => b.name)).toEqual(['@deepseek-ai/dsh-base', 'dsh-market'])
@@ -113,7 +114,7 @@ describe('bundle stack (#98 diagnostics)', () => {
     })
     writeBundle(dir, '@deepseek-ai/dsh-base', '4.0.1', [{ insert: [{ id: 'x' }] }])
 
-    const report = analyzeProfile(dir)
+    const report = analyzeProfile(dir, { dshInstallDir: dir })
     const missing = report.bundles.find(b => b.name === 'missing-bundle')
     expect(missing).toBeDefined()
     expect(missing?.directory).toBeNull()
@@ -582,7 +583,7 @@ describe('duplicate loader entry ids (#98 boot failure)', () => {
       { insert: [{ id: 'shared-entry', name: 'from-user' }] },
     ]))
 
-    const report = analyzeProfile(dir)
+    const report = analyzeProfile(dir, { dshInstallDir: dir })
     const dup = report.duplicates.find(d => d.id === 'shared-entry')
     expect(dup).toBeDefined()
     expect(dup?.id).toBe('shared-entry')
@@ -608,7 +609,7 @@ describe('duplicate loader entry names (#98 opt: runtime shadowing)', () => {
       { insert: [{ id: 'two', name: 'same-plugin' }] },
     ]))
 
-    const report = analyzeProfile(dir)
+    const report = analyzeProfile(dir, { dshInstallDir: dir })
     // The shadowing pair stays structurally visible with the SAME shape
     // ({name, layers, count}) for the diagnostics panel to render.
     const dup = report.duplicateNames.find(d => d.name === 'same-plugin')
@@ -796,6 +797,61 @@ describe('in-box bundles that cannot be located (#369)', () => {
       expect(layer.unresolvedInbox).toBe(true)
     }
     expect(report.summary.errors.join('\n')).not.toMatch(/is not installed/)
+  })
+
+  it('does not inspect a stale profile copy when the in-box host is hidden', () => {
+    const dir = pdir()
+    writeProfile(dir, {
+      name: 'web-profile',
+      dependencies: { '@deepseek-ai/dsh-base': '^0.0.1' },
+      dsh: { profile: { bundles: ['@deepseek-ai/dsh-base'] } },
+    })
+    const stale = writePackage(dir, '@deepseek-ai/dsh-base', {
+      name: '@deepseek-ai/dsh-base',
+      version: '0.0.1',
+      dsh: {},
+    })
+
+    const report = analyzeProfile(dir, desktop())
+    const official = report.bundles[0]
+
+    expect(official).toMatchObject({
+      directory: null,
+      unresolvedInbox: true,
+      error: null,
+    })
+    expect(official?.directory).not.toBe(stale)
+    expect(report.summary.ok).toBe(true)
+  })
+
+  it('uses the healed parent fallback behind a stale direct in-box shadow', () => {
+    const dir = pdir('profiles/web')
+    writeProfile(dir, {
+      name: 'web-profile',
+      dependencies: { '@deepseek-ai/dsh-base': '^0.0.1' },
+      dsh: { profile: { bundles: ['@deepseek-ai/dsh-base'] } },
+    })
+    writePackage(dir, '@deepseek-ai/dsh-base', {
+      name: '@deepseek-ai/dsh-base',
+      version: '0.0.1',
+      dsh: {},
+    })
+    const fallback = writeBundle(
+      join(tmp, 'profiles'),
+      '@deepseek-ai/dsh-base',
+      '4.0.1',
+      [{ insert: [{ id: 'host-base' }] }],
+    )
+
+    const report = analyzeProfile(dir, desktop())
+    const official = report.bundles[0]
+
+    expect(official?.directory).toBe(fallback)
+    expect(official?.unresolvedInbox).toBeUndefined()
+    expect(official?.error).toBeNull()
+    expect(official?.entries).toEqual(['host-base'])
+    expect(report.rows.map(row => row.id)).toEqual(['host-base'])
+    expect(report.summary.ok).toBe(true)
   })
 
   it('still calls a COMMUNITY bundle missing, which is a real defect', () => {
