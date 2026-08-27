@@ -673,3 +673,23 @@
 .setSegBtn:disabled{cursor:default;opacity:.5}
 .setSegOn{background:var(--dsw-alias-bg-layer-2,#eef0f4);color:var(--dsw-alias-label-primary,#1f2328);font-weight:600}
 .setBetaTag{margin-left:6px;padding:0 6px;border-radius:9px;font-size:11px;font-weight:600;line-height:17px;background:var(--dsw-alias-bg-module-platform,#eef0f4);color:var(--dsw-alias-label-secondary,#6b7280)}
+
+/* ---------------------------------------------------------- comments */
+/* Card footer entry point. Styled as the quiet sibling of .src, not as a
+   button: it competes with Install for attention otherwise, and Install is
+   what the card is for. */
+.commentsLink{background:none;border:0;padding:0;cursor:pointer;font-size:11px;line-height:16px;white-space:nowrap;color:var(--dsw-alias-label-secondary,#9ca3af)}
+.commentsLink:hover{color:var(--dsw-alias-brand-primary,#4f6ef7)}
+.commentsNote{font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary,#9ca3af);margin:0 0 8px}
+.commentsStatus{font-size:12px;color:var(--dsw-alias-label-secondary,#9ca3af);margin:0}
+.commentsStatus:empty{display:none}
+.commentsError{font-size:12px;color:var(--dsw-alias-label-primary,#1f2328);margin:0 0 8px}
+.commentsFail{display:flex;flex-direction:column;align-items:flex-start;gap:8px;padding:12px 0}
+/* The iframe reports its own height once giscus has the thread. Holding room
+   until then keeps the modal from snapping open to full size a beat after the
+   reader has already started looking at it. */
+/* The host owns the dialog's width and does not let a plugin change it, so the
+   thread is fitted to that width rather than overflowing a box that clips.
+   giscus lays out fine this narrow — it is the width it uses on phones. */
+.commentsMount{width:100%;min-height:240px;max-height:56vh;overflow:auto}
+.commentsMount iframe{width:100%}

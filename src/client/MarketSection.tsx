@@ -35,6 +35,7 @@ import {
   type MenuEntry,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import css from './Market.module.css'
+import { CommentsModal } from './CommentsModal.tsx'
 import { OperationsPanel } from './OperationsPanel.tsx'
 import { clearSettled, drop, enqueue, patch as patchRecord, recordForUrl } from './operations.ts'
 import type { OperationRecord } from './operations.ts'
@@ -1020,6 +1021,8 @@ export function MarketSection(props: MarketSectionProps) {
   const [qInstalled, setQInstalled] = useState('')
   const [cat, setCat] = useState('all')
   const [confirming, setConfirming] = useState<RegistryPlugin | null>(null)
+  /** The plugin whose comment thread is open, or null. */
+  const [commentsFor, setCommentsFor] = useState<RegistryPlugin | null>(null)
   /** A rejected install and the installed plugins it clashed with, one entry
    * per owner as grouped by the host. */
   interface ConflictNotice {
@@ -2717,6 +2720,13 @@ export function MarketSection(props: MarketSectionProps) {
               date/tag pair alone was long enough in English to wrap onto its
               own line, splitting one card's footer into two visual rows. */}
           <span className={css.grow} />
+          {/* No comment count here. Showing one would mean asking giscus about
+              every card on the page just to render a number, and a row of
+              zeroes reads as "nobody uses these" on a catalog where almost
+              nothing has been commented on yet. */}
+          <button type="button" className={css.commentsLink} onClick={() => setCommentsFor(p)}>
+            {t('comments')}
+          </button>
         </div>
         {busy && (
           <div className={css.progress}>
@@ -4105,6 +4115,16 @@ export function MarketSection(props: MarketSectionProps) {
           })()}
           <p className={css.modalNote}><IconWarningOutline16 size={14} className={css.bannerIcon} />{' ' + t('confirmWarn')}</p>
         </Modal>
+      )}
+      {commentsFor !== null && (
+        <CommentsModal
+          key={commentsFor.url}
+          name={pluginName(commentsFor.name)}
+          url={commentsFor.url}
+          lang={lang}
+          onClose={() => setCommentsFor(null)}
+          t={t}
+        />
       )}
       {lightbox !== null && (
         <ScreenshotLightbox
