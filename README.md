@@ -31,8 +31,9 @@ its own dsh: it may be older than the one `npm` would give you (#139).
 
 ## What you get
 
-- **Browse & search** the full community catalog (1550+ plugins, growing daily) — category filters, star counts, top/new sorting, bilingual descriptions that follow your UI language
+- **Browse & search** the full community catalog (2300+ plugins, growing daily) — category filters, star counts, top/new sorting, bilingual descriptions that follow your UI language
 - **Screenshots** — AppStore-style screenshots, auto-carousel when there's more than one, click to preview full-size: author-curated shots show right on the card (zero extra requests); plugins without curated shots fall back to automatic README extraction once you open the install dialog. Images load from GitHub hosting only
+- **Comments** — every card opens the plugin's discussion thread in place. It is the same thread its pages on [dshmarket.com](https://dshmarket.com) and the [catalog](https://awesome-dsh-plugin.com) show, so a plugin has one conversation rather than three. Backed by GitHub Discussions through giscus: it loads when you open it, needs a GitHub account only to post, and the note above it says plainly that opening it contacts giscus.app and GitHub
 - **Themes** — a dedicated tab for community themes and skins: install → active immediately, switch with one click (themes are mutually exclusive, your choice survives restarts), uninstall to revert
 - **One-click install** — confirm the source, watch live progress; most plugins go live after a page refresh, no restart
 - **Backup & restore** — export your profile's plugin list and configuration as readable JSON, import it on another machine, store it on WebDAV with daily auto-backup, or sync through a private GitHub Gist; restores **merge** (plugins installed after the backup are kept), validate before writing, and roll back on failure
