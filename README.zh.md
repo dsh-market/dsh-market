@@ -112,6 +112,10 @@ DSHM_REGISTRY_URL=https://your-mirror.example/plugins.json dsh web
 
 [dsh-app](https://github.com/RyensX/dsh-app)——基于 Tauri 2（而非 Electron）的 DeepSeek Harness 桌面客户端，因此安装包小得多，界面走系统 webview。AGPL-3.0。
 
+### Local DSH
+
+[local-dsh](https://github.com/liangchen-harold/local-dsh)——包含端侧模型运行能力的开源 DeepSeek Harness 桌面客户端，基于 Turi 构建，极致精简的打包，快速启动。
+
 ### DSH Get
 
 [DSH Get](https://www.dshget.com/)——DeepSeek Harness 插件的网页检索目录：分类筛选、中英描述、安装命令与插件详情页；其规范化的目录快照公开在 [bobby-sheng/dshget-data](https://github.com/bobby-sheng/dshget-data)。

@@ -115,6 +115,10 @@ DSHM_REGISTRY_URL=https://your-mirror.example/plugins.json dsh web
 
 [dsh-app](https://github.com/RyensX/dsh-app) — a DeepSeek Harness desktop client built on Tauri 2 rather than Electron, so it ships a much smaller binary and uses the system webview. AGPL-3.0.
 
+### Local DSH
+
+[local-dsh](https://github.com/liangchen-harold/local-dsh) — an open-source DeepSeek Harness desktop client that runs LLMs locally through llama.cpp, built on Tauri and ships a smaller binary.
+
 ### DSH Get
 
 [DSH Get](https://www.dshget.com/) — a searchable web directory for discovering DeepSeek Harness plugins: category filters, bilingual descriptions, install commands and per-plugin detail pages. Its normalized catalog snapshot is public at [bobby-sheng/dshget-data](https://github.com/bobby-sheng/dshget-data).
