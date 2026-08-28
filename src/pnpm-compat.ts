@@ -45,7 +45,7 @@ export const HOST_NAMESPACE_RE = /^@deepseek-ai\//
 export interface PnpmFailure {
   code: 'adding-to-root' | 'not-a-workspace' | 'hoist-pattern-diff' | 'pnpm-missing' | 'release-age-violation'
     | 'ignored-builds' | 'git-prepare-not-allowed' | 'fetch-404' | 'transient-network' | 'fetch-timeout'
-    | 'unexpected-store' | 'patch-failed' | 'missing-tarball-integrity'
+    | 'unexpected-store' | 'patch-failed' | 'missing-tarball-integrity' | 'windows-file-locked'
   /** Bilingual, actionable message shown to the user instead of the raw wall of text. */
   message: string
   /** True when re-running `pnpm install` in the profile is the documented recovery. */
@@ -266,6 +266,34 @@ export function classifyPnpmFailure(output: string): PnpmFailure | null {
       recoverable: false,
       pkg,
       message: `有一个依赖在 registry 上不存在${zh}，pnpm 因此拒绝任何安装操作。它可能是之前失败操作残留在 profile package.json 里的幽灵依赖（可手动删除该行），也可能是需要登录的私有包 / a dependency cannot be resolved from the registry${en}; pnpm refuses every install while it is present. It may be a ghost entry left in the profile's package.json by an earlier failed operation (remove that line by hand), or a private package needing registry credentials`,
+    }
+  }
+  // #389 by @qq1054435284: on Windows, pnpm stages the new version in a
+  // sibling `<name>_tmp_<pid>_<n>` directory and renames it over the old one.
+  // Windows refuses that rename while any file underneath the target is open
+  // — and for an UPDATE the target is a plugin the running dsh has loaded, so
+  // its own files are exactly the ones held open. POSIX does not have this
+  // problem: replacing an open file there leaves the old inode alive for
+  // whoever still holds it.
+  //
+  // Not retried automatically. A retry from inside the same process cannot
+  // win, because that process is the thing holding the handles; retrying
+  // would only turn one clear failure into several slow ones. So this names
+  // the cause and the two ways out instead of guessing.
+  if (/ERR_PNPM_EPERM|EPERM: operation not permitted, rename/i.test(output)) {
+    // Read through the NDJSON reporter like the integrity classifier does:
+    // in production this arrives JSON-escaped, so every separator is doubled
+    // and a single-character class silently matches nothing.
+    const diagnostic = withDecodedPnpmDiagnostics(output)
+    const pkg = /node_modules[\\/]+((?:@[a-z0-9][a-z0-9._-]*[\\/]+)?[a-z0-9][a-z0-9._-]*)_tmp_\d+/i
+      .exec(diagnostic)?.[1]?.replace(/\\+/g, '/')
+    const zh = pkg === undefined ? '' : `（${pkg}）`
+    const en = pkg === undefined ? '' : ` (${pkg})`
+    return {
+      code: 'windows-file-locked',
+      recoverable: false,
+      ...(pkg === undefined ? {} : { pkg }),
+      message: `Windows 不允许替换正在被打开的文件，而更新一个插件${zh}要替换的正是当前 DeepSeek Harness 已经加载的那些文件，所以 pnpm 改名失败、更新没有生效（原来的版本没有被破坏，仍可正常使用）。两种做法：完全退出 DeepSeek Harness 后在命令行执行一次更新；或先在「已安装」里停用该插件、重启、再更新。杀毒软件或文件索引临时占用目录也会造成同样的报错，若上述都不适用可稍后重试 / Windows will not replace a file that is open, and updating a plugin${en} replaces exactly the files the running DeepSeek Harness has loaded, so pnpm's rename failed and the update did not apply (the existing version is intact and still works). Two ways round it: quit DeepSeek Harness completely and run the update from the command line, or disable the plugin under Installed, restart, then update. Antivirus or a file indexer holding the directory produces the same error, so a later retry is worth trying if neither applies`,
     }
   }
   // #83: pnpm replays the WHOLE dependency tree on every add/remove, so a
