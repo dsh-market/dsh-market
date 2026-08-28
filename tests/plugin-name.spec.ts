@@ -21,16 +21,16 @@ describe('pluginName', () => {
     // Both upstream conventions, which differ for no reason anyone chose:
     // one writes the sub-package, the other writes its path. They describe
     // the same plugin and now render identically.
-    expect(pluginName('dsh-web-ui#packages/dsh-web-ui-all')).toBe('dsh-web-ui-all')
-    expect(pluginName('dsh-web-ui#dsh-web-ui-all')).toBe('dsh-web-ui-all')
+    expect(pluginName('dsh-web#packages/dsh-web-all')).toBe('dsh-web-all')
+    expect(pluginName('dsh-web#dsh-web-all')).toBe('dsh-web-all')
     expect(pluginName('dsh-plugins#src/plugins/dsh-plugin-setting-mcp')).toBe('dsh-plugin-setting-mcp')
   })
 
   it('matches what the installed list already calls the same plugin', () => {
     // The bug this exists for: the installed tab reads names out of the
-    // profile manifest, so one plugin was `dsh-web-ui#packages/dsh-web-ui-all`
-    // before the Install button and `dsh-web-ui-all` after it.
-    expect(pluginName('dsh-web-ui#packages/dsh-web-ui-all')).toBe('dsh-web-ui-all')
+    // profile manifest, so one plugin was `dsh-web#packages/dsh-web-all`
+    // before the Install button and `dsh-web-all` after it.
+    expect(pluginName('dsh-web#packages/dsh-web-all')).toBe('dsh-web-all')
   })
 
   it('keeps duplicates rather than qualifying them', () => {

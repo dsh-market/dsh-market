@@ -1612,10 +1612,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		*
 		* The catalog's `name` is an IDENTITY, and for the 104 entries that live in
 		* a repository holding several plugins it is a compound one:
-		* `dsh-web-ui#packages/dsh-web-ui-all`. Shown verbatim it puts a repository
+		* `dsh-web#packages/dsh-web-all`. Shown verbatim it puts a repository
 		* path in front of a user who did not ask about repositories — and worse, it
 		* disagrees with the market's own installed list, which reads names out of
-		* the profile manifest and calls the same plugin `dsh-web-ui-all`. The same
+		* the profile manifest and calls the same plugin `dsh-web-all`. The same
 		* thing had two names either side of the Install button.
 		*
 		* A card answers two questions: who made it, and what is it called. The
