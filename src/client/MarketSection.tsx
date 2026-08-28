@@ -777,6 +777,7 @@ function ScreenshotLightbox({ shots, startIndex, onClose, t }: { shots: string[]
   // disabled with intervalMs = 0. Arrows, dots, and the keyboard still
   // navigate manually.
   const [index, setIndex] = useAutoCarousel(shots.length, startIndex, 0)
+  const host = useMarketPortalHost()
   useEffect(() => {
     // Capture phase + stopPropagation: the Settings dialog underneath is a
     // Modal with its own Escape-to-close handling, also on window/document.
@@ -847,7 +848,7 @@ function ScreenshotLightbox({ shots, startIndex, onClose, t }: { shots: string[]
         </>
       )}
     </div>,
-    marketPortalHost(),
+    host,
   )
 }
 
@@ -875,10 +876,30 @@ function marketPortalHost(): HTMLElement {
     // plugins a real portal slot, can see who owns it.
     portalHost.setAttribute('data-dsh-market-portal', '')
   }
-  // appendChild on an existing child MOVES it to the end — the stacking
-  // guarantee, refreshed each time without ever creating a second container.
-  document.body.appendChild(portalHost)
   return portalHost
+}
+
+/**
+ * Move the container to the end of `document.body`, which is what keeps this
+ * package's layers above the host's own portalled dialog.
+ *
+ * In a layout effect, NOT during render. `createPortal` needs the element
+ * while rendering, but appending it does not belong there: React may start a
+ * render, abandon it and start again, so a mutation in the render body runs
+ * for passes that never commit — and this particular mutation reorders
+ * `document.body`, the one container this package shares with the host's
+ * separate React root. That is the same shared-child-list hazard #293 was
+ * about, just arrived at from the other side. Committing it in an effect
+ * means it happens once, after React is done, in the order React expects.
+ */
+function useMarketPortalHost(): HTMLElement {
+  const host = marketPortalHost()
+  useLayoutEffect(() => {
+    // appendChild on an existing child MOVES it to the end — the stacking
+    // guarantee, refreshed on open without ever creating a second container.
+    document.body.appendChild(host)
+  }, [host])
+  return host
 }
 
 /** Test hook: the container is module state and outlives a component unmount. */

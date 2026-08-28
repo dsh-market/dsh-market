@@ -2745,6 +2745,30 @@ describe('card thumbnail + lightbox (curated screenshots only)', () => {
     expect(document.body.lastElementChild).toBe(own)
   })
 
+  it('keeps one container, last in body, across repeated opens', async () => {
+    // The container is created during render (createPortal needs a target) but
+    // MOVED into body from a layout effect — see useMarketPortalHost. What is
+    // observable from here is the invariant that move exists to hold: exactly
+    // one container, always body's last child, however many times the preview
+    // is opened. A second container, or one that drifts off the end, is the
+    // shared-child-list churn between two React roots that #293 was about.
+    resetMarketPortalHost()
+    stubFetch({ '/dsh-market/registry': { source: 'live', registry: registryWithShots() } })
+    const { container } = render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+
+    for (let i = 0; i < 3; i++) {
+      fireEvent.click(container.querySelector('img[class*="cardShot"]')!)
+      await waitFor(() => expect(document.querySelector('[class*="lightboxImg"]')).toBeTruthy())
+      expect(document.querySelectorAll('[data-dsh-market-portal]').length,
+        'a second portal container was created').toBe(1)
+      expect(document.body.lastElementChild,
+        'the container drifted off the end of body').toBe(document.querySelector('[data-dsh-market-portal]'))
+      fireEvent.click(document.querySelector('[class*="lightboxClose"]')!)
+      await waitFor(() => expect(document.querySelector('[class*="lightboxImg"]')).toBeNull())
+    }
+  })
+
   it('opens a lightbox on click, at the clicked shot, and wraps prev/next around the ends', async () => {
     stubFetch({ '/dsh-market/registry': { source: 'live', registry: registryWithShots() } })
     const { container } = render(<MarketSection {...props()} />)

@@ -5051,6 +5051,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		*/
 		function ScreenshotLightbox({ shots, startIndex, onClose, t }) {
 			const [index, setIndex] = useAutoCarousel(shots.length, startIndex, 0);
+			const host = useMarketPortalHost();
 			(0, react.useEffect)(() => {
 				const onKey = (e) => {
 					if (e.key === "Escape") {
@@ -5112,7 +5113,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						})
 					] })
 				]
-			}), marketPortalHost());
+			}), host);
 		}
 		/**
 		* The one DOM node this package portals into, created on first use and kept
@@ -5135,8 +5136,27 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				portalHost = document.createElement("div");
 				portalHost.setAttribute("data-dsh-market-portal", "");
 			}
-			document.body.appendChild(portalHost);
 			return portalHost;
+		}
+		/**
+		* Move the container to the end of `document.body`, which is what keeps this
+		* package's layers above the host's own portalled dialog.
+		*
+		* In a layout effect, NOT during render. `createPortal` needs the element
+		* while rendering, but appending it does not belong there: React may start a
+		* render, abandon it and start again, so a mutation in the render body runs
+		* for passes that never commit — and this particular mutation reorders
+		* `document.body`, the one container this package shares with the host's
+		* separate React root. That is the same shared-child-list hazard #293 was
+		* about, just arrived at from the other side. Committing it in an effect
+		* means it happens once, after React is done, in the order React expects.
+		*/
+		function useMarketPortalHost() {
+			const host = marketPortalHost();
+			(0, react.useLayoutEffect)(() => {
+				document.body.appendChild(host);
+			}, [host]);
+			return host;
 		}
 		/**
 		* Official-style market glyph: the shared block-grid brand mark converted to
