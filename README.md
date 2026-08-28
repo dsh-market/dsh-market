@@ -117,7 +117,7 @@ DSHM_REGISTRY_URL=https://your-mirror.example/plugins.json dsh web
 
 ### Local DSH
 
-[local-dsh](https://github.com/liangchen-harold/local-dsh) — an open-source DeepSeek Harness desktop client that runs LLMs locally through llama.cpp, built on Tauri and ships a smaller binary.
+[local-dsh](https://github.com/liangchen-harold/local-dsh) — a DeepSeek Harness desktop client that can run the model on your own machine: it bundles llama.cpp next to Node, pnpm and DSH, so a downloaded GGUF model answers without any external API. Built on Tauri; Apple Silicon Macs for now. [localdsh.com](https://localdsh.com)
 
 ### DSH Get
 

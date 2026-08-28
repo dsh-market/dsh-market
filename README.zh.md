@@ -114,7 +114,7 @@ DSHM_REGISTRY_URL=https://your-mirror.example/plugins.json dsh web
 
 ### Local DSH
 
-[local-dsh](https://github.com/liangchen-harold/local-dsh)——包含端侧模型运行能力的开源 DeepSeek Harness 桌面客户端，基于 Turi 构建，极致精简的打包，快速启动。
+[local-dsh](https://github.com/liangchen-harold/local-dsh)——可以把模型跑在本机的 DeepSeek Harness 桌面客户端：发行包内置 llama.cpp 与 Node、pnpm、DSH，下载一个 GGUF 模型就能对话，不必接外部 API。基于 Tauri 构建；目前支持 Apple 芯片的 Mac。[localdsh.com](https://localdsh.com)
 
 ### DSH Get
 
