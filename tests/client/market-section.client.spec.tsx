@@ -6,6 +6,8 @@
  * endpoints, stubbed with fixture payloads.
  */
 
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MarketSection, resetMarketPortalHost, resetThemePreviewCache } from '../../src/client/MarketSection.tsx'
@@ -2599,6 +2601,22 @@ describe('category row expansion', () => {
       if (clientHeightDesc) Object.defineProperty(HTMLElement.prototype, 'clientHeight', clientHeightDesc)
       else Reflect.deleteProperty(HTMLElement.prototype, 'clientHeight')
     }
+  })
+
+  it('keeps the scroller opted out of scroll anchoring, which the auto-collapse cannot survive (#395)', () => {
+    // Honest about its reach: jsdom does no layout and implements no scroll
+    // anchoring, so this cannot reproduce #395 — the browser behaviour was
+    // measured by hand (see the rule's own comment in Market.module.css).
+    // What it CAN do is stop the declaration from being dropped by someone
+    // tidying the rule, which is the realistic way this regresses: the line
+    // looks like a no-op, and the bug it prevents only appears with the
+    // category row open, on a scroller with real overflow, in Chrome.
+    // Resolved from the project root, not import.meta.url: under the jsdom
+    // environment `new URL(rel, import.meta.url)` throws on jsdom's Location.
+    const css = readFileSync(resolve('src/client/Market.module.css'), 'utf8')
+    const body = /^\.body\{([^}]*)\}/mu.exec(css)
+    expect(body, '.body rule not found in Market.module.css').not.toBeNull()
+    expect(body![1]!).toContain('overflow-anchor:none')
   })
 
   it('shrinks the open, multi-row category list to one row while the sticky header is pinned by scroll, and restores it once unstuck (#188)', async () => {

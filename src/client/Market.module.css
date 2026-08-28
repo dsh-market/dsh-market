@@ -22,7 +22,26 @@
 .banner{display:flex;align-items:center;gap:8px;background:var(--dsw-alias-bg-layer-2,#fdf3e3);border:1px solid var(--dsw-alias-border-l2,#f3e3c3);border-radius:8px;padding:8px 12px;font-size:12px;margin:0}
 .bannerIcon{flex-shrink:0;color:var(--dsw-alias-label-secondary,#6b7280)}
 .bannerHint{display:inline-flex;color:var(--dsw-alias-label-tertiary,#8b93a1);cursor:help}
-.body{flex:1;overflow-y:auto;padding:12px 4px 24px;overflow-x:hidden}
+/* overflow-anchor:none is load-bearing, not a tidy-up (#395 by @zhangyh-x:
+   "展开分类，滑动列表时会闪动"). Chrome anchors the scroll position to a node
+   below the viewport and silently rewrites scrollTop whenever content ABOVE
+   it changes height. The sticky header does exactly that on purpose: leaving
+   the top auto-collapses an expanded category row, which is ~120px. So the
+   first small scroll collapsed the row, Chrome moved scrollTop back by the
+   same 120px to keep the anchored card still, that put the viewport above
+   the sentinel again, the row re-expanded, and the cycle repeated for as
+   long as the user kept scrolling. Measured in Chrome at 1020x526 with the
+   row open: scrollTop 8 -> 134 -> 24 inside 30ms with the row flipping
+   146px <-> 26px each time; parking at scrollTop 20 was yanked back to 0.
+   With anchoring off, the same gesture collapses once and scrollTop stays
+   where the user put it.
+
+   Anchoring costs this list nothing to give up: every image it renders is
+   sized in CSS (.shot, .cardShot, .av), so nothing above the viewport
+   resizes on load, and the banners that can appear live outside this
+   scroller entirely. The one thing anchoring had left to compensate for was
+   the deliberate collapse — the one adjustment that must not happen. */
+.body{flex:1;overflow-y:auto;padding:12px 4px 24px;overflow-x:hidden;overflow-anchor:none}
 /* Sticky, so the search box and the category row both stay reachable while
    the grid scrolls — they used to stick separately (only .cats did), which
    left the search row to scroll away under .head's fixed title/tabs strip,
