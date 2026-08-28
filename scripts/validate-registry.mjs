@@ -9,14 +9,14 @@
  *   E1  required string fields present and non-empty
  *   E2  description carries both non-empty "en" and "zh" (the market is bilingual)
  *   E3  npm is null or a syntactically valid npm package name
- *   E4  stars is a non-negative integer
+ *   E4  stars is a non-negative integer, or null when the catalog has no count
  *   E5  url is a github repo or tree(subpath) url
  *   E6  owner field matches the owner parsed from url
  *   E7  category is in the declared whitelist (top-level `categories`)
  *   E8  page is an awesome-dsh-plugin.com/p/ url
  *   E9  added is a YYYY-MM-DD date not in the future
- *   E10 install command references the entry's real target
- *       (npm name, or github:owner/repo[+ #path:] for git entries)
+ *   E10 install command references the entry's real target (npm name,
+ *       github:owner/repo[+ #path:], or a release archive under that same repo)
  *   E11 no duplicate install identity (same repo+subpath, or same npm package)
  *   E12 top-level `count` matches plugins.length
  *
@@ -43,6 +43,22 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 const INSTALL_RE = /^dsh plugin --profile \S+ add (.+)$/
 
 const now = new Date()
+
+/**
+ * The `owner/repo` a GitHub release archive belongs to, or null when the
+ * target is not one. Mirrors releaseTarballTarget in src/sources.ts.
+ * @param target - the install target from the entry's install command.
+ * @returns lowercase `owner/repo`, or null.
+ */
+function releaseTargetRepo(target) {
+  let url
+  try { url = new URL(target) } catch { return null }
+  if (url.protocol !== 'https:' || url.hostname !== 'github.com') return null
+  if (!url.pathname.endsWith('.tgz') && !url.pathname.endsWith('.tar.gz')) return null
+  const segments = url.pathname.split('/').filter(segment => segment !== '')
+  if (segments.length < 4 || segments[2] !== 'releases') return null
+  return `${segments[0]}/${segments[1]}`.toLowerCase()
+}
 
 function fail(errors, entry, code, msg) {
   errors.push({ entry: entry && entry.name ? entry.name : '<unknown>', code, msg })
@@ -98,8 +114,18 @@ function main() {
     }
 
     // E4 — stars
-    if (typeof p.stars !== 'number' || !Number.isInteger(p.stars) || p.stars < 0) {
-      fail(errors, p, 'E4', 'stars must be a non-negative integer')
+    //
+    // null is a legitimate value, not a defect: the catalog probes star counts
+    // against the GitHub API, whose anonymous quota it can exhaust, and its own
+    // publish guard ships as long as two thirds of entries have a count. So up
+    // to a third of a perfectly good plugins.json can carry `stars: null`, and
+    // the market renders those cards without the star line already
+    // (`typeof p.stars === 'number' &&`). Requiring a number here made this
+    // check pass only by luck — on the snapshot refresh where 302 entries came
+    // back null it failed the build for data that was doing nothing wrong.
+    if (p.stars !== null && p.stars !== undefined
+      && (typeof p.stars !== 'number' || !Number.isInteger(p.stars) || p.stars < 0)) {
+      fail(errors, p, 'E4', `stars must be a non-negative integer or null, got ${JSON.stringify(p.stars)}`)
     }
 
     // E5 — url shape (repo root or tree subpath)
@@ -139,12 +165,27 @@ function main() {
     if (!im) {
       fail(errors, p, 'E10', `install must match "dsh plugin --profile <p> add <target>": ${p.install}`)
     } else {
-      const target = im[1]
+      // The command quotes a URL target, so the quotes are part of the match.
+      const target = im[1].replace(/^"(.*)"$/, '$1')
       if (p.npm) {
         if (target !== p.npm) fail(errors, p, 'E10', `install target "${target}" does not match npm "${p.npm}"`)
       } else if (um) {
         const expect = `github:${um[1]}/${um[2]}`
-        if (!target.startsWith(expect)) {
+        // An author-published release archive is a legitimate target — it is
+        // the prebuilt path that makes a source-only plugin install in
+        // seconds. What matters is the same thing the market enforces at
+        // install time (releaseTarballTarget in src/sources.ts): the archive
+        // must live under the entry's OWN repo, or an entry could name a
+        // trusted repository and serve bytes from somewhere else. Kept in
+        // step with that function deliberately, including the case-insensitive
+        // owner/repo compare and the refusal of the release CDN hosts, whose
+        // paths carry no owner to bind to.
+        const release = releaseTargetRepo(target)
+        if (release !== null) {
+          if (release !== `${um[1]}/${um[2]}`.toLowerCase()) {
+            fail(errors, p, 'E10', `release archive "${target}" belongs to ${release}, not ${um[1]}/${um[2]}`)
+          }
+        } else if (!target.startsWith(expect)) {
           fail(errors, p, 'E10', `install target "${target}" does not reference ${expect}`)
         }
       }
@@ -174,7 +215,13 @@ function main() {
     if (p.npm) {
       identity = `npm:${p.npm}`
     } else if (um) {
-      const sp = (im && (im[1].match(/#path:\/(.+)$/) || [])[1]) || ''
+      // The subpath comes from `url`, which every entry has, rather than from
+      // the install command, which only carries `#path:` for the github:
+      // shortcut form. An entry that installs from a release archive has no
+      // such fragment, so reading the command collapsed every plugin in one
+      // monorepo onto a single identity and reported unrelated plugins as
+      // duplicates of each other.
+      const sp = um[4] ?? (im && (im[1].match(/#path:\/(.+)$/) || [])[1]) ?? ''
       identity = `gh:${um[1]}/${um[2]}#${sp}`
     } else {
       identity = `??:${p.url}`
