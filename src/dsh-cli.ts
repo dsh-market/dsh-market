@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Process layer: re-invoking the dsh CLI that launched this host, spawning
  * `dsh plugin` commands with timeouts and live progress, and provisioning
  * pnpm. This is the only module that starts child processes.
@@ -9,7 +9,7 @@
 
 import { spawn } from 'node:child_process'
 import type { ChildProcess, SpawnOptions } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readdirSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { logEvent } from './log.ts'
@@ -821,6 +821,41 @@ function makeProgressFeeder(tracker: ReturnType<typeof createProgressTracker>): 
   }
 }
 
+/**
+ * Remove stale pnpm temp directories from node_modules before install.
+ *
+ * pnpm sometimes leaves `*_tmp_*` directories after a failed or interrupted
+ * install (observed on Windows 10 22H2 with native modules like node-hid).
+ * On the next install, pnpm tries to rename the temp dir into place and fails
+ * with EPERM: operation not permitted, rename '..._tmp_...' -> '...'.
+ *
+ * Scanning and removing these stale dirs before each install is a defensive
+ * fix that makes the retry path work without manual intervention.
+ */
+function cleanupTmpDirsInNodeModules(profileDirectory: string): void {
+  const nodeModulesDir = join(profileDirectory, 'node_modules')
+  if (!existsSync(nodeModulesDir)) return
+  let cleaned = 0
+  try {
+    const entries = readdirSync(nodeModulesDir)
+    for (const name of entries) {
+      if (name.includes('_tmp_')) {
+        const tmpPath = join(nodeModulesDir, name)
+        try {
+          rmSync(tmpPath, { recursive: true, force: true })
+          cleaned++
+        } catch (e) {
+          logEvent('warn', 'install', `failed to remove stale tmp dir ${name}: ${(e as Error).message}`)
+        }
+      }
+    }
+    if (cleaned > 0) {
+      logEvent('info', 'install', `cleaned up ${cleaned} stale tmp dir(s) in node_modules to prevent EPERM rename failures`)
+    }
+  } catch (err) {
+    logEvent('warn', 'install', `failed to scan node_modules for tmp dirs: ${(err as Error).message}`)
+  }
+}
 /** Run one `dsh plugin --profile <p> …` command with timeout and progress tracking. */
 export function runDshPlugin(profile: string, pluginArgs: string[]): Promise<InstallResult> {
   const { file, args, cwd, viaShell } = dshArgv()
@@ -836,6 +871,7 @@ export function runDshPlugin(profile: string, pluginArgs: string[]): Promise<Ins
   }
   pluginArgs = prepared.args
   const tracker = beginProgress(prepared.target)
+  cleanupTmpDirsInNodeModules(profileDir(profile))
   const feed = makeProgressFeeder(tracker)
   return new Promise((resolvePromise) => {
     const child = spawnShim(file, [...args, 'plugin', '--profile', profile, ...pluginArgs], {
