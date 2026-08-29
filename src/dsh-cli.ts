@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Process layer: re-invoking the dsh CLI that launched this host, spawning
  * `dsh plugin` commands with timeouts and live progress, and provisioning
  * pnpm. This is the only module that starts child processes.
@@ -9,7 +9,7 @@
 
 import { spawn } from 'node:child_process'
 import type { ChildProcess, SpawnOptions } from 'node:child_process'
-import { existsSync, unlinkSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { logEvent } from './log.ts'
@@ -780,35 +780,6 @@ function preparePluginArgs(profileDirectory: string, pluginArgs: readonly string
   if (NDJSON_COMMANDS.has(args[0])) args = [...args, '--reporter=ndjson']
   return { args, target }
 }
-/**
- * Whether an install target is a URL tarball (GitHub codeload, gh-proxy,
- * etc.). These carry no integrity hash in pnpm-lock.yaml, so a stale entry
- * from a previous install makes every later attempt fail with
- * ERR_PNPM_MISSING_TARBALL_INTEGRITY — pnpm refuses to verify a tarball it
- * cannot hash. The fix is to drop the lockfile before the install so pnpm
- * regenerates it from the fresh download.
- */
-function isUrlTarballTarget(target: string): boolean {
-  return /^https?:\/\//.test(target) && /\.(tar\.gz|tgz)(\?|$|#)/.test(target)
-}
-
-/**
- * Remove pnpm-lock.yaml from a profile directory before a URL-tarball install.
- * Silent when the file is absent — the first install has nothing to clean.
- */
-function cleanupPnpmLockForUrlTarball(profileDirectory: string, target: string): void {
-  if (!isUrlTarballTarget(target)) return
-  const lockPath = join(profileDirectory, 'pnpm-lock.yaml')
-  try {
-    if (existsSync(lockPath)) {
-      unlinkSync(lockPath)
-      logEvent('info', 'install', url-tarball target ${target}: removed stale pnpm-lock.yaml (no integrity field))
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    logEvent('warn', 'install', url-tarball target ${target}: could not remove pnpm-lock.yaml — ${message})
-  }
-}
 
 /** Reset the singleton status snapshot before one operation starts. */
 function beginProgress(target: string): ReturnType<typeof createProgressTracker> {
@@ -864,10 +835,6 @@ export function runDshPlugin(profile: string, pluginArgs: string[]): Promise<Ins
     return Promise.resolve({ exitCode: 1, timedOut: false, stdout: '', stderr: prepared.error, cancelled: false })
   }
   pluginArgs = prepared.args
-  // URL-tarball targets carry no integrity hash in pnpm-lock.yaml; a stale
-  // entry makes every later install fail with ERR_PNPM_MISSING_TARBALL_INTEGRITY.
-  // Drop the lockfile so pnpm regenerates it from the fresh download.
-  if (prepared.args[0] === 'add') cleanupPnpmLockForUrlTarball(profileDir(profile), prepared.target)
   const tracker = beginProgress(prepared.target)
   const feed = makeProgressFeeder(tracker)
   return new Promise((resolvePromise) => {
@@ -969,9 +936,6 @@ export function createDesktopPluginRuntime(
       logEvent('error', 'install', prepared.error)
       return { exitCode: 1, timedOut: false, stdout: '', stderr: prepared.error, cancelled: false }
     }
-    // URL-tarball targets carry no integrity hash in pnpm-lock.yaml; drop it
-    // before the install so pnpm regenerates it from the fresh download.
-    if (prepared.args[0] === 'add') cleanupPnpmLockForUrlTarball(activeProfileDir, prepared.target)
 
     const abort = new AbortController()
     let handle: DesktopPnpmHandleLike
