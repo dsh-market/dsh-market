@@ -1,4 +1,4 @@
-/**
+﻿/**
  * The Market settings section: Discover / Themes / Installed tabs over the
  * /dsh-market/* host routes, with install/update/uninstall flows and the
  * pending-restart bookkeeping in sessionStorage.
@@ -2250,7 +2250,11 @@ export function MarketSection(props: MarketSectionProps) {
       .then(({ status, body }) => {
         if (status === 200 && body.ok) {
           if (!body.hot) setRemovedCount(n => n + 1)
-          clearPendingRefresh(name)
+          // A client-part plugin stays injected until a page reload — the same
+          // pending-refresh banner as enable/disable tells the user to reload,
+          // instead of silently leaving the uninstalled plugin's UI running.
+          if (body.refresh === true) setRefreshNames(names => names.includes(name) ? names : names.concat(name))
+          else clearPendingRefresh(name)
           refreshInstalled()
         } else {
           if (body.cancelled === true) {

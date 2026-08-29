@@ -1,4 +1,4 @@
-/**
+﻿/**
  * HTTP routes bridging the browser market UI to the host. This layer only
  * parses requests, calls the service modules, and serializes responses —
  * process spawning lives in dsh-cli.ts, filesystem reads in profile.ts,
@@ -2964,6 +2964,10 @@ export function mountMarketRoutes(
               // removal is final (a retry would 400 on "not installed").
               reconciled: reconciled || undefined,
               hot,
+              // A client-part plugin's UI is already injected into the page; after
+              // uninstall the injected bundle stays live until a refresh, so the
+              // same banner as enable/disable prompts the user to reload.
+              refresh: ok && packageHasClientPart(activeProfileDir, name),
               partial: cancelDiff?.partial,
               changed: cancelDiff?.changed,
               // The state of the package that was just removed (captured pre-op).
@@ -3309,6 +3313,10 @@ export function mountMarketRoutes(
               cancelled: cancelled || undefined,
               busy: result.busy || undefined,
               hot,
+              // A client-part plugin's UI is already injected into the page; after
+              // uninstall the injected bundle stays live until a refresh, so the
+              // same banner as enable/disable prompts the user to reload.
+              refresh: ok && packageHasClientPart(activeProfileDir, name),
               partial: cancelDiff?.partial,
               changed: cancelDiff?.changed,
               activation,
