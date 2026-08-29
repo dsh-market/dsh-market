@@ -2253,8 +2253,18 @@ export function MarketSection(props: MarketSectionProps) {
           // A client-part plugin stays injected until a page reload — the same
           // pending-refresh banner as enable/disable tells the user to reload,
           // instead of silently leaving the uninstalled plugin's UI running.
-          if (body.refresh === true) setRefreshNames(names => names.includes(name) ? names : names.concat(name))
-          else clearPendingRefresh(name)
+          //
+          // But only when it was live in THIS page. A plugin installed during
+          // this session was never injected: the banner was asking the user to
+          // reload in order to GET it, so undoing the install nets to zero and
+          // the banner must go (#340 — "it was reporting session history, not
+          // pending work"). Being already pending is exactly what distinguishes
+          // the two, and the server cannot see it: `refresh` says the package
+          // HAD a client part, not that this page ever loaded it.
+          const neverLoadedHere = hotNames.includes(name) || refreshNames.includes(name)
+          if (body.refresh === true && !neverLoadedHere) {
+            setRefreshNames(names => names.includes(name) ? names : names.concat(name))
+          } else clearPendingRefresh(name)
           refreshInstalled()
         } else {
           if (body.cancelled === true) {
@@ -2280,7 +2290,9 @@ export function MarketSection(props: MarketSectionProps) {
       })
       .catch(error => setInstallError(String(error)))
       .finally(() => setRemovingName(null))
-  }, [refreshInstalled])
+    // hotNames/refreshNames are read above to tell a plugin this page loaded
+    // from one installed inside it, so they belong in the closure.
+  }, [refreshInstalled, hotNames, refreshNames])
 
   /** Live enable/disable of one installed plugin (#60). `reload` opts the
    * card-level theme flow into a page refresh so the visual result lands

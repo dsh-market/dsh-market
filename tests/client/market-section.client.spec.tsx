@@ -1286,6 +1286,87 @@ describe('refresh banner falls back when the change is undone (#340)', () => {
     await waitFor(() => expect(screen.queryAllByText(re(en.refreshBanner))).toHaveLength(0))
   })
 
+  it('still stops asking when the undone plugin has a client part', async () => {
+    // Same shape as the test above, except the route now answers
+    // `refresh: true` because the package declares dsh.client. Installing and
+    // uninstalling inside one page still nets to zero: the client bundle was
+    // never injected, so the banner was asking the user to reload IN ORDER TO
+    // get it, and after the uninstall there is nothing to reload for.
+    let present: Record<string, string> = {}
+    stubFetch({
+      '/dsh-market/installed': () => ({
+        profile: 'web', installed: present, live: Object.keys(present), disabled: [],
+        activation: { 'dsh-loop': { state: 'live', reasons: [], bundle: true, hot: true } },
+      }),
+      '/dsh-market/install': () => {
+        present = { 'dsh-loop': '^1.0.0' }
+        return { ok: true, hot: true, installed: present }
+      },
+      '/dsh-market/uninstall': () => { present = {}; return { ok: true, hot: true, refresh: true } },
+    })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    let card: HTMLElement | null = screen.getByText('dsh-loop')
+    while (card !== null && within(card).queryAllByRole('button', { name: en.install }).length === 0) {
+      card = card.parentElement
+    }
+    fireEvent.click(within(card!).getAllByRole('button', { name: en.install })[0]!)
+    fireEvent.click(await screen.findByRole('button', { name: en.confirmInstall }))
+    await waitFor(() => expect(screen.getAllByText(re(en.refreshBanner)).length).toBe(1))
+
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    fireEvent.click((await screen.findAllByRole('button', { name: en.uninstall }))[0]!)
+    await screen.findByText(re(en.uninstallConfirmDesc))
+    fireEvent.click(screen.getAllByRole('button', { name: en.uninstall }).at(-1)!)
+
+    await waitFor(() => expect(screen.queryAllByText(re(en.refreshBanner))).toHaveLength(0))
+  })
+
+  it('asks for a reload when a plugin the page had loaded is uninstalled (#415)', async () => {
+    // Installed BEFORE this page loaded, so its client bundle is injected and
+    // still on screen after the package is gone. Exactly one banner, and it
+    // is the refresh one: a hot uninstall needs no host restart.
+    stubFetch({
+      '/dsh-market/installed': () => ({
+        profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: ['dsh-loop'], disabled: [],
+        activation: { 'dsh-loop': { state: 'live', reasons: [], bundle: true, hot: true } },
+      }),
+      '/dsh-market/uninstall': () => ({ ok: true, hot: true, refresh: true }),
+    })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    fireEvent.click((await screen.findAllByRole('button', { name: en.uninstall }))[0]!)
+    await screen.findByText(re(en.uninstallConfirmDesc))
+    fireEvent.click(screen.getAllByRole('button', { name: en.uninstall }).at(-1)!)
+
+    await waitFor(() => expect(screen.getAllByText(re(en.refreshBanner)).length).toBe(1))
+    // Not two. A restart banner here would be the "为啥有三个状态横幅啊" shape.
+    expect(screen.queryAllByText(re(en.restartBanner)).length).toBe(0)
+  })
+
+  it('leaves a non-hot uninstall with only its restart banner (#415)', async () => {
+    // The other arm: a removal that needs a host restart already tells the
+    // user to restart, and a restart reloads the page. Adding a reload banner
+    // beside it asks twice for one action.
+    stubFetch({
+      '/dsh-market/installed': () => ({
+        profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: ['dsh-loop'], disabled: [],
+        activation: { 'dsh-loop': { state: 'live', reasons: [], bundle: true, hot: false } },
+      }),
+      '/dsh-market/uninstall': () => ({ ok: true, hot: false }),
+    })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    fireEvent.click((await screen.findAllByRole('button', { name: en.uninstall }))[0]!)
+    await screen.findByText(re(en.uninstallConfirmDesc))
+    fireEvent.click(screen.getAllByRole('button', { name: en.uninstall }).at(-1)!)
+
+    await waitFor(() => expect(screen.getAllByText(re(en.restartBanner)).length).toBe(1))
+    expect(screen.queryAllByText(re(en.refreshBanner)).length).toBe(0)
+  })
+
   it('stops asking when a switch is put back where the page found it', async () => {
     let disabled: string[] = []
     stubFetch({

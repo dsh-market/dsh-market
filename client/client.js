@@ -6529,7 +6529,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				}))).then(({ status, body }) => {
 					if (status === 200 && body.ok) {
 						if (!body.hot) setRemovedCount((n) => n + 1);
-						clearPendingRefresh(name);
+						const neverLoadedHere = hotNames.includes(name) || refreshNames.includes(name);
+						if (body.refresh === true && !neverLoadedHere) setRefreshNames((names) => names.includes(name) ? names : names.concat(name));
+						else clearPendingRefresh(name);
 						refreshInstalled();
 					} else {
 						if (body.cancelled === true) {
@@ -6548,7 +6550,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						setInstallError((text(body.error) || humanOutput(text(body.stderr)) || "error").trim().slice(-600));
 					}
 				}).catch((error) => setInstallError(String(error))).finally(() => setRemovingName(null));
-			}, [refreshInstalled]);
+			}, [
+				refreshInstalled,
+				hotNames,
+				refreshNames
+			]);
 			/** Live enable/disable of one installed plugin (#60). `reload` opts the
 			* card-level theme flow into a page refresh so the visual result lands
 			* immediately (mirrors the use-skin reload on activate). */
