@@ -311,32 +311,60 @@ export function isMarketItself(plugin: Pick<RegistryPlugin, 'name' | 'npm'>): bo
   return plugin.name === 'dsh-market' || plugin.npm === 'dshmarket'
 }
 
+/** Normalize punctuation-separated package names and human text alike. */
+function searchText(value: string): string {
+  return value.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim().replace(/\s+/g, ' ')
+}
+
 /**
- * The discover list: category filter, then the published-within window, then
- * search across name / owner / localized description / category ids and
- * localized category labels, then the selected sort.
- * Pure — the section renders exactly this.
+ * Relevance within one field. Exact and prefix matches beat phrase matches;
+ * for a multi-word query every word must occur in the same field.
  */
-export function visiblePlugins(plugins: RegistryPlugin[], options: ListQuery): RegistryPlugin[] {
-  const query = options.query.trim().toLowerCase()
-  const list = plugins.filter((p) => {
-    if (isMarketItself(p)) return false
-    const categories = pluginCategories(p)
-    if (options.category !== 'all' && !categories.includes(options.category)) return false
-    if (options.sinceDays !== undefined && !withinDays(p.added, options.sinceDays)) return false
-    if (query === '') return true
-    const desc = (p.description && (p.description[options.lang] || p.description.en)) || ''
-    const categoryMatches = categories.some((category) => {
-      if (category.toLowerCase().includes(query)) return true
-      return Object.values(options.categories?.[category] ?? {}).some(
-        label => typeof label === 'string' && label.toLowerCase().includes(query),
-      )
-    })
-    return p.name.toLowerCase().includes(query)
-      || p.owner.toLowerCase().includes(query)
-      || desc.toLowerCase().includes(query)
-      || categoryMatches
-  })
+function fieldRelevance(value: string | undefined, query: string, tokens: string[], weight: number): number {
+  if (!value) return 0
+  const text = searchText(value)
+  if (text === '' || !tokens.every(token => text.includes(token))) return 0
+  if (text === query) return weight + 300
+  if (text.startsWith(query)) return weight + 250
+  if (text.includes(query)) return weight + 200
+  return weight + 150
+}
+
+/**
+ * Search ranking is field-aware rather than a popularity-only filter:
+ * package identities outrank owners, descriptions, and categories. The
+ * selected popularity/date sort remains the tie-breaker between equally
+ * relevant entries.
+ */
+function pluginRelevance(
+  plugin: RegistryPlugin,
+  query: string,
+  tokens: string[],
+  lang: string,
+  categories: Record<string, LocalizedText> | undefined,
+): number {
+  const descriptions = plugin.description ?? {}
+  const preferredLocale = descriptions[lang] ? lang : descriptions.en ? 'en' : null
+  const preferredDescription = descriptions[lang] || descriptions.en
+  const otherDescriptions = Object.entries(descriptions)
+    .filter(([locale, value]) => locale !== preferredLocale && typeof value === 'string')
+    .map(([, value]) => value)
+  const categoryIds = pluginCategories(plugin)
+  const categoryLabels = categoryIds.flatMap(category => Object.values(categories?.[category] ?? {}))
+
+  return Math.max(
+    fieldRelevance(plugin.name, query, tokens, 700),
+    fieldRelevance(plugin.npm, query, tokens, 700),
+    fieldRelevance(plugin.owner, query, tokens, 400),
+    fieldRelevance(preferredDescription, query, tokens, 280),
+    ...otherDescriptions.map(value => fieldRelevance(value, query, tokens, 240)),
+    ...categoryIds.map(value => fieldRelevance(value, query, tokens, 180)),
+    ...categoryLabels.map(value => fieldRelevance(value, query, tokens, 180)),
+  )
+}
+
+/** Compare two already-filtered entries using the user's selected sort. */
+function comparePlugins(a: RegistryPlugin, b: RegistryPlugin, sort: string): number {
   // A github:-only entry has no npm package and therefore no download count
   // at all — that is a coverage gap, not a "0 downloads" verdict, and must
   // not be read as less popular than a package that genuinely has zero.
@@ -344,35 +372,49 @@ export function visiblePlugins(plugins: RegistryPlugin[], options: ListQuery): R
   // direction, and are ordered against each other by star count — the only
   // signal available for them — rather than left in an arbitrary tie.
   const hasDownloads = (p: RegistryPlugin): p is RegistryPlugin & { downloads: number } => typeof p.downloads === 'number'
-  if (options.sort === 'downloads-desc') {
-    return [...list].sort((a, b) => {
-      if (hasDownloads(a) && hasDownloads(b)) return b.downloads - a.downloads
-      if (hasDownloads(a)) return -1
-      if (hasDownloads(b)) return 1
-      return (b.stars ?? -1) - (a.stars ?? -1)
-    })
+  if (sort === 'downloads-desc') {
+    if (hasDownloads(a) && hasDownloads(b)) return b.downloads - a.downloads
+    if (hasDownloads(a)) return -1
+    if (hasDownloads(b)) return 1
+    return (b.stars ?? -1) - (a.stars ?? -1)
   }
-  if (options.sort === 'downloads-asc') {
-    return [...list].sort((a, b) => {
-      if (hasDownloads(a) && hasDownloads(b)) return a.downloads - b.downloads
-      if (hasDownloads(a)) return -1
-      if (hasDownloads(b)) return 1
-      return (a.stars ?? -1) - (b.stars ?? -1)
-    })
+  if (sort === 'downloads-asc') {
+    if (hasDownloads(a) && hasDownloads(b)) return a.downloads - b.downloads
+    if (hasDownloads(a)) return -1
+    if (hasDownloads(b)) return 1
+    return (a.stars ?? -1) - (b.stars ?? -1)
   }
-  if (options.sort === 'stars-desc') {
-    return [...list].sort((a, b) => (b.stars ?? -1) - (a.stars ?? -1))
-  }
-  if (options.sort === 'stars-asc') {
-    return [...list].sort((a, b) => (a.stars ?? -1) - (b.stars ?? -1))
-  }
-  if (options.sort === 'added-desc') {
-    return [...list].sort((a, b) => String(b.added).localeCompare(String(a.added)))
-  }
-  if (options.sort === 'added-asc') {
-    return [...list].sort((a, b) => String(a.added).localeCompare(String(b.added)))
-  }
-  return list
+  if (sort === 'stars-desc') return (b.stars ?? -1) - (a.stars ?? -1)
+  if (sort === 'stars-asc') return (a.stars ?? -1) - (b.stars ?? -1)
+  if (sort === 'added-desc') return String(b.added).localeCompare(String(a.added))
+  if (sort === 'added-asc') return String(a.added).localeCompare(String(b.added))
+  return 0
+}
+
+/**
+ * The discover list: category filter, then the published-within window, then
+ * relevance-ranked search across package identity / owner / every localized
+ * description / category ids and labels. With no search, only the selected
+ * sort applies, preserving the existing discover-list behaviour.
+ * Pure — the section renders exactly this.
+ */
+export function visiblePlugins(plugins: RegistryPlugin[], options: ListQuery): RegistryPlugin[] {
+  const query = searchText(options.query)
+  const tokens = query.split(' ').filter(Boolean)
+  const scored = plugins.flatMap((plugin, index) => {
+    if (isMarketItself(plugin)) return []
+    const categories = pluginCategories(plugin)
+    if (options.category !== 'all' && !categories.includes(options.category)) return []
+    if (options.sinceDays !== undefined && !withinDays(plugin.added, options.sinceDays)) return []
+    const relevance = query === '' ? 0 : pluginRelevance(plugin, query, tokens, options.lang, options.categories)
+    return relevance === 0 && query !== '' ? [] : [{ plugin, relevance, index }]
+  })
+
+  return scored.sort((a, b) =>
+    b.relevance - a.relevance
+    || comparePlugins(a.plugin, b.plugin, options.sort)
+    || a.index - b.index,
+  ).map(row => row.plugin)
 }
 
 /** The themes tab listing: theme category only, most-starred first. */

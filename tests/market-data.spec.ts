@@ -246,14 +246,43 @@ describe('discover list (visiblePlugins)', () => {
     plugin({ name: 'no-stars', owner: 'dave', category: 'memory', added: '2026-07-01', description: { en: 'Vector memory store' } }),
   ]
 
-  it('searches across name, owner, and the localized description, case-insensitively', () => {
+  it('searches package identities, owners, and every localized description case-insensitively', () => {
     expect(visiblePlugins(CATALOG, { category: 'all', query: 'LOOP', lang: 'en', sort: 'x' }).map(p => p.name)).toEqual(['dsh-loop'])
     expect(visiblePlugins(CATALOG, { category: 'all', query: 'carol', lang: 'en', sort: 'x' }).map(p => p.name)).toEqual(['whale-skin'])
-    // zh UI searches the zh description; en falls back when zh is absent.
+    // The current locale ranks higher, but other translations remain searchable.
     expect(visiblePlugins(CATALOG, { category: 'all', query: '通知', lang: 'zh', sort: 'x' }).map(p => p.name)).toEqual(['dsh-notify'])
+    expect(visiblePlugins(CATALOG, { category: 'all', query: '循环', lang: 'en', sort: 'x' }).map(p => p.name)).toEqual(['dsh-loop'])
     expect(visiblePlugins(CATALOG, { category: 'all', query: 'vector', lang: 'zh', sort: 'x' }).map(p => p.name)).toEqual(['no-stars'])
+    expect(visiblePlugins([
+      plugin({ name: 'friendly-title', npm: '@scope/dsh-mcp-tools' }),
+    ], { category: 'all', query: 'mcp tools', lang: 'en', sort: 'x' }).map(p => p.name)).toEqual(['friendly-title'])
     // Empty query = everything, registry order preserved.
     expect(visiblePlugins(CATALOG, { category: 'all', query: '  ', lang: 'en', sort: 'x' })).toHaveLength(4)
+  })
+
+  it('ranks package-name relevance before popularity and uses the selected sort as a tie-breaker', () => {
+    const rows: RegistryPlugin[] = [
+      plugin({ name: 'popular-agent', downloads: 500_000, description: { en: 'MCP integration for agents' } }),
+      plugin({ name: 'dsh-mcp-panel', downloads: 50 }),
+      plugin({ name: 'dsh-mcp-connector', downloads: 3_200 }),
+    ]
+    expect(visiblePlugins(rows, {
+      category: 'all', query: 'mcp', lang: 'en', sort: 'downloads-desc',
+    }).map(p => p.name)).toEqual([
+      'dsh-mcp-connector',
+      'dsh-mcp-panel',
+      'popular-agent',
+    ])
+  })
+
+  it('normalizes punctuation and keeps exact package names ahead of longer prefixes', () => {
+    const rows: RegistryPlugin[] = [
+      plugin({ name: 'dsh-mcp-connector-guide', downloads: 50_000 }),
+      plugin({ name: 'dsh-mcp-connector', downloads: 10 }),
+    ]
+    expect(visiblePlugins(rows, {
+      category: 'all', query: 'DSH MCP connector', lang: 'en', sort: 'downloads-desc',
+    }).map(p => p.name)).toEqual(['dsh-mcp-connector', 'dsh-mcp-connector-guide'])
   })
 
   it('filters by any category and keeps legacy string categories working', () => {
