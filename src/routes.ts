@@ -1,4 +1,4 @@
-﻿/**
+/**
  * HTTP routes bridging the browser market UI to the host. This layer only
  * parses requests, calls the service modules, and serializes responses —
  * process spawning lives in dsh-cli.ts, filesystem reads in profile.ts,
@@ -2902,6 +2902,10 @@ export function mountMarketRoutes(
             const activation = {
               [name]: verifyActivation(config.profile, name, liveNames(), activeProfileDir, disabled.has(name)),
             }
+            // Capture whether the plugin has a client part BEFORE removal — after
+            // runPlugin the package may be gone from node_modules, so a post-hoc
+            // check would always return false on a successful uninstall.
+            const hadClientPart = packageHasClientPart(activeProfileDir, name)
             const result = await runPlugin(config.profile, ['remove', name])
             const cancelled = result.cancelled
             const ok = result.exitCode === 0 && !result.timedOut && !cancelled
@@ -2967,7 +2971,10 @@ export function mountMarketRoutes(
               // A client-part plugin's UI is already injected into the page; after
               // uninstall the injected bundle stays live until a refresh, so the
               // same banner as enable/disable prompts the user to reload.
-              refresh: ok && packageHasClientPart(activeProfileDir, name),
+              // Gate on hot: non-hot uninstalls already show the restart banner,
+              // and adding a refresh banner there would double-banner (#213's
+              // pendingRefreshNames merge exists specifically to avoid that).
+              refresh: ok && hot && hadClientPart,
               partial: cancelDiff?.partial,
               changed: cancelDiff?.changed,
               // The state of the package that was just removed (captured pre-op).
@@ -3313,10 +3320,6 @@ export function mountMarketRoutes(
               cancelled: cancelled || undefined,
               busy: result.busy || undefined,
               hot,
-              // A client-part plugin's UI is already injected into the page; after
-              // uninstall the injected bundle stays live until a refresh, so the
-              // same banner as enable/disable prompts the user to reload.
-              refresh: ok && packageHasClientPart(activeProfileDir, name),
               partial: cancelDiff?.partial,
               changed: cancelDiff?.changed,
               activation,
