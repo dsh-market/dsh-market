@@ -6,7 +6,7 @@
  * endpoints, stubbed with fixture payloads.
  */
 
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -186,6 +186,38 @@ describe('api() base resolution (#345)', () => {
     expect(fetchCalls.some(call => call.path === '/dsh-market/changelog')).toBe(false)
     expect(fetchMock.mock.calls.some(([url]) =>
       url === '/app/my-dsh/dsh-market/changelog?name=dsh-loop')).toBe(true)
+  })
+
+  it('leaves no root-absolute endpoint anywhere in the client source', () => {
+    // #345 has now been fixed twice. The first fix converted every endpoint
+    // that existed; changelog and personal notes were written afterwards, as
+    // ordinary-looking `fetch('/dsh-market/…')` calls, and escaped to the
+    // origin root again (#407). Nothing about writing that line looks wrong,
+    // and nothing fails until someone is behind a path-prefixed proxy — the
+    // one population that cannot see this test, or fix it.
+    //
+    // So the invariant is checked over the SOURCE rather than per endpoint:
+    // a per-call test can only cover calls somebody thought to add.
+    const offenders: string[] = []
+    for (const file of readdirSync(resolve('src/client'))) {
+      if (!/\.tsx?$/.test(file)) continue
+      const lines = readFileSync(resolve('src/client', file), 'utf8').split('\n')
+      lines.forEach((line, index) => {
+        // Prose about the bug is allowed to name the shape it describes; only
+        // code counts. Comment lines in this codebase are `//`, `/*` or ` *`.
+        const code = line.trim()
+        if (code.startsWith('//') || code.startsWith('*') || code.startsWith('/*')) return
+        // The literal INSIDE an api() call is the correct shape — that is the
+        // whole point of the helper — so remove those before looking at what
+        // is left. What is left is a path the browser would resolve itself.
+        const bare = code.replace(/\bapi\(\s*(['"`])\/?[^'"`]*\1\s*\)/g, 'api(…)')
+        if (/['"`]\/dsh-market\//.test(bare)) offenders.push(`${file}:${index + 1}: ${code}`)
+      })
+    }
+    expect(
+      offenders,
+      `route these through api() — a root-absolute path resolves against the origin, not the mount:\n${offenders.join('\n')}`,
+    ).toEqual([])
   })
 })
 
