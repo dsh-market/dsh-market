@@ -491,6 +491,38 @@ describe('MarketSection (jsdom)', () => {
     await waitFor(() => { expect(screen.getByText(en.exportedLog)).toBeTruthy() })
   })
 
+  it('the exported file carries the browser section, not just the server one', async () => {
+    // The wiring, not the helper — self-check.client.spec.ts covers the lines
+    // themselves. What this proves is that they reach the file a reporter
+    // actually attaches to an issue, which is the entire point of collecting
+    // them: #293 and #384 both stalled on evidence that existed in the page
+    // and never made it into the export.
+    let saved = ''
+    // Patch only the two statics. Replacing the whole `URL` global breaks
+    // api(), which calls `new URL(...)` — the market stops resolving its own
+    // endpoints and the test fails for a reason that has nothing to do with
+    // what it is testing.
+    const realCreate = URL.createObjectURL
+    const realRevoke = URL.revokeObjectURL
+    URL.createObjectURL = (blob: Blob) => { void blob.text().then((text) => { saved = text }); return 'blob:stub' }
+    URL.revokeObjectURL = () => {}
+    try {
+      stubFetch({ '/dsh-market/logs': 'log-lines' })
+      render(<MarketSection {...props()} />)
+      await screen.findByText('dsh-loop')
+      fireEvent.click(screen.getByRole('button', { name: en.exportLog }))
+      await waitFor(() => { expect(screen.getByText(en.exportedLog)).toBeTruthy() })
+      await waitFor(() => { expect(saved).toContain('## browser') })
+      expect(saved).toContain('portal containers:')
+      expect(saved).toContain('client bundle evaluations:')
+      // The server half is still there — this appends, it does not replace.
+      expect(saved).toContain('log-lines')
+    } finally {
+      URL.createObjectURL = realCreate
+      URL.revokeObjectURL = realRevoke
+    }
+  })
+
   it('shows curated registry screenshots in the dialog, and README-extracted ones as fallback (#61)', async () => {
     const CURATED = 'https://raw.githubusercontent.com/alice/dsh-loop/main/assets/demo.png'
     const registry = JSON.parse(JSON.stringify(REGISTRY))

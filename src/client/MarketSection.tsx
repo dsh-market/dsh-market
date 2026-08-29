@@ -40,6 +40,7 @@ import { OperationsPanel } from './OperationsPanel.tsx'
 import { clearSettled, drop, enqueue, patch as patchRecord, recordForUrl } from './operations.ts'
 import type { OperationRecord } from './operations.ts'
 import { Diagnostics } from './Diagnostics.tsx'
+import { clientDiagnostics } from './self-check.ts'
 import {
   api, avatarColor, entryForDep, githubProxyInUse, githubUrl, groupSwitchState, humanOutput, installedForCatalog, isInstalled, looksTerminal, matchInstalledName, orderedCategories, pluginCategories,
   formatCount, pageItems, pluginName, pluginScreenshotCandidates, pluginScreenshots, rankThemeScreenshots, readSession, safeScreenshots, setGithubProxy, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
@@ -1186,7 +1187,18 @@ export function MarketSection(props: MarketSectionProps) {
     fetch(api('/dsh-market/logs'))
       .then(async (res) => {
         if (!res.ok) throw new Error(`HTTP ${String(res.status)}`)
-        const blob = await res.blob()
+        // The server half describes the server. Everything it reports was
+        // already true on machines where the reported bug does not happen,
+        // which is why #293 and #384 both stalled on "please open a console
+        // and paste this". The browser appends what only it can see — see
+        // self-check.ts. Done here rather than sent to the route so this
+        // adds no endpoint, no request body, and no new trust boundary.
+        const serverText = await res.text()
+        const browser = clientDiagnostics()
+        const blob = new Blob(
+          [serverText, ...(browser.length > 0 ? ['## browser\n', browser.join('\n'), '\n'] : [])],
+          { type: 'text/plain;charset=utf-8' },
+        )
         const url = URL.createObjectURL(blob)
         const anchor = document.createElement('a')
         anchor.href = url
