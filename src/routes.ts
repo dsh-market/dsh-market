@@ -469,9 +469,13 @@ export function mountMarketRoutes(
    * next start still fails. Re-run pnpm install against the restored
    * manifest to rematerialize the previous build's files.
    */
-  async function rollbackUpdateBuild(name: string, manifestBefore: ProfileManifestSnapshot): Promise<{ ok: boolean; detail: string | null }> {
+  async function rollbackUpdateBuild(
+    name: string,
+    manifestBefore: ProfileManifestSnapshot,
+    rematerializeWhenManifestUnchanged = false,
+  ): Promise<{ ok: boolean; detail: string | null }> {
     const rolledBack = restoreProfileManifest(config.profile, manifestBefore, activeProfileDir)
-    if (rolledBack.length === 0) return { ok: true, detail: null }
+    if (rolledBack.length === 0 && !rematerializeWhenManifestUnchanged) return { ok: true, detail: null }
     // CI=true (the market always runs pnpm that way) turns frozen-lockfile
     // on, and the restored manifest pin now disagrees with the lockfile the
     // bad add just wrote — without the flag this restore run fails with
@@ -484,6 +488,42 @@ export function mountMarketRoutes(
     const ok = reinstall.exitCode === 0 && !reinstall.timedOut && !reinstall.cancelled
     if (ok) logEvent('info', 'update', `${name}: previous build rematerialized (${rolledBack.join(', ')})`)
     return { ok, detail: ok ? null : failureDetail(reinstall) }
+  }
+
+  /**
+   * Restore the exact npm build that was on disk before an update started.
+   * Reinstalling a restored range is not sufficient: the failed add may have
+   * advanced the lockfile to another version that still satisfies that range,
+   * so `pnpm install` can keep the rejected bytes while reporting success.
+   */
+  async function rollbackNpmBuild(
+    name: string,
+    manifestBefore: ProfileManifestSnapshot,
+    beforeVersion: string | null,
+  ): Promise<{ ok: boolean; detail: string | null }> {
+    restoreProfileManifest(config.profile, manifestBefore, activeProfileDir)
+    if (beforeVersion === null) {
+      return { ok: false, detail: 'the previous installed version is unknown; exact rollback is unavailable' }
+    }
+    const add = await runPlugin(config.profile, ['add', RELEASE_AGE_OVERRIDE, `${name}@${beforeVersion}`])
+      .finally(() => {
+        // The exact add deliberately pins its target. Preserve the user's
+        // durable range/tag spelling even when the command rejects or fails
+        // after a partial manifest write.
+        restoreProfileManifest(config.profile, manifestBefore, activeProfileDir)
+      })
+    if (add.exitCode !== 0 || add.timedOut || add.cancelled) {
+      return { ok: false, detail: failureDetail(add) }
+    }
+    const restoredVersion = readInstalledVersion(config.profile, name, activeProfileDir)
+    if (restoredVersion !== beforeVersion) {
+      return { ok: false, detail: `expected v${beforeVersion} after rollback, found v${restoredVersion ?? 'unknown'}` }
+    }
+    if (!hasLoadableEntry(activeProfileDir, name)) {
+      return { ok: false, detail: 'the previous version was reinstalled without a loadable entry' }
+    }
+    logEvent('info', 'update-rollback', `${name}: restored npm build v${beforeVersion}`)
+    return { ok: true, detail: null }
   }
 
   interface PendingRollback {
@@ -521,13 +561,28 @@ export function mountMarketRoutes(
     }
     restoreProfileManifest(config.profile, manifestBefore, activeProfileDir)
     const add = await runPlugin(config.profile, ['add', RELEASE_AGE_OVERRIDE, rollbackTarget])
+      .finally(() => {
+        // Keep the durable source spelling (including a floating github:
+        // target or #path selector) even when the exact recovery add rejects
+        // or fails after writing its commit-pinned target into package.json.
+        restoreProfileManifest(config.profile, manifestBefore, activeProfileDir)
+      })
     if (add.exitCode !== 0 || add.timedOut || add.cancelled) {
       return { ok: false, detail: failureDetail(add) }
+    }
+    const repoKey = repoOfTarget(rollbackTarget)?.split('#')[0] ?? null
+    const restoredCommit = repoKey === null
+      ? null
+      : readLockCommits(config.profile, activeProfileDir).get(repoKey.toLowerCase()) ?? null
+    if (restoredCommit !== beforeCommit) {
+      return { ok: false, detail: `expected commit ${beforeCommit} after rollback, found ${restoredCommit ?? 'unknown'}` }
+    }
+    if (!hasLoadableEntry(activeProfileDir, name)) {
+      return { ok: false, detail: 'the previous commit was reinstalled without a loadable entry' }
     }
     // pnpm wrote a commit-pinned spec; the profile's durable spec must stay
     // the original `github:owner/repo` form. The lockfile keeps the restored
     // commit resolution for the next boot.
-    restoreProfileManifest(config.profile, manifestBefore, activeProfileDir)
     logEvent('info', 'update-rollback', `${name}: restored github build at ${beforeCommit}`)
     return { ok: true, detail: null }
   }
@@ -1965,12 +2020,28 @@ export function mountMarketRoutes(
           // to try THIS plugin early, not to be handed every other author's
           // unreleased work.
           const channel = activeChannel()
+          const installed = readInstalled(config.profile, activeProfileDir)
           const channelFor = new Map(
-            Object.keys(readInstalled(config.profile, activeProfileDir))
+            Object.keys(installed)
               .filter(name => SELF_NAMES.has(name))
               .map(name => [name, channel] as const),
           )
-          sendJson(response, 200, { updates: await checkUpdates(config.profile, force, activeProfileDir, channelFor) })
+          const onlineSourceFor = new Map<string, string>()
+          try {
+            const registry = await loadRegistry()
+            for (const [name, spec] of Object.entries(installed)) {
+              if (!spec.toLowerCase().startsWith('file:')) continue
+              const evidence = readInstalledRepoEvidence(config.profile, name, spec, activeProfileDir)
+              const entry = findCatalogEntryForLocal(registry.plugins, name, evidence.identities, evidence.hints)
+              const target = entry === null ? null : restoreTargetForLocal(entry, evidence.identities)
+              if (target !== null && NPM_NAME_RE.test(target)) onlineSourceFor.set(name, target)
+            }
+          } catch (error) {
+            logEvent('warn', 'updates', `local package source lookup failed — ${error instanceof Error ? error.message : String(error)}`)
+          }
+          sendJson(response, 200, {
+            updates: await checkUpdates(config.profile, force, activeProfileDir, channelFor, onlineSourceFor),
+          })
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
         }
@@ -2033,8 +2104,8 @@ export function mountMarketRoutes(
               sendJson(response, 400, { error: 'restore 只适用于 link:/file: 的本地开发安装。 / Restore only applies to locally developed link:/file: installs.' })
               return
             }
-            if (restore && SELF_NAMES.has(name)) {
-              sendJson(response, 400, { error: '市场自身不做恢复，请继续用 dsh plugin add <tgz> 安装市场。 / The market never restores itself; keep installing it via dsh plugin add <tgz>.' })
+            if (restore && SELF_NAMES.has(name) && spec.toLowerCase().startsWith('link:')) {
+              sendJson(response, 400, { error: '市场的本地开发链接不会被线上版本替换。 / The market\'s local development link is never replaced by an online release.' })
               return
             }
             if (isLocalSpec(spec)) {
@@ -2192,16 +2263,34 @@ export function mountMarketRoutes(
             const manifestBefore = readProfileManifestSnapshot(config.profile, activeProfileDir)
             const result = await runPlugin(config.profile, addArgs)
             const cancelled = result.cancelled
-            if ((result.exitCode !== 0 || result.timedOut) && !cancelled) {
-              const rolledBack = restoreProfileManifest(config.profile, manifestBefore, activeProfileDir)
-              if (rolledBack.length > 0) logEvent('warn', 'update', `${name}: rolled back manifest residue of the failed run: ${rolledBack.join(', ')}`)
+            let rollbackOk = true
+            let rollbackDetail: string | null = null
+            let hardFailureRollbackError: string | null = null
+            // A non-zero exit or timeout can happen after pnpm has replaced
+            // both package.json and node_modules. Restoring the manifest alone
+            // leaves the rejected build running after restart. Reinstall the
+            // exact prior source identity unless the host rejected the start
+            // as busy or the user deliberately cancelled and chose to inspect
+            // the resulting partial state.
+            if ((result.exitCode !== 0 || result.timedOut) && !cancelled && result.busy !== true) {
+              const rollback = isGit && !restore
+                ? await rollbackGitBuild(name, manifestBefore, target, beforeCommit)
+                : !isGit && !restore
+                  ? await rollbackNpmBuild(name, manifestBefore, beforeVersion)
+                  : await rollbackUpdateBuild(name, manifestBefore, true)
+              rollbackOk = rollback.ok
+              rollbackDetail = rollback.detail
+              if (rollback.ok) {
+                logEvent('warn', 'update', `${name}: failed update command; previous build restored and verified`)
+              } else {
+                hardFailureRollbackError = `${name} 更新失败，且更新前的构建未能验证恢复（${rollback.detail ?? 'unknown'}）；请先检查该 profile，再重新启动。 / ${name} update failed and restoration of the previous build could not be verified (${rollback.detail ?? 'unknown'}); inspect this profile before restarting.`
+                logEvent('error', 'update-rollback', `${name}: failed update command and restoration of the previous build could not be verified — ${rollback.detail ?? 'unknown'}`)
+              }
             }
             let ok = result.exitCode === 0 && !result.timedOut && !cancelled
             let stale = false
             let versionFailureCode: 'DOWNGRADE_DETECTED' | 'RESOLVED_VERSION_MISMATCH' | null = null
             let versionFailureError: string | null = null
-            let rollbackOk = true
-            let rollbackDetail: string | null = null
             let activation: Record<string, ReturnType<typeof verifyActivation>> | undefined
             if (ok) {
               if (restore) {
@@ -2410,7 +2499,7 @@ export function mountMarketRoutes(
               ...(() => { const orphans = orphanBundles(); return orphans.length > 0 ? { orphanBundles: orphans } : {} })(),
               staleReason: staleReason ?? undefined,
               failureCode: versionFailureCode ?? undefined,
-              error: versionFailureError ?? trialError ?? brokenEntryError ?? staleError ?? undefined,
+              error: versionFailureError ?? trialError ?? brokenEntryError ?? hardFailureRollbackError ?? staleError ?? undefined,
               exitCode: result.exitCode,
               timedOut: result.timedOut,
               stdout: result.stdout,

@@ -56,7 +56,13 @@ jobs:
             https://awesome-dsh-plugin.com/readmes.json -o data/readmes-snapshot.json \
             || echo "readmes.json unavailable — building without README bodies"
 
+      # Unset until the AdSense review clears these domains; while unset the
+      # build emits no ad markup and no third-party script, so the site is
+      # byte-identical to an ad-free one. A variable rather than a secret:
+      # the publisher id ships in the HTML either way.
       - run: node scripts/build-site.mjs
+        env:
+          ADSENSE_CLIENT: ${{ vars.ADSENSE_CLIENT }}
 
       - uses: actions/upload-pages-artifact@v3
         with:

@@ -69,6 +69,11 @@ const fake = vi.hoisted(() => ({
    * is written before registry fetches and the build-script check run.
    */
   failAfterWriteStderrOnce: '',
+  /** Keep the dependency spec unchanged while the next npm add replaces its
+   * package files, matching a range that already admits the new version. */
+  preserveManifestOnNextAdd: false,
+  /** Fail one exact add target after writing, without affecting the update attempt before it. */
+  failAddTargetOnce: null as { target: string; stderr: string } | null,
   /** Simulate dsh adding a profile bundle before that same add later fails (#339). */
   profileBundleOnNextAdd: null as string | null,
   /** Make restore's bulk install fail so its per-plugin fallback is exercised. */
@@ -249,10 +254,21 @@ vi.mock('../src/dsh-cli.ts', () => {
       // pnpm minimumReleaseAge: "Already up to date", old version kept, exit 0.
       return ok
     }
-    const version = fake.resolvedNpmVersionOnce ?? pkg.latest
+    const exactVersion = /@(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/.exec(target)?.[1] ?? null
+    const version = fake.resolvedNpmVersionOnce ?? exactVersion ?? pkg.latest
     fake.resolvedNpmVersionOnce = null
+    const previousSpec = readManifest().dependencies?.[name]
     writeDep(name, `^${version}`)
     writePkg(name, { version, ...(pkg.versions[version].manifest as object) }, pkg.versions[version].artifacts, pkg.versions[version].artifactContents)
+    if (fake.preserveManifestOnNextAdd) {
+      fake.preserveManifestOnNextAdd = false
+      if (previousSpec !== undefined) writeDep(name, previousSpec)
+    }
+    if (fake.failAddTargetOnce?.target === target) {
+      const stderr = fake.failAddTargetOnce.stderr
+      fake.failAddTargetOnce = null
+      return { exitCode: 1, timedOut: false, stdout: '', stderr, cancelled: false }
+    }
     if (fake.profileBundleOnNextAdd !== null) {
       appendProfileBundle(fake.profileBundleOnNextAdd)
       fake.profileBundleOnNextAdd = null
@@ -472,6 +488,8 @@ beforeEach(() => {
   fake.buildScriptOutputOnce = ''
   fake.failNextAddStderrOnce = ''
   fake.failAfterWriteStderrOnce = ''
+  fake.preserveManifestOnNextAdd = false
+  fake.failAddTargetOnce = null
   fake.profileBundleOnNextAdd = null
   fake.failInstallOnce = false
   fake.captureBundlesOnNextAdd = false
@@ -627,7 +645,10 @@ describe('host-provided profile and package-operation seams', () => {
     fake.profileDir = explicitDir
     fake.npm['dsh-loop'] = {
       latest: '1.2.0',
-      versions: { '1.2.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } },
+      versions: {
+        '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] },
+        '1.2.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] },
+      },
     }
     fake.failAfterWriteStderrOnce = '[ERR_PNPM_FETCH_404] GET https://registry.npmjs.org/ghost: Not Found - 404'
     vi.stubGlobal('fetch', () => Promise.resolve(new Response(JSON.stringify({ version: '1.2.0' }), { status: 200 })))
@@ -637,6 +658,8 @@ describe('host-provided profile and package-operation seams', () => {
     expect(result.status).toBe(502)
     const desktopManifest = JSON.parse(readFileSync(join(explicitDir, 'package.json'), 'utf8'))
     expect(desktopManifest.dependencies).toEqual({ 'dsh-loop': '^1.0.0' })
+    const installed = JSON.parse(readFileSync(join(explicitDir, 'node_modules', 'dsh-loop', 'package.json'), 'utf8')) as { version?: string }
+    expect(installed.version).toBe('1.0.0')
     const ordinaryManifest = JSON.parse(readFileSync(join(profileDir('web'), 'package.json'), 'utf8'))
     expect(ordinaryManifest.dependencies).toEqual({})
   })
@@ -1711,14 +1734,135 @@ describe('update flow — no npm publishing required', () => {
     expect(lastAdd).toContain('--config.minimumReleaseAge=0')
   })
 
-  it('restores the previous pin when an update fails after pnpm wrote the bumped spec (#65)', async () => {
+  it('restores the previous build when an update fails after pnpm wrote new files (#65 follow-up)', async () => {
     advanceNpmLatest('1.2.0')
     fake.failAfterWriteStderrOnce = '[ERR_PNPM_FETCH_404] GET https://registry.npmjs.org/some-ghost-dep: Not Found - 404'
     const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
     expect(r.status).toBe(502)
-    // pnpm had already bumped the spec to ^1.2.0 before failing; the
-    // rollback restores the pre-update pin.
+    // pnpm had already bumped the spec and replaced the package files before
+    // failing. A rollback is only complete when both return to the previous
+    // build; otherwise the rejected release still runs after restart.
     expect(installedSpec('dsh-loop')).toBe('^1.0.0')
+    const installed = JSON.parse(readFileSync(join(fake.profileDir, 'node_modules', 'dsh-loop', 'package.json'), 'utf8')) as { version?: string }
+    expect(installed.version).toBe('1.0.0')
+    expect(fake.calls.some(call => call.includes('dsh-loop@1.0.0'))).toBe(true)
+    expect(String(r.json.stderr)).toContain('some-ghost-dep')
+  })
+
+  it('restores prior bytes even when the failed update did not change the manifest range', async () => {
+    advanceNpmLatest('1.2.0')
+    fake.preserveManifestOnNextAdd = true
+    fake.failAfterWriteStderrOnce = 'ELIFECYCLE: postinstall failed after replacing the package directory'
+
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+
+    expect(r.status).toBe(502)
+    expect(installedSpec('dsh-loop')).toBe('^1.0.0')
+    const installed = JSON.parse(readFileSync(join(fake.profileDir, 'node_modules', 'dsh-loop', 'package.json'), 'utf8')) as { version?: string }
+    expect(installed.version).toBe('1.0.0')
+    expect(fake.calls.some(call => call.includes('dsh-loop@1.0.0'))).toBe(true)
+  })
+
+  it('reports a failed byte rollback without claiming the previous build was restored', async () => {
+    advanceNpmLatest('1.2.0')
+    const manifestPath = join(fake.profileDir, 'package.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    manifest.dependencies['dsh-loop'] = '~1.0.0'
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+    fake.failAfterWriteStderrOnce = 'ELIFECYCLE: update build failed after writing files'
+    fake.failAddTargetOnce = { target: 'dsh-loop@1.0.0', stderr: 'ELIFECYCLE: rollback build failed' }
+
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+
+    expect(r.status).toBe(502)
+    expect(String(r.json.error)).toMatch(/未能验证|could not be verified/)
+    expect(String(r.json.error)).not.toMatch(/已自动回滚并恢复原版本文件|previous build was restored/)
+    // The failed recovery command rewrites the manifest before exiting. The
+    // route's finally block must still put the user's exact durable spelling
+    // back, even though it cannot claim the recovery was verified.
+    expect(installedSpec('dsh-loop')).toBe('~1.0.0')
+    const installed = JSON.parse(readFileSync(join(fake.profileDir, 'node_modules', 'dsh-loop', 'package.json'), 'utf8')) as { version?: string }
+    expect(installed.version).toBe('1.0.0')
+  })
+
+  it('restores the captured GitHub commit after an update command fails post-write', async () => {
+    const OLD = 'a'.repeat(40)
+    const NEW = 'b'.repeat(40)
+    await bed.dispatch('POST', '/dsh-market/uninstall', { name: 'dsh-loop' })
+    fake.repos['github:owner/dsh-loop'] = {
+      name: 'dsh-loop',
+      manifest: { name: 'dsh-loop', version: '2.0.0', dsh: {}, main: 'lib/index.js' },
+      artifacts: ['lib/index.js'],
+      lockCommit: NEW,
+      byCommit: {
+        [OLD]: { manifest: { name: 'dsh-loop', version: '1.0.0', dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] },
+      },
+    }
+    const manifestPath = join(fake.profileDir, 'package.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    manifest.dependencies = { 'dsh-loop': 'github:owner/dsh-loop' }
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+    const pkgDir = join(fake.profileDir, 'node_modules', 'dsh-loop')
+    mkdirSync(join(pkgDir, 'lib'), { recursive: true })
+    writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: 'dsh-loop', version: '1.0.0', dsh: {}, main: 'lib/index.js' }))
+    writeFileSync(join(pkgDir, 'lib', 'index.js'), '')
+    writeFileSync(join(fake.profileDir, 'pnpm-lock.yaml'), `lockfileVersion: 9\n  resolution: {tarball: https://codeload.github.com/owner/dsh-loop/tar.gz/${OLD}}\n`)
+    fake.failAfterWriteStderrOnce = 'ELIFECYCLE: git update failed after replacing files'
+
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+
+    expect(r.status).toBe(502)
+    expect(r.json.error).toBeUndefined()
+    expect(String(r.json.stderr)).toContain('git update failed')
+    expect(installedSpec('dsh-loop')).toBe('github:owner/dsh-loop')
+    expect(fake.calls.some(call => call.includes(`github:owner/dsh-loop#${OLD}`))).toBe(true)
+    const lockfile = readFileSync(join(fake.profileDir, 'pnpm-lock.yaml'), 'utf8')
+    expect(lockfile).toContain(OLD)
+    expect(lockfile).not.toContain(NEW)
+    const installed = JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf8')) as { version?: string }
+    expect(installed.version).toBe('1.0.0')
+  })
+
+  it('does not launch recovery when Desktop rejects the update as busy', async () => {
+    advanceNpmLatest('1.2.0')
+    bed.dispose()
+    const runPlugin = vi.fn(() => Promise.resolve({
+      exitCode: 127,
+      timedOut: false,
+      stdout: '',
+      stderr: 'another desktop pnpm operation is already running',
+      cancelled: false,
+      busy: true,
+    }))
+    bed = createTestbed({}, {
+      runPlugin,
+      probePnpm: () => Promise.resolve(true),
+      provisionPnpm: () => Promise.resolve({ ok: true }),
+      cancelActive: () => false,
+    })
+
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+
+    expect(r.status).toBe(409)
+    expect(r.json).toMatchObject({ ok: false, busy: true })
+    expect(runPlugin.mock.calls).toEqual([
+      ['web', ['add', 'dsh-loop@latest']],
+      ['web', ['store', 'path']],
+    ])
+    expect(installedSpec('dsh-loop')).toBe('^1.0.0')
+  })
+
+  it('does not launch automatic recovery for a user-cancelled update', async () => {
+    advanceNpmLatest('1.2.0')
+    fake.cancelNext = true
+    const callsBefore = fake.calls.length
+
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+
+    expect(r.status).toBe(200)
+    expect(r.json).toMatchObject({ ok: false, cancelled: true })
+    expect(fake.calls.slice(callsBefore)).toHaveLength(1)
+    expect(fake.calls.slice(callsBefore).flat()).not.toContain('dsh-loop@1.0.0')
   })
 
   it('surfaces blocked build scripts during an update so the approve banner can retry it (#69)', async () => {
@@ -1901,13 +2045,13 @@ describe('local-dev restore flow', () => {
     expect(installedSpec('dsh-loop')).toBe('^1.0.0')
   })
 
-  it('refuses restore for the market itself even when locally linked', async () => {
+  it('keeps the market development link local', async () => {
     writeFileSync(join(fake.profileDir, 'package.json'), JSON.stringify({
       dependencies: { dshmarket: 'link:../dshmarket-dev' },
     }))
     const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'dshmarket', restore: true })
     expect(r.status).toBe(400)
-    expect(String(r.json.error)).toMatch(/never restores itself/)
+    expect(String(r.json.error)).toMatch(/local development link/)
     expect(installedSpec('dshmarket')).toBe('link:../dshmarket-dev')
   })
 
@@ -2136,6 +2280,38 @@ describe('duplicate alias guard (#27)', () => {
 })
 
 describe('market self-update', () => {
+  it('switches a locally packaged market to its newer online release', async () => {
+    await bed.dispatch('POST', '/dsh-market/channel', { channel: 'stable' })
+    fake.npm['dshmarket'] = {
+      latest: '1.0.3',
+      versions: { '1.0.3': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } },
+    }
+    await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/dsh-market/dsh-market' })
+    const manifestPath = join(fake.profileDir, 'package.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { dependencies: Record<string, string> }
+    manifest.dependencies['dshmarket'] = 'file:/packages/dshmarket-1.0.3.tgz'
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+    const packagePath = join(fake.profileDir, 'node_modules', 'dshmarket', 'package.json')
+    const installedPackage = JSON.parse(readFileSync(packagePath, 'utf8')) as Record<string, unknown>
+    installedPackage.repository = { type: 'git', url: 'https://github.com/dsh-market/dsh-market.git' }
+    writeFileSync(packagePath, JSON.stringify(installedPackage))
+    fake.npm['dshmarket'].latest = '1.2.3'
+    fake.npm['dshmarket'].versions['1.2.3'] = {
+      manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'],
+    }
+    vi.stubGlobal('fetch', (url: string) => String(url).includes('registry.npmjs.org')
+      ? Promise.resolve(new Response(JSON.stringify({ version: '1.2.3' }), { status: 200 }))
+      : Promise.reject(new Error('unexpected fetch')))
+
+    const updates = await bed.dispatch('GET', '/dsh-market/updates?force=1')
+    expect(updates.json.updates['dshmarket']).toMatchObject({
+      current: '1.0.3', latest: '1.2.3', updateAvailable: true, restoreRequired: true,
+    })
+    const result = await bed.dispatch('POST', '/dsh-market/update', { name: 'dshmarket', restore: true })
+    expect(result.status, String(result.json.error ?? '')).toBe(200)
+    expect(installedSpec('dshmarket')).toBe('^1.2.3')
+  })
+
   it('the market updates itself through the same flow', async () => {
     // Pin the channel: with no choice on record it is derived from the
     // RUNNING build, and this repo carries a prerelease version while a beta

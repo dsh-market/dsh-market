@@ -22,7 +22,7 @@ const t = (key: string): string => (en as Record<string, string>)[key] ?? key
 let calls: Array<{ path: string; body: unknown }> = []
 
 function stubFetch(options: {
-  version?: string; restart?: boolean; latest?: string | null; removeOk?: boolean; error?: string; selfManaged?: boolean
+  version?: string; restart?: boolean; latest?: string | null; restoreRequired?: boolean; removeOk?: boolean; error?: string; selfManaged?: boolean
   channel?: string; channelSwitch?: string; channelError?: string
   region?: string; regionAuto?: boolean; regionError?: string; githubProxy?: string | null
 } = {}): void {
@@ -48,7 +48,7 @@ function stubFetch(options: {
     if (path.includes('/dsh-market/updates')) {
       return json({ updates: { dshmarket: options.channelSwitch !== undefined
         ? { updateAvailable: false, latest: options.channelSwitch, channelSwitch: options.channelSwitch }
-        : { updateAvailable: options.latest != null, latest: options.latest ?? null } } })
+        : { updateAvailable: options.latest != null, latest: options.latest ?? null, restoreRequired: options.restoreRequired === true } } })
     }
     if (path.endsWith('/dsh-market/channel')) {
       return options.channelError !== undefined
@@ -116,6 +116,20 @@ describe('SettingsCard', () => {
     await open()
     await waitFor(() => { expect(screen.getByText(/1\.13\.0/)).toBeTruthy() })
     expect(screen.getByRole('button', { name: t('setSelfUpdate') })).toBeTruthy()
+  })
+
+  it('confirms before switching a locally packaged market to its matched online release', async () => {
+    stubFetch({ version: '1.29.2', latest: '1.37.0', restoreRequired: true })
+    await open()
+    const button = await screen.findByRole('button', { name: t('restoreOnline') })
+    fireEvent.click(button)
+    expect(calls.some(call => call.path.endsWith('/dsh-market/update'))).toBe(false)
+    expect(screen.getByText(t('restoreHint'))).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: t('restoreContinue') }))
+    await waitFor(() => {
+      expect(calls.find(call => call.path.endsWith('/dsh-market/update'))?.body)
+        .toEqual({ name: 'dshmarket', restore: true })
+    })
   })
 
   it('does not explain what the Update button does when there is no Update button', async () => {
