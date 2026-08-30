@@ -230,6 +230,51 @@ describe('MarketSection (jsdom)', () => {
     expect(screen.getAllByRole('button', { name: en.install }).length).toBeGreaterThanOrEqual(3)
   })
 
+  it('opens Discover with the host-provided plugin query', async () => {
+    render(<MarketSection {...props()} preferredSubsectionId="discover:dsh-loop" />)
+
+    expect(await screen.findByText('dsh-loop')).toBeTruthy()
+    expect(screen.getByRole('button', { name: en.tabDiscover }).className).toMatch(/\bon\b|_on_/)
+    expect(screen.getByPlaceholderText(en.searchPh)).toHaveProperty('value', 'dsh-loop')
+    expect(screen.queryByText('dsh-notify')).toBeNull()
+  })
+
+  it('opens Installed with the host-provided plugin query', async () => {
+    stubFetch({
+      '/dsh-market/installed': {
+        profile: 'web',
+        installed: { 'dsh-loop': '^1.0.0', 'dsh-notify': '^1.0.0' },
+        live: ['dsh-loop', 'dsh-notify'],
+        disabled: [],
+        groups: {},
+        groupOrder: [],
+      },
+    })
+
+    render(<MarketSection {...props()} preferredSubsectionId="installed:dsh-loop" />)
+
+    const installedTab = await screen.findByRole('button', { name: /Installed/ })
+    expect(installedTab.className).toMatch(/\bon\b|_on_/)
+    expect(screen.getByPlaceholderText(en.searchPh)).toHaveProperty('value', 'dsh-loop')
+    expect(await screen.findByText('dsh-loop')).toBeTruthy()
+    expect(screen.queryByText('dsh-notify')).toBeNull()
+  })
+
+  it('handles a later host navigation request without remounting', async () => {
+    const { rerender } = render(
+      <MarketSection {...props()} preferredSubsectionId="discover:dsh-loop" />,
+    )
+    expect(await screen.findByText('dsh-loop')).toBeTruthy()
+
+    rerender(<MarketSection {...props()} preferredSubsectionId="discover:whale-skin" />)
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText(en.searchPh)).toHaveProperty('value', 'whale-skin')
+    })
+    expect(await screen.findByText('whale-skin')).toBeTruthy()
+    expect(screen.queryByText('dsh-loop')).toBeNull()
+  })
+
   /** #256: the title has always opened the repo, but `color:inherit` with no
    * underline meant nothing said so until the cursor was already on it. The
    * link now carries a standing mark and names its destination, so it is

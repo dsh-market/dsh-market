@@ -1050,6 +1050,8 @@ export interface MarketSectionProps {
     subscribe(callback: () => void): () => void
     getSnapshot(): ThemeSnapshot | null
   }
+  /** Optional host-provided destination: `discover:<query>` or `installed:<query>`. */
+  preferredSubsectionId?: string
 }
 
 export function MarketSection(props: MarketSectionProps) {
@@ -1091,6 +1093,21 @@ export function MarketSection(props: MarketSectionProps) {
   const [qThemes, setQThemes] = useState('')
   const [qInstalled, setQInstalled] = useState('')
   const [cat, setCat] = useState('all')
+  useEffect(() => {
+    const target = props.preferredSubsectionId
+    if (target === undefined) return
+    const separator = target.indexOf(':')
+    const kind = separator === -1 ? target : target.slice(0, separator)
+    const value = separator === -1 ? '' : target.slice(separator + 1)
+    if (kind === 'installed') {
+      setTab('installed')
+      setQInstalled(value)
+    } else {
+      setTab('discover')
+      setCat('all')
+      setQ(value)
+    }
+  }, [props.preferredSubsectionId])
   const [confirming, setConfirming] = useState<RegistryPlugin | null>(null)
   /** The plugin whose comment thread is open, or null. */
   const [commentsFor, setCommentsFor] = useState<RegistryPlugin | null>(null)
