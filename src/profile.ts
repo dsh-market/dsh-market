@@ -420,6 +420,29 @@ export function readInstalledRepoEvidence(
   return { identities: [], hints: [] }
 }
 
+/**
+ * Read the sibling metadata file for a URL tarball cache entry. The DSH CLI
+ * writes url-<sha256-prefix>.json alongside every downloaded tarball,
+ * recording the original URL, repo, and SHA. This is what lets the
+ * installed-status resolver map a file: spec back to its GitHub repository
+ * when the package itself declares no repository field.
+ */
+function readUrlTarballMeta(spec: string): { url?: string; repo?: string; sha?: string } | null {
+  const match = /^(?:file):(.+)$/i.exec(spec)
+  if (match === null) return null
+  let tarballPath = match[1]!
+  try { tarballPath = decodeURIComponent(tarballPath) } catch { /* keep the literal path */ }
+  if (!/url-[0-9a-f]{32}\.(?:tar\.gz|tgz)$/.test(tarballPath)) return null
+  const metaPath = tarballPath.replace(/\.(?:tar\.gz|tgz)$/, '.json')
+  try {
+    if (!existsSync(metaPath)) return null
+    const meta = JSON.parse(readFileSync(metaPath, 'utf8')) as Record<string, unknown>
+    return typeof meta === 'object' && meta !== null ? meta as { url?: string; repo?: string; sha?: string } : null
+  } catch {
+    return null
+  }
+}
+
 /** Pinned commit per `owner/repo` from the profile lockfile's codeload tarball URLs. */
 export function readLockCommits(profile: string, explicitDir?: string): Map<string, string> {
   const commits = new Map<string, string>()

@@ -1,7 +1,9 @@
 /**
  * Registry-source knowledge: how a curated registry entry's URL maps to an
- * installable pnpm target. Pure string logic, no I/O.
+ * installable pnpm target. Mostly pure string logic; the only I/O is reading the sibling metadata file for URL tarball cache entries (China-region codeload mirrors).
  */
+
+import { existsSync, readFileSync } from 'node:fs'
 
 const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
 
@@ -183,7 +185,33 @@ function repoFromTarget(spec: string): { repo: string; subpath: string | null } 
   // same reason profile.ts does: the proxy sits in FRONT of the real URL,
   // so anchoring the pattern would see only the proxy's own hostname.
   const tarball = /codeload\.github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/tar\.gz\/[0-9a-f]{40}/.exec(spec)
-  return tarball === null ? null : { repo: tarball[1]!, subpath: null }
+  if (tarball !== null) return { repo: tarball[1]!, subpath: null }
+  // A URL tarball cache entry (China-region codeload mirror): file: spec
+  // pointing at bundled-plugins/url-<sha256-prefix>.tar.gz. The sibling
+  // url-<sha256-prefix>.json records the original repo.
+  const urlTarball = readUrlTarballRepo(spec)
+  return urlTarball === null ? null : { repo: urlTarball, subpath: null }
+}
+
+/**
+ * Read the repo from a URL tarball cache entry's sibling metadata file.
+ * The DSH CLI writes url-<sha256-prefix>.json alongside every downloaded
+ * tarball, recording the original URL, repo, and SHA.
+ */
+function readUrlTarballRepo(spec: string): string | null {
+  const match = /^(?:file):(.+)$/i.exec(spec)
+  if (match === null) return null
+  let tarballPath = match[1]!
+  try { tarballPath = decodeURIComponent(tarballPath) } catch { /* keep the literal path */ }
+  if (!/url-[0-9a-f]{32}\.(?:tar\.gz|tgz)$/.test(tarballPath)) return null
+  const metaPath = tarballPath.replace(/\.(?:tar\.gz|tgz)$/, '.json')
+  try {
+    if (!existsSync(metaPath)) return null
+    const meta = JSON.parse(readFileSync(metaPath, 'utf8')) as { repo?: string }
+    return typeof meta.repo === 'string' && meta.repo !== '' ? meta.repo : null
+  } catch {
+    return null
+  }
 }
 
 /**
