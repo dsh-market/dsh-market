@@ -728,6 +728,23 @@ describe('backup and restore (#55)', () => {
     expect(text).toMatch(/ghost-bundle: NOT RESOLVED/)
   })
 
+  /** REIN-280: the host version was the field investigations kept stalling
+   * on. #293 ran three rounds before it emerged that the reporter's host was
+   * newer than every attempt to reproduce; #404 is a plugin requiring a host
+   * newer than the Desktop build it was installed on. The export never
+   * carried it, so every such question had to be asked by hand. */
+  it('names the host version in the export, or says plainly that it could not find one', async () => {
+    const r = await bed.dispatch('GET', '/dsh-market/logs')
+    expect(r.status).toBe(200)
+    const line = r.text.split('\n').find(row => row.startsWith('dsh host: '))
+    expect(line, `no "dsh host" line in:\n${r.text.slice(0, 400)}`).toBeDefined()
+    // Under the test harness there is no locatable host package, and that
+    // must read as a stated fact rather than a blank or "undefined" — an
+    // empty field would look like a bug in the export itself.
+    expect(line).toBe('dsh host: not locatable from this process')
+    expect(r.text).not.toContain('undefined')
+  })
+
   /** #346: a catalog entry can name a monorepo subpackage its author has
    * since moved. pnpm's failure for that is unrecognisable — the user sees a
    * resolver error with no reason to suspect the entry rather than their own

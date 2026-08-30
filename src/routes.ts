@@ -18,6 +18,7 @@ import {
   mountClientOnlyDeps, purgeMarketState, readMarketState, writeMarketState,
 } from './hot.ts'
 import { createGroup, deleteGroup, removeFromGroups, renameGroup, setGroupMembers } from './groups.ts'
+import { dshHostInfo } from './dsh-install.ts'
 import { configurePersistentLog, exportLogs, logEvent, readPersistentLog } from './log.ts'
 import { marketFetch } from './net.ts'
 import { diagnosePackageManifests } from './diagnostics.ts'
@@ -1929,8 +1930,18 @@ export function mountMarketRoutes(
         } catch (error) {
           snapshot.push(`profile state unavailable: ${error instanceof Error ? error.message : String(error)}`)
         }
+        // The host version, and where it was found. Absent until now, and
+        // it is the field investigations kept stalling on: #293 spent three
+        // rounds before it emerged that the reporter's host was newer than
+        // every attempt to reproduce, and a path under Electron's resources
+        // is how a Desktop-bundled (possibly older, #139) host announces
+        // itself. sanitize() rewrites the home prefix in the value.
+        const host = dshHostInfo()
         response.end(exportLogs({
           'dsh-market': version,
+          'dsh host': host === null
+            ? 'not locatable from this process'
+            : `${host.version} (${host.directory})`,
           platform: `${process.platform} ${process.arch}`,
           node: process.version,
           profile: config.profile,
