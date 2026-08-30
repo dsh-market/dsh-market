@@ -80,8 +80,9 @@ describe('public update API v1 operation model', () => {
     expect(completed).not.toHaveProperty('legacyRollbackId')
 
     expect(store.beginRollback(operation.operationId)).toBe('private-rollback-7')
-    expect(store.finishRollback(operation.operationId, 200, { rolledBack: true })).toMatchObject({
+    expect(store.finishRollback(operation.operationId, 200, { rolledBack: true }, '0.2.24')).toMatchObject({
       state: 'rolled-back',
+      installedVersion: '0.2.24',
       outcome: {
         restartRequired: true,
         rollback: { available: false, state: 'succeeded' },

@@ -15,7 +15,8 @@
 
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { dirname, join, resolve } from 'node:path'
+import { join } from 'node:path'
+import { findDshInstallDir } from './dsh-install.ts'
 
 /** Profile bundles that ship with the dsh host and must stay put (#98). */
 export const INBOX_BUNDLES = new Set([
@@ -74,26 +75,6 @@ export function readBundleStack(profileDir: string): BundleStack {
   } catch {
     return { bundles: [], community: [] }
   }
-}
-
-/**
- * Locate the dsh host installation from the process entry (same source as
- * dsh-cli.ts / check.ts): walk up from dirname(argv[1]) until a package.json
- * named @deepseek-ai/dsh is found.
- */
-function findDshInstallDir(entry = process.argv[1]): string | null {
-  if (entry === undefined) return null
-  let dir = resolve(dirname(entry))
-  for (let depth = 0; depth < 10; depth += 1) {
-    try {
-      const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as { name?: unknown }
-      if (manifest.name === '@deepseek-ai/dsh') return dir
-    } catch { /* keep walking up */ }
-    const parent = dirname(dir)
-    if (parent === dir) return null
-    dir = parent
-  }
-  return null
 }
 
 /**

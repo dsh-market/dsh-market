@@ -49,16 +49,18 @@ describe('provisionPnpm (#149)', () => {
     // WORKED — yet `pnpm --version` still fails, because the binary landed
     // in a prefix this process never had on PATH.
     const calls: string[][] = []
-    const globalBin = process.platform === 'win32' ? 'C:\\npm-prefix' : '/opt/custom-prefix'
+    const globalPrefix = process.platform === 'win32' ? 'C:\\npm-prefix' : '/opt/custom-prefix'
+    const globalBin = process.platform === 'win32' ? globalPrefix : `${globalPrefix}/bin`
+    const separator = process.platform === 'win32' ? ';' : ':'
     childProcess.spawn.mockImplementation((file: string, args: string[], options: { env?: Record<string, string> }) => {
       const command = commandOf(file, args)
       calls.push([command])
       if (command.startsWith('corepack')) return fakeChild(0)
       if (command.startsWith('npm install')) return fakeChild(0)
-      if (command.startsWith('npm prefix')) return fakeChild(0, `${globalBin}\n`)
+      if (command.startsWith('npm prefix')) return fakeChild(0, `${globalPrefix}\n`)
       // pnpm runs only once the discovered bin dir is on the spawn PATH.
       const path = options.env?.PATH ?? ''
-      return fakeChild(path.includes(globalBin) ? 0 : 1)
+      return fakeChild(path.split(separator).includes(globalBin) ? 0 : 1)
     })
 
     const { provisionPnpm } = await import('../src/dsh-cli.ts')

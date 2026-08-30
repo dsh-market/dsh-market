@@ -239,11 +239,19 @@ export class UpdateOperationStoreV1 {
     return operation.legacyRollbackId
   }
 
-  finishRollback(operationId: string, status: number, payload: unknown): UpdateOperationV1 | null {
+  finishRollback(
+    operationId: string,
+    status: number,
+    payload: unknown,
+    installedVersion?: string | null,
+  ): UpdateOperationV1 | null {
     const operation = this.operations.get(operationId)
     if (operation === undefined) return null
     const body = record(payload) ?? {}
     const ok = status >= 200 && status < 300 && body.rolledBack === true
+    // The rollback endpoint supplies a fresh disk read. Keep the argument
+    // optional so existing store consumers retain source compatibility.
+    if (installedVersion !== undefined) operation.installedVersion = installedVersion
     operation.outcome.rollback.available = !ok && status !== 400
     operation.outcome.rollback.state = ok ? 'succeeded' : 'failed'
     operation.outcome.rollback.detail = ok ? null : text(body.error) ?? `rollback failed with HTTP ${String(status)}`

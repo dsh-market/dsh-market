@@ -15,16 +15,24 @@ import {
   analyzeProfile,
   compareSemver,
   corePackageNames,
+  findDshInstallDir,
   satisfiesRange,
 } from '../src/check.ts'
+import { readBundleRules } from '../src/order.ts'
 
 let tmp: string
+const originalResourcesPath = Object.getOwnPropertyDescriptor(process, 'resourcesPath')
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), 'dshm-check-'))
   process.env.DSH_HOME = tmp
 })
 afterEach(() => {
   delete process.env.DSH_HOME
+  if (originalResourcesPath === undefined) {
+    delete (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath
+  } else {
+    Object.defineProperty(process, 'resourcesPath', originalResourcesPath)
+  }
   rmSync(tmp, { recursive: true, force: true })
 })
 
@@ -60,11 +68,17 @@ function writeLoadablePackage(base: string, name: string): string {
 }
 
 /** Write a dsh bundle package (dsh.bundle.patch entry-list) at base/node_modules/<name>. */
-function writeBundle(base: string, name: string, version: string, patch: unknown[]): string {
+function writeBundle(
+  base: string,
+  name: string,
+  version: string,
+  patch: unknown[],
+  order?: unknown,
+): string {
   const dir = writePackage(base, name, {
     name,
     version,
-    dsh: { bundle: { patch: './cordis.patch.yml' } },
+    dsh: { bundle: { patch: './cordis.patch.yml', ...(order === undefined ? {} : { order }) } },
   })
   writeFileSync(join(dir, 'cordis.patch.yml'), dump(patch))
   return dir
@@ -770,11 +784,10 @@ describe('suggestedOrder (#98 opt: LOOT-style auto-fix)', () => {
 
 })
 
-/** #369: on DSH Desktop the dsh installation lives inside the Electron app
- * bundle, and findDshInstallDir walks up from process.argv[1] — Electron's
- * entry, nowhere near it. Both anchors then miss the in-box bundles, which
- * are supplied by that installation by definition, and the composition was
- * declared unbootable. `dsh --dump-config` on the same profile exited 0. */
+/** #369: when no CLI or Desktop installation anchor is visible, the in-box
+ * bundles cannot be resolved. They are supplied by that installation by
+ * definition, so this unknown state must not declare the profile unbootable.
+ * `dsh --dump-config` on the same profile exited 0. */
 describe('in-box bundles that cannot be located (#369)', () => {
   /** `tmp` is assigned per test, so this has to be read inside one. */
   const desktop = () => ({ dshInstallDir: null, homeDir: join(tmp, 'empty-home') })
@@ -867,6 +880,105 @@ describe('in-box bundles that cannot be located (#369)', () => {
     const community = report.bundles.find(layer => layer.name === 'some-community-bundle')
     expect(community?.error).toMatch(/not installed/)
     expect(community?.unresolvedInbox).toBeUndefined()
+  })
+})
+
+describe('Desktop host discovery (#405)', () => {
+  it.each(['app.asar.unpacked', 'app.asar', 'app'])(
+    'finds a validated host package in resources/%s',
+    applicationRoot => {
+      const resources = join(tmp, `resources-${applicationRoot}`)
+      const dshInstall = writePackage(join(resources, applicationRoot), '@deepseek-ai/dsh', {
+        name: '@deepseek-ai/dsh',
+        version: '0.1.1-rc.2',
+      })
+      Object.defineProperty(process, 'resourcesPath', {
+        value: resources,
+        configurable: true,
+      })
+
+      expect(findDshInstallDir(join(tmp, 'electron-entry', 'main.js'))).toBe(dshInstall)
+    },
+  )
+
+  it('keeps CLI-entry discovery ahead of the Desktop fallback', () => {
+    const cliInstall = pdir('cli-install')
+    mkdirSync(join(cliInstall, 'bin'), { recursive: true })
+    writeFileSync(join(cliInstall, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh' }))
+
+    const resources = pdir('desktop-resources')
+    writePackage(join(resources, 'app.asar.unpacked'), '@deepseek-ai/dsh', {
+      name: '@deepseek-ai/dsh',
+    })
+    Object.defineProperty(process, 'resourcesPath', {
+      value: resources,
+      configurable: true,
+    })
+
+    expect(findDshInstallDir(join(cliInstall, 'bin', 'dsh.js'))).toBe(cliInstall)
+  })
+
+  it('rejects a Desktop candidate with the wrong package identity', () => {
+    const resources = pdir('wrong-package-resources')
+    writePackage(join(resources, 'app.asar.unpacked'), '@deepseek-ai/dsh', {
+      name: 'not-the-dsh-host',
+    })
+    Object.defineProperty(process, 'resourcesPath', {
+      value: resources,
+      configurable: true,
+    })
+
+    expect(findDshInstallDir(join(tmp, 'electron-entry', 'main.js'))).toBeNull()
+  })
+
+  it('loads hoisted in-box rows before composing community patches', () => {
+    const resources = join(tmp, 'resources')
+    const applicationRoot = join(resources, 'app.asar.unpacked')
+    const dshInstall = writePackage(applicationRoot, '@deepseek-ai/dsh', {
+      name: '@deepseek-ai/dsh',
+      version: '0.1.1-rc.2',
+    })
+    const dshBase = writeBundle(applicationRoot, '@deepseek-ai/dsh-base', '0.1.1-rc.2', [
+      { insert: [{ id: 'attachment-local', name: '@deepseek-ai/dsh-attachment-local' }] },
+    ], { before: ['dsh-vision-router'] })
+
+    const dir = pdir()
+    writeProfile(dir, {
+      name: 'web-profile',
+      dependencies: { 'dsh-vision-router': '2.0.1' },
+      dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', 'dsh-vision-router'] } },
+    })
+    writeBundle(dir, 'dsh-vision-router', '2.0.1', [
+      { id: 'attachment-local', config: { local: true } },
+    ])
+    Object.defineProperty(process, 'resourcesPath', {
+      value: resources,
+      configurable: true,
+    })
+
+    expect(findDshInstallDir(join(tmp, 'electron-entry', 'main.js'))).toBe(dshInstall)
+    const report = analyzeProfile(dir, { homeDir: join(tmp, 'empty-home') })
+
+    const official = report.bundles.find(bundle => bundle.name === '@deepseek-ai/dsh-base')
+    expect(official).toMatchObject({
+      directory: dshBase,
+      entries: ['attachment-local'],
+    })
+    expect(official?.unresolvedInbox).toBeUndefined()
+    expect(report.orphans).toEqual([])
+    expect(report.overrides).toEqual([{
+      id: 'attachment-local',
+      layer: 'dsh-vision-router',
+      overriddenLayers: ['@deepseek-ai/dsh-base'],
+    }])
+    expect(readBundleRules(dir)).toContainEqual({
+      name: '@deepseek-ai/dsh-base',
+      before: ['dsh-vision-router'],
+      after: [],
+    })
+    expect(report.summary.warnings).not.toContain(
+      'dsh-vision-router: attachment-local — patch target not found',
+    )
   })
 })
 

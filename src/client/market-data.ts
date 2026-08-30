@@ -317,12 +317,40 @@ function searchText(value: string): string {
 }
 
 /**
+ * Normalized catalog fields are immutable for the lifetime of one registry
+ * entry. Keep them with that entry so typing does not repeat unicode
+ * normalization across the whole catalog, while replaced catalogs remain
+ * collectible. The raw query is intentionally not cached: it is normalized
+ * once per call and would otherwise grow the cache on every keystroke.
+ */
+const pluginSearchTextCache = new WeakMap<RegistryPlugin, Map<string, string>>()
+
+function cachedPluginSearchText(plugin: RegistryPlugin, value: string): string {
+  let fields = pluginSearchTextCache.get(plugin)
+  if (fields === undefined) {
+    fields = new Map()
+    pluginSearchTextCache.set(plugin, fields)
+  }
+  const hit = fields.get(value)
+  if (hit !== undefined) return hit
+  const normalized = searchText(value)
+  fields.set(value, normalized)
+  return normalized
+}
+
+/**
  * Relevance within one field. Exact and prefix matches beat phrase matches;
  * for a multi-word query every word must occur in the same field.
  */
-function fieldRelevance(value: string | undefined, query: string, tokens: string[], weight: number): number {
+function fieldRelevance(
+  plugin: RegistryPlugin,
+  value: string | undefined,
+  query: string,
+  tokens: string[],
+  weight: number,
+): number {
   if (!value) return 0
-  const text = searchText(value)
+  const text = cachedPluginSearchText(plugin, value)
   if (text === '' || !tokens.every(token => text.includes(token))) return 0
   if (text === query) return weight + 300
   if (text.startsWith(query)) return weight + 250
@@ -353,13 +381,13 @@ function pluginRelevance(
   const categoryLabels = categoryIds.flatMap(category => Object.values(categories?.[category] ?? {}))
 
   return Math.max(
-    fieldRelevance(plugin.name, query, tokens, 700),
-    fieldRelevance(plugin.npm, query, tokens, 700),
-    fieldRelevance(plugin.owner, query, tokens, 400),
-    fieldRelevance(preferredDescription, query, tokens, 280),
-    ...otherDescriptions.map(value => fieldRelevance(value, query, tokens, 240)),
-    ...categoryIds.map(value => fieldRelevance(value, query, tokens, 180)),
-    ...categoryLabels.map(value => fieldRelevance(value, query, tokens, 180)),
+    fieldRelevance(plugin, plugin.name, query, tokens, 700),
+    fieldRelevance(plugin, plugin.npm, query, tokens, 700),
+    fieldRelevance(plugin, plugin.owner, query, tokens, 400),
+    fieldRelevance(plugin, preferredDescription, query, tokens, 280),
+    ...otherDescriptions.map(value => fieldRelevance(plugin, value, query, tokens, 240)),
+    ...categoryIds.map(value => fieldRelevance(plugin, value, query, tokens, 180)),
+    ...categoryLabels.map(value => fieldRelevance(plugin, value, query, tokens, 180)),
   )
 }
 

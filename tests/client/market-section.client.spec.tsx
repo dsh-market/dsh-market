@@ -6,7 +6,7 @@
  * endpoints, stubbed with fixture payloads.
  */
 
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -27,22 +27,25 @@ const REGISTRY = {
 /** Every fetch the component made, for asserting request payloads. */
 let fetchCalls: Array<{ path: string; method: string; body: unknown }> = []
 
-function stubFetch(overrides: Record<string, unknown> = {}) {
+function stubFetch(overrides: Record<string, unknown> = {}, mountPath = '') {
   fetchCalls = []
   const mock = vi.fn((input: unknown, init?: RequestInit) => {
     const path = String(input).split('?')[0]
+    const route = mountPath !== '' && path.startsWith(`${mountPath}/`)
+      ? path.slice(mountPath.length)
+      : path
     const method = (init?.method ?? 'GET').toUpperCase()
     const body = init?.body ? JSON.parse(String(init.body)) : undefined
     fetchCalls.push({ path, method, body })
     const payload =
-      path === '/dsh-market/registry' ? { source: 'live', registry: REGISTRY }
-      : path === '/dsh-market/installed' ? { profile: 'web', installed: {}, live: [], disabled: [], groups: {}, groupOrder: [] }
-      : path === '/dsh-market/status' ? { active: false, pnpm: true, boot: 'boot-1', restart: true, installed: {} }
-      : path === '/dsh-market/updates' ? { updates: {} }
-      : path === '/dsh-market/toggle' ? { ok: true, disabled: [], live: [], activation: {} }
-      : path === '/dsh-market/groups' ? { ok: true, groups: {}, groupOrder: [], disabled: [] }
+      route === '/dsh-market/registry' ? { source: 'live', registry: REGISTRY }
+      : route === '/dsh-market/installed' ? { profile: 'web', installed: {}, live: [], disabled: [], groups: {}, groupOrder: [] }
+      : route === '/dsh-market/status' ? { active: false, pnpm: true, boot: 'boot-1', restart: true, installed: {} }
+      : route === '/dsh-market/updates' ? { updates: {} }
+      : route === '/dsh-market/toggle' ? { ok: true, disabled: [], live: [], activation: {} }
+      : route === '/dsh-market/groups' ? { ok: true, groups: {}, groupOrder: [], disabled: [] }
       : null
-    const merged = overrides[path] ?? payload
+    const merged = overrides[path] ?? overrides[route] ?? payload
     if (merged === null) return Promise.reject(new Error(`unstubbed fetch: ${String(input)}`))
     const result = typeof merged === 'function' ? (merged as (requestBody?: unknown) => unknown)(body) : merged
     const status = result !== null && typeof result === 'object' && '__status' in result && typeof (result as { __status?: unknown }).__status === 'number'
@@ -124,6 +127,97 @@ describe('api() base resolution (#345)', () => {
     // Arbitrary depth, and a leading slash in the argument is not special.
     tag.setAttribute('href', 'http://host.example/user/a/b/')
     expect(api('dsh-market/status')).toBe('/user/a/b/dsh-market/status')
+  })
+
+  it('keeps newer changelog and note requests under that prefix too', async () => {
+    const tag = document.createElement('base')
+    tag.setAttribute('href', 'http://host.example/app/my-dsh/')
+    document.head.appendChild(tag)
+    const fetchMock = stubFetch({
+      '/dsh-market/installed': {
+        profile: 'web',
+        installed: { 'dsh-loop': '^1.0.0' },
+        live: ['dsh-loop'],
+        disabled: [],
+        notes: {},
+      },
+      '/dsh-market/updates': {
+        updates: {
+          'dsh-loop': {
+            kind: 'npm', version: '1.0.0', current: '1.0.0', latest: '1.2.0', updateAvailable: true,
+          },
+        },
+      },
+      '/dsh-market/changelog': {
+        kind: 'release',
+        release: {
+          tag: 'v1.2.0', name: 'Subpath release', publishedAt: null, url: null, body: 'Subpath release notes',
+        },
+      },
+      '/dsh-market/note': (body: any) => ({
+        ok: true,
+        notes: { [body.name]: String(body.text).trim() },
+      }),
+    }, '/app/my-dsh')
+
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+
+    fireEvent.click(await screen.findByRole('button', { name: en.noteAdd }))
+    fireEvent.change(screen.getByPlaceholderText(en.notePlaceholder), { target: { value: 'for project A' } })
+    fireEvent.click(screen.getByRole('button', { name: en.noteSave }))
+    expect(await screen.findByText('for project A')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(en.notesLink) }))
+    expect(await screen.findByText('Subpath release notes')).toBeTruthy()
+
+    expect(fetchCalls).toContainEqual({
+      path: '/app/my-dsh/dsh-market/note',
+      method: 'POST',
+      body: { name: 'dsh-loop', text: 'for project A' },
+    })
+    expect(fetchCalls).toContainEqual({
+      path: '/app/my-dsh/dsh-market/changelog',
+      method: 'GET',
+      body: undefined,
+    })
+    expect(fetchCalls.some(call => call.path === '/dsh-market/note')).toBe(false)
+    expect(fetchCalls.some(call => call.path === '/dsh-market/changelog')).toBe(false)
+    expect(fetchMock.mock.calls.some(([url]) =>
+      url === '/app/my-dsh/dsh-market/changelog?name=dsh-loop')).toBe(true)
+  })
+
+  it('leaves no root-absolute endpoint anywhere in the client source', () => {
+    // #345 has now been fixed twice. The first fix converted every endpoint
+    // that existed; changelog and personal notes were written afterwards, as
+    // ordinary-looking `fetch('/dsh-market/…')` calls, and escaped to the
+    // origin root again (#407). Nothing about writing that line looks wrong,
+    // and nothing fails until someone is behind a path-prefixed proxy — the
+    // one population that cannot see this test, or fix it.
+    //
+    // So the invariant is checked over the SOURCE rather than per endpoint:
+    // a per-call test can only cover calls somebody thought to add.
+    const offenders: string[] = []
+    for (const file of readdirSync(resolve('src/client'))) {
+      if (!/\.tsx?$/.test(file)) continue
+      const lines = readFileSync(resolve('src/client', file), 'utf8').split('\n')
+      lines.forEach((line, index) => {
+        // Prose about the bug is allowed to name the shape it describes; only
+        // code counts. Comment lines in this codebase are `//`, `/*` or ` *`.
+        const code = line.trim()
+        if (code.startsWith('//') || code.startsWith('*') || code.startsWith('/*')) return
+        // The literal INSIDE an api() call is the correct shape — that is the
+        // whole point of the helper — so remove those before looking at what
+        // is left. What is left is a path the browser would resolve itself.
+        const bare = code.replace(/\bapi\(\s*(['"`])\/?[^'"`]*\1\s*\)/g, 'api(…)')
+        if (/['"`]\/dsh-market\//.test(bare)) offenders.push(`${file}:${index + 1}: ${code}`)
+      })
+    }
+    expect(
+      offenders,
+      `route these through api() — a root-absolute path resolves against the origin, not the mount:\n${offenders.join('\n')}`,
+    ).toEqual([])
   })
 })
 
@@ -395,6 +489,38 @@ describe('MarketSection (jsdom)', () => {
     // Success feedback appears as a Toast (body portal, no layout impact),
     // then the button returns to idle.
     await waitFor(() => { expect(screen.getByText(en.exportedLog)).toBeTruthy() })
+  })
+
+  it('the exported file carries the browser section, not just the server one', async () => {
+    // The wiring, not the helper — self-check.client.spec.ts covers the lines
+    // themselves. What this proves is that they reach the file a reporter
+    // actually attaches to an issue, which is the entire point of collecting
+    // them: #293 and #384 both stalled on evidence that existed in the page
+    // and never made it into the export.
+    let saved = ''
+    // Patch only the two statics. Replacing the whole `URL` global breaks
+    // api(), which calls `new URL(...)` — the market stops resolving its own
+    // endpoints and the test fails for a reason that has nothing to do with
+    // what it is testing.
+    const realCreate = URL.createObjectURL
+    const realRevoke = URL.revokeObjectURL
+    URL.createObjectURL = (blob: Blob) => { void blob.text().then((text) => { saved = text }); return 'blob:stub' }
+    URL.revokeObjectURL = () => {}
+    try {
+      stubFetch({ '/dsh-market/logs': 'log-lines' })
+      render(<MarketSection {...props()} />)
+      await screen.findByText('dsh-loop')
+      fireEvent.click(screen.getByRole('button', { name: en.exportLog }))
+      await waitFor(() => { expect(screen.getByText(en.exportedLog)).toBeTruthy() })
+      await waitFor(() => { expect(saved).toContain('## browser') })
+      expect(saved).toContain('portal containers:')
+      expect(saved).toContain('client bundle evaluations:')
+      // The server half is still there — this appends, it does not replace.
+      expect(saved).toContain('log-lines')
+    } finally {
+      URL.createObjectURL = realCreate
+      URL.revokeObjectURL = realRevoke
+    }
   })
 
   it('shows curated registry screenshots in the dialog, and README-extracted ones as fallback (#61)', async () => {
@@ -1158,6 +1284,87 @@ describe('refresh banner falls back when the change is undone (#340)', () => {
     fireEvent.click(screen.getAllByRole('button', { name: en.uninstall }).at(-1)!)
 
     await waitFor(() => expect(screen.queryAllByText(re(en.refreshBanner))).toHaveLength(0))
+  })
+
+  it('still stops asking when the undone plugin has a client part', async () => {
+    // Same shape as the test above, except the route now answers
+    // `refresh: true` because the package declares dsh.client. Installing and
+    // uninstalling inside one page still nets to zero: the client bundle was
+    // never injected, so the banner was asking the user to reload IN ORDER TO
+    // get it, and after the uninstall there is nothing to reload for.
+    let present: Record<string, string> = {}
+    stubFetch({
+      '/dsh-market/installed': () => ({
+        profile: 'web', installed: present, live: Object.keys(present), disabled: [],
+        activation: { 'dsh-loop': { state: 'live', reasons: [], bundle: true, hot: true } },
+      }),
+      '/dsh-market/install': () => {
+        present = { 'dsh-loop': '^1.0.0' }
+        return { ok: true, hot: true, installed: present }
+      },
+      '/dsh-market/uninstall': () => { present = {}; return { ok: true, hot: true, refresh: true } },
+    })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    let card: HTMLElement | null = screen.getByText('dsh-loop')
+    while (card !== null && within(card).queryAllByRole('button', { name: en.install }).length === 0) {
+      card = card.parentElement
+    }
+    fireEvent.click(within(card!).getAllByRole('button', { name: en.install })[0]!)
+    fireEvent.click(await screen.findByRole('button', { name: en.confirmInstall }))
+    await waitFor(() => expect(screen.getAllByText(re(en.refreshBanner)).length).toBe(1))
+
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    fireEvent.click((await screen.findAllByRole('button', { name: en.uninstall }))[0]!)
+    await screen.findByText(re(en.uninstallConfirmDesc))
+    fireEvent.click(screen.getAllByRole('button', { name: en.uninstall }).at(-1)!)
+
+    await waitFor(() => expect(screen.queryAllByText(re(en.refreshBanner))).toHaveLength(0))
+  })
+
+  it('asks for a reload when a plugin the page had loaded is uninstalled (#415)', async () => {
+    // Installed BEFORE this page loaded, so its client bundle is injected and
+    // still on screen after the package is gone. Exactly one banner, and it
+    // is the refresh one: a hot uninstall needs no host restart.
+    stubFetch({
+      '/dsh-market/installed': () => ({
+        profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: ['dsh-loop'], disabled: [],
+        activation: { 'dsh-loop': { state: 'live', reasons: [], bundle: true, hot: true } },
+      }),
+      '/dsh-market/uninstall': () => ({ ok: true, hot: true, refresh: true }),
+    })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    fireEvent.click((await screen.findAllByRole('button', { name: en.uninstall }))[0]!)
+    await screen.findByText(re(en.uninstallConfirmDesc))
+    fireEvent.click(screen.getAllByRole('button', { name: en.uninstall }).at(-1)!)
+
+    await waitFor(() => expect(screen.getAllByText(re(en.refreshBanner)).length).toBe(1))
+    // Not two. A restart banner here would be the "为啥有三个状态横幅啊" shape.
+    expect(screen.queryAllByText(re(en.restartBanner)).length).toBe(0)
+  })
+
+  it('leaves a non-hot uninstall with only its restart banner (#415)', async () => {
+    // The other arm: a removal that needs a host restart already tells the
+    // user to restart, and a restart reloads the page. Adding a reload banner
+    // beside it asks twice for one action.
+    stubFetch({
+      '/dsh-market/installed': () => ({
+        profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: ['dsh-loop'], disabled: [],
+        activation: { 'dsh-loop': { state: 'live', reasons: [], bundle: true, hot: false } },
+      }),
+      '/dsh-market/uninstall': () => ({ ok: true, hot: false }),
+    })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    fireEvent.click((await screen.findAllByRole('button', { name: en.uninstall }))[0]!)
+    await screen.findByText(re(en.uninstallConfirmDesc))
+    fireEvent.click(screen.getAllByRole('button', { name: en.uninstall }).at(-1)!)
+
+    await waitFor(() => expect(screen.getAllByText(re(en.restartBanner)).length).toBe(1))
+    expect(screen.queryAllByText(re(en.refreshBanner)).length).toBe(0)
   })
 
   it('stops asking when a switch is put back where the page found it', async () => {

@@ -31,7 +31,10 @@ import { createRequire, isBuiltin } from 'node:module'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { JSON_SCHEMA, Type, load } from 'js-yaml'
+import { findDshInstallDir } from './dsh-install.ts'
 import { INBOX_BUNDLES, readBundleRules, suggestOrder, validateOrder } from './order.ts'
+
+export { findDshInstallDir } from './dsh-install.ts'
 
 /** js-yaml dialect for `!!js` scalars — identical to dsh-app-boot's entryListSchema. */
 const jsExpr = new Type('tag:yaml.org,2002:js', {
@@ -202,7 +205,7 @@ export interface CheckReport {
 }
 
 export interface CheckOptions {
-  /** DSH host installation dir; auto-detected from process.argv when omitted (tests inject it). */
+  /** DSH host install dir; auto-detected from the CLI entry or Desktop resources when omitted. */
   dshInstallDir?: string
   /** Harness home for the home-level patch layer; defaults to $DSH_HOME or ~/.dsh. */
   homeDir?: string
@@ -337,26 +340,6 @@ export function corePackageNames(dshInstallDir: string | null): Set<string> {
     if (typeof manifest.name === 'string') names.add(manifest.name)
   } catch { /* not a package dir */ }
   return names
-}
-
-/**
- * Locate the dsh host installation from the process entry (the same source
- * dsh-cli.ts uses to re-invoke the CLI): walk up from dirname(argv[1]) until
- * a package.json named @deepseek-ai/dsh is found.
- */
-export function findDshInstallDir(entry = process.argv[1]): string | null {
-  if (entry === undefined) return null
-  let dir = resolve(dirname(entry))
-  for (let depth = 0; depth < 10; depth += 1) {
-    try {
-      const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as { name?: unknown }
-      if (manifest.name === '@deepseek-ai/dsh') return dir
-    } catch { /* keep walking up */ }
-    const parent = dirname(dir)
-    if (parent === dir) return null
-    dir = parent
-  }
-  return null
 }
 
 /** Version of `name` as physically resolved at `base`/node_modules, or null. */
@@ -934,9 +917,8 @@ export function buildBundleLayers(
       // An in-box bundle is supplied by the dsh INSTALLATION, not by the
       // profile — that is what makes it in-box. So failing to find one says
       // we could not locate the installation, not that the profile is
-      // broken: on DSH Desktop dsh lives inside the app bundle and
-      // findDshInstallDir() walks up from process.argv[1], which is
-      // Electron's entry and leads nowhere near it.
+      // broken: unusual or older hosts can still hide the in-box installation
+      // from both the CLI-entry and packaged-Desktop discovery anchors.
       //
       // Calling that "will fail to boot" turned a working composition into a
       // fatal verdict and rolled back a good update (#369) — while `dsh

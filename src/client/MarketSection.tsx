@@ -40,6 +40,7 @@ import { OperationsPanel } from './OperationsPanel.tsx'
 import { clearSettled, drop, enqueue, patch as patchRecord, recordForUrl } from './operations.ts'
 import type { OperationRecord } from './operations.ts'
 import { Diagnostics } from './Diagnostics.tsx'
+import { clientDiagnostics } from './self-check.ts'
 import {
   api, avatarColor, entryForDep, githubProxyInUse, githubUrl, groupSwitchState, humanOutput, installedForCatalog, isInstalled, looksTerminal, matchInstalledName, orderedCategories, pluginCategories,
   formatCount, pageItems, pluginName, pluginScreenshotCandidates, pluginScreenshots, rankThemeScreenshots, readSession, safeScreenshots, setGithubProxy, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
@@ -1186,7 +1187,18 @@ export function MarketSection(props: MarketSectionProps) {
     fetch(api('/dsh-market/logs'))
       .then(async (res) => {
         if (!res.ok) throw new Error(`HTTP ${String(res.status)}`)
-        const blob = await res.blob()
+        // The server half describes the server. Everything it reports was
+        // already true on machines where the reported bug does not happen,
+        // which is why #293 and #384 both stalled on "please open a console
+        // and paste this". The browser appends what only it can see — see
+        // self-check.ts. Done here rather than sent to the route so this
+        // adds no endpoint, no request body, and no new trust boundary.
+        const serverText = await res.text()
+        const browser = clientDiagnostics()
+        const blob = new Blob(
+          [serverText, ...(browser.length > 0 ? ['## browser\n', browser.join('\n'), '\n'] : [])],
+          { type: 'text/plain;charset=utf-8' },
+        )
         const url = URL.createObjectURL(blob)
         const anchor = document.createElement('a')
         anchor.href = url
@@ -2167,7 +2179,7 @@ export function MarketSection(props: MarketSectionProps) {
     setNotesFor({ name, current, latest, repoUrl })
     setUpdateNotes(null)
     setNotesState('loading')
-    fetch(`/dsh-market/changelog?name=${encodeURIComponent(name)}`)
+    fetch(`${api('/dsh-market/changelog')}?name=${encodeURIComponent(name)}`)
       .then(res => res.json())
       .then(body => { setUpdateNotes(body as ResolvedNotes); setNotesState('ready') })
       .catch(() => setNotesState('fail'))
@@ -2205,7 +2217,7 @@ export function MarketSection(props: MarketSectionProps) {
   /** Write (or clear, when empty) this plugin's note. */
   const saveNote = useCallback((name: string, text: string) => {
     setNotingName(null)
-    fetch('/dsh-market/note', {
+    fetch(api('/dsh-market/note'), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ name, text }),
@@ -2238,7 +2250,21 @@ export function MarketSection(props: MarketSectionProps) {
       .then(({ status, body }) => {
         if (status === 200 && body.ok) {
           if (!body.hot) setRemovedCount(n => n + 1)
-          clearPendingRefresh(name)
+          // A client-part plugin stays injected until a page reload — the same
+          // pending-refresh banner as enable/disable tells the user to reload,
+          // instead of silently leaving the uninstalled plugin's UI running.
+          //
+          // But only when it was live in THIS page. A plugin installed during
+          // this session was never injected: the banner was asking the user to
+          // reload in order to GET it, so undoing the install nets to zero and
+          // the banner must go (#340 — "it was reporting session history, not
+          // pending work"). Being already pending is exactly what distinguishes
+          // the two, and the server cannot see it: `refresh` says the package
+          // HAD a client part, not that this page ever loaded it.
+          const neverLoadedHere = hotNames.includes(name) || refreshNames.includes(name)
+          if (body.refresh === true && !neverLoadedHere) {
+            setRefreshNames(names => names.includes(name) ? names : names.concat(name))
+          } else clearPendingRefresh(name)
           refreshInstalled()
         } else {
           if (body.cancelled === true) {
@@ -2264,7 +2290,9 @@ export function MarketSection(props: MarketSectionProps) {
       })
       .catch(error => setInstallError(String(error)))
       .finally(() => setRemovingName(null))
-  }, [refreshInstalled])
+    // hotNames/refreshNames are read above to tell a plugin this page loaded
+    // from one installed inside it, so they belong in the closure.
+  }, [refreshInstalled, hotNames, refreshNames])
 
   /** Live enable/disable of one installed plugin (#60). `reload` opts the
    * card-level theme flow into a page refresh so the visual result lands

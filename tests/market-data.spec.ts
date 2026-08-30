@@ -285,6 +285,19 @@ describe('discover list (visiblePlugins)', () => {
     }).map(p => p.name)).toEqual(['dsh-mcp-connector', 'dsh-mcp-connector-guide'])
   })
 
+  it('treats punctuation-only input as no search and keeps multi-word matches within one field', () => {
+    const rows: RegistryPlugin[] = [
+      plugin({ name: 'task-helper', description: { en: 'Runner utilities' } }),
+      plugin({ name: 'workflow-loop', description: { en: 'Task runner for projects' } }),
+    ]
+    expect(visiblePlugins(rows, {
+      category: 'all', query: '---', lang: 'en', sort: 'x',
+    })).toHaveLength(2)
+    expect(visiblePlugins(rows, {
+      category: 'all', query: 'task runner', lang: 'en', sort: 'x',
+    }).map(p => p.name)).toEqual(['workflow-loop'])
+  })
+
   it('filters by any category and keeps legacy string categories working', () => {
     expect(pluginCategories(CATALOG[0]!)).toEqual(['tool', 'skill'])
     expect(pluginCategories(CATALOG[1]!)).toEqual(['tool'])

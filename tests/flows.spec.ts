@@ -1268,6 +1268,7 @@ describe('update flow — no npm publishing required', () => {
     expect(rolledBack.status).toBe(200)
     expect(rolledBack.json.operation).toMatchObject({
       state: 'rolled-back',
+      installedVersion: '1.0.0',
       outcome: { restartRequired: true, rollback: { available: false, state: 'succeeded' } },
     })
     expect(installedSpec('dsh-loop')).toBe('^1.0.0')

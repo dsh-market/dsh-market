@@ -979,13 +979,15 @@ export function mountMarketRoutes(
         try {
           const body = (await readJsonBody(request)) as { operationId?: unknown }
           const operationId = typeof body.operationId === 'string' ? body.operationId : ''
+          const trackedOperation = operationsV1.get(operationId)
           const legacyRollbackId = operationsV1.beginRollback(operationId)
-          if (legacyRollbackId === null) {
+          if (legacyRollbackId === null || trackedOperation === null) {
             sendJson(response, 409, { schema: UPDATE_API_V1_SCHEMA, error: 'rollback is not available for this operation' })
             return
           }
           const result = await invokeLegacy('/dsh-market/rollback', request, 'POST', { rollbackId: legacyRollbackId })
-          const operation = operationsV1.finishRollback(operationId, result.status, result.payload)
+          const installedVersion = readInstalledVersion(config.profile, trackedOperation.packageName, activeProfileDir)
+          const operation = operationsV1.finishRollback(operationId, result.status, result.payload, installedVersion)
           sendJson(response, 200, { schema: UPDATE_API_V1_SCHEMA, operation })
         } catch (error) {
           sendJson(response, 400, {
@@ -2900,6 +2902,10 @@ export function mountMarketRoutes(
             const activation = {
               [name]: verifyActivation(config.profile, name, liveNames(), activeProfileDir, disabled.has(name)),
             }
+            // Capture whether the plugin has a client part BEFORE removal — after
+            // runPlugin the package may be gone from node_modules, so a post-hoc
+            // check would always return false on a successful uninstall.
+            const hadClientPart = packageHasClientPart(activeProfileDir, name)
             const result = await runPlugin(config.profile, ['remove', name])
             const cancelled = result.cancelled
             const ok = result.exitCode === 0 && !result.timedOut && !cancelled
@@ -2962,6 +2968,13 @@ export function mountMarketRoutes(
               // removal is final (a retry would 400 on "not installed").
               reconciled: reconciled || undefined,
               hot,
+              // A client-part plugin's UI is already injected into the page; after
+              // uninstall the injected bundle stays live until a refresh, so the
+              // same banner as enable/disable prompts the user to reload.
+              // Gate on hot: non-hot uninstalls already show the restart banner,
+              // and adding a refresh banner there would double-banner (#213's
+              // pendingRefreshNames merge exists specifically to avoid that).
+              refresh: ok && hot && hadClientPart,
               partial: cancelDiff?.partial,
               changed: cancelDiff?.changed,
               // The state of the package that was just removed (captured pre-op).
