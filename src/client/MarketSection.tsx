@@ -2496,7 +2496,7 @@ export function MarketSection(props: MarketSectionProps) {
         setUpdatingAll(false)
         return
       }
-      doUpdate(name).then(next, next)
+      doUpdate(name, false, updates[name]?.restoreRequired === true).then(next, next)
     }
     next()
   }, [updatableNames, doUpdate])
@@ -4127,7 +4127,7 @@ export function MarketSection(props: MarketSectionProps) {
                                               size="sm"
                                               className={css.warnBtn}
                                               disabled={updatingName !== null}
-                                              onClick={() => doUpdate(name)}
+                                              onClick={() => doUpdate(name, false, status.restoreRequired === true)}
                                             >{t('update')}</Button>
                                           )
                                         : localDev

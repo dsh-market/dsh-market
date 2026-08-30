@@ -1948,6 +1948,34 @@ describe('installed masonry layout (#273)', () => {
 })
 
 describe('local-dev restore', () => {
+  it('updates a catalog-matched local package through its online source', async () => {
+    stubFetch({
+      '/dsh-market/installed': {
+        profile: 'web', installed: { 'dsh-better-sidebar': 'file:/plugins/dsh-better-sidebar-0.16.1.tgz' }, live: [],
+      },
+      '/dsh-market/updates': {
+        updates: {
+          'dsh-better-sidebar': {
+            kind: 'linked', version: '0.16.1', current: '0.16.1', latest: '0.17.1',
+            updateAvailable: true, restoreRequired: true,
+          },
+        },
+      },
+      '/dsh-market/update': { ok: true },
+    })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    fireEvent.click(await screen.findByRole('button', { name: en.update }))
+    await waitFor(() => {
+      expect(fetchCalls.some(call =>
+        call.path === '/dsh-market/update'
+        && call.body?.name === 'dsh-better-sidebar'
+        && call.body?.restore === true,
+      )).toBe(true)
+    })
+  })
+
   it('asks in the red banner before swapping a linked plugin to the catalog', async () => {
     stubFetch({
       '/dsh-market/installed': { profile: 'web', installed: { 'dsh-loop': 'link:../dsh-loop' }, live: [] },

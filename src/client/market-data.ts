@@ -120,6 +120,8 @@ export interface UpdateStatus {
       the range between them in whichever form reads best. */
   current?: string | null
   latest?: string | null
+  /** Updating this local package switches it to its matched online release. */
+  restoreRequired?: boolean
 }
 
 /** Poll payload from /dsh-market/status. */

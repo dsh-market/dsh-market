@@ -1965,12 +1965,28 @@ export function mountMarketRoutes(
           // to try THIS plugin early, not to be handed every other author's
           // unreleased work.
           const channel = activeChannel()
+          const installed = readInstalled(config.profile, activeProfileDir)
           const channelFor = new Map(
-            Object.keys(readInstalled(config.profile, activeProfileDir))
+            Object.keys(installed)
               .filter(name => SELF_NAMES.has(name))
               .map(name => [name, channel] as const),
           )
-          sendJson(response, 200, { updates: await checkUpdates(config.profile, force, activeProfileDir, channelFor) })
+          const onlineSourceFor = new Map<string, string>()
+          try {
+            const registry = await loadRegistry()
+            for (const [name, spec] of Object.entries(installed)) {
+              if (!spec.toLowerCase().startsWith('file:')) continue
+              const evidence = readInstalledRepoEvidence(config.profile, name, spec, activeProfileDir)
+              const entry = findCatalogEntryForLocal(registry.plugins, name, evidence.identities, evidence.hints)
+              const target = entry === null ? null : restoreTargetForLocal(entry, evidence.identities)
+              if (target !== null && NPM_NAME_RE.test(target)) onlineSourceFor.set(name, target)
+            }
+          } catch (error) {
+            logEvent('warn', 'updates', `local package source lookup failed — ${error instanceof Error ? error.message : String(error)}`)
+          }
+          sendJson(response, 200, {
+            updates: await checkUpdates(config.profile, force, activeProfileDir, channelFor, onlineSourceFor),
+          })
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
         }
@@ -2033,8 +2049,8 @@ export function mountMarketRoutes(
               sendJson(response, 400, { error: 'restore 只适用于 link:/file: 的本地开发安装。 / Restore only applies to locally developed link:/file: installs.' })
               return
             }
-            if (restore && SELF_NAMES.has(name)) {
-              sendJson(response, 400, { error: '市场自身不做恢复，请继续用 dsh plugin add <tgz> 安装市场。 / The market never restores itself; keep installing it via dsh plugin add <tgz>.' })
+            if (restore && SELF_NAMES.has(name) && spec.toLowerCase().startsWith('link:')) {
+              sendJson(response, 400, { error: '市场的本地开发链接不会被线上版本替换。 / The market\'s local development link is never replaced by an online release.' })
               return
             }
             if (isLocalSpec(spec)) {

@@ -1901,13 +1901,13 @@ describe('local-dev restore flow', () => {
     expect(installedSpec('dsh-loop')).toBe('^1.0.0')
   })
 
-  it('refuses restore for the market itself even when locally linked', async () => {
+  it('keeps the market development link local', async () => {
     writeFileSync(join(fake.profileDir, 'package.json'), JSON.stringify({
       dependencies: { dshmarket: 'link:../dshmarket-dev' },
     }))
     const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'dshmarket', restore: true })
     expect(r.status).toBe(400)
-    expect(String(r.json.error)).toMatch(/never restores itself/)
+    expect(String(r.json.error)).toMatch(/local development link/)
     expect(installedSpec('dshmarket')).toBe('link:../dshmarket-dev')
   })
 
@@ -2136,6 +2136,38 @@ describe('duplicate alias guard (#27)', () => {
 })
 
 describe('market self-update', () => {
+  it('switches a locally packaged market to its newer online release', async () => {
+    await bed.dispatch('POST', '/dsh-market/channel', { channel: 'stable' })
+    fake.npm['dshmarket'] = {
+      latest: '1.0.3',
+      versions: { '1.0.3': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } },
+    }
+    await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/dsh-market/dsh-market' })
+    const manifestPath = join(fake.profileDir, 'package.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { dependencies: Record<string, string> }
+    manifest.dependencies['dshmarket'] = 'file:/packages/dshmarket-1.0.3.tgz'
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+    const packagePath = join(fake.profileDir, 'node_modules', 'dshmarket', 'package.json')
+    const installedPackage = JSON.parse(readFileSync(packagePath, 'utf8')) as Record<string, unknown>
+    installedPackage.repository = { type: 'git', url: 'https://github.com/dsh-market/dsh-market.git' }
+    writeFileSync(packagePath, JSON.stringify(installedPackage))
+    fake.npm['dshmarket'].latest = '1.2.3'
+    fake.npm['dshmarket'].versions['1.2.3'] = {
+      manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'],
+    }
+    vi.stubGlobal('fetch', (url: string) => String(url).includes('registry.npmjs.org')
+      ? Promise.resolve(new Response(JSON.stringify({ version: '1.2.3' }), { status: 200 }))
+      : Promise.reject(new Error('unexpected fetch')))
+
+    const updates = await bed.dispatch('GET', '/dsh-market/updates?force=1')
+    expect(updates.json.updates['dshmarket']).toMatchObject({
+      current: '1.0.3', latest: '1.2.3', updateAvailable: true, restoreRequired: true,
+    })
+    const result = await bed.dispatch('POST', '/dsh-market/update', { name: 'dshmarket', restore: true })
+    expect(result.status, String(result.json.error ?? '')).toBe(200)
+    expect(installedSpec('dshmarket')).toBe('^1.2.3')
+  })
+
   it('the market updates itself through the same flow', async () => {
     // Pin the channel: with no choice on record it is derived from the
     // RUNNING build, and this repo carries a prerelease version while a beta
