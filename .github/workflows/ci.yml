@@ -76,6 +76,20 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
+        # The released line is what users run today; the alpha is what they
+        # will run next, and it is where the market breaks first. dsh
+        # 0.1.2-alpha.1 removed two exports this plugin imported by name, and
+        # the result was the HOST FAILING TO BOOT with the market installed —
+        # nothing in CI could see it, because CI only ever ran the released
+        # line. A plugin that can stop the host from starting has to be
+        # caught before the alpha becomes `latest`.
+        dsh: ['0.1.0-rc.8', '0.1.2-alpha.2']
+        exclude:
+          # Host-API breakage is platform-independent, and Windows web-e2e is
+          # the slowest job in the matrix (~8 min). Running the alpha on Linux
+          # alone catches the class without doubling the critical path.
+          - os: windows-latest
+            dsh: '0.1.2-alpha.2'
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -92,7 +106,7 @@ jobs:
       # flaky "dsh boot timeout" (and, on longer specs, an hours-long stuck
       # job) with nothing wrong in this repo's own code. rc.8 added
       # `--no-open`, which tests/web/scaffold.ts now passes.
-      - run: npm install -g @deepseek-ai/dsh@0.1.0-rc.8
+      - run: npm install -g @deepseek-ai/dsh@${{ matrix.dsh }}
       # --with-deps installs system libraries and is Linux-only.
       - run: npx playwright install --with-deps chromium
         if: runner.os == 'Linux'

@@ -12,6 +12,8 @@
  * contract I did not write.
  */
 
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { installMarketSettings, MarketSettings } from '../src/settings.ts'
 
@@ -65,5 +67,32 @@ describe('installMarketSettings', () => {
     // registration rides its own scoped fiber.
     expect(ctx.injected.flat()).toContain('settings')
     expect(ctx.injected.flat()).not.toContain('webServer')
+  })
+
+  it('takes nothing from @deepseek-ai/dsh-settings at runtime', () => {
+    // dsh 0.1.2-alpha.1 deleted `installSettingsSection` and moved
+    // `settingsNamespace` elsewhere. This module imported both, and the
+    // result was not a missing feature — it was the HOST FAILING TO BOOT:
+    //
+    //   SyntaxError: The requested module '@deepseek-ai/dsh-settings' does
+    //   not provide an export named 'installSettingsSection'
+    //
+    // That is the distinction this guard exists for. `ctx.inject` degrades
+    // quietly when a SERVICE is absent, which is the graceful path this file
+    // already tests above. An ESM import of a missing EXPORT cannot degrade
+    // at all: it throws while the module is being evaluated, cordis reports
+    // a failed entry, and dsh exits 1 with the market installed. A plugin
+    // must never be able to stop the host from starting.
+    //
+    // The service is the stable surface — `settings.register(ns, schema,
+    // { base })` is byte-identical in 0.1.0-rc.7 and 0.1.2-alpha.2 — so the
+    // rule is simply: reach the settings service through injection, never
+    // through this package's exports. Scanned rather than mocked, because
+    // this is a fact about our own source, not a claim about their contract
+    // (see the note at the top of this file).
+    const source = readFileSync(resolve('src/settings.ts'), 'utf8')
+    const runtimeImports = [...source.matchAll(/^import\s+(?!type\b)(.+?)\s+from\s+'([^']+)'/gmu)]
+      .filter(match => match[2]!.startsWith('@deepseek-ai/dsh-settings'))
+    expect(runtimeImports.map(match => match[0]), 'import the settings SERVICE via ctx.inject instead').toEqual([])
   })
 })

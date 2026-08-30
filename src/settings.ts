@@ -27,19 +27,67 @@
  * plugin configuration page, so a second door bought nothing and cost the
  * setting its memory.
  *
- * installSettingsSection rides the scoped fiber, so a host with no settings
- * service — every dsh before 0.1.0-rc.7 — simply never runs any of this and
- * the entry configuration stands as composed. That is why this needs no
- * version check of its own.
+ * The wiring rides the scoped fiber, so a host with no settings service —
+ * every dsh before 0.1.0-rc.7 — simply never runs any of this and the entry
+ * configuration stands as composed. That is why this needs no version check
+ * of its own.
+ *
+ * It depends on the SERVICE and nothing else, which is the whole point of
+ * the shape below. This module used to import two convenience helpers,
+ * `installSettingsSection` and `settingsNamespace`, from
+ * `@deepseek-ai/dsh-settings`. dsh 0.1.2-alpha.1 deleted both — and a
+ * missing NAMED EXPORT is not a missing service. `ctx.inject` degrades
+ * quietly; an ESM named import that resolves to nothing is a SyntaxError at
+ * module evaluation, which cordis's loader reports as a failed entry and the
+ * host exits 1. Installing the market stopped the host from booting at all:
+ *
+ *   SyntaxError: The requested module '@deepseek-ai/dsh-settings' does not
+ *   provide an export named 'installSettingsSection'
+ *
+ * The service itself never changed — `sctx.settings.register(ns, schema,
+ * { base })` is identical in 0.1.0-rc.7 and 0.1.2-alpha.2. Only the two
+ * wrappers went away. So this inlines what the wrapper did (verified against
+ * its source: an inject, a register, a watch, and an unload effect) and
+ * validates the namespace here. Nothing about the graceful-degradation story
+ * changes; it just stops being conditional on an export that upstream is
+ * free to move.
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
 import z from '@deepseek-ai/schemastery'
 import { restartAllowed } from './restart.ts'
 
+/**
+ * The namespace pattern `settingsNamespace` enforced before it was removed.
+ * Kept as a literal check rather than an import for the reason above.
+ */
+const NAMESPACE_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/
+
 /** Namespace the card on the browser side keys itself to. */
-export const MARKET_SETTINGS_NS = settingsNamespace('dsh-market')
+export const MARKET_SETTINGS_NS = 'dsh-market'
+
+if (!NAMESPACE_PATTERN.test(MARKET_SETTINGS_NS)) {
+  throw new TypeError(`settings namespace "${MARKET_SETTINGS_NS}" must match ${String(NAMESPACE_PATTERN)}`)
+}
+
+/**
+ * The slice of the host's `settings` service this module uses.
+ *
+ * Declared structurally rather than imported: the package no longer exports
+ * a type for it on every supported host, and naming only what is called
+ * keeps this from breaking again when a neighbouring field moves.
+ */
+interface SettingsScope {
+  get: () => MarketSettings
+  watch: (listener: () => void) => void
+}
+interface SettingsService {
+  register: (
+    ns: string,
+    schema: z<MarketSettings>,
+    options: { base: MarketSettings },
+  ) => SettingsScope
+}
 
 /** The market settings a user may edit at runtime. */
 export interface MarketSettings {
@@ -71,16 +119,23 @@ export function installMarketSettings(ctx: Context, resolved: { allowRestart?: b
   // class of confusion the detection exists to end.
   const entry = { allowRestart: restartAllowed(resolved) }
   let source = (): MarketSettings => entry
-  installSettingsSection(
-    ctx,
-    MARKET_SETTINGS_NS,
-    MarketSettings,
-    entry,
-    {
-      setSource: (current) => { source = current },
-      // Assigns ONLY what this namespace owns. Writing back a field the
-      // market stores elsewhere is how the channel lost its memory.
-      onChange: () => { resolved.allowRestart = source().allowRestart },
-    },
-  )
+  // Assigns ONLY what this namespace owns. Writing back a field the market
+  // stores elsewhere is how the channel lost its memory.
+  const apply = (): void => { resolved.allowRestart = source().allowRestart }
+
+  // `inject` is the graceful-degradation boundary: on a host with no
+  // settings service the callback never runs and the composed entry stands.
+  ctx.inject(['settings'], (scopedCtx: Context) => {
+    const scoped = scopedCtx as unknown as Context & { settings: SettingsService }
+    const scope = scoped.settings.register(MARKET_SETTINGS_NS, MarketSettings, { base: entry })
+    source = () => scope.get()
+    // Unload restores the composed entry, so a disabled section cannot leave
+    // the routes reading a value nobody can see or change any more.
+    scoped.effect(() => () => {
+      source = () => entry
+      apply()
+    })
+    apply()
+    scope.watch(apply)
+  })
 }
