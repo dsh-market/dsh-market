@@ -101,11 +101,11 @@ describe('checkUpdates — github pins', () => {
   let home: string
 
   /** Profile with one github-installed plugin pinned at `commit`. */
-  function profileWith(spec: string, commit: string | null): string {
+  function profileWith(spec: string, commit: string | null, version = '1.0.0'): string {
     const dir = join(mkdtempSync(join(tmpdir(), 'dshm-upd-')), 'profiles', 'web')
     mkdirSync(join(dir, 'node_modules', 'themer'), { recursive: true })
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ dependencies: { themer: spec } }))
-    writeFileSync(join(dir, 'node_modules', 'themer', 'package.json'), JSON.stringify({ name: 'themer', version: '1.0.0' }))
+    writeFileSync(join(dir, 'node_modules', 'themer', 'package.json'), JSON.stringify({ name: 'themer', version }))
     writeFileSync(join(dir, 'pnpm-lock.yaml'), commit === null ? 'lockfileVersion: 9\n'
       : `  resolution: {tarball: https://codeload.github.com/owner/themer/tar.gz/${commit}}\n`)
     return dir
@@ -176,7 +176,19 @@ describe('checkUpdates — github pins', () => {
     expect(result.themer).toMatchObject({ kind: 'npm' })
   })
 
-  it('never offers an update for a linked or file: dependency', async () => {
+  it('offers a catalog-matched local package a published upgrade', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ version: '0.17.1' }), { status: 200 })))
+    const result = await checkUpdates(
+      'web', true, profileWith('FILE:/tmp/dsh-better-sidebar-0.16.1.tgz', OLD, '0.16.1'),
+      new Map(), new Map([['themer', 'dsh-better-sidebar']]),
+    )
+    expect(result.themer).toMatchObject({
+      kind: 'linked', current: '0.16.1', latest: '0.17.1',
+      updateAvailable: true, restoreRequired: true,
+    })
+  })
+
+  it('keeps local packages without a catalog source and link workspaces local', async () => {
     for (const spec of ['link:../themer', 'file:/tmp/themer.tgz']) {
       const result = await checkUpdates('web', true, profileWith(spec, OLD))
       expect(result.themer, spec).toMatchObject({ kind: 'linked', updateAvailable: false })

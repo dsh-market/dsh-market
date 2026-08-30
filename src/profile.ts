@@ -5,9 +5,9 @@
  */
 
 import { existsSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
+import { resolveDshHome } from './home-paths.ts'
 import { githubRemoteIdentities, githubRepoIdentities } from './sources.ts'
 
 /**
@@ -36,8 +36,7 @@ export function isDshProfileName(profile: string): boolean {
 export function profileDir(profile: string, explicitDir?: string): string {
   if (explicitDir !== undefined) return explicitDir
   if (!isDshProfileName(profile)) throw new Error(`dsh-market: invalid profile name ${JSON.stringify(profile)}`)
-  const home = process.env.DSH_HOME ?? join(homedir(), '.dsh')
-  return join(home, 'profiles', profile)
+  return join(resolveDshHome(), 'profiles', profile)
 }
 
 /**

@@ -50,6 +50,28 @@ function writeBundle(base: string, name: string, version: string, patch: unknown
   return dir
 }
 
+describe('shared DSH home resolution', () => {
+  it('does not compose the process directory as home when DSH_HOME is empty', () => {
+    const dir = pdir('blank-home-profile')
+    const cwd = pdir('blank-home-cwd')
+    const previousCwd = process.cwd()
+    writeProfile(dir, [])
+    mkdirSync(cwd, { recursive: true })
+    writeFileSync(join(cwd, 'cordis.patch.yml'), dump([
+      { insert: [{ id: 'blank-home-trap', name: 'must-not-load' }] },
+    ]))
+    process.env.DSH_HOME = ''
+
+    try {
+      process.chdir(cwd)
+      const result = trialValidate(dir, [], { dshInstallDir: null })
+      expect(result.rows.map(row => row.id)).not.toContain('blank-home-trap')
+    } finally {
+      process.chdir(previousCwd)
+    }
+  })
+})
+
 /** #369: on DSH Desktop the in-box bundles come from the app bundle, and the
  * install directory is not discoverable from process.argv[1]. Trial
  * validation then judged the profile unbootable and the update route rolled

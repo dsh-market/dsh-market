@@ -22,7 +22,7 @@
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { dshAvailable, launchMarketScaffold } from './scaffold.ts'
+import { dshAvailable, exchangeProcessLaunchToken, launchMarketScaffold } from './scaffold.ts'
 import type { WebScaffold } from './scaffold.ts'
 
 const HAS_DSH = dshAvailable()
@@ -145,12 +145,31 @@ describe.skipIf(!HAS_DSH).sequential('web e2e: the real install chain', () => {
     //
     // A host without the service (every dsh before 0.1.0-rc.7) serves no
     // namespaces at all, so this reads as skipped rather than failed there.
-    const response = await fetch(`${base}/api/settings.describe`, {
+    const exchange = await exchangeProcessLaunchToken(scaffold.baseUrl, scaffold.processLaunchUrl)
+    const headers = {
+      'content-type': 'application/json',
+      ...(exchange === null ? {} : { cookie: `${exchange.cookie.name}=${exchange.cookie.value}` }),
+    }
+    const request = (path: string, method: string): Promise<Response> => fetch(`${base}${path}`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ type: 'client-request', rpcId: '1', method: 'settings.describe', payload: { args: {} } }),
+      headers,
+      body: JSON.stringify({ type: 'client-request', rpcId: '1', method, payload: { args: {} } }),
     })
-    const body = (await response.json()) as { result?: { ok?: boolean; value?: { namespaces?: { ns: string }[] } } }
+
+    let response = await request('/api/settings/describe', 'settings/describe')
+    if (response.status === 404) {
+      await response.text()
+      response = await request('/api/settings.describe', 'settings.describe')
+    }
+    const raw = await response.text()
+    expect(response.status, `settings describe HTTP ${String(response.status)}: ${raw.slice(0, 300)}`).toBe(200)
+
+    let body: { result?: { ok?: boolean; value?: { namespaces?: { ns: string }[] } } }
+    try {
+      body = JSON.parse(raw) as typeof body
+    } catch {
+      throw new Error(`settings describe returned non-JSON: ${raw.slice(0, 300)}`)
+    }
     // Assert the list arrived at all: an early return on a missing field
     // would let this pass while proving nothing, which is how the first
     // draft of this spec stayed green against a build that never shipped

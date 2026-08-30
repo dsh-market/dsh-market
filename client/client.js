@@ -135,6 +135,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			notesNone: "该插件未提供更新说明。",
 			notesLoadFail: "暂时读不到更新说明，稍后再试。",
 			restore: "恢复",
+			restoreOnline: "换用线上版本",
 			restoreHint: "会卸载本地版本，重新安装线上版本，并保持更新检测。无法回退，请二次确认。",
 			restoreContinue: "继续更新",
 			restoreNoCatalog: "精选目录里没有这个插件，无法恢复到线上版本。可以卸载本地版，或继续用本地开发。",
@@ -603,6 +604,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			notesNone: "This plugin does not publish update notes.",
 			notesLoadFail: "Update notes are unavailable right now — try again later.",
 			restore: "Restore",
+			restoreOnline: "Use online version",
 			restoreHint: "This will uninstall the local version, reinstall the catalog version, and keep update checks. This cannot be undone — please confirm again.",
 			restoreContinue: "Continue update",
 			restoreNoCatalog: "This plugin is not in the curated catalog, so it cannot be restored. Uninstall the local copy, or keep developing it locally.",
@@ -5525,6 +5527,21 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const [qThemes, setQThemes] = (0, react.useState)("");
 			const [qInstalled, setQInstalled] = (0, react.useState)("");
 			const [cat, setCat] = (0, react.useState)("all");
+			(0, react.useEffect)(() => {
+				const target = props.preferredSubsectionId;
+				if (target === void 0) return;
+				const separator = target.indexOf(":");
+				const kind = separator === -1 ? target : target.slice(0, separator);
+				const value = separator === -1 ? "" : target.slice(separator + 1);
+				if (kind === "installed") {
+					setTab("installed");
+					setQInstalled(value);
+				} else if (kind === "discover") {
+					setTab("discover");
+					setCat("all");
+					setQ(value);
+				}
+			}, [props.preferredSubsectionId]);
 			const [confirming, setConfirming] = (0, react.useState)(null);
 			/** The plugin whose comment thread is open, or null. */
 			const [commentsFor, setCommentsFor] = (0, react.useState)(null);
@@ -6794,10 +6811,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				});
 			}, [doGroupAction, groups]);
 			const selfName = installed["dshmarket"] !== void 0 ? "dshmarket" : "dsh-market";
-			const updatableNames = Object.keys(installed).filter((name) => name !== selfName && !updatedNames.includes(name) && updates[name] && updates[name].updateAvailable);
+			const batchUpdatableNames = Object.keys(installed).filter((name) => name !== selfName && !updatedNames.includes(name) && updates[name] && updates[name].updateAvailable).filter((name) => updates[name]?.restoreRequired !== true);
 			const installedOtherCount = Object.keys(installed).filter((name) => name !== selfName).length;
 			const doUpdateAll = (0, react.useCallback)(() => {
-				const names = updatableNames.slice();
+				const names = batchUpdatableNames.slice();
 				setUpdatingAll(true);
 				const next = () => {
 					const name = names.shift();
@@ -6808,7 +6825,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					doUpdate(name).then(next, next);
 				};
 				next();
-			}, [updatableNames, doUpdate]);
+			}, [batchUpdatableNames, doUpdate]);
 			const finishRestore = (0, react.useCallback)((body) => {
 				const errors = Array.isArray(body.errors) ? body.errors : [];
 				const unportable = Array.isArray(body.unportable) ? body.unportable : [];
@@ -7566,18 +7583,20 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									}),
 									(() => {
 										const self = installed["dshmarket"] !== void 0 ? "dshmarket" : "dsh-market";
-										return updates[self] && updates[self].updateAvailable && !updatedNames.includes(self) && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+										const status = updates[self];
+										return status && status.updateAvailable && !updatedNames.includes(self) && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 											variant: "primary",
 											size: "sm",
 											disabled: updatingName !== null || busyUrl !== null,
 											onClick: () => {
 												setTab("installed");
-												doUpdate(self);
+												if (status.restoreRequired === true) askRestore(self);
+												else doUpdate(self);
 											},
-											children: updatingName === self ? t("updating") : t("marketUpdate")
+											children: updatingName === self ? t("updating") : status.restoreRequired === true ? t("restoreOnline") : t("marketUpdate")
 										});
 									})(),
-									updatableNames.length >= 2 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+									batchUpdatableNames.length >= 2 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 										variant: "primary",
 										size: "sm",
 										disabled: updatingAll || updatingName !== null || busyUrl !== null || removingName !== null,
@@ -7585,7 +7604,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 											setTab("installed");
 											doUpdateAll();
 										},
-										children: updatingAll ? t("updating") : t("updateAll") + " (" + updatableNames.length + ")"
+										children: updatingAll ? t("updating") : t("updateAll") + " (" + batchUpdatableNames.length + ")"
 									})
 								]
 							}),
@@ -8937,8 +8956,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 														size: "sm",
 														className: Market_module_css_default.warnBtn,
 														disabled: updatingName !== null,
-														onClick: () => doUpdate(name),
-														children: t("update")
+														onClick: () => {
+															if (status.restoreRequired === true) askRestore(name);
+															else doUpdate(name);
+														},
+														children: status.restoreRequired === true ? t("restoreOnline") : t("update")
 													}) : localDev ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 														className: Market_module_css_default.metaTag,
 														title: t("linkedDev"),
@@ -8953,7 +8975,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 														className: Market_module_css_default.dangerBtn,
 														disabled: true,
 														children: t("uninstalling")
-													}) : /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [localDev && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+													}) : /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [localDev && status?.restoreRequired !== true && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 														variant: "outline",
 														size: "sm",
 														disabled: removingName !== null || busyUrl !== null || updatingName !== null,
@@ -9467,7 +9489,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			return {
 				updateAvailable: own.updateAvailable === true,
 				latest: own.latest ?? null,
-				channelSwitch: own.channelSwitch ?? null
+				channelSwitch: own.channelSwitch ?? null,
+				restoreRequired: own.restoreRequired === true
 			};
 		}
 		/**
@@ -9489,6 +9512,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const [status, setStatus] = (0, react.useState)(null);
 			const [update, setUpdate] = (0, react.useState)(null);
 			const [phase, setPhase] = (0, react.useState)("idle");
+			const [restoreConfirming, setRestoreConfirming] = (0, react.useState)(false);
 			const [purge, setPurge] = (0, react.useState)(false);
 			const [error, setError] = (0, react.useState)(null);
 			/**
@@ -9538,6 +9562,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				})).json();
 			}, []);
 			const onUpdate = (0, react.useCallback)((force = false) => {
+				setRestoreConfirming(false);
 				setPhase("working");
 				setError(null);
 				setStale(false);
@@ -9545,6 +9570,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					try {
 						const body = await post(api("/dsh-market/update"), {
 							name: "dshmarket",
+							...update?.restoreRequired === true ? { restore: true } : {},
 							...force ? { force: true } : {}
 						});
 						if (body.ok === true) setPhase("updated");
@@ -9558,7 +9584,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						setPhase("failed");
 					}
 				})();
-			}, [post, t]);
+			}, [
+				post,
+				t,
+				update?.restoreRequired
+			]);
 			const onRemove = (0, react.useCallback)(() => {
 				setPhase("working");
 				setError(null);
@@ -9664,13 +9694,26 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				variant: "primary",
 				size: "sm",
 				disabled: busy,
-				onClick: () => onUpdate()
-			}, t("setSelfUpdate")) : update?.channelSwitch != null ? (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+				onClick: () => {
+					if (update.restoreRequired) setRestoreConfirming(true);
+					else onUpdate();
+				}
+			}, update.restoreRequired ? t("restoreOnline") : t("setSelfUpdate")) : update?.channelSwitch != null ? (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 				variant: "outline",
 				size: "sm",
 				disabled: busy,
 				onClick: () => onUpdate()
-			}, t("setChannelSwitch")) : null) : null, status?.selfManaged === true ? row(t("setChannel"), t(CHANNEL_HINT[status.channel]), (0, react.createElement)("div", { className: Market_module_css_default.setSeg }, (status?.channels ?? ["stable", "beta"]).map((id) => (0, react.createElement)("button", {
+			}, t("setChannelSwitch")) : null) : null, status?.selfManaged === true && restoreConfirming ? (0, react.createElement)("div", { className: Market_module_css_default.setConfirm }, (0, react.createElement)("div", { className: Market_module_css_default.setHint }, t("restoreHint")), (0, react.createElement)("div", { className: Market_module_css_default.setActions }, (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+				variant: "ghost",
+				size: "sm",
+				onClick: () => {
+					setRestoreConfirming(false);
+				}
+			}, t("setSelfCancel")), (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+				variant: "primary",
+				size: "sm",
+				onClick: () => onUpdate()
+			}, t("restoreContinue")))) : null, status?.selfManaged === true ? row(t("setChannel"), t(CHANNEL_HINT[status.channel]), (0, react.createElement)("div", { className: Market_module_css_default.setSeg }, (status?.channels ?? ["stable", "beta"]).map((id) => (0, react.createElement)("button", {
 				key: id,
 				type: "button",
 				className: status?.channel === id ? `${Market_module_css_default.setSegBtn} ${Market_module_css_default.setSegOn}` : Market_module_css_default.setSegBtn,
@@ -9781,14 +9824,15 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					label: () => t("nav"),
 					locale: NS,
 					inject: () => ({ t })
-				}, () => (0, react.createElement)(MarketSection, {
+				}, (ownerProps = {}) => (0, react.createElement)(MarketSection, {
 					t,
 					locale: ctx.locale,
 					theme: ctx.theme,
 					themeStore: {
 						subscribe: (cb) => ctx.on("theme/change", cb),
 						getSnapshot: () => ctx.theme.getTheme()
-					}
+					},
+					preferredSubsectionId: ownerProps.preferredSubsectionId
 				}));
 				if (typeof off === "function") retireSection = off;
 				return off;

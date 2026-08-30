@@ -13,7 +13,7 @@
 import { chromium } from 'playwright'
 import type { Browser, Page } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { dshAvailable, launchMarketScaffold, watchConsole } from './scaffold.ts'
+import { dshAvailable, launchMarketScaffold, openMarketPage, watchConsole } from './scaffold.ts'
 import type { WebScaffold } from './scaffold.ts'
 
 const HAS_DSH = dshAvailable()
@@ -29,7 +29,7 @@ describe.skipIf(!HAS_DSH)('web e2e: plugin market', () => {
     browser = await chromium.launch()
     page = await browser.newPage({ viewport: { width: 1500, height: 950 } })
     tripwire = watchConsole(page)
-    await page.goto(scaffold.baseUrl, { waitUntil: 'load' })
+    await openMarketPage(page, scaffold)
     // A fresh home greets with onboarding dialogs (testing notice, API-key
     // prompt, …); click through whichever appear until none are left.
     const passes = /^(Continue|继续|Configure later|稍后配置)$/

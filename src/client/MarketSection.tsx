@@ -1050,6 +1050,8 @@ export interface MarketSectionProps {
     subscribe(callback: () => void): () => void
     getSnapshot(): ThemeSnapshot | null
   }
+  /** Optional host-provided destination: `discover:<query>` or `installed:<query>`. */
+  preferredSubsectionId?: string
 }
 
 export function MarketSection(props: MarketSectionProps) {
@@ -1091,6 +1093,22 @@ export function MarketSection(props: MarketSectionProps) {
   const [qThemes, setQThemes] = useState('')
   const [qInstalled, setQInstalled] = useState('')
   const [cat, setCat] = useState('all')
+  // FLAQ Desktop supplies this for onboarding/feature navigation; upstream dsh web omits it, so ordinary web opens intentionally leave this effect idle.
+  useEffect(() => {
+    const target = props.preferredSubsectionId
+    if (target === undefined) return
+    const separator = target.indexOf(':')
+    const kind = separator === -1 ? target : target.slice(0, separator)
+    const value = separator === -1 ? '' : target.slice(separator + 1)
+    if (kind === 'installed') {
+      setTab('installed')
+      setQInstalled(value)
+    } else if (kind === 'discover') {
+      setTab('discover')
+      setCat('all')
+      setQ(value)
+    }
+  }, [props.preferredSubsectionId])
   const [confirming, setConfirming] = useState<RegistryPlugin | null>(null)
   /** The plugin whose comment thread is open, or null. */
   const [commentsFor, setCommentsFor] = useState<RegistryPlugin | null>(null)
@@ -2482,13 +2500,17 @@ export function MarketSection(props: MarketSectionProps) {
   const updatableNames = Object.keys(installed).filter(
     name => name !== selfName && !updatedNames.includes(name) && updates[name] && updates[name].updateAvailable,
   )
+  // Replacing a local source with its catalog source is deliberately not a
+  // batch update: every such plugin has an existing, explicit confirmation
+  // gate because the source switch cannot be rolled back.
+  const batchUpdatableNames = updatableNames.filter(name => updates[name]?.restoreRequired !== true)
   // The market manages itself from its own settings card (Settings → Plugins
   // → Plugin configuration), not as a row here — listing it in both places
   // read as two different controls for the same thing.
   const installedOtherCount = Object.keys(installed).filter(name => name !== selfName).length
 
   const doUpdateAll = useCallback(() => {
-    const names = updatableNames.slice()
+    const names = batchUpdatableNames.slice()
     setUpdatingAll(true)
     const next = () => {
       const name = names.shift()
@@ -2499,7 +2521,7 @@ export function MarketSection(props: MarketSectionProps) {
       doUpdate(name).then(next, next)
     }
     next()
-  }, [updatableNames, doUpdate])
+  }, [batchUpdatableNames, doUpdate])
 
   const finishRestore = useCallback((body: { errors?: unknown; unportable?: unknown; bootErrors?: unknown }) => {
     const errors = Array.isArray(body.errors) ? body.errors as { name?: unknown; error?: unknown }[] : []
@@ -3168,23 +3190,28 @@ export function MarketSection(props: MarketSectionProps) {
           {version !== null && <span className={css.version} title={t('versionHint')}>v{version}</span>}
           {(() => {
             const self = installed['dshmarket'] !== undefined ? 'dshmarket' : 'dsh-market'
-            return updates[self] && updates[self].updateAvailable && !updatedNames.includes(self)
+            const status = updates[self]
+            return status && status.updateAvailable && !updatedNames.includes(self)
               && (
                 <Button
                   variant="primary"
                   size="sm"
                   disabled={updatingName !== null || busyUrl !== null}
-                  onClick={() => { setTab('installed'); doUpdate(self) }}
-                >{updatingName === self ? t('updating') : t('marketUpdate')}</Button>
+                  onClick={() => {
+                    setTab('installed')
+                    if (status.restoreRequired === true) askRestore(self)
+                    else doUpdate(self)
+                  }}
+                >{updatingName === self ? t('updating') : status.restoreRequired === true ? t('restoreOnline') : t('marketUpdate')}</Button>
               )
           })()}
-          {updatableNames.length >= 2 && (
+          {batchUpdatableNames.length >= 2 && (
             <Button
               variant="primary"
               size="sm"
               disabled={updatingAll || updatingName !== null || busyUrl !== null || removingName !== null}
               onClick={() => { setTab('installed'); doUpdateAll() }}
-            >{updatingAll ? t('updating') : t('updateAll') + ' (' + updatableNames.length + ')'}</Button>
+            >{updatingAll ? t('updating') : t('updateAll') + ' (' + batchUpdatableNames.length + ')'}</Button>
           )}
         </div>
         <div className={css.sub}>
@@ -4127,8 +4154,11 @@ export function MarketSection(props: MarketSectionProps) {
                                               size="sm"
                                               className={css.warnBtn}
                                               disabled={updatingName !== null}
-                                              onClick={() => doUpdate(name)}
-                                            >{t('update')}</Button>
+                                              onClick={() => {
+                                                if (status.restoreRequired === true) askRestore(name)
+                                                else doUpdate(name)
+                                              }}
+                                            >{status.restoreRequired === true ? t('restoreOnline') : t('update')}</Button>
                                           )
                                         : localDev
                                           ? <span className={css.metaTag} title={t('linkedDev')}>{t('linkedDev')}</span>
@@ -4138,7 +4168,7 @@ export function MarketSection(props: MarketSectionProps) {
                                     ? <Button variant="outline" size="sm" className={css.dangerBtn} disabled>{t('uninstalling')}</Button>
                                     : (
                                         <>
-                                          {localDev && (
+                                          {localDev && status?.restoreRequired !== true && (
                                             <Button
                                               variant="outline"
                                               size="sm"

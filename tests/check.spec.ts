@@ -18,6 +18,7 @@ import {
   findDshInstallDir,
   satisfiesRange,
 } from '../src/check.ts'
+import { dshHostInfo } from '../src/dsh-install.ts'
 import { readBundleRules } from '../src/order.ts'
 
 let tmp: string
@@ -172,6 +173,28 @@ describe('workspace-root hoisted bundles (#98 review B1)', () => {
     expect(bundle?.directory).toBe(root)
     expect(report.rows.map(r => r.id)).toEqual(['a-entry'])
     expect(report.summary.ok).toBe(true)
+  })
+})
+
+describe('shared DSH home resolution', () => {
+  it('does not treat the process directory as home when DSH_HOME is empty', () => {
+    const dir = pdir('blank-home-profile')
+    const cwd = pdir('blank-home-cwd')
+    const previousCwd = process.cwd()
+    writeProfile(dir, { name: 'web-profile', dependencies: {} })
+    mkdirSync(cwd, { recursive: true })
+    writeFileSync(join(cwd, 'cordis.patch.yml'), dump([
+      { insert: [{ id: 'blank-home-trap', name: 'must-not-load' }] },
+    ]))
+    process.env.DSH_HOME = ''
+
+    try {
+      process.chdir(cwd)
+      const report = analyzeProfile(dir, { dshInstallDir: null })
+      expect(report.rows.map(row => row.id)).not.toContain('blank-home-trap')
+    } finally {
+      process.chdir(previousCwd)
+    }
   })
 })
 
@@ -880,6 +903,56 @@ describe('in-box bundles that cannot be located (#369)', () => {
     const community = report.bundles.find(layer => layer.name === 'some-community-bundle')
     expect(community?.error).toMatch(/not installed/)
     expect(community?.unresolvedInbox).toBeUndefined()
+  })
+})
+
+describe('host version for the exported log (REIN-280)', () => {
+  it('reports the version and the directory it came from', () => {
+    const cliInstall = writePackage(join(tmp, 'cli'), '@deepseek-ai/dsh', {
+      name: '@deepseek-ai/dsh',
+      version: '0.1.1-rc.2',
+    })
+
+    expect(dshHostInfo(join(cliInstall, 'bin', 'dsh.js')))
+      .toEqual({ version: '0.1.1-rc.2', directory: cliInstall })
+  })
+
+  it('reports a Desktop-bundled host by the resources path it was found at', () => {
+    // The directory is half the answer: a path under Electron's resources is
+    // how a bundled host — which #139 established can be older than anything
+    // npm would report — identifies itself without asking the user.
+    const resources = join(tmp, 'resources-desktop')
+    const dshInstall = writePackage(join(resources, 'app.asar'), '@deepseek-ai/dsh', {
+      name: '@deepseek-ai/dsh',
+      version: '0.1.0-rc.8',
+    })
+    Object.defineProperty(process, 'resourcesPath', { value: resources, configurable: true })
+
+    expect(dshHostInfo(join(tmp, 'electron-entry', 'main.js')))
+      .toEqual({ version: '0.1.0-rc.8', directory: dshInstall })
+  })
+
+  it('distinguishes "located but unversioned" from "no host found"', () => {
+    // Two different facts. A host that is present and declares no version
+    // still tells the reader where it is; null says the market could not
+    // find one at all, which is a legitimate state for a global install.
+    const unversioned = writePackage(join(tmp, 'noversion'), '@deepseek-ai/dsh', {
+      name: '@deepseek-ai/dsh',
+    })
+    expect(dshHostInfo(join(unversioned, 'bin', 'dsh.js')))
+      .toEqual({ version: 'unknown', directory: unversioned })
+
+    delete (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath
+    expect(dshHostInfo(join(tmp, 'nothing-here', 'main.js'))).toBeNull()
+  })
+
+  it('does not accept a package that merely sits at the right path', () => {
+    const impostor = writePackage(join(tmp, 'impostor'), '@deepseek-ai/dsh', {
+      name: 'something-else',
+      version: '9.9.9',
+    })
+    delete (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath
+    expect(dshHostInfo(join(impostor, 'bin', 'dsh.js'))).toBeNull()
   })
 })
 

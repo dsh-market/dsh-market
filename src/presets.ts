@@ -305,7 +305,12 @@ export function applyPreset(profileDir: string, name: unknown, maxSnapshots: num
   }
 
   const preview = previewPreset(profileDir, name)
-  const snapshot = createProfileSnapshot(profileDir, maxSnapshots)
+  const captured = createProfileSnapshot(profileDir, maxSnapshots)
+  if (!captured.ok) {
+    logEvent('error', 'preset', `apply "${name}" refused: ${captured.error}`)
+    return { ok: false, error: captured.error }
+  }
+  const snapshot = captured.snapshot
   const ordered = applyBundleOrder(profileDir, preset.bundleOrder)
   if (!ordered.ok) {
     return { ok: false, error: ordered.error }
@@ -320,8 +325,8 @@ export function applyPreset(profileDir: string, name: unknown, maxSnapshots: num
   }
   state.disabled = new Set(filtered)
   writeMarketState(profileDir, state)
-  logEvent('info', 'preset', `applied "${name}"${snapshot !== null ? ` (snapshot ${snapshot.id})` : ''}`)
-  return { ok: true, snapshot: snapshot?.id, changes: preview.ok ? preview.changes : undefined }
+  logEvent('info', 'preset', `applied "${name}" (snapshot ${snapshot.id})`)
+  return { ok: true, snapshot: snapshot.id, changes: preview.ok ? preview.changes : undefined }
 }
 
 /*

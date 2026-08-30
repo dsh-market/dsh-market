@@ -28,10 +28,10 @@
 
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { createRequire, isBuiltin } from 'node:module'
-import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { JSON_SCHEMA, Type, load } from 'js-yaml'
 import { findDshInstallDir } from './dsh-install.ts'
+import { resolveDshHome } from './home-paths.ts'
 import { INBOX_BUNDLES, readBundleRules, suggestOrder, validateOrder } from './order.ts'
 
 export { findDshInstallDir } from './dsh-install.ts'
@@ -984,7 +984,7 @@ export function buildBundleLayers(
  */
 export function analyzeProfile(profileDirectory: string, options: CheckOptions = {}): CheckReport {
   const dshInstall = options.dshInstallDir ?? findDshInstallDir()
-  const home = options.homeDir ?? process.env.DSH_HOME ?? join(homedir(), '.dsh')
+  const home = resolveDshHome(options.homeDir)
   const core = corePackageNames(dshInstall)
 
   // --- 1. bundle stack ---

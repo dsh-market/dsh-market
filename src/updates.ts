@@ -21,6 +21,8 @@ export interface UpdateStatus {
    * as "there is an upgrade" and labels a button accordingly.
    */
   updateAvailable: boolean
+  /** Taking this update replaces a local package source with its matched online release. */
+  restoreRequired?: boolean
   /**
    * The version this package's channel points at, when it differs from what
    * is installed and is NOT newer.
@@ -248,13 +250,19 @@ export async function checkUpdates(
    * unreleased work.
    */
   channelFor: ReadonlyMap<string, Channel> = new Map(),
+  /**
+   * Curated npm sources for `file:` installs that were matched to the market
+   * catalog. `link:` workspaces remain development sources and are never
+   * opted into online updates.
+   */
+  onlineSourceFor: ReadonlyMap<string, string> = new Map(),
 ): Promise<Record<string, UpdateStatus>> {
   const activeProfileDir = profileDir(profile, explicitDir)
   // The channel is part of the key: switching to betas has to change the
   // answer immediately, and a cache keyed on the profile alone would serve
   // the stable verdict for the rest of the TTL — reading as "the setting did
   // nothing".
-  const cacheKey = `${activeProfileDir}\u0000${[...channelFor].map(([n, c]) => `${n}:${c}`).sort().join(',')}`
+  const cacheKey = `${activeProfileDir}\u0000${[...channelFor].map(([n, c]) => `${n}:${c}`).sort().join(',')}\u0000${[...onlineSourceFor].map(([n, s]) => `${n}:${s}`).sort().join(',')}`
   if (!force && updatesCache?.key === cacheKey && Date.now() - updatesCache.at < UPDATES_TTL_MS) {
     return updatesCache.data
   }
@@ -263,7 +271,22 @@ export async function checkUpdates(
   const result: Record<string, UpdateStatus> = {}
   await Promise.all(Object.entries(installed).map(async ([name, spec]) => {
     const version = readInstalledVersion(profile, name, activeProfileDir)
-    if (spec.startsWith('link:') || spec.startsWith('file:')) {
+    const normalizedSpec = spec.toLowerCase()
+    if (normalizedSpec.startsWith('file:')) {
+      const onlineSource = onlineSourceFor.get(name)
+      if (onlineSource !== undefined) {
+        const latest = await fetchNpmLatest(onlineSource)
+        const updateAvailable = isUpgrade(version, latest)
+        result[name] = {
+          kind: 'linked', version, current: version, latest, updateAvailable,
+          ...(updateAvailable ? { restoreRequired: true } : {}),
+        }
+        return
+      }
+      result[name] = { kind: 'linked', version, current: null, latest: null, updateAvailable: false }
+      return
+    }
+    if (normalizedSpec.startsWith('link:')) {
       result[name] = { kind: 'linked', version, current: null, latest: null, updateAvailable: false }
       return
     }

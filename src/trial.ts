@@ -25,12 +25,12 @@
  */
 
 import { existsSync, readFileSync } from 'node:fs'
-import { homedir } from 'node:os'
 import { join } from 'node:path'
 import {
   buildBundleLayers, composeLayers, findDshInstallDir, parsePatchFile,
   type DuplicateId, type LayerInput, type OrphanRow, type OverrideRow,
 } from './check.ts'
+import { resolveDshHome } from './home-paths.ts'
 import { mergeOrder, readBundleStack } from './order.ts'
 
 export interface TrialIssue {
@@ -104,7 +104,7 @@ export function trialValidate(
     patchLayers.push({ label: 'user-patch', kind: 'user', patches: patches ?? [], parseError: null })
     if (patches === null) errors.push({ layer: 'user-patch', message: 'cordis.patch.yml is not a valid entry list / cordis.patch.yml 不是合法的条目列表' })
   }
-  const home = options.homeDir ?? process.env.DSH_HOME ?? join(homedir(), '.dsh')
+  const home = resolveDshHome(options.homeDir)
   const homePatchPath = join(home, 'cordis.patch.yml')
   if (existsSync(homePatchPath)) {
     const patches = parsePatchFile(homePatchPath)

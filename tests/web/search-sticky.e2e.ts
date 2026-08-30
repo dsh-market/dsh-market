@@ -9,7 +9,7 @@
  */
 import { chromium } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { dshAvailable, launchMarketScaffold } from './scaffold.ts'
+import { dshAvailable, launchMarketScaffold, openMarketPage } from './scaffold.ts'
 import type { WebScaffold } from './scaffold.ts'
 
 describe.skipIf(!dshAvailable())('web e2e: search box stays with the sticky header', () => {
@@ -18,7 +18,7 @@ describe.skipIf(!dshAvailable())('web e2e: search box stays with the sticky head
     s = await launchMarketScaffold()
     browser = await chromium.launch()
     page = await browser.newPage({ viewport: { width: 1200, height: 800 } })
-    await page.goto(s.baseUrl, { waitUntil: 'load' })
+    await openMarketPage(page, s)
     for (let i = 0; i < 6; i++) {
       const b = page.getByRole('button', { name: /^(Continue|继续|Configure later|稍后配置)$/ }).first()
       try { await b.waitFor({ timeout: i === 0 ? 30_000 : 3000 }); await b.click() } catch { break }

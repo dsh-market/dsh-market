@@ -1,7 +1,7 @@
 {
   "name": "dshmarket",
   "description": "Visual plugin market inside DeepSeek Harness — browse, search, and one-click install community plugins. · DSH 可视化插件市场：逛一逛，点一下，装好。",
-  "version": "1.36.0",
+  "version": "1.38.0",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
@@ -31,7 +31,8 @@
     "prepare": "npm run build",
     "validate:registry": "node scripts/validate-registry.mjs",
     "snapshot": "curl -sf https://awesome-dsh-plugin.com/plugins.json -o data/registry-snapshot.json && curl -sf https://awesome-dsh-plugin.com/readmes.json -o data/readmes-snapshot.json",
-    "test:web": "vitest run --config vitest.web.config.ts",
+    "check:web-auth-capture": "node scripts/check-web-auth-capture.mjs",
+    "test:web": "node scripts/check-web-auth-capture.mjs && vitest run --config vitest.web.config.ts",
     "build:site": "node scripts/build-site.mjs"
   },
   "dependencies": {

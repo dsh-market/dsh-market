@@ -5,8 +5,9 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { homedir, tmpdir } from 'node:os'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { resolveDshHome } from '../src/home-paths.ts'
 import {
   addProfileBundle, conflictingEntryIds, dropFromManifest, entryArtifactExists, hasDshManifest, hasLoadableEntry, isDshProfileName, pluginSubdirs, profileDir,
   readInstalled, readInstalledManifest, readInstalledRepoEvidence, readInstalledRepoIdentities, readInstalledVersion, readLockCommits,
@@ -29,6 +30,34 @@ function writeProfile(manifest: unknown): string {
   writeFileSync(join(dir, 'package.json'), JSON.stringify(manifest))
   return dir
 }
+
+describe('DSH home resolution (dsh-v0.1.2-alpha.1)', () => {
+  it.each([
+    ['undefined', undefined],
+    ['empty', ''],
+    ['whitespace', ' \t '],
+  ])('treats %s DSH_HOME as unset', (_label, value) => {
+    const env = value === undefined ? {} : { DSH_HOME: value }
+    const expected = join(homedir(), '.dsh')
+
+    expect(resolveDshHome(undefined, env)).toBe(expected)
+    if (value === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = value
+    expect(profileDir('web')).toBe(join(expected, 'profiles', 'web'))
+    expect(isAbsolute(profileDir('web'))).toBe(true)
+  })
+
+  it('normalizes a relative DSH_HOME to an absolute profile path', () => {
+    process.env.DSH_HOME = 'relative-dsh-home'
+    expect(profileDir('web')).toBe(join(resolve('relative-dsh-home'), 'profiles', 'web'))
+    expect(isAbsolute(profileDir('web'))).toBe(true)
+  })
+
+  it('expands a tilde DSH_HOME before resolving the profile', () => {
+    process.env.DSH_HOME = '~'
+    expect(profileDir('web')).toBe(join(homedir(), 'profiles', 'web'))
+  })
+})
 
 describe('profile names (#260)', () => {
   it('matches the DSH profile directory contract instead of an ASCII-only subset', () => {

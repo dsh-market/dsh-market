@@ -110,7 +110,7 @@ export function apply(ctx: MarketClientContext): void {
       label: () => t('nav'),
       locale: NS,
       inject: () => ({ t }),
-    }, () => h(MarketSection, {
+    }, (ownerProps: { preferredSubsectionId?: string } = {}) => h(MarketSection, {
       t,
       locale: ctx.locale,
       theme: ctx.theme,
@@ -118,6 +118,7 @@ export function apply(ctx: MarketClientContext): void {
         subscribe: (cb: () => void) => ctx.on('theme/change', cb),
         getSnapshot: () => ctx.theme.getTheme(),
       },
+      preferredSubsectionId: ownerProps.preferredSubsectionId,
     }))
     if (typeof off === 'function') retireSection = off as () => void
     return off
