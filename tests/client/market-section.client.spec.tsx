@@ -2602,6 +2602,112 @@ describe('standing restart notice for host-reported pending plugins', () => {
   })
 })
 
+describe('boot-scoped update reminder dismissals (#419)', () => {
+  const installed = {
+    dshmarket: '^1.38.0',
+    'dsh-loop': '^1.0.0',
+    'dsh-notify': '^1.0.0',
+  }
+  const updateStatuses = {
+    dshmarket: { kind: 'npm', current: '1.38.0', latest: '1.39.0', updateAvailable: true },
+    'dsh-loop': { kind: 'npm', current: '1.0.0', latest: '1.1.0', updateAvailable: true },
+    'dsh-notify': { kind: 'npm', current: '1.0.0', latest: '1.1.0', updateAvailable: true },
+  }
+
+  function stubUpdateReminders(boot = 'boot-1') {
+    stubFetch({
+      '/dsh-market/installed': { profile: 'web', installed, live: Object.keys(installed) },
+      '/dsh-market/status': { active: false, busy: false, pnpm: true, boot, restart: true, installed },
+      '/dsh-market/updates': { updates: updateStatuses },
+    })
+  }
+
+  const installedTab = () => screen.getByRole('button', { name: /^Installed \(2\)/ })
+  const updateDot = () => installedTab().querySelector('[class*="dot"]')
+
+  it('dismisses one plugin without hiding its Installed-row information or update action', async () => {
+    stubUpdateReminders()
+    render(<MarketSection {...props()} />)
+    expect(await screen.findByRole('button', { name: /Update all \(2\)/ })).toBeTruthy()
+    expect(updateDot()).toBeTruthy()
+
+    fireEvent.click(installedTab())
+    fireEvent.click(await screen.findByRole('button', { name: `${en.ignoreUpdateNotice} dsh-loop` }))
+
+    expect(JSON.parse(sessionStorage.getItem('dshm-updates-ignored')!)).toEqual({
+      boot: 'boot-1', names: ['dsh-loop'],
+    })
+    expect(await screen.findByText(en.updateNoticeIgnored)).toBeTruthy()
+    // Ignoring means "do not prompt", not "remove the update".
+    expect(screen.getAllByRole('button', { name: en.update })).toHaveLength(2)
+    expect(screen.getAllByRole('button', { name: re(en.notesLink) })).toHaveLength(2)
+    // dsh-notify is still unignored, so the tab continues to carry its dot.
+    expect(updateDot()).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Update all \(2\)/ })).toBeNull()
+  })
+
+  it('ignores all current reminders while preserving the complete Installed update list', async () => {
+    stubUpdateReminders()
+    render(<MarketSection {...props()} />)
+    fireEvent.click(await screen.findByRole('button', { name: en.ignoreAllUpdateNotices }))
+
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: en.marketUpdate })).toBeNull()
+      expect(screen.queryByRole('button', { name: /Update all/ })).toBeNull()
+      expect(updateDot()).toBeNull()
+    })
+    expect(new Set(JSON.parse(sessionStorage.getItem('dshm-updates-ignored')!).names))
+      .toEqual(new Set(['dshmarket', 'dsh-loop', 'dsh-notify']))
+
+    fireEvent.click(installedTab())
+    expect(await screen.findAllByText(en.updateNoticeIgnored)).toHaveLength(2)
+    expect(screen.getAllByRole('button', { name: en.update })).toHaveLength(2)
+    expect(screen.getAllByRole('button', { name: re(en.notesLink) })).toHaveLength(2)
+  })
+
+  it('keeps reminders dismissed after a page remount in the same boot', async () => {
+    stubUpdateReminders('boot-1')
+    const first = render(<MarketSection {...props()} />)
+    fireEvent.click(await screen.findByRole('button', { name: en.ignoreAllUpdateNotices }))
+    await waitFor(() => expect(updateDot()).toBeNull())
+    first.unmount()
+
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: en.ignoreAllUpdateNotices })).toBeNull()
+      expect(screen.queryByRole('button', { name: en.marketUpdate })).toBeNull()
+      expect(screen.queryByRole('button', { name: /Update all/ })).toBeNull()
+      expect(updateDot()).toBeNull()
+    })
+  })
+
+  it('invalidates an old dismissal after the host boot changes', async () => {
+    sessionStorage.setItem('dshm-updates-ignored', JSON.stringify({
+      boot: 'boot-1', names: ['dshmarket', 'dsh-loop', 'dsh-notify'],
+    }))
+    stubUpdateReminders('boot-2')
+    render(<MarketSection {...props()} />)
+
+    expect(await screen.findByRole('button', { name: en.ignoreAllUpdateNotices })).toBeTruthy()
+    expect(screen.getByRole('button', { name: en.marketUpdate })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Update all \(2\)/ })).toBeTruthy()
+    expect(updateDot()).toBeTruthy()
+    expect(sessionStorage.getItem('dshm-updates-ignored')).toBeNull()
+  })
+
+  it('fails open when the stored dismissal is malformed', async () => {
+    sessionStorage.setItem('dshm-updates-ignored', '{not-json')
+    stubUpdateReminders()
+    render(<MarketSection {...props()} />)
+
+    expect(await screen.findByRole('button', { name: en.ignoreAllUpdateNotices })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Update all \(2\)/ })).toBeTruthy()
+    expect(updateDot()).toBeTruthy()
+    expect(sessionStorage.getItem('dshm-updates-ignored')).toBeNull()
+  })
+})
+
 /**
  * The pnpm setup banner (#142). Before any plugin can be installed the
  * market may have to provision pnpm, and the banner is the whole interface
