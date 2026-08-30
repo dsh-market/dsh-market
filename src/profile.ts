@@ -8,7 +8,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync, renameSync, statSy
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { resolveDshHome } from './home-paths.ts'
-import { githubRemoteIdentities, githubRepoIdentities } from './sources.ts'
+import { githubRemoteIdentities, githubRepoIdentities, parseGitHubRemote } from './sources.ts'
 
 /**
  * Whether a profile name follows DSH's own directory-name contract.
