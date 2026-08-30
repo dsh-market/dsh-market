@@ -1093,6 +1093,7 @@ export function MarketSection(props: MarketSectionProps) {
   const [qThemes, setQThemes] = useState('')
   const [qInstalled, setQInstalled] = useState('')
   const [cat, setCat] = useState('all')
+  // FLAQ Desktop supplies this for onboarding/feature navigation; upstream dsh web omits it, so ordinary web opens intentionally leave this effect idle.
   useEffect(() => {
     const target = props.preferredSubsectionId
     if (target === undefined) return
