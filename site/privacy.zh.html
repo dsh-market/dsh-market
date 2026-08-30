@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>隐私说明 — dsh-market</title>
-<meta name="description" content="dsh-market 插件与网站收集什么、不收集什么。插件无遥测；网站使用无 cookie 的访问统计。">
+<meta name="description" content="dsh-market 插件与网站收集什么、不收集什么。插件无遥测；网站使用无 cookie 的访问统计，并设有一个广告位。">
 <link rel="canonical" href="https://dshmarket.com/zh/privacy/">
 <link rel="alternate" hreflang="en" href="https://dshmarket.com/privacy/">
 <link rel="alternate" hreflang="zh" href="https://dshmarket.com/zh/privacy/">
@@ -62,10 +62,10 @@ footer a:hover{color:var(--accent)}
 </header>
 <main class="prose">
 <h1>隐私说明</h1>
-<p class="updated">最后更新 2026-08-18。本页说明本网站与 dsh-market 插件的数据处理方式。内容依据代码写成，而非依据意图——下面每一条都可以在<a href="https://github.com/dsh-market/dsh-market">代码仓库</a>里核对。</p>
+<p class="updated">最后更新 2026-08-30。本页说明本网站与 dsh-market 插件的数据处理方式。内容依据代码写成，而非依据意图——下面每一条都可以在<a href="https://github.com/dsh-market/dsh-market">代码仓库</a>里核对。</p>
 
 <h2>一句话版本</h2>
-<p>插件不会把关于你的任何信息发到任何地方，它只下载你让它下载的东西。本网站会统计访问量，不使用 cookie，也不识别你的身份。</p>
+<p>插件不会把关于你的任何信息发到任何地方，它只下载你让它下载的东西。本网站统计访问量的部分不使用 cookie、也不识别你的身份；页面上有 <a href="#advertising">Google 广告</a>，广告会用到 cookie。</p>
 
 <h2>本网站（dshmarket.com）</h2>
 
@@ -73,7 +73,7 @@ footer a:hover{color:var(--accent)}
 <p>我们使用 <strong>Cloudflare Web Analytics</strong>。它不使用 cookie，也不做指纹识别或跨站跟踪，记录的是页面访问量和粗粒度的技术信息——来源页、国家/地区、浏览器与设备类型——由 Cloudflare 汇总。我们看到的是数字，不是个人。详见 <a href="https://www.cloudflare.com/web-analytics/">Cloudflare Web Analytics</a>。</p>
 
 <h3>页面会加载什么</h3>
-<p>一个到 <code>awesome-dsh-plugin.com</code> 的请求，用于显示目录里当前的插件数量，其中不包含关于你的任何信息。没有广告网络，没有第三方字体，也没有任何跟踪脚本。</p>
+<p>一个到 <code>awesome-dsh-plugin.com</code> 的请求，用于显示目录里当前的插件数量，其中不包含关于你的任何信息。插件截图从 <code>raw.githubusercontent.com</code> 加载，也就是它们在各自仓库里原本所在的位置；广告从 <code>pagead2.googlesyndication.com</code> 加载。没有第三方字体，也没有其它脚本。</p>
 
 <h3>评论</h3>
 <p>每个插件页面都带有评论区。评论存放在 <strong>GitHub Discussions</strong>，由 <a href="https://giscus.app">giscus</a> 以内嵌框架的形式呈现。页面打开时并不会立即加载这个框架——只有当评论区接近屏幕时才会请求它（多数页面上，也就是你向下滚过 README 之后），也只有在那一刻，<code>giscus.app</code> 与 GitHub 才会收到你的 IP 地址（任何网页服务器为了响应请求都必须知道它）。只是阅读的话不需要账号。发表评论或点表情时，giscus 会引导你登录 GitHub；你写下的内容是 <a href="https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/discussions">awesome-dsh-plugin</a> 仓库里一条公开的 GitHub Discussion，适用 GitHub 的条款，我们自己不保存其中任何内容。详见 <a href="https://github.com/giscus/giscus/blob/main/PRIVACY-POLICY.md">giscus 隐私政策</a>。</p>
@@ -82,7 +82,10 @@ footer a:hover{color:var(--accent)}
 <p>本站由 <strong>GitHub Pages</strong> 提供服务。和任何网页服务器一样，GitHub 会为了响应请求而收到你的 IP 地址。详见 <a href="https://docs.github.com/site-policy/privacy-policies/github-privacy-statement">GitHub 隐私声明</a>。</p>
 
 <h3>Cookie</h3>
-<p>本站不设置任何 cookie。</p>
+<p>本站自身不设置任何 cookie。Google 会为广告设置 cookie——见下。</p>
+
+<h3 id="advertising">广告</h3>
+<p>本站有 <strong>Google AdSense</strong> 广告。Google 会设置 cookie 用于投放和衡量广告，并在每次广告请求中收到你的 IP 地址。你可以在 <a href="https://myadcenter.google.com/">我的广告中心</a> 更改 Google 对你数据的使用。</p>
 
 <h2>dsh-market 插件</h2>
 <p>插件运行在你自己的 DeepSeek Harness 里，在你自己的机器上。没有 dsh-market 账号，没有我们运营的服务器，也没有任何遥测。<strong>我们无法知道你装了什么。</strong></p>
@@ -105,9 +108,6 @@ footer a:hover{color:var(--accent)}
 <li><strong>浏览器存储</strong>只保存界面状态——你打开的是哪个标签页、正在恢复的安装、已关闭的提示。不含任何标识，也不记录你装过什么。</li>
 <li><strong>导出的日志</strong>是给你自己看、用于反馈问题的。home 路径与密钥形状已打码，我们不会把它上传到任何地方。</li>
 </ul>
-
-<h2>广告</h2>
-<p>目前没有广告，也没有任何引入广告的安排。若将来有变化，本页会在变化发生之前说明，且改动会体现在本仓库的提交历史中。</p>
 
 <h2>联系方式</h2>
 <p>更正与疑问请<a href="https://github.com/dsh-market/dsh-market/issues">提交 issue</a>。如果本页描述与代码不符，那就是一个 bug，我们希望知道。</p>

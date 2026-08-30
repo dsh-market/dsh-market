@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Privacy — dsh-market</title>
-<meta name="description" content="What the dsh-market plugin and website do and do not collect. No telemetry in the plugin; cookie-less analytics on the site.">
+<meta name="description" content="What the dsh-market plugin and website do and do not collect. No telemetry in the plugin; cookie-less analytics and one advertising placement on the site.">
 <link rel="canonical" href="https://dshmarket.com/privacy/">
 <link rel="alternate" hreflang="en" href="https://dshmarket.com/privacy/">
 <link rel="alternate" hreflang="zh" href="https://dshmarket.com/zh/privacy/">
@@ -62,10 +62,10 @@ footer a:hover{color:var(--accent)}
 </header>
 <main class="prose">
 <h1>Privacy</h1>
-<p class="updated">Last updated 2026-08-18. This page describes this website and the dsh-market plugin. It is written from the code, not from intent — every claim below is checkable in <a href="https://github.com/dsh-market/dsh-market">the repository</a>.</p>
+<p class="updated">Last updated 2026-08-30. This page describes this website and the dsh-market plugin. It is written from the code, not from intent — every claim below is checkable in <a href="https://github.com/dsh-market/dsh-market">the repository</a>.</p>
 
 <h2>The short version</h2>
-<p>The plugin sends nothing about you anywhere. It downloads what you ask it to download. This website counts visits, without cookies and without identifying you.</p>
+<p>The plugin sends nothing about you anywhere. It downloads what you ask it to download. This website counts visits without cookies and without identifying you, and carries <a href="#advertising">Google ads</a>, which do use cookies.</p>
 
 <h2>This website (dshmarket.com)</h2>
 
@@ -73,7 +73,7 @@ footer a:hover{color:var(--accent)}
 <p>We use <strong>Cloudflare Web Analytics</strong>. It is cookie-less and does not fingerprint or track you across sites. It records page views and coarse technical facts — referrer, country, browser and device class — which Cloudflare aggregates. We see counts, never individuals. See <a href="https://www.cloudflare.com/web-analytics/">Cloudflare Web Analytics</a>.</p>
 
 <h3>What the page loads</h3>
-<p>One request to <code>awesome-dsh-plugin.com</code>, to display the current number of plugins in the catalog. Nothing about you is included in it. There are no ad networks, no third-party fonts, and no tracking scripts.</p>
+<p>One request to <code>awesome-dsh-plugin.com</code>, to display the current number of plugins in the catalog. Nothing about you is included in it. Plugin screenshots load from <code>raw.githubusercontent.com</code>, the same host they live on in their own repositories, and ads from <code>pagead2.googlesyndication.com</code>. There are no third-party fonts and no other scripts.</p>
 
 <h3>Comments</h3>
 <p>Each plugin page carries a comment thread, which lives in <strong>GitHub Discussions</strong> and is rendered by <a href="https://giscus.app">giscus</a> in an embedded frame. That frame is not loaded up front: it is requested only once the comment section comes close to the screen — on most pages, after you scroll past the README — and only then do <code>giscus.app</code> and GitHub receive your IP address, as any web server must to answer a request. Reading needs no account. Posting a comment or a reaction signs you in to GitHub through giscus, and what you write is a public GitHub Discussion in the <a href="https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/discussions">awesome-dsh-plugin</a> repository, governed by GitHub's terms — we store none of it ourselves. See the <a href="https://github.com/giscus/giscus/blob/main/PRIVACY-POLICY.md">giscus privacy policy</a>.</p>
@@ -82,7 +82,10 @@ footer a:hover{color:var(--accent)}
 <p>The site is served by <strong>GitHub Pages</strong>. Like any web server, GitHub receives your IP address in order to answer the request. See the <a href="https://docs.github.com/site-policy/privacy-policies/github-privacy-statement">GitHub Privacy Statement</a>.</p>
 
 <h3>Cookies</h3>
-<p>This site sets none.</p>
+<p>This site sets none of its own. Google sets cookies for the ads — see below.</p>
+
+<h3 id="advertising">Advertising</h3>
+<p>This site carries ads from <strong>Google AdSense</strong>. Google sets cookies to serve and measure them and receives your IP address with each ad request. You can change what Google does with your data at <a href="https://myadcenter.google.com/">My Ad Center</a>.</p>
 
 <h2>The dsh-market plugin</h2>
 <p>The plugin runs inside your own DeepSeek Harness, on your machine. There is no dsh-market account, no server we operate, and no telemetry. We cannot see what you install.</p>
@@ -105,9 +108,6 @@ footer a:hover{color:var(--accent)}
 <li><strong>Browser storage</strong> holds interface state only — which tab you had open, a pending install being recovered, a dismissed notice. No identifiers, no history of what you install.</li>
 <li><strong>Exported logs</strong> are produced for you to read and attach to a bug report. Home paths and credential shapes are masked, and the file is never uploaded anywhere by us.</li>
 </ul>
-
-<h2>Advertising</h2>
-<p>There is none, and there is no arrangement to introduce any. Should that ever change, this page will say so before it happens, and the change will be visible in this repository's history.</p>
 
 <h2>Contact</h2>
 <p>Corrections and questions: <a href="https://github.com/dsh-market/dsh-market/issues">open an issue</a>. If something on this page does not match the code, that is a bug and we want to hear about it.</p>
