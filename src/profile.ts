@@ -459,14 +459,13 @@ function readUrlTarballMeta(spec: string): { url?: string; repo?: string; sha?: 
   const metaPath = tarballPath.replace(/\.(?:tar\.gz|tgz)$/, '.json')
   try {
     if (!existsSync(metaPath)) {
-    logEvent('warn', 'url-tarball-sidecar-missing', 
-o sidecar json for )
-    return null
-  }
+      logEvent('warn', 'url-tarball-sidecar-missing', `no sidecar json for ${tarballPath}`)
+      return null
+    }
     const meta = JSON.parse(readFileSync(metaPath, 'utf8')) as Record<string, unknown>
     return typeof meta === 'object' && meta !== null ? meta as { url?: string; repo?: string; sha?: string } : null
   } catch (err) {
-    logEvent('warn', 'url-tarball-sidecar-parse-error', ailed to parse : )
+    logEvent('warn', 'url-tarball-sidecar-parse-error', `failed to parse ${metaPath}: ${err}`)
     return null
   }
 }
