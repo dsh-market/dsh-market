@@ -394,6 +394,28 @@ export function readInstalledRepoEvidence(
   explicitDir?: string,
 ): InstalledRepoEvidence {
   if (!PACKAGE_NAME_RE.test(name) || !/^(?:link|file):/i.test(spec)) return { identities: [], hints: [] }
+  // URL tarball installs (China-region codeload mirrors) land as file: specs
+  // pointing at bundled-plugins/url-<sha256-prefix>.tar.gz. The sibling
+  // url-<sha256-prefix>.json records the original repo and URL — read it so
+  // mirror-installed plugins report their GitHub identity and show as
+  // installed. Without this they have no repository field and no Git checkout,
+  // so the installed endpoint returns empty identities and the catalog cannot
+  // match them to a registry entry.
+  const tarballMeta = readUrlTarballMeta(spec)
+  if (tarballMeta !== null) {
+    if (typeof tarballMeta.repo === 'string' && tarballMeta.repo !== '') {
+      const identities = githubRepoIdentities(`https://github.com/${tarballMeta.repo}`, null)
+      if (identities.length > 0) return { identities, hints: [] }
+    }
+    if (typeof tarballMeta.url === 'string' && tarballMeta.url !== '') {
+      // Use parseGitHubRemote to handle codeload.github.com and proxy-prefixed URLs
+      const parsed = parseGitHubRemote(tarballMeta.url)
+      if (parsed !== null) {
+        const identities = githubRepoIdentities(`https://github.com/${parsed.repo}`, null)
+        if (identities.length > 0) return { identities, hints: [] }
+      }
+    }
+  }
   const root = profileDir(profile, explicitDir)
   const sourceDir = localSpecDirectory(root, spec)
   const installedDir = installedPackageDirectory(root, name)
