@@ -1102,7 +1102,7 @@ export function MarketSection(props: MarketSectionProps) {
     if (kind === 'installed') {
       setTab('installed')
       setQInstalled(value)
-    } else {
+    } else if (kind === 'discover') {
       setTab('discover')
       setCat('all')
       setQ(value)

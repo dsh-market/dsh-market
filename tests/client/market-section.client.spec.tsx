@@ -275,6 +275,36 @@ describe('MarketSection (jsdom)', () => {
     expect(screen.queryByText('dsh-loop')).toBeNull()
   })
 
+  it('handles the same destination again after the host clears the request', async () => {
+    const { rerender } = render(
+      <MarketSection {...props()} preferredSubsectionId="discover:dsh-loop" />,
+    )
+    const search = await screen.findByPlaceholderText(en.searchPh)
+    expect(search).toHaveProperty('value', 'dsh-loop')
+
+    rerender(<MarketSection {...props()} />)
+    fireEvent.change(search, { target: { value: 'whale-skin' } })
+    expect(search).toHaveProperty('value', 'whale-skin')
+
+    rerender(<MarketSection {...props()} preferredSubsectionId="discover:dsh-loop" />)
+    await waitFor(() => {
+      expect(search).toHaveProperty('value', 'dsh-loop')
+    })
+  })
+
+  it('ignores empty and unknown host destinations without resetting the current view', async () => {
+    const { rerender } = render(<MarketSection {...props()} />)
+    const search = await screen.findByPlaceholderText(en.searchPh)
+    fireEvent.change(search, { target: { value: 'whale-skin' } })
+    expect(search).toHaveProperty('value', 'whale-skin')
+
+    rerender(<MarketSection {...props()} preferredSubsectionId="" />)
+    expect(search).toHaveProperty('value', 'whale-skin')
+
+    rerender(<MarketSection {...props()} preferredSubsectionId="future:plugin" />)
+    expect(search).toHaveProperty('value', 'whale-skin')
+  })
+
   /** #256: the title has always opened the repo, but `color:inherit` with no
    * underline meant nothing said so until the cursor was already on it. The
    * link now carries a standing mark and names its destination, so it is
