@@ -179,7 +179,7 @@ describe('checkUpdates — github pins', () => {
   it('offers a catalog-matched local package a published upgrade', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ version: '0.17.1' }), { status: 200 })))
     const result = await checkUpdates(
-      'web', true, profileWith('file:/tmp/dsh-better-sidebar-0.16.1.tgz', OLD, '0.16.1'),
+      'web', true, profileWith('FILE:/tmp/dsh-better-sidebar-0.16.1.tgz', OLD, '0.16.1'),
       new Map(), new Map([['themer', 'dsh-better-sidebar']]),
     )
     expect(result.themer).toMatchObject({

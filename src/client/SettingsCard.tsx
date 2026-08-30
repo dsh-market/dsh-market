@@ -181,6 +181,7 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
   const [status, setStatus] = useState<SelfStatus | null>(null)
   const [update, setUpdate] = useState<SelfUpdate | null>(null)
   const [phase, setPhase] = useState<Phase>('idle')
+  const [restoreConfirming, setRestoreConfirming] = useState(false)
   const [purge, setPurge] = useState(false)
   const [error, setError] = useState<string | null>(null)
   /**
@@ -238,6 +239,7 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
   }, [])
 
   const onUpdate = useCallback((force = false) => {
+    setRestoreConfirming(false)
     setPhase('working')
     setError(null)
     setStale(false)
@@ -383,11 +385,32 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
           phase === 'updated'
             ? null
             : update?.updateAvailable === true
-              ? h(Button, { variant: 'primary', size: 'sm', disabled: busy, onClick: () => onUpdate() }, t('setSelfUpdate'))
+              ? h(Button, {
+                  variant: 'primary',
+                  size: 'sm',
+                  disabled: busy,
+                  onClick: () => {
+                    if (update.restoreRequired) setRestoreConfirming(true)
+                    else onUpdate()
+                  },
+                }, update.restoreRequired ? t('restoreOnline') : t('setSelfUpdate'))
               : update?.channelSwitch != null
                 ? h(Button, { variant: 'outline', size: 'sm', disabled: busy, onClick: () => onUpdate() }, t('setChannelSwitch'))
                 : null,
         ) : null,
+        status?.selfManaged === true && restoreConfirming
+          ? h('div', { className: css.setConfirm },
+              h('div', { className: css.setHint }, t('restoreHint')),
+              h('div', { className: css.setActions },
+                h(Button, {
+                  variant: 'ghost', size: 'sm', onClick: () => { setRestoreConfirming(false) },
+                }, t('setSelfCancel')),
+                h(Button, {
+                  variant: 'primary', size: 'sm', onClick: () => onUpdate(),
+                }, t('restoreContinue')),
+              ),
+            )
+          : null,
         status?.selfManaged === true ? row(t('setChannel'), t(CHANNEL_HINT[status.channel]),
           h('div', { className: css.setSeg },
             // Drawn from what the SERVER says is available, so the control

@@ -118,11 +118,14 @@ describe('SettingsCard', () => {
     expect(screen.getByRole('button', { name: t('setSelfUpdate') })).toBeTruthy()
   })
 
-  it('switches a locally packaged market to its matched online release', async () => {
+  it('confirms before switching a locally packaged market to its matched online release', async () => {
     stubFetch({ version: '1.29.2', latest: '1.37.0', restoreRequired: true })
     await open()
-    const button = await screen.findByRole('button', { name: t('setSelfUpdate') })
+    const button = await screen.findByRole('button', { name: t('restoreOnline') })
     fireEvent.click(button)
+    expect(calls.some(call => call.path.endsWith('/dsh-market/update'))).toBe(false)
+    expect(screen.getByText(t('restoreHint'))).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: t('restoreContinue') }))
     await waitFor(() => {
       expect(calls.find(call => call.path.endsWith('/dsh-market/update'))?.body)
         .toEqual({ name: 'dshmarket', restore: true })

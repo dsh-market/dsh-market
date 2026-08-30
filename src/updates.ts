@@ -271,7 +271,8 @@ export async function checkUpdates(
   const result: Record<string, UpdateStatus> = {}
   await Promise.all(Object.entries(installed).map(async ([name, spec]) => {
     const version = readInstalledVersion(profile, name, activeProfileDir)
-    if (spec.startsWith('file:')) {
+    const normalizedSpec = spec.toLowerCase()
+    if (normalizedSpec.startsWith('file:')) {
       const onlineSource = onlineSourceFor.get(name)
       if (onlineSource !== undefined) {
         const latest = await fetchNpmLatest(onlineSource)
@@ -285,7 +286,7 @@ export async function checkUpdates(
       result[name] = { kind: 'linked', version, current: null, latest: null, updateAvailable: false }
       return
     }
-    if (spec.startsWith('link:')) {
+    if (normalizedSpec.startsWith('link:')) {
       result[name] = { kind: 'linked', version, current: null, latest: null, updateAvailable: false }
       return
     }

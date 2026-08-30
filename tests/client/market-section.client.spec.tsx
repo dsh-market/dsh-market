@@ -1948,8 +1948,23 @@ describe('installed masonry layout (#273)', () => {
 })
 
 describe('local-dev restore', () => {
-  it('updates a catalog-matched local package through its online source', async () => {
+  it('confirms before switching a catalog-matched local package to its online source', async () => {
     stubFetch({
+      '/dsh-market/registry': {
+        source: 'live',
+        registry: {
+          ...REGISTRY,
+          plugins: [
+            ...REGISTRY.plugins,
+            {
+              name: 'dsh-better-sidebar', owner: 'flaqai',
+              url: 'https://github.com/flaqai/dsh-better-sidebar',
+              category: 'tools', npm: 'dsh-better-sidebar', stars: 20,
+              added: '2026-08-20', description: { en: 'Better sidebar', zh: '侧边栏增强' }, install: '',
+            },
+          ],
+        },
+      },
       '/dsh-market/installed': {
         profile: 'web', installed: { 'dsh-better-sidebar': 'file:/plugins/dsh-better-sidebar-0.16.1.tgz' }, live: [],
       },
@@ -1966,7 +1981,11 @@ describe('local-dev restore', () => {
     render(<MarketSection {...props()} />)
     await screen.findByText('dsh-loop')
     fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
-    fireEvent.click(await screen.findByRole('button', { name: en.update }))
+    expect(screen.queryByRole('button', { name: en.restore })).toBeNull()
+    fireEvent.click(await screen.findByRole('button', { name: en.restoreOnline }))
+    expect(await screen.findByText(en.restoreHint)).toBeTruthy()
+    expect(fetchCalls.some(call => call.path === '/dsh-market/update')).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: en.restoreContinue }))
     await waitFor(() => {
       expect(fetchCalls.some(call =>
         call.path === '/dsh-market/update'
@@ -1974,6 +1993,39 @@ describe('local-dev restore', () => {
         && call.body?.restore === true,
       )).toBe(true)
     })
+  })
+
+  it('leaves source switches out of Update all', async () => {
+    stubFetch({
+      '/dsh-market/installed': {
+        profile: 'web',
+        installed: {
+          'dsh-loop': '^1.0.0',
+          'dsh-notify': '^1.0.0',
+          'dsh-better-sidebar': 'file:/plugins/dsh-better-sidebar-0.16.1.tgz',
+        },
+        live: [],
+      },
+      '/dsh-market/updates': {
+        updates: {
+          'dsh-loop': { kind: 'npm', version: '1.0.0', latest: '1.1.0', updateAvailable: true },
+          'dsh-notify': { kind: 'npm', version: '1.0.0', latest: '1.1.0', updateAvailable: true },
+          'dsh-better-sidebar': {
+            kind: 'linked', version: '0.16.1', latest: '0.17.1',
+            updateAvailable: true, restoreRequired: true,
+          },
+        },
+      },
+      '/dsh-market/update': { ok: true },
+    })
+    render(<MarketSection {...props()} />)
+    fireEvent.click(await screen.findByRole('button', { name: /Update all \(2\)/ }))
+    await waitFor(() => {
+      expect(fetchCalls.filter(call => call.path === '/dsh-market/update')).toHaveLength(2)
+    })
+    expect(fetchCalls.filter(call => call.path === '/dsh-market/update').map(call => call.body?.name).sort())
+      .toEqual(['dsh-loop', 'dsh-notify'])
+    expect(fetchCalls.some(call => call.body?.restore === true)).toBe(false)
   })
 
   it('asks in the red banner before swapping a linked plugin to the catalog', async () => {
