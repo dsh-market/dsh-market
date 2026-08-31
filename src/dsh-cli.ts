@@ -331,6 +331,8 @@ export interface PluginCommandRuntime {
   probePnpm(): Promise<boolean>
   provisionPnpm(): Promise<{ ok: boolean; hint?: string }>
   cancelActive(): boolean
+  /** Whether this host can execute an immutable rollback add target. */
+  supportsExactRollbackTarget?(target: string): boolean
 }
 
 /** One running package operation, however it was started. */
@@ -1056,6 +1058,11 @@ export function createDesktopPluginRuntime(
 
   return {
     runPlugin,
+    // Anywhere Labs' optional external boundary accepts exact npm targets
+    // only. Every Desktop host without that boundary retains the ordinary
+    // CLI grammar, including immutable Git and archive targets.
+    supportsExactRollbackTarget: target => TARGET_RE.test(target)
+      && (service.runExternalMarketPluginInstall === undefined || EXACT_NPM_TARGET_RE.test(target)),
     // The service is backed by Desktop's packaged pnpm; system discovery and
     // global provisioning are neither needed nor allowed in this mode.
     probePnpm: () => Promise.resolve(true),

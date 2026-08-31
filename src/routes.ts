@@ -8,10 +8,11 @@
  * same-origin POSTs and only sources present in the curated registry.
  */
 
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { load as loadYaml } from 'js-yaml'
 import { forgetCatalog, loadRegistry, pluginCategories } from './registry.ts'
 import {
   cleanHotDir, hotMount, hotUnmount, listHotMounts, MAX_NOTE,
@@ -23,7 +24,7 @@ import { configurePersistentLog, exportLogs, logEvent, readPersistentLog } from 
 import { marketFetch } from './net.ts'
 import { diagnosePackageManifests } from './diagnostics.ts'
 import {
-  BOOT_ID, cancelActive, probePnpm, progress, provisionPnpm, runDshPlugin,
+  BOOT_ID, cancelActive, probePnpm, progress, provisionPnpm, runDshPlugin, TARGET_RE,
   type PluginCommandRuntime,
 } from './dsh-cli.ts'
 import { addProfileBundle, dropFromManifest, hasLoadableEntry, INBOX_BUNDLES, isDshProfileName, profileDir, readInstalled, readInstalledManifest, readInstalledRepoEvidence, readInstalledVersion, readLockCommits, readProfileBundles, readProfileManifestSnapshot, removeProfileBundle, restoreProfileManifest, setAllowBuilds, type ProfileManifestSnapshot } from './profile.ts'
@@ -61,6 +62,27 @@ import { MAX_UPDATE_OPERATIONS_V1, UpdateOperationStoreV1, UPDATE_API_V1_SCHEMA 
 
 export type { LoaderEntry } from './themes.ts'
 export type { UpdateStatus } from './updates.ts'
+
+/**
+ * Recognize the documented GitHub Release-download target shape. This does
+ * not authorize a new URL: install trust remains catalog-bound in sources.ts,
+ * while rollback only re-adds the exact direct URL already present in this
+ * profile before the update. Keep it route-local and independent of any
+ * unverified Desktop sidecar.
+ */
+function isGitHubReleaseTarballSpec(spec: string): boolean {
+  try {
+    const url = new URL(spec)
+    if (url.protocol !== 'https:' || url.hostname !== 'github.com') return false
+    const segments = url.pathname.split('/').filter(segment => segment !== '')
+    return segments.length >= 6
+      && segments[2] === 'releases'
+      && segments[3] === 'download'
+      && (url.pathname.endsWith('.tgz') || url.pathname.endsWith('.tar.gz'))
+  } catch {
+    return false
+  }
+}
 
 export interface WebServerService {
   register(route: {
@@ -225,7 +247,9 @@ export function mountMarketRoutes(
   // here so DSH's own HMR re-composes the tree (no restart) and the loader
   // re-applies the same choice on every boot (ported from dsh-plugin-hub).
   const userPatchPath = findUserPatchPath(host, activeProfileDir)
-  const commands = commandRuntime ?? { runPlugin: runDshPlugin, probePnpm, provisionPnpm, cancelActive }
+  const commands: PluginCommandRuntime = commandRuntime ?? { runPlugin: runDshPlugin, probePnpm, provisionPnpm, cancelActive }
+  const supportsExactRollbackTarget = (target: string): boolean =>
+    commands.supportsExactRollbackTarget?.(target) ?? TARGET_RE.test(target)
   // Snapshot retention cap (issue #98 supplement): a finite positive number
   // from the market config wins; anything else falls back to the default.
   const maxSnapshots = typeof config.maxSnapshots === 'number' && Number.isFinite(config.maxSnapshots) && config.maxSnapshots >= 1
@@ -490,86 +514,224 @@ export function mountMarketRoutes(
     return { ok, detail: ok ? null : failureDetail(reinstall) }
   }
 
+  type ProfileLockfileSnapshot =
+    | { present: false }
+    | { present: true; contents: Buffer }
+
+  type ManifestCapture =
+    | { ok: true; snapshot: ProfileManifestSnapshot }
+    | { ok: false; detail: string }
+
+  type LockfileCapture =
+    | { ok: true; snapshot: ProfileLockfileSnapshot }
+    | { ok: false; detail: string }
+
+  type UpdateRollbackSource =
+    | { kind: 'npm'; beforeVersion: string; lockfileBefore: ProfileLockfileSnapshot }
+    | { kind: 'github'; target: string; beforeCommit: string; lockfileBefore: ProfileLockfileSnapshot; keepRepairedLock: boolean }
+    | { kind: 'manifest' }
+
+  type UpdateRollbackPlan =
+    | { available: true; source: UpdateRollbackSource }
+    | { available: false; detail: string; lockfileBefore?: ProfileLockfileSnapshot }
+
   /**
-   * Restore the exact npm build that was on disk before an update started.
-   * Reinstalling a restored range is not sufficient: the failed add may have
-   * advanced the lockfile to another version that still satisfies that range,
-   * so `pnpm install` can keep the rejected bytes while reporting success.
+   * Discriminated preflight for rollback state. readProfileManifestSnapshot
+   * intentionally degrades read/parse failures to an empty profile for
+   * diagnostics callers; an update must never mistake that fabricated empty
+   * value for a rollback snapshot and erase real dependencies.
    */
-  async function rollbackNpmBuild(
+  function captureUpdateManifest(): ManifestCapture {
+    const file = join(activeProfileDir, 'package.json')
+    try {
+      const value = JSON.parse(readFileSync(file, 'utf8')) as unknown
+      if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+        return { ok: false, detail: 'the profile package.json root is not an object' }
+      }
+      const manifest = value as { dependencies?: unknown; dsh?: unknown }
+      if (manifest.dependencies !== undefined && (
+        typeof manifest.dependencies !== 'object'
+        || manifest.dependencies === null
+        || Array.isArray(manifest.dependencies)
+        || Object.values(manifest.dependencies).some(spec => typeof spec !== 'string')
+      )) {
+        return { ok: false, detail: 'the profile package.json dependency map is malformed' }
+      }
+      if (manifest.dsh !== undefined && (
+        typeof manifest.dsh !== 'object'
+        || manifest.dsh === null
+        || Array.isArray(manifest.dsh)
+      )) {
+        return { ok: false, detail: 'the profile package.json dsh field is malformed' }
+      }
+      const dsh = typeof manifest.dsh === 'object' && manifest.dsh !== null && !Array.isArray(manifest.dsh)
+        ? manifest.dsh as Record<string, unknown>
+        : undefined
+      if (dsh?.profile !== undefined && (
+        typeof dsh.profile !== 'object'
+        || dsh.profile === null
+        || Array.isArray(dsh.profile)
+      )) {
+        return { ok: false, detail: 'the profile package.json dsh.profile field is malformed' }
+      }
+      const profile = typeof dsh?.profile === 'object' && dsh.profile !== null && !Array.isArray(dsh.profile)
+        ? dsh.profile as Record<string, unknown>
+        : undefined
+      return {
+        ok: true,
+        snapshot: {
+          dependencies: { ...(manifest.dependencies as Record<string, string> | undefined) },
+          profileBundles: profile !== undefined && Object.hasOwn(profile, 'bundles')
+            ? { present: true, value: structuredClone(profile.bundles) }
+            : { present: false },
+        },
+      }
+    } catch (error) {
+      return { ok: false, detail: `the profile package.json could not be read: ${error instanceof Error ? error.message : String(error)}` }
+    }
+  }
+
+  /** Exact pnpm importer state paired with one pre-update manifest snapshot. */
+  function captureProfileLockfile(): LockfileCapture {
+    const file = join(activeProfileDir, 'pnpm-lock.yaml')
+    try {
+      return { ok: true, snapshot: { present: true, contents: readFileSync(file) } }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return { ok: true, snapshot: { present: false } }
+      }
+      const detail = error instanceof Error ? error.message : String(error)
+      return {
+        ok: false,
+        detail: `更新前无法读取 pnpm-lock.yaml，因此自动回滚不可用：${detail} / The pre-update pnpm-lock.yaml could not be read, so automatic rollback is unavailable: ${detail}`,
+      }
+    }
+  }
+
+  /** Resolved npm version for one dependency in a captured pnpm v9 importer. */
+  function capturedNpmVersion(snapshot: ProfileLockfileSnapshot, name: string): string | null {
+    if (!snapshot.present) return null
+    try {
+      const parsed = loadYaml(snapshot.contents.toString('utf8')) as {
+        importers?: Record<string, { dependencies?: Record<string, string | { version?: unknown }> }>
+      } | null
+      const dependency = parsed?.importers?.['.']?.dependencies?.[name]
+      const raw = typeof dependency === 'string' ? dependency : dependency?.version
+      if (typeof raw !== 'string') return null
+      return /^(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)(?:\(|$)/.exec(raw)?.[1] ?? null
+    } catch {
+      return null
+    }
+  }
+
+  /** Restore lockfile bytes atomically, or restore the fact it was absent. */
+  function restoreProfileLockfile(snapshot: ProfileLockfileSnapshot): { ok: boolean; detail: string | null } {
+    const file = join(activeProfileDir, 'pnpm-lock.yaml')
+    if (!snapshot.present) {
+      try {
+        rmSync(file, { force: true })
+        return { ok: true, detail: null }
+      } catch (error) {
+        return { ok: false, detail: `the newly created lockfile could not be removed: ${error instanceof Error ? error.message : String(error)}` }
+      }
+    }
+    const temp = `${file}.dsh-market-rollback-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    try {
+      writeFileSync(temp, snapshot.contents)
+      renameSync(temp, file)
+      return { ok: true, detail: null }
+    } catch (error) {
+      try { rmSync(temp, { force: true }) } catch { /* best-effort temp cleanup */ }
+      return { ok: false, detail: `the pre-update lockfile could not be restored: ${error instanceof Error ? error.message : String(error)}` }
+    }
+  }
+
+  /**
+   * Re-add one immutable source while restoring both durable manifest spelling
+   * and the exact pre-update importer/lock resolution around the command.
+   * The second lock restore is load-bearing for floating tags: real pnpm 11
+   * rewrites `latest` to an exact specifier during the add, and putting only
+   * package.json back makes the next frozen install reject the profile.
+   */
+  async function rollbackExactTarget(
     name: string,
     manifestBefore: ProfileManifestSnapshot,
-    beforeVersion: string | null,
+    lockfileBefore: ProfileLockfileSnapshot,
+    target: string,
+    keepRepairedLock = false,
   ): Promise<{ ok: boolean; detail: string | null }> {
     restoreProfileManifest(config.profile, manifestBefore, activeProfileDir)
-    if (beforeVersion === null) {
-      return { ok: false, detail: 'the previous installed version is unknown; exact rollback is unavailable' }
+    const preparedLock = restoreProfileLockfile(lockfileBefore)
+    if (!preparedLock.ok) return preparedLock
+    let finalLockError: string | null = null
+    // The lock can already name the old identity while pnpm's package bytes
+    // were replaced before the rejected update failed. A normal exact add is
+    // then an "already up to date" no-op; --force is what rematerializes the
+    // captured version/commit/archive instead of blessing corrupted bytes.
+    const add = await runPlugin(config.profile, ['add', '--force', RELEASE_AGE_OVERRIDE, target])
+    // Exact recovery targets deliberately pin versions/commits. Keep the
+    // user's durable range, tag, floating github shortcut, or release URL.
+    restoreProfileManifest(config.profile, manifestBefore, activeProfileDir)
+    // When an independently authoritative old identity (an installed npm
+    // version or pinned Git manifest) disagrees with a missing/stale lock,
+    // keep the exact add's repaired OLD resolution. Floating sources instead
+    // need their captured importer/lock bytes back.
+    if (!keepRepairedLock || add.exitCode !== 0 || add.timedOut || add.cancelled) {
+      const restoredLock = restoreProfileLockfile(lockfileBefore)
+      finalLockError = restoredLock.detail
     }
-    const add = await runPlugin(config.profile, ['add', RELEASE_AGE_OVERRIDE, `${name}@${beforeVersion}`])
-      .finally(() => {
-        // The exact add deliberately pins its target. Preserve the user's
-        // durable range/tag spelling even when the command rejects or fails
-        // after a partial manifest write.
-        restoreProfileManifest(config.profile, manifestBefore, activeProfileDir)
-      })
+    if (finalLockError !== null) return { ok: false, detail: finalLockError }
     if (add.exitCode !== 0 || add.timedOut || add.cancelled) {
       return { ok: false, detail: failureDetail(add) }
     }
+    if (!hasLoadableEntry(activeProfileDir, name)) {
+      return { ok: false, detail: 'the previous source was reinstalled without a loadable entry' }
+    }
+    return { ok: true, detail: null }
+  }
+
+  /** Restore the exact npm build that was on disk before the update. */
+  async function rollbackNpmBuild(
+    name: string,
+    manifestBefore: ProfileManifestSnapshot,
+    beforeVersion: string,
+    lockfileBefore: ProfileLockfileSnapshot,
+  ): Promise<{ ok: boolean; detail: string | null }> {
+    const rollback = await rollbackExactTarget(name, manifestBefore, lockfileBefore, `${name}@${beforeVersion}`)
+    if (!rollback.ok) return rollback
     const restoredVersion = readInstalledVersion(config.profile, name, activeProfileDir)
     if (restoredVersion !== beforeVersion) {
       return { ok: false, detail: `expected v${beforeVersion} after rollback, found v${restoredVersion ?? 'unknown'}` }
-    }
-    if (!hasLoadableEntry(activeProfileDir, name)) {
-      return { ok: false, detail: 'the previous version was reinstalled without a loadable entry' }
     }
     logEvent('info', 'update-rollback', `${name}: restored npm build v${beforeVersion}`)
     return { ok: true, detail: null }
   }
 
-  interface PendingRollback {
-    id: string
-    kind: 'update' | 'install'
-    names: string[]
-    manifestBefore?: ProfileManifestSnapshot
-    /** github: updates must re-add the pre-update commit, not just reinstall. */
-    gitTarget?: string
-    beforeCommit?: string | null
+  function exactGitRollbackTarget(target: string, beforeCommit: string): string | null {
+    return githubCommitOfTarget(target) === beforeCommit
+      ? target
+      : githubTargetAtCommit(target, beforeCommit)
   }
 
-  const pendingRollbacks = new Map<string, PendingRollback>()
-  let rollbackSequence = 0
-
-  function savePendingRollback(record: Omit<PendingRollback, 'id'>): string {
-    const id = `rollback-${String(rollbackSequence++)}`
-    pendingRollbacks.set(id, { ...record, id })
-    return id
-  }
-
-  /** Restore a github: update by re-adding the commit captured before the update. */
+  /** Restore a github: update by re-adding the commit captured before it. */
   async function rollbackGitBuild(
     name: string,
     manifestBefore: ProfileManifestSnapshot,
     target: string,
-    beforeCommit: string | null,
+    beforeCommit: string,
+    lockfileBefore: ProfileLockfileSnapshot,
+    keepRepairedLock: boolean,
   ): Promise<{ ok: boolean; detail: string | null }> {
-    if (beforeCommit === null) {
-      return { ok: false, detail: 'the previous commit is unknown; nothing to roll back to' }
-    }
-    const rollbackTarget = githubTargetAtCommit(target, beforeCommit)
+    // Preserve an already immutable durable spelling (including a pinned
+    // codeload URL). Rewriting that source to github: while keeping the
+    // repaired lock would make its importer disagree with package.json.
+    // Floating shortcuts still need to be converted to an exact commit.
+    const rollbackTarget = exactGitRollbackTarget(target, beforeCommit)
     if (rollbackTarget === null) {
       return { ok: false, detail: 'the previous github target is invalid; nothing to roll back to' }
     }
-    restoreProfileManifest(config.profile, manifestBefore, activeProfileDir)
-    const add = await runPlugin(config.profile, ['add', RELEASE_AGE_OVERRIDE, rollbackTarget])
-      .finally(() => {
-        // Keep the durable source spelling (including a floating github:
-        // target or #path selector) even when the exact recovery add rejects
-        // or fails after writing its commit-pinned target into package.json.
-        restoreProfileManifest(config.profile, manifestBefore, activeProfileDir)
-      })
-    if (add.exitCode !== 0 || add.timedOut || add.cancelled) {
-      return { ok: false, detail: failureDetail(add) }
-    }
+    const rollback = await rollbackExactTarget(name, manifestBefore, lockfileBefore, rollbackTarget, keepRepairedLock)
+    if (!rollback.ok) return rollback
     const repoKey = repoOfTarget(rollbackTarget)?.split('#')[0] ?? null
     const restoredCommit = repoKey === null
       ? null
@@ -577,14 +739,69 @@ export function mountMarketRoutes(
     if (restoredCommit !== beforeCommit) {
       return { ok: false, detail: `expected commit ${beforeCommit} after rollback, found ${restoredCommit ?? 'unknown'}` }
     }
-    if (!hasLoadableEntry(activeProfileDir, name)) {
-      return { ok: false, detail: 'the previous commit was reinstalled without a loadable entry' }
-    }
-    // pnpm wrote a commit-pinned spec; the profile's durable spec must stay
-    // the original `github:owner/repo` form. The lockfile keeps the restored
-    // commit resolution for the next boot.
     logEvent('info', 'update-rollback', `${name}: restored github build at ${beforeCommit}`)
     return { ok: true, detail: null }
+  }
+
+  async function executeUpdateRollback(
+    name: string,
+    manifestBefore: ProfileManifestSnapshot,
+    source: UpdateRollbackSource,
+  ): Promise<{ ok: boolean; detail: string | null }> {
+    if (source.kind === 'npm') {
+      return rollbackNpmBuild(name, manifestBefore, source.beforeVersion, source.lockfileBefore)
+    }
+    if (source.kind === 'github') {
+      return rollbackGitBuild(name, manifestBefore, source.target, source.beforeCommit, source.lockfileBefore, source.keepRepairedLock)
+    }
+    return rollbackUpdateBuild(name, manifestBefore, true)
+  }
+
+  interface PendingRollback {
+    id: string
+    kind: 'update' | 'install'
+    names: string[]
+    expectedState: ProfileStateFingerprint
+    manifestBefore?: ProfileManifestSnapshot
+    updateSource?: UpdateRollbackSource
+  }
+
+  interface ProfileStateFingerprint {
+    packageJson: Buffer
+    lockfile: ProfileLockfileSnapshot
+  }
+
+  const pendingRollbacks = new Map<string, PendingRollback>()
+  let rollbackSequence = 0
+
+  function captureProfileStateFingerprint(): ProfileStateFingerprint | null {
+    try {
+      const packageJson = readFileSync(join(activeProfileDir, 'package.json'))
+      const lockfile = captureProfileLockfile()
+      return lockfile.ok ? { packageJson, lockfile: lockfile.snapshot } : null
+    } catch {
+      return null
+    }
+  }
+
+  function sameProfileLockfile(left: ProfileLockfileSnapshot, right: ProfileLockfileSnapshot): boolean {
+    if (left.present !== right.present) return false
+    return !left.present || (right.present && left.contents.equals(right.contents))
+  }
+
+  function profileStateMatches(expected: ProfileStateFingerprint): boolean {
+    const current = captureProfileStateFingerprint()
+    return current !== null
+      && current.packageJson.equals(expected.packageJson)
+      && sameProfileLockfile(current.lockfile, expected.lockfile)
+  }
+
+  function savePendingRollback(record: Omit<PendingRollback, 'id' | 'expectedState'>): string | null {
+    const expectedState = captureProfileStateFingerprint()
+    if (expectedState === null) return null
+    const id = `rollback-${String(rollbackSequence++)}`
+    pendingRollbacks.set(id, { ...record, id, expectedState })
+    return id
   }
 
   async function removeInstalledPackage(name: string): Promise<{ ok: boolean; hot: boolean; detail: string | null }> {
@@ -1115,6 +1332,7 @@ export function mountMarketRoutes(
         try {
           const body = await readJsonBody(request, MAX_BACKUP_BYTES + 4096) as { backup?: unknown }
           await withMutationLock(response, 'install', async () => {
+            pendingRollbacks.clear()
             sendJson(response, 200, { ok: true, ...await restoreBackup(body.backup) })
           })
         } catch (error) {
@@ -1397,6 +1615,7 @@ export function mountMarketRoutes(
                 return
               }
               const snapshot = captured.snapshot
+              pendingRollbacks.clear()
               const applied = applyBundleOrder(activeProfileDir, order)
               if (!applied.ok) {
                 sendJson(response, 400, { error: applied.error })
@@ -1468,6 +1687,7 @@ export function mountMarketRoutes(
                 return
               }
               case 'apply': {
+                pendingRollbacks.clear()
                 const applied = applyPreset(activeProfileDir, name, maxSnapshots)
                 if (applied.ok) {
                   invalidateUpdates()
@@ -1541,6 +1761,7 @@ export function mountMarketRoutes(
               sendJson(response, 400, { error: 'snapshot id is required / 需要快照 id' })
               return
             }
+            pendingRollbacks.clear()
             const restored = restoreSnapshot(activeProfileDir, body.snapshot)
             if (restored.ok) {
               invalidateUpdates()
@@ -1615,6 +1836,7 @@ export function mountMarketRoutes(
             sendJson(response, 400, { error: 'not an installed theme' })
             return
           }
+          pendingRollbacks.clear()
           const activated = await themes.activateTheme(name)
           logEvent(activated ? 'info' : 'error', 'use-skin', `${name}: ${activated ? 'active' : 'failed'}`)
           sendJson(response, activated ? 200 : 502, { ok: activated, live: listHotMounts() })
@@ -1640,17 +1862,18 @@ export function mountMarketRoutes(
           return
         }
         try {
-          const body = (await readJsonBody(request)) as { name?: unknown; enabled?: unknown }
-          const name = typeof body.name === 'string' ? body.name : ''
-          const enabled = body.enabled === true
-          if (name === 'dsh-market' || name === 'dshmarket') {
-            sendJson(response, 400, { error: 'the market cannot be disabled from its own page; use the dsh CLI' })
-            return
-          }
-          if (readInstalled(config.profile, activeProfileDir)[name] === undefined) {
-            sendJson(response, 400, { error: 'plugin is not installed' })
-            return
-          }
+          await withMutationLock(response, 'write', async () => {
+            const body = (await readJsonBody(request)) as { name?: unknown; enabled?: unknown }
+            const name = typeof body.name === 'string' ? body.name : ''
+            const enabled = body.enabled === true
+            if (name === 'dsh-market' || name === 'dshmarket') {
+              sendJson(response, 400, { error: 'the market cannot be disabled from its own page; use the dsh CLI' })
+              return
+            }
+            if (readInstalled(config.profile, activeProfileDir)[name] === undefined) {
+              sendJson(response, 400, { error: 'plugin is not installed' })
+              return
+            }
           // Host infrastructure (port of dsh-plugin-hub): switching off the
           // timer/hmr/webserver/storage chain would break the very HMR the
           // patch layer relies on, so those rows refuse to toggle.
@@ -1660,6 +1883,7 @@ export function mountMarketRoutes(
             })
             return
           }
+          pendingRollbacks.clear()
           let ok: boolean
           let reason: string | undefined
           if (enabled && (await themes.installedThemeNames()).has(name)) {
@@ -1732,20 +1956,21 @@ export function mountMarketRoutes(
           // needs a browser refresh to show the change (same signal the
           // install flow uses for the hot banner).
           const refresh = packageHasClientPart(activeProfileDir, name)
-          sendJson(response, ok ? 200 : 502, {
-            ok,
-            name,
-            enabled,
-            disabled: [...disabled],
-            live: listHotMounts(),
-            activation: { [name]: verifyActivation(config.profile, name, liveNames(), activeProfileDir, offNow) },
-            reason,
-            patchRows,
-            patchWrite: patchWrite ?? { ok: true, reason: null },
-            carrier: disablesOthers,
-            bundleSwitch,
-            restart,
-            refresh,
+            sendJson(response, ok ? 200 : 502, {
+              ok,
+              name,
+              enabled,
+              disabled: [...disabled],
+              live: listHotMounts(),
+              activation: { [name]: verifyActivation(config.profile, name, liveNames(), activeProfileDir, offNow) },
+              reason,
+              patchRows,
+              patchWrite: patchWrite ?? { ok: true, reason: null },
+              carrier: disablesOthers,
+              bundleSwitch,
+              restart,
+              refresh,
+            })
           })
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
@@ -1836,6 +2061,7 @@ export function mountMarketRoutes(
               sendJson(response, 400, { ok: false, error: 'group not found / 分组不存在' })
               return
             }
+            pendingRollbacks.clear()
             // Batch toggle: on = every installed member enabled, off = every
             // member disabled. Each member keeps its own persisted flag, so
             // later individual toggles still work (the group switch itself is
@@ -2095,8 +2321,15 @@ export function mountMarketRoutes(
             const name = typeof body.name === 'string' ? body.name : ''
             const force = body.force === true
             const restore = body.restore === true
-            let spec = readInstalled(config.profile, activeProfileDir)[name]
-            if (spec === undefined) {
+            const manifestCapture = captureUpdateManifest()
+            if (!manifestCapture.ok) {
+              sendJson(response, 500, {
+                error: `更新前无法安全读取 profile package.json，未执行任何修改（${manifestCapture.detail}）。 / The profile package.json could not be captured safely before update; nothing was changed (${manifestCapture.detail}).`,
+              })
+              return
+            }
+            let spec = manifestCapture.snapshot.dependencies[name]
+            if (spec === undefined || INBOX_BUNDLES.has(name)) {
               sendJson(response, 400, { error: 'plugin is not installed' })
               return
             }
@@ -2179,6 +2412,18 @@ export function mountMarketRoutes(
               ? githubUpdateTarget(spec)
               : codeloadRepo === null ? null : `github:${codeloadRepo}`
             const isGit = gitSpec !== null
+            const isReleaseTarball = !restore && isGitHubReleaseTarballSpec(spec)
+            const isNpmRollbackSource = !restore && !isGit && !isReleaseTarball
+              // Market-managed npm installs persist only a range, version, or
+              // dist-tag. Any protocol/path/manual shorthand needs its own
+              // proven source-preserving rollback rather than being guessed
+              // into name@<installed-version>.
+              && !/[:/\\]/.test(spec)
+            // Every ordinary non-Git update still installs name@<tag>, even
+            // when its PREVIOUS source was a release URL. Source
+            // classification chooses rollback mechanics; it must not weaken
+            // the existing registry target/downgrade validation.
+            const usesNpmUpdateTarget = !restore && !isGit
             // `@latest` was hardcoded, so a beta subscriber would have been
             // told an update existed and then handed the stable build. The
             // dist-tag has to follow the same setting the offer came from.
@@ -2216,7 +2461,7 @@ export function mountMarketRoutes(
             // so here the guard only refuses when the channel already points
             // at what is installed, and it compares against the target tag
             // rather than `latest`, which is not the tag being installed.
-            if (!isGit && !restore) {
+            if (usesNpmUpdateTarget) {
               const installedVersion = readInstalledVersion(config.profile, name, activeProfileDir)
               const registryLatest = selfChannel === null
                 ? await fetchNpmLatest(name)
@@ -2233,7 +2478,13 @@ export function mountMarketRoutes(
                 return
               }
             }
-            const repoKey = isGit ? repoOfTarget(spec)?.split('#')[0] ?? null : null
+            const repoIdentity = isGit ? repoOfTarget(spec) : null
+            const repoKey = repoIdentity?.split('#')[0] ?? null
+            // dsh-cli's deliberately narrow target grammar rejects the `&`
+            // required to combine an exact commit and a monorepo path. Do not
+            // weaken that command boundary or offer a rollback action that
+            // the real host can never execute.
+            const hasGitSubpath = repoIdentity?.includes('#path:/') ?? false
             // Captured BEFORE pnpm replaces the files: afterwards the loader
             // inventory reads exactly the same, because replacing a package
             // on disk does not unload the module the process already imported.
@@ -2243,9 +2494,21 @@ export function mountMarketRoutes(
             const wasLive = verifyActivation(config.profile, name, liveNames(), activeProfileDir, disabled.has(name)).state === 'live'
               && hasHostHalf(config.profile, name, activeProfileDir)
             const beforeVersion = readInstalledVersion(config.profile, name, activeProfileDir)
-            const beforeCommit = repoKey !== null
-              ? githubCommitOfTarget(spec) ?? readLockCommits(config.profile, activeProfileDir).get(repoKey) ?? null
+            // A durable manifest pin is independently authoritative. When its
+            // captured lock is missing or stale, the exact OLD re-add repairs
+            // that lock and rollback must keep the repair. Floating Git specs
+            // still derive identity from the captured lock, so their exact
+            // importer bytes remain the authority after rematerialization.
+            const manifestPinnedCommit = repoKey !== null ? githubCommitOfTarget(spec) : null
+            const capturedLockCommit = repoKey !== null
+              ? readLockCommits(config.profile, activeProfileDir).get(repoKey) ?? null
               : null
+            const beforeCommit = manifestPinnedCommit ?? capturedLockCommit
+            const keepRepairedGitLock = manifestPinnedCommit !== null
+              && capturedLockCommit !== manifestPinnedCommit
+            const gitRollbackTarget = beforeCommit === null
+              ? null
+              : exactGitRollbackTarget(spec, beforeCommit)
             // force: the user chose to install a fresh release without the
             // default one-day safety wait; scoped to this single command.
             const addArgs = force ? ['add', RELEASE_AGE_OVERRIDE, target] : ['add', target]
@@ -2260,9 +2523,95 @@ export function mountMarketRoutes(
             // broke is attributable to it, so the profile is swept before as
             // well as after.
             const bundlesBefore = brokenClientBundles(config.profile, activeProfileDir)
-            const manifestBefore = readProfileManifestSnapshot(config.profile, activeProfileDir)
+            const manifestBefore = manifestCapture.snapshot
+            const lockfileCapture = captureProfileLockfile()
+            const previousVersionZh = beforeVersion === null ? '更新前版本未知' : `更新前版本为 v${beforeVersion}`
+            const previousVersionEn = beforeVersion === null ? 'the previous version is unknown' : `the previous version was v${beforeVersion}`
+            const rollbackPlan: UpdateRollbackPlan = restore
+              ? { available: true, source: { kind: 'manifest' } }
+              : !lockfileCapture.ok
+                ? { available: false, detail: lockfileCapture.detail }
+                : isGit
+                  ? hasGitSubpath
+                    ? {
+                        available: false,
+                        detail: `更新前的 GitHub 来源使用 monorepo 子目录${beforeCommit === null ? '' : `（提交 ${beforeCommit}）`}，当前 DSH 命令无法表达该精确目标，因此自动回滚不可用；需要时请手工重新安装该提交。 / The previous GitHub source uses a monorepo subpath${beforeCommit === null ? '' : ` at commit ${beforeCommit}`}; the current DSH command cannot express that exact target, so automatic rollback is unavailable. Reinstall that commit manually if needed.`,
+                        lockfileBefore: lockfileCapture.snapshot,
+                      }
+                    : beforeCommit === null
+                      ? {
+                          available: false,
+                          detail: '未能确认更新前的 GitHub 提交，因此自动回滚不可用；需要时请从可信来源手工重新安装先前版本。 / The previous GitHub commit could not be verified, so automatic rollback is unavailable. Reinstall the prior version manually from a trusted source if needed.',
+                          lockfileBefore: lockfileCapture.snapshot,
+                        }
+                      : gitRollbackTarget === null || !supportsExactRollbackTarget(gitRollbackTarget)
+                        ? {
+                            available: false,
+                            detail: `当前宿主无法安装更新前的精确 GitHub 提交 ${beforeCommit}，因此自动回滚不可用；需要时请手工重新安装该提交。 / This host cannot install the exact previous GitHub commit ${beforeCommit}, so automatic rollback is unavailable. Reinstall that commit manually if needed.`,
+                            lockfileBefore: lockfileCapture.snapshot,
+                          }
+                        : {
+                            available: true,
+                            source: {
+                              kind: 'github',
+                              target: spec,
+                              beforeCommit,
+                              lockfileBefore: lockfileCapture.snapshot,
+                              keepRepairedLock: keepRepairedGitLock,
+                            },
+                          }
+                  : isReleaseTarball
+                    // A release download URL is not a content identity: GitHub
+                    // assets can be replaced unless immutable releases are
+                    // enabled. Re-adding the same URL could bless different
+                    // bytes, so restore durable state but never claim an exact
+                    // build rollback without a captured content binding.
+                    ? {
+                        available: false,
+                        detail: `${previousVersionZh}，但先前的 Release 归档没有经过验证的不可变内容标识；同一链接以后可能返回不同文件，因此自动回滚不可用。需要时请从可信来源手工重新安装${beforeVersion === null ? '先前版本' : ` v${beforeVersion}`}。 / ${previousVersionEn}, but the previous Release archive has no verified immutable content identity; the same URL may later return different bytes, so automatic rollback is unavailable. Reinstall ${beforeVersion === null ? 'the prior version' : `v${beforeVersion}`} manually from a trusted source if needed.`,
+                        lockfileBefore: lockfileCapture.snapshot,
+                      }
+                    : isNpmRollbackSource
+                      ? beforeVersion === null
+                        ? {
+                            available: false,
+                            detail: '未能确认更新前安装的 npm 版本，因此自动回滚不可用；需要时请从可信来源手工重新安装先前版本。 / The previously installed npm version could not be verified, so automatic rollback is unavailable. Reinstall the prior version manually from a trusted source if needed.',
+                            lockfileBefore: lockfileCapture.snapshot,
+                          }
+                        : lockfileCapture.snapshot.present
+                          && capturedNpmVersion(lockfileCapture.snapshot, name) !== beforeVersion
+                          ? {
+                              available: false,
+                              detail: `更新前安装的是 v${beforeVersion}，但 pnpm-lock.yaml 中的版本与它不一致，因此无法证明精确来源，自动回滚不可用。需要时请手工重新安装 ${name}@${beforeVersion}。 / The installed version before the update was v${beforeVersion}, but pnpm-lock.yaml does not match it, so the exact source cannot be proven and automatic rollback is unavailable. Reinstall ${name}@${beforeVersion} manually if needed.`,
+                              lockfileBefore: lockfileCapture.snapshot,
+                            }
+                          : !supportsExactRollbackTarget(`${name}@${beforeVersion}`)
+                            ? {
+                                available: false,
+                                detail: `当前宿主无法安装更新前的精确 npm 目标 ${name}@${beforeVersion}（v${beforeVersion}），因此自动回滚不可用；需要时请手工重新安装该版本。 / This host cannot install the exact previous npm target ${name}@${beforeVersion} (v${beforeVersion}), so automatic rollback is unavailable. Reinstall that version manually if needed.`,
+                                lockfileBefore: lockfileCapture.snapshot,
+                              }
+                            : { available: true, source: { kind: 'npm', beforeVersion, lockfileBefore: lockfileCapture.snapshot } }
+                      : {
+                          available: false,
+                          detail: `更新前的来源 ${spec} 不是受支持的精确回滚目标（${previousVersionZh}），因此自动回滚不可用；需要时请从可信来源手工重新安装先前版本。 / The previous source ${spec} is not a supported exact rollback target (${previousVersionEn}), so automatic rollback is unavailable. Reinstall the prior version manually from a trusted source if needed.`,
+                          lockfileBefore: lockfileCapture.snapshot,
+                        }
             const result = await runPlugin(config.profile, addArgs)
             const cancelled = result.cancelled
+            const rollbackAttemptBuild = async (): Promise<{ ok: boolean; detail: string | null }> => {
+              if (rollbackPlan.available) {
+                return executeUpdateRollback(name, manifestBefore, rollbackPlan.source)
+              }
+              restoreProfileManifest(config.profile, manifestBefore, activeProfileDir)
+              const lockRestore = rollbackPlan.lockfileBefore === undefined
+                ? { ok: true, detail: null }
+                : restoreProfileLockfile(rollbackPlan.lockfileBefore)
+              return {
+                ok: false,
+                detail: lockRestore.ok ? rollbackPlan.detail : `${rollbackPlan.detail}; ${lockRestore.detail ?? 'the lockfile could not be restored'}`,
+              }
+            }
             let rollbackOk = true
             let rollbackDetail: string | null = null
             let hardFailureRollbackError: string | null = null
@@ -2273,11 +2622,7 @@ export function mountMarketRoutes(
             // as busy or the user deliberately cancelled and chose to inspect
             // the resulting partial state.
             if ((result.exitCode !== 0 || result.timedOut) && !cancelled && result.busy !== true) {
-              const rollback = isGit && !restore
-                ? await rollbackGitBuild(name, manifestBefore, target, beforeCommit)
-                : !isGit && !restore
-                  ? await rollbackNpmBuild(name, manifestBefore, beforeVersion)
-                  : await rollbackUpdateBuild(name, manifestBefore, true)
+              const rollback = await rollbackAttemptBuild()
               rollbackOk = rollback.ok
               rollbackDetail = rollback.detail
               if (rollback.ok) {
@@ -2318,7 +2663,7 @@ export function mountMarketRoutes(
             // looked like a successful update. Verify the bytes that actually
             // landed against both the pre-update version and the registry
             // target, then rematerialize the previous build on any mismatch.
-            if (ok && !isGit && !restore) {
+            if (ok && usesNpmUpdateTarget) {
               const afterVersion = readInstalledVersion(config.profile, name, activeProfileDir)
               const direction = beforeVersion !== null && afterVersion !== null
                 ? compareVersions(afterVersion, beforeVersion)
@@ -2346,16 +2691,19 @@ export function mountMarketRoutes(
               )
               if (unexpectedDowngrade || targetMismatch) {
                 versionFailureCode = unexpectedDowngrade ? 'DOWNGRADE_DETECTED' : 'RESOLVED_VERSION_MISMATCH'
-                versionFailureError = unexpectedDowngrade
-                  ? `${name} 更新实际解析为 v${afterVersion ?? 'unknown'}，低于更新前的 v${beforeVersion ?? 'unknown'}；已拒绝降级并自动恢复原版本。 / ${name} resolved to v${afterVersion ?? 'unknown'}, below the installed v${beforeVersion ?? 'unknown'}; the downgrade was rejected and the previous build was restored.`
-                  : `${name} 更新目标为 v${expectedNpmVersion ?? 'unknown'}，但实际安装为 v${afterVersion ?? 'unknown'}；已自动恢复原版本。 / ${name} targeted v${expectedNpmVersion ?? 'unknown'} but installed v${afterVersion ?? 'unknown'}; the previous build was restored.`
                 ok = false
-                const rollback = await rollbackUpdateBuild(name, manifestBefore)
+                const rollback = await rollbackAttemptBuild()
                 rollbackOk = rollback.ok
                 rollbackDetail = rollback.detail
-                if (!rollback.ok) {
-                  versionFailureError += ` 回滚未能恢复原版本文件：${rollback.detail ?? 'unknown'} / Rollback could not restore the previous build: ${rollback.detail ?? 'unknown'}`
-                }
+                const mismatchZh = unexpectedDowngrade
+                  ? `${name} 更新实际解析为 v${afterVersion ?? 'unknown'}，低于更新前的 v${beforeVersion ?? 'unknown'}；已拒绝降级`
+                  : `${name} 更新目标为 v${expectedNpmVersion ?? 'unknown'}，但实际安装为 v${afterVersion ?? 'unknown'}`
+                const mismatchEn = unexpectedDowngrade
+                  ? `${name} resolved to v${afterVersion ?? 'unknown'}, below the installed v${beforeVersion ?? 'unknown'}; the downgrade was rejected`
+                  : `${name} targeted v${expectedNpmVersion ?? 'unknown'} but installed v${afterVersion ?? 'unknown'}`
+                versionFailureError = rollback.ok
+                  ? `${mismatchZh}；已自动恢复原版本。 / ${mismatchEn}; the previous build was restored.`
+                  : `${mismatchZh}；回滚未能验证恢复原版本（${rollback.detail ?? 'unknown'}）。 / ${mismatchEn}; restoration of the previous build could not be verified (${rollback.detail ?? 'unknown'}).`
                 logEvent('error', 'update-version',
                   `${name}: ${versionFailureCode} before=${beforeVersion ?? 'unknown'} expected=${expectedNpmVersion ?? 'unknown'} actual=${afterVersion ?? 'unknown'}${rollback.ok ? '; previous build restored' : `; rollback failed: ${rollback.detail ?? 'unknown'}`}`)
               }
@@ -2375,7 +2723,7 @@ export function mountMarketRoutes(
             if (ok && !hasLoadableEntry(activeProfileDir, name)) {
               brokenEntry = true
               ok = false
-              const rollback = await rollbackUpdateBuild(name, manifestBefore)
+              const rollback = await rollbackAttemptBuild()
               rollbackOk = rollback.ok
               rollbackDetail = rollback.detail
               logEvent('error', 'update',
@@ -2393,7 +2741,7 @@ export function mountMarketRoutes(
               if (!trial.ok) {
                 ok = false
                 const first = trial.errors[0]?.message ?? 'the composition would not boot'
-                const rollback = await rollbackUpdateBuild(name, manifestBefore)
+                const rollback = await rollbackAttemptBuild()
                 rollbackOk = rollback.ok
                 rollbackDetail = rollback.detail
                 trialError = rollback.ok
@@ -2403,7 +2751,14 @@ export function mountMarketRoutes(
                   `${name}: trial validation failed — ${first}${rollback.ok ? '; previous build restored' : `; could not restore previous files: ${rollback.detail ?? 'unknown'}`}`)
               }
             }
-            let compatibility: { code: 'soft-incompatible'; risks: CompatibilityRisk[]; shadowedNames?: DuplicateName[]; brokenBundles?: Array<{ name: string; reason: string }>; rollbackId: string } | undefined
+            let compatibility: {
+              code: 'soft-incompatible'
+              risks: CompatibilityRisk[]
+              shadowedNames?: DuplicateName[]
+              brokenBundles?: Array<{ name: string; reason: string }>
+              rollbackId?: string
+              rollbackUnavailable?: string
+            } | undefined
             if (ok) {
               invalidateUpdates()
               activation = {
@@ -2429,21 +2784,26 @@ export function mountMarketRoutes(
                 ].filter((entry, index, all) => all.findIndex(other => other.name === entry.name) === index),
               )
               if (risks.length > 0 || shadowed.length > 0 || brokenBundles.length > 0) {
+                const rollbackId = rollbackPlan.available
+                  ? savePendingRollback({
+                      kind: 'update',
+                      names: [name],
+                      manifestBefore,
+                      updateSource: rollbackPlan.source,
+                    })
+                  : null
                 compatibility = {
                   code: 'soft-incompatible',
                   risks,
                   shadowedNames: shadowed.length > 0 ? shadowed : undefined,
                   brokenBundles: brokenBundles.length > 0 ? brokenBundles : undefined,
-                  rollbackId: savePendingRollback({
-                    kind: 'update',
-                    names: [name],
-                    manifestBefore,
-                    // Restore must NOT go through rollbackGitBuild: its target
-                    // carries #path: (a second # would corrupt the selector),
-                    // and the pre-restore state is the local link:/file: spec
-                    // that rollbackUpdateBuild rematerializes with pnpm install.
-                    ...(isGit && !restore ? { gitTarget: target, beforeCommit } : {}),
-                  }),
+                  ...(rollbackId !== null
+                    ? { rollbackId }
+                    : {
+                        rollbackUnavailable: rollbackPlan.available
+                          ? `更新完成后无法安全捕获 profile 状态（${previousVersionZh}），因此自动回滚不可用；需要时请从可信来源手工重新安装先前版本。 / The post-update profile state could not be captured safely (${previousVersionEn}), so automatic rollback is unavailable. Reinstall the prior version manually from a trusted source if needed.`
+                          : rollbackPlan.detail,
+                      }),
                 }
                 if (brokenBundles.length > 0) {
                   logEvent('error', 'update-bundle', `${brokenBundles.map(entry => `${entry.name}: ${entry.reason}`).join('; ')}`)
@@ -2471,7 +2831,9 @@ export function mountMarketRoutes(
             // the bad artifact is cached under its integrity hash, so a plain
             // re-add reuses it — the package has to be removed first.
             const brokenEntryError = !brokenEntry ? null
-              : `${name} 更新后缺少入口文件（package.json 的 main/exports 指向的文件不存在），已自动回滚并重新安装原版本文件，下次启动不受影响。这通常是镜像源在新版本刚发布时同步不完整；若仍需这个版本，请先卸载再从官方源重装。 / ${name} arrived without the entry file its package.json points at; the previous build was restored, so the next boot is unaffected. A registry mirror serving an incomplete tarball for a just-published version is the usual cause — remove the package and reinstall from the official registry if you still want this version.${rollbackOk ? '' : ` Rollback could not restore the previous files: ${rollbackDetail ?? ''}`}`
+              : rollbackOk
+                ? `${name} 更新后缺少入口文件（package.json 的 main/exports 指向的文件不存在），已自动回滚并重新安装原版本文件，下次启动不受影响。这通常是镜像源在新版本刚发布时同步不完整；若仍需这个版本，请先卸载再从官方源重装。 / ${name} arrived without the entry file its package.json points at; the previous build was restored, so the next boot is unaffected. A registry mirror serving an incomplete tarball for a just-published version is the usual cause — remove the package and reinstall from the official registry if you still want this version.`
+                : `${name} 更新后缺少入口文件（package.json 的 main/exports 指向的文件不存在），且未能验证恢复原版本文件（${rollbackDetail ?? 'unknown'}）；请先检查该 profile，再重新启动。 / ${name} arrived without the entry file its package.json points at, and restoration of the previous build could not be verified (${rollbackDetail ?? 'unknown'}); inspect this profile before restarting.`
 
             const cancelDiff = cancelled ? changedSince(beforeInstalled) : null
             // Build-script blocks hit updates too (#69): a leftover invalid
@@ -2680,6 +3042,7 @@ export function mountMarketRoutes(
               return
             }
 
+            pendingRollbacks.clear()
             const result = await runPlugin(config.profile, ['remove', selfName])
             const ok = result.exitCode === 0 && !result.timedOut && !result.cancelled
             if (!ok) {
@@ -2893,6 +3256,7 @@ export function mountMarketRoutes(
             sendJson(response, 400, { error: 'no installed packages given' })
             return
           }
+          pendingRollbacks.clear()
           const approved = setAllowBuilds(config.profile, packages, activeProfileDir)
           logEvent('info', 'approve-builds', `allowed build scripts: ${approved.join(', ')}`)
           sendJson(response, 200, { ok: true, approved })
@@ -3117,14 +3481,26 @@ export function mountMarketRoutes(
               sendJson(response, 400, { error: 'rollback is not available (it may have been superseded by another operation) / 回滚已不可用（可能已被后续操作覆盖）' })
               return
             }
+            // The token captures whole-profile manifest and lock state. A
+            // terminal-side pnpm/dsh command is outside this route's mutation
+            // lock, so internal invalidation alone cannot prevent an old token
+            // from overwriting a newer external edit. Refuse unless the exact
+            // post-operation state that the user was shown is still current.
+            if (!profileStateMatches(pending.expectedState)) {
+              pendingRollbacks.delete(id)
+              sendJson(response, 400, {
+                error: 'rollback is not available because the profile changed after this operation / 操作后配置已发生变化，回滚不可用',
+              })
+              return
+            }
             let ok = true
             let hot = false
             let detail: string | null = null
             if (pending.kind === 'update') {
               const name = pending.names[0]!
-              const result = pending.gitTarget !== undefined
-                ? await rollbackGitBuild(name, pending.manifestBefore!, pending.gitTarget, pending.beforeCommit ?? null)
-                : await rollbackUpdateBuild(name, pending.manifestBefore!)
+              const result = pending.updateSource === undefined
+                ? { ok: false, detail: 'the saved update rollback source is unavailable' }
+                : await executeUpdateRollback(name, pending.manifestBefore!, pending.updateSource)
               ok = result.ok
               detail = result.detail
             } else {
@@ -3346,7 +3722,14 @@ export function mountMarketRoutes(
             const installed = readInstalled(config.profile, activeProfileDir)
             let hot = false
             let activation: Record<string, ReturnType<typeof verifyActivation>> | undefined
-            let compatibility: { code: 'soft-incompatible'; risks: CompatibilityRisk[]; shadowedNames?: DuplicateName[]; brokenBundles?: Array<{ name: string; reason: string }>; rollbackId: string } | undefined
+            let compatibility: {
+              code: 'soft-incompatible'
+              risks: CompatibilityRisk[]
+              shadowedNames?: DuplicateName[]
+              brokenBundles?: Array<{ name: string; reason: string }>
+              rollbackId?: string
+              rollbackUnavailable?: string
+            } | undefined
             let addedPackages: string[] = []
             if (ok) {
               const added = Object.keys(installed).filter(name => !before.has(name))
@@ -3395,12 +3778,15 @@ export function mountMarketRoutes(
                 ].filter((entry, index, all) => all.findIndex(other => other.name === entry.name) === index),
               )
               if (risks.length > 0 || shadowed.length > 0 || brokenBundles.length > 0) {
+                const rollbackId = savePendingRollback({ kind: 'install', names: addedPackages })
                 compatibility = {
                   code: 'soft-incompatible',
                   risks,
                   shadowedNames: shadowed.length > 0 ? shadowed : undefined,
                   brokenBundles: brokenBundles.length > 0 ? brokenBundles : undefined,
-                  rollbackId: savePendingRollback({ kind: 'install', names: addedPackages }),
+                  ...(rollbackId !== null
+                    ? { rollbackId }
+                    : { rollbackUnavailable: '安装完成后无法安全捕获 profile 状态，因此自动回滚不可用；需要时请手工卸载新安装的插件。 / The post-install profile state could not be captured safely, so automatic rollback is unavailable. Remove the newly installed plugin manually if needed.' }),
                 }
                 if (brokenBundles.length > 0) {
                   logEvent('error', 'install-bundle', `${brokenBundles.map(entry => `${entry.name}: ${entry.reason}`).join('; ')}`)
