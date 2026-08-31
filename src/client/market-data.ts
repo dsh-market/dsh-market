@@ -58,6 +58,8 @@ export interface RegistryPlugin {
   replacement?: string
   /** Author-curated screenshot URLs from the registry (#61); optional. */
   screenshots?: string[]
+  /** Repository URLs of platform plugins installed before this entry. */
+  requires?: string[]
 }
 
 /** Category ids for one entry, de-duplicated in declaration order. */

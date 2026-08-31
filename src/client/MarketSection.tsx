@@ -2847,6 +2847,16 @@ export function MarketSection(props: MarketSectionProps) {
           </div>
         </div>
         <CardDesc text={desc} t={t} />
+        {p.requires !== undefined && p.requires.length > 0 && (
+          <div className={css.depLine}>
+            <span>{t('requiresLabel')}</span>
+            {p.requires.map(url => (
+              <a key={url} className={css.src} href={url} target="_blank" rel="noreferrer">
+                {url.replace(/\/+$/u, '').split('/').pop()}
+              </a>
+            ))}
+          </div>
+        )}
         <CardShot plugin={p} onOpen={openLightbox} />
         {p.deprecated === true && (
           <div className={css.deprecate}>
@@ -4252,6 +4262,16 @@ export function MarketSection(props: MarketSectionProps) {
               size, also matches the card's own reading order: name, byline,
               description, then screenshots. */}
           <CardDesc text={(confirming.description && (confirming.description[lang] || confirming.description.en)) || ''} t={t} />
+          {confirming.requires !== undefined && confirming.requires.length > 0 && (
+            <div className={css.depLine}>
+              <span>{t('alsoInstallsLabel')}</span>
+              {confirming.requires.map(url => (
+                <a key={url} className={css.src} href={url} target="_blank" rel="noreferrer">
+                  {url.replace(/\/+$/u, '').split('/').pop()}
+                </a>
+              ))}
+            </div>
+          )}
           <ScreenshotStrip plugin={confirming} onOpen={openLightbox} />
           <DisclosureRow
             icon={<IconCodeOutline16 size={16} />}

@@ -94,6 +94,21 @@ dsh plugin --profile web add dshmarket
 DSHM_REGISTRY_URL=https://your-mirror.example/plugins.json dsh web
 ```
 
+如果希望保留官方目录，同时加载组织自己的必需目录，请配置市场 Bundle。
+目录按仓库 URL 合并；后加载的目录可以更新同一仓库的展示信息，但同名插件不能指向不同仓库：
+
+```yaml
+- id: dsh-market
+  name: dshmarket
+  config:
+    additionalRegistryUrls:
+      - https://raw.githubusercontent.com/your-org/dsh-plugin-catalog/main/plugins.json
+```
+
+组织目录可以用 `requires` 声明其他目录条目的仓库 URL。市场会先安装这些依赖，在插件卡片中显示依赖关系，并在仍有已安装插件依赖时阻止卸载基础插件。
+
+每份附加目录都是安装许可清单，权限等同于官方目录。控制其 URL 的人可以发布任意插件来源，并通过 `requires` 引入依赖链，因此只能配置与当前 profile 由同一管理员治理的目录，绝不能从不可信的用户输入生成 `additionalRegistryUrls`。每份已配置目录都是必需的：任何附加目录不可访问或内容无效时，整个目录加载都会失败，而不会静默隐藏组织插件。
+
 ## 友情链接
 
 ### DSH Desktop（dataelement）

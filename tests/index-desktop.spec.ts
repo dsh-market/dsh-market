@@ -65,7 +65,11 @@ beforeEach(() => {
 describe('host adaptation', () => {
   it('preserves the ordinary DSH profile and CLI runtime fallback', () => {
     const ctx = new FakeContext({ webServer: {}, loader: {} })
-    apply(ctx as never, { profile: 'team', allowRestart: true })
+    apply(ctx as never, {
+      profile: 'team',
+      allowRestart: true,
+      additionalRegistryUrls: ['https://catalog.aiko.test/plugins.json'],
+    })
 
     // The host pair is what the routes wait on; `settings` is the optional
     // wiring behind the settings card, which no-ops on a host that never
@@ -77,7 +81,11 @@ describe('host adaptation', () => {
     expect(state.factoryArgs).toEqual([])
     expect(state.mounts).toHaveLength(1)
     expect(state.mounts[0]).toMatchObject({
-      config: { profile: 'team', allowRestart: true },
+      config: {
+        profile: 'team',
+        allowRestart: true,
+        additionalRegistryUrls: ['https://catalog.aiko.test/plugins.json'],
+      },
       runtime: undefined,
     })
   })

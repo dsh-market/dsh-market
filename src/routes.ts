@@ -12,7 +12,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { forgetCatalog, loadRegistry, pluginCategories } from './registry.ts'
+import { forgetCatalog, loadRegistry, pluginCategories, setAdditionalRegistryUrls } from './registry.ts'
 import {
   cleanHotDir, hotMount, hotUnmount, listHotMounts, MAX_NOTE,
   mountClientOnlyDeps, purgeMarketState, readMarketState, writeMarketState,
@@ -58,6 +58,7 @@ import {
   createGist, fitsGistLimit, GistError, gistErrorCode, parseGistId, readGist, resolveGistTokenSource, updateGist, verifyGistToken,
 } from './gist.ts'
 import { MAX_UPDATE_OPERATIONS_V1, UpdateOperationStoreV1, UPDATE_API_V1_SCHEMA } from './update-api-v1.ts'
+import { installedDependents, resolveInstallOrder } from './dependencies.ts'
 
 export type { LoaderEntry } from './themes.ts'
 export type { UpdateStatus } from './updates.ts'
@@ -91,6 +92,8 @@ export interface MarketConfig {
   region?: Region
   /** Snapshots retained per profile (issue #98); defaults to DEFAULT_MAX_SNAPSHOTS. */
   maxSnapshots?: number
+  /** Required catalogs merged after the official catalog, in declaration order. */
+  additionalRegistryUrls?: string[]
 }
 
 /**
@@ -155,6 +158,31 @@ function packageHasClientPart(profileDirectory: string, name: string): boolean {
   }
 }
 
+/** Direct profile plugins whose peer contract requires another direct plugin. */
+function peerDependents(profileDirectory: string, target: string, installed: Record<string, string>): string[] {
+  const dependents: string[] = []
+  for (const name of Object.keys(installed)) {
+    if (name === target) continue
+    try {
+      const manifest = JSON.parse(
+        readFileSync(join(profileDirectory, 'node_modules', name, 'package.json'), 'utf8'),
+      ) as {
+        peerDependencies?: Record<string, string>
+        peerDependenciesMeta?: Record<string, { optional?: boolean }>
+      }
+      if (
+        manifest.peerDependencies?.[target] !== undefined
+        && manifest.peerDependenciesMeta?.[target]?.optional !== true
+      ) {
+        dependents.push(name)
+      }
+    } catch {
+      // A missing peer manifest is handled by the existing profile diagnostics.
+    }
+  }
+  return dependents
+}
+
 /**
  * Packages whose build scripts pnpm refused to run, from any of its three
  * reporting shapes: the structured ndjson event (pnpm 11), the human
@@ -198,6 +226,7 @@ export function mountMarketRoutes(
     throw new Error(message)
   }
   const activeProfileDir = profileDir(config.profile, config.profileDirectory)
+  setAdditionalRegistryUrls(config.additionalRegistryUrls)
   const persistentLogFile = join(activeProfileDir, '.dsh-market', 'log.ndjson')
   configurePersistentLog(persistentLogFile)
   let agentGuardUnavailableLogged = false
@@ -530,6 +559,8 @@ export function mountMarketRoutes(
     id: string
     kind: 'update' | 'install'
     names: string[]
+    /** Pre-existing plugins enabled by an install and disabled again after its rollback. */
+    restoreDisabled?: string[]
     manifestBefore?: ProfileManifestSnapshot
     /** github: updates must re-add the pre-update commit, not just reinstall. */
     gitTarget?: string
@@ -2944,17 +2975,54 @@ export function mountMarketRoutes(
           await withMutationLock(response, 'install', async () => {
             const body = (await readJsonBody(request)) as { name?: unknown; force?: unknown }
             const name = typeof body.name === 'string' ? body.name : ''
-            // Only the INDETERMINATE patch case is forceable, below. A patch
-            // that definitely names the package stays refused: there the user
-            // has a concrete thing to go fix, so an override would only help
-            // them break their next boot.
+            // Indeterminate dependency and user-patch inspections are
+            // forceable. A definite reference stays refused: there the user
+            // has a concrete thing to fix, so an override would only help them
+            // break their next boot.
             const force = body.force === true
             if (name === 'dsh-market' || name === 'dshmarket') {
               sendJson(response, 400, { error: 'the market cannot uninstall itself; use the dsh CLI' })
               return
             }
-            if (readInstalled(config.profile, activeProfileDir)[name] === undefined) {
+            const installedSnapshot = readInstalled(config.profile, activeProfileDir)
+            if (installedSnapshot[name] === undefined) {
               sendJson(response, 400, { error: 'plugin is not installed' })
+              return
+            }
+            const requiredBy = new Set(peerDependents(activeProfileDir, name, installedSnapshot))
+            try {
+              const registry = await loadRegistry()
+              const targetEntry = registry.plugins.find(plugin => findInstalledAlias(plugin, installedSnapshot) === name)
+              if (targetEntry !== undefined) {
+                for (const dependent of installedDependents(
+                  registry.plugins,
+                  targetEntry,
+                  plugin => findInstalledAlias(plugin, installedSnapshot) !== null,
+                )) {
+                  requiredBy.add(findInstalledAlias(dependent, installedSnapshot) ?? dependent.name)
+                }
+              }
+            } catch (error) {
+              const detail = error instanceof Error ? error.message : String(error)
+              if (!force) {
+                logEvent('warn', 'uninstall-blocked', `${name}: catalog dependency check unavailable: ${detail}`)
+                sendJson(response, 409, {
+                  error: `无法安全卸载 ${name}：插件目录当前不可用，因此无法排除其他已安装插件仍依赖它。目录恢复后请重试；确认无依赖后可强制卸载。 / Cannot safely uninstall ${name}: the plugin catalog is unavailable, so the market cannot rule out installed dependents. Retry when the catalog recovers; you can force the uninstall once you are sure no plugin depends on it.`,
+                  dependencyInspectionFailed: true,
+                  forceable: true,
+                })
+                return
+              }
+              logEvent('warn', 'uninstall-dependencies', `${name}: forced past unavailable catalog dependency check: ${detail}`)
+            }
+            if (requiredBy.size > 0) {
+              const dependents = [...requiredBy]
+              logEvent('warn', 'uninstall-blocked', `${name}: required by ${dependents.join(', ')}`)
+              sendJson(response, 409, {
+                error: `无法卸载 ${name}：${dependents.join('、')} 仍依赖它。请先卸载这些插件。 / Cannot uninstall ${name}: it is still required by ${dependents.join(', ')}. Uninstall those plugins first.`,
+                dependencyRequired: true,
+                dependents,
+              })
               return
             }
             const userPatchReferences = userPatchPackageReferences(userPatchPath, name)
@@ -3128,13 +3196,23 @@ export function mountMarketRoutes(
               ok = result.ok
               detail = result.detail
             } else {
-              for (const name of pending.names) {
+              for (const name of [...pending.names].reverse()) {
                 const result = await removeInstalledPackage(name)
                 hot ||= result.hot
                 if (!result.ok) {
                   ok = false
                   detail = result.detail
                   break
+                }
+              }
+              if (ok) {
+                for (const name of [...(pending.restoreDisabled ?? [])].reverse()) {
+                  const result = await setPluginEnabled(name, false)
+                  if (!result.ok) {
+                    ok = false
+                    detail = result.reason ?? `failed to restore ${name} to disabled state`
+                    break
+                  }
                 }
               }
             }
@@ -3196,6 +3274,7 @@ export function mountMarketRoutes(
               sendJson(response, 400, { error: 'plugin is not in the curated registry' })
               return
             }
+            const installOrder = resolveInstallOrder(registry.plugins, entry)
             const plainTarget = installTargetFor(entry)
             if (plainTarget === null) {
               sendJson(response, 400, { error: 'unsupported source url' })
@@ -3280,6 +3359,65 @@ export function mountMarketRoutes(
                 return
               }
             }
+            const dependencyTargets: string[] = []
+            const resolvedDependencies: string[] = []
+            const installedDependencies: string[] = []
+            for (const dependency of installOrder.slice(0, -1)) {
+              const installedAlias = findInstalledAlias(dependency, installedNow)
+              if (installedAlias !== null) {
+                if (!hasLoadableEntry(activeProfileDir, installedAlias)) {
+                  sendJson(response, 409, {
+                    error: `无法安装 ${entry.name}：已登记的依赖 ${installedAlias} 缺少可加载入口。请先修复或重新安装该依赖。 / Cannot install ${entry.name}: installed dependency ${installedAlias} has no loadable entry. Repair or reinstall that dependency first.`,
+                    dependencyInvalid: true,
+                    dependency: installedAlias,
+                  })
+                  return
+                }
+                const current = verifyActivation(
+                  config.profile,
+                  installedAlias,
+                  liveNames(),
+                  activeProfileDir,
+                  disabled.has(installedAlias),
+                )
+                if (current.state !== 'live' && !disabled.has(installedAlias)) {
+                  sendJson(response, 409, {
+                    error: `无法安装 ${entry.name}：依赖 ${installedAlias} 已安装但当前未运行，且无法安全地自动恢复其运行态。 / Cannot install ${entry.name}: dependency ${installedAlias} is installed but not running, and its runtime state cannot be restored safely automatically.`,
+                    dependencyActivationFailed: true,
+                    dependency: installedAlias,
+                  })
+                  return
+                }
+                if (current.state !== 'live' && pluginCategories(dependency).includes('theme')) {
+                  sendJson(response, 409, {
+                    error: `无法安装 ${entry.name}：主题依赖 ${installedAlias} 当前未运行，自动激活会改变其他主题状态。请先手动启用它。 / Cannot install ${entry.name}: theme dependency ${installedAlias} is not running, and automatic activation would change other theme state. Enable it manually first.`,
+                    dependencyActivationFailed: true,
+                    dependency: installedAlias,
+                  })
+                  return
+                }
+                installedDependencies.push(installedAlias)
+                continue
+              }
+              const clashName = [dependency.npm, dependency.name].find(
+                (name): name is string => typeof name === 'string' && name !== '' && installedNow[name] !== undefined,
+              )
+              if (clashName !== undefined) {
+                sendJson(response, 400, {
+                  error: `依赖 ${dependency.name} 与已安装的 ${clashName} 同名但来源不同，无法安装 / dependency ${dependency.name} conflicts with installed package ${clashName} from another source`,
+                  dependencyConflict: true,
+                  dependency: dependency.name,
+                })
+                return
+              }
+              const dependencyTarget = installTargetFor(dependency)
+              if (dependencyTarget === null) {
+                sendJson(response, 400, { error: `unsupported dependency source: ${dependency.url}` })
+                return
+              }
+              dependencyTargets.push(await acceleratedTarget(dependencyTarget, region))
+              resolvedDependencies.push(dependency.name)
+            }
             const beforeSpecs = readInstalled(config.profile, activeProfileDir)
             const before = new Set(Object.keys(beforeSpecs))
             if (retryAlias !== null) before.delete(retryAlias)
@@ -3298,7 +3436,7 @@ export function mountMarketRoutes(
             // keep their partial state on purpose (the user sees the diff
             // and decides).
             const manifestBefore = readProfileManifestSnapshot(config.profile, activeProfileDir)
-            const result = await runPlugin(config.profile, ['add', target])
+            const result = await runPlugin(config.profile, ['add', ...dependencyTargets, target])
             const cancelled = result.cancelled
             if ((result.exitCode !== 0 || result.timedOut) && !cancelled) {
               const rolledBack = restoreProfileManifest(config.profile, manifestBefore, activeProfileDir)
@@ -3348,9 +3486,56 @@ export function mountMarketRoutes(
             let activation: Record<string, ReturnType<typeof verifyActivation>> | undefined
             let compatibility: { code: 'soft-incompatible'; risks: CompatibilityRisk[]; shadowedNames?: DuplicateName[]; brokenBundles?: Array<{ name: string; reason: string }>; rollbackId: string } | undefined
             let addedPackages: string[] = []
+            let rollbackPackages: string[] = []
+            const activatedDependencies: string[] = []
             if (ok) {
               const added = Object.keys(installed).filter(name => !before.has(name))
               addedPackages = added
+              const orderedAliases = installOrder
+                .map(plugin => findInstalledAlias(plugin, installed))
+                .filter((name): name is string => name !== null && added.includes(name))
+              rollbackPackages = [...new Set([
+                ...orderedAliases,
+                ...added.filter(name => !orderedAliases.includes(name)),
+              ])]
+              for (const dependency of installedDependencies) {
+                const current = verifyActivation(
+                  config.profile,
+                  dependency,
+                  liveNames(),
+                  activeProfileDir,
+                  disabled.has(dependency),
+                )
+                if (current.state === 'live' && !disabled.has(dependency)) continue
+                const enabled = await setPluginEnabled(dependency, true)
+                if (enabled.ok) {
+                  activatedDependencies.push(dependency)
+                  continue
+                }
+                const restorationFailures: string[] = []
+                for (const name of [...activatedDependencies, dependency].reverse()) {
+                  const restored = await setPluginEnabled(name, false)
+                  if (!restored.ok) restorationFailures.push(`${name}: ${restored.reason ?? 'activation state restore failed'}`)
+                }
+                const removalFailures: string[] = []
+                for (const name of [...rollbackPackages].reverse()) {
+                  const removed = await removeInstalledPackage(name)
+                  if (!removed.ok) {
+                    removalFailures.push(`${name}: ${removed.detail ?? 'remove failed'}`)
+                    break
+                  }
+                }
+                invalidateUpdates()
+                const rollbackFailures = [...restorationFailures, ...removalFailures]
+                logEvent('error', 'install-dependency', `${dependency}: activation failed${rollbackFailures.length === 0 ? '; transaction rolled back' : `; rollback failures: ${rollbackFailures.join('; ')}`}`)
+                sendJson(response, 409, {
+                  error: `无法安装 ${entry.name}：依赖 ${dependency} 已安装但无法激活。 / Cannot install ${entry.name}: dependency ${dependency} is installed but could not be activated.`,
+                  dependencyActivationFailed: true,
+                  dependency,
+                  rollbackFailures: rollbackFailures.length > 0 ? rollbackFailures : undefined,
+                })
+                return
+              }
               if (added.length > 0) {
                 // Fresh installs start enabled: drop any stale disable flag
                 // (e.g. reinstall after an uninstall while this process kept
@@ -3400,7 +3585,11 @@ export function mountMarketRoutes(
                   risks,
                   shadowedNames: shadowed.length > 0 ? shadowed : undefined,
                   brokenBundles: brokenBundles.length > 0 ? brokenBundles : undefined,
-                  rollbackId: savePendingRollback({ kind: 'install', names: addedPackages }),
+                  rollbackId: savePendingRollback({
+                    kind: 'install',
+                    names: rollbackPackages,
+                    restoreDisabled: activatedDependencies,
+                  }),
                 }
                 if (brokenBundles.length > 0) {
                   logEvent('error', 'install-bundle', `${brokenBundles.map(entry => `${entry.name}: ${entry.reason}`).join('; ')}`)
@@ -3424,6 +3613,7 @@ export function mountMarketRoutes(
               partial: cancelDiff?.partial,
               changed: cancelDiff?.changed,
               activation,
+              resolvedDependencies: resolvedDependencies.length > 0 ? resolvedDependencies : undefined,
               compatibility,
               ignoredBuilds,
               // Named here rather than left for the next restart to find

@@ -97,6 +97,23 @@ There is deliberately no bundled snapshot to fall back on: for a catalog that gr
 DSHM_REGISTRY_URL=https://your-mirror.example/plugins.json dsh web
 ```
 
+To keep the official catalog and add required organization catalogs, configure
+the market bundle instead. Catalogs are merged by repository URL; later entries
+may replace metadata for the same repository, while duplicate names pointing to
+different repositories are rejected:
+
+```yaml
+- id: dsh-market
+  name: dshmarket
+  config:
+    additionalRegistryUrls:
+      - https://raw.githubusercontent.com/your-org/dsh-plugin-catalog/main/plugins.json
+```
+
+Organization catalogs may declare `requires` as repository URLs of other catalog entries. The market installs those dependencies before the selected plugin, shows them on the plugin card, and prevents removal while an installed plugin still depends on them.
+
+Every additional catalog is an installation allowlist with the same authority as the official catalog. Whoever controls its URL can publish arbitrary plugin sources and use `requires` to add dependency chains, so configure only catalogs governed by the same administrator who controls the profile. Never populate `additionalRegistryUrls` from untrusted user input. Every configured catalog is required: an unreachable or invalid additional catalog fails the whole catalog load instead of silently hiding organization plugins.
+
 ## Friends
 
 ### DSH Desktop (dataelement)

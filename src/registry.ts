@@ -7,6 +7,7 @@
 import { configuredProxy, marketFetch } from './net.ts'
 import { catalogFromPackage } from './catalog-npm.ts'
 import { activeRegion, routesFor, type CatalogSource, type Region } from './regions.ts'
+import { resolveInstallOrder } from './dependencies.ts'
 
 export interface RegistryPlugin {
   name: string
@@ -34,6 +35,8 @@ export interface RegistryPlugin {
   deprecated?: boolean
   /** Catalog name of the suggested replacement plugin, when deprecated. */
   replacement?: string
+  /** Repository URLs of platform plugins that must activate before this entry. */
+  requires?: string[]
 }
 
 /**
@@ -109,7 +112,7 @@ const FETCH_TIMEOUT_MS = 15_000
  * 0 bytes and 0.5s for a 304. The reporter whose fetch took 9.9s was
  * downloading the full 1.07 MB every time they opened the market.
  */
-let served: {
+interface ServedCatalog {
   /** Which source issued this, so a validator is never sent to another one. */
   key: string
   etag: string | null
@@ -117,7 +120,13 @@ let served: {
   /** The published version, for the npm route — its equivalent of an ETag. */
   version: string | null
   data: Registry
-} | null = null
+}
+
+/** Revalidation state is independent per origin when several catalogs are composed. */
+const served = new Map<string, ServedCatalog>()
+
+/** Additional required catalogs configured by the active market instance. */
+let additionalRegistryUrls: string[] = []
 
 /** Identity of a catalog source, for scoping the validator to its origin. */
 function sourceKey(source: CatalogSource): string {
@@ -131,7 +140,11 @@ function asRegistry(value: unknown): Registry {
   const plugins = data.plugins.map((plugin, index) => {
     const category = pluginCategories(plugin)
     if (category.length === 0) throw new Error(`catalog plugin ${String(index)} carries no usable category`)
-    return { ...plugin, category }
+    const requires = plugin.requires
+    if (requires !== undefined && (!Array.isArray(requires) || requires.some(url => typeof url !== 'string' || !/^https?:\/\//u.test(url)))) {
+      throw new Error(`catalog plugin ${String(index)} carries invalid requires URLs`)
+    }
+    return { ...plugin, category, ...(requires === undefined ? {} : { requires: [...new Set(requires)] }) }
   })
   return { ...data, plugins }
 }
@@ -143,7 +156,136 @@ function asRegistry(value: unknown): Registry {
  * 304 would otherwise leak a validator into the next one.
  */
 export function forgetCatalog(): void {
-  served = null
+  served.clear()
+}
+
+/**
+ * Configure catalogs that are merged after the region's official catalog.
+ *
+ * Every configured catalog is required. Silently omitting an unreachable
+ * private catalog would make an internal plugin look unpublished while the
+ * market appears healthy.
+ *
+ * @param values - Absolute HTTP(S) URLs, or undefined to use only the official catalog.
+ */
+export function setAdditionalRegistryUrls(values: readonly string[] | undefined): void {
+  if (values !== undefined && !Array.isArray(values)) {
+    throw new Error('dsh-market: additionalRegistryUrls must be an array of URL strings')
+  }
+  const next: string[] = []
+  const seen = new Set<string>()
+  for (const value of values ?? []) {
+    if (typeof value !== 'string' || value.trim() === '') {
+      throw new Error('dsh-market: additionalRegistryUrls must contain non-empty URL strings')
+    }
+    let parsed: URL
+    try {
+      parsed = new URL(value.trim())
+    } catch {
+      throw new Error(`dsh-market: invalid additional registry URL ${JSON.stringify(value)}`)
+    }
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      throw new Error(`dsh-market: additional registry URL must use HTTP(S): ${JSON.stringify(value)}`)
+    }
+    const normalized = parsed.toString()
+    if (seen.has(normalized)) continue
+    seen.add(normalized)
+    next.push(normalized)
+  }
+  additionalRegistryUrls = next
+  forgetCatalog()
+}
+
+/** Canonical repository identity for merging one entry from several catalogs. */
+function pluginIdentity(plugin: RegistryPlugin): string {
+  return plugin.url.trim().replace(/\/+$/u, '').toLowerCase()
+}
+
+/**
+ * Compose independently curated catalogs into one install allowlist.
+ * Later catalogs may update metadata for the same repository, but cannot
+ * redirect an existing display name to another repository.
+ */
+function mergeRegistries(registries: readonly Registry[]): Registry {
+  if (registries.length === 1) return registries[0]!
+  const categories: Registry['categories'] = {}
+  const plugins: RegistryPlugin[] = []
+  const indexByIdentity = new Map<string, number>()
+  const identityByName = new Map<string, string | null>()
+  let updated = ''
+
+  for (const registry of registries) {
+    Object.assign(categories, registry.categories)
+    if (registry.updated > updated) updated = registry.updated
+    // Existing catalogs contain a few historical same-name entries. Preserve
+    // those within their source; only a LATER catalog redirecting a name is a
+    // cross-catalog conflict.
+    const priorIdentityByName = new Map(identityByName)
+    for (const plugin of registry.plugins) {
+      const identity = pluginIdentity(plugin)
+      const namedIdentity = priorIdentityByName.get(plugin.name)
+      if (priorIdentityByName.has(plugin.name) && namedIdentity !== identity) {
+        throw new Error(`catalog conflict: plugin name ${JSON.stringify(plugin.name)} points at more than one repository`)
+      }
+      const currentIdentity = identityByName.get(plugin.name)
+      identityByName.set(
+        plugin.name,
+        !identityByName.has(plugin.name) || currentIdentity === identity ? identity : null,
+      )
+      const existing = indexByIdentity.get(identity)
+      if (existing === undefined) {
+        indexByIdentity.set(identity, plugins.length)
+        plugins.push(plugin)
+      } else {
+        plugins[existing] = plugin
+      }
+    }
+  }
+  return { updated, count: plugins.length, categories, plugins }
+}
+
+/** Load the first healthy source in one fallback group. */
+async function loadRegistryGroup(sources: readonly CatalogSource[], label: string): Promise<Registry> {
+  const started = Date.now()
+  let last: unknown
+  let attempts = 0
+  for (const source of sources) {
+    const key = sourceKey(source)
+    for (let attempt = 0; attempt < 2; attempt++) {
+      attempts += 1
+      try {
+        const reusable = served.get(key) ?? null
+        if (source.kind === 'npm') {
+          const { version, data } = await catalogFromPackage(
+            source.registry, source.pkg, reusable?.version ?? undefined,
+          )
+          if (data === null && reusable !== null) return reusable.data
+          if (data === null) throw new Error('the catalog package reported no change with nothing to reuse')
+          const parsed = asRegistry(data)
+          served.set(key, { key, etag: null, modified: null, version, data: parsed })
+          return parsed
+        }
+        const headers: Record<string, string> = {}
+        if (reusable?.etag != null) headers['if-none-match'] = reusable.etag
+        else if (reusable?.modified != null) headers['if-modified-since'] = reusable.modified
+
+        const res = await marketFetch(source.url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS), headers })
+        if (res.status === 304) {
+          if (reusable === null) throw new Error('the catalog answered "not modified" with nothing to revalidate')
+          return reusable.data
+        }
+        if (!res.ok) throw new Error(`HTTP ${String(res.status)}`)
+        const data = asRegistry(await res.json())
+        served.set(key, {
+          key, etag: res.headers.get('etag'), modified: res.headers.get('last-modified'), version: null, data,
+        })
+        return data
+      } catch (error) {
+        last = error
+      }
+    }
+  }
+  throw new Error(`${label}: ${describeFetchFailure(last, Date.now() - started, attempts)}`)
 }
 
 /**
@@ -167,65 +309,17 @@ export function forgetCatalog(): void {
  * @throws when the catalog cannot be fetched or does not look like one.
  */
 export async function loadRegistry(region: Region = activeRegion()): Promise<Registry> {
-  const started = Date.now()
-  let last: unknown
-  let attempts = 0
-  // Sources in order, each a fallback for the one before it. The catalog is
-  // the FIRST request the market makes, so a mirror that has gone down must
-  // mean a slow market rather than an empty one — the list ends at the
-  // address that has always worked.
-  for (const source of routesFor(region).catalog) {
-    const key = sourceKey(source)
-    // Two attempts each. A catalog fetch crossing a long, lossy path fails
-    // transiently often enough that one retry is worth more than the second
-    // or two it costs — and with nothing behind this call any more, a
-    // transient failure is a market with no plugins in it.
-    for (let attempt = 0; attempt < 2; attempt++) {
-      attempts += 1
-      try {
-        // A validator only ever goes back to the source that issued it.
-        // Carried across a region switch it could earn a "not modified" from
-        // an origin whose body we have never seen.
-        const reusable = served?.key === key ? served : null
-        if (source.kind === 'npm') {
-          const { version, data } = await catalogFromPackage(
-            source.registry, source.pkg, reusable?.version ?? undefined,
-          )
-          // `data === null` means the published version is the one in hand.
-          if (data === null && reusable !== null) return reusable.data
-          if (data === null) throw new Error('the catalog package reported no change with nothing to reuse')
-          const parsed = asRegistry(data)
-          served = { key, etag: null, modified: null, version, data: parsed }
-          return parsed
-        }
-        // ETag first: it is exact, while a date has one-second resolution and
-        // a catalog republished twice within the same second would validate
-        // as unchanged. Only one is sent — an origin given both must satisfy
-        // both, which turns a weak ETag match into an unnecessary 200.
-        const headers: Record<string, string> = {}
-        if (reusable?.etag != null) headers['if-none-match'] = reusable.etag
-        else if (reusable?.modified != null) headers['if-modified-since'] = reusable.modified
-
-        const res = await marketFetch(source.url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS), headers })
-        if (res.status === 304) {
-          // Only reachable when we sent a validator, so `reusable` is present.
-          // Guarded anyway: answering a 304 with nothing to reuse would
-          // otherwise surface as a confusing parse error on an empty body.
-          if (reusable === null) throw new Error('the catalog answered "not modified" with nothing to revalidate')
-          return reusable.data
-        }
-        if (!res.ok) throw new Error(`HTTP ${String(res.status)}`)
-        const data = asRegistry(await res.json())
-        served = {
-          key, etag: res.headers.get('etag'), modified: res.headers.get('last-modified'), version: null, data,
-        }
-        return data
-      } catch (error) {
-        last = error
-      }
-    }
-  }
-  throw new Error(describeFetchFailure(last, Date.now() - started, attempts))
+  const groups: Array<{ label: string; sources: CatalogSource[] }> = [
+    { label: 'official catalog', sources: routesFor(region).catalog },
+    ...additionalRegistryUrls.map(url => ({
+      label: `additional catalog ${url}`,
+      sources: [{ kind: 'url' as const, url }],
+    })),
+  ]
+  const registries = await Promise.all(groups.map(group => loadRegistryGroup(group.sources, group.label)))
+  const registry = mergeRegistries(registries)
+  for (const plugin of registry.plugins) resolveInstallOrder(registry.plugins, plugin)
+  return registry
 }
 
 /**

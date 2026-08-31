@@ -13,7 +13,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { describeFetchFailure, forgetCatalog, loadRegistry } from '../src/registry.ts'
+import { describeFetchFailure, forgetCatalog, loadRegistry, setAdditionalRegistryUrls } from '../src/registry.ts'
 import { configuredProxy, marketFetch } from '../src/net.ts'
 
 /**
@@ -51,7 +51,7 @@ const PROXY_VARS = ['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'n
 let savedProxy: Record<string, string | undefined> = {}
 
 beforeEach(() => {
-  forgetCatalog()
+  setAdditionalRegistryUrls(undefined)
   savedProxy = {}
   for (const key of PROXY_VARS) {
     savedProxy[key] = process.env[key]
@@ -98,6 +98,120 @@ const ok = (body: unknown): Response =>
   new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } })
 
 describe('loadRegistry', () => {
+  it('merges required additional catalogs after the official catalog', async () => {
+    const custom = {
+      updated: '2026-08-29',
+      count: 1,
+      categories: { workflow: { en: 'Workflows', zh: '工作流' } },
+      plugins: [{
+        name: 'aiko-dsh-bid-studio', owner: 'aiko-dsh-plugins',
+        url: 'https://github.com/aiko-dsh-plugins/dsh-bid-studio', category: 'workflow',
+        description: { en: 'Bid workbench.' }, install: 'github:aiko-dsh-plugins/dsh-bid-studio',
+        added: '2026-08-29',
+      }],
+    }
+    setAdditionalRegistryUrls(['https://catalog.aiko.test/plugins.json'])
+    const stub = vi.fn((url: unknown) => Promise.resolve(
+      String(url).includes('catalog.aiko.test') ? ok(custom) : ok(CATALOG),
+    ))
+    vi.stubGlobal('fetch', stub)
+
+    const registry = await loadRegistry()
+    expect(registry.updated).toBe('2026-08-29')
+    expect(registry.count).toBe(2)
+    expect(registry.categories).toMatchObject({ tools: CATALOG.categories.tools, workflow: custom.categories.workflow })
+    expect(registry.plugins.map(plugin => plugin.name)).toEqual(['dsh-loop', 'aiko-dsh-bid-studio'])
+  })
+
+  it('validates dependency references after all catalogs are merged', async () => {
+    const platform = { name: 'aiko-kernel', owner: 'aiko', url: 'https://github.com/aiko/kernel', category: 'tools', description: { en: 'Kernel.' }, install: '', added: '2026-08-30' }
+    const scene = { name: 'aiko-scene', owner: 'aiko', url: 'https://github.com/aiko/scene', category: 'workflow', description: { en: 'Scene.' }, install: '', added: '2026-08-30', requires: [platform.url] }
+    setAdditionalRegistryUrls(['https://catalog.aiko.test/plugins.json'])
+    vi.stubGlobal('fetch', vi.fn((url: unknown) => Promise.resolve(
+      String(url).includes('catalog.aiko.test')
+        ? ok({ updated: '2026-08-30', count: 2, categories: { workflow: { en: 'Workflow' } }, plugins: [platform, scene] })
+        : ok(CATALOG),
+    )))
+    const registry = await loadRegistry()
+    expect(registry.plugins.find(plugin => plugin.name === 'aiko-scene')?.requires).toEqual([platform.url])
+  })
+
+  it('rejects a dependency that is absent from the merged catalogs', async () => {
+    const broken = { ...CATALOG, plugins: [{ ...CATALOG.plugins[0], requires: ['https://github.com/missing/kernel'] }] }
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(ok(broken))))
+    await expect(loadRegistry()).rejects.toThrow(/requires missing entry/)
+  })
+
+  it('lets an additional catalog replace metadata for the same repository', async () => {
+    const custom = {
+      ...CATALOG,
+      updated: '2026-08-29',
+      plugins: [{ ...CATALOG.plugins[0], description: { en: 'organization description' } }],
+    }
+    setAdditionalRegistryUrls(['https://catalog.aiko.test/plugins.json'])
+    vi.stubGlobal('fetch', vi.fn((url: unknown) => Promise.resolve(
+      String(url).includes('catalog.aiko.test') ? ok(custom) : ok(CATALOG),
+    )))
+
+    const registry = await loadRegistry()
+    expect(registry.count).toBe(1)
+    expect(registry.plugins[0]?.description.en).toBe('organization description')
+  })
+
+  it('rejects one plugin name pointing at different repositories', async () => {
+    const conflicting = {
+      ...CATALOG,
+      plugins: [{ ...CATALOG.plugins[0], url: 'https://github.com/other/repository' }],
+    }
+    setAdditionalRegistryUrls(['https://catalog.aiko.test/plugins.json'])
+    vi.stubGlobal('fetch', vi.fn((url: unknown) => Promise.resolve(
+      String(url).includes('catalog.aiko.test') ? ok(conflicting) : ok(CATALOG),
+    )))
+
+    await expect(loadRegistry()).rejects.toThrow(/points at more than one repository/)
+  })
+
+  it('preserves historical same-name entries inside one source catalog', async () => {
+    const official = {
+      ...CATALOG,
+      count: 2,
+      plugins: [
+        CATALOG.plugins[0],
+        { ...CATALOG.plugins[0], url: 'https://github.com/legacy/second-repository' },
+      ],
+    }
+    const custom = {
+      ...CATALOG,
+      plugins: [{ ...CATALOG.plugins[0], name: 'aiko-only', url: 'https://github.com/aiko/only' }],
+    }
+    setAdditionalRegistryUrls(['https://catalog.aiko.test/plugins.json'])
+    vi.stubGlobal('fetch', vi.fn((url: unknown) => Promise.resolve(
+      String(url).includes('catalog.aiko.test') ? ok(custom) : ok(official),
+    )))
+
+    const registry = await loadRegistry()
+    expect(registry.plugins.map(plugin => plugin.url)).toEqual([
+      'https://example.com',
+      'https://github.com/legacy/second-repository',
+      'https://github.com/aiko/only',
+    ])
+  })
+
+  it('reports an unavailable required additional catalog instead of hiding its plugins', async () => {
+    setAdditionalRegistryUrls(['https://catalog.aiko.test/plugins.json'])
+    vi.stubGlobal('fetch', vi.fn((url: unknown) => String(url).includes('catalog.aiko.test')
+      ? Promise.reject(new Error('internal catalog unavailable'))
+      : Promise.resolve(ok(CATALOG))))
+
+    await expect(loadRegistry()).rejects.toThrow(/additional catalog .*internal catalog unavailable/)
+  })
+
+  it('validates additional catalog URLs when configured', () => {
+    expect(() => setAdditionalRegistryUrls('https://catalog.test/plugins.json' as never)).toThrow(/must be an array/)
+    expect(() => setAdditionalRegistryUrls(['file:///tmp/plugins.json'])).toThrow(/must use HTTP/)
+    expect(() => setAdditionalRegistryUrls(['not a URL'])).toThrow(/invalid additional registry URL/)
+  })
+
   it('goes to the network every single time it is asked', async () => {
     // The one-hour cache is gone deliberately. The catalog grows by roughly
     // 250 entries a day, so an hour-old listing answers "does this plugin
