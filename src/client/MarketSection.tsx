@@ -64,6 +64,28 @@ function isHostDependencyFinding(value: unknown): value is SharedHostPackageDepe
 }
 
 const HOST_DEPENDENCY_PREVIEW_LIMIT = 5
+const IGNORED_UPDATES_SESSION_KEY = 'dshm-updates-ignored'
+
+/**
+ * Read the update reminders dismissed for this host process. The boot id is
+ * part of the value rather than the key so sessionStorage never accumulates
+ * one orphaned entry per process. Invalid and stale records fail open: an
+ * update reminder is safer than silently hiding one we cannot account for.
+ */
+function ignoredUpdatesForBoot(boot: string): string[] {
+  const saved = readSession(IGNORED_UPDATES_SESSION_KEY)
+  const valid = saved !== null
+    && typeof saved === 'object'
+    && !Array.isArray(saved)
+    && saved.boot === boot
+    && Array.isArray(saved.names)
+    && saved.names.every((name: unknown) => typeof name === 'string' && name !== '')
+  if (!valid) {
+    try { sessionStorage.removeItem(IGNORED_UPDATES_SESSION_KEY) } catch { /* storage unavailable */ }
+    return []
+  }
+  return [...new Set(saved.names as string[])]
+}
 
 function HostDependencyDiagnostics({
   findings,
@@ -1257,6 +1279,10 @@ export function MarketSection(props: MarketSectionProps) {
    * reset the Toast's auto-dismiss timer on every parent re-render. */
   const exportToastDone = useCallback(() => setExportState('idle'), [])
   const [updates, setUpdates] = useState<Record<string, UpdateStatus>>({})
+  /** Update reminders dismissed for this host boot. The Installed tab still
+   * shows these plugins and their update actions; only proactive prompts use
+   * this set. */
+  const [ignoredUpdateNames, setIgnoredUpdateNames] = useState<string[]>([])
   const [updatingName, setUpdatingName] = useState<string | null>(null)
   /** Update-notes dialog (#294): which row opened it, and what it resolved to. */
   const [notesFor, setNotesFor] = useState<{ name: string; current: string | null; latest: string | null; repoUrl: string | null } | null>(null)
@@ -1530,6 +1556,7 @@ export function MarketSection(props: MarketSectionProps) {
         setGithubProxy(typeof status.githubProxy === 'string' ? status.githubProxy : null)
         if (typeof status.boot === 'string') {
           setBootId(status.boot)
+          setIgnoredUpdateNames(ignoredUpdatesForBoot(status.boot))
           // A dismissal only silences the notice for the boot it was made
           // in: if the user dismissed instead of restarting, the next boot
           // (or a stale dismissal from a previous one) shows it again.
@@ -2528,13 +2555,32 @@ export function MarketSection(props: MarketSectionProps) {
   // batch update: every such plugin has an existing, explicit confirmation
   // gate because the source switch cannot be rolled back.
   const batchUpdatableNames = updatableNames.filter(name => updates[name]?.restoreRequired !== true)
+  const ignoredUpdateSet = useMemo(() => new Set(ignoredUpdateNames), [ignoredUpdateNames])
+  const reminderUpdatableNames = updatableNames.filter(name => !ignoredUpdateSet.has(name))
+  const reminderBatchUpdatableNames = batchUpdatableNames.filter(name => !ignoredUpdateSet.has(name))
+  const selfUpdateAvailable = updates[selfName]?.updateAvailable === true && !updatedNames.includes(selfName)
+  const reminderUpdateNames = [
+    ...(selfUpdateAvailable ? [selfName] : []),
+    ...updatableNames,
+  ].filter(name => !ignoredUpdateSet.has(name))
   // The market manages itself from its own settings card (Settings → Plugins
   // → Plugin configuration), not as a row here — listing it in both places
   // read as two different controls for the same thing.
   const installedOtherCount = Object.keys(installed).filter(name => name !== selfName).length
 
+  const ignoreUpdateNotices = useCallback((names: string[]) => {
+    if (bootId === null || names.length === 0) return
+    setIgnoredUpdateNames(current => {
+      const next = [...new Set([...current, ...names])]
+      try {
+        sessionStorage.setItem(IGNORED_UPDATES_SESSION_KEY, JSON.stringify({ boot: bootId, names: next }))
+      } catch { /* storage unavailable: keep the dismissal for this mount */ }
+      return next
+    })
+  }, [bootId])
+
   const doUpdateAll = useCallback(() => {
-    const names = batchUpdatableNames.slice()
+    const names = reminderBatchUpdatableNames.slice()
     setUpdatingAll(true)
     const next = () => {
       const name = names.shift()
@@ -2545,7 +2591,7 @@ export function MarketSection(props: MarketSectionProps) {
       doUpdate(name).then(next, next)
     }
     next()
-  }, [batchUpdatableNames, doUpdate])
+  }, [reminderBatchUpdatableNames, doUpdate])
 
   const finishRestore = useCallback((body: { errors?: unknown; unportable?: unknown; bootErrors?: unknown }) => {
     const errors = Array.isArray(body.errors) ? body.errors as { name?: unknown; error?: unknown }[] : []
@@ -2778,9 +2824,7 @@ export function MarketSection(props: MarketSectionProps) {
   // Self-update lives in the header button and the settings card, not this
   // tab's row list (the market itself is filtered out below) — so a pending
   // self-update alone must not light up a dot pointing at an empty-looking tab.
-  const hasUpdates = Object.keys(installed).some(
-    name => name !== selfName && !updatedNames.includes(name) && updates[name] && updates[name].updateAvailable,
-  )
+  const hasUpdates = reminderUpdatableNames.length > 0
 
   /** Live status line: structured phase, or the human-line fallback. */
   const phasePart = progressPhase != null
@@ -3216,6 +3260,7 @@ export function MarketSection(props: MarketSectionProps) {
             const self = installed['dshmarket'] !== undefined ? 'dshmarket' : 'dsh-market'
             const status = updates[self]
             return status && status.updateAvailable && !updatedNames.includes(self)
+              && !ignoredUpdateSet.has(self)
               && (
                 <Button
                   variant="primary"
@@ -3229,13 +3274,20 @@ export function MarketSection(props: MarketSectionProps) {
                 >{updatingName === self ? t('updating') : status.restoreRequired === true ? t('restoreOnline') : t('marketUpdate')}</Button>
               )
           })()}
-          {batchUpdatableNames.length >= 2 && (
+          {reminderBatchUpdatableNames.length >= 2 && (
             <Button
               variant="primary"
               size="sm"
               disabled={updatingAll || updatingName !== null || busyUrl !== null || removingName !== null}
               onClick={() => { setTab('installed'); doUpdateAll() }}
-            >{updatingAll ? t('updating') : t('updateAll') + ' (' + batchUpdatableNames.length + ')'}</Button>
+            >{updatingAll ? t('updating') : t('updateAll') + ' (' + reminderBatchUpdatableNames.length + ')'}</Button>
+          )}
+          {bootId !== null && reminderUpdateNames.length > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => ignoreUpdateNotices(reminderUpdateNames)}
+            >{t('ignoreAllUpdateNotices')}</Button>
           )}
         </div>
         <div className={css.sub}>
@@ -4052,11 +4104,25 @@ export function MarketSection(props: MarketSectionProps) {
                                       reserves for conditional content, so rows
                                       without it are pixel-identical to before. */}
                                   {status !== undefined && status.updateAvailable && (
-                                    <button
-                                      type="button"
-                                      className={css.notesLink}
-                                      onClick={() => openNotes(name, status.current ?? null, status.latest ?? null, repoUrl)}
-                                    >{`▸ ${t('notesLink')}`}</button>
+                                    <div className={css.noteRow}>
+                                      <button
+                                        type="button"
+                                        className={css.notesLink}
+                                        onClick={() => openNotes(name, status.current ?? null, status.latest ?? null, repoUrl)}
+                                      >{`▸ ${t('notesLink')}`}</button>
+                                      {bootId !== null && (
+                                        ignoredUpdateSet.has(name)
+                                          ? <span className={css.metaInline}>{t('updateNoticeIgnored')}</span>
+                                          : (
+                                              <button
+                                                type="button"
+                                                className={css.noteToggle}
+                                                aria-label={`${t('ignoreUpdateNotice')} ${name}`}
+                                                onClick={() => ignoreUpdateNotices([name])}
+                                              >{t('ignoreUpdateNotice')}</button>
+                                            )
+                                      )}
+                                    </div>
                                   )}
                                   {!off && act !== undefined && meta !== null && (
                                         <div className={css.act}>

@@ -140,12 +140,53 @@ export function readPersistentLog(file: string, maxLines = 80): string[] {
 }
 
 /**
+ * How to read the `at` fields, said once at the top.
+ *
+ * Every line is stamped in UTC and stays that way: this file is written to
+ * be attached to an issue, and a maintainer comparing two reporters' logs
+ * needs one clock, not each machine's. Localizing the lines would make the
+ * artifact worse at the only job it has.
+ *
+ * But the reader is looking at their own wall clock, and #449 is what that
+ * costs when nobody says so — a UTC+8 user saw `07:32` for something they
+ * watched happen at `15:32` and could not tell whether the log was skewed
+ * or their own machine was. So the offset is stated, with the arithmetic
+ * already done: "add 8h" is a fact they can use without converting
+ * anything, and it is the one line that turns the timestamps from
+ * suspicious into usable.
+ * @returns the note, or null when this machine is already on UTC.
+ */
+function timezoneNote(now = new Date()): string | null {
+  // getTimezoneOffset is minutes to ADD to local to reach UTC, so it is
+  // positive west of Greenwich — the opposite sign from how offsets are
+  // written. Negate it once here rather than at each use.
+  const minutes = -now.getTimezoneOffset()
+  if (minutes === 0) return null
+  const sign = minutes < 0 ? '-' : '+'
+  const abs = Math.abs(minutes)
+  const hh = String(Math.floor(abs / 60)).padStart(2, '0')
+  const mm = String(abs % 60).padStart(2, '0')
+  let zone = ''
+  try {
+    const named = Intl.DateTimeFormat().resolvedOptions().timeZone
+    zone = typeof named === 'string' && named !== '' ? ` (${named})` : ''
+  } catch { /* a runtime without full ICU still gets the offset */ }
+  const shift = mm === '00' ? `${String(Math.floor(abs / 60))}h` : `${String(Math.floor(abs / 60))}h${mm}m`
+  const direction = minutes < 0 ? 'subtract' : 'add'
+  return `timestamps: UTC — this machine is UTC${sign}${hh}:${mm}${zone}, so ${direction} ${shift} for local time`
+}
+
+/**
  * The export document for bug reports.
  * @param header - environment lines to prepend (version, platform — no paths).
  * @returns plain text, newest entry last.
  */
 export function exportLogs(header: Record<string, string>, snapshot: string[] = [], priorSessions: string[] = []): string {
-  const head = Object.entries(header).map(([key, value]) => `${key}: ${sanitize(value)}`)
+  const note = timezoneNote()
+  const head = [
+    ...Object.entries(header).map(([key, value]) => `${key}: ${sanitize(value)}`),
+    ...(note === null ? [] : [note]),
+  ]
   const lines = entries.map(e => `${e.at} [${e.level}] ${e.event}: ${e.detail}`)
   return [
     '# dsh-market log export',

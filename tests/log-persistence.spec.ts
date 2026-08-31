@@ -72,3 +72,48 @@ describe('persistent log sink', () => {
     expect(exportLogs({}, [], readPersistentLog(join(home, 'absent.ndjson')))).not.toContain('previous sessions')
   })
 })
+
+describe('exported timestamps say which clock they are on (#449)', () => {
+  const withOffset = async (minutes: number, zone: string): Promise<string> => {
+    const realOffset = Date.prototype.getTimezoneOffset
+    const realFormat = Intl.DateTimeFormat
+    // getTimezoneOffset is minutes to ADD to local to reach UTC, so UTC+8
+    // reports -480. Stub the platform rather than the module: the note is
+    // computed from the runtime's own clock, which is the thing under test.
+    Date.prototype.getTimezoneOffset = function () { return -minutes }
+    Intl.DateTimeFormat = function () {
+      return { resolvedOptions: () => ({ timeZone: zone }) }
+    } as unknown as typeof Intl.DateTimeFormat
+    try {
+      return exportLogs({ 'dsh-market': 'test' })
+    } finally {
+      Date.prototype.getTimezoneOffset = realOffset
+      Intl.DateTimeFormat = realFormat
+    }
+  }
+
+  it('does the arithmetic for the reader instead of leaving a bare Z', async () => {
+    // #449: a UTC+8 reporter saw 07:32 for something they watched happen at
+    // 15:32 and could not tell whether the log was skewed or their machine
+    // was. Lines stay UTC on purpose — one clock across reporters — so the
+    // header has to be what closes that gap.
+    const text = await withOffset(480, 'Asia/Shanghai')
+    expect(text).toContain('timestamps: UTC')
+    expect(text).toContain('UTC+08:00')
+    expect(text).toContain('Asia/Shanghai')
+    expect(text).toContain('add 8h for local time')
+  })
+
+  it('points the other way west of Greenwich, and keeps half-hour zones exact', async () => {
+    expect(await withOffset(-300, 'America/New_York')).toContain('UTC-05:00')
+    expect(await withOffset(-300, 'America/New_York')).toContain('subtract 5h for local time')
+    // A whole-hour shift would be wrong for the zones that are not on one.
+    expect(await withOffset(330, 'Asia/Kolkata')).toContain('add 5h30m for local time')
+  })
+
+  it('says nothing at all when the machine is already on UTC', async () => {
+    // A note that reduces to "add 0h" is noise in an artifact people read
+    // under pressure.
+    expect(await withOffset(0, 'UTC')).not.toContain('timestamps: UTC —')
+  })
+})
