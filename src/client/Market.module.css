@@ -259,11 +259,12 @@
 .nmLink:hover{color:var(--dsw-alias-brand-primary,#4f6ef7);text-decoration:underline}
 /* The title has always opened the repo, but styled `color:inherit` with no
    underline it looked like plain text, so nothing said so until the cursor
-   was already on it (#256). This mark is the standing affordance. It rides
-   the title's own line rather than taking a row of its own — a second link
-   to the same URL would have cost every card ~20px of head, against the
-   density the grid was just tuned for. */
-.repoMark{color:var(--dsw-alias-label-tertiary,#8b93a1);flex-shrink:0;margin-left:5px;vertical-align:-1px}
+   was already on it (#256). The GitHub mark is the standing affordance —
+   it names the destination before hover (#365). It rides the title's own
+   line rather than taking a row of its own; a second link to the same URL
+   would have cost every card ~20px of head, against the density the grid
+   was just tuned for. */
+.repoMark{color:var(--dsw-alias-label-secondary,#6b7280);flex-shrink:0;margin-left:5px;vertical-align:-1px;display:inline-block}
 .nmLink:hover .repoMark{color:var(--dsw-alias-brand-primary,#4f6ef7)}
 /* flex-wrap so a long owner name pushes the download/star counts to a
    second line instead of squeezing the name itself toward unreadable: an

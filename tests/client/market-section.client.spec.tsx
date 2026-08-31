@@ -305,10 +305,10 @@ describe('MarketSection (jsdom)', () => {
     expect(search).toHaveProperty('value', 'whale-skin')
   })
 
-  /** #256: the title has always opened the repo, but `color:inherit` with no
-   * underline meant nothing said so until the cursor was already on it. The
-   * link now carries a standing mark and names its destination, so it is
-   * findable without hovering every card to look for one. */
+  /** #256 / #365: the title has always opened the repo, but `color:inherit`
+   * with no underline meant nothing said so until the cursor was already on
+   * it. The link now carries a GitHub mark and names its destination, so it
+   * is findable without hovering every card to look for one. */
   it('gives every card title a visible, named link to its repository', async () => {
     render(<MarketSection {...props()} />)
     await screen.findByText('dsh-loop')
@@ -318,10 +318,12 @@ describe('MarketSection (jsdom)', () => {
       for (const link of own) {
         expect(link.getAttribute('target')).toBe('_blank')
         expect(link.getAttribute('rel')).toBe('noreferrer')
-        // The mark rides the title's own line — a second link on a row of
-        // its own would cost every card head the height the grid was tuned
-        // for.
-        expect(link.querySelector('svg')).toBeTruthy()
+        // The GitHub mark rides the title's own line — a second link on a
+        // row of its own would cost every card head the height the grid was
+        // tuned for.
+        const mark = link.querySelector('svg[aria-hidden="true"]')
+        expect(mark).toBeTruthy()
+        expect(mark?.getAttribute('viewBox')).toBe('0 0 16 16')
         expect(link.textContent).toContain(plugin.name)
         // The tooltip still carries the RAW catalog identity. For a compound
         // entry (owner#packages/x) the card shows only the short name, so
