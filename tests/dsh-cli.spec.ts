@@ -207,6 +207,104 @@ describe('the proxy translation actually reaches spawned pnpm (#148)', () => {
   })
 })
 
+describe('configured build environment reaches spawned children (#336)', () => {
+  // The feature's whole point is a host whose process cannot inherit a shell
+  // environment: the operator pins CC/CXX in the market config and every
+  // build/install spawn must carry them — above the inherited env, below the
+  // market's own PATH and CI. These two assertions ride a real spawn call,
+  // the same way the proxy wiring is proven (see the test above): a pure
+  // function test would only prove the helper agrees with the helper.
+  it('lays the configured env over the inherited one', async () => {
+    vi.resetModules()
+    const seen: Array<NodeJS.ProcessEnv | undefined> = []
+    vi.doMock('node:child_process', () => ({
+      spawn: (_file: string, _args: readonly string[], options: { env?: NodeJS.ProcessEnv }) => {
+        seen.push(options.env)
+        const child = new EventEmitter() as EventEmitter & { pid?: number }
+        child.pid = 1
+        // Non-zero: probePnpm caches only success, so this leaves no state.
+        setImmediate(() => child.emit('close', 1))
+        return child
+      },
+    }))
+    const previous = process.env.CC
+    process.env.CC = '/usr/bin/gcc-10'
+    try {
+      const { probePnpm, setBuildEnvSource } = await import('../src/dsh-cli.ts')
+      setBuildEnvSource(() => ({ CC: '/usr/bin/gcc-11', CXX: '/usr/bin/g++-11' }))
+      await probePnpm()
+      expect(seen.length).toBeGreaterThan(0)
+      // The pinned value REPLACES the one the parent process inherited —
+      // overriding is the feature (an unshelled host cannot export first).
+      expect(seen[0]?.CC).toBe('/usr/bin/gcc-11')
+      expect(seen[0]?.CXX).toBe('/usr/bin/g++-11')
+    } finally {
+      if (previous === undefined) delete process.env.CC
+      else process.env.CC = previous
+      vi.doUnmock('node:child_process')
+      vi.resetModules()
+    }
+  })
+
+  it('never lets a config value override the market-owned CI and PATH', async () => {
+    vi.resetModules()
+    const seen: Array<NodeJS.ProcessEnv | undefined> = []
+    vi.doMock('node:child_process', () => ({
+      spawn: (_file: string, _args: readonly string[], options: { env?: NodeJS.ProcessEnv }) => {
+        seen.push(options.env)
+        const child = new EventEmitter() as EventEmitter & { pid?: number }
+        child.pid = 1
+        setImmediate(() => child.emit('close', 1))
+        return child
+      },
+    }))
+    try {
+      const { nodeBinDir, probePnpm, setBuildEnvSource } = await import('../src/dsh-cli.ts')
+      setBuildEnvSource(() => ({ CI: 'false', PATH: '/usr/bin/evil', CC: '/usr/bin/gcc-11' }))
+      await probePnpm()
+      expect(seen.length).toBeGreaterThan(0)
+      // CI answers pnpm's interactive prompt and PATH answers "where is
+      // pnpm"; either one breaking is a failure that looks nothing like its
+      // cause, so both are computed LAST and a config value may not touch
+      // them (#336).
+      expect(seen[0]?.CI).toBe('true')
+      expect(seen[0]?.PATH).not.toBe('/usr/bin/evil')
+      expect(seen[0]?.PATH).toContain(nodeBinDir)
+    } finally {
+      vi.doUnmock('node:child_process')
+      vi.resetModules()
+    }
+  })
+
+  it('adds nothing when no build environment is configured, and forgets a configured one on restore', async () => {
+    vi.resetModules()
+    const seen: Array<NodeJS.ProcessEnv | undefined> = []
+    vi.doMock('node:child_process', () => ({
+      spawn: (_file: string, _args: readonly string[], options: { env?: NodeJS.ProcessEnv }) => {
+        seen.push(options.env)
+        const child = new EventEmitter() as EventEmitter & { pid?: number }
+        child.pid = 1
+        setImmediate(() => child.emit('close', 1))
+        return child
+      },
+    }))
+    try {
+      const { probePnpm, setBuildEnvSource } = await import('../src/dsh-cli.ts')
+      setBuildEnvSource(() => ({ CC: '/usr/bin/gcc-11' }))
+      await probePnpm()
+      expect(seen[0]?.CC).toBe('/usr/bin/gcc-11')
+      // The routes restore the previous source on unmount; the default adds
+      // nothing, so the env returns to plain process.env.
+      setBuildEnvSource(() => ({}))
+      await probePnpm()
+      expect(seen[1]?.CC).toBeUndefined()
+    } finally {
+      vi.doUnmock('node:child_process')
+      vi.resetModules()
+    }
+  })
+})
+
 describe('TARGET_RE plugin target allowlist', () => {
   it('accepts semver range prefixes that restore/install flows produce', () => {
     // Regression: carets/tildes from manifest specs (name@^x.y.z) were rejected

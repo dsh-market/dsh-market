@@ -194,6 +194,32 @@ export function toolSearchDirs(
   return [...new Set(dirs.filter(dir => dir.trim() !== ''))]
 }
 
+/**
+ * The operator-configured build environment (issue #336): environment
+ * variables pinned in the market's config (cordis.yml `buildEnv`) or its
+ * settings section, for hosts — GUI, systemd/launchd, Windows Start menu —
+ * where the dsh process cannot inherit a shell environment.
+ *
+ * The value is read through a live SOURCE rather than copied at mount: the
+ * settings wiring mutates `config.buildEnv` at runtime, and a frozen copy
+ * would quietly keep every later spawn on the boot-time value. The default
+ * source answers nothing, so a host that never configures this (or that
+ * unmounts its routes) gets the exact same env it always did.
+ */
+let buildEnvSource: () => Readonly<Record<string, string>> = () => ({})
+
+/**
+ * Point every future child spawn at the configured build environment.
+ * @param source - Live source of the config's `buildEnv` object, re-read on
+ * every spawn so a settings change reaches the next child immediately.
+ * @returns the previous source, so a caller can restore it on teardown.
+ */
+export function setBuildEnvSource(source: () => Readonly<Record<string, string>>): () => Readonly<Record<string, string>> {
+  const previous = buildEnvSource
+  buildEnvSource = source
+  return previous
+}
+
 function spawnEnv(): NodeJS.ProcessEnv {
   // pnpm v10+ blocks forever on a silent interactive prompt without a TTY;
   // CI mode forces it to act or fail instead of asking.
@@ -202,7 +228,17 @@ function spawnEnv(): NodeJS.ProcessEnv {
   for (const bin of toolSearchDirs()) {
     if (!parts.includes(bin)) parts.push(bin)
   }
-  return { ...process.env, ...proxyEnvForPnpm(process.env, activeRegion()), CI: 'true', PATH: parts.join(separator) }
+  // Merge order is the feature. The configured build env sits directly above
+  // the inherited process.env — the whole point is that it can REPLACE a
+  // compiler the parent process picked up (CC/CXX, NODE_OPTIONS, ...) — yet
+  // strictly below the two values the market computes for itself. PATH is the
+  // market's answer to "where is pnpm" and CI is its answer to pnpm's
+  // interactive prompt; either one being overridden by a config value would
+  // produce a failure that looks nothing like its cause (#336). The proxy
+  // translation is asked about the merged env so its "fill silence, never
+  // overwrite speech" guards also see what the operator pinned.
+  const withBuildEnv = { ...process.env, ...buildEnvSource() }
+  return { ...withBuildEnv, ...proxyEnvForPnpm(withBuildEnv, activeRegion()), CI: 'true', PATH: parts.join(separator) }
 }
 
 const INSTALL_TIMEOUT_MS = Number(process.env.DSH_MARKET_INSTALL_TIMEOUT_MS) || 15 * 60 * 1000

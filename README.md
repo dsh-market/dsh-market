@@ -72,6 +72,18 @@ Installs prefer repo-verified npm packages, then author-supplied prebuilt GitHub
   ```
 
   `GET /dsh-market/status` reports `"restart": false` once it has taken effect.
+- Plugins that compile (native modules) build under the environment the dsh process inherited — which a GUI, a systemd/launchd unit, or a Windows Start-menu launch does **not** inherit from your shell. If a plugin needs a newer compiler than the machine's default (`g++` too old while other work depends on that version), pin the build-time variables with `buildEnv` under `config:` — the config equivalent of `CC=... CXX=... dsh` from a terminal, without changing anything globally. Pinned values may override inherited ones but never the `PATH` or `CI` the market computes for its children (issue #336):
+
+  ```yaml
+  - id: dsh-market
+    name: dshmarket
+    config:
+      buildEnv:
+        CC: /usr/bin/gcc-11     # or CXX, NODE_OPTIONS, ...
+        CXX: /usr/bin/g++-11
+  ```
+
+  On hosts with the settings service the same fields are editable live in **Settings → Plugins → Plugin configuration**, so the build environment can be changed without touching the profile file.
 - For terminal-attached launches, the detached replacement keeps running after the original terminal closes
 - Listing ≠ endorsement: plugins are third-party code, install sources you trust
 

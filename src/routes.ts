@@ -23,7 +23,7 @@ import { configurePersistentLog, exportLogs, logEvent, readPersistentLog } from 
 import { marketFetch } from './net.ts'
 import { diagnosePackageManifests } from './diagnostics.ts'
 import {
-  BOOT_ID, cancelActive, probePnpm, progress, provisionPnpm, runDshPlugin,
+  BOOT_ID, cancelActive, probePnpm, progress, provisionPnpm, runDshPlugin, setBuildEnvSource,
   type PluginCommandRuntime,
 } from './dsh-cli.ts'
 import { addProfileBundle, dropFromManifest, hasLoadableEntry, INBOX_BUNDLES, isDshProfileName, profileDir, readInstalled, readInstalledManifest, readInstalledRepoEvidence, readInstalledVersion, readLockCommits, readProfileBundles, readProfileManifestSnapshot, removeProfileBundle, restoreProfileManifest, setAllowBuilds, type ProfileManifestSnapshot } from './profile.ts'
@@ -91,6 +91,14 @@ export interface MarketConfig {
   region?: Region
   /** Snapshots retained per profile (issue #98); defaults to DEFAULT_MAX_SNAPSHOTS. */
   maxSnapshots?: number
+  /**
+   * Environment variables pinned for plugin build/install commands (issue
+   * #336): the compiler (CC/CXX) or anything else a native build reads, for
+   * hosts whose dsh process cannot inherit a shell environment. These may
+   * override values the parent process inherited, but never the PATH or CI
+   * the market computes for its children.
+   */
+  buildEnv?: Record<string, string>
 }
 
 /**
@@ -226,6 +234,11 @@ export function mountMarketRoutes(
   // re-applies the same choice on every boot (ported from dsh-plugin-hub).
   const userPatchPath = findUserPatchPath(host, activeProfileDir)
   const commands = commandRuntime ?? { runPlugin: runDshPlugin, probePnpm, provisionPnpm, cancelActive }
+  // Point every plugin build/install spawn at the configured build
+  // environment (#336). Read LIVE from `config.buildEnv` because the settings
+  // wiring mutates that object when the operator edits the section at runtime;
+  // the reset below restores the empty default when the routes unmount.
+  const previousBuildEnvSource = setBuildEnvSource(() => config.buildEnv ?? {})
   // Snapshot retention cap (issue #98 supplement): a finite positive number
   // from the market config wins; anything else falls back to the default.
   const maxSnapshots = typeof config.maxSnapshots === 'number' && Number.isFinite(config.maxSnapshots) && config.maxSnapshots >= 1
@@ -3486,6 +3499,7 @@ export function mountMarketRoutes(
   ]
 
   return () => {
+    setBuildEnvSource(previousBuildEnvSource)
     configurePersistentLog(null)
     for (const dispose of disposers) dispose()
   }

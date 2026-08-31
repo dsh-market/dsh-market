@@ -12,7 +12,7 @@ import type { AgentsServiceLike } from './agents.ts'
 export const name = 'dsh-market'
 
 /** Optional cordis.yml configuration; profile defaults to `web`. */
-export type Config = Partial<Pick<MarketConfig, 'profile' | 'allowRestart' | 'maxSnapshots'>>
+export type Config = Partial<Pick<MarketConfig, 'profile' | 'allowRestart' | 'maxSnapshots' | 'buildEnv'>>
 
 /** Structural subset of DSH Desktop's public `desktopProfiles` contract. */
 interface DesktopProfilesLike {
@@ -69,6 +69,9 @@ export function apply(ctx: Context, config?: Config): void {
         // is exactly the distinction supervisor detection needs (#229).
         allowRestart: config?.allowRestart,
         maxSnapshots: config?.maxSnapshots,
+        // Build-time environment (#336); undefined means "inherit", and the
+        // settings wiring below is what makes it editable at runtime.
+        buildEnv: config?.buildEnv,
       }
       // Offer allowRestart as a switch on the settings page. Deliberately
       // NOT in the Desktop branch below: there the shell owns the process
@@ -95,6 +98,9 @@ export function apply(ctx: Context, config?: Config): void {
         // lifecycle. The shell remains responsible for restart in this mode.
         allowRestart: false,
         maxSnapshots: config?.maxSnapshots,
+        // The operator's pinned build environment applies in Desktop mode
+        // too: Desktop's packaged pnpm still runs plugin build scripts.
+        buildEnv: config?.buildEnv,
       }
       const desktopHost = desktopCtx as unknown as MarketEffectHost
       desktopHost.effect(() => {

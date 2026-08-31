@@ -142,6 +142,14 @@ vi.mock('../src/dsh-cli.ts', () => {
       fake.running = false
     }
   }
+  // Build-env source, same live-source contract as the real module (#336):
+  // the routes set it at mount and restore the previous source at teardown.
+  let buildEnvSource: () => Readonly<Record<string, string>> = () => ({})
+  function setBuildEnvSource(source: () => Readonly<Record<string, string>>): () => Readonly<Record<string, string>> {
+    const previous = buildEnvSource
+    buildEnvSource = source
+    return previous
+  }
   async function execute(args: string[]): Promise<unknown> {
     if (fake.gate !== null) await fake.gate
     if (fake.cancelNext) {
@@ -299,6 +307,10 @@ vi.mock('../src/dsh-cli.ts', () => {
     dshArgv: () => ({ file: 'dsh', args: [], cwd: undefined, viaShell: false }),
     winCmdShim: false,
     runDshPlugin,
+    // Routes point every spawn at the configured build environment (#336);
+    // mirror the real "return the previous source" contract so mounting and
+    // the mount's teardown both work without the fake caring about env.
+    setBuildEnvSource,
   }
 })
 

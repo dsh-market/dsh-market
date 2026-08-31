@@ -69,6 +69,18 @@ dsh plugin --profile web add dshmarket
   ```
 
   生效后 `GET /dsh-market/status` 会返回 `"restart": false`。
+- 需要本地编译的插件（原生模块）会在 dsh 进程继承到的环境里构建——而图形界面、systemd/launchd 托管、Windows 开始菜单启动的 dsh **不会**继承你终端的环境。如果插件需要的编译器比机器默认的新（比如系统 `g++` 太老，但其它工作又依赖这个版本，不能全局升级），就用 `config:` 下的 `buildEnv` 固定编译期环境变量——相当于在终端里 `CC=... CXX=... dsh`，且不动任何全局配置。固定的值可以覆盖继承来的环境变量，但绝不会覆盖市场为子进程算好的 `PATH` 和 `CI`（issue #336）：
+
+  ```yaml
+  - id: dsh-market
+    name: dshmarket
+    config:
+      buildEnv:
+        CC: /usr/bin/gcc-11     # 也可以是 CXX、NODE_OPTIONS 等
+        CXX: /usr/bin/g++-11
+  ```
+
+  有 settings 服务的宿主机还可以在**设置 → 插件 → 插件配置**里随时改这些字段，不用动 profile 文件。
 - 从终端启动时，替代进程脱离原终端，关闭原终端后仍会继续运行
 - 收录 ≠ 背书:插件是第三方代码,请只安装你信任的来源
 
