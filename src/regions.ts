@@ -43,10 +43,25 @@ const NPM_CHINA = 'https://mirrors.cloud.tencent.com/npm'
 /**
  * Prefix proxy for github.com-family URLs, no trailing slash.
  *
- * Verified against gh-proxy: it serves the GitHub API and commit-pinned
- * codeload tarballs, and it refuses anything that is not a github.com
- * hostname — which is why the catalog cannot be carried through it at all,
- * and travels as a published npm package instead.
+ * It serves the GitHub API and commit-pinned codeload tarballs. The catalog
+ * still does not travel through it — it goes as a published npm package
+ * instead, which additionally gives it a version number that can be rolled
+ * back when a bad build ships.
+ *
+ * What this proxy accepts is a list of GitHub SERVICES, not a hostname test.
+ * The previous note here said it "refuses anything that is not a github.com
+ * hostname", which #460 by @Homplex measured as wrong in both directions —
+ * re-measured 2026-09-01:
+ *
+ *   https://raw.githubusercontent.com/…   200   ← not a github.com hostname
+ *   https://github.com/owner/repo         403   ← is one
+ *   https://example.com/                  403
+ *
+ * So a plain repository page is refused while raw content is served. Do not
+ * reason about this proxy from the hostname; check the specific service, and
+ * re-measure rather than infer, because the policy is the operator's and can
+ * change under us. That fragility is the substance of #460's actual request
+ * (a mirror list and a visible setting), which is tracked separately.
  */
 const GITHUB_PROXY_CHINA = 'https://gh-proxy.com'
 
