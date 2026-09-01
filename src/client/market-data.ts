@@ -80,6 +80,46 @@ export interface Registry {
   plugins: RegistryPlugin[]
 }
 
+const MCP_CONNECTOR_INTERNAL_DESCRIPTION: LocalizedText = {
+  en: 'Over one hundred MCP connectors, continuously updated in one plugin for discovering, authorizing, and managing MCP servers. Supports OAuth 2.0 PKCE, API keys, stdio/HTTP, mcpServers JSON import, and tool and prompt discovery. Maintained by Qichacha/QCC.',
+  zh: '超百个 MCP连接器持续更新，一个插件统一发现、授权和连接管理 MCP Server。支持 OAuth 2.0 PKCE、API Key、stdio/HTTP、mcpServers JSON 导入，以及工具与 Prompt 发现；由企查查/QCC 团队维护。',
+}
+
+/**
+ * Tailor one catalog description to the context the user is already in.
+ *
+ * awesome-dsh-plugin is both an external directory and this market's live
+ * catalog. Its source entry must keep the DeepSeek Harness identity for
+ * external search, while repeating that identity inside DSH spends the most
+ * valuable first line of the card on context the user already knows. Match
+ * every stable identity field so an unrelated same-named entry can never
+ * inherit product-owned copy.
+ */
+export function pluginForInternalMarket(plugin: RegistryPlugin): RegistryPlugin {
+  if (
+    plugin.name !== 'dsh-mcp-connector'
+    || plugin.owner !== 'duhu2000'
+    || plugin.npm !== 'dsh-mcp-connector'
+    || plugin.url !== 'https://github.com/duhu2000/dsh-mcp-connector'
+  ) return plugin
+
+  return {
+    ...plugin,
+    description: {
+      ...plugin.description,
+      ...MCP_CONNECTOR_INTERNAL_DESCRIPTION,
+    },
+  }
+}
+
+/** Apply in-DSH presentation copy without mutating the fetched catalog. */
+export function registryForInternalMarket(registry: Registry): Registry {
+  return {
+    ...registry,
+    plugins: registry.plugins.map(pluginForInternalMarket),
+  }
+}
+
 /** Profile dependency map: package name → install spec. */
 export type InstalledMap = Record<string, string>
 

@@ -8,12 +8,61 @@
 
 import { describe, expect, it } from 'vitest'
 import {
-  entryForDep, extractReadmeImageCandidates, extractReadmeImages, formatCount, groupSwitchState, installedForCatalog, isInstalled, isMarketItself, looksTerminal, matchInstalledName, orderedCategories, pageItems, pluginCategories, previewDimensionScore, rankThemeScreenshots, safeScreenshots, themePlugins, visiblePlugins, humanOutput} from '../src/client/market-data.ts'
+  entryForDep, extractReadmeImageCandidates, extractReadmeImages, formatCount, groupSwitchState, installedForCatalog, isInstalled, isMarketItself, looksTerminal, matchInstalledName, orderedCategories, pageItems, pluginCategories, pluginForInternalMarket, previewDimensionScore, rankThemeScreenshots, registryForInternalMarket, safeScreenshots, themePlugins, visiblePlugins, humanOutput} from '../src/client/market-data.ts'
 import type { RegistryPlugin, ScreenshotCandidate } from '../src/client/market-data.ts'
 
 function plugin(partial: Partial<RegistryPlugin>): RegistryPlugin {
   return { name: 'x', owner: 'o', url: 'https://github.com/o/x', category: 'tool', ...partial }
 }
+
+describe('internal market copy', () => {
+  const source = plugin({
+    name: 'dsh-mcp-connector',
+    owner: 'duhu2000',
+    npm: 'dsh-mcp-connector',
+    url: 'https://github.com/duhu2000/dsh-mcp-connector',
+    description: {
+      en: 'DeepSeek Harness external listing',
+      zh: 'DeepSeek Harness 站外目录文案',
+    },
+  })
+
+  it('uses over-one-hundred copy inside DSH without mutating external metadata', () => {
+    const displayed = pluginForInternalMarket(source)
+    expect(displayed).not.toBe(source)
+    expect(displayed.description?.zh).toContain('超百个 MCP连接器')
+    expect(displayed.description?.zh).toContain('统一发现、授权和连接管理')
+    expect(displayed.description?.zh).not.toContain('DeepSeek Harness')
+    expect(displayed.description?.en).toContain('Over one hundred MCP connectors')
+    expect(displayed.description?.en).not.toContain('DeepSeek Harness')
+    expect(source.description?.zh).toBe('DeepSeek Harness 站外目录文案')
+  })
+
+  it('requires the canonical owner, npm package, and repository URL', () => {
+    expect(pluginForInternalMarket({ ...source, owner: 'someone-else' })).toBeTruthy()
+    expect(pluginForInternalMarket({ ...source, owner: 'someone-else' }).description?.zh)
+      .toBe('DeepSeek Harness 站外目录文案')
+    expect(pluginForInternalMarket({ ...source, npm: 'lookalike' }).description?.zh)
+      .toBe('DeepSeek Harness 站外目录文案')
+    expect(pluginForInternalMarket({ ...source, url: 'https://github.com/other/repo' }).description?.zh)
+      .toBe('DeepSeek Harness 站外目录文案')
+  })
+
+  it('preserves the catalog count and all required search terms', () => {
+    const registry = registryForInternalMarket({
+      count: 1,
+      categories: {},
+      plugins: [source],
+    })
+    expect(registry.count).toBe(1)
+    expect(registry.plugins).toHaveLength(1)
+    for (const query of ['mcp', 'MCP连接器', '连接器', 'mcp server', '连接管理']) {
+      expect(visiblePlugins(registry.plugins, {
+        category: 'all', query, lang: 'zh', sort: 'x',
+      }).map(row => row.name)).toEqual(['dsh-mcp-connector'])
+    }
+  })
+})
 
 describe('looksTerminal', () => {
   it('does not label a web plugin as terminal-only when the description says a CLI is not required', () => {

@@ -43,7 +43,7 @@ import { Diagnostics } from './Diagnostics.tsx'
 import { clientDiagnostics } from './self-check.ts'
 import {
   api, avatarColor, entryForDep, githubProxyInUse, githubUrl, groupSwitchState, humanOutput, installedForCatalog, isInstalled, looksTerminal, matchInstalledName, orderedCategories, pluginCategories,
-  formatCount, pageItems, pluginName, pluginScreenshotCandidates, pluginScreenshots, rankThemeScreenshots, readSession, safeScreenshots, setGithubProxy, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
+  formatCount, pageItems, pluginName, pluginScreenshotCandidates, pluginScreenshots, rankThemeScreenshots, readSession, registryForInternalMarket, safeScreenshots, setGithubProxy, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
 } from './market-data.ts'
 import type {
 ActivationInfo, ActivationState, GistExportResult, InstalledMap, InstalledRepoHints, InstalledRepoIdentities, MarketStatus, Registry, RegistryPlugin,
@@ -1538,8 +1538,9 @@ export function MarketSection(props: MarketSectionProps) {
       })
       .then((body) => {
         if (body.registry === undefined) throw new Error('the catalog response carried no data')
-        cachedRegistry = body.registry
-        setData(body.registry)
+        const registry = registryForInternalMarket(body.registry)
+        cachedRegistry = registry
+        setData(registry)
         setLoadError(null)
       })
       // Report WHY. An unreachable catalog used to be answered with a
