@@ -29,8 +29,14 @@ header a:hover{color:var(--accent)}
 .hero h1{font-size:clamp(1.9rem,5vw,3rem);font-weight:800;letter-spacing:-.02em;line-height:1.2}
 .hero h1 em{font-style:normal;color:var(--accent)}
 .hero p{font-size:1.1rem;color:var(--ink2);margin:1rem auto 0;max-width:34rem}
+/* 插件数量先输出构建时的值，再由本文件末尾的 fetch 替换成线上值。等宽数字让两者
+   宽度一致，这次替换就不会挪动它所在的句子。 */
+#count{font-variant-numeric:tabular-nums}
 .install{display:inline-flex;align-items:center;gap:.8rem;margin-top:2rem;background:var(--ink);color:#e8ecf4;border-radius:12px;padding:.9rem 1.2rem;font-family:ui-monospace,Menlo,monospace;font-size:.95rem}
-.install button{border:none;background:var(--accent);color:#fff;border-radius:8px;padding:.4rem .9rem;font-size:.8rem;cursor:pointer;font-weight:600}
+/* 为按钮可能显示的最长文案预留宽度。点击后文案变成「已复制!」，1.5 秒后变回——
+   这个变回发生在点击 500ms 之后，超出了 CLS 对交互的豁免窗口，按钮不预留宽度
+   就会撑动整个 install 盒子，被计为意外布局偏移。它是本页最大的 CLS 来源。 */
+.install button{border:none;background:var(--accent);color:#fff;border-radius:8px;padding:.4rem .9rem;font-size:.8rem;cursor:pointer;font-weight:600;min-width:5.5rem}
 .install button:hover{filter:brightness(1.1)}
 .sub{margin-top:.8rem;font-size:.85rem;color:var(--ink3)}
 .about{margin-top:3.5rem;border-top:1px solid var(--line);padding-top:2.5rem}

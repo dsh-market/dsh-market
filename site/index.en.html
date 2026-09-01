@@ -29,8 +29,17 @@ header a:hover{color:var(--accent)}
 .hero h1{font-size:clamp(1.9rem,5vw,3.1rem);font-weight:800;letter-spacing:-.02em;line-height:1.15}
 .hero h1 em{font-style:normal;color:var(--accent)}
 .hero p{font-size:1.1rem;color:var(--ink2);margin:1rem auto 0;max-width:36rem}
+/* The plugin count ships at its build-time value and is replaced with the live
+   one by the fetch at the end of this file. Tabular digits keep both the same
+   width, so that swap cannot nudge the sentence around it. */
+#count{font-variant-numeric:tabular-nums}
 .install{display:inline-flex;align-items:center;gap:.8rem;margin-top:2rem;background:var(--ink);color:#e8ecf4;border-radius:12px;padding:.9rem 1.2rem;font-family:ui-monospace,Menlo,monospace;font-size:.95rem}
-.install button{border:none;background:var(--accent);color:#fff;border-radius:8px;padding:.4rem .9rem;font-size:.8rem;cursor:pointer;font-weight:600}
+/* Width is reserved for the longest label this button ever shows. It swaps to
+   "Copied!" on click and back 1.5s later — and that revert lands outside the
+   500ms window CLS forgives after an interaction, so an unreserved button
+   resizes the install box and counts as an unexpected shift. It was the single
+   largest CLS source on this page. */
+.install button{border:none;background:var(--accent);color:#fff;border-radius:8px;padding:.4rem .9rem;font-size:.8rem;cursor:pointer;font-weight:600;min-width:5.5rem}
 .install button:hover{filter:brightness(1.1)}
 .sub{margin-top:.8rem;font-size:.85rem;color:var(--ink3)}
 .sub a{color:var(--accent);text-decoration:none}
