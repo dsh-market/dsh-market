@@ -24,6 +24,7 @@ import { activeRegion, routesFor } from './regions.ts'
 import { profileDir, readInstalled } from './profile.ts'
 import { repoOfTarget } from './sources.ts'
 import { checkUpdates } from './updates.ts'
+import { loadRegistry } from './registry.ts'
 
 const UPDATES_PACKAGE = 'dsh-plugin-updates'
 const UPDATES_FILE = 'package/updates.json'
@@ -222,7 +223,20 @@ export async function updateNotesFor(
   }
   try {
     const payload = await loadUpdateNotes()
-    const key = repoKeyOf(spec)
+    let key = repoKeyOf(spec)
+    // If the spec is an npm package name (not a GitHub URL), look up the
+    // catalog to find the corresponding GitHub repo URL.
+    if (key === null) {
+      try {
+        const registry = await loadRegistry()
+        const plugin = registry.plugins.find(p => p.npm === name)
+        if (plugin !== undefined) {
+          key = plugin.url
+        }
+      } catch {
+        // Catalog unavailable; fall through to npm times.
+      }
+    }
     const entry = key === null ? undefined : entryForRepo(payload, key)
     // Both tiers below need the installed sha for github-kind installs; it
     // comes from the update check the row was rendered from, cache-warm.

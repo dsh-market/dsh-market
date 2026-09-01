@@ -172,7 +172,13 @@ function repoFromTarget(spec: string): { repo: string; subpath: string | null } 
   // same reason profile.ts does: the proxy sits in FRONT of the real URL,
   // so anchoring the pattern would see only the proxy's own hostname.
   const tarball = /codeload\.github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/tar\.gz\/[0-9a-f]{40}/.exec(spec)
-  return tarball === null ? null : { repo: tarball[1]!, subpath: null }
+  if (tarball !== null) return { repo: tarball[1]!, subpath: null }
+  // A GitHub Release asset tarball (used by the catalog), e.g.
+  // https://github.com/owner/repo/releases/latest/download/name.tgz
+  // https://github.com/owner/repo/releases/download/v1.0.0/name.tgz
+  const releaseAsset = /github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/releases\/(?:latest\/download|download\/[^/]+)\/[^/]+\.(?:tgz|tar\.gz)/i.exec(spec)
+  if (releaseAsset !== null) return { repo: releaseAsset[1]!, subpath: null }
+  return null
 }
 
 /**
