@@ -6026,6 +6026,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				const timer = setInterval(() => {
 					fetch(api("/dsh-market/status"), { cache: "no-store" }).then((res) => res.json()).then((status) => {
 						setHostBusy(status.busy === true);
+						setDebuggerLatch(typeof status.debugger === "string" ? status.debugger : null);
 						if (status.active) {
 							setCancelling(status.cancelling === true);
 							if (status.phase !== null && status.phase !== void 0) {

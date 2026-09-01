@@ -24,7 +24,7 @@ export function setDetectedDebuggerOverride(value: 'inspector' | null | undefine
   debuggerOverride = value
 }
 
-const INSPECT_ARG_PREFIXES = ['--inspect', '--inspect-brk', '--inspect-port'] as const
+const INSPECT_ARG_PREFIXES = ['--inspect', '--inspect-brk', '--inspect-port', '--inspect-wait'] as const
 
 function tokenHasInspectFlag(token: string): boolean {
   for (const prefix of INSPECT_ARG_PREFIXES) {
@@ -102,7 +102,8 @@ export function detectedSupervisor(
  * `inspector.open()`, and SIGUSR1 attach). Secondary: inspect-family flags
  * in `execArgv` and `NODE_OPTIONS`, matched by token prefix — not a
  * `/inspect/` substring, so script paths like `.../inspect-tool.js` do not
- * false-positive.
+ * false-positive. Includes `--inspect-wait` for Node versions that expose it
+ * as a distinct flag before `inspector.url()` is populated.
  *
  * Accepted false positive (same trade as #229 not guessing pm2): a host left
  * listening on an inspector port — including `NODE_OPTIONS=--inspect` with

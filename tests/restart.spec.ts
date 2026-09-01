@@ -180,6 +180,7 @@ describe('debugger detection gates self-restart (#447)', () => {
     expect(detectedDebugger(undefined, ['--inspect=9229'], '')).toBe('inspector')
     expect(detectedDebugger(undefined, ['--inspect-brk'], '')).toBe('inspector')
     expect(detectedDebugger(undefined, ['--inspect-port=9230'], '')).toBe('inspector')
+    expect(detectedDebugger(undefined, ['--inspect-wait'], '')).toBe('inspector')
     expect(detectedDebugger(undefined, ['--debug-brk'], '')).toBe('inspector')
   })
 

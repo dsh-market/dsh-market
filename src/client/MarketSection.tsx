@@ -1684,6 +1684,7 @@ export function MarketSection(props: MarketSectionProps) {
         .then(res => res.json())
         .then(status => {
           setHostBusy(status.busy === true)
+          setDebuggerLatch(typeof status.debugger === 'string' ? status.debugger : null)
           if (status.active) {
             setCancelling(status.cancelling === true)
             if (status.phase !== null && status.phase !== undefined) {
