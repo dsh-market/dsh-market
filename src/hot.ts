@@ -319,7 +319,12 @@ export function writeMarketState(profileDir: string, state: MarketState): void {
   const notes = state.notes ?? onDisk.notes ?? {}
   const channel = state.channel ?? onDisk.channel
   const region = state.region ?? onDisk.region
-  const regionAuto = state.regionAuto ?? onDisk.regionAuto
+  // Unlike channel and region, regionAuto has an explicit clear path: a
+  // manual region choice owns this field and sets it to undefined. Preserve
+  // the disk value only when the caller omitted the property entirely.
+  const regionAuto = Object.prototype.hasOwnProperty.call(state, 'regionAuto')
+    ? state.regionAuto
+    : onDisk.regionAuto
   writeFileSync(stateFile(profileDir), JSON.stringify({
     disabled: [...state.disabled],
     groups: state.groups,

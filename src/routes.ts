@@ -204,6 +204,7 @@ export function mountMarketRoutes(
   commandRuntime?: PluginCommandRuntime,
   agentsLookup?: AgentsLookup,
 ): () => void {
+  let disposed = false
   // An ordinary profile must resolve under DSH_HOME by the same rules as the
   // DSH CLI. A host-authoritative explicit directory (DSH Desktop) does not
   // derive a path from this display/profile name.
@@ -295,6 +296,9 @@ export function mountMarketRoutes(
   // few seconds after boot.
   if (config.region === undefined) {
     void resolveRegion(undefined).then(({ region: probed }) => {
+      // A manual choice made while the probe was pending, or a replacement
+      // mount created after this one was disposed, owns the region now.
+      if (disposed || config.region !== undefined) return
       applyRegion(probed)
       regionAuto = true
       // Persisted as the decision, not re-probed each boot: a market that
@@ -3889,6 +3893,7 @@ export function mountMarketRoutes(
   ]
 
   return () => {
+    disposed = true
     configurePersistentLog(null)
     for (const dispose of disposers) dispose()
   }

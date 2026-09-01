@@ -1676,6 +1676,13 @@ export function MarketSection(props: MarketSectionProps) {
 
   useEffect(() => {
     if (busyUrl === null && updatingName === null) {
+      // `hostBusy` is sampled by the progress poll. A normal update response
+      // can settle the local operation before the next poll observes the
+      // route lock released, leaving the restart button disabled until this
+      // section remounts (#440). With no tracked install/update left, discard
+      // that stale sample; the guarded restart route still handles the small
+      // post-response lock-release window with its existing 409 retry.
+      setHostBusy(false)
       setProgressLine(null)
       setProgressPhase(null)
       setProgressCurrent(null)

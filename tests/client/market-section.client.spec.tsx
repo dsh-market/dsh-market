@@ -702,6 +702,74 @@ describe('MarketSection (jsdom)', () => {
     })
   })
 
+  it('re-enables Restart now when a completed update leaves the last status poll busy (#440)', async () => {
+    vi.useFakeTimers()
+    try {
+      let operationStarted = false
+      let updateSettled = false
+      let busyStatusObserved = false
+      let resolveUpdate!: (response: Response) => void
+      const updateResponse = new Promise<Response>((resolve) => { resolveUpdate = resolve })
+
+      vi.stubGlobal('fetch', vi.fn((url: string) => {
+        const path = String(url).split('?')[0]
+        if (path === '/dsh-market/update') {
+          operationStarted = true
+          return updateResponse
+        }
+        const payload =
+          path === '/dsh-market/registry' ? { source: 'live', registry: REGISTRY }
+          : path === '/dsh-market/installed' ? {
+              profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: [], disabled: [], groups: {}, groupOrder: [],
+            }
+          : path === '/dsh-market/status' ? (() => {
+              const busy = operationStarted && !updateSettled
+              if (busy) busyStatusObserved = true
+              return {
+                active: busy, busy, pnpm: true, boot: 'boot-1', restart: true,
+                installed: { 'dsh-loop': '^1.0.0' },
+              }
+            })()
+          : path === '/dsh-market/updates' ? {
+              updates: {
+                'dsh-loop': {
+                  kind: 'npm', version: '1.0.0', current: '1.0.0', latest: '1.2.0', updateAvailable: true,
+                },
+              },
+            }
+          : null
+        if (payload === null) return Promise.reject(new Error(`unstubbed fetch: ${String(url)}`))
+        return Promise.resolve(new Response(JSON.stringify(payload), { status: 200 }))
+      }))
+
+      render(<MarketSection {...props()} />)
+      await vi.waitFor(() => { screen.getByText('dsh-loop') })
+      fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+      await vi.waitFor(() => { screen.getByRole('button', { name: en.update }) })
+      fireEvent.click(screen.getByRole('button', { name: en.update }))
+
+      // Observe the route-level mutation lock while the request is in flight.
+      // The successful response then arrives before another status poll can
+      // publish busy=false, which is the real ordering reported in #440.
+      await vi.advanceTimersByTimeAsync(2100)
+      expect(busyStatusObserved).toBe(true)
+      updateSettled = true
+      resolveUpdate(new Response(JSON.stringify({
+        ok: true,
+        activation: {
+          'dsh-loop': { state: 'restart', hot: false, bundle: true, reasons: ['restart to apply'] },
+        },
+      }), { status: 200 }))
+
+      await vi.waitFor(() => {
+        expect(screen.getAllByText(re(en.restartBanner)).length).toBeGreaterThan(0)
+      })
+      expect((screen.getByRole('button', { name: en.restartNow }) as HTMLButtonElement).disabled).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('a stale update response arms the Update-now button (#22 flow)', async () => {
     stubFetch({
       '/dsh-market/installed': { profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: [] },

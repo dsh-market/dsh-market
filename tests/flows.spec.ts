@@ -356,24 +356,39 @@ const hot = vi.hoisted(() => ({
   groupOrder: [] as string[],
   /** Stands in for the channel line of state.json; undefined = never chosen. */
   channel: undefined as 'stable' | 'beta' | 'dev' | undefined,
+  region: undefined as 'global' | 'china' | undefined,
+  regionAuto: undefined as true | undefined,
+  notes: {} as Record<string, string>,
   failNext: false,
 }))
 vi.mock('../src/hot.ts', () => ({
+  MAX_NOTE: 200,
   cleanHotDir: () => {},
   readDisabledThemes: () => hot.disabled,
   writeDisabledThemes: (_dir: string, set: Set<string>) => { hot.disabled = new Set(set) },
   readDisabled: () => hot.disabled,
   writeDisabled: (_dir: string, set: Set<string>) => { hot.disabled = new Set(set) },
-  readMarketState: () => ({ disabled: hot.disabled, groups: hot.groups, groupOrder: hot.groupOrder, channel: hot.channel }),
+  readMarketState: () => ({
+    disabled: hot.disabled, groups: hot.groups, groupOrder: hot.groupOrder,
+    channel: hot.channel, region: hot.region, regionAuto: hot.regionAuto,
+    notes: hot.notes,
+  }),
   // Carries `channel` because the real one does. A stand-in that silently
   // drops a field cannot fail when the code under test forgets to persist
   // it — which is exactly how the channel choice reached this suite with
   // zero coverage while four route tests passed.
-  writeMarketState: (_dir: string, state: { disabled: Set<string>; groups: Record<string, string[]>; groupOrder: string[]; channel?: 'stable' | 'beta' | 'dev' }) => {
+  writeMarketState: (_dir: string, state: {
+    disabled: Set<string>; groups: Record<string, string[]>; groupOrder: string[]
+    channel?: 'stable' | 'beta' | 'dev'; region?: 'global' | 'china'; regionAuto?: true
+    notes?: Record<string, string>
+  }) => {
     hot.disabled = new Set(state.disabled)
     hot.groups = state.groups
     hot.groupOrder = state.groupOrder
     hot.channel = state.channel
+    if (Object.prototype.hasOwnProperty.call(state, 'region')) hot.region = state.region
+    if (Object.prototype.hasOwnProperty.call(state, 'regionAuto')) hot.regionAuto = state.regionAuto
+    if (state.notes !== undefined) hot.notes = state.notes
   },
   listHotMounts: () => [...hot.mounts],
   hotMount: (_ctx: unknown, _dir: string, name: string) => {
@@ -447,6 +462,22 @@ vi.mock('../src/registry.ts', async (importOriginal) => ({
   ...registryModule,
 }))
 registryModule.loadRegistry.mockImplementation(() => Promise.resolve(REGISTRY))
+
+// Most flow tests pin a region. These two hold the boot probe open so its
+// completion can be ordered deterministically against a manual choice or
+// route disposal.
+const regionProbe = vi.hoisted(() => ({
+  pending: null as Promise<{ region: 'global' | 'china'; probed: boolean }> | null,
+}))
+vi.mock('../src/region-probe.ts', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../src/region-probe.ts')>()
+  return {
+    ...original,
+    resolveRegion: (configured?: 'global' | 'china') => configured === undefined && regionProbe.pending !== null
+      ? regionProbe.pending
+      : original.resolveRegion(configured),
+  }
+})
 
 // ---------------------------------------------------------------- testbed
 import { marketVersion, mountMarketRoutes } from '../src/routes.ts'
@@ -555,6 +586,10 @@ beforeEach(() => {
   hot.groups = {}
   hot.groupOrder = []
   hot.channel = undefined
+  hot.region = undefined
+  hot.regionAuto = undefined
+  hot.notes = {}
+  regionProbe.pending = null
   hot.failNext = false
   bed = createTestbed()
 })
@@ -3600,6 +3635,42 @@ describe('self-uninstall — the market removing itself from its settings card',
 })
 
 describe('download region', () => {
+  it('does not let a late automatic probe replace a manual region choice', async () => {
+    let finishProbe!: (value: { region: 'china'; probed: true }) => void
+    regionProbe.pending = new Promise(resolve => { finishProbe = resolve })
+    bed.dispose()
+    bed = createTestbed({ region: undefined })
+
+    expect((await bed.dispatch('POST', '/dsh-market/region', { region: 'global' })).status).toBe(200)
+    finishProbe({ region: 'china', probed: true })
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect((await bed.dispatch('GET', '/dsh-market/status')).json.region).toBe('global')
+    expect(hot.region).toBe('global')
+    expect(hot.regionAuto).toBeUndefined()
+  })
+
+  it('does not let a disposed mount apply its late automatic probe', async () => {
+    let finishProbe!: (value: { region: 'china'; probed: true }) => void
+    regionProbe.pending = new Promise(resolve => { finishProbe = resolve })
+    bed.dispose()
+    const staleMount = createTestbed({ region: undefined })
+    staleMount.dispose()
+
+    bed = createTestbed({ region: 'global' })
+    expect((await bed.dispatch('POST', '/dsh-market/region', { region: 'global' })).status).toBe(200)
+    expect((await bed.dispatch('POST', '/dsh-market/note', {
+      name: 'dsh-loop', text: 'new mount owns this note',
+    })).status).toBe(200)
+    finishProbe({ region: 'china', probed: true })
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(hot.notes).toEqual({ 'dsh-loop': 'new mount owns this note' })
+    expect((await bed.dispatch('GET', '/dsh-market/status')).json.region).toBe('global')
+    expect(hot.region).toBe('global')
+    expect(hot.regionAuto).toBeUndefined()
+  })
+
   it('rejects anything but the two regions', async () => {
     expect((await bed.dispatch('POST', '/dsh-market/region', { region: 'CN' })).status).toBe(400)
     expect((await bed.dispatch('POST', '/dsh-market/region', {})).status).toBe(400)

@@ -6023,6 +6023,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			}, [data]);
 			(0, react.useEffect)(() => {
 				if (busyUrl === null && updatingName === null) {
+					setHostBusy(false);
 					setProgressLine(null);
 					setProgressPhase(null);
 					setProgressCurrent(null);
