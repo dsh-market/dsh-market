@@ -1385,6 +1385,8 @@ export function MarketSection(props: MarketSectionProps) {
   const [restartEnabled, setRestartEnabled] = useState(false)
   /** Supervisor the host detected around itself, when it named one (#229). */
   const [supervisor, setSupervisor] = useState<string | null>(null)
+  /** Debugger latch when one-click restart must not kill the host (#447). */
+  const [debuggerLatch, setDebuggerLatch] = useState<string | null>(null)
   const [restarting, setRestarting] = useState(false)
   const [showTop, setShowTop] = useState(false)
   const [backupBusy, setBackupBusy] = useState(false)
@@ -1566,6 +1568,7 @@ export function MarketSection(props: MarketSectionProps) {
         }
         setRestartEnabled(status.restart === true)
         setSupervisor(typeof status.supervisor === 'string' ? status.supervisor : null)
+        setDebuggerLatch(typeof status.debugger === 'string' ? status.debugger : null)
         if (typeof status.version === 'string' && status.version !== '') setVersion(status.version)
       })
       .catch(() => {})
@@ -3402,12 +3405,18 @@ export function MarketSection(props: MarketSectionProps) {
             <IconRefreshOutline14 size={14} className={css.bannerIcon} />
             <span className={css.grow}><b>{pendingRestart}</b> {t('restartBanner')}</span>
             <Tooltip
-              label={supervisor === null ? t('restartHint') : t('restartHintSupervised').replace('{0}', supervisor)}
+              label={
+                debuggerLatch !== null
+                  ? t('restartHintDebugged')
+                  : supervisor === null
+                    ? t('restartHint')
+                    : t('restartHintSupervised').replace('{0}', supervisor)
+              }
               side="bottom"
             >
               <span className={css.bannerHint}><IconQuestionOutline14 size={14} /></span>
             </Tooltip>
-            {restartEnabled && (
+            {restartEnabled && debuggerLatch === null && (
               <Button
                 variant="primary"
                 size="sm"
