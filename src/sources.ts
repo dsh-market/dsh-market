@@ -201,6 +201,27 @@ export function repoOfTarget(spec: string): string | null {
 }
 
 /**
+ * The branch or tag a GitHub spec selects, or null for the default branch.
+ *
+ * Update detection has to ask about the same ref the install used, or it
+ * compares the installed commit against a line the user never chose (#446).
+ * A commit pin yields null: the answer for a pinned install is the default
+ * branch, which is what "is there something newer" means there.
+ */
+export function githubRefOfTarget(spec: string): string | null {
+  if (!spec.startsWith('github:')) return null
+  const fragmentAt = spec.indexOf('#')
+  if (fragmentAt === -1) return null
+  for (const selector of spec.slice(fragmentAt + 1).split('&')) {
+    if (selector === '' || selector.startsWith('path:/')) continue
+    if (/^[0-9a-f]{40}$/i.test(selector)) continue
+    if (selector.startsWith('semver:')) continue
+    return selector
+  }
+  return null
+}
+
+/**
  * An immutable GitHub commit already carried by an install target.
  *
  * Build-script approval on pnpm below 11.21 needs the exact commit-pinned

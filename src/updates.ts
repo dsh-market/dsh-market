@@ -9,7 +9,7 @@ import { headCommit } from './accelerate.ts'
 import { marketFetch } from './net.ts'
 import { activeRegion, routesFor } from './regions.ts'
 import { profileDir, readInstalled, readInstalledVersion, readLockCommits } from './profile.ts'
-import { githubCommitOfTarget, repoOfTarget } from './sources.ts'
+import { githubCommitOfTarget, githubRefOfTarget, repoOfTarget } from './sources.ts'
 
 export interface UpdateStatus {
   kind: 'github' | 'npm' | 'linked'
@@ -310,7 +310,12 @@ export async function checkUpdates(
         // stops reporting updates (#349). The ref endpoint git itself uses
         // has no such quota; this is the same call `acceleratedTarget`
         // already makes to resolve a commit for the China region.
-        const latest = await headCommit(repo, routesFor(activeRegion()).githubProxy)
+        // Ask about the ref the install actually names. Answering with the
+        // default branch for a `#branch` install compares two lines that
+        // never converge, so the row reported an update forever (#446).
+        const latest = await headCommit(
+          repo, routesFor(activeRegion()).githubProxy, undefined, githubRefOfTarget(spec) ?? undefined,
+        )
         result[name] = {
           kind: 'github', version, current, latest,
           updateAvailable: current !== null && latest !== null && current !== latest,

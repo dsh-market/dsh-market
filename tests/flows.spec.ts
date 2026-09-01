@@ -1483,18 +1483,50 @@ describe('update flow — no npm publishing required', () => {
     expect(fake.calls.at(-1)).toContain(target)
     expect(installedSpec('plug-a')).toBe(target)
 
-    // A ref and path may share pnpm's fragment. Updating still discards the
-    // ref (so HEAD is re-resolved) but must not discard the package subpath.
+    // A ref and path may share pnpm's fragment. A COMMIT PIN is what an
+    // update discards, so the repository is resolved again rather than the
+    // pin reinstalled — but the package subpath must survive.
     const manifestPath = join(profileDir('web'), 'package.json')
     const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
-    manifest.dependencies['plug-a'] = 'github:m/mono#release-1&path:/packages/plug-a'
+    const pin = 'c'.repeat(40)
+    manifest.dependencies['plug-a'] = `github:m/mono#${pin}&path:/packages/plug-a`
     writeFileSync(manifestPath, JSON.stringify(manifest))
 
     const refreshed = await bed.dispatch('POST', '/dsh-market/update', { name: 'plug-a' })
     expect(refreshed.status).toBe(200)
     expect(fake.calls.at(-1)).toContain(target)
-    expect(fake.calls.at(-1)).not.toContain('release-1')
+    expect(fake.calls.at(-1)).not.toContain(pin)
     expect(installedSpec('plug-a')).toBe(target)
+  })
+
+  it('keeps the branch an update was installed from, alongside the subpath (#446)', async () => {
+    // #281 dropped every revision selector, which was right for a pin and
+    // wrong for a branch: `github:owner/repo#publish` names the line of
+    // development the user chose, and discarding it moved them to the
+    // default branch under the word "update" — a source change, not an
+    // update. The pin case above still drops.
+    const target = 'github:m/mono#publish&path:/packages/plug-b'
+    fake.repos[target] = {
+      name: 'plug-b', manifest: { dsh: {}, main: 'index.js' }, artifacts: ['index.js'],
+    }
+    fake.repos['github:m/mono#path:/packages/plug-b'] = {
+      name: 'plug-b', manifest: { dsh: {}, main: 'index.js' }, artifacts: ['index.js'],
+    }
+    const installed = await bed.dispatch('POST', '/dsh-market/install', {
+      url: 'https://github.com/m/mono/tree/main/packages/plug-b',
+    })
+    expect(installed.status).toBe(200)
+
+    const manifestPath = join(profileDir('web'), 'package.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    manifest.dependencies['plug-b'] = target
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+
+    const refreshed = await bed.dispatch('POST', '/dsh-market/update', { name: 'plug-b' })
+    expect(refreshed.status).toBe(200)
+    // The whole target, not a substring: fake.calls entries are argv arrays,
+    // so an exact element is what proves both selectors survived together.
+    expect(fake.calls.at(-1)).toContain(target)
   })
 
   it('does not offer a rollback that the real CLI cannot execute for a github subpath', async () => {

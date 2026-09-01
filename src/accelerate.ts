@@ -72,11 +72,20 @@ const RESOLVE_TIMEOUT_MS = 6000
  * `<sha> HEAD\0<capabilities>`. Read with a pattern rather than a parser:
  * one 40-character hex string followed by `HEAD` is unambiguous in this
  * payload, and a length-prefix reader would be more code to get wrong.
+ *
+ * The same advertisement lists every branch and tag, which is what `ref`
+ * uses. A plugin installed from `github:owner/repo#publish` is not asking
+ * about the default branch at all, and answering with it made the market
+ * report an update forever (#446) — the two SHAs simply never match. Both
+ * namespaces are searched because pnpm accepts a tag there too, branches
+ * first since that is what the reports are about.
+ * @param ref - branch or tag to resolve, or undefined for the default branch.
  */
 export async function headCommit(
   repo: string,
   proxy: string | null,
   signal?: AbortSignal,
+  ref?: string,
 ): Promise<string | null> {
   const base = `https://github.com/${repo}/info/refs?service=git-upload-pack`
   try {
@@ -85,8 +94,20 @@ export async function headCommit(
       headers: { 'user-agent': 'git/2.40.0' },
     })
     if (!res.ok) return null
-    const found = /([0-9a-f]{40}) HEAD/.exec(await res.text())
-    return found === null ? null : found[1]!
+    const body = await res.text()
+    if (ref === undefined) {
+      const found = /([0-9a-f]{40}) HEAD/.exec(body)
+      return found === null ? null : found[1]!
+    }
+    // Anchored to the ref's full name so `publish` cannot match a branch
+    // called `publish-old`, and escaped because a ref may contain regex
+    // metacharacters (`.` is legal in a branch name).
+    const quoted = ref.replace(/[.*+?^${}()|[\]\\]/gu, String.raw`\$&`)
+    for (const namespace of ['heads', 'tags']) {
+      const found = new RegExp(String.raw`([0-9a-f]{40}) refs/${namespace}/${quoted}(?![^\s])`, 'u').exec(body)
+      if (found !== null) return found[1]!
+    }
+    return null
   } catch {
     return null
   }

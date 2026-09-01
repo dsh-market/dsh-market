@@ -5,6 +5,7 @@
 
 import { describe, expect, it } from 'vitest'
 import {
+  githubRefOfTarget,
   findCatalogEntryForLocal, findInstalledAlias, gitAllowBuildsKey, githubRemoteIdentities, githubRepoIdentities, githubRepoIdentity, githubTargetAtCommit,
   installTargetFor, isLocalSpec, parseGitHubRemote, parseGitHubRepository, parseSourceUrl, repoOf, restoreBlockedByWorkspace, restoreTargetForLocal, workspaceProtocolDeps,
 } from '../src/sources.ts'
@@ -131,6 +132,31 @@ describe('gitAllowBuildsKey (#68/#69)', () => {
     expect(gitAllowBuildsKey('dsh-loop', '^1.2.0')).toBeNull()
     expect(gitAllowBuildsKey('dsh-loop', 'link:../dev')).toBeNull()
     expect(gitAllowBuildsKey('dsh-loop', '')).toBeNull()
+  })
+})
+
+describe('githubRefOfTarget (#446)', () => {
+  it('reads the branch or tag an install actually names', () => {
+    expect(githubRefOfTarget('github:o/r#publish')).toBe('publish')
+    expect(githubRefOfTarget('github:o/r#v2.1.0')).toBe('v2.1.0')
+    // pnpm allows a ref and a subpath in one fragment.
+    expect(githubRefOfTarget('github:o/r#publish&path:/packages/p')).toBe('publish')
+    expect(githubRefOfTarget('github:o/r#path:/packages/p&publish')).toBe('publish')
+  })
+
+  it('answers null where the default branch is the right question', () => {
+    expect(githubRefOfTarget('github:o/r')).toBeNull()
+    expect(githubRefOfTarget('github:o/r#path:/packages/p')).toBeNull()
+    // A pin: "is there something newer" means the default branch, and
+    // resolving the pin as a ref would compare a commit against itself.
+    expect(githubRefOfTarget(`github:o/r#${'a'.repeat(40)}`)).toBeNull()
+    // A semver range selects a release line the ref advertisement cannot
+    // answer; treating it as a branch name would look up a ref that is not
+    // there and report no update at all.
+    expect(githubRefOfTarget('github:o/r#semver:^1.2.0')).toBeNull()
+    // Not a github spec.
+    expect(githubRefOfTarget('dsh-loop@1.0.0')).toBeNull()
+    expect(githubRefOfTarget('https://example.test/x.tgz')).toBeNull()
   })
 })
 

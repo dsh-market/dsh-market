@@ -138,18 +138,42 @@ export function marketVersion(): string {
 const SELF_NAMES = new Set(['dshmarket', 'dsh-market'])
 
 /**
- * Rebuild a GitHub target for an update: revision selectors are deliberately
- * dropped so pnpm resolves the repository again, while one valid `path:`
- * selector is kept because it identifies the package inside a monorepo.
- * pnpm permits both in one fragment (`#main&path:/packages/plugin`).
+ * Rebuild a GitHub target for an update.
+ *
+ * A commit pin is dropped so pnpm resolves the repository again — that is the
+ * whole point of asking for an update. One valid `path:` selector is kept
+ * because it identifies the package inside a monorepo; pnpm permits both in
+ * one fragment (`#main&path:/packages/plugin`).
+ *
+ * A BRANCH or tag is kept, which used to be the same case as a commit and
+ * was not (#446 by @Dave-12138). `github:owner/repo#publish` names the line
+ * of development the user installed from; dropping it silently moved them to
+ * the default branch on the next update — a source change wearing the word
+ * "update". A 40-character hex selector is a pin worth discarding, and
+ * anything else is a choice worth preserving. A short hex string stays too:
+ * it is indistinguishable from a branch named `abc1234`, and keeping a pin
+ * by mistake only means the update is a no-op, while dropping a branch by
+ * mistake reinstalls different code.
  */
 function githubUpdateTarget(spec: string): string {
   const fragmentAt = spec.indexOf('#')
   if (fragmentAt === -1) return spec
   const repo = spec.slice(0, fragmentAt)
   let subpath: string | null = null
+  let ref: string | null = null
   for (const selector of spec.slice(fragmentAt + 1).split('&')) {
-    if (!selector.startsWith('path:/')) continue
+    if (!selector.startsWith('path:/')) {
+      // `semver:<range>` selects a release line, so it is preserved for the
+      // same reason a branch is.
+      const isCommitPin = /^[0-9a-f]{40}$/i.test(selector)
+      if (selector !== '' && !isCommitPin) {
+        // Two refs in one fragment is not a shape pnpm produces; refuse to
+        // guess which one the user meant and fall back to the bare repo.
+        if (ref !== null) return repo
+        ref = selector
+      }
+      continue
+    }
     const candidate = selector.slice('path:/'.length)
     const valid = /^[A-Za-z0-9_./-]+$/.test(candidate)
       && !candidate.split('/').some(segment => segment === '' || segment === '.' || segment === '..')
@@ -158,8 +182,10 @@ function githubUpdateTarget(spec: string): string {
     if (subpath !== null || !valid) return repo
     subpath = candidate
   }
-  return subpath === null ? repo : `${repo}#path:/${subpath}`
+  const selectors = [...(ref === null ? [] : [ref]), ...(subpath === null ? [] : [`path:/${subpath}`])]
+  return selectors.length === 0 ? repo : `${repo}#${selectors.join('&')}`
 }
+
 
 /**
  * Whether an installed package declares a client part (`dsh.client`). Its UI
