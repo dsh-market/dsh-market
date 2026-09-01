@@ -45,7 +45,7 @@ import { updateNotesFor } from './changelog.ts'
 import { checkUpdates, compareVersions, fetchNpmLatest, invalidateUpdates, isUpgrade, latestPublishedRecently, setUpdateRegistry, versionOnChannel } from './updates.ts'
 import { createThemeManager, type LoaderEntry } from './themes.ts'
 import { readJsonBody, sameOrigin, sendJson } from './http.ts'
-import { detectedSupervisor, restartAllowed, scheduleRestart, servingPort, trustedRestartRequest, trustedDownloadRequest } from './restart.ts'
+import { detectedDebugger, detectedSupervisor, restartAllowed, scheduleRestart, servingPort, trustedRestartRequest, trustedDownloadRequest } from './restart.ts'
 import { activationAfterReplace, brokenClientBundles, checkClientBundle, hasHostHalf, newlyBrokenBundles, verifyActivation } from './verify.ts'
 import {
   carrierDisableIds, disableRow, enableRow, findUserPatchPath, isProtectedModule, packagePatchFlags,
@@ -1107,6 +1107,7 @@ export function mountMarketRoutes(
             supported: canRestart,
             managedBy: canRestart ? 'market' : config.profileDirectory === undefined ? 'operator' : 'desktop-host',
             supervisor: detectedSupervisor(),
+            debugger: detectedDebugger(),
           },
           operationRetention: 'current-process',
           operationLimit: MAX_UPDATE_OPERATIONS_V1,
@@ -2178,6 +2179,7 @@ export function mountMarketRoutes(
           // Named so the UI can say WHY the button is gone. A blank
           // "no restart button" is the state #229 reported as broken.
           supervisor: detectedSupervisor(),
+          debugger: detectedDebugger(),
           selfManaged: installed.dshmarket !== undefined || installed['dsh-market'] !== undefined,
           installed,
         })
@@ -3140,6 +3142,10 @@ export function mountMarketRoutes(
         // One-click restart contributed in #14 by @ysyyhhh.
         if (!restartAllowed(config)) {
           sendJson(response, 403, { error: 'self-restart is disabled for this host' })
+          return
+        }
+        if (detectedDebugger() !== null) {
+          sendJson(response, 403, { error: 'self-restart is disabled while the host is under a debugger' })
           return
         }
         if (!trustedRestartRequest(request)) {

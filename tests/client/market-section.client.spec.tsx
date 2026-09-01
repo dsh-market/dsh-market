@@ -2731,6 +2731,28 @@ describe('standing restart notice for host-reported pending plugins', () => {
     await screen.findByText('dsh-loop')
     expect(screen.queryAllByText(re(en.restartBanner)).length).toBe(0)
   })
+
+  it('shows the restart banner but hides the button while the host is debugged (#447)', async () => {
+    stubWithActivation('boot-1')
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      const path = String(url).split('?')[0]
+      const installed = { 'dsh-loop': '^1.0.0' }
+      const payload =
+        path === '/dsh-market/registry' ? { source: 'live', registry: REGISTRY }
+        : path === '/dsh-market/installed' ? {
+            profile: 'web', installed, live: [],
+            activation: { 'dsh-loop': { state: 'restart', reasons: ['in the bundle layer'], bundle: true, hot: false } },
+          }
+        : path === '/dsh-market/status' ? { active: false, busy: false, pnpm: true, boot: 'boot-1', restart: true, debugger: 'inspector', installed }
+        : path === '/dsh-market/updates' ? { updates: {} }
+        : null
+      if (payload === null) return Promise.reject(new Error(`unstubbed fetch: ${String(url)}`))
+      return Promise.resolve(new Response(JSON.stringify(payload), { status: 200 }))
+    }))
+    render(<MarketSection {...props()} />)
+    await waitFor(() => { expect(screen.getAllByText(re(en.restartBanner)).length).toBeGreaterThan(0) })
+    expect(screen.queryByRole('button', { name: en.restartNow })).toBeNull()
+  })
 })
 
 describe('boot-scoped update reminder dismissals (#419)', () => {

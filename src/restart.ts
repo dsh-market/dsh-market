@@ -10,10 +10,37 @@
  */
 
 import { spawn } from 'node:child_process'
+import inspector from 'node:inspector'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { IncomingMessage } from 'node:http'
 import { dshArgv, nodeExecutable } from './dsh-cli.ts'
+
+/** Vitest / flows can pin detection without opening a real inspector port. */
+let debuggerOverride: 'inspector' | null | undefined
+
+/** @internal test hook — production callers use detectedDebugger() only. */
+export function setDetectedDebuggerOverride(value: 'inspector' | null | undefined): void {
+  debuggerOverride = value
+}
+
+const INSPECT_ARG_PREFIXES = ['--inspect', '--inspect-brk', '--inspect-port', '--inspect-wait'] as const
+
+function tokenHasInspectFlag(token: string): boolean {
+  for (const prefix of INSPECT_ARG_PREFIXES) {
+    if (token === prefix || token.startsWith(`${prefix}=`)) return true
+  }
+  if (token === '--debug-brk' || token.startsWith('--debug-brk=')) return true
+  if (token === '--debug' || token.startsWith('--debug=')) return true
+  return false
+}
+
+function argvHasInspectFlag(tokens: readonly string[]): boolean {
+  for (const token of tokens) {
+    if (tokenHasInspectFlag(token)) return true
+  }
+  return false
+}
 
 /**
  * The process supervisor running this host, when one can be identified —
@@ -54,6 +81,44 @@ export function detectedSupervisor(
 ): string | null {
   const set = (name: string): boolean => (env[name] ?? '') !== ''
   if ((set('INVOCATION_ID') || set('JOURNAL_STREAM')) && ppid === 1) return 'systemd'
+  return null
+}
+
+/**
+ * Whether this host process is under a debugger, when one can be identified —
+ * `'inspector'` or `null`.
+ *
+ * Parallel to `detectedSupervisor()` (#229): a runtime latch for the restart
+ * route and status poll, NOT an entry in `restartAllowed()`. Folding it into
+ * `restartAllowed()` would write `allowRestart: false` through the settings
+ * page while a debug session is open, and the switch would stay off after
+ * the debugger detaches (#447).
+ *
+ * An explicit `allowRestart: true` does NOT override this latch either —
+ * unlike systemd, there is no documented deployment shape where killing a
+ * debug-attached host from the market UI is the right answer.
+ *
+ * Primary signal: `inspector.url()` is set (covers `--inspect` at boot,
+ * `inspector.open()`, and SIGUSR1 attach). Secondary: inspect-family flags
+ * in `execArgv` and `NODE_OPTIONS`, matched by token prefix — not a
+ * `/inspect/` substring, so script paths like `.../inspect-tool.js` do not
+ * false-positive. Includes `--inspect-wait` for Node versions that expose it
+ * as a distinct flag before `inspector.url()` is populated.
+ *
+ * Accepted false positive (same trade as #229 not guessing pm2): a host left
+ * listening on an inspector port — including `NODE_OPTIONS=--inspect` with
+ * nobody attached — is treated as debug-owned and gets no one-click restart.
+ */
+export function detectedDebugger(
+  inspectorUrl: string | undefined = inspector.url(),
+  execArgv: readonly string[] = process.execArgv,
+  nodeOptions: string = process.env.NODE_OPTIONS ?? '',
+): 'inspector' | null {
+  if (debuggerOverride !== undefined) return debuggerOverride
+  if (inspectorUrl !== undefined && inspectorUrl !== '') return 'inspector'
+  if (argvHasInspectFlag(execArgv)) return 'inspector'
+  const options = nodeOptions.trim()
+  if (options !== '' && argvHasInspectFlag(options.split(/\s+/u))) return 'inspector'
   return null
 }
 

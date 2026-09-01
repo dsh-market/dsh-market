@@ -409,10 +409,13 @@ vi.mock('../src/hot.ts', () => ({
 
 // ---------------------------------------------------------------- fake restart scheduler
 const restartCalls = vi.hoisted(() => ({ count: 0 }))
+const debuggerLatch = vi.hoisted(() => ({ value: undefined as 'inspector' | null | undefined }))
 vi.mock('../src/restart.ts', async (importOriginal) => {
   const original = await importOriginal<typeof import('../src/restart.ts')>()
   return {
     ...original,
+    detectedDebugger: (...args: Parameters<typeof original.detectedDebugger>) =>
+      debuggerLatch.value !== undefined ? debuggerLatch.value : original.detectedDebugger(...args),
     // The real one SIGTERMs the process — fatal inside a test worker.
     scheduleRestart: () => {
       restartCalls.count += 1
@@ -577,6 +580,7 @@ beforeEach(() => {
   fake.running = false
   fake.calls = []
   restartCalls.count = 0
+  debuggerLatch.value = undefined
   hot.mounts = []
   hot.disabled = new Set()
   hot.groups = {}
@@ -3208,6 +3212,24 @@ describe('one-click restart guards (#14)', () => {
     bed.dispose()
     bed = createTestbed({ allowRestart: false })
     expect((await bed.dispatch('GET', '/dsh-market/status')).json.restart).toBe(false)
+    expect((await bed.dispatch('POST', '/dsh-market/restart', {})).status).toBe(403)
+    expect(restartCalls.count).toBe(0)
+  })
+
+  it('refuses while the host is under a debugger (#447)', async () => {
+    debuggerLatch.value = 'inspector'
+    const status = await bed.dispatch('GET', '/dsh-market/status')
+    expect(status.json.restart).toBe(true)
+    expect(status.json.debugger).toBe('inspector')
+    expect((await bed.dispatch('POST', '/dsh-market/restart', {})).status).toBe(403)
+    expect(restartCalls.count).toBe(0)
+  })
+
+  it('allowRestart: true does not override the debugger latch (#447)', async () => {
+    bed.dispose()
+    bed = createTestbed({ allowRestart: true })
+    debuggerLatch.value = 'inspector'
+    expect((await bed.dispatch('GET', '/dsh-market/status')).json.restart).toBe(true)
     expect((await bed.dispatch('POST', '/dsh-market/restart', {})).status).toBe(403)
     expect(restartCalls.count).toBe(0)
   })

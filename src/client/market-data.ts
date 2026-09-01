@@ -162,6 +162,12 @@ export interface MarketStatus {
    * button is missing instead of just omitting it (#229).
    */
   supervisor?: string | null
+  /**
+   * Debugger latch (#447): `'inspector'` when the host is under a debugger,
+   * or null/absent otherwise. Kept separate from `supervisor` and from
+   * `restart` so `allowRestart` settings are not conflated with debug state.
+   */
+  debugger?: string | null
 }
 
 /** Post-install activation state (P0-2), per installed package. */
