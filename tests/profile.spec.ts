@@ -203,6 +203,56 @@ describe('readInstalledRepoEvidence (#141)', () => {
       rmSync(target, { recursive: true, force: true })
     }
   })
+
+  it('reads repo identity from URL tarball sibling metadata (China-region codeload mirror)', () => {
+    const cacheDir = mkdtempSync(join(tmpdir(), 'dshm-urlcache-'))
+    try {
+      const tarballPath = join(cacheDir, 'url-0123456789abcdef0123456789abcdef.tar.gz')
+      const metaPath = join(cacheDir, 'url-0123456789abcdef0123456789abcdef.json')
+      writeFileSync(tarballPath, '')
+      writeFileSync(metaPath, JSON.stringify({
+        url: 'https://gh-proxy.com/https://codeload.github.com/Owner/Repo/tar.gz/0123456789abcdef0123456789abcdef01234567',
+        repo: 'Owner/Repo',
+        sha: '0123456789abcdef0123456789abcdef01234567',
+      }))
+      writeProfile({ dependencies: { 'mirror-plugin': `file:${tarballPath}` } })
+      expect(readInstalledRepoIdentities('web', 'mirror-plugin', `file:${tarballPath}`))
+        .toEqual(['owner/repo'])
+      expect(readInstalledRepoEvidence('web', 'mirror-plugin', `file:${tarballPath}`))
+        .toEqual({ identities: ['owner/repo'], hints: [] })
+    } finally {
+      rmSync(cacheDir, { recursive: true, force: true })
+    }
+  })
+
+  it('falls back to the metadata URL when the repo field is absent', () => {
+    const cacheDir = mkdtempSync(join(tmpdir(), 'dshm-urlcache2-'))
+    try {
+      const tarballPath = join(cacheDir, 'url-abcdef0123456789abcdef0123456789.tar.gz')
+      const metaPath = join(cacheDir, 'url-abcdef0123456789abcdef0123456789.json')
+      writeFileSync(tarballPath, '')
+      writeFileSync(metaPath, JSON.stringify({
+        url: 'https://codeload.github.com/Owner2/Repo2/tar.gz/abcdef0123456789abcdef0123456789abcdef01',
+      }))
+      writeProfile({ dependencies: { 'mirror-plugin2': `file:${tarballPath}` } })
+      expect(readInstalledRepoIdentities('web', 'mirror-plugin2', `file:${tarballPath}`))
+        .toEqual(['owner2/repo2'])
+    } finally {
+      rmSync(cacheDir, { recursive: true, force: true })
+    }
+  })
+
+  it('returns empty identities when the URL tarball metadata file is missing or unparseable', () => {
+    const cacheDir = mkdtempSync(join(tmpdir(), 'dshm-urlcache3-'))
+    try {
+      const tarballPath = join(cacheDir, 'url-deadbeefdeadbeefdeadbeefdeadbeef.tar.gz')
+      writeFileSync(tarballPath, '')
+      writeProfile({ dependencies: { 'mirror-plugin3': `file:${tarballPath}` } })
+      expect(readInstalledRepoIdentities('web', 'mirror-plugin3', `file:${tarballPath}`)).toEqual([])
+    } finally {
+      rmSync(cacheDir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('readLockCommits', () => {

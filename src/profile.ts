@@ -1,5 +1,5 @@
-/**
- * Profile filesystem reads — everything the market learns from a dsh
+﻿/**
+ * Profile filesystem reads 鈥?everything the market learns from a dsh
  * profile directory (manifest, lockfile, installed package trees). Pure
  * functions of the directory contents; no processes, no network.
  */
@@ -8,7 +8,8 @@ import { existsSync, readdirSync, readFileSync, realpathSync, renameSync, statSy
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { resolveDshHome } from './home-paths.ts'
-import { githubRemoteIdentities, githubRepoIdentities } from './sources.ts'
+import { logEvent } from './log.ts'
+import { githubRemoteIdentities, githubRepoIdentities, parseGitHubRemote } from './sources.ts'
 
 /**
  * Whether a profile name follows DSH's own directory-name contract.
@@ -40,7 +41,7 @@ export function profileDir(profile: string, explicitDir?: string): string {
 }
 
 /**
- * The in-box bundles dsh's profile templates install themselves — the ONLY
+ * The in-box bundles dsh's profile templates install themselves 鈥?the ONLY
  * names the market hides from the installed list. Community plugins may
  * legitimately publish under the official scope (#28), so a whole-scope
  * filter would make them invisible and fail install validation.
@@ -69,7 +70,7 @@ export function readInstalled(profile: string, explicitDir?: string): Record<str
 }
 
 /**
- * RAW dependency map of the profile manifest — including the in-box bundles
+ * RAW dependency map of the profile manifest 鈥?including the in-box bundles
  * readInstalled() filters out. This is the rollback snapshot (#65): restoring
  * a filtered view would delete @deepseek-ai/dsh-base and friends.
  */
@@ -201,10 +202,10 @@ export function restoreProfileManifest(
 }
 
 /**
- * Remove a package from BOTH manifest lists — dependencies and
+ * Remove a package from BOTH manifest lists 鈥?dependencies and
  * dsh.profile.bundles. The uninstall counterpart of restoreProfileManifest:
  * pnpm can fail a remove after deleting node_modules but before saving
- * package.json (the #65 write-order's mirror image — a file locked mid-
+ * package.json (the #65 write-order's mirror image 鈥?a file locked mid-
  * unlink aborts the run), leaving the manifest pointing at a package that
  * no longer exists on disk. The next boot then fails to activate the ghost
  * dependency. When disk truth says the package is gone, this finishes the
@@ -394,6 +395,28 @@ export function readInstalledRepoEvidence(
   explicitDir?: string,
 ): InstalledRepoEvidence {
   if (!PACKAGE_NAME_RE.test(name) || !/^(?:link|file):/i.test(spec)) return { identities: [], hints: [] }
+  // URL tarball installs (China-region codeload mirrors) land as file: specs
+  // pointing at bundled-plugins/url-<sha256-prefix>.tar.gz. The sibling
+  // url-<sha256-prefix>.json records the original repo and URL 鈥?read it so
+  // mirror-installed plugins report their GitHub identity and show as
+  // installed. Without this they have no repository field and no Git checkout,
+  // so the installed endpoint returns empty identities and the catalog cannot
+  // match them to a registry entry.
+  const tarballMeta = readUrlTarballMeta(spec)
+  if (tarballMeta !== null) {
+    if (typeof tarballMeta.repo === 'string' && tarballMeta.repo !== '') {
+      const identities = githubRepoIdentities(`https://github.com/${tarballMeta.repo}`, null)
+      if (identities.length > 0) return { identities, hints: [] }
+    }
+    if (typeof tarballMeta.url === 'string' && tarballMeta.url !== '') {
+      // Use parseGitHubRemote to handle codeload.github.com and proxy-prefixed URLs
+      const parsed = parseGitHubRemote(tarballMeta.url)
+      if (parsed !== null) {
+        const identities = githubRepoIdentities(`https://github.com/${parsed.repo}`, null)
+        if (identities.length > 0) return { identities, hints: [] }
+      }
+    }
+  }
   const root = profileDir(profile, explicitDir)
   const sourceDir = localSpecDirectory(root, spec)
   const installedDir = installedPackageDirectory(root, name)
@@ -420,6 +443,33 @@ export function readInstalledRepoEvidence(
   return { identities: [], hints: [] }
 }
 
+/**
+ * Read the sibling metadata file for a URL tarball cache entry. The DSH CLI
+ * writes url-<sha256-prefix>.json alongside every downloaded tarball,
+ * recording the original URL, repo, and SHA. This is what lets the
+ * installed-status resolver map a file: spec back to its GitHub repository
+ * when the package itself declares no repository field.
+ */
+function readUrlTarballMeta(spec: string): { url?: string; repo?: string; sha?: string } | null {
+  const match = /^(?:file):(.+)$/i.exec(spec)
+  if (match === null) return null
+  let tarballPath = match[1]!
+  try { tarballPath = decodeURIComponent(tarballPath) } catch { /* keep the literal path */ }
+  if (!/url-[0-9a-f]{8,64}\.(?:tar\.gz|tgz)$/.test(tarballPath)) return null
+  const metaPath = tarballPath.replace(/\.(?:tar\.gz|tgz)$/, '.json')
+  try {
+    if (!existsSync(metaPath)) {
+      logEvent('warn', 'url-tarball-sidecar-missing', `no sidecar json for ${tarballPath}`)
+      return null
+    }
+    const meta = JSON.parse(readFileSync(metaPath, 'utf8')) as Record<string, unknown>
+    return typeof meta === 'object' && meta !== null ? meta as { url?: string; repo?: string; sha?: string } : null
+  } catch (err) {
+    logEvent('warn', 'url-tarball-sidecar-parse-error', `failed to parse ${metaPath}: ${err}`)
+    return null
+  }
+}
+
 /** Pinned commit per `owner/repo` from the profile lockfile's codeload tarball URLs. */
 export function readLockCommits(profile: string, explicitDir?: string): Map<string, string> {
   const commits = new Map<string, string>()
@@ -428,7 +478,7 @@ export function readLockCommits(profile: string, explicitDir?: string): Map<stri
     for (const m of lock.matchAll(/codeload\.github\.com\/([^/\s]+\/[^/\s]+)\/tar\.gz\/([0-9a-f]{40})/g)) {
       commits.set(m[1].toLowerCase(), m[2])
     }
-  } catch { /* no lockfile — no git installs to report */ }
+  } catch { /* no lockfile 鈥?no git installs to report */ }
   return commits
 }
 
@@ -443,7 +493,7 @@ export function hasDshManifest(dir: string): boolean {
 }
 
 /**
- * True when the package's declared entry artifact actually exists — github
+ * True when the package's declared entry artifact actually exists 鈥?github
  * source checkouts of build-required plugins ship no lib/, and promoting one
  * into the bundle layer bricks the next boot (ERR_MODULE_NOT_FOUND kills the
  * whole profile, #18).
@@ -471,7 +521,7 @@ export function entryArtifactExists(dir: string): boolean {
 }
 
 /**
- * Package names a bundle patch mounts — the `name:` rows of the package's
+ * Package names a bundle patch mounts 鈥?the `name:` rows of the package's
  * declared `dsh.bundle.patch` file. Line-wise on purpose: the strict
  * hot-mount parser rejects config/expression rows, but for "what does this
  * bundle bring in" any name row counts.
@@ -490,19 +540,19 @@ export function bundlePatchEntryIds(dir: string): string[] {
 }
 
 /**
- * Loader entry ids the patch INSERTS — the rows the package owns, as opposed
+ * Loader entry ids the patch INSERTS 鈥?the rows the package owns, as opposed
  * to rows of OTHER plugins it merely configures (#147).
  *
  * A bundle patch has two kinds of entry:
  *
- *     - insert:                     ← rows this package brings into the tree
+ *     - insert:                     鈫?rows this package brings into the tree
  *         - id: vision-router
  *           name: dsh-vision-router
- *     - id: attachment-local        ← someone else's row, only reconfigured
- *       config: { maxImageBytes: … }
+ *     - id: attachment-local        鈫?someone else's row, only reconfigured
+ *       config: { maxImageBytes: 鈥?}
  *
  * Treating both as "this package's rows" made disabling one plugin write
- * `disabled: true` onto the official rows it tuned — killing attachments and
+ * `disabled: true` onto the official rows it tuned 鈥?killing attachments and
  * the DeepSeek model with it.
  */
 export function bundlePatchInsertedIds(dir: string): string[] {
@@ -518,7 +568,7 @@ export function bundlePatchInsertedIds(dir: string): string[] {
 /**
  * Rows of one patch file. Exported because a package may ship its patch at
  * the conventional path INSTEAD of declaring `dsh.bundle.patch`, and the
- * patch layer has to read that one by the same rules — a second hand-rolled
+ * patch layer has to read that one by the same rules 鈥?a second hand-rolled
  * scan drifted from this one and re-introduced #147 on that path (it closed
  * the insert block only on `id:` lines, so `- disable:` followed by nested
  * ids claimed the neighbour's rows).
@@ -530,12 +580,12 @@ export function parsePatchRows(text: string): { names: string[]; ids: string[]; 
   {
     // `insert:` opens a nested list; every id below it, at deeper
     // indentation, is a row this package brings in. A row at or above the
-    // `insert:` indentation closes the block — those target OTHER plugins.
+    // `insert:` indentation closes the block 鈥?those target OTHER plugins.
     let insertIndent: number | null = null
     // CRLF too, for consistency with the hot-mount parser, which a
     // Windows-authored patch genuinely broke. Here it changes no outcome
-    // today — every row pattern below is `^`-anchored and a comment line
-    // always starts with `#`, so an unstripped comment matches nothing —
+    // today 鈥?every row pattern below is `^`-anchored and a comment line
+    // always starts with `#`, so an unstripped comment matches nothing 鈥?
     // and it is deliberately NOT covered by a spec, because a test that
     // passes with or without the change tests nothing.
     for (const raw of text.split(/\r?\n/)) {
@@ -582,7 +632,7 @@ function readBundlePatchRows(dir: string): { names: string[]; ids: string[]; ins
   }
 }
 
-/** The profile manifest's `dsh.profile.bundles` — what the CLI reconciled. */
+/** The profile manifest's `dsh.profile.bundles` 鈥?what the CLI reconciled. */
 export function readProfileBundles(profileDirectory: string): string[] {
   try {
     const manifest = JSON.parse(readFileSync(join(profileDirectory, 'package.json'), 'utf8')) as {
@@ -615,7 +665,7 @@ function writeManifestAtomic(manifestPath: string, manifest: unknown): void {
  * (dsh-postgres-backends disables session-persistence-jsonl and reroutes
  * storage-domain) keeps applying those side-effect rows on every boot while it
  * stays in the stack, and the #147 ownership rule deliberately never writes
- * them — so removing the bundle from the stack is the only thing that stops
+ * them 鈥?so removing the bundle from the stack is the only thing that stops
  * them all at once. The package itself stays installed; enabling re-adds it.
  * @returns true when the bundle was present and removed.
  */
@@ -677,7 +727,7 @@ export function conflictingEntryIds(
   // INSERTED ids on both sides, not every id in the file. What bricks the
   // next boot is two entries created under one id; a row that merely
   // CONFIGURES another plugin's entry creates nothing, so counting it here
-  // refuses a legitimate plugin outright — the same distinction #147 drew
+  // refuses a legitimate plugin outright 鈥?the same distinction #147 drew
   // for the disable path, which this guard was left out of.
   const mine = bundlePatchInsertedIds(join(profileDirectory, 'node_modules', candidate))
   if (mine.length === 0) return []
@@ -694,14 +744,14 @@ export function conflictingEntryIds(
 
 /**
  * Whether the loader has anything to load for this package: its own entry
- * artifact, or — for CARRIER bundles — patch rows naming other packages that
+ * artifact, or 鈥?for CARRIER bundles 鈥?patch rows naming other packages that
  * do have one.
  *
  * Carriers are why `entryArtifactExists` alone is the wrong test (#103):
  * `@linxin666/dsh-skins` ships skin assets plus a patch mounting
  * `@linxin666/dsh-client-ui-skin-center`, and declares no main/exports/
  * index.js of its own. Judged by its own entry it looks like the
- * source-only checkout the #18 guard removes — so the market both flagged it
+ * source-only checkout the #18 guard removes 鈥?so the market both flagged it
  * broken AND uninstalled it right after installing.
  * @param profileDirectory - resolved profile directory (host-authoritative under Desktop).
  * @param name - installed package name.
@@ -711,7 +761,7 @@ export function hasLoadableEntry(profileDirectory: string, name: string): boolea
   if (entryArtifactExists(dir)) return true
   // A carrier is only sound when something it mounts is itself loadable.
   // Targets resolve hoisted (the dsh profile default), nested under the
-  // carrier, or — #203 — one level up: pnpm hoists shared/in-box packages to
+  // carrier, or 鈥?#203 鈥?one level up: pnpm hoists shared/in-box packages to
   // `<profiles>/node_modules` when the profile is a workspace member, the
   // same workspace-root fallback readProfileVisibleVersion (check.ts) already
   // uses. A carrier naming an in-box package (@deepseek-ai/dsh-mcp-client and
@@ -747,7 +797,7 @@ export function pluginSubdirs(root: string): string[] {
         if (!inner.isDirectory() || !/^[A-Za-z0-9_.-]+$/.test(inner.name) || inner.name === 'node_modules') continue
         if (hasDshManifest(join(root, sub, inner.name))) found.push(`${sub}/${inner.name}`)
       }
-    } catch { /* unreadable level — skip */ }
+    } catch { /* unreadable level 鈥?skip */ }
     if (found.length >= 8) break
   }
   return found.slice(0, 8)
@@ -762,11 +812,11 @@ export function pluginSubdirs(root: string): string[] {
  */
 /**
  * Quote a YAML block-mapping key when a plain scalar would be invalid.
- * Scoped npm names start with `@` — a reserved YAML indicator — so an
+ * Scoped npm names start with `@` 鈥?a reserved YAML indicator 鈥?so an
  * unquoted `@scope/pkg: true` entry breaks the whole pnpm-workspace.yaml
  * for every later pnpm run in the profile (and for the market itself).
  * Keys containing `: ` or ending with `:` are quoted for the same reason;
- * git keys like `name@git+https://…` keep their existing plain form.
+ * git keys like `name@git+https://鈥 keep their existing plain form.
  */
 function quoteYamlKey(key: string): string {
   if (/^[-?:,[\]{}#&*!|>'"%@`]/.test(key) || /:(\s|$)/.test(key)) {
@@ -790,20 +840,20 @@ export function setAllowBuilds(profile: string, packages: string[], explicitDir?
   // git with core.autocrlf=true) put a `\r` between `allowBuilds:` and the
   // newline, so the old pattern never matched an EXISTING block and appended
   // a second one. Two top-level `allowBuilds:` keys is invalid YAML, and pnpm
-  // then refuses every install in that profile — not just the one that
+  // then refuses every install in that profile 鈥?not just the one that
   // triggered it (#231 by @MichengAI).
   const blockRe = /allowBuilds:[ \t]*\r?\n((?:[ \t]+[^\r\n]*\r?\n?)*)/g
   const map: Record<string, string> = {}
   // Every block, not just the first: a profile already broken by the bug
-  // above carries two, and merging them is what repairs it — dropping the
+  // above carries two, and merging them is what repairs it 鈥?dropping the
   // extra silently would also drop whatever approvals it held.
   const blockMatches = [...yaml.matchAll(blockRe)]
   const blockMatch = blockMatches[0] ?? null
   for (const match of blockMatches) {
     for (const line of match[1].split(/\r?\n/)) {
       // The key itself may contain colons: git-hosted deps are only matched
-      // by a `name@git+https://…` key (#68). The anchored boolean tail makes
-      // the split land on the LAST colon, never inside a `://` — and doubles
+      // by a `name@git+https://鈥 key (#68). The anchored boolean tail makes
+      // the split land on the LAST colon, never inside a `://` 鈥?and doubles
       // as the placeholder filter: pnpm's failed-install bug (#11535, seen
       // in our #56) writes a literal "set this to true or false" value,
       // which breaks every later approval until the entry is dropped.
@@ -822,7 +872,7 @@ export function setAllowBuilds(profile: string, packages: string[], explicitDir?
     }
   }
   // Bare package names, or the server-derived stable git form
-  // `name@git+https://github.com/owner/repo.git` (#68) — nothing else.
+  // `name@git+https://github.com/owner/repo.git` (#68) 鈥?nothing else.
   const GIT_KEY_RE = /^[A-Za-z0-9@/_.-]+@git\+https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\.git$/
   // The commit-pinned form pnpm below 11.21 matches instead (#285). Held to
   // the same shape as the one above rather than loosened into "anything with
@@ -844,7 +894,7 @@ export function setAllowBuilds(profile: string, packages: string[], explicitDir?
     next = `${yaml.replace(/\r?\n?$/, eol)}${blockText}`
   } else {
     // The merged block replaces the first occurrence; any further ones are
-    // the duplicates this bug created and are dropped — their entries are
+    // the duplicates this bug created and are dropped 鈥?their entries are
     // already folded into `map` above, so nothing is lost.
     let seen = 0
     next = yaml.replace(blockRe, () => (seen++ === 0 ? blockText : ''))

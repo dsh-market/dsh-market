@@ -1,7 +1,9 @@
-/**
+﻿/**
  * Registry-source knowledge: how a curated registry entry's URL maps to an
- * installable pnpm target. Pure string logic, no I/O.
+ * installable pnpm target. Mostly pure string logic; the only I/O is reading the sibling metadata file for URL tarball cache entries (China-region codeload mirrors).
  */
+
+import { existsSync, readFileSync } from 'node:fs'
 
 const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
 
@@ -14,7 +16,7 @@ function validSubpath(subpath: string): boolean {
 export const NPM_NAME_RE = /^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/
 
 /**
- * A curated, prebuilt GitHub Release archive accepted as a pnpm target —
+ * A curated, prebuilt GitHub Release archive accepted as a pnpm target 鈥?
  * but only one belonging to `repo`, the entry's own `owner/name`.
  *
  * The binding is the whole point. `npm` gets the same treatment one branch
@@ -41,7 +43,7 @@ function releaseTarballTarget(value: unknown, repo: string): string | null {
   }
   if (url.protocol !== 'https:' || url.hostname !== 'github.com') return null
   if (!url.pathname.endsWith('.tgz') && !url.pathname.endsWith('.tar.gz')) return null
-  // /{owner}/{repo}/releases/... — the two leading segments must be the
+  // /{owner}/{repo}/releases/... 鈥?the two leading segments must be the
   // entry's own. GitHub treats them case-insensitively, so we do too.
   const segments = url.pathname.split('/').filter(segment => segment !== '')
   if (segments.length < 4 || segments[2] !== 'releases') return null
@@ -150,7 +152,7 @@ export function codeloadTarball(repo: string, sha: string, proxy: string | null)
 
 /**
  * The GitHub source behind an install target, in whatever spelling that
- * target uses — `owner/repo` in its ORIGINAL case, plus any `#path:`
+ * target uses 鈥?`owner/repo` in its ORIGINAL case, plus any `#path:`
  * subpath.
  *
  * Current installs use `github:` shortcuts. Older regional installs can
@@ -183,12 +185,38 @@ function repoFromTarget(spec: string): { repo: string; subpath: string | null } 
   // same reason profile.ts does: the proxy sits in FRONT of the real URL,
   // so anchoring the pattern would see only the proxy's own hostname.
   const tarball = /codeload\.github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/tar\.gz\/[0-9a-f]{40}/.exec(spec)
-  return tarball === null ? null : { repo: tarball[1]!, subpath: null }
+  if (tarball !== null) return { repo: tarball[1]!, subpath: null }
+  // A URL tarball cache entry (China-region codeload mirror): file: spec
+  // pointing at bundled-plugins/url-<sha256-prefix>.tar.gz. The sibling
+  // url-<sha256-prefix>.json records the original repo.
+  const urlTarball = readUrlTarballRepo(spec)
+  return urlTarball === null ? null : { repo: urlTarball, subpath: null }
+}
+
+/**
+ * Read the repo from a URL tarball cache entry's sibling metadata file.
+ * The DSH CLI writes url-<sha256-prefix>.json alongside every downloaded
+ * tarball, recording the original URL, repo, and SHA.
+ */
+function readUrlTarballRepo(spec: string): string | null {
+  const match = /^(?:file):(.+)$/i.exec(spec)
+  if (match === null) return null
+  let tarballPath = match[1]!
+  try { tarballPath = decodeURIComponent(tarballPath) } catch { /* keep the literal path */ }
+  if (!/url-[0-9a-f]{8,64}\.(?:tar\.gz|tgz)$/.test(tarballPath)) return null
+  const metaPath = tarballPath.replace(/\.(?:tar\.gz|tgz)$/, '.json')
+  try {
+    if (!existsSync(metaPath)) return null
+    const meta = JSON.parse(readFileSync(metaPath, 'utf8')) as { repo?: string }
+    return typeof meta.repo === 'string' && meta.repo !== '' ? meta.repo : null
+  } catch {
+    return null
+  }
 }
 
 /**
  * Normalized identity of an install target, for comparing two targets that
- * may be spelled differently — lowercased, matching `githubRepoIdentity`.
+ * may be spelled differently 鈥?lowercased, matching `githubRepoIdentity`.
  *
  * @returns the identity, or null when the spec is not a GitHub source (an
  * npm package name, a `file:` link, anything else).
@@ -230,7 +258,7 @@ export function githubTargetAtCommit(spec: string, sha: string): string | null {
 /**
  * The allowBuilds key that actually authorizes a git-hosted dependency's
  * build scripts. Verified against pnpm 11.21 (#68 by @yzr278892): for a
- * `github:owner/repo` install, a bare `name: true` entry does NOT match —
+ * `github:owner/repo` install, a bare `name: true` entry does NOT match 鈥?
  * pnpm's own hint names a commit-pinned codeload URL that changes on every
  * push; the stable form that matches is `name@git+https://github.com/owner/repo.git`.
  *
@@ -247,7 +275,7 @@ export function gitAllowBuildsKey(name: string, spec: string): string | null {
   const parsed = repoFromTarget(spec)
   // Original case, not the normalized identity: this key is matched by pnpm
   // as a literal string, so it has to name the repo the way the spec did.
-  // Subpath entries authorize under the repo itself — the `#path:` selector
+  // Subpath entries authorize under the repo itself 鈥?the `#path:` selector
   // picks a directory out of the same download.
   return parsed === null ? null : `${name}@git+https://github.com/${parsed.repo}.git`
 }
@@ -256,16 +284,16 @@ export function gitAllowBuildsKey(name: string, spec: string): string | null {
  * The OTHER allowBuilds key form, for pnpm below 11.21 (#285 by @omdsh-dev,
  * following #267).
  *
- * The stable `name@git+https://…` key above is what pnpm 11.21+ matches, and
+ * The stable `name@git+https://鈥 key above is what pnpm 11.21+ matches, and
  * it is the better key precisely because it does not change when the
- * repository is pushed to. Older pnpm does not match it at all: 11.8.0 — the
- * version DSH Desktop still bundles — matches only the commit-pinned
+ * repository is pushed to. Older pnpm does not match it at all: 11.8.0 鈥?the
+ * version DSH Desktop still bundles 鈥?matches only the commit-pinned
  * codeload URL it names in its own `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED`
  * message. On those versions the "allow build scripts and retry" button
  * could never work, because the key it wrote was one pnpm would never read.
  *
  * Both are written. The pinned form goes stale the moment the repository
- * moves, which is why it cannot REPLACE the stable one — but a stale entry
+ * moves, which is why it cannot REPLACE the stable one 鈥?but a stale entry
  * costs a line in a YAML file, and a missing one costs the user the only
  * button that could have unblocked them.
  *
@@ -302,7 +330,7 @@ export function isLocalSpec(spec: string): boolean {
 
 /**
  * Keys a catalog URL contributes to restore matching.
- * A `/tree/` entry is ONLY its exact `#path:` id — never the bare repo —
+ * A `/tree/` entry is ONLY its exact `#path:` id 鈥?never the bare repo 鈥?
  * so a collection-root identity cannot select a sibling subpackage.
  */
 function catalogMatchKeys(url: string): { path: string | null; repo: string | null } {
@@ -318,7 +346,7 @@ function catalogMatchKeys(url: string): { path: string | null; repo: string | nu
  * The catalog entry a locally linked / file: install should restore to.
  * Exact `#path:` identities win, then collection-root identities against
  * root-only catalog rows, then a unique name/npm match. A bare repo identity
- * never selects a root row while `/tree/` siblings exist for that repo —
+ * never selects a root row while `/tree/` siblings exist for that repo 鈥?
  * the checkout did not say which package it is, and guessing wrong installs
  * a different plugin. Same-named forks without identities or a matching hint
  * stay unmatched rather than guessing.
@@ -368,7 +396,7 @@ export function findCatalogEntryForLocal<T extends { name: string; npm?: string 
 /**
  * pnpm add target for restoring a local checkout onto a catalog entry.
  * When the catalog only lists the collection root but the checkout declared
- * `repository.directory`, keep that subdirectory — otherwise we install the
+ * `repository.directory`, keep that subdirectory 鈥?otherwise we install the
  * repo tarball and get the wrong package name (and its build scripts).
  */
 export function restoreTargetForLocal(
@@ -419,14 +447,14 @@ export function restoreBlockedByWorkspace(target: string, workspaceDeps: readonl
 }
 
 /**
- * The name an entry is ALREADY installed under, or null — the server-side
+ * The name an entry is ALREADY installed under, or null 鈥?the server-side
  * duplicate guard (#27): the same plugin listed under an alias entry must
  * never install twice (two loader entries with one id brick the next boot).
  *
  * Identity is subpath-aware so monorepo siblings stay independent: an entry
  * with a /tree/ subpath identifies as repo#path:/sub (never the bare repo),
  * while an installed dependency contributes its bare repo AND its #path:
- * form — so a collection root still matches the pieces it was retargeted
+ * form 鈥?so a collection root still matches the pieces it was retargeted
  * into, but two different subpackages of one repo never cross-match.
  */
 export function findInstalledAlias(
@@ -452,8 +480,8 @@ export function findInstalledAlias(
       dep.add(repoId)
       // Repo evidence on both sides is decisive (#66): the curated registry
       // lists distinct plugins under one name (both dsh-usage-stats, four
-      // dsh-memory…), so a github-installed dependency is the entry's plugin
-      // only if the REPOS agree — a bare name coincidence must not count.
+      // dsh-memory鈥?, so a github-installed dependency is the entry's plugin
+      // only if the REPOS agree 鈥?a bare name coincidence must not count.
       if (entryRepoId !== null) {
         if (dep.has(entryRepoId)) return name
         continue
