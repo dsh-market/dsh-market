@@ -797,6 +797,26 @@ describe('MarketSection (jsdom)', () => {
     expect(await screen.findByRole('button', { name: en.updateNow })).toBeTruthy()
   })
 
+  it('shows a failed update instead of leaving the row unchanged (#448)', async () => {
+    // #448: the update failed (pnpm exit 1), the profile was rolled back,
+    // log.ndjson recorded both — and the card said nothing, so the user
+    // pressed update again. Whatever else happens, a failure has to be
+    // visible on the surface the user is looking at.
+    stubFetch({
+      '/dsh-market/installed': { profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: [] },
+      '/dsh-market/updates': { updates: { 'dsh-loop': { kind: 'npm', version: '1.0.0', current: '1.0.0', latest: '1.2.0', updateAvailable: true } } },
+      '/dsh-market/update': { ok: false, error: 'ERR_PNPM_PREPARE_PACKAGE: the build script failed' },
+    })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    fireEvent.click(await screen.findByRole('button', { name: en.update }))
+
+    const banner = await screen.findByText(/ERR_PNPM_PREPARE_PACKAGE/)
+    expect(banner).toBeTruthy()
+    expect(banner.textContent).toContain('dsh-loop')
+  })
+
   it('a busy-agent update response names the running agent instead of the generic busy message', async () => {
     stubFetch({
       '/dsh-market/installed': { profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: [] },
