@@ -678,6 +678,18 @@ describe('MarketSection (jsdom)', () => {
     expect(fetchMock.mock.calls.some(([url]) => url === '/dsh-market/restore')).toBe(false)
   })
 
+  it('keeps the Tasks entry wrapped so opening the panel does not shift the tab row', async () => {
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    const entry = await screen.findByRole('button', { name: new RegExp(`^${en.opTitle}$`) })
+    const wrapBefore = entry.parentElement
+    expect(wrapBefore?.className, 'idle Tasks entry must sit in .opWrap for stable tab-row spacing').toMatch(/opWrap/)
+    fireEvent.click(entry)
+    await screen.findByText(en.opEmpty)
+    expect(entry.parentElement, 'opening the panel must not drop the .opWrap wrapper').toBe(wrapBefore)
+    expect(entry.parentElement?.className).toMatch(/opWrap/)
+  })
+
   it('shows a running update in the Tasks panel (#295)', async () => {
     // The panel answers "what is running right now", and an update is one of
     // the things that runs. `OperationKind` has carried 'update' since the

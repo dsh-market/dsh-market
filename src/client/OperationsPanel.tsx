@@ -247,25 +247,25 @@ export function OperationsPanel(props: OperationsPanelProps) {
       ? `${String(summary.attention)} ${t('opNeedsYou')}`
       : t('opTitle')
 
-  if (records.length === 0 && !open) {
-    return (
-      <button type="button" className={`${css.opEntry} ${css.opEntryQuiet}`} onClick={() => setOpen(true)}>
-        {t('opTitle')}
-      </button>
-    )
-  }
+  // Always render inside .opWrap so the tab-row bottom margin is stable —
+  // the old idle-only <button> skipped the wrapper and jumped on first open.
+  const quiet = records.length === 0 && !open
 
   return (
     <div className={css.opWrap} ref={wrapRef}>
       <button
         type="button"
-        className={summary.attention > 0 ? `${css.opEntry} ${css.opEntryAlert}` : css.opEntry}
+        className={quiet
+          ? `${css.opEntry} ${css.opEntryQuiet}`
+          : summary.attention > 0
+            ? `${css.opEntry} ${css.opEntryAlert}`
+            : css.opEntry}
         aria-expanded={open}
-        onClick={() => setOpen(!open)}
+        onClick={() => setOpen(quiet ? true : !open)}
       >
-        {busy && <span className={css.spin}><IconLoadingOutline16 size={12} /></span>}
-        {label}
-        {summary.attention > 0 && <span className={css.opDot} />}
+        {!quiet && busy && <span className={css.spin}><IconLoadingOutline16 size={12} /></span>}
+        {quiet ? t('opTitle') : label}
+        {!quiet && summary.attention > 0 && <span className={css.opDot} />}
       </button>
       {open && (
         <div className={css.opPanel}>

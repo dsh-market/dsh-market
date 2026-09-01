@@ -460,7 +460,10 @@
 .irowNameText{min-width:0;overflow-wrap:anywhere;white-space:normal}
 .irowName>.owner{flex:0 0 auto}
 .nameLink:hover{color:var(--dsw-alias-brand-primary,#4f6ef7);text-decoration:underline}
-.opWrap{position:relative;display:inline-flex;flex-shrink:0}
+/* Lift the entry off the tab row's bottom rule — a pill button flush on the
+   divider reads as clipped, especially when export log sits one row above on
+   narrow viewports. */
+.opWrap{position:relative;display:inline-flex;flex-shrink:0;margin-bottom:6px}
 .opEntry{display:inline-flex;align-items:center;gap:6px;font:inherit;font-size:12px;
          padding:4px 10px;border-radius:7px;cursor:pointer;position:relative;white-space:nowrap;
          color:var(--dsw-alias-label-primary,#1f2328);
