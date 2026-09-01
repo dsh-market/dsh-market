@@ -965,9 +965,12 @@ function MarketLogo({ size = 16, style, animated = false }: { size?: number; sty
 }
 
 /**
- * GitHub mark beside catalog card titles (#256, #365). Every entry's `url`
- * is a github.com repo; the generic outbound arrow did not say so until
- * hover. This rides the title's own line — no second link, no extra row.
+ * GitHub mark beside catalog card titles (#256, #365). Catalog intake in
+ * awesome-dsh-plugin rejects any entry whose `url` is not
+ * `https://github.com/owner/repo` (scripts/lib/entries.mjs), so this renders
+ * unconditionally — not a bet that today's snapshot happens to be all
+ * GitHub. The generic outbound arrow did not say so until hover. This rides
+ * the title's own line — no second link, no extra row.
  */
 function GithubRepoMark({ size = 12, className }: { size?: number; className?: string }) {
   return (
@@ -1232,7 +1235,8 @@ export function MarketSection(props: MarketSectionProps) {
     shadowedNames?: Array<{ name: string; layers: string[]; count: number }>
     /** Client bundles that no longer parse after the operation (#222). */
     brokenBundles?: Array<{ name: string; reason: string }>
-    rollbackId: string
+    rollbackId?: string
+    rollbackUnavailable?: string
   }
   const [compatibilityNotice, setCompatibilityNotice] = useState<CompatibilityNotice | null>(null)
   const [rollingBack, setRollingBack] = useState(false)
@@ -3482,7 +3486,7 @@ export function MarketSection(props: MarketSectionProps) {
                 it actually is: a peer-version risk and a loader-name
                 collision are not the same problem and must not read as one. */}
             {compatibilityNotice.risks.length > 0 && (
-              <><b>{t('compatRiskBanner')}</b> {compatibilitySummary(compatibilityNotice.risks)}</>
+              <><b>{t(compatibilityNotice.rollbackId === undefined ? 'compatRiskBannerNoRollback' : 'compatRiskBanner')}</b> {compatibilitySummary(compatibilityNotice.risks)}</>
             )}
             {compatibilityNotice.shadowedNames !== undefined && compatibilityNotice.shadowedNames.length > 0 && (
               <>
@@ -3500,9 +3504,13 @@ export function MarketSection(props: MarketSectionProps) {
             )}
           </span>
           <Button variant="outline" size="sm" onClick={() => setTab('diagnostics')}>{t('goDiagnose')}</Button>
-          <Button variant="primary" size="sm" disabled={rollingBack} onClick={() => void doRollback(compatibilityNotice.rollbackId)}>
-            {rollingBack ? t('rollingBack') : t('rollbackNow')}
-          </Button>
+          {compatibilityNotice.rollbackId === undefined
+            ? <span>{compatibilityNotice.rollbackUnavailable ?? t('rollbackUnavailable')}</span>
+            : (
+                <Button variant="primary" size="sm" disabled={rollingBack} onClick={() => void doRollback(compatibilityNotice.rollbackId!)}>
+                  {rollingBack ? t('rollingBack') : t('rollbackNow')}
+                </Button>
+              )}
         </div>
       )}
       {installError !== null && (

@@ -204,6 +204,26 @@ describe('Anywhere Labs install boundary (#215, #219, #272)', () => {
     await runtime.dispose()
   })
 
+  it('reports the exact rollback targets its host boundary can execute', async () => {
+    const { service } = boundaryService()
+    const restricted = createDesktopPluginRuntime(service, profileFixture(), '/tmp', 10_000)
+    expect(restricted.supportsExactRollbackTarget?.('example-plugin@1.2.3')).toBe(true)
+    expect(restricted.supportsExactRollbackTarget?.('github:owner/repo#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')).toBe(false)
+    expect(restricted.supportsExactRollbackTarget?.('https://github.com/o/r/releases/download/v1.0.0/plugin.tgz')).toBe(false)
+    await restricted.dispose()
+
+    const ordinary = createDesktopPluginRuntime({
+      runPlugin() {
+        return {
+          stdout: new PassThrough(), stderr: new PassThrough(),
+          done: Promise.resolve({ exitCode: 0, signal: null }), cancel: () => {},
+        }
+      },
+    }, profileFixture(), '/tmp', 10_000)
+    expect(ordinary.supportsExactRollbackTarget?.('github:owner/repo#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')).toBe(true)
+    await ordinary.dispose()
+  })
+
   /** #138: falling back is right, but their refusal ("must use the
    * recoverable install boundary", exit 127) is accurate about their contract
    * and silent about why THIS plugin. Roughly half the catalog has no npm

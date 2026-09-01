@@ -284,24 +284,55 @@ export function readMarketState(profileDir: string): MarketState {
   }
 }
 
-/** Persist the whole market state; `disabled` is the single written key. */
+/**
+ * Persist the whole market state.
+ *
+ * Every field a caller does not carry forward is taken from disk rather than
+ * dropped. Several callers legitimately know about only one part of the
+ * state — `writeMarketState(dir, { disabled, groups, groupOrder })` appears
+ * at five call sites in routes.ts — and before #435 that shape silently
+ * erased whatever else the user had chosen:
+ *
+ * - `channel` and `region` had no fallback at all, so toggling any plugin
+ *   threw away the user's update channel and download region. Both are
+ *   deliberate choices made through the settings card, and neither has a
+ *   "clear it" path: once picked they only ever move to another value. So
+ *   an absent one always means "the caller has nothing to say", never
+ *   "the user unchose it".
+ * `notes` keeps its original rule — an explicit object wins, including an
+ * empty one, because deleting the last note has to be expressible. What made
+ * #435 lose notes was not this function but a caller: the note route wrote
+ * through a fresh read while the long-lived `marketState` in routes.ts still
+ * carried `notes: {}` from boot, and the next write from that object put the
+ * empty one back. The fix for that belongs at the call site, where the two
+ * copies are, not here — see the note route.
+ *
+ * Reading before writing costs one small JSON parse on an operation that is
+ * already doing filesystem work, and it is what makes "this function writes
+ * the whole document" safe for callers that only hold part of it.
+ */
 export function writeMarketState(profileDir: string, state: MarketState): void {
   mkdirSync(join(profileDir, HOT_DIR), { recursive: true, mode: 0o700 })
-  // Absent means "keep what is on disk", not "clear it". Only an explicit
-  // empty object erases every note.
-  const notes = state.notes ?? readMarketState(profileDir).notes ?? {}
+  const onDisk = readMarketState(profileDir)
+  // `?? {}` only for the type: MarketState declares notes optional, while
+  // readMarketState always returns an object.
+  const notes = state.notes ?? onDisk.notes ?? {}
+  const channel = state.channel ?? onDisk.channel
+  const region = state.region ?? onDisk.region
+  const regionAuto = state.regionAuto ?? onDisk.regionAuto
   writeFileSync(stateFile(profileDir), JSON.stringify({
     disabled: [...state.disabled],
     groups: state.groups,
     groupOrder: state.groupOrder,
     ...(Object.keys(notes).length > 0 ? { notes } : {}),
     // Omitted while unchosen, so "never picked" survives a round trip and
-    // keeps deriving from the running build.
-    ...(state.channel === undefined ? {} : { channel: state.channel }),
+    // keeps deriving from the running build — but only when disk has not
+    // recorded a choice either.
+    ...(channel === undefined ? {} : { channel }),
     // Same reasoning, different consequence: an absent region is what makes
     // the probe run, so writing a default here would mean it never does.
-    ...(state.region === undefined ? {} : { region: state.region }),
-    ...(state.regionAuto === true ? { regionAuto: true } : {}),
+    ...(region === undefined ? {} : { region }),
+    ...(regionAuto === true ? { regionAuto: true } : {}),
   }))
 }
 

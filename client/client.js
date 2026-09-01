@@ -111,11 +111,13 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			agentBusyUpdate: "有 agent 正在运行，请等待其完成或将其取消后再更新——更新会直接替换插件文件，运行中的 agent 可能中途报错或新旧版本混用。",
 			agentBusyInstall: "有 agent 正在运行，请等待其完成或将其取消后再安装——安装会修改插件文件，运行中的 agent 可能中途报错。",
 			compatRiskBanner: "检测到兼容性风险，建议重启前到诊断页处理，或一键回滚本次操作。",
+			compatRiskBannerNoRollback: "检测到兼容性风险，建议重启前到诊断页处理。",
 			shadowNameBanner: "本次操作让同一个插件名在两个层里同时存在，重启后只有一个会生效：",
 			brokenBundleBanner: "下列插件的前端文件已损坏、无法解析，刷新后界面可能空白，建议回滚：",
 			goDiagnose: "前往诊断页修复",
 			rollbackNow: "回滚本次操作",
 			rollingBack: "回滚中…",
+			rollbackUnavailable: "无法确认更新前的准确来源，自动回滚不可用。",
 			approveBuilds: "放行构建脚本并重试",
 			buildsSkipped: "该插件需要运行构建脚本才能工作，出于安全考虑已默认阻止。确认来源可信后，可放行并重新安装：",
 			restartNow: "立即重启",
@@ -584,11 +586,13 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			agentBusyUpdate: "An agent is currently working — wait for it to finish (or cancel it) before updating. Updates replace plugin files in place, so a working agent can fail or mix versions mid-turn.",
 			agentBusyInstall: "An agent is currently working — wait for it to finish (or cancel it) before installing. Installing changes plugin files, so a working agent can fail mid-turn.",
 			compatRiskBanner: "Compatibility risk detected — open Diagnostics before restarting, or roll this operation back.",
+			compatRiskBannerNoRollback: "Compatibility risk detected — open Diagnostics before restarting.",
 			shadowNameBanner: "This operation left one plugin name defined in two layers; only one will load after a restart:",
 			brokenBundleBanner: "These plugins now have a client bundle that will not parse; the page may come up blank after a refresh — rolling back is recommended:",
 			goDiagnose: "Open Diagnostics",
 			rollbackNow: "Roll back",
 			rollingBack: "Rolling back…",
+			rollbackUnavailable: "Automatic rollback is unavailable because the previous exact source could not be verified.",
 			approveBuilds: "Allow build scripts and retry",
 			buildsSkipped: "This plugin needs its build scripts to run; they are blocked by default for safety. If you trust the source, allow them and reinstall:",
 			restartNow: "Restart now",
@@ -5403,9 +5407,12 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			});
 		}
 		/**
-		* GitHub mark beside catalog card titles (#256, #365). Every entry's `url`
-		* is a github.com repo; the generic outbound arrow did not say so until
-		* hover. This rides the title's own line — no second link, no extra row.
+		* GitHub mark beside catalog card titles (#256, #365). Catalog intake in
+		* awesome-dsh-plugin rejects any entry whose `url` is not
+		* `https://github.com/owner/repo` (scripts/lib/entries.mjs), so this renders
+		* unconditionally — not a bet that today's snapshot happens to be all
+		* GitHub. The generic outbound arrow did not say so until hover. This rides
+		* the title's own line — no second link, no extra row.
 		*/
 		function GithubRepoMark({ size = 12, className }) {
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("svg", {
@@ -7971,7 +7978,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 								className: Market_module_css_default.grow,
 								children: [
 									compatibilityNotice.risks.length > 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
-										/* @__PURE__ */ (0, react_jsx_runtime.jsx)("b", { children: t("compatRiskBanner") }),
+										/* @__PURE__ */ (0, react_jsx_runtime.jsx)("b", { children: t(compatibilityNotice.rollbackId === void 0 ? "compatRiskBannerNoRollback" : "compatRiskBanner") }),
 										" ",
 										compatibilitySummary(compatibilityNotice.risks)
 									] }),
@@ -7995,7 +8002,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 								onClick: () => setTab("diagnostics"),
 								children: t("goDiagnose")
 							}),
-							/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+							compatibilityNotice.rollbackId === void 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: compatibilityNotice.rollbackUnavailable ?? t("rollbackUnavailable") }) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 								variant: "primary",
 								size: "sm",
 								disabled: rollingBack,
