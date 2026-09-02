@@ -12,7 +12,7 @@
  * exact `window.__ModuleLoader__.load({ id: "dshmarket"` prefix.
  */
 import { readFile } from 'node:fs/promises'
-import { basename, dirname, resolve as resolvePath } from 'node:path'
+import { basename, dirname, relative, resolve as resolvePath } from 'node:path'
 import { defineConfig } from 'tsdown'
 import { transform } from 'lightningcss'
 
@@ -71,8 +71,14 @@ export default defineConfig({
       // The virtual id otherwise hides the physical stylesheet from Rolldown's watch graph.
       this.addWatchFile(fileId)
       const source = await readFile(fileId)
+      // The filename feeds lightningcss's `[hash]`. Handing it the absolute
+      // path made the class prefix a fingerprint of the checkout location:
+      // the same commit built `.SOz1_a_root` on one machine and
+      // `.eGUBIq_root` on the CI runner (#472's second half, measured by the
+      // reproducibility guard this repo now runs). Repo-relative with posix
+      // separators is the same input everywhere, including Windows.
       const { code, exports: cssExports } = transform({
-        filename: fileId,
+        filename: relative(process.cwd(), fileId).split('\\').join('/'),
         code: source,
         cssModules: { pattern: '[hash]_[local]' },
         minify: true,
