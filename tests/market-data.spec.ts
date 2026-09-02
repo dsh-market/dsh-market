@@ -128,11 +128,13 @@ describe('matchInstalledName / isInstalled', () => {
       plugins[0]!,
       installed,
       repoIdentities,
+      plugins,
     )).toBe('dsh-vision-bridge')
     expect(matchInstalledName(
       plugins[1]!,
       installed,
       repoIdentities,
+      plugins,
     )).toBeNull()
 
     // With no strong identity the client admits ambiguity instead of marking
@@ -164,13 +166,26 @@ describe('matchInstalledName / isInstalled', () => {
     expect(isInstalled(only, installed, {}, [only])).toBe(true)
   })
 
-  it('keeps the unique loose name match when a weak hint disagrees', () => {
+  it('refuses a discover badge when a weak hint disagrees with the only same-named row', () => {
     const installed = { 'dsh-vision-bridge': 'link:D:/src/dsh-vision-bridge' }
     const only = plugin({ name: 'dsh-vision-bridge', url: 'https://github.com/other/dsh-vision-bridge' })
     const hints = { 'dsh-vision-bridge': ['gxx182/dsh-vision-bridge'] }
 
-    expect(matchInstalledName(only, installed, {}, [only], hints)).toBe('dsh-vision-bridge')
+    expect(matchInstalledName(only, installed, {}, [only], hints)).toBeNull()
+    expect(isInstalled(only, installed, {}, [only], hints)).toBe(false)
+    // entryForDep keeps the looser path for non-discover callers.
     expect(entryForDep([only], 'dsh-vision-bridge', installed['dsh-vision-bridge']!, [], hints['dsh-vision-bridge'])).toBe(only)
+  })
+
+  it('does not mark a same-named fork card installed when repo evidence disagrees (#485)', () => {
+    const plugins = [
+      plugin({ name: 'dsh-humanizer', owner: 'lynote-ai', url: 'https://github.com/lynote-ai/dsh-humanizer', npm: 'dsh-humanizer' }),
+    ]
+    const installed = { 'dsh-humanizer': 'link:../dsh-humanizer' }
+    const repoIdentities = { 'dsh-humanizer': ['handsomeliu/dsh-humanizer'] }
+
+    expect(isInstalled(plugins[0]!, installed, repoIdentities, plugins)).toBe(false)
+    expect(matchInstalledName(plugins[0]!, installed, repoIdentities, plugins)).toBeNull()
   })
 
   it('rejects malformed repository identities from local package metadata', () => {
@@ -214,9 +229,11 @@ describe('matchInstalledName / isInstalled', () => {
       'plugin-a': ['o/collection', 'o/collection#path:/packages/plugin-a'],
     }
 
-    expect(matchInstalledName(root, installed, repoIdentities)).toBe('plugin-a')
-    expect(matchInstalledName(exact, installed, repoIdentities)).toBe('plugin-a')
-    expect(matchInstalledName(sibling, installed, repoIdentities)).toBeNull()
+    const plugins = [root, exact, sibling]
+
+    expect(matchInstalledName(root, installed, repoIdentities, plugins)).toBeNull()
+    expect(matchInstalledName(exact, installed, repoIdentities, plugins)).toBe('plugin-a')
+    expect(matchInstalledName(sibling, installed, repoIdentities, plugins)).toBeNull()
 
     const sha = 'b0e6c57ebeeb4796017864f5cd5c66e6ba0899ec'
     const pinned = { 'plugin-a': `github:o/collection#${sha}&path:/packages/plugin-a` }
