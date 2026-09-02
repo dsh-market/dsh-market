@@ -692,11 +692,22 @@ export function matchInstalledName(
 ): string | null {
   const ids = entryIdentities(plugin)
   for (const [name, spec] of Object.entries(installed)) {
+    const specStr = String(spec)
     const repos = repoIdentities[name] ?? []
-    if (depRepoIds(String(spec), repos).size === 0 && plugins !== undefined && looseMatchCount(plugins, name) > 1
+    // Discover badges and theme cards share this helper. Local link:/file:
+    // installs must use the same strict catalog row as restore and the
+    // Installed tab — a coincidental unique name must not mark someone
+    // else's fork as installed (#485).
+    if (/^(?:link|file):/i.test(specStr)) {
+      if (plugins === undefined) continue
+      const entry = findCatalogEntryForLocal(plugins, name, repos, repoHints[name] ?? [])
+      if (entry !== null && entry.url === plugin.url) return name
+      continue
+    }
+    if (depRepoIds(specStr, repos).size === 0 && plugins !== undefined && looseMatchCount(plugins, name) > 1
       && !repoHintMatches(plugin, repoHints[name] ?? [])) continue
-    if (sameSourceConflict(plugin, String(spec), repos)) continue
-    for (const id of depIdentities(name, String(spec), repos)) {
+    if (sameSourceConflict(plugin, specStr, repos)) continue
+    for (const id of depIdentities(name, specStr, repos)) {
       if (ids.has(id)) return name
     }
   }
