@@ -2242,8 +2242,9 @@ export function MarketSection(props: MarketSectionProps) {
   }, [refreshInstalled, t])
 
   const askRestore = useCallback((name: string) => {
+    if (data === null) return
     const spec = installed[name]
-    const entry = data === null || spec === undefined
+    const entry = spec === undefined
       ? undefined
       : entryForDep(data.plugins, name, String(spec), repoIdentities[name], repoHints[name])
     setStaleName(null)
@@ -2254,7 +2255,7 @@ export function MarketSection(props: MarketSectionProps) {
     }
     setRestoreNoCatalogFor(null)
     setRestoreName(name)
-  }, [data, installed, repoHints, repoIdentities, t])
+  }, [data, installed, repoHints, repoIdentities])
 
   /** Open the update-notes dialog and start its fetch. Lazy: the request only
       exists while a user is actually looking at one plugin's notes, and
@@ -4282,10 +4283,10 @@ export function MarketSection(props: MarketSectionProps) {
                                           ? (
                                               <button
                                                 type="button"
-                                                className={`${css.metaTag} ${css.metaTagAction}`}
+                                                className={css.metaTagAction}
                                                 title={`${t('restore')} — ${t('restoreOnline')}`}
                                                 aria-label={t('restore')}
-                                                disabled={removingName !== null || busyUrl !== null || updatingName !== null}
+                                                disabled={data === null || removingName !== null || busyUrl !== null || updatingName !== null}
                                                 onClick={() => askRestore(name)}
                                               >{t('restore')}</button>
                                             )
@@ -4455,10 +4456,10 @@ export function MarketSection(props: MarketSectionProps) {
         <Modal
           open
           onClose={() => setRestoreNoCatalogFor(null)}
-          title={`${t('restore')} ${restoreNoCatalogFor}?`}
+          title={`${t('restoreNoCatalogTitle')} — ${restoreNoCatalogFor}`}
           description={t('restoreNoCatalog')}
           footer={(
-            <Button variant="ghost" onClick={() => setRestoreNoCatalogFor(null)}>{t('cancel')}</Button>
+            <Button variant="ghost" onClick={() => setRestoreNoCatalogFor(null)}>{t('gotIt')}</Button>
           )}
         />
       )}

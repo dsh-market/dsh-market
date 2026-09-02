@@ -2290,7 +2290,7 @@ describe('local-dev restore', () => {
     expect(await screen.findByText(en.restoreNoCatalog)).toBeTruthy()
     expect(screen.queryByRole('button', { name: en.restoreProceed })).toBeNull()
     expect(fetchCalls.some(call => call.path === '/dsh-market/update')).toBe(false)
-    fireEvent.click(screen.getByRole('button', { name: en.cancel }))
+    fireEvent.click(screen.getByRole('button', { name: en.gotIt }))
     expect(screen.queryByText(en.restoreNoCatalog)).toBeNull()
     expect(screen.getByRole('button', { name: en.uninstall })).toBeTruthy()
   })

@@ -445,7 +445,9 @@
            background:color-mix(in srgb, var(--dsw-alias-state-success-primary,#16a34a) 10%, transparent)}
 /* Local-dev restore in the same status slot as 已是最新 — same pill as
    .metaTag but clickable and never ellipsized. */
-.metaTagAction{font:inherit;cursor:pointer;border:none;flex-shrink:0;
+.metaTagAction{font-family:inherit;font-size:11px;line-height:18px;font-weight:inherit;
+              cursor:pointer;border:none;flex-shrink:0;padding:1px 7px;border-radius:5px;
+              background:var(--dsw-alias-bg-layer-2,#f3f4f6);
               color:var(--dsw-alias-label-secondary,#6b7280)}
 .metaTagAction:hover:not(:disabled){color:var(--dsw-alias-brand-primary,#4f6ef7)}
 .metaTagAction:disabled{opacity:.5;cursor:default}
