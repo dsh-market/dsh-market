@@ -4099,10 +4099,11 @@ export function MarketSection(props: MarketSectionProps) {
                                         const authored = (entry?.description && (entry.description[lang] || entry.description.en)) || ''
                                         const theirs = showTheirs.includes(name)
                                         const shown = note !== undefined && !theirs ? note : authored
-                                        if (shown === '' && note === undefined) return null
                                         return (
                                           <div className={`${css.desc} ${css.descTight} ${css.noteRow}`}>
-                                            <span className={note !== undefined && !theirs ? css.noteMine : undefined}>{shown}</span>
+                                            {shown !== '' && (
+                                              <span className={note !== undefined && !theirs ? css.noteMine : undefined}>{shown}</span>
+                                            )}
                                             {note !== undefined && authored !== '' && (
                                               <button
                                                 type="button"
