@@ -133,6 +133,8 @@ describe('repoOfTarget', () => {
     // A tarball with no full SHA is not a target we produce, and treating it
     // as one would let an unpinned install pass the identity check.
     expect(repoOfTarget('https://codeload.github.com/o/r/tar.gz/HEAD')).toBeNull()
+    // Non-matching GitHub URLs are not recognized as targets.
+    expect(repoOfTarget('https://github.com/owner/repo/archive/refs/heads/main.tar.gz')).toBeNull()
   })
 })
 

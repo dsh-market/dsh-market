@@ -21,9 +21,10 @@
 import { fileFromTarball } from './catalog-npm.ts'
 import { marketFetch } from './net.ts'
 import { activeRegion, routesFor } from './regions.ts'
-import { profileDir, readInstalled } from './profile.ts'
-import { repoOfTarget } from './sources.ts'
+import { profileDir, readInstalled, readLockCommits } from './profile.ts'
+import { lookupRepoFromUrl, repoOfTarget } from './sources.ts'
 import { checkUpdates } from './updates.ts'
+import { loadRegistry } from './registry.ts'
 
 const UPDATES_PACKAGE = 'dsh-plugin-updates'
 const UPDATES_FILE = 'package/updates.json'
@@ -222,12 +223,39 @@ export async function updateNotesFor(
   }
   try {
     const payload = await loadUpdateNotes()
-    const key = repoKeyOf(spec)
+    let key = repoKeyOf(spec)
+    // If the spec is a Release asset URL (catalog format), try to extract
+    // the repo from the URL directly. This handles npm-installed plugins
+    // whose profile spec is the npm name but the catalog entry uses a
+    // Release asset tarball URL.
+    if (key === null) {
+      key = lookupRepoFromUrl(spec)
+    }
+    // If the spec is an npm package name (not a GitHub URL), look up the
+    // catalog to find the corresponding GitHub repo URL.
+    if (key === null) {
+      try {
+        const registry = await loadRegistry()
+        const plugin = registry.plugins.find(p => p.name === name)
+        if (plugin !== undefined) {
+          key = plugin.url
+        }
+      } catch {
+        // Catalog unavailable; fall through to npm times.
+      }
+    }
     const entry = key === null ? undefined : entryForRepo(payload, key)
-    // Both tiers below need the installed sha for github-kind installs; it
-    // comes from the update check the row was rendered from, cache-warm.
-    const statuses = await checkUpdates(profile, false, explicitDir).catch(() => null)
-    const current = statuses?.[name]?.current ?? null
+    // Both tiers below need the installed sha for github-kind installs.
+    // For Release asset URLs and catalog lookups, checkUpdates doesn't
+    // recognize the spec, so we read the lockfile directly using the repo key.
+    let current: string | null = null
+    if (key !== null && key.startsWith('https://github.com/')) {
+      const repo = key.slice('https://github.com/'.length).split('#')[0]!.toLowerCase()
+      current = readLockCommits(profile, activeProfileDir).get(repo) ?? null
+    } else {
+      const statuses = await checkUpdates(profile, false, explicitDir).catch(() => null)
+      current = statuses?.[name]?.current ?? null
+    }
 
     if (entry?.release !== undefined && entry.release !== null && (entry.release.body !== '' || entry.release.tag !== null)) {
       return { kind: 'release', release: entry.release }

@@ -183,7 +183,29 @@ function repoFromTarget(spec: string): { repo: string; subpath: string | null } 
   // same reason profile.ts does: the proxy sits in FRONT of the real URL,
   // so anchoring the pattern would see only the proxy's own hostname.
   const tarball = /codeload\.github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/tar\.gz\/[0-9a-f]{40}/.exec(spec)
-  return tarball === null ? null : { repo: tarball[1]!, subpath: null }
+  if (tarball !== null) return { repo: tarball[1]!, subpath: null }
+  return null
+}
+
+/**
+ * Extract a GitHub repo URL from a URL that may be a Release asset tarball
+ * (the format used by the catalog: releases/latest/download/ or
+ * releases/download/vX.Y.Z/).
+ *
+ * THIS IS FOR DISPLAY/LOOKUP PURPOSES ONLY — e.g., finding update notes for a
+ * plugin installed via npm. It MUST NOT be used for any decision that affects
+ * installation, rollback, duplicate detection, or build-script approval.
+ * Those paths use `repoFromTarget` / `repoOfTarget` which are stricter and
+ * intentionally do NOT recognize Release asset URLs (because the same asset
+ * URL can serve different bytes at different times).
+ */
+export function lookupRepoFromUrl(url: string): string | null {
+  // A GitHub Release asset tarball (used by the catalog), e.g.
+  // https://github.com/owner/repo/releases/latest/download/name.tgz
+  // https://github.com/owner/repo/releases/download/v1.0.0/name.tgz
+  const releaseAsset = /github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/releases\/(?:latest\/download|download\/[^/]+)\/[^/]+\.(?:tgz|tar\.gz)/i.exec(url)
+  if (releaseAsset !== null) return `https://github.com/${releaseAsset[1]!}`
+  return null
 }
 
 /**

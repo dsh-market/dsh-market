@@ -47,6 +47,13 @@ jobs:
           version: 10
       - run: npm install
       - run: npm run check
+      # The committed client bundle must be reproducible from the committed
+      # source (#472, and the review-noise half of the same problem: a
+      # 320-line artifact diff on every client PR is where a bad change can
+      # hide). npm run check just rebuilt it; if the rebuild differs from
+      # what is committed, either the source and artifact are out of sync or
+      # the build is environment-dependent — both are things to know loudly.
+      - run: git diff --exit-code client/
       - run: npm test
       - run: node scripts/preflight.mjs
       - run: node scripts/validate-registry.mjs

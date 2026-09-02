@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest'
 import {
   githubRefOfTarget,
   findCatalogEntryForLocal, findInstalledAlias, gitAllowBuildsKey, githubRemoteIdentities, githubRepoIdentities, githubRepoIdentity, githubTargetAtCommit,
-  installTargetFor, isLocalSpec, parseGitHubRemote, parseGitHubRepository, parseSourceUrl, repoOf, restoreBlockedByWorkspace, restoreTargetForLocal, workspaceProtocolDeps,
+  installTargetFor, isLocalSpec, lookupRepoFromUrl, parseGitHubRemote, parseGitHubRepository, parseSourceUrl, repoOf, restoreBlockedByWorkspace, restoreTargetForLocal, workspaceProtocolDeps,
 } from '../src/sources.ts'
 
 describe('parseSourceUrl', () => {
@@ -287,5 +287,23 @@ describe('githubTargetAtCommit', () => {
   it('refuses non-github targets and invalid commits', () => {
     expect(githubTargetAtCommit('dsh-loop', sha)).toBeNull()
     expect(githubTargetAtCommit('github:o/r', 'short')).toBeNull()
+  })
+})
+
+describe('lookupRepoFromUrl (display/lookup only — NOT for install/rollback)', () => {
+  it('extracts repo from catalog Release asset URLs', () => {
+    expect(lookupRepoFromUrl('https://github.com/owner/repo/releases/latest/download/plugin-1.0.0.tgz'))
+      .toBe('https://github.com/owner/repo')
+    expect(lookupRepoFromUrl('https://github.com/owner/repo/releases/download/v1.0.0/plugin-1.0.0.tgz'))
+      .toBe('https://github.com/owner/repo')
+    expect(lookupRepoFromUrl('https://github.com/owner/repo/releases/download/v1.0.0/plugin-1.0.0.tar.gz'))
+      .toBe('https://github.com/owner/repo')
+  })
+
+  it('returns null for non-Release-asset URLs', () => {
+    expect(lookupRepoFromUrl('https://github.com/owner/repo/archive/refs/heads/main.tar.gz')).toBeNull()
+    expect(lookupRepoFromUrl('https://codeload.github.com/owner/repo/tar.gz/' + 'a'.repeat(40))).toBeNull()
+    expect(lookupRepoFromUrl('dsh-loop')).toBeNull()
+    expect(lookupRepoFromUrl('@scope/pkg')).toBeNull()
   })
 })

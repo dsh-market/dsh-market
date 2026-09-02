@@ -479,7 +479,7 @@ ${readmeHtml}
       .replaceAll('__TITLE__', () => esc(loc.P_TITLE.replace('{NAME}', p.displayName)))
       .replaceAll('__DESC__', () => esc(metaDesc))
       .replaceAll('__URL__', () => url)
-      .replaceAll('__HREFLANGS__', () => hreflangs((l) => pluginPath(l, p.slug)))
+      .replaceAll('__CANONICAL__', () => CATALOG + pluginPath(loc, p.slug))
       .replaceAll('__OG_IMAGE__', () => `${ORIGIN}/assets/demo-${loc.code}.png`)
       .replaceAll('__JSONLD__', () => ldSafe(jsonld))
       .replaceAll('__HOME__', () => loc.urlPath)
@@ -514,12 +514,17 @@ const urlEntry = (pathFor, lastmod, freq) => LOCALES.map((l) => `  <url>
 ${alt(pathFor)}
   </url>`).join('\n')
 
+// Plugin pages are deliberately absent. They canonicalize to
+// awesome-dsh-plugin.com (see plugin-template.html), and a sitemap is a list
+// of URLs we claim as canonical — submitting 4,900 URLs whose canonical says
+// "not this site" is what kept 920 of them parked in Search Console's
+// "Discovered - currently not indexed" bucket. The pages still exist and are
+// reachable from /browse/; they just are not put forward for indexing.
 const updated = registry.updated ?? new Date().toISOString().slice(0, 10)
 fs.writeFileSync(`${OUT}/sitemap.xml`, `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">
 ${urlEntry((l) => l.urlPath, updated, 'weekly')}
 ${urlEntry((l) => l.browsePath, updated, 'daily')}
-${plugins.map((p) => urlEntry((l) => pluginPath(l, p.slug), p.added ?? updated, 'weekly')).join('\n')}
 ${urlEntry((l) => l.privacyPath, updated, 'yearly')}
 </urlset>
 `)

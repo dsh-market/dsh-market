@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { invalidateUpdateNotes, loadUpdateNotes, sliceCommitsAt, updateNotesFor } from '../src/changelog.ts'
+import { forgetCatalog } from '../src/registry.ts'
 
 const SHA_A = 'a'.repeat(40)
 const SHA_B = 'b'.repeat(40)
@@ -146,6 +147,7 @@ describe('updateNotesFor', () => {
   let dir: string
   beforeEach(() => {
     invalidateUpdateNotes()
+    forgetCatalog()
     vi.unstubAllGlobals()
     dir = mkdtempSync(join(tmpdir(), 'dshm-notes-'))
   })
@@ -191,5 +193,44 @@ describe('updateNotesFor', () => {
     vi.stubGlobal('fetch', fetchMock)
     await expect(updateNotesFor('web', dir, 'local-plugin')).resolves.toEqual({ kind: 'none' })
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('falls back to catalog lookup when spec is an npm package name', async () => {
+    writeProfile(dir, { 'npm-plugin': '@scope/my-plugin' }, [['owner/repo', SHA_B]])
+    const payload = { count: 1, updates: { 'https://github.com/owner/repo': { commits: COMMITS } } }
+    // Mock both the updates payload AND the catalog fetch
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL) => {
+      const url = String(input)
+      if (url.endsWith('/dsh-plugin-updates/latest')) return new Response('no', { status: 404 })
+      if (url.endsWith('updates.json')) {
+        return new Response(JSON.stringify(payload), { status: 200 })
+      }
+      if (url.includes('/commits/HEAD')) {
+        return new Response(JSON.stringify({ sha: SHA_C }), { status: 200 })
+      }
+      // Catalog fetch - return plugins.json with matching npm name
+      // Global region uses https://awesome-dsh-plugin.com/plugins.json
+      if (url.includes('awesome-dsh-plugin.com') || url.includes('dsh-plugin-catalog')) {
+        return new Response(JSON.stringify({
+          plugins: [{ name: 'npm-plugin', npm: '@scope/my-plugin', url: 'https://github.com/owner/repo', category: 'utility' }],
+        }), { status: 200 })
+      }
+      return new Response('{}', { status: 200 })
+    }))
+    await expect(updateNotesFor('web', dir, 'npm-plugin')).resolves.toEqual({
+      kind: 'commits',
+      commits: { items: [{ sha: SHA_C, message: 'third', date: '2026-08-26T03:00:00Z' }], found: true },
+    })
+  })
+
+  it('uses Release asset URL directly when spec is a Release asset tarball URL', async () => {
+    const releaseAssetUrl = 'https://github.com/owner/repo/releases/latest/download/plugin-1.0.0.tgz'
+    writeProfile(dir, { 'release-asset-plugin': releaseAssetUrl }, [['owner/repo', SHA_B]])
+    const payload = { count: 1, updates: { 'https://github.com/owner/repo': { commits: COMMITS } } }
+    stubWorld({ headSha: SHA_C, payload })
+    await expect(updateNotesFor('web', dir, 'release-asset-plugin')).resolves.toEqual({
+      kind: 'commits',
+      commits: { items: [{ sha: SHA_C, message: 'third', date: '2026-08-26T03:00:00Z' }], found: true },
+    })
   })
 })
