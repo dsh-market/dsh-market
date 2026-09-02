@@ -1296,6 +1296,8 @@ export function MarketSection(props: MarketSectionProps) {
   const [staleName, setStaleName] = useState<string | null>(null)
   // Local link:/file: restore: the red banner asks before swapping to the catalog.
   const [restoreName, setRestoreName] = useState<string | null>(null)
+  // Git -> npm is a source migration, not an update; it gets its own confirmation state.
+  const [migrationName, setMigrationName] = useState<string | null>(null)
 
   /** Determinate percent parsed from pnpm's Progress line, when available. */
   const [progressPct, setProgressPct] = useState<number | null>(null)
@@ -2152,6 +2154,7 @@ export function MarketSection(props: MarketSectionProps) {
     // one kept it — the rest failed silently with no way forward (#255).
     setStaleName(prev => (prev === name ? null : prev))
     setRestoreName(prev => (prev === name ? null : prev))
+    setMigrationName(null)
     setUpdatingName(name)
     updateIdleStrikes.current = 0
     // Mirror the install flow's dshm-pending marker: closing the config page
@@ -2240,12 +2243,68 @@ export function MarketSection(props: MarketSectionProps) {
       })
   }, [refreshInstalled, t])
 
+
+  const doSourceMigration = useCallback((name: string) => {
+    setInstallError(null)
+    setActivationWarnings([])
+    setMigrationName(null)
+    setUpdatingName(name)
+    return fetch(api('/dsh-market/migrate-source'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name }),
+    })
+      .then(res => res.json().then(body => ({ status: res.status, body })))
+      .then(({ status, body }) => {
+        setUpdatingName(null)
+        if (status === 200 && body.ok === true) {
+          const targetName = typeof body.to?.name === 'string' ? body.to.name : name
+          setUpdatedNames(names => names.includes(targetName) ? names : names.concat(targetName))
+          if (body.activation && typeof body.activation === 'object') {
+            setActivations(prev => ({ ...prev, ...body.activation }))
+          }
+          refreshInstalled(true)
+          const warnings = Array.isArray(body.warnings) ? body.warnings.map(String).filter(Boolean) : []
+          if (warnings.length > 0) setInstallError(warnings.join('\n'))
+          return
+        }
+        if (status === 409 && body.agentsBusy === true) {
+          const running = Array.isArray(body.runningAgents) && body.runningAgents.length > 0 ? ` (${body.runningAgents.join(', ')})` : ''
+          setInstallError(t('agentBusyUpdate') + running)
+          return
+        }
+        setInstallError(t('migrateFail') + ': ' + String(body.error || ('HTTP ' + String(status))))
+      })
+      .catch(error => {
+        setUpdatingName(null)
+        setInstallError(t('migrateFail') + ': ' + String(error))
+      })
+  }, [refreshInstalled, t])
+
+  const askSourceMigration = useCallback((name: string) => {
+    const migration = updates[name]?.sourceMigration
+    const source = installed[name]
+    setStaleName(null)
+    setRestoreName(null)
+    if (migration === undefined || source === undefined) {
+      setMigrationName(null)
+      return
+    }
+    setMigrationName(name)
+    setInstallError(
+      t('migrateHint')
+        .replace('{0}', `${name}: ${String(source)}`)
+        .replace('{1}', migration.target),
+    )
+  }, [installed, t, updates])
+
   const askRestore = useCallback((name: string) => {
     const spec = installed[name]
     const entry = data === null || spec === undefined
       ? undefined
       : entryForDep(data.plugins, name, String(spec), repoIdentities[name], repoHints[name])
     setStaleName(null)
+    setMigrationName(null)
     if (entry === undefined) {
       setRestoreName(null)
       setInstallError(t('restoreNoCatalog'))
@@ -3530,6 +3589,9 @@ export function MarketSection(props: MarketSectionProps) {
             {restoreName !== null && (
               <Button size="sm" onClick={() => doUpdate(restoreName, false, true)}>{t('restoreContinue')}</Button>
             )}
+            {migrationName !== null && (
+              <Button size="sm" onClick={() => doSourceMigration(migrationName)}>{t('migrateContinue')}</Button>
+            )}
             {/* The banner text told users to export the log; now it IS the button (#84). */}
             <Button
               size="sm"
@@ -4256,6 +4318,14 @@ export function MarketSection(props: MarketSectionProps) {
                                     — already ellipsizing since #234 — is what gives up
                                     width first. */}
                                 <span className={css.irowTrailing}>
+                                {!missing && status?.sourceMigration !== undefined && (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    disabled={updatingName !== null || removingName !== null || busyUrl !== null}
+                                    onClick={() => askSourceMigration(name)}
+                                  >{t('migrateNpm')}</Button>
+                                )}
                                 {missing
                                   ? <span className={css.metaTag}>{t('notInstalled')}</span>
                                   : updatedNames.includes(name)

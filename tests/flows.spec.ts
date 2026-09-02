@@ -430,6 +430,7 @@ const REGISTRY = {
   categories: { tool: { en: 'Tools' }, theme: { en: 'Themes' } },
   plugins: [
     { name: 'dsh-loop', owner: 'o', url: 'https://github.com/o/dsh-loop', category: 'tool', npm: 'dsh-loop', description: {}, install: '', added: '' },
+    { name: 'dsh-genui', owner: 'omdsh-dev', url: 'https://github.com/omdsh-dev/dsh-genui', category: 'tool', npm: '@changfenhuang/dsh-genui', description: {}, install: '', added: '' },
     // The market's own entry: the release-channel specs need it installed,
     // because the channel applies to this package and no other.
     { name: 'dshmarket', owner: 'o', url: 'https://github.com/o/dshmarket', category: 'tool', npm: 'dshmarket', description: {}, install: '', added: '' },
@@ -3914,3 +3915,72 @@ describe('the dev channel is an ordinary choice', () => {
     expect(hot.channel).toBeUndefined()
   })
 })
+
+
+          describe('git to npm source migration (#461)', () => {
+            it('offers an explicit migration and renames package-owned user state', async () => {
+              const dir = profileDir('web')
+              writeFileSync(join(dir, 'package.json'), JSON.stringify({
+                dependencies: { 'dsh-genui': 'github:omdsh-dev/dsh-genui' },
+              }))
+              mkdirSync(join(dir, 'node_modules', 'dsh-genui'), { recursive: true })
+              writeFileSync(join(dir, 'node_modules', 'dsh-genui', 'package.json'), JSON.stringify({
+                name: 'dsh-genui', version: '0.9.6', main: 'index.js',
+              }))
+              writeFileSync(join(dir, 'node_modules', 'dsh-genui', 'index.js'), '')
+              fake.npm['@changfenhuang/dsh-genui'] = {
+                latest: '0.9.7',
+                versions: {
+                  '0.9.7': {
+                    manifest: { name: '@changfenhuang/dsh-genui', main: 'index.js' },
+                    artifacts: ['index.js'],
+                  },
+                },
+              }
+              hot.disabled.add('dsh-genui')
+              hot.groups.work = ['dsh-genui']
+              hot.groupOrder.push('work')
+              hot.notes['dsh-genui'] = 'legacy source'
+
+              const updates = await bed.dispatch('GET', '/dsh-market/updates?force=1')
+              expect(updates.status).toBe(200)
+              expect(updates.json.updates['dsh-genui'].sourceMigration).toEqual({
+                kind: 'git-to-npm',
+                repo: 'omdsh-dev/dsh-genui',
+                target: '@changfenhuang/dsh-genui',
+              })
+
+              const migrated = await bed.dispatch('POST', '/dsh-market/migrate-source', { name: 'dsh-genui' })
+              expect(migrated.status).toBe(200)
+              expect(migrated.json).toMatchObject({
+                ok: true,
+                from: { name: 'dsh-genui', source: 'github:omdsh-dev/dsh-genui' },
+                to: { name: '@changfenhuang/dsh-genui', source: 'npm' },
+              })
+              expect(installedSpec('dsh-genui')).toBeUndefined()
+              expect(installedSpec('@changfenhuang/dsh-genui')).toBe('^0.9.7')
+              expect(hot.disabled.has('@changfenhuang/dsh-genui')).toBe(true)
+              expect(hot.disabled.has('dsh-genui')).toBe(false)
+              expect(hot.groups.work).toEqual(['@changfenhuang/dsh-genui'])
+              expect(hot.notes['@changfenhuang/dsh-genui']).toBe('legacy source')
+              expect(hot.notes['dsh-genui']).toBeUndefined()
+            })
+
+            it('does not offer or execute migration for an explicit Git ref', async () => {
+              const dir = profileDir('web')
+              writeFileSync(join(dir, 'package.json'), JSON.stringify({
+                dependencies: { 'dsh-genui': 'github:omdsh-dev/dsh-genui#publish' },
+              }))
+              mkdirSync(join(dir, 'node_modules', 'dsh-genui'), { recursive: true })
+              writeFileSync(join(dir, 'node_modules', 'dsh-genui', 'package.json'), JSON.stringify({
+                name: 'dsh-genui', version: '0.9.6', main: 'index.js',
+              }))
+              writeFileSync(join(dir, 'node_modules', 'dsh-genui', 'index.js'), '')
+
+              const updates = await bed.dispatch('GET', '/dsh-market/updates?force=1')
+              expect(updates.json.updates['dsh-genui'].sourceMigration).toBeUndefined()
+              const migrated = await bed.dispatch('POST', '/dsh-market/migrate-source', { name: 'dsh-genui' })
+              expect(migrated.status).toBe(400)
+              expect(installedSpec('dsh-genui')).toBe('github:omdsh-dev/dsh-genui#publish')
+            })
+          })

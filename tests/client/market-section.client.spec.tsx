@@ -3668,3 +3668,59 @@ describe('card owner name and description overflow', () => {
     }
   })
 })
+
+
+          describe('Git to npm source migration (#461)', () => {
+            it('requires a second confirmation and uses the dedicated migration endpoint', async () => {
+              stubFetch({
+                '/dsh-market/installed': {
+                  profile: 'web',
+                  installed: { 'dsh-loop': 'github:alice/dsh-loop' },
+                  live: ['dsh-loop'],
+                  disabled: [],
+                  groups: {},
+                  groupOrder: [],
+                },
+                '/dsh-market/updates': {
+                  updates: {
+                    'dsh-loop': {
+                      kind: 'github',
+                      version: '1.0.0',
+                      current: 'a'.repeat(40),
+                      latest: 'a'.repeat(40),
+                      updateAvailable: false,
+                      sourceMigration: {
+                        kind: 'git-to-npm',
+                        repo: 'alice/dsh-loop',
+                        target: 'dsh-loop',
+                      },
+                    },
+                  },
+                },
+                '/dsh-market/migrate-source': {
+                  ok: true,
+                  from: { name: 'dsh-loop', source: 'github:alice/dsh-loop' },
+                  to: { name: 'dsh-loop', source: 'npm' },
+                  activation: {},
+                  warnings: [],
+                },
+              })
+
+              render(<MarketSection {...props()} />)
+              await screen.findByText('dsh-loop')
+              fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+
+              fireEvent.click(await screen.findByRole('button', { name: en.migrateNpm }))
+              expect(await screen.findByText(/This changes source, not just version:/)).toBeTruthy()
+              expect(fetchCalls.some(call => call.path.endsWith('/dsh-market/migrate-source'))).toBe(false)
+
+              fireEvent.click(screen.getByRole('button', { name: en.migrateContinue }))
+              await waitFor(() => {
+                expect(fetchCalls).toContainEqual({
+                  path: '/dsh-market/migrate-source',
+                  method: 'POST',
+                  body: { name: 'dsh-loop' },
+                })
+              })
+            })
+          })

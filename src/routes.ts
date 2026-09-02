@@ -59,6 +59,7 @@ import {
   createGist, fitsGistLimit, GistError, gistErrorCode, parseGistId, readGist, resolveGistTokenSource, updateGist, verifyGistToken,
 } from './gist.ts'
 import { MAX_UPDATE_OPERATIONS_V1, UpdateOperationStoreV1, UPDATE_API_V1_SCHEMA } from './update-api-v1.ts'
+import { findGitToNpmMigration } from './source-migration.ts'
 
 export type { LoaderEntry } from './themes.ts'
 export type { UpdateStatus } from './updates.ts'
@@ -2296,9 +2297,12 @@ export function mountMarketRoutes(
               .map(name => [name, channel] as const),
           )
           const onlineSourceFor = new Map<string, string>()
+          const sourceMigrationFor = new Map<string, { kind: 'git-to-npm'; repo: string; target: string }>()
           try {
             const registry = await loadRegistry()
             for (const [name, spec] of Object.entries(installed)) {
+              const migration = findGitToNpmMigration(registry.plugins, spec)
+              if (migration !== null) sourceMigrationFor.set(name, migration)
               if (!spec.toLowerCase().startsWith('file:')) continue
               const evidence = readInstalledRepoEvidence(config.profile, name, spec, activeProfileDir)
               const entry = findCatalogEntryForLocal(registry.plugins, name, evidence.identities, evidence.hints)
@@ -2306,11 +2310,14 @@ export function mountMarketRoutes(
               if (target !== null && NPM_NAME_RE.test(target)) onlineSourceFor.set(name, target)
             }
           } catch (error) {
-            logEvent('warn', 'updates', `local package source lookup failed — ${error instanceof Error ? error.message : String(error)}`)
+            logEvent('warn', 'updates', `package source lookup failed — ${error instanceof Error ? error.message : String(error)}`)
           }
-          sendJson(response, 200, {
-            updates: await checkUpdates(config.profile, force, activeProfileDir, channelFor, onlineSourceFor),
-          })
+          const updates = await checkUpdates(config.profile, force, activeProfileDir, channelFor, onlineSourceFor)
+          for (const [name, migration] of sourceMigrationFor) {
+            const status = updates[name]
+            if (status !== undefined) updates[name] = { ...status, sourceMigration: migration }
+          }
+sendJson(response, 200, { updates })
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
         }
@@ -2339,6 +2346,215 @@ export function mountMarketRoutes(
             return
           }
           sendJson(response, 200, await updateNotesFor(config.profile, activeProfileDir, name))
+        } catch (error) {
+          sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    }),
+
+
+    host.webServer.register({
+      kind: 'exact',
+      path: '/dsh-market/migrate-source',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) {
+          sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        try {
+          await withMutationLock(response, 'install', async () => {
+            const body = (await readJsonBody(request)) as { name?: unknown }
+            const name = typeof body.name === 'string' ? body.name : ''
+            if (!NPM_NAME_RE.test(name) || INBOX_BUNDLES.has(name)) {
+              sendJson(response, 400, { error: 'plugin is not installed' })
+              return
+            }
+
+            const manifestCapture = captureUpdateManifest()
+            if (!manifestCapture.ok) {
+              sendJson(response, 500, {
+                error: `迁移前无法安全读取 profile package.json，未执行任何修改（${manifestCapture.detail}）。 / The profile package.json could not be captured safely before migration; nothing was changed (${manifestCapture.detail}).`,
+              })
+              return
+            }
+            const spec = manifestCapture.snapshot.dependencies[name]
+            if (spec === undefined) {
+              sendJson(response, 400, { error: 'plugin is not installed' })
+              return
+            }
+
+            let migration: ReturnType<typeof findGitToNpmMigration> = null
+            try {
+              const registry = await loadRegistry()
+              migration = findGitToNpmMigration(registry.plugins, spec)
+            } catch (error) {
+              logEvent('warn', 'source-migration', `${name}: catalog lookup failed — ${error instanceof Error ? error.message : String(error)}`)
+            }
+            if (migration === null) {
+              sendJson(response, 400, {
+                error: '当前 Git 来源无法唯一核验到一个 npm 包，或包含显式 branch/tag/commit/ref；未执行迁移。 / This Git source cannot be uniquely verified to one npm package, or it carries an explicit branch/tag/commit/ref; migration was not performed.',
+              })
+              return
+            }
+
+            const targetName = migration.target
+            if (targetName !== name && manifestCapture.snapshot.dependencies[targetName] !== undefined) {
+              sendJson(response, 409, {
+                error: `目标 npm 包 ${targetName} 已经作为独立依赖安装；为避免覆盖现有安装，未执行迁移。 / The target npm package ${targetName} is already installed as a separate dependency; migration was not performed to avoid overwriting it.`,
+              })
+              return
+            }
+
+            const busyAgents = runningAgentsForGuard()
+            if (busyAgents.length > 0) {
+              sendJson(response, 409, {
+                error: `有 agent 正在运行（${busyAgents.join(', ')}）。来源迁移会替换插件文件，请等它完成或取消后再迁移。 / ${busyAgents.length === 1 ? 'An agent is running' : 'Agents are running'} (${busyAgents.join(', ')}). Source migration replaces plugin files; wait for the running work to finish (or cancel it) before migrating.`,
+                agentsBusy: true,
+                runningAgents: busyAgents,
+              })
+              return
+            }
+
+            const lockfileCapture = captureProfileLockfile()
+            if (!lockfileCapture.ok) {
+              sendJson(response, 500, { error: lockfileCapture.detail })
+              return
+            }
+
+            const wasLive = verifyActivation(config.profile, name, liveNames(), activeProfileDir, disabled.has(name)).state === 'live'
+              && hasHostHalf(config.profile, name, activeProfileDir)
+            const oldRows = rowIdsForPackage(host, activeProfileDir, name)
+            const patchFlags = packagePatchFlags(host, activeProfileDir, [name], readUserPatchState(userPatchPath))
+            const wasDisabled = disabled.has(name)
+            const manifestBefore = manifestCapture.snapshot
+            const lockfileBefore = lockfileCapture.snapshot
+
+            const rollbackMigration = async (): Promise<{ ok: boolean; detail: string | null }> => {
+              restoreProfileManifest(config.profile, manifestBefore, activeProfileDir)
+              const prepared = restoreProfileLockfile(lockfileBefore)
+              if (!prepared.ok) return prepared
+              const reinstall = await runPlugin(config.profile, ['--no-frozen-lockfile', RELEASE_AGE_OVERRIDE, 'install'])
+              restoreProfileManifest(config.profile, manifestBefore, activeProfileDir)
+              const finalLock = restoreProfileLockfile(lockfileBefore)
+              if (!finalLock.ok) return finalLock
+              if (reinstall.exitCode !== 0 || reinstall.timedOut || reinstall.cancelled) {
+                return { ok: false, detail: failureDetail(reinstall) }
+              }
+              return hasLoadableEntry(activeProfileDir, name)
+                ? { ok: true, detail: null }
+                : { ok: false, detail: 'the previous Git source was restored without a loadable entry' }
+            }
+
+            const failWithRollback = async (detail: string, extra: Record<string, unknown> = {}): Promise<void> => {
+              const rollback = await rollbackMigration()
+              logEvent(
+                rollback.ok ? 'warn' : 'error',
+                'source-migration',
+                `${name}: migration failed — ${detail}; ${rollback.ok ? 'previous Git source restored' : `rollback failed: ${rollback.detail ?? 'unknown'}`}`,
+              )
+              sendJson(response, 500, {
+                ok: false,
+                error: rollback.ok
+                  ? `${detail}；已恢复原 Git 来源。 / ${detail}; the previous Git source was restored.`
+                  : `${detail}；且原 Git 来源未能验证恢复（${rollback.detail ?? 'unknown'}）。 / ${detail}; restoration of the previous Git source could not be verified (${rollback.detail ?? 'unknown'}).`,
+                rollback: rollback.ok,
+                ...extra,
+              })
+            }
+
+            const remove = await runPlugin(config.profile, ['remove', name])
+            if (remove.exitCode !== 0 || remove.timedOut || remove.cancelled) {
+              await failWithRollback(failureDetail(remove))
+              return
+            }
+
+            const add = await runPlugin(config.profile, ['add', `${targetName}@latest`])
+            if (add.exitCode !== 0 || add.timedOut || add.cancelled) {
+              await failWithRollback(failureDetail(add), {
+                ignoredBuilds: blockedBuilds(add),
+                cancelled: add.cancelled,
+              })
+              return
+            }
+
+            const after = readInstalled(config.profile, activeProfileDir)
+            if (after[targetName] === undefined || (targetName !== name && after[name] !== undefined) || !hasLoadableEntry(activeProfileDir, targetName)) {
+              await failWithRollback('npm 目标安装完成后未形成可加载且唯一的依赖。 / The npm target did not produce one loadable replacement dependency.')
+              return
+            }
+
+            const stack = readBundleStack(activeProfileDir)
+            const trial = trialValidate(activeProfileDir, stack.community)
+            if (!trial.ok) {
+              await failWithRollback(`迁移后的 profile 无法通过启动校验（${trial.errors[0]?.message ?? 'unknown'}）。 / The migrated profile failed boot validation (${trial.errors[0]?.message ?? 'unknown'}).`)
+              return
+            }
+
+            if (targetName !== name) {
+              if (wasDisabled) {
+                disabled.delete(name)
+                disabled.add(targetName)
+              } else {
+                disabled.delete(name)
+              }
+              for (const [group, members] of Object.entries(groups)) {
+                const next: string[] = []
+                for (const member of members) {
+                  const mapped = member === name ? targetName : member
+                  if (!next.includes(mapped)) next.push(mapped)
+                }
+                groups[group] = next
+              }
+              const marketNotes = marketState.notes ?? (marketState.notes = {})
+              if (marketNotes[name] !== undefined) {
+                if (marketNotes[targetName] === undefined) marketNotes[targetName] = marketNotes[name]
+                delete marketNotes[name]
+              }
+            }
+
+            let stateWarning: string | null = null
+            try {
+              writeMarketState(activeProfileDir, marketState)
+            } catch (error) {
+              stateWarning = `市场状态未能持久化：${error instanceof Error ? error.message : String(error)} / Market state could not be persisted: ${error instanceof Error ? error.message : String(error)}`
+              logEvent('warn', 'source-migration', `${name}: ${stateWarning}`)
+            }
+
+            removeRowBlocks(userPatchPath, oldRows)
+            const patchDisabled = wasDisabled || patchFlags.disabled.includes(name)
+            const patchForced = !patchDisabled && patchFlags.forced.includes(name)
+            const patchWarnings: string[] = []
+            for (const rowId of rowIdsForPackage(host, activeProfileDir, targetName)) {
+              const changed = patchDisabled
+                ? await disableRow(userPatchPath, rowId)
+                : patchForced
+                  ? await enableRow(userPatchPath, rowId)
+                  : { ok: true, reason: null }
+              if (!changed.ok && changed.reason !== null) patchWarnings.push(changed.reason)
+            }
+            if (patchDisabled) await themes.setEntryDisabled(targetName, true)
+
+            invalidateUpdates()
+            const activation = {
+              [targetName]: activationAfterReplace(
+                verifyActivation(config.profile, targetName, liveNames(), activeProfileDir, disabled.has(targetName)),
+                wasLive,
+              ),
+            }
+            logEvent('info', 'source-migration', `${name}: ${spec} -> ${targetName}`)
+            sendJson(response, 200, {
+              ok: true,
+              from: { name, source: spec },
+              to: { name: targetName, source: 'npm' },
+              activation,
+              warnings: [stateWarning, ...patchWarnings].filter((value): value is string => value !== null && value !== ''),
+            })
+          })
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
         }

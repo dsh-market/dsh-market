@@ -122,6 +122,8 @@ export interface UpdateStatus {
   latest?: string | null
   /** Updating this local package switches it to its matched online release. */
   restoreRequired?: boolean
+  /** Explicit source migration; never part of update-all. */
+  sourceMigration?: { kind: 'git-to-npm'; repo: string; target: string }
 }
 
 /** Poll payload from /dsh-market/status. */

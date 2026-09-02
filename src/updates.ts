@@ -23,6 +23,8 @@ export interface UpdateStatus {
   updateAvailable: boolean
   /** Taking this update replaces a local package source with its matched online release. */
   restoreRequired?: boolean
+  /** Independent, explicit source switch offered for verified legacy Git installs. */
+  sourceMigration?: { kind: 'git-to-npm'; repo: string; target: string }
   /**
    * The version this package's channel points at, when it differs from what
    * is installed and is NOT newer.
