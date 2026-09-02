@@ -1694,6 +1694,20 @@ describe('favorites (#414)', () => {
     await waitFor(() => expect(state.favorites).toEqual([]))
     expect(screen.getByText(en.favoritesEmpty)).toBeTruthy()
   })
+
+  it('groups favorites into plugin and theme sections', async () => {
+    favoritesStub([
+      'https://github.com/alice/dsh-loop',
+      'https://github.com/carol/whale-skin',
+    ])
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: re(en.tabFavorites) }))
+    await screen.findByText('dsh-loop')
+    await screen.findByText('whale-skin')
+    expect(screen.getByText(en.favoritesPluginsSection.replace('{0}', '1'))).toBeTruthy()
+    expect(screen.getByText(en.favoritesThemesSection.replace('{0}', '1'))).toBeTruthy()
+  })
 })
 
 /** #347: a catalog description answers "what is this", written by its author

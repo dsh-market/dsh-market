@@ -1874,11 +1874,23 @@ export function MarketSection(props: MarketSectionProps) {
       sinceDays: favTimeRange === 'all' ? undefined : TIME_RANGE_DAYS[favTimeRange],
     })),
     [data, qFavorites, lang, favoriteUrlSet, favSortField, favSortDir, favTimeRange])
-  const favoritePagination = usePagination(
-    favoriteListed.length, [qFavorites, favSortField, favSortDir, favTimeRange], scrollToTop)
-  const favoritePagePlugins = favoriteListed.slice(
-    (favoritePagination.currentPage - 1) * favoritePagination.pageSize,
-    favoritePagination.currentPage * favoritePagination.pageSize)
+  const favoritePlugins = useMemo(
+    () => favoriteListed.filter(p => !pluginCategories(p).includes('theme')),
+    [favoriteListed])
+  const favoriteThemes = useMemo(
+    () => favoriteListed.filter(p => pluginCategories(p).includes('theme')),
+    [favoriteListed])
+  const favResetDeps = [qFavorites, favSortField, favSortDir, favTimeRange] as const
+  const favoritePluginPagination = usePagination(
+    favoritePlugins.length, favResetDeps, scrollToTop)
+  const favoriteThemePagination = usePagination(
+    favoriteThemes.length, favResetDeps, scrollToTop)
+  const favoritePagePlugins = favoritePlugins.slice(
+    (favoritePluginPagination.currentPage - 1) * favoritePluginPagination.pageSize,
+    favoritePluginPagination.currentPage * favoritePluginPagination.pageSize)
+  const favoritePageThemes = favoriteThemes.slice(
+    (favoriteThemePagination.currentPage - 1) * favoriteThemePagination.pageSize,
+    favoriteThemePagination.currentPage * favoriteThemePagination.pageSize)
 
   /** Download a host endpoint as a file — primitives Button can't be an <a download>.
    * Prefers the server's Content-Disposition filename (e.g. the timestamped
@@ -3425,11 +3437,11 @@ export function MarketSection(props: MarketSectionProps) {
         </div>
         <div className={css.tabs}>
           <button className={tab === 'discover' ? `${css.tab} ${css.on}` : css.tab} onClick={() => setTab('discover')}>{t('tabDiscover')}</button>
+          {themeSnap !== null && <button className={tab === 'themes' ? `${css.tab} ${css.on}` : css.tab} onClick={() => setTab('themes')}>{t('tabThemes')}</button>}
           <button
             className={tab === 'favorites' ? `${css.tab} ${css.on}` : css.tab}
             onClick={() => setTab('favorites')}
           >{t('tabFavorites') + (favoriteUrls.length > 0 ? ' (' + favoriteUrls.length + ')' : '')}</button>
-          {themeSnap !== null && <button className={tab === 'themes' ? `${css.tab} ${css.on}` : css.tab} onClick={() => setTab('themes')}>{t('tabThemes')}</button>}
           <button className={tab === 'installed' ? `${css.tab} ${css.on}` : css.tab} onClick={() => { setTab('installed'); refreshInstalled(true) }}>
             {t('tabInstalled') + (installedOtherCount > 0 ? ' (' + installedOtherCount + ')' : '')}
             {hasUpdates && <StateDot state="error" size={7} className={css.dot} />}
@@ -3882,15 +3894,15 @@ export function MarketSection(props: MarketSectionProps) {
                 ? <div className={css.empty}>{t('favoritesEmpty')}</div>
                 : (
                     <>
-                      <div className={css.stickyHead}>
-                        <div className={css.tabSearchRow}>
-                          <Input
-                            className={css.tabSearch}
-                            icon={<IconSearchOutline16 size={14} />}
-                            placeholder={t('searchFavoritesPh')}
-                            value={qFavorites}
-                            onChange={e => setQFavorites(e.target.value)}
-                          />
+                      <div className={css.themeToolbar}>
+                        <Input
+                          className={css.themeSearch}
+                          icon={<IconSearchOutline16 size={14} />}
+                          placeholder={t('searchFavoritesPh')}
+                          value={qFavorites}
+                          onChange={e => setQFavorites(e.target.value)}
+                        />
+                        <div className={css.themeToolbarActions}>
                           <FilterMenu
                             sortField={favSortField}
                             sortDir={favSortDir}
@@ -3909,19 +3921,40 @@ export function MarketSection(props: MarketSectionProps) {
                               <div className={css.themeResultBar}>
                                 <span>{t('favoritesResultCount').replace('{0}', String(favoriteListed.length))}</span>
                               </div>
-                              <div className={css.grid}>
-                                {favoritePagePlugins.map(p => (
-                                  pluginCategories(p).includes('theme') ? themePluginCard(p) : pluginCard(p)
-                                ))}
-                              </div>
-                              <Pager
-                                currentPage={favoritePagination.currentPage}
-                                totalPages={favoritePagination.totalPages}
-                                pageSize={favoritePagination.pageSize}
-                                onGoToPage={favoritePagination.goToPage}
-                                onChangePageSize={favoritePagination.changePageSize}
-                                t={t}
-                              />
+                              {favoritePlugins.length > 0 && (
+                                <>
+                                  <h3 className={css.favoritesSectionHead}>
+                                    {t('favoritesPluginsSection').replace('{0}', String(favoritePlugins.length))}
+                                  </h3>
+                                  <Masonry items={favoritePagePlugins} render={pluginCard} />
+                                  <Pager
+                                    currentPage={favoritePluginPagination.currentPage}
+                                    totalPages={favoritePluginPagination.totalPages}
+                                    pageSize={favoritePluginPagination.pageSize}
+                                    onGoToPage={favoritePluginPagination.goToPage}
+                                    onChangePageSize={favoritePluginPagination.changePageSize}
+                                    t={t}
+                                  />
+                                </>
+                              )}
+                              {favoriteThemes.length > 0 && (
+                                <>
+                                  <h3 className={css.favoritesSectionHead}>
+                                    {t('favoritesThemesSection').replace('{0}', String(favoriteThemes.length))}
+                                  </h3>
+                                  <div className={css.themeGallery}>
+                                    {favoritePageThemes.map(themePluginCard)}
+                                  </div>
+                                  <Pager
+                                    currentPage={favoriteThemePagination.currentPage}
+                                    totalPages={favoriteThemePagination.totalPages}
+                                    pageSize={favoriteThemePagination.pageSize}
+                                    onGoToPage={favoriteThemePagination.goToPage}
+                                    onChangePageSize={favoriteThemePagination.changePageSize}
+                                    t={t}
+                                  />
+                                </>
+                              )}
                             </>
                           )}
                     </>
