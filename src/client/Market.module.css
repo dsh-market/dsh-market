@@ -706,6 +706,10 @@
    what the card is for. */
 .commentsLink{background:none;border:0;padding:0;cursor:pointer;font-size:11px;line-height:16px;white-space:nowrap;color:var(--dsw-alias-label-secondary,#9ca3af)}
 .commentsLink:hover{color:var(--dsw-alias-brand-primary,#4f6ef7)}
+.footActions{display:inline-flex;align-items:center;gap:8px;flex-shrink:0}
+.favoriteBtn{background:none;border:0;padding:0;cursor:pointer;display:inline-flex;align-items:center;color:var(--dsw-alias-label-secondary,#9ca3af)}
+.favoriteBtn:hover{color:var(--dsw-alias-brand-primary,#4f6ef7)}
+.favoriteOn{color:var(--dsw-alias-brand-primary,#4f6ef7)}
 .commentsNote{font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary,#9ca3af);margin:0 0 8px}
 .commentsStatus{font-size:12px;color:var(--dsw-alias-label-secondary,#9ca3af);margin:0}
 .commentsStatus:empty{display:none}

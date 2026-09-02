@@ -205,6 +205,8 @@ export interface InstalledPayload {
   groups?: Record<string, string[]>
   /** Display order of group names. */
   groupOrder?: string[]
+  /** Catalog entry URLs bookmarked for later install (#414). */
+  favorites?: string[]
 }
 
 /**
@@ -451,6 +453,19 @@ export function visiblePlugins(plugins: RegistryPlugin[], options: ListQuery): R
     || comparePlugins(a.plugin, b.plugin, options.sort)
     || a.index - b.index,
   ).map(row => row.plugin)
+}
+
+/**
+ * Favorites tab listing: only bookmarked catalog entries, then the usual
+ * search/sort window. Pure — the section renders exactly this.
+ */
+export function pluginsForFavorites(
+  plugins: RegistryPlugin[],
+  favoriteUrls: ReadonlySet<string>,
+  options: Omit<ListQuery, 'category'>,
+): RegistryPlugin[] {
+  const subset = plugins.filter(plugin => favoriteUrls.has(plugin.url))
+  return visiblePlugins(subset, { ...options, category: 'all' })
 }
 
 /** The themes tab listing: theme category only, most-starred first. */

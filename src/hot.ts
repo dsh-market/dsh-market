@@ -217,6 +217,12 @@ export interface MarketState {
    * downloads oddly.
    */
   regionAuto?: boolean
+  /**
+   * Catalog entry URLs the user bookmarked for later install (#414).
+   * Keys are registry `url` strings, not package names — favorites are a
+   * pre-install list, unlike groups/notes which target installed packages.
+   */
+  favorites?: string[]
 }
 
 /** Unique non-empty strings in `value`, order preserved. */
@@ -230,6 +236,11 @@ function uniqueStrings(value: unknown): string[] {
     out.push(item)
   }
   return out
+}
+
+/** Catalog URLs the user may favorite; http(s) only, order preserved. */
+function favoriteUrls(value: unknown): string[] {
+  return uniqueStrings(value).filter(url => url.startsWith('http://') || url.startsWith('https://'))
 }
 
 /**
@@ -252,6 +263,7 @@ export function readMarketState(profileDir: string): MarketState {
       region?: unknown
       regionAuto?: unknown
       notes?: unknown
+      favorites?: unknown
     }
     const disabled = uniqueStrings(state.disabled !== undefined ? state.disabled : state.disabledSkins)
     const groups: Record<string, string[]> = {}
@@ -278,9 +290,10 @@ export function readMarketState(profileDir: string): MarketState {
       // Only meaningful beside a region, and only when true: a stray flag
       // with no region would promise a notice about a choice nobody made.
       regionAuto: state.regionAuto === true && asRegion(state.region) !== null ? true : undefined,
+      favorites: favoriteUrls(state.favorites),
     }
   } catch {
-    return { disabled: new Set(), groups: {}, groupOrder: [], notes: {} }
+    return { disabled: new Set(), groups: {}, groupOrder: [], notes: {}, favorites: [] }
   }
 }
 
@@ -325,10 +338,12 @@ export function writeMarketState(profileDir: string, state: MarketState): void {
   const regionAuto = Object.prototype.hasOwnProperty.call(state, 'regionAuto')
     ? state.regionAuto
     : onDisk.regionAuto
+  const favorites = state.favorites ?? onDisk.favorites ?? []
   writeFileSync(stateFile(profileDir), JSON.stringify({
     disabled: [...state.disabled],
     groups: state.groups,
     groupOrder: state.groupOrder,
+    ...(favorites.length > 0 ? { favorites } : {}),
     ...(Object.keys(notes).length > 0 ? { notes } : {}),
     // Omitted while unchosen, so "never picked" survives a round trip and
     // keeps deriving from the running build — but only when disk has not

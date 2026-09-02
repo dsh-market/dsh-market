@@ -369,6 +369,7 @@ export function mountMarketRoutes(
     marketState.channel = fresh.channel
     marketState.region = fresh.region
     marketState.regionAuto = fresh.regionAuto
+    marketState.favorites = fresh.favorites
   }
 
   // Client-only packages (dsh.client without dsh.bundle) are invisible to the
@@ -1543,6 +1544,7 @@ export function mountMarketRoutes(
           groups,
           groupOrder,
           notes: readMarketState(activeProfileDir).notes ?? {},
+          favorites: readMarketState(activeProfileDir).favorites ?? [],
           patch: { disables: patch.disables, forced: patch.forced, inserts: patch.inserts },
           patchDisabled: patchFlags.disabled,
           patchForced: patchFlags.forced,
@@ -2053,6 +2055,46 @@ export function mountMarketRoutes(
             writeMarketState(activeProfileDir, { ...state, notes })
             refreshMarketState()
             sendJson(response, 200, { ok: true, notes })
+          })
+        } catch (error) {
+          sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    }),
+
+    host.webServer.register({
+      kind: 'exact',
+      path: '/dsh-market/favorite',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) {
+          sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        try {
+          await withMutationLock(response, 'write', async () => {
+            const body = (await readJsonBody(request)) as { url?: unknown; favorited?: unknown } | null
+            const url = typeof body?.url === 'string' ? body.url.trim() : ''
+            if (url === '' || (!url.startsWith('http://') && !url.startsWith('https://'))) {
+              sendJson(response, 400, { error: 'url is required / 需要有效的 http(s) url' })
+              return
+            }
+            const state = readMarketState(activeProfileDir)
+            const favorites = [...(state.favorites ?? [])]
+            const favorited = body?.favorited === true
+            if (favorited) {
+              if (!favorites.includes(url)) favorites.push(url)
+            } else {
+              const index = favorites.indexOf(url)
+              if (index !== -1) favorites.splice(index, 1)
+            }
+            writeMarketState(activeProfileDir, { ...state, favorites })
+            refreshMarketState()
+            sendJson(response, 200, { ok: true, favorites })
           })
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })

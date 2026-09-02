@@ -90,11 +90,33 @@ describe('market state.json (#60)', () => {
     expect(readMarketState(dir).notes).toEqual({ b: 'real' })
   })
 
+  it('persists favorites as ordered http(s) urls and drops junk on read', () => {
+    const dir = stateDir()
+    try {
+      writeMarketState(dir, {
+        disabled: new Set(), groups: {}, groupOrder: [],
+        favorites: [
+          'https://github.com/o/a',
+          'https://github.com/o/a',
+          'ftp://bad',
+          'https://github.com/o/b',
+        ],
+      })
+      expect(readMarketState(dir).favorites).toEqual([
+        'https://github.com/o/a',
+        'https://github.com/o/b',
+      ])
+      expect('favorites' in readRaw(dir)).toBe(true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('readMarketState normalizes malformed payloads to empty state', () => {
     const dir = stateDir()
     try {
       writeFileSync(join(dir, '.dsh-market', 'state.json'), 'not json')
-      expect(readMarketState(dir)).toEqual({ disabled: new Set(), groups: {}, groupOrder: [], notes: {} })
+      expect(readMarketState(dir)).toEqual({ disabled: new Set(), groups: {}, groupOrder: [], notes: {}, favorites: [] })
       writeFileSync(join(dir, '.dsh-market', 'state.json'), JSON.stringify({
         disabled: ['a', 'a', '', 7],
         groups: { work: ['x', 'x', 3] },
@@ -201,6 +223,19 @@ describe('a partial write must not erase the rest of the state (#435)', () => {
     writeMarketState(dir, { ...current, notes: {} })
 
     expect(readMarketState(dir).notes).toEqual({})
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('keeps favorites when a partial write only touches disabled/groups', () => {
+    const dir = stateDir()
+    writeMarketState(dir, {
+      disabled: new Set(), groups: {}, groupOrder: [],
+      favorites: ['https://github.com/o/dsh-loop'],
+    })
+
+    writeMarketState(dir, { disabled: new Set(['x']), groups: {}, groupOrder: [] })
+
+    expect(readMarketState(dir).favorites).toEqual(['https://github.com/o/dsh-loop'])
     rmSync(dir, { recursive: true, force: true })
   })
 
