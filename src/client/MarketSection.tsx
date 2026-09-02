@@ -2421,6 +2421,10 @@ export function MarketSection(props: MarketSectionProps) {
           setFavoriteError(t('favoriteUnavailable'))
           return
         }
+        if (status === 409) {
+          setFavoriteError(t('favoriteBusy'))
+          return
+        }
         setFavoriteError(typeof body?.error === 'string' ? body.error : t('favoriteFailed'))
       })
       .catch((error: unknown) => {
@@ -2438,39 +2442,40 @@ export function MarketSection(props: MarketSectionProps) {
     setFavoriteError(null)
     setClearingStale(true)
     setFavoriteUrls(list => list.filter(url => !stale.includes(url)))
-    Promise.all(stale.map(url =>
-      fetch(api('/dsh-market/favorite'), {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ url, favorited: false }),
-      }).then(async (res) => {
-        const text = await res.text()
-        let body: { ok?: unknown; favorites?: unknown; error?: unknown } | null = null
-        if (text !== '') {
-          try { body = JSON.parse(text) as { ok?: unknown; favorites?: unknown; error?: unknown } } catch { /* non-JSON */ }
-        }
-        return { status: res.status, body }
-      }),
-    ))
-      .then((results) => {
-        if (gen !== favoriteOpGen.current) return
-        const lastOk = [...results].reverse().find(result =>
-          result.status === 200 && result.body?.ok === true && Array.isArray(result.body.favorites))
-        if (lastOk?.body !== null && lastOk?.body !== undefined && Array.isArray(lastOk.body.favorites)) {
-          setFavoriteUrls(lastOk.body.favorites.filter((entry: unknown): entry is string => typeof entry === 'string'))
+    void (async () => {
+      try {
+        let latest: string[] | null = null
+        for (const url of stale) {
+          const res = await fetch(api('/dsh-market/favorite'), {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ url, favorited: false }),
+          })
+          const text = await res.text()
+          let body: { ok?: unknown; favorites?: unknown; error?: unknown } | null = null
+          if (text !== '') {
+            try { body = JSON.parse(text) as { ok?: unknown; favorites?: unknown; error?: unknown } } catch { /* non-JSON */ }
+          }
+          if (res.status === 200 && body?.ok === true && Array.isArray(body.favorites)) {
+            latest = body.favorites.filter((entry: unknown): entry is string => typeof entry === 'string')
+            continue
+          }
+          if (gen !== favoriteOpGen.current) return
+          setFavoriteUrls(previous)
+          if (res.status === 409) setFavoriteError(t('favoriteBusy'))
+          else setFavoriteError(typeof body?.error === 'string' ? body.error : t('favoriteFailed'))
           return
         }
-        setFavoriteUrls(previous)
-        setFavoriteError(t('favoriteFailed'))
-      })
-      .catch((error: unknown) => {
+        if (gen !== favoriteOpGen.current) return
+        if (latest !== null) setFavoriteUrls(latest)
+      } catch (error: unknown) {
         if (gen !== favoriteOpGen.current) return
         setFavoriteUrls(previous)
         setFavoriteError(String(error))
-      })
-      .finally(() => {
+      } finally {
         if (gen === favoriteOpGen.current) setClearingStale(false)
-      })
+      }
+    })()
   }, [favoriteStale, favoriteUrls, t])
 
   const clearPendingRefresh = useCallback((name: string) => {

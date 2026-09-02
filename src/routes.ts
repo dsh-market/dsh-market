@@ -406,6 +406,17 @@ export function mountMarketRoutes(
   let mutationChain: Promise<unknown> = Promise.resolve()
 
   /**
+   * Append a lightweight state write to the mutation chain without answering
+   * 409 when another operation is in flight. Favorites are catalog bookmarks
+   * only — they must stay editable while an install runs (#414).
+   */
+  async function withMutationQueued<T>(fn: () => Promise<T> | T): Promise<T> {
+    const run = mutationChain.then(async () => fn())
+    mutationChain = run.catch(() => undefined)
+    return await run
+  }
+
+  /**
    * Run a mutating operation under the shared mutation lock. `kind` selects
    * the UI busy flag (`install` = pnpm operation, `write` = direct profile
    * write) and the 409 message. The operation runs only after every earlier
@@ -2076,7 +2087,7 @@ export function mountMarketRoutes(
           return
         }
         try {
-          await withMutationLock(response, 'write', async () => {
+          await withMutationQueued(async () => {
             const body = (await readJsonBody(request)) as { url?: unknown; favorited?: unknown } | null
             const url = typeof body?.url === 'string' ? body.url.trim() : ''
             if (url === '' || (!url.startsWith('http://') && !url.startsWith('https://'))) {
@@ -2102,7 +2113,10 @@ export function mountMarketRoutes(
               const index = favorites.indexOf(url)
               if (index !== -1) favorites.splice(index, 1)
             }
-            writeMarketState(activeProfileDir, { ...state, favorites })
+            // Re-read immediately before write so a concurrent install cannot
+            // leave us holding a stale disabled/groups snapshot (#414).
+            const fresh = readMarketState(activeProfileDir)
+            writeMarketState(activeProfileDir, { ...fresh, favorites })
             refreshMarketState()
             sendJson(response, 200, { ok: true, favorites })
           })

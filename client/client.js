@@ -124,6 +124,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			agentBusyInstall: "有 agent 正在运行，请等待其完成或将其取消后再安装——安装会修改插件文件，运行中的 agent 可能中途报错。",
 			favoriteFailed: "收藏失败，请稍后重试",
 			favoriteUnavailable: "收藏功能暂不可用。请刷新页面或重启 dsh web。",
+			favoriteBusy: "插件操作进行中，收藏已排队，请稍候再试",
 			compatRiskBanner: "检测到兼容性风险，建议重启前到诊断页处理，或一键回滚本次操作。",
 			compatRiskBannerNoRollback: "检测到兼容性风险，建议重启前到诊断页处理。",
 			shadowNameBanner: "本次操作让同一个插件名在两个层里同时存在，重启后只有一个会生效：",
@@ -613,6 +614,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			agentBusyInstall: "An agent is currently working — wait for it to finish (or cancel it) before installing. Installing changes plugin files, so a working agent can fail mid-turn.",
 			favoriteFailed: "Could not update favorites. Try again.",
 			favoriteUnavailable: "Favorites are unavailable. Refresh the page or restart dsh web.",
+			favoriteBusy: "A plugin operation is running. Your favorite change is queued — try again in a moment.",
 			compatRiskBanner: "Compatibility risk detected — open Diagnostics before restarting, or roll this operation back.",
 			compatRiskBannerNoRollback: "Compatibility risk detected — open Diagnostics before restarting.",
 			shadowNameBanner: "This operation left one plugin name defined in two layers; only one will load after a restart:",
@@ -6797,6 +6799,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						setFavoriteError(t("favoriteUnavailable"));
 						return;
 					}
+					if (status === 409) {
+						setFavoriteError(t("favoriteBusy"));
+						return;
+					}
 					setFavoriteError(typeof body?.error === "string" ? body.error : t("favoriteFailed"));
 				}).catch((error) => {
 					if (gen !== favoriteOpGen.current) return;
@@ -6816,39 +6822,43 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				setFavoriteError(null);
 				setClearingStale(true);
 				setFavoriteUrls((list) => list.filter((url) => !stale.includes(url)));
-				Promise.all(stale.map((url) => fetch(api("/dsh-market/favorite"), {
-					method: "POST",
-					headers: { "content-type": "application/json" },
-					body: JSON.stringify({
-						url,
-						favorited: false
-					})
-				}).then(async (res) => {
-					const text = await res.text();
-					let body = null;
-					if (text !== "") try {
-						body = JSON.parse(text);
-					} catch {}
-					return {
-						status: res.status,
-						body
-					};
-				}))).then((results) => {
-					if (gen !== favoriteOpGen.current) return;
-					const lastOk = [...results].reverse().find((result) => result.status === 200 && result.body?.ok === true && Array.isArray(result.body.favorites));
-					if (lastOk?.body !== null && lastOk?.body !== void 0 && Array.isArray(lastOk.body.favorites)) {
-						setFavoriteUrls(lastOk.body.favorites.filter((entry) => typeof entry === "string"));
-						return;
+				(async () => {
+					try {
+						let latest = null;
+						for (const url of stale) {
+							const res = await fetch(api("/dsh-market/favorite"), {
+								method: "POST",
+								headers: { "content-type": "application/json" },
+								body: JSON.stringify({
+									url,
+									favorited: false
+								})
+							});
+							const text = await res.text();
+							let body = null;
+							if (text !== "") try {
+								body = JSON.parse(text);
+							} catch {}
+							if (res.status === 200 && body?.ok === true && Array.isArray(body.favorites)) {
+								latest = body.favorites.filter((entry) => typeof entry === "string");
+								continue;
+							}
+							if (gen !== favoriteOpGen.current) return;
+							setFavoriteUrls(previous);
+							if (res.status === 409) setFavoriteError(t("favoriteBusy"));
+							else setFavoriteError(typeof body?.error === "string" ? body.error : t("favoriteFailed"));
+							return;
+						}
+						if (gen !== favoriteOpGen.current) return;
+						if (latest !== null) setFavoriteUrls(latest);
+					} catch (error) {
+						if (gen !== favoriteOpGen.current) return;
+						setFavoriteUrls(previous);
+						setFavoriteError(String(error));
+					} finally {
+						if (gen === favoriteOpGen.current) setClearingStale(false);
 					}
-					setFavoriteUrls(previous);
-					setFavoriteError(t("favoriteFailed"));
-				}).catch((error) => {
-					if (gen !== favoriteOpGen.current) return;
-					setFavoriteUrls(previous);
-					setFavoriteError(String(error));
-				}).finally(() => {
-					if (gen === favoriteOpGen.current) setClearingStale(false);
-				});
+				})();
 			}, [
 				favoriteStale,
 				favoriteUrls,
