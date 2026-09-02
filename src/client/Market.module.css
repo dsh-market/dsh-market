@@ -748,3 +748,11 @@
 .notesSha:hover{color:var(--dsw-alias-label-primary,#1f2328);text-decoration:underline}
 .notesVer{color:inherit;text-decoration:none;font-weight:600}
 .notesVer:hover{text-decoration:underline}
+
+/* Git -> npm source confirmation: make the from/to change readable without turning it into an error banner. */
+.migrationSources{display:flex;flex-direction:column;gap:8px;margin-top:4px}
+.migrationSource{display:flex;flex-direction:column;gap:4px;padding:10px 12px;border:1px solid var(--dsw-alias-border-default,#e5e7eb);border-radius:8px}
+.migrationSource code{font-size:12px;font-family:ui-monospace,Menlo,monospace;overflow-wrap:anywhere}
+.migrationLabel{font-size:11px;color:var(--dsw-alias-label-secondary,#9ca3af)}
+.migrationArrow{text-align:center;color:var(--dsw-alias-label-secondary,#9ca3af)}
+.migrationWarning{display:flex;align-items:flex-start;gap:6px;margin:12px 0 0;font-size:12px;line-height:18px;color:var(--dsw-alias-state-warn-primary,#b45309)}

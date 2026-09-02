@@ -1103,6 +1103,12 @@ export interface MarketSectionProps {
   preferredSubsectionId?: string
 }
 
+interface SourceMigrationConfirm {
+  name: string
+  source: string
+  target: string
+}
+
 export function MarketSection(props: MarketSectionProps) {
   const t = props.t
   const initialWebdav = useMemo(savedWebdav, [])
@@ -1296,8 +1302,8 @@ export function MarketSection(props: MarketSectionProps) {
   const [staleName, setStaleName] = useState<string | null>(null)
   // Local link:/file: restore: the red banner asks before swapping to the catalog.
   const [restoreName, setRestoreName] = useState<string | null>(null)
-  // Git -> npm is a source migration, not an update; it gets its own confirmation state.
-  const [migrationName, setMigrationName] = useState<string | null>(null)
+  // Snapshot the source switch the user agreed to review; later renders must not change it under the dialog.
+  const [migrationConfirm, setMigrationConfirm] = useState<SourceMigrationConfirm | null>(null)
 
   /** Determinate percent parsed from pnpm's Progress line, when available. */
   const [progressPct, setProgressPct] = useState<number | null>(null)
@@ -2154,7 +2160,7 @@ export function MarketSection(props: MarketSectionProps) {
     // one kept it — the rest failed silently with no way forward (#255).
     setStaleName(prev => (prev === name ? null : prev))
     setRestoreName(prev => (prev === name ? null : prev))
-    setMigrationName(null)
+    setMigrationConfirm(null)
     setUpdatingName(name)
     updateIdleStrikes.current = 0
     // Mirror the install flow's dshm-pending marker: closing the config page
@@ -2247,7 +2253,7 @@ export function MarketSection(props: MarketSectionProps) {
   const doSourceMigration = useCallback((name: string) => {
     setInstallError(null)
     setActivationWarnings([])
-    setMigrationName(null)
+    setMigrationConfirm(null)
     setUpdatingName(name)
     return fetch(api('/dsh-market/migrate-source'), {
       method: 'POST',
@@ -2284,19 +2290,22 @@ export function MarketSection(props: MarketSectionProps) {
   const askSourceMigration = useCallback((name: string) => {
     const migration = updates[name]?.sourceMigration
     const source = installed[name]
+
     setStaleName(null)
     setRestoreName(null)
+    setInstallError(null)
+
     if (migration === undefined || source === undefined) {
-      setMigrationName(null)
+      setMigrationConfirm(null)
       return
     }
-    setMigrationName(name)
-    setInstallError(
-      t('migrateHint')
-        .replace('{0}', `${name}: ${String(source)}`)
-        .replace('{1}', migration.target),
-    )
-  }, [installed, t, updates])
+
+    setMigrationConfirm({
+      name,
+      source: String(source),
+      target: migration.target,
+    })
+  }, [installed, updates])
 
   const askRestore = useCallback((name: string) => {
     const spec = installed[name]
@@ -2304,7 +2313,7 @@ export function MarketSection(props: MarketSectionProps) {
       ? undefined
       : entryForDep(data.plugins, name, String(spec), repoIdentities[name], repoHints[name])
     setStaleName(null)
-    setMigrationName(null)
+    setMigrationConfirm(null)
     if (entry === undefined) {
       setRestoreName(null)
       setInstallError(t('restoreNoCatalog'))
@@ -3589,9 +3598,6 @@ export function MarketSection(props: MarketSectionProps) {
             {restoreName !== null && (
               <Button size="sm" onClick={() => doUpdate(restoreName, false, true)}>{t('restoreContinue')}</Button>
             )}
-            {migrationName !== null && (
-              <Button size="sm" onClick={() => doSourceMigration(migrationName)}>{t('migrateContinue')}</Button>
-            )}
             {/* The banner text told users to export the log; now it IS the button (#84). */}
             <Button
               size="sm"
@@ -4490,6 +4496,53 @@ export function MarketSection(props: MarketSectionProps) {
           onClose={() => setLightbox(null)}
           t={t}
         />
+      )}
+      {migrationConfirm !== null && (
+        <Modal
+          open
+          onClose={() => setMigrationConfirm(null)}
+          title={t('migrateTitle')}
+          description={t('migrateDescription')}
+          footer={(
+            <>
+              <Button
+                variant="ghost"
+                onClick={() => setMigrationConfirm(null)}
+              >
+                {t('cancel')}
+              </Button>
+              <Button
+                variant="primary"
+                disabled={updatingName !== null}
+                onClick={() => doSourceMigration(migrationConfirm.name)}
+              >
+                {t('migrateContinue')}
+              </Button>
+            </>
+          )}
+        >
+          <div className={css.migrationSources}>
+            <div className={css.migrationSource}>
+              <span className={css.migrationLabel}>
+                {t('migrateCurrentSource')}
+              </span>
+              <code>
+                {migrationConfirm.name}: {migrationConfirm.source}
+              </code>
+            </div>
+            <div className={css.migrationArrow}>↓</div>
+            <div className={css.migrationSource}>
+              <span className={css.migrationLabel}>
+                {t('migrateTargetSource')}
+              </span>
+              <code>{migrationConfirm.target}</code>
+            </div>
+          </div>
+          <p className={css.migrationWarning}>
+            <IconWarningOutline16 size={14} />
+            {t('migrateWarning')}
+          </p>
+        </Modal>
       )}
       {removeConfirm !== null && (
         <Modal
