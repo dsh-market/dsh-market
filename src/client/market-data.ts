@@ -319,9 +319,21 @@ export function isMarketItself(plugin: Pick<RegistryPlugin, 'name' | 'npm'>): bo
   return plugin.name === 'dsh-market' || plugin.npm === 'dshmarket'
 }
 
-/** Normalize punctuation-separated package names and human text alike. */
+/**
+ * A single pass that inserts a separator after the character on the left of
+ * every Han ↔ Latin/number boundary. Punctuation is normalized separately
+ * below. Keeping this generic lets `MCP管理`, `管理MCP`, and `OAuth2授权`
+ * behave like their space-separated forms without product-specific aliases.
+ */
+const searchScriptBoundary = /(?:\p{Script=Han}(?=[\p{Script=Latin}\p{N}])|[\p{Script=Latin}\p{N}](?=\p{Script=Han}))/gu
+
+/** Normalize package names, human text, and adjacent mixed-script terms alike. */
 function searchText(value: string): string {
-  return value.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim().replace(/\s+/g, ' ')
+  return value.normalize('NFKC').toLowerCase()
+    .replace(searchScriptBoundary, '$& ')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim()
+    .replace(/\s+/g, ' ')
 }
 
 /**

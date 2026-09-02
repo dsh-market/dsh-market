@@ -285,6 +285,45 @@ describe('discover list (visiblePlugins)', () => {
     }).map(p => p.name)).toEqual(['dsh-mcp-connector', 'dsh-mcp-connector-guide'])
   })
 
+  it('treats adjacent Han and Latin terms like their space-separated forms', () => {
+    const rows: RegistryPlugin[] = [
+      plugin({ name: 'compact-panel', downloads: 1, description: { zh: 'MCP面板' } }),
+      plugin({ name: 'expanded-panel', downloads: 100_000, description: { zh: 'MCP 运行状态面板' } }),
+      plugin({ name: 'market-tools', downloads: 80_000, description: { zh: 'MCP Server 市场' } }),
+    ]
+    const names = (query: string) => visiblePlugins(rows, {
+      category: 'all', query, lang: 'zh', sort: 'downloads-desc',
+    }).map(p => p.name)
+
+    // The compact field is an exact match and remains ahead of the much more
+    // popular expanded description. Both query spellings return the same set
+    // in the same order, so the rule applies to indexed fields and queries.
+    expect(names('MCP面板')).toEqual(['compact-panel', 'expanded-panel'])
+    expect(names('MCP 面板')).toEqual(names('MCP面板'))
+    expect(names('MCP市场')).toEqual(['market-tools'])
+    expect(names('MCP 市场')).toEqual(names('MCP市场'))
+  })
+
+  it('recognizes Han-to-Latin and number-to-Han boundaries without crossing fields', () => {
+    const rows: RegistryPlugin[] = [
+      plugin({ name: 'compact-reverse', downloads: 1, description: { zh: '管理API' } }),
+      plugin({ name: 'expanded-reverse', downloads: 90_000, description: { zh: '统一管理 API 服务' } }),
+      plugin({ name: 'oauth-guide', description: { zh: 'OAuth2授权指南' } }),
+      // `API` and `管理` exist, but not in the same field. Boundary splitting
+      // must not weaken the existing same-field requirement.
+      plugin({ name: 'split-fields', owner: 'API team', description: { zh: '统一管理' } }),
+    ]
+    const names = (query: string) => visiblePlugins(rows, {
+      category: 'all', query, lang: 'zh', sort: 'downloads-desc',
+    }).map(p => p.name)
+
+    expect(names('管理API')).toEqual(['compact-reverse', 'expanded-reverse'])
+    expect(names('管理 API')).toEqual(names('管理API'))
+    expect(names('OAuth2授权')).toEqual(['oauth-guide'])
+    expect(names('OAuth2 授权')).toEqual(names('OAuth2授权'))
+    expect(names('API管理')).not.toContain('split-fields')
+  })
+
   it('treats punctuation-only input as no search and keeps multi-word matches within one field', () => {
     const rows: RegistryPlugin[] = [
       plugin({ name: 'task-helper', description: { en: 'Runner utilities' } }),
