@@ -43,7 +43,7 @@ import { Diagnostics } from './Diagnostics.tsx'
 import { clientDiagnostics } from './self-check.ts'
 import {
   api, avatarColor, entryForDep, githubProxyInUse, githubUrl, groupSwitchState, humanOutput, installedForCatalog, isInstalled, looksTerminal, matchInstalledName, orderedCategories, pluginCategories,
-  formatCount, pageItems, pluginName, pluginScreenshotCandidates, pluginScreenshots, pluginsForFavorites, rankThemeScreenshots, readSession, safeScreenshots, setGithubProxy, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
+  formatCount, pageItems, pluginName, pluginScreenshotCandidates, pluginScreenshots, pluginsForFavorites, rankThemeScreenshots, readSession, safeScreenshots, setGithubProxy, staleFavoriteUrls, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
 } from './market-data.ts'
 import type {
 ActivationInfo, ActivationState, GistExportResult, InstalledMap, InstalledRepoHints, InstalledRepoIdentities, MarketStatus, Registry, RegistryPlugin,
@@ -1242,6 +1242,10 @@ export function MarketSection(props: MarketSectionProps) {
   const updateIdleStrikes = useRef(0)
   const [doneUrls, setDoneUrls] = useState<string[]>([])
   const [installError, setInstallError] = useState<string | null>(null)
+  const [favoriteError, setFavoriteError] = useState<string | null>(null)
+  /** Ignores out-of-order /dsh-market/favorite responses after a newer toggle. */
+  const favoriteOpGen = useRef(0)
+  const [clearingStale, setClearingStale] = useState(false)
   /** The notes payload the server answers with, verbatim (see /changelog). */
   type NoteRelease = { tag: string | null; name: string | null; publishedAt: string | null; url: string | null; body: string }
   type NoteCommit = { sha: string; message: string; date: string | null }
@@ -1310,6 +1314,7 @@ export function MarketSection(props: MarketSectionProps) {
   /** Stable onDone for the export Toast — a fresh closure per render would
    * reset the Toast's auto-dismiss timer on every parent re-render. */
   const exportToastDone = useCallback(() => setExportState('idle'), [])
+  const favoriteErrorDone = useCallback(() => setFavoriteError(null), [])
   const [updates, setUpdates] = useState<Record<string, UpdateStatus>>({})
   /** Update reminders dismissed for this host boot. The Installed tab still
    * shows these plugins and their update actions; only proactive prompts use
@@ -1891,6 +1896,14 @@ export function MarketSection(props: MarketSectionProps) {
   const favoritePageThemes = favoriteThemes.slice(
     (favoriteThemePagination.currentPage - 1) * favoriteThemePagination.pageSize,
     favoriteThemePagination.currentPage * favoriteThemePagination.pageSize)
+  const favoriteStale = useMemo(
+    () => (data === null ? [] : staleFavoriteUrls(favoriteUrls, data.plugins)),
+    [data, favoriteUrls])
+  const favoritesAllStale = favoriteUrls.length > 0
+    && favoriteStale.length === favoriteUrls.length
+    && qFavorites.trim() === ''
+  /** Tab badge counts catalog-visible bookmarks once the registry is loaded. */
+  const favoriteTabCount = data === null ? favoriteUrls.length : favoriteListed.length
 
   /** Download a host endpoint as a file — primitives Button can't be an <a download>.
    * Prefers the server's Content-Disposition filename (e.g. the timestamped
@@ -2376,8 +2389,10 @@ export function MarketSection(props: MarketSectionProps) {
   }, [])
 
   const toggleFavorite = useCallback((url: string) => {
+    const gen = ++favoriteOpGen.current
     const favorited = !favoriteUrlSet.has(url)
     const previous = favoriteUrls
+    setFavoriteError(null)
     setFavoriteUrls((list) => {
       if (favorited) return list.includes(url) ? list : [...list, url]
       return list.filter(entry => entry !== url)
@@ -2396,22 +2411,67 @@ export function MarketSection(props: MarketSectionProps) {
         return { status: res.status, body }
       })
       .then(({ status, body }) => {
+        if (gen !== favoriteOpGen.current) return
         if (status === 200 && body?.ok === true && Array.isArray(body.favorites)) {
           setFavoriteUrls(body.favorites.filter((entry: unknown): entry is string => typeof entry === 'string'))
           return
         }
         setFavoriteUrls(previous)
         if (body === null && (status === 404 || status === 405)) {
-          setInstallError(t('favoriteUnavailable'))
+          setFavoriteError(t('favoriteUnavailable'))
           return
         }
-        setInstallError(typeof body?.error === 'string' ? body.error : t('favoriteFailed'))
+        setFavoriteError(typeof body?.error === 'string' ? body.error : t('favoriteFailed'))
       })
       .catch((error: unknown) => {
+        if (gen !== favoriteOpGen.current) return
         setFavoriteUrls(previous)
-        setInstallError(String(error))
+        setFavoriteError(String(error))
       })
   }, [favoriteUrlSet, favoriteUrls, t])
+
+  const clearStaleFavorites = useCallback(() => {
+    if (favoriteStale.length === 0) return
+    const gen = ++favoriteOpGen.current
+    const stale = favoriteStale
+    const previous = favoriteUrls
+    setFavoriteError(null)
+    setClearingStale(true)
+    setFavoriteUrls(list => list.filter(url => !stale.includes(url)))
+    Promise.all(stale.map(url =>
+      fetch(api('/dsh-market/favorite'), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ url, favorited: false }),
+      }).then(async (res) => {
+        const text = await res.text()
+        let body: { ok?: unknown; favorites?: unknown; error?: unknown } | null = null
+        if (text !== '') {
+          try { body = JSON.parse(text) as { ok?: unknown; favorites?: unknown; error?: unknown } } catch { /* non-JSON */ }
+        }
+        return { status: res.status, body }
+      }),
+    ))
+      .then((results) => {
+        if (gen !== favoriteOpGen.current) return
+        const lastOk = [...results].reverse().find(result =>
+          result.status === 200 && result.body?.ok === true && Array.isArray(result.body.favorites))
+        if (lastOk?.body !== null && lastOk?.body !== undefined && Array.isArray(lastOk.body.favorites)) {
+          setFavoriteUrls(lastOk.body.favorites.filter((entry: unknown): entry is string => typeof entry === 'string'))
+          return
+        }
+        setFavoriteUrls(previous)
+        setFavoriteError(t('favoriteFailed'))
+      })
+      .catch((error: unknown) => {
+        if (gen !== favoriteOpGen.current) return
+        setFavoriteUrls(previous)
+        setFavoriteError(String(error))
+      })
+      .finally(() => {
+        if (gen === favoriteOpGen.current) setClearingStale(false)
+      })
+  }, [favoriteStale, favoriteUrls, t])
 
   const clearPendingRefresh = useCallback((name: string) => {
     setHotNames(names => names.filter(entry => entry !== name))
@@ -3441,7 +3501,7 @@ export function MarketSection(props: MarketSectionProps) {
           <button
             className={tab === 'favorites' ? `${css.tab} ${css.on}` : css.tab}
             onClick={() => setTab('favorites')}
-          >{t('tabFavorites') + (favoriteUrls.length > 0 ? ' (' + favoriteUrls.length + ')' : '')}</button>
+          >{t('tabFavorites') + (favoriteTabCount > 0 ? ' (' + favoriteTabCount + ')' : '')}</button>
           <button className={tab === 'installed' ? `${css.tab} ${css.on}` : css.tab} onClick={() => { setTab('installed'); refreshInstalled(true) }}>
             {t('tabInstalled') + (installedOtherCount > 0 ? ' (' + installedOtherCount + ')' : '')}
             {hasUpdates && <StateDot state="error" size={7} className={css.dot} />}
@@ -3915,9 +3975,32 @@ export function MarketSection(props: MarketSectionProps) {
                         </div>
                       </div>
                       {favoriteListed.length === 0
-                        ? <div className={css.empty}>{t('empty')}</div>
+                        ? favoritesAllStale
+                          ? (
+                              <div className={css.favoritesStaleOnly}>
+                                <div className={css.empty}>{t('favoritesStaleEmpty')}</div>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  disabled={clearingStale}
+                                  onClick={() => clearStaleFavorites()}
+                                >{clearingStale ? t('favoritesClearingStale') : t('favoritesClearStale')}</Button>
+                              </div>
+                            )
+                          : <div className={css.empty}>{t('empty')}</div>
                         : (
                             <>
+                              {favoriteStale.length > 0 && (
+                                <div className={css.favoritesStaleBar}>
+                                  <span>{t('favoritesStaleNote').replace('{0}', String(favoriteStale.length))}</span>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    disabled={clearingStale}
+                                    onClick={() => clearStaleFavorites()}
+                                  >{clearingStale ? t('favoritesClearingStale') : t('favoritesClearStale')}</Button>
+                                </div>
+                              )}
                               <div className={css.themeResultBar}>
                                 <span>{t('favoritesResultCount').replace('{0}', String(favoriteListed.length))}</span>
                               </div>
@@ -4786,6 +4869,9 @@ export function MarketSection(props: MarketSectionProps) {
       )}
       {exportState === 'fail' && (
         <Toast text={t('exportLogFail')} icon={<IconWarningOutline16 size={14} />} onDone={exportToastDone} />
+      )}
+      {favoriteError !== null && (
+        <Toast text={favoriteError} icon={<IconWarningOutline16 size={14} />} onDone={favoriteErrorDone} />
       )}
       {toggled !== null && (
         <Toast

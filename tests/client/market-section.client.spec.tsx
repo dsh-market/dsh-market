@@ -1708,6 +1708,15 @@ describe('favorites (#414)', () => {
     expect(screen.getByText(en.favoritesPluginsSection.replace('{0}', '1'))).toBeTruthy()
     expect(screen.getByText(en.favoritesThemesSection.replace('{0}', '1'))).toBeTruthy()
   })
+
+  it('shows stale empty state when every favorite left the catalog', async () => {
+    favoritesStub(['https://github.com/ghost/removed-plugin'])
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: re(en.tabFavorites) }))
+    expect(await screen.findByText(en.favoritesStaleEmpty)).toBeTruthy()
+    expect(screen.getByRole('button', { name: en.favoritesClearStale })).toBeTruthy()
+  })
 })
 
 /** #347: a catalog description answers "what is this", written by its author

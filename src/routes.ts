@@ -15,7 +15,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { load as loadYaml } from 'js-yaml'
 import { forgetCatalog, loadRegistry, pluginCategories } from './registry.ts'
 import {
-  cleanHotDir, hotMount, hotUnmount, listHotMounts, MAX_NOTE,
+  cleanHotDir, hotMount, hotUnmount, listHotMounts, MAX_FAVORITES, MAX_NOTE,
   mountClientOnlyDeps, purgeMarketState, readMarketState, writeMarketState,
 } from './hot.ts'
 import { createGroup, deleteGroup, removeFromGroups, renameGroup, setGroupMembers } from './groups.ts'
@@ -2087,7 +2087,17 @@ export function mountMarketRoutes(
             const favorites = [...(state.favorites ?? [])]
             const favorited = body?.favorited === true
             if (favorited) {
-              if (!favorites.includes(url)) favorites.push(url)
+              if (favorites.includes(url)) {
+                sendJson(response, 200, { ok: true, favorites })
+                return
+              }
+              if (favorites.length >= MAX_FAVORITES) {
+                sendJson(response, 400, {
+                  error: `favorites limit reached (${String(MAX_FAVORITES)}) / 收藏已达上限（${String(MAX_FAVORITES)}）`,
+                })
+                return
+              }
+              favorites.push(url)
             } else {
               const index = favorites.indexOf(url)
               if (index !== -1) favorites.splice(index, 1)

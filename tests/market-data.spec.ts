@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from 'vitest'
 import {
-  entryForDep, extractReadmeImageCandidates, extractReadmeImages, formatCount, groupSwitchState, installedForCatalog, isInstalled, isMarketItself, looksTerminal, matchInstalledName, orderedCategories, pageItems, pluginCategories, previewDimensionScore, rankThemeScreenshots, safeScreenshots, themePlugins, visiblePlugins, humanOutput} from '../src/client/market-data.ts'
+  entryForDep, extractReadmeImageCandidates, extractReadmeImages, formatCount, groupSwitchState, installedForCatalog, isInstalled, isMarketItself, looksTerminal, matchInstalledName, orderedCategories, pageItems, pluginCategories, pluginsForFavorites, previewDimensionScore, rankThemeScreenshots, safeScreenshots, staleFavoriteUrls, themePlugins, visiblePlugins, humanOutput} from '../src/client/market-data.ts'
 import type { RegistryPlugin, ScreenshotCandidate } from '../src/client/market-data.ts'
 
 function plugin(partial: Partial<RegistryPlugin>): RegistryPlugin {
@@ -370,6 +370,24 @@ describe('discover list (visiblePlugins)', () => {
   it('themePlugins lists only themes, most-starred first', () => {
     const themes = themePlugins([...CATALOG, plugin({ name: 'starless-theme', category: 'theme' })])
     expect(themes.map(p => p.name)).toEqual(['whale-skin', 'starless-theme'])
+  })
+
+  it('pluginsForFavorites keeps only bookmarked catalog entries', () => {
+    const rows = [
+      plugin({ name: 'dsh-loop', url: 'https://github.com/o/dsh-loop' }),
+      plugin({ name: 'dsh-notify', url: 'https://github.com/o/dsh-notify' }),
+    ]
+    const urls = new Set(['https://github.com/o/dsh-loop', 'https://github.com/ghost/gone'])
+    const listed = pluginsForFavorites(rows, urls, { query: '', lang: 'en', sort: 'stars-desc' })
+    expect(listed.map(p => p.name)).toEqual(['dsh-loop'])
+  })
+
+  it('staleFavoriteUrls lists bookmarks with no catalog row', () => {
+    const rows = [plugin({ name: 'dsh-loop', url: 'https://github.com/o/dsh-loop' })]
+    expect(staleFavoriteUrls(
+      ['https://github.com/o/dsh-loop', 'https://github.com/ghost/gone'],
+      rows,
+    )).toEqual(['https://github.com/ghost/gone'])
   })
 
   it('orderedCategories pulls the active chip forward only while collapsed', () => {

@@ -468,6 +468,13 @@ export function pluginsForFavorites(
   return visiblePlugins(subset, { ...options, category: 'all' })
 }
 
+/** Bookmarked URLs with no matching catalog entry — delisted or URL changed. */
+export function staleFavoriteUrls(urls: readonly string[], plugins: RegistryPlugin[]): string[] {
+  if (urls.length === 0) return []
+  const catalog = new Set(plugins.map(plugin => plugin.url))
+  return urls.filter(url => !catalog.has(url))
+}
+
 /** The themes tab listing: theme category only, most-starred first. */
 export function themePlugins(plugins: RegistryPlugin[]): RegistryPlugin[] {
   return plugins.filter(p => pluginCategories(p).includes('theme')).sort((a, b) => (b.stars || 0) - (a.stars || 0))

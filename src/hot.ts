@@ -238,6 +238,9 @@ function uniqueStrings(value: unknown): string[] {
   return out
 }
 
+/** Upper bound on bookmarked catalog URLs kept in state.json (#414). */
+export const MAX_FAVORITES = 500
+
 /** Catalog URLs the user may favorite; http(s) only, order preserved. */
 function favoriteUrls(value: unknown): string[] {
   return uniqueStrings(value).filter(url => url.startsWith('http://') || url.startsWith('https://'))

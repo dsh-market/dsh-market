@@ -364,6 +364,7 @@ const hot = vi.hoisted(() => ({
 }))
 vi.mock('../src/hot.ts', () => ({
   MAX_NOTE: 200,
+  MAX_FAVORITES: 500,
   cleanHotDir: () => {},
   readDisabledThemes: () => hot.disabled,
   writeDisabledThemes: (_dir: string, set: Set<string>) => { hot.disabled = new Set(set) },
@@ -3950,5 +3951,12 @@ describe('favorites (#414)', () => {
     await bed.dispatch('POST', '/dsh-market/favorite', { url: 'https://github.com/h/dsh-share', favorited: true })
     await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-loop', enabled: false })
     expect(hot.favorites).toEqual(['https://github.com/h/dsh-share'])
+  })
+
+  it('rejects favorites beyond MAX_FAVORITES', async () => {
+    hot.favorites = Array.from({ length: 500 }, (_, index) => `https://github.com/o/p-${index}`)
+    const add = await bed.dispatch('POST', '/dsh-market/favorite', { url: 'https://github.com/o/one-more', favorited: true })
+    expect(add.status).toBe(400)
+    expect(hot.favorites).toHaveLength(500)
   })
 })
