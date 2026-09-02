@@ -1294,8 +1294,9 @@ export function MarketSection(props: MarketSectionProps) {
   const [notesState, setNotesState] = useState<'loading' | 'ready' | 'fail'>('loading')
   // Plugin blocked by pnpm's fresh-release safety wait; arms the update-now button.
   const [staleName, setStaleName] = useState<string | null>(null)
-  // Local link:/file: restore: the red banner asks before swapping to the catalog.
+  // Local link:/file: restore — a modal asks before swapping to the catalog.
   const [restoreName, setRestoreName] = useState<string | null>(null)
+  const [restoreNoCatalogFor, setRestoreNoCatalogFor] = useState<string | null>(null)
 
   /** Determinate percent parsed from pnpm's Progress line, when available. */
   const [progressPct, setProgressPct] = useState<number | null>(null)
@@ -2248,9 +2249,10 @@ export function MarketSection(props: MarketSectionProps) {
     setStaleName(null)
     if (entry === undefined) {
       setRestoreName(null)
-      setInstallError(t('restoreNoCatalog'))
+      setRestoreNoCatalogFor(name)
       return
     }
+    setRestoreNoCatalogFor(null)
     setRestoreName(name)
   }, [data, installed, repoHints, repoIdentities, t])
 
@@ -4280,9 +4282,9 @@ export function MarketSection(props: MarketSectionProps) {
                                           ? (
                                               <button
                                                 type="button"
-                                                className={css.metaTagBtn}
-                                                title={`${t('restoreOnline')} — ${t('linkedDev')}`}
-                                                aria-label={t('restoreOnline')}
+                                                className={`${css.metaTag} ${css.metaTagAction}`}
+                                                title={`${t('restore')} — ${t('restoreOnline')}`}
+                                                aria-label={t('restore')}
                                                 disabled={removingName !== null || busyUrl !== null || updatingName !== null}
                                                 onClick={() => askRestore(name)}
                                               >{t('restore')}</button>
@@ -4444,8 +4446,19 @@ export function MarketSection(props: MarketSectionProps) {
           footer={(
             <>
               <Button variant="ghost" onClick={() => setRestoreName(null)}>{t('cancel')}</Button>
-              <Button variant="primary" disabled={updatingName !== null} onClick={() => doUpdate(restoreName, false, true)}>{t('restoreContinue')}</Button>
+              <Button variant="primary" disabled={updatingName !== null} onClick={() => doUpdate(restoreName, false, true)}>{t('restoreProceed')}</Button>
             </>
+          )}
+        />
+      )}
+      {restoreNoCatalogFor !== null && (
+        <Modal
+          open
+          onClose={() => setRestoreNoCatalogFor(null)}
+          title={`${t('restore')} ${restoreNoCatalogFor}?`}
+          description={t('restoreNoCatalog')}
+          footer={(
+            <Button variant="ghost" onClick={() => setRestoreNoCatalogFor(null)}>{t('cancel')}</Button>
           )}
         />
       )}
