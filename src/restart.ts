@@ -10,6 +10,7 @@
  */
 
 import { spawn } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import inspector from 'node:inspector'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -64,9 +65,20 @@ function argvHasInspectFlag(tokens: readonly string[]): boolean {
  * large population of hosts where it works fine, which is a worse bug than
  * the one being fixed.
  *
- * `ppid === 1` is what distinguishes being the unit's own main process from
- * merely descending from one: systemd forks its services from PID 1, while a
- * terminal's node has the shell as its parent and a runner's has the agent.
+ * The parent test is what distinguishes being the unit's own main process
+ * from merely descending from one: a terminal's node has the shell as its
+ * parent and a runner's has the agent. It used to be `ppid === 1`, which is
+ * only true for SYSTEM units. A per-user unit's service is forked by that
+ * user's manager instance — `systemd --user`, an ordinary PID — so user-unit
+ * hosts read as unsupervised, and one-click restart killed them for good
+ * (#471 by @automagik-genie, with the journal to prove the whole chain:
+ * clean SIGTERM exit → `Restart=on-failure` does not fire → `KillMode=mixed`
+ * SIGKILLs the detached helper before it can spawn the replacement). So the
+ * parent counts as a manager when it is PID 1 or its comm is `systemd` —
+ * the one name both manager instances share and the false-positive parents
+ * (shells, CI agents) never carry. `/proc` is Linux-only, which is exactly
+ * as wide as systemd itself; anywhere it cannot be read the answer stays
+ * "not a manager".
  *
  * Scoped to systemd on purpose. pm2 sets `pm_id`, but it is inherited the
  * same way and pm2's God daemon — not PID 1 — is the parent, so there is no
@@ -78,10 +90,21 @@ function argvHasInspectFlag(tokens: readonly string[]): boolean {
 export function detectedSupervisor(
   env: NodeJS.ProcessEnv = process.env,
   ppid: number = process.ppid,
+  parentComm: (pid: number) => string | null = readParentComm,
 ): string | null {
   const set = (name: string): boolean => (env[name] ?? '') !== ''
-  if ((set('INVOCATION_ID') || set('JOURNAL_STREAM')) && ppid === 1) return 'systemd'
+  if (!set('INVOCATION_ID') && !set('JOURNAL_STREAM')) return null
+  if (ppid === 1 || parentComm(ppid) === 'systemd') return 'systemd'
   return null
+}
+
+/** The comm of `pid` from /proc, or null wherever that cannot be read. */
+function readParentComm(pid: number): string | null {
+  try {
+    return readFileSync(`/proc/${String(pid)}/comm`, 'utf8').trim()
+  } catch {
+    return null
+  }
 }
 
 /**

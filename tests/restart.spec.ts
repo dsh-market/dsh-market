@@ -150,8 +150,28 @@ describe('supervisor detection gates self-restart (#229)', () => {
     // unit. Reading inheritance as ownership would hide the button on a
     // large population of hosts where restart works fine — a worse bug than
     // the one being fixed.
-    expect(detectedSupervisor({ INVOCATION_ID: 'abc123' }, 4242)).toBeNull()
-    expect(detectedSupervisor({ JOURNAL_STREAM: '8:12345' }, 4242)).toBeNull()
+    //
+    // The parent's comm is injected: on the Linux CI runner the default
+    // implementation would read the REAL /proc entry of whatever happens to
+    // own pid 4242, and the assertion would depend on the runner's process
+    // table.
+    expect(detectedSupervisor({ INVOCATION_ID: 'abc123' }, 4242, () => 'bash')).toBeNull()
+    expect(detectedSupervisor({ JOURNAL_STREAM: '8:12345' }, 4242, () => 'Runner.Worker')).toBeNull()
+    // No /proc to consult (macOS, or the pid vanished) keeps the old answer.
+    expect(detectedSupervisor({ INVOCATION_ID: 'abc123' }, 4242, () => null)).toBeNull()
+  })
+
+  it('names systemd for a per-user unit, whose manager is not PID 1 (#471)', () => {
+    // A user unit's service is forked by that user's `systemd --user`
+    // instance — an ordinary pid. Reading that as "unsupervised" is how
+    // one-click restart killed a user-unit host for good: clean SIGTERM
+    // exit, Restart=on-failure does not fire, KillMode=mixed SIGKILLs the
+    // detached helper before it can spawn the replacement.
+    expect(detectedSupervisor({ INVOCATION_ID: 'abc123' }, 1759, () => 'systemd')).toBe('systemd')
+    expect(detectedSupervisor({ JOURNAL_STREAM: '8:1' }, 1759, () => 'systemd')).toBe('systemd')
+    // The comm alone is not enough — the env marker is still required, so a
+    // bare child of some unrelated process named systemd does not count.
+    expect(detectedSupervisor({}, 1759, () => 'systemd')).toBeNull()
   })
 
   it('defaults restart OFF under a detected supervisor and ON without one', () => {
