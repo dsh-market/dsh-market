@@ -988,6 +988,92 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			hostDependencyMore: "{0} more finding(s) omitted"
 		};
 		//#endregion
+		//#region src/catalog-local-match.ts
+		/**
+		* Catalog matching for locally linked / file: installs. Shared by the host
+		* restore route and the Market client so both refuse the same wrong guesses.
+		*/
+		const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+		function validSubpath(subpath) {
+			if (!/^[A-Za-z0-9_./-]+$/.test(subpath)) return false;
+			return !subpath.split("/").some((seg) => seg === "" || seg === "." || seg === "..");
+		}
+		/**
+		* Keys a catalog URL contributes to restore matching.
+		* A `/tree/` entry is ONLY its exact `#path:` id — never the bare repo —
+		* so a collection-root identity cannot select a sibling subpackage.
+		*/
+		function catalogMatchKeys(url) {
+			const m = /^https:\/\/github\.com\/([^/]+\/[^/]+?)(?:\/tree\/[^/]+\/(.+?))?\/?$/.exec(url);
+			if (m === null || !REPO_RE.test(m[1])) return {
+				path: null,
+				repo: null
+			};
+			const subpath = m[2] ?? null;
+			if (subpath !== null && !validSubpath(subpath)) return {
+				path: null,
+				repo: null
+			};
+			const repo = m[1].toLowerCase();
+			return subpath === null ? {
+				path: null,
+				repo
+			} : {
+				path: `${repo}#path:/${subpath.toLowerCase()}`,
+				repo: null
+			};
+		}
+		function catalogEntryMatchesHints(url, hintSet) {
+			const keys = catalogMatchKeys(url);
+			return keys.path !== null && hintSet.has(keys.path) || keys.repo !== null && hintSet.has(keys.repo);
+		}
+		/**
+		* The catalog entry a locally linked / file: install should restore to.
+		* Exact `#path:` identities win, then collection-root identities against
+		* root-only catalog rows, then a unique name/npm match when nothing
+		* contradicts it. A bare repo identity never selects a root row while
+		* `/tree/` siblings exist for that repo — the checkout did not say which
+		* package it is, and guessing wrong installs a different plugin.
+		* Same-named forks without identities or a matching hint stay unmatched
+		* rather than guessing; declared repo evidence that matches nothing in the
+		* catalog must not fall back to a coincidental unique name.
+		*/
+		function findCatalogEntryForLocal(plugins, name, identities = [], hints = []) {
+			const nameKey = name.toLowerCase();
+			const byName = plugins.filter((plugin) => plugin.name.toLowerCase() === nameKey || typeof plugin.npm === "string" && plugin.npm.toLowerCase() === nameKey);
+			const identitySet = new Set(identities.map((value) => value.toLowerCase()));
+			const hintSet = new Set(hints.map((value) => value.toLowerCase()));
+			const treeRepos = /* @__PURE__ */ new Set();
+			for (const plugin of plugins) {
+				const keys = catalogMatchKeys(plugin.url);
+				if (keys.path !== null) treeRepos.add(keys.path.slice(0, keys.path.indexOf("#path:/")));
+			}
+			if (identitySet.size > 0) {
+				const pathHit = plugins.find((plugin) => {
+					const keys = catalogMatchKeys(plugin.url);
+					return keys.path !== null && identitySet.has(keys.path);
+				});
+				if (pathHit !== void 0) return pathHit;
+				const rootHit = plugins.find((plugin) => {
+					const keys = catalogMatchKeys(plugin.url);
+					if (keys.repo === null || !identitySet.has(keys.repo)) return false;
+					return !treeRepos.has(keys.repo) || byName.includes(plugin);
+				});
+				if (rootHit !== void 0) return rootHit;
+				return null;
+			}
+			if (byName.length === 1) {
+				const only = byName[0];
+				if (hintSet.size > 0 && !catalogEntryMatchesHints(only.url, hintSet)) return null;
+				return only;
+			}
+			if (byName.length > 1 && hintSet.size > 0) {
+				const hinted = byName.find((plugin) => catalogEntryMatchesHints(plugin.url, hintSet));
+				if (hinted !== void 0) return hinted;
+			}
+			return null;
+		}
+		//#endregion
 		//#region src/client/market-data.ts
 		/** One registry entry from /dsh-market/registry. */
 		/**
@@ -6573,9 +6659,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const askRestore = (0, react.useCallback)((name) => {
 				if (data === null) return;
 				const spec = installed[name];
-				const entry = spec === void 0 ? void 0 : entryForDep(data.plugins, name, String(spec), repoIdentities[name], repoHints[name]);
+				if (spec === void 0) return;
+				const specText = String(spec);
+				const entry = /^(?:link|file):/i.test(specText) ? findCatalogEntryForLocal(data.plugins, name, repoIdentities[name] ?? [], repoHints[name] ?? []) : entryForDep(data.plugins, name, specText, repoIdentities[name], repoHints[name]);
 				setStaleName(null);
-				if (entry === void 0) {
+				if (entry === void 0 || entry === null) {
 					setRestoreName(null);
 					setRestoreNoCatalogFor(name);
 					return;

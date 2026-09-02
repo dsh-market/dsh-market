@@ -42,7 +42,7 @@ import type { OperationRecord } from './operations.ts'
 import { Diagnostics } from './Diagnostics.tsx'
 import { clientDiagnostics } from './self-check.ts'
 import {
-  api, avatarColor, entryForDep, githubProxyInUse, githubUrl, groupSwitchState, humanOutput, installedForCatalog, isInstalled, looksTerminal, matchInstalledName, orderedCategories, pluginCategories,
+  api, avatarColor, entryForDep, findCatalogEntryForLocal, githubProxyInUse, githubUrl, groupSwitchState, humanOutput, installedForCatalog, isInstalled, looksTerminal, matchInstalledName, orderedCategories, pluginCategories,
   formatCount, pageItems, pluginName, pluginScreenshotCandidates, pluginScreenshots, rankThemeScreenshots, readSession, safeScreenshots, setGithubProxy, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
 } from './market-data.ts'
 import type {
@@ -2244,11 +2244,13 @@ export function MarketSection(props: MarketSectionProps) {
   const askRestore = useCallback((name: string) => {
     if (data === null) return
     const spec = installed[name]
-    const entry = spec === undefined
-      ? undefined
-      : entryForDep(data.plugins, name, String(spec), repoIdentities[name], repoHints[name])
+    if (spec === undefined) return
+    const specText = String(spec)
+    const entry = /^(?:link|file):/i.test(specText)
+      ? findCatalogEntryForLocal(data.plugins, name, repoIdentities[name] ?? [], repoHints[name] ?? [])
+      : entryForDep(data.plugins, name, specText, repoIdentities[name], repoHints[name])
     setStaleName(null)
-    if (entry === undefined) {
+    if (entry === undefined || entry === null) {
       setRestoreName(null)
       setRestoreNoCatalogFor(name)
       return

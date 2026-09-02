@@ -2295,6 +2295,39 @@ describe('local-dev restore', () => {
     expect(screen.getByRole('button', { name: en.uninstall })).toBeTruthy()
   })
 
+  it('does not offer restore when the linked fork disagrees with the only same-named catalog entry', async () => {
+    stubFetch({
+      '/dsh-market/registry': {
+        source: 'snapshot',
+        registry: {
+          updated: '', count: 1,
+          categories: { tools: { en: 'Tools', zh: '工具' } },
+          plugins: [
+            {
+              name: 'dsh-humanizer', owner: 'lynote-ai',
+              url: 'https://github.com/lynote-ai/dsh-humanizer',
+              category: 'tools', npm: 'dsh-humanizer', stars: 1,
+              added: '2026-01-01', description: { en: 'Catalog copy', zh: '目录版' }, install: '',
+            },
+          ],
+        },
+      },
+      '/dsh-market/installed': {
+        profile: 'web',
+        installed: { 'dsh-humanizer': 'link:../dsh-humanizer' },
+        live: [],
+        repoIdentities: { 'dsh-humanizer': ['handsomeliu/dsh-humanizer'] },
+      },
+      '/dsh-market/updates': { updates: { 'dsh-humanizer': { kind: 'linked', updateAvailable: false } } },
+    })
+    render(<MarketSection {...props()} />)
+    fireEvent.click(await screen.findByRole('button', { name: /Installed/ }))
+    fireEvent.click(await screen.findByRole('button', { name: en.restore }))
+    expect(await screen.findByText(en.restoreNoCatalog)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: en.restoreProceed })).toBeNull()
+    expect(fetchCalls.some(call => call.path === '/dsh-market/update')).toBe(false)
+  })
+
   it('dismissing the restore modal does not call update', async () => {
     stubFetch({
       '/dsh-market/installed': { profile: 'web', installed: { 'dsh-loop': 'link:../dsh-loop' }, live: [] },

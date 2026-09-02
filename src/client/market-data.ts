@@ -1141,3 +1141,5 @@ export function formatCount(n: number): string {
   const k = Math.round(n / 100) / 10
   return `${Number.isInteger(k) ? k.toFixed(0) : k.toFixed(1)}k`
 }
+
+export { findCatalogEntryForLocal } from '../catalog-local-match.ts'

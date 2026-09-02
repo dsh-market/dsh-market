@@ -206,6 +206,16 @@ describe('findCatalogEntryForLocal', () => {
     ]
     expect(findCatalogEntryForLocal(mono, 'mono-cli', ['m/mono'])?.name).toBe('mono-cli')
   })
+
+  it('does not restore a unique same-named catalog entry when repo evidence disagrees', () => {
+    const plugins = [
+      { name: 'dsh-humanizer', npm: 'dsh-humanizer', url: 'https://github.com/lynote-ai/dsh-humanizer' },
+    ]
+    expect(findCatalogEntryForLocal(plugins, 'dsh-humanizer', ['handsomeliu/dsh-humanizer'])).toBeNull()
+    expect(findCatalogEntryForLocal(plugins, 'dsh-humanizer', [], ['handsomeliu/dsh-humanizer'])).toBeNull()
+    expect(findCatalogEntryForLocal(plugins, 'dsh-humanizer', ['lynote-ai/dsh-humanizer'])?.url)
+      .toBe('https://github.com/lynote-ai/dsh-humanizer')
+  })
 })
 
 describe('restoreTargetForLocal', () => {
