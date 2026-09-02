@@ -2252,7 +2252,6 @@ export function MarketSection(props: MarketSectionProps) {
       return
     }
     setRestoreName(name)
-    setInstallError(t('restoreHint'))
   }, [data, installed, repoHints, repoIdentities, t])
 
   /** Open the update-notes dialog and start its fetch. Lazy: the request only
@@ -3527,9 +3526,6 @@ export function MarketSection(props: MarketSectionProps) {
             {staleName !== null && (
               <Button size="sm" onClick={() => doUpdate(staleName, true)}>{t('updateNow')}</Button>
             )}
-            {restoreName !== null && (
-              <Button size="sm" onClick={() => doUpdate(restoreName, false, true)}>{t('restoreContinue')}</Button>
-            )}
             {/* The banner text told users to export the log; now it IS the button (#84). */}
             <Button
               size="sm"
@@ -4041,6 +4037,7 @@ export function MarketSection(props: MarketSectionProps) {
                             return (
                               <div key={name} className={missing ? `${css.irow} ${css.irowMissing}` : css.irow}>
                                 <div style={{ minWidth: 0 }}>
+                                  <div className={css.irowHead}>
                                   {/* Row-scoped, NOT `.nm` alone: `.nm` clips with
                                       overflow+ellipsis as one block, so with the name and
                                       the version as inline siblings the ellipsis landed at
@@ -4062,10 +4059,14 @@ export function MarketSection(props: MarketSectionProps) {
                                     {entry?.deprecated === true && <span className={css.depBadge}>{t('deprecatedBadge')}</span>}
                                     {version && <span className={css.owner} title={version}>{version}</span>}
                                   </div>
+                                  {localDev && (
+                                    <span className={css.irowDevTag} title={t('linkedDev')} role="status">{t('linkedDev')}</span>
+                                  )}
+                                  </div>
                                   {specRedundant
                                     ? null
                                     : repoUrl !== null
-                                      ? <a className={`${css.spec} ${css.src}`} href={repoUrl} target="_blank" rel="noreferrer" style={{ display: 'inline-block' }}>{specText}</a>
+                                      ? <a className={`${css.spec} ${css.src}`} href={repoUrl} target="_blank" rel="noreferrer">{specText}</a>
                                       : <div className={css.spec}>{specText}</div>}
                                   {/* The user's own note REPLACES the author's
                                       description (#347): a catalog blurb answers
@@ -4276,29 +4277,28 @@ export function MarketSection(props: MarketSectionProps) {
                                             >{status.restoreRequired === true ? t('restoreOnline') : t('update')}</Button>
                                           )
                                         : localDev
-                                          ? <span className={css.metaTag} title={t('linkedDev')}>{t('linkedDev')}</span>
+                                          ? (
+                                              <button
+                                                type="button"
+                                                className={css.metaTagBtn}
+                                                title={`${t('restoreOnline')} — ${t('linkedDev')}`}
+                                                aria-label={t('restoreOnline')}
+                                                disabled={removingName !== null || busyUrl !== null || updatingName !== null}
+                                                onClick={() => askRestore(name)}
+                                              >{t('restore')}</button>
+                                            )
                                           : <span className={css.metaTag} title={t('upToDate')}>{t('upToDate')}</span>}
                                 {!missing && name !== 'dsh-market' && name !== 'dshmarket' && (
                                   removingName === name
                                     ? <Button variant="outline" size="sm" className={css.dangerBtn} disabled>{t('uninstalling')}</Button>
                                     : (
-                                        <>
-                                          {localDev && status?.restoreRequired !== true && (
-                                            <Button
-                                              variant="outline"
-                                              size="sm"
-                                              disabled={removingName !== null || busyUrl !== null || updatingName !== null}
-                                              onClick={() => askRestore(name)}
-                                            >{t('restore')}</Button>
-                                          )}
-                                          <Button
-                                            variant="outline"
-                                            size="sm"
-                                            className={css.dangerBtn}
-                                            disabled={removingName !== null || busyUrl !== null || updatingName !== null}
-                                            onClick={() => setRemoveConfirm(name)}
-                                          >{t('uninstall')}</Button>
-                                        </>
+                                        <Button
+                                          variant="outline"
+                                          size="sm"
+                                          className={css.dangerBtn}
+                                          disabled={removingName !== null || busyUrl !== null || updatingName !== null}
+                                          onClick={() => setRemoveConfirm(name)}
+                                        >{t('uninstall')}</Button>
                                       )
                                 )}
                                 </span>
@@ -4431,6 +4431,20 @@ export function MarketSection(props: MarketSectionProps) {
             <>
               <Button variant="ghost" onClick={() => setRemoveConfirm(null)}>{t('cancel')}</Button>
               <Button variant="primary" disabled={removingName !== null} onClick={() => doUninstall(removeConfirm)}>{t('uninstall')}</Button>
+            </>
+          )}
+        />
+      )}
+      {restoreName !== null && (
+        <Modal
+          open
+          onClose={() => setRestoreName(null)}
+          title={`${t('restoreOnline')} ${restoreName}?`}
+          description={t('restoreHint')}
+          footer={(
+            <>
+              <Button variant="ghost" onClick={() => setRestoreName(null)}>{t('cancel')}</Button>
+              <Button variant="primary" disabled={updatingName !== null} onClick={() => doUpdate(restoreName, false, true)}>{t('restoreContinue')}</Button>
             </>
           )}
         />
