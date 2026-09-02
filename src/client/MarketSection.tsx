@@ -42,8 +42,8 @@ import type { OperationRecord } from './operations.ts'
 import { Diagnostics } from './Diagnostics.tsx'
 import { clientDiagnostics } from './self-check.ts'
 import {
-  api, avatarColor, entryForDep, findCatalogEntryForLocal, githubProxyInUse, githubUrl, groupSwitchState, humanOutput, installedForCatalog, isInstalled, looksTerminal, matchInstalledName, orderedCategories, pluginCategories,
-  formatCount, pageItems, pluginName, pluginScreenshotCandidates, pluginScreenshots, rankThemeScreenshots, readSession, safeScreenshots, setGithubProxy, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
+  api, avatarColor, catalogEntryForInstalled, entryForDep, githubProxyInUse, githubUrl, groupSwitchState, humanOutput, installedForCatalog, isInstalled, looksTerminal, matchInstalledName, orderedCategories, pluginCategories,
+  formatCount, pageItems, pluginName, pluginScreenshotCandidates, pluginScreenshots, rankThemeScreenshots, readSession, resolveCatalogRestore, safeScreenshots, setGithubProxy, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
 } from './market-data.ts'
 import type {
 ActivationInfo, ActivationState, GistExportResult, InstalledMap, InstalledRepoHints, InstalledRepoIdentities, MarketStatus, Registry, RegistryPlugin,
@@ -1295,8 +1295,8 @@ export function MarketSection(props: MarketSectionProps) {
   // Plugin blocked by pnpm's fresh-release safety wait; arms the update-now button.
   const [staleName, setStaleName] = useState<string | null>(null)
   // Local link:/file: restore — a modal asks before swapping to the catalog.
-  const [restoreName, setRestoreName] = useState<string | null>(null)
-  const [restoreNoCatalogFor, setRestoreNoCatalogFor] = useState<string | null>(null)
+  const [restoreConfirm, setRestoreConfirm] = useState<{ name: string; entry: RegistryPlugin } | null>(null)
+  const [restoreBlocked, setRestoreBlocked] = useState<{ name: string; reason: 'no-catalog' | 'repo-mismatch' } | null>(null)
 
   /** Determinate percent parsed from pnpm's Progress line, when available. */
   const [progressPct, setProgressPct] = useState<number | null>(null)
@@ -2152,7 +2152,7 @@ export function MarketSection(props: MarketSectionProps) {
     // earlier release-age failure lost its retry button and only the last
     // one kept it — the rest failed silently with no way forward (#255).
     setStaleName(prev => (prev === name ? null : prev))
-    setRestoreName(prev => (prev === name ? null : prev))
+    setRestoreConfirm(prev => (prev?.name === name ? null : prev))
     setUpdatingName(name)
     updateIdleStrikes.current = 0
     // Mirror the install flow's dshm-pending marker: closing the config page
@@ -2246,17 +2246,30 @@ export function MarketSection(props: MarketSectionProps) {
     const spec = installed[name]
     if (spec === undefined) return
     const specText = String(spec)
-    const entry = /^(?:link|file):/i.test(specText)
-      ? findCatalogEntryForLocal(data.plugins, name, repoIdentities[name] ?? [], repoHints[name] ?? [])
-      : entryForDep(data.plugins, name, specText, repoIdentities[name], repoHints[name])
     setStaleName(null)
-    if (entry === undefined || entry === null) {
-      setRestoreName(null)
-      setRestoreNoCatalogFor(name)
+    setRestoreBlocked(null)
+    if (/^(?:link|file):/i.test(specText)) {
+      const resolved = resolveCatalogRestore(
+        data.plugins,
+        name,
+        repoIdentities[name] ?? [],
+        repoHints[name] ?? [],
+      )
+      if (!resolved.ok) {
+        setRestoreConfirm(null)
+        setRestoreBlocked({ name, reason: resolved.reason })
+        return
+      }
+      setRestoreConfirm({ name, entry: resolved.entry })
       return
     }
-    setRestoreNoCatalogFor(null)
-    setRestoreName(name)
+    const entry = entryForDep(data.plugins, name, specText, repoIdentities[name], repoHints[name])
+    if (entry === undefined) {
+      setRestoreConfirm(null)
+      setRestoreBlocked({ name, reason: 'no-catalog' })
+      return
+    }
+    setRestoreConfirm({ name, entry })
   }, [data, installed, repoHints, repoIdentities])
 
   /** Open the update-notes dialog and start its fetch. Lazy: the request only
@@ -3253,7 +3266,7 @@ export function MarketSection(props: MarketSectionProps) {
     const names = new Set<string>()
     if (data === null) return names
     for (const [name, spec] of Object.entries(installed)) {
-      const entry = entryForDep(data.plugins, name, String(spec), repoIdentities[name], repoHints[name])
+      const entry = catalogEntryForInstalled(data.plugins, name, String(spec), repoIdentities[name], repoHints[name])
       if (entry !== undefined && pluginCategories(entry).includes('theme')) names.add(name)
     }
     return names
@@ -3963,7 +3976,7 @@ export function MarketSection(props: MarketSectionProps) {
                             {ungroupedNames.length === 0
                               ? <div className={css.empty}>{t('installedEmpty')}</div>
                               : ungroupedNames.map(name => {
-                                  const entry = data === null ? undefined : entryForDep(data.plugins, name, String(installed[name]), repoIdentities[name], repoHints[name])
+                                  const entry = data === null ? undefined : catalogEntryForInstalled(data.plugins, name, String(installed[name]), repoIdentities[name], repoHints[name])
                                   const off = effectiveDisabledSet.has(name)
                                   return (
                                     <div className={css.irow} key={'ug-' + name}>
@@ -4009,7 +4022,7 @@ export function MarketSection(props: MarketSectionProps) {
                               if (needle === '') return true
                               if (name.toLowerCase().includes(needle)) return true
                               if (String(spec).toLowerCase().includes(needle)) return true
-                              const entry = data === null ? undefined : entryForDep(data.plugins, name, String(spec), repoIdentities[name], repoHints[name])
+                              const entry = data === null ? undefined : catalogEntryForInstalled(data.plugins, name, String(spec), repoIdentities[name], repoHints[name])
                               if (entry !== undefined) {
                                 const desc = (entry.description && (entry.description[lang] || entry.description.en)) || ''
                                 if (desc.toLowerCase().includes(needle)) return true
@@ -4019,7 +4032,7 @@ export function MarketSection(props: MarketSectionProps) {
                             })}
                             render={([name, spec]) => {
                             const missing = pendingBackup !== null && !installedFiles.includes(name)
-                            const entry = data === null ? undefined : entryForDep(data.plugins, name, String(spec), repoIdentities[name], repoHints[name])
+                            const entry = data === null ? undefined : catalogEntryForInstalled(data.plugins, name, String(spec), repoIdentities[name], repoHints[name])
                             const status = updates[name]
                             const localDev = /^(?:link|file):/i.test(String(spec)) || status?.kind === 'linked'
                             const act = activations[name]
@@ -4440,28 +4453,28 @@ export function MarketSection(props: MarketSectionProps) {
           )}
         />
       )}
-      {restoreName !== null && (
+      {restoreConfirm !== null && (
         <Modal
           open
-          onClose={() => setRestoreName(null)}
-          title={`${t('restoreOnline')} ${restoreName}?`}
-          description={t('restoreHint')}
+          onClose={() => setRestoreConfirm(null)}
+          title={`${t('restoreOnline')} ${restoreConfirm.name}?`}
+          description={`${t('restoreHint')}\n\n${restoreConfirm.entry.owner} · ${restoreConfirm.entry.url}`}
           footer={(
             <>
-              <Button variant="ghost" onClick={() => setRestoreName(null)}>{t('cancel')}</Button>
-              <Button variant="primary" disabled={updatingName !== null} onClick={() => doUpdate(restoreName, false, true)}>{t('restoreProceed')}</Button>
+              <Button variant="ghost" onClick={() => setRestoreConfirm(null)}>{t('cancel')}</Button>
+              <Button variant="primary" disabled={updatingName !== null} onClick={() => doUpdate(restoreConfirm.name, false, true)}>{t('restoreProceed')}</Button>
             </>
           )}
         />
       )}
-      {restoreNoCatalogFor !== null && (
+      {restoreBlocked !== null && (
         <Modal
           open
-          onClose={() => setRestoreNoCatalogFor(null)}
-          title={`${t('restoreNoCatalogTitle')} — ${restoreNoCatalogFor}`}
-          description={t('restoreNoCatalog')}
+          onClose={() => setRestoreBlocked(null)}
+          title={`${t('restoreNoCatalogTitle')} — ${restoreBlocked.name}`}
+          description={t(restoreBlocked.reason === 'repo-mismatch' ? 'restoreNoMatch' : 'restoreNoCatalog')}
           footer={(
-            <Button variant="ghost" onClick={() => setRestoreNoCatalogFor(null)}>{t('gotIt')}</Button>
+            <Button variant="ghost" onClick={() => setRestoreBlocked(null)}>{t('gotIt')}</Button>
           )}
         />
       )}

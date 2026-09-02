@@ -89,3 +89,35 @@ export function findCatalogEntryForLocal<T extends { name: string; npm?: string 
   }
   return null
 }
+
+function catalogEntriesByName<T extends { name: string; npm?: string | null }>(
+  plugins: readonly T[],
+  name: string,
+): T[] {
+  const nameKey = name.toLowerCase()
+  return plugins.filter(plugin =>
+    plugin.name.toLowerCase() === nameKey
+    || (typeof plugin.npm === 'string' && plugin.npm.toLowerCase() === nameKey),
+  )
+}
+
+export type CatalogRestoreReason = 'no-catalog' | 'repo-mismatch'
+
+/** Why a local restore was blocked, when findCatalogEntryForLocal returned null. */
+export function resolveCatalogRestore<T extends { name: string; npm?: string | null; url: string }>(
+  plugins: readonly T[],
+  name: string,
+  identities: readonly string[] = [],
+  hints: readonly string[] = [],
+): { ok: true; entry: T } | { ok: false; reason: CatalogRestoreReason } {
+  const entry = findCatalogEntryForLocal(plugins, name, identities, hints)
+  if (entry !== null) return { ok: true, entry }
+  const byName = catalogEntriesByName(plugins, name)
+  if (byName.length === 0) return { ok: false, reason: 'no-catalog' }
+  const identitySet = new Set(identities.map(value => value.toLowerCase()))
+  const hintSet = new Set(hints.map(value => value.toLowerCase()))
+  if (identitySet.size > 0 || hintSet.size > 0) return { ok: false, reason: 'repo-mismatch' }
+  // Only ambiguous same-name rows reach here: a unique name with no evidence
+  // would have matched inside findCatalogEntryForLocal.
+  return { ok: false, reason: 'no-catalog' }
+}

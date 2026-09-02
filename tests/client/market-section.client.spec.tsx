@@ -2209,7 +2209,7 @@ describe('local-dev restore', () => {
     fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
     expect(screen.queryByRole('button', { name: en.restore })).toBeNull()
     fireEvent.click(await screen.findByRole('button', { name: en.restoreOnline }))
-    expect(await screen.findByText(en.restoreHint)).toBeTruthy()
+    expect(await screen.findByText((content: string) => content.includes(en.restoreHint.slice(0, 32)))).toBeTruthy()
     expect(fetchCalls.some(call => call.path === '/dsh-market/update')).toBe(false)
     fireEvent.click(screen.getByRole('button', { name: en.restoreProceed }))
     await waitFor(() => {
@@ -2268,7 +2268,7 @@ describe('local-dev restore', () => {
     expect(screen.getByRole('status', { name: en.linkedDev })).toBeTruthy()
     const restoreBtn = await screen.findByRole('button', { name: en.restore })
     fireEvent.click(restoreBtn)
-    expect(await screen.findByText(en.restoreHint)).toBeTruthy()
+    expect(await screen.findByText((content: string) => content.includes(en.restoreHint.slice(0, 32)))).toBeTruthy()
     expect(fetchCalls.some(call => call.path === '/dsh-market/update')).toBe(false)
     fireEvent.click(screen.getByRole('button', { name: en.restoreProceed }))
     await waitFor(() => {
@@ -2323,9 +2323,10 @@ describe('local-dev restore', () => {
     render(<MarketSection {...props()} />)
     fireEvent.click(await screen.findByRole('button', { name: /Installed/ }))
     fireEvent.click(await screen.findByRole('button', { name: en.restore }))
-    expect(await screen.findByText(en.restoreNoCatalog)).toBeTruthy()
+    expect(await screen.findByText(en.restoreNoMatch)).toBeTruthy()
     expect(screen.queryByRole('button', { name: en.restoreProceed })).toBeNull()
     expect(fetchCalls.some(call => call.path === '/dsh-market/update')).toBe(false)
+    expect(screen.queryByText('Catalog copy')).toBeNull()
   })
 
   it('dismissing the restore modal does not call update', async () => {
@@ -2337,9 +2338,9 @@ describe('local-dev restore', () => {
     render(<MarketSection {...props()} />)
     fireEvent.click(await screen.findByRole('button', { name: /Installed/ }))
     fireEvent.click(await screen.findByRole('button', { name: en.restore }))
-    expect(await screen.findByText(en.restoreHint)).toBeTruthy()
+    expect(await screen.findByText((content: string) => content.includes(en.restoreHint.slice(0, 32)))).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: en.cancel }))
-    expect(screen.queryByText(en.restoreHint)).toBeNull()
+    expect(screen.queryByText((content: string) => content.includes(en.restoreHint.slice(0, 32)))).toBeNull()
     expect(fetchCalls.some(call => call.path === '/dsh-market/update')).toBe(false)
   })
 

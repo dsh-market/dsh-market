@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from 'vitest'
 import {
-  entryForDep, extractReadmeImageCandidates, extractReadmeImages, formatCount, groupSwitchState, installedForCatalog, isInstalled, isMarketItself, looksTerminal, matchInstalledName, orderedCategories, pageItems, pluginCategories, previewDimensionScore, rankThemeScreenshots, safeScreenshots, themePlugins, visiblePlugins, humanOutput} from '../src/client/market-data.ts'
+  entryForDep, extractReadmeImageCandidates, extractReadmeImages, formatCount, groupSwitchState, installedForCatalog, isInstalled, isMarketItself, looksTerminal, matchInstalledName, orderedCategories, pageItems, pluginCategories, previewDimensionScore, rankThemeScreenshots, safeScreenshots, themePlugins, visiblePlugins, humanOutput, catalogEntryForInstalled} from '../src/client/market-data.ts'
 import type { RegistryPlugin, ScreenshotCandidate } from '../src/client/market-data.ts'
 
 function plugin(partial: Partial<RegistryPlugin>): RegistryPlugin {
@@ -235,6 +235,26 @@ describe('entryForDep', () => {
     expect(entryForDep(plugins, 'b-npm', '^1.0.0')?.name).toBe('b')
     expect(entryForDep(plugins, 'anything', 'github:o/a#main')?.name).toBe('a')
     expect(entryForDep(plugins, 'unknown', '^1.0.0')).toBeUndefined()
+  })
+})
+
+describe('catalogEntryForInstalled', () => {
+  it('refuses a local link whose repo evidence disagrees with the only same-named catalog row', () => {
+    const plugins = [
+      plugin({ name: 'dsh-humanizer', owner: 'lynote-ai', url: 'https://github.com/lynote-ai/dsh-humanizer', npm: 'dsh-humanizer' }),
+    ]
+    expect(catalogEntryForInstalled(
+      plugins,
+      'dsh-humanizer',
+      'link:../dsh-humanizer',
+      ['handsomeliu/dsh-humanizer'],
+    )).toBeUndefined()
+    expect(catalogEntryForInstalled(
+      plugins,
+      'dsh-humanizer',
+      'link:../dsh-humanizer',
+      ['lynote-ai/dsh-humanizer'],
+    )?.owner).toBe('lynote-ai')
   })
 })
 

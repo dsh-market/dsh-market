@@ -2638,6 +2638,46 @@ describe('local-dev restore flow', () => {
     expect(String(r.json.error)).toMatch(/No catalog entry/)
   })
 
+  it('returns 400 when restore repo evidence disagrees with the only same-named catalog entry', async () => {
+    const checkout = join(fake.profileDir, '..', 'humanizer-dev')
+    mkdirSync(checkout, { recursive: true })
+    writeFileSync(join(checkout, 'package.json'), JSON.stringify({
+      name: 'dsh-humanizer',
+      version: '0.1.0',
+      main: 'index.js',
+      dsh: {},
+      repository: { type: 'git', url: 'https://github.com/handsomeliu/dsh-humanizer.git' },
+    }))
+    writeFileSync(join(checkout, 'index.js'), '')
+    writeFileSync(join(fake.profileDir, 'package.json'), JSON.stringify({
+      dependencies: { 'dsh-humanizer': `link:${checkout}` },
+    }))
+    mkdirSync(join(fake.profileDir, 'node_modules', 'dsh-humanizer'), { recursive: true })
+    writeFileSync(join(fake.profileDir, 'node_modules', 'dsh-humanizer', 'package.json'), JSON.stringify({
+      name: 'dsh-humanizer',
+      version: '0.1.0',
+      main: 'index.js',
+      dsh: {},
+      repository: { type: 'git', url: 'https://github.com/handsomeliu/dsh-humanizer.git' },
+    }))
+    registryModule.loadRegistry.mockImplementationOnce(() => Promise.resolve({
+      ...REGISTRY,
+      count: REGISTRY.count + 1,
+      plugins: [
+        ...REGISTRY.plugins,
+        {
+          name: 'dsh-humanizer', owner: 'lynote-ai',
+          url: 'https://github.com/lynote-ai/dsh-humanizer',
+          category: 'tool', npm: 'dsh-humanizer', description: {}, install: '', added: '',
+        },
+      ],
+    }))
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-humanizer', restore: true })
+    expect(r.status).toBe(400)
+    expect(String(r.json.error)).toMatch(/No catalog entry/)
+    expect(installedSpec('dsh-humanizer')).toBe(`link:${checkout}`)
+  })
+
   /** #250 landed a third target shape — a prebuilt Release archive URL —
    * after this restore path was written. It is neither an npm name nor a
    * `github:` shortcut, so the dist-tag branch would have handed pnpm

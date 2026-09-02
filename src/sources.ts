@@ -343,7 +343,7 @@ export function isLocalSpec(spec: string): boolean {
   return /^(?:link|file):/i.test(spec)
 }
 
-export { findCatalogEntryForLocal } from './catalog-local-match.ts'
+export { findCatalogEntryForLocal, resolveCatalogRestore } from './catalog-local-match.ts'
 
 /**
  * pnpm add target for restoring a local checkout onto a catalog entry.

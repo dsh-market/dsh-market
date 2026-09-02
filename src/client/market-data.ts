@@ -4,6 +4,7 @@
  */
 
 import type { DiagnosticReportV1 } from '../diagnostics.ts'
+import { findCatalogEntryForLocal } from '../catalog-local-match.ts'
 export type { SharedHostPackageDependencyFinding } from '../diagnostics.ts'
 
 /** Localized text keyed by language ('zh' / 'en'). */
@@ -1142,4 +1143,19 @@ export function formatCount(n: number): string {
   return `${Number.isInteger(k) ? k.toFixed(0) : k.toFixed(1)}k`
 }
 
-export { findCatalogEntryForLocal } from '../catalog-local-match.ts'
+export { findCatalogEntryForLocal, resolveCatalogRestore } from '../catalog-local-match.ts'
+export type { CatalogRestoreReason } from '../catalog-local-match.ts'
+
+/** Catalog row for an installed dependency — strict for local link:/file: specs. */
+export function catalogEntryForInstalled(
+  plugins: RegistryPlugin[],
+  name: string,
+  spec: string,
+  repoIdentities: readonly string[] = [],
+  repoHints: readonly string[] = [],
+): RegistryPlugin | undefined {
+  if (/^(?:link|file):/i.test(spec)) {
+    return findCatalogEntryForLocal(plugins, name, repoIdentities, repoHints) ?? undefined
+  }
+  return entryForDep(plugins, name, spec, repoIdentities, repoHints)
+}

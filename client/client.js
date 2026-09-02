@@ -144,6 +144,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			restoreProceed: "确认恢复",
 			restoreNoCatalogTitle: "无法恢复",
 			restoreNoCatalog: "精选目录里没有这个插件，无法恢复到线上版本。可以卸载本地版，或继续用本地开发。",
+			restoreNoMatch: "精选目录里有同名插件，但与你本地仓库不一致，无法安全恢复。可以卸载本地版，或继续用本地开发。",
 			restoreFail: "恢复失败",
 			exportLog: "导出日志",
 			exportingLog: "导出中…",
@@ -621,6 +622,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			restoreProceed: "Confirm restore",
 			restoreNoCatalogTitle: "Cannot restore",
 			restoreNoCatalog: "This plugin is not in the curated catalog, so it cannot be restored. Uninstall the local copy, or keep developing it locally.",
+			restoreNoMatch: "A same-named plugin exists in the catalog, but it does not match your local repository, so restore is not safe. Uninstall the local copy, or keep developing it locally.",
 			restoreFail: "Restore failed",
 			exportLog: "Export log",
 			exportingLog: "Exporting…",
@@ -1072,6 +1074,32 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				if (hinted !== void 0) return hinted;
 			}
 			return null;
+		}
+		function catalogEntriesByName(plugins, name) {
+			const nameKey = name.toLowerCase();
+			return plugins.filter((plugin) => plugin.name.toLowerCase() === nameKey || typeof plugin.npm === "string" && plugin.npm.toLowerCase() === nameKey);
+		}
+		/** Why a local restore was blocked, when findCatalogEntryForLocal returned null. */
+		function resolveCatalogRestore(plugins, name, identities = [], hints = []) {
+			const entry = findCatalogEntryForLocal(plugins, name, identities, hints);
+			if (entry !== null) return {
+				ok: true,
+				entry
+			};
+			if (catalogEntriesByName(plugins, name).length === 0) return {
+				ok: false,
+				reason: "no-catalog"
+			};
+			const identitySet = new Set(identities.map((value) => value.toLowerCase()));
+			const hintSet = new Set(hints.map((value) => value.toLowerCase()));
+			if (identitySet.size > 0 || hintSet.size > 0) return {
+				ok: false,
+				reason: "repo-mismatch"
+			};
+			return {
+				ok: false,
+				reason: "no-catalog"
+			};
 		}
 		//#endregion
 		//#region src/client/market-data.ts
@@ -1819,6 +1847,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			if (!Number.isFinite(n) || n < 1e3) return String(n);
 			const k = Math.round(n / 100) / 10;
 			return `${Number.isInteger(k) ? k.toFixed(0) : k.toFixed(1)}k`;
+		}
+		/** Catalog row for an installed dependency — strict for local link:/file: specs. */
+		function catalogEntryForInstalled(plugins, name, spec, repoIdentities = [], repoHints = []) {
+			if (/^(?:link|file):/i.test(spec)) return findCatalogEntryForLocal(plugins, name, repoIdentities, repoHints) ?? void 0;
+			return entryForDep(plugins, name, spec, repoIdentities, repoHints);
 		}
 		//#endregion
 		//#region src/client/InstallToast.tsx
@@ -5785,8 +5818,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const [updateNotes, setUpdateNotes] = (0, react.useState)(null);
 			const [notesState, setNotesState] = (0, react.useState)("loading");
 			const [staleName, setStaleName] = (0, react.useState)(null);
-			const [restoreName, setRestoreName] = (0, react.useState)(null);
-			const [restoreNoCatalogFor, setRestoreNoCatalogFor] = (0, react.useState)(null);
+			const [restoreConfirm, setRestoreConfirm] = (0, react.useState)(null);
+			const [restoreBlocked, setRestoreBlocked] = (0, react.useState)(null);
 			/** Determinate percent parsed from pnpm's Progress line, when available. */
 			const [progressPct, setProgressPct] = (0, react.useState)(null);
 			/**
@@ -6575,7 +6608,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				setInstallError(null);
 				setActivationWarnings([]);
 				setStaleName((prev) => prev === name ? null : prev);
-				setRestoreName((prev) => prev === name ? null : prev);
+				setRestoreConfirm((prev) => prev?.name === name ? null : prev);
 				setUpdatingName(name);
 				updateIdleStrikes.current = 0;
 				sessionStorage.setItem("dshm-updating", JSON.stringify({ name }));
@@ -6661,15 +6694,37 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				const spec = installed[name];
 				if (spec === void 0) return;
 				const specText = String(spec);
-				const entry = /^(?:link|file):/i.test(specText) ? findCatalogEntryForLocal(data.plugins, name, repoIdentities[name] ?? [], repoHints[name] ?? []) : entryForDep(data.plugins, name, specText, repoIdentities[name], repoHints[name]);
 				setStaleName(null);
-				if (entry === void 0 || entry === null) {
-					setRestoreName(null);
-					setRestoreNoCatalogFor(name);
+				setRestoreBlocked(null);
+				if (/^(?:link|file):/i.test(specText)) {
+					const resolved = resolveCatalogRestore(data.plugins, name, repoIdentities[name] ?? [], repoHints[name] ?? []);
+					if (!resolved.ok) {
+						setRestoreConfirm(null);
+						setRestoreBlocked({
+							name,
+							reason: resolved.reason
+						});
+						return;
+					}
+					setRestoreConfirm({
+						name,
+						entry: resolved.entry
+					});
 					return;
 				}
-				setRestoreNoCatalogFor(null);
-				setRestoreName(name);
+				const entry = entryForDep(data.plugins, name, specText, repoIdentities[name], repoHints[name]);
+				if (entry === void 0) {
+					setRestoreConfirm(null);
+					setRestoreBlocked({
+						name,
+						reason: "no-catalog"
+					});
+					return;
+				}
+				setRestoreConfirm({
+					name,
+					entry
+				});
 			}, [
 				data,
 				installed,
@@ -7703,7 +7758,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				const names = /* @__PURE__ */ new Set();
 				if (data === null) return names;
 				for (const [name, spec] of Object.entries(installed)) {
-					const entry = entryForDep(data.plugins, name, String(spec), repoIdentities[name], repoHints[name]);
+					const entry = catalogEntryForInstalled(data.plugins, name, String(spec), repoIdentities[name], repoHints[name]);
 					if (entry !== void 0 && pluginCategories(entry).includes("theme")) names.add(name);
 				}
 				return names;
@@ -8776,7 +8831,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									className: Market_module_css_default.empty,
 									children: t("installedEmpty")
 								}) : ungroupedNames.map((name) => {
-									const entry = data === null ? void 0 : entryForDep(data.plugins, name, String(installed[name]), repoIdentities[name], repoHints[name]);
+									const entry = data === null ? void 0 : catalogEntryForInstalled(data.plugins, name, String(installed[name]), repoIdentities[name], repoHints[name]);
 									const off = effectiveDisabledSet.has(name);
 									return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 										className: Market_module_css_default.irow,
@@ -8862,7 +8917,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									if (needle === "") return true;
 									if (name.toLowerCase().includes(needle)) return true;
 									if (String(spec).toLowerCase().includes(needle)) return true;
-									const entry = data === null ? void 0 : entryForDep(data.plugins, name, String(spec), repoIdentities[name], repoHints[name]);
+									const entry = data === null ? void 0 : catalogEntryForInstalled(data.plugins, name, String(spec), repoIdentities[name], repoHints[name]);
 									if (entry !== void 0) {
 										if ((entry.description && (entry.description[lang] || entry.description.en) || "").toLowerCase().includes(needle)) return true;
 										if ((entry.owner || "").toLowerCase().includes(needle)) return true;
@@ -8871,7 +8926,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 								}),
 								render: ([name, spec]) => {
 									const missing = pendingBackup !== null && !installedFiles.includes(name);
-									const entry = data === null ? void 0 : entryForDep(data.plugins, name, String(spec), repoIdentities[name], repoHints[name]);
+									const entry = data === null ? void 0 : catalogEntryForInstalled(data.plugins, name, String(spec), repoIdentities[name], repoHints[name]);
 									const status = updates[name];
 									const localDev = /^(?:link|file):/i.test(String(spec)) || status?.kind === "linked";
 									const act = activations[name];
@@ -9347,30 +9402,30 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 							children: t("uninstall")
 						})] })
 					}),
-					restoreName !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Modal, {
+					restoreConfirm !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Modal, {
 						open: true,
-						onClose: () => setRestoreName(null),
-						title: `${t("restoreOnline")} ${restoreName}?`,
-						description: t("restoreHint"),
+						onClose: () => setRestoreConfirm(null),
+						title: `${t("restoreOnline")} ${restoreConfirm.name}?`,
+						description: `${t("restoreHint")}\n\n${restoreConfirm.entry.owner} · ${restoreConfirm.entry.url}`,
 						footer: /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 							variant: "ghost",
-							onClick: () => setRestoreName(null),
+							onClick: () => setRestoreConfirm(null),
 							children: t("cancel")
 						}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 							variant: "primary",
 							disabled: updatingName !== null,
-							onClick: () => doUpdate(restoreName, false, true),
+							onClick: () => doUpdate(restoreConfirm.name, false, true),
 							children: t("restoreProceed")
 						})] })
 					}),
-					restoreNoCatalogFor !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Modal, {
+					restoreBlocked !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Modal, {
 						open: true,
-						onClose: () => setRestoreNoCatalogFor(null),
-						title: `${t("restoreNoCatalogTitle")} — ${restoreNoCatalogFor}`,
-						description: t("restoreNoCatalog"),
+						onClose: () => setRestoreBlocked(null),
+						title: `${t("restoreNoCatalogTitle")} — ${restoreBlocked.name}`,
+						description: t(restoreBlocked.reason === "repo-mismatch" ? "restoreNoMatch" : "restoreNoCatalog"),
 						footer: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 							variant: "ghost",
-							onClick: () => setRestoreNoCatalogFor(null),
+							onClick: () => setRestoreBlocked(null),
 							children: t("gotIt")
 						})
 					}),
