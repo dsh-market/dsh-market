@@ -317,6 +317,10 @@
 /* Below the spec line; #458 can leave this row button-only with no desc
    height, so a little top margin keeps it from hugging the link. */
 .desc.noteRow{margin-top:6px}
+/* The update-preview row (#294) sits right under the note row; without a
+   desc line to carry height the two blocks read as one (#458). */
+.desc.noteRow + .noteRow{margin-top:6px}
+.noteEdit + .noteRow{margin-top:6px}
 .noteMine{color:var(--dsw-alias-label-primary,#1f2328)}
 .noteToggle{font:inherit;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#8b93a1);background:0 0;border:none;padding:0;cursor:pointer;flex-shrink:0;white-space:nowrap}
 .noteToggle:hover{color:var(--dsw-alias-brand-primary,#4f6ef7);text-decoration:underline}
