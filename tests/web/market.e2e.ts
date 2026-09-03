@@ -130,6 +130,26 @@ describe.skipIf(!HAS_DSH)('web e2e: plugin market', () => {
     expect(await pages()).toBe(allPages)
   })
 
+  it('treats adjacent Han and Latin search terms like their spaced forms', async () => {
+    await page.getByRole('button', { name: /^(发现|Discover)$/ }).click()
+    const search = page.getByPlaceholder(/搜索插件|Search plugins/)
+    const gridNames = () => page.locator('[class*="masonryCol"] [class*="nm"]').allTextContents()
+
+    for (const [compact, spaced] of [['MCP管理', 'MCP 管理'], ['管理MCP', '管理 MCP']]) {
+      await search.fill(compact)
+      await page.waitForTimeout(400)
+      const compactNames = await gridNames()
+      expect(compactNames.length, `${compact} should recover mixed-script matches`).toBeGreaterThan(0)
+
+      await search.fill(spaced)
+      await page.waitForTimeout(400)
+      expect(await gridNames(), `${compact} and ${spaced} should rank identically`).toEqual(compactNames)
+    }
+
+    await search.fill('')
+    await page.waitForTimeout(200)
+  })
+
   it('never lists the market itself in the Installed tab — it manages itself from its own settings card', async () => {
     await page.getByRole('button', { name: /已安装|Installed/ }).click()
     await page.waitForTimeout(1000)
