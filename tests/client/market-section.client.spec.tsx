@@ -1701,6 +1701,40 @@ describe('plugin notes (#347)', () => {
     expect(await screen.findByText('Loop task runner')).toBeTruthy()
     expect(screen.queryByRole('button', { name: en.noteSeeTheirs })).toBeNull()
   })
+
+  it('shows add-note even when the plugin has no catalog description (#458)', async () => {
+    stubFetch({
+      '/dsh-market/registry': {
+        source: 'snapshot',
+        registry: {
+          updated: '', count: 1,
+          categories: { tools: { en: 'Tools', zh: '工具' } },
+          plugins: [
+            { name: 'dsh-local', owner: 'alice', url: 'https://github.com/alice/dsh-local', category: 'tools', npm: 'dsh-local', stars: 1, added: '2026-08-01', description: { en: '', zh: '' }, install: '' },
+          ],
+        },
+      },
+      '/dsh-market/installed': () => ({
+        profile: 'web', installed: { 'dsh-local': 'link:../dsh-local' }, live: ['dsh-local'], disabled: [], notes: {},
+      }),
+      '/dsh-market/note': (body: any) => ({
+        ok: true,
+        notes: String(body.text).trim() === '' ? {} : { [body.name]: String(body.text).trim() },
+      }),
+    })
+    render(<MarketSection {...props()} />)
+    fireEvent.click(await screen.findByRole('button', { name: /Installed/ }))
+    await screen.findByText('dsh-local')
+
+    const addNote = screen.getByRole('button', { name: en.noteAdd })
+    expect(addNote.className).toMatch(/noteAction/)
+    fireEvent.click(addNote)
+    fireEvent.change(screen.getByPlaceholderText(en.notePlaceholder), { target: { value: 'local dev fork' } })
+    fireEvent.click(screen.getByRole('button', { name: en.noteSave }))
+
+    expect((await screen.findByText('local dev fork')).className).toMatch(/noteMine/)
+    expect(screen.getByRole('button', { name: en.noteEdit }).className).toMatch(/noteAction/)
+  })
 })
 
 describe('#60 catalog deprecation', () => {

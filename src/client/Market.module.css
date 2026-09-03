@@ -314,12 +314,19 @@
    tertiary text treatment, `备注` read like another word in the blurb
    instead of something the user could press (#399). */
 .noteRow{display:flex;align-items:baseline;gap:6px;min-width:0;flex-wrap:wrap}
+/* Below the spec line; #458 can leave this row button-only with no desc
+   height, so a little top margin keeps it from hugging the link. */
+.desc.noteRow{margin-top:6px}
+/* The update-preview row (#294) sits right under the note row; without a
+   desc line to carry height the two blocks read as one (#458). */
+.desc.noteRow + .noteRow{margin-top:6px}
+.noteEdit + .noteRow{margin-top:6px}
 .noteMine{color:var(--dsw-alias-label-primary,#1f2328)}
 .noteToggle{font:inherit;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#8b93a1);background:0 0;border:none;padding:0;cursor:pointer;flex-shrink:0;white-space:nowrap}
 .noteToggle:hover{color:var(--dsw-alias-brand-primary,#4f6ef7);text-decoration:underline}
 .noteAction{display:inline-flex;align-items:center;color:var(--dsw-alias-label-primary,#1f2328);background:var(--dsw-alias-bg-layer-2,#f3f4f6);border:1px solid var(--dsw-alias-border-l3,#d9dde3);border-radius:4px;padding:0 5px;font-weight:600;text-decoration:none}
 .noteAction:hover{color:var(--dsw-alias-label-primary,#1f2328);border-color:var(--dsw-alias-brand-primary,#4f6ef7);text-decoration:none}
-.noteEdit{display:flex;align-items:center;gap:6px;min-width:0;flex-wrap:wrap;margin-top:2px}
+.noteEdit{display:flex;align-items:center;gap:6px;min-width:0;flex-wrap:wrap;margin-top:6px}
 .noteInput{flex:1;min-width:160px}
 .descTight{min-height:0}
 .src{font-size:11px;color:var(--dsw-alias-label-secondary,#9ca3af);text-decoration:none}
