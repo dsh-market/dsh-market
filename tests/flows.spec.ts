@@ -358,11 +358,14 @@ const hot = vi.hoisted(() => ({
   channel: undefined as 'stable' | 'beta' | 'dev' | undefined,
   region: undefined as 'global' | 'china' | undefined,
   regionAuto: undefined as true | undefined,
+  githubProxy: undefined as string | undefined,
   notes: {} as Record<string, string>,
+  favorites: [] as string[],
   failNext: false,
 }))
 vi.mock('../src/hot.ts', () => ({
   MAX_NOTE: 200,
+  MAX_FAVORITES: 500,
   cleanHotDir: () => {},
   readDisabledThemes: () => hot.disabled,
   writeDisabledThemes: (_dir: string, set: Set<string>) => { hot.disabled = new Set(set) },
@@ -371,7 +374,8 @@ vi.mock('../src/hot.ts', () => ({
   readMarketState: () => ({
     disabled: hot.disabled, groups: hot.groups, groupOrder: hot.groupOrder,
     channel: hot.channel, region: hot.region, regionAuto: hot.regionAuto,
-    notes: hot.notes,
+    githubProxy: hot.githubProxy,
+    notes: hot.notes, favorites: hot.favorites,
   }),
   // Carries `channel` because the real one does. A stand-in that silently
   // drops a field cannot fail when the code under test forgets to persist
@@ -380,7 +384,8 @@ vi.mock('../src/hot.ts', () => ({
   writeMarketState: (_dir: string, state: {
     disabled: Set<string>; groups: Record<string, string[]>; groupOrder: string[]
     channel?: 'stable' | 'beta' | 'dev'; region?: 'global' | 'china'; regionAuto?: true
-    notes?: Record<string, string>
+    githubProxy?: string
+    notes?: Record<string, string>; favorites?: string[]
   }) => {
     hot.disabled = new Set(state.disabled)
     hot.groups = state.groups
@@ -388,7 +393,9 @@ vi.mock('../src/hot.ts', () => ({
     hot.channel = state.channel
     if (Object.prototype.hasOwnProperty.call(state, 'region')) hot.region = state.region
     if (Object.prototype.hasOwnProperty.call(state, 'regionAuto')) hot.regionAuto = state.regionAuto
+    if (Object.prototype.hasOwnProperty.call(state, 'githubProxy')) hot.githubProxy = state.githubProxy
     if (state.notes !== undefined) hot.notes = state.notes
+    if (state.favorites !== undefined) hot.favorites = state.favorites
   },
   listHotMounts: () => [...hot.mounts],
   hotMount: (_ctx: unknown, _dir: string, name: string) => {
@@ -430,6 +437,7 @@ const REGISTRY = {
   categories: { tool: { en: 'Tools' }, theme: { en: 'Themes' } },
   plugins: [
     { name: 'dsh-loop', owner: 'o', url: 'https://github.com/o/dsh-loop', category: 'tool', npm: 'dsh-loop', description: {}, install: '', added: '' },
+    { name: 'dsh-genui', owner: 'omdsh-dev', url: 'https://github.com/omdsh-dev/dsh-genui', category: 'tool', npm: '@changfenhuang/dsh-genui', description: {}, install: '', added: '' },
     // The market's own entry: the release-channel specs need it installed,
     // because the channel applies to this package and no other.
     { name: 'dshmarket', owner: 'o', url: 'https://github.com/o/dshmarket', category: 'tool', npm: 'dshmarket', description: {}, install: '', added: '' },
@@ -553,6 +561,7 @@ let bed: Testbed
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'dshm-flow-'))
   process.env.DSH_HOME = home
+  delete process.env.DSHM_GITHUB_PROXY
   const dir = join(home, 'profiles', 'web')
   mkdirSync(dir, { recursive: true })
   writeFileSync(join(dir, 'package.json'), '{"dependencies":{}}')
@@ -588,7 +597,9 @@ beforeEach(() => {
   hot.channel = undefined
   hot.region = undefined
   hot.regionAuto = undefined
+  hot.githubProxy = undefined
   hot.notes = {}
+  hot.favorites = []
   regionProbe.pending = null
   hot.failNext = false
   bed = createTestbed()
@@ -597,6 +608,7 @@ afterEach(() => {
   bed.dispose()
   vi.unstubAllGlobals()
   delete process.env.DSH_HOME
+  delete process.env.DSHM_GITHUB_PROXY
   rmSync(home, { recursive: true, force: true })
 })
 
@@ -2279,7 +2291,10 @@ describe('update flow — no npm publishing required', () => {
     // Exercise the China path: the update target itself is already pinned
     // after HEAD is resolved through the mirror. Rollback must replace that
     // pin, not append a second `#` to it (#385).
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(`001e${NEW} HEAD\0multi_ack\n`, { status: 200 })))
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(
+      `001e# service=git-upload-pack\n00000155${NEW} HEAD\0multi_ack\n003f${NEW} refs/heads/main\n0000`,
+      { status: 200 },
+    )))
     bed.dispose()
     bed = createTestbed({ region: 'china' })
 
@@ -2636,6 +2651,46 @@ describe('local-dev restore flow', () => {
     const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'mystery-plug', restore: true })
     expect(r.status).toBe(400)
     expect(String(r.json.error)).toMatch(/No catalog entry/)
+  })
+
+  it('returns 400 when restore repo evidence disagrees with the only same-named catalog entry', async () => {
+    const checkout = join(fake.profileDir, '..', 'humanizer-dev')
+    mkdirSync(checkout, { recursive: true })
+    writeFileSync(join(checkout, 'package.json'), JSON.stringify({
+      name: 'dsh-humanizer',
+      version: '0.1.0',
+      main: 'index.js',
+      dsh: {},
+      repository: { type: 'git', url: 'https://github.com/handsomeliu/dsh-humanizer.git' },
+    }))
+    writeFileSync(join(checkout, 'index.js'), '')
+    writeFileSync(join(fake.profileDir, 'package.json'), JSON.stringify({
+      dependencies: { 'dsh-humanizer': `link:${checkout}` },
+    }))
+    mkdirSync(join(fake.profileDir, 'node_modules', 'dsh-humanizer'), { recursive: true })
+    writeFileSync(join(fake.profileDir, 'node_modules', 'dsh-humanizer', 'package.json'), JSON.stringify({
+      name: 'dsh-humanizer',
+      version: '0.1.0',
+      main: 'index.js',
+      dsh: {},
+      repository: { type: 'git', url: 'https://github.com/handsomeliu/dsh-humanizer.git' },
+    }))
+    registryModule.loadRegistry.mockImplementationOnce(() => Promise.resolve({
+      ...REGISTRY,
+      count: REGISTRY.count + 1,
+      plugins: [
+        ...REGISTRY.plugins,
+        {
+          name: 'dsh-humanizer', owner: 'lynote-ai',
+          url: 'https://github.com/lynote-ai/dsh-humanizer',
+          category: 'tool', npm: 'dsh-humanizer', description: {}, install: '', added: '',
+        },
+      ],
+    }))
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-humanizer', restore: true })
+    expect(r.status).toBe(400)
+    expect(String(r.json.error)).toMatch(/No catalog entry/)
+    expect(installedSpec('dsh-humanizer')).toBe(`link:${checkout}`)
   })
 
   /** #250 landed a third target shape — a prebuilt Release archive URL —
@@ -3732,7 +3787,52 @@ describe('download region', () => {
     const proxy = (await bed.dispatch('GET', '/dsh-market/status')).json.githubProxy
     expect(typeof proxy).toBe('string')
     expect(String(proxy).startsWith('https://')).toBe(true)
+    const candidates = (await bed.dispatch('GET', '/dsh-market/status')).json.githubRoutes
+    expect(candidates.raw).toEqual(['https://gh-proxy.com', 'https://ghfast.top', null])
+    expect(candidates.git[0]).toBeNull()
+    expect(candidates.avatar[0]).toBeNull()
     await bed.dispatch('POST', '/dsh-market/region', { region: 'global' })
+  })
+
+  it('persists one custom GitHub escape route and can restore automatic routing', async () => {
+    const set = await bed.dispatch('POST', '/dsh-market/github-proxy', {
+      proxy: 'https://mirror.example/prefix/',
+    })
+    expect(set.status).toBe(200)
+    expect(set.json.githubProxyCustom).toBe('https://mirror.example/prefix')
+    expect(hot.githubProxy).toBe('https://mirror.example/prefix')
+    let status = (await bed.dispatch('GET', '/dsh-market/status')).json
+    expect(status.githubRoutes.raw).toEqual(['https://mirror.example/prefix', null])
+    expect(status.githubProxyCustom).toBe('https://mirror.example/prefix')
+
+    const clear = await bed.dispatch('POST', '/dsh-market/github-proxy', { proxy: null })
+    expect(clear.status).toBe(200)
+    expect(hot.githubProxy).toBeUndefined()
+    status = (await bed.dispatch('GET', '/dsh-market/status')).json
+    expect(status.githubProxyCustom).toBeNull()
+    expect(status.githubRoutes.raw).toEqual([null])
+  })
+
+  it('rejects unsafe custom prefixes and refuses UI writes while the environment owns the route', async () => {
+    for (const proxy of [
+      'http://mirror.example',
+      'https://user:secret@mirror.example',
+      'https://mirror.example/?token=secret',
+      'not a url',
+    ]) {
+      expect((await bed.dispatch('POST', '/dsh-market/github-proxy', { proxy })).status).toBe(400)
+    }
+    expect((await bed.dispatch('POST', '/dsh-market/github-proxy', {
+      proxy: 'https://mirror.example',
+    }, { crossOrigin: true })).status).toBe(403)
+
+    bed.dispose()
+    process.env.DSHM_GITHUB_PROXY = 'https://env.example'
+    bed = createTestbed({ region: 'china' })
+    const status = (await bed.dispatch('GET', '/dsh-market/status')).json
+    expect(status.githubProxyManaged).toBe(true)
+    expect(status.githubRoutes.raw).toEqual(['https://env.example', null])
+    expect((await bed.dispatch('POST', '/dsh-market/github-proxy', { proxy: null })).status).toBe(409)
   })
 
   it('stops offering the automatic explanation once the user has chosen', async () => {
@@ -3912,5 +4012,136 @@ describe('the dev channel is an ordinary choice', () => {
   it('still refuses a cross-origin selection', async () => {
     expect((await bed.dispatch('POST', '/dsh-market/channel', { channel: 'dev' }, { crossOrigin: true })).status).toBe(403)
     expect(hot.channel).toBeUndefined()
+  })
+})
+
+
+          describe('git to npm source migration (#461)', () => {
+            it('offers an explicit migration and renames package-owned user state', async () => {
+              const dir = profileDir('web')
+              writeFileSync(join(dir, 'package.json'), JSON.stringify({
+                dependencies: { 'dsh-genui': 'github:omdsh-dev/dsh-genui' },
+              }))
+              mkdirSync(join(dir, 'node_modules', 'dsh-genui'), { recursive: true })
+              writeFileSync(join(dir, 'node_modules', 'dsh-genui', 'package.json'), JSON.stringify({
+                name: 'dsh-genui', version: '0.9.6', main: 'index.js',
+              }))
+              writeFileSync(join(dir, 'node_modules', 'dsh-genui', 'index.js'), '')
+              fake.npm['@changfenhuang/dsh-genui'] = {
+                latest: '0.9.7',
+                versions: {
+                  '0.9.7': {
+                    manifest: { name: '@changfenhuang/dsh-genui', main: 'index.js' },
+                    artifacts: ['index.js'],
+                  },
+                },
+              }
+              hot.disabled.add('dsh-genui')
+              hot.groups.work = ['dsh-genui']
+              hot.groupOrder.push('work')
+              hot.notes['dsh-genui'] = 'legacy source'
+
+              const updates = await bed.dispatch('GET', '/dsh-market/updates?force=1')
+              expect(updates.status).toBe(200)
+              expect(updates.json.updates['dsh-genui'].sourceMigration).toEqual({
+                kind: 'git-to-npm',
+                repo: 'omdsh-dev/dsh-genui',
+                target: '@changfenhuang/dsh-genui',
+              })
+
+              const migrated = await bed.dispatch('POST', '/dsh-market/migrate-source', { name: 'dsh-genui' })
+              expect(migrated.status).toBe(200)
+              expect(migrated.json).toMatchObject({
+                ok: true,
+                from: { name: 'dsh-genui', source: 'github:omdsh-dev/dsh-genui' },
+                to: { name: '@changfenhuang/dsh-genui', source: 'npm' },
+              })
+              expect(installedSpec('dsh-genui')).toBeUndefined()
+              expect(installedSpec('@changfenhuang/dsh-genui')).toBe('^0.9.7')
+              expect(hot.disabled.has('@changfenhuang/dsh-genui')).toBe(true)
+              expect(hot.disabled.has('dsh-genui')).toBe(false)
+              expect(hot.groups.work).toEqual(['@changfenhuang/dsh-genui'])
+              expect(hot.notes['@changfenhuang/dsh-genui']).toBe('legacy source')
+              expect(hot.notes['dsh-genui']).toBeUndefined()
+            })
+
+            it('does not offer or execute migration for an explicit Git ref', async () => {
+              const dir = profileDir('web')
+              writeFileSync(join(dir, 'package.json'), JSON.stringify({
+                dependencies: { 'dsh-genui': 'github:omdsh-dev/dsh-genui#publish' },
+              }))
+              mkdirSync(join(dir, 'node_modules', 'dsh-genui'), { recursive: true })
+              writeFileSync(join(dir, 'node_modules', 'dsh-genui', 'package.json'), JSON.stringify({
+                name: 'dsh-genui', version: '0.9.6', main: 'index.js',
+              }))
+              writeFileSync(join(dir, 'node_modules', 'dsh-genui', 'index.js'), '')
+
+              const updates = await bed.dispatch('GET', '/dsh-market/updates?force=1')
+              expect(updates.json.updates['dsh-genui'].sourceMigration).toBeUndefined()
+              const migrated = await bed.dispatch('POST', '/dsh-market/migrate-source', { name: 'dsh-genui' })
+              expect(migrated.status).toBe(400)
+              expect(installedSpec('dsh-genui')).toBe('github:omdsh-dev/dsh-genui#publish')
+            })
+          })
+describe('favorites (#414)', () => {
+  it('adds and removes a catalog url and returns it from GET /installed', async () => {
+    const url = 'https://github.com/o/dsh-loop'
+    const add = await bed.dispatch('POST', '/dsh-market/favorite', { url, favorited: true })
+    expect(add.status).toBe(200)
+    expect(add.json.favorites).toEqual([url])
+    expect(hot.favorites).toEqual([url])
+
+    const listed = await bed.dispatch('GET', '/dsh-market/installed')
+    expect(listed.json.favorites).toEqual([url])
+
+    const remove = await bed.dispatch('POST', '/dsh-market/favorite', { url, favorited: false })
+    expect(remove.status).toBe(200)
+    expect(remove.json.favorites).toEqual([])
+    expect(hot.favorites).toEqual([])
+  })
+
+  it('rejects invalid urls and cross-origin writes', async () => {
+    expect((await bed.dispatch('POST', '/dsh-market/favorite', { url: '', favorited: true })).status).toBe(400)
+    expect((await bed.dispatch('POST', '/dsh-market/favorite', { url: 'ftp://bad', favorited: true })).status).toBe(400)
+    expect((await bed.dispatch('POST', '/dsh-market/favorite', { url: 'https://github.com/o/x', favorited: true }, { crossOrigin: true })).status).toBe(403)
+  })
+
+  it('a disable toggle does not clear favorites', async () => {
+    fake.npm['dsh-loop'] = {
+      latest: '1.0.0',
+      versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } },
+    }
+    await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
+    await bed.dispatch('POST', '/dsh-market/favorite', { url: 'https://github.com/h/dsh-share', favorited: true })
+    await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-loop', enabled: false })
+    expect(hot.favorites).toEqual(['https://github.com/h/dsh-share'])
+  })
+
+  it('rejects favorites beyond MAX_FAVORITES', async () => {
+    hot.favorites = Array.from({ length: 500 }, (_, index) => `https://github.com/o/p-${index}`)
+    const add = await bed.dispatch('POST', '/dsh-market/favorite', { url: 'https://github.com/o/one-more', favorited: true })
+    expect(add.status).toBe(400)
+    expect(hot.favorites).toHaveLength(500)
+  })
+
+  it('queues favorite writes while an install is running', async () => {
+    fake.npm['dsh-loop'] = {
+      latest: '1.0.0',
+      versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } },
+    }
+    let release!: () => void
+    fake.gate = new Promise<void>((resolvePromise) => { release = resolvePromise })
+    const install = bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 20))
+    const favorite = bed.dispatch('POST', '/dsh-market/favorite', {
+      url: 'https://github.com/o/dsh-share',
+      favorited: true,
+    })
+    release()
+    fake.gate = null
+    expect((await install).status).toBe(200)
+    const fav = await favorite
+    expect(fav.status).toBe(200)
+    expect(fav.json.favorites).toEqual(['https://github.com/o/dsh-share'])
   })
 })

@@ -10,7 +10,8 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { acceleratedTarget } from '../src/accelerate.ts'
+import { acceleratedTarget, resolveHeadCommit } from '../src/accelerate.ts'
+import { resetGithubRoutePreferences } from '../src/regions.ts'
 
 const SHA = 'b0e6c57ebeeb4796017864f5cd5c66e6ba0899ec'
 const CHINA = { DSHM_GITHUB_PROXY: 'https://gh.test' }
@@ -40,8 +41,8 @@ function stubResolve(outcome: 'refs' | 'http-error' | 'throw' | 'garbage'): void
   }))
 }
 
-beforeEach(() => { vi.unstubAllGlobals() })
-afterEach(() => { vi.unstubAllGlobals() })
+beforeEach(() => { vi.unstubAllGlobals(); resetGithubRoutePreferences() })
+afterEach(() => { vi.unstubAllGlobals(); resetGithubRoutePreferences(); vi.useRealTimers() })
 
 describe('acceleratedTarget', () => {
   it('leaves everything alone in a region with no mirror', async () => {
@@ -95,5 +96,65 @@ describe('acceleratedTarget', () => {
     // The lockfile reader matches exactly 40 hex characters. Anything else
     // would install and then report no version for the life of the plugin.
     await expect(acceleratedTarget('github:o/r', 'china', CHINA)).resolves.toBe('github:o/r')
+  })
+
+  it('falls through transport errors and 200 HTML pages to the next service route', async () => {
+    const seen: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL) => {
+      const url = String(input)
+      seen.push(url)
+      if (url.startsWith('https://github.com/')) throw new Error('direct blocked')
+      if (url.startsWith('https://gh-proxy.com/')) {
+        return new Response('<!doctype html><title>temporary proxy error</title>', {
+          status: 200, headers: { 'content-type': 'text/html' },
+        })
+      }
+      return new Response(refAdvertisement(SHA), { status: 200 })
+    }))
+
+    await expect(resolveHeadCommit('o/r', 'china', {})).resolves.toBe(SHA)
+    expect(seen.map(url => url.split('/https://')[0])).toEqual([
+      'https://github.com/o/r/info/refs?service=git-upload-pack',
+      'https://gh-proxy.com',
+      'https://ghfast.top',
+    ])
+  })
+
+  it('remembers a successful git route, but stops on a valid advertisement missing the requested ref', async () => {
+    const seen: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL) => {
+      const url = String(input)
+      seen.push(url)
+      if (!url.startsWith('https://ghfast.top/')) throw new Error('unavailable')
+      return new Response(refAdvertisement(SHA), { status: 200 })
+    }))
+    await expect(resolveHeadCommit('o/r', 'china', {})).resolves.toBe(SHA)
+    seen.length = 0
+    await expect(resolveHeadCommit('o/r', 'china', {}, 'does-not-exist')).resolves.toBeNull()
+    // The last successful route is tried first. Its payload is a valid ref
+    // advertisement, so an absent branch is an authoritative miss rather
+    // than a reason to ask mirrors for a different answer.
+    expect(seen).toHaveLength(1)
+    expect(seen[0]).toMatch(/^https:\/\/ghfast\.top\//)
+  })
+
+  it('gives each candidate its own timeout so one hung route cannot consume every fallback', async () => {
+    vi.useFakeTimers()
+    const seen: string[] = []
+    vi.stubGlobal('fetch', vi.fn((input: string | URL, init?: RequestInit) => {
+      const url = String(input)
+      seen.push(url)
+      if (seen.length === 1) {
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => { reject(new DOMException('aborted', 'AbortError')) })
+        })
+      }
+      return Promise.resolve(new Response(refAdvertisement(SHA), { status: 200 }))
+    }))
+
+    const pending = resolveHeadCommit('o/r', 'china', {})
+    await vi.advanceTimersByTimeAsync(6000)
+    await expect(pending).resolves.toBe(SHA)
+    expect(seen).toHaveLength(2)
   })
 })

@@ -37,7 +37,8 @@ import { createElement as h, Fragment, useCallback, useEffect, useRef, useState 
 import type { ReactElement } from 'react'
 import { Button, IconChevronDownOutline14, IconLoadingOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import css from './Market.module.css'
-import { api, setGithubProxy } from './market-data.ts'
+import { api, applyGithubRouting } from './market-data.ts'
+import type { MarketStatus } from './market-data.ts'
 import type { Translate } from './market-data.ts'
 
 /** Keys the market leaves in the browser; cleared when the user purges. */
@@ -72,6 +73,10 @@ interface SelfStatus {
   regions: Region[]
   /** The region came from the network check, not from the user. */
   regionAuto: boolean
+  /** User-maintained fallback prefix, separate from the active learned route. */
+  githubProxyCustom: string | null
+  /** Environment-owned prefixes are visible but not editable. */
+  githubProxyManaged: boolean
   /** Whether the profile package manager owns this market installation. */
   selfManaged: boolean
 }
@@ -86,6 +91,9 @@ interface StatusBody {
   regions?: string[]
   regionAuto?: boolean
   githubProxy?: string | null
+  githubRoutes?: MarketStatus['githubRoutes']
+  githubProxyCustom?: string | null
+  githubProxyManaged?: boolean
   selfManaged?: boolean
 }
 
@@ -148,6 +156,8 @@ function readStatus(body: StatusBody): SelfStatus {
     // the row tells the truth about that host rather than hiding.
     regions: regions.length > 0 ? regions : REGIONS,
     regionAuto: body.regionAuto === true,
+    githubProxyCustom: typeof body.githubProxyCustom === 'string' ? body.githubProxyCustom : null,
+    githubProxyManaged: body.githubProxyManaged === true,
     selfManaged: body.selfManaged !== false,
   }
 }
@@ -184,6 +194,9 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
   const [restoreConfirming, setRestoreConfirming] = useState(false)
   const [purge, setPurge] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [proxyEditing, setProxyEditing] = useState(false)
+  const [proxyDraft, setProxyDraft] = useState('')
+  const [proxySaving, setProxySaving] = useState(false)
   /**
    * The last self-update was refused by pnpm's fresh-release safety wait
    * (#39). Only the market's own card can update the market, so without a
@@ -210,12 +223,13 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
         const response = await fetch(api('/dsh-market/status'), { cache: 'no-store' })
         const body = (await response.json()) as StatusBody
         if (live) setStatus(readStatus(body))
-        setGithubProxy(typeof body.githubProxy === 'string' ? body.githubProxy : null)
+        applyGithubRouting(body)
       } catch {
         if (live) {
           setStatus({
             version: null, restart: false, channel: 'stable', channels: ['stable', 'beta'],
-            region: 'global', regions: REGIONS, regionAuto: false, selfManaged: true,
+            region: 'global', regions: REGIONS, regionAuto: false,
+            githubProxyCustom: null, githubProxyManaged: false, selfManaged: true,
           })
         }
       }
@@ -341,10 +355,31 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
         try {
           const fresh = await fetch(api('/dsh-market/status'), { cache: 'no-store' })
           const status = (await fresh.json()) as StatusBody
-          setGithubProxy(typeof status.githubProxy === 'string' ? status.githubProxy : null)
+          applyGithubRouting(status)
         } catch { /* images keep the previous route until the next load */ }
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : String(cause))
+      }
+    })()
+  }, [post, t])
+
+  /** Save or clear the single user-facing GitHub escape route. */
+  const onGithubProxy = useCallback((proxy: string | null) => {
+    setError(null)
+    setProxySaving(true)
+    void (async () => {
+      try {
+        const body = await post(api('/dsh-market/github-proxy'), { proxy }) as { ok?: boolean; error?: string }
+        if (body.ok !== true) { setError(body.error ?? t('setSelfFailed')); return }
+        const fresh = await fetch(api('/dsh-market/status'), { cache: 'no-store' })
+        const statusBody = (await fresh.json()) as StatusBody
+        setStatus(readStatus(statusBody))
+        applyGithubRouting(statusBody)
+        setProxyEditing(false)
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause))
+      } finally {
+        setProxySaving(false)
       }
     })()
   }, [post, t])
@@ -450,6 +485,57 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
               onClick: () => { onRegion(id) },
             }, t(REGION_LABEL[id]))),
           )),
+        row(
+          t('setGithubProxy'),
+          status?.githubProxyManaged === true
+            ? t('setGithubProxyManagedHint')
+            : status?.githubProxyCustom !== null && status?.githubProxyCustom !== undefined
+              ? t('setGithubProxyCustomHint')
+              : t('setGithubProxyAutoHint'),
+          status?.githubProxyManaged === true
+            ? null
+            : status?.githubProxyCustom !== null && status?.githubProxyCustom !== undefined
+              ? h('div', { className: css.setInlineActions },
+                  h(Button, {
+                    variant: 'outline', size: 'sm', disabled: proxySaving,
+                    onClick: () => { setProxyDraft(status.githubProxyCustom ?? ''); setProxyEditing(true) },
+                  }, t('setGithubProxyEdit')),
+                  h(Button, {
+                    variant: 'ghost', size: 'sm', disabled: proxySaving,
+                    onClick: () => { onGithubProxy(null) },
+                  }, t('setGithubProxyAuto')),
+                )
+              : h(Button, {
+                  variant: 'outline', size: 'sm', disabled: status === null || proxySaving,
+                  onClick: () => { setProxyDraft(''); setProxyEditing(true) },
+                }, t('setGithubProxyCustom')),
+        ),
+        proxyEditing && status?.githubProxyManaged !== true
+          ? h('div', { className: css.setProxyEditor },
+              h('label', { className: css.setProxyLabel },
+                t('setGithubProxyInput'),
+                h('input', {
+                  className: css.setProxyInput,
+                  type: 'url',
+                  value: proxyDraft,
+                  placeholder: 'https://mirror.example',
+                  'aria-label': t('setGithubProxyInput'),
+                  disabled: proxySaving,
+                  onChange: (event: { currentTarget: { value: string } }) => { setProxyDraft(event.currentTarget.value) },
+                }),
+              ),
+              h('div', { className: css.setInlineActions },
+                h(Button, {
+                  variant: 'ghost', size: 'sm', disabled: proxySaving,
+                  onClick: () => { setProxyEditing(false) },
+                }, t('setSelfCancel')),
+                h(Button, {
+                  variant: 'primary', size: 'sm', disabled: proxySaving || proxyDraft.trim() === '',
+                  onClick: () => { onGithubProxy(proxyDraft) },
+                }, t('setGithubProxySave')),
+              ),
+            )
+          : null,
         status?.selfManaged === true ? row(t('setSelfRemove'), t('setSelfRemoveHint'),
           phase === 'confirming' || busy
             ? null

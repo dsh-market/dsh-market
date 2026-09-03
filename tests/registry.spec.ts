@@ -414,6 +414,19 @@ describe('configuredProxy', () => {
     expect(configuredProxy()).toBe('http://127.0.0.1:7897')
   })
 
+  it('defaults a scheme-less proxy to http', () => {
+    // Windows proxy fields and npm config both commonly store host:port.
+    // URL-based proxy agents require a scheme and otherwise throw before
+    // the catalog request starts (#450).
+    process.env.HTTPS_PROXY = '127.0.0.1:7890'
+    expect(configuredProxy()).toBe('http://127.0.0.1:7890')
+  })
+
+  it('preserves an explicitly configured proxy scheme', () => {
+    process.env.HTTPS_PROXY = 'socks5://proxy.corp.example:1080'
+    expect(configuredProxy()).toBe('socks5://proxy.corp.example:1080')
+  })
+
   it('uses npm_config_https_proxy when the standard variables are not set', () => {
     // The machine that reported this: its proxy was configured with
     // `npm config set proxy` (common on Windows), so it exists as
@@ -457,11 +470,11 @@ describe('marketFetch', () => {
     // The trap this guards: configuredProxy() alone would make the failure
     // message claim a proxy was tried while `new EnvHttpProxyAgent()` with
     // no arguments still reads only http(s)_proxy and goes direct.
-    process.env.npm_config_https_proxy = 'http://npm:1'
+    process.env.npm_config_https_proxy = 'proxy.corp.example:8080'
     await marketFetch('https://catalog.example/plugins.json')
     expect(undici.EnvHttpProxyAgent).toHaveBeenCalledWith({
       httpProxy: undefined,
-      httpsProxy: 'http://npm:1',
+      httpsProxy: 'http://proxy.corp.example:8080',
     })
     expect(undici.fetch).toHaveBeenCalledWith(
       'https://catalog.example/plugins.json',

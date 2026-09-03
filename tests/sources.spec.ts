@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest'
 import {
   githubRefOfTarget,
   findCatalogEntryForLocal, findInstalledAlias, gitAllowBuildsKey, githubRemoteIdentities, githubRepoIdentities, githubRepoIdentity, githubTargetAtCommit,
-  installTargetFor, isLocalSpec, lookupRepoFromUrl, parseGitHubRemote, parseGitHubRepository, parseSourceUrl, repoOf, restoreBlockedByWorkspace, restoreTargetForLocal, workspaceProtocolDeps,
+  installTargetFor, isLocalSpec, lookupRepoFromUrl, parseGitHubRemote, parseGitHubRepository, parseSourceUrl, repoOf, resolveCatalogRestore, restoreBlockedByWorkspace, restoreTargetForLocal, workspaceProtocolDeps,
 } from '../src/sources.ts'
 
 describe('parseSourceUrl', () => {
@@ -205,6 +205,27 @@ describe('findCatalogEntryForLocal', () => {
       { name: 'mono-cli', npm: null, url: 'https://github.com/m/mono' },
     ]
     expect(findCatalogEntryForLocal(mono, 'mono-cli', ['m/mono'])?.name).toBe('mono-cli')
+  })
+
+  it('does not restore a unique same-named catalog entry when repo evidence disagrees', () => {
+    const plugins = [
+      { name: 'dsh-humanizer', npm: 'dsh-humanizer', url: 'https://github.com/lynote-ai/dsh-humanizer' },
+    ]
+    expect(findCatalogEntryForLocal(plugins, 'dsh-humanizer', ['handsomeliu/dsh-humanizer'])).toBeNull()
+    expect(findCatalogEntryForLocal(plugins, 'dsh-humanizer', [], ['handsomeliu/dsh-humanizer'])).toBeNull()
+    expect(findCatalogEntryForLocal(plugins, 'dsh-humanizer', ['lynote-ai/dsh-humanizer'])?.url)
+      .toBe('https://github.com/lynote-ai/dsh-humanizer')
+  })
+
+  it('resolveCatalogRestore distinguishes missing catalog rows from repo mismatch', () => {
+    const plugins = [
+      { name: 'dsh-humanizer', npm: 'dsh-humanizer', url: 'https://github.com/lynote-ai/dsh-humanizer' },
+    ]
+    expect(resolveCatalogRestore(plugins, 'missing-plug')).toEqual({ ok: false, reason: 'no-catalog' })
+    expect(resolveCatalogRestore(plugins, 'dsh-humanizer', ['handsomeliu/dsh-humanizer']))
+      .toEqual({ ok: false, reason: 'repo-mismatch' })
+    expect(resolveCatalogRestore(plugins, 'dsh-humanizer', ['lynote-ai/dsh-humanizer']))
+      .toEqual({ ok: true, entry: plugins[0] })
   })
 })
 

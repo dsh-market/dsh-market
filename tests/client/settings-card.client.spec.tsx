@@ -25,8 +25,10 @@ function stubFetch(options: {
   version?: string; restart?: boolean; latest?: string | null; restoreRequired?: boolean; removeOk?: boolean; error?: string; selfManaged?: boolean
   channel?: string; channelSwitch?: string; channelError?: string
   region?: string; regionAuto?: boolean; regionError?: string; githubProxy?: string | null
+  githubProxyCustom?: string | null; githubProxyManaged?: boolean; githubProxyError?: string
 } = {}): void {
   calls = []
+  let githubProxyCustom = options.githubProxyCustom ?? null
   vi.stubGlobal('fetch', vi.fn((input: unknown, init?: RequestInit) => {
     const path = String(input)
     calls.push({ path, body: init?.body === undefined ? null : JSON.parse(String(init.body)) })
@@ -42,6 +44,13 @@ function stubFetch(options: {
         regions: ['global', 'china'],
         regionAuto: options.regionAuto === true,
         githubProxy: options.githubProxy ?? null,
+        githubRoutes: {
+          raw: options.githubProxy === undefined ? [null] : [options.githubProxy],
+          avatar: options.githubProxy === undefined ? [null] : [options.githubProxy],
+          git: options.githubProxy === undefined ? [null] : [options.githubProxy],
+        },
+        githubProxyCustom,
+        githubProxyManaged: options.githubProxyManaged === true,
         selfManaged: options.selfManaged !== false,
       })
     }
@@ -59,6 +68,12 @@ function stubFetch(options: {
       return options.regionError !== undefined
         ? json({ ok: false, error: options.regionError })
         : json({ ok: true, region: (JSON.parse(String(init?.body)) as { region: string }).region })
+    }
+    if (path.endsWith('/dsh-market/github-proxy')) {
+      if (options.githubProxyError !== undefined) return json({ ok: false, error: options.githubProxyError })
+      const raw = (JSON.parse(String(init?.body)) as { proxy: string | null }).proxy
+      githubProxyCustom = raw === null ? null : raw.replace(/\/+$/, '')
+      return json({ ok: true, githubProxyCustom })
     }
     if (path.endsWith('/dsh-market/self-uninstall')) {
       return options.removeOk === false
@@ -391,6 +406,41 @@ describe('SettingsCard — download region', () => {
     await waitFor(() => {
       expect(calls.filter(call => call.path.endsWith('/dsh-market/status'))).toHaveLength(1)
     })
+  })
+})
+
+describe('SettingsCard — GitHub escape route', () => {
+  it('keeps mirror details behind one custom entry and persists the prefix', async () => {
+    await open()
+    await waitFor(() => { expect(screen.getByText(t('setGithubProxy'), { selector: 'div' })).toBeTruthy() })
+    expect(screen.getByText(t('setGithubProxyAutoHint'))).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: t('setGithubProxyCustom') }))
+    const input = screen.getByRole('textbox', { name: t('setGithubProxyInput') })
+    fireEvent.change(input, { target: { value: 'https://mirror.example/prefix/' } })
+    fireEvent.click(screen.getByRole('button', { name: t('setGithubProxySave') }))
+    await waitFor(() => {
+      expect(calls.find(call => call.path.endsWith('/dsh-market/github-proxy'))?.body)
+        .toEqual({ proxy: 'https://mirror.example/prefix/' })
+    })
+    await waitFor(() => { expect(screen.getByText(t('setGithubProxyCustomHint'))).toBeTruthy() })
+  })
+
+  it('offers a restore-to-automatic action for a saved prefix', async () => {
+    stubFetch({ githubProxyCustom: 'https://mirror.example' })
+    await open()
+    await waitFor(() => { expect(screen.getByRole('button', { name: t('setGithubProxyAuto') })).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: t('setGithubProxyAuto') }))
+    await waitFor(() => {
+      expect(calls.find(call => call.path.endsWith('/dsh-market/github-proxy'))?.body).toEqual({ proxy: null })
+    })
+  })
+
+  it('shows environment-managed routing as read-only', async () => {
+    stubFetch({ githubProxyManaged: true, githubProxy: 'https://env.example' })
+    await open()
+    await waitFor(() => { expect(screen.getByText(t('setGithubProxyManagedHint'))).toBeTruthy() })
+    expect(screen.queryByRole('button', { name: t('setGithubProxyCustom') })).toBeNull()
+    expect(screen.queryByRole('button', { name: t('setGithubProxyAuto') })).toBeNull()
   })
 })
 

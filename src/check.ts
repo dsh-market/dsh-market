@@ -509,8 +509,15 @@ function semverStr(v: Semver): string {
  * prerelease of its own; then every comparator is checked normally. So
  * `^0.1.0` never matches `0.2.0-rc.1` (nor `0.1.0-rc.5`), while
  * `>=1.2.3-rc.1 <2.0.0` does match `1.2.3-rc.2` (issue #98 analysis).
+ * Discovery can opt into npm's `includePrerelease` behaviour because every
+ * published DSH host line is itself prerelease; diagnostics retain the npm
+ * default unless a caller explicitly asks for that wider admission.
  */
-export function satisfiesRange(version: string, range: string): boolean | null {
+export function satisfiesRange(
+  version: string,
+  range: string,
+  options: { includePrerelease?: boolean } = {},
+): boolean | null {
   const v = parseSemver(version)
   if (v === null) return null
   const versionHasPre = v.pre.length > 0
@@ -596,7 +603,7 @@ export function satisfiesRange(version: string, range: string): boolean | null {
     if (parts.length === 0) return true
     const parsed = parts.map(part => comparator(part))
     if (parsed.some(part => part === null)) return null
-    if (versionHasPre) {
+    if (versionHasPre && options.includePrerelease !== true) {
       // npm gate (set-level): the set admits prerelease versions only when a
       // comparator pins the SAME base tuple with a prerelease of its own.
       const admitted = parsed.some((part) => {

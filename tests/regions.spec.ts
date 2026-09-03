@@ -10,14 +10,19 @@
 
 import { afterEach, describe, expect, it } from 'vitest'
 import {
-  activeRegion, asRegion, DEFAULT_NPM_REGISTRY, REGIONS, routesFor, setActiveRegion, throughProxy,
+  activeRegion, asRegion, DEFAULT_NPM_REGISTRY, githubRoutesFor, REGIONS, rememberGithubRoute,
+  resetGithubRoutePreferences, routesFor, setActiveRegion, setCustomGithubProxy, throughProxy,
 } from '../src/regions.ts'
 import { codeloadAllowBuildsKey, codeloadTarball, githubCommitOfTarget, gitAllowBuildsKey, repoOfTarget } from '../src/sources.ts'
 import { githubProxyInUse, githubUrl, setGithubProxy } from '../src/client/market-data.ts'
 
 const SHA = 'b0e6c57ebeeb4796017864f5cd5c66e6ba0899ec'
 
-afterEach(() => { setActiveRegion('global') })
+afterEach(() => {
+  setActiveRegion('global')
+  setCustomGithubProxy(null)
+  resetGithubRoutePreferences()
+})
 
 describe('asRegion', () => {
   it('accepts the two regions and nothing else', () => {
@@ -50,6 +55,15 @@ describe('routesFor', () => {
     // be a guaranteed 404 that costs two attempts to discover.
     expect(routes.catalog).toHaveLength(2)
     expect(routes.catalog[1]).toEqual({ kind: 'url', url: expect.stringContaining('awesome-dsh-plugin.com') })
+    expect(routes.githubRoutes.raw).toEqual([
+      'https://gh-proxy.com', 'https://ghfast.top', null,
+    ])
+    // Git ref advertisements and avatars are known to work directly on
+    // networks where raw content does not, so each service gets its own order.
+    expect(routes.githubRoutes.git).toEqual([
+      null, 'https://gh-proxy.com', 'https://ghfast.top',
+    ])
+    expect(routes.githubRoutes.avatar).toEqual(routes.githubRoutes.git)
   })
 
   it('moves the catalog package onto whichever registry the environment named', () => {
@@ -65,6 +79,17 @@ describe('routesFor', () => {
     // Trailing slashes are stripped so callers can join without doubling.
     expect(routes.npmRegistry).toBe('https://npm.internal')
     expect(routes.githubProxy).toBe('https://gh.internal')
+    expect(routes.githubRoutes.raw).toEqual(['https://gh.internal', null])
+    expect(routes.githubRoutes.git).toEqual(['https://gh.internal', null])
+    expect(routes.githubRoutes.avatar).toEqual(['https://gh.internal', null])
+  })
+
+  it('lets a persisted custom prefix replace built-ins while the environment stays authoritative', () => {
+    setCustomGithubProxy('https://saved.example/proxy')
+    expect(routesFor('china', {}).githubRoutes.raw).toEqual(['https://saved.example/proxy', null])
+    expect(routesFor('global', {}).githubRoutes.git).toEqual(['https://saved.example/proxy', null])
+    expect(routesFor('china', { DSHM_GITHUB_PROXY: 'https://env.example' }).githubRoutes.raw)
+      .toEqual(['https://env.example', null])
   })
 
   it('replaces the whole source list when the catalog itself is overridden', () => {
@@ -78,6 +103,18 @@ describe('routesFor', () => {
   it('ignores blank overrides', () => {
     const routes = routesFor('china', { DSHM_NPM_MIRROR: '   ' })
     expect(routes.npmRegistry).toBe(routesFor('china', {}).npmRegistry)
+  })
+})
+
+describe('github service route memory', () => {
+  it('reuses the last successful route per service and forgets it on reset', () => {
+    expect(githubRoutesFor('raw', 'china', {})[0]).toBe('https://gh-proxy.com')
+    rememberGithubRoute('raw', 'https://ghfast.top')
+    expect(githubRoutesFor('raw', 'china', {})[0]).toBe('https://ghfast.top')
+    // A raw success must not reorder a different GitHub service.
+    expect(githubRoutesFor('git', 'china', {})[0]).toBeNull()
+    resetGithubRoutePreferences()
+    expect(githubRoutesFor('raw', 'china', {})[0]).toBe('https://gh-proxy.com')
   })
 })
 

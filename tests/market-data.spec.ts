@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from 'vitest'
 import {
-  entryForDep, extractReadmeImageCandidates, extractReadmeImages, formatCount, groupSwitchState, installedForCatalog, isInstalled, isMarketItself, looksTerminal, matchInstalledName, orderedCategories, pageItems, pluginCategories, previewDimensionScore, rankThemeScreenshots, safeScreenshots, themePlugins, visiblePlugins, humanOutput} from '../src/client/market-data.ts'
+  entryForDep, extractReadmeImageCandidates, extractReadmeImages, formatCount, groupSwitchState, installedForCatalog, isInstalled, isMarketItself, looksTerminal, matchInstalledName, orderedCategories, pageItems, pluginCategories, pluginsForFavorites, previewDimensionScore, rankThemeScreenshots, safeScreenshots, staleFavoriteUrls, themePlugins, visiblePlugins, humanOutput, catalogEntryForInstalled} from '../src/client/market-data.ts'
 import type { RegistryPlugin, ScreenshotCandidate } from '../src/client/market-data.ts'
 
 function plugin(partial: Partial<RegistryPlugin>): RegistryPlugin {
@@ -128,11 +128,13 @@ describe('matchInstalledName / isInstalled', () => {
       plugins[0]!,
       installed,
       repoIdentities,
+      plugins,
     )).toBe('dsh-vision-bridge')
     expect(matchInstalledName(
       plugins[1]!,
       installed,
       repoIdentities,
+      plugins,
     )).toBeNull()
 
     // With no strong identity the client admits ambiguity instead of marking
@@ -164,13 +166,26 @@ describe('matchInstalledName / isInstalled', () => {
     expect(isInstalled(only, installed, {}, [only])).toBe(true)
   })
 
-  it('keeps the unique loose name match when a weak hint disagrees', () => {
+  it('refuses a discover badge when a weak hint disagrees with the only same-named row', () => {
     const installed = { 'dsh-vision-bridge': 'link:D:/src/dsh-vision-bridge' }
     const only = plugin({ name: 'dsh-vision-bridge', url: 'https://github.com/other/dsh-vision-bridge' })
     const hints = { 'dsh-vision-bridge': ['gxx182/dsh-vision-bridge'] }
 
-    expect(matchInstalledName(only, installed, {}, [only], hints)).toBe('dsh-vision-bridge')
+    expect(matchInstalledName(only, installed, {}, [only], hints)).toBeNull()
+    expect(isInstalled(only, installed, {}, [only], hints)).toBe(false)
+    // entryForDep keeps the looser path for non-discover callers.
     expect(entryForDep([only], 'dsh-vision-bridge', installed['dsh-vision-bridge']!, [], hints['dsh-vision-bridge'])).toBe(only)
+  })
+
+  it('does not mark a same-named fork card installed when repo evidence disagrees (#485)', () => {
+    const plugins = [
+      plugin({ name: 'dsh-humanizer', owner: 'lynote-ai', url: 'https://github.com/lynote-ai/dsh-humanizer', npm: 'dsh-humanizer' }),
+    ]
+    const installed = { 'dsh-humanizer': 'link:../dsh-humanizer' }
+    const repoIdentities = { 'dsh-humanizer': ['handsomeliu/dsh-humanizer'] }
+
+    expect(isInstalled(plugins[0]!, installed, repoIdentities, plugins)).toBe(false)
+    expect(matchInstalledName(plugins[0]!, installed, repoIdentities, plugins)).toBeNull()
   })
 
   it('rejects malformed repository identities from local package metadata', () => {
@@ -214,9 +229,11 @@ describe('matchInstalledName / isInstalled', () => {
       'plugin-a': ['o/collection', 'o/collection#path:/packages/plugin-a'],
     }
 
-    expect(matchInstalledName(root, installed, repoIdentities)).toBe('plugin-a')
-    expect(matchInstalledName(exact, installed, repoIdentities)).toBe('plugin-a')
-    expect(matchInstalledName(sibling, installed, repoIdentities)).toBeNull()
+    const plugins = [root, exact, sibling]
+
+    expect(matchInstalledName(root, installed, repoIdentities, plugins)).toBeNull()
+    expect(matchInstalledName(exact, installed, repoIdentities, plugins)).toBe('plugin-a')
+    expect(matchInstalledName(sibling, installed, repoIdentities, plugins)).toBeNull()
 
     const sha = 'b0e6c57ebeeb4796017864f5cd5c66e6ba0899ec'
     const pinned = { 'plugin-a': `github:o/collection#${sha}&path:/packages/plugin-a` }
@@ -235,6 +252,26 @@ describe('entryForDep', () => {
     expect(entryForDep(plugins, 'b-npm', '^1.0.0')?.name).toBe('b')
     expect(entryForDep(plugins, 'anything', 'github:o/a#main')?.name).toBe('a')
     expect(entryForDep(plugins, 'unknown', '^1.0.0')).toBeUndefined()
+  })
+})
+
+describe('catalogEntryForInstalled', () => {
+  it('refuses a local link whose repo evidence disagrees with the only same-named catalog row', () => {
+    const plugins = [
+      plugin({ name: 'dsh-humanizer', owner: 'lynote-ai', url: 'https://github.com/lynote-ai/dsh-humanizer', npm: 'dsh-humanizer' }),
+    ]
+    expect(catalogEntryForInstalled(
+      plugins,
+      'dsh-humanizer',
+      'link:../dsh-humanizer',
+      ['handsomeliu/dsh-humanizer'],
+    )).toBeUndefined()
+    expect(catalogEntryForInstalled(
+      plugins,
+      'dsh-humanizer',
+      'link:../dsh-humanizer',
+      ['lynote-ai/dsh-humanizer'],
+    )?.owner).toBe('lynote-ai')
   })
 })
 
@@ -283,6 +320,45 @@ describe('discover list (visiblePlugins)', () => {
     expect(visiblePlugins(rows, {
       category: 'all', query: 'DSH MCP connector', lang: 'en', sort: 'downloads-desc',
     }).map(p => p.name)).toEqual(['dsh-mcp-connector', 'dsh-mcp-connector-guide'])
+  })
+
+  it('treats adjacent Han and Latin terms like their space-separated forms', () => {
+    const rows: RegistryPlugin[] = [
+      plugin({ name: 'compact-panel', downloads: 1, description: { zh: 'MCP面板' } }),
+      plugin({ name: 'expanded-panel', downloads: 100_000, description: { zh: 'MCP 运行状态面板' } }),
+      plugin({ name: 'market-tools', downloads: 80_000, description: { zh: 'MCP Server 市场' } }),
+    ]
+    const names = (query: string) => visiblePlugins(rows, {
+      category: 'all', query, lang: 'zh', sort: 'downloads-desc',
+    }).map(p => p.name)
+
+    // The compact field is an exact match and remains ahead of the much more
+    // popular expanded description. Both query spellings return the same set
+    // in the same order, so the rule applies to indexed fields and queries.
+    expect(names('MCP面板')).toEqual(['compact-panel', 'expanded-panel'])
+    expect(names('MCP 面板')).toEqual(names('MCP面板'))
+    expect(names('MCP市场')).toEqual(['market-tools'])
+    expect(names('MCP 市场')).toEqual(names('MCP市场'))
+  })
+
+  it('recognizes Han-to-Latin and number-to-Han boundaries without crossing fields', () => {
+    const rows: RegistryPlugin[] = [
+      plugin({ name: 'compact-reverse', downloads: 1, description: { zh: '管理API' } }),
+      plugin({ name: 'expanded-reverse', downloads: 90_000, description: { zh: '统一管理 API 服务' } }),
+      plugin({ name: 'oauth-guide', description: { zh: 'OAuth2授权指南' } }),
+      // `API` and `管理` exist, but not in the same field. Boundary splitting
+      // must not weaken the existing same-field requirement.
+      plugin({ name: 'split-fields', owner: 'API team', description: { zh: '统一管理' } }),
+    ]
+    const names = (query: string) => visiblePlugins(rows, {
+      category: 'all', query, lang: 'zh', sort: 'downloads-desc',
+    }).map(p => p.name)
+
+    expect(names('管理API')).toEqual(['compact-reverse', 'expanded-reverse'])
+    expect(names('管理 API')).toEqual(names('管理API'))
+    expect(names('OAuth2授权')).toEqual(['oauth-guide'])
+    expect(names('OAuth2 授权')).toEqual(names('OAuth2授权'))
+    expect(names('API管理')).not.toContain('split-fields')
   })
 
   it('treats punctuation-only input as no search and keeps multi-word matches within one field', () => {
@@ -372,6 +448,24 @@ describe('discover list (visiblePlugins)', () => {
     expect(themes.map(p => p.name)).toEqual(['whale-skin', 'starless-theme'])
   })
 
+  it('pluginsForFavorites keeps only bookmarked catalog entries', () => {
+    const rows = [
+      plugin({ name: 'dsh-loop', url: 'https://github.com/o/dsh-loop' }),
+      plugin({ name: 'dsh-notify', url: 'https://github.com/o/dsh-notify' }),
+    ]
+    const urls = new Set(['https://github.com/o/dsh-loop', 'https://github.com/ghost/gone'])
+    const listed = pluginsForFavorites(rows, urls, { query: '', lang: 'en', sort: 'stars-desc' })
+    expect(listed.map(p => p.name)).toEqual(['dsh-loop'])
+  })
+
+  it('staleFavoriteUrls lists bookmarks with no catalog row', () => {
+    const rows = [plugin({ name: 'dsh-loop', url: 'https://github.com/o/dsh-loop' })]
+    expect(staleFavoriteUrls(
+      ['https://github.com/o/dsh-loop', 'https://github.com/ghost/gone'],
+      rows,
+    )).toEqual(['https://github.com/ghost/gone'])
+  })
+
   it('orderedCategories pulls the active chip forward only while collapsed', () => {
     const cats = ['tool', 'theme', 'memory']
     // No visibleCount given: the conservative default, as if nothing had
@@ -426,6 +520,29 @@ describe('discover list (visiblePlugins)', () => {
     // No window keeps everything, including the dateless entry.
     expect(visiblePlugins(list, { category: 'all', query: '', lang: 'en', sort: 'x' }).map(p => p.name))
       .toEqual(['recent', 'week-old', 'month-old', 'no-date'])
+  })
+
+  it('host filtering removes only confirmed mismatches and keeps unknown entries visible', () => {
+    const rows = [
+      plugin({ name: 'matches', npm: 'matches' }),
+      plugin({ name: 'mismatch', npm: 'mismatch' }),
+      plugin({ name: 'undeclared', npm: 'undeclared' }),
+      plugin({ name: 'not-loaded-yet', npm: 'not-loaded-yet' }),
+      plugin({ name: 'github-only', npm: null }),
+    ]
+    const base = { basis: 'manifest' as const, requirement: '^0.1.2-alpha.2', declarations: [] }
+    const hostCompatibility = {
+      matches: { ...base, status: 'compatible' as const },
+      mismatch: { ...base, status: 'incompatible' as const },
+      undeclared: { status: 'unknown' as const, basis: 'undeclared' as const, requirement: null, declarations: [] },
+    }
+
+    expect(visiblePlugins(rows, {
+      category: 'all', query: '', lang: 'en', sort: 'x', hostCompatibility, compatibleWithHost: false,
+    }).map(plugin => plugin.name)).toEqual(rows.map(plugin => plugin.name))
+    expect(visiblePlugins(rows, {
+      category: 'all', query: '', lang: 'en', sort: 'x', hostCompatibility, compatibleWithHost: true,
+    }).map(plugin => plugin.name)).toEqual(['matches', 'undeclared', 'not-loaded-yet', 'github-only'])
   })
 })
 
