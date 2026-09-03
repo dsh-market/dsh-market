@@ -9,6 +9,10 @@
 [![npm](https://img.shields.io/npm/v/dshmarket)](https://www.npmjs.com/package/dshmarket)
 [![stars](https://img.shields.io/github/stars/dsh-market/dsh-market?style=flat)](https://github.com/dsh-market/dsh-market)
 
+## ❤️ 赞助商
+
+> 让你的产品出现在 DeepSeek Harness 社区面前——本 README 加上 [dshmarket.com](https://dshmarket.com) 与 [awesome-dsh-plugin.com](https://awesome-dsh-plugin.com)，每月合计**超过五十万次页面浏览**。[想出现在这里？→](mailto:fkysly@gmail.com)
+
 装在 DeepSeek Harness 里的插件市场。打开设置 → **插件市场** → 逛一逛，点一下，装好。
 
 ![dsh-market](assets/demo-zh.png)

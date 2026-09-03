@@ -9,6 +9,10 @@ English | [中文](README.zh.md)
 [![npm](https://img.shields.io/npm/v/dshmarket)](https://www.npmjs.com/package/dshmarket)
 [![stars](https://img.shields.io/github/stars/dsh-market/dsh-market?style=flat)](https://github.com/dsh-market/dsh-market)
 
+## ❤️ Sponsors
+
+> Put your product in front of the DeepSeek Harness community — this README plus [dshmarket.com](https://dshmarket.com) and [awesome-dsh-plugin.com](https://awesome-dsh-plugin.com) together serve **over half a million page views a month**. [Want to appear here? →](mailto:fkysly@gmail.com)
+
 The plugin market inside DeepSeek Harness. Open Settings → **Plugin Market** → browse, search, one-click install.
 
 ![dsh-market](assets/demo-en.png)
