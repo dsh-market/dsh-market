@@ -42,12 +42,17 @@ import type { OperationRecord } from './operations.ts'
 import { Diagnostics } from './Diagnostics.tsx'
 import { clientDiagnostics } from './self-check.ts'
 import {
+<<<<<<< HEAD
   api, avatarColor, entryForDep, githubProxyInUse, githubUrl, groupSwitchState, humanOutput, installedForCatalog, isInstalled, looksTerminal, matchInstalledName, orderedCategories, pluginCategories,
   formatCount, pageItems, pluginName, pluginScreenshotCandidates, pluginScreenshots, pluginsForFavorites, rankThemeScreenshots, readSession, safeScreenshots, setGithubProxy, staleFavoriteUrls, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
+=======
+  api, applyGithubRouting, avatarColor, entryForDep, githubRouteCandidates, groupSwitchState, humanOutput, installedForCatalog, isInstalled, looksTerminal, matchInstalledName, orderedCategories, pluginCategories,
+  formatCount, pageItems, pluginName, pluginScreenshotCandidates, pluginScreenshots, rankThemeScreenshots, readSession, rememberGithubRoute, safeScreenshots, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
+>>>>>>> origin/main
 } from './market-data.ts'
 import type {
 ActivationInfo, ActivationState, GistExportResult, InstalledMap, InstalledRepoHints, InstalledRepoIdentities, MarketStatus, Registry, RegistryPlugin,
-  ScreenshotCandidate, ScreenshotMeasurement, SharedHostPackageDependencyFinding, SortDir, SortField, ThemeSnapshot, TimeRange, Translate, UpdateStatus,
+  HostCompatibility, HostCompatibilityMap, ScreenshotCandidate, ScreenshotMeasurement, SharedHostPackageDependencyFinding, SortDir, SortField, ThemeSnapshot, TimeRange, Translate, UpdateStatus,
 } from './market-data.ts'
 
 function isHostDependencyFinding(value: unknown): value is SharedHostPackageDependencyFinding {
@@ -65,6 +70,12 @@ function isHostDependencyFinding(value: unknown): value is SharedHostPackageDepe
 
 const HOST_DEPENDENCY_PREVIEW_LIMIT = 5
 const IGNORED_UPDATES_SESSION_KEY = 'dshm-updates-ignored'
+const UNAVAILABLE_HOST_COMPATIBILITY: HostCompatibility = {
+  status: 'unknown',
+  basis: 'unavailable',
+  requirement: null,
+  declarations: [],
+}
 
 /**
  * Read the update reminders dismissed for this host process. The boot id is
@@ -176,13 +187,19 @@ function usePagination(count: number, resetDeps: readonly unknown[], scrollToTop
  * state, so Discover and Themes can each mount one without threading an
  * extra `filterOpen`/`setFilterOpen` pair through their own state.
  */
-function FilterMenu({ sortField, sortDir, timeRange, onSortField, onSortDir, onTimeRange, t }: {
+function FilterMenu({
+  sortField, sortDir, timeRange, hostVersion, compatibleWithHost,
+  onSortField, onSortDir, onTimeRange, onCompatibleWithHost, t,
+}: {
   sortField: SortField
   sortDir: SortDir
   timeRange: TimeRange
+  hostVersion?: string | null
+  compatibleWithHost?: boolean
   onSortField: (field: SortField) => void
   onSortDir: (dir: SortDir) => void
   onTimeRange: (range: TimeRange) => void
+  onCompatibleWithHost?: (enabled: boolean) => void
   t: Translate
 }) {
   const [open, setOpen] = useState(false)
@@ -200,15 +217,37 @@ function FilterMenu({ sortField, sortDir, timeRange, onSortField, onSortDir, onT
     { type: 'separator', id: 'f-sep2' },
     { type: 'label', id: 'f-time', text: t('filterTime') },
     ...TIME_OPTIONS.map(opt => ({ id: 'time:' + opt.key, label: t(opt.label) })),
+    ...(onCompatibleWithHost === undefined ? [] : [
+      { type: 'separator' as const, id: 'f-sep3' },
+      { type: 'label' as const, id: 'f-host', text: t('filterHost') },
+      { id: 'host:all', label: t('hostAll') },
+      {
+        id: 'host:compatible',
+        label: hostVersion === undefined
+          ? t('hostDetecting')
+          : hostVersion === null
+            ? t('hostUnknown')
+            : t('hostCompatible').replace('{0}', hostVersion),
+      },
+    ]),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- sortDirLabel closes only over sortField, already a dep.
-  ], [t, sortField])
+  ], [t, sortField, hostVersion, onCompatibleWithHost])
   const selectedIds = useMemo(
-    () => ['field:' + sortField, 'dir:' + sortDir, 'time:' + timeRange],
-    [sortField, sortDir, timeRange])
+    () => [
+      'field:' + sortField,
+      'dir:' + sortDir,
+      'time:' + timeRange,
+      ...(onCompatibleWithHost === undefined
+        ? []
+        : [compatibleWithHost === true ? 'host:compatible' : 'host:all']),
+    ],
+    [sortField, sortDir, timeRange, compatibleWithHost, onCompatibleWithHost])
   const onSelect = (id: string) => {
     if (id.startsWith('field:')) onSortField(id.slice(6) as SortField)
     else if (id.startsWith('dir:')) onSortDir(id.slice(4) as SortDir)
     else if (id.startsWith('time:')) onTimeRange(id.slice(5) as TimeRange)
+    else if (id === 'host:all') onCompatibleWithHost?.(false)
+    else if (id === 'host:compatible' && typeof hostVersion === 'string') onCompatibleWithHost?.(true)
   }
   return (
     <Menu
@@ -354,8 +393,10 @@ function renderMarkdown(md: string): Array<JSX.Element | string> {
   return out
 }
 
-function OwnerAvatar({ name, owner }: { name: string; owner: string }) {
+/** Avatar fallback advances one service route at a time before using initials. */
+export function OwnerAvatar({ name, owner }: { name: string; owner: string }) {
   const [failed, setFailed] = useState(false)
+  const [routeIndex, setRouteIndex] = useState(0)
   if (failed || owner === '') {
     return (
       <div className={css.av} style={{ background: avatarColor(name) }}>
@@ -363,13 +404,22 @@ function OwnerAvatar({ name, owner }: { name: string; owner: string }) {
       </div>
     )
   }
+  const candidates = githubRouteCandidates(
+    'avatar',
+    `https://avatars.githubusercontent.com/${encodeURIComponent(owner)}?size=96`,
+  )
+  const candidate = candidates[Math.min(routeIndex, candidates.length - 1)]!
   return (
     <img
       className={css.av}
-      src={avatarUrl(owner)}
+      src={candidate.url}
       alt=""
       loading="lazy"
-      onError={() => setFailed(true)}
+      onLoad={() => rememberGithubRoute('avatar', candidate.proxy)}
+      onError={() => {
+        if (routeIndex + 1 < candidates.length) setRouteIndex(routeIndex + 1)
+        else setFailed(true)
+      }}
     />
   )
 }
@@ -462,26 +512,6 @@ function thumbUrl(src: string, height: number): string {
   // around it would have traded a working request for a bigger one, on a
   // page that makes dozens of them.
   return `https://images.weserv.nl/?url=${encodeURIComponent(src.replace(/^https?:\/\//, ''))}&h=${String(height)}&fit=inside&we=1`
-}
-
-/**
- * The owner's GitHub avatar, addressed so the region's proxy can serve it.
- *
- * `github.com/<owner>.png` is a redirect to the avatar host, and gh-proxy
- * does not follow it — measured from an unproxied mainland connection, that
- * URL hangs until the client gives up (60s), while naming the avatar host
- * directly through the same proxy answers in 1.07s. So a proxied region
- * addresses the destination itself.
- *
- * The redirect is left in place when there is no proxy: it is the form that
- * has always worked, and this is not the release to change it on a path
- * nobody has reported a problem with.
- */
-function avatarUrl(owner: string): string {
-  const name = encodeURIComponent(owner)
-  return githubProxyInUse() === null
-    ? `https://github.com/${name}.png?size=96`
-    : githubUrl(`https://avatars.githubusercontent.com/${name}?size=96`)
 }
 
 /**
@@ -1465,6 +1495,14 @@ export function MarketSection(props: MarketSectionProps) {
   const [sortField, setSortField] = useState<SortField>('downloads')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
   const [timeRange, setTimeRange] = useState<TimeRange>('all')
+  /** Undefined while the first catalog response is pending; null means the host cannot be located. */
+  const [hostVersion, setHostVersion] = useState<string | null | undefined>(undefined)
+  /** v1 is deliberately opt-in: undeclared/unknown entries stay visible even when enabled. */
+  const [compatibleWithHost, setCompatibleWithHost] = useState(false)
+  const [hostCompatibility, setHostCompatibility] = useState<HostCompatibilityMap>({})
+  const [hostCompatibilityPending, setHostCompatibilityPending] = useState(0)
+  /** Names already resolved or in flight; failed/unavailable names are released for an explicit retry. */
+  const requestedHostCompatibility = useRef(new Set<string>())
   const [catsOpen, setCatsOpen] = useState(false)
   /** Themes tab: independent from Discover's sort/time state above — a
    * search or sort choice in one tab has no business resetting the other. */
@@ -1572,7 +1610,11 @@ export function MarketSection(props: MarketSectionProps) {
     setLoadError(null)
     return fetch(api('/dsh-market/registry'), { cache: 'no-store' })
       .then(async (res) => {
-        const body = (await res.json().catch(() => ({}))) as { registry?: Registry; error?: string }
+        const body = (await res.json().catch(() => ({}))) as {
+          registry?: Registry
+          hostVersion?: string | null
+          error?: string
+        }
         if (!res.ok) throw new Error(typeof body.error === 'string' ? body.error : `HTTP ${String(res.status)}`)
         return body
       })
@@ -1580,6 +1622,7 @@ export function MarketSection(props: MarketSectionProps) {
         if (body.registry === undefined) throw new Error('the catalog response carried no data')
         cachedRegistry = body.registry
         setData(body.registry)
+        setHostVersion(typeof body.hostVersion === 'string' ? body.hostVersion : null)
         setLoadError(null)
       })
       // Report WHY. An unreachable catalog used to be answered with a
@@ -1587,6 +1630,62 @@ export function MarketSection(props: MarketSectionProps) {
       // smaller today" looked identical on screen — and the second reading
       // is the one users reached.
       .catch((error: unknown) => { setLoadError(error instanceof Error ? error.message : String(error)) })
+  }, [])
+
+  const loadHostCompatibility = useCallback(async (names: readonly string[]): Promise<void> => {
+    const unique = [...new Set(names)].filter(name => {
+      if (name === '' || requestedHostCompatibility.current.has(name)) return false
+      requestedHostCompatibility.current.add(name)
+      return true
+    })
+    if (unique.length === 0) return
+    setHostCompatibilityPending(count => count + unique.length)
+    for (let offset = 0; offset < unique.length; offset += 64) {
+      const chunk = unique.slice(offset, offset + 64)
+      try {
+        const response = await fetch(api('/dsh-market/discovery-compatibility'), {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ packages: chunk }),
+        })
+        const body = await response.json() as {
+          hostVersion?: string | null
+          plugins?: Record<string, HostCompatibility>
+        }
+        if (!response.ok || body.plugins === null || typeof body.plugins !== 'object') {
+          throw new Error(`HTTP ${String(response.status)}`)
+        }
+        if (typeof body.hostVersion === 'string' || body.hostVersion === null) {
+          setHostVersion(body.hostVersion)
+        }
+        const accepted: HostCompatibilityMap = {}
+        for (const name of chunk) {
+          const item = body.plugins[name] as HostCompatibility | null | undefined
+          if (item === null || item === undefined
+            || !['compatible', 'incompatible', 'unknown'].includes(item.status)
+            || !['manifest', 'undeclared', 'unavailable'].includes(item.basis)
+            || (item.requirement !== null && typeof item.requirement !== 'string')
+            || !Array.isArray(item.declarations)) {
+            requestedHostCompatibility.current.delete(name)
+            accepted[name] = UNAVAILABLE_HOST_COMPATIBILITY
+            continue
+          }
+          accepted[name] = item
+          // A transient registry failure is shown as unknown, but remains
+          // retryable when navigation or a filter toggle asks again later.
+          if (item.basis === 'unavailable') requestedHostCompatibility.current.delete(name)
+        }
+        setHostCompatibility(current => ({ ...current, ...accepted }))
+      } catch {
+        for (const name of chunk) requestedHostCompatibility.current.delete(name)
+        setHostCompatibility(current => ({
+          ...current,
+          ...Object.fromEntries(chunk.map(name => [name, UNAVAILABLE_HOST_COMPATIBILITY])),
+        }))
+      } finally {
+        setHostCompatibilityPending(count => Math.max(0, count - chunk.length))
+      }
+    }
   }, [])
 
   useEffect(() => {
@@ -1599,7 +1698,7 @@ export function MarketSection(props: MarketSectionProps) {
         // page draws from is a larger request through the same server, so it
         // lands later; and if it ever did not, the status poll re-renders
         // within seconds and the images correct themselves.
-        setGithubProxy(typeof status.githubProxy === 'string' ? status.githubProxy : null)
+        applyGithubRouting(status)
         if (typeof status.boot === 'string') {
           setBootId(status.boot)
           setIgnoredUpdateNames(ignoredUpdatesForBoot(status.boot))
@@ -1847,18 +1946,46 @@ export function MarketSection(props: MarketSectionProps) {
     const el = bodyRef.current
     if (el !== null) el.scrollTop = 0
     setShowTop(false)
+<<<<<<< HEAD
   }, [tab, q, cat, sortField, sortDir, timeRange, qThemes, themeSortField, themeSortDir, themeTimeRange, qFavorites, favSortField, favSortDir, favTimeRange, qInstalled, installedView])
+=======
+  }, [tab, q, cat, sortField, sortDir, timeRange, compatibleWithHost, qThemes, themeSortField, themeSortDir, themeTimeRange, qInstalled, installedView])
+>>>>>>> origin/main
 
   const plugins = useMemo(
     () => (data === null ? [] : visiblePlugins(data.plugins, {
       category: cat, query: q, lang, categories: data.categories,
       sort: `${sortField}-${sortDir}`,
       sinceDays: timeRange === 'all' ? undefined : TIME_RANGE_DAYS[timeRange],
+      hostCompatibility,
+      compatibleWithHost,
     })),
-    [data, q, cat, lang, sortField, sortDir, timeRange])
+    [data, q, cat, lang, sortField, sortDir, timeRange, hostCompatibility, compatibleWithHost])
   const { currentPage, totalPages, pageSize, goToPage, changePageSize } =
-    usePagination(plugins.length, [q, cat, sortField, sortDir, timeRange], scrollToTop)
+    usePagination(plugins.length, [q, cat, sortField, sortDir, timeRange, compatibleWithHost], scrollToTop)
   const pagePlugins = plugins.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+  const pageHostPackages = [...new Set(pagePlugins.flatMap(plugin =>
+    typeof plugin.npm === 'string' && plugin.npm !== '' ? [plugin.npm] : []))]
+  const allHostPackages = useMemo(
+    () => [...new Set((data?.plugins ?? []).flatMap(plugin =>
+      typeof plugin.npm === 'string' && plugin.npm !== '' ? [plugin.npm] : []))],
+    [data],
+  )
+  const pageHostPackagesKey = pageHostPackages.join('\u0000')
+  const allHostPackagesKey = allHostPackages.join('\u0000')
+  useEffect(() => {
+    if (tab === 'discover') void loadHostCompatibility(pageHostPackages)
+    // The key is the stable identity of this page's npm package set; the
+    // array itself is recreated as compatibility results arrive.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, pageHostPackagesKey, loadHostCompatibility])
+  useEffect(() => {
+    if (compatibleWithHost) void loadHostCompatibility(allHostPackages)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [compatibleWithHost, allHostPackagesKey, loadHostCompatibility])
+  const loadedHostPackages = allHostPackages.reduce(
+    (count, name) => count + (hostCompatibility[name] === undefined ? 0 : 1), 0,
+  )
 
   const themePlugins = useMemo(
     () => (data === null ? [] : visiblePlugins(data.plugins, {
@@ -3052,6 +3179,21 @@ export function MarketSection(props: MarketSectionProps) {
     // is the obvious next move — which is how the same clash gets hit twice.
     const record = recordForUrl(records, p.url)
     const blocked = record !== null && (record.state === 'input' || record.state === 'failed')
+    const compatibility = typeof p.npm === 'string' ? hostCompatibility[p.npm] : undefined
+    const hostRequirementLabel = compatibility?.requirement !== null && compatibility?.requirement !== undefined
+      ? t('hostRequirement').replace('{0}', compatibility.requirement)
+      : typeof p.npm !== 'string'
+        ? t('hostRequirementUnavailable')
+        : compatibility === undefined
+          ? t('hostRequirementLoading')
+          : compatibility.basis === 'undeclared'
+            ? t('hostRequirementUndeclared')
+            : t('hostRequirementUnavailable')
+    const hostRequirementTitle = compatibility?.declarations.map(declaration =>
+      declaration.kind === 'engine'
+        ? `engines.dsh: ${declaration.range}`
+        : `${declaration.package ?? 'peer'}: ${declaration.range}`,
+    ).join('\n') || hostRequirementLabel
     return (
       <div key={p.url} className={blocked ? `${css.card} ${css.cardBlocked}` : css.card}>
         <div className={css.row1}>
@@ -3124,6 +3266,7 @@ export function MarketSection(props: MarketSectionProps) {
           </div>
         )}
         <div className={css.foot}>
+          <span className={css.hostRequirement} title={hostRequirementTitle}>{hostRequirementLabel}</span>
           {pluginCategories(p).map(category => (
             <span key={category} className={css.tag}>
               {(data!.categories[category] && (data!.categories[category]![lang] || data!.categories[category]!.en)) || category}
@@ -3927,12 +4070,24 @@ export function MarketSection(props: MarketSectionProps) {
                         sortField={sortField}
                         sortDir={sortDir}
                         timeRange={timeRange}
+                        hostVersion={hostVersion}
+                        compatibleWithHost={compatibleWithHost}
                         onSortField={setSortField}
                         onSortDir={setSortDir}
                         onTimeRange={setTimeRange}
+                        onCompatibleWithHost={setCompatibleWithHost}
                         t={t}
                       />
                       </div>
+                      {compatibleWithHost && typeof hostVersion === 'string' && (
+                        <div className={css.hostFilterNote}>
+                          {hostCompatibilityPending > 0 || loadedHostPackages < allHostPackages.length
+                            ? t('hostFilterLoading')
+                              .replace('{0}', String(loadedHostPackages))
+                              .replace('{1}', String(allHostPackages.length))
+                            : t('hostFilterActive').replace('{0}', hostVersion)}
+                        </div>
+                      )}
                     </div>
                     </div>
                     {plugins.length === 0

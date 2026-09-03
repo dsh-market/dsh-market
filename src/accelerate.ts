@@ -42,7 +42,9 @@
 
 import { logEvent } from './log.ts'
 import { marketFetch } from './net.ts'
-import { routesFor, type Region } from './regions.ts'
+import {
+  githubRoutesFor, rememberGithubRoute, routesFor, throughProxy, type GithubRoute, type Region,
+} from './regions.ts'
 
 /** A bare repo shortcut whose HEAD can be replaced by one immutable ref. */
 const BARE_GITHUB_RE = /^github:([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)$/
@@ -87,17 +89,43 @@ export async function headCommit(
   signal?: AbortSignal,
   ref?: string,
 ): Promise<string | null> {
+  const result = await tryHeadCommit(repo, proxy, signal, ref)
+  return result.kind === 'valid' ? result.sha : null
+}
+
+type HeadAttempt =
+  | { kind: 'valid'; sha: string | null }
+  | { kind: 'failed' }
+
+/** One route attempt, preserving valid "ref is absent" from invalid payloads. */
+async function tryHeadCommit(
+  repo: string,
+  proxy: GithubRoute,
+  signal?: AbortSignal,
+  ref?: string,
+): Promise<HeadAttempt> {
   const base = `https://github.com/${repo}/info/refs?service=git-upload-pack`
   try {
-    const res = await marketFetch(proxy === null ? base : `${proxy}/${base}`, {
+    const res = await marketFetch(throughProxy(proxy, base), {
       signal,
       headers: { 'user-agent': 'git/2.40.0' },
     })
-    if (!res.ok) return null
+    if (!res.ok) return { kind: 'failed' }
     const body = await res.text()
+    const contentType = (res as Response & { headers?: { get?(name: string): string | null } })
+      .headers?.get?.('content-type')?.toLowerCase() ?? ''
+    // Public mirrors often answer a failed upstream request with their own
+    // branded HTML and status 200. A git advertisement has both its service
+    // prelude and at least one advertised ref; accepting anything else would
+    // cache a route that never returned Git data in the first place.
+    if (contentType.includes('text/html')
+      || !body.includes('# service=git-upload-pack')
+      || !/[0-9a-f]{40} (?:HEAD|refs\/(?:heads|tags)\/)/u.test(body)) {
+      return { kind: 'failed' }
+    }
     if (ref === undefined) {
       const found = /([0-9a-f]{40}) HEAD/.exec(body)
-      return found === null ? null : found[1]!
+      return { kind: 'valid', sha: found === null ? null : found[1]! }
     }
     // Anchored to the ref's full name so `publish` cannot match a branch
     // called `publish-old`, and escaped because a ref may contain regex
@@ -105,11 +133,33 @@ export async function headCommit(
     const quoted = ref.replace(/[.*+?^${}()|[\]\\]/gu, String.raw`\$&`)
     for (const namespace of ['heads', 'tags']) {
       const found = new RegExp(String.raw`([0-9a-f]{40}) refs/${namespace}/${quoted}(?![^\s])`, 'u').exec(body)
-      if (found !== null) return found[1]!
+      if (found !== null) return { kind: 'valid', sha: found[1]! }
     }
-    return null
+    // The advertisement is authoritative for this repository. Asking another
+    // mirror cannot make a branch that is absent here appear.
+    return { kind: 'valid', sha: null }
   } catch {
-    return null
+    return { kind: 'failed' }
+  }
+}
+
+/** Run one candidate under its own budget, optionally linked to a caller signal. */
+async function timedHeadCommit(
+  repo: string,
+  route: GithubRoute,
+  ref?: string,
+  signal?: AbortSignal,
+): Promise<HeadAttempt> {
+  const controller = new AbortController()
+  const abort = (): void => { controller.abort() }
+  if (signal?.aborted === true) controller.abort()
+  else signal?.addEventListener('abort', abort, { once: true })
+  const timer = setTimeout(abort, RESOLVE_TIMEOUT_MS)
+  try {
+    return await tryHeadCommit(repo, route, controller.signal, ref)
+  } finally {
+    clearTimeout(timer)
+    signal?.removeEventListener('abort', abort)
   }
 }
 
@@ -123,14 +173,15 @@ export async function resolveHeadCommit(
   repo: string,
   region: Region,
   env: NodeJS.ProcessEnv = process.env,
+  ref?: string,
 ): Promise<string | null> {
-  const controller = new AbortController()
-  const timer = setTimeout(() => { controller.abort() }, RESOLVE_TIMEOUT_MS)
-  try {
-    return await headCommit(repo, routesFor(region, env).githubProxy, controller.signal)
-  } finally {
-    clearTimeout(timer)
+  for (const route of githubRoutesFor('git', region, env)) {
+    const result = await timedHeadCommit(repo, route, ref)
+    if (result.kind === 'failed') continue
+    rememberGithubRoute('git', route)
+    return result.sha
   }
+  return null
 }
 
 /**
@@ -139,7 +190,7 @@ export async function resolveHeadCommit(
  * @param target - what `installTargetFor` produced.
  * @param region - the download region.
  * @param env - environment, for the proxy override.
- * @returns a commit-pinned GitHub shortcut when the mirror resolves HEAD,
+ * @returns a commit-pinned GitHub shortcut when one route resolves HEAD,
  *   otherwise `target` unchanged.
  */
 export async function acceleratedTarget(
@@ -147,21 +198,16 @@ export async function acceleratedTarget(
   region: Region,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<string> {
-  const proxy = routesFor(region, env).githubProxy
-  if (proxy === null) return target
+  // A plain global install lets pnpm do its ordinary GitHub resolution. A
+  // custom prefix makes even that region an accelerated one.
+  if (routesFor(region, env).githubProxy === null) return target
   const bare = BARE_GITHUB_RE.exec(target)
   if (bare === null) return target
   const repo = bare[1]!
-  const controller = new AbortController()
-  const timer = setTimeout(() => { controller.abort() }, RESOLVE_TIMEOUT_MS)
-  try {
-    const sha = await headCommit(repo, proxy, controller.signal)
-    if (sha === null) {
-      logEvent('info', 'region', `${repo}: could not resolve a commit through the mirror; installing directly`)
-      return target
-    }
-    return `github:${repo}#${sha}`
-  } finally {
-    clearTimeout(timer)
+  const sha = await resolveHeadCommit(repo, region, env)
+  if (sha === null) {
+    logEvent('info', 'region', `${repo}: could not resolve a commit through the available routes; installing directly`)
+    return target
   }
+  return `github:${repo}#${sha}`
 }

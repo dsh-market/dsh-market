@@ -219,9 +219,10 @@ function writeStandardProfile(): void {
 
 // --- tests ------------------------------------------------------------------
 
-describe('method & Allow contract (6 new routes)', () => {
+describe('method & Allow contract', () => {
   it.each([
     ['/dsh-market/check', 'POST', 'GET'],
+    ['/dsh-market/discovery-compatibility', 'GET', 'POST'],
     ['/dsh-market/bundle-order', 'GET', 'POST'],
     ['/dsh-market/snapshots', 'DELETE', 'GET, POST'],
     ['/dsh-market/restore-snapshot', 'GET', 'POST'],
@@ -234,8 +235,9 @@ describe('method & Allow contract (6 new routes)', () => {
   })
 })
 
-describe('origin enforcement (mutating routes)', () => {
+describe('origin enforcement (POST routes)', () => {
   const mutating: Array<[string, unknown]> = [
+    ['/dsh-market/discovery-compatibility', { packages: [] }],
     ['/dsh-market/bundle-order', { order: ['beta', 'alpha'] }],
     ['/dsh-market/snapshots', undefined],
     ['/dsh-market/restore-snapshot', { snapshot: 'snapshot-x' }],
@@ -268,6 +270,35 @@ describe('origin enforcement (mutating routes)', () => {
 })
 
 describe('body validation — 400 contracts', () => {
+  it('discovery compatibility bounds and validates npm package names', async () => {
+    for (const body of [
+      null,
+      [],
+      {},
+      { packages: 'plugin-a' },
+      { packages: ['https://evil.example/package'] },
+      { packages: Array.from({ length: 65 }, (_, index) => `plugin-${String(index)}`) },
+    ]) {
+      const res = await hit(
+        routes,
+        '/dsh-market/discovery-compatibility',
+        post('/dsh-market/discovery-compatibility', body),
+      )
+      expect(res.status).toBe(400)
+      expect(String(jsonBody(res).error)).toMatch(/packages must be an array/)
+    }
+  })
+
+  it('discovery compatibility accepts an empty bounded batch without network access', async () => {
+    const res = await hit(
+      routes,
+      '/dsh-market/discovery-compatibility',
+      post('/dsh-market/discovery-compatibility', { packages: [] }),
+    )
+    expect(res.status).toBe(200)
+    expect(jsonBody(res).plugins).toEqual({})
+  })
+
   it('bundle-order refuses a null / non-object / non-string-array order', async () => {
     writeStandardProfile()
     // A well-formed array that is NOT a permutation (e.g. ['alpha']) is a 422

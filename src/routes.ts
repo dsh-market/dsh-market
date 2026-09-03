@@ -20,6 +20,7 @@ import {
 } from './hot.ts'
 import { createGroup, deleteGroup, removeFromGroups, renameGroup, setGroupMembers } from './groups.ts'
 import { dshHostInfo } from './dsh-install.ts'
+import { deriveHostCompatibility, DiscoveryManifestIndex } from './discovery-compatibility.ts'
 import { configurePersistentLog, exportLogs, logEvent, readPersistentLog } from './log.ts'
 import { marketFetch } from './net.ts'
 import { diagnosePackageManifests } from './diagnostics.ts'
@@ -30,7 +31,7 @@ import {
 import { addProfileBundle, dropFromManifest, hasLoadableEntry, INBOX_BUNDLES, isDshProfileName, profileDir, readInstalled, readInstalledManifest, readInstalledRepoEvidence, readInstalledVersion, readLockCommits, readProfileBundles, readProfileManifestSnapshot, removeProfileBundle, restoreProfileManifest, setAllowBuilds, type ProfileManifestSnapshot } from './profile.ts'
 import { assessProfile, classifyPeer, introducedDuplicateNames, introducedRisks, type CompatibilityRisk } from './compatibility.ts'
 import { runningAgentIds, type AgentsLookup } from './agents.ts'
-import { analyzeProfile, type DuplicateName } from './check.ts'
+import { analyzeProfile, corePackageNames, type DuplicateName } from './check.ts'
 import { applyBundleOrder, mergeOrder, readBundleRules, readBundleStack, validateOrder } from './order.ts'
 import { applyPreset, deletePreset, listPresets, previewPreset, savePreset } from './presets.ts'
 import { createProfileSnapshot, DEFAULT_MAX_SNAPSHOTS, deleteSnapshot, listSnapshots, restoreSnapshot } from './snapshot.ts'
@@ -38,7 +39,10 @@ import { trialValidate } from './trial.ts'
 import { codeloadAllowBuildsKey, findCatalogEntryForLocal, findInstalledAlias, githubCommitOfTarget, githubTargetAtCommit, gitAllowBuildsKey, installTargetFor, isLocalSpec, NPM_NAME_RE, repoOfTarget, restoreBlockedByWorkspace, restoreTargetForLocal, workspaceProtocolDeps } from './sources.ts'
 import { failureDetail, groupConflictsByOwner, isStaleUpdate, parseIgnoredBuilds, parsePrepareNotAllowed, RELEASE_AGE_OVERRIDE, retargetCollections, validateAddedPlugins, withHoistRecovery } from './install.ts'
 import { asChannel, CHANNELS, DIST_TAG, resolveChannel, type Channel } from './channels.ts'
-import { asRegion, REGIONS, routesFor, setActiveRegion, type Region } from './regions.ts'
+import {
+  asRegion, githubProxyManaged, normalizeGithubProxy, REGIONS, routesFor, setActiveRegion,
+  setCustomGithubProxy, type Region,
+} from './regions.ts'
 import { resolveRegion } from './region-probe.ts'
 import { acceleratedTarget, resolveHeadCommit } from './accelerate.ts'
 import { updateNotesFor } from './changelog.ts'
@@ -248,6 +252,9 @@ export function mountMarketRoutes(
   }
   const activeProfileDir = profileDir(config.profile, config.profileDirectory)
   const persistentLogFile = join(activeProfileDir, '.dsh-market', 'log.ndjson')
+  const discoveryManifests = new DiscoveryManifestIndex(
+    join(activeProfileDir, '.dsh-market', 'discovery-compatibility-v1.json'),
+  )
   configurePersistentLog(persistentLogFile)
   let agentGuardUnavailableLogged = false
   /** Running-agent ids for the mutation gate; logs once when the host exposes no agents service. */
@@ -289,6 +296,7 @@ export function mountMarketRoutes(
   // disabledSkins loads transparently) plus custom groups. Every toggle,
   // group, install and uninstall mutates this shared state and persists it.
   const marketState = readMarketState(activeProfileDir)
+  setCustomGithubProxy(marketState.githubProxy ?? null)
   const disabled = marketState.disabled
   const groups = marketState.groups
   const groupOrder = marketState.groupOrder
@@ -369,7 +377,12 @@ export function mountMarketRoutes(
     marketState.channel = fresh.channel
     marketState.region = fresh.region
     marketState.regionAuto = fresh.regionAuto
+<<<<<<< HEAD
     marketState.favorites = fresh.favorites
+=======
+    marketState.githubProxy = fresh.githubProxy
+    setCustomGithubProxy(fresh.githubProxy ?? null)
+>>>>>>> origin/main
   }
 
   // Client-only packages (dsh.client without dsh.bundle) are invisible to the
@@ -1490,7 +1503,11 @@ export function mountMarketRoutes(
         }
         try {
           try {
-            sendJson(response, 200, { registry: await loadRegistry() })
+            const registry = await loadRegistry()
+            sendJson(response, 200, {
+              registry,
+              hostVersion: dshHostInfo()?.version ?? null,
+            })
           } catch (error) {
             // Say what went wrong. The market used to substitute a bundled
             // copy here, so an unreachable registry looked exactly like a
@@ -1499,6 +1516,51 @@ export function mountMarketRoutes(
             logEvent('warn', 'registry', `catalog fetch failed: ${message}`)
             sendJson(response, 502, { error: message })
           }
+        } catch (error) {
+          sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    }),
+
+    host.webServer.register({
+      kind: 'exact',
+      path: '/dsh-market/discovery-compatibility',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) {
+          sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        let body: unknown
+        try {
+          body = await readJsonBody(request, 32 * 1024)
+        } catch (error) {
+          sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) })
+          return
+        }
+        const requested = body !== null && typeof body === 'object' && !Array.isArray(body)
+          ? (body as { packages?: unknown }).packages
+          : undefined
+        if (!Array.isArray(requested) || requested.length > 64
+          || !requested.every(name => typeof name === 'string' && NPM_NAME_RE.test(name))) {
+          sendJson(response, 400, { error: 'packages must be an array of at most 64 npm package names' })
+          return
+        }
+        const packages = [...new Set(requested as string[])]
+        try {
+          const host = dshHostInfo()
+          const hostVersion = host?.version ?? null
+          const hostPackages = corePackageNames(host?.directory ?? null)
+          const facts = await discoveryManifests.lookup(packages, routesFor(region).npmRegistry)
+          const plugins = Object.fromEntries(packages.map(name => [
+            name,
+            deriveHostCompatibility(facts[name] ?? null, hostVersion, hostPackages),
+          ]))
+          sendJson(response, 200, { hostVersion, plugins })
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
         }
@@ -2263,6 +2325,11 @@ export function mountMarketRoutes(
           // `region` on the client, so the routing table has one home and a
           // change to it cannot leave the two halves disagreeing.
           githubProxy: routesFor(region).githubProxy,
+          // New clients use per-service candidates. Keep githubProxy above
+          // for older bundles that understand only one prefix.
+          githubRoutes: routesFor(region).githubRoutes,
+          githubProxyCustom: marketState.githubProxy ?? null,
+          githubProxyManaged: githubProxyManaged(),
           // Whether the region was decided by the network check rather than
           // by the user — the card explains a choice it made on their behalf
           // exactly once, so nobody has to wonder why downloads moved.
@@ -3115,6 +3182,51 @@ export function mountMarketRoutes(
       },
     }),
 
+    /**
+     * Last-resort GitHub prefix for networks where every built-in route is
+     * unavailable. It is one escape hatch, not three service-level knobs;
+     * the service ordering itself remains maintained by the routing table.
+     */
+    host.webServer.register({
+      kind: 'exact',
+      path: '/dsh-market/github-proxy',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) {
+          sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        if (githubProxyManaged()) {
+          sendJson(response, 409, { error: 'GitHub proxy is managed by DSHM_GITHUB_PROXY' })
+          return
+        }
+        try {
+          const body = (await readJsonBody(request)) as { proxy?: unknown }
+          const wanted = body.proxy === null ? null : normalizeGithubProxy(body.proxy)
+          if (body.proxy !== null && wanted === null) {
+            sendJson(response, 400, {
+              error: 'proxy must be an HTTPS prefix without credentials, query parameters, or a fragment',
+            })
+            return
+          }
+          setCustomGithubProxy(wanted)
+          marketState.githubProxy = wanted ?? undefined
+          writeMarketState(activeProfileDir, marketState)
+          invalidateUpdates()
+          logEvent('info', 'region', wanted === null
+            ? 'custom GitHub route cleared; automatic routing restored'
+            : 'custom GitHub route updated')
+          sendJson(response, 200, { ok: true, githubProxyCustom: wanted })
+        } catch (error) {
+          sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    }),
+
     host.webServer.register({
       kind: 'exact',
       path: '/dsh-market/self-uninstall',
@@ -3690,14 +3802,14 @@ export function mountMarketRoutes(
               sendJson(response, 400, { error: 'unsupported source url' })
               return
             }
-            // Resolve GitHub HEAD through the region's mirror, when there is
-            // one, then let pnpm fetch the canonical commit-pinned target.
+            // Resolve GitHub HEAD through the region's available routes, then
+            // let pnpm fetch the canonical commit-pinned target.
             // Applied HERE, before the guards below, so every step downstream
             // reasons about the exact spec that will be installed. Returns
             // the original on any lookup failure (see accelerate.ts).
             const target = await acceleratedTarget(plainTarget, region)
             if (target !== plainTarget) {
-              logEvent('info', 'region', `${entry.name}: resolved HEAD through the ${region} mirror; downloading the commit-pinned GitHub target directly for pnpm integrity`)
+              logEvent('info', 'region', `${entry.name}: resolved HEAD through an available ${region} route; downloading the commit-pinned GitHub target directly for pnpm integrity`)
             }
             // Duplicate guard (#27): the same plugin listed under another name
             // (an alias entry pointing at the same repo) must never install

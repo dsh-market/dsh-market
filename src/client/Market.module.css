@@ -71,6 +71,8 @@
 .top{position:absolute;right:18px;bottom:18px;z-index:20;display:inline-flex}
 .topBtn{width:38px;height:38px;border-radius:99px;padding:0}
 .tag{border:1px solid var(--dsw-alias-border-l3,#d9dde3);color:var(--dsw-alias-label-secondary,#6b7280);border-radius:4px;flex-shrink:0;padding:1px 6px;font-size:11px;line-height:16px}
+.hostRequirement{border:1px solid var(--dsw-alias-border-l3,#d9dde3);color:var(--dsw-alias-label-secondary,#6b7280);border-radius:4px;min-width:0;max-width:100%;padding:1px 6px;font-size:11px;line-height:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hostFilterNote{margin-top:6px;color:var(--dsw-alias-label-tertiary,#8b93a1);font-size:11px;line-height:16px}
 .okState{font-size:12px;font-weight:600;color:var(--dsw-alias-state-success-primary,#16a34a);white-space:nowrap}
 .catsWrap{display:flex;gap:6px;flex-wrap:wrap;flex:1;min-width:0;align-items:center}
 .catsCollapsed{max-height:62px;overflow:hidden}
@@ -701,6 +703,11 @@
 .setConfirm{border-top:1px solid var(--dsw-alias-border-l2,#e5e7eb);display:flex;flex-direction:column;gap:8px;padding:12px 0 4px}
 .setCheck{display:flex;align-items:center;gap:8px;font-size:12px;line-height:18px;cursor:pointer}
 .setActions{border-top:1px solid var(--dsw-alias-border-l2,#e5e7eb);justify-content:flex-end;align-items:center;gap:8px;padding:12px 0 4px;display:flex}
+.setInlineActions{display:flex;align-items:center;justify-content:flex-end;gap:6px;flex-wrap:wrap}
+.setProxyEditor{border-top:1px solid var(--dsw-alias-border-l2,#e5e7eb);display:flex;align-items:flex-end;flex-wrap:wrap;gap:10px;padding:12px 0}
+.setProxyLabel{display:flex;flex:1;min-width:180px;flex-direction:column;gap:5px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#6b7280)}
+.setProxyInput{box-sizing:border-box;width:100%;min-width:0;border:1px solid var(--dsw-alias-border-l2,#d1d5db);border-radius:7px;background:var(--dsw-alias-bg-layer-3,#fff);color:var(--dsw-alias-label-primary,#1f2328);font:inherit;font-size:12px;line-height:18px;padding:6px 8px}
+.setProxyInput:focus{border-color:var(--dsw-alias-brand-primary,#4f6ef7);outline:2px solid color-mix(in srgb,var(--dsw-alias-brand-primary,#4f6ef7) 18%,transparent)}
 .setDanger{color:var(--dsw-alias-state-error-primary,#dc2626)}
 /* A two-state segmented control rather than a switch: "stable / beta" is a
    choice between two named things, and a toggle would force one of them to

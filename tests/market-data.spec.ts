@@ -484,6 +484,29 @@ describe('discover list (visiblePlugins)', () => {
     expect(visiblePlugins(list, { category: 'all', query: '', lang: 'en', sort: 'x' }).map(p => p.name))
       .toEqual(['recent', 'week-old', 'month-old', 'no-date'])
   })
+
+  it('host filtering removes only confirmed mismatches and keeps unknown entries visible', () => {
+    const rows = [
+      plugin({ name: 'matches', npm: 'matches' }),
+      plugin({ name: 'mismatch', npm: 'mismatch' }),
+      plugin({ name: 'undeclared', npm: 'undeclared' }),
+      plugin({ name: 'not-loaded-yet', npm: 'not-loaded-yet' }),
+      plugin({ name: 'github-only', npm: null }),
+    ]
+    const base = { basis: 'manifest' as const, requirement: '^0.1.2-alpha.2', declarations: [] }
+    const hostCompatibility = {
+      matches: { ...base, status: 'compatible' as const },
+      mismatch: { ...base, status: 'incompatible' as const },
+      undeclared: { status: 'unknown' as const, basis: 'undeclared' as const, requirement: null, declarations: [] },
+    }
+
+    expect(visiblePlugins(rows, {
+      category: 'all', query: '', lang: 'en', sort: 'x', hostCompatibility, compatibleWithHost: false,
+    }).map(plugin => plugin.name)).toEqual(rows.map(plugin => plugin.name))
+    expect(visiblePlugins(rows, {
+      category: 'all', query: '', lang: 'en', sort: 'x', hostCompatibility, compatibleWithHost: true,
+    }).map(plugin => plugin.name)).toEqual(['matches', 'undeclared', 'not-loaded-yet', 'github-only'])
+  })
 })
 
 describe('discover pager (pageItems)', () => {

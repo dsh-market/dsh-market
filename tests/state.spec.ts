@@ -275,6 +275,43 @@ describe('a partial write must not erase the rest of the state (#435)', () => {
       rmSync(dir, { recursive: true, force: true })
     }
   })
+
+  it('preserves a custom GitHub prefix on unrelated writes and allows an explicit clear', () => {
+    const dir = stateDir()
+    try {
+      writeMarketState(dir, {
+        disabled: new Set(), groups: {}, groupOrder: [], githubProxy: 'https://mirror.example/prefix/',
+      })
+      expect(readMarketState(dir).githubProxy).toBe('https://mirror.example/prefix')
+
+      writeMarketState(dir, { disabled: new Set(['dsh-loop']), groups: {}, groupOrder: [] })
+      expect(readMarketState(dir).githubProxy).toBe('https://mirror.example/prefix')
+
+      const current = readMarketState(dir)
+      writeMarketState(dir, { ...current, githubProxy: undefined })
+      expect(readMarketState(dir).githubProxy).toBeUndefined()
+      expect('githubProxy' in readRaw(dir)).toBe(false)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('ignores unsafe or malformed persisted GitHub prefixes', () => {
+    const dir = stateDir()
+    try {
+      for (const githubProxy of [
+        'http://mirror.example',
+        'https://user:secret@mirror.example',
+        'https://mirror.example/?token=secret',
+        'not a url',
+      ]) {
+        writeFileSync(join(dir, '.dsh-market', 'state.json'), JSON.stringify({ githubProxy }))
+        expect(readMarketState(dir).githubProxy).toBeUndefined()
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('group CRUD (groups.ts)', () => {

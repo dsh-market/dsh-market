@@ -5,9 +5,9 @@
  */
 
 import { DIST_TAG, type Channel } from './channels.ts'
-import { headCommit } from './accelerate.ts'
+import { resolveHeadCommit } from './accelerate.ts'
 import { marketFetch } from './net.ts'
-import { activeRegion, routesFor } from './regions.ts'
+import { activeRegion } from './regions.ts'
 import { profileDir, readInstalled, readInstalledVersion, readLockCommits } from './profile.ts'
 import { githubCommitOfTarget, githubRefOfTarget, repoOfTarget } from './sources.ts'
 
@@ -313,8 +313,8 @@ export async function checkUpdates(
         // Ask about the ref the install actually names. Answering with the
         // default branch for a `#branch` install compares two lines that
         // never converge, so the row reported an update forever (#446).
-        const latest = await headCommit(
-          repo, routesFor(activeRegion()).githubProxy, undefined, githubRefOfTarget(spec) ?? undefined,
+        const latest = await resolveHeadCommit(
+          repo, activeRegion(), process.env, githubRefOfTarget(spec) ?? undefined,
         )
         result[name] = {
           kind: 'github', version, current, latest,
