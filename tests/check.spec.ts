@@ -1229,6 +1229,11 @@ describe('satisfiesRange', () => {
     expect(satisfiesRange('0.2.0-rc.1', '^0.1.0 || ^0.2.0-rc.1')).toBe(true)
   })
 
+  it('can include prereleases across base tuples for the all-prerelease DSH release line', () => {
+    expect(satisfiesRange('0.1.2-alpha.2', '^0.1.1-rc.2')).toBe(false)
+    expect(satisfiesRange('0.1.2-alpha.2', '^0.1.1-rc.2', { includePrerelease: true })).toBe(true)
+  })
+
   it('matches wildcard, compound and || ranges; unknown ranges are null', () => {
     expect(satisfiesRange('1.2.3', '*')).toBe(true)
     expect(satisfiesRange('1.5.0', '>=1.2.0 <2.0.0')).toBe(true)

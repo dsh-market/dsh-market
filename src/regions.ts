@@ -2,9 +2,9 @@
  * Download regions: which route the market's own network requests take.
  *
  * Almost every external request the market makes lands on npm's registry or
- * on GitHub — the plugin catalog, update checks, package downloads, plugin
- * tarballs, author avatars, README screenshots. From mainland China all of
- * those are slow at once, which is why this is ONE setting rather than a
+ * on GitHub — the plugin catalog, update checks, package downloads, author
+ * avatars, README screenshots. From mainland China several of those can be
+ * slow, which is why this is ONE setting rather than a
  * row of them: "npm mirror", "GitHub proxy" and "image proxy" are three
  * spellings of a single question the user is actually being asked, which is
  * where they are.
@@ -14,9 +14,9 @@
  * entry instead of a search across six modules.
  *
  * Each route has an environment escape hatch, following `DSHM_REGISTRY_URL`
- * (src/registry.ts). The China route leans on a free public proxy for the
- * GitHub half; those come and go, and a user whose proxy has died needs a
- * way out that is not "wait for the next release".
+ * (src/registry.ts). The China route has service-specific public-proxy
+ * fallbacks; those come and go, and a user whose routes have died needs a way
+ * out that is not "wait for the next release".
  */
 
 /** A region the market can download from. */
@@ -41,12 +41,8 @@ export const DEFAULT_NPM_REGISTRY = 'https://registry.npmjs.org'
 const NPM_CHINA = 'https://mirrors.cloud.tencent.com/npm'
 
 /**
- * Prefix proxy for github.com-family URLs, no trailing slash.
- *
- * It serves the GitHub API and commit-pinned codeload tarballs. The catalog
- * still does not travel through it — it goes as a published npm package
- * instead, which additionally gives it a version number that can be rolled
- * back when a bad build ships.
+ * First public prefix used for unauthenticated GitHub reads, no trailing slash.
+ * Authenticated API calls and canonical codeload tarballs never use it.
  *
  * What this proxy accepts is a list of GitHub SERVICES, not a hostname test.
  * The previous note here said it "refuses anything that is not a github.com
@@ -64,6 +60,16 @@ const NPM_CHINA = 'https://mirrors.cloud.tencent.com/npm'
  * (a mirror list and a visible setting), which is tracked separately.
  */
 const GITHUB_PROXY_CHINA = 'https://gh-proxy.com'
+const GITHUB_PROXY_CHINA_FALLBACK = 'https://ghfast.top'
+
+/** GitHub transports that fail independently on filtered networks. */
+export type GithubService = 'git' | 'raw' | 'avatar'
+
+/** A prefix proxy, or null for the canonical GitHub address. */
+export type GithubRoute = string | null
+
+/** Ordered candidates per GitHub service. */
+export type GithubRoutes = Record<GithubService, GithubRoute[]>
 
 /**
  * The catalog's stable public address.
@@ -91,6 +97,8 @@ export interface RegionRoutes {
   npmRegistry: string
   /** Prefix proxy for github.com-family URLs, or null to go direct. */
   githubProxy: string | null
+  /** Ordered routes per service; every list ends in a direct escape path. */
+  githubRoutes: GithubRoutes
   /**
    * Where to look for the catalog, in order. Later entries are fallbacks.
    *
@@ -123,11 +131,21 @@ const ROUTES: Record<Region, RegionRoutes> = {
   global: {
     npmRegistry: DEFAULT_NPM_REGISTRY,
     githubProxy: null,
+    githubRoutes: { git: [null], raw: [null], avatar: [null] },
     catalog: [{ kind: 'url', url: CATALOG_OFFICIAL }],
   },
   china: {
     npmRegistry: NPM_CHINA,
     githubProxy: GITHUB_PROXY_CHINA,
+    // Filtering is service-shaped, not GitHub-shaped. Raw content commonly
+    // needs help while git advertisements and avatars remain reachable, so
+    // putting one global order on all three only trades one outage for
+    // needless proxy traffic on the paths that still work.
+    githubRoutes: {
+      raw: [GITHUB_PROXY_CHINA, GITHUB_PROXY_CHINA_FALLBACK, null],
+      git: [null, GITHUB_PROXY_CHINA, GITHUB_PROXY_CHINA_FALLBACK],
+      avatar: [null, GITHUB_PROXY_CHINA, GITHUB_PROXY_CHINA_FALLBACK],
+    },
     // The package, then the origin. There is deliberately no
     // raw.githubusercontent step between them: `plugins.json` is a build
     // artifact that the site publishes to Pages and never commits, so that
@@ -146,6 +164,54 @@ function override(env: NodeJS.ProcessEnv, name: string): string | null {
 }
 
 /**
+ * Normalize a user-maintained prefix, or reject it.
+ *
+ * Public mirrors receive the complete destination URL in their path. Only
+ * HTTPS prefixes without embedded credentials or query fragments are safe to
+ * persist and show again in the settings UI.
+ */
+export function normalizeGithubProxy(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const raw = value.trim()
+  if (raw === '' || raw.includes('\\')) return null
+  try {
+    const parsed = new URL(raw)
+    if (parsed.protocol !== 'https:' || parsed.username !== '' || parsed.password !== '') return null
+    if (parsed.search !== '' || parsed.hash !== '') return null
+    const path = parsed.pathname.replace(/\/+$/u, '')
+    return `${parsed.origin}${path}`
+  } catch {
+    return null
+  }
+}
+
+let customGithubProxy: string | null = null
+const preferredGithubRoutes = new Map<GithubService, GithubRoute>()
+
+/** Apply (or clear) the persisted UI escape route. */
+export function setCustomGithubProxy(proxy: string | null): void {
+  const next = proxy === null ? null : normalizeGithubProxy(proxy)
+  if (next === customGithubProxy) return
+  customGithubProxy = next
+  resetGithubRoutePreferences()
+}
+
+/** Whether the operator-owned environment variable disables UI changes. */
+export function githubProxyManaged(env: NodeJS.ProcessEnv = process.env): boolean {
+  return override(env, 'DSHM_GITHUB_PROXY') !== null
+}
+
+/** Remember one verified route without changing other GitHub services. */
+export function rememberGithubRoute(service: GithubService, route: GithubRoute): void {
+  preferredGithubRoutes.set(service, route)
+}
+
+/** Forget learned winners after the configured candidates change. */
+export function resetGithubRoutePreferences(): void {
+  preferredGithubRoutes.clear()
+}
+
+/**
  * The routes for a region, with environment overrides applied.
  *
  * Overrides win over the table because they are the user's statement about
@@ -159,12 +225,20 @@ function override(env: NodeJS.ProcessEnv, name: string): string | null {
 export function routesFor(region: Region, env: NodeJS.ProcessEnv = process.env): RegionRoutes {
   const base = ROUTES[region]
   const npmMirror = override(env, 'DSHM_NPM_MIRROR')
-  const githubProxy = override(env, 'DSHM_GITHUB_PROXY')
+  const githubProxy = override(env, 'DSHM_GITHUB_PROXY') ?? customGithubProxy
   const catalog = override(env, 'DSHM_REGISTRY_URL')
   const registry = npmMirror ?? base.npmRegistry
+  const githubRoutes: GithubRoutes = githubProxy === null
+    ? {
+        git: [...base.githubRoutes.git],
+        raw: [...base.githubRoutes.raw],
+        avatar: [...base.githubRoutes.avatar],
+      }
+    : { git: [githubProxy, null], raw: [githubProxy, null], avatar: [githubProxy, null] }
   return {
     npmRegistry: registry,
     githubProxy: githubProxy ?? base.githubProxy,
+    githubRoutes,
     // A named catalog REPLACES the list rather than joining it. Someone
     // pointing the market at their own catalog does not want it quietly
     // reverting to ours when theirs is briefly unreachable — that is how a
@@ -175,6 +249,20 @@ export function routesFor(region: Region, env: NodeJS.ProcessEnv = process.env):
       // catalog to the same mirror it moved everything else to.
       : base.catalog.map(source => (source.kind === 'npm' ? { ...source, registry } : source)),
   }
+}
+
+/** Ordered candidates with this process's last verified winner first. */
+export function githubRoutesFor(
+  service: GithubService,
+  region: Region = activeRegion(),
+  env: NodeJS.ProcessEnv = process.env,
+): GithubRoute[] {
+  const routes = routesFor(region, env).githubRoutes[service]
+  if (!preferredGithubRoutes.has(service)) return routes
+  const preferred = preferredGithubRoutes.get(service)!
+  const index = routes.findIndex(route => route === preferred)
+  if (index <= 0) return routes
+  return [routes[index]!, ...routes.slice(0, index), ...routes.slice(index + 1)]
 }
 
 /**
@@ -205,8 +293,8 @@ export function setActiveRegion(region: Region): void {
  * Wrap a github.com-family URL in a prefix proxy.
  *
  * The proxy takes the full absolute URL as its path (`{proxy}/{url}`) rather
- * than a rewritten hostname, which is what lets one prefix serve api,
- * codeload, raw and the web host without a mapping table per service.
+ * than a rewritten hostname, so the same joining rule works for every
+ * GitHub service a caller has explicitly allowed through public routes.
  *
  * @param proxy - the prefix, or null to go direct.
  * @param url - an absolute https URL on a github.com-family host.

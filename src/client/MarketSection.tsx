@@ -1,5 +1,5 @@
 /**
- * The Market settings section: Discover / Themes / Installed tabs over the
+ * The Market settings section: Discover / Favorites / Themes / Installed tabs over the
  * /dsh-market/* host routes, with install/update/uninstall flows and the
  * pending-restart bookkeeping in sessionStorage.
  */
@@ -42,12 +42,12 @@ import type { OperationRecord } from './operations.ts'
 import { Diagnostics } from './Diagnostics.tsx'
 import { clientDiagnostics } from './self-check.ts'
 import {
-  api, avatarColor, catalogEntryForInstalled, entryForDep, githubProxyInUse, githubUrl, groupSwitchState, humanOutput, installedForCatalog, isInstalled, looksTerminal, matchInstalledName, orderedCategories, pluginCategories,
-  formatCount, pageItems, pluginName, pluginScreenshotCandidates, pluginScreenshots, rankThemeScreenshots, readSession, resolveCatalogRestore, safeScreenshots, setGithubProxy, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
+  api, applyGithubRouting, avatarColor, catalogEntryForInstalled, entryForDep, githubRouteCandidates, groupSwitchState, humanOutput, installedForCatalog, isInstalled, looksTerminal, matchInstalledName, orderedCategories, pluginCategories,
+  formatCount, pageItems, pluginName, pluginScreenshotCandidates, pluginScreenshots, pluginsForFavorites, rankThemeScreenshots, readSession, rememberGithubRoute, resolveCatalogRestore, safeScreenshots, staleFavoriteUrls, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
 } from './market-data.ts'
 import type {
 ActivationInfo, ActivationState, GistExportResult, InstalledMap, InstalledRepoHints, InstalledRepoIdentities, MarketStatus, Registry, RegistryPlugin,
-  ScreenshotCandidate, ScreenshotMeasurement, SharedHostPackageDependencyFinding, SortDir, SortField, ThemeSnapshot, TimeRange, Translate, UpdateStatus,
+  HostCompatibility, HostCompatibilityMap, ScreenshotCandidate, ScreenshotMeasurement, SharedHostPackageDependencyFinding, SortDir, SortField, ThemeSnapshot, TimeRange, Translate, UpdateStatus,
 } from './market-data.ts'
 
 function isHostDependencyFinding(value: unknown): value is SharedHostPackageDependencyFinding {
@@ -65,6 +65,12 @@ function isHostDependencyFinding(value: unknown): value is SharedHostPackageDepe
 
 const HOST_DEPENDENCY_PREVIEW_LIMIT = 5
 const IGNORED_UPDATES_SESSION_KEY = 'dshm-updates-ignored'
+const UNAVAILABLE_HOST_COMPATIBILITY: HostCompatibility = {
+  status: 'unknown',
+  basis: 'unavailable',
+  requirement: null,
+  declarations: [],
+}
 
 /**
  * Read the update reminders dismissed for this host process. The boot id is
@@ -176,13 +182,19 @@ function usePagination(count: number, resetDeps: readonly unknown[], scrollToTop
  * state, so Discover and Themes can each mount one without threading an
  * extra `filterOpen`/`setFilterOpen` pair through their own state.
  */
-function FilterMenu({ sortField, sortDir, timeRange, onSortField, onSortDir, onTimeRange, t }: {
+function FilterMenu({
+  sortField, sortDir, timeRange, hostVersion, compatibleWithHost,
+  onSortField, onSortDir, onTimeRange, onCompatibleWithHost, t,
+}: {
   sortField: SortField
   sortDir: SortDir
   timeRange: TimeRange
+  hostVersion?: string | null
+  compatibleWithHost?: boolean
   onSortField: (field: SortField) => void
   onSortDir: (dir: SortDir) => void
   onTimeRange: (range: TimeRange) => void
+  onCompatibleWithHost?: (enabled: boolean) => void
   t: Translate
 }) {
   const [open, setOpen] = useState(false)
@@ -200,15 +212,37 @@ function FilterMenu({ sortField, sortDir, timeRange, onSortField, onSortDir, onT
     { type: 'separator', id: 'f-sep2' },
     { type: 'label', id: 'f-time', text: t('filterTime') },
     ...TIME_OPTIONS.map(opt => ({ id: 'time:' + opt.key, label: t(opt.label) })),
+    ...(onCompatibleWithHost === undefined ? [] : [
+      { type: 'separator' as const, id: 'f-sep3' },
+      { type: 'label' as const, id: 'f-host', text: t('filterHost') },
+      { id: 'host:all', label: t('hostAll') },
+      {
+        id: 'host:compatible',
+        label: hostVersion === undefined
+          ? t('hostDetecting')
+          : hostVersion === null
+            ? t('hostUnknown')
+            : t('hostCompatible').replace('{0}', hostVersion),
+      },
+    ]),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- sortDirLabel closes only over sortField, already a dep.
-  ], [t, sortField])
+  ], [t, sortField, hostVersion, onCompatibleWithHost])
   const selectedIds = useMemo(
-    () => ['field:' + sortField, 'dir:' + sortDir, 'time:' + timeRange],
-    [sortField, sortDir, timeRange])
+    () => [
+      'field:' + sortField,
+      'dir:' + sortDir,
+      'time:' + timeRange,
+      ...(onCompatibleWithHost === undefined
+        ? []
+        : [compatibleWithHost === true ? 'host:compatible' : 'host:all']),
+    ],
+    [sortField, sortDir, timeRange, compatibleWithHost, onCompatibleWithHost])
   const onSelect = (id: string) => {
     if (id.startsWith('field:')) onSortField(id.slice(6) as SortField)
     else if (id.startsWith('dir:')) onSortDir(id.slice(4) as SortDir)
     else if (id.startsWith('time:')) onTimeRange(id.slice(5) as TimeRange)
+    else if (id === 'host:all') onCompatibleWithHost?.(false)
+    else if (id === 'host:compatible' && typeof hostVersion === 'string') onCompatibleWithHost?.(true)
   }
   return (
     <Menu
@@ -354,8 +388,10 @@ function renderMarkdown(md: string): Array<JSX.Element | string> {
   return out
 }
 
-function OwnerAvatar({ name, owner }: { name: string; owner: string }) {
+/** Avatar fallback advances one service route at a time before using initials. */
+export function OwnerAvatar({ name, owner }: { name: string; owner: string }) {
   const [failed, setFailed] = useState(false)
+  const [routeIndex, setRouteIndex] = useState(0)
   if (failed || owner === '') {
     return (
       <div className={css.av} style={{ background: avatarColor(name) }}>
@@ -363,13 +399,22 @@ function OwnerAvatar({ name, owner }: { name: string; owner: string }) {
       </div>
     )
   }
+  const candidates = githubRouteCandidates(
+    'avatar',
+    `https://avatars.githubusercontent.com/${encodeURIComponent(owner)}?size=96`,
+  )
+  const candidate = candidates[Math.min(routeIndex, candidates.length - 1)]!
   return (
     <img
       className={css.av}
-      src={avatarUrl(owner)}
+      src={candidate.url}
       alt=""
       loading="lazy"
-      onError={() => setFailed(true)}
+      onLoad={() => rememberGithubRoute('avatar', candidate.proxy)}
+      onError={() => {
+        if (routeIndex + 1 < candidates.length) setRouteIndex(routeIndex + 1)
+        else setFailed(true)
+      }}
     />
   )
 }
@@ -462,26 +507,6 @@ function thumbUrl(src: string, height: number): string {
   // around it would have traded a working request for a bigger one, on a
   // page that makes dozens of them.
   return `https://images.weserv.nl/?url=${encodeURIComponent(src.replace(/^https?:\/\//, ''))}&h=${String(height)}&fit=inside&we=1`
-}
-
-/**
- * The owner's GitHub avatar, addressed so the region's proxy can serve it.
- *
- * `github.com/<owner>.png` is a redirect to the avatar host, and gh-proxy
- * does not follow it — measured from an unproxied mainland connection, that
- * URL hangs until the client gives up (60s), while naming the avatar host
- * directly through the same proxy answers in 1.07s. So a proxied region
- * addresses the destination itself.
- *
- * The redirect is left in place when there is no proxy: it is the form that
- * has always worked, and this is not the release to change it on a path
- * nobody has reported a problem with.
- */
-function avatarUrl(owner: string): string {
-  const name = encodeURIComponent(owner)
-  return githubProxyInUse() === null
-    ? `https://github.com/${name}.png?size=96`
-    : githubUrl(`https://avatars.githubusercontent.com/${name}?size=96`)
 }
 
 /**
@@ -991,6 +1016,33 @@ function GithubRepoMark({ size = 12, className }: { size?: number; className?: s
   )
 }
 
+/** Bookmark toggle on catalog cards (#414). Outline when off, filled when on —
+ * deliberately not a star, which the byline already uses for GitHub popularity. */
+function BookmarkMark({ size = 14, filled = false, className }: { size?: number; filled?: boolean; className?: string }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+      className={className}
+    >
+      {filled
+        ? <path d="M4 1.5h8a1 1 0 0 1 1 1v11.8a.5.5 0 0 1-.78.41L8 12.2 3.78 14.71A.5.5 0 0 1 3 14.3V2.5a1 1 0 0 1 1-1z" fill="currentColor" />
+        : (
+            <path
+              d="M4 1.5h8a1 1 0 0 1 1 1v11.8a.5.5 0 0 1-.78.41L8 12.2 3.78 14.71A.5.5 0 0 1 3 14.3V2.5a1 1 0 0 1 1-1z"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.25"
+              strokeLinejoin="round"
+            />
+          )}
+    </svg>
+  )
+}
+
 /**
  * Module-scope caches so re-entering the section renders instantly instead
  * of refetching and rebuilding from a spinner (#30 by @StarsTom). Module
@@ -1140,6 +1192,7 @@ export function MarketSection(props: MarketSectionProps) {
   const [q, setQ] = useState('')
   /** Per-tab searches stay independent: discover / themes / installed. */
   const [qThemes, setQThemes] = useState('')
+  const [qFavorites, setQFavorites] = useState('')
   const [qInstalled, setQInstalled] = useState('')
   const [cat, setCat] = useState('all')
   // FLAQ Desktop supplies this for onboarding/feature navigation; upstream dsh web omits it, so ordinary web opens intentionally leave this effect idle.
@@ -1214,6 +1267,10 @@ export function MarketSection(props: MarketSectionProps) {
   const updateIdleStrikes = useRef(0)
   const [doneUrls, setDoneUrls] = useState<string[]>([])
   const [installError, setInstallError] = useState<string | null>(null)
+  const [favoriteError, setFavoriteError] = useState<string | null>(null)
+  /** Ignores out-of-order /dsh-market/favorite responses after a newer toggle. */
+  const favoriteOpGen = useRef(0)
+  const [clearingStale, setClearingStale] = useState(false)
   /** The notes payload the server answers with, verbatim (see /changelog). */
   type NoteRelease = { tag: string | null; name: string | null; publishedAt: string | null; url: string | null; body: string }
   type NoteCommit = { sha: string; message: string; date: string | null }
@@ -1282,6 +1339,7 @@ export function MarketSection(props: MarketSectionProps) {
   /** Stable onDone for the export Toast — a fresh closure per render would
    * reset the Toast's auto-dismiss timer on every parent re-render. */
   const exportToastDone = useCallback(() => setExportState('idle'), [])
+  const favoriteErrorDone = useCallback(() => setFavoriteError(null), [])
   const [updates, setUpdates] = useState<Record<string, UpdateStatus>>({})
   /** Update reminders dismissed for this host boot. The Installed tab still
    * shows these plugins and their update actions; only proactive prompts use
@@ -1317,6 +1375,8 @@ export function MarketSection(props: MarketSectionProps) {
   const [disabledNames, setDisabledNames] = useState<string[]>([])
   /** The user's own note per plugin (#347): package name → text. */
   const [notes, setNotes] = useState<Record<string, string>>({})
+  /** Catalog URLs bookmarked for later install (#414). */
+  const [favoriteUrls, setFavoriteUrls] = useState<string[]>([])
   /** Rows the user asked to show the AUTHOR's description on, despite a note. */
   const [showTheirs, setShowTheirs] = useState<string[]>([])
   /** The row whose note is being edited, and the text in the box. */
@@ -1431,12 +1491,23 @@ export function MarketSection(props: MarketSectionProps) {
   const [sortField, setSortField] = useState<SortField>('downloads')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
   const [timeRange, setTimeRange] = useState<TimeRange>('all')
+  /** Undefined while the first catalog response is pending; null means the host cannot be located. */
+  const [hostVersion, setHostVersion] = useState<string | null | undefined>(undefined)
+  /** v1 is deliberately opt-in: undeclared/unknown entries stay visible even when enabled. */
+  const [compatibleWithHost, setCompatibleWithHost] = useState(false)
+  const [hostCompatibility, setHostCompatibility] = useState<HostCompatibilityMap>({})
+  const [hostCompatibilityPending, setHostCompatibilityPending] = useState(0)
+  /** Names already resolved or in flight; failed/unavailable names are released for an explicit retry. */
+  const requestedHostCompatibility = useRef(new Set<string>())
   const [catsOpen, setCatsOpen] = useState(false)
   /** Themes tab: independent from Discover's sort/time state above — a
    * search or sort choice in one tab has no business resetting the other. */
   const [themeSortField, setThemeSortField] = useState<SortField>('downloads')
   const [themeSortDir, setThemeSortDir] = useState<SortDir>('desc')
   const [themeTimeRange, setThemeTimeRange] = useState<TimeRange>('all')
+  const [favSortField, setFavSortField] = useState<SortField>('downloads')
+  const [favSortDir, setFavSortDir] = useState<SortDir>('desc')
+  const [favTimeRange, setFavTimeRange] = useState<TimeRange>('all')
   /** WebDAV provider-preset dropdown (primitives Menu). */
   const [presetOpen, setPresetOpen] = useState(false)
   /** Install-command disclosure inside the confirm dialog. */
@@ -1486,6 +1557,7 @@ export function MarketSection(props: MarketSectionProps) {
         if (Array.isArray(body.patchDisabled)) setPatchDisabledNames(body.patchDisabled)
         if (body.groups && typeof body.groups === 'object') setGroups(body.groups)
         if (Array.isArray(body.groupOrder)) setGroupOrder(body.groupOrder)
+        if (Array.isArray(body.favorites)) setFavoriteUrls(body.favorites.filter((url: unknown): url is string => typeof url === 'string'))
         setInstalledBundles(Array.isArray(body.bundles) ? body.bundles.filter((name: unknown): name is string => typeof name === 'string') : [])
         if (body.activation && typeof body.activation === 'object') setActivations(body.activation)
         const findings = body.diagnostics?.schema === 'dsh-market/diagnostics/v1'
@@ -1508,6 +1580,7 @@ export function MarketSection(props: MarketSectionProps) {
   )
   /** Lookup set for the persisted disable list (#60). */
   const disabledSet = useMemo(() => new Set(disabledNames), [disabledNames])
+  const favoriteUrlSet = useMemo(() => new Set(favoriteUrls), [favoriteUrls])
   /** Effective switch state: market disable list ∪ user-patch-layer disables. */
   const effectiveDisabledSet = useMemo(
     () => new Set([...disabledNames, ...patchDisabledNames]),
@@ -1533,7 +1606,11 @@ export function MarketSection(props: MarketSectionProps) {
     setLoadError(null)
     return fetch(api('/dsh-market/registry'), { cache: 'no-store' })
       .then(async (res) => {
-        const body = (await res.json().catch(() => ({}))) as { registry?: Registry; error?: string }
+        const body = (await res.json().catch(() => ({}))) as {
+          registry?: Registry
+          hostVersion?: string | null
+          error?: string
+        }
         if (!res.ok) throw new Error(typeof body.error === 'string' ? body.error : `HTTP ${String(res.status)}`)
         return body
       })
@@ -1541,6 +1618,7 @@ export function MarketSection(props: MarketSectionProps) {
         if (body.registry === undefined) throw new Error('the catalog response carried no data')
         cachedRegistry = body.registry
         setData(body.registry)
+        setHostVersion(typeof body.hostVersion === 'string' ? body.hostVersion : null)
         setLoadError(null)
       })
       // Report WHY. An unreachable catalog used to be answered with a
@@ -1548,6 +1626,62 @@ export function MarketSection(props: MarketSectionProps) {
       // smaller today" looked identical on screen — and the second reading
       // is the one users reached.
       .catch((error: unknown) => { setLoadError(error instanceof Error ? error.message : String(error)) })
+  }, [])
+
+  const loadHostCompatibility = useCallback(async (names: readonly string[]): Promise<void> => {
+    const unique = [...new Set(names)].filter(name => {
+      if (name === '' || requestedHostCompatibility.current.has(name)) return false
+      requestedHostCompatibility.current.add(name)
+      return true
+    })
+    if (unique.length === 0) return
+    setHostCompatibilityPending(count => count + unique.length)
+    for (let offset = 0; offset < unique.length; offset += 64) {
+      const chunk = unique.slice(offset, offset + 64)
+      try {
+        const response = await fetch(api('/dsh-market/discovery-compatibility'), {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ packages: chunk }),
+        })
+        const body = await response.json() as {
+          hostVersion?: string | null
+          plugins?: Record<string, HostCompatibility>
+        }
+        if (!response.ok || body.plugins === null || typeof body.plugins !== 'object') {
+          throw new Error(`HTTP ${String(response.status)}`)
+        }
+        if (typeof body.hostVersion === 'string' || body.hostVersion === null) {
+          setHostVersion(body.hostVersion)
+        }
+        const accepted: HostCompatibilityMap = {}
+        for (const name of chunk) {
+          const item = body.plugins[name] as HostCompatibility | null | undefined
+          if (item === null || item === undefined
+            || !['compatible', 'incompatible', 'unknown'].includes(item.status)
+            || !['manifest', 'undeclared', 'unavailable'].includes(item.basis)
+            || (item.requirement !== null && typeof item.requirement !== 'string')
+            || !Array.isArray(item.declarations)) {
+            requestedHostCompatibility.current.delete(name)
+            accepted[name] = UNAVAILABLE_HOST_COMPATIBILITY
+            continue
+          }
+          accepted[name] = item
+          // A transient registry failure is shown as unknown, but remains
+          // retryable when navigation or a filter toggle asks again later.
+          if (item.basis === 'unavailable') requestedHostCompatibility.current.delete(name)
+        }
+        setHostCompatibility(current => ({ ...current, ...accepted }))
+      } catch {
+        for (const name of chunk) requestedHostCompatibility.current.delete(name)
+        setHostCompatibility(current => ({
+          ...current,
+          ...Object.fromEntries(chunk.map(name => [name, UNAVAILABLE_HOST_COMPATIBILITY])),
+        }))
+      } finally {
+        setHostCompatibilityPending(count => Math.max(0, count - chunk.length))
+      }
+    }
   }, [])
 
   useEffect(() => {
@@ -1560,7 +1694,7 @@ export function MarketSection(props: MarketSectionProps) {
         // page draws from is a larger request through the same server, so it
         // lands later; and if it ever did not, the status poll re-renders
         // within seconds and the images correct themselves.
-        setGithubProxy(typeof status.githubProxy === 'string' ? status.githubProxy : null)
+        applyGithubRouting(status)
         if (typeof status.boot === 'string') {
           setBootId(status.boot)
           setIgnoredUpdateNames(ignoredUpdatesForBoot(status.boot))
@@ -1808,18 +1942,42 @@ export function MarketSection(props: MarketSectionProps) {
     const el = bodyRef.current
     if (el !== null) el.scrollTop = 0
     setShowTop(false)
-  }, [tab, q, cat, sortField, sortDir, timeRange, qThemes, themeSortField, themeSortDir, themeTimeRange, qInstalled, installedView])
+  }, [tab, q, cat, sortField, sortDir, timeRange, compatibleWithHost, qThemes, themeSortField, themeSortDir, themeTimeRange, qFavorites, favSortField, favSortDir, favTimeRange, qInstalled, installedView])
 
   const plugins = useMemo(
     () => (data === null ? [] : visiblePlugins(data.plugins, {
       category: cat, query: q, lang, categories: data.categories,
       sort: `${sortField}-${sortDir}`,
       sinceDays: timeRange === 'all' ? undefined : TIME_RANGE_DAYS[timeRange],
+      hostCompatibility,
+      compatibleWithHost,
     })),
-    [data, q, cat, lang, sortField, sortDir, timeRange])
+    [data, q, cat, lang, sortField, sortDir, timeRange, hostCompatibility, compatibleWithHost])
   const { currentPage, totalPages, pageSize, goToPage, changePageSize } =
-    usePagination(plugins.length, [q, cat, sortField, sortDir, timeRange], scrollToTop)
+    usePagination(plugins.length, [q, cat, sortField, sortDir, timeRange, compatibleWithHost], scrollToTop)
   const pagePlugins = plugins.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+  const pageHostPackages = [...new Set(pagePlugins.flatMap(plugin =>
+    typeof plugin.npm === 'string' && plugin.npm !== '' ? [plugin.npm] : []))]
+  const allHostPackages = useMemo(
+    () => [...new Set((data?.plugins ?? []).flatMap(plugin =>
+      typeof plugin.npm === 'string' && plugin.npm !== '' ? [plugin.npm] : []))],
+    [data],
+  )
+  const pageHostPackagesKey = pageHostPackages.join('\u0000')
+  const allHostPackagesKey = allHostPackages.join('\u0000')
+  useEffect(() => {
+    if (tab === 'discover') void loadHostCompatibility(pageHostPackages)
+    // The key is the stable identity of this page's npm package set; the
+    // array itself is recreated as compatibility results arrive.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, pageHostPackagesKey, loadHostCompatibility])
+  useEffect(() => {
+    if (compatibleWithHost) void loadHostCompatibility(allHostPackages)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [compatibleWithHost, allHostPackagesKey, loadHostCompatibility])
+  const loadedHostPackages = allHostPackages.reduce(
+    (count, name) => count + (hostCompatibility[name] === undefined ? 0 : 1), 0,
+  )
 
   const themePlugins = useMemo(
     () => (data === null ? [] : visiblePlugins(data.plugins, {
@@ -1832,6 +1990,39 @@ export function MarketSection(props: MarketSectionProps) {
     themePlugins.length, [qThemes, themeSortField, themeSortDir, themeTimeRange], scrollToTop)
   const themePagePlugins = themePlugins.slice(
     (themePagination.currentPage - 1) * themePagination.pageSize, themePagination.currentPage * themePagination.pageSize)
+
+  const favoriteListed = useMemo(
+    () => (data === null ? [] : pluginsForFavorites(data.plugins, favoriteUrlSet, {
+      query: qFavorites, lang, categories: data.categories,
+      sort: `${favSortField}-${favSortDir}`,
+      sinceDays: favTimeRange === 'all' ? undefined : TIME_RANGE_DAYS[favTimeRange],
+    })),
+    [data, qFavorites, lang, favoriteUrlSet, favSortField, favSortDir, favTimeRange])
+  const favoritePlugins = useMemo(
+    () => favoriteListed.filter(p => !pluginCategories(p).includes('theme')),
+    [favoriteListed])
+  const favoriteThemes = useMemo(
+    () => favoriteListed.filter(p => pluginCategories(p).includes('theme')),
+    [favoriteListed])
+  const favResetDeps = [qFavorites, favSortField, favSortDir, favTimeRange] as const
+  const favoritePluginPagination = usePagination(
+    favoritePlugins.length, favResetDeps, scrollToTop)
+  const favoriteThemePagination = usePagination(
+    favoriteThemes.length, favResetDeps, scrollToTop)
+  const favoritePagePlugins = favoritePlugins.slice(
+    (favoritePluginPagination.currentPage - 1) * favoritePluginPagination.pageSize,
+    favoritePluginPagination.currentPage * favoritePluginPagination.pageSize)
+  const favoritePageThemes = favoriteThemes.slice(
+    (favoriteThemePagination.currentPage - 1) * favoriteThemePagination.pageSize,
+    favoriteThemePagination.currentPage * favoriteThemePagination.pageSize)
+  const favoriteStale = useMemo(
+    () => (data === null ? [] : staleFavoriteUrls(favoriteUrls, data.plugins)),
+    [data, favoriteUrls])
+  const favoritesAllStale = favoriteUrls.length > 0
+    && favoriteStale.length === favoriteUrls.length
+    && qFavorites.trim() === ''
+  /** Tab badge counts catalog-visible bookmarks once the registry is loaded. */
+  const favoriteTabCount = data === null ? favoriteUrls.length : favoriteListed.length
 
   /** Download a host endpoint as a file — primitives Button can't be an <a download>.
    * Prefers the server's Content-Disposition filename (e.g. the timestamped
@@ -2331,6 +2522,96 @@ export function MarketSection(props: MarketSectionProps) {
       })
       .catch(error => setInstallError(String(error)))
   }, [])
+
+  const toggleFavorite = useCallback((url: string) => {
+    const gen = ++favoriteOpGen.current
+    const favorited = !favoriteUrlSet.has(url)
+    const previous = favoriteUrls
+    setFavoriteError(null)
+    setFavoriteUrls((list) => {
+      if (favorited) return list.includes(url) ? list : [...list, url]
+      return list.filter(entry => entry !== url)
+    })
+    fetch(api('/dsh-market/favorite'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ url, favorited }),
+    })
+      .then(async (res) => {
+        const text = await res.text()
+        let body: { ok?: unknown; favorites?: unknown; error?: unknown } | null = null
+        if (text !== '') {
+          try { body = JSON.parse(text) as { ok?: unknown; favorites?: unknown; error?: unknown } } catch { /* non-JSON */ }
+        }
+        return { status: res.status, body }
+      })
+      .then(({ status, body }) => {
+        if (gen !== favoriteOpGen.current) return
+        if (status === 200 && body?.ok === true && Array.isArray(body.favorites)) {
+          setFavoriteUrls(body.favorites.filter((entry: unknown): entry is string => typeof entry === 'string'))
+          return
+        }
+        setFavoriteUrls(previous)
+        if (body === null && (status === 404 || status === 405)) {
+          setFavoriteError(t('favoriteUnavailable'))
+          return
+        }
+        if (status === 409) {
+          setFavoriteError(t('favoriteBusy'))
+          return
+        }
+        setFavoriteError(typeof body?.error === 'string' ? body.error : t('favoriteFailed'))
+      })
+      .catch((error: unknown) => {
+        if (gen !== favoriteOpGen.current) return
+        setFavoriteUrls(previous)
+        setFavoriteError(String(error))
+      })
+  }, [favoriteUrlSet, favoriteUrls, t])
+
+  const clearStaleFavorites = useCallback(() => {
+    if (favoriteStale.length === 0) return
+    const gen = ++favoriteOpGen.current
+    const stale = favoriteStale
+    const previous = favoriteUrls
+    setFavoriteError(null)
+    setClearingStale(true)
+    setFavoriteUrls(list => list.filter(url => !stale.includes(url)))
+    void (async () => {
+      try {
+        let latest: string[] | null = null
+        for (const url of stale) {
+          const res = await fetch(api('/dsh-market/favorite'), {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ url, favorited: false }),
+          })
+          const text = await res.text()
+          let body: { ok?: unknown; favorites?: unknown; error?: unknown } | null = null
+          if (text !== '') {
+            try { body = JSON.parse(text) as { ok?: unknown; favorites?: unknown; error?: unknown } } catch { /* non-JSON */ }
+          }
+          if (res.status === 200 && body?.ok === true && Array.isArray(body.favorites)) {
+            latest = body.favorites.filter((entry: unknown): entry is string => typeof entry === 'string')
+            continue
+          }
+          if (gen !== favoriteOpGen.current) return
+          setFavoriteUrls(previous)
+          if (res.status === 409) setFavoriteError(t('favoriteBusy'))
+          else setFavoriteError(typeof body?.error === 'string' ? body.error : t('favoriteFailed'))
+          return
+        }
+        if (gen !== favoriteOpGen.current) return
+        if (latest !== null) setFavoriteUrls(latest)
+      } catch (error: unknown) {
+        if (gen !== favoriteOpGen.current) return
+        setFavoriteUrls(previous)
+        setFavoriteError(String(error))
+      } finally {
+        if (gen === favoriteOpGen.current) setClearingStale(false)
+      }
+    })()
+  }, [favoriteStale, favoriteUrls, t])
 
   const clearPendingRefresh = useCallback((name: string) => {
     setHotNames(names => names.filter(entry => entry !== name))
@@ -2878,6 +3159,23 @@ export function MarketSection(props: MarketSectionProps) {
       ? data?.plugins.find(r => r.name === p.replacement)
       : undefined
 
+  const renderFavoriteControl = (url: string) => {
+    const favorited = favoriteUrlSet.has(url)
+    return (
+      <Tooltip label={favorited ? t('favoriteRemove') : t('favoriteAdd')} side="top">
+        <button
+          type="button"
+          className={favorited ? `${css.favoriteBtn} ${css.favoriteOn}` : css.favoriteBtn}
+          aria-pressed={favorited}
+          aria-label={favorited ? t('favoriteRemove') : t('favoriteAdd')}
+          onClick={() => toggleFavorite(url)}
+        >
+          <BookmarkMark filled={favorited} />
+        </button>
+      </Tooltip>
+    )
+  }
+
   const pluginCard = (p: RegistryPlugin) => {
     const desc = (p.description && (p.description[lang] || p.description.en)) || ''
     const done = doneUrls.includes(p.url) || hotUrls.includes(p.url)
@@ -2889,6 +3187,21 @@ export function MarketSection(props: MarketSectionProps) {
     // is the obvious next move — which is how the same clash gets hit twice.
     const record = recordForUrl(records, p.url)
     const blocked = record !== null && (record.state === 'input' || record.state === 'failed')
+    const compatibility = typeof p.npm === 'string' ? hostCompatibility[p.npm] : undefined
+    const hostRequirementLabel = compatibility?.requirement !== null && compatibility?.requirement !== undefined
+      ? t('hostRequirement').replace('{0}', compatibility.requirement)
+      : typeof p.npm !== 'string'
+        ? t('hostRequirementUnavailable')
+        : compatibility === undefined
+          ? t('hostRequirementLoading')
+          : compatibility.basis === 'undeclared'
+            ? t('hostRequirementUndeclared')
+            : t('hostRequirementUnavailable')
+    const hostRequirementTitle = compatibility?.declarations.map(declaration =>
+      declaration.kind === 'engine'
+        ? `engines.dsh: ${declaration.range}`
+        : `${declaration.package ?? 'peer'}: ${declaration.range}`,
+    ).join('\n') || hostRequirementLabel
     return (
       <div key={p.url} className={blocked ? `${css.card} ${css.cardBlocked}` : css.card}>
         <div className={css.row1}>
@@ -2961,6 +3274,7 @@ export function MarketSection(props: MarketSectionProps) {
           </div>
         )}
         <div className={css.foot}>
+          <span className={css.hostRequirement} title={hostRequirementTitle}>{hostRequirementLabel}</span>
           {pluginCategories(p).map(category => (
             <span key={category} className={css.tag}>
               {(data!.categories[category] && (data!.categories[category]![lang] || data!.categories[category]!.en)) || category}
@@ -2971,13 +3285,12 @@ export function MarketSection(props: MarketSectionProps) {
               date/tag pair alone was long enough in English to wrap onto its
               own line, splitting one card's footer into two visual rows. */}
           <span className={css.grow} />
-          {/* No comment count here. Showing one would mean asking giscus about
-              every card on the page just to render a number, and a row of
-              zeroes reads as "nobody uses these" on a catalog where almost
-              nothing has been commented on yet. */}
-          <button type="button" className={css.commentsLink} onClick={() => setCommentsFor(p)}>
-            {t('comments')}
-          </button>
+          <span className={css.footActions}>
+            {renderFavoriteControl(p.url)}
+            <button type="button" className={css.commentsLink} onClick={() => setCommentsFor(p)}>
+              {t('comments')}
+            </button>
+          </span>
         </div>
         {busy && (
           <div className={css.progress}>
@@ -3074,6 +3387,9 @@ export function MarketSection(props: MarketSectionProps) {
           )}
 
           <div className={css.themeCardFooter}>
+            <span className={css.footActions}>
+              {renderFavoriteControl(p.url)}
+            </span>
             {instName === null && (
               <span className={css.themeLifecycle}>{done ? t('installedBadge') : t('notInstalled')}</span>
             )}
@@ -3338,6 +3654,10 @@ export function MarketSection(props: MarketSectionProps) {
         <div className={css.tabs}>
           <button className={tab === 'discover' ? `${css.tab} ${css.on}` : css.tab} onClick={() => setTab('discover')}>{t('tabDiscover')}</button>
           {themeSnap !== null && <button className={tab === 'themes' ? `${css.tab} ${css.on}` : css.tab} onClick={() => setTab('themes')}>{t('tabThemes')}</button>}
+          <button
+            className={tab === 'favorites' ? `${css.tab} ${css.on}` : css.tab}
+            onClick={() => setTab('favorites')}
+          >{t('tabFavorites') + (favoriteTabCount > 0 ? ' (' + favoriteTabCount + ')' : '')}</button>
           <button className={tab === 'installed' ? `${css.tab} ${css.on}` : css.tab} onClick={() => { setTab('installed'); refreshInstalled(true) }}>
             {t('tabInstalled') + (installedOtherCount > 0 ? ' (' + installedOtherCount + ')' : '')}
             {hasUpdates && <StateDot state="error" size={7} className={css.dot} />}
@@ -3755,12 +4075,24 @@ export function MarketSection(props: MarketSectionProps) {
                         sortField={sortField}
                         sortDir={sortDir}
                         timeRange={timeRange}
+                        hostVersion={hostVersion}
+                        compatibleWithHost={compatibleWithHost}
                         onSortField={setSortField}
                         onSortDir={setSortDir}
                         onTimeRange={setTimeRange}
+                        onCompatibleWithHost={setCompatibleWithHost}
                         t={t}
                       />
                       </div>
+                      {compatibleWithHost && typeof hostVersion === 'string' && (
+                        <div className={css.hostFilterNote}>
+                          {hostCompatibilityPending > 0 || loadedHostPackages < allHostPackages.length
+                            ? t('hostFilterLoading')
+                              .replace('{0}', String(loadedHostPackages))
+                              .replace('{1}', String(allHostPackages.length))
+                            : t('hostFilterActive').replace('{0}', hostVersion)}
+                        </div>
+                      )}
                     </div>
                     </div>
                     {plugins.length === 0
@@ -3780,6 +4112,101 @@ export function MarketSection(props: MarketSectionProps) {
                         )}
                   </>
                 )
+          : tab === 'favorites'
+            ? data === null
+              ? <div className={css.loading}><span className={css.logoMark}><MarketLogo size={26} animated /></span>{t('loading')}</div>
+              : favoriteUrls.length === 0
+                ? <div className={css.empty}>{t('favoritesEmpty')}</div>
+                : (
+                    <>
+                      <div className={css.themeToolbar}>
+                        <Input
+                          className={css.themeSearch}
+                          icon={<IconSearchOutline16 size={14} />}
+                          placeholder={t('searchFavoritesPh')}
+                          value={qFavorites}
+                          onChange={e => setQFavorites(e.target.value)}
+                        />
+                        <div className={css.themeToolbarActions}>
+                          <FilterMenu
+                            sortField={favSortField}
+                            sortDir={favSortDir}
+                            timeRange={favTimeRange}
+                            onSortField={setFavSortField}
+                            onSortDir={setFavSortDir}
+                            onTimeRange={setFavTimeRange}
+                            t={t}
+                          />
+                        </div>
+                      </div>
+                      {favoriteListed.length === 0
+                        ? favoritesAllStale
+                          ? (
+                              <div className={css.favoritesStaleOnly}>
+                                <div className={css.empty}>{t('favoritesStaleEmpty')}</div>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  disabled={clearingStale}
+                                  onClick={() => clearStaleFavorites()}
+                                >{clearingStale ? t('favoritesClearingStale') : t('favoritesClearStale')}</Button>
+                              </div>
+                            )
+                          : <div className={css.empty}>{t('empty')}</div>
+                        : (
+                            <>
+                              {favoriteStale.length > 0 && (
+                                <div className={css.favoritesStaleBar}>
+                                  <span>{t('favoritesStaleNote').replace('{0}', String(favoriteStale.length))}</span>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    disabled={clearingStale}
+                                    onClick={() => clearStaleFavorites()}
+                                  >{clearingStale ? t('favoritesClearingStale') : t('favoritesClearStale')}</Button>
+                                </div>
+                              )}
+                              <div className={css.themeResultBar}>
+                                <span>{t('favoritesResultCount').replace('{0}', String(favoriteListed.length))}</span>
+                              </div>
+                              {favoritePlugins.length > 0 && (
+                                <>
+                                  <h3 className={css.favoritesSectionHead}>
+                                    {t('favoritesPluginsSection').replace('{0}', String(favoritePlugins.length))}
+                                  </h3>
+                                  <Masonry items={favoritePagePlugins} render={pluginCard} />
+                                  <Pager
+                                    currentPage={favoritePluginPagination.currentPage}
+                                    totalPages={favoritePluginPagination.totalPages}
+                                    pageSize={favoritePluginPagination.pageSize}
+                                    onGoToPage={favoritePluginPagination.goToPage}
+                                    onChangePageSize={favoritePluginPagination.changePageSize}
+                                    t={t}
+                                  />
+                                </>
+                              )}
+                              {favoriteThemes.length > 0 && (
+                                <>
+                                  <h3 className={css.favoritesSectionHead}>
+                                    {t('favoritesThemesSection').replace('{0}', String(favoriteThemes.length))}
+                                  </h3>
+                                  <div className={css.themeGallery}>
+                                    {favoritePageThemes.map(themePluginCard)}
+                                  </div>
+                                  <Pager
+                                    currentPage={favoriteThemePagination.currentPage}
+                                    totalPages={favoriteThemePagination.totalPages}
+                                    pageSize={favoriteThemePagination.pageSize}
+                                    onGoToPage={favoriteThemePagination.goToPage}
+                                    onChangePageSize={favoriteThemePagination.changePageSize}
+                                    t={t}
+                                  />
+                                </>
+                              )}
+                            </>
+                          )}
+                    </>
+                  )
           : tab === 'themes' && themeSnap !== null
             ? (
                 <>
@@ -4637,6 +5064,9 @@ export function MarketSection(props: MarketSectionProps) {
       )}
       {exportState === 'fail' && (
         <Toast text={t('exportLogFail')} icon={<IconWarningOutline16 size={14} />} onDone={exportToastDone} />
+      )}
+      {favoriteError !== null && (
+        <Toast text={favoriteError} icon={<IconWarningOutline16 size={14} />} onDone={favoriteErrorDone} />
       )}
       {toggled !== null && (
         <Toast

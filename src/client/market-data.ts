@@ -37,7 +37,7 @@ export interface RegistryPlugin {
   name: string
   owner: string
   url: string
-  npm?: string
+  npm?: string | null
   tarball?: string | null
   /** One legacy category id or several category ids. */
   category: string | string[]
@@ -80,6 +80,17 @@ export interface Registry {
   categories: Record<string, LocalizedText>
   plugins: RegistryPlugin[]
 }
+
+/** Discovery-time verdict derived from a package's public npm manifest. */
+export interface HostCompatibility {
+  status: 'compatible' | 'incompatible' | 'unknown'
+  basis: 'manifest' | 'undeclared' | 'unavailable'
+  requirement: string | null
+  declarations: Array<{ kind: 'engine' | 'peer'; package?: string; range: string }>
+}
+
+/** npm package name -> discovery-time host verdict. */
+export type HostCompatibilityMap = Record<string, HostCompatibility>
 
 /** Profile dependency map: package name → install spec. */
 export type InstalledMap = Record<string, string>
@@ -131,11 +142,17 @@ export interface MarketStatus {
   version?: string
   /** Whether the profile package manager owns the market dependency. */
   selfManaged?: boolean
-  /**
-   * Prefix to put in front of github.com URLs the BROWSER loads, or null to
-   * address them directly. Resolved by the server from the download region.
-   */
+  /** Legacy single prefix for browser bundles predating githubRoutes. */
   githubProxy?: string | null
+  /** Ordered per-service routes; null means the canonical GitHub URL. */
+  githubRoutes?: {
+    raw?: Array<string | null>
+    avatar?: Array<string | null>
+  }
+  /** Saved UI escape route, if any. */
+  githubProxyCustom?: string | null
+  /** True when DSHM_GITHUB_PROXY owns the effective route. */
+  githubProxyManaged?: boolean
   active?: boolean
   lastLine?: string
   seconds?: number
@@ -206,6 +223,8 @@ export interface InstalledPayload {
   groups?: Record<string, string[]>
   /** Display order of group names. */
   groupOrder?: string[]
+  /** Catalog entry URLs bookmarked for later install (#414). */
+  favorites?: string[]
 }
 
 /**
@@ -308,6 +327,10 @@ export interface ListQuery {
   sort: string
   /** Keep only plugins published within the last N days; undefined = any time. */
   sinceDays?: number
+  /** Optional discovery metadata, keyed by the entry's npm package name. */
+  hostCompatibility?: HostCompatibilityMap
+  /** Hide only entries that are known to be incompatible; unknown stays visible. */
+  compatibleWithHost?: boolean
 }
 
 /**
@@ -403,7 +426,7 @@ function pluginRelevance(
 
   return Math.max(
     fieldRelevance(plugin, plugin.name, query, tokens, 700),
-    fieldRelevance(plugin, plugin.npm, query, tokens, 700),
+    fieldRelevance(plugin, plugin.npm ?? undefined, query, tokens, 700),
     fieldRelevance(plugin, plugin.owner, query, tokens, 400),
     fieldRelevance(plugin, preferredDescription, query, tokens, 280),
     ...otherDescriptions.map(value => fieldRelevance(plugin, value, query, tokens, 240)),
@@ -455,6 +478,8 @@ export function visiblePlugins(plugins: RegistryPlugin[], options: ListQuery): R
     const categories = pluginCategories(plugin)
     if (options.category !== 'all' && !categories.includes(options.category)) return []
     if (options.sinceDays !== undefined && !withinDays(plugin.added, options.sinceDays)) return []
+    if (options.compatibleWithHost === true && plugin.npm != null
+      && options.hostCompatibility?.[plugin.npm]?.status === 'incompatible') return []
     const relevance = query === '' ? 0 : pluginRelevance(plugin, query, tokens, options.lang, options.categories)
     return relevance === 0 && query !== '' ? [] : [{ plugin, relevance, index }]
   })
@@ -464,6 +489,26 @@ export function visiblePlugins(plugins: RegistryPlugin[], options: ListQuery): R
     || comparePlugins(a.plugin, b.plugin, options.sort)
     || a.index - b.index,
   ).map(row => row.plugin)
+}
+
+/**
+ * Favorites tab listing: only bookmarked catalog entries, then the usual
+ * search/sort window. Pure — the section renders exactly this.
+ */
+export function pluginsForFavorites(
+  plugins: RegistryPlugin[],
+  favoriteUrls: ReadonlySet<string>,
+  options: Omit<ListQuery, 'category'>,
+): RegistryPlugin[] {
+  const subset = plugins.filter(plugin => favoriteUrls.has(plugin.url))
+  return visiblePlugins(subset, { ...options, category: 'all' })
+}
+
+/** Bookmarked URLs with no matching catalog entry — delisted or URL changed. */
+export function staleFavoriteUrls(urls: readonly string[], plugins: RegistryPlugin[]): string[] {
+  if (urls.length === 0) return []
+  const catalog = new Set(plugins.map(plugin => plugin.url))
+  return urls.filter(url => !catalog.has(url))
 }
 
 /** The themes tab listing: theme category only, most-starred first. */
@@ -778,33 +823,96 @@ export function themeSwatch(def: ThemeDef): string[] {
 // ------------------------------------------------------------- screenshots
 
 /**
- * Prefix for github.com URLs this page loads, or null to address them
- * directly. Set from the status poll, which gets it from the download region.
+ * Ordered routes for GitHub URLs this page loads. Set from the status poll,
+ * which resolves them from the download region on the server.
  *
- * Module state rather than a prop: the URLs it applies to are built in four
- * places across two files (avatars, README fetches, screenshot thumbnails),
- * and threading one string through every card would put it in signatures
- * that have no other reason to know about networking.
+ * Module state rather than a prop: avatars and README fetches are built in
+ * separate files, and threading the lists through every card would put them
+ * in signatures that have no other reason to know about networking.
  *
  * Applied at the LAST moment, never stored. Extracted image URLs stay
  * canonical, so changing region re-renders against the new route instead of
  * leaving a page full of links to a proxy the user just switched away from.
  */
-let githubProxy: string | null = null
+export type ClientGithubService = 'raw' | 'avatar'
+export interface ClientGithubRouteCandidate { proxy: string | null; url: string }
+export type ClientGithubRoutes = Partial<Record<ClientGithubService, Array<string | null>>>
 
-/** Point browser-side github.com requests at a proxy, or null for direct. */
+let githubRoutes: Record<ClientGithubService, Array<string | null>> = {
+  raw: [null],
+  avatar: [null],
+}
+const preferredGithubRoutes = new Map<ClientGithubService, string | null>()
+
+function cleanGithubRoutes(value: unknown, fallback: string | null): Array<string | null> {
+  if (!Array.isArray(value)) return [fallback]
+  const out: Array<string | null> = []
+  for (const item of value) {
+    if (item !== null && typeof item !== 'string') continue
+    const route = typeof item === 'string' ? item.trim().replace(/\/+$/u, '') : null
+    if (route === '' || out.includes(route)) continue
+    out.push(route)
+  }
+  return out.length === 0 ? [fallback] : out
+}
+
+/** Install server-resolved per-service candidates, with old-host fallback. */
+export function setGithubRoutes(routes: ClientGithubRoutes | undefined, fallback: string | null = null): void {
+  let changed = false
+  for (const service of ['raw', 'avatar'] as const) {
+    const next = cleanGithubRoutes(routes?.[service], fallback)
+    if (next.length === githubRoutes[service].length
+      && next.every((route, index) => route === githubRoutes[service][index])) continue
+    githubRoutes[service] = next
+    preferredGithubRoutes.delete(service)
+    changed = true
+  }
+  // Failed/empty README results are cached too. A route change is the user's
+  // explicit request to try a different path, so an old failure must not win.
+  if (changed) readmeShotsCache.clear()
+}
+
+/** Apply either a current status payload or its legacy single-prefix shape. */
+export function applyGithubRouting(status: Pick<MarketStatus, 'githubRoutes' | 'githubProxy'>): void {
+  setGithubRoutes(status.githubRoutes, typeof status.githubProxy === 'string' ? status.githubProxy : null)
+}
+
+/** Point every browser-side GitHub request at one legacy prefix. */
 export function setGithubProxy(proxy: string | null): void {
-  githubProxy = proxy
+  setGithubRoutes({ raw: [proxy], avatar: [proxy] }, proxy)
 }
 
-/** The proxy in force, for callers that must decide between two URL shapes. */
+/** First avatar prefix, retained for old consumers and tests. */
 export function githubProxyInUse(): string | null {
-  return githubProxy
+  return githubRoutes.avatar[0] ?? null
 }
 
-/** `url` through the proxy in force, or unchanged when there is none. */
+/** Candidates for one request, with that service's last winner first. */
+export function githubRouteCandidates(service: ClientGithubService, url: string): ClientGithubRouteCandidate[] {
+  const routes = [...githubRoutes[service]]
+  if (preferredGithubRoutes.has(service)) {
+    const preferred = preferredGithubRoutes.get(service)!
+    const index = routes.findIndex(route => route === preferred)
+    if (index > 0) routes.unshift(...routes.splice(index, 1))
+  }
+  return routes.map(proxy => ({ proxy, url: proxy === null ? url : `${proxy}/${url}` }))
+}
+
+/** Cache a route only after the consumer has validated its expected payload. */
+export function rememberGithubRoute(service: ClientGithubService, proxy: string | null): void {
+  preferredGithubRoutes.set(service, proxy)
+}
+
+/** Test/page-lifetime reset for both configured routes and learned winners. */
+export function resetGithubRouting(): void {
+  githubRoutes = { raw: [null], avatar: [null] }
+  preferredGithubRoutes.clear()
+}
+
+/** `url` through the first candidate for its host, retained for compatibility. */
 export function githubUrl(url: string): string {
-  return githubProxy === null ? url : `${githubProxy}/${url}`
+  const service: ClientGithubService = url.includes('avatars.githubusercontent.com') ? 'avatar' : 'raw'
+  return githubRouteCandidates(service, url)[0]!.url
 }
 
 /**
@@ -1057,12 +1165,27 @@ export function pluginScreenshotCandidates(plugin: RegistryPlugin): Promise<Scre
   const cached = readmeShotsCache.get(cacheKey)
   if (cached !== undefined) return cached
   const fetchReadme = async (path: string | null): Promise<string | null> => {
-    try {
-      const res = await fetch(githubUrl(`https://raw.githubusercontent.com/${owner}/${repo}/HEAD/${path === null ? '' : path + '/'}README.md`))
-      return res.ok ? await res.text() : null
-    } catch {
-      return null
+    const url = `https://raw.githubusercontent.com/${owner}/${repo}/HEAD/${path === null ? '' : path + '/'}README.md`
+    for (const candidate of githubRouteCandidates('raw', url)) {
+      const controller = new AbortController()
+      const timer = setTimeout(() => { controller.abort() }, 6000)
+      try {
+        const res = await fetch(candidate.url, { signal: controller.signal })
+        if (!res.ok) continue
+        const body = await res.text()
+        const contentType = res.headers.get('content-type')?.toLowerCase() ?? ''
+        // A public proxy's branded error document is not a README even when
+        // it carries HTTP 200. Validate before remembering the route.
+        if (contentType.includes('text/html') || /^\s*(?:<!doctype\s+html|<html[\s>])/iu.test(body)) continue
+        rememberGithubRoute('raw', candidate.proxy)
+        return body
+      } catch {
+        // Transport failure is exactly what the next candidate is for.
+      } finally {
+        clearTimeout(timer)
+      }
     }
+    return null
   }
   const task = (async () => {
     // Monorepo subpath entries prefer their own README, falling back to the

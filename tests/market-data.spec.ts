@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from 'vitest'
 import {
-  entryForDep, extractReadmeImageCandidates, extractReadmeImages, formatCount, groupSwitchState, installedForCatalog, isInstalled, isMarketItself, looksTerminal, matchInstalledName, orderedCategories, pageItems, pluginCategories, previewDimensionScore, rankThemeScreenshots, safeScreenshots, themePlugins, visiblePlugins, humanOutput, catalogEntryForInstalled} from '../src/client/market-data.ts'
+  entryForDep, extractReadmeImageCandidates, extractReadmeImages, formatCount, groupSwitchState, installedForCatalog, isInstalled, isMarketItself, looksTerminal, matchInstalledName, orderedCategories, pageItems, pluginCategories, pluginsForFavorites, previewDimensionScore, rankThemeScreenshots, safeScreenshots, staleFavoriteUrls, themePlugins, visiblePlugins, humanOutput, catalogEntryForInstalled} from '../src/client/market-data.ts'
 import type { RegistryPlugin, ScreenshotCandidate } from '../src/client/market-data.ts'
 
 function plugin(partial: Partial<RegistryPlugin>): RegistryPlugin {
@@ -448,6 +448,24 @@ describe('discover list (visiblePlugins)', () => {
     expect(themes.map(p => p.name)).toEqual(['whale-skin', 'starless-theme'])
   })
 
+  it('pluginsForFavorites keeps only bookmarked catalog entries', () => {
+    const rows = [
+      plugin({ name: 'dsh-loop', url: 'https://github.com/o/dsh-loop' }),
+      plugin({ name: 'dsh-notify', url: 'https://github.com/o/dsh-notify' }),
+    ]
+    const urls = new Set(['https://github.com/o/dsh-loop', 'https://github.com/ghost/gone'])
+    const listed = pluginsForFavorites(rows, urls, { query: '', lang: 'en', sort: 'stars-desc' })
+    expect(listed.map(p => p.name)).toEqual(['dsh-loop'])
+  })
+
+  it('staleFavoriteUrls lists bookmarks with no catalog row', () => {
+    const rows = [plugin({ name: 'dsh-loop', url: 'https://github.com/o/dsh-loop' })]
+    expect(staleFavoriteUrls(
+      ['https://github.com/o/dsh-loop', 'https://github.com/ghost/gone'],
+      rows,
+    )).toEqual(['https://github.com/ghost/gone'])
+  })
+
   it('orderedCategories pulls the active chip forward only while collapsed', () => {
     const cats = ['tool', 'theme', 'memory']
     // No visibleCount given: the conservative default, as if nothing had
@@ -502,6 +520,29 @@ describe('discover list (visiblePlugins)', () => {
     // No window keeps everything, including the dateless entry.
     expect(visiblePlugins(list, { category: 'all', query: '', lang: 'en', sort: 'x' }).map(p => p.name))
       .toEqual(['recent', 'week-old', 'month-old', 'no-date'])
+  })
+
+  it('host filtering removes only confirmed mismatches and keeps unknown entries visible', () => {
+    const rows = [
+      plugin({ name: 'matches', npm: 'matches' }),
+      plugin({ name: 'mismatch', npm: 'mismatch' }),
+      plugin({ name: 'undeclared', npm: 'undeclared' }),
+      plugin({ name: 'not-loaded-yet', npm: 'not-loaded-yet' }),
+      plugin({ name: 'github-only', npm: null }),
+    ]
+    const base = { basis: 'manifest' as const, requirement: '^0.1.2-alpha.2', declarations: [] }
+    const hostCompatibility = {
+      matches: { ...base, status: 'compatible' as const },
+      mismatch: { ...base, status: 'incompatible' as const },
+      undeclared: { status: 'unknown' as const, basis: 'undeclared' as const, requirement: null, declarations: [] },
+    }
+
+    expect(visiblePlugins(rows, {
+      category: 'all', query: '', lang: 'en', sort: 'x', hostCompatibility, compatibleWithHost: false,
+    }).map(plugin => plugin.name)).toEqual(rows.map(plugin => plugin.name))
+    expect(visiblePlugins(rows, {
+      category: 'all', query: '', lang: 'en', sort: 'x', hostCompatibility, compatibleWithHost: true,
+    }).map(plugin => plugin.name)).toEqual(['matches', 'undeclared', 'not-loaded-yet', 'github-only'])
   })
 })
 
