@@ -436,9 +436,11 @@ describe('discover pager (pageItems)', () => {
   })
 
   it('windows around the current page with leading/trailing ellipses', () => {
-    expect(pageItems(1, 17)).toEqual([1, 2, 3, 4, 5, '…', 17])
+    // The window is capped at five numbered buttons (current ± 1) so the
+    // pager fits one line in the settings dialog; 1 and N are always shown.
+    expect(pageItems(1, 17)).toEqual([1, 2, '…', 17])
     expect(pageItems(9, 17)).toEqual([1, '…', 8, 9, 10, '…', 17])
-    expect(pageItems(17, 17)).toEqual([1, '…', 13, 14, 15, 16, 17])
+    expect(pageItems(17, 17)).toEqual([1, '…', 16, 17])
   })
 })
 

@@ -231,10 +231,19 @@ function FilterMenu({ sortField, sortDir, timeRange, onSortField, onSortDir, onT
   )
 }
 
-/** First/prev/numbered/next/last controls plus a per-page-size menu — one
+/** Prev/numbered/next controls plus a per-page-size menu — one
  * implementation for every paged list, driven entirely by `usePagination`'s
  * return value. Owns its own page-size dropdown open state for the same
- * reason `FilterMenu` owns its own. */
+ * reason `FilterMenu` owns its own.
+ *
+ * Layout: the numbered cluster (`.pagerPages`) centers in the row and the
+ * page-info + page-size menu (`.pagerMeta`) sit on the right, all on ONE
+ * line. The host settings dialog gives this row ~556px (800px panel − 188px
+ * section nav − 48px options padding − 8px body padding), which fits only a
+ * compact pager: `pageItems` caps the numbered window (its 1 and N are
+ * always present, so skipping to either end stays one click away) and
+ * `.pager`/`.pagerPages` are nowrap with tight paddings — a wrapping pager
+ * reads as broken here. */
 function Pager({ currentPage, totalPages, pageSize, onGoToPage, onChangePageSize, t }: {
   currentPage: number
   totalPages: number
@@ -249,7 +258,6 @@ function Pager({ currentPage, totalPages, pageSize, onGoToPage, onChangePageSize
       <div className={css.pagerPages}>
         {totalPages > 1 && (
           <>
-            <Button variant="outline" size="sm" disabled={currentPage === 1} onClick={() => onGoToPage(1)} aria-label={t('firstPage')}>«</Button>
             <Button
               variant="outline"
               size="sm"
@@ -275,28 +283,29 @@ function Pager({ currentPage, totalPages, pageSize, onGoToPage, onChangePageSize
               disabled={currentPage === totalPages}
               onClick={() => onGoToPage(currentPage + 1)}
             >{t('nextPage')}<IconChevronRightOutline14 size={14} /></Button>
-            <Button variant="outline" size="sm" disabled={currentPage === totalPages} onClick={() => onGoToPage(totalPages)} aria-label={t('lastPage')}>»</Button>
-            <span className={css.pageInfo}>{t('pageInfo').replace('{0}', String(currentPage)).replace('{1}', String(totalPages))}</span>
           </>
         )}
       </div>
-      <Menu
-        open={sizeOpen}
-        onClose={() => setSizeOpen(false)}
-        onSelect={id => onChangePageSize(Number(id))}
-        selectedId={String(pageSize)}
-        align="end"
-        portal
-        anchor={(
-          <Button
-            variant="outline"
-            size="sm"
-            icon={<IconChevronDownOutline14 size={14} />}
-            onClick={() => setSizeOpen(o => !o)}
-          >{t('perPage') + ' ' + pageSize}</Button>
-        )}
-        items={PAGE_SIZES.map(size => ({ id: String(size), label: String(size) }))}
-      />
+      <div className={css.pagerMeta}>
+        {totalPages > 1 && <span className={css.pageInfo}>{t('pageInfo').replace('{0}', String(currentPage)).replace('{1}', String(totalPages))}</span>}
+        <Menu
+          open={sizeOpen}
+          onClose={() => setSizeOpen(false)}
+          onSelect={id => onChangePageSize(Number(id))}
+          selectedId={String(pageSize)}
+          align="end"
+          portal
+          anchor={(
+            <Button
+              variant="outline"
+              size="sm"
+              icon={<IconChevronDownOutline14 size={14} />}
+              onClick={() => setSizeOpen(o => !o)}
+            >{t('perPage') + ' ' + pageSize}</Button>
+          )}
+          items={PAGE_SIZES.map(size => ({ id: String(size), label: String(size) }))}
+        />
+      </div>
     </div>
   )
 }

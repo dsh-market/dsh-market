@@ -63,6 +63,23 @@ describe.skipIf(!HAS_DSH)('web e2e: plugin market', () => {
     expect(cards).toBe(24)
     // Numbered pager: primitives Buttons inside the pager row.
     expect(await page.locator('[class*="pager"] button').count()).toBeGreaterThan(0)
+    // The pager must stay on ONE line inside the fixed-width settings dialog
+    // (800px panel − 188px nav − 48px padding → ~556px content column):
+    // every button aligns to one row and none is clipped past the row edge
+    // (a centered nowrap row overflows on BOTH sides, which the host's
+    // overflow-x hidden turns into invisible controls).
+    const pagerRow = page.locator('[class*="pager"]').first()
+    const layout = await pagerRow.evaluate(row => {
+      const rect = row.getBoundingClientRect()
+      const btns = [...row.querySelectorAll('button')].map(b => b.getBoundingClientRect())
+      const tops = new Set(btns.map(b => Math.round(b.top + b.height / 2)))
+      return {
+        oneRow: tops.size === 1,
+        clipped: btns.some(b => b.left < rect.left - 1 || b.right > rect.right + 1),
+      }
+    })
+    expect(layout.oneRow).toBe(true)
+    expect(layout.clipped).toBe(false)
   })
 
   it('shows its own version next to the heading', async () => {

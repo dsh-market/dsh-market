@@ -948,7 +948,7 @@ describe('MarketSection (jsdom)', () => {
     await waitFor(() => expect(screen.getByText('dsh-p1')).toBeTruthy())
   })
 
-  it('switches page size and exposes first/last shortcuts', async () => {
+  it('switches page size and keeps direct 1/N page access in the numbered window', async () => {
     const plugins = Array.from({ length: 30 }, (_, i) => ({
       name: 'dsh-q' + (i + 1),
       owner: 'bob',
@@ -968,10 +968,13 @@ describe('MarketSection (jsdom)', () => {
     })
     render(<MarketSection {...props()} />)
     await screen.findByText('dsh-q1')
-    // First/last shortcuts jump straight to the edges.
-    expect(screen.getByRole('button', { name: en.firstPage })).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: en.lastPage }))
+    // The numbered window always exposes 1 and N, so both ends stay one
+    // click away without separate «/» glyphs crowding the single-line row.
+    expect(screen.getByRole('button', { name: '1' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '2' }))
     await waitFor(() => expect(screen.getByText('dsh-q30')).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: '1' }))
+    await waitFor(() => expect(screen.getByText('dsh-q1')).toBeTruthy())
     // A larger page size collapses the 30 plugins to a single page and hides
     // the numbered pager while keeping the size switcher visible. The
     // switcher is a primitives Menu: open it, then pick 48.

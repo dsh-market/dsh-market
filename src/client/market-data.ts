@@ -493,9 +493,11 @@ export function orderedCategories(
 
 /**
  * Page-number list for the discover pager. With few pages it is simply
- * 1..total; with many it windows around the current page and inserts '…'
- * so a 400-plugin catalog stays a compact `1 … 4 5 6 … 17` instead of a
- * long row of numbered buttons. Always begins with 1 and ends with total.
+ * 1..total; with many it windows around the current page —
+ * `1 … n-1 n n+1 … total` (at most five numbered buttons) — so a
+ * 400-plugin catalog stays compact instead of a long row of numbered
+ * buttons. Always begins with 1 and ends with total, so the first/last
+ * pages stay one click away even without the pager's «/» shortcuts.
  */
 export function pageItems(current: number, total: number): Array<number | '…'> {
   if (total <= 7) {
@@ -503,11 +505,9 @@ export function pageItems(current: number, total: number): Array<number | '…'>
     for (let i = 1; i <= total; i++) all.push(i)
     return all
   }
+  const start = Math.max(2, current - 1)
+  const end = Math.min(total - 1, current + 1)
   const items: Array<number | '…'> = [1]
-  let start = Math.max(2, current - 1)
-  let end = Math.min(total - 1, current + 1)
-  if (current <= 4) end = 5
-  if (current >= total - 3) start = total - 4
   if (start > 2) items.push('…')
   for (let i = start; i <= end; i++) items.push(i)
   if (end < total - 1) items.push('…')

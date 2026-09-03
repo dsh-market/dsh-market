@@ -550,10 +550,23 @@
 .backupCheckList .spec{flex:0 1 30%;max-width:30%;text-align:right;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .staleAction{margin-top:8px}
 .pct{font-weight:600;font-size:11px;flex-shrink:0;color:var(--dsw-alias-label-secondary,#6b7280)}
-.pager{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:16px 0 4px;flex-wrap:wrap}
-.pagerPages{display:flex;align-items:center;justify-content:center;gap:6px;flex-wrap:wrap;flex:1;min-width:0}
-.pageEllipsis{color:var(--dsw-alias-label-secondary,#9ca3af);font-size:12px;padding:0 2px}
+/* Single-line pager: the host settings dialog's content column is ~556px
+   (800px panel − 188px section nav − 48px options padding − 8px body
+   padding), so 上一页/下一页 + the numbered window + 第x/y页 + 每页n must
+   share ONE row. nowrap is safe because pageItems caps the numbered window
+   (five buttons max, 1 and N always present — the pager had no room for the
+   «/» skip glyphs: even the compact set measures ~60px over the column in
+   English, and a centered overflow clips them at the scroll edge). Compact
+   8px paddings (primitives sm uses 10px) keep the row inside the column.
+   Below 544px the pager falls back to two centered lines instead of
+   squeezing buttons. */
+.pager{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:16px 0 4px;flex-wrap:nowrap}
+.pagerPages{display:flex;align-items:center;justify-content:center;gap:4px;flex-wrap:nowrap;flex:1;min-width:0}
+.pagerMeta{display:flex;align-items:center;gap:6px;flex-wrap:nowrap;flex-shrink:0}
+.pagerPages button,.pagerMeta button{padding:0 8px;min-width:0}
+.pageEllipsis{color:var(--dsw-alias-label-secondary,#9ca3af);font-size:12px;padding:0 1px}
 .pageInfo{font-size:12px;color:var(--dsw-alias-label-secondary,#6b7280);white-space:nowrap}
+@container (max-width:544px){.pager{flex-wrap:wrap;justify-content:center;gap:8px}.pagerPages{flex-basis:100%}}
 /* #60: per-plugin enable/disable switches, deprecation badges, custom groups */
 .depBadge{border:1px solid var(--dsw-alias-state-warn-primary,#b45309);color:var(--dsw-alias-state-warn-primary,#b45309);border-radius:4px;flex-shrink:0;padding:1px 6px;font-size:11px;line-height:16px;font-weight:600;white-space:nowrap;margin-left:6px}
 .deprecate{font-size:12px;line-height:18px;color:var(--dsw-alias-state-warn-primary,#b45309);background:var(--dsw-alias-bg-layer-2,#fdf3e3);border:1px solid var(--dsw-alias-border-l2,#f3e3c3);border-radius:8px;padding:8px 10px;margin:0}
