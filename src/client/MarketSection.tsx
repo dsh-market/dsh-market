@@ -3961,8 +3961,15 @@ export function MarketSection(props: MarketSectionProps) {
         <div className={css.err}>
           {installError}
           <div className={css.staleAction}>
+            {/* Primary, because the banner's own words point at it ("点
+                「立即更新」不再等待") and it is the way out of the wait. With
+                the default variant it inherited the banner's 12px red text
+                and sat flush against the export button, which is why #410
+                was reported as "there is no such button" — @Dave-12138
+                spotted it in the reporter's own screenshot: it was there,
+                it just did not look like one. */}
             {staleName !== null && (
-              <Button size="sm" onClick={() => doUpdate(staleName, true)}>{t('updateNow')}</Button>
+              <Button variant="primary" size="sm" onClick={() => doUpdate(staleName, true)}>{t('updateNow')}</Button>
             )}
             {/* The banner text told users to export the log; now it IS the button (#84). */}
             <Button
