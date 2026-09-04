@@ -226,6 +226,8 @@ interface PublicAddress {
 interface WebdavResponse {
   status: number
   body: Buffer
+  /** The Location header, for the GET redirect loop in downloadWebdav. */
+  location?: string
 }
 
 async function webdavRequest(
@@ -286,7 +288,11 @@ async function webdavRequest(
         }
         chunks.push(value)
       })
-      response.once('end', () => resolveRequest({ status: response.statusCode ?? 0, body: Buffer.concat(chunks) }))
+      response.once('end', () => resolveRequest({
+        status: response.statusCode ?? 0,
+        body: Buffer.concat(chunks),
+        ...(typeof response.headers.location === 'string' ? { location: response.headers.location } : {}),
+      }))
     })
     request.once('error', reject)
     request.end(body)
@@ -401,8 +407,43 @@ export async function resolvePublicAddress(hostname: string): Promise<PublicAddr
   return { address: selected.address, family: selected.family }
 }
 
+/**
+ * How many redirects a download will follow before giving up. Providers use
+ * one hop (WebDAV endpoint -> signed CDN link); five tolerates a CDN's own
+ * indirection without letting two servers ping-pong forever.
+ */
+const MAX_REDIRECTS = 5
+
 export async function downloadWebdav(url: string, username: string, password: string): Promise<unknown> {
-  const response = await webdavRequest(url, username, password, 'GET')
+  // Some providers answer a WebDAV GET with 302 to a time-limited signed CDN
+  // link while accepting PUT directly on the same path (#480 by @zhyx1996,
+  // measured against 123pan) — so upload worked and restore failed with
+  // "HTTP 302". Only GET follows: the upload path is direct on every
+  // provider seen, and replaying a PUT body across redirects is a can of
+  // worms nothing currently needs opened.
+  //
+  // Every hop goes back through webdavRequest, so the full SSRF gate —
+  // https-only, no credentials in the URL, resolvePublicAddress with the
+  // rebinding-safe direct-IP connect — is re-run per target, not only on the
+  // first one. A redirect is the server choosing the next URL; trusting it
+  // half as much as the user's own input would invert the threat model.
+  //
+  // Credentials do NOT cross origins. The signed link authorizes itself;
+  // forwarding Basic auth to whatever host the server named would hand the
+  // user's WebDAV password to a third party on the server's say-so.
+  let currentUrl = url
+  let response = await webdavRequest(currentUrl, username, password, 'GET')
+  for (let hop = 0; hop < MAX_REDIRECTS; hop += 1) {
+    if (response.status !== 301 && response.status !== 302 && response.status !== 303
+      && response.status !== 307 && response.status !== 308) break
+    if (response.location === undefined) break
+    const next = new URL(response.location, currentUrl)
+    const sameOrigin = next.origin === new URL(currentUrl).origin
+    currentUrl = next.toString()
+    response = sameOrigin
+      ? await webdavRequest(currentUrl, username, password, 'GET')
+      : await webdavRequest(currentUrl, '', '', 'GET')
+  }
   if (response.status < 200 || response.status >= 300) {
     throw new Error(response.status === 404
       ? 'WebDAV download failed: HTTP 404 — no backup at that path yet. Upload one first, and check the URL points at the backup FILE (…/dsh/backup.json), not its folder / 该路径下还没有备份文件。请先执行一次上传，并确认地址指向备份文件本身（…/dsh/backup.json）而不是目录'
