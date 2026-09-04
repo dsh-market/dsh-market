@@ -225,7 +225,25 @@ describe('findCatalogEntryForLocal', () => {
     expect(resolveCatalogRestore(plugins, 'dsh-humanizer', ['handsomeliu/dsh-humanizer']))
       .toEqual({ ok: false, reason: 'repo-mismatch' })
     expect(resolveCatalogRestore(plugins, 'dsh-humanizer', ['lynote-ai/dsh-humanizer']))
-      .toEqual({ ok: true, entry: plugins[0] })
+      .toEqual({ ok: true, entry: plugins[0], verified: true })
+  })
+
+  it('marks a name-only match as unverified rather than presenting it as the source (#485)', () => {
+    // A local checkout that declares no repository gives the market nothing
+    // to match on, so a unique same-named catalog entry is a guess. Usually
+    // a good one — the local copy is a tweaked copy of that entry — but
+    // @liuwenji007's fork restored to a different author's plugin that
+    // happened to share the name, which is someone else's code arriving
+    // under a button labelled "restore". The match is kept; the caller is
+    // told not to present it as a certainty.
+    const plugins = [
+      { name: 'dsh-humanizer', npm: 'dsh-humanizer', url: 'https://github.com/lynote-ai/dsh-humanizer' },
+    ]
+    expect(resolveCatalogRestore(plugins, 'dsh-humanizer'))
+      .toEqual({ ok: true, entry: plugins[0], verified: false })
+    // A hint is evidence: the entry agreed with something other than a name.
+    expect(resolveCatalogRestore(plugins, 'dsh-humanizer', [], ['lynote-ai/dsh-humanizer']))
+      .toEqual({ ok: true, entry: plugins[0], verified: true })
   })
 })
 

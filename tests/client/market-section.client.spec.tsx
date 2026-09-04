@@ -2601,7 +2601,7 @@ describe('local-dev restore', () => {
     fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
     expect(screen.queryByRole('button', { name: en.restore })).toBeNull()
     fireEvent.click(await screen.findByRole('button', { name: en.restoreOnline }))
-    expect(await screen.findByText((content: string) => content.includes(en.restoreHint.slice(0, 32)))).toBeTruthy()
+    expect(await screen.findByText((content: string) => content.includes(en.restoreNameOnlyHint.slice(0, 40)))).toBeTruthy()
     expect(fetchCalls.some(call => call.path === '/dsh-market/update')).toBe(false)
     fireEvent.click(screen.getByRole('button', { name: en.restoreProceed }))
     await waitFor(() => {
@@ -2646,6 +2646,45 @@ describe('local-dev restore', () => {
     expect(fetchCalls.some(call => call.body?.restore === true)).toBe(false)
   })
 
+  it('says a name-only catalog match is unverified, and names whose plugin it is (#485)', async () => {
+    // The local copy declares no repository, so the catalog row below agreed
+    // on nothing but the package name — and its owner may be a stranger.
+    // Presenting that as "restore to your online source" is how @liuwenji007's
+    // fork was offered a different author's plugin of the same name.
+    stubFetch({
+      '/dsh-market/registry': {
+        source: 'live',
+        registry: {
+          ...REGISTRY,
+          plugins: [
+            ...REGISTRY.plugins,
+            {
+              name: 'dsh-humanizer', owner: 'lynote-ai', url: 'https://github.com/lynote-ai/dsh-humanizer',
+              category: 'tools', npm: 'dsh-humanizer', stars: 3,
+              added: '2026-08-20', description: { en: 'Humanizer', zh: '拟人化' }, install: '',
+            },
+          ],
+        },
+      },
+      '/dsh-market/installed': {
+        profile: 'web', installed: { 'dsh-humanizer': 'link:/Users/me/dsh-humanizer' }, live: [],
+      },
+      '/dsh-market/updates': { updates: { 'dsh-humanizer': { kind: 'linked', version: '0.1.0', updateAvailable: false } } },
+      '/dsh-market/update': { ok: true },
+    })
+    render(<MarketSection {...props()} />)
+    // Wait for the CATALOG, not just the installed list: the restore dialog
+    // needs it to resolve an entry, and clicking before it lands is a no-op
+    // that reads as "the button did nothing".
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    fireEvent.click(await screen.findByRole('button', { name: en.restore }))
+    expect(await screen.findByText((content: string) => content.includes(en.restoreNameOnlyHint.slice(0, 40)))).toBeTruthy()
+    // The owner is on screen to be checked against, not buried in a link.
+    expect(await screen.findByText((content: string) => content.includes('lynote-ai'))).toBeTruthy()
+    expect(screen.queryByText((content: string) => content.includes(en.restoreHint.slice(0, 32)))).toBeNull()
+  })
+
   it('asks in a modal before swapping a linked plugin to the catalog', async () => {
     stubFetch({
       '/dsh-market/installed': { profile: 'web', installed: { 'dsh-loop': 'link:../dsh-loop' }, live: [] },
@@ -2660,7 +2699,7 @@ describe('local-dev restore', () => {
     expect(screen.getByRole('status', { name: en.linkedDev })).toBeTruthy()
     const restoreBtn = await screen.findByRole('button', { name: en.restore })
     fireEvent.click(restoreBtn)
-    expect(await screen.findByText((content: string) => content.includes(en.restoreHint.slice(0, 32)))).toBeTruthy()
+    expect(await screen.findByText((content: string) => content.includes(en.restoreNameOnlyHint.slice(0, 40)))).toBeTruthy()
     expect(fetchCalls.some(call => call.path === '/dsh-market/update')).toBe(false)
     fireEvent.click(screen.getByRole('button', { name: en.restoreProceed }))
     await waitFor(() => {
@@ -2730,9 +2769,9 @@ describe('local-dev restore', () => {
     render(<MarketSection {...props()} />)
     fireEvent.click(await screen.findByRole('button', { name: /Installed/ }))
     fireEvent.click(await screen.findByRole('button', { name: en.restore }))
-    expect(await screen.findByText((content: string) => content.includes(en.restoreHint.slice(0, 32)))).toBeTruthy()
+    expect(await screen.findByText((content: string) => content.includes(en.restoreNameOnlyHint.slice(0, 40)))).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: en.cancel }))
-    expect(screen.queryByText((content: string) => content.includes(en.restoreHint.slice(0, 32)))).toBeNull()
+    expect(screen.queryByText((content: string) => content.includes(en.restoreNameOnlyHint.slice(0, 40)))).toBeNull()
     expect(fetchCalls.some(call => call.path === '/dsh-market/update')).toBe(false)
   })
 
