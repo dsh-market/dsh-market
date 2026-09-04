@@ -1368,7 +1368,7 @@ export function MarketSection(props: MarketSectionProps) {
   // Plugin blocked by pnpm's fresh-release safety wait; arms the update-now button.
   const [staleName, setStaleName] = useState<string | null>(null)
   // Local link:/file: restore — a modal asks before swapping to the catalog.
-  const [restoreConfirm, setRestoreConfirm] = useState<{ name: string; entry: RegistryPlugin } | null>(null)
+  const [restoreConfirm, setRestoreConfirm] = useState<{ name: string; entry: RegistryPlugin; verified: boolean } | null>(null)
   const [restoreBlocked, setRestoreBlocked] = useState<{ name: string; reason: 'no-catalog' | 'repo-mismatch' } | null>(null)
   // Snapshot the source switch the user agreed to review; later renders must not change it under the dialog.
   const [migrationConfirm, setMigrationConfirm] = useState<SourceMigrationConfirm | null>(null)
@@ -2544,7 +2544,7 @@ export function MarketSection(props: MarketSectionProps) {
         setRestoreBlocked({ name, reason: resolved.reason })
         return
       }
-      setRestoreConfirm({ name, entry: resolved.entry })
+      setRestoreConfirm({ name, entry: resolved.entry, verified: resolved.verified })
       return
     }
     const entry = entryForDep(data.plugins, name, specText, repoIdentities[name], repoHints[name])
@@ -2553,7 +2553,9 @@ export function MarketSection(props: MarketSectionProps) {
       setRestoreBlocked({ name, reason: 'no-catalog' })
       return
     }
-    setRestoreConfirm({ name, entry })
+    // Not a local checkout: the entry was resolved from the install spec
+    // itself, which names the source. Nothing was guessed from the name.
+    setRestoreConfirm({ name, entry, verified: true })
   }, [data, installed, repoHints, repoIdentities])
 
   /** Open the update-notes dialog and start its fetch. Lazy: the request only
@@ -5039,7 +5041,11 @@ export function MarketSection(props: MarketSectionProps) {
           open
           onClose={() => setRestoreConfirm(null)}
           title={`${t('restoreOnline')} ${restoreConfirm.name}?`}
-          description={`${t('restoreHint')}\n\n${restoreConfirm.entry.owner} · ${restoreConfirm.entry.url}`}
+          // An unverified match is named for what it is (#485). The local
+          // copy declares no repository, so the only thing that agrees with
+          // the catalog entry below is the package name — and the owner on
+          // that line may be a stranger, not the author of this checkout.
+          description={`${restoreConfirm.verified ? t('restoreHint') : t('restoreNameOnlyHint')}\n\n${restoreConfirm.entry.owner} · ${restoreConfirm.entry.url}`}
           footer={(
             <>
               <Button variant="ghost" onClick={() => setRestoreConfirm(null)}>{t('cancel')}</Button>

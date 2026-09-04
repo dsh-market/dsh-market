@@ -172,6 +172,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			restore: "恢复",
 			restoreOnline: "换用线上版本",
 			restoreHint: "会卸载本地版本，重新安装线上版本，并保持更新检测。无法回退，请二次确认。",
+			restoreNameOnlyHint: "你本地这份没有写明来自哪个仓库，市场只能按包名去精选目录里找，找到的是下面这一个——它可能是同名的另一个作者写的插件，不是你这份的来源。确认前请先核对下面的作者和仓库地址。会卸载本地版本并安装它，无法回退。",
 			restoreContinue: "继续更新",
 			restoreProceed: "确认恢复",
 			restoreNoCatalogTitle: "无法恢复",
@@ -692,6 +693,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			restore: "Restore",
 			restoreOnline: "Use online version",
 			restoreHint: "This will uninstall the local version, reinstall the catalog version, and keep update checks. This cannot be undone — please confirm again.",
+			restoreNameOnlyHint: "Your local copy does not say which repository it came from, so the market could only match it by package name. The catalog entry below is what that found — it may be a different author's plugin that happens to share the name, not the source of your copy. Check the owner and repository below before confirming. This uninstalls the local version and installs that one, and cannot be undone.",
 			restoreContinue: "Continue update",
 			restoreProceed: "Confirm restore",
 			restoreNoCatalogTitle: "Cannot restore",
@@ -1163,12 +1165,29 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const nameKey = name.toLowerCase();
 			return plugins.filter((plugin) => plugin.name.toLowerCase() === nameKey || typeof plugin.npm === "string" && plugin.npm.toLowerCase() === nameKey);
 		}
-		/** Why a local restore was blocked, when findCatalogEntryForLocal returned null. */
+		/**
+		* Why a local restore was blocked, when findCatalogEntryForLocal returned
+		* null — and, when it matched, whether anything but the NAME agreed.
+		*
+		* `verified` is the difference between "put this back where it came from"
+		* and "install the catalog's plugin that happens to share this name". A
+		* local checkout with no declared repo — no git remote, no `repository`
+		* field — gives the market nothing to match on, so a unique same-named
+		* catalog entry is a guess. Usually a good one (#429: the local copy IS a
+		* tweaked copy of that entry). Not always: @liuwenji007 reported a fork of
+		* their own `dsh-humanizer` restored to a different author's plugin of the
+		* same name (#485), which is someone else's code arriving under a button
+		* labelled "restore".
+		*
+		* The match is kept, because refusing it would break the ordinary case, and
+		* the caller is told not to present it as a certainty.
+		*/
 		function resolveCatalogRestore(plugins, name, identities = [], hints = []) {
 			const entry = findCatalogEntryForLocal(plugins, name, identities, hints);
 			if (entry !== null) return {
 				ok: true,
-				entry
+				entry,
+				verified: identities.length > 0 || hints.length > 0
 			};
 			if (catalogEntriesByName(plugins, name).length === 0) return {
 				ok: false,
@@ -7147,7 +7166,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					}
 					setRestoreConfirm({
 						name,
-						entry: resolved.entry
+						entry: resolved.entry,
+						verified: resolved.verified
 					});
 					return;
 				}
@@ -7162,7 +7182,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				}
 				setRestoreConfirm({
 					name,
-					entry
+					entry,
+					verified: true
 				});
 			}, [
 				data,
@@ -10149,7 +10170,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						open: true,
 						onClose: () => setRestoreConfirm(null),
 						title: `${t("restoreOnline")} ${restoreConfirm.name}?`,
-						description: `${t("restoreHint")}\n\n${restoreConfirm.entry.owner} · ${restoreConfirm.entry.url}`,
+						description: `${restoreConfirm.verified ? t("restoreHint") : t("restoreNameOnlyHint")}\n\n${restoreConfirm.entry.owner} · ${restoreConfirm.entry.url}`,
 						footer: /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 							variant: "ghost",
 							onClick: () => setRestoreConfirm(null),
