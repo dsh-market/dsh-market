@@ -47,7 +47,7 @@ export interface PnpmFailure {
   code: 'adding-to-root' | 'not-a-workspace' | 'hoist-pattern-diff' | 'pnpm-missing' | 'release-age-violation'
     | 'ignored-builds' | 'git-prepare-not-allowed' | 'fetch-404' | 'transient-network' | 'fetch-timeout'
     | 'unexpected-store' | 'patch-failed' | 'missing-tarball-integrity' | 'windows-file-locked'
-    | 'pnpm-unusable'
+    | 'pnpm-unusable' | 'missing-local-dependency'
   /** Bilingual, actionable message shown to the user instead of the raw wall of text. */
   message: string
   /** True when re-running `pnpm install` in the profile is the documented recovery. */
@@ -387,6 +387,27 @@ export function classifyPnpmFailure(output: string, exitCode?: number | null): P
       code: 'pnpm-missing',
       recoverable: false,
       message: '找不到 pnpm，请先在市场页顶部一键安装组件 / pnpm is not on PATH — use the one-click setup at the top of the market page',
+    }
+  }
+  // Reported by @screamff on #436: a `file:` dependency whose tarball or
+  // directory is no longer on disk. pnpm re-resolves every direct dependency
+  // before ANY mutation, so one dead local path blocks every install and
+  // uninstall in the profile — including uninstalling the market, which is
+  // what the reporter was trying to do. Same family as the #65 ghost
+  // registry entry; the local form has its own error, and it names the PATH
+  // rather than the package, which is why "a plugin is missing" was never a
+  // usable description of it.
+  //
+  // Measured on pnpm 10.28.2 and 11.21.0 (both exit 254): the wording only
+  // differs in how the code is bracketed, and both carry the path and the
+  // "direct dependency" line. Both are required — an ENOENT from a build
+  // script is a different failure and must not wear this explanation.
+  const localMiss = /ENOENT: no such file or directory, open '([^']+)'/.exec(output)
+  if (localMiss !== null && output.includes('while installing a direct dependency')) {
+    return {
+      code: 'missing-local-dependency',
+      recoverable: false,
+      message: `profile 里有一个从本地文件安装的插件，它的文件已经不在了（${localMiss[1]}）。pnpm 在做任何改动前都会重新解析全部直接依赖，所以这一条会挡住这个 profile 里的所有安装和卸载——包括卸载别的插件。请在 profile 的 package.json 的 dependencies 里删掉值等于上面这个路径的那一行（或在市场的「已安装」里卸载它），然后重试。 / a plugin in this profile was installed from a local file that no longer exists (${localMiss[1]}). pnpm re-resolves every direct dependency before making any change, so this one entry blocks every install and uninstall in the profile — including uninstalling other plugins. Remove the dependency whose value is that path from the profile's package.json (or uninstall it from the market's Installed list) and retry.`,
     }
   }
   // #502 by @Ztyss: a pnpm WAS found on PATH and could not be started.
