@@ -7018,6 +7018,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						if (body.partial === true) setInstallError(t("partialNote"));
 						return;
 					}
+					if (status === 200 && body.ok && body.skipped === "current") {
+						setRecords((list) => drop(list, updateRecordId));
+						refreshInstalled(true);
+						return;
+					}
 					if (status === 200 && body.ok) {
 						setRecords((list) => patch(list, updateRecordId, { state: "done" }));
 						setUpdatedNames((names) => names.concat(name));
@@ -7582,12 +7587,17 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					const name = names.shift();
 					if (name === void 0) {
 						setUpdatingAll(false);
+						refreshInstalled(true);
 						return;
 					}
 					doUpdate(name).then(next, next);
 				};
 				next();
-			}, [reminderBatchUpdatableNames, doUpdate]);
+			}, [
+				reminderBatchUpdatableNames,
+				doUpdate,
+				refreshInstalled
+			]);
 			const finishRestore = (0, react.useCallback)((body) => {
 				const errors = Array.isArray(body.errors) ? body.errors : [];
 				const unportable = Array.isArray(body.unportable) ? body.unportable : [];
