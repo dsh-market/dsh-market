@@ -68,6 +68,11 @@ export interface WebScaffold {
   home: string
   /** Stop dsh and boot it again on the same DSH_HOME, same port. */
   restart(): Promise<void>
+  /**
+   * Move a fixture's `latest` dist-tag — an author publishing a release
+   * while the user is running the previous one. Throws without fixtures.
+   */
+  publish(name: string, version: string): void
   close(): Promise<void>
 }
 
@@ -364,8 +369,12 @@ export interface ScaffoldOptions {
    * Fixture directories under `tests/web/fixtures` to publish to a local
    * npm registry and list in a curated catalog the market is pointed at.
    * With this set the specs can drive the REAL install route end to end.
+   *
+   * `{ dir, version }` publishes the same fixture directory again under a
+   * different version, which is how a spec gets something to update TO. The
+   * last entry for a name is the registry's `latest`.
    */
-  fixtures?: string[]
+  fixtures?: (string | { dir: string; version: string })[]
 }
 
 function run(command: string, env: NodeJS.ProcessEnv, cwd: string = REPO_ROOT): void {
@@ -421,7 +430,9 @@ export async function launchMarketScaffold(options: ScaffoldOptions = {}): Promi
   // specs install go through real resolution without touching the network.
   let registry: FixtureRegistry | null = null
   if (options.fixtures !== undefined && options.fixtures.length > 0) {
-    registry = await startFixtureRegistry(options.fixtures.map(dir => packFixture(dir, home)))
+    registry = await startFixtureRegistry(options.fixtures.map(
+      entry => typeof entry === 'string' ? packFixture(entry, home) : packFixture(entry.dir, home, entry.version),
+    ))
     writeFileSync(
       join(home, 'profiles', 'web', '.npmrc'),
       // minimum-release-age=0: a fixture "published" seconds ago would
@@ -431,7 +442,18 @@ export async function launchMarketScaffold(options: ScaffoldOptions = {}): Promi
     // npm_config_registry OUTRANKS .npmrc, and `npm run test:web` puts the
     // caller's registry there — so the file alone silently sends pnpm to the
     // public registry, where a fixture does not exist. Set both.
-    env = { ...env, DSHM_REGISTRY_URL: registry.catalogUrl, npm_config_registry: registry.npmUrl }
+    // DSHM_NPM_MIRROR as well as the pnpm registry: the market reads package
+    // METADATA itself (update checks, #45's publish times) through its own
+    // region routing table, which npm_config_registry does not touch. Without
+    // it a fixture's update check goes to the public registry, 404s, and the
+    // market truthfully reports "no update" for a package that only exists
+    // here — a green run that asserted nothing.
+    env = {
+      ...env,
+      DSHM_REGISTRY_URL: registry.catalogUrl,
+      npm_config_registry: registry.npmUrl,
+      DSHM_NPM_MIRROR: registry.npmUrl.replace(/\/+$/, ''),
+    }
   }
 
   const port = await freePort()
@@ -531,6 +553,10 @@ export async function launchMarketScaffold(options: ScaffoldOptions = {}): Promi
       launched = await boot()
       child = launched.child
       processLaunchUrl = launched.processLaunchUrl
+    },
+    publish: (name: string, version: string): void => {
+      if (registry === null) throw new Error('no fixture registry — pass `fixtures` to launchMarketScaffold')
+      registry.setLatest(name, version)
     },
     close: async () => {
       await registry?.close()
