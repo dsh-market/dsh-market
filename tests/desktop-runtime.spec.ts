@@ -198,9 +198,23 @@ describe('Anywhere Labs install boundary (#215, #219, #272)', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ version: '2.3.4' }), { status: 200 })))
     const { service, plain, boundary } = boundaryService()
     const runtime = createDesktopPluginRuntime(service, profileFixture(), '/tmp', 10_000)
-    await runtime.runPlugin('web', ['add', 'example-plugin'])
+    const result = await runtime.runPlugin('web', ['add', 'example-plugin'])
     expect(plain, 'add went down the path their host refuses').toHaveLength(0)
     expect(boundary[0]?.args).toContain('example-plugin@2.3.4')
+    // Update verification must see the pin this host actually sent (#496).
+    expect(result.resolvedNpmVersion).toBe('2.3.4')
+    await runtime.dispose()
+  })
+
+  it('reports an already-exact add target as resolvedNpmVersion without re-fetching', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ version: '9.9.9' }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const { service, boundary } = boundaryService()
+    const runtime = createDesktopPluginRuntime(service, profileFixture(), '/tmp', 10_000)
+    const result = await runtime.runPlugin('web', ['add', 'example-plugin@1.2.3'])
+    expect(boundary[0]?.args).toContain('example-plugin@1.2.3')
+    expect(result.resolvedNpmVersion).toBe('1.2.3')
+    expect(fetchMock).not.toHaveBeenCalled()
     await runtime.dispose()
   })
 
