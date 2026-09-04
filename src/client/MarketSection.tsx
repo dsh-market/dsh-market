@@ -2398,6 +2398,17 @@ export function MarketSection(props: MarketSectionProps) {
           if (body.partial === true) setInstallError(t('partialNote'))
           return
         }
+        // The plugin is already on the version this update would install
+        // (#495 by @Ztyss) — the list this row came from was taken before an
+        // earlier round of the same batch moved it. Not a failure and not a
+        // change: the row goes away, the list is re-read so the rest of it is
+        // trustworthy too, and no restart is claimed, because nothing on disk
+        // moved.
+        if (status === 200 && body.ok && body.skipped === 'current') {
+          setRecords(list => drop(list, updateRecordId))
+          refreshInstalled(true)
+          return
+        }
         if (status === 200 && body.ok) {
           setRecords(list => patchRecord(list, updateRecordId, { state: 'done' }))
           setUpdatedNames(names => names.concat(name))
@@ -2981,12 +2992,17 @@ export function MarketSection(props: MarketSectionProps) {
       const name = names.shift()
       if (name === undefined) {
         setUpdatingAll(false)
+        // The queue was a snapshot taken before any of it ran, and a batch is
+        // where it drifts furthest from the profile (#495): re-read the list
+        // once at the end so what is left on screen is what is actually still
+        // updatable, forced past the 30-minute listing cache.
+        refreshInstalled(true)
         return
       }
       doUpdate(name).then(next, next)
     }
     next()
-  }, [reminderBatchUpdatableNames, doUpdate])
+  }, [reminderBatchUpdatableNames, doUpdate, refreshInstalled])
 
   const finishRestore = useCallback((body: { errors?: unknown; unportable?: unknown; bootErrors?: unknown }) => {
     const errors = Array.isArray(body.errors) ? body.errors as { name?: unknown; error?: unknown }[] : []

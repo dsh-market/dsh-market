@@ -2847,10 +2847,32 @@ sendJson(response, 200, { updates })
               const refuse = selfChannel === null
                 ? installedVersion !== null && registryLatest !== null && !isUpgrade(installedVersion, registryLatest)
                 : installedVersion !== null && registryLatest !== null && installedVersion === registryLatest
+              // "Already there" is not a failure (#495 by @Ztyss). The two
+              // halves of this guard are different events wearing one reply:
+              // the registry pointing at an OLDER release is a downgrade the
+              // user must see, while it pointing at exactly what is installed
+              // means the request is a no-op — usually because the page's
+              // updatable list was snapshotted before an earlier round of the
+              // same batch updated this plugin. Answering that with a 400 made
+              // a batch that did everything right report "update failed" for
+              // three plugins that were already on the version they asked for.
+              //
+              // 200 with `skipped`, so the page can drop the row and re-read
+              // the list rather than counting a failure; no restart is owed,
+              // because nothing on disk changed.
+              if (refuse && installedVersion === registryLatest) {
+                logEvent('info', 'update', `${name} already current at ${installedVersion}; nothing to do`)
+                // The listing that offered this update is provably behind the
+                // profile, so drop it rather than serve the same wrong row for
+                // the rest of the TTL.
+                invalidateUpdates()
+                sendJson(response, 200, { ok: true, skipped: 'current', name, version: installedVersion })
+                return
+              }
               if (refuse) {
                 logEvent('info', 'update', `${name} refused: latest=${registryLatest} is not newer than installed=${installedVersion}`)
                 sendJson(response, 400, {
-                  error: `已是最新：registry 的 latest 是 ${registryLatest}，不高于已装的 ${installedVersion}，更新会造成降级。 / Already current: the registry's latest (${registryLatest}) is not newer than the installed ${installedVersion}, so updating would downgrade it.`,
+                  error: `更新会降级：registry 上的最新版是 ${registryLatest}，比已装的 ${installedVersion} 还旧，已停止，插件保持不变。 / Updating would downgrade this plugin: the registry's latest (${registryLatest}) is older than the installed ${installedVersion}, so nothing was changed.`,
                 })
                 return
               }

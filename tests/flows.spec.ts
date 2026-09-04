@@ -1457,6 +1457,39 @@ describe('update flow — no npm publishing required', () => {
     expect(installedSpec('dsh-loop')).toBe('^1.0.0')
   })
 
+  it('skips an update for a plugin already on the registry latest, without touching pnpm (#495)', async () => {
+    // The page's updatable list is a snapshot. A batch that already updated
+    // this plugin a round earlier re-submits it from that snapshot; answering
+    // "已是最新" with a 400 made the batch report failures for work it had
+    // just done correctly. Nothing to install, so nothing to fail.
+    advanceNpmLatest('1.0.0')
+    const callsBefore = fake.calls.length
+
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+
+    expect(r.status).toBe(200)
+    expect(r.json).toMatchObject({ ok: true, skipped: 'current', name: 'dsh-loop', version: '1.0.0' })
+    expect(fake.calls).toHaveLength(callsBefore)
+    expect(installedSpec('dsh-loop')).toBe('^1.0.0')
+  })
+
+  it('still refuses when the registry latest is OLDER than what is installed (#64)', async () => {
+    // The other half of the same guard, and a different event: the dist-tag
+    // was moved back to a previous release, so updating would walk the
+    // profile backwards. That one the user has to see.
+    advanceNpmLatest('1.2.0')
+    expect((await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })).json.ok).toBe(true)
+    advanceNpmLatest('0.9.0')
+    const callsBefore = fake.calls.length
+
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+
+    expect(r.status).toBe(400)
+    expect(String(r.json.error)).toMatch(/更新会降级|would downgrade/)
+    expect(r.json.skipped).toBeUndefined()
+    expect(fake.calls).toHaveLength(callsBefore)
+  })
+
   it('exposes a versioned capability and update-check contract for plugin-owned UIs', async () => {
     advanceNpmLatest('1.2.0')
     const capabilities = await bed.dispatch('GET', '/dsh-market/api/v1/capabilities')
