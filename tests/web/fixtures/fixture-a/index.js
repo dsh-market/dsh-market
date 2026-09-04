@@ -13,10 +13,26 @@
  * registered here outlive the plugin's disposal, and a probe built on one
  * reports a disabled plugin as still alive.
  */
-import { writeFileSync, rmSync } from 'node:fs'
+import { writeFileSync, rmSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 export const name = 'dshm-e2e-fixture-a'
+
+/**
+ * The version of the build that is actually RUNNING, read from the copy of
+ * package.json this module was loaded beside.
+ *
+ * Written into the marker so an update can be observed from outside: after
+ * the market replaces this package on disk under a running host, a marker
+ * still naming the old version proves the old module is what the process is
+ * serving, and one naming the new version proves the host reloaded (#491).
+ * `activation[name].state` is the market's own inference and cannot settle
+ * that question about itself.
+ */
+const version = JSON.parse(
+  readFileSync(join(fileURLToPath(new URL('.', import.meta.url)), 'package.json'), 'utf8'),
+).version
 
 const marker = () => join(process.env.DSH_HOME ?? '.', `e2e-${name}.alive`)
 
@@ -25,7 +41,7 @@ export function apply(ctx) {
     // ctx.effect is how this host models a disposable side effect: the
     // returned function runs when the plugin is unloaded.
     host.effect(() => {
-      writeFileSync(marker(), String(Date.now()))
+      writeFileSync(marker(), version)
       return () => { rmSync(marker(), { force: true }) }
     }, `${name}: e2e liveness marker`)
   })

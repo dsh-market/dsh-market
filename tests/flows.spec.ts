@@ -1245,6 +1245,33 @@ describe('update flow — no npm publishing required', () => {
     expect(r.json.activation['dsh-loop']).toMatchObject({ state: 'restart', hot: false })
   })
 
+  it('keeps saying "restart to apply" on every later listing, not only in the reply', async () => {
+    // The reply is read once; the listing is read on every page load. It
+    // recomputed activation from the loader's inventory alone — which still
+    // lists the name, because the process never unloaded the module — so a
+    // refresh turned the notice back into "live" and the update looked
+    // finished while the old build was still answering. Measured against a
+    // real host in tests/web/update.e2e.ts.
+    advanceNpmLatest('1.2.0')
+    await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+
+    const listed = await bed.dispatch('GET', '/dsh-market/installed')
+    expect(listed.json.activation['dsh-loop']).toMatchObject({ state: 'restart', hot: false })
+  })
+
+  it('drops the restart notice once the plugin is genuinely remounted', async () => {
+    // Off and on again imports the module as it is on disk now, so this
+    // process really is serving the new build — the one way out of the
+    // notice that is not a restart, and it has to be honoured.
+    advanceNpmLatest('1.2.0')
+    await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+    await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-loop', enabled: false })
+    await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-loop', enabled: true })
+
+    const listed = await bed.dispatch('GET', '/dsh-market/installed')
+    expect(listed.json.activation['dsh-loop']?.state).toBe('live')
+  })
+
   it('refuses an update before mutation when package.json cannot be captured exactly', async () => {
     const manifestPath = join(fake.profileDir, 'package.json')
     const malformed = JSON.stringify({

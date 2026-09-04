@@ -299,6 +299,22 @@ export function mountMarketRoutes(
   const marketState = readMarketState(activeProfileDir)
   setCustomGithubProxy(marketState.githubProxy ?? null)
   const disabled = marketState.disabled
+  /**
+   * Packages whose files were replaced while their host half was already
+   * running, this process only.
+   *
+   * Replacing a package on disk does not unload the module Node has already
+   * imported — measured against a real host in tests/web/update.e2e.ts, where
+   * 2.0.0 is on disk and the process keeps answering as 1.0.0. The update
+   * REPLY says so, but the installed listing recomputed activation from the
+   * loader's inventory alone, and the loader still lists the name: so the
+   * moment the page refreshed, a plugin serving its old build read as `live`
+   * and the restart notice vanished.
+   *
+   * Deliberately not persisted. What it records is a fact about THIS
+   * process, and a restart — the thing that resolves it — ends the process.
+   */
+  const replacedWhileLive = new Set<string>()
   const groups = marketState.groups
   const groupOrder = marketState.groupOrder
   // A choice made in a previous session outranks whatever the entry layer
@@ -492,6 +508,11 @@ export function mountMarketRoutes(
         const result = await hotMount(host, dir, name)
         ok = result.ok
         reason = result.reason ?? undefined
+        // A mount that succeeded imported the module as it is on disk NOW,
+        // so whatever was replaced under the old instance is no longer what
+        // this process is serving. Off-and-on is a real way out of the
+        // restart notice, and holding it after that would be wrong.
+        if (result.ok) replacedWhileLive.delete(name)
       }
     } else {
       ok = await hotUnmount(name) || await themes.setEntryDisabled(name, true)
@@ -881,6 +902,7 @@ export function mountMarketRoutes(
     const hot = unmounted || entryDisabled
     removeRowBlocks(userPatchPath, rowIdsForPackage(host, activeProfileDir, name))
     disabled.delete(name)
+    replacedWhileLive.delete(name)
     removeFromGroups({ groups, groupOrder }, name)
     writeMarketState(activeProfileDir, { disabled, groups, groupOrder })
     return { ok: true, hot, detail: null }
@@ -1595,8 +1617,11 @@ export function mountMarketRoutes(
         const activation: Record<string, ReturnType<typeof verifyActivation>> = {}
         const live = liveNames()
         for (const name of Object.keys(installed)) {
-          activation[name] = verifyActivation(config.profile, name, live, activeProfileDir,
-            disabled.has(name) || patchFlags.disabled.includes(name))
+          activation[name] = activationAfterReplace(
+            verifyActivation(config.profile, name, live, activeProfileDir,
+              disabled.has(name) || patchFlags.disabled.includes(name)),
+            replacedWhileLive.has(name),
+          )
         }
         const diagnostics = diagnosePackageManifests(Object.keys(installed).map(packageName => ({
           packageName,
@@ -2670,6 +2695,7 @@ sendJson(response, 200, { updates })
             if (patchDisabled) await themes.setEntryDisabled(targetName, true)
 
             invalidateUpdates()
+            if (wasLive) replacedWhileLive.add(targetName)
             const activation = {
               [targetName]: activationAfterReplace(
                 verifyActivation(config.profile, targetName, liveNames(), activeProfileDir, disabled.has(targetName)),
@@ -3194,6 +3220,10 @@ sendJson(response, 200, { updates })
             } | undefined
             if (ok) {
               invalidateUpdates()
+              // Remembered, not just reported: the listing recomputes
+              // activation on every page load and would otherwise call this
+              // live again the moment the user refreshed.
+              if (wasLive) replacedWhileLive.add(name)
               activation = {
                 [name]: activationAfterReplace(
                   verifyActivation(config.profile, name, liveNames(), activeProfileDir, disabled.has(name)),
