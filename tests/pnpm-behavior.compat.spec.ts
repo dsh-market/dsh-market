@@ -242,3 +242,31 @@ describe('#39 — a too-young lockfile entry blocks every later mutation', () =>
     }
   })
 })
+
+describe('a dead file: dependency blocks the whole profile (#436)', () => {
+  // @screamff could not uninstall the market until they removed an unrelated
+  // plugin that had been installed from a .tgz they had since deleted. pnpm
+  // re-resolves every direct dependency before any mutation, so one dead
+  // local path stops everything — and the error names the PATH, never the
+  // package, which is why it read as unrelated to what they were doing.
+  for (const version of [PNPM[10], PNPM[11]]) {
+    it(`pnpm ${version} refuses to remove an unrelated package, and the market names the cause`, () => {
+      const dir = profileFixture({ workspace: true })
+      expect(pnpm(version, ['add', '-w', 'is-odd@3.0.0'], dir).code).toBe(0)
+      const manifestPath = join(dir, 'package.json')
+      const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { dependencies?: Record<string, string> }
+      const ghost = join(dir, 'gone', 'ghost-plugin-1.0.0.tgz')
+      manifest.dependencies = { ...manifest.dependencies, 'ghost-plugin': `file:${ghost}` }
+      writeFileSync(manifestPath, JSON.stringify(manifest))
+
+      const blocked = pnpm(version, ['remove', '-w', 'is-odd'], dir)
+
+      expect(blocked.code, blocked.out.slice(-400)).not.toBe(0)
+      const failure = classifyPnpmFailure(blocked.out, blocked.code)
+      expect(failure?.code, blocked.out.slice(-400)).toBe('missing-local-dependency')
+      // The path is the only handle the user has: it is the literal value of
+      // the offending line in their package.json.
+      expect(failure?.message).toContain('ghost-plugin-1.0.0.tgz')
+    }, 300_000)
+  }
+})

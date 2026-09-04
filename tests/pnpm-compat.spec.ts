@@ -358,3 +358,34 @@ describe('a pnpm that exists on PATH but cannot be started (#502)', () => {
     expect(classifyPnpmFailure('some other failure', 1)).toBeNull()
   })
 })
+
+describe('a local file: dependency whose file is gone (#436)', () => {
+  // Measured against real pnpm 10.28.2 and 11.21.0, both exit 254. Only the
+  // bracketing of the code differs; both carry the path and the direct-
+  // dependency line.
+  const PNPM_10 = " ENOENT  ENOENT: no such file or directory, open '/home/u/dl/dsh-sandbox-escalation-fix-0.1.2-alpha1.tgz'\n\nThis error happened while installing a direct dependency of /home/u/.dsh/profiles/web\n"
+  const PNPM_11 = "[ENOENT] ENOENT: no such file or directory, open '/home/u/dl/dsh-sandbox-escalation-fix-0.1.2-alpha1.tgz'\n\nThis error happened while installing a direct dependency of /home/u/.dsh/profiles/web\n"
+
+  it('is recognized on both pnpm majors, and names the path', () => {
+    for (const output of [PNPM_10, PNPM_11]) {
+      const failure = classifyPnpmFailure(output, 254)
+      expect(failure?.code).toBe('missing-local-dependency')
+      expect(failure?.recoverable).toBe(false)
+      expect(failure?.message).toContain('dsh-sandbox-escalation-fix-0.1.2-alpha1.tgz')
+    }
+  })
+
+  it('says the entry blocks operations on OTHER plugins, which is how it is met', () => {
+    // The reporter hit it while uninstalling the market, not while touching
+    // the dead entry — "this plugin is broken" would have been useless.
+    const message = classifyPnpmFailure(PNPM_11, 254)?.message ?? ''
+    expect(message).toContain('包括卸载别的插件')
+    expect(message).toContain('blocks every install and uninstall')
+  })
+
+  it('does not claim an ENOENT that is not about a profile dependency', () => {
+    // A build script opening a missing file is a different failure and must
+    // keep pnpm's own words.
+    expect(classifyPnpmFailure("ENOENT: no such file or directory, open '/tmp/whatever'", 1)).toBeNull()
+  })
+})
