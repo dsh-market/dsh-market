@@ -68,12 +68,16 @@ describe('#20 bug 1 — workspace-root add without -w', () => {
     expect(classifyPnpmFailure(out)?.code).toBe('adding-to-root')
   })
 
-  it('pnpm 10 and 11 accept it (the refusal is a pnpm-9-only behavior)', () => {
-    for (const version of [PNPM[10], PNPM[11]]) {
-      const dir = profileFixture({ workspace: true })
-      const { code } = pnpm(version, ['add', 'is-odd@3.0.1'], dir)
-      expect(code, `pnpm ${version}`).toBe(0)
-    }
+  it('pnpm 10 accepts it (the refusal is a pnpm-9-only behavior)', () => {
+    const dir = profileFixture({ workspace: true })
+    const { code } = pnpm(PNPM[10], ['add', 'is-odd@3.0.1'], dir)
+    expect(code, `pnpm ${PNPM[10]}`).toBe(0)
+  })
+
+  it('pnpm 11 accepts it (the refusal is a pnpm-9-only behavior)', () => {
+    const dir = profileFixture({ workspace: true })
+    const { code } = pnpm(PNPM[11], ['add', 'is-odd@3.0.1'], dir)
+    expect(code, `pnpm ${PNPM[11]}`).toBe(0)
   })
 })
 
