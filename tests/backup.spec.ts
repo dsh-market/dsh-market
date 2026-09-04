@@ -18,10 +18,10 @@ import {
 } from '../src/backup.ts'
 import { profileDir } from '../src/profile.ts'
 
-function respondWith(body: string, statusCode: number): void {
+function respondWith(body: string, statusCode: number, headers: Record<string, string> = {}): void {
   network.request.mockImplementationOnce((_options, callback) => {
     const response = Readable.from(body === '' ? [] : [Buffer.from(body)])
-    Object.assign(response, { statusCode, headers: { 'content-length': String(Buffer.byteLength(body)) } })
+    Object.assign(response, { statusCode, headers: { 'content-length': String(Buffer.byteLength(body)), ...headers } })
     const request = Object.assign(new EventEmitter(), { end: vi.fn() })
     queueMicrotask(() => callback(response))
     return request
@@ -181,6 +181,61 @@ describe('profile backup and restore', () => {
     expect(network.request.mock.calls[1][0]).toMatchObject({
       hostname: '93.184.216.34', method: 'GET', servername: 'dav.example',
     })
+  })
+})
+
+describe('WebDAV download redirects (#480)', () => {
+  const backup = { format: 'dsh-profile-backup', version: 0.2, profile: 'web', createdAt: 'x', files: [{ path: 'package.json', json: { dependencies: {} } }] }
+  const backupJson = JSON.stringify(backup)
+
+  it('follows a 302 to a signed link, and does not forward Basic auth across origins', async () => {
+    // 123pan answers every WebDAV GET with 302 to a time-limited CDN link
+    // while accepting PUT directly — so upload worked and restore failed.
+    respondWith('', 302, { location: 'https://cdn.example/signed/backup.json?sig=abc' })
+    respondWith(backupJson, 200)
+
+    expect(await downloadWebdav('https://dav.example/backup.json', 'user', 'secret')).toEqual(backup)
+    const first = network.request.mock.calls[0]![0] as { headers: Record<string, string> }
+    const second = network.request.mock.calls[1]![0] as { headers: Record<string, string>; path: string }
+    expect(first.headers.authorization).toBeDefined()
+    // The signed link authorizes itself; forwarding the user's WebDAV
+    // password to whatever host the server named would leak it on the
+    // server's say-so.
+    expect(second.headers.authorization).toBeUndefined()
+    expect(second.path).toBe('/signed/backup.json?sig=abc')
+  })
+
+  it('keeps auth on a same-origin redirect and resolves a relative Location', async () => {
+    respondWith('', 301, { location: '/moved/backup.json' })
+    respondWith(backupJson, 200)
+
+    expect(await downloadWebdav('https://dav.example/backup.json', 'user', 'secret')).toEqual(backup)
+    const second = network.request.mock.calls[1]![0] as { headers: Record<string, string>; path: string }
+    expect(second.headers.authorization).toBeDefined()
+    expect(second.path).toBe('/moved/backup.json')
+  })
+
+  it('re-runs the SSRF gate on every hop', async () => {
+    // A redirect is the server choosing the next target. Trusting it more
+    // than the user's own input would invert the threat model, so each hop
+    // passes the same https-only + public-address checks as the first.
+    respondWith('', 302, { location: 'http://dav.example/plain' })
+    await expect(downloadWebdav('https://dav.example/backup.json', 'u', 'p'))
+      .rejects.toThrow(/https/)
+
+    network.request.mockReset()
+    network.lookup.mockResolvedValueOnce([{ address: '93.184.216.34', family: 4 }])
+    network.lookup.mockResolvedValueOnce([{ address: '169.254.169.254', family: 4 }])
+    respondWith('', 302, { location: 'https://metadata.internal.example/latest' })
+    await expect(downloadWebdav('https://dav.example/backup.json', 'u', 'p'))
+      .rejects.toThrow(/invalid WebDAV URL/)
+  })
+
+  it('gives up after the hop limit instead of ping-ponging forever', async () => {
+    for (let i = 0; i < 6; i += 1) respondWith('', 302, { location: 'https://dav.example/again' })
+    await expect(downloadWebdav('https://dav.example/backup.json', 'u', 'p'))
+      .rejects.toThrow(/HTTP 302/)
+    expect(network.request).toHaveBeenCalledTimes(6)
   })
 })
 
