@@ -32,7 +32,7 @@ dsh plugin --profile web add dshmarket
 - **逛与搜**——完整社区目录（2300+ 插件，每天在涨），分类筛选、star 数、最热/最新排序，中英描述跟随界面语言
 - **按宿主发现**——卡片展示插件通过 `engines.dsh` 或同版本线 `@deepseek-ai/dsh-*` peer 声明的 DSH 要求；可选筛选只隐藏与当前宿主明确不匹配的插件。未声明、格式异常、暂时取不到清单及仅 GitHub 发布的条目仍保持可见，不猜成不兼容
 - **截图展示**——App Store 式截图，多图自动轮播，点开还能看大图；作者在 registry 里策展的截图列表卡片就直接显示（零额外请求），没有策展的插件则在打开安装弹窗时自动从 README 抽取；图片仅从 GitHub 图床加载
-- **评论**——每张卡片都能就地打开该插件的讨论。它和插件在 [dshmarket.com](https://dshmarket.com) 与[目录站](https://awesome-dsh-plugin.com)上的页面共用同一条讨论，一个插件只有一处对话，而不是三处。底层是 GitHub Discussions（经由 giscus）：打开即加载，只有发表评论才需要 GitHub 账号；说明里也直说打开会连接 giscus.app 与 GitHub
+- **评论**——每张卡片都能就地打开该插件的讨论。它和插件在 [dshmarket.com](https://dshmarket.com) 与[目录站](https://awesome-dsh-plugin.com)上的页面共用同一条讨论，一个插件只有一处对话，而不是三处。底层是 GitHub Discussions（经由 giscus）：打开即加载，只有发表评论才需要 GitHub 账号；说明里也直说打开会连接 giscus.app 与 GitHub。本地 dsh web 继续内嵌评论供阅读，登录和发表则通过专用 GitHub 入口在新标签页打开当前插件的精确讨论，不让跨站回跳携带或依赖宿主会话
 - **收藏**——在「发现」或「主题」页点书签即可收藏插件/主题；「收藏」Tab 集中展示，支持搜索、排序与安装。书签写入 profile 的市场状态（`state.json`）；已下架条目可一键清除
 - **主题**——独立主题页：装完立即生效，点一下切换（主题互斥、选择跨重启保留），卸载即恢复
 - **一键安装**——确认来源，实时进度；多数插件刷新页面即可用，无需重启

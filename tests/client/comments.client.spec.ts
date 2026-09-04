@@ -11,7 +11,7 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { GISCUS, commentsTerm, giscusLang, pluginSlug } from '../../src/client/comments.ts'
+import { GISCUS, commentsDiscussionUrl, commentsTerm, giscusLang, pluginSlug } from '../../src/client/comments.ts'
 
 const root = new URL('../../', import.meta.url)
 
@@ -69,6 +69,16 @@ describe('pluginSlug', () => {
       else seen.set(term, p.url)
     }
     expect(collisions).toEqual([])
+  })
+})
+
+describe('commentsDiscussionUrl', () => {
+  it('searches GitHub for the exact shared discussion term', () => {
+    const href = new URL(commentsDiscussionUrl('https://github.com/owner/repo/tree/main/packages/a'))
+    expect(href.origin + href.pathname).toBe(
+      'https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/discussions',
+    )
+    expect(href.searchParams.get('discussions_q')).toBe('"plugin:owner/repo--packages-a"')
   })
 })
 

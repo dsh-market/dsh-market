@@ -37,5 +37,18 @@ export function pluginSlug(url: string): string {
 /** The giscus discussion term for a plugin. */
 export const commentsTerm = (url: string): string => `plugin:${pluginSlug(url)}`
 
+/**
+ * GitHub's discussion search narrowed to this plugin's exact shared term.
+ *
+ * This is deliberately composed from constants and the catalog URL only.
+ * In particular it never copies the current page URL: a local dsh web page
+ * may carry its one-time host token there, and sending that to GitHub would
+ * trade a comment-login inconvenience for credential disclosure.
+ */
+export function commentsDiscussionUrl(url: string): string {
+  const term = `"${commentsTerm(url)}"`
+  return `https://github.com/${GISCUS.repo}/discussions?discussions_q=${encodeURIComponent(term)}`
+}
+
 /** giscus's own locale codes, which are not the ones this plugin uses. */
 export const giscusLang = (lang: string): string => (lang === 'zh' ? 'zh-CN' : 'en')

@@ -10,7 +10,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CommentsModal } from '../../src/client/CommentsModal.tsx'
 import { en, zh } from '../../src/client/locales.ts'
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  window.history.replaceState({}, '', '/')
+})
 
 const dict = (d: Record<string, string>) => (k: string) => d[k] ?? k
 
@@ -36,6 +39,22 @@ describe('CommentsModal', () => {
     // Nothing in the dialog asks the reader to start the load.
     expect(screen.queryByRole('button', { name: en.commentsRetry })).toBeNull()
     expect(screen.getByText(en.commentsLoading)).toBeTruthy()
+  })
+
+  it('keeps GitHub as the primary sign-in path while the embedded thread loads', async () => {
+    window.history.replaceState({}, '', '/?token=local-host-secret')
+    open()
+
+    const link = screen.getByRole('link', { name: en.commentsOnGitHub })
+    const href = new URL(link.getAttribute('href')!)
+    expect(href.origin + href.pathname).toBe(
+      'https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/discussions',
+    )
+    expect(href.searchParams.get('discussions_q')).toBe('"plugin:alice/dsh-loop"')
+    expect(href.href).not.toContain('local-host-secret')
+    expect(link.getAttribute('target')).toBe('_blank')
+
+    await waitFor(() => expect(loader()).not.toBeNull())
   })
 
   it('asks for the discussion this plugin shares with both websites', async () => {
@@ -83,6 +102,11 @@ describe('CommentsModal', () => {
     expect(screen.getByText(en.commentsNote)).toBeTruthy()
     expect(en.commentsNote).toContain('giscus.app')
     expect(zh.commentsNote).toContain('giscus.app')
+    expect(screen.getByText(en.commentsLoginHint)).toBeTruthy()
+    expect(en.commentsLoginHint).toContain('nothing is broken')
+    expect(en.commentsLoginHint).toContain('GitHub')
+    expect(zh.commentsLoginHint).toContain('不是故障')
+    expect(zh.commentsLoginHint).toContain('GitHub')
   })
 })
 

@@ -15,7 +15,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Button, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import css from './Market.module.css'
-import { GISCUS, commentsTerm, giscusLang } from './comments.ts'
+import { GISCUS, commentsDiscussionUrl, commentsTerm, giscusLang } from './comments.ts'
 
 /**
  * Whether the host is currently showing a dark theme.
@@ -88,6 +88,17 @@ export function CommentsModal(props: {
       title={t('commentsTitle') + ' — ' + name}
     >
       <p className={css.commentsNote}>{t('commentsNote')}</p>
+      <div className={css.commentsGithubPrompt}>
+        <p className={css.commentsGithubHint}>{t('commentsLoginHint')}</p>
+        <a
+          className={css.commentsGithubAction}
+          href={commentsDiscussionUrl(url)}
+          target="_blank"
+          rel="noreferrer"
+        >
+          {t('commentsOnGitHub')}
+        </a>
+      </div>
       {state === 'failed'
         ? (
             <div className={css.commentsFail}>
@@ -95,14 +106,6 @@ export function CommentsModal(props: {
               <Button variant="outline" size="sm" onClick={() => setAttempt(n => n + 1)}>
                 {t('commentsRetry')}
               </Button>
-              <a
-                className={css.src}
-                href={`https://github.com/${GISCUS.repo}/discussions`}
-                target="_blank"
-                rel="noreferrer"
-              >
-                {t('commentsOnGitHub')}
-              </a>
             </div>
           )
         : (

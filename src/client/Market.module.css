@@ -759,6 +759,10 @@
 .favoriteBtn:hover{color:var(--dsw-alias-brand-primary,#4f6ef7)}
 .favoriteOn{color:var(--dsw-alias-brand-primary,#4f6ef7)}
 .commentsNote{font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary,#9ca3af);margin:0 0 8px}
+.commentsGithubPrompt{padding:10px;margin:0 0 10px;border:1px solid color-mix(in srgb,var(--dsw-alias-brand-primary,#4f6ef7) 24%,transparent);border-radius:8px;background:color-mix(in srgb,var(--dsw-alias-brand-primary,#4f6ef7) 6%,transparent)}
+.commentsGithubHint{font-size:12px;line-height:17px;color:var(--dsw-alias-label-primary,#1f2328);margin:0 0 8px}
+.commentsGithubAction{display:inline-flex;align-items:center;justify-content:center;min-height:28px;box-sizing:border-box;padding:5px 10px;border:1px solid var(--dsw-alias-brand-primary,#4f6ef7);border-radius:6px;color:var(--dsw-alias-brand-primary,#4f6ef7);font-size:12px;font-weight:600;line-height:16px;text-decoration:none}
+.commentsGithubAction:hover{background:color-mix(in srgb,var(--dsw-alias-brand-primary,#4f6ef7) 9%,transparent)}
 .commentsStatus{font-size:12px;color:var(--dsw-alias-label-secondary,#9ca3af);margin:0}
 .commentsStatus:empty{display:none}
 .commentsError{font-size:12px;color:var(--dsw-alias-label-primary,#1f2328);margin:0 0 8px}
