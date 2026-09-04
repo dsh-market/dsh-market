@@ -1308,6 +1308,155 @@ describe('update flow — no npm publishing required', () => {
     expect(fake.calls.some(call => call.includes('dsh-loop@1.0.0'))).toBe(true)
   })
 
+  it('pins the npm update target to the resolved version so Desktop cannot re-fetch latest (#496)', async () => {
+    advanceNpmLatest('1.2.0')
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+    expect(r.json).toMatchObject({ ok: true })
+    // One registry resolution, one install target: Desktop's install boundary
+    // must not get `@latest` and fetch again (that drift was the false
+    // RESOLVED_VERSION_MISMATCH rollback).
+    const add = fake.calls.find(call => call[0] === 'add' && call.some(arg => arg.startsWith('dsh-loop@')))
+    expect(add).toContain('dsh-loop@1.2.0')
+    expect(add?.some(arg => arg === 'dsh-loop@latest')).toBe(false)
+  })
+
+  it('keeps an exact route pin authoritative over a mismatched Desktop resolvedNpmVersion (#496)', async () => {
+    // The route already sent name@1.2.0. A host that reports a different
+    // resolvedNpmVersion (and whose pnpm tree somehow landed there) must
+    // still fail verification — otherwise the boundary field could lower
+    // the bar the route just fixed in place.
+    advanceNpmLatest('1.2.0')
+    fake.npm['dsh-loop'].versions['1.1.0'] = { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] }
+    bed.dispose()
+    bed = createTestbed({}, {
+      runPlugin: async (profile, args) => {
+        const target = args.filter(arg => !arg.startsWith('-')).at(-1) ?? ''
+        if (args[0] === 'add' && target.startsWith('dsh-loop@')) {
+          fake.resolvedNpmVersionOnce = '1.1.0'
+          const result = await runDshPlugin(profile, args) as {
+            exitCode: number | null
+            timedOut: boolean
+            stdout: string
+            stderr: string
+            cancelled: boolean
+          }
+          return { ...result, resolvedNpmVersion: '1.1.0' }
+        }
+        return await runDshPlugin(profile, args) as {
+          exitCode: number | null
+          timedOut: boolean
+          stdout: string
+          stderr: string
+          cancelled: boolean
+        }
+      },
+      probePnpm: () => Promise.resolve(true),
+      provisionPnpm: () => Promise.resolve({ ok: true }),
+      cancelActive: () => false,
+    })
+
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+
+    expect(r.status).toBe(502)
+    expect(r.json).toMatchObject({ ok: false, failureCode: 'RESOLVED_VERSION_MISMATCH' })
+    expect(String(r.json.error)).toMatch(/目标为 v1\.2\.0|targeted v1\.2\.0/)
+    expect(installedSpec('dsh-loop')).toBe('^1.0.0')
+  })
+
+  it('adopts the Desktop boundary pin only when the route sent a floating dist-tag (#496)', async () => {
+    // Registry metadata unavailable → add stays `name@latest`. Verification
+    // then has to trust the exact pin Desktop's boundary actually sent.
+    fake.npm['dsh-loop'].latest = '1.2.0'
+    fake.npm['dsh-loop'].versions['1.2.0'] = { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] }
+    vi.stubGlobal('fetch', () => Promise.reject(new Error('registry offline')))
+    bed.dispose()
+    bed = createTestbed({}, {
+      runPlugin: async (profile, args) => {
+        const target = args.filter(arg => !arg.startsWith('-')).at(-1) ?? ''
+        if (args[0] === 'add' && target === 'dsh-loop@latest') {
+          const result = await runDshPlugin(profile, args) as {
+            exitCode: number | null
+            timedOut: boolean
+            stdout: string
+            stderr: string
+            cancelled: boolean
+          }
+          return { ...result, resolvedNpmVersion: '1.2.0' }
+        }
+        if (args[0] === 'add' && target.startsWith('dsh-loop@')) {
+          // Wrong pin reported while a floating tag was NOT what we sent —
+          // should not reach here for this scenario.
+          const result = await runDshPlugin(profile, args) as {
+            exitCode: number | null
+            timedOut: boolean
+            stdout: string
+            stderr: string
+            cancelled: boolean
+          }
+          return { ...result, resolvedNpmVersion: '1.2.0' }
+        }
+        return await runDshPlugin(profile, args) as {
+          exitCode: number | null
+          timedOut: boolean
+          stdout: string
+          stderr: string
+          cancelled: boolean
+        }
+      },
+      probePnpm: () => Promise.resolve(true),
+      provisionPnpm: () => Promise.resolve({ ok: true }),
+      cancelActive: () => false,
+    })
+
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+
+    expect(r.status).toBe(200)
+    expect(r.json).toMatchObject({ ok: true })
+    expect(fake.calls.some(call => call[0] === 'add' && call.includes('dsh-loop@latest'))).toBe(true)
+    const installed = JSON.parse(readFileSync(join(fake.profileDir, 'node_modules', 'dsh-loop', 'package.json'), 'utf8')) as { version?: string }
+    expect(installed.version).toBe('1.2.0')
+  })
+
+  it('rejects a floating-tag update whose Desktop pin does not match what landed (#496)', async () => {
+    fake.npm['dsh-loop'].latest = '1.2.0'
+    fake.npm['dsh-loop'].versions['1.2.0'] = { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] }
+    fake.npm['dsh-loop'].versions['1.1.0'] = { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] }
+    vi.stubGlobal('fetch', () => Promise.reject(new Error('registry offline')))
+    bed.dispose()
+    bed = createTestbed({}, {
+      runPlugin: async (profile, args) => {
+        const target = args.filter(arg => !arg.startsWith('-')).at(-1) ?? ''
+        if (args[0] === 'add' && target === 'dsh-loop@latest') {
+          fake.resolvedNpmVersionOnce = '1.1.0'
+          const result = await runDshPlugin(profile, args) as {
+            exitCode: number | null
+            timedOut: boolean
+            stdout: string
+            stderr: string
+            cancelled: boolean
+          }
+          return { ...result, resolvedNpmVersion: '1.2.0' }
+        }
+        return await runDshPlugin(profile, args) as {
+          exitCode: number | null
+          timedOut: boolean
+          stdout: string
+          stderr: string
+          cancelled: boolean
+        }
+      },
+      probePnpm: () => Promise.resolve(true),
+      provisionPnpm: () => Promise.resolve({ ok: true }),
+      cancelActive: () => false,
+    })
+
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+
+    expect(r.status).toBe(502)
+    expect(r.json).toMatchObject({ ok: false, failureCode: 'RESOLVED_VERSION_MISMATCH' })
+    expect(installedSpec('dsh-loop')).toBe('^1.0.0')
+  })
+
   it('exposes a versioned capability and update-check contract for plugin-owned UIs', async () => {
     advanceNpmLatest('1.2.0')
     const capabilities = await bed.dispatch('GET', '/dsh-market/api/v1/capabilities')
@@ -1688,7 +1837,7 @@ describe('update flow — no npm publishing required', () => {
     expect(readFileSync(join(fake.profileDir, 'node_modules', 'dsh-loop', 'lib', 'index.js'), 'utf8')).toBe('old-build')
     expect(existsSync(lockfilePath)).toBe(false)
     expect(fake.calls.slice(callsBefore).filter(call => call[0] === 'add')).toEqual([
-      ['add', 'dsh-loop@latest'],
+      ['add', 'dsh-loop@1.3.0'],
       ['add', '--force', '--config.minimumReleaseAge=0', 'dsh-loop@1.0.0'],
     ])
   })
@@ -2489,7 +2638,7 @@ describe('update flow — no npm publishing required', () => {
     expect(r.status).toBe(409)
     expect(r.json).toMatchObject({ ok: false, busy: true })
     expect(runPlugin.mock.calls).toEqual([
-      ['web', ['add', 'dsh-loop@latest']],
+      ['web', ['add', 'dsh-loop@1.2.0']],
       ['web', ['store', 'path']],
     ])
     expect(installedSpec('dsh-loop')).toBe('^1.0.0')
@@ -3870,20 +4019,39 @@ describe('release channel', () => {
     // The offer and the install have to agree. `@latest` was hardcoded, so a
     // beta subscriber would be told an update existed and then handed the
     // stable build — the setting would look like it did nothing.
-    fake.npm['dshmarket'] = { latest: '1.0.0', versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } } }
+    //
+    // The add target is the exact pin the channel resolved (#496), not the
+    // dist-tag itself: Desktop's install boundary would otherwise re-fetch
+    // `latest` and drift. What must still hold is that beta does not install
+    // the stable release.
+    fake.npm['dshmarket'] = {
+      latest: '1.0.0',
+      versions: {
+        '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] },
+        '9.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] },
+        '9.1.0-beta.1': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] },
+      },
+    }
     await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dshmarket' })
     fake.npm['dshmarket'].latest = '9.0.0'
-    fake.npm['dshmarket'].versions['9.0.0'] = { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] }
     await bed.dispatch('POST', '/dsh-market/channel', { channel: 'beta' })
+    vi.stubGlobal('fetch', (url: string) => {
+      const u = String(url)
+      if (u.includes('/beta')) {
+        return Promise.resolve(new Response(JSON.stringify({ version: '9.1.0-beta.1' }), { status: 200 }))
+      }
+      return Promise.resolve(new Response(JSON.stringify({ version: '9.0.0' }), { status: 200 }))
+    })
     fake.calls = []
     await bed.dispatch('POST', '/dsh-market/update', { name: 'dshmarket' })
     const added = fake.calls.find(call => call[0] === 'add')
-    expect(added?.join(' '), 'the update ran with the wrong dist-tag').toContain('dshmarket@beta')
+    expect(added?.join(' '), 'the update ran with the wrong channel pin').toContain('dshmarket@9.1.0-beta.1')
+    expect(added?.join(' ')).not.toContain('dshmarket@9.0.0')
 
     await bed.dispatch('POST', '/dsh-market/channel', { channel: 'stable' })
     fake.calls = []
     await bed.dispatch('POST', '/dsh-market/update', { name: 'dshmarket' })
-    expect(fake.calls.find(call => call[0] === 'add')?.join(' ')).toContain('dshmarket@latest')
+    expect(fake.calls.find(call => call[0] === 'add')?.join(' ')).toContain('dshmarket@9.0.0')
   })
 
   it('re-checks immediately when the channel changes', async () => {

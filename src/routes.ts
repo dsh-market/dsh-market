@@ -2820,6 +2820,41 @@ sendJson(response, 200, { updates })
             const selfChannel = SELF_NAMES.has(name) ? activeChannel() : null
             const tag = selfChannel === null ? 'latest' : DIST_TAG[selfChannel]
             let expectedNpmVersion: string | null = null
+            // Resolve the registry pin BEFORE building the add target (#496).
+            // Desktop's install boundary otherwise fetches `latest` again to
+            // rewrite `@latest` into `name@x.y.z`; when the two views drift,
+            // verification against the first fetch rolls back a correct
+            // install. Pinning the already-resolved version here makes the
+            // boundary a no-op rewrite and keeps one source of truth.
+            if (usesNpmUpdateTarget) {
+              const installedVersion = readInstalledVersion(config.profile, name, activeProfileDir)
+              const registryLatest = selfChannel === null
+                ? await fetchNpmLatest(name)
+                : await versionOnChannel(name, selfChannel, await fetchNpmLatest(name))
+              expectedNpmVersion = registryLatest
+              // Never let `@latest` walk a profile BACKWARDS (#64 by @ZeroOrigin64):
+              // a package whose latest dist-tag was left on an older release turns
+              // this update into a downgrade that also rewrites an exact pin to
+              // `@latest`. Detection already hides the button; this guards the
+              // route itself. Unreadable versions fall through and update as before.
+              //
+              // A channel-following package is exempt from the DIRECTION, not
+              // from the check. Going backwards is exactly what "put me back on
+              // stable" means, and #64 is about a downgrade nobody asked for —
+              // so here the guard only refuses when the channel already points
+              // at what is installed, and it compares against the target tag
+              // rather than `latest`, which is not the tag being installed.
+              const refuse = selfChannel === null
+                ? installedVersion !== null && registryLatest !== null && !isUpgrade(installedVersion, registryLatest)
+                : installedVersion !== null && registryLatest !== null && installedVersion === registryLatest
+              if (refuse) {
+                logEvent('info', 'update', `${name} refused: latest=${registryLatest} is not newer than installed=${installedVersion}`)
+                sendJson(response, 400, {
+                  error: `已是最新：registry 的 latest 是 ${registryLatest}，不高于已装的 ${installedVersion}，更新会造成降级。 / Already current: the registry's latest (${registryLatest}) is not newer than the installed ${installedVersion}, so updating would downgrade it.`,
+                })
+                return
+              }
+            }
             // Re-accelerated from the unpinned shortcut, never from the
             // installed URL: that one names the commit already on disk, so
             // reusing it would be an update that can never move.
@@ -2836,37 +2871,8 @@ sendJson(response, 200, { updates })
             const target = restore
               ? (NPM_NAME_RE.test(spec) ? `${spec}@${tag}` : await acceleratedTarget(spec, region))
               : gitSpec === null
-                ? `${name}@${tag}`
+                ? (expectedNpmVersion !== null ? `${name}@${expectedNpmVersion}` : `${name}@${tag}`)
                 : await acceleratedTarget(gitSpec, region)
-            // Never let `@latest` walk a profile BACKWARDS (#64 by @ZeroOrigin64):
-            // a package whose latest dist-tag was left on an older release turns
-            // this update into a downgrade that also rewrites an exact pin to
-            // `@latest`. Detection already hides the button; this guards the
-            // route itself. Unreadable versions fall through and update as before.
-            //
-            // A channel-following package is exempt from the DIRECTION, not
-            // from the check. Going backwards is exactly what "put me back on
-            // stable" means, and #64 is about a downgrade nobody asked for —
-            // so here the guard only refuses when the channel already points
-            // at what is installed, and it compares against the target tag
-            // rather than `latest`, which is not the tag being installed.
-            if (usesNpmUpdateTarget) {
-              const installedVersion = readInstalledVersion(config.profile, name, activeProfileDir)
-              const registryLatest = selfChannel === null
-                ? await fetchNpmLatest(name)
-                : await versionOnChannel(name, selfChannel, await fetchNpmLatest(name))
-              expectedNpmVersion = registryLatest
-              const refuse = selfChannel === null
-                ? installedVersion !== null && registryLatest !== null && !isUpgrade(installedVersion, registryLatest)
-                : installedVersion !== null && registryLatest !== null && installedVersion === registryLatest
-              if (refuse) {
-                logEvent('info', 'update', `${name} refused: latest=${registryLatest} is not newer than installed=${installedVersion}`)
-                sendJson(response, 400, {
-                  error: `已是最新：registry 的 latest 是 ${registryLatest}，不高于已装的 ${installedVersion}，更新会造成降级。 / Already current: the registry's latest (${registryLatest}) is not newer than the installed ${installedVersion}, so updating would downgrade it.`,
-                })
-                return
-              }
-            }
             const repoIdentity = isGit ? repoOfTarget(spec) : null
             const repoKey = repoIdentity?.split('#')[0] ?? null
             // dsh-cli's deliberately narrow target grammar rejects the `&`
@@ -3046,13 +3052,29 @@ sendJson(response, 200, { updates })
                 if (stale) ok = false
               }
             }
-            // pnpm's minimumReleaseAge can silently resolve `@latest` to an
-            // OLDER release and still exit 0. The old stale check only caught
-            // "same version"; a real 0.2.24 -> 0.2.23 regression therefore
-            // looked like a successful update. Verify the bytes that actually
-            // landed against both the pre-update version and the registry
-            // target, then rematerialize the previous build on any mismatch.
+            // Verify the bytes that landed against the pin this run asked for.
+            // When the route already sent an exact `name@x.y.z` (#496), that
+            // pin is authoritative: Desktop's install boundary must not be
+            // allowed to lower the bar by reporting a different
+            // `resolvedNpmVersion`. Only a floating dist-tag target (registry
+            // metadata unavailable, so the add still says `@latest`/`@beta`)
+            // adopts the boundary's reported pin — that is the version the
+            // host actually handed to pnpm.
+            //
+            // Getting LESS than the pin is still a mismatch (including the
+            // historical `@latest` + minimumReleaseAge silent-hold shape,
+            // when a floating tag is what was sent). A version above the pin
+            // is only possible on a floating target whose resolver moved
+            // forward mid-download; that stays accepted.
             if (ok && usesNpmUpdateTarget) {
+              const floatingDistTag = expectedNpmVersion === null
+              if (
+                floatingDistTag
+                && typeof result.resolvedNpmVersion === 'string'
+                && result.resolvedNpmVersion !== ''
+              ) {
+                expectedNpmVersion = result.resolvedNpmVersion
+              }
               const afterVersion = readInstalledVersion(config.profile, name, activeProfileDir)
               const direction = beforeVersion !== null && afterVersion !== null
                 ? compareVersions(afterVersion, beforeVersion)
