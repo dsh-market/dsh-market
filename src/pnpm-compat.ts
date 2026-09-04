@@ -47,10 +47,21 @@ export interface PnpmFailure {
   code: 'adding-to-root' | 'not-a-workspace' | 'hoist-pattern-diff' | 'pnpm-missing' | 'release-age-violation'
     | 'ignored-builds' | 'git-prepare-not-allowed' | 'fetch-404' | 'transient-network' | 'fetch-timeout'
     | 'unexpected-store' | 'patch-failed' | 'missing-tarball-integrity' | 'windows-file-locked'
+    | 'pnpm-unusable'
   /** Bilingual, actionable message shown to the user instead of the raw wall of text. */
   message: string
   /** True when re-running `pnpm install` in the profile is the documented recovery. */
   recoverable: boolean
+  /**
+   * Show this message INSTEAD of the captured output, not after it.
+   *
+   * Normally the raw text is worth keeping: it is pnpm's own account of what
+   * happened, and the explanation sits under it. Set only where the captured
+   * bytes carry nothing a user can read — cmd.exe writes its errors in the
+   * OEM code page, which arrives here as replacement characters, so pasting
+   * them under an explanation adds noise and hides the explanation (#502).
+   */
+  replaceOutput?: boolean
   /**
    * The package pnpm could not resolve, when the failure names one.
    *
@@ -165,9 +176,13 @@ function integrityViolators(diagnostic: string): string[] {
  * dsh's own wrapper line ("dsh: pnpm failed in profile directory …") names no
  * cause, so the market must recognize pnpm's real diagnostics itself (#20).
  * @param output - stdout+stderr of the failed run.
+ * @param exitCode - the run's exit status, when the caller has it (null when
+ *   the process was signalled). Only a
+ *   failure whose whole signal IS the status reads it (#502); everything else
+ *   is recognized from what pnpm said.
  * @returns the classified failure, or null when unrecognized (raw output is then shown as-is).
  */
-export function classifyPnpmFailure(output: string): PnpmFailure | null {
+export function classifyPnpmFailure(output: string, exitCode?: number | null): PnpmFailure | null {
   if (output.includes('ERR_PNPM_PUBLIC_HOIST_PATTERN_DIFF')
     || output.includes('ERR_PNPM_VIRTUAL_STORE_DIR_MAX_LENGTH_DIFF')) {
     return {
@@ -372,6 +387,29 @@ export function classifyPnpmFailure(output: string): PnpmFailure | null {
       code: 'pnpm-missing',
       recoverable: false,
       message: '找不到 pnpm，请先在市场页顶部一键安装组件 / pnpm is not on PATH — use the one-click setup at the top of the market page',
+    }
+  }
+  // #502 by @Ztyss: a pnpm WAS found on PATH and could not be started.
+  //
+  // Different from `pnpm-missing` in the one way that matters to the user:
+  // the market's own setup does not fix it, because as far as PATH is
+  // concerned pnpm is already there. The reported case is a `pnpm.cmd`
+  // wrapper built out of environment variables that only exist in its
+  // installer's own process — expanded in the market's child process it
+  // collapses to an empty command, and cmd.exe answers 9009 with its message
+  // in the OEM code page, which reaches us as replacement characters. Three
+  // updates in a row failed showing the user nothing but that.
+  //
+  // 9009 is cmd.exe's "command not found" and is language-independent, so it
+  // leads; the text forms catch the same failure in a log with no exit code.
+  // Last in the chain deliberately: pnpm's own errors never exit 9009, and
+  // anything pnpm actually said has already matched above.
+  if (exitCode === 9009 || /is not recognized as an internal or external command|不是内部或外部命令|不是內部或外部命令/.test(output)) {
+    return {
+      code: 'pnpm-unusable',
+      recoverable: false,
+      replaceOutput: true,
+      message: '找不到能用的 pnpm，插件没有任何改动。系统里确实有一个 pnpm，但它启动失败了（命令行退出码 9009）。可能是它其实没装好，也可能它是一个包装脚本、而脚本需要的环境变量在市场启动的子进程里不存在。在终端里执行一次 `pnpm --version` 就能分辨：那里同样失败，说明要修的是这台机器上的 pnpm；那里正常，说明是启动市场的方式带来的环境差异，改用普通的 `dsh web` 启动可以绕开。 / pnpm could not be started, and nothing was changed. A pnpm does exist on PATH, but launching it failed (command-line exit code 9009). Either that pnpm is not installed properly, or it is a wrapper script whose required environment variables are missing in the process the market spawns. Run `pnpm --version` in a terminal to tell them apart: failing there too means pnpm itself needs fixing on this machine; working there means the difference comes from how the market was launched, and starting dsh with a plain `dsh web` avoids it.',
     }
   }
   return null

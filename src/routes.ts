@@ -37,7 +37,7 @@ import { applyPreset, deletePreset, listPresets, previewPreset, savePreset } fro
 import { createProfileSnapshot, DEFAULT_MAX_SNAPSHOTS, deleteSnapshot, listSnapshots, restoreSnapshot } from './snapshot.ts'
 import { trialValidate } from './trial.ts'
 import { codeloadAllowBuildsKey, findCatalogEntryForLocal, findInstalledAlias, githubCommitOfTarget, githubTargetAtCommit, gitAllowBuildsKey, installTargetFor, isLocalSpec, NPM_NAME_RE, repoOfTarget, restoreBlockedByWorkspace, restoreTargetForLocal, workspaceProtocolDeps } from './sources.ts'
-import { failureDetail, groupConflictsByOwner, isStaleUpdate, parseIgnoredBuilds, parsePrepareNotAllowed, RELEASE_AGE_OVERRIDE, retargetCollections, validateAddedPlugins, withHoistRecovery } from './install.ts'
+import { failureDetail, groupConflictsByOwner, isStaleUpdate, parseIgnoredBuilds, parsePrepareNotAllowed, pnpmNeverStarted, RELEASE_AGE_OVERRIDE, retargetCollections, validateAddedPlugins, withHoistRecovery } from './install.ts'
 import { asChannel, CHANNELS, DIST_TAG, resolveChannel, type Channel } from './channels.ts'
 import {
   asRegion, githubProxyManaged, normalizeGithubProxy, REGIONS, routesFor, setActiveRegion,
@@ -3016,7 +3016,13 @@ sendJson(response, 200, { updates })
             // exact prior source identity unless the host rejected the start
             // as busy or the user deliberately cancelled and chose to inspect
             // the resulting partial state.
-            if ((result.exitCode !== 0 || result.timedOut) && !cancelled && result.busy !== true) {
+            // pnpm never launched (#502): nothing was written, so there is
+            // nothing to restore — and the notice this block produces when a
+            // rollback cannot be verified ("inspect this profile before
+            // restarting") would be alarm over an untouched profile, on top
+            // of a failure the user already cannot act on from here.
+            if ((result.exitCode !== 0 || result.timedOut) && !cancelled && result.busy !== true
+              && !pnpmNeverStarted(result)) {
               const rollback = await rollbackAttemptBuild()
               rollbackOk = rollback.ok
               rollbackDetail = rollback.detail

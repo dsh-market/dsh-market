@@ -11,7 +11,7 @@ import { join } from 'node:path'
 import type { InstallResult } from '../src/dsh-cli.ts'
 import {
   failureDetail, FETCH_TIMEOUT_OVERRIDE, groupConflictsByOwner, isStaleUpdate, parseIgnoredBuilds,
-  parsePrepareNotAllowed, retargetCollections, validateAddedPlugins, withHoistRecovery,
+  parsePrepareNotAllowed, pnpmNeverStarted, retargetCollections, validateAddedPlugins, withHoistRecovery,
 } from '../src/install.ts'
 import { profileDir } from '../src/profile.ts'
 
@@ -335,6 +335,37 @@ describe('withHoistRecovery', () => {
     expect(calls).toEqual([['add', FETCH_TIMEOUT_OVERRIDE, 'dsh-loop'], ['store', 'path']])
     // The final failure message is appended for the UI.
     expect(result.stderr).toContain('下载超时')
+  })
+
+  it('replaces cmd.exe\'s undecodable output rather than printing it (#502)', async () => {
+    // Windows answers 9009 for "command not found" and writes its message in
+    // the OEM code page, which reaches us as replacement characters. Leaving
+    // that above the explanation was what the user was shown three times in
+    // a row, with no way to tell it was a pnpm launch problem.
+    const run = async (): Promise<InstallResult> => ({
+      exitCode: 9009,
+      timedOut: false,
+      stdout: '\ufffd\ufffd\ufffd\ufffd',
+      stderr: "'\"\"' \ufffd\ufffd\ufffd\ufffd\ndsh: pnpm failed in profile directory",
+      cancelled: false,
+    })
+    const result = await withHoistRecovery(run, 'web', ['add', 'dsh-loop'])
+    expect(result.stderr).toContain('pnpm --version')
+    expect(result.stderr).not.toContain('\ufffd')
+    expect(result.stdout).toBe('')
+  })
+})
+
+describe('pnpmNeverStarted (#502)', () => {
+  it('is true only when the failure happened before pnpm could run', () => {
+    const failed = (over: Partial<InstallResult>): InstallResult =>
+      ({ exitCode: 1, timedOut: false, stdout: '', stderr: '', cancelled: false, ...over })
+    // The profile is untouched here, so the update route must not report a
+    // rollback it could not verify — there is nothing to roll back.
+    expect(pnpmNeverStarted(failed({ exitCode: 9009, stderr: "'\"\"' \ufffd\ufffd\ufffd" }))).toBe(true)
+    // pnpm ran and failed: package.json may already have been rewritten.
+    expect(pnpmNeverStarted(failed({ stderr: 'ERR_PNPM_FETCH_404 GET https://registry.npmjs.org/ghost: Not Found - 404' }))).toBe(false)
+    expect(pnpmNeverStarted(failed({ stderr: 'some other failure' }))).toBe(false)
   })
 })
 

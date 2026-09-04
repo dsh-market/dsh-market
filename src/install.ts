@@ -97,7 +97,7 @@ export async function withHoistRecovery(
   let result = await run(profile, pluginArgs)
   const ok = (r: InstallResult): boolean => r.exitCode === 0 && !r.timedOut && !r.cancelled
   if (!ok(result) && !result.cancelled) {
-    const failure = classifyPnpmFailure(`${result.stderr}\n${result.stdout}`)
+    const failure = classifyPnpmFailure(`${result.stderr}\n${result.stdout}`, result.exitCode)
     if (failure?.code === 'hoist-pattern-diff') {
       logEvent('warn', 'install', `modules dir was built by a different pnpm major — rebuilding (pnpm install) and retrying once`)
       // --no-frozen-lockfile: the market runs pnpm with CI=true (TTY hangs),
@@ -151,9 +151,13 @@ export async function withHoistRecovery(
     // construction: directories are only removed when their owning pid is
     // gone (the name carries it), so a live download is never touched.
     await cleanOrphanedStore(run, profile)
-    const failure = classifyPnpmFailure(`${result.stderr}\n${result.stdout}`)
+    const failure = classifyPnpmFailure(`${result.stderr}\n${result.stdout}`, result.exitCode)
     if (failure !== null) {
-      result = { ...result, stderr: `${result.stderr}\n\n${failure.message}` }
+      result = {
+        ...result,
+        stderr: failure.replaceOutput === true ? failure.message : `${result.stderr}\n\n${failure.message}`,
+        ...(failure.replaceOutput === true ? { stdout: '' } : {}),
+      }
     } else if (result.pnpmError !== undefined && result.pnpmError !== '') {
       // Nothing matched, but pnpm DID say what went wrong — in its ndjson
       // stream, which never reaches stderr. Without this the user is shown
@@ -169,6 +173,22 @@ export async function withHoistRecovery(
     }
   }
   return result
+}
+
+/**
+ * Whether pnpm never started at all, so the profile cannot have been touched.
+ *
+ * Worth its own question because the update route answers a failed run by
+ * reinstalling the previous build and reporting loudly when it cannot verify
+ * that (#502 by @Ztyss): three updates in a row told the user their profile
+ * might be broken and to inspect it before restarting, when in fact nothing
+ * had been written — the command line could not launch pnpm, so package.json
+ * and node_modules were exactly as they had been.
+ * @param result - the failed run.
+ * @returns true when the failure happened before pnpm could run.
+ */
+export function pnpmNeverStarted(result: InstallResult): boolean {
+  return classifyPnpmFailure(`${result.stderr}\n${result.stdout}`, result.exitCode)?.code === 'pnpm-unusable'
 }
 
 /**
