@@ -314,3 +314,47 @@ pnpm now wants to use the store at "C:\\Users\\lenovo\\AppData\\Local\\pnpm\\sto
     expect(failure?.message).toContain('--store-dir')
   })
 })
+
+describe('a pnpm that exists on PATH but cannot be started (#502)', () => {
+  // Reported on Windows: the pnpm first on PATH was a `.cmd` wrapper built
+  // out of environment variables that only exist in its installer's own
+  // process. Expanded in the market's child process it collapsed to an empty
+  // command; cmd.exe answered 9009 and wrote its message in the OEM code
+  // page, which arrives here as replacement characters. Three updates in a
+  // row failed showing the user nothing else.
+  const MOJIBAKE = "'\"\"' ��������������\ndsh: pnpm failed in profile directory"
+
+  it('is recognized by the exit status, whatever locale cmd answered in', () => {
+    const failure = classifyPnpmFailure(MOJIBAKE, 9009)
+    expect(failure?.code).toBe('pnpm-unusable')
+    expect(failure?.recoverable).toBe(false)
+  })
+
+  it('replaces the unreadable output instead of appending to it', () => {
+    // The captured bytes are undecodable by construction, so printing them
+    // above the explanation only buries the explanation.
+    expect(classifyPnpmFailure(MOJIBAKE, 9009)?.replaceOutput).toBe(true)
+  })
+
+  it('tells the two causes apart for the user with one command they can run', () => {
+    const message = classifyPnpmFailure(MOJIBAKE, 9009)?.message ?? ''
+    expect(message).toContain('pnpm --version')
+    expect(message).toContain('9009')
+  })
+
+  it('also matches on cmd\'s own wording when no exit status is available', () => {
+    expect(classifyPnpmFailure("'pnpm' is not recognized as an internal or external command,\noperable program or batch file.")?.code).toBe('pnpm-unusable')
+    expect(classifyPnpmFailure("'pnpm' 不是内部或外部命令。")?.code).toBe('pnpm-unusable')
+  })
+
+  it('never outranks a failure pnpm itself reported', () => {
+    // pnpm's own errors never exit 9009. If one somehow arrives with that
+    // status, what pnpm said is the more specific answer and must win.
+    expect(classifyPnpmFailure('ERR_PNPM_ADDING_TO_ROOT  Running this command will add the dependency to the workspace root', 9009)?.code)
+      .toBe('adding-to-root')
+  })
+
+  it('leaves an ordinary failure alone', () => {
+    expect(classifyPnpmFailure('some other failure', 1)).toBeNull()
+  })
+})
