@@ -2914,6 +2914,57 @@ sendJson(response, 200, { updates })
                 })
                 return
               }
+              // Ask BEFORE installing whether this release says it needs a
+              // newer host than the one running (#404 by @Ztyss).
+              //
+              // The report: a caret range floated a plugin onto a release
+              // that had migrated to a host API the user's bundled runtime
+              // did not have. It installed silently and broke the panel; the
+              // only way back was a manual downgrade. The market noticed
+              // nothing, because at the time it only compared what a plugin
+              // DECLARED, and almost nothing declared anything — the reason
+              // this was left open rather than built.
+              //
+              // #473 changed that premise. Reading `engines.dsh` together
+              // with the lockstep `@deepseek-ai/dsh-*` peers took catalog
+              // coverage from about 2% to about 60%, so for most plugins
+              // there is now a claim to check. Discover already shows it;
+              // this is the same derivation applied at the moment it can
+              // still prevent something.
+              //
+              // Only a CONFIRMED mismatch stops here: `incompatible` means a
+              // declaration was read and is not satisfied. Undeclared,
+              // unreadable, and unknown host versions all go through, which
+              // is most of the ecosystem and the same stance Discover takes
+              // — absence of a claim is not a verdict.
+              //
+              // `force` is the way past it, because the market can be the
+              // wrong one here: a bundled host that misreports its version
+              // makes a satisfiable requirement look unsatisfied, and the
+              // user who knows that must not be locked out of their own
+              // profile. Refused with 400 and the facts, so the page can ask
+              // rather than dead-end.
+              if (selfChannel === null && !force && registryLatest !== null) {
+                const host = dshHostInfo()
+                const verdict = deriveHostCompatibility(
+                  (await discoveryManifests.lookup([name], routesFor(region).npmRegistry))[name] ?? null,
+                  host?.version ?? null,
+                  corePackageNames(host?.directory ?? null),
+                )
+                if (verdict.status === 'incompatible') {
+                  logEvent('warn', 'update-compat', `${name}@${registryLatest} declares ${verdict.requirement ?? 'a host requirement'}; this host is ${host?.version ?? 'unknown'} — refused before installing`)
+                  sendJson(response, 400, {
+                    hostIncompatible: {
+                      name,
+                      version: registryLatest,
+                      requirement: verdict.requirement,
+                      hostVersion: host?.version ?? null,
+                    },
+                    error: `${name} ${registryLatest} 要求的 DSH 版本是 ${verdict.requirement ?? '未知'}，而当前运行的是 ${host?.version ?? '未知版本'}，装上多半会直接报错。已停止，插件保持在原来的版本。 / ${name} ${registryLatest} declares it needs DSH ${verdict.requirement ?? '(unknown)'}, and this host is ${host?.version ?? 'unknown'}; installing it would most likely break the plugin. Nothing was changed.`,
+                  })
+                  return
+                }
+              }
             }
             // Re-accelerated from the unpinned shortcut, never from the
             // installed URL: that one names the commit already on disk, so

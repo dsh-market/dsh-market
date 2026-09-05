@@ -37,14 +37,14 @@ export interface ServedPackage {
  * Pack a fixture directory into `destination` and describe it for the
  * registry. Uses `npm pack` so the tarball layout is the real thing.
  */
-export function packFixture(dir: string, destination: string, version?: string): ServedPackage {
+export function packFixture(dir: string, destination: string, version?: string, manifestPatch?: Record<string, unknown>): ServedPackage {
   // A second version of the same fixture is packed from a COPY with its
   // version rewritten, so one fixture directory can play both sides of an
   // update. Copying rather than editing in place keeps the checked-in
   // fixture at its own version, which several specs install by name.
   const source = version === undefined
     ? join(FIXTURE_ROOT, dir)
-    : versionedCopy(dir, destination, version)
+    : versionedCopy(dir, destination, version, manifestPatch)
   // execSync, not execFileSync: on Windows `npm` is npm.cmd, a batch shim
   // that cannot be spawned without a shell — the same trap the market's own
   // tool spawning handles (#2/#3/#5/#80). Node reports it as ENOENT on
@@ -58,12 +58,12 @@ export function packFixture(dir: string, destination: string, version?: string):
 }
 
 /** The same fixture directory at a different version, in a temp copy. */
-function versionedCopy(dir: string, destination: string, version: string): string {
+function versionedCopy(dir: string, destination: string, version: string, manifestPatch?: Record<string, unknown>): string {
   const target = join(destination, `${dir}@${version}`)
   cpSync(join(FIXTURE_ROOT, dir), target, { recursive: true })
   const manifestPath = join(target, 'package.json')
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, unknown>
-  writeFileSync(manifestPath, `${JSON.stringify({ ...manifest, version }, null, 2)}\n`)
+  writeFileSync(manifestPath, `${JSON.stringify({ ...manifest, ...manifestPatch, version }, null, 2)}\n`)
   return target
 }
 

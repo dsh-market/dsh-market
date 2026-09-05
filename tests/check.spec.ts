@@ -7,7 +7,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { dump } from 'js-yaml'
@@ -915,6 +915,31 @@ describe('host version for the exported log (REIN-280)', () => {
 
     expect(dshHostInfo(join(cliInstall, 'bin', 'dsh.js')))
       .toEqual({ version: '0.1.1-rc.2', directory: cliInstall })
+  })
+
+  it('follows the bin symlink a global install actually puts on PATH', () => {
+    // `npm i -g` and Homebrew both install the package under lib/ and link
+    // it into bin/, so process.argv[1] is the LINK. Walking up from there
+    // reaches / without ever passing the package, and every consumer of the
+    // host version — the log line, Discover's requirement filter (#473),
+    // the pre-update check (#404) — silently answered "unknown" on the most
+    // ordinary install there is. Measured against a real Homebrew dsh:
+    // null for the link, correct for its target.
+    const cliInstall = writePackage(join(tmp, 'global-lib'), '@deepseek-ai/dsh', {
+      name: '@deepseek-ai/dsh',
+      version: '0.1.2-alpha.5',
+    })
+    mkdirSync(join(cliInstall, 'lib'), { recursive: true })
+    writeFileSync(join(cliInstall, 'lib', 'bin.js'), '#!/usr/bin/env node\n')
+    const bin = join(tmp, 'global-bin')
+    mkdirSync(bin, { recursive: true })
+    const link = join(bin, 'dsh')
+    symlinkSync(join(cliInstall, 'lib', 'bin.js'), link)
+
+    // realpathSync on the expectation too: macOS's own /var -> /private/var
+    // link means the resolved directory is not string-equal to the one the
+    // fixture built, and the point here is the package that was found.
+    expect(dshHostInfo(link)).toEqual({ version: '0.1.2-alpha.5', directory: realpathSync(cliInstall) })
   })
 
   it('reports a Desktop-bundled host by the resources path it was found at', () => {
