@@ -9,7 +9,9 @@ import { createElement as h } from 'react'
 import * as primitives from '@deepseek-ai/dsh-client-ui-primitives'
 import { en, zh } from './locales.ts'
 import { InstallToast } from './InstallToast.tsx'
+import { MarketErrorBoundary } from './ErrorBoundary.tsx'
 import { MarketSection } from './MarketSection.tsx'
+import { exportMarketLog } from './self-check.ts'
 import { SettingsCard } from './SettingsCard.tsx'
 import type { ThemeSnapshot, Translate } from './market-data.ts'
 
@@ -110,7 +112,24 @@ export function apply(ctx: MarketClientContext): void {
       label: () => t('nav'),
       locale: NS,
       inject: () => ({ t }),
-    }, (ownerProps: { preferredSubsectionId?: string } = {}) => h(MarketSection, {
+    }, (ownerProps: { preferredSubsectionId?: string } = {}) => h(MarketErrorBoundary, {
+      // Wrapped at the registration point, so the boundary is OUTSIDE
+      // everything the section renders — including its portalled layers.
+      // A crash inside used to unmount the whole tree and leave an empty
+      // settings panel with no export-log button, which is how #293 went
+      // months without a usable report (#513 fixed that trigger; this
+      // covers the next one).
+      text: {
+        title: t('crashTitle'),
+        hint: t('crashHint'),
+        reload: t('crashReload'),
+        details: t('crashDetails'),
+      },
+      actions: h('button', {
+        type: 'button',
+        onClick: () => { void exportMarketLog().catch(() => {}) },
+      }, t('exportLog')),
+    }, h(MarketSection, {
       t,
       locale: ctx.locale,
       theme: ctx.theme,
@@ -119,7 +138,7 @@ export function apply(ctx: MarketClientContext): void {
         getSnapshot: () => ctx.theme.getTheme(),
       },
       preferredSubsectionId: ownerProps.preferredSubsectionId,
-    }))
+    })))
     if (typeof off === 'function') retireSection = off as () => void
     return off
   })

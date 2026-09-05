@@ -20,6 +20,37 @@
  * anything on its own; it is evidence, collected before it is needed.
  */
 
+import { api } from './market-data.ts'
+import { lastMarketCrash } from './ErrorBoundary.tsx'
+
+/**
+ * Download the exported log: the server's account plus what only the browser
+ * can see.
+ *
+ * A free function rather than a hook, because the market's error boundary
+ * has to offer it too — a crashed market is exactly when the log matters,
+ * and for months it was exactly when the button did not exist (#293).
+ * @throws when the server half cannot be fetched; callers show their own state.
+ */
+export async function exportMarketLog(): Promise<void> {
+  const res = await fetch(api('/dsh-market/logs'))
+  if (!res.ok) throw new Error(`HTTP ${String(res.status)}`)
+  const serverText = await res.text()
+  const browser = clientDiagnostics()
+  const blob = new Blob(
+    [serverText, ...(browser.length > 0 ? ['## browser\n', browser.join('\n'), '\n'] : [])],
+    { type: 'text/plain;charset=utf-8' },
+  )
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = 'dsh-market-log.txt'
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  URL.revokeObjectURL(url)
+}
+
 /**
  * How many times this module has been evaluated in this page.
  *
@@ -54,6 +85,17 @@ function translatedMarks(): string | null {
     ...(root.hasAttribute('_msttexthash') ? ['edge (_msttexthash)'] : []),
   ]
   return marks.length === 0 ? null : marks.join(', ')
+}
+
+/** The market crash the error boundary caught, if there was one. */
+function crashLines(): string[] {
+  const crash = lastMarketCrash()
+  if (crash === null) return []
+  return [
+    `market UI crashed at: ${crash.at}`,
+    `market crash message: ${crash.message}`,
+    ...(crash.stack === null ? [] : [`market crash component stack:${crash.stack}`]),
+  ]
 }
 
 /** Whether `value` looks like a browser environment worth inspecting. */
@@ -96,6 +138,10 @@ export function clientDiagnostics(): string[] {
     `page translated by the browser: ${translatedMarks() ?? 'no'}`,
     `document baseURI: ${document.baseURI}`,
     `page URL: ${location.origin}${location.pathname}`,
+    // A crash the error boundary caught. Reported after the DOM facts
+    // because it is the one line that already IS a diagnosis — and when it
+    // is present, it is the first thing worth reading.
+    ...crashLines(),
     `user agent: ${navigator.userAgent}`,
   ]
 }
