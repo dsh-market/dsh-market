@@ -3850,20 +3850,19 @@ describe('category row expansion', () => {
       // would use — proves the stuck path swapped budgets, not just re-ran
       // the ordinary collapse.
       expect(chipCount()).toBe(3) // "all" pill + 2 categories
-      // The auto-collapse is a REAL catsOpen flip, so the chevron now reads
-      // "more" (collapsed), not "less" — and, critically, clicking it must
-      // still work. An earlier version computed a display-only "effectively
-      // open" value while leaving catsOpen genuinely true, so the chevron's
-      // click handler toggled a value the render path had stopped
-      // consulting — clicking it while stuck did nothing visible (reported:
-      // "吸顶滚动了之后，展开没反应了").
+      // Auto-collapse is render-derived (`catsExpanded = stuckExpanded` while
+      // pinned, starting false) — not a follow-up catsOpen flip. Chevron still
+      // tracks catsExpanded, and clicking it while stuck must keep working
+      // (earlier display-only overrides left catsOpen true and ignored the
+      // click — "吸顶滚动了之后，展开没反应了").
       const moreButton = screen.getByLabelText(re(en.catsMore))
       fireEvent.click(moreButton)
       await waitFor(() => expect(chipCount()).toBe(openCount))
       expect(screen.getByLabelText(re(en.catsLess))).toBeTruthy()
 
       // An explicit re-open while still stuck must survive scrolling back to
-      // the top — the auto-collapse must not fight the user's own choice.
+      // the top — catsOpen stays aligned with the chevron so unstuck keeps
+      // the open row.
       onChange!({ isIntersecting: true })
       await waitFor(() => expect(chipCount()).toBe(openCount))
       expect(screen.getByLabelText(re(en.catsLess))).toBeTruthy()
