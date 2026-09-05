@@ -374,7 +374,7 @@ export interface ScaffoldOptions {
    * different version, which is how a spec gets something to update TO. The
    * last entry for a name is the registry's `latest`.
    */
-  fixtures?: (string | { dir: string; version: string })[]
+  fixtures?: (string | { dir: string; version: string; manifest?: Record<string, unknown> })[]
 }
 
 function run(command: string, env: NodeJS.ProcessEnv, cwd: string = REPO_ROOT): void {
@@ -431,7 +431,7 @@ export async function launchMarketScaffold(options: ScaffoldOptions = {}): Promi
   let registry: FixtureRegistry | null = null
   if (options.fixtures !== undefined && options.fixtures.length > 0) {
     registry = await startFixtureRegistry(options.fixtures.map(
-      entry => typeof entry === 'string' ? packFixture(entry, home) : packFixture(entry.dir, home, entry.version),
+      entry => typeof entry === 'string' ? packFixture(entry, home) : packFixture(entry.dir, home, entry.version, entry.manifest),
     ))
     writeFileSync(
       join(home, 'profiles', 'web', '.npmrc'),

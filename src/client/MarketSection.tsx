@@ -1351,6 +1351,10 @@ export function MarketSection(props: MarketSectionProps) {
   const [staleName, setStaleName] = useState<string | null>(null)
   // Local link:/file: restore — a modal asks before swapping to the catalog.
   const [restoreConfirm, setRestoreConfirm] = useState<{ name: string; entry: RegistryPlugin; verified: boolean } | null>(null)
+  /** An update whose target declares a DSH version this host does not meet (#404). */
+  const [hostIncompatible, setHostIncompatible] = useState<
+    { name: string; version: string; requirement: string | null; hostVersion: string | null } | null
+  >(null)
   const [restoreBlocked, setRestoreBlocked] = useState<{ name: string; reason: 'no-catalog' | 'repo-mismatch' } | null>(null)
   // Snapshot the source switch the user agreed to review; later renders must not change it under the dialog.
   const [migrationConfirm, setMigrationConfirm] = useState<SourceMigrationConfirm | null>(null)
@@ -2411,6 +2415,21 @@ export function MarketSection(props: MarketSectionProps) {
             }
             setRecords(list => patchRecord(list, updateRecordId, { state: 'failed', reason: t('busyWait') }))
             setInstallError(t('busyWait'))
+            return
+          }
+          // The target says it needs a newer host than this one (#404). Not
+          // a failure to report and move on from — a decision, so it gets a
+          // dialog with the two facts and a way past. The row is dropped
+          // rather than marked failed: nothing was attempted.
+          if (body.hostIncompatible && typeof body.hostIncompatible === 'object') {
+            const notice = body.hostIncompatible as { name?: unknown; version?: unknown; requirement?: unknown; hostVersion?: unknown }
+            setRecords(list => drop(list, updateRecordId))
+            setHostIncompatible({
+              name: String(notice.name ?? name),
+              version: String(notice.version ?? ''),
+              requirement: typeof notice.requirement === 'string' ? notice.requirement : null,
+              hostVersion: typeof notice.hostVersion === 'string' ? notice.hostVersion : null,
+            })
             return
           }
           if (body.stale === true) setStaleName(name)
@@ -5055,6 +5074,34 @@ export function MarketSection(props: MarketSectionProps) {
             <>
               <Button variant="ghost" onClick={() => setRestoreConfirm(null)}>{t('cancel')}</Button>
               <Button variant="primary" disabled={updatingName !== null} onClick={() => doUpdate(restoreConfirm.name, false, true)}>{t('restoreProceed')}</Button>
+            </>
+          )}
+        />
+      )}
+      {hostIncompatible !== null && (
+        <Modal
+          open
+          onClose={() => setHostIncompatible(null)}
+          title={t('hostIncompatibleTitle')}
+          description={t('hostIncompatibleBody')
+            .replace('{plugin}', `${hostIncompatible.name} ${hostIncompatible.version}`)
+            .replace('{requirement}', hostIncompatible.requirement ?? t('hostIncompatibleUnknown'))
+            .replace('{host}', hostIncompatible.hostVersion ?? t('hostIncompatibleUnknown'))}
+          footer={(
+            <>
+              {/* Staying put is the recommended action, so it is the primary
+                  one — the opposite of the usual dialog, because here the
+                  safe choice is to do nothing. */}
+              <Button variant="primary" onClick={() => setHostIncompatible(null)}>{t('hostIncompatibleKeep')}</Button>
+              <Button
+                variant="ghost"
+                disabled={updatingName !== null}
+                onClick={() => {
+                  const target = hostIncompatible.name
+                  setHostIncompatible(null)
+                  doUpdate(target, true)
+                }}
+              >{t('hostIncompatibleAnyway')}</Button>
             </>
           )}
         />

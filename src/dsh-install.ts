@@ -1,7 +1,19 @@
 /** Locate the DSH host package in CLI and packaged Desktop runtimes. */
 
-import { readFileSync } from 'node:fs'
+import { readFileSync, realpathSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
+
+/** The entry with symlinks resolved, or unchanged when it cannot be read. */
+function realpathOf(entry: string): string {
+  try {
+    return realpathSync(entry)
+  } catch {
+    // A path that does not exist, or one inside an ASAR archive, where
+    // realpath fails: the raw entry is still the best guess and the walk
+    // below simply answers null if it leads nowhere.
+    return entry
+  }
+}
 
 const DSH_PACKAGE = '@deepseek-ai/dsh'
 
@@ -61,10 +73,25 @@ export function dshHostInfo(entry = process.argv[1]): { version: string; directo
  * Walk up from the CLI entry first, then inspect Electron's authoritative
  * resources directory. Desktop distributions may keep node_modules outside
  * the ASAR, expose them through ASAR's virtual filesystem, or disable ASAR.
+ *
+ * The entry is resolved through symlinks before the walk, because for a
+ * globally installed dsh it IS one. `npm i -g` and Homebrew both put a link
+ * in a `bin/` directory pointing at the real package, so `process.argv[1]`
+ * is `/opt/homebrew/bin/dsh` and walking up from there reaches `/` without
+ * ever passing the package. Measured: the same call answers `null` for the
+ * link and the correct directory for its target.
+ *
+ * That was not a cosmetic gap. Everything downstream reads the host version
+ * from here — the exported log's `dsh host:` line (#426), Discover's
+ * host-requirement column and filter (#473), and the pre-update check
+ * (#404) — and a null version makes every one of them answer "unknown",
+ * silently, on exactly the ordinary global install. A bundled Desktop host
+ * is reached by the resources branch below and was never affected, which is
+ * why this survived: the case that worked is the one that gets tested.
  */
 export function findDshInstallDir(entry = process.argv[1]): string | null {
   if (entry !== undefined) {
-    let directory = resolve(dirname(entry))
+    let directory = resolve(dirname(realpathOf(entry)))
     for (let depth = 0; depth < 10; depth += 1) {
       if (isDshPackage(directory)) return directory
       const parent = dirname(directory)
