@@ -40,7 +40,7 @@ import { OperationsPanel } from './OperationsPanel.tsx'
 import { clearSettled, drop, enqueue, patch as patchRecord, recordForUrl } from './operations.ts'
 import type { OperationRecord } from './operations.ts'
 import { Diagnostics } from './Diagnostics.tsx'
-import { clientDiagnostics } from './self-check.ts'
+import { exportMarketLog } from './self-check.ts'
 import {
   api, applyGithubRouting, avatarColor, catalogEntryForInstalled, entryForDep, githubRouteCandidates, groupSwitchState, humanOutput, installedForCatalog, isInstalled, looksTerminal, matchInstalledName, orderedCategories, pluginCategories,
   formatCount, pageItems, pluginName, pluginScreenshotCandidates, pluginScreenshots, pluginsForFavorites, rankThemeScreenshots, readSession, rememberGithubRoute, resetScreenshotsCache, resolveCatalogRestore, safeScreenshots, staleFavoriteUrls, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
@@ -1329,32 +1329,9 @@ export function MarketSection(props: MarketSectionProps) {
    */
   const doExportLog = useCallback(() => {
     setExportState('busy')
-    fetch(api('/dsh-market/logs'))
-      .then(async (res) => {
-        if (!res.ok) throw new Error(`HTTP ${String(res.status)}`)
-        // The server half describes the server. Everything it reports was
-        // already true on machines where the reported bug does not happen,
-        // which is why #293 and #384 both stalled on "please open a console
-        // and paste this". The browser appends what only it can see — see
-        // self-check.ts. Done here rather than sent to the route so this
-        // adds no endpoint, no request body, and no new trust boundary.
-        const serverText = await res.text()
-        const browser = clientDiagnostics()
-        const blob = new Blob(
-          [serverText, ...(browser.length > 0 ? ['## browser\n', browser.join('\n'), '\n'] : [])],
-          { type: 'text/plain;charset=utf-8' },
-        )
-        const url = URL.createObjectURL(blob)
-        const anchor = document.createElement('a')
-        anchor.href = url
-        anchor.download = 'dsh-market-log.txt'
-        document.body.appendChild(anchor)
-        anchor.click()
-        anchor.remove()
-        URL.revokeObjectURL(url)
-        setExportState('done')
-      })
-      .catch(() => setExportState('fail'))
+    // The composing lives in self-check.ts: the error boundary offers this
+    // same download, and a crashed market is exactly when the log matters.
+    exportMarketLog().then(() => setExportState('done'), () => setExportState('fail'))
   }, [])
   /** Stable onDone for the export Toast — a fresh closure per render would
    * reset the Toast's auto-dismiss timer on every parent re-render. */
