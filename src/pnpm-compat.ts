@@ -332,16 +332,29 @@ export function classifyPnpmFailure(output: string, exitCode?: number | null): P
   }
   // #389 by @qq1054435284: on Windows, pnpm stages the new version in a
   // sibling `<name>_tmp_<pid>_<n>` directory and renames it over the old one.
-  // Windows refuses that rename while any file underneath the target is open
-  // — and for an UPDATE the target is a plugin the running dsh has loaded, so
-  // its own files are exactly the ones held open. POSIX does not have this
-  // problem: replacing an open file there leaves the old inode alive for
-  // whoever still holds it.
+  // Windows refuses that rename while any file underneath the target is open,
+  // and the process holding them is usually the one asking. POSIX does not
+  // have this problem: replacing an open file there leaves the old inode
+  // alive for whoever still holds it.
+  //
+  // Worded for the RENAME, not for an update (#441 by @yandidan1). The
+  // reporter met this while INSTALLING — a reinstall of a plugin they had
+  // just uninstalled — and was told their update had not applied, that their
+  // existing version was intact, and to disable the plugin under Installed,
+  // which they had already removed. The package pnpm names here is also not
+  // necessarily a plugin: theirs was `node-hid`, a dependency.
+  //
+  // The native-module sentence is the part that makes the advice usable in
+  // that case. Node never unloads a native addon: once a `.node` is loaded
+  // there is no dlclose, so disabling the plugin, unmounting it, or
+  // uninstalling it cannot release the file — only ending the process does.
+  // That is why "uninstall, then install again" fails on Windows for those
+  // plugins while it works for every other one.
   //
   // Not retried automatically. A retry from inside the same process cannot
   // win, because that process is the thing holding the handles; retrying
   // would only turn one clear failure into several slow ones. So this names
-  // the cause and the two ways out instead of guessing.
+  // the cause and the ways out instead of guessing.
   if (/ERR_PNPM_EPERM|EPERM: operation not permitted, rename/i.test(output)) {
     // Read through the NDJSON reporter like the integrity classifier does:
     // in production this arrives JSON-escaped, so every separator is doubled
@@ -355,7 +368,7 @@ export function classifyPnpmFailure(output: string, exitCode?: number | null): P
       code: 'windows-file-locked',
       recoverable: false,
       ...(pkg === undefined ? {} : { pkg }),
-      message: `Windows 不允许替换正在被打开的文件，而更新一个插件${zh}要替换的正是当前 DeepSeek Harness 已经加载的那些文件，所以 pnpm 改名失败、更新没有生效（原来的版本没有被破坏，仍可正常使用）。两种做法：完全退出 DeepSeek Harness 后在命令行执行一次更新；或先在「已安装」里停用该插件、重启、再更新。杀毒软件或文件索引临时占用目录也会造成同样的报错，若上述都不适用可稍后重试 / Windows will not replace a file that is open, and updating a plugin${en} replaces exactly the files the running DeepSeek Harness has loaded, so pnpm's rename failed and the update did not apply (the existing version is intact and still works). Two ways round it: quit DeepSeek Harness completely and run the update from the command line, or disable the plugin under Installed, restart, then update. Antivirus or a file indexer holding the directory produces the same error, so a later retry is worth trying if neither applies`,
+      message: `Windows 不允许替换正在被打开的文件。pnpm 要用新目录替换${zh === '' ? '一个已装好的包' : ` ${pkg!}`}，而它的文件正被运行中的 DeepSeek Harness 打开着，改名因此失败，这一步没有生效——已经装好的内容没有被破坏。\n如果这个包带原生模块（.node 文件，例如 node-hid 这类），那么停用插件、甚至卸载插件都不够：原生模块一旦被加载，在进程退出前都不会释放。刚卸载完立刻重装同一个插件在 Windows 上失败，通常就是这个原因。\n可行的做法：完全退出 DeepSeek Harness（不是刷新页面），重新启动后再操作一次；或退出后在命令行执行。杀毒软件或文件索引临时占用目录也会报同样的错，若都不适用可稍后重试。 / Windows will not replace a file that is open. pnpm tried to swap a new directory over${en === '' ? ' an installed package' : en}, whose files the running DeepSeek Harness holds open, so the rename failed and this step did not apply — what was already installed is intact. If that package ships a native module (a .node file, node-hid and friends), disabling the plugin — even uninstalling it — is not enough: once a native module is loaded it is not released until the process exits, which is the usual reason reinstalling a plugin right after uninstalling it fails on Windows. What works: quit DeepSeek Harness completely (not a page refresh), start it again, and repeat the operation; or run it from the command line with the app closed. Antivirus or a file indexer holding the directory produces the same error, so a later retry is worth trying if neither applies.`,
     }
   }
   // #83: pnpm replays the WHOLE dependency tree on every add/remove, so a

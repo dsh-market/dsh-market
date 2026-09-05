@@ -260,6 +260,51 @@ export function readInstalledManifest(profile: string, name: string, explicitDir
   }
 }
 
+/**
+ * Whether a package or one of its direct dependencies ships a native addon.
+ *
+ * The question behind it: can unloading this plugin actually free its files?
+ * For ordinary JavaScript, yes — and on POSIX it does not even matter,
+ * because replacing an open file leaves the old inode to whoever holds it.
+ * For a native addon it is no on both counts: Node has no dlclose, so once a
+ * `.node` is loaded the process holds it until it exits. On Windows that
+ * turns "uninstall, then install again" into an EPERM on the rename, which
+ * is what @yandidan1 hit with node-hid (#441) — and no amount of disabling,
+ * unmounting or uninstalling from inside the running process can fix it.
+ *
+ * Deliberately a cheap structural check rather than a scan. Walking a
+ * dependency's tree for `*.node` means recursing through packages that can
+ * be tens of thousands of files, on the uninstall path, to answer a question
+ * three `existsSync` calls answer for every native module built or shipped
+ * the conventional way: node-gyp's `build/Release`, prebuild's `prebuilds/`,
+ * and the `binding.gyp` that names the addon in the first place.
+ *
+ * Direct dependencies are included because that is where these live: the
+ * plugin is JavaScript and the addon is a package it depends on, hoisted to
+ * the profile root beside it.
+ * @param profile - profile name.
+ * @param name - the installed package to ask about.
+ * @param explicitDir - resolved profile directory, when the caller has it.
+ * @returns true when a native addon is present in the package or a direct dependency.
+ */
+export function holdsNativeAddon(profile: string, name: string, explicitDir?: string): boolean {
+  const modules = join(profileDir(profile, explicitDir), 'node_modules')
+  const shipsAddon = (packageName: string): boolean => {
+    const dir = join(modules, packageName)
+    return existsSync(join(dir, 'build', 'Release'))
+      || existsSync(join(dir, 'prebuilds'))
+      || existsSync(join(dir, 'binding.gyp'))
+  }
+  if (shipsAddon(name)) return true
+  const manifest = readInstalledManifest(profile, name, explicitDir)
+  if (manifest === null || typeof manifest !== 'object') return false
+  const dependencies = (manifest as { dependencies?: unknown }).dependencies
+  if (dependencies === null || typeof dependencies !== 'object') return false
+  return Object.keys(dependencies as Record<string, unknown>)
+    .filter(dependency => PACKAGE_NAME_RE.test(dependency))
+    .some(shipsAddon)
+}
+
 const PACKAGE_NAME_RE = /^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/i
 
 function localSpecDirectory(root: string, spec: string): string | null {

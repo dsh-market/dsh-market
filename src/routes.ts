@@ -28,7 +28,7 @@ import {
   BOOT_ID, cancelActive, probePnpm, progress, provisionPnpm, runDshPlugin, TARGET_RE,
   type PluginCommandRuntime,
 } from './dsh-cli.ts'
-import { addProfileBundle, dropFromManifest, hasLoadableEntry, INBOX_BUNDLES, isDshProfileName, profileDir, readInstalled, readInstalledManifest, readInstalledRepoEvidence, readInstalledVersion, readLockCommits, readProfileBundles, readProfileManifestSnapshot, removeProfileBundle, restoreProfileManifest, setAllowBuilds, type ProfileManifestSnapshot } from './profile.ts'
+import { addProfileBundle, dropFromManifest, hasLoadableEntry, holdsNativeAddon, INBOX_BUNDLES, isDshProfileName, profileDir, readInstalled, readInstalledManifest, readInstalledRepoEvidence, readInstalledVersion, readLockCommits, readProfileBundles, readProfileManifestSnapshot, removeProfileBundle, restoreProfileManifest, setAllowBuilds, type ProfileManifestSnapshot } from './profile.ts'
 import { assessProfile, classifyPeer, introducedDuplicateNames, introducedRisks, type CompatibilityRisk } from './compatibility.ts'
 import { runningAgentIds, type AgentsLookup } from './agents.ts'
 import { analyzeProfile, corePackageNames, type DuplicateName } from './check.ts'
@@ -890,6 +890,15 @@ export function mountMarketRoutes(
   }
 
   async function removeInstalledPackage(name: string): Promise<{ ok: boolean; hot: boolean; detail: string | null }> {
+    // Asked BEFORE the removal, while the files are still there to look at.
+    // A native addon is never released by unloading (#441): Node has no
+    // dlclose, so the process keeps the `.node` open until it exits, and on
+    // Windows the next install of the same plugin fails renaming over it.
+    // Reporting this uninstall as `hot` would be claiming it took effect
+    // without a restart, which for these is exactly what did not happen —
+    // and the page then tells the user to refresh, which is the one thing
+    // that cannot help.
+    const native = holdsNativeAddon(config.profile, name, activeProfileDir)
     const result = await runPlugin(config.profile, ['remove', name])
     if (result.exitCode !== 0 || result.timedOut || result.cancelled) {
       return { ok: false, hot: false, detail: failureDetail(result) }
@@ -899,7 +908,10 @@ export function mountMarketRoutes(
     // because the first succeeded.
     const unmounted = await hotUnmount(name)
     const entryDisabled = await themes.setEntryDisabled(name, true)
-    const hot = unmounted || entryDisabled
+    const hot = (unmounted || entryDisabled) && !native
+    if (native) {
+      logEvent('info', 'uninstall', `${name} ships or depends on a native addon; a restart is needed before it can be installed again`)
+    }
     removeRowBlocks(userPatchPath, rowIdsForPackage(host, activeProfileDir, name))
     disabled.delete(name)
     replacedWhileLive.delete(name)
@@ -3889,6 +3901,15 @@ sendJson(response, 200, { updates })
             // runPlugin the package may be gone from node_modules, so a post-hoc
             // check would always return false on a successful uninstall.
             const hadClientPart = packageHasClientPart(activeProfileDir, name)
+            // Also captured before the removal, and for the same reason: a
+            // native addon in this plugin or one of its dependencies is not
+            // released by unloading it (#441). Node has no dlclose, so the
+            // process holds the `.node` until it exits — and on Windows the
+            // next install of the same plugin then fails renaming over the
+            // copy this process is still holding. Calling such an uninstall
+            // `hot` would send the user to a page refresh, which is the one
+            // thing that cannot help.
+            const heldNativeAddon = holdsNativeAddon(config.profile, name, activeProfileDir)
             const result = await runPlugin(config.profile, ['remove', name])
             const cancelled = result.cancelled
             const ok = result.exitCode === 0 && !result.timedOut && !cancelled
@@ -3929,6 +3950,10 @@ sendJson(response, 200, { updates })
               // successful unmount costs a lookup and nothing else.
               const entryDisabled = await themes.setEntryDisabled(name, true)
               hot = hot || entryDisabled
+              if (heldNativeAddon && hot) {
+                logEvent('info', 'uninstall', `${name} ships or depends on a native addon, which this process cannot release — reporting the uninstall as needing a restart`)
+              }
+              hot = hot && !heldNativeAddon
               // Patch-layer rows must not survive the remove either: a
               // `- id: X` + `disabled: true` row for a package that no longer
               // mounts is a boot-time orphan (port of dsh-plugin-hub).

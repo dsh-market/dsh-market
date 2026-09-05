@@ -2985,6 +2985,28 @@ describe('local-dev restore flow', () => {
 })
 
 describe('uninstall flow', () => {
+  it('does not call the uninstall hot when a native addon is involved (#441)', async () => {
+    // Node has no dlclose: once a `.node` is loaded the process holds it
+    // until it exits, so unmounting the plugin does not release the file.
+    // Reporting `hot` would tell the page a refresh is enough — and on
+    // Windows the next install of the same plugin then fails renaming over
+    // the copy this process is still holding, which is what @yandidan1 hit.
+    fake.npm['dsh-loop'] = { latest: '1.0.0', versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } } }
+    await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
+    // The plugin is JavaScript; the addon is a dependency hoisted beside it.
+    const installedManifest = join(fake.profileDir, 'node_modules', 'dsh-loop', 'package.json')
+    const manifest = JSON.parse(readFileSync(installedManifest, 'utf8')) as Record<string, unknown>
+    writeFileSync(installedManifest, JSON.stringify({ ...manifest, dependencies: { 'node-hid': '3.4.0' } }))
+    mkdirSync(join(fake.profileDir, 'node_modules', 'node-hid', 'build', 'Release'), { recursive: true })
+    writeFileSync(join(fake.profileDir, 'node_modules', 'node-hid', 'package.json'), '{"name":"node-hid","version":"3.4.0"}')
+
+    const r = await bed.dispatch('POST', '/dsh-market/uninstall', { name: 'dsh-loop' })
+
+    expect(r.status).toBe(200)
+    expect(r.json.hot).toBe(false)
+    expect(installedSpec('dsh-loop')).toBeUndefined()
+  })
+
   it('removes the plugin (live when hot mounted) and protects the market itself', async () => {
     fake.npm['dsh-loop'] = { latest: '1.0.0', versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } } }
     await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })

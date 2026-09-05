@@ -97,11 +97,31 @@ describe('classifyPnpmFailure', () => {
     expect(failed?.pkg).toBe('dsh-passwords')
     // Says which plugin, that nothing was broken, and what to do about it.
     expect(failed?.message).toContain('dsh-passwords')
-    expect(failed?.message).toContain('原来的版本没有被破坏')
+    expect(failed?.message).toContain('没有被破坏')
     expect(failed?.message).toContain('quit DeepSeek Harness')
     // Not retried: the process that would retry is the one holding the files.
     expect(failed?.recoverable).toBe(false)
     expect(failed?.message).not.toContain('undefined')
+  })
+
+  it('is worded for the rename, so it also fits a reinstall (#441)', () => {
+    // @yandidan1 met this while INSTALLING — a reinstall of a plugin they had
+    // just uninstalled — and the message told them their UPDATE had not
+    // applied and to disable the plugin under Installed, which no longer
+    // existed. The package pnpm names is a dependency, not their plugin.
+    const failed = classifyPnpmFailure(String.raw`{"name":"pnpm","level":"error","err":{"code":"ERR_PNPM_EPERM","message":"[importPackage C:\p\web\node_modules\node-hid] EPERM: operation not permitted, rename 'C:\p\web\node_modules\node-hid_tmp_9120_3' -> 'C:\p\web\node_modules\node-hid'"}}`)
+
+    expect(failed?.pkg).toBe('node-hid')
+    // Never calls the named package a plugin, and never says "update".
+    expect(failed?.message).not.toContain('更新')
+    expect(failed?.message).not.toMatch(/updating a plugin/)
+    // Names the reason disabling or uninstalling cannot help here.
+    expect(failed?.message).toContain('.node')
+    expect(failed?.message).toContain('刚卸载完立刻重装')
+    expect(failed?.message).toContain('native module')
+    // A page refresh is what the uninstall flow suggests, and it is exactly
+    // the thing that does not release a native module.
+    expect(failed?.message).toContain('not a page refresh')
   })
 
   it('classifies a locked rename with no readable package name (#389)', () => {
