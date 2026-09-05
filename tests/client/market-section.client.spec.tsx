@@ -4257,3 +4257,17 @@ describe('Git to npm source migration (#461)', () => {
     })
   })
 })
+
+describe('catalog version in discover byline (#348)', () => {
+  it('shows v{version} when the catalog supplies a string, and omits null/absent', async () => {
+    const registry = JSON.parse(JSON.stringify(REGISTRY))
+    registry.plugins[0].version = '1.2.3'
+    registry.plugins[1].version = null
+    stubFetch({ '/dsh-market/registry': { source: 'live', registry, hostVersion: '0.1.2-alpha.2' } })
+    render(<MarketSection {...props()} />)
+    const loop = (await screen.findByText('dsh-loop')).closest('[class*="card"]') as HTMLElement
+    const notify = screen.getByText('dsh-notify').closest('[class*="card"]') as HTMLElement
+    expect(within(loop).getByText('· v1.2.3')).toBeTruthy()
+    expect(within(notify).queryByText(/^· v/)).toBeNull()
+  })
+})

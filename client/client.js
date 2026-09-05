@@ -263,6 +263,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			hostRequirementUndeclared: "未声明宿主要求",
 			hostRequirementUnavailable: "宿主要求未知",
 			sortDownloads: "npm 下载量(近 30 天)",
+			/** Discover/theme card byline tooltip for catalog `version`. */
+			catalogNpmLatest: "npm 当前 latest",
 			sortStars: "Star 数",
 			sortAdded: "发布时间",
 			sortDesc: "降序",
@@ -788,6 +790,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			hostRequirementUndeclared: "Host requirement undeclared",
 			hostRequirementUnavailable: "Host requirement unknown",
 			sortDownloads: "npm downloads (30d)",
+			/** Discover/theme card byline tooltip for catalog `version`. */
+			catalogNpmLatest: "npm latest",
 			sortStars: "Stars",
 			sortAdded: "Release date",
 			sortDesc: "Descending",
@@ -5990,6 +5994,22 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			});
 		}
 		/**
+		* Catalog npm latest in the card byline (#348). Same quiet style as ↓ / ★;
+		* omitted when absent so github-only and not-yet-backfilled rows stay clean.
+		*/
+		function CatalogVersionMark({ version, tip }) {
+			if (typeof version !== "string" || version.length === 0) return null;
+			const label = /^v/i.test(version) ? version : `v${version}`;
+			return /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {
+				label: tip,
+				side: "top",
+				children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+					className: Market_module_css_default.star,
+					children: `· ${label}`
+				})
+			});
+		}
+		/**
 		* Module-scope caches so re-entering the section renders instantly instead
 		* of refetching and rebuilding from a spinner (#30 by @StarsTom). Module
 		* state survives section switches; a background refetch keeps it current.
@@ -8084,6 +8104,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 												title: p.owner,
 												children: p.owner
 											}),
+											/* @__PURE__ */ (0, react_jsx_runtime.jsx)(CatalogVersionMark, {
+												version: p.version,
+												tip: t("catalogNpmLatest")
+											}),
 											typeof p.downloads === "number" && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {
 												label: String(p.downloads),
 												side: "top",
@@ -8257,6 +8281,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 													className: Market_module_css_default.owner,
 													title: p.owner,
 													children: p.owner
+												}),
+												/* @__PURE__ */ (0, react_jsx_runtime.jsx)(CatalogVersionMark, {
+													version: p.version,
+													tip: t("catalogNpmLatest")
 												}),
 												typeof p.downloads === "number" && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {
 													label: String(p.downloads),
@@ -10167,6 +10195,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 										className: Market_module_css_default.owner,
 										title: confirming.owner,
 										children: confirming.owner
+									}),
+									/* @__PURE__ */ (0, react_jsx_runtime.jsx)(CatalogVersionMark, {
+										version: confirming.version,
+										tip: t("catalogNpmLatest")
 									}),
 									typeof confirming.downloads === "number" && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {
 										label: String(confirming.downloads),
