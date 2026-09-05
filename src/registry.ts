@@ -24,6 +24,12 @@ export interface RegistryPlugin {
    * zero — so sorting must not read it as "less popular than 0".
    */
   downloads?: number | null
+  /**
+   * Registry `dist-tags.latest` from awesome-dsh-plugin (#348). A string when
+   * known; `null`/absent when github-only or not yet backfilled — the UI
+   * omits the byline segment rather than showing a placeholder.
+   */
+  version?: string | null
   install: string
   added: string
   /**
