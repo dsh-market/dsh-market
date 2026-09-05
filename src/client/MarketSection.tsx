@@ -325,7 +325,13 @@ function Pager({ currentPage, totalPages, pageSize, onGoToPage, onChangePageSize
         <Menu
           open={sizeOpen}
           onClose={() => setSizeOpen(false)}
-          onSelect={id => onChangePageSize(Number(id))}
+          onSelect={id => {
+            onChangePageSize(Number(id))
+            // primitives Menu does not close itself on select (FilterMenu
+            // stays open on purpose for multi-pick). Page size is one shot;
+            // leaving it open after scrollToTop parks the panel mid-list.
+            setSizeOpen(false)
+          }}
           selectedId={String(pageSize)}
           align="end"
           portal
@@ -1532,6 +1538,14 @@ export function MarketSection(props: MarketSectionProps) {
   // (padding, sticky `top`), which drifts silently whenever that CSS
   // changes. The sentinel just reports what's actually true on screen.
   const [catsStuck, setCatsStuck] = useState(false)
+  /** While the sticky header is pinned, expansion is this flag — not
+   * `catsOpen`. Becoming stuck collapses on the SAME render (stuckExpanded
+   * starts false) instead of a follow-up `useLayoutEffect` that flipped
+   * `catsOpen` and forced a second commit; that delayed height change is
+   * what lined up with the host Settings dialog hitching after tab 收放.
+   * An explicit chevron click while stuck sets this true and keeps
+   * `catsOpen` in sync so unstuck restores the user's choice. */
+  const [stuckExpanded, setStuckExpanded] = useState(false)
   const [catsSentinel, setCatsSentinel] = useState<HTMLDivElement | null>(null)
 
   const refreshInstalled = useCallback((force?: boolean) => {
@@ -3356,17 +3370,18 @@ export function MarketSection(props: MarketSectionProps) {
           </div>
         )}
         <div className={css.foot}>
-          <span className={css.hostRequirement} title={hostRequirementTitle}>{hostRequirementLabel}</span>
-          {pluginCategories(p).map(category => (
-            <span key={category} className={css.tag}>
-              {(data!.categories[category] && (data!.categories[category]![lang] || data!.categories[category]!.en)) || category}
-            </span>
-          ))}
+          <div className={css.footTags}>
+            <span className={css.hostRequirement} title={hostRequirementTitle}>{hostRequirementLabel}</span>
+            {pluginCategories(p).map(category => (
+              <span key={category} className={css.tag}>
+                {(data!.categories[category] && (data!.categories[category]![lang] || data!.categories[category]!.en)) || category}
+              </span>
+            ))}
+          </div>
           {/* Published date and a source link used to live here too — both
               redundant now that the title itself opens the repo, and the
               date/tag pair alone was long enough in English to wrap onto its
               own line, splitting one card's footer into two visual rows. */}
-          <span className={css.grow} />
           <span className={css.footActions}>
             {renderFavoriteControl(p.url)}
             <button type="button" className={css.commentsLink} onClick={() => setCommentsFor(p)}>
@@ -3612,32 +3627,23 @@ export function MarketSection(props: MarketSectionProps) {
           const overflow = root.scrollHeight - root.clientHeight
           if (overflow <= wrap.offsetHeight) return
         }
-        setCatsStuck(leftView)
+        setCatsStuck(prev => (prev === leftView ? prev : leftView))
       },
       { root: bodyRef.current, threshold: 0 },
     )
     observer.observe(catsSentinel)
     return () => observer.disconnect()
   }, [catsSentinel])
-  /**
-   * Becoming stuck auto-collapses an open row — a REAL `catsOpen` flip, not
-   * a display-only override. An earlier version faked this by computing a
-   * separate "effectively open" value for rendering while leaving `catsOpen`
-   * itself true; the chevron's own click handler only ever toggled the real
-   * `catsOpen`, so while stuck it flipped a value the render path had
-   * already stopped consulting — clicking "expand" did nothing visible
-   * (reported: "吸顶滚动了之后，展开没反应了"). Driving the same state the
-   * chevron drives means the chevron always works, stuck or not.
-   */
-  const catsAutoCollapsedRef = useRef(false)
-  useLayoutEffect(() => {
-    if (catsStuck) {
-      if (catsOpen) { setCatsOpen(false); catsAutoCollapsedRef.current = true }
-    } else if (catsAutoCollapsedRef.current) {
-      setCatsOpen(true)
-      catsAutoCollapsedRef.current = false
-    }
+  // Drop any in-pin expand once the header unpins, so the next pin starts
+  // collapsed without a rising-edge setState in the observer.
+  useEffect(() => {
+    if (!catsStuck) setStuckExpanded(false)
   }, [catsStuck])
+  /** Expanded chips + chevron share one value. Stuck uses `stuckExpanded`
+   * so pinning collapses without rewriting `catsOpen` in a layout effect
+   * (see stuckExpanded state). Leaving stuck falls back to `catsOpen`,
+   * which still holds the pre-pin / in-pin user choice. */
+  const catsExpanded = catsStuck ? stuckExpanded : catsOpen
 
   /**
    * A fresh install (hotUrls/hotNames) and a toggle/group action
@@ -3985,7 +3991,10 @@ export function MarketSection(props: MarketSectionProps) {
       <div
         className={css.body}
         ref={bodyRef}
-        onScroll={e => setShowTop(e.currentTarget.scrollTop > 400)}
+        onScroll={e => {
+          const show = e.currentTarget.scrollTop > 400
+          setShowTop(prev => (prev === show ? prev : show))
+        }}
       >
         {tab === 'backup'
           ? (
@@ -4142,12 +4151,12 @@ export function MarketSection(props: MarketSectionProps) {
                         {(() => {
                           // Collapsed, the selected category is pulled to the front so it never hides.
                           // Whenever collapsed (default, or auto-collapsed by the sticky
-                          // header going stuck — see catsAutoCollapsedRef above), a stuck
+                          // header going stuck — see catsExpanded / stuckExpanded), a stuck
                           // header uses the one-row budget instead of the two-row one so an
                           // already-open list that just got pinned shrinks further.
                           const budget = catsStuck ? visibleCatsOneRow : visibleCats
-                          const ordered = orderedCategories(categories, cat, catsOpen, budget)
-                          const shown = catsOpen || budget === null ? ordered : ordered.slice(0, Math.max(0, budget - 1))
+                          const ordered = orderedCategories(categories, cat, catsExpanded, budget)
+                          const shown = catsExpanded || budget === null ? ordered : ordered.slice(0, Math.max(0, budget - 1))
                           return (
                             <>
                               <Pill data-chip="1" active={cat === 'all'} onClick={() => setCat('all')}>{t('all') + ' (' + formatCount(data!.count) + ')'}</Pill>
@@ -4163,13 +4172,12 @@ export function MarketSection(props: MarketSectionProps) {
                                 variant="ghost"
                                 size="sm"
                                 className={css.catsToggle}
-                                icon={catsOpen ? <IconChevronUpOutline14 size={14} /> : <IconChevronDownOutline14 size={14} />}
-                                aria-label={catsOpen ? t('catsLess') : t('catsMore')}
+                                icon={catsExpanded ? <IconChevronUpOutline14 size={14} /> : <IconChevronDownOutline14 size={14} />}
+                                aria-label={catsExpanded ? t('catsLess') : t('catsMore')}
                                 onClick={() => {
-                                  // An explicit click always wins — don't let the next
-                                  // stuck/unstuck transition second-guess it.
-                                  catsAutoCollapsedRef.current = false
-                                  setCatsOpen(o => !o)
+                                  const next = !catsExpanded
+                                  if (catsStuck) setStuckExpanded(next)
+                                  setCatsOpen(next)
                                 }}
                               />
                             </>
