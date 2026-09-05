@@ -68,7 +68,16 @@
 .cats{padding:12px 4px 4px;margin:0 -4px 2px}
 .catsRow{display:flex;gap:8px;align-items:flex-start;position:relative}
 .star{font-size:11px;color:var(--dsw-alias-label-secondary,#9ca3af);flex:0 0 auto;white-space:nowrap}
-.top{position:absolute;right:18px;bottom:18px;z-index:20;display:inline-flex}
+/* Opaque disc behind the outline Button. The host outline fill (incl.
+   :hover) is transparent by design — without a surface under it the
+   chevron sits on card text. Keep the fill on this wrapper so the
+   Button can keep its native hover wash. */
+.top{
+  position:absolute;right:18px;bottom:18px;z-index:20;display:inline-flex;
+  border-radius:99px;
+  background:var(--dsw-alias-bg-layer-1,#fff);
+  box-shadow:var(--dsw-shadow-lv1,0 4px 12px rgba(31,35,40,.08));
+}
 .topBtn{width:38px;height:38px;border-radius:99px;padding:0}
 .tag{border:1px solid var(--dsw-alias-border-l3,#d9dde3);color:var(--dsw-alias-label-secondary,#6b7280);border-radius:4px;flex-shrink:0;padding:1px 6px;font-size:11px;line-height:16px}
 .hostRequirement{border:1px solid var(--dsw-alias-border-l3,#d9dde3);color:var(--dsw-alias-label-secondary,#6b7280);border-radius:4px;min-width:0;max-width:100%;padding:1px 6px;font-size:11px;line-height:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -303,8 +312,12 @@
 .descToggle{display:flex;align-items:center;justify-content:center;width:20px;height:16px;margin-top:2px;
             color:var(--dsw-alias-label-tertiary,#8b93a1);background:none;border:none;padding:0;cursor:pointer}
 .descToggle:hover{color:var(--dsw-alias-brand-primary,#4f6ef7)}
-.foot{display:flex;align-items:center;gap:8px;flex-wrap:wrap;row-gap:8px}
+.foot{display:flex;align-items:flex-end;gap:8px;flex-wrap:nowrap}
 .foot .metaInline,.foot .src{white-space:nowrap}
+/* Tags share one flex child so they wrap among themselves instead of
+   kicking favorite/comments onto a lonely second row. flex:1 + min-width:0
+   leaves room for .footActions on the right of the same line. */
+.footTags{display:flex;flex-wrap:wrap;gap:8px;flex:1 1 0;min-width:0;align-items:center}
 .grow{flex:1}
 .titleRow{display:flex;align-items:center;gap:10px}
 /* Sits beside the heading so a screenshot of the page carries the
