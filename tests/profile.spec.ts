@@ -9,7 +9,7 @@ import { homedir, tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { resolveDshHome } from '../src/home-paths.ts'
 import {
-  addProfileBundle, conflictingEntryIds, dropFromManifest, entryArtifactExists, hasDshManifest, hasLoadableEntry, isDshProfileName, pluginSubdirs, profileDir,
+  addProfileBundle, conflictingEntryIds, dropFromManifest, entryArtifactExists, hasDshManifest, hasLoadableEntry, holdsNativeAddon, isDshProfileName, pluginSubdirs, profileDir,
   readInstalled, readInstalledManifest, readInstalledRepoEvidence, readInstalledRepoIdentities, readInstalledVersion, readLockCommits,
   removeProfileBundle,
 } from '../src/profile.ts'
@@ -147,6 +147,57 @@ describe('readInstalledManifest', () => {
     } finally {
       rmSync(explicitDir, { recursive: true, force: true })
     }
+  })
+})
+
+describe('holdsNativeAddon (#441)', () => {
+  /** Put a package in the profile's node_modules with the given layout. */
+  const packageAt = (dir: string, name: string, manifest: unknown, subdirs: string[] = [], files: string[] = []): void => {
+    const packageDir = join(dir, 'node_modules', name)
+    mkdirSync(packageDir, { recursive: true })
+    writeFileSync(join(packageDir, 'package.json'), JSON.stringify(manifest))
+    for (const sub of subdirs) mkdirSync(join(packageDir, sub), { recursive: true })
+    for (const file of files) writeFileSync(join(packageDir, file), '')
+  }
+
+  it('finds an addon in a DEPENDENCY, which is where plugins keep theirs', () => {
+    // @yandidan1's plugin is JavaScript; node-hid is the addon, hoisted to
+    // the profile root beside it. Asking only about the plugin's own
+    // directory would answer no for every case this exists to catch.
+    const dir = writeProfile({ dependencies: {} })
+    packageAt(dir, 'dsh-music-huazai', { name: 'dsh-music-huazai', dependencies: { 'node-hid': '3.4.0' } })
+    packageAt(dir, 'node-hid', { name: 'node-hid' }, ['build/Release'])
+    expect(holdsNativeAddon('web', 'dsh-music-huazai')).toBe(true)
+  })
+
+  it('recognizes all three conventional layouts, on the package itself too', () => {
+    const dir = writeProfile({ dependencies: {} })
+    packageAt(dir, 'gyp-built', { name: 'gyp-built' }, ['build/Release'])
+    packageAt(dir, 'prebuilt', { name: 'prebuilt' }, ['prebuilds'])
+    packageAt(dir, 'source-built', { name: 'source-built' }, [], ['binding.gyp'])
+    for (const name of ['gyp-built', 'prebuilt', 'source-built']) {
+      expect(holdsNativeAddon('web', name), name).toBe(true)
+    }
+  })
+
+  it('answers no for ordinary JavaScript, and for packages that are not there', () => {
+    // A false yes costs the user a restart they did not need, on every
+    // uninstall — so plain packages must stay plain.
+    const dir = writeProfile({ dependencies: {} })
+    packageAt(dir, 'dsh-loop', { name: 'dsh-loop', dependencies: { 'plain-dep': '1.0.0' } }, ['dist', 'lib'])
+    packageAt(dir, 'plain-dep', { name: 'plain-dep' }, ['dist'])
+    expect(holdsNativeAddon('web', 'dsh-loop')).toBe(false)
+    expect(holdsNativeAddon('web', 'never-installed')).toBe(false)
+  })
+
+  it('is not confused by a malformed manifest or a junk dependency name', () => {
+    const dir = writeProfile({ dependencies: {} })
+    const packageDir = join(dir, 'node_modules', 'broken')
+    mkdirSync(packageDir, { recursive: true })
+    writeFileSync(join(packageDir, 'package.json'), '{')
+    expect(holdsNativeAddon('web', 'broken')).toBe(false)
+    packageAt(dir, 'odd', { name: 'odd', dependencies: { '../escape': '1.0.0' } })
+    expect(holdsNativeAddon('web', 'odd')).toBe(false)
   })
 })
 
