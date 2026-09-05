@@ -2565,6 +2565,24 @@ describe('installed masonry layout (#273)', () => {
   })
 })
 
+describe('browser page translation (#293)', () => {
+  it('marks the market subtree untranslatable, so a translated page cannot unmount it', () => {
+    // Chrome and Edge translate by REPLACING text nodes. React then tries to
+    // remove a node its parent no longer has, throws NotFoundError, and the
+    // whole section unmounts — the blank panel, with the export-log button
+    // gone with it, which is why every log requested from that state came
+    // back empty. @apdc111 identified it on #293 after the same shape went
+    // unreproduced in #286 and #241.
+    stubFetch({})
+    render(<MarketSection {...props()} />)
+    const root = document.querySelector('[data-dsh-market-root]')
+    expect(root).toBeTruthy()
+    expect(root?.getAttribute('translate')).toBe('no')
+    // `notranslate` says the same thing to engines older than the attribute.
+    expect(root?.className).toContain('notranslate')
+  })
+})
+
 describe('local-dev restore', () => {
   it('confirms before switching a catalog-matched local package to its online source', async () => {
     stubFetch({

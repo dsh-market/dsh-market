@@ -4758,6 +4758,24 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		*/
 		const globals = globalThis;
 		globals.__dshmarketClientLoads = (globals.__dshmarketClientLoads ?? 0) + 1;
+		/**
+		* The marks Chrome and Edge leave on `<html>` when they translate a page.
+		*
+		* Both add a `translated-*` class for the direction they rendered into; Edge
+		* also flags the document it worked on. Reported verbatim rather than
+		* reduced to a boolean, because which engine did it is the next question
+		* after "was it translated at all".
+		* @returns the marks found, or null when there are none.
+		*/
+		function translatedMarks() {
+			const root = document.documentElement;
+			const marks = [
+				...[...root.classList].filter((name) => name.startsWith("translated")),
+				...root.hasAttribute("_msthash") ? ["edge (_msthash)"] : [],
+				...root.hasAttribute("_msttexthash") ? ["edge (_msttexthash)"] : []
+			];
+			return marks.length === 0 ? null : marks.join(", ");
+		}
 		/** Whether `value` looks like a browser environment worth inspecting. */
 		const hasDom = () => typeof document !== "undefined" && document.body !== null;
 		/**
@@ -4779,6 +4797,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				`market roots in the document: ${String(roots.length)}`,
 				`portal containers: ${String(portals.length)}` + (last === null ? "" : ` (last one is body's last child: ${String(last === document.body.lastElementChild)})`),
 				`plugin cards rendered: ${String(document.querySelectorAll("[data-dsh-market-root] [class*=\"_card\"]").length)}`,
+				`page translated by the browser: ${translatedMarks() ?? "no"}`,
 				`document baseURI: ${document.baseURI}`,
 				`page URL: ${location.origin}${location.pathname}`,
 				`user agent: ${navigator.userAgent}`
@@ -5652,6 +5671,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			if (portalHost === null) {
 				portalHost = document.createElement("div");
 				portalHost.setAttribute("data-dsh-market-portal", "");
+				portalHost.setAttribute("translate", "no");
+				portalHost.classList.add("notranslate");
 			}
 			return portalHost;
 		}
@@ -8369,8 +8390,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				repoHints
 			]);
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-				className: Market_module_css_default.root,
+				className: `${Market_module_css_default.root} notranslate`,
 				"data-dsh-market-root": true,
+				translate: "no",
 				"data-dsh-market-tab": tab,
 				"data-dsh-market-fullscreen": tab === "themes" && themesFullscreen ? "true" : void 0,
 				children: [

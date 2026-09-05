@@ -45,6 +45,22 @@ describe('clientDiagnostics', () => {
     expect(find('plugin cards rendered:')).toBe('plugin cards rendered: 0')
   })
 
+  it('says when the browser has translated the page (#293)', () => {
+    // The one reported cause of the blank market, and the one thing the
+    // reporter cannot be expected to volunteer — Chrome and Edge mark the
+    // document, so the export can say it instead of asking.
+    expect(find('page translated by the browser:')).toBe('page translated by the browser: no')
+
+    document.documentElement.classList.add('translated-ltr')
+    expect(find('page translated by the browser:')).toBe('page translated by the browser: translated-ltr')
+
+    document.documentElement.setAttribute('_msthash', '1')
+    expect(find('page translated by the browser:')).toBe('page translated by the browser: translated-ltr, edge (_msthash)')
+
+    document.documentElement.classList.remove('translated-ltr')
+    document.documentElement.removeAttribute('_msthash')
+  })
+
   it('shows a second portal container, and that the live one is not last (#384)', () => {
     const first = document.createElement('div')
     first.setAttribute('data-dsh-market-portal', '')
