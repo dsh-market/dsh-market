@@ -37,6 +37,25 @@
 const globals = globalThis as typeof globalThis & { __dshmarketClientLoads?: number }
 globals.__dshmarketClientLoads = (globals.__dshmarketClientLoads ?? 0) + 1
 
+/**
+ * The marks Chrome and Edge leave on `<html>` when they translate a page.
+ *
+ * Both add a `translated-*` class for the direction they rendered into; Edge
+ * also flags the document it worked on. Reported verbatim rather than
+ * reduced to a boolean, because which engine did it is the next question
+ * after "was it translated at all".
+ * @returns the marks found, or null when there are none.
+ */
+function translatedMarks(): string | null {
+  const root = document.documentElement
+  const marks = [
+    ...[...root.classList].filter(name => name.startsWith('translated')),
+    ...(root.hasAttribute('_msthash') ? ['edge (_msthash)'] : []),
+    ...(root.hasAttribute('_msttexthash') ? ['edge (_msttexthash)'] : []),
+  ]
+  return marks.length === 0 ? null : marks.join(', ')
+}
+
 /** Whether `value` looks like a browser environment worth inspecting. */
 const hasDom = (): boolean => typeof document !== 'undefined' && document.body !== null
 
@@ -69,6 +88,12 @@ export function clientDiagnostics(): string[] {
     `plugin cards rendered: ${String(document.querySelectorAll('[data-dsh-market-root] [class*="_card"]').length)}`,
     // The mount point every /dsh-market/* request is resolved against (#345).
     // A surprising value here explains a whole class of "nothing loads".
+    // #293: browser page translation replaces text nodes underneath React,
+    // which is the one reported cause of the blank market. Chrome and Edge
+    // mark the document when they do it, so a report can now say so without
+    // the reporter having to notice. A fact, not a verdict — a translated
+    // page is not by itself a fault.
+    `page translated by the browser: ${translatedMarks() ?? 'no'}`,
     `document baseURI: ${document.baseURI}`,
     `page URL: ${location.origin}${location.pathname}`,
     `user agent: ${navigator.userAgent}`,

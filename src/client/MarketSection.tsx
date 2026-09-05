@@ -932,6 +932,11 @@ function marketPortalHost(): HTMLElement {
     // Named so anyone inspecting the DOM, or a future host wanting to give
     // plugins a real portal slot, can see who owns it.
     portalHost.setAttribute('data-dsh-market-portal', '')
+    // Dialogs, the lightbox and every other layer render THROUGH this host,
+    // outside the root above — so it needs the same exemption, or a
+    // translated dialog crashes React exactly like a translated page (#293).
+    portalHost.setAttribute('translate', 'no')
+    portalHost.classList.add('notranslate')
   }
   return portalHost
 }
@@ -3690,8 +3695,24 @@ export function MarketSection(props: MarketSectionProps) {
 
   return (
     <div
-      className={css.root}
+      className={`${css.root} notranslate`}
       data-dsh-market-root
+      /* Browser page translation is the one reported cause of the blank
+         market (#293 by @apdc111, and the same shape in #286 / #241, none of
+         which ever reproduced in an untranslated browser). Chrome and Edge
+         translate by REPLACING text nodes underneath React's feet; React then
+         tries to remove a node its parent no longer has, throws
+         NotFoundError, and the whole section unmounts — leaving the panel
+         blank, with the export-log button gone too, which is why every
+         request for a log from that state came back empty.
+
+         `translate="no"` is scoped to this subtree, so the host page around
+         it still translates. The cost is that machine translation stops
+         inside the market; that is a fair trade against a page that cannot
+         render at all, and the market already ships its own 中文 and English
+         rather than relying on the browser for them. `notranslate` is the
+         same instruction for engines that predate the attribute. */
+      translate="no"
       data-dsh-market-tab={tab}
       data-dsh-market-fullscreen={tab === 'themes' && themesFullscreen ? 'true' : undefined}
     >
