@@ -1058,6 +1058,20 @@ function BookmarkMark({ size = 14, filled = false, className }: { size?: number;
 }
 
 /**
+ * Catalog npm latest in the card byline (#348). Same quiet style as ↓ / ★;
+ * omitted when absent so github-only and not-yet-backfilled rows stay clean.
+ */
+function CatalogVersionMark({ version, tip }: { version: string | null | undefined; tip: string }) {
+  if (typeof version !== 'string' || version.length === 0) return null
+  const label = /^v/i.test(version) ? version : `v${version}`
+  return (
+    <Tooltip label={tip} side="top">
+      <span className={css.star}>{`· ${label}`}</span>
+    </Tooltip>
+  )
+}
+
+/**
  * Module-scope caches so re-entering the section renders instantly instead
  * of refetching and rebuilding from a spinner (#30 by @StarsTom). Module
  * state survives section switches; a background refetch keeps it current.
@@ -3300,6 +3314,7 @@ export function MarketSection(props: MarketSectionProps) {
             <div className={css.byline}>
               <OwnerAvatar name={p.name} owner={p.owner || ''} />
               <span className={css.owner} title={p.owner}>{p.owner}</span>
+              <CatalogVersionMark version={p.version} tip={t('catalogNpmLatest')} />
               {typeof p.downloads === 'number' && (
                 <Tooltip label={String(p.downloads)} side="top">
                   <span className={css.star}>{'· ↓ ' + formatCount(p.downloads)}</span>
@@ -3432,6 +3447,7 @@ export function MarketSection(props: MarketSectionProps) {
               <div className={css.byline}>
                 <OwnerAvatar name={p.name} owner={p.owner || ''} />
                 <span className={css.owner} title={p.owner}>{p.owner}</span>
+                <CatalogVersionMark version={p.version} tip={t('catalogNpmLatest')} />
                 {typeof p.downloads === 'number' && (
                   <Tooltip label={String(p.downloads)} side="top">
                     <span className={css.star}>{'· ↓ ' + formatCount(p.downloads)}</span>
@@ -4895,12 +4911,13 @@ export function MarketSection(props: MarketSectionProps) {
           )}
         >
           {/* The detail dialog has to show at LEAST what the card already
-              does — owner, downloads, stars, published date, category — a
-              "detail" view that shows less than the summary it opened from
+              does — owner, version, downloads, stars, published date, category —
+              a "detail" view that shows less than the summary it opened from
               is backwards. */}
           <div className={css.byline}>
             <OwnerAvatar name={confirming.name} owner={confirming.owner || ''} />
             <span className={css.owner} title={confirming.owner}>{confirming.owner}</span>
+            <CatalogVersionMark version={confirming.version} tip={t('catalogNpmLatest')} />
             {typeof confirming.downloads === 'number' && (
               <Tooltip label={String(confirming.downloads)} side="top">
                 <span className={css.star}>{'· ↓ ' + formatCount(confirming.downloads)}</span>

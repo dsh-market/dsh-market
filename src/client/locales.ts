@@ -230,6 +230,8 @@ export const zh = {
   hostRequirementUndeclared: '未声明宿主要求',
   hostRequirementUnavailable: '宿主要求未知',
   sortDownloads: 'npm 下载量(近 30 天)',
+  /** Discover/theme card byline tooltip for catalog `version`. */
+  catalogNpmLatest: 'npm 当前 latest',
   sortStars: 'Star 数',
   sortAdded: '发布时间',
   sortDesc: '降序',
@@ -763,6 +765,8 @@ export const en: Record<MarketKey, string> = {
   hostRequirementUndeclared: 'Host requirement undeclared',
   hostRequirementUnavailable: 'Host requirement unknown',
   sortDownloads: 'npm downloads (30d)',
+  /** Discover/theme card byline tooltip for catalog `version`. */
+  catalogNpmLatest: 'npm latest',
   sortStars: 'Stars',
   sortAdded: 'Release date',
   sortDesc: 'Descending',
