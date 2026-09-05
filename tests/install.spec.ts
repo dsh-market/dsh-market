@@ -365,6 +365,10 @@ describe('pnpmNeverStarted (#502)', () => {
     expect(pnpmNeverStarted(failed({ exitCode: 9009, stderr: "'\"\"' \ufffd\ufffd\ufffd" }))).toBe(true)
     // pnpm ran and failed: package.json may already have been rewritten.
     expect(pnpmNeverStarted(failed({ stderr: 'ERR_PNPM_FETCH_404 GET https://registry.npmjs.org/ghost: Not Found - 404' }))).toBe(false)
+    // #509: the spawn was refused outright, so the profile is equally
+    // untouched — and the update route's "restoration could not be verified,
+    // inspect this profile" notice is equally an alarm about nothing.
+    expect(pnpmNeverStarted(failed({ stderr: "Error: spawnSync pnpm EACCES\n  code: 'EACCES',\n  syscall: 'spawnSync pnpm'," }))).toBe(true)
     expect(pnpmNeverStarted(failed({ stderr: 'some other failure' }))).toBe(false)
   })
 })

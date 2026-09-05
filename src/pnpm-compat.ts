@@ -436,14 +436,43 @@ export function classifyPnpmFailure(output: string, exitCode?: number | null): P
   //
   // 9009 is cmd.exe's "command not found" and is language-independent, so it
   // leads; the text forms catch the same failure in a log with no exit code.
-  // Last in the chain deliberately: pnpm's own errors never exit 9009, and
-  // anything pnpm actually said has already matched above.
-  if (exitCode === 9009 || /is not recognized as an internal or external command|不是内部或外部命令|不是內部或外部命令/.test(output)) {
+  //
+  // #509 by @awslmowms added the other way a present pnpm fails to run: the
+  // spawn itself is refused, and dsh's wrapper rethrows Node's error
+  // verbatim — `EACCES, syscall: 'spawnSync pnpm'` on Ubuntu. Same class
+  // (pnpm is there, it will not run, and the market's own setup cannot help)
+  // but a different repair, so the message names the reason it was given.
+  //
+  // Last in the chain deliberately: pnpm's own errors never exit 9009 and
+  // never fail to spawn, and anything pnpm actually said has matched above.
+  const spawnRefused = /spawnSync pnpm/.test(output)
+    ? /EACCES/.test(output) ? 'EACCES' : /ENOENT/.test(output) ? 'ENOENT' : 'unknown'
+    : null
+  const cmdNotFound = exitCode === 9009
+    || /is not recognized as an internal or external command|不是内部或外部命令|不是內部或外部命令/.test(output)
+  if (cmdNotFound || spawnRefused !== null) {
+    // Each cause gets the repair that fits it. One generic sentence would
+    // send the EACCES reporter hunting for a missing wrapper variable and
+    // the Windows reporter reaching for chmod.
+    const why = spawnRefused === 'EACCES'
+      ? {
+          zh: '系统拒绝执行它（EACCES，权限不足）。多半是那个文件没有执行权限，或者它所在的分区是以 noexec 挂载的。用 `ls -l $(command -v pnpm)` 看一眼权限位，必要时 `chmod +x`；如果 pnpm 装在 noexec 的分区上，换个位置重装。',
+          en: 'the system refused to execute it (EACCES, permission denied). Usually the file has no execute permission, or it lives on a partition mounted noexec. Check the permission bits with `ls -l $(command -v pnpm)` and `chmod +x` if needed; if pnpm sits on a noexec partition, reinstall it elsewhere.',
+        }
+      : spawnRefused === 'ENOENT'
+        ? {
+            zh: '要执行的文件已经不在了（ENOENT）。PATH 里那条记录指向的 pnpm 被删掉或改名了，重新装一次 pnpm 即可。',
+            en: 'the file it tried to execute is gone (ENOENT). The pnpm that entry on PATH points at has been deleted or renamed; reinstall pnpm.',
+          }
+        : {
+            zh: '命令行没能把它启动起来（退出码 9009）。可能是它其实没装好，也可能它是一个包装脚本、而脚本需要的环境变量在市场启动的子进程里不存在。',
+            en: "the command line could not launch it (exit code 9009). Either it is not installed properly, or it is a wrapper script whose required environment variables are missing in the market's child process.",
+          }
     return {
       code: 'pnpm-unusable',
       recoverable: false,
       replaceOutput: true,
-      message: '找不到能用的 pnpm，插件没有任何改动。系统里确实有一个 pnpm，但它启动失败了（命令行退出码 9009）。可能是它其实没装好，也可能它是一个包装脚本、而脚本需要的环境变量在市场启动的子进程里不存在。在终端里执行一次 `pnpm --version` 就能分辨：那里同样失败，说明要修的是这台机器上的 pnpm；那里正常，说明是启动市场的方式带来的环境差异，改用普通的 `dsh web` 启动可以绕开。 / pnpm could not be started, and nothing was changed. A pnpm does exist on PATH, but launching it failed (command-line exit code 9009). Either that pnpm is not installed properly, or it is a wrapper script whose required environment variables are missing in the process the market spawns. Run `pnpm --version` in a terminal to tell them apart: failing there too means pnpm itself needs fixing on this machine; working there means the difference comes from how the market was launched, and starting dsh with a plain `dsh web` avoids it.',
+      message: `找不到能用的 pnpm，插件没有任何改动。系统里确实有一个 pnpm，但${why.zh}\n在终端里执行一次 \`pnpm --version\` 可以确认：那里同样失败，说明要修的是这台机器上的 pnpm；那里正常，说明是启动市场的方式带来的环境差异，改用普通的 \`dsh web\` 启动可以绕开。 / pnpm could not be started, and nothing was changed. A pnpm does exist on PATH, but ${why.en}\nRun \`pnpm --version\` in a terminal to check: failing there too means pnpm itself needs fixing on this machine; working there means the difference comes from how the market was launched, and starting dsh with a plain \`dsh web\` avoids it.`,
     }
   }
   return null

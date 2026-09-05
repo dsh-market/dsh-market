@@ -367,6 +367,35 @@ describe('a pnpm that exists on PATH but cannot be started (#502)', () => {
     expect(classifyPnpmFailure("'pnpm' 不是内部或外部命令。")?.code).toBe('pnpm-unusable')
   })
 
+  it('also covers a spawn the system refused, with the repair that fits it (#509)', () => {
+    // @awslmowms on Ubuntu: pnpm is on PATH and the spawn itself is denied.
+    // dsh's wrapper rethrows Node's error verbatim, so what the user saw was
+    // an argv dump and a Node version banner.
+    const EACCES = String.raw`Error: spawnSync pnpm EACCES
+    at Object.spawnSync (node:internal/child_process:1123:20) {
+  errno: -13,
+  code: 'EACCES',
+  syscall: 'spawnSync pnpm',
+  path: 'pnpm',
+  spawnargs: [ 'add', '-w', 'dshmarket@1.41.0' ]
+}`
+    const failure = classifyPnpmFailure(EACCES, 1)
+    expect(failure?.code).toBe('pnpm-unusable')
+    expect(failure?.replaceOutput).toBe(true)
+    // The repair is specific to being refused execution — not the Windows
+    // wrapper story, which would send this reporter looking for the wrong
+    // thing entirely.
+    expect(failure?.message).toContain('chmod +x')
+    expect(failure?.message).toContain('noexec')
+    expect(failure?.message).not.toContain('9009')
+
+    // A vanished target is a third repair again.
+    const gone = classifyPnpmFailure(String.raw`Error: spawnSync pnpm ENOENT { code: 'ENOENT', syscall: 'spawnSync pnpm' }`, 1)
+    expect(gone?.code).toBe('pnpm-unusable')
+    expect(gone?.message).toContain('ENOENT')
+    expect(gone?.message).not.toContain('chmod +x')
+  })
+
   it('never outranks a failure pnpm itself reported', () => {
     // pnpm's own errors never exit 9009. If one somehow arrives with that
     // status, what pnpm said is the more specific answer and must win.
