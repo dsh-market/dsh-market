@@ -45,7 +45,8 @@ export const HOST_NAMESPACE_RE = /^@deepseek-ai\//
 
 export interface PnpmFailure {
   code: 'adding-to-root' | 'not-a-workspace' | 'hoist-pattern-diff' | 'pnpm-missing' | 'release-age-violation'
-    | 'ignored-builds' | 'git-prepare-not-allowed' | 'fetch-404' | 'transient-network' | 'fetch-timeout'
+    | 'ignored-builds' | 'git-prepare-not-allowed' | 'git-prepare-failed' | 'tarball-url-mismatch'
+    | 'fetch-404' | 'transient-network' | 'fetch-timeout'
     | 'unexpected-store' | 'patch-failed' | 'missing-tarball-integrity' | 'windows-file-locked'
     | 'pnpm-unusable' | 'missing-local-dependency'
   /** Bilingual, actionable message shown to the user instead of the raw wall of text. */
@@ -242,6 +243,30 @@ export function classifyPnpmFailure(output: string, exitCode?: number | null): P
       message: `profile 的 pnpm-lock.yaml 里有 tarball 依赖${zh}缺少 integrity，pnpm 因此拒绝这个 profile 里的所有安装和卸载——包括卸载它自己，所以装不回来也删不掉。这种条目通常是旧版市场留下的：它把 GitHub 插件写成了带镜像前缀的 tarball 地址，pnpm 认不出那是 GitHub，就要求一个它自己从不为 GitHub 源写入的校验值。新版市场改为交给 pnpm 原生的 GitHub 地址，不会再产生这种条目（#385）。请在 pnpm-lock.yaml 里删掉上面点名的那条依赖记录后重试，市场会用当前方式把它重新装回来；不要删整个 pnpm-lock.yaml，那会让其余插件全部重新解析版本。市场不会自动为未经验证的字节生成校验值 / a tarball dependency${en} in this profile's pnpm-lock.yaml has no integrity, so pnpm refuses every install and uninstall in this profile — including uninstalling that dependency itself, so it can be neither repaired nor removed. Entries like this usually come from an older market version, which installed GitHub plugins from a mirror-prefixed tarball URL: pnpm cannot tell that is GitHub, so it demands a checksum it never writes for GitHub sources. Current versions hand pnpm its own native GitHub target instead and no longer produce such entries (#385). Delete the named dependency's entry from pnpm-lock.yaml and retry — the market will reinstall it the current way. Do not delete the whole pnpm-lock.yaml; that re-resolves the versions of every other plugin too. The market will not generate a checksum for unverified bytes automatically`,
     }
   }
+  // #455 by @Asheblog: pnpm 11's supply-chain check compares every lockfile tarball URL
+  // against the registry's published metadata. A lockfile generated against
+  // registry.npmjs.org fails wholesale when the profile resolves a mirror
+  // registry (npmmirror), because the mirror's metadata names its own
+  // tarball host. pnpm refuses every operation while the mismatch stands,
+  // and the same check runs inside a git-hosted package's own build — which
+  // is how a floating github: dependency can break updates of unrelated
+  // plugins (the inner failure surfaces as ERR_PNPM_PREPARE_PACKAGE).
+  if (output.includes('ERR_PNPM_TARBALL_URL_MISMATCH')) {
+    const diagnostic = withDecodedPnpmDiagnostics(output)
+    const NAME = String.raw`(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*`
+    const named = [...diagnostic.matchAll(new RegExp(String.raw`(?<![\w./:@-])(${NAME})@[A-Za-z0-9._+-]+ has a tarball URL`, 'gi'))]
+      .map(match => match[1])
+      .filter((name, index, all) => all.indexOf(name) === index)
+    const pkg = named.length === 1 ? named[0] : undefined
+    const zh = named.length === 0 ? '' : `（${named.join('、')}）`
+    const en = named.length === 0 ? '' : ` (${named.join(', ')})`
+    return {
+      code: 'tarball-url-mismatch',
+      recoverable: false,
+      ...(pkg === undefined ? {} : { pkg }),
+      message: `pnpm-lock.yaml 里有一些条目的 tarball 地址与当前 registry 发布的元数据不一致${zh}，pnpm 11 的供应链检查因此拒绝这个 profile 里的所有操作。这通常发生在镜像 registry（如 npmmirror）与用 npmjs.org 生成的 lockfile 相遇时——例如某个 git 插件仓库自带的 lockfile。可以按 pnpm 的提示执行 pnpm clean --lockfile 后重新安装，或把 registry 切回生成该 lockfile 的源 / some entries in pnpm-lock.yaml have tarball URLs that do not match the current registry's published metadata${en}; pnpm 11's supply-chain check therefore refuses every operation in this profile. This usually happens when a mirror registry (e.g. npmmirror) meets a lockfile generated against npmjs.org — for example a git-hosted plugin repository's own lockfile. Run pnpm clean --lockfile and reinstall as pnpm suggests, or switch the registry back to the source the lockfile was generated against`,
+    }
+  }
   // #222 by @MicroMilo: a patch in the profile that no longer applies.
   //
   // pnpm exits 1 (verified against 10.29.3) but it has ALREADY written the
@@ -312,6 +337,29 @@ export function classifyPnpmFailure(output: string, exitCode?: number | null): P
       code: 'git-prepare-not-allowed',
       recoverable: false,
       message: '这个 git 插件需要在安装时执行构建脚本，被 pnpm 默认拦截。点击「允许构建脚本并重试」放行后重试即可 / this git-hosted plugin needs to run its build script at install time, which pnpm blocks by default — click "Allow build scripts and retry" to approve and retry',
+    }
+  }
+  // #455 by @Asheblog: a git-hosted package with a prepare/prepack script failed its own
+  // build. pnpm runs `pnpm install` inside the fetched repository and
+  // rethrows the inner failure as ERR_PNPM_PREPARE_PACKAGE with only a
+  // one-line summary — the inner diagnostics (which package, which registry)
+  // are not propagated, so the user sees "pnpm install Exit status 1" with no
+  // cause. The most common cause on pnpm 11 is the repository's own
+  // pnpm-lock.yaml failing the supply-chain check against a mirror registry
+  // (tarball URLs pointing at registry.npmjs.org while the profile resolves
+  // npmmirror); the repository's build script itself failing, or a network
+  // problem, are the other ones.
+  if (output.includes('ERR_PNPM_PREPARE_PACKAGE')) {
+    const diagnostic = withDecodedPnpmDiagnostics(output)
+    const named = /Failed to prepare git-hosted package fetched from "https:\/\/codeload\.github\.com\/[^"]+":\s*((?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*)@[A-Za-z0-9._+-]+/i
+      .exec(diagnostic)?.[1]
+    const zh = named === undefined ? '' : `（${named}）`
+    const en = named === undefined ? '' : ` (${named})`
+    return {
+      code: 'git-prepare-failed',
+      recoverable: false,
+      ...(named === undefined ? {} : { pkg: named }),
+      message: `git 插件${zh}在安装时需要执行它自己仓库里的构建脚本（pnpm install），但构建失败了。最常见的原因是仓库自带的 pnpm-lock.yaml 与你的 registry 不兼容：lockfile 里的 tarball 地址指向 registry.npmjs.org，而你的 registry 是镜像（如 npmmirror），pnpm 11 的供应链检查会拒绝整个 lockfile；也可能是仓库的构建脚本本身报错或网络问题。可以先把这个依赖固定到已知可用的 commit（github:owner/repo#<commit>）再更新其他插件，或临时把 registry 切到 npmjs.org 重试 / a git-hosted plugin${en} failed to run its own build (pnpm install) during install. The most common cause is the repository's pnpm-lock.yaml being incompatible with your registry: its tarball URLs point at registry.npmjs.org while your registry is a mirror (e.g. npmmirror), which pnpm 11's supply-chain check rejects; the repository's build script itself failing, or a network problem, are the other causes. Pin that dependency to a known-good commit (github:owner/repo#<commit>) before updating other plugins, or temporarily switch the registry to npmjs.org and retry`,
     }
   }
   // #65: a dependency that no longer resolves — an unpublished package left

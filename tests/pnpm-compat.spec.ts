@@ -255,6 +255,54 @@ The lockfile contains entries that the active policies reject.`)
     expect(prepare?.code).toBe('git-prepare-not-allowed')
     expect(prepare?.message).toContain('允许构建脚本并重试')
   })
+
+  it('recognizes a git-hosted package whose own build failed (ERR_PNPM_PREPARE_PACKAGE)', () => {
+    // Verbatim from a real profile: updating an unrelated npm plugin
+    // re-resolved a floating github: dependency to a new HEAD whose own
+    // pnpm-lock.yaml fails pnpm 11's supply-chain check against a mirror
+    // registry. pnpm rethrows the inner `pnpm install` failure with only a
+    // one-line summary, so the classifier must name the package from that.
+    const failed = classifyPnpmFailure('ERR_PNPM_PREPARE_PACKAGE: Failed to prepare git-hosted package fetched from "https://codeload.github.com/omdsh-dev/DSH-better-sidebar/tar.gz/d70db8fb026d002b22ae97efd893ff08ee9f0d10": dsh-better-sidebar@0.18.0-alpha.0 pnpm-install: `pnpm install`Exit status 1')
+    expect(failed?.code).toBe('git-prepare-failed')
+    expect(failed?.recoverable).toBe(false)
+    expect(failed?.pkg).toBe('dsh-better-sidebar')
+    expect(failed?.message).toContain('dsh-better-sidebar')
+    expect(failed?.message).toContain('registry')
+    expect(failed?.message).toContain('github:owner/repo#<commit>')
+    // The scoped form is read the same way.
+    const scoped = classifyPnpmFailure('ERR_PNPM_PREPARE_PACKAGE: Failed to prepare git-hosted package fetched from "https://codeload.github.com/o/r/tar.gz/abc": @scope/plugin@1.0.0 pnpm-install: `pnpm install`Exit status 1')
+    expect(scoped?.pkg).toBe('@scope/plugin')
+    // Unparseable prose still classifies, without inventing a package.
+    const generic = classifyPnpmFailure('ERR_PNPM_PREPARE_PACKAGE: something reworded upstream')
+    expect(generic?.code).toBe('git-prepare-failed')
+    expect(generic?.pkg).toBeUndefined()
+    expect(generic?.message).not.toContain('undefined')
+  })
+
+  it('recognizes the tarball URL mismatch supply-chain check (ERR_PNPM_TARBALL_URL_MISMATCH)', () => {
+    // Captured from pnpm 11.7.0 preparing a git-hosted package whose
+    // committed lockfile names registry.npmjs.org tarballs while the profile
+    // resolves registry.npmmirror.com.
+    const failed = classifyPnpmFailure(`[ERR_PNPM_TARBALL_URL_MISMATCH] 2 lockfile entries failed verification:
+  @deepseek-ai/dsh-util-crypto@0.1.2-alpha.2 has a tarball URL (https://registry.npmjs.org/@deepseek-ai/dsh-util-crypto/-/dsh-util-crypto-0.1.2-alpha.2.tgz) that does not match the registry's published metadata (https://registry.npmmirror.com/@deepseek-ai/dsh-util-crypto/-/dsh-util-crypto-0.1.2-alpha.2.tgz)
+  @deepseek-ai/dsh-util-time@0.1.2-alpha.2 has a tarball URL (https://registry.npmjs.org/@deepseek-ai/dsh-util-time/-/dsh-util-time-0.1.2-alpha.2.tgz) that does not match the registry's published metadata (https://registry.npmmirror.com/@deepseek-ai/dsh-util-time/-/dsh-util-time-0.1.2-alpha.2.tgz)
+
+The lockfile contains entries that the active policies reject.`)
+    expect(failed?.code).toBe('tarball-url-mismatch')
+    expect(failed?.recoverable).toBe(false)
+    // Two violators: both named, `pkg` stays undefined.
+    expect(failed?.pkg).toBeUndefined()
+    expect(failed?.message).toContain('@deepseek-ai/dsh-util-crypto')
+    expect(failed?.message).toContain('@deepseek-ai/dsh-util-time')
+    expect(failed?.message).toContain('pnpm clean --lockfile')
+    // A single violator is exposed as `pkg`.
+    const single = classifyPnpmFailure(`[ERR_PNPM_TARBALL_URL_MISMATCH] 1 lockfile entries failed verification:
+  dsh-music-huazai@0.1.0 has a tarball URL (https://registry.npmjs.org/x.tgz) that does not match the registry's published metadata (https://registry.npmmirror.com/x.tgz)`)
+    expect(single?.pkg).toBe('dsh-music-huazai')
+    // The escaped NDJSON form used in production decodes the same way.
+    const ndjson = String.raw`{"name":"pnpm","level":"error","err":{"code":"ERR_PNPM_TARBALL_URL_MISMATCH","message":"1 lockfile entries failed verification:\n  dsh-music-huazai@0.1.0 has a tarball URL (https://registry.npmjs.org/x.tgz) that does not match the registry's published metadata (https://registry.npmmirror.com/x.tgz)"}}`
+    expect(classifyPnpmFailure(ndjson)?.pkg).toBe('dsh-music-huazai')
+  })
 })
 
 describe('provisionHint (#142 / #108 / #32)', () => {
