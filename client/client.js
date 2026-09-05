@@ -6428,6 +6428,14 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const [visibleCatsOneRow, setVisibleCatsOneRow] = (0, react.useState)(null);
 			const catsWrapRef = (0, react.useRef)(null);
 			const [catsStuck, setCatsStuck] = (0, react.useState)(false);
+			/** While the sticky header is pinned, expansion is this flag — not
+			* `catsOpen`. Becoming stuck collapses on the SAME render (stuckExpanded
+			* starts false) instead of a follow-up `useLayoutEffect` that flipped
+			* `catsOpen` and forced a second commit; that delayed height change is
+			* what lined up with the host Settings dialog hitching after tab 收放.
+			* An explicit chevron click while stuck sets this true and keeps
+			* `catsOpen` in sync so unstuck restores the user's choice. */
+			const [stuckExpanded, setStuckExpanded] = (0, react.useState)(false);
 			const [catsSentinel, setCatsSentinel] = (0, react.useState)(null);
 			const refreshInstalled = (0, react.useCallback)((force) => {
 				fetch(api("/dsh-market/installed"), { cache: "no-store" }).then((res) => res.json()).then((body) => {
@@ -8473,7 +8481,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					if (leftView && root !== null && wrap !== null) {
 						if (root.scrollHeight - root.clientHeight <= wrap.offsetHeight) return;
 					}
-					setCatsStuck(leftView);
+					setCatsStuck((prev) => prev === leftView ? prev : leftView);
 				}, {
 					root: bodyRef.current,
 					threshold: 0
@@ -8481,28 +8489,14 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				observer.observe(catsSentinel);
 				return () => observer.disconnect();
 			}, [catsSentinel]);
-			/**
-			* Becoming stuck auto-collapses an open row — a REAL `catsOpen` flip, not
-			* a display-only override. An earlier version faked this by computing a
-			* separate "effectively open" value for rendering while leaving `catsOpen`
-			* itself true; the chevron's own click handler only ever toggled the real
-			* `catsOpen`, so while stuck it flipped a value the render path had
-			* already stopped consulting — clicking "expand" did nothing visible
-			* (reported: "吸顶滚动了之后，展开没反应了"). Driving the same state the
-			* chevron drives means the chevron always works, stuck or not.
-			*/
-			const catsAutoCollapsedRef = (0, react.useRef)(false);
-			(0, react.useLayoutEffect)(() => {
-				if (catsStuck) {
-					if (catsOpen) {
-						setCatsOpen(false);
-						catsAutoCollapsedRef.current = true;
-					}
-				} else if (catsAutoCollapsedRef.current) {
-					setCatsOpen(true);
-					catsAutoCollapsedRef.current = false;
-				}
+			(0, react.useEffect)(() => {
+				if (!catsStuck) setStuckExpanded(false);
 			}, [catsStuck]);
+			/** Expanded chips + chevron share one value. Stuck uses `stuckExpanded`
+			* so pinning collapses without rewriting `catsOpen` in a layout effect
+			* (see stuckExpanded state). Leaving stuck falls back to `catsOpen`,
+			* which still holds the pre-pin / in-pin user choice. */
+			const catsExpanded = catsStuck ? stuckExpanded : catsOpen;
 			/**
 			* A fresh install (hotUrls/hotNames) and a toggle/group action
 			* (refreshNames) both end in the same place — "reload the page" — and
@@ -8952,7 +8946,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 						className: Market_module_css_default.body,
 						ref: bodyRef,
-						onScroll: (e) => setShowTop(e.currentTarget.scrollTop > 400),
+						onScroll: (e) => {
+							const show = e.currentTarget.scrollTop > 400;
+							setShowTop((prev) => prev === show ? prev : show);
+						},
 						children: tab === "backup" ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 							className: Market_module_css_default.backupGrid,
 							children: [
@@ -9234,8 +9231,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 											className: visibleCats === null ? `${Market_module_css_default.catsWrap} ${Market_module_css_default.catsCollapsed}` : Market_module_css_default.catsWrap,
 											children: (() => {
 												const budget = catsStuck ? visibleCatsOneRow : visibleCats;
-												const ordered = orderedCategories(categories, cat, catsOpen, budget);
-												const shown = catsOpen || budget === null ? ordered : ordered.slice(0, Math.max(0, budget - 1));
+												const ordered = orderedCategories(categories, cat, catsExpanded, budget);
+												const shown = catsExpanded || budget === null ? ordered : ordered.slice(0, Math.max(0, budget - 1));
 												return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
 													/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Pill, {
 														"data-chip": "1",
@@ -9253,11 +9250,12 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 														variant: "ghost",
 														size: "sm",
 														className: Market_module_css_default.catsToggle,
-														icon: catsOpen ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconChevronUpOutline14, { size: 14 }) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconChevronDownOutline14, { size: 14 }),
-														"aria-label": catsOpen ? t("catsLess") : t("catsMore"),
+														icon: catsExpanded ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconChevronUpOutline14, { size: 14 }) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconChevronDownOutline14, { size: 14 }),
+														"aria-label": catsExpanded ? t("catsLess") : t("catsMore"),
 														onClick: () => {
-															catsAutoCollapsedRef.current = false;
-															setCatsOpen((o) => !o);
+															const next = !catsExpanded;
+															if (catsStuck) setStuckExpanded(next);
+															setCatsOpen(next);
 														}
 													})
 												] });
