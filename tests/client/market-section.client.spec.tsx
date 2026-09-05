@@ -1263,6 +1263,9 @@ describe('MarketSection (jsdom)', () => {
       expect(screen.getByText('dsh-q30')).toBeTruthy()
       expect(screen.queryByRole('button', { name: '2' })).toBeNull()
       expect(screen.getByRole('button', { name: en.perPage + ' 48' })).toBeTruthy()
+      // Selecting a size must close the menu — otherwise scroll-to-top leaves
+      // the panel floating over the list.
+      expect(screen.queryByRole('menuitem', { name: '24' })).toBeNull()
     })
   })
 

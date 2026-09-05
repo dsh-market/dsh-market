@@ -325,7 +325,13 @@ function Pager({ currentPage, totalPages, pageSize, onGoToPage, onChangePageSize
         <Menu
           open={sizeOpen}
           onClose={() => setSizeOpen(false)}
-          onSelect={id => onChangePageSize(Number(id))}
+          onSelect={id => {
+            onChangePageSize(Number(id))
+            // primitives Menu does not close itself on select (FilterMenu
+            // stays open on purpose for multi-pick). Page size is one shot;
+            // leaving it open after scrollToTop parks the panel mid-list.
+            setSizeOpen(false)
+          }}
           selectedId={String(pageSize)}
           align="end"
           portal
@@ -3356,17 +3362,18 @@ export function MarketSection(props: MarketSectionProps) {
           </div>
         )}
         <div className={css.foot}>
-          <span className={css.hostRequirement} title={hostRequirementTitle}>{hostRequirementLabel}</span>
-          {pluginCategories(p).map(category => (
-            <span key={category} className={css.tag}>
-              {(data!.categories[category] && (data!.categories[category]![lang] || data!.categories[category]!.en)) || category}
-            </span>
-          ))}
+          <div className={css.footTags}>
+            <span className={css.hostRequirement} title={hostRequirementTitle}>{hostRequirementLabel}</span>
+            {pluginCategories(p).map(category => (
+              <span key={category} className={css.tag}>
+                {(data!.categories[category] && (data!.categories[category]![lang] || data!.categories[category]!.en)) || category}
+              </span>
+            ))}
+          </div>
           {/* Published date and a source link used to live here too — both
               redundant now that the title itself opens the repo, and the
               date/tag pair alone was long enough in English to wrap onto its
               own line, splitting one card's footer into two visual rows. */}
-          <span className={css.grow} />
           <span className={css.footActions}>
             {renderFavoriteControl(p.url)}
             <button type="button" className={css.commentsLink} onClick={() => setCommentsFor(p)}>
