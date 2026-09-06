@@ -3281,6 +3281,43 @@ describe('market self-update', () => {
     expect(installedSpec('dshmarket')).toBe('^1.2.3')
   })
 
+  it('names a newer release for a generation the desktop host linked in, without offering it (#497)', async () => {
+    await bed.dispatch('POST', '/dsh-market/channel', { channel: 'stable' })
+    fake.npm['dshmarket'] = {
+      latest: '1.0.3',
+      versions: { '1.0.3': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } },
+    }
+    await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/dsh-market/dsh-market' })
+    // The desktop host's layout: the package lives in a generation directory
+    // beside the profile, and the profile links to it.
+    const generation = join(fake.profileDir, '..', '.generations', 'live', 'dshmarket+1.0.3+7aba605c3145', 'node_modules', 'dshmarket')
+    mkdirSync(generation, { recursive: true })
+    const packagePath = join(fake.profileDir, 'node_modules', 'dshmarket', 'package.json')
+    const installedPackage = JSON.parse(readFileSync(packagePath, 'utf8')) as Record<string, unknown>
+    installedPackage.repository = { type: 'git', url: 'https://github.com/dsh-market/dsh-market.git' }
+    writeFileSync(packagePath, JSON.stringify(installedPackage))
+    writeFileSync(join(generation, 'package.json'), JSON.stringify(installedPackage))
+    const manifestPath = join(fake.profileDir, 'package.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { dependencies: Record<string, string> }
+    manifest.dependencies['dshmarket'] = 'link:../.generations/live/dshmarket+1.0.3+7aba605c3145/node_modules/dshmarket'
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+    vi.stubGlobal('fetch', (url: string) => String(url).includes('registry.npmjs.org')
+      ? Promise.resolve(new Response(JSON.stringify({ version: '1.2.3' }), { status: 200 }))
+      : Promise.reject(new Error('unexpected fetch')))
+
+    const updates = await bed.dispatch('GET', '/dsh-market/updates?force=1')
+    expect(updates.json.updates['dshmarket']).toMatchObject({
+      kind: 'generation', current: '1.0.3', latest: '1.2.3', updateAvailable: false,
+    })
+    expect(updates.json.updates['dshmarket'].restoreRequired).toBeUndefined()
+
+    // The desktop host asks the versioned API the same question and gets
+    // the same answer: the release is named, nothing is offered.
+    const v1 = await bed.dispatch('GET', '/dsh-market/api/v1/updates?name=dshmarket&force=1')
+    expect(v1.status).toBe(200)
+    expect(v1.json.package).toMatchObject({ source: 'generation', installedVersion: '1.0.3', latestVersion: '1.2.3', updateAvailable: false })
+  })
+
   it('the market updates itself through the same flow', async () => {
     // Pin the channel: with no choice on record it is derived from the
     // RUNNING build, and this repo carries a prerelease version while a beta

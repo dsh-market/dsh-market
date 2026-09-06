@@ -2730,6 +2730,30 @@ describe('local-dev restore', () => {
     })
   })
 
+  it('names a newer release for a host-installed generation without a button (#497)', async () => {
+    stubFetch({
+      '/dsh-market/installed': {
+        profile: 'web',
+        installed: { 'dsh-loop': 'link:../.generations/live/dsh-loop+1.0.0+7aba605c3145/node_modules/dsh-loop' },
+        live: [],
+      },
+      '/dsh-market/updates': {
+        updates: { 'dsh-loop': { kind: 'generation', version: '1.0.0', current: '1.0.0', latest: '1.1.0', updateAvailable: false } },
+      },
+    })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    expect(await screen.findByText(en.hostUpdateReady.replace('{0}', '1.1.0'))).toBeTruthy()
+    // The host reconciles its generations at startup: an update applied here
+    // would silently revert, and a restore would tear down the host's own
+    // install. Neither is offered, and the row is not tagged as local work.
+    expect(screen.queryByRole('button', { name: en.update })).toBeNull()
+    expect(screen.queryByRole('button', { name: en.restoreOnline })).toBeNull()
+    expect(screen.queryByRole('button', { name: en.restore })).toBeNull()
+    expect(screen.queryByText(en.linkedDev)).toBeNull()
+  })
+
   it('does not offer restore when the linked plugin is not in the catalog', async () => {
     stubFetch({
       '/dsh-market/installed': { profile: 'web', installed: { 'mystery-plug': 'link:../mystery' }, live: [] },

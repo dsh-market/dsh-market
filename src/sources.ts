@@ -463,6 +463,19 @@ export function gitUploadPackUrl(spec: string): string | null {
   return `${base}/info/refs?service=git-upload-pack`
 }
 
+/**
+ * A `link:` that points into a generation the desktop host materialised
+ * (#497): `link:../.generations/live/<pkg>+<version>+<hash>/node_modules/<pkg>`.
+ * That is the host's production install, not a developer's checkout — it
+ * came from the registry and has releases to compare against. The host
+ * recognises its own installs by the `.generations/live/` segment, and no
+ * hand-written link ever lands under that directory, so the same test is
+ * enough here.
+ */
+export function isGenerationLink(spec: string): boolean {
+  return /^link:/i.test(spec) && /(?:^|[\\/])\.generations[\\/]live[\\/]/i.test(spec)
+}
+
 export { findCatalogEntryForLocal, resolveCatalogRestore } from './catalog-local-match.ts'
 
 /**

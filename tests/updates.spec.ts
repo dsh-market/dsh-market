@@ -194,6 +194,47 @@ describe('checkUpdates — github pins', () => {
       expect(result.themer, spec).toMatchObject({ kind: 'linked', updateAvailable: false })
     }
   })
+
+  // #497: the desktop host installs through generations — a `link:` into
+  // `.generations/live/` — and reconciles them at startup. The market names
+  // what is newer and never offers to apply it.
+  const GENERATION = 'link:../.generations/live/themer+0.16.1+7aba605c3145/node_modules/themer'
+
+  it('names a newer release for a generation without offering it', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ version: '0.17.1' }), { status: 200 })))
+    const result = await checkUpdates(
+      'web', true, profileWith(GENERATION, OLD, '0.16.1'), new Map(), new Map([['themer', 'themer']]),
+    )
+    expect(result.themer).toEqual({
+      kind: 'generation', version: '0.16.1', current: '0.16.1', latest: '0.17.1', updateAvailable: false,
+    })
+  })
+
+  it('names nothing for a generation that is current, behind a lagging tag, or unmatched', async () => {
+    for (const published of ['0.16.1', '0.15.0']) {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ version: published }), { status: 200 })))
+      const result = await checkUpdates(
+        'web', true, profileWith(GENERATION, OLD, '0.16.1'), new Map(), new Map([['themer', 'themer']]),
+      )
+      expect(result.themer, published).toMatchObject({ kind: 'generation', current: '0.16.1', latest: null, updateAvailable: false })
+    }
+    const unmatched = await checkUpdates('web', true, profileWith(GENERATION, OLD, '0.16.1'))
+    expect(unmatched.themer).toMatchObject({ kind: 'generation', current: '0.16.1', latest: null, updateAvailable: false })
+  })
+
+  it('names the newest build the channel admits for a generation', async () => {
+    // The market is itself a generation on a desktop host; a beta subscriber
+    // is told about the prerelease the same way an npm install would be.
+    const at: Record<string, string> = { latest: '1.13.1', beta: '1.14.0-beta.1' }
+    vi.stubGlobal('fetch', vi.fn((url: unknown) => {
+      const tag = String(url).split('/').pop() ?? ''
+      return Promise.resolve(new Response(JSON.stringify({ version: at[tag] }), { status: 200 }))
+    }))
+    const result = await checkUpdates(
+      'web', true, profileWith(GENERATION, OLD, '1.13.1'), new Map([['themer', 'beta']]), new Map([['themer', 'themer']]),
+    )
+    expect(result.themer).toMatchObject({ kind: 'generation', current: '1.13.1', latest: '1.14.0-beta.1', updateAvailable: false })
+  })
 })
 
 describe('checkUpdates — private git hosts (#525)', () => {

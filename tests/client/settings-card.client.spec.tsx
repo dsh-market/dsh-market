@@ -23,6 +23,7 @@ let calls: Array<{ path: string; body: unknown }> = []
 
 function stubFetch(options: {
   version?: string; restart?: boolean; latest?: string | null; restoreRequired?: boolean; removeOk?: boolean; error?: string; selfManaged?: boolean
+  kind?: string
   channel?: string; channelSwitch?: string; channelError?: string
   region?: string; regionAuto?: boolean; regionError?: string; githubProxy?: string | null
   githubProxyCustom?: string | null; githubProxyManaged?: boolean; githubProxyError?: string
@@ -57,7 +58,13 @@ function stubFetch(options: {
     if (path.includes('/dsh-market/updates')) {
       return json({ updates: { dshmarket: options.channelSwitch !== undefined
         ? { updateAvailable: false, latest: options.channelSwitch, channelSwitch: options.channelSwitch }
-        : { updateAvailable: options.latest != null, latest: options.latest ?? null, restoreRequired: options.restoreRequired === true } } })
+        : {
+            // A generation (#497) names its newer release without offering it.
+            updateAvailable: options.kind !== 'generation' && options.latest != null,
+            latest: options.latest ?? null,
+            restoreRequired: options.restoreRequired === true,
+            ...(options.kind === undefined ? {} : { kind: options.kind }),
+          } } })
     }
     if (path.endsWith('/dsh-market/channel')) {
       return options.channelError !== undefined
@@ -131,6 +138,15 @@ describe('SettingsCard', () => {
     await open()
     await waitFor(() => { expect(screen.getByText(/1\.13\.0/)).toBeTruthy() })
     expect(screen.getByRole('button', { name: t('setSelfUpdate') })).toBeTruthy()
+  })
+
+  it('names a newer release for a host-installed market without offering to apply it (#497)', async () => {
+    stubFetch({ version: '1.38.1', latest: '1.41.0', kind: 'generation' })
+    await open()
+    await waitFor(() => { expect(screen.getByText(/1\.41\.0/)).toBeTruthy() })
+    expect(screen.getByText(t('setSelfHostManagedHint'))).toBeTruthy()
+    expect(screen.queryByRole('button', { name: t('setSelfUpdate') })).toBeNull()
+    expect(screen.queryByRole('button', { name: t('restoreOnline') })).toBeNull()
   })
 
   it('confirms before switching a locally packaged market to its matched online release', async () => {
