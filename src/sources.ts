@@ -362,7 +362,35 @@ export function isGitHostedSpec(spec: string): boolean {
   // https://host/…/repo.git with optional fragment / query — not a Release
   // archive and not a bare registry name.
   if (/^https?:\/\/[^\s]+\/[^\s]+?\.git(?:[#?].*)?$/i.test(s)) return true
+  // Same shape without the `.git` suffix (Gitea/GitLab often omit it).
+  if (looksLikeHttpsGitRemote(s)) return true
   return false
+}
+
+/**
+ * `https://host/owner/repo` (optional `.git`, fragment, query) that is not an
+ * npm registry, Release archive, or codeload tarball.
+ */
+function looksLikeHttpsGitRemote(spec: string): boolean {
+  const bare = spec.trim().split(/[?#]/)[0] ?? ''
+  let url: URL
+  try {
+    url = new URL(bare)
+  } catch {
+    return false
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return false
+  const host = url.hostname.toLowerCase()
+  if (host === 'registry.npmjs.org' || host.endsWith('.npmjs.org')) return false
+  if (host === 'registry.npmmirror.com' || host === 'cdn.npmmirror.com') return false
+  if (host === 'codeload.github.com') return false
+  if (/\.(?:tgz|tar\.gz|zip)$/i.test(url.pathname)) return false
+  if (/\/(?:releases|archive)\//i.test(url.pathname)) return false
+  // Exactly owner/repo — deeper paths are too ambiguous to treat as git.
+  const segments = url.pathname.split('/').filter(seg => seg !== '')
+  if (segments.length !== 2) return false
+  const repo = segments[1]!.replace(/\.git$/i, '')
+  return /^[A-Za-z0-9_.-]+$/.test(segments[0]!) && /^[A-Za-z0-9_.-]+$/.test(repo)
 }
 
 /**
@@ -379,11 +407,30 @@ export function gitCommitOfTarget(spec: string): string | null {
 }
 
 /**
- * pnpm add target for updating a non-GitHub git install: drop a full-SHA
+ * pnpm add target for updating a non-shortcut git install: drop a full-SHA
  * pin so the remote re-resolves to HEAD, keep any branch/tag fragment.
+ * GitHub-hosted `git+https://github.com/…` is rewritten to `github:` — the
+ * market's canonical spelling — so a successful update rematerializes the
+ * dependency that way and later check/update/rollback can use the first-class
+ * GitHub path. This turn still installs through the generic-git target slot
+ * (no region acceleration on the rewritten shortcut itself).
  */
 export function gitUpdateTarget(spec: string): string | null {
   if (!isGitHostedSpec(spec) || spec.startsWith('github:') || repoFromTarget(spec) !== null) return null
+  const github = parseGitHubRemote(spec)
+  if (github !== null) {
+    const hash = spec.indexOf('#')
+    if (hash === -1) return `github:${github.repo}`
+    const frag = spec.slice(hash + 1).split(/[?&]/)[0] ?? ''
+    if (/^[0-9a-f]{40}$/i.test(frag)) return `github:${github.repo}`
+    // Preserve branch/tag / path selectors the same way githubUpdateTarget does
+    // for shortcuts — only full-SHA pins are dropped.
+    if (frag.startsWith('path:/') || frag.startsWith('semver:')) {
+      return `github:${github.repo}#${frag}`
+    }
+    if (frag !== '') return `github:${github.repo}#${frag}`
+    return `github:${github.repo}`
+  }
   const hash = spec.indexOf('#')
   if (hash === -1) return spec
   const frag = spec.slice(hash + 1).split(/[?&]/)[0] ?? ''
@@ -393,6 +440,7 @@ export function gitUpdateTarget(spec: string): string | null {
 /**
  * Smart-HTTP info/refs URL for a git-hosted install target, or null when the
  * transport cannot be probed with `fetch` (scp / git:// / ssh://).
+ * Userinfo is stripped so update checks do not resend embedded credentials.
  */
 export function gitUploadPackUrl(spec: string): string | null {
   let remote = spec.trim().replace(/^git\+/i, '')
@@ -402,8 +450,16 @@ export function gitUploadPackUrl(spec: string): string | null {
   if (hash !== -1) remote = remote.slice(0, hash)
   const query = remote.indexOf('?')
   if (query !== -1) remote = remote.slice(0, query)
-  if (!/^https?:\/\//i.test(remote)) return null
-  const base = remote.replace(/\/+$/, '')
+  let url: URL
+  try {
+    url = new URL(remote)
+  } catch {
+    return null
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return null
+  url.username = ''
+  url.password = ''
+  const base = url.toString().replace(/\/+$/, '')
   return `${base}/info/refs?service=git-upload-pack`
 }
 

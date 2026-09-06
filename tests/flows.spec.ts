@@ -264,6 +264,23 @@ vi.mock('../src/dsh-cli.ts', () => {
       }
       return ok
     }
+    // Private-host / git+https remotes (#525). Same write path as github:;
+    // without this branch FakeDsh fell through to npm name parsing and the
+    // update-route regression could not prove the Gitea URL was kept.
+    if (/^git\+/i.test(target) || /^git@[^/\s:]+:\S+/.test(target)) {
+      const bare = target.split(/[#?]/)[0]!
+      const repo = fake.repos[target] ?? fake.repos[bare]
+      if (repo === undefined) {
+        return { exitCode: 1, timedOut: false, stdout: '', stderr: `fake dsh: unknown git remote ${target}`, cancelled: false }
+      }
+      writeDep(repo.name, target)
+      writePkg(repo.name, repo.manifest, repo.artifacts)
+      if (fake.profileBundleOnNextAdd !== null) {
+        appendProfileBundle(fake.profileBundleOnNextAdd)
+        fake.profileBundleOnNextAdd = null
+      }
+      return ok
+    }
     if (/^https?:/.test(target)) {
       const prebuilt = fake.tarballs[target]
       if (prebuilt === undefined) {
@@ -1686,6 +1703,44 @@ describe('update flow — no npm publishing required', () => {
     // And not the pin it already had: an update that reinstalls the commit
     // on disk is an update that can never move.
     expect(ran).not.toContain(sha)
+  })
+
+  it('updates a Gitea git+https install from the git URL, not a same-named npm package (#525)', async () => {
+    // Same silent failure mode as the codeload case above, for self-hosted
+    // remotes: repoOfTarget only knows github:/codeload, so a Gitea URL used
+    // to fall through to name@latest when the package name collided.
+    const gitea = 'git+https://gitea.example.com/me/themer.git'
+    fake.npm.themer = {
+      versions: {
+        '0.1.0': { manifest: { dsh: {}, main: 'index.js' }, artifacts: ['index.js'] },
+        '9.9.9': { manifest: { dsh: {}, main: 'index.js' }, artifacts: ['index.js'] },
+      },
+      latest: '9.9.9',
+    }
+    fake.repos[gitea] = {
+      name: 'themer', manifest: { dsh: {}, main: 'index.js' }, artifacts: ['index.js'],
+    }
+    // Seed a profile that already has the private-git spelling on disk.
+    const manifestPath = join(profileDir('web'), 'package.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    manifest.dependencies = { ...(manifest.dependencies ?? {}), themer: gitea }
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+    mkdirSync(join(profileDir('web'), 'node_modules', 'themer'), { recursive: true })
+    writeFileSync(
+      join(profileDir('web'), 'node_modules', 'themer', 'package.json'),
+      JSON.stringify({ name: 'themer', version: '0.1.0', dsh: {}, main: 'index.js' }),
+    )
+    writeFileSync(join(profileDir('web'), 'node_modules', 'themer', 'index.js'), 'export {}\n')
+
+    fake.calls = []
+    const updated = await bed.dispatch('POST', '/dsh-market/update', { name: 'themer' })
+    expect(updated.status).toBe(200)
+    const add = fake.calls.find(call => call[0] === 'add')
+    const ran = add?.join(' ') ?? ''
+    expect(ran, 'the update must keep the Gitea remote').toContain(gitea)
+    expect(ran).not.toContain('themer@latest')
+    expect(ran).not.toContain('themer@9.9.9')
+    expect(fake.calls.some(call => call.some(arg => /themer@(latest|9\.9\.9)/.test(arg)))).toBe(false)
   })
 
   it('keeps a github subpath while dropping revision selectors during update (#281)', async () => {

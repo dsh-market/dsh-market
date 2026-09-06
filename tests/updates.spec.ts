@@ -266,6 +266,27 @@ describe('checkUpdates — private git hosts (#525)', () => {
     })
   })
 
+  it('treats a bare https Gitea remote (no .git suffix) as git, not npm (#525)', async () => {
+    const gitea = 'https://gitea.example.com/me/themer'
+    let npmHits = 0
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      const href = String(url)
+      if (href.includes('registry.npmjs.org') || /\/themer\/latest/.test(href)) {
+        npmHits += 1
+        return { ok: true, status: 200, json: async () => ({ version: '9.9.9' }), text: async () => '' }
+      }
+      return {
+        ok: true, status: 200,
+        headers: { get: () => 'application/x-git-upload-pack-advertisement' },
+        json: async () => ({}),
+        text: async () => `001e# service=git-upload-pack\n00000155${HEAD} HEAD\0multi_ack\n`,
+      }
+    }))
+    const result = await checkUpdates('web', true, profileWith(gitea, OLD))
+    expect(npmHits).toBe(0)
+    expect(result.themer?.kind).not.toBe('npm')
+  })
+
   it('still treats a bare owner/repo registry shorthand as npm', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({
       ok: true, status: 200, json: async () => ({ version: '1.0.0' }), text: async () => '',
