@@ -367,8 +367,9 @@ export function classifyPnpmFailure(output: string, exitCode?: number | null): P
   // before it finishes), or a private-registry package without credentials.
   // pnpm re-resolves EVERY direct dependency on any add, so one ghost entry
   // blocks all later installs, of anything.
-  if (output.includes('ERR_PNPM_FETCH_404')) {
+  if (output.includes('ERR_PNPM_FETCH_404') || output.includes('ERR_PNPM_NO_MATCHING_VERSION')) {
     const pkg = /GET\s+\S*\/([^/\s]+):/.exec(output)?.[1].replace(/%2[Ff]/g, '/')
+      ?? /No matching version found for\s+((?:@[^/\s]+\/)?[^@\s]+)@/.exec(output)?.[1]
     const zh = pkg === undefined ? '' : `（${pkg}）`
     const en = pkg === undefined ? '' : ` (${pkg})`
     return {
