@@ -869,8 +869,8 @@ export function cleanupTmpDirsInNodeModules(profileDirectory: string): void {
   }
 
   function tryRemoveTmpDir(dirPath: string, name: string): void {
-    const pidMatch = name.match(tmpDirPattern)
-    if (pidMatch) {
+    const pidMatch = tmpDirPattern.exec(name)
+    if (pidMatch !== null) {
       const pid = parseInt(pidMatch[1]!, 10)
       if (isPidAlive(pid)) {
         logEvent('info', 'install', `skipping live pnpm tmp dir ${name} (pid ${pid} is alive)`)
@@ -880,8 +880,8 @@ export function cleanupTmpDirsInNodeModules(profileDirectory: string): void {
     try {
       rmSync(dirPath, { recursive: true, force: true })
       cleaned++
-    } catch (e) {
-      logEvent('warn', 'install', `failed to remove stale tmp dir ${name}: ${(e as Error).message}`)
+    } catch (err) {
+      logEvent('warn', 'install', `failed to remove stale tmp dir ${name}: ${(err as Error).message}`)
     }
   }
 
@@ -921,6 +921,7 @@ export function cleanupTmpDirsInNodeModules(profileDirectory: string): void {
     logEvent('warn', 'install', `failed to scan node_modules for tmp dirs: ${(err as Error).message}`)
   }
 }
+
 /** Run one `dsh plugin --profile <p> …` command with timeout and progress tracking. */
 export function runDshPlugin(profile: string, pluginArgs: string[]): Promise<InstallResult> {
   const { file, args, cwd, viaShell } = dshArgv()
