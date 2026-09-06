@@ -1807,6 +1807,19 @@ describe('update flow — no npm publishing required', () => {
     busyBed.dispose()
   })
 
+  it('exposes running agents in /status so the client can drain its install queue', async () => {
+    const defaultStatus = await bed.dispatch('GET', '/dsh-market/status')
+    expect(defaultStatus.json.agentGuardAvailable).toBe(false)
+    expect(defaultStatus.json.runningAgents).toEqual([])
+    const busyBed = createTestbed({}, undefined, {
+      list: () => [{ id: 'main', status: 'running' }],
+    })
+    const busyStatus = await busyBed.dispatch('GET', '/dsh-market/status')
+    expect(busyStatus.json.agentGuardAvailable).toBe(true)
+    expect(busyStatus.json.runningAgents).toEqual(['main'])
+    busyBed.dispose()
+  })
+
   it('refuses install and uninstall while any agent is running, before pnpm is touched', async () => {
     const callsBefore = fake.calls.length
     const defaultStatus = await bed.dispatch('GET', '/dsh-market/status')

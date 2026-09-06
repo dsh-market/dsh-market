@@ -179,6 +179,12 @@ export interface MarketStatus {
    */
   busy?: boolean
   /**
+   * Ids of currently running agents, sampled from the same guard that refuses
+   * mutations while agents run. The client's install queue drains when this
+   * is empty and the operation lock is free; absent means idle.
+   */
+  runningAgents?: string[]
+  /**
    * The process supervisor the host detected around itself (systemd, pm2),
    * or null/absent when none. Present so the UI can explain WHY the restart
    * button is missing instead of just omitting it (#229).

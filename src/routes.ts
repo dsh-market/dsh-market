@@ -2346,6 +2346,11 @@ export function mountMarketRoutes(
           // still holds the operation lock for a moment — the exact window
           // where clicking the restart banner used to bounce off a 409 (#91).
           busy: installing,
+          // Queue drain signal for the client's install queue: the agent-file
+          // guard values are already computed for every status poll, so the
+          // client can decide when a queued operation may run without an
+          // extra round trip. Absent ([]) means agents are idle.
+          runningAgents: runningAgentsForGuard(),
           pnpm: await commands.probePnpm(),
           boot: BOOT_ID,
           agentGuardAvailable: agentsGuardAvailable(),
