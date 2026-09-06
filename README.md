@@ -83,7 +83,7 @@ Installs prefer repo-verified npm packages, then author-supplied prebuilt GitHub
         CXX: /usr/bin/g++-11
   ```
 
-  On hosts with the settings service the same fields are editable live in **Settings → Plugins → Plugin configuration**, so the build environment can be changed without touching the profile file.
+  In the UI the same variables are edited live in **Settings → Plugins → Plugin configuration → dshmarket → Build environment** (one `KEY=value` per line; saving applies to the next install without a restart, and saving an empty list goes back to the profile config above). `PATH` and `CI` are always managed by the market and cannot be overridden from either place.
 - For terminal-attached launches, the detached replacement keeps running after the original terminal closes
 - Listing ≠ endorsement: plugins are third-party code, install sources you trust
 

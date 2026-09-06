@@ -42,15 +42,6 @@ describe('MarketSettings schema', () => {
     expect(MarketSettings({ allowRestart: false }).allowRestart).toBe(false)
   })
 
-  it('defaults buildEnv to nothing', () => {
-    expect(MarketSettings({}).buildEnv).toEqual({})
-  })
-
-  it('accepts a pinned build environment (#336)', () => {
-    expect(MarketSettings({ buildEnv: { CC: '/usr/bin/gcc-11', CXX: '/usr/bin/g++-11' } }).buildEnv)
-      .toEqual({ CC: '/usr/bin/gcc-11', CXX: '/usr/bin/g++-11' })
-  })
-
   it('claims only what this namespace actually stores', () => {
     // The release channel was in here for one version, and it made this a
     // SECOND writer for a value that lives in the market's state.json. The
@@ -59,17 +50,18 @@ describe('MarketSettings schema', () => {
     // back over it, so the user's choice survived until the next settings
     // event and no further.
     //
+    // `buildEnv` (issue #336) is likewise a value with its OWN editor and
+    // storage: the market's settings card persists it to state.json through
+    // the /dsh-market/build-env route. Registering it here as a second
+    // writer would recreate the channel bug exactly — this guard exists to
+    // keep that door closed.
+    //
     // A schema field is a claim of ownership, so this asserts the claim
     // stays narrow — widening it silently is exactly how that happened.
-    // The one deliberate widening is `buildEnv` (issue #336), whose whole
-    // point is to be edited at runtime on hosts whose process environment
-    // cannot be controlled from a shell; it has its own ownership guarantee
-    // (its merge precedence in src/dsh-cli.ts spawnEnv). Everything else in
-    // here is a regression, and the consequence itself is caught in layer 3
-    // (tests/web/channel.e2e.ts) against a real settings service, per this
-    // file's own rule about not hand-writing a stand-in for a contract we
-    // did not author.
-    expect(Object.keys(MarketSettings({}))).toEqual(['allowRestart', 'buildEnv'])
+    // The consequence itself is caught in layer 3 (tests/web/channel.e2e.ts)
+    // against a real settings service, per this file's own rule about not
+    // hand-writing a stand-in for a contract we did not author.
+    expect(Object.keys(MarketSettings({}))).toEqual(['allowRestart'])
   })
 })
 
@@ -81,37 +73,6 @@ describe('installMarketSettings', () => {
     // registration rides its own scoped fiber.
     expect(ctx.injected.flat()).toContain('settings')
     expect(ctx.injected.flat()).not.toContain('webServer')
-  })
-
-  it('syncs a pinned buildEnv into the live config the routes read (#336)', () => {
-    // The routes read `resolved.buildEnv` live through the spawnEnv source,
-    // so a settings edit must land on that object — not on a copy made at
-    // registration. Same contract `allowRestart` already holds.
-    let stored: MarketSettings = { allowRestart: true, buildEnv: { CC: '/usr/bin/gcc-11', CXX: '/usr/bin/g++-11' } }
-    let notify: () => void = () => {}
-    const scope = {
-      get: () => stored,
-      watch: (listener: () => void) => { notify = listener },
-    }
-    const ctx = {
-      injected: [] as string[][],
-      inject(services: string[], callback: (scoped: unknown) => void) {
-        ctx.injected.push(services)
-        if (services.includes('settings')) {
-          callback({ settings: { register: () => scope }, effect: (run: () => unknown) => run() })
-        }
-      },
-      effect: (run: () => unknown) => { run() },
-      on: () => () => {},
-    }
-    const resolved: { allowRestart?: boolean; buildEnv?: Record<string, string> } = { allowRestart: true }
-    installMarketSettings(ctx as never, resolved)
-    expect(resolved.buildEnv).toEqual({ CC: '/usr/bin/gcc-11', CXX: '/usr/bin/g++-11' })
-    // A later edit reaches the same object — the settings service calls the
-    // registered watcher on every commit, which is what re-syncs the config.
-    stored = { allowRestart: true, buildEnv: { CC: '/usr/bin/gcc-11' } }
-    notify()
-    expect(resolved.buildEnv).toEqual({ CC: '/usr/bin/gcc-11' })
   })
 
   it('takes nothing from @deepseek-ai/dsh-settings at runtime', () => {

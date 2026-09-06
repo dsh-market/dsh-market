@@ -217,6 +217,16 @@ export interface MarketState {
    * downloads oddly.
    */
   regionAuto?: boolean
+  /**
+   * The operator's pinned build environment (issue #336) as saved from the
+   * market's own settings card. Absent means "the composition says" — the
+   * entry's `config.buildEnv`, or nothing at all. Present (non-empty) means
+   * a saved editor state REPLACES the composition map, so clearing the
+   * field on the card inherits the composition again rather than freezing
+   * an earlier save. Read live into `config.buildEnv` by the routes; see
+   * src/dsh-cli.ts spawnEnv for the precedence once it reaches a child.
+   */
+  buildEnv?: Record<string, string>
 }
 
 /** Unique non-empty strings in `value`, order preserved. */
@@ -230,6 +240,37 @@ function uniqueStrings(value: unknown): string[] {
     out.push(item)
   }
   return out
+}
+
+/** A POSIX-looking environment variable name: the name part of `KEY=value`. */
+const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/
+
+/** Upper bound on one pinned env value, so state.json cannot balloon. */
+const MAX_ENV_VALUE = 4096
+
+/**
+ * Sanitize an untrusted build-env map (state.json, or the card route's body)
+ * into the shape spawnEnv can merge.
+ *
+ * An empty map and a non-object both read as undefined: clearing the card
+ * must inherit the composition, and a blank line in state.json must not
+ * disable every pinned variable. Only the merge precedence in
+ * src/dsh-cli.ts spawnEnv — never this — protects PATH and CI, but a value
+ * a user typed for them would silently do nothing there, so it is rejected
+ * here with a reason instead.
+ */
+export function buildEnvFromUnknown(value: unknown): Record<string, string> | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const out: Record<string, string> = {}
+  for (const [key, raw] of Object.entries(value)) {
+    if (!ENV_KEY_RE.test(key)) continue
+    if (key === 'PATH' || key === 'CI') continue
+    if (typeof raw !== 'string') continue
+    const entry = raw.trim()
+    if (entry === '') continue
+    out[key] = entry.slice(0, MAX_ENV_VALUE)
+  }
+  return Object.keys(out).length > 0 ? out : undefined
 }
 
 /**
@@ -251,6 +292,7 @@ export function readMarketState(profileDir: string): MarketState {
       channel?: unknown
       region?: unknown
       regionAuto?: unknown
+      buildEnv?: unknown
       notes?: unknown
     }
     const disabled = uniqueStrings(state.disabled !== undefined ? state.disabled : state.disabledSkins)
@@ -278,6 +320,7 @@ export function readMarketState(profileDir: string): MarketState {
       // Only meaningful beside a region, and only when true: a stray flag
       // with no region would promise a notice about a choice nobody made.
       regionAuto: state.regionAuto === true && asRegion(state.region) !== null ? true : undefined,
+      buildEnv: buildEnvFromUnknown(state.buildEnv),
     }
   } catch {
     return { disabled: new Set(), groups: {}, groupOrder: [], notes: {} }
@@ -302,6 +345,9 @@ export function writeMarketState(profileDir: string, state: MarketState): void {
     // the probe run, so writing a default here would mean it never does.
     ...(state.region === undefined ? {} : { region: state.region }),
     ...(state.regionAuto === true ? { regionAuto: true } : {}),
+    // Omitted while not saved, so a card that was never touched keeps
+    // inheriting the composition's buildEnv on every boot.
+    ...(state.buildEnv === undefined ? {} : { buildEnv: state.buildEnv }),
   }))
 }
 

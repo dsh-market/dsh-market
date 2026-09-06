@@ -9,19 +9,18 @@
  * say that was editing YAML in the right place with the right indentation,
  * where a stray space stops the profile booting.
  *
- * Only `allowRestart` and `buildEnv` are exposed. `profile` names which
- * profile this instance manages: it is decided at mount from the composition
- * or the command line, and a running instance cannot switch to another one,
- * so offering it as a field would promise something the write cannot deliver.
+ * Only `allowRestart` is exposed. `profile` names which profile this
+ * instance manages: it is decided at mount from the composition or the
+ * command line, and a running instance cannot switch to another one, so
+ * offering it as a field would promise something the write cannot deliver.
  *
- * `buildEnv` (issue #336) is the environment pinned for plugin build/install
- * commands: the case that started it is a host whose shell environment cannot
- * be controlled (GUI, systemd/launchd, Windows Start menu), where the global
- * compiler is too old for a plugin's build but upgrading it would break other
- * work. Pinning `CC`/`CXX` here is the config equivalent of running
- * `CC=... CXX=... dsh` from a terminal. The precedence rule lives with the
- * consumer: it may override inherited env, never the PATH or CI the market
- * computes for its children.
+ * `buildEnv` (issue #336) is deliberately NOT here. It is a map, so it
+ * wants a form, and the market's own settings card is the form that renders
+ * one — editing it there persists through the market's state.json and
+ * reaches children through spawnEnv. Registering it here as well would make
+ * this namespace a SECOND writer for a value that already has an editor:
+ * the settings layer and the card would overwrite each other on their next
+ * events, the exact shape of the channel bug documented below.
  *
  * The release channel is NOT here either, and that is a correction rather
  * than an omission. It was, briefly, and it made this namespace a second
@@ -101,18 +100,10 @@ interface SettingsService {
 /** The market settings a user may edit at runtime. */
 export interface MarketSettings {
   allowRestart: boolean
-  /**
-   * Environment variables pinned for plugin build/install commands (issue
-   * #336), e.g. `CC`/`CXX` for hosts whose process cannot inherit a shell
-   * environment — GUI, systemd/launchd, Windows Start menu. May override the
-   * inherited process.env but never PATH or CI (see src/dsh-cli.ts spawnEnv).
-   */
-  buildEnv: Record<string, string>
 }
 
 export const MarketSettings: z<MarketSettings> = z.object({
   allowRestart: z.boolean().default(true),
-  buildEnv: z.dict(z.string()).default({}),
 })
 
 /**
@@ -127,21 +118,18 @@ export const MarketSettings: z<MarketSettings> = z.object({
  * @param ctx - the plugin context owning the wiring.
  * @param resolved - the live config object the routes read.
  */
-export function installMarketSettings(ctx: Context, resolved: { allowRestart?: boolean; buildEnv?: Record<string, string> }): void {
+export function installMarketSettings(ctx: Context, resolved: { allowRestart?: boolean }): void {
   // The switch must show what the routes will actually DO, which since #229
   // is not simply "unset means on": under a detected supervisor an unset
   // value means off, because the supervisor owns restarts. Asking
   // restartAllowed() rather than re-deriving it here is what keeps the two
   // from drifting — a switch showing On beside a hidden button is the same
   // class of confusion the detection exists to end.
-  const entry = { allowRestart: restartAllowed(resolved), buildEnv: resolved.buildEnv ?? {} }
+  const entry = { allowRestart: restartAllowed(resolved) }
   let source = (): MarketSettings => entry
   // Assigns ONLY what this namespace owns. Writing back a field the market
   // stores elsewhere is how the channel lost its memory.
-  const apply = (): void => {
-    resolved.allowRestart = source().allowRestart
-    resolved.buildEnv = source().buildEnv
-  }
+  const apply = (): void => { resolved.allowRestart = source().allowRestart }
 
   // `inject` is the graceful-degradation boundary: on a host with no
   // settings service the callback never runs and the composed entry stands.

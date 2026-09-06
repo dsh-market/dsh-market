@@ -322,6 +322,8 @@ const hot = vi.hoisted(() => ({
   groupOrder: [] as string[],
   /** Stands in for the channel line of state.json; undefined = never chosen. */
   channel: undefined as 'stable' | 'beta' | 'dev' | undefined,
+  /** Stands in for the buildEnv line of state.json; undefined = composition. */
+  buildEnv: undefined as Record<string, string> | undefined,
   failNext: false,
 }))
 vi.mock('../src/hot.ts', () => ({
@@ -330,16 +332,32 @@ vi.mock('../src/hot.ts', () => ({
   writeDisabledThemes: (_dir: string, set: Set<string>) => { hot.disabled = new Set(set) },
   readDisabled: () => hot.disabled,
   writeDisabled: (_dir: string, set: Set<string>) => { hot.disabled = new Set(set) },
-  readMarketState: () => ({ disabled: hot.disabled, groups: hot.groups, groupOrder: hot.groupOrder, channel: hot.channel }),
+  readMarketState: () => ({ disabled: hot.disabled, groups: hot.groups, groupOrder: hot.groupOrder, channel: hot.channel, buildEnv: hot.buildEnv }),
+  // Same sanitizing contract as the real one: junk and protected names are
+  // dropped before anything reaches a spawn (see src/hot.ts).
+  buildEnvFromUnknown: (value: unknown): Record<string, string> | undefined => {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
+    const out: Record<string, string> = {}
+    for (const [key, raw] of Object.entries(value)) {
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue
+      if (key === 'PATH' || key === 'CI') continue
+      if (typeof raw !== 'string') continue
+      const entry = raw.trim()
+      if (entry === '') continue
+      out[key] = entry
+    }
+    return Object.keys(out).length > 0 ? out : undefined
+  },
   // Carries `channel` because the real one does. A stand-in that silently
   // drops a field cannot fail when the code under test forgets to persist
   // it — which is exactly how the channel choice reached this suite with
-  // zero coverage while four route tests passed.
-  writeMarketState: (_dir: string, state: { disabled: Set<string>; groups: Record<string, string[]>; groupOrder: string[]; channel?: 'stable' | 'beta' | 'dev' }) => {
+  // zero coverage while four route tests passed. Same rule for `buildEnv`.
+  writeMarketState: (_dir: string, state: { disabled: Set<string>; groups: Record<string, string[]>; groupOrder: string[]; channel?: 'stable' | 'beta' | 'dev'; buildEnv?: Record<string, string> }) => {
     hot.disabled = new Set(state.disabled)
     hot.groups = state.groups
     hot.groupOrder = state.groupOrder
     hot.channel = state.channel
+    hot.buildEnv = state.buildEnv
   },
   listHotMounts: () => [...hot.mounts],
   hotMount: (_ctx: unknown, _dir: string, name: string) => {
@@ -514,6 +532,7 @@ beforeEach(() => {
   hot.groups = {}
   hot.groupOrder = []
   hot.channel = undefined
+  hot.buildEnv = undefined
   hot.failNext = false
   bed = createTestbed()
 })
@@ -3070,6 +3089,42 @@ describe('download region', () => {
     // The market has nothing left to explain: the answer is the user's now.
     expect((await bed.dispatch('GET', '/dsh-market/status')).json.regionAuto).toBe(false)
     await bed.dispatch('POST', '/dsh-market/region', { region: 'global' })
+  })
+})
+
+describe('build environment (#336)', () => {
+  it('accepts only a map, and only from the same origin', async () => {
+    expect((await bed.dispatch('POST', '/dsh-market/build-env', { buildEnv: 'CC=x' })).status).toBe(400)
+    expect((await bed.dispatch('POST', '/dsh-market/build-env', {})).status).toBe(400)
+    expect((await bed.dispatch('POST', '/dsh-market/build-env', { buildEnv: { CC: 'x' } }, { crossOrigin: true })).status).toBe(403)
+  })
+
+  it('round-trips the pinned environment and reports it on /status', async () => {
+    const set = await bed.dispatch('POST', '/dsh-market/build-env', {
+      buildEnv: { CC: '/usr/bin/gcc-11', CXX: '/usr/bin/g++-11' },
+    })
+    expect(set.status).toBe(200)
+    expect(set.json.buildEnv).toEqual({ CC: '/usr/bin/gcc-11', CXX: '/usr/bin/g++-11' })
+    // The editor draws from /status, so the value it saves and the value it
+    // next renders must be the same one.
+    expect((await bed.dispatch('GET', '/dsh-market/status')).json.buildEnv)
+      .toEqual({ CC: '/usr/bin/gcc-11', CXX: '/usr/bin/g++-11' })
+
+    // Saving an empty map clears the override — the next spawn inherits the
+    // composition instead of an old save.
+    const clear = await bed.dispatch('POST', '/dsh-market/build-env', { buildEnv: {} })
+    expect(clear.status).toBe(200)
+    expect((await bed.dispatch('GET', '/dsh-market/status')).json.buildEnv).toEqual({})
+  })
+
+  it('a saved buildEnv survives a remount (state is the memory, not the route)', async () => {
+    await bed.dispatch('POST', '/dsh-market/build-env', { buildEnv: { CXX: '/usr/bin/g++-11' } })
+    expect((await bed.dispatch('GET', '/dsh-market/status')).json.buildEnv.CXX).toBe('/usr/bin/g++-11')
+    // A second bed on the same state.json-equivalent (the same fake hot bus)
+    // must mount with the saved value already applied.
+    const restarted = createTestbed()
+    expect((await restarted.dispatch('GET', '/dsh-market/status')).json.buildEnv.CXX).toBe('/usr/bin/g++-11')
+    restarted.dispose()
   })
 })
 

@@ -74,6 +74,8 @@ interface SelfStatus {
   regionAuto: boolean
   /** Whether the profile package manager owns this market installation. */
   selfManaged: boolean
+  /** The effective build environment (composition + card-saved override). */
+  buildEnv: Record<string, string>
 }
 
 /** The subset of api('/dsh-market/status') this card reads. */
@@ -87,6 +89,7 @@ interface StatusBody {
   regionAuto?: boolean
   githubProxy?: string | null
   selfManaged?: boolean
+  buildEnv?: Record<string, string>
 }
 
 /** What api('/dsh-market/updates') says about the market's own row. */
@@ -149,7 +152,32 @@ function readStatus(body: StatusBody): SelfStatus {
     regions: regions.length > 0 ? regions : REGIONS,
     regionAuto: body.regionAuto === true,
     selfManaged: body.selfManaged !== false,
+    buildEnv: body.buildEnv ?? {},
   }
+}
+
+/** Render the effective build environment as one `KEY=value` line each. */
+export function buildEnvToText(env: Record<string, string>): string {
+  return Object.entries(env)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([key, value]) => `${key}=${value}`)
+    .join('\n')
+}
+
+/** Parse a `KEY=value` block back into a map; blank lines are dropped. */
+export function buildEnvFromText(text: string): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const line of text.split('\n')) {
+    const entry = line.trim()
+    if (entry === '') continue
+    const at = entry.indexOf('=')
+    if (at <= 0) continue
+    const key = entry.slice(0, at).trim()
+    const value = entry.slice(at + 1).trim()
+    if (key === '') continue
+    out[key] = value
+  }
+  return out
 }
 
 function readUpdate(own: RawUpdate): SelfUpdate {
@@ -184,6 +212,9 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
   const [restoreConfirming, setRestoreConfirming] = useState(false)
   const [purge, setPurge] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  /** Draft of the build-environment editor (#336), seeded once from status. */
+  const [envText, setEnvText] = useState('')
+  const envSeeded = useRef(false)
   /**
    * The last self-update was refused by pnpm's fresh-release safety wait
    * (#39). Only the market's own card can update the market, so without a
@@ -215,7 +246,7 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
         if (live) {
           setStatus({
             version: null, restart: false, channel: 'stable', channels: ['stable', 'beta'],
-            region: 'global', regions: REGIONS, regionAuto: false, selfManaged: true,
+            region: 'global', regions: REGIONS, regionAuto: false, selfManaged: true, buildEnv: {},
           })
         }
       }
@@ -349,6 +380,33 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
     })()
   }, [post, t])
 
+  /**
+   * Seed the build-environment editor from the server's effective value —
+   * ONCE. The draft is the user's to edit from then on; the status refetch
+   * after a save updates it explicitly instead.
+   */
+  useEffect(() => {
+    if (status === null || envSeeded.current) return
+    envSeeded.current = true
+    setEnvText(buildEnvToText(status.buildEnv))
+  }, [status])
+
+  /** Save the draft build environment; an empty list clears it (#336). */
+  const onSaveEnv = useCallback(async () => {
+    setError(null)
+    try {
+      const body = await post(api('/dsh-market/build-env'), {
+        buildEnv: buildEnvFromText(envText),
+      }) as { ok?: boolean; error?: string; buildEnv?: Record<string, string> }
+      if (body.ok !== true) { setError(body.error ?? t('setSelfFailed')); return }
+      // Reflect exactly what the server applied, not what we sent — the
+      // server is the one that dropped blank lines and rejected names.
+      setEnvText(buildEnvToText(body.buildEnv ?? {}))
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    }
+  }, [envText, post, t])
+
   /** One label + hint block with an optional action, the host's row shape. */
   const row = (label: string, hint: string, action: ReactElement | null): ReactElement =>
     h('div', { className: css.setRow },
@@ -450,6 +508,31 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
               onClick: () => { onRegion(id) },
             }, t(REGION_LABEL[id]))),
           )),
+        // Build environment (#336): the one place an unshelled host pins
+        // CC/CXX for plugin builds. Full-width block, because the editor is
+        // a list — a cramped column would teach a one-line-per-row format
+        // nobody can read.
+        h('div', { className: css.setConfirm },
+          h('div', { className: css.setLabel }, t('setBuildEnv')),
+          h('div', { className: css.setHint }, t('setBuildEnvHint')),
+          h('textarea', {
+            className: css.envEditor,
+            rows: 3,
+            spellCheck: false,
+            'aria-label': t('setBuildEnv'),
+            value: envText,
+            disabled: busy || status === null,
+            placeholder: 'CC=/usr/bin/gcc-11\nCXX=/usr/bin/g++-11',
+            onChange: (event: { target: { value: string } }) => { setEnvText(event.target.value) },
+          }),
+          h('div', { className: css.setActions },
+            h(Button, {
+              variant: 'primary',
+              size: 'sm',
+              disabled: busy || status === null,
+              onClick: () => { void onSaveEnv() },
+            }, t('setBuildEnvSave'))),
+        ),
         status?.selfManaged === true ? row(t('setSelfRemove'), t('setSelfRemoveHint'),
           phase === 'confirming' || busy
             ? null

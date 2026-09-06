@@ -25,6 +25,7 @@ function stubFetch(options: {
   version?: string; restart?: boolean; latest?: string | null; restoreRequired?: boolean; removeOk?: boolean; error?: string; selfManaged?: boolean
   channel?: string; channelSwitch?: string; channelError?: string
   region?: string; regionAuto?: boolean; regionError?: string; githubProxy?: string | null
+  buildEnv?: Record<string, string>; buildEnvError?: string
 } = {}): void {
   calls = []
   vi.stubGlobal('fetch', vi.fn((input: unknown, init?: RequestInit) => {
@@ -43,7 +44,15 @@ function stubFetch(options: {
         regionAuto: options.regionAuto === true,
         githubProxy: options.githubProxy ?? null,
         selfManaged: options.selfManaged !== false,
+        buildEnv: options.buildEnv ?? {},
       })
+    }
+    if (path.endsWith('/dsh-market/build-env')) {
+      // The server answers with what it APPLIED — here, the same map sent
+      // back, exactly like the region endpoint echoes its choice.
+      return options.buildEnvError !== undefined
+        ? json({ ok: false, error: options.buildEnvError })
+        : json({ ok: true, buildEnv: (JSON.parse(String(init?.body)) as { buildEnv: Record<string, string> }).buildEnv })
     }
     if (path.includes('/dsh-market/updates')) {
       return json({ updates: { dshmarket: options.channelSwitch !== undefined
@@ -416,5 +425,55 @@ describe('SettingsCard — a channel switch is not an update', () => {
     await open()
     await waitFor(() => { expect(screen.getByText(`${t('setSelfUpdateReady')} 1.14.0`)).toBeTruthy() })
     expect(screen.getByRole('button', { name: t('setSelfUpdate') })).toBeTruthy()
+  })
+})
+
+describe('SettingsCard — build environment (#336)', () => {
+  const editor = (): HTMLElement => screen.getByRole('textbox', { name: t('setBuildEnv') })
+
+  it('renders the effective build environment as one KEY=value line each', async () => {
+    stubFetch({ buildEnv: { CC: '/usr/bin/gcc-11', CXX: '/usr/bin/g++-11' } })
+    await open()
+    await waitFor(() => {
+      expect((editor() as HTMLTextAreaElement).value).toContain('CC=/usr/bin/gcc-11')
+      expect((editor() as HTMLTextAreaElement).value).toContain('CXX=/usr/bin/g++-11')
+    })
+  })
+
+  it('saves the edited list back to the server in the map shape the route wants', async () => {
+    stubFetch({ buildEnv: { CC: '/usr/bin/gcc-11' } })
+    await open()
+    await waitFor(() => { expect((editor() as HTMLTextAreaElement).value).toContain('CC=/usr/bin/gcc-11') })
+    fireEvent.change(editor(), { target: { value: 'CC=/usr/bin/gcc-12\nCXX=/usr/bin/g++-12' } })
+    fireEvent.click(screen.getByRole('button', { name: t('setBuildEnvSave') }))
+    await waitFor(() => {
+      expect(calls.find(call => call.path.endsWith('/dsh-market/build-env'))?.body)
+        .toEqual({ buildEnv: { CC: '/usr/bin/gcc-12', CXX: '/usr/bin/g++-12' } })
+    })
+    // What the textarea shows afterwards is the SERVER's applied answer,
+    // not the draft: same contract as the channel/region rows.
+    await waitFor(() => {
+      expect((editor() as HTMLTextAreaElement).value).toContain('CXX=/usr/bin/g++-12')
+    })
+  })
+
+  it('sends an empty map when the editor is cleared, so the save clears the override', async () => {
+    stubFetch({ buildEnv: { CC: '/usr/bin/gcc-11' } })
+    await open()
+    await waitFor(() => { expect((editor() as HTMLTextAreaElement).value).toContain('CC=/usr/bin/gcc-11') })
+    fireEvent.change(editor(), { target: { value: '  \n ' } })
+    fireEvent.click(screen.getByRole('button', { name: t('setBuildEnvSave') }))
+    await waitFor(() => {
+      expect(calls.find(call => call.path.endsWith('/dsh-market/build-env'))?.body).toEqual({ buildEnv: {} })
+    })
+  })
+
+  it('surfaces a refusal instead of pretending the save landed', async () => {
+    stubFetch({ buildEnvError: 'PATH is managed by the market' })
+    await open()
+    await waitFor(() => { expect(screen.getByRole('button', { name: t('setBuildEnvSave') })).toBeTruthy() })
+    fireEvent.change(editor(), { target: { value: 'CC=/usr/bin/gcc-11' } })
+    fireEvent.click(screen.getByRole('button', { name: t('setBuildEnvSave') }))
+    await waitFor(() => { expect(screen.getByText(/PATH is managed by the market/)).toBeTruthy() })
   })
 })

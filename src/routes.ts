@@ -14,7 +14,7 @@ import { Readable } from 'node:stream'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { forgetCatalog, loadRegistry, pluginCategories } from './registry.ts'
 import {
-  cleanHotDir, hotMount, hotUnmount, listHotMounts, MAX_NOTE,
+  buildEnvFromUnknown, cleanHotDir, hotMount, hotUnmount, listHotMounts, MAX_NOTE,
   mountClientOnlyDeps, purgeMarketState, readMarketState, writeMarketState,
 } from './hot.ts'
 import { createGroup, deleteGroup, removeFromGroups, renameGroup, setGroupMembers } from './groups.ts'
@@ -258,6 +258,12 @@ export function mountMarketRoutes(
   // composed, which is only ever a default.
   if (marketState.channel !== undefined) config.channel = marketState.channel
   const activeChannel = (): Channel => resolveChannel(config.channel, marketVersion())
+  // The card-saved build environment (issue #336) outranks the composition,
+  // the same way a hand-picked channel does. `composedBuildEnv` is kept so
+  // clearing the card can inherit the composition again without a restart;
+  // spawnEnv re-reads `config.buildEnv` live on every spawn.
+  const composedBuildEnv = config.buildEnv
+  if (marketState.buildEnv !== undefined) config.buildEnv = marketState.buildEnv
 
   // The download region: which mirrors every outbound request uses.
   //
@@ -1937,6 +1943,11 @@ export function mountMarketRoutes(
           channels: CHANNELS,
           region,
           regions: REGIONS,
+          // The padded/PATH- and CI-safe build environment currently pinned
+          // (issue #336): composition plus any card-saved override. The card
+          // edits exactly what this reports, so the form never shows a stale
+          // idea of what the next install will build under.
+          buildEnv: config.buildEnv ?? {},
           // The prefix the BROWSER should put in front of github.com URLs
           // (avatars, README images). Sent resolved rather than derived from
           // `region` on the client, so the routing table has one home and a
@@ -2651,6 +2662,49 @@ export function mountMarketRoutes(
           invalidateUpdates()
           logEvent('info', 'region', `download region set to ${wanted}`)
           sendJson(response, 200, { ok: true, region: wanted })
+        } catch (error) {
+          sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    }),
+
+    host.webServer.register({
+      kind: 'exact',
+      path: '/dsh-market/build-env',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) {
+          sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        try {
+          // The card always sends the FULL map it wants (an empty object
+          // means "clear → inherit the composition"). Keys are validated
+          // POSIX-style; PATH and CI are rejected because the market computes
+          // both for its children and a saved value for them would silently
+          // do nothing (issue #336; see src/dsh-cli.ts spawnEnv).
+          const body = (await readJsonBody(request)) as { buildEnv?: unknown }
+          if (body.buildEnv === null || typeof body.buildEnv !== 'object' || Array.isArray(body.buildEnv)) {
+            sendJson(response, 400, {
+              error: 'buildEnv must be a KEY/value 对象（空对象表示清除）/ buildEnv must be a KEY/value object (an empty object clears it)',
+            })
+            return
+          }
+          const next = buildEnvFromUnknown(body.buildEnv)
+          // Saving applies immediately to the LIVE config, so the next
+          // install builds under it without a restart; an empty or cleared
+          // map inherits the composition instead of freezing an old save.
+          marketState.buildEnv = next
+          config.buildEnv = next ?? composedBuildEnv
+          writeMarketState(activeProfileDir, marketState)
+          logEvent('info', 'build-env', next === undefined
+            ? 'build environment cleared (composition inherits)'
+            : `build environment saved: ${Object.keys(next).join(', ')}`)
+          sendJson(response, 200, { ok: true, buildEnv: config.buildEnv ?? {} })
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
         }

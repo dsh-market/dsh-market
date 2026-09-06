@@ -164,6 +164,40 @@ describe('market state.json (#60)', () => {
       rmSync(dir, { recursive: true, force: true })
     }
   })
+
+  it('persists a saved build environment and forgives junk on the way in (#336)', () => {
+    const dir = stateDir()
+    try {
+      const base = { disabled: new Set(), groups: {}, groupOrder: [] }
+      writeMarketState(dir, { ...base, buildEnv: { CC: '/usr/bin/gcc-11', CXX: '/usr/bin/g++-11' } })
+      expect(readRaw(dir).buildEnv).toEqual({ CC: '/usr/bin/gcc-11', CXX: '/usr/bin/g++-11' })
+      expect(readMarketState(dir).buildEnv).toEqual({ CC: '/usr/bin/gcc-11', CXX: '/usr/bin/g++-11' })
+
+      // Names pnpm would never apply, blank values and non-strings are
+      // dropped rather than replayed into every future install.
+      writeFileSync(join(dir, '.dsh-market', 'state.json'), JSON.stringify({
+        buildEnv: { CC: '/usr/bin/gcc-11', '1BAD': 'x', 'A-B': 'y', BLANK: '   ', NUM: 7, PATH: '/evil' },
+      }))
+      expect(readMarketState(dir).buildEnv).toEqual({ CC: '/usr/bin/gcc-11' })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('an absent or emptied build environment is absent, not a blank override', () => {
+    const dir = stateDir()
+    try {
+      writeMarketState(dir, { disabled: new Set(), groups: {}, groupOrder: [] })
+      expect('buildEnv' in readRaw(dir)).toBe(false)
+      expect(readMarketState(dir).buildEnv).toBeUndefined()
+      // An all-junk map on disk reads as "never saved" — the composition
+      // keeps inheriting rather than a frozen empty override.
+      writeFileSync(join(dir, '.dsh-market', 'state.json'), JSON.stringify({ buildEnv: { '': '' } }))
+      expect(readMarketState(dir).buildEnv).toBeUndefined()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('group CRUD (groups.ts)', () => {
