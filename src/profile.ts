@@ -477,6 +477,47 @@ export function readLockCommits(profile: string, explicitDir?: string): Map<stri
   return commits
 }
 
+/**
+ * Commit recorded for a non-codeload git resolution (`type: git` in pnpm's
+ * lockfile). Matched against the install spec so a Gitea/GitLab URL can
+ * compare HEAD without mistaking a same-named npm package (#525).
+ */
+export function readGitResolutionCommit(
+  profile: string,
+  spec: string,
+  explicitDir?: string,
+): string | null {
+  const want = normalizeGitRepoKey(spec)
+  if (want === null) return null
+  try {
+    const lock = readFileSync(join(profileDir(profile, explicitDir), 'pnpm-lock.yaml'), 'utf8')
+    for (const m of lock.matchAll(
+      /resolution:\s*\{([^}]*)\}/g,
+    )) {
+      const body = m[1]!
+      const commit = /\bcommit:\s*([0-9a-f]{40})\b/i.exec(body)
+      const repo = /\brepo:\s*([^\s,}]+)/.exec(body)
+      if (commit === null || repo === null) continue
+      if (normalizeGitRepoKey(repo[1]!) === want) return commit[1]!.toLowerCase()
+    }
+  } catch { /* no lockfile */ }
+  return null
+}
+
+/** Lowercased transport-agnostic key for comparing two git remote spellings. */
+function normalizeGitRepoKey(spec: string): string | null {
+  let remote = spec.trim().replace(/^git\+/i, '')
+  const scp = /^git@([^:]+):(.+)$/.exec(remote)
+  if (scp !== null) remote = `https://${scp[1]}/${scp[2]!.replace(/^\/*/, '')}`
+  const hash = remote.indexOf('#')
+  if (hash !== -1) remote = remote.slice(0, hash)
+  const query = remote.indexOf('?')
+  if (query !== -1) remote = remote.slice(0, query)
+  remote = remote.replace(/\/+$/, '').toLowerCase()
+  if (!/^https?:\/\//.test(remote) && !remote.includes('.git')) return null
+  return remote
+}
+
 /** True when the installed package's manifest declares a dsh plugin surface. */
 export function hasDshManifest(dir: string): boolean {
   try {

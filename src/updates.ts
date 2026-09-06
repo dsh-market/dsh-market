@@ -8,8 +8,8 @@ import { DIST_TAG, type Channel } from './channels.ts'
 import { resolveHeadCommit } from './accelerate.ts'
 import { marketFetch } from './net.ts'
 import { activeRegion } from './regions.ts'
-import { profileDir, readInstalled, readInstalledVersion, readLockCommits } from './profile.ts'
-import { githubCommitOfTarget, githubRefOfTarget, repoOfTarget } from './sources.ts'
+import { profileDir, readGitResolutionCommit, readInstalled, readInstalledVersion, readLockCommits } from './profile.ts'
+import { gitCommitOfTarget, gitUploadPackUrl, githubCommitOfTarget, githubRefOfTarget, isGitHostedSpec, repoOfTarget } from './sources.ts'
 
 export interface UpdateStatus {
   kind: 'github' | 'npm' | 'linked'
@@ -46,10 +46,50 @@ export interface UpdateStatus {
 }
 
 const UPDATES_TTL_MS = 30 * 60 * 1000
+const GIT_REMOTE_HEAD_TIMEOUT_MS = 6000
 let updatesCache: { key: string; at: number; data: Record<string, UpdateStatus> } | null = null
 
-const SEMVER = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/
+/**
+ * HEAD for an arbitrary smart-HTTP git remote (Gitea, GitLab, …). Same
+ * advertisement format as GitHub's info/refs; kept here so accelerate.ts
+ * does not need to import sources.ts.
+ */
+async function resolveGitRemoteHead(spec: string, ref?: string): Promise<string | null> {
+  const url = gitUploadPackUrl(spec)
+  if (url === null) return null
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), GIT_REMOTE_HEAD_TIMEOUT_MS)
+  try {
+    const res = await marketFetch(url, {
+      signal: controller.signal,
+      headers: { 'user-agent': 'git/2.40.0' },
+    })
+    if (!res.ok) return null
+    const body = await res.text()
+    const contentType = res.headers?.get?.('content-type')?.toLowerCase() ?? ''
+    if (contentType.includes('text/html')
+      || !body.includes('# service=git-upload-pack')
+      || !/[0-9a-f]{40} (?:HEAD|refs\/(?:heads|tags)\/)/u.test(body)) {
+      return null
+    }
+    if (ref === undefined) {
+      const found = /([0-9a-f]{40}) HEAD/.exec(body)
+      return found === null ? null : found[1]!
+    }
+    const quoted = ref.replace(/[.*+?^${}()|[\]\\]/gu, String.raw`\$&`)
+    for (const namespace of ['heads', 'tags']) {
+      const found = new RegExp(String.raw`([0-9a-f]{40}) refs/${namespace}/${quoted}(?![^\s])`, 'u').exec(body)
+      if (found !== null) return found[1]!
+    }
+    return null
+  } catch {
+    return null
+  } finally {
+    clearTimeout(timer)
+  }
+}
 
+const SEMVER = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/
 function parseSemver(v: string): { core: number[]; pre: string[] } | null {
   const m = SEMVER.exec(v.trim())
   if (m === null) return null
@@ -322,6 +362,19 @@ export async function checkUpdates(
           kind: 'github', version, current, latest,
           updateAvailable: current !== null && latest !== null && current !== latest,
         }
+      } else if (isGitHostedSpec(spec)) {
+        // Private / self-hosted git (Gitea, GitLab, raw git+https). Never ask
+        // npm by package name — a colliding registry package would be offered
+        // as an update and then installed over the git source (#525).
+        // Reuse kind `github` as "git-sourced" so the existing Installed UI
+        // keeps treating the row as a VCS install without a client change.
+        const current = gitCommitOfTarget(spec)
+          ?? readGitResolutionCommit(profile, spec, activeProfileDir)
+        const latest = await resolveGitRemoteHead(spec)
+        result[name] = {
+          kind: 'github', version, current, latest,
+          updateAvailable: current !== null && latest !== null && current !== latest,
+        }
       } else {
         const meta = (await fetchJson(npmUrl(`${encodeURIComponent(name)}/latest`))) as { version?: string }
         const stable = typeof meta.version === 'string' ? meta.version : null
@@ -339,7 +392,7 @@ export async function checkUpdates(
         }
       }
     } catch {
-      result[name] = { kind: spec.startsWith('github:') ? 'github' : 'npm', version, current: null, latest: null, updateAvailable: false }
+      result[name] = { kind: (spec.startsWith('github:') || isGitHostedSpec(spec)) ? 'github' : 'npm', version, current: null, latest: null, updateAvailable: false }
     }
   }))
   updatesCache = { key: cacheKey, at: Date.now(), data: result }

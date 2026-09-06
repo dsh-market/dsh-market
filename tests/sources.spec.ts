@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest'
 import {
   githubRefOfTarget,
   findCatalogEntryForLocal, findInstalledAlias, gitAllowBuildsKey, githubRemoteIdentities, githubRepoIdentities, githubRepoIdentity, githubTargetAtCommit,
-  installTargetFor, isLocalSpec, lookupRepoFromUrl, parseGitHubRemote, parseGitHubRepository, parseSourceUrl, repoOf, resolveCatalogRestore, restoreBlockedByWorkspace, restoreTargetForLocal, workspaceProtocolDeps,
+  gitCommitOfTarget, gitUpdateTarget, installTargetFor, isGitHostedSpec, isLocalSpec, lookupRepoFromUrl, parseGitHubRemote, parseGitHubRepository, parseSourceUrl, repoOf, resolveCatalogRestore, restoreBlockedByWorkspace, restoreTargetForLocal, workspaceProtocolDeps,
 } from '../src/sources.ts'
 
 describe('parseSourceUrl', () => {
@@ -344,5 +344,34 @@ describe('lookupRepoFromUrl (display/lookup only — NOT for install/rollback)',
     expect(lookupRepoFromUrl('https://codeload.github.com/owner/repo/tar.gz/' + 'a'.repeat(40))).toBeNull()
     expect(lookupRepoFromUrl('dsh-loop')).toBeNull()
     expect(lookupRepoFromUrl('@scope/pkg')).toBeNull()
+  })
+})
+
+describe('isGitHostedSpec / gitUpdateTarget (#525)', () => {
+  const SHA = 'a'.repeat(40)
+
+  it('recognizes private-host git transports that repoOfTarget rejects', () => {
+    expect(isGitHostedSpec('git+https://gitea.example.com/me/plug.git')).toBe(true)
+    expect(isGitHostedSpec('https://gitea.example.com/me/plug.git')).toBe(true)
+    expect(isGitHostedSpec(`git+https://gitea.example.com/me/plug.git#${SHA}`)).toBe(true)
+    expect(isGitHostedSpec('git@gitea.example.com:me/plug.git')).toBe(true)
+    expect(isGitHostedSpec('github:owner/repo')).toBe(true)
+  })
+
+  it('does not treat registry names or local checkouts as git-hosted', () => {
+    expect(isGitHostedSpec('themer')).toBe(false)
+    expect(isGitHostedSpec('@scope/themer')).toBe(false)
+    expect(isGitHostedSpec('owner/themer')).toBe(false)
+    expect(isGitHostedSpec('link:../themer')).toBe(false)
+    expect(isGitHostedSpec('file:/tmp/themer.tgz')).toBe(false)
+    expect(isGitHostedSpec('^1.2.3')).toBe(false)
+  })
+
+  it('strips a commit pin so update re-resolves HEAD, and reads the pin back', () => {
+    const pinned = `git+https://gitea.example.com/me/plug.git#${SHA}`
+    expect(gitCommitOfTarget(pinned)).toBe(SHA)
+    expect(gitUpdateTarget(pinned)).toBe('git+https://gitea.example.com/me/plug.git')
+    expect(gitUpdateTarget('git+https://gitea.example.com/me/plug.git'))
+      .toBe('git+https://gitea.example.com/me/plug.git')
   })
 })

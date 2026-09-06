@@ -343,6 +343,70 @@ export function isLocalSpec(spec: string): boolean {
   return /^(?:link|file):/i.test(spec)
 }
 
+/**
+ * True when the install came from a git remote — GitHub shortcuts, codeload
+ * tarballs, and any other host (Gitea, GitLab self-host, raw `git+https://…`).
+ *
+ * Update detection used to ask only `repoOfTarget` (GitHub spellings). A
+ * private-host URL then fell through to the npm branch and was looked up by
+ * package name; a colliding registry package read as an "update" and
+ * `name@latest` replaced the git install (#525).
+ */
+export function isGitHostedSpec(spec: string): boolean {
+  const s = spec.trim()
+  if (s === '' || isLocalSpec(s)) return false
+  if (s.startsWith('github:')) return true
+  if (repoFromTarget(s) !== null) return true
+  if (/^git\+/i.test(s) || /^git:\/\//i.test(s) || /^ssh:\/\//i.test(s)) return true
+  if (/^git@[^/\s:]+:\S+/.test(s)) return true
+  // https://host/…/repo.git with optional fragment / query — not a Release
+  // archive and not a bare registry name.
+  if (/^https?:\/\/[^\s]+\/[^\s]+?\.git(?:[#?].*)?$/i.test(s)) return true
+  return false
+}
+
+/**
+ * Immutable commit already carried by a non-shortcut git URL (`…git#<sha>`).
+ * GitHub shortcuts keep using `githubCommitOfTarget`.
+ */
+export function gitCommitOfTarget(spec: string): string | null {
+  const github = githubCommitOfTarget(spec)
+  if (github !== null) return github
+  const hash = spec.indexOf('#')
+  if (hash === -1) return null
+  const frag = spec.slice(hash + 1).split(/[?&]/)[0] ?? ''
+  return /^[0-9a-f]{40}$/i.test(frag) ? frag.toLowerCase() : null
+}
+
+/**
+ * pnpm add target for updating a non-GitHub git install: drop a full-SHA
+ * pin so the remote re-resolves to HEAD, keep any branch/tag fragment.
+ */
+export function gitUpdateTarget(spec: string): string | null {
+  if (!isGitHostedSpec(spec) || spec.startsWith('github:') || repoFromTarget(spec) !== null) return null
+  const hash = spec.indexOf('#')
+  if (hash === -1) return spec
+  const frag = spec.slice(hash + 1).split(/[?&]/)[0] ?? ''
+  return /^[0-9a-f]{40}$/i.test(frag) ? spec.slice(0, hash) : spec
+}
+
+/**
+ * Smart-HTTP info/refs URL for a git-hosted install target, or null when the
+ * transport cannot be probed with `fetch` (scp / git:// / ssh://).
+ */
+export function gitUploadPackUrl(spec: string): string | null {
+  let remote = spec.trim().replace(/^git\+/i, '')
+  const scp = /^git@([^:]+):(.+)$/.exec(remote)
+  if (scp !== null) remote = `https://${scp[1]}/${scp[2]!.replace(/^\/*/, '')}`
+  const hash = remote.indexOf('#')
+  if (hash !== -1) remote = remote.slice(0, hash)
+  const query = remote.indexOf('?')
+  if (query !== -1) remote = remote.slice(0, query)
+  if (!/^https?:\/\//i.test(remote)) return null
+  const base = remote.replace(/\/+$/, '')
+  return `${base}/info/refs?service=git-upload-pack`
+}
+
 export { findCatalogEntryForLocal, resolveCatalogRestore } from './catalog-local-match.ts'
 
 /**

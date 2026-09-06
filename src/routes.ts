@@ -36,7 +36,7 @@ import { applyBundleOrder, mergeOrder, readBundleRules, readBundleStack, validat
 import { applyPreset, deletePreset, listPresets, previewPreset, savePreset } from './presets.ts'
 import { createProfileSnapshot, DEFAULT_MAX_SNAPSHOTS, deleteSnapshot, listSnapshots, restoreSnapshot } from './snapshot.ts'
 import { trialValidate } from './trial.ts'
-import { codeloadAllowBuildsKey, findCatalogEntryForLocal, findInstalledAlias, githubCommitOfTarget, githubTargetAtCommit, gitAllowBuildsKey, installTargetFor, isLocalSpec, NPM_NAME_RE, repoOfTarget, restoreBlockedByWorkspace, restoreTargetForLocal, workspaceProtocolDeps } from './sources.ts'
+import { codeloadAllowBuildsKey, findCatalogEntryForLocal, findInstalledAlias, githubCommitOfTarget, githubTargetAtCommit, gitAllowBuildsKey, gitUpdateTarget, installTargetFor, isLocalSpec, NPM_NAME_RE, repoOfTarget, restoreBlockedByWorkspace, restoreTargetForLocal, workspaceProtocolDeps } from './sources.ts'
 import { failureDetail, groupConflictsByOwner, isStaleUpdate, parseIgnoredBuilds, parsePrepareNotAllowed, pnpmNeverStarted, RELEASE_AGE_OVERRIDE, retargetCollections, validateAddedPlugins, withHoistRecovery } from './install.ts'
 import { asChannel, CHANNELS, DIST_TAG, resolveChannel, type Channel } from './channels.ts'
 import {
@@ -2838,7 +2838,11 @@ sendJson(response, 200, { updates })
             const gitSpec = spec.startsWith('github:')
               ? githubUpdateTarget(spec)
               : codeloadRepo === null ? null : `github:${codeloadRepo}`
-            const isGit = gitSpec !== null
+            // Non-GitHub git remotes (Gitea / git+https): keep the remote URL
+            // as the add target. Falling through to name@latest is what #525
+            // reported — a colliding npm package replaced the private install.
+            const genericGitTarget = gitSpec === null ? gitUpdateTarget(spec) : null
+            const isGit = gitSpec !== null || genericGitTarget !== null
             const isReleaseTarball = !restore && isGitHubReleaseTarballSpec(spec)
             const isNpmRollbackSource = !restore && !isGit && !isReleaseTarball
               // Market-managed npm installs persist only a range, version, or
@@ -2981,9 +2985,11 @@ sendJson(response, 200, { updates })
             // nothing where one does not.
             const target = restore
               ? (NPM_NAME_RE.test(spec) ? `${spec}@${tag}` : await acceleratedTarget(spec, region))
-              : gitSpec === null
+              : usesNpmUpdateTarget
                 ? (expectedNpmVersion !== null ? `${name}@${expectedNpmVersion}` : `${name}@${tag}`)
-                : await acceleratedTarget(gitSpec, region)
+                : genericGitTarget !== null
+                  ? genericGitTarget
+                  : await acceleratedTarget(gitSpec!, region)
             const repoIdentity = isGit ? repoOfTarget(spec) : null
             const repoKey = repoIdentity?.split('#')[0] ?? null
             // dsh-cli's deliberately narrow target grammar rejects the `&`
