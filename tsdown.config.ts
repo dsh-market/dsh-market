@@ -44,9 +44,23 @@ export default defineConfig({
   // Host types ship from lib/types (tsc); dts here would wrap the
   // banner/footer into .d.cts and break parsing.
   dts: false,
-  // Plugin code is fetched outside the host's module graph, so its own bundle
-  // carries the TS/TSX mapping consumed by browser profiling tools.
-  sourcemap: true,
+  // No sourcemap, and the reason is the repository rather than the browser.
+  //
+  // `client.js` is committed (the market must install where build scripts are
+  // blocked) and CI enforces that it matches the source. That is fine for the
+  // bundle itself: 11k unminified lines with real identifiers, which git
+  // merges line by line like any other file — measured across a run of
+  // front-end PRs, it did not conflict once.
+  //
+  // The map is one 789KB line. Every change to it is a whole-file conflict,
+  // for every contributor, every time another front-end PR lands first
+  // (#533 by @liuwenji007, who was hitting it on three stacked PRs). It also
+  // rode along in the published package, where nothing consumed it.
+  //
+  // The debugging it bought was small, because the bundle it maps is already
+  // readable — a stack trace against it names the real functions. Not worth a
+  // permanent tax on everyone who touches the client.
+  sourcemap: false,
   clean: false,
   external: [...CLIENT_EXTERNALS],
   // tsdown auto-externalizes package dependencies; anything NOT in the loader

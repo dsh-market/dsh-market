@@ -11198,5 +11198,3 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		return module.exports;
 	}
 });
-
-//# sourceMappingURL=client.js.map
