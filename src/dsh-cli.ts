@@ -258,20 +258,21 @@ type SpawnShimOptions = SpawnOptions & { viaShell?: boolean }
  * combination (DEP0190). Windows `.cmd` shims cannot start without a shell,
  * so the shim path routes through `cmd.exe /d /s /c` with an explicitly
  * built, quoted command line; every other invocation spawns directly with
- * `shell: false`.
+ * `shell: false`. Hide consoles when the host itself has no console (#530).
  */
 function spawnShim(file: string, args: readonly string[], options: SpawnShimOptions): ChildProcess {
   const { viaShell = false, ...spawnOptions } = options
   if (!viaShell) {
-    return spawn(file, [...args], { ...spawnOptions, shell: false })
+    return spawn(file, [...args], { ...spawnOptions, shell: false, windowsHide: true })
   }
   if (process.platform !== 'win32') {
-    return spawn(file, [...args], { ...spawnOptions, shell: false })
+    return spawn(file, [...args], { ...spawnOptions, shell: false, windowsHide: true })
   }
   return spawn(COMSPEC, ['/d', '/s', '/c', `"${cmdCommandLine([file, ...args])}"`], {
     ...spawnOptions,
     shell: false,
     windowsVerbatimArguments: true,
+    windowsHide: true,
   })
 }
 
@@ -482,7 +483,7 @@ export interface DesktopPluginRuntime extends PluginCommandRuntime {
 export function killChild(child: ChildProcess): void {
   if (process.platform === 'win32' && child.pid !== undefined) {
     try {
-      spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' })
+      spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore', windowsHide: true })
       return
     } catch { /* fall through */ }
   }
@@ -511,7 +512,7 @@ let activeDesktopOperation: ActiveDesktopOperation | null = null
 function killTree(child: ChildProcess): void {
   if (process.platform === 'win32' && child.pid !== undefined) {
     try {
-      spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' })
+      spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore', windowsHide: true })
       return
     } catch { /* fall through */ }
   }
