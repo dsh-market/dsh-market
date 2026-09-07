@@ -196,6 +196,106 @@ describe('checkUpdates — github pins', () => {
   })
 })
 
+describe('checkUpdates — private git hosts (#525)', () => {
+  const HEAD = 'a'.repeat(40)
+  const OLD = 'b'.repeat(40)
+  let home: string
+  const proxyKeys = [
+    'http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY',
+    'npm_config_proxy', 'npm_config_https_proxy',
+  ] as const
+  const savedProxy: Record<string, string | undefined> = {}
+
+  function profileWith(spec: string, lockCommit: string | null, version = '1.0.0'): string {
+    const dir = join(mkdtempSync(join(tmpdir(), 'dshm-gitea-')), 'profiles', 'web')
+    mkdirSync(join(dir, 'node_modules', 'themer'), { recursive: true })
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ dependencies: { themer: spec } }))
+    writeFileSync(join(dir, 'node_modules', 'themer', 'package.json'), JSON.stringify({ name: 'themer', version }))
+    // pnpm's non-GitHub git resolution shape — not a codeload tarball.
+    writeFileSync(join(dir, 'pnpm-lock.yaml'), lockCommit === null ? 'lockfileVersion: 9\n'
+      : `lockfileVersion: 9\npackages:\n  themer@${spec}:\n    resolution: {commit: ${lockCommit}, repo: ${spec}, type: git}\n`)
+    return dir
+  }
+
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'dshm-giteahome-'))
+    // marketFetch uses undici when a proxy is set, which bypasses stubGlobal('fetch').
+    for (const key of proxyKeys) {
+      savedProxy[key] = process.env[key]
+      delete process.env[key]
+    }
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    for (const key of proxyKeys) {
+      if (savedProxy[key] === undefined) delete process.env[key]
+      else process.env[key] = savedProxy[key]
+    }
+    rmSync(home, { recursive: true, force: true })
+  })
+
+  it('does not treat a Gitea git+https install as an npm package, even when the name collides (#525)', async () => {
+    // The failure mode: repoOfTarget only knows github:/codeload, so a Gitea
+    // URL fell through to fetchNpmLatest(name). A same-named registry package
+    // then read as "an update", and update-all installed name@latest.
+    const gitea = 'git+https://gitea.example.com/me/themer.git'
+    let npmHits = 0
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      const href = String(url)
+      if (href.includes('registry.npmjs.org') || href.includes('/themer/latest')) {
+        npmHits += 1
+        return { ok: true, status: 200, json: async () => ({ version: '9.9.9' }), text: async () => '' }
+      }
+      // git advertisement for the private host
+      return {
+        ok: true, status: 200,
+        headers: { get: () => 'application/x-git-upload-pack-advertisement' },
+        json: async () => ({}),
+        text: async () => `001e# service=git-upload-pack\n00000155${HEAD} HEAD\0multi_ack\n`,
+      }
+    }))
+    const result = await checkUpdates('web', true, profileWith(gitea, OLD))
+    expect(npmHits, 'must not ask the npm registry by package name').toBe(0)
+    expect(result.themer?.kind).not.toBe('npm')
+    expect(result.themer).toMatchObject({
+      kind: 'github',
+      current: OLD,
+      latest: HEAD,
+      updateAvailable: true,
+    })
+  })
+
+  it('treats a bare https Gitea remote (no .git suffix) as git, not npm (#525)', async () => {
+    const gitea = 'https://gitea.example.com/me/themer'
+    let npmHits = 0
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      const href = String(url)
+      if (href.includes('registry.npmjs.org') || /\/themer\/latest/.test(href)) {
+        npmHits += 1
+        return { ok: true, status: 200, json: async () => ({ version: '9.9.9' }), text: async () => '' }
+      }
+      return {
+        ok: true, status: 200,
+        headers: { get: () => 'application/x-git-upload-pack-advertisement' },
+        json: async () => ({}),
+        text: async () => `001e# service=git-upload-pack\n00000155${HEAD} HEAD\0multi_ack\n`,
+      }
+    }))
+    const result = await checkUpdates('web', true, profileWith(gitea, OLD))
+    expect(npmHits).toBe(0)
+    expect(result.themer?.kind).not.toBe('npm')
+  })
+
+  it('still treats a bare owner/repo registry shorthand as npm', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true, status: 200, json: async () => ({ version: '1.0.0' }), text: async () => '',
+    })))
+    const result = await checkUpdates('web', true, profileWith('owner/themer', OLD))
+    expect(result.themer).toMatchObject({ kind: 'npm' })
+  })
+})
+
 describe('preferBeta (release channel)', () => {
   it('offers the prerelease only when it is actually newer', async () => {
     // The trap: a `beta` dist-tag is NOT automatically ahead. Once 1.14.0
