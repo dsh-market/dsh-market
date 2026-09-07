@@ -2864,6 +2864,31 @@ sendJson(response, 200, { updates })
             // verification against the first fetch rolls back a correct
             // install. Pinning the already-resolved version here makes the
             // boundary a no-op rewrite and keeps one source of truth.
+            //
+            // The pin also decides what pnpm 11's fresh-release hold does,
+            // which is the whole of #531 (@Astro-Han). Measured against real
+            // pnpm 11.7.0 with `minimumReleaseAge: 1440` and a registry whose
+            // publish times the measurement controlled — `latest` moved to a
+            // version published five minutes earlier:
+            //
+            //   add pkg@latest  → exit 0, installs the OLDER version, writes
+            //                     ^older into the manifest, and says NOTHING
+            //                     about having skipped one.
+            //   add pkg@2.0.0   → ERR_PNPM_NO_MATURE_MATCHING_VERSION,
+            //                     nothing installed.
+            //
+            // The first is a silent downgrade the market can only notice
+            // afterwards, by which point its own verification calls the
+            // result a RESOLVED_VERSION_MISMATCH and rolls a real upgrade
+            // back to where the user started — every day, for as long as
+            // releases are daily. The second is an error the market already
+            // recovers from: classifyPnpmFailure reads it as
+            // release-age-violation and withHoistRecovery retries once with
+            // --config.minimumReleaseAge=0 (#39).
+            //
+            // So a version resolved BEFORE the add is not only about the
+            // Desktop boundary; it is what turns a silent skip into a
+            // failure with a name.
             if (usesNpmUpdateTarget) {
               const installedVersion = readInstalledVersion(config.profile, name, activeProfileDir)
               const registryLatest = selfChannel === null
