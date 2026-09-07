@@ -1994,6 +1994,56 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			}
 			return kept.join("\n").trim();
 		}
+		/** CJK ideographs — enough to tell a Chinese half from a Latin one. */
+		const CJK_RE = /[\u3400-\u9FFF\uF900-\uFAFF]/gu;
+		/** Count CJK code points in a string. */
+		function cjkCount(text) {
+			return text.match(CJK_RE)?.length ?? 0;
+		}
+		/**
+		* Pick one language from a `中文 / English` (or reverse) pair. Ambiguous
+		* strings stay unchanged. Callers that prepend `t(…)` must localize the
+		* server half first, then concatenate — this function does not strip UI chrome.
+		*/
+		function pickBilingualPair(text, lang) {
+			const sep = " / ";
+			const parts = text.split(sep);
+			if (parts.length < 2) return text;
+			let bestLeft = parts[0];
+			let bestRight = parts.slice(1).join(sep);
+			let bestScore = Math.abs(cjkCount(bestLeft) - cjkCount(bestRight));
+			for (let i = 1; i < parts.length - 1; i++) {
+				const left = parts.slice(0, i + 1).join(sep);
+				const right = parts.slice(i + 1).join(sep);
+				const score = Math.abs(cjkCount(left) - cjkCount(right));
+				if (score > bestScore) {
+					bestScore = score;
+					bestLeft = left;
+					bestRight = right;
+				}
+			}
+			if (bestScore === 0) return text;
+			const zhPart = cjkCount(bestLeft) > cjkCount(bestRight) ? bestLeft : bestRight;
+			const enPart = cjkCount(bestLeft) > cjkCount(bestRight) ? bestRight : bestLeft;
+			return lang === "zh" ? zhPart : enPart;
+		}
+		/**
+		* Pick the locale half of a server bilingual string (`中文 / English` or
+		* `English / 中文`). Multiline input is handled line by line. Ambiguous
+		* strings are returned unchanged.
+		*/
+		function localizeBilingual(text, lang) {
+			if (text.includes("\n")) return text.split("\n").map((line) => localizeBilingual(line, lang)).join("\n");
+			return pickBilingualPair(text, lang);
+		}
+		/**
+		* Localize each bilingual reason and join for display. Reasons are separate
+		* diagnoses; do not rejoin them with ` / `, which is the bilingual separator.
+		*/
+		function localizeBilingualList(parts, lang) {
+			const sep = lang === "zh" ? "；" : "; ";
+			return parts.map((part) => localizeBilingual(part, lang)).filter((part) => part !== "").join(sep);
+		}
 		/**
 		* The plugin's own name, for display.
 		*
@@ -2989,13 +3039,13 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			});
 		}
 		/** The one-line status under a record's name; the bucket carries the rest. */
-		function statusLine(t, record, ahead) {
+		function statusLine(t, lang, record, ahead) {
 			switch (record.state) {
 				case "queued": return ahead === null || ahead === 0 ? t("opQueued") : `${t("opQueued")} · ${t("opQueuedAhead")} ${String(ahead)}`;
 				case "running": return record.detail ?? t("opRunning");
 				case "input": return t("opNeedsChoice");
-				case "failed": return record.reason ?? t("installFail");
-				case "warned": return record.reason ?? t("opDone");
+				case "failed": return record.reason !== void 0 ? localizeBilingual(record.reason, lang) : t("installFail");
+				case "warned": return record.reason !== void 0 ? localizeBilingual(record.reason, lang) : t("opDone");
 				case "done": return record.needsRefresh === true ? t("opDoneRefresh") : t("opDone");
 			}
 		}
@@ -3132,7 +3182,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 											}),
 											/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 												className: bucketOf(record.state) === "attention" ? `${Market_module_css_default.opStatus} ${Market_module_css_default.opStatusBad}` : Market_module_css_default.opStatus,
-												children: statusLine(t, record, ahead)
+												children: statusLine(t, props.lang, record, ahead)
 											}),
 											needsUser(record) && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(ConflictChoice, {
 												t,
@@ -7164,14 +7214,15 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 							return;
 						}
 						setRestarting(false);
-						setInstallError(t("restartFail") + ": " + String(body.error || "HTTP " + String(status)));
+						setInstallError(t("restartFail") + ": " + localizeBilingual(String(body.error || "HTTP " + String(status)), lang));
 					}).catch(awaitNewBoot);
 				};
 				requestRestart(10);
 			}, [
 				bootId,
 				restarting,
-				t
+				t,
+				lang
 			]);
 			/** Cancel the running plugin command (#6 by @qichuang321). */
 			const doCancel = (0, react.useCallback)(() => {
@@ -7270,19 +7321,23 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						const orphans = Array.isArray(body.orphanBundles) ? body.orphanBundles.map(String) : [];
 						const failure = text(body.error) || humanOutput([text(body.stderr), text(body.stdout)].filter(Boolean).join("\n")) || "exit " + body.exitCode;
 						const staleEntry = typeof body.staleEntry === "string" ? body.staleEntry : null;
-						const detail = [
+						const clipped = [
 							orphans.length > 0 ? `${t("orphanBundle")} ${orphans.join(", ")}` : null,
 							staleEntry,
 							failure
-						].filter(Boolean).join("\n");
+						].filter(Boolean).join("\n").trim().slice(-600);
 						setRecords((list) => patch(list, updateRecordId, {
 							state: "failed",
-							reason: detail.trim().slice(-600)
+							reason: clipped
 						}));
-						setInstallError((restore ? t("restoreFail") : t("updateFail")) + ": " + name + " — " + detail.trim().slice(-600));
+						setInstallError((restore ? t("restoreFail") : t("updateFail")) + ": " + name + " — " + localizeBilingual(clipped, lang));
 					}
 				}).catch(() => {});
-			}, [refreshInstalled, t]);
+			}, [
+				refreshInstalled,
+				t,
+				lang
+			]);
 			const doSourceMigration = (0, react.useCallback)((name) => {
 				setInstallError(null);
 				setActivationWarnings([]);
@@ -7314,12 +7369,16 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						setInstallError(t("agentBusyUpdate") + running);
 						return;
 					}
-					setInstallError(t("migrateFail") + ": " + String(body.error || "HTTP " + String(status)));
+					setInstallError(t("migrateFail") + ": " + localizeBilingual(String(body.error || "HTTP " + String(status)), lang));
 				}).catch((error) => {
 					setUpdatingName(null);
 					setInstallError(t("migrateFail") + ": " + String(error));
 				});
-			}, [refreshInstalled, t]);
+			}, [
+				refreshInstalled,
+				t,
+				lang
+			]);
 			const askSourceMigration = (0, react.useCallback)((name) => {
 				const migration = updates[name]?.sourceMigration;
 				const source = installed[name];
@@ -8687,6 +8746,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { className: Market_module_css_default.grow }),
 									/* @__PURE__ */ (0, react_jsx_runtime.jsx)(OperationsPanel, {
 										t,
+										lang,
 										describe: describePlugin,
 										records,
 										open: operationsOpen,
@@ -8870,7 +8930,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 											className: Market_module_css_default.spec,
 											children: [
 												"（",
-												info.reasons.join(" / "),
+												localizeBilingualList(info.reasons, lang),
 												"）"
 											]
 										})
@@ -8944,7 +9004,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 								onClick: () => setTab("diagnostics"),
 								children: t("goDiagnose")
 							}),
-							compatibilityNotice.rollbackId === void 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: compatibilityNotice.rollbackUnavailable ?? t("rollbackUnavailable") }) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+							compatibilityNotice.rollbackId === void 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: compatibilityNotice.rollbackUnavailable ? localizeBilingual(compatibilityNotice.rollbackUnavailable, lang) : t("rollbackUnavailable") }) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 								variant: "primary",
 								size: "sm",
 								disabled: rollingBack,
@@ -8955,7 +9015,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					}),
 					installError !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 						className: Market_module_css_default.err,
-						children: [installError, /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+						children: [localizeBilingual(installError, lang), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 							className: Market_module_css_default.staleAction,
 							children: [staleName !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 								variant: "primary",
@@ -9985,7 +10045,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 														className: Market_module_css_default.actWhy,
 														children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 															className: Market_module_css_default.spec,
-															children: act.reasons.join(" / ")
+															children: localizeBilingualList(act.reasons, lang)
 														})
 													})]
 												}),
@@ -10630,7 +10690,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						onDone: exportToastDone
 					}),
 					favoriteError !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Toast, {
-						text: favoriteError,
+						text: localizeBilingual(favoriteError, lang),
 						icon: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconWarningOutline16, { size: 14 }),
 						onDone: favoriteErrorDone
 					}),

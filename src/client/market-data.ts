@@ -1244,6 +1244,66 @@ export function humanOutput(raw: string): string {
   return kept.join('\n').trim()
 }
 
+/** CJK ideographs — enough to tell a Chinese half from a Latin one. */
+const CJK_RE = /[\u3400-\u9FFF\uF900-\uFAFF]/gu
+
+/** Count CJK code points in a string. */
+function cjkCount(text: string): number {
+  return text.match(CJK_RE)?.length ?? 0
+}
+
+/**
+ * Pick one language from a `中文 / English` (or reverse) pair. Ambiguous
+ * strings stay unchanged. Callers that prepend `t(…)` must localize the
+ * server half first, then concatenate — this function does not strip UI chrome.
+ */
+function pickBilingualPair(text: string, lang: 'zh' | 'en'): string {
+  const sep = ' / '
+  const parts = text.split(sep)
+  if (parts.length < 2) return text
+
+  // Prefer the split with the largest CJK contrast when the text has more
+  // than one ` / ` (English prose can contain the same separator).
+  let bestLeft = parts[0]
+  let bestRight = parts.slice(1).join(sep)
+  let bestScore = Math.abs(cjkCount(bestLeft) - cjkCount(bestRight))
+  for (let i = 1; i < parts.length - 1; i++) {
+    const left = parts.slice(0, i + 1).join(sep)
+    const right = parts.slice(i + 1).join(sep)
+    const score = Math.abs(cjkCount(left) - cjkCount(right))
+    if (score > bestScore) {
+      bestScore = score
+      bestLeft = left
+      bestRight = right
+    }
+  }
+  if (bestScore === 0) return text
+  const zhPart = cjkCount(bestLeft) > cjkCount(bestRight) ? bestLeft : bestRight
+  const enPart = cjkCount(bestLeft) > cjkCount(bestRight) ? bestRight : bestLeft
+  return lang === 'zh' ? zhPart : enPart
+}
+
+/**
+ * Pick the locale half of a server bilingual string (`中文 / English` or
+ * `English / 中文`). Multiline input is handled line by line. Ambiguous
+ * strings are returned unchanged.
+ */
+export function localizeBilingual(text: string, lang: 'zh' | 'en'): string {
+  if (text.includes('\n')) {
+    return text.split('\n').map(line => localizeBilingual(line, lang)).join('\n')
+  }
+  return pickBilingualPair(text, lang)
+}
+
+/**
+ * Localize each bilingual reason and join for display. Reasons are separate
+ * diagnoses; do not rejoin them with ` / `, which is the bilingual separator.
+ */
+export function localizeBilingualList(parts: string[], lang: 'zh' | 'en'): string {
+  const sep = lang === 'zh' ? '；' : '; '
+  return parts.map(part => localizeBilingual(part, lang)).filter(part => part !== '').join(sep)
+}
+
 /**
  * The plugin's own name, for display.
  *

@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from 'vitest'
 import {
-  entryForDep, extractReadmeImageCandidates, extractReadmeImages, formatCount, groupSwitchState, installedForCatalog, isInstalled, isMarketItself, looksTerminal, matchInstalledName, orderedCategories, pageItems, pluginCategories, pluginsForFavorites, previewDimensionScore, rankThemeScreenshots, safeScreenshots, staleFavoriteUrls, themePlugins, visiblePlugins, humanOutput, catalogEntryForInstalled} from '../src/client/market-data.ts'
+  entryForDep, extractReadmeImageCandidates, extractReadmeImages, formatCount, groupSwitchState, installedForCatalog, isInstalled, isMarketItself, localizeBilingual, localizeBilingualList, looksTerminal, matchInstalledName, orderedCategories, pageItems, pluginCategories, pluginsForFavorites, previewDimensionScore, rankThemeScreenshots, safeScreenshots, staleFavoriteUrls, themePlugins, visiblePlugins, humanOutput, catalogEntryForInstalled} from '../src/client/market-data.ts'
 import type { RegistryPlugin, ScreenshotCandidate } from '../src/client/market-data.ts'
 
 function plugin(partial: Partial<RegistryPlugin>): RegistryPlugin {
@@ -672,6 +672,46 @@ describe('humanOutput', () => {
   it('leaves ordinary output and malformed lines alone', () => {
     expect(humanOutput('plain error\n{not json\n')).toBe('plain error\n{not json')
     expect(humanOutput('')).toBe('')
+  })
+})
+
+describe('localizeBilingual', () => {
+  it('picks the Chinese half of a zh-first activation reason', () => {
+    const text = '未声明 dsh.bundle,已作为普通依赖安装,不会成为 profile 层 / no dsh.bundle — installed as a plain dependency, never a profile-layer plugin'
+    expect(localizeBilingual(text, 'zh')).toBe('未声明 dsh.bundle,已作为普通依赖安装,不会成为 profile 层')
+    expect(localizeBilingual(text, 'en')).toBe('no dsh.bundle — installed as a plain dependency, never a profile-layer plugin')
+  })
+
+  it('picks the Chinese half when English comes first', () => {
+    const text = 'JSON body is required / 需要 JSON body'
+    expect(localizeBilingual(text, 'zh')).toBe('需要 JSON body')
+    expect(localizeBilingual(text, 'en')).toBe('JSON body is required')
+  })
+
+  it('splits on the language join when the English half contains an em-dash', () => {
+    const text = 'theme activation failed — restart required / 主题启用失败，需要重启'
+    expect(localizeBilingual(text, 'zh')).toBe('主题启用失败，需要重启')
+    expect(localizeBilingual(text, 'en')).toBe('theme activation failed — restart required')
+  })
+
+  it('leaves monolingual and ambiguous strings alone', () => {
+    expect(localizeBilingual('already localized', 'zh')).toBe('already localized')
+    expect(localizeBilingual('left / right', 'en')).toBe('left / right')
+  })
+
+  it('localizes multiline warnings line by line', () => {
+    const text = '第一行中文 / first line\n第二行中文 / second line'
+    expect(localizeBilingual(text, 'zh')).toBe('第一行中文\n第二行中文')
+    expect(localizeBilingual(text, 'en')).toBe('first line\nsecond line')
+  })
+
+  it('joins multiple reasons without reusing the bilingual separator', () => {
+    const reasons = [
+      '未声明 dsh.bundle / no dsh.bundle',
+      '需要重启 / restart required',
+    ]
+    expect(localizeBilingualList(reasons, 'zh')).toBe('未声明 dsh.bundle；需要重启')
+    expect(localizeBilingualList(reasons, 'en')).toBe('no dsh.bundle; restart required')
   })
 })
 

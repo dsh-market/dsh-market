@@ -42,7 +42,7 @@ import type { OperationRecord } from './operations.ts'
 import { Diagnostics } from './Diagnostics.tsx'
 import { exportMarketLog } from './self-check.ts'
 import {
-  api, applyGithubRouting, avatarColor, catalogEntryForInstalled, entryForDep, githubRouteCandidates, groupSwitchState, humanOutput, installedForCatalog, isInstalled, looksTerminal, matchInstalledName, orderedCategories, pluginCategories,
+  api, applyGithubRouting, avatarColor, catalogEntryForInstalled, entryForDep, githubRouteCandidates, groupSwitchState, humanOutput, installedForCatalog, isInstalled, localizeBilingual, localizeBilingualList, looksTerminal, matchInstalledName, orderedCategories, pluginCategories,
   formatCount, pageItems, pluginName, pluginScreenshotCandidates, pluginScreenshots, pluginsForFavorites, rankThemeScreenshots, readSession, rememberGithubRoute, resetScreenshotsCache, resolveCatalogRestore, safeScreenshots, staleFavoriteUrls, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
 } from './market-data.ts'
 import type {
@@ -2202,7 +2202,7 @@ export function MarketSection(props: MarketSectionProps) {
           ].filter(Boolean).join('\n')
           // Carry the blocked names onto the record too: the panel is where
           // this failure is read, so it is where the one-click way out has to
-          // be (#314).
+          // be (#314). The reason stays bilingual; the panel localizes it.
           setRecords(list => patchRecord(list, recordId, {
             state: 'failed', reason: detail.trim().slice(-600),
             ...(blocked.length > 0 ? { blockedBuilds: blocked } : {}),
@@ -2335,12 +2335,12 @@ export function MarketSection(props: MarketSectionProps) {
             return
           }
           setRestarting(false)
-          setInstallError(t('restartFail') + ': ' + String(body.error || ('HTTP ' + String(status))))
+          setInstallError(t('restartFail') + ': ' + localizeBilingual(String(body.error || ('HTTP ' + String(status))), lang))
         })
         .catch(awaitNewBoot) // the host may die mid-response; keep polling
     }
     requestRestart(10)
-  }, [bootId, restarting, t])
+  }, [bootId, restarting, t, lang])
 
   /** Cancel the running plugin command (#6 by @qichuang321). */
   const doCancel = useCallback(() => {
@@ -2460,8 +2460,10 @@ export function MarketSection(props: MarketSectionProps) {
             staleEntry,
             failure,
           ].filter(Boolean).join('\n')
-          setRecords(list => patchRecord(list, updateRecordId, { state: 'failed', reason: detail.trim().slice(-600) }))
-          setInstallError((restore ? t('restoreFail') : t('updateFail')) + ': ' + name + ' — ' + detail.trim().slice(-600))
+          const clipped = detail.trim().slice(-600)
+          setRecords(list => patchRecord(list, updateRecordId, { state: 'failed', reason: clipped }))
+          // Localize the server half before prepending t() chrome.
+          setInstallError((restore ? t('restoreFail') : t('updateFail')) + ': ' + name + ' — ' + localizeBilingual(clipped, lang))
         }
       })
       .catch(() => {
@@ -2470,7 +2472,7 @@ export function MarketSection(props: MarketSectionProps) {
         // running row, and let the status poll converge the outcome instead
         // of declaring a false failure — mirroring the install flow's catch.
       })
-  }, [refreshInstalled, t])
+  }, [refreshInstalled, t, lang])
 
 
   const doSourceMigration = useCallback((name: string) => {
@@ -2502,13 +2504,13 @@ export function MarketSection(props: MarketSectionProps) {
           setInstallError(t('agentBusyUpdate') + running)
           return
         }
-        setInstallError(t('migrateFail') + ': ' + String(body.error || ('HTTP ' + String(status))))
+        setInstallError(t('migrateFail') + ': ' + localizeBilingual(String(body.error || ('HTTP ' + String(status))), lang))
       })
       .catch(error => {
         setUpdatingName(null)
         setInstallError(t('migrateFail') + ': ' + String(error))
       })
-  }, [refreshInstalled, t])
+  }, [refreshInstalled, t, lang])
 
   const askSourceMigration = useCallback((name: string) => {
     const migration = updates[name]?.sourceMigration
@@ -3795,6 +3797,7 @@ export function MarketSection(props: MarketSectionProps) {
               switching tab all leave it — and any pending decision — in place. */}
           <OperationsPanel
             t={t}
+            lang={lang}
             describe={describePlugin}
             records={records}
             open={operationsOpen}
@@ -3920,7 +3923,7 @@ export function MarketSection(props: MarketSectionProps) {
               {activationWarnings.map(({ name, info }) => (
                 <div key={name}>
                   <b>{name}</b> — {activationMeta(info.state, t).label}
-                  {info.reasons.length > 0 && <span className={css.spec}>（{info.reasons.join(' / ')}）</span>}
+                  {info.reasons.length > 0 && <span className={css.spec}>（{localizeBilingualList(info.reasons, lang)}）</span>}
                 </div>
               ))}
             </span>
@@ -3973,7 +3976,7 @@ export function MarketSection(props: MarketSectionProps) {
           </span>
           <Button variant="outline" size="sm" onClick={() => setTab('diagnostics')}>{t('goDiagnose')}</Button>
           {compatibilityNotice.rollbackId === undefined
-            ? <span>{compatibilityNotice.rollbackUnavailable ?? t('rollbackUnavailable')}</span>
+            ? <span>{compatibilityNotice.rollbackUnavailable ? localizeBilingual(compatibilityNotice.rollbackUnavailable, lang) : t('rollbackUnavailable')}</span>
             : (
                 <Button variant="primary" size="sm" disabled={rollingBack} onClick={() => void doRollback(compatibilityNotice.rollbackId!)}>
                   {rollingBack ? t('rollingBack') : t('rollbackNow')}
@@ -3983,7 +3986,7 @@ export function MarketSection(props: MarketSectionProps) {
       )}
       {installError !== null && (
         <div className={css.err}>
-          {installError}
+          {localizeBilingual(installError, lang)}
           <div className={css.staleAction}>
             {/* Primary, because the banner's own words point at it ("点
                 「立即更新」不再等待") and it is the way out of the wait. With
@@ -4748,7 +4751,7 @@ export function MarketSection(props: MarketSectionProps) {
                                               onToggle={() => setWhyOpen(whyOpen === name ? null : name)}
                                               className={css.actWhy}
                                             >
-                                              <div className={css.spec}>{act.reasons.join(' / ')}</div>
+                                              <div className={css.spec}>{localizeBilingualList(act.reasons, lang)}</div>
                                             </DisclosureRow>
                                           )}
                                         </div>
@@ -5284,7 +5287,7 @@ export function MarketSection(props: MarketSectionProps) {
         <Toast text={t('exportLogFail')} icon={<IconWarningOutline16 size={14} />} onDone={exportToastDone} />
       )}
       {favoriteError !== null && (
-        <Toast text={favoriteError} icon={<IconWarningOutline16 size={14} />} onDone={favoriteErrorDone} />
+        <Toast text={localizeBilingual(favoriteError, lang)} icon={<IconWarningOutline16 size={14} />} onDone={favoriteErrorDone} />
       )}
       {toggled !== null && (
         <Toast
