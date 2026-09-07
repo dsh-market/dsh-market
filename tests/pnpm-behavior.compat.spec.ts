@@ -107,6 +107,19 @@ describe('the market argv decision works on every pnpm major × profile shape', 
   })
 })
 
+/** Lock shapes for `github:owner/repo#sha` — older pnpm used codeload tarballs
+ *  with `gitHosted: true`; current pnpm writes `git+https` / `type: git`. */
+function githubShortcutLockShape(lockfile: string, sha: string): {
+  hasCodeload: boolean
+  hasGitUrl: boolean
+} {
+  return {
+    hasCodeload: lockfile.includes(`codeload.github.com/pnpm/test-git-fetch/tar.gz/${sha}`),
+    hasGitUrl: lockfile.includes(`git+https://github.com/pnpm/test-git-fetch.git#${sha}`)
+      || (lockfile.includes('type: git') && lockfile.includes(sha)),
+  }
+}
+
 describe('#385 — pnpm keeps a commit-pinned github shortcut inside its git-hosted trust boundary', () => {
   it('installs on Desktop and current pnpm, then survives the next dependency mutation', () => {
     for (const version of [DESKTOP_PNPM, PNPM[11]]) {
@@ -117,8 +130,9 @@ describe('#385 — pnpm keeps a commit-pinned github shortcut inside its git-hos
       expect(installed.code, `pnpm ${version}\n${installed.out.slice(-600)}`).toBe(0)
 
       const lockfile = readFileSync(join(dir, 'pnpm-lock.yaml'), 'utf8')
-      expect(lockfile).toContain(`codeload.github.com/pnpm/test-git-fetch/tar.gz/${GIT_FIXTURE_SHA}`)
-      expect(lockfile).toContain('gitHosted: true')
+      const { hasCodeload, hasGitUrl } = githubShortcutLockShape(lockfile, GIT_FIXTURE_SHA)
+      expect(hasCodeload || hasGitUrl, `pnpm ${version} lock shape:\n${lockfile.slice(0, 800)}`).toBe(true)
+      if (hasCodeload) expect(lockfile).toContain('gitHosted: true')
 
       // A prefix-proxied codeload URL loses that marker and #385 fails here
       // with ERR_PNPM_MISSING_TARBALL_INTEGRITY. The pinned github shortcut
@@ -141,14 +155,29 @@ describe('#385 — pnpm keeps a commit-pinned github shortcut inside its git-hos
     const seed = pnpm(DESKTOP_PNPM, ['add', '-w', '--ignore-scripts', target], dir)
     expect(seed.code, seed.out.slice(-600)).toBe(0)
 
+    const lockPath = join(dir, 'pnpm-lock.yaml')
+    const seedLock = readFileSync(lockPath, 'utf8')
+    const { hasCodeload, hasGitUrl } = githubShortcutLockShape(seedLock, GIT_FIXTURE_SHA)
+    expect(hasCodeload || hasGitUrl, `seed lock shape:\n${seedLock.slice(0, 800)}`).toBe(true)
+
+    // Prefix-proxy orphan only applies to codeload tarball resolutions. When
+    // Desktop/current pnpm already writes git+https, prove install + mutation
+    // still stay off the integrity failure path instead of inventing a poison.
+    if (!hasCodeload) {
+      expect(seedLock).not.toContain('gh-proxy.com')
+      const mutation = pnpm(DESKTOP_PNPM, ['add', '-w', '--ignore-scripts', 'is-odd@3.0.1'], dir)
+      expect(mutation.code, mutation.out.slice(-600)).toBe(0)
+      expect(mutation.out).not.toContain('ERR_PNPM_MISSING_TARBALL_INTEGRITY')
+      return
+    }
+
     // Recreate the durable state left by v1.34 after the failed install:
     // package.json was restored, but pnpm's prefix-proxy resolution remained
     // orphaned in the lockfile without its git-hosted trust marker.
     const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as Record<string, unknown>
     manifest.dependencies = {}
     writeFileSync(join(dir, 'package.json'), JSON.stringify(manifest))
-    const lockPath = join(dir, 'pnpm-lock.yaml')
-    const poisoned = readFileSync(lockPath, 'utf8')
+    const poisoned = seedLock
       .replaceAll(canonical, proxied)
       .replaceAll('gitHosted: true, ', '')
     expect(poisoned).toContain(proxied)
@@ -159,8 +188,9 @@ describe('#385 — pnpm keeps a commit-pinned github shortcut inside its git-hos
     expect(repaired.code, repaired.out.slice(-600)).toBe(0)
     const repairedLock = readFileSync(lockPath, 'utf8')
     expect(repairedLock).not.toContain('gh-proxy.com')
-    expect(repairedLock).toContain(canonical)
-    expect(repairedLock).toContain('gitHosted: true')
+    const repairedShape = githubShortcutLockShape(repairedLock, GIT_FIXTURE_SHA)
+    expect(repairedShape.hasCodeload || repairedShape.hasGitUrl).toBe(true)
+    if (repairedShape.hasCodeload) expect(repairedLock).toContain('gitHosted: true')
 
     const mutation = pnpm(DESKTOP_PNPM, ['add', '-w', '--ignore-scripts', 'is-odd@3.0.1'], dir)
     expect(mutation.code, mutation.out.slice(-600)).toBe(0)
