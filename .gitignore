@@ -6,3 +6,6 @@ research/
 npm-cache/
 docs/
 data/readmes-snapshot.json
+
+# Generated when a local build enables sourcemaps; never committed (#533).
+client/*.map
