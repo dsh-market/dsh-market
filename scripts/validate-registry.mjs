@@ -2,9 +2,9 @@
 /**
  * Registry data gate — P1-8 in IMPROVEMENT-PLAN.md ("目录数据治理").
  *
- * Offline, dependency-free validation of data/registry-snapshot.json, the
- * curated plugin catalog the market serves. It catches the defects that would
- * otherwise reach users as a broken install or an ambiguous entry:
+ * Dependency-free validation of the curated plugin catalog the market serves.
+ * It catches the defects that would otherwise reach users as a broken install
+ * or an ambiguous entry:
  *
  *   E1  required string fields present and non-empty
  *   E2  description carries both non-empty "en" and "zh" (the market is bilingual)
@@ -32,7 +32,49 @@
 import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
-const SNAPSHOT = fileURLToPath(new URL('../data/registry-snapshot.json', import.meta.url))
+/**
+ * Where the catalog is read from, live first.
+ *
+ * It used to be a committed `data/registry-snapshot.json`, and that copy went
+ * eleven days stale without anyone noticing — because nothing depends on it
+ * being fresh: the site build downloads its own copy into a throwaway
+ * checkout, and the market has read the live catalog since the bundled
+ * fallback was deliberately removed (see loadRegistry: for a catalog, stale
+ * is not a degraded answer, it is a wrong one).
+ *
+ * So the only thing the committed file did was gate merges on an old copy of
+ * data this repository does not own, while looking enough like the source of
+ * truth that people tried to add plugins to it (#545 by @Icstick, and the
+ * CI guard that exists because it had happened before).
+ *
+ * Now the gate reads what users actually get. A local file still wins when
+ * present, so an offline run works by dropping one in.
+ */
+const CATALOG_URL = process.env.DSHM_REGISTRY_URL ?? 'https://awesome-dsh-plugin.com/plugins.json'
+const LOCAL = fileURLToPath(new URL('../data/registry-snapshot.json', import.meta.url))
+
+/** The catalog and where it came from, or null when neither source answers. */
+async function loadCatalog() {
+  if (fs.existsSync(LOCAL)) {
+    try {
+      return { raw: JSON.parse(fs.readFileSync(LOCAL, 'utf8')), from: LOCAL }
+    } catch (e) {
+      console.error(`validate-registry: cannot read ${LOCAL}: ${e.message}`)
+      process.exit(1)
+    }
+  }
+  try {
+    const response = await fetch(CATALOG_URL, { signal: AbortSignal.timeout(30_000) })
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    return { raw: await response.json(), from: CATALOG_URL }
+  } catch (e) {
+    // Not a failure: an origin that cannot be reached has not said anything
+    // about the catalog, and failing every unrelated PR on someone else's
+    // outage would teach people to ignore this gate.
+    console.log(`validate-registry: skipped — ${CATALOG_URL} unreachable (${e.message})`)
+    return null
+  }
+}
 
 // npm package-name syntax (scoped or simple), lowercased per npm rules.
 const NPM_NAME_RE = /^(?:@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/
@@ -64,17 +106,13 @@ function fail(errors, entry, code, msg) {
   errors.push({ entry: entry && entry.name ? entry.name : '<unknown>', code, msg })
 }
 
-function main() {
+async function main() {
   const errors = []
   const warnings = []
 
-  let raw
-  try {
-    raw = JSON.parse(fs.readFileSync(SNAPSHOT, 'utf8'))
-  } catch (e) {
-    console.error(`validate-registry: cannot read ${SNAPSHOT}: ${e.message}`)
-    process.exit(1)
-  }
+  const loaded = await loadCatalog()
+  if (loaded === null) return
+  const { raw, from } = loaded
 
   const plugins = raw && raw.plugins
   if (!Array.isArray(plugins)) {
@@ -256,7 +294,7 @@ function main() {
   const stars0 = plugins.filter((p) => p.stars === 0).length
 
   // Report
-  const rel = SNAPSHOT.replace(/\\/g, '/').replace(/.*dsh-market\//, 'dsh-market/')
+  const rel = from.replace(/\\/g, '/').replace(/.*dsh-market\//, 'dsh-market/')
   console.log(`validate-registry: ${rel}`)
   console.log(
     `  plugins: ${plugins.length} | categories: ${categories.size} | ` +
@@ -279,4 +317,4 @@ function main() {
   console.log('\n  registry ok ✓')
 }
 
-main()
+await main()

@@ -41,10 +41,11 @@ jobs:
           node-version: 24
       - run: npm install
 
-      # Both snapshots come from awesome-dsh-plugin, which owns the list. The
-      # registry copy in the repo is the plugin's runtime fallback and is
-      # deliberately left alone by anything that commits; here it is only a
-      # build input, refreshed in a checkout that is thrown away.
+      # Both come from awesome-dsh-plugin, which owns the list, and both are
+      # build inputs only — fetched into a checkout that is thrown away and
+      # never committed. The market itself reads the live catalog; the
+      # bundled fallback it used to have was removed on purpose, because for
+      # a catalog stale is not a degraded answer but a wrong one.
       - name: Fetch catalog
         run: |
           curl -sfL --retry 3 --retry-delay 5 \
