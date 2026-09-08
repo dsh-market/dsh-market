@@ -113,6 +113,21 @@ afterEach(() => {
   resetGithubRouting()
 })
 
+describe('search input scheduling', () => {
+  it('keeps the list unchanged while typing and filters after a pause', async () => {
+    const { container } = render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    const before = rankedNames(container)
+    const input = screen.getByPlaceholderText(en.searchPh) as HTMLInputElement
+    fireEvent.change(input, { target: { value: 'loop' } })
+    expect(input.value).toBe('loop')
+    expect(rankedNames(container)).toEqual(before)
+    await waitFor(() => expect(rankedNames(container)).toEqual(['dsh-loop']))
+    fireEvent.change(input, { target: { value: '' } })
+    expect(rankedNames(container)).toEqual(before)
+  })
+})
+
 describe('api() base resolution (#345)', () => {
   /** Behind a reverse proxy that mounts dsh under a prefix, a root-absolute
    * `/dsh-market/...` resolves against the ORIGIN and misses the prefix rule,
