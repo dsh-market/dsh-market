@@ -959,6 +959,34 @@ function safeScreenshot(value: unknown): string | null {
   return value
 }
 
+/**
+ * Prepare a GitHub release body for the update-notes dialog's tiny markdown
+ * renderer. HTML — especially pasted `<img>` tags — must not surface as
+ * literal text; markdown syntax is left intact for the dialog to render.
+ */
+export function sanitizeReleaseNotesBody(md: string): string {
+  let s = md.replace(/<!--[\s\S]*?-->/g, '')
+  s = s.replace(/<img\b[^>]*>/gi, '')
+  // Drop remaining tags, keep inner text (`<a href=…>label</a>` → `label`).
+  s = s.replace(/<\/?[a-zA-Z][\w:-]*\b[^>]*>/g, '')
+  s = s.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n')
+  return s.trim()
+}
+
+/**
+ * A whole-line markdown image with an allowlisted https URL, or null.
+ * Relative paths and non-GitHub hosts stay out of the dialog (same gate as
+ * install screenshots).
+ */
+export function releaseNotesHttpsImage(line: string): { alt: string; src: string } | null {
+  const match = /^!\[([^\]]*)\]\(\s*(?:<(https:\/\/[^>]+)>|(https:\/\/[^\s)]+))(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*\)$/u
+    .exec(line.trim())
+  if (match === null) return null
+  const src = safeScreenshot(match[2] ?? match[3] ?? '')
+  if (src === null) return null
+  return { alt: match[1] ?? '', src }
+}
+
 /** Keep only https URLs on allowlisted image hosts; SVG dropped (logos/badges). */
 export function safeScreenshots(urls: unknown): string[] {
   if (!Array.isArray(urls)) return []

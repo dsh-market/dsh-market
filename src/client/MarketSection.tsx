@@ -43,7 +43,7 @@ import { Diagnostics } from './Diagnostics.tsx'
 import { exportMarketLog } from './self-check.ts'
 import {
   api, applyGithubRouting, avatarColor, catalogEntryForInstalled, entryForDep, githubRouteCandidates, groupSwitchState, humanOutput, installedForCatalog, isInstalled, looksTerminal, matchInstalledName, orderedCategories, pluginCategories,
-  formatCount, pageItems, pluginName, pluginScreenshotCandidates, pluginScreenshots, pluginsForFavorites, rankThemeScreenshots, readSession, rememberGithubRoute, resetScreenshotsCache, resolveCatalogRestore, safeScreenshots, staleFavoriteUrls, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
+  formatCount, pageItems, pluginName, pluginScreenshotCandidates, pluginScreenshots, pluginsForFavorites, rankThemeScreenshots, readSession, releaseNotesHttpsImage, rememberGithubRoute, resetScreenshotsCache, resolveCatalogRestore, safeScreenshots, sanitizeReleaseNotesBody, staleFavoriteUrls, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
 } from './market-data.ts'
 import type {
 ActivationInfo, ActivationState, GistExportResult, InstalledMap, InstalledRepoHints, InstalledRepoIdentities, MarketStatus, Registry, RegistryPlugin,
@@ -369,9 +369,9 @@ function mdInline(text: string): Array<string | JSX.Element> {
 
 /**
  * Release-body markdown, reduced to what a reading dialog needs: headings,
- * bullets, paragraphs, bold, inline code. Every character arrives as a React
- * text child (auto-escaped) — nothing from the repo is ever interpreted as
- * markup, so this stays free of the HTML surface real markdown parsers open.
+ * bullets, paragraphs, bold, inline code, and allowlisted https images.
+ * HTML from the repo is stripped first (never interpreted as markup); every
+ * remaining character arrives as a React text child or a controlled node.
  */
 function renderMarkdown(md: string): Array<JSX.Element | string> {
   const out: Array<JSX.Element | string> = []
@@ -382,9 +382,23 @@ function renderMarkdown(md: string): Array<JSX.Element | string> {
     out.push(<ul key={`l${out.length}`} className={css.notesList}>{items.map((item, i) => <li key={i}>{mdInline(item)}</li>)}</ul>)
     bullets = null
   }
-  for (const line of md.split('\n')) {
+  for (const line of sanitizeReleaseNotesBody(md).split('\n')) {
     const trimmed = line.trim()
     if (trimmed === '') { flushList(); continue }
+    const image = releaseNotesHttpsImage(trimmed)
+    if (image !== null) {
+      flushList()
+      out.push(
+        <img
+          key={`i${out.length}`}
+          className={css.notesImg}
+          src={image.src}
+          alt={image.alt}
+          loading="lazy"
+        />,
+      )
+      continue
+    }
     const heading = /^#{1,6}\s+(.*)$/.exec(trimmed)
     if (heading !== null) {
       flushList()
