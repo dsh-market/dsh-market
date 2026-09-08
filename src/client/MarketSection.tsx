@@ -5178,7 +5178,7 @@ export function MarketSection(props: MarketSectionProps) {
         <Modal
           open
           onClose={() => setNotesFor(null)}
-          className={css.notesModal}
+          className={notesState === 'ready' && updateNotes?.kind === 'release' ? css.notesModalWide : undefined}
           /* The host's Modal renders its title node verbatim; the hand-written
              primitives.d.ts narrows the prop to string, so this cast documents
              intent rather than defeating a runtime check. */

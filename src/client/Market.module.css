@@ -796,12 +796,13 @@
    an action competing with 更新/卸载 on the trailing edge. */
 .notesLink{display:block;background:0 0;border:none;padding:0;margin:2px 0 0;font:inherit;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#6b7280);cursor:pointer;text-align:left}
 .notesLink:hover{color:var(--dsw-alias-label-primary,#1f2328)}
-/* Wider than the default settings-sized Modal — release notes are prose. */
-.notesModal{width:min(640px,92vw);max-width:min(640px,92vw)}
+/* Wider only for prose release notes — npm/commit lists stay at the default
+   Modal width so a short changelog does not sit in a half-empty box. */
+.notesModalWide{width:min(640px,92vw);max-width:min(640px,92vw)}
 /* Cap height so a long release body scrolls inside the dialog instead of
    stretching the Modal past the viewport (same idea as .notesPre / .commentsMount).
-   Bottom padding keeps the last lines clear of the Modal footer. */
-.notesBody{display:flex;flex-direction:column;gap:10px;min-width:0;max-height:min(60vh,520px);overflow-y:auto;overscroll-behavior:contain;padding:0 4px 16px 0}
+   flex:0 keeps short lists from growing into empty space above the footer. */
+.notesBody{display:flex;flex-direction:column;gap:10px;min-width:0;flex:0 1 auto;max-height:min(60vh,520px);overflow-y:auto;overscroll-behavior:contain;padding:0 2px 8px 0}
 /* 弹窗内的层级：范围行弱化、区块标题小而重、正文有承载面 */
 .notesRange{display:flex;align-items:center;gap:8px;font-size:12px;line-height:18px;margin-bottom:4px}
 .notesArrow{color:var(--dsw-alias-label-tertiary,#8b93a1)}
