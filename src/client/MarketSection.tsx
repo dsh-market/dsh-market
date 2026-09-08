@@ -354,9 +354,17 @@ function Pager({ currentPage, totalPages, pageSize, onGoToPage, onChangePageSize
  * Card avatar: the plugin owner's GitHub avatar (no API, browser-cached),
  * falling back to the initial-letter tile when it can't load.
  */
-/** Inline pass: `code` spans and **bold**, everything else plain text. */
+/** Inline pass: links, `code`, **bold**; everything else plain text. */
 function mdInline(text: string): Array<string | JSX.Element> {
-  return text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).map((part, i) => {
+  return text.split(/(\[[^\]]+\]\(\s*https:\/\/[^)\s]+\s*\)|\*\*[^*]+\*\*|`[^`]+`)/g).map((part, i) => {
+    const link = /^\[([^\]]+)\]\(\s*(https:\/\/[^)\s]+)\s*\)$/u.exec(part)
+    if (link !== null) {
+      return (
+        <a key={i} className={css.notesA} href={link[2]} target="_blank" rel="noreferrer">
+          {link[1]}
+        </a>
+      )
+    }
     if (part.startsWith('**') && part.endsWith('**') && part.length > 4) {
       return <strong key={i}>{part.slice(2, -2)}</strong>
     }
@@ -369,21 +377,42 @@ function mdInline(text: string): Array<string | JSX.Element> {
 
 /**
  * Release-body markdown, reduced to what a reading dialog needs: headings,
- * bullets, paragraphs, bold, inline code, and allowlisted https images.
- * HTML from the repo is stripped first (never interpreted as markup); every
- * remaining character arrives as a React text child or a controlled node.
+ * bullets, quotes, fenced code, paragraphs, bold, inline code, https links,
+ * and allowlisted https images. HTML from the repo is stripped first (never
+ * interpreted as markup); remaining text arrives as React children or
+ * controlled nodes only.
  */
 function renderMarkdown(md: string): Array<JSX.Element | string> {
   const out: Array<JSX.Element | string> = []
   let bullets: string[] | null = null
+  let fence: string[] | null = null
   const flushList = (): void => {
     if (bullets === null) return
     const items = bullets
-    out.push(<ul key={`l${out.length}`} className={css.notesList}>{items.map((item, i) => <li key={i}>{mdInline(item)}</li>)}</ul>)
+    out.push(<ul key={`l${out.length}`} className={css.notesBullets}>{items.map((item, i) => <li key={i}>{mdInline(item)}</li>)}</ul>)
     bullets = null
+  }
+  const flushFence = (): void => {
+    if (fence === null) return
+    const body = fence.join('\n')
+    out.push(<pre key={`c${out.length}`} className={css.notesFence}><code>{body}</code></pre>)
+    fence = null
   }
   for (const line of sanitizeReleaseNotesBody(md).split('\n')) {
     const trimmed = line.trim()
+    if (fence !== null) {
+      if (/^```/.test(trimmed)) {
+        flushFence()
+      } else {
+        fence.push(line.replace(/\s+$/u, ''))
+      }
+      continue
+    }
+    if (/^```/.test(trimmed)) {
+      flushList()
+      fence = []
+      continue
+    }
     if (trimmed === '') { flushList(); continue }
     const image = releaseNotesHttpsImage(trimmed)
     if (image !== null) {
@@ -402,18 +431,25 @@ function renderMarkdown(md: string): Array<JSX.Element | string> {
     const heading = /^#{1,6}\s+(.*)$/.exec(trimmed)
     if (heading !== null) {
       flushList()
-      out.push(<div key={`h${out.length}`} className={css.notesH}>{mdInline(heading[1])}</div>)
+      out.push(<div key={`h${out.length}`} className={css.notesH}>{mdInline(heading[1]!)}</div>)
+      continue
+    }
+    const quote = /^>\s?(.*)$/u.exec(trimmed)
+    if (quote !== null) {
+      flushList()
+      out.push(<div key={`q${out.length}`} className={css.notesQuote}>{mdInline(quote[1]!)}</div>)
       continue
     }
     const bullet = /^[-*]\s+(.*)$/.exec(trimmed)
     if (bullet !== null) {
-      ;(bullets ??= []).push(bullet[1])
+      ;(bullets ??= []).push(bullet[1]!)
       continue
     }
     flushList()
     out.push(<div key={`p${out.length}`} className={css.notesP}>{mdInline(line)}</div>)
   }
   flushList()
+  flushFence()
   return out
 }
 
