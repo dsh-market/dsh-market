@@ -796,6 +796,8 @@
    an action competing with 更新/卸载 on the trailing edge. */
 .notesLink{display:block;background:0 0;border:none;padding:0;margin:2px 0 0;font:inherit;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#6b7280);cursor:pointer;text-align:left}
 .notesLink:hover{color:var(--dsw-alias-label-primary,#1f2328)}
+/* Wider than the default settings-sized Modal — release notes are prose. */
+.notesModal{width:min(640px,92vw);max-width:min(640px,92vw)}
 /* Cap height so a long release body scrolls inside the dialog instead of
    stretching the Modal past the viewport (same idea as .notesPre / .commentsMount).
    Bottom padding keeps the last lines clear of the Modal footer. */
