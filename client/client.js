@@ -10489,6 +10489,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					notesFor !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(_deepseek_ai_dsh_client_ui_primitives.Modal, {
 						open: true,
 						onClose: () => setNotesFor(null),
+						className: Market_module_css_default.notesModal,
 						title: notesFor.repoUrl !== null ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("a", {
 							className: Market_module_css_default.nameLink,
 							href: notesFor.repoUrl + "#readme",
@@ -10499,7 +10500,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						footer: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 							variant: "ghost",
 							onClick: () => setNotesFor(null),
-							children: t("cancel")
+							children: t("gotIt")
 						}),
 						children: [
 							(notesFor.current !== null || notesFor.latest !== null) && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {

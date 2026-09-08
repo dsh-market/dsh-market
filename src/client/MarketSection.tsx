@@ -5178,6 +5178,7 @@ export function MarketSection(props: MarketSectionProps) {
         <Modal
           open
           onClose={() => setNotesFor(null)}
+          className={css.notesModal}
           /* The host's Modal renders its title node verbatim; the hand-written
              primitives.d.ts narrows the prop to string, so this cast documents
              intent rather than defeating a runtime check. */
@@ -5185,7 +5186,7 @@ export function MarketSection(props: MarketSectionProps) {
             ? <a className={css.nameLink} href={notesFor.repoUrl + '#readme'} target="_blank" rel="noreferrer">{notesFor.name}</a>
             : notesFor.name) as unknown as string}
           footer={(
-            <Button variant="ghost" onClick={() => setNotesFor(null)}>{t('cancel')}</Button>
+            <Button variant="ghost" onClick={() => setNotesFor(null)}>{t('gotIt')}</Button>
           )}
         >
           {/* The version line reads as versions when both ends are semver and
