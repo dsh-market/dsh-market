@@ -2664,6 +2664,33 @@ describe('local-dev restore', () => {
     expect(fetchCalls.some(call => call.body?.restore === true)).toBe(false)
   })
 
+  it('skips disabled plugins from Update all', async () => {
+    stubFetch({
+      '/dsh-market/installed': {
+        profile: 'web',
+        installed: { 'dsh-loop': '^1.0.0', 'dsh-notify': '^1.0.0', 'dsh-third': '^1.0.0' },
+        live: [],
+        disabled: ['dsh-third'],
+      },
+      '/dsh-market/updates': {
+        updates: {
+          'dsh-loop': { kind: 'npm', version: '1.0.0', latest: '1.1.0', updateAvailable: true },
+          'dsh-notify': { kind: 'npm', version: '1.0.0', latest: '1.1.0', updateAvailable: true },
+          'dsh-third': { kind: 'npm', version: '1.0.0', latest: '1.1.0', updateAvailable: true },
+        },
+      },
+      '/dsh-market/update': { ok: true },
+    })
+    render(<MarketSection {...props()} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /Update all \(2\)/ }))
+    await waitFor(() => {
+      expect(fetchCalls.filter(call => call.path === '/dsh-market/update')).toHaveLength(2)
+    })
+    expect(fetchCalls.filter(call => call.path === '/dsh-market/update').map(call => call.body?.name).sort())
+      .toEqual(['dsh-loop', 'dsh-notify'])
+  })
+
   it('says a name-only catalog match is unverified, and names whose plugin it is (#485)', async () => {
     // The local copy declares no repository, so the catalog row below agreed
     // on nothing but the package name — and its owner may be a stranger.
