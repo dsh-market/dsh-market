@@ -1144,16 +1144,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		* rather than guessing; declared repo evidence that matches nothing in the
 		* catalog must not fall back to a coincidental unique name.
 		*/
-		const localMatchCache = /* @__PURE__ */ new WeakMap();
-		function localMatchKey(name, identities, hints) {
-			return [
-				name.toLowerCase(),
-				...identities.map((value) => value.toLowerCase()).sort(),
-				"",
-				...hints.map((value) => value.toLowerCase()).sort()
-			].join("\\u0000");
-		}
-		function findCatalogEntryForLocalUncached(plugins, name, identities = [], hints = []) {
+		function findCatalogEntryForLocal(plugins, name, identities = [], hints = []) {
 			const nameKey = name.toLowerCase();
 			const byName = plugins.filter((plugin) => plugin.name.toLowerCase() === nameKey || typeof plugin.npm === "string" && plugin.npm.toLowerCase() === nameKey);
 			const identitySet = new Set(identities.map((value) => value.toLowerCase()));
@@ -1187,18 +1178,6 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				if (hinted !== void 0) return hinted;
 			}
 			return null;
-		}
-		function findCatalogEntryForLocal(plugins, name, identities = [], hints = []) {
-			let cache = localMatchCache.get(plugins);
-			if (cache === void 0) {
-				cache = /* @__PURE__ */ new Map();
-				localMatchCache.set(plugins, cache);
-			}
-			const key = localMatchKey(name, identities, hints);
-			if (cache.has(key)) return cache.get(key) ?? null;
-			const result = findCatalogEntryForLocalUncached(plugins, name, identities, hints);
-			cache.set(key, result);
-			return result;
 		}
 		function catalogEntriesByName(plugins, name) {
 			const nameKey = name.toLowerCase();

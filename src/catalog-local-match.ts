@@ -46,13 +46,7 @@ function catalogEntryMatchesHints(
  * rather than guessing; declared repo evidence that matches nothing in the
  * catalog must not fall back to a coincidental unique name.
  */
-const localMatchCache = new WeakMap<object, Map<string, unknown>>()
-
-function localMatchKey(name: string, identities: readonly string[], hints: readonly string[]): string {
-  return [name.toLowerCase(), ...identities.map(value => value.toLowerCase()).sort(), '', ...hints.map(value => value.toLowerCase()).sort()].join('\\u0000')
-}
-
-function findCatalogEntryForLocalUncached<T extends { name: string; npm?: string | null; url: string }>(
+export function findCatalogEntryForLocal<T extends { name: string; npm?: string | null; url: string }>(
   plugins: readonly T[],
   name: string,
   identities: readonly string[] = [],
@@ -94,24 +88,6 @@ function findCatalogEntryForLocalUncached<T extends { name: string; npm?: string
     if (hinted !== undefined) return hinted
   }
   return null
-}
-
-export function findCatalogEntryForLocal<T extends { name: string; npm?: string | null; url: string }>(
-  plugins: readonly T[],
-  name: string,
-  identities: readonly string[] = [],
-  hints: readonly string[] = [],
-): T | null {
-  let cache = localMatchCache.get(plugins as object)
-  if (cache === undefined) {
-    cache = new Map<string, unknown>()
-    localMatchCache.set(plugins as object, cache)
-  }
-  const key = localMatchKey(name, identities, hints)
-  if (cache.has(key)) return (cache.get(key) ?? null) as T | null
-  const result = findCatalogEntryForLocalUncached(plugins, name, identities, hints)
-  cache.set(key, result)
-  return result
 }
 
 function catalogEntriesByName<T extends { name: string; npm?: string | null }>(
