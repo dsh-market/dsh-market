@@ -42,7 +42,7 @@ describe('pluginSlug', () => {
     expect(pluginSlug('https://github.com/o/r/tree/master/p')).toBe(pluginSlug('https://github.com/o/r/tree/main/p'))
   })
 
-  it('agrees with the site builder over the whole real catalog', () => {
+  it('agrees with the site builder over every URL shape the catalog publishes', () => {
     // The builder is plain node ESM with side effects at import time, so its
     // slugOf is lifted out by source rather than imported. If that function is
     // reworded this test fails loudly, which is the point.
@@ -52,8 +52,18 @@ describe('pluginSlug', () => {
     // eslint-disable-next-line no-new-func
     const slugOf = new Function('p', body![1]!) as (p: { url: string }) => string
 
-    const snap = JSON.parse(readFileSync(fileURLToPath(new URL('data/registry-snapshot.json', root)), 'utf8'))
-    const plugins: { url: string }[] = snap.plugins ?? []
+    // A shape corpus rather than a copy of the catalog. The committed
+    // catalog snapshot this used to read was removed (#545): nothing else
+    // depended on it, it went eleven days stale without anyone noticing, and
+    // it looked enough like the source of truth that people tried to add
+    // plugins to it. What this test actually needs is every URL SHAPE that
+    // occurs, which is 108 of them across 3408 entries — sampled with real
+    // URLs so a shape nobody anticipated is still a real example, and small
+    // enough to read. Whether the live catalog only ever publishes these
+    // shapes is gated separately, against the live catalog, by
+    // scripts/validate-registry.mjs (E5).
+    const corpus = JSON.parse(readFileSync(fileURLToPath(new URL('tests/fixtures/catalog-url-shapes.json', root)), 'utf8')) as { urls: string[] }
+    const plugins: { url: string }[] = corpus.urls.map(url => ({ url }))
     expect(plugins.length).toBeGreaterThan(100)
 
     const disagree = plugins.filter(p => slugOf(p) !== pluginSlug(p.url)).map(p => p.url)

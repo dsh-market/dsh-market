@@ -21,16 +21,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
-      - name: Refuse a hand-edited catalog snapshot
+      - name: Refuse a committed catalog copy
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
-          if git diff --name-only "$BASE" "$HEAD" | grep -qx 'data/registry-snapshot.json'; then
-            echo "::error file=data/registry-snapshot.json::This file is a snapshot downloaded from awesome-dsh-plugin.com, not the plugin catalog. An entry added here is overwritten by the next refresh (Build site runs daily), so the plugin would never show up in the market. Add it to https://github.com/awesome-dsh-plugin/awesome-dsh-plugin instead — the snapshot then picks it up on its own. Genuinely refreshing the snapshot? Label the PR 'snapshot-refresh'."
+          # --diff-filter=AM: adding or editing the file is the mistake.
+          # Removing it is not, and a guard that cannot tell those apart
+          # blocks its own retirement — which is how this one first fired,
+          # on the PR deleting the file it was written to protect.
+          if git diff --name-only --diff-filter=AM "$BASE" "$HEAD" | grep -qx 'data/registry-snapshot.json'; then
+            echo "::error file=data/registry-snapshot.json::This repository does not carry a copy of the plugin catalog any more (#545). The market reads the live catalog, the site build downloads its own, and the merge gate validates the live one — so a file added here is read by nothing and goes stale immediately, while looking enough like the source of truth to mislead the next person. To list a plugin, add it to https://github.com/awesome-dsh-plugin/awesome-dsh-plugin."
             exit 1
           fi
-          echo "snapshot untouched"
+          echo "no committed catalog copy"
 
   check:
     strategy:
