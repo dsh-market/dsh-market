@@ -434,6 +434,38 @@ describe('MarketSection (jsdom)', () => {
     expect(within(otherCard).queryByText(en.alreadyInstalled)).toBeNull()
   })
 
+  it.each([false, true])('keeps same-named npm cards source-specific through filtering (reversed=%s, #544)', async reversed => {
+    const plugins = [
+      { name: 'dsh-mermaid', owner: 'AKS1st', url: 'https://github.com/AKS1st/dsh-mermaid', category: 'tools', npm: null, description: { en: 'Other diagrams' }, install: '' },
+      { name: 'dsh-mermaid', owner: 'MrmoLabs', url: 'https://github.com/MrmoLabs/dsh-mermaid', category: 'skill', npm: 'dsh-mermaid', description: { en: 'Installed diagrams' }, install: '' },
+    ]
+    if (reversed) plugins.reverse()
+    stubFetch({
+      '/dsh-market/registry': { source: 'snapshot', registry: { updated: '', count: 2, categories: REGISTRY.categories, plugins } },
+      '/dsh-market/installed': {
+        profile: 'web', installed: { 'dsh-mermaid': '^0.4.0' },
+        repoIdentities: { 'dsh-mermaid': ['mrmolabs/dsh-mermaid'] }, repoHints: {}, live: ['dsh-mermaid'],
+      },
+    })
+    render(<MarketSection {...props()} />)
+    const own = await screen.findByText('MrmoLabs')
+    expect(within(own.closest('div[class*="card"]') as HTMLElement).getByText(en.alreadyInstalled)).toBeTruthy()
+    const assertOther = () => {
+      const card = screen.getByText('AKS1st').closest('div[class*="card"]') as HTMLElement
+      expect(within(card).getByRole('button', { name: en.install })).toBeTruthy()
+      expect(within(card).queryByText(en.alreadyInstalled)).toBeNull()
+    }
+    assertOther()
+    fireEvent.change(screen.getByPlaceholderText(en.searchPh), { target: { value: 'AKS1st' } })
+    await waitFor(() => expect(screen.queryByText('MrmoLabs')).toBeNull())
+    assertOther()
+    fireEvent.change(screen.getByPlaceholderText(en.searchPh), { target: { value: '' } })
+    await screen.findByText('MrmoLabs')
+    fireEvent.click(screen.getByRole('button', { name: 'Tools' }))
+    await waitFor(() => expect(screen.queryByText('MrmoLabs')).toBeNull())
+    assertOther()
+  })
+
   it('shows shared host dependency findings from the installed snapshot', async () => {
     const findings = Array.from({ length: 7 }, (_, index) => ({
       code: 'shared-host-package-dependency',

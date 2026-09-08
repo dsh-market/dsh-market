@@ -307,6 +307,21 @@ export function holdsNativeAddon(profile: string, name: string, explicitDir?: st
 
 const PACKAGE_NAME_RE = /^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/i
 
+/** Registry versions/ranges/tags, optionally under an npm alias. This only
+ * gates manifest discovery; it does not validate npm's full spec grammar.
+ * Paths, archives and other protocols must retain their own source evidence.
+ */
+function isRegistrySpec(spec: string): boolean {
+  let selector = spec.trim()
+  if (selector.startsWith('npm:')) {
+    const alias = /^npm:((?:@[^/]+\/)?[^@]+)(?:@(.*))?$/.exec(selector)
+    if (alias === null || !PACKAGE_NAME_RE.test(alias[1]!)) return false
+    selector = alias[2] ?? '*'
+  }
+  return !/\.(?:tgz|tar|tar\.gz)$/i.test(selector)
+    && /^[a-z0-9~^<>=*|+.\s-]*$/i.test(selector)
+}
+
 function localSpecDirectory(root: string, spec: string): string | null {
   const match = /^(?:link|file):(.+)$/i.exec(spec)
   if (match === null) return null
@@ -408,10 +423,10 @@ function checkoutSubpath(root: string, packageDir: string): string | null {
 }
 
 /**
- * Strong repository identities for a locally linked dependency (#141).
- * Explicit github: specs already carry this evidence; only link:/file: need
- * filesystem discovery. This compatibility wrapper returns only declared
- * package.json identities; Git origins are exposed separately as hints.
+ * Strong repository identities for npm and locally linked dependencies.
+ * Explicit Git/URL specs retain their own source evidence.
+ * This compatibility wrapper returns only declared package.json identities;
+ * Git origins are exposed separately as hints.
  */
 export function readInstalledRepoIdentities(
   profile: string,
@@ -429,8 +444,8 @@ export interface InstalledRepoEvidence {
 
 /**
  * Discover declared repository identities and weaker local-origin hints. A
- * package.json repository declaration is authoritative; Git origin is only a
- * disambiguation hint because a checkout may legitimately point at a fork.
+ * package.json repository declaration identifies npm/local installs. Git
+ * origin is only a hint because a checkout may legitimately point at a fork.
  */
 export function readInstalledRepoEvidence(
   profile: string,
@@ -438,9 +453,11 @@ export function readInstalledRepoEvidence(
   spec: string,
   explicitDir?: string,
 ): InstalledRepoEvidence {
-  if (!PACKAGE_NAME_RE.test(name) || !/^(?:link|file):/i.test(spec)) return { identities: [], hints: [] }
+  if (!PACKAGE_NAME_RE.test(name)) return { identities: [], hints: [] }
+  const local = /^(?:link|file):/i.test(spec)
+  if (!local && !isRegistrySpec(spec)) return { identities: [], hints: [] }
   const root = profileDir(profile, explicitDir)
-  const sourceDir = localSpecDirectory(root, spec)
+  const sourceDir = local ? localSpecDirectory(root, spec) : null
   const installedDir = installedPackageDirectory(root, name)
   const manifestDir = installedDir ?? sourceDir
   const manifest = manifestDir === null ? readInstalledManifest(profile, name, explicitDir) : manifestAt(manifestDir)

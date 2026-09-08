@@ -703,6 +703,33 @@ describe('host-provided profile and package-operation seams', () => {
     expect(cancel).toHaveBeenCalledOnce()
   })
 
+  it('returns installed npm repository evidence from the host profile and refreshes it (#544)', async () => {
+    bed.dispose()
+    const root = join(home, 'npm-evidence-profile')
+    const dir = join(root, 'node_modules', 'dsh-mermaid')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { 'dsh-mermaid': '^0.4.0' } }))
+    const manifest = { name: 'dsh-mermaid', version: '0.4.0', repository: { type: 'git', url: 'git+https://github.com/MrmoLabs/dsh-mermaid.git' } }
+    writeFileSync(join(dir, 'package.json'), JSON.stringify(manifest))
+    fake.profileDir = root
+    bed = createTestbed({ profile: 'web', profileDirectory: root })
+    const response = await bed.dispatch('GET', '/dsh-market/installed')
+    expect(response.status).toBe(200)
+    expect(response.json).toMatchObject({
+      installed: { 'dsh-mermaid': '^0.4.0' },
+      repoIdentities: { 'dsh-mermaid': ['mrmolabs/dsh-mermaid'] },
+      repoHints: {},
+    })
+    manifest.repository.url = 'https://github.com/AKS1st/dsh-mermaid'
+    writeFileSync(join(dir, 'package.json'), JSON.stringify(manifest))
+    expect((await bed.dispatch('GET', '/dsh-market/installed')).json.repoIdentities)
+      .toEqual({ 'dsh-mermaid': ['aks1st/dsh-mermaid'] })
+    writeFileSync(join(dir, 'package.json'), '{')
+    const missing = await bed.dispatch('GET', '/dsh-market/installed')
+    expect(missing.status).toBe(200)
+    expect(missing.json.repoIdentities).toEqual({})
+  })
+
   it('maps a generation-wide Desktop package-operation gate to conflict', async () => {
     bed.dispose()
     bed = createTestbed({}, {

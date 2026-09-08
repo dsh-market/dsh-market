@@ -4,9 +4,10 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { entryForDep, isInstalled } from '../src/client/market-data.ts'
 import { resolveDshHome } from '../src/home-paths.ts'
 import {
   addProfileBundle, conflictingEntryIds, dropFromManifest, entryArtifactExists, hasDshManifest, hasLoadableEntry, holdsNativeAddon, isDshProfileName, pluginSubdirs, profileDir,
@@ -15,12 +16,14 @@ import {
 } from '../src/profile.ts'
 
 let home: string
+const originalDshHome = process.env.DSH_HOME
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'dshm-home-'))
   process.env.DSH_HOME = home
 })
 afterEach(() => {
-  delete process.env.DSH_HOME
+  if (originalDshHome === undefined) delete process.env.DSH_HOME
+  else process.env.DSH_HOME = originalDshHome
   rmSync(home, { recursive: true, force: true })
 })
 
@@ -252,6 +255,81 @@ describe('readInstalledRepoEvidence (#141)', () => {
       expect(readInstalledRepoIdentities('web', 'local-plugin', '^1.0.0')).toEqual([])
     } finally {
       rmSync(target, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('installed npm repository evidence (#544)', () => {
+  function install(name: string, manifest: unknown, root = writeProfile({ dependencies: { [name]: '^0.4.0' } })): string {
+    const dir = join(root, 'node_modules', name)
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'package.json'), JSON.stringify(manifest))
+    return dir
+  }
+
+  it.each(['^0.4.0', '0.4.0', '~0.4.0', 'latest', 'next', '*', '>=0.4.0 <1', '0.4.0 || 1.x', 'npm:dsh-mermaid@^0.4.0', 'npm:@scope/mermaid@next'])(
+    'reads the actually installed manifest for %s', spec => {
+      install('dsh-mermaid', { name: 'dsh-mermaid', version: '0.4.0', repository: { type: 'git', url: 'git+https://github.com/MrmoLabs/dsh-mermaid.git' } })
+      expect(readInstalledRepoEvidence('web', 'dsh-mermaid', spec))
+        .toEqual({ identities: ['mrmolabs/dsh-mermaid'], hints: [] })
+    },
+  )
+
+  it('resolves a scoped alias through a pnpm symlink in the explicit profile and refreshes changed metadata', () => {
+    const root = join(home, 'desktop-profile')
+    const target = install('actual-name', { name: 'actual-name', repository: 'https://github.com/Owner/Repo' }, join(root, 'node_modules', '.pnpm', 'actual-name@1'))
+    mkdirSync(join(root, 'node_modules', '@scope'), { recursive: true })
+    symlinkSync(target, join(root, 'node_modules', '@scope', 'alias'), 'junction')
+    const read = () => readInstalledRepoEvidence('web', '@scope/alias', 'npm:actual-name@1', root)
+    expect(read()).toEqual({ identities: ['owner/repo'], hints: [] })
+    writeFileSync(join(target, 'package.json'), JSON.stringify({ repository: { url: 'https://github.com/Other/Collection', directory: 'packages/actual-name' } }))
+    expect(read()).toEqual({ identities: ['other/collection', 'other/collection#path:/packages/actual-name'], hints: [] })
+    expect(readInstalledRepoEvidence('web', '@scope/alias', 'npm:actual-name@1')).toEqual({ identities: [], hints: [] })
+  })
+
+  it.each([
+    'github:fork/plugin', 'fork/plugin', 'git+https://github.com/fork/plugin.git',
+    'git+https://gitlab.com/fork/plugin.git', 'git@gitlab.com:fork/plugin.git',
+    'https://github.com/fork/plugin', 'https://example.com/plugin.tgz',
+    './plugin.tgz', 'plugin.tgz', 'workspace:*', 'patch:plugin@1#patch',
+    'npm:plugin@github:fork/plugin',
+  ])('does not override an explicit non-registry source: %s', spec => {
+    install('plugin', { repository: 'https://github.com/upstream/plugin' })
+    expect(readInstalledRepoEvidence('web', 'plugin', spec)).toEqual({ identities: [], hints: [] })
+  })
+
+  it('matches only the declared monorepo subpackage, and keeps ambiguous missing evidence unmatched', () => {
+    const plugins = ['packages/one', 'packages/two'].map(path => ({
+      name: 'plugin', owner: 'owner', npm: null, category: 'tools', description: {}, install: '',
+      url: `https://github.com/owner/collection/tree/main/${path}`,
+    }))
+    install('plugin', { repository: { url: 'https://github.com/owner/collection', directory: 'packages/one' } })
+    const evidence = readInstalledRepoEvidence('web', 'plugin', '^1')
+    for (const catalog of [plugins, [...plugins].reverse()]) {
+      expect(isInstalled(plugins[0]!, { plugin: '^1' }, { plugin: evidence.identities }, catalog)).toBe(true)
+      expect(isInstalled(plugins[1]!, { plugin: '^1' }, { plugin: evidence.identities }, catalog)).toBe(false)
+      expect(entryForDep(catalog, 'plugin', '^1', evidence.identities)).toBe(plugins[0])
+      for (const plugin of catalog) expect(isInstalled(plugin, { plugin: '^1' }, {}, catalog)).toBe(false)
+    }
+    expect(isInstalled(plugins[0]!, { plugin: '^1' }, {}, [plugins[0]!])).toBe(true)
+  })
+
+  it('ignores missing, corrupt and invalid manifests without borrowing the surrounding Git origin', () => {
+    const root = writeProfile({})
+    mkdirSync(join(root, '.git'))
+    writeFileSync(join(root, '.git', 'config'), '[remote "origin"]\nurl = https://github.com/parent/repo.git\n')
+    const empty = { identities: [], hints: [] }
+    expect(readInstalledRepoEvidence('web', 'plugin', '^1')).toEqual(empty)
+    const dir = install('plugin', {}, root)
+    for (const contents of ['{', 'null', '{}', '{"repository":42}', '{"repository":{"url":false}}', '{"repository":"https://example.com/o/r"}', '{"repository":{"url":"https://github.com/o/r","directory":"../sibling"}}']) {
+      writeFileSync(join(dir, 'package.json'), contents)
+      expect(readInstalledRepoEvidence('web', 'plugin', '^1'), contents).toEqual(empty)
+    }
+    // Without the package-name guard, ../outside would read this manifest.
+    mkdirSync(join(root, 'outside'))
+    writeFileSync(join(root, 'outside', 'package.json'), JSON.stringify({ repository: 'https://github.com/outside/repo' }))
+    for (const name of ['../../outside', '../outside', '@scope/../../outside', '/outside', 'bad\\name', '']) {
+      expect(readInstalledRepoEvidence('web', name, '^1')).toEqual(empty)
     }
   })
 })
