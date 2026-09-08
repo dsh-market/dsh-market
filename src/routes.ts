@@ -28,7 +28,7 @@ import {
   BOOT_ID, cancelActive, probePnpm, progress, provisionPnpm, runDshPlugin, TARGET_RE,
   type PluginCommandRuntime,
 } from './dsh-cli.ts'
-import { addProfileBundle, dropFromManifest, hasLoadableEntry, holdsNativeAddon, INBOX_BUNDLES, isDshProfileName, profileDir, readInstalled, readInstalledManifest, readInstalledRepoEvidence, readInstalledVersion, readLockCommits, readProfileBundles, readProfileManifestSnapshot, removeProfileBundle, restoreProfileManifest, setAllowBuilds, type ProfileManifestSnapshot } from './profile.ts'
+import { addProfileBundle, bundlePatchInsertedIds, dropFromManifest, hasLoadableEntry, holdsNativeAddon, INBOX_BUNDLES, isDshProfileName, profileDir, readInstalled, readInstalledManifest, readInstalledRepoEvidence, readInstalledVersion, readLockCommits, readProfileBundles, readProfileManifestSnapshot, removeProfileBundle, restoreProfileManifest, setAllowBuilds, type ProfileManifestSnapshot } from './profile.ts'
 import { assessProfile, classifyPeer, introducedDuplicateNames, introducedRisks, type CompatibilityRisk } from './compatibility.ts'
 import { runningAgentIds, type AgentsLookup } from './agents.ts'
 import { analyzeProfile, corePackageNames, type DuplicateName } from './check.ts'
@@ -103,6 +103,15 @@ export interface MarketHost {
   plugin(plugin: unknown, config: unknown): { await(): Promise<unknown>; dispose(): Promise<unknown> | void }
   on?(event: string, callback: (fiber: { entry?: { options?: { name?: string } } }) => void): () => void
   logger?: { info?(message: string): void; warn(message: string): void }
+}
+
+/**
+ * Optional Ellamaka host capability. Its composition watcher is the single
+ * activation owner, so a successful install is acknowledged by one full-stack
+ * replay rather than a second dsh-market loader entry.
+ */
+export interface HostPluginActivation {
+  activate(): Promise<{ ok: true } | { ok: false; error: string }>
 }
 
 export interface MarketConfig {
@@ -234,6 +243,7 @@ export function mountMarketRoutes(
   config: MarketConfig,
   commandRuntime?: PluginCommandRuntime,
   agentsLookup?: AgentsLookup,
+  hostActivation?: HostPluginActivation,
 ): () => void {
   let disposed = false
   // An ordinary profile must resolve under DSH_HOME by the same rules as the
@@ -903,12 +913,15 @@ export function mountMarketRoutes(
     if (result.exitCode !== 0 || result.timedOut || result.cancelled) {
       return { ok: false, hot: false, detail: failureDetail(result) }
     }
-    // Both cleanups run — see the uninstall route's note on #213: a package
-    // with two activation sources must not have the second one skipped
-    // because the first succeeded.
-    const unmounted = await hotUnmount(name)
-    const entryDisabled = await themes.setEntryDisabled(name, true)
+    // Ellamaka's composition watcher is the sole activation source. It owns
+    // removal too: calling market hotUnmount here would look only in the
+    // .dsh-market temporary tree, miss the host root entry, and falsely tell
+    // the user to restart even after the watcher unmounted the plugin.
+    const hostResult = hostActivation ? await hostActivation.activate() : undefined
+    const unmounted = hostActivation ? hostResult!.ok : await hotUnmount(name)
+    const entryDisabled = hostActivation ? false : await themes.setEntryDisabled(name, true)
     const hot = (unmounted || entryDisabled) && !native
+    if (hostResult && !hostResult.ok) logEvent('warn', 'host-activation', `${name}: ${hostResult.error}`)
     if (native) {
       logEvent('info', 'uninstall', `${name} ships or depends on a native addon; a restart is needed before it can be installed again`)
     }
@@ -4014,24 +4027,35 @@ sendJson(response, 200, { updates })
             let hot = false
             if (ok || halfGone) {
               invalidateUpdates()
-              hot = await hotUnmount(name)
-              // Bundle-layer plugins never hot-mount, but their loader entry
-              // is still LIVE in this process — after the remove deleted the
-              // package, the next refresh would 404 on its client bundle and
-              // wedge the whole page until a dsh restart (#37 by
-              // @1123762794). Live-disable the entry so the refresh composes
-              // without it; after a real restart the entry is gone anyway.
-              //
-              // Both run, unconditionally. This used to short-circuit on the
-              // hot unmount, which is right only while a package has ONE
-              // activation source — a package that is both hot-mounted AND
-              // reachable through the bundle layer got half its cleanup, and
-              // the surviving half is exactly the 404-on-refresh wedge above
-              // (#213). setEntryDisabled just scans entries by name and
-              // returns false when none match, so calling it after a
-              // successful unmount costs a lookup and nothing else.
-              const entryDisabled = await themes.setEntryDisabled(name, true)
-              hot = hot || entryDisabled
+              if (hostActivation) {
+                // Ellamaka's watcher owns the bundle-layer entry. Await its
+                // full-stack replay instead of asking the market's temporary
+                // tree to unmount an entry it never created. A successful
+                // replay removes both the server fiber and the client module
+                // source before the response reaches the browser.
+                const result = await hostActivation.activate()
+                hot = result.ok
+                if (!result.ok) logEvent('warn', 'host-activation', `${name}: ${result.error}`)
+              } else {
+                hot = await hotUnmount(name)
+                // Bundle-layer plugins never hot-mount, but their loader entry
+                // is still LIVE in this process — after the remove deleted the
+                // package, the next refresh would 404 on its client bundle and
+                // wedge the whole page until a dsh restart (#37 by
+                // @1123762794). Live-disable the entry so the refresh composes
+                // without it; after a real restart the entry is gone anyway.
+                //
+                // Both run, unconditionally. This used to short-circuit on the
+                // hot unmount, which is right only while a package has ONE
+                // activation source — a package that is both hot-mounted AND
+                // reachable through the bundle layer got half its cleanup, and
+                // the surviving half is exactly the 404-on-refresh wedge above
+                // (#213). setEntryDisabled just scans entries by name and
+                // returns false when none match, so calling it after a
+                // successful unmount costs a lookup and nothing else.
+                const entryDisabled = await themes.setEntryDisabled(name, true)
+                hot = hot || entryDisabled
+              }
               if (heldNativeAddon && hot) {
                 logEvent('info', 'uninstall', `${name} ships or depends on a native addon, which this process cannot release — reporting the uninstall as needing a restart`)
               }
@@ -4367,12 +4391,36 @@ sendJson(response, 200, { updates })
                 writeMarketState(activeProfileDir, { disabled, groups, groupOrder })
                 // Theme installs auto-activate (and deactivate the previous
                 // theme) so the result is visible right after the refresh.
-                hot = true
-                for (const name of added) {
-                  const live = pluginCategories(entry).includes('theme')
-                    ? await themes.activateTheme(name)
-                    : (await hotMount(host, activeProfileDir, name)).ok
-                  if (!live) hot = false
+                if (hostActivation) {
+                  // Ellamaka's watcher owns the entire composition. Waiting
+                  // for its replay result gives the market a real live/fail
+                  // verdict without creating the second .dsh-market loader
+                  // entry that races it and double-registers plugin routes.
+                  const result = await hostActivation.activate()
+                  hot = result.ok
+                  if (!result.ok) logEvent('warn', 'host-activation', `${added.join(', ')}: ${result.error}`)
+                } else {
+                  hot = true
+                  for (const name of added) {
+                    // Some hosts activate the install themselves — a
+                    // composition watcher replays the profile the moment the
+                    // manifest lands (Ellamaka's bun-hmr), so the install
+                    // command can return AFTER the plugin is already mounted.
+                    // Hot-mounting again would insert a second loader entry for
+                    // an id the live composition already serves. An entry whose
+                    // fiber is already up is adopted, not re-mounted: the
+                    // loader inventory (live names + `#<id>`) is the fact
+                    // "already active this session", the same source
+                    // verifyActivation reads below.
+                    const live = liveNames().has(name)
+                      || liveNames().has(`#${name}`)
+                      || bundlePatchInsertedIds(join(activeProfileDir, 'node_modules', name))
+                        .some(id => liveNames().has(`#${id}`))
+                      || (pluginCategories(entry).includes('theme')
+                        ? await themes.activateTheme(name)
+                        : (await hotMount(host, activeProfileDir, name)).ok)
+                    if (!live) hot = false
+                  }
                 }
                 activation = {}
                 const live = liveNames()

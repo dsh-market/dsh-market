@@ -516,6 +516,7 @@ type Handler = (request: unknown, response: unknown) => void | Promise<void>
 interface Testbed {
   dispatch(method: string, path: string, body?: unknown, options?: { crossOrigin?: boolean; remoteAddress?: string; forwarded?: boolean }): Promise<{ status: number; json: any }>
   loaderEntries: { options: { name: string; disabled?: boolean | null }; fiber?: unknown; update(o: { disabled: boolean | null }): Promise<void> }[]
+  hostPluginCalls: unknown[]
   dispose(): void
 }
 
@@ -523,9 +524,11 @@ function createTestbed(
   config: { profile?: string; allowRestart?: boolean; profileDirectory?: string; region?: 'global' | 'china' } = {},
   runtime?: Parameters<typeof mountMarketRoutes>[2],
   agents?: AgentsServiceLike,
+  activation?: Parameters<typeof mountMarketRoutes>[4],
 ): Testbed {
   const routes = new Map<string, Handler>()
   const loaderEntries: Testbed['loaderEntries'] = []
+  const hostPluginCalls: unknown[] = []
   const host = {
     webServer: {
       register(route: { path: string; handler: Handler }) {
@@ -534,7 +537,10 @@ function createTestbed(
       },
     },
     loader: { entries: () => loaderEntries },
-    plugin: () => ({ await: () => Promise.resolve(), dispose: () => {} }),
+    plugin: (plugin: unknown) => {
+      hostPluginCalls.push(plugin)
+      return { await: () => Promise.resolve(), dispose: () => {} }
+    },
     on: () => () => {},
   }
   // Pinned so no test reaches the network to decide one. An unpinned region
@@ -542,7 +548,7 @@ function createTestbed(
   // every install assertion depend on which registry answered first —
   // and, as this suite proved once, would let a spec resolve a REAL commit
   // through a REAL proxy. Specs that care about the mirrors set it.
-  const dispose = mountMarketRoutes(host as never, { profile: 'web', region: 'global', ...config }, runtime, () => agents)
+  const dispose = mountMarketRoutes(host as never, { profile: 'web', region: 'global', ...config }, runtime, () => agents, activation)
   async function dispatch(method: string, path: string, body?: unknown, options?: { crossOrigin?: boolean }) {
     const handler = routes.get(path.split('?')[0])
     if (handler === undefined) throw new Error(`no route: ${path}`)
@@ -568,7 +574,7 @@ function createTestbed(
     try { json = JSON.parse(payload) } catch { /* non-JSON (logs route) */ }
     return { status, json, text: payload }
   }
-  return { dispatch, loaderEntries, dispose }
+  return { dispatch, loaderEntries, hostPluginCalls, dispose }
 }
 
 // ---------------------------------------------------------------- suite
@@ -974,6 +980,38 @@ describe('install flow', () => {
     const listed = await bed.dispatch('GET', '/dsh-market/installed')
     expect(listed.json.installed['dsh-loop']).toBe('^1.0.0')
     expect(listed.json.activation['dsh-loop'].state).toBe('live')
+  })
+
+  it('uses the host activation acknowledgement and never creates a second market loader entry', async () => {
+    bed.dispose()
+    fake.npm['dsh-loop'] = { latest: '1.0.0', versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } } }
+    const activate = vi.fn().mockResolvedValue({ ok: true as const })
+    bed = createTestbed({}, undefined, undefined, { activate })
+    const before = bed.hostPluginCalls.length
+
+    const r = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
+
+    expect(r.status).toBe(200)
+    expect(r.json.hot).toBe(true)
+    expect(activate).toHaveBeenCalledOnce()
+    // `hotMount()` uses host.plugin() to create the .dsh-market loader entry.
+    // In host-owned mode it must not run at all: one plugin, one activation source.
+    expect(bed.hostPluginCalls).toHaveLength(before)
+  })
+
+  it('reports restart only when the sole host activation replay fails', async () => {
+    bed.dispose()
+    fake.npm['dsh-loop'] = { latest: '1.0.0', versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } } }
+    const activate = vi.fn().mockResolvedValue({ ok: false as const, error: 'plugin composition replay failed' })
+    bed = createTestbed({}, undefined, undefined, { activate })
+    const before = bed.hostPluginCalls.length
+
+    const r = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
+
+    expect(r.status).toBe(200)
+    expect(r.json.hot).toBe(false)
+    expect(activate).toHaveBeenCalledOnce()
+    expect(bed.hostPluginCalls).toHaveLength(before)
   })
 
   it('reports host contracts declared as normal dependencies without rejecting the plugin', async () => {
@@ -3073,6 +3111,23 @@ describe('uninstall flow', () => {
 
     expect((await bed.dispatch('POST', '/dsh-market/uninstall', { name: 'dshmarket' })).status).toBe(400)
     expect((await bed.dispatch('POST', '/dsh-market/uninstall', { name: 'ghost' })).status).toBe(400)
+  })
+
+  it('uses host activation for uninstall and never asks the market hot tree to remove a host entry', async () => {
+    bed.dispose()
+    fake.npm['dsh-loop'] = { latest: '1.0.0', versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } } }
+    const activate = vi.fn().mockResolvedValue({ ok: true as const })
+    bed = createTestbed({}, undefined, undefined, { activate })
+    await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
+    activate.mockClear()
+    expect(hot.mounts).toEqual([])
+
+    const r = await bed.dispatch('POST', '/dsh-market/uninstall', { name: 'dsh-loop' })
+
+    expect(r.status).toBe(200)
+    expect(r.json.hot).toBe(true)
+    expect(activate).toHaveBeenCalledOnce()
+    expect(hot.mounts).toEqual([])
   })
 
   it('refuses to remove a package still inserted by the user patch (#165)', async () => {
