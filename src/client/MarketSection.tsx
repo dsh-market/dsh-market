@@ -5213,10 +5213,9 @@ export function MarketSection(props: MarketSectionProps) {
                   {updateNotes.release.tag !== null && <span>{' ' + updateNotes.release.tag}</span>}
                   {updateNotes.release.publishedAt !== null && <span>{' · ' + updateNotes.release.publishedAt.slice(0, 10)}</span>}
                 </div>
-                {/* Author-written markdown, rendered through a deliberately
-                    tiny converter: everything lands as React text children
-                    (auto-escaped), so no HTML from the repo can ever become
-                    markup — headings, bullets, bold and inline code only. */}
+                {/* Author-written markdown through the tiny converter: HTML is
+                    stripped first; headings, quotes, fences, bullets, bold,
+                    inline code, https links and allowlisted images only. */}
                 <div className={css.notesRendered}>{renderMarkdown(updateNotes.release.body || t('notesNone'))}</div>
               </div>
             )
