@@ -112,6 +112,10 @@ describe.skipIf(!dshAvailable())('web e2e: search clear controls and sticky head
       await search.fill('long-search-text-'.repeat(30))
       expect(await search.getAttribute('spellcheck')).toBe('false')
       expect(await clear.getAttribute('type')).toBe('button')
+      // Resizing can leave the host repainting after fill has completed.
+      // Wait for stable geometry and pointer actionability before sampling,
+      // without clearing the query or accepting a persistently covered button.
+      await clear.click({ trial: true })
       const inputLayout = await search.evaluate(input => {
         const box = input.getBoundingClientRect()
         const field = input.closest('[class*="searchField"]')!.getBoundingClientRect()
