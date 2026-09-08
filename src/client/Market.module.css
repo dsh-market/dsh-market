@@ -796,7 +796,9 @@
    an action competing with 更新/卸载 on the trailing edge. */
 .notesLink{display:block;background:0 0;border:none;padding:0;margin:2px 0 0;font:inherit;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#6b7280);cursor:pointer;text-align:left}
 .notesLink:hover{color:var(--dsw-alias-label-primary,#1f2328)}
-.notesBody{display:flex;flex-direction:column;gap:8px;min-width:0}
+/* Cap height so a long release body scrolls inside the dialog instead of
+   stretching the Modal past the viewport (same idea as .notesPre / .commentsMount). */
+.notesBody{display:flex;flex-direction:column;gap:8px;min-width:0;max-height:min(60vh,520px);overflow-y:auto;overscroll-behavior:contain;padding-right:4px}
 /* 弹窗内的层级：范围行弱化、区块标题小而重、正文有承载面 */
 .notesRange{display:flex;align-items:center;gap:8px;font-size:12px;line-height:18px;margin-bottom:4px}
 .notesArrow{color:var(--dsw-alias-label-tertiary,#8b93a1)}
@@ -805,6 +807,7 @@
 .notesList{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px;font-size:13px;line-height:20px}
 /* markdown轻渲染的层级：标题、段落、行内代码 */
 .notesRendered{display:flex;flex-direction:column;gap:6px;min-width:0}
+.notesImg{display:block;max-width:100%;height:auto;border-radius:6px;margin:4px 0}
 .notesH{font-size:13px;font-weight:650;line-height:20px;margin-top:6px}
 .notesP{font-size:13px;line-height:20px}
 .notesCode{font-family:var(--dsw-alias-font-mono,ui-monospace,monospace);font-size:12px;padding:1px 5px;border-radius:5px;background:var(--dsw-alias-bg-layer-2,#eef0f4)}
