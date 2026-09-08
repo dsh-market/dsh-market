@@ -14,7 +14,7 @@ import { MarketSection, OwnerAvatar, resetMarketPortalHost, resetThemePreviewCac
 import {
   pluginScreenshotCandidates, resetGithubRouting, resetScreenshotsCache, setGithubRoutes,
 } from '../../src/client/market-data.ts'
-import { en } from '../../src/client/locales.ts'
+import { en, zh } from '../../src/client/locales.ts'
 
 const REGISTRY = {
   updated: '', count: 4,
@@ -2876,6 +2876,183 @@ describe('local-dev restore', () => {
       expect(retries.length).toBeGreaterThanOrEqual(2)
       expect(retries.at(-1)?.body).toMatchObject({ name: 'dsh-loop', restore: true })
     })
+  })
+})
+
+describe('search clear controls (#524)', () => {
+  function searchTabProps() {
+    stubFetch({
+      '/dsh-market/installed': {
+        profile: 'web',
+        installed: { 'dsh-loop': '^1.0.0', 'dsh-notify': '^1.0.0', 'whale-skin': '^1.0.0' },
+        live: [], disabled: [], groups: {}, groupOrder: [],
+        favorites: REGISTRY.plugins.map(plugin => plugin.url),
+      },
+    })
+    const themeSnapshot = { preference: 'light', themes: [] as Array<{ id: string }> }
+    return {
+      ...props(),
+      themeStore: { subscribe: () => () => {}, getSnapshot: () => themeSnapshot },
+    }
+  }
+
+  it('clears the Discover search and restores the filtered-out results (#524)', async () => {
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    const input = screen.getByPlaceholderText(en.searchPh)
+    fireEvent.change(input, { target: { value: 'loop' } })
+    await waitFor(() => expect(screen.queryByText('dsh-notify')).toBeNull())
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear search' }))
+
+    expect(input).toHaveProperty('value', '')
+    expect(await screen.findByText('dsh-notify')).toBeTruthy()
+    expect(screen.getByText('dsh-loop')).toBeTruthy()
+  })
+
+  it.each([
+    { tab: 'Discover', label: en.tabDiscover, placeholder: en.searchPh, result: 'dsh-loop', query: 'loop' },
+    { tab: 'Favorites', label: en.tabFavorites, placeholder: en.searchFavoritesPh, result: 'dsh-loop', query: 'loop' },
+    { tab: 'Themes', label: en.tabThemes, placeholder: en.searchPh, result: 'whale-skin', query: 'whale' },
+    { tab: 'Installed', label: en.tabInstalled, placeholder: en.searchPh, result: 'dsh-loop', query: 'loop' },
+  ])('$tab clears nonempty searches, restores focus, and accepts another query', async ({ label, placeholder, result, query }) => {
+    render(<MarketSection {...searchTabProps()} />)
+    await screen.findByText('dsh-loop')
+    // The Themes category pill has the same label as the tab; the tab is first.
+    fireEvent.click(screen.getAllByRole('button', { name: re(label) })[0])
+    await screen.findByText(result)
+    const input = screen.getByPlaceholderText(placeholder)
+    expect(input.tagName).toBe('INPUT')
+    expect(input.getAttribute('spellcheck')).toBe('false')
+    expect(screen.queryByRole('button', { name: en.clearSearch })).toBeNull()
+
+    fireEvent.change(input, { target: { value: 'zzz-no-match' } })
+    await waitFor(() => expect(screen.queryByText(result)).toBeNull())
+    const clear = screen.getByRole('button', { name: en.clearSearch })
+    expect(clear.getAttribute('type')).toBe('button')
+    // Move focus onto the control before activation, as keyboard users do.
+    // Real Enter/Space default activation is covered in browser validation.
+    clear.focus()
+    expect(document.activeElement).toBe(clear)
+    fireEvent.click(clear)
+    expect(input).toHaveProperty('value', '')
+    expect(document.activeElement).toBe(input)
+    expect(screen.queryByRole('button', { name: en.clearSearch })).toBeNull()
+    expect(await screen.findByText(result)).toBeTruthy()
+
+    fireEvent.change(input, { target: { value: query } })
+    expect(input).toHaveProperty('value', query)
+    expect(screen.getByText(result)).toBeTruthy()
+    fireEvent.change(input, { target: { value: '   ' } })
+    fireEvent.click(screen.getByRole('button', { name: en.clearSearch }))
+    expect(input).toHaveProperty('value', '')
+    expect(document.activeElement).toBe(input)
+    expect(screen.queryByRole('button', { name: en.clearSearch })).toBeNull()
+  })
+
+  it('updates the accessible clear label when the locale changes', async () => {
+    const marketProps = props()
+    const { rerender } = render(<MarketSection {...marketProps} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.change(screen.getByPlaceholderText(en.searchPh), { target: { value: 'loop' } })
+    expect(screen.getByRole('button', { name: 'Clear search' })).toBeTruthy()
+
+    const localeSnapshot = { active: 'zh' }
+    rerender(<MarketSection {...marketProps}
+      t={key => (zh as Record<string, string>)[key] ?? key}
+      locale={{ subscribe: () => () => {}, getSnapshot: () => localeSnapshot }}
+    />)
+    const input = screen.getByPlaceholderText(zh.searchPh)
+    expect(input).toHaveProperty('value', 'loop')
+    expect(input.getAttribute('spellcheck')).toBe('false')
+    expect(screen.queryByRole('button', { name: 'Clear search' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '清除搜索' }))
+    expect(input).toHaveProperty('value', '')
+    expect(document.activeElement).toBe(input)
+    expect(await screen.findByText('dsh-notify')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '清除搜索' })).toBeNull()
+  })
+
+  it('clears only the active tab while preserving all other tab queries', async () => {
+    render(<MarketSection {...searchTabProps()} />)
+    await screen.findByText('dsh-loop')
+    const searches = [
+      { label: en.tabDiscover, placeholder: en.searchPh, query: 'loop' },
+      { label: en.tabFavorites, placeholder: en.searchFavoritesPh, query: 'notify' },
+      { label: en.tabThemes, placeholder: en.searchPh, query: 'whale' },
+      { label: en.tabInstalled, placeholder: en.searchPh, query: 'no-match' },
+    ]
+    for (const { label, placeholder, query } of searches) {
+      fireEvent.click(screen.getAllByRole('button', { name: re(label) })[0])
+      fireEvent.change(screen.getByPlaceholderText(placeholder), { target: { value: query } })
+    }
+    fireEvent.click(screen.getByRole('button', { name: en.clearSearch }))
+    expect(screen.getByPlaceholderText(en.searchPh)).toHaveProperty('value', '')
+    expect(await screen.findByText('dsh-loop')).toBeTruthy()
+    for (const { label, placeholder, query } of searches.slice(0, -1)) {
+      fireEvent.click(screen.getAllByRole('button', { name: re(label) })[0])
+      expect(screen.getByPlaceholderText(placeholder)).toHaveProperty('value', query)
+      expect(screen.getByRole('button', { name: en.clearSearch })).toBeTruthy()
+    }
+    fireEvent.click(screen.getByRole('button', { name: re(en.tabInstalled) }))
+    expect(screen.getByPlaceholderText(en.searchPh)).toHaveProperty('value', '')
+    expect(screen.queryByRole('button', { name: en.clearSearch })).toBeNull()
+  })
+
+  it('preserves filters and page size, resetting the page just like manually erasing the query', async () => {
+    const daysAgo = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10)
+    const makePlugin = (name: string, stars: number) => ({
+      ...REGISTRY.plugins[0], name, npm: name, url: `https://github.com/alice/${name}`,
+      category: 'tools', stars, downloads: 1000 - stars, added: daysAgo(1),
+    })
+    const matching = Array.from({ length: 50 }, (_, i) => makePlugin(`dsh-match-${i + 1}`, i + 1))
+    const extra = makePlugin('dsh-extra', 51)
+    const plugins = [
+      ...matching, extra,
+      { ...makePlugin('dsh-old', 0.1), added: daysAgo(60) },
+      { ...makePlugin('dsh-theme', 0.2), category: 'theme' },
+      makePlugin('dsh-incompatible', 0.3),
+    ]
+    stubFetch({
+      '/dsh-market/registry': {
+        source: 'live', hostVersion: '0.1.2-alpha.2', registry: { ...REGISTRY, count: plugins.length, plugins },
+      },
+      '/dsh-market/discovery-compatibility': (body: { packages: string[] }) => ({
+        hostVersion: '0.1.2-alpha.2',
+        plugins: Object.fromEntries(body.packages.map(name => [name, {
+          status: name === 'dsh-incompatible' ? 'incompatible' : 'compatible',
+          basis: 'manifest', requirement: '^0.1.2-alpha.2',
+          declarations: [{ kind: 'engine', range: '^0.1.2-alpha.2' }],
+        }])),
+      }),
+    })
+    const { container } = render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-match-1')
+    fireEvent.click(screen.getByRole('button', { name: 'Tools' }))
+    fireEvent.click(screen.getByRole('button', { name: en.filter }))
+    fireEvent.click(screen.getByRole('menuitem', { name: en.sortStars }))
+    fireEvent.click(screen.getByRole('menuitem', { name: en.sortAsc }))
+    fireEvent.click(screen.getByRole('menuitem', { name: en.timeWeek }))
+    fireEvent.click(screen.getByRole('menuitem', { name: en.hostCompatible.replace('{0}', '0.1.2-alpha.2') }))
+    fireEvent.click(screen.getByRole('button', { name: en.filter }))
+    await screen.findByText(en.hostFilterActive.replace('{0}', '0.1.2-alpha.2'))
+    fireEvent.click(screen.getByRole('button', { name: en.perPage + ' 24' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '48' }))
+    const input = screen.getByPlaceholderText(en.searchPh)
+
+    for (const clearWithButton of [true, false]) {
+      fireEvent.change(input, { target: { value: 'dsh-match' } })
+      fireEvent.click(screen.getByRole('button', { name: '2' }))
+      await waitFor(() => expect(rankedNames(container)).toEqual(['dsh-match-49', 'dsh-match-50']))
+      if (clearWithButton) fireEvent.click(screen.getByRole('button', { name: en.clearSearch }))
+      else fireEvent.change(input, { target: { value: '' } })
+
+      await waitFor(() => expect(rankedNames(container)).toEqual(matching.slice(0, 48).map(plugin => plugin.name)))
+      expect(screen.getByText(en.pageInfo.replace('{0}', '1').replace('{1}', '2'))).toBeTruthy()
+      expect(screen.getByRole('button', { name: en.perPage + ' 48' })).toBeTruthy()
+      fireEvent.click(screen.getByRole('button', { name: '2' }))
+      await waitFor(() => expect(rankedNames(container)).toEqual(['dsh-match-49', 'dsh-match-50', 'dsh-extra']))
+    }
   })
 })
 
