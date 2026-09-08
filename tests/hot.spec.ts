@@ -8,10 +8,10 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { hotMount, hotUnmount, listHotMounts, mountClientOnlyDeps, parseSimplePatch } from '../src/hot.ts'
+import { hotMount, hotUnmount, listHotMounts, mountClientOnlyDeps, parseSimplePatch, resolveProfileEntry } from '../src/hot.ts'
 
 // The harness-vendored Include class is not importable in the unit lane;
 // a minimal stand-in lets hotMount succeed so the skip logic is observable.
@@ -235,5 +235,117 @@ describe('parseSimplePatch — hot-mountable or restart-only', () => {
     expect(parseSimplePatch('')).toBeNull()
     expect(parseSimplePatch('# only a comment\n\n')).toBeNull()
     expect(parseSimplePatch('- insert:\n')).toBeNull()
+  })
+})
+
+/**
+ * Hot-mount rows must reach the loader as absolute file:// URLs resolved
+ * against the profile the package was installed into.
+ *
+ * The include tree's base class resolves bare names against the LOADER's own
+ * location — the host closure — whose parent walk can never reach
+ * `home/profiles/<profile>/node_modules`. On any closure-hosted loader
+ * (Ellamaka, DSH Desktop sidecar) every market hot mount died with
+ * `Cannot find module '<pkg>' from '…/cordis-plugin-loader/…'` and fell back
+ * to a restart the host did not even need: the bundle layer + a composition
+ * replay had usually already mounted the plugin.
+ */
+describe('resolveProfileEntry — hot-mount rows are anchored at the profile', () => {
+  /** A bundle-plugin package shape: main + lib/index.js on disk (the shape
+   * every hot-mountable plugin carries — install validation, which runs
+   * before hotMount, requires a checkable entry artifact). */
+  function bundlePkg(dir: string, name: string): void {
+    const pkgDir = join(dir, 'node_modules', name)
+    mkdirSync(join(pkgDir, 'lib'), { recursive: true })
+    writeFileSync(join(pkgDir, 'package.json'),
+      JSON.stringify({ name, main: 'lib/index.js', dsh: { bundle: { patch: './cordis.patch.yml' } } }))
+    writeFileSync(join(pkgDir, 'lib', 'index.js'), 'export default {}')
+  }
+
+  it('resolves a bare package name to the profile-installed entry URL', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dshm-hot-'))
+    try {
+      bundlePkg(dir, 'dsh-real-plugin')
+      const resolved = resolveProfileEntry(dir, 'dsh-real-plugin')
+      expect(resolved.startsWith('file://')).toBe(true)
+      expect(resolved).toContain('dsh-real-plugin')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('resolves a scoped package name the same way', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dshm-hot-'))
+    try {
+      bundlePkg(dir, join('@scope', 'pkg'))
+      const resolved = resolveProfileEntry(dir, '@scope/pkg')
+      expect(resolved.startsWith('file://')).toBe(true)
+      expect(resolved).toContain('@scope')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('passes through specifiers the base class owns', () => {
+    expect(resolveProfileEntry('/any', '')).toBe('')
+    expect(resolveProfileEntry('/any', './relative.js')).toBe('./relative.js')
+    expect(resolveProfileEntry('/any', 'cordis:include')).toBe('cordis:include')
+    expect(resolveProfileEntry('/any', 'file:///already/absolute.js')).toBe('file:///already/absolute.js')
+  })
+
+  it('keeps the bare name when the package is not installed under the profile', () => {
+    // Base-class semantics for shapes this fix does not own: an unresolvable
+    // name reaches the loader unchanged and its error surfaces as before.
+    const dir = mkdtempSync(join(tmpdir(), 'dshm-hot-'))
+    try {
+      expect(resolveProfileEntry(dir, 'dsh-not-installed')).toBe('dsh-not-installed')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+/**
+ * A failed hot mount must leave NOTHING behind. The dispose covers the
+ * subtree; the input file removal matters because `cleanHotDir` only runs at
+ * market START — a file left by a mid-session failure stays on disk until
+ * the next restart, and on a closure-hosted loader it re-throws the same
+ * resolve error on every later composition replay that imports it. On the
+ * reporting host this grew the plugin log by millions of repeated errors
+ * between restarts.
+ */
+describe('failed hotMount cleanup — no leftover file, no wedged fiber', () => {
+  it('removes the hot input file when the import fails', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dshm-hot-'))
+    try {
+      // A package whose host half exists but fails to load: the stand-in
+      // Include.import throws for anything not pre-registered.
+      vi.doMock('@deepseek-ai/cordis-plugin-include', () => ({
+        Include: class {
+          write(): void {}
+          import(name: string): unknown {
+            if (name.includes('dsh-doomed-plugin')) throw new Error('Cannot find module')
+            return { name, apply: () => {} }
+          }
+        },
+      }))
+      vi.resetModules()
+      const { hotMount: freshHotMount, listHotMounts: freshList } = await import('../src/hot.ts')
+      mkdirSync(join(dir, 'node_modules', 'dsh-doomed-plugin'), { recursive: true })
+      writeFileSync(join(dir, 'node_modules', 'dsh-doomed-plugin', 'package.json'),
+        JSON.stringify({ name: 'dsh-doomed-plugin', dsh: { bundle: { patch: './cordis.patch.yml' } } }))
+      writeFileSync(join(dir, 'node_modules', 'dsh-doomed-plugin', 'cordis.patch.yml'),
+        '- insert:\n    - id: doomed\n      name: dsh-doomed-plugin\n')
+      const failCtx = { plugin: () => ({ await: () => Promise.reject(new Error('Cannot find module')), dispose: () => {} }) }
+      const result = await freshHotMount(failCtx, dir, 'dsh-doomed-plugin')
+      expect(result.ok).toBe(false)
+      const hotFiles = readdirSync(join(dir, '.dsh-market')).filter(f => f.startsWith('hot-'))
+      expect(hotFiles).toEqual([])
+      expect(freshList()).not.toContain('dsh-doomed-plugin')
+    } finally {
+      vi.doUnmock('@deepseek-ai/cordis-plugin-include')
+      vi.resetModules()
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
