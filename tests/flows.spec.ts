@@ -488,6 +488,15 @@ vi.mock('../src/registry.ts', async (importOriginal) => ({
 }))
 registryModule.loadRegistry.mockImplementation(() => Promise.resolve(REGISTRY))
 
+// Host-compat guard (#473, extended to installs by this change): flows do not
+// exercise the guard's refusal semantics (host-compat-guard.spec.ts does), so
+// keep it on the fast fail-open path — no real host version, no network for
+// manifest lookups.
+vi.mock('../src/dsh-install.ts', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../src/dsh-install.ts')>(),
+  dshHostInfo: () => null,
+}))
+
 // Most flow tests pin a region. These two hold the boot probe open so its
 // completion can be ordered deterministically against a manual choice or
 // route disposal.
