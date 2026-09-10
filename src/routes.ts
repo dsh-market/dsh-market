@@ -3046,9 +3046,21 @@ sendJson(response, 200, { updates })
             const gitRollbackTarget = beforeCommit === null
               ? null
               : exactGitRollbackTarget(spec, beforeCommit)
+            // A floating git spec makes `add` a no-op: the target is
+            // byte-identical to the specifier already in the manifest, so
+            // pnpm answers "Lockfile is up to date, resolution step is
+            // skipped" and the install never moves (#562). `update <name>`
+            // re-resolves inside the same specifier, which is exactly what a
+            // mutable `github:owner/repo` (or `#branch` / `#semver:`) wants.
+            // Anything whose target differs from the specifier — npm pins,
+            // a de-pinned commit, a rebuilt codeload shortcut, a restore —
+            // keeps `add`, because there the new target IS the change.
+            const reresolveInPlace = isGit && !restore && target === spec
             // force: the user chose to install a fresh release without the
             // default one-day safety wait; scoped to this single command.
-            const addArgs = force ? ['add', RELEASE_AGE_OVERRIDE, target] : ['add', target]
+            const addArgs = reresolveInPlace
+              ? (force ? ['update', RELEASE_AGE_OVERRIDE, name] : ['update', name])
+              : (force ? ['add', RELEASE_AGE_OVERRIDE, target] : ['add', target])
             // Exact manifest snapshot for failure rollback (#65, #339) — the
             // host can write dependencies AND dsh.profile.bundles before a
             // hard-failed add, leaving residue that breaks the next boot.

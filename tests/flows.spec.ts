@@ -213,7 +213,16 @@ vi.mock('../src/dsh-cli.ts', () => {
       fake.hoistDiffTimes--
       return { exitCode: 1, timedOut: false, stdout: '', stderr: 'ERR_PNPM_PUBLIC_HOIST_PATTERN_DIFF  Run "pnpm install" to recreate the modules directory.', cancelled: false }
     }
-    const target = positional[positional.length - 1]
+    let target = positional[positional.length - 1]
+    if (cmd === 'update') {
+      // `pnpm update <name>` re-resolves the named dependency inside the
+      // specifier the manifest already carries. FakeDsh replays that as an
+      // add of the current spec, so a floating git spec lands on the repo's
+      // current commit and every add-side fault flag still applies (#562).
+      const spec = readManifest().dependencies?.[target]
+      if (spec === undefined) return { exitCode: 1, timedOut: false, stdout: '', stderr: `fake dsh: ${target} is not installed`, cancelled: false }
+      target = /^(github:|git\+|git@|https?:)/.test(spec) ? spec : `${target}@${spec}`
+    }
     if (cmd === 'remove') {
       if (fake.failNextRemoveOnce !== '') {
         const stderr = fake.failNextRemoveOnce
@@ -1735,9 +1744,11 @@ describe('update flow — no npm publishing required', () => {
     fake.calls = []
     const updated = await bed.dispatch('POST', '/dsh-market/update', { name: 'themer' })
     expect(updated.status).toBe(200)
-    const add = fake.calls.find(call => call[0] === 'add')
-    const ran = add?.join(' ') ?? ''
-    expect(ran, 'the update must keep the Gitea remote').toContain(gitea)
+    // The remote stays the source: the update re-resolves the existing
+    // specifier in place (#562), and the manifest still names the Gitea URL.
+    expect(fake.calls.at(-1)?.[0], 'the update must keep the Gitea remote').toBe('update')
+    expect(installedSpec('themer')).toBe(gitea)
+    const ran = fake.calls.map(call => call.join(' ')).join('\n')
     expect(ran).not.toContain('themer@latest')
     expect(ran).not.toContain('themer@9.9.9')
     expect(fake.calls.some(call => call.some(arg => /themer@(latest|9\.9\.9)/.test(arg)))).toBe(false)
@@ -1756,7 +1767,11 @@ describe('update flow — no npm publishing required', () => {
 
     const direct = await bed.dispatch('POST', '/dsh-market/update', { name: 'plug-a' })
     expect(direct.status).toBe(200)
-    expect(fake.calls.at(-1)).toContain(target)
+    // Nothing to change in the specifier, so it is re-resolved in place
+    // rather than re-added byte-for-byte (#562); the subpath lives on in
+    // the manifest untouched.
+    expect(fake.calls.at(-1)?.[0]).toBe('update')
+    expect(fake.calls.at(-1)).toContain('plug-a')
     expect(installedSpec('plug-a')).toBe(target)
 
     // A ref and path may share pnpm's fragment. A COMMIT PIN is what an
@@ -1800,9 +1815,38 @@ describe('update flow — no npm publishing required', () => {
 
     const refreshed = await bed.dispatch('POST', '/dsh-market/update', { name: 'plug-b' })
     expect(refreshed.status).toBe(200)
-    // The whole target, not a substring: fake.calls entries are argv arrays,
-    // so an exact element is what proves both selectors survived together.
-    expect(fake.calls.at(-1)).toContain(target)
+    // The branch is kept by leaving the specifier alone: the update
+    // re-resolves in place (#562) instead of re-adding a target, so both
+    // selectors survive together in the manifest.
+    expect(fake.calls.at(-1)?.[0]).toBe('update')
+    expect(installedSpec('plug-b')).toBe(target)
+  })
+
+  it('updates a floating github install with `pnpm update`, not a no-op `add` of the same specifier (#562)', async () => {
+    const OLD = 'c'.repeat(40)
+    const NEW = 'd'.repeat(40)
+    fake.repos['github:o/blue-whale'] = {
+      name: 'dsh-blue-whale', manifest: { dsh: {}, main: 'index.js' }, artifacts: ['index.js'], lockCommit: OLD,
+    }
+    expect((await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/blue-whale' })).status).toBe(200)
+    expect(installedSpec('dsh-blue-whale')).toBe('github:o/blue-whale')
+    // A new commit lands upstream. The specifier in the manifest cannot
+    // change, so `add github:o/blue-whale` would be byte-identical to what
+    // is installed and pnpm would skip resolution ("Lockfile is up to date").
+    fake.repos['github:o/blue-whale'] = {
+      name: 'dsh-blue-whale', manifest: { dsh: {}, main: 'index.js' }, artifacts: ['index.js'], lockCommit: NEW,
+    }
+    const callsBefore = fake.calls.length
+
+    const updated = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-blue-whale' })
+
+    expect(updated.status, JSON.stringify(updated.json)).toBe(200)
+    expect(updated.json.stale).toBeUndefined()
+    const during = fake.calls.slice(callsBefore)
+    expect(during.some(call => call[0] === 'update' && call.includes('dsh-blue-whale'))).toBe(true)
+    expect(during.some(call => call[0] === 'add' && call.includes('github:o/blue-whale'))).toBe(false)
+    expect(installedSpec('dsh-blue-whale')).toBe('github:o/blue-whale')
+    expect(readFileSync(join(fake.profileDir, 'pnpm-lock.yaml'), 'utf8')).toContain(NEW)
   })
 
   it('does not offer a rollback that the real CLI cannot execute for a github subpath', async () => {
@@ -3311,7 +3355,8 @@ describe('theme update and uninstall', () => {
   it('updates a github-installed theme by re-resolving its repo', async () => {
     const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'theme-a' })
     expect(r.status).toBe(200)
-    expect(fake.calls[fake.calls.length - 1]).toContain('github:o/theme-a')
+    expect(fake.calls[fake.calls.length - 1]?.[0]).toBe('update')
+    expect(installedSpec('theme-a')).toBe('github:o/theme-a')
   })
 
   it('uninstalls the active theme and clears its live mount', async () => {
