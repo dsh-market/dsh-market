@@ -3745,7 +3745,7 @@ export function MarketSection(props: MarketSectionProps) {
                 >{updatingName === self ? t('updating') : status.restoreRequired === true ? t('restoreOnline') : t('marketUpdate')}</Button>
               )
           })()}
-          {reminderBatchUpdatableNames.length >= 2 && (
+          {reminderBatchUpdatableNames.length >= 1 && (
             <Button
               variant="primary"
               size="sm"
