@@ -19,7 +19,7 @@ import {
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import css from './Market.module.css'
-import type { Translate } from './market-data.ts'
+import { localizeBilingual, type Translate } from './market-data.ts'
 import type { ConflictGroup, OperationRecord } from './operations.ts'
 import { bucketOf, isSettled, needsUser, queuePosition, sortForPanel, summarize } from './operations.ts'
 
@@ -41,6 +41,8 @@ export type DescribePlugin = (name: string) => {
 
 export interface OperationsPanelProps {
   t: Translate
+  /** Active UI language — used to pick one half of bilingual wire errors. */
+  lang: 'zh' | 'en'
   /** Resolves a package name to the identity a card would show for it. */
   describe: DescribePlugin
   records: readonly OperationRecord[]
@@ -195,7 +197,7 @@ function BucketIcon(props: { record: OperationRecord }) {
 }
 
 /** The one-line status under a record's name; the bucket carries the rest. */
-function statusLine(t: Translate, record: OperationRecord, ahead: number | null): string {
+function statusLine(t: Translate, lang: 'zh' | 'en', record: OperationRecord, ahead: number | null): string {
   switch (record.state) {
     case 'queued':
       return ahead === null || ahead === 0 ? t('opQueued') : `${t('opQueued')} · ${t('opQueuedAhead')} ${String(ahead)}`
@@ -204,9 +206,9 @@ function statusLine(t: Translate, record: OperationRecord, ahead: number | null)
     case 'input':
       return t('opNeedsChoice')
     case 'failed':
-      return record.reason ?? t('installFail')
+      return record.reason !== undefined ? localizeBilingual(record.reason, lang) : t('installFail')
     case 'warned':
-      return record.reason ?? t('opDone')
+      return record.reason !== undefined ? localizeBilingual(record.reason, lang) : t('opDone')
     case 'done':
       return record.needsRefresh === true ? t('opDoneRefresh') : t('opDone')
   }
@@ -322,7 +324,7 @@ export function OperationsPanel(props: OperationsPanelProps) {
                     </div>
                   )}
                   <div className={bucketOf(record.state) === 'attention' ? `${css.opStatus} ${css.opStatusBad}` : css.opStatus}>
-                    {statusLine(t, record, ahead)}
+                    {statusLine(t, props.lang, record, ahead)}
                   </div>
                   {needsUser(record) && (
                     <ConflictChoice
