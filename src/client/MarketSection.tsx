@@ -1357,9 +1357,9 @@ export function MarketSection(props: MarketSectionProps) {
   const [staleName, setStaleName] = useState<string | null>(null)
   // Local link:/file: restore — a modal asks before swapping to the catalog.
   const [restoreConfirm, setRestoreConfirm] = useState<{ name: string; entry: RegistryPlugin; verified: boolean } | null>(null)
-  /** An update whose target declares a DSH version this host does not meet (#404). */
+  /** A release whose declared host requirement this host does not meet (#404). kind distinguishes the update dialog from the fresh-install dialog. */
   const [hostIncompatible, setHostIncompatible] = useState<
-    { name: string; version: string; requirement: string | null; hostVersion: string | null } | null
+    { kind: 'update' | 'install'; name: string; version: string; requirement: string | null; hostVersion: string | null; plugin: RegistryPlugin | null } | null
   >(null)
   const [restoreBlocked, setRestoreBlocked] = useState<{ name: string; reason: 'no-catalog' | 'repo-mismatch' } | null>(null)
   // Snapshot the source switch the user agreed to review; later renders must not change it under the dialog.
@@ -2096,7 +2096,7 @@ export function MarketSection(props: MarketSectionProps) {
     return `${first.name} — ${first.layers.join(' / ')}${rest}`
   }
 
-  const doInstall = useCallback((plugin: RegistryPlugin) => {
+  const doInstall = useCallback((plugin: RegistryPlugin, force = false) => {
     setBuildsSkipped(null)
     setConfirming(null)
     setInstallError(null)
@@ -2112,7 +2112,7 @@ export function MarketSection(props: MarketSectionProps) {
     fetch(api('/dsh-market/install'), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ url: plugin.url }),
+      body: JSON.stringify({ url: plugin.url, ...(force ? { force: true } : {}) }),
     })
       .then(res => res.json().then(body => ({ status: res.status, body })))
       .then(({ status, body }) => {
@@ -2180,6 +2180,24 @@ export function MarketSection(props: MarketSectionProps) {
             // Raise the panel for anything that needs an answer. A red dot on
             // a closed panel is not a report; out of sight is out of mind.
             setOperationsOpen(true)
+            return
+          }
+          // A host-compatibility refusal is not a failure to report and
+          // forget: the host already stopped it, so what remains is a
+          // decision with two facts on the table and a way past (#404,
+          // extended to fresh installs). `input` keeps the record in the
+          // panel until the user answers it.
+          if (body.hostIncompatible && typeof body.hostIncompatible === 'object') {
+            const notice = body.hostIncompatible as { name?: unknown; version?: unknown; requirement?: unknown; hostVersion?: unknown }
+            setRecords(list => drop(list, recordId))
+            setHostIncompatible({
+              kind: 'install',
+              name: String(notice.name ?? plugin.name),
+              version: String(notice.version ?? ''),
+              requirement: typeof notice.requirement === 'string' ? notice.requirement : null,
+              hostVersion: typeof notice.hostVersion === 'string' ? notice.hostVersion : null,
+              plugin,
+            })
             return
           }
           const blocked = Array.isArray(body.ignoredBuilds) ? body.ignoredBuilds.map(String) : []
@@ -2431,10 +2449,12 @@ export function MarketSection(props: MarketSectionProps) {
             const notice = body.hostIncompatible as { name?: unknown; version?: unknown; requirement?: unknown; hostVersion?: unknown }
             setRecords(list => drop(list, updateRecordId))
             setHostIncompatible({
+              kind: 'update',
               name: String(notice.name ?? name),
               version: String(notice.version ?? ''),
               requirement: typeof notice.requirement === 'string' ? notice.requirement : null,
               hostVersion: typeof notice.hostVersion === 'string' ? notice.hostVersion : null,
+              plugin: null,
             })
             return
           }
@@ -3382,7 +3402,17 @@ export function MarketSection(props: MarketSectionProps) {
         )}
         <div className={css.foot}>
           <div className={css.footTags}>
-            <span className={css.hostRequirement} title={hostRequirementTitle}>{hostRequirementLabel}</span>
+            <span
+          className={compatibility?.status === 'compatible'
+            ? css.hostRequirementOk
+            : compatibility?.status === 'incompatible'
+              ? css.hostRequirementBad
+              : css.hostRequirement}
+          data-status={compatibility?.status ?? 'unknown'}
+          title={(compatibility?.status === 'compatible' || compatibility?.status === 'incompatible'
+            ? t(compatibility.status === 'compatible' ? 'hostStatusCompatible' : 'hostStatusIncompatible') + '\n'
+            : '') + hostRequirementTitle}
+        >{hostRequirementLabel}</span>
             {pluginCategories(p).map(category => (
               <span key={category} className={css.tag}>
                 {(data!.categories[category] && (data!.categories[category]![lang] || data!.categories[category]!.en)) || category}
@@ -5090,8 +5120,8 @@ export function MarketSection(props: MarketSectionProps) {
           open
           onClose={() => setHostIncompatible(null)}
           title={t('hostIncompatibleTitle')}
-          description={t('hostIncompatibleBody')
-            .replace('{plugin}', `${hostIncompatible.name} ${hostIncompatible.version}`)
+          description={t(hostIncompatible.kind === 'install' ? 'hostIncompatibleBodyInstall' : 'hostIncompatibleBody')
+            .replace('{plugin}', `${hostIncompatible.name} ${hostIncompatible.version}`.trim())
             .replace('{requirement}', hostIncompatible.requirement ?? t('hostIncompatibleUnknown'))
             .replace('{host}', hostIncompatible.hostVersion ?? t('hostIncompatibleUnknown'))}
           footer={(
@@ -5099,16 +5129,19 @@ export function MarketSection(props: MarketSectionProps) {
               {/* Staying put is the recommended action, so it is the primary
                   one — the opposite of the usual dialog, because here the
                   safe choice is to do nothing. */}
-              <Button variant="primary" onClick={() => setHostIncompatible(null)}>{t('hostIncompatibleKeep')}</Button>
+              <Button variant="primary" onClick={() => setHostIncompatible(null)}>{t(hostIncompatible.kind === 'install' ? 'hostIncompatibleCancel' : 'hostIncompatibleKeep')}</Button>
               <Button
                 variant="ghost"
-                disabled={updatingName !== null}
+                disabled={hostIncompatible.kind === 'install' ? busyUrl !== null : updatingName !== null}
                 onClick={() => {
+                  const kind = hostIncompatible.kind
                   const target = hostIncompatible.name
+                  const forcePlugin = hostIncompatible.plugin
                   setHostIncompatible(null)
-                  doUpdate(target, true)
+                  if (kind === 'install' && forcePlugin !== null) doInstall(forcePlugin, true)
+                  else doUpdate(target, true)
                 }}
-              >{t('hostIncompatibleAnyway')}</Button>
+              >{t(hostIncompatible.kind === 'install' ? 'hostIncompatibleInstallAnyway' : 'hostIncompatibleAnyway')}</Button>
             </>
           )}
         />

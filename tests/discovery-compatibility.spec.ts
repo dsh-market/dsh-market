@@ -174,3 +174,56 @@ describe('DiscoveryManifestIndex', () => {
     expect(retried).toBe(1)
   })
 })
+
+describe('host-compatibility declaration semantics (Phase 1 additions)', () => {
+  it('derives incompatible from an engine-only declaration the host does not satisfy', () => {
+    const result = deriveHostCompatibility(
+      facts({ enginesDsh: '^0.1.1-rc.2' }),
+      '0.1.0-alpha.1',
+      HOST_PACKAGES,
+    )
+    expect(result.status).toBe('incompatible')
+    expect(result.basis).toBe('manifest')
+    expect(result.requirement).toBe('^0.1.1-rc.2')
+  })
+
+  it('is conjunctive: one failing peer refuses even when engines.dsh passes', () => {
+    const result = deriveHostCompatibility(
+      facts({
+        enginesDsh: '>=0.1.0',
+        peerDependencies: {
+          '@deepseek-ai/dsh-settings': '^0.1.1-rc.2',
+          '@deepseek-ai/dsh-tools': '^99.0.0',
+        },
+      }),
+      '0.1.2-alpha.2',
+      HOST_PACKAGES,
+    )
+    expect(result.status).toBe('incompatible')
+    expect(result.basis).toBe('manifest')
+    // All three declarations surface in the human-readable requirement.
+    expect(result.requirement).toContain('>=0.1.0')
+    expect(result.requirement).toContain('^0.1.1-rc.2')
+    expect(result.requirement).toContain('^99.0.0')
+  })
+
+  it('ignores non-lockstep @deepseek-ai peers that are not host packages', () => {
+    const result = deriveHostCompatibility(
+      facts({
+        enginesDsh: '>=0.1.0',
+        peerDependencies: {
+          // Shipped by the plugin but not part of the host's lockstep line:
+          // not a declaration about the host, must not change the verdict.
+          '@deepseek-ai/foo-extra': '^1.0.0',
+          '@deepseek-ai/cordis': '^4.0.1',
+          '@deepseek-ai/schemastery': '^3.18.1',
+        },
+      }),
+      '0.1.2-alpha.2',
+      HOST_PACKAGES,
+    )
+    expect(result.status).toBe('compatible')
+    expect(result.basis).toBe('manifest')
+    expect(result.requirement).toBe('>=0.1.0') // only the engine declaration remains
+  })
+})

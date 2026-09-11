@@ -1156,6 +1156,55 @@ export function mountMarketRoutes(
     try { return new URL(request.url ?? '', 'http://localhost').searchParams.get('force') === '1' } catch { return false }
   }
 
+  /**
+   * Pre-install host compatibility refusal, shared by the update route and
+   * the fresh-install route (#404/#473 convention, extended to installs).
+   *
+   * Only a declaration that was READ and is not SATISFIED stops the
+   * operation: undeclared, unreadable, and unknown host versions all pass
+   * through (absence of a claim is not a verdict). `force` is the way past
+   * a bundled host that misreports its version, exactly like the update
+   * route. Returns true when a 400 has been sent and the caller must return.
+   */
+  async function refuseHostIncompatible(
+    npmName: string | null,
+    displayName: string,
+    version: string | null,
+    force: boolean,
+    response: ServerResponse,
+    region: Region,
+    event: 'update-compat' | 'install-compat',
+  ): Promise<boolean> {
+    if (force || npmName === null) return false
+    const host = dshHostInfo()
+    // No host version means nothing to compare against: deriveHostCompatibility
+    // would answer `unknown` and pass anyway, so skip the manifest fetch
+    // entirely (one less network round-trip, identical verdict).
+    if (host?.version == null) return false
+    const facts = (await discoveryManifests.lookup([npmName], routesFor(region).npmRegistry))[npmName] ?? null
+    const verdict = deriveHostCompatibility(
+      facts,
+      host?.version ?? null,
+      corePackageNames(host?.directory ?? null),
+    )
+    if (verdict.status !== 'incompatible') return false
+    version = version ?? facts?.version ?? null
+    logEvent('warn', event, `${displayName}@${version} declares ${verdict.requirement ?? 'a host requirement'}; this host is ${host?.version ?? 'unknown'} — refused before installing`)
+    const nothingWasInstalled = event === 'install-compat'
+    sendJson(response, 400, {
+      hostIncompatible: {
+        name: displayName,
+        version,
+        requirement: verdict.requirement,
+        hostVersion: host?.version ?? null,
+      },
+      error: nothingWasInstalled
+        ? `${displayName} ${version ?? ''} 要求的 DSH 版本是 ${verdict.requirement ?? '未知'}，而当前运行的是 ${host?.version ?? '未知版本'}，装上多半会直接报错。已停止，没有安装任何东西。 / ${displayName} ${version ?? ''} declares it needs DSH ${verdict.requirement ?? '(unknown)'}, and this host is ${host?.version ?? 'unknown'}; installing it would most likely break the plugin. Nothing was installed.`
+        : `${displayName} ${version ?? ''} 要求的 DSH 版本是 ${verdict.requirement ?? '未知'}，而当前运行的是 ${host?.version ?? '未知版本'}，装上多半会直接报错。已停止，插件保持在原来的版本。 / ${displayName} ${version ?? ''} declares it needs DSH ${verdict.requirement ?? '(unknown)'}, and this host is ${host?.version ?? 'unknown'}; installing it would most likely break the plugin. Nothing was changed.`,
+    })
+    return true
+  }
+
   const disposers = [
     host.webServer.register({
       kind: 'exact',
@@ -2973,26 +3022,8 @@ sendJson(response, 200, { updates })
               // user who knows that must not be locked out of their own
               // profile. Refused with 400 and the facts, so the page can ask
               // rather than dead-end.
-              if (selfChannel === null && !force && registryLatest !== null) {
-                const host = dshHostInfo()
-                const verdict = deriveHostCompatibility(
-                  (await discoveryManifests.lookup([name], routesFor(region).npmRegistry))[name] ?? null,
-                  host?.version ?? null,
-                  corePackageNames(host?.directory ?? null),
-                )
-                if (verdict.status === 'incompatible') {
-                  logEvent('warn', 'update-compat', `${name}@${registryLatest} declares ${verdict.requirement ?? 'a host requirement'}; this host is ${host?.version ?? 'unknown'} — refused before installing`)
-                  sendJson(response, 400, {
-                    hostIncompatible: {
-                      name,
-                      version: registryLatest,
-                      requirement: verdict.requirement,
-                      hostVersion: host?.version ?? null,
-                    },
-                    error: `${name} ${registryLatest} 要求的 DSH 版本是 ${verdict.requirement ?? '未知'}，而当前运行的是 ${host?.version ?? '未知版本'}，装上多半会直接报错。已停止，插件保持在原来的版本。 / ${name} ${registryLatest} declares it needs DSH ${verdict.requirement ?? '(unknown)'}, and this host is ${host?.version ?? 'unknown'}; installing it would most likely break the plugin. Nothing was changed.`,
-                  })
-                  return
-                }
+              if (selfChannel === null && registryLatest !== null) {
+                if (await refuseHostIncompatible(name, name, registryLatest, force, response, region, 'update-compat')) return
               }
             }
             // Re-accelerated from the unpinned shortcut, never from the
@@ -4178,7 +4209,8 @@ sendJson(response, 200, { updates })
         }
         try {
           await withMutationLock(response, 'install', async () => {
-            const body = (await readJsonBody(request)) as { url?: unknown }
+            const body = (await readJsonBody(request)) as { url?: unknown; force?: unknown }
+            const force = body.force === true
             const busyAgents = runningAgentsForGuard()
             if (busyAgents.length > 0) {
               logEvent('warn', 'install-blocked', `refused while agents are running — ${busyAgents.join(', ')}`)
@@ -4281,10 +4313,19 @@ sendJson(response, 200, { updates })
                 return
               }
             }
+            // Fresh installs ask the host requirement too (#404/#473: the
+            // update route refuses a declared-incompatible release before
+            // installing; an unguarded fresh install would hit exactly the
+            // same "装上才炸" wall. Same derivation and same cache as the
+            // update route: only a CONFIRMED mismatch stops an install;
+            // undeclared, unreadable, and unknown host versions all pass
+            // (absence of a claim is not a verdict). force is the escape
+            // hatch for a bundled host that misreports its version.
+            const npmName = typeof entry.npm === 'string' && NPM_NAME_RE.test(entry.npm) ? entry.npm : null
+            if (npmName !== null && await refuseHostIncompatible(npmName, entry.name, null, force, response, region, 'install-compat')) return
             const beforeSpecs = readInstalled(config.profile, activeProfileDir)
             const before = new Set(Object.keys(beforeSpecs))
             if (retryAlias !== null) before.delete(retryAlias)
-            pendingRollbacks.clear()
             const compatibilityBefore = assessProfile(config.profile, activeProfileDir)
             // pnpm re-extracts the whole tree on any operation, so a plugin
             // nobody touched can come back pristine-and-broken, or lose a

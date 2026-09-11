@@ -89,3 +89,60 @@ describe.skipIf(!HAS_DSH).sequential('web e2e: the host-version pre-check (#404)
     expect(installedVersion()).toBe('2.0.0')
   }, 300_000)
 })
+
+describe.skipIf(!HAS_DSH).sequential('web e2e: the fresh-install host-version pre-check (Phase 1)', () => {
+  let scaffold: WebScaffold
+  let base: string
+  const B = 'dshm-e2e-fixture-b'
+
+  beforeAll(async () => {
+    // 1.0.0 installable; 2.0.0 claims a far-future host.
+    scaffold = await launchMarketScaffold({
+      fixtures: [
+        { dir: 'fixture-a', version: '2.0.0', manifest: { engines: { dsh: '>=99.0.0' } } },
+        { dir: 'fixture-a', version: '1.0.0' },
+      ],
+    })
+    base = scaffold.baseUrl
+  }, 600_000)
+
+  afterAll(async () => { await scaffold?.close() })
+
+  const post = async (path: string, body: unknown): Promise<Response> =>
+    fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: base },
+      body: JSON.stringify(body),
+    })
+
+  const installedVersion = (): string | null => {
+    try {
+      return (JSON.parse(readFileSync(
+        join(scaffold.home, 'profiles', 'web', 'node_modules', B, 'package.json'),
+        'utf8',
+      )) as { version: string }).version
+    } catch {
+      return null
+    }
+  }
+
+  it('refuses a fresh install whose release declares an incompatible host', async () => {
+    const refused = await post('/dsh-market/install', { url: `https://github.com/dshm-e2e/${B}` })
+    expect(refused.status).toBe(400)
+    const body = await refused.json() as { hostIncompatible?: { requirement?: string; hostVersion?: string } }
+    expect(body.hostIncompatible).toBeDefined()
+    expect(body.hostIncompatible?.requirement).toContain('99')
+    expect(body.hostIncompatible?.hostVersion).toMatch(/^\d+\.\d+\./)
+    expect(installedVersion()).toBeNull()
+  }, 300_000)
+
+  it('lets the user through the fresh install when they insist', async () => {
+    const forced = await post('/dsh-market/install', {
+      url: `https://github.com/dshm-e2e/${B}`,
+      force: true,
+    })
+    expect(forced.status).toBe(200)
+    expect(await forced.json()).toMatchObject({ ok: true })
+    expect(installedVersion()).toBe('2.0.0')
+  }, 300_000)
+})
