@@ -120,6 +120,10 @@ DSHM_REGISTRY_URL=https://your-mirror.example/plugins.json dsh web
 
 [local-dsh](https://github.com/liangchen-harold/local-dsh)——可以把模型跑在本机的 DeepSeek Harness 桌面客户端：发行包内置 llama.cpp 与 Node、pnpm、DSH，下载一个 GGUF 模型就能对话，不必接外部 API。基于 Tauri 构建；目前支持 Apple 芯片的 Mac。[localdsh.com](https://localdsh.com)
 
+### dsh desktop（MochiNek0）
+
+[dsh-desktop](https://github.com/MochiNek0/dsh-desktop)——基于 Tauri 构建的跨平台 DeepSeek Harness 桌面客户端（Windows / macOS / Linux），界面走系统 webview，安装包只有几 MB（Windows 2.3 MB、macOS 5.8 MB）。启动时自动在后台拉起 `dsh web` 并嵌入原生窗口，会话与配置和 CLI 共享；内置插件面板的推荐位第一条就是本市场，点一下即可装上。另有「运行环境」面板枚举与切换本机 Node、安装或升级 dsh，全程无需管理员权限；回合结束或 dsh 等待你确认时发出系统通知。[dsh-desktop.cc.cd](https://dsh-desktop.cc.cd/)
+
 ### DSH Get
 
 [DSH Get](https://www.dshget.com/)——DeepSeek Harness 插件的网页检索目录：分类筛选、中英描述、安装命令与插件详情页；其规范化的目录快照公开在 [bobby-sheng/dshget-data](https://github.com/bobby-sheng/dshget-data)。

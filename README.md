@@ -123,6 +123,10 @@ DSHM_REGISTRY_URL=https://your-mirror.example/plugins.json dsh web
 
 [local-dsh](https://github.com/liangchen-harold/local-dsh) — a DeepSeek Harness desktop client that can run the model on your own machine: it bundles llama.cpp next to Node, pnpm and DSH, so a downloaded GGUF model answers without any external API. Built on Tauri; Apple Silicon Macs for now. [localdsh.com](https://localdsh.com)
 
+### dsh desktop (MochiNek0)
+
+[dsh-desktop](https://github.com/MochiNek0/dsh-desktop) — a cross-platform DeepSeek Harness desktop client built on Tauri (Windows, macOS, Linux). It uses the system webview, so the installer is a few megabytes: 2.3 MB on Windows, 5.8 MB on macOS. It starts `dsh web` in the background on launch and embeds it in a native window, sharing sessions and config with the CLI. This market sits first in the recommended list of its built-in plugin panel, one click to install. A Runtime panel enumerates and switches the machine's Node installs and installs or upgrades dsh, no administrator privileges required, and native notifications fire when a turn ends or dsh is waiting on you. [dsh-desktop.cc.cd](https://dsh-desktop.cc.cd/)
+
 ### DSH Get
 
 [DSH Get](https://www.dshget.com/) — a searchable web directory for discovering DeepSeek Harness plugins: category filters, bilingual descriptions, install commands and per-plugin detail pages. Its normalized catalog snapshot is public at [bobby-sheng/dshget-data](https://github.com/bobby-sheng/dshget-data).
