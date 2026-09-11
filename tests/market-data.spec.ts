@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from 'vitest'
 import {
-  entryForDep, extractReadmeImageCandidates, extractReadmeImages, formatCount, groupSwitchState, installedForCatalog, isInstalled, isMarketItself, looksTerminal, matchInstalledName, orderedCategories, pageItems, pluginCategories, pluginsForFavorites, previewDimensionScore, rankThemeScreenshots, safeScreenshots, staleFavoriteUrls, themePlugins, visiblePlugins, humanOutput, catalogEntryForInstalled} from '../src/client/market-data.ts'
+  entryForDep, extractReadmeImageCandidates, extractReadmeImages, formatCount, groupSwitchState, installedForCatalog, isInstalled, isMarketItself, looksTerminal, matchInstalledName, orderedCategories, pageItems, pluginCategories, pluginsForFavorites, previewDimensionScore, rankThemeScreenshots, releaseNotesHttpsImage, safeScreenshots, sanitizeReleaseNotesBody, staleFavoriteUrls, themePlugins, visiblePlugins, humanOutput, catalogEntryForInstalled} from '../src/client/market-data.ts'
 import type { RegistryPlugin, ScreenshotCandidate } from '../src/client/market-data.ts'
 
 function plugin(partial: Partial<RegistryPlugin>): RegistryPlugin {
@@ -613,6 +613,34 @@ describe('screenshots (#61)', () => {
     // capped at 6
     const many = Array.from({ length: 9 }, (_, i) => `https://raw.githubusercontent.com/o/r/main/s${i}.png`)
     expect(safeScreenshots(many)).toHaveLength(6)
+  })
+
+  it('sanitizeReleaseNotesBody drops pasted HTML images and other tags without eating prose', () => {
+    const body = [
+      'Open the Context tab from the chat stats line.',
+      '<img width="999" height="148" alt="image" src="https://github.com/user-attachments/assets/d732b30f-2649-4758-bc7a-c57a1cac6e14" />',
+      '',
+      'More <strong>detail</strong> with an <a href="https://example.com">label</a>.',
+      '![ok](https://github.com/user-attachments/assets/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee)',
+    ].join('\n')
+    const cleaned = sanitizeReleaseNotesBody(body)
+    expect(cleaned).not.toContain('<img')
+    expect(cleaned).not.toContain('<strong>')
+    expect(cleaned).toContain('Open the Context tab from the chat stats line.')
+    expect(cleaned).toContain('More detail with an label.')
+    expect(cleaned).toContain('![ok](https://github.com/user-attachments/assets/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee)')
+  })
+
+  it('releaseNotesHttpsImage accepts allowlisted https markdown images only', () => {
+    expect(releaseNotesHttpsImage(
+      '![shot](https://github.com/user-attachments/assets/d732b30f-2649-4758-bc7a-c57a1cac6e14)',
+    )).toEqual({
+      alt: 'shot',
+      src: 'https://github.com/user-attachments/assets/d732b30f-2649-4758-bc7a-c57a1cac6e14',
+    })
+    expect(releaseNotesHttpsImage('![x](https://evil.example/a.png)')).toBeNull()
+    expect(releaseNotesHttpsImage('![x](assets/local.png)')).toBeNull()
+    expect(releaseNotesHttpsImage('not an image')).toBeNull()
   })
 
   it('extractReadmeImages ranks screenshot evidence ahead of title logos and keeps scanning past six images', () => {

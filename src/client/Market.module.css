@@ -796,19 +796,32 @@
    an action competing with 更新/卸载 on the trailing edge. */
 .notesLink{display:block;background:0 0;border:none;padding:0;margin:2px 0 0;font:inherit;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#6b7280);cursor:pointer;text-align:left}
 .notesLink:hover{color:var(--dsw-alias-label-primary,#1f2328)}
-.notesBody{display:flex;flex-direction:column;gap:8px;min-width:0}
+/* Wider only for prose release notes — npm/commit lists stay at the default
+   Modal width so a short changelog does not sit in a half-empty box. */
+.notesModalWide{width:min(640px,92vw);max-width:min(640px,92vw)}
+/* Cap height so a long release body scrolls inside the dialog instead of
+   stretching the Modal past the viewport (same idea as .notesPre / .commentsMount).
+   flex:0 keeps short lists from growing into empty space above the footer. */
+.notesBody{display:flex;flex-direction:column;gap:10px;min-width:0;flex:0 1 auto;max-height:min(60vh,520px);overflow-y:auto;overscroll-behavior:contain;padding:0 2px 8px 0}
 /* 弹窗内的层级：范围行弱化、区块标题小而重、正文有承载面 */
 .notesRange{display:flex;align-items:center;gap:8px;font-size:12px;line-height:18px;margin-bottom:4px}
 .notesArrow{color:var(--dsw-alias-label-tertiary,#8b93a1)}
-.notesMeta{font-size:12px;line-height:18px;letter-spacing:.02em;text-transform:uppercase;color:var(--dsw-alias-label-secondary,#6b7280);display:flex;gap:6px;flex-wrap:wrap;align-items:baseline;margin-top:12px}
+.notesMeta{font-size:12px;line-height:18px;letter-spacing:.02em;text-transform:uppercase;color:var(--dsw-alias-label-secondary,#6b7280);display:flex;gap:6px;flex-wrap:wrap;align-items:baseline;margin-top:4px}
+.notesBody>.notesMeta:first-child{margin-top:0}
 .notesPre{margin:0;white-space:pre-wrap;word-break:break-word;font-size:13px;line-height:20px;padding:10px 12px;background:var(--dsw-alias-bg-layer-2,#eef0f4);border-radius:8px;max-height:40vh;overflow:auto}
-.notesList{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px;font-size:13px;line-height:20px}
-/* markdown轻渲染的层级：标题、段落、行内代码 */
-.notesRendered{display:flex;flex-direction:column;gap:6px;min-width:0}
-.notesH{font-size:13px;font-weight:650;line-height:20px;margin-top:6px}
+/* markdown轻渲染的层级：标题、段落、引用、围栏代码、行内代码与链接 */
+.notesRendered{display:flex;flex-direction:column;gap:8px;min-width:0}
+.notesImg{display:block;max-width:100%;height:auto;border-radius:6px;margin:4px 0}
+.notesH{font-size:13px;font-weight:650;line-height:20px;margin-top:4px}
 .notesP{font-size:13px;line-height:20px}
+.notesQuote{font-size:13px;line-height:20px;margin:0;padding:8px 10px;border-left:3px solid var(--dsw-alias-border-l3,#d9dde3);background:var(--dsw-alias-bg-layer-2,#f7f8fa);border-radius:0 6px 6px 0;color:var(--dsw-alias-label-primary,#1f2328)}
+.notesFence{margin:0;padding:10px 12px;background:var(--dsw-alias-bg-layer-2,#eef0f4);border-radius:8px;overflow-x:auto;font-family:var(--dsw-alias-font-mono,ui-monospace,Menlo,monospace);font-size:12px;line-height:18px;white-space:pre}
+.notesFence code{font:inherit;background:transparent;padding:0}
+.notesBullets{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px;font-size:13px;line-height:20px}
+.notesA{color:var(--dsw-alias-brand-primary,#4f6ef7);text-decoration:none}
+.notesA:hover{text-decoration:underline}
 .notesCode{font-family:var(--dsw-alias-font-mono,ui-monospace,monospace);font-size:12px;padding:1px 5px;border-radius:5px;background:var(--dsw-alias-bg-layer-2,#eef0f4)}
-/* 列表行：日期一列弱化对齐，内容一列自适应换行 */
+/* commit / npm 列表行：日期一列弱化对齐，内容一列自适应换行 */
 .notesList{margin:0;padding:0;list-style:none;display:flex;flex-direction:column}
 .notesRow{display:flex;gap:12px;align-items:baseline;padding:6px 0;border-bottom:1px solid var(--dsw-alias-border-l2,#e5e7eb)}
 .notesRow:last-child{border-bottom:none}

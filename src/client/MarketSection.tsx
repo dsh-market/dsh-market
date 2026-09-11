@@ -43,7 +43,7 @@ import { Diagnostics } from './Diagnostics.tsx'
 import { exportMarketLog } from './self-check.ts'
 import {
   api, applyGithubRouting, avatarColor, catalogEntryForInstalled, entryForDep, githubRouteCandidates, groupSwitchState, humanOutput, installedForCatalog, isInstalled, looksTerminal, matchInstalledName, orderedCategories, pluginCategories,
-  formatCount, pageItems, pluginName, pluginScreenshotCandidates, pluginScreenshots, pluginsForFavorites, rankThemeScreenshots, readSession, rememberGithubRoute, resetScreenshotsCache, resolveCatalogRestore, safeScreenshots, staleFavoriteUrls, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
+  formatCount, pageItems, pluginName, pluginScreenshotCandidates, pluginScreenshots, pluginsForFavorites, rankThemeScreenshots, readSession, releaseNotesHttpsImage, rememberGithubRoute, resetScreenshotsCache, resolveCatalogRestore, safeScreenshots, sanitizeReleaseNotesBody, staleFavoriteUrls, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
 } from './market-data.ts'
 import type {
 ActivationInfo, ActivationState, GistExportResult, InstalledMap, InstalledRepoHints, InstalledRepoIdentities, MarketStatus, Registry, RegistryPlugin,
@@ -354,9 +354,17 @@ function Pager({ currentPage, totalPages, pageSize, onGoToPage, onChangePageSize
  * Card avatar: the plugin owner's GitHub avatar (no API, browser-cached),
  * falling back to the initial-letter tile when it can't load.
  */
-/** Inline pass: `code` spans and **bold**, everything else plain text. */
+/** Inline pass: links, `code`, **bold**; everything else plain text. */
 function mdInline(text: string): Array<string | JSX.Element> {
-  return text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).map((part, i) => {
+  return text.split(/(\[[^\]]+\]\(\s*https:\/\/[^)\s]+\s*\)|\*\*[^*]+\*\*|`[^`]+`)/g).map((part, i) => {
+    const link = /^\[([^\]]+)\]\(\s*(https:\/\/[^)\s]+)\s*\)$/u.exec(part)
+    if (link !== null) {
+      return (
+        <a key={i} className={css.notesA} href={link[2]} target="_blank" rel="noreferrer">
+          {link[1]}
+        </a>
+      )
+    }
     if (part.startsWith('**') && part.endsWith('**') && part.length > 4) {
       return <strong key={i}>{part.slice(2, -2)}</strong>
     }
@@ -369,37 +377,79 @@ function mdInline(text: string): Array<string | JSX.Element> {
 
 /**
  * Release-body markdown, reduced to what a reading dialog needs: headings,
- * bullets, paragraphs, bold, inline code. Every character arrives as a React
- * text child (auto-escaped) — nothing from the repo is ever interpreted as
- * markup, so this stays free of the HTML surface real markdown parsers open.
+ * bullets, quotes, fenced code, paragraphs, bold, inline code, https links,
+ * and allowlisted https images. HTML from the repo is stripped first (never
+ * interpreted as markup); remaining text arrives as React children or
+ * controlled nodes only.
  */
 function renderMarkdown(md: string): Array<JSX.Element | string> {
   const out: Array<JSX.Element | string> = []
   let bullets: string[] | null = null
+  let fence: string[] | null = null
   const flushList = (): void => {
     if (bullets === null) return
     const items = bullets
-    out.push(<ul key={`l${out.length}`} className={css.notesList}>{items.map((item, i) => <li key={i}>{mdInline(item)}</li>)}</ul>)
+    out.push(<ul key={`l${out.length}`} className={css.notesBullets}>{items.map((item, i) => <li key={i}>{mdInline(item)}</li>)}</ul>)
     bullets = null
   }
-  for (const line of md.split('\n')) {
+  const flushFence = (): void => {
+    if (fence === null) return
+    const body = fence.join('\n')
+    out.push(<pre key={`c${out.length}`} className={css.notesFence}><code>{body}</code></pre>)
+    fence = null
+  }
+  for (const line of sanitizeReleaseNotesBody(md).split('\n')) {
     const trimmed = line.trim()
+    if (fence !== null) {
+      if (/^```/.test(trimmed)) {
+        flushFence()
+      } else {
+        fence.push(line.replace(/\s+$/u, ''))
+      }
+      continue
+    }
+    if (/^```/.test(trimmed)) {
+      flushList()
+      fence = []
+      continue
+    }
     if (trimmed === '') { flushList(); continue }
+    const image = releaseNotesHttpsImage(trimmed)
+    if (image !== null) {
+      flushList()
+      out.push(
+        <img
+          key={`i${out.length}`}
+          className={css.notesImg}
+          src={image.src}
+          alt={image.alt}
+          loading="lazy"
+        />,
+      )
+      continue
+    }
     const heading = /^#{1,6}\s+(.*)$/.exec(trimmed)
     if (heading !== null) {
       flushList()
-      out.push(<div key={`h${out.length}`} className={css.notesH}>{mdInline(heading[1])}</div>)
+      out.push(<div key={`h${out.length}`} className={css.notesH}>{mdInline(heading[1]!)}</div>)
+      continue
+    }
+    const quote = /^>\s?(.*)$/u.exec(trimmed)
+    if (quote !== null) {
+      flushList()
+      out.push(<div key={`q${out.length}`} className={css.notesQuote}>{mdInline(quote[1]!)}</div>)
       continue
     }
     const bullet = /^[-*]\s+(.*)$/.exec(trimmed)
     if (bullet !== null) {
-      ;(bullets ??= []).push(bullet[1])
+      ;(bullets ??= []).push(bullet[1]!)
       continue
     }
     flushList()
     out.push(<div key={`p${out.length}`} className={css.notesP}>{mdInline(line)}</div>)
   }
   flushList()
+  flushFence()
   return out
 }
 
@@ -5128,6 +5178,7 @@ export function MarketSection(props: MarketSectionProps) {
         <Modal
           open
           onClose={() => setNotesFor(null)}
+          className={notesState === 'ready' && updateNotes?.kind === 'release' ? css.notesModalWide : undefined}
           /* The host's Modal renders its title node verbatim; the hand-written
              primitives.d.ts narrows the prop to string, so this cast documents
              intent rather than defeating a runtime check. */
@@ -5135,7 +5186,7 @@ export function MarketSection(props: MarketSectionProps) {
             ? <a className={css.nameLink} href={notesFor.repoUrl + '#readme'} target="_blank" rel="noreferrer">{notesFor.name}</a>
             : notesFor.name) as unknown as string}
           footer={(
-            <Button variant="ghost" onClick={() => setNotesFor(null)}>{t('cancel')}</Button>
+            <Button variant="ghost" onClick={() => setNotesFor(null)}>{t('gotIt')}</Button>
           )}
         >
           {/* The version line reads as versions when both ends are semver and
@@ -5162,10 +5213,9 @@ export function MarketSection(props: MarketSectionProps) {
                   {updateNotes.release.tag !== null && <span>{' ' + updateNotes.release.tag}</span>}
                   {updateNotes.release.publishedAt !== null && <span>{' · ' + updateNotes.release.publishedAt.slice(0, 10)}</span>}
                 </div>
-                {/* Author-written markdown, rendered through a deliberately
-                    tiny converter: everything lands as React text children
-                    (auto-escaped), so no HTML from the repo can ever become
-                    markup — headings, bullets, bold and inline code only. */}
+                {/* Author-written markdown through the tiny converter: HTML is
+                    stripped first; headings, quotes, fences, bullets, bold,
+                    inline code, https links and allowlisted images only. */}
                 <div className={css.notesRendered}>{renderMarkdown(updateNotes.release.body || t('notesNone'))}</div>
               </div>
             )
