@@ -223,6 +223,31 @@ describe('readInstalledRepoEvidence (#141)', () => {
       .toEqual({ identities: ['mrmolabs/dsh-mermaid'], hints: [] })
   })
 
+  it('does NOT read the manifest for a spec that already names its source (#544/#548)', () => {
+    // A fork installed as github:myfork/plugin almost always still declares
+    // the UPSTREAM repository, because nobody edits that field when forking.
+    // Trusting it would add the upstream as an identity and mark the
+    // upstream's Discover card as installed — a weaker signal outvoting a
+    // definite one, which is #485's mistake. The first version of the #544
+    // fix widened to every spec kind and had exactly that hole.
+    const dir = writeProfile({ dependencies: { 'dsh-plug': 'github:myfork/dsh-plug' } })
+    const installedDir = join(dir, 'node_modules', 'dsh-plug')
+    mkdirSync(installedDir, { recursive: true })
+    writeFileSync(join(installedDir, 'package.json'), JSON.stringify({
+      name: 'dsh-plug',
+      repository: { type: 'git', url: 'git+https://github.com/upstream/dsh-plug.git' },
+    }))
+
+    expect(readInstalledRepoEvidence('web', 'dsh-plug', 'github:myfork/dsh-plug'))
+      .toEqual({ identities: [], hints: [] })
+    // Same for a Release archive and a raw git+https spec: each states its
+    // own source already.
+    expect(readInstalledRepoEvidence('web', 'dsh-plug', 'https://github.com/myfork/dsh-plug/releases/download/v1/p.tgz'))
+      .toEqual({ identities: [], hints: [] })
+    expect(readInstalledRepoEvidence('web', 'dsh-plug', 'git+https://gitea.example/me/dsh-plug.git'))
+      .toEqual({ identities: [], hints: [] })
+  })
+
   it('reads package.json repository metadata, including monorepo directories', () => {
     const target = mkdtempSync(join(tmpdir(), 'dshm-link-'))
     try {
