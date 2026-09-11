@@ -36,6 +36,7 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import css from './Market.module.css'
 import { CommentsModal } from './CommentsModal.tsx'
+import { SearchInput } from './SearchInput.tsx'
 import { OperationsPanel } from './OperationsPanel.tsx'
 import { clearSettled, drop, enqueue, patch as patchRecord, recordForUrl } from './operations.ts'
 import type { OperationRecord } from './operations.ts'
@@ -4152,7 +4153,7 @@ export function MarketSection(props: MarketSectionProps) {
                     <div ref={setCatsSentinel} />
                     <div className={css.stickyHead}>
                     <div className={css.tabSearchRow}>
-                      <Input className={css.tabSearch} icon={<IconSearchOutline16 size={14} />} placeholder={t('searchPh')} value={q} onChange={e => setQ(e.target.value)} />
+                      <SearchInput className={css.tabSearch} placeholder={t('searchPh')} value={q} onChange={setQ} t={t} />
                     </div>
                     <div className={css.cats}>
                       <div className={css.catsRow}>
@@ -4251,12 +4252,12 @@ export function MarketSection(props: MarketSectionProps) {
                 : (
                     <>
                       <div className={css.themeToolbar}>
-                        <Input
+                        <SearchInput
                           className={css.themeSearch}
-                          icon={<IconSearchOutline16 size={14} />}
                           placeholder={t('searchFavoritesPh')}
                           value={qFavorites}
-                          onChange={e => setQFavorites(e.target.value)}
+                          onChange={setQFavorites}
+                          t={t}
                         />
                         <div className={css.themeToolbarActions}>
                           <FilterMenu
@@ -4342,7 +4343,7 @@ export function MarketSection(props: MarketSectionProps) {
             ? (
                 <>
                   <div className={css.themeToolbar}>
-                    <Input className={css.themeSearch} icon={<IconSearchOutline16 size={14} />} placeholder={t('searchPh')} value={qThemes} onChange={e => setQThemes(e.target.value)} />
+                    <SearchInput className={css.themeSearch} placeholder={t('searchPh')} value={qThemes} onChange={setQThemes} t={t} />
                     <div className={css.themeToolbarActions}>
                       <FilterMenu
                         sortField={themeSortField}
@@ -4412,7 +4413,7 @@ export function MarketSection(props: MarketSectionProps) {
                     <button type="button" className={installedView === 'groups' ? `${css.viewBtn} ${css.viewOn}` : css.viewBtn} onClick={() => setInstalledView('groups')}>{t('tabGroups')}</button>
                   </div>
                   <div className={css.tabSearchRow}>
-                    <Input className={css.tabSearch} icon={<IconSearchOutline16 size={14} />} placeholder={t('searchPh')} value={qInstalled} onChange={e => setQInstalled(e.target.value)} />
+                    <SearchInput className={css.tabSearch} placeholder={t('searchPh')} value={qInstalled} onChange={setQInstalled} t={t} />
                   </div>
                   {installedView === 'groups'
                       ? (
