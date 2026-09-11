@@ -46,7 +46,7 @@ export const HOST_NAMESPACE_RE = /^@deepseek-ai\//
 export interface PnpmFailure {
   code: 'adding-to-root' | 'not-a-workspace' | 'hoist-pattern-diff' | 'pnpm-missing' | 'release-age-violation'
     | 'ignored-builds' | 'git-prepare-not-allowed' | 'git-prepare-failed' | 'tarball-url-mismatch'
-    | 'fetch-404' | 'transient-network' | 'fetch-timeout'
+    | 'fetch-404' | 'no-matching-version' | 'transient-network' | 'fetch-timeout'
     | 'unexpected-store' | 'patch-failed' | 'missing-tarball-integrity' | 'windows-file-locked'
     | 'pnpm-unusable' | 'missing-local-dependency'
   /** Bilingual, actionable message shown to the user instead of the raw wall of text. */
@@ -376,6 +376,29 @@ export function classifyPnpmFailure(output: string, exitCode?: number | null): P
       recoverable: false,
       pkg,
       message: `有一个依赖在 registry 上不存在${zh}，pnpm 因此拒绝任何安装操作。它可能是之前失败操作残留在 profile package.json 里的幽灵依赖（可手动删除该行），也可能是需要登录的私有包 / a dependency cannot be resolved from the registry${en}; pnpm refuses every install while it is present. It may be a ghost entry left in the profile's package.json by an earlier failed operation (remove that line by hand), or a private package needing registry credentials`,
+    }
+  }
+  // #569: a host peer that only ever published pre-releases (e.g.
+  // `@deepseek-ai/dsh-tools` with nothing above `-rc.*`) resolves to NO
+  // stable version, and pnpm reports ERR_PNPM_NO_MATCHING_VERSION — the
+  // package exists, the requested range matches nothing. This is the same
+  // unpublished-host-peer shape #289 recovers from, just with a different
+  // error code, so the classifier names it separately and the #289 retry
+  // shares it via install.ts's gate. Real output (pnpm 12.4.1): see
+  // tests/pnpm-compat.spec.ts, which pins this wording.
+  if (output.includes('ERR_PNPM_NO_MATCHING_VERSION')) {
+    const pkg = /No matching version found for\s+((?:@[^/\s]+\/)?[^@\s]+)@/.exec(output)?.[1]
+      ?? /GET\s+\S*\/([^/\s]+):/.exec(output)?.[1].replace(/%2[Ff]/g, '/')
+    const zh = pkg === undefined ? '' : `（${pkg}）`
+    const en = pkg === undefined ? '' : ` (${pkg})`
+    const hostPeer = pkg !== undefined && HOST_NAMESPACE_RE.test(pkg)
+    return {
+      code: 'no-matching-version',
+      recoverable: false,
+      pkg,
+      message: hostPeer
+        ? `插件声明依赖的宿主包${zh}在 registry 上没有满足其版本范围的发布版（宿主运行时会自带它，npm 上不会出现这个版本）。市场会自动重试一次，放行这条 peer 依赖 / a plugin's declared host peer${en} has no published version satisfying its range — the runtime provides it, so npm carries no such version. The market retries once with that peer exempted from auto-install`
+        : `插件声明的一个依赖版本范围在 registry 上没有可满足的版本${zh}，通常是该版本被弃用或从未发布 / a dependency of this plugin declared a version range with no matching release on the registry${en} — the range resolves to nothing (withdrawn or never published)`,
     }
   }
   // #389 by @qq1054435284: on Windows, pnpm stages the new version in a
