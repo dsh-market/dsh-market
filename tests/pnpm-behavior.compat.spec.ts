@@ -107,18 +107,68 @@ describe('the market argv decision works on every pnpm major × profile shape', 
   })
 })
 
+const GIT_FIXTURE_REPO = 'pnpm/test-git-fetch'
+
+/** Lock shapes for `github:owner/repo#sha` — older pnpm used codeload tarballs
+ *  with `gitHosted: true`; current pnpm writes `git+https` / `git+ssh` /
+ *  `type: git`. */
+function githubShortcutLockShape(lockfile: string, sha: string): {
+  hasCodeload: boolean
+  hasGitUrl: boolean
+} {
+  return {
+    hasCodeload: lockfile.includes(`codeload.github.com/${GIT_FIXTURE_REPO}/tar.gz/${sha}`),
+    hasGitUrl: lockfile.includes(`git+https://github.com/${GIT_FIXTURE_REPO}.git#${sha}`)
+      || lockfile.includes(`git+ssh://git@github.com/${GIT_FIXTURE_REPO}.git#${sha}`)
+      || (lockfile.includes(GIT_FIXTURE_REPO) && lockfile.includes('type: git') && lockfile.includes(sha)),
+  }
+}
+
+/** Prefix-proxied codeload lock entry without `gitHosted` — the durable
+ *  orphan v1.34 left behind. Hand-written so the probe does not depend on
+ *  current pnpm's lock shape. */
+function orphanedProxyLockfile(proxied: string): string {
+  return [
+    "lockfileVersion: '9.0'",
+    '',
+    'settings:',
+    '  autoInstallPeers: false',
+    '  excludeLinksFromLockfile: false',
+    '',
+    'importers:',
+    '',
+    '  .:',
+    '    dependencies:',
+    '      test-git-fetch:',
+    `        specifier: ${proxied}`,
+    `        version: ${proxied}`,
+    '',
+    'packages:',
+    '',
+    `  test-git-fetch@${proxied}:`,
+    `    resolution: {tarball: ${proxied}}`,
+    '    version: 1.0.0',
+    '',
+    'snapshots:',
+    '',
+    `  test-git-fetch@${proxied}: {}`,
+    '',
+  ].join('\n')
+}
+
 describe('#385 — pnpm keeps a commit-pinned github shortcut inside its git-hosted trust boundary', () => {
   it('installs on Desktop and current pnpm, then survives the next dependency mutation', () => {
     for (const version of [DESKTOP_PNPM, PNPM[11]]) {
       const dir = profileFixture({ workspace: true })
-      const target = `github:pnpm/test-git-fetch#${GIT_FIXTURE_SHA}`
+      const target = `github:${GIT_FIXTURE_REPO}#${GIT_FIXTURE_SHA}`
 
       const installed = pnpm(version, ['add', '-w', '--ignore-scripts', target], dir)
       expect(installed.code, `pnpm ${version}\n${installed.out.slice(-600)}`).toBe(0)
 
       const lockfile = readFileSync(join(dir, 'pnpm-lock.yaml'), 'utf8')
-      expect(lockfile).toContain(`codeload.github.com/pnpm/test-git-fetch/tar.gz/${GIT_FIXTURE_SHA}`)
-      expect(lockfile).toContain('gitHosted: true')
+      const { hasCodeload, hasGitUrl } = githubShortcutLockShape(lockfile, GIT_FIXTURE_SHA)
+      expect(hasCodeload || hasGitUrl, `pnpm ${version} lock shape:\n${lockfile.slice(0, 800)}`).toBe(true)
+      if (hasCodeload) expect(lockfile).toContain('gitHosted: true')
 
       // A prefix-proxied codeload URL loses that marker and #385 fails here
       // with ERR_PNPM_MISSING_TARBALL_INTEGRITY. The pinned github shortcut
@@ -134,33 +184,39 @@ describe('#385 — pnpm keeps a commit-pinned github shortcut inside its git-hos
 
   it('repairs the orphaned proxy lock entry left by a failed Desktop install', () => {
     const dir = profileFixture({ workspace: true })
-    const target = `github:pnpm/test-git-fetch#${GIT_FIXTURE_SHA}`
-    const canonical = `https://codeload.github.com/pnpm/test-git-fetch/tar.gz/${GIT_FIXTURE_SHA}`
+    const target = `github:${GIT_FIXTURE_REPO}#${GIT_FIXTURE_SHA}`
+    const canonical = `https://codeload.github.com/${GIT_FIXTURE_REPO}/tar.gz/${GIT_FIXTURE_SHA}`
     const proxied = `https://gh-proxy.com/${canonical}`
-
-    const seed = pnpm(DESKTOP_PNPM, ['add', '-w', '--ignore-scripts', target], dir)
-    expect(seed.code, seed.out.slice(-600)).toBe(0)
-
-    // Recreate the durable state left by v1.34 after the failed install:
-    // package.json was restored, but pnpm's prefix-proxy resolution remained
-    // orphaned in the lockfile without its git-hosted trust marker.
-    const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as Record<string, unknown>
-    manifest.dependencies = {}
-    writeFileSync(join(dir, 'package.json'), JSON.stringify(manifest))
     const lockPath = join(dir, 'pnpm-lock.yaml')
-    const poisoned = readFileSync(lockPath, 'utf8')
-      .replaceAll(canonical, proxied)
-      .replaceAll('gitHosted: true, ', '')
+    const manifestPath = join(dir, 'package.json')
+
+    // Hand-write the bricked profile: manifest + lock both name a
+    // prefix-proxied codeload tarball without gitHosted. Current pnpm writes
+    // git+https/ssh, so poisoning a live seed cannot recreate this mode.
+    const poisoned = orphanedProxyLockfile(proxied)
     expect(poisoned).toContain(proxied)
     expect(poisoned).not.toContain('gitHosted: true')
     writeFileSync(lockPath, poisoned)
+    writeFileSync(manifestPath, JSON.stringify({
+      name: 'dsh-profile-fixture',
+      private: true,
+      dependencies: { 'test-git-fetch': proxied },
+    }))
+
+    const before = pnpm(DESKTOP_PNPM, ['add', '-w', '--ignore-scripts', 'is-odd@3.0.1'], dir)
+    expect(before.out).toContain('ERR_PNPM_MISSING_TARBALL_INTEGRITY')
+
+    // v1.34 restored package.json after the failed install but left the
+    // proxied lock entry behind.
+    writeFileSync(manifestPath, JSON.stringify({ name: 'dsh-profile-fixture', private: true }))
 
     const repaired = pnpm(DESKTOP_PNPM, ['add', '-w', '--ignore-scripts', target], dir)
     expect(repaired.code, repaired.out.slice(-600)).toBe(0)
     const repairedLock = readFileSync(lockPath, 'utf8')
     expect(repairedLock).not.toContain('gh-proxy.com')
-    expect(repairedLock).toContain(canonical)
-    expect(repairedLock).toContain('gitHosted: true')
+    const repairedShape = githubShortcutLockShape(repairedLock, GIT_FIXTURE_SHA)
+    expect(repairedShape.hasCodeload || repairedShape.hasGitUrl).toBe(true)
+    if (repairedShape.hasCodeload) expect(repairedLock).toContain('gitHosted: true')
 
     const mutation = pnpm(DESKTOP_PNPM, ['add', '-w', '--ignore-scripts', 'is-odd@3.0.1'], dir)
     expect(mutation.code, mutation.out.slice(-600)).toBe(0)
