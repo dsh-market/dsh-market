@@ -5,7 +5,7 @@
  * must detect the gap and skip registration instead of throwing mid-render.
  */
 import { describe, expect, it } from 'vitest'
-import { missingPrimitives, REQUIRED_PRIMITIVES } from '../../src/client/index.ts'
+import { apply, missingPrimitives, REQUIRED_PRIMITIVES } from '../../src/client/index.ts'
 
 describe('missingPrimitives', () => {
   it('reports no gaps when every required export exists', () => {
@@ -26,4 +26,25 @@ describe('missingPrimitives', () => {
   it('accepts a custom requirement list', () => {
     expect(missingPrimitives({ A: 1 }, ['A', 'B', 'C'])).toEqual(['B', 'C'])
   })
+})
+
+it('keeps the main market on hosts without settingsScope (#516)', () => {
+  const registrations: Record<string, unknown>[] = []
+  const injections: string[][] = []
+  apply({
+    effect: (run: () => unknown) => { run() },
+    on: () => () => {},
+    locale: {
+      register: () => () => {}, bind: () => (key: string) => key,
+      subscribe: () => () => {}, getSnapshot: () => ({ active: 'en' }),
+    },
+    theme: { getTheme: () => null, setTheme: () => {} },
+    slots: {
+      inject: (_slot: string, register: () => unknown) => { register() },
+      register: (options: Record<string, unknown>) => { registrations.push(options); return () => {} },
+    },
+    inject: (services: string[]) => { injections.push(services) },
+  } as Parameters<typeof apply>[0])
+  expect(injections).toEqual([['settingsScope']])
+  expect(registrations.map(entry => entry.name)).toEqual(['settings.section', 'shell.overlay'])
 })
