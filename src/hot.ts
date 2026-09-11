@@ -17,11 +17,13 @@
  */
 
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { asChannel, type Channel } from './channels.ts'
 import { asRegion, normalizeGithubProxy, type Region } from './regions.ts'
 import { logEvent } from './log.ts'
+import { entryArtifactExists } from './profile.ts'
 
 interface HotRow {
   id: string
@@ -36,6 +38,54 @@ interface PluginHandle {
 interface HotContext {
   plugin(plugin: unknown, config: unknown): PluginHandle
   logger?: { info?(message: string): void; warn(message: string): void }
+}
+
+/**
+ * Profile-scoped resolution for hot-mount rows: turn a bare package name into
+ * the absolute `file://` entry URL of the package just installed into
+ * `profileDir`.
+ *
+ * Include-tree rows reach `Include.import` as BARE names (`name:
+ * '@scope/pkg'`), and the base class resolves them against the LOADER's own
+ * location — the host closure
+ * (`closures/<fp>/node_modules/…/cordis-plugin-loader`), whose parent walk
+ * can never reach `home/profiles/<profile>/node_modules/`. Under a host whose
+ * loader sits in an immutable dependency closure, EVERY market hot mount dies
+ * with `Cannot find module '<pkg>' from '…/cordis-plugin-loader/…'` and falls
+ * back to "restart required", blaming the plugin for what is a resolution
+ * anchor problem.
+ *
+ * Resolving the row name HERE, against the profile the package was actually
+ * installed into, is anchor-independent: `require.resolve` walks
+ * `profileDir/node_modules` natively, so the tree hands the loader a
+ * `file://` URL needing no further resolution. Non-bare specifiers (relative
+ * paths, `file://`, `cordis:` builtins) and names that do not resolve under
+ * the profile pass through unchanged, preserving base-class semantics for
+ * every shape this fix does not own.
+ *
+ * The fallback keeps the name bare rather than synthesising a URL: a package
+ * whose entry cannot be located via `require.resolve` (no `main`/exports —
+ * the market's own `entryArtifactExists` heuristic covers those shapes before
+ * an install is accepted) is not something this resolver should guess about.
+ * Client-only shims never reach this function (their rows are replaced by a
+ * no-op host module before the file is written).
+ */
+export function resolveProfileEntry(profileDir: string, name: string): string {
+  if (!name || name.startsWith('.') || name.startsWith('cordis:') || name.startsWith('file://')) return name
+  const packageDir = join(profileDir, 'node_modules', ...name.split('/'))
+  try {
+    return pathToFileURL(createRequire(join(profileDir, 'package.json')).resolve(name)).href
+  } catch {
+    // require.resolve needs a resolvable package entry; the market's install
+    // validation accepts a broader artifact set (exports objects, index.js).
+    // Fall back to the index.js artifact so a valid mount is not refused over
+    // resolver strictness — and keep the bare name when no checkable entry
+    // exists, letting the loader produce its own (accurate) error.
+    if (entryArtifactExists(packageDir)) {
+      return pathToFileURL(join(packageDir, 'index.js')).href
+    }
+    return name
+  }
 }
 
 const HOT_DIR = '.dsh-market'
@@ -505,21 +555,33 @@ export async function hotMount(ctx: HotContext, profileDir: string, packageName:
     mkdirSync(dir, { recursive: true, mode: 0o700 })
     hotSequence += 1
     const file = join(dir, `hot-${String(hotSequence)}.yml`)
+    // Rows carry ABSOLUTE file:// entry URLs, resolved against this profile:
+    // the loader's own parent-walk (from the host closure) can never reach
+    // `profileDir/node_modules`, so bare names in the file would fail to
+    // import on closure-hosted loaders. The file remains a faithful record —
+    // `cleanHotDir` wipes it on every boot and the bundle layer owns
+    // persistence, so nothing reads these files back.
     const yml = rows
-      .map(row => `- id: 'mkt-${row.id}'\n  name: '${row.name}'\n`)
+      .map(row => `- id: 'mkt-${row.id}'\n  name: '${resolveProfileEntry(profileDir, row.name)}'\n`)
       .join('')
     writeFileSync(file, yml)
     const handle = ctx.plugin(HotTree, { path: pathToFileURL(file).href })
     try {
       await raceActivationTimeout(handle.await())
     } catch (error) {
+      // A failed or wedged mount must leave NOTHING behind: the disposed
+      // subtree stops retrying the import, and the input file is removed so
+      // it cannot be re-imported by a later boot or replay (a leftover file
+      // re-throwing the same resolve error on every composition replay
+      // produced unbounded error-log growth on a closure-hosted loader).
+      try { Promise.resolve(handle.dispose()).catch(() => {}) } catch { /* best effort */ }
+      try { rmSync(file, { force: true }) } catch { /* best effort */ }
       if (error instanceof ActivationTimeout) {
         // A wedged activation would otherwise hold this request open forever:
         // the route's `finally { installing = false }` never runs, so every
         // later install/update/uninstall gets 409'd until a host restart.
         // Unwind the half-mounted subtree best-effort; disposal never blocks
         // the reply, and the caller falls back to restart activation.
-        try { Promise.resolve(handle.dispose()).catch(() => {}) } catch { /* best effort */ }
       }
       throw error
     }
