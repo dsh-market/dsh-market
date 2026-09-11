@@ -232,6 +232,27 @@ describe('api() base resolution (#345)', () => {
 })
 
 describe('MarketSection (jsdom)', () => {
+  it('offers the top update-all button when exactly one plugin is updatable (#555)', async () => {
+    stubFetch({
+      '/dsh-market/installed': {
+        profile: 'web',
+        installed: { 'dsh-loop': '^1.0.0' },
+        live: ['dsh-loop'],
+        disabled: [],
+        notes: {},
+      },
+      '/dsh-market/updates': {
+        updates: {
+          'dsh-loop': {
+            kind: 'npm', version: '1.0.0', current: '1.0.0', latest: '1.2.0', updateAvailable: true,
+          },
+        },
+      },
+    })
+    render(<MarketSection {...props()} />)
+    expect(await screen.findByRole('button', { name: /Update all \(1\)/ })).toBeTruthy()
+  })
+
   it('renders the catalog with install buttons once the registry loads', async () => {
     render(<MarketSection {...props()} />)
     expect(await screen.findByText('dsh-loop')).toBeTruthy()
