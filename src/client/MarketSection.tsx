@@ -1375,6 +1375,11 @@ export function MarketSection(props: MarketSectionProps) {
   const [buildsSkipped, setBuildsSkipped] = useState<{ plugin?: RegistryPlugin; updateName?: string; names: string[]; restore?: boolean } | null>(null)
   const [updatingAll, setUpdatingAll] = useState(false)
   const [updatedNames, setUpdatedNames] = useState<string[]>([])
+  // #558: session-tracked updates the host actually parked behind a restart.
+  // Kept separate from `updatedNames`, which doubles as the row-level
+  // "updated" marker and therefore also records client-only updates that go
+  // live without a restart.
+  const [restartNames, setRestartNames] = useState<string[]>([])
   const [hotUrls, setHotUrls] = useState<string[]>([])
   const [hotNames, setHotNames] = useState<string[]>([])
   const [progressLine, setProgressLine] = useState<string | null>(null)
@@ -1740,13 +1745,14 @@ export function MarketSection(props: MarketSectionProps) {
     }
     if (Array.isArray(saved.doneUrls) && saved.doneUrls.length > 0) setDoneUrls(saved.doneUrls)
     if (Array.isArray(saved.updated) && saved.updated.length > 0) setUpdatedNames(saved.updated)
+    if (Array.isArray(saved.restartNames) && saved.restartNames.length > 0) setRestartNames(saved.restartNames)
     if (typeof saved.removed === 'number' && saved.removed > 0) setRemovedCount(saved.removed)
     if (typeof saved.toggled === 'number' && saved.toggled > 0) setToggleRestart(saved.toggled)
   }, [bootId])
 
   useEffect(() => {
     if (bootId === null) return
-    if (doneUrls.length === 0 && updatedNames.length === 0 && removedCount === 0 && toggleRestart === 0) {
+    if (doneUrls.length === 0 && updatedNames.length === 0 && restartNames.length === 0 && removedCount === 0 && toggleRestart === 0) {
       // Nothing pending: drop any stale entry (e.g. a hot mount cleared the
       // only doneUrl) so a same-boot remount cannot resurrect the banner (#73).
       sessionStorage.removeItem('dshm-restart')
@@ -1756,10 +1762,11 @@ export function MarketSection(props: MarketSectionProps) {
       boot: bootId,
       doneUrls,
       updated: updatedNames,
+      restartNames,
       removed: removedCount,
       toggled: toggleRestart,
     }))
-  }, [bootId, doneUrls, updatedNames, removedCount, toggleRestart])
+  }, [bootId, doneUrls, updatedNames, restartNames, removedCount, toggleRestart])
 
   const fixEnv = useCallback(() => {
     setEnvFixing(true)
@@ -2404,6 +2411,14 @@ export function MarketSection(props: MarketSectionProps) {
         if (status === 200 && body.ok) {
           setRecords(list => patchRecord(list, updateRecordId, { state: 'done' }))
           setUpdatedNames(names => names.concat(name))
+          // #558: the restart banner counts plugins the host parked behind a
+          // restart, not every completed change. A client-only plugin comes
+          // back 'inert'/'live' and goes live on refresh; when the host
+          // reports no activation at all, count it to stay on the safe side.
+          const activation = body.activation && typeof body.activation === 'object' ? body.activation[name] : undefined
+          if (!activation || activation.state === 'restart') {
+            setRestartNames(names => names.includes(name) ? names : names.concat(name))
+          }
           if (body.activation && typeof body.activation === 'object') {
             setActivations(prev => ({ ...prev, ...body.activation }))
           }
@@ -3225,7 +3240,10 @@ export function MarketSection(props: MarketSectionProps) {
     if (Date.now() - last >= 24 * 60 * 60 * 1000) runWebdav('backup')
   }, [autoBackup, runWebdav, webdavUrl, webdavUser])
 
-  const sessionPendingRestart = doneUrls.length + updatedNames.length + removedCount + toggleRestart + (backupRestored ? 1 : 0)
+  // #558: count restart-pending session changes (restartNames), not every
+  // completed change, so the banner agrees with the host-side count for the
+  // same set instead of jumping between the two when the session is lost.
+  const sessionPendingRestart = doneUrls.length + restartNames.length + removedCount + toggleRestart + (backupRestored ? 1 : 0)
   /**
    * Plugins the HOST reports as restart-pending, independent of what this
    * browser session happens to remember. Installing and then reloading the
