@@ -2715,6 +2715,64 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				]
 			});
 		}
+		/** Keep keystrokes out of the market's large render tree, not just its filter.
+		* Only settled queries reach the parent. Explicit navigation remains immediate.
+		*/
+		function SearchInput({ value, onCommit, className, placeholder, resetToken }) {
+			const [draft, setDraft] = (0, react.useState)(value);
+			const timer = (0, react.useRef)(null);
+			const composing = (0, react.useRef)(false);
+			const cancel = (0, react.useCallback)(() => {
+				if (timer.current !== null) clearTimeout(timer.current);
+				timer.current = null;
+			}, []);
+			const commit = (next) => {
+				cancel();
+				onCommit(next);
+			};
+			const schedule = (next) => {
+				cancel();
+				if (composing.current) return;
+				if (next === "") commit(next);
+				else timer.current = setTimeout(() => commit(next), 250);
+			};
+			(0, react.useLayoutEffect)(() => {
+				cancel();
+				setDraft(value);
+			}, [
+				value,
+				resetToken,
+				cancel
+			]);
+			(0, react.useEffect)(() => cancel, [cancel]);
+			return /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
+				className,
+				icon: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconSearchOutline16, { size: 14 }),
+				placeholder,
+				value: draft,
+				onChange: (event) => {
+					const next = event.target.value;
+					setDraft(next);
+					schedule(next);
+				},
+				onCompositionStart: () => {
+					composing.current = true;
+					cancel();
+				},
+				onCompositionEnd: (event) => {
+					composing.current = false;
+					const next = event.currentTarget.value;
+					setDraft(next);
+					schedule(next);
+				},
+				onKeyDown: (event) => {
+					if (event.key === "Enter" && !composing.current && !event.nativeEvent.isComposing && event.keyCode !== 229) commit(event.currentTarget.value);
+				},
+				onBlur: (event) => {
+					if (!composing.current) commit(event.currentTarget.value);
+				}
+			});
+		}
 		//#endregion
 		//#region src/client/operations.ts
 		const BUCKETS = {
@@ -6149,6 +6207,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				return saved || "discover";
 			});
 			const [q, setQ] = (0, react.useState)("");
+			const [discoverSearchReset, resetDiscoverSearch] = (0, react.useState)(0);
+			const [installedSearchReset, resetInstalledSearch] = (0, react.useState)(0);
 			/** Per-tab searches stay independent: discover / themes / installed. */
 			const [qThemes, setQThemes] = (0, react.useState)("");
 			const [qFavorites, setQFavorites] = (0, react.useState)("");
@@ -6163,10 +6223,12 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				if (kind === "installed") {
 					setTab("installed");
 					setQInstalled(value);
+					resetInstalledSearch((n) => n + 1);
 				} else if (kind === "discover") {
 					setTab("discover");
 					setCat("all");
 					setQ(value);
+					resetDiscoverSearch((n) => n + 1);
 				}
 			}, [props.preferredSubsectionId]);
 			const [confirming, setConfirming] = (0, react.useState)(null);
@@ -9241,13 +9303,13 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 								className: Market_module_css_default.stickyHead,
 								children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 									className: Market_module_css_default.tabSearchRow,
-									children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
+									children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(SearchInput, {
+										resetToken: discoverSearchReset,
 										className: Market_module_css_default.tabSearch,
-										icon: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconSearchOutline16, { size: 14 }),
 										placeholder: t("searchPh"),
 										value: q,
-										onChange: (e) => setQ(e.target.value)
-									})
+										onCommit: setQ
+									}, "discover")
 								}), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 									className: Market_module_css_default.cats,
 									children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
@@ -9331,13 +9393,12 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 							children: t("favoritesEmpty")
 						}) : /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 							className: Market_module_css_default.themeToolbar,
-							children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
+							children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(SearchInput, {
 								className: Market_module_css_default.themeSearch,
-								icon: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconSearchOutline16, { size: 14 }),
 								placeholder: t("searchFavoritesPh"),
 								value: qFavorites,
-								onChange: (e) => setQFavorites(e.target.value)
-							}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+								onCommit: setQFavorites
+							}, "favorites"), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 								className: Market_module_css_default.themeToolbarActions,
 								children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(FilterMenu, {
 									sortField: favSortField,
@@ -9418,13 +9479,12 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						] })] }) : tab === "themes" && themeSnap !== null ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
 							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 								className: Market_module_css_default.themeToolbar,
-								children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
+								children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(SearchInput, {
 									className: Market_module_css_default.themeSearch,
-									icon: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconSearchOutline16, { size: 14 }),
 									placeholder: t("searchPh"),
 									value: qThemes,
-									onChange: (e) => setQThemes(e.target.value)
-								}), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+									onCommit: setQThemes
+								}, "themes"), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 									className: Market_module_css_default.themeToolbarActions,
 									children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(FilterMenu, {
 										sortField: themeSortField,
@@ -9506,13 +9566,13 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 							}),
 							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 								className: Market_module_css_default.tabSearchRow,
-								children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
+								children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(SearchInput, {
+									resetToken: installedSearchReset,
 									className: Market_module_css_default.tabSearch,
-									icon: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconSearchOutline16, { size: 14 }),
 									placeholder: t("searchPh"),
 									value: qInstalled,
-									onChange: (e) => setQInstalled(e.target.value)
-								})
+									onCommit: setQInstalled
+								}, "installed")
 							}),
 							installedView === "groups" ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
 								/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {

@@ -36,6 +36,7 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import css from './Market.module.css'
 import { CommentsModal } from './CommentsModal.tsx'
+import { SearchInput } from './SearchInput.tsx'
 import { OperationsPanel } from './OperationsPanel.tsx'
 import { clearSettled, drop, enqueue, patch as patchRecord, recordForUrl } from './operations.ts'
 import type { OperationRecord } from './operations.ts'
@@ -1216,6 +1217,8 @@ export function MarketSection(props: MarketSectionProps) {
     return saved || 'discover'
   })
   const [q, setQ] = useState('')
+  const [discoverSearchReset, resetDiscoverSearch] = useState(0)
+  const [installedSearchReset, resetInstalledSearch] = useState(0)
   /** Per-tab searches stay independent: discover / themes / installed. */
   const [qThemes, setQThemes] = useState('')
   const [qFavorites, setQFavorites] = useState('')
@@ -1231,10 +1234,12 @@ export function MarketSection(props: MarketSectionProps) {
     if (kind === 'installed') {
       setTab('installed')
       setQInstalled(value)
+      resetInstalledSearch(n => n + 1)
     } else if (kind === 'discover') {
       setTab('discover')
       setCat('all')
       setQ(value)
+      resetDiscoverSearch(n => n + 1)
     }
   }, [props.preferredSubsectionId])
   const [confirming, setConfirming] = useState<RegistryPlugin | null>(null)
@@ -4152,7 +4157,7 @@ export function MarketSection(props: MarketSectionProps) {
                     <div ref={setCatsSentinel} />
                     <div className={css.stickyHead}>
                     <div className={css.tabSearchRow}>
-                      <Input className={css.tabSearch} icon={<IconSearchOutline16 size={14} />} placeholder={t('searchPh')} value={q} onChange={e => setQ(e.target.value)} />
+                      <SearchInput key="discover" resetToken={discoverSearchReset} className={css.tabSearch} placeholder={t('searchPh')} value={q} onCommit={setQ} />
                     </div>
                     <div className={css.cats}>
                       <div className={css.catsRow}>
@@ -4251,12 +4256,12 @@ export function MarketSection(props: MarketSectionProps) {
                 : (
                     <>
                       <div className={css.themeToolbar}>
-                        <Input
+                        <SearchInput
+                          key="favorites"
                           className={css.themeSearch}
-                          icon={<IconSearchOutline16 size={14} />}
                           placeholder={t('searchFavoritesPh')}
                           value={qFavorites}
-                          onChange={e => setQFavorites(e.target.value)}
+                          onCommit={setQFavorites}
                         />
                         <div className={css.themeToolbarActions}>
                           <FilterMenu
@@ -4342,7 +4347,7 @@ export function MarketSection(props: MarketSectionProps) {
             ? (
                 <>
                   <div className={css.themeToolbar}>
-                    <Input className={css.themeSearch} icon={<IconSearchOutline16 size={14} />} placeholder={t('searchPh')} value={qThemes} onChange={e => setQThemes(e.target.value)} />
+                    <SearchInput key="themes" className={css.themeSearch} placeholder={t('searchPh')} value={qThemes} onCommit={setQThemes} />
                     <div className={css.themeToolbarActions}>
                       <FilterMenu
                         sortField={themeSortField}
@@ -4412,7 +4417,7 @@ export function MarketSection(props: MarketSectionProps) {
                     <button type="button" className={installedView === 'groups' ? `${css.viewBtn} ${css.viewOn}` : css.viewBtn} onClick={() => setInstalledView('groups')}>{t('tabGroups')}</button>
                   </div>
                   <div className={css.tabSearchRow}>
-                    <Input className={css.tabSearch} icon={<IconSearchOutline16 size={14} />} placeholder={t('searchPh')} value={qInstalled} onChange={e => setQInstalled(e.target.value)} />
+                    <SearchInput key="installed" resetToken={installedSearchReset} className={css.tabSearch} placeholder={t('searchPh')} value={qInstalled} onCommit={setQInstalled} />
                   </div>
                   {installedView === 'groups'
                       ? (
