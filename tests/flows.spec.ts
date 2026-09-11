@@ -651,6 +651,64 @@ function npmLockFixture(name: string, spec: string, version: string): string {
   ].join('\n')
 }
 
+describe('flat Desktop host consumers (#553)', () => {
+  const resourcesDescriptor = Object.getOwnPropertyDescriptor(process, 'resourcesPath')
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    if (resourcesDescriptor === undefined) delete (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath
+    else Object.defineProperty(process, 'resourcesPath', resourcesDescriptor)
+  })
+
+  it.each([false, true])('propagates host evidence through registry, discovery and update (conflict=%s)', async conflict => {
+    for (const key of ['http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY', 'npm_config_proxy', 'npm_config_https_proxy']) {
+      vi.stubEnv(key, '')
+    }
+    // Report-derived filesystem fixture, not a real Electron installation.
+    const resources = join(home, 'resources')
+    const app = join(resources, 'app')
+    mkdirSync(app, { recursive: true })
+    writeFileSync(join(app, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh-desktop', version: '0.1.0-rc.12' }))
+    for (const name of ['dsh-base', 'dsh-web-app', 'dsh-web', 'dsh-settings']) {
+      const dir = join(app, 'node_modules', '@deepseek-ai', name)
+      mkdirSync(dir, { recursive: true })
+      writeFileSync(join(dir, 'package.json'), JSON.stringify({
+        name: `@deepseek-ai/${name}`, version: conflict && name === 'dsh-web' ? '0.1.1-rc.2' : '0.1.0-rc.12',
+      }))
+    }
+    Object.defineProperty(process, 'resourcesPath', { value: resources, configurable: true })
+    const expectedVersion = conflict ? 'unknown' : '0.1.0-rc.12'
+    fake.npm['dsh-loop'] = { latest: '1.0.0', versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } } }
+    expect((await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })).status).toBe(200)
+    fake.npm['dsh-loop'].latest = '2.0.0'
+    fake.npm['dsh-loop'].versions['2.0.0'] = { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] }
+    vi.stubGlobal('fetch', async () => new Response(JSON.stringify({
+      name: 'dsh-loop', version: '2.0.0', engines: { dsh: '>=0.1.1-rc.2' },
+      'dist-tags': { latest: '2.0.0' },
+    }), { status: 200 }))
+
+    const registry = await bed.dispatch('GET', '/dsh-market/registry')
+    expect(registry.json.hostVersion).toBe(expectedVersion)
+    const logs = await bed.dispatch('GET', '/dsh-market/logs')
+    expect(logs.status).toBe(200)
+    expect(logs.text).toContain(`dsh host: ${expectedVersion} (`)
+    expect(logs.text).not.toContain('dsh host: not locatable')
+    const discovery = await bed.dispatch('POST', '/dsh-market/discovery-compatibility', { packages: ['dsh-loop'] })
+    expect(discovery.json.hostVersion).toBe(expectedVersion)
+    expect(discovery.json.plugins['dsh-loop'].status).toBe(conflict ? 'unknown' : 'incompatible')
+    const callsBeforeUpdate = fake.calls.length
+    const updated = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+    if (conflict) {
+      expect(updated.status).toBe(200)
+      expect(updated.json.hostIncompatible).toBeUndefined()
+    } else {
+      expect(updated.status).toBe(400)
+      expect(updated.json.hostIncompatible).toMatchObject({ hostVersion: expectedVersion, requirement: '>=0.1.1-rc.2' })
+      expect(fake.calls.slice(callsBeforeUpdate).filter(args => args.includes('add'))).toEqual([])
+      expect(installedSpec('dsh-loop')).toBe('^1.0.0')
+    }
+  })
+})
+
 describe('host-provided profile and package-operation seams', () => {
   it('mounts ordinary routes for a dotted, Unicode, spaced DSH profile name (#260)', async () => {
     bed.dispose()

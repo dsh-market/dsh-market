@@ -20,6 +20,7 @@ import {
 } from '../src/check.ts'
 import { dshHostInfo } from '../src/dsh-install.ts'
 import { readBundleRules } from '../src/order.ts'
+import { trialValidate } from '../src/trial.ts'
 
 let tmp: string
 const originalResourcesPath = Object.getOwnPropertyDescriptor(process, 'resourcesPath')
@@ -1077,6 +1078,150 @@ describe('Desktop host discovery (#405)', () => {
     expect(report.summary.warnings).not.toContain(
       'dsh-vision-router: attachment-local — patch target not found',
     )
+  })
+})
+
+describe('flat Desktop host discovery (#553)', () => {
+  // Report-derived layout, not an extracted rc.12 installer. In particular,
+  // app.asar below is an ordinary directory, NOT Electron's virtual fs.
+  const packages = ['dsh-base', 'dsh-web-app', 'dsh-web', 'dsh-settings']
+  const version = '0.1.0-rc.12'
+  function desktop(applicationRoot = 'app'): string {
+    const resources = join(tmp, 'flat-resources')
+    const app = join(resources, applicationRoot)
+    writeProfile(app, { name: '@deepseek-ai/dsh-desktop', version })
+    for (const name of packages) {
+      writePackage(app, `@deepseek-ai/${name}`, { name: `@deepseek-ai/${name}`, version })
+    }
+    Object.defineProperty(process, 'resourcesPath', { value: resources, configurable: true })
+    return app
+  }
+
+  it('finds the flat dependency anchor from the process entry without resourcesPath', () => {
+    const app = desktop()
+    delete (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath
+    expect(findDshInstallDir(join(app, 'lib', 'main.js'))).toBe(app)
+    expect(dshHostInfo(join(app, 'lib', 'main.js'))).toEqual({ directory: app, version })
+  })
+
+  it.each(['app', 'app.asar', 'app.asar.unpacked'])(
+    'falls back to resources/%s with an unhelpful entry (filesystem fixture)', root => {
+      const app = desktop(root)
+      expect(dshHostInfo(join(tmp, 'unrelated', 'main.js'))).toEqual({ directory: app, version })
+    },
+  )
+
+  it('preserves legacy nested-host priority over a flat shell reached by argv', () => {
+    const app = desktop()
+    const cli = writePackage(app, '@deepseek-ai/dsh', { name: '@deepseek-ai/dsh', version: '0.1.1-rc.2' })
+    expect(dshHostInfo(join(app, 'lib', 'main.js'))).toEqual({ directory: cli, version: '0.1.1-rc.2' })
+  })
+
+  it.each([undefined, '', ' ', 'not-a-version', '0.1', 12, null, '9.9.9'])(
+    'retains the dependency anchor but not an uncorroborated shell version %j', shellVersion => {
+      const app = desktop()
+      writeProfile(app, { name: '@deepseek-ai/dsh-desktop', version: shellVersion })
+      expect(dshHostInfo(join(app, 'lib', 'main.js'))).toEqual({ directory: app, version: 'unknown' })
+    },
+  )
+
+  it.each(packages)('does not choose a version when %s disagrees', name => {
+    const app = desktop()
+    writePackage(app, `@deepseek-ai/${name}`, { name: `@deepseek-ai/${name}`, version: '0.1.1-rc.2' })
+    expect(dshHostInfo(join(app, 'lib', 'main.js'))).toEqual({ directory: app, version: 'unknown' })
+  })
+
+  it.each(['garbage', '01.2.3', '1.2.3-01', '1.2.3-rc..1'])(
+    'does not report an invalid version even if every manifest agrees: %s', invalidVersion => {
+      const app = desktop()
+      writeProfile(app, { name: '@deepseek-ai/dsh-desktop', version: invalidVersion })
+      for (const name of packages) {
+        writePackage(app, `@deepseek-ai/${name}`, { name: `@deepseek-ai/${name}`, version: invalidVersion })
+      }
+      expect(dshHostInfo(join(app, 'lib', 'main.js'))).toEqual({ directory: app, version: 'unknown' })
+    },
+  )
+
+  it.each([false, true])('accepts bundled package links but not profile links (external=%s)', external => {
+    const app = desktop()
+    const name = '@deepseek-ai/dsh-web'
+    const target = writePackage(external ? pdir() : join(app, 'node_modules', '.pnpm', 'runtime'), name, { name, version })
+    const link = join(app, 'node_modules', name)
+    rmSync(link, { recursive: true })
+    symlinkSync(target, link, process.platform === 'win32' ? 'junction' : 'dir')
+    expect(dshHostInfo(join(app, 'lib', 'main.js'))).toEqual({ directory: app, version: external ? 'unknown' : version })
+  })
+
+  it('uses resources when argv has no entry', () => {
+    const app = desktop()
+    const argv = process.argv
+    try {
+      process.argv = [argv[0]!]
+      expect(dshHostInfo()).toEqual({ directory: app, version })
+    } finally {
+      process.argv = argv
+    }
+  })
+
+  it.each(['missing', 'unreadable', 'json', 'identity', 'version'])(
+    'keeps a confirmed bundle anchor when another witness is %s', defect => {
+      const app = desktop()
+      const manifest = join(app, 'node_modules', '@deepseek-ai', 'dsh-web-app', 'package.json')
+      if (defect === 'missing' || defect === 'unreadable') {
+        rmSync(manifest)
+        // A directory at the file path produces a read failure on both OSes.
+        if (defect === 'unreadable') mkdirSync(manifest)
+      } else {
+        writeFileSync(manifest, defect === 'json' ? '{' : JSON.stringify(
+          defect === 'identity' ? { name: 'impostor', version } : { name: '@deepseek-ai/dsh-web-app' },
+        ))
+      }
+      expect(dshHostInfo(join(app, 'lib', 'main.js'))).toEqual({ directory: app, version: 'unknown' })
+    },
+  )
+
+  it.each(['null', '{', '{"name":"other-desktop","version":"0.1.0-rc.12"}'])(
+    'rejects a malformed or wrong shell manifest: %s', content => {
+      const app = desktop()
+      writeFileSync(join(app, 'package.json'), content)
+      expect(dshHostInfo(join(app, 'lib', 'main.js'))).toBeNull()
+    },
+  )
+
+  it('does not treat a shell-only directory or profile packages as a bundled runtime', () => {
+    const app = desktop()
+    rmSync(join(app, 'node_modules'), { recursive: true })
+    for (const name of packages) {
+      writePackage(pdir(), `@deepseek-ai/${name}`, { name: `@deepseek-ai/${name}`, version })
+      // Node's ancestor search must not supply version evidence either.
+      writePackage(tmp, `@deepseek-ai/${name}`, { name: `@deepseek-ai/${name}`, version })
+    }
+    expect(dshHostInfo(join(app, 'lib', 'main.js'))).toBeNull()
+  })
+
+  it('resolves built-in bundle composition, inventory, ordering and trial from the flat anchor', () => {
+    const app = desktop()
+    const base = writeBundle(app, '@deepseek-ai/dsh-base', version, [
+      { insert: [{ id: 'attachment-local', name: '@deepseek-ai/dsh-attachment-local' }] },
+    ], { before: ['community'] })
+    const dir = pdir()
+    writeProfile(dir, {
+      dependencies: { community: '1.0.0' },
+      dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', 'community'] } },
+    })
+    writeBundle(dir, 'community', '1.0.0', [{ id: 'attachment-local', config: { local: true } }])
+    writeBundle(dir, '@deepseek-ai/dsh-base', '9.9.9', [])
+
+    const report = analyzeProfile(dir, { homeDir: join(tmp, 'empty-home') })
+    expect(report.bundles[0]).toMatchObject({ directory: base, entries: ['attachment-local'] })
+    expect(report.orphans).toEqual([])
+    expect(report.overrides).toContainEqual({
+      id: 'attachment-local', layer: 'community', overriddenLayers: ['@deepseek-ai/dsh-base'],
+    })
+    expect(corePackageNames(findDshInstallDir())).toContain('@deepseek-ai/dsh-web')
+    expect(readBundleRules(dir)).toContainEqual({ name: '@deepseek-ai/dsh-base', before: ['community'], after: [] })
+    expect(trialValidate(dir, ['community'], { homeDir: join(tmp, 'empty-home') })).toMatchObject({ ok: true })
+    expect(dshHostInfo()).toEqual({ directory: app, version })
   })
 })
 
