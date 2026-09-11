@@ -9,10 +9,17 @@ import { resolveHeadCommit } from './accelerate.ts'
 import { marketFetch } from './net.ts'
 import { activeRegion } from './regions.ts'
 import { profileDir, readGitResolutionCommit, readInstalled, readInstalledVersion, readLockCommits } from './profile.ts'
-import { gitCommitOfTarget, gitUploadPackUrl, githubCommitOfTarget, githubRefOfTarget, isGitHostedSpec, repoOfTarget } from './sources.ts'
+import { gitCommitOfTarget, gitUploadPackUrl, githubCommitOfTarget, githubRefOfTarget, isGenerationLink, isGitHostedSpec, repoOfTarget } from './sources.ts'
 
 export interface UpdateStatus {
-  kind: 'github' | 'npm' | 'linked'
+  /**
+   * `generation` is a `link:` the desktop host wrote (#497): the host
+   * installs it and reconciles it at startup, so the market names a newer
+   * release under `latest` and never offers to apply it. For that kind
+   * `latest` is null when the installed build is current or nothing newer
+   * can be confirmed.
+   */
+  kind: 'github' | 'npm' | 'linked' | 'generation'
   version: string | null
   current: string | null
   latest: string | null
@@ -293,9 +300,10 @@ export async function checkUpdates(
    */
   channelFor: ReadonlyMap<string, Channel> = new Map(),
   /**
-   * Curated npm sources for `file:` installs that were matched to the market
-   * catalog. `link:` workspaces remain development sources and are never
-   * opted into online updates.
+   * Curated npm sources for the installs that carry no registry spec of
+   * their own: `file:` packages matched to the market catalog (#429) and
+   * the generations the desktop host links in (#497). Any other `link:` is
+   * a development workspace and is never opted into online updates.
    */
   onlineSourceFor: ReadonlyMap<string, string> = new Map(),
 ): Promise<Record<string, UpdateStatus>> {
@@ -329,6 +337,28 @@ export async function checkUpdates(
       return
     }
     if (normalizedSpec.startsWith('link:')) {
+      if (isGenerationLink(spec)) {
+        // The desktop host's production install, not a checkout (#497): it
+        // came from the registry and has a release history to compare
+        // against. Reported, never offered — the host reconciles `live/`
+        // against its own desired.json at startup, so an update applied
+        // here would appear to work and silently revert on the next boot.
+        // Only a release that is actually newer is named; current and
+        // unknown both read as null, so a lagging `latest` tag (#64) can't
+        // advertise a downgrade either.
+        const onlineSource = onlineSourceFor.get(name)
+        const stable = onlineSource === undefined ? null : await fetchNpmLatest(onlineSource)
+        const channel = channelFor.get(name)
+        const newest = channel === undefined || onlineSource === undefined
+          ? stable
+          : await versionOnChannel(onlineSource, channel, stable)
+        result[name] = {
+          kind: 'generation', version, current: version,
+          latest: isUpgrade(version, newest) ? newest : null,
+          updateAvailable: false,
+        }
+        return
+      }
       result[name] = { kind: 'linked', version, current: null, latest: null, updateAvailable: false }
       return
     }

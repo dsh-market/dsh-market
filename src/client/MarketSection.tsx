@@ -42,7 +42,7 @@ import type { OperationRecord } from './operations.ts'
 import { Diagnostics } from './Diagnostics.tsx'
 import { exportMarketLog } from './self-check.ts'
 import {
-  api, applyGithubRouting, avatarColor, catalogEntryForInstalled, entryForDep, githubRouteCandidates, groupSwitchState, humanOutput, installedForCatalog, isInstalled, looksTerminal, matchInstalledName, orderedCategories, pluginCategories,
+  api, applyGithubRouting, avatarColor, catalogEntryForInstalled, entryForDep, githubRouteCandidates, groupSwitchState, humanOutput, installedForCatalog, isGenerationSpec, isInstalled, looksTerminal, matchInstalledName, orderedCategories, pluginCategories,
   formatCount, pageItems, pluginName, pluginScreenshotCandidates, pluginScreenshots, pluginsForFavorites, rankThemeScreenshots, readSession, rememberGithubRoute, resetScreenshotsCache, resolveCatalogRestore, safeScreenshots, staleFavoriteUrls, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
 } from './market-data.ts'
 import type {
@@ -4592,7 +4592,13 @@ export function MarketSection(props: MarketSectionProps) {
                             const missing = pendingBackup !== null && !installedFiles.includes(name)
                             const entry = data === null ? undefined : catalogEntryForInstalled(data.plugins, name, String(spec), repoIdentities[name], repoHints[name])
                             const status = updates[name]
-                            const localDev = /^(?:link|file):/i.test(String(spec)) || status?.kind === 'linked'
+                            // A generation is the desktop host's own install (#497):
+                            // the host updates it, the market only says a newer
+                            // release exists. Not a development checkout, so no
+                            // "local" tag and no restore — the host would put the
+                            // generation straight back.
+                            const generation = status?.kind === 'generation' || isGenerationSpec(String(spec))
+                            const localDev = !generation && (/^(?:link|file):/i.test(String(spec)) || status?.kind === 'linked')
                             const act = activations[name]
                             const meta = act !== undefined ? activationMeta(act.state, t) : null
                             const version = status && status.version ? 'v' + status.version : ''
@@ -4706,7 +4712,7 @@ export function MarketSection(props: MarketSectionProps) {
                                       one quiet line in the flow the row already
                                       reserves for conditional content, so rows
                                       without it are pixel-identical to before. */}
-                                  {status !== undefined && status.updateAvailable && (
+                                  {status !== undefined && (status.updateAvailable || (generation && status.latest != null)) && (
                                     <div className={css.noteRow}>
                                       <button
                                         type="button"
@@ -4848,6 +4854,8 @@ export function MarketSection(props: MarketSectionProps) {
                                     ? <span className={`${css.metaTag} ${css.metaTagOk}`}>{act?.state === 'live' ? t('updatedLive') : t('updated')}</span>
                                     : updatingName === name
                                       ? <Button variant="primary" size="sm" className={css.warnBtn} disabled>{t('updating')}</Button>
+                                      : status !== undefined && generation && status.latest != null
+                                        ? <span className={css.metaTag} title={t('hostUpdateHint')}>{t('hostUpdateReady').replace('{0}', status.latest)}</span>
                                       : status && status.updateAvailable
                                         ? (
                                             <Button

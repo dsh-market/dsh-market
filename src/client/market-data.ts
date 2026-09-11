@@ -124,10 +124,21 @@ export interface GistExportResult {
   gistUrl: string
 }
 
+/**
+ * A `link:` the desktop host wrote for one of its generations (#497). The
+ * test the server applies (`isGenerationLink` in sources.ts), repeated here
+ * because the client bundle cannot import server modules.
+ */
+export function isGenerationSpec(spec: string): boolean {
+  return /^link:/i.test(spec) && /(?:^|[\\/])\.generations[\\/]live[\\/]/i.test(spec)
+}
+
 /** Per-package update status from /dsh-market/updates. */
 export interface UpdateStatus {
   updateAvailable?: boolean
   version?: string
+  /** `github` | `npm` | `linked` | `generation` — the last is a host-managed
+      install (#497): `latest` names a newer release, never an offer. */
   kind?: string
   /** What is installed and what the source of truth offers — versions for npm
       packages, commit shas for github installs; the notes dialog (#294) shows

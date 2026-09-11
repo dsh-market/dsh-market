@@ -105,12 +105,14 @@ interface SelfUpdate {
   channelSwitch: string | null
   /** The current build came from a local package and must switch to the online release. */
   restoreRequired: boolean
+  /** A generation the desktop host installed (#497): a newer release is named here, never applied from here. */
+  hostManaged: boolean
 }
 
 type Phase = 'idle' | 'confirming' | 'working' | 'removed' | 'updated' | 'failed'
 
 /** The market's own row as api('/dsh-market/updates') sends it. */
-interface RawUpdate { updateAvailable?: boolean; latest?: string; channelSwitch?: string; restoreRequired?: boolean }
+interface RawUpdate { updateAvailable?: boolean; latest?: string; channelSwitch?: string; restoreRequired?: boolean; kind?: string }
 
 const CHANNELS: Channel[] = ['stable', 'beta', 'dev']
 const asChannel = (value: unknown): Channel | null =>
@@ -168,6 +170,7 @@ function readUpdate(own: RawUpdate): SelfUpdate {
     latest: own.latest ?? null,
     channelSwitch: own.channelSwitch ?? null,
     restoreRequired: own.restoreRequired === true,
+    hostManaged: own.kind === 'generation',
   }
 }
 
@@ -404,7 +407,7 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
           // An older offer is not an update, and calling it one would have
           // the user click "更新" to go backwards. It IS what picking an
           // earlier channel asked for, so it is offered — under its own name.
-          update?.updateAvailable === true && update.latest !== null
+          (update?.updateAvailable === true || update?.hostManaged === true) && update.latest !== null
             ? `${t('setSelfUpdateReady')} ${update.latest}`
             : update?.channelSwitch != null
               ? `${t('setChannelSwitch')} ${update.channelSwitch}`
@@ -416,7 +419,10 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
               // Explains what the Update button does — only worth saying
               // when that button is actually on screen. Already up to date,
               // it read as an instruction for an action that wasn't there.
-              : update?.updateAvailable === true ? t('setSelfUpdateHint') : t('setSelfUpToDateHint'),
+              : update?.updateAvailable === true ? t('setSelfUpdateHint')
+                // Named, not offered: the desktop host owns this install.
+                : update?.hostManaged === true && update.latest !== null ? t('setSelfHostManagedHint')
+                  : t('setSelfUpToDateHint'),
           phase === 'updated'
             ? null
             : update?.updateAvailable === true

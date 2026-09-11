@@ -40,6 +40,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			setSelfUpdateReady: "有新版本",
 			setSelfUpdateHint: "更新会下载新版本，重启后生效。",
 			setSelfUpToDateHint: "",
+			setSelfHostManagedHint: "这份市场由桌面宿主安装，新版本请在桌面端更新。",
 			setSelfUpdate: "更新",
 			setSelfUpdatedHint: "已下载完成。重启 DeepSeek Harness 后新版本才会生效——前端页面会立即更新，服务端不会。",
 			setRegion: "下载区域",
@@ -154,6 +155,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			updateFail: "更新失败",
 			upToDate: "已是最新",
 			linkedDev: "本地开发",
+			hostUpdateReady: "有新版本 {0}",
+			hostUpdateHint: "这份由桌面宿主安装和更新，市场只提醒，不在这里更新",
 			notesLink: "更新内容",
 			notesRelease: "版本说明",
 			notesCommits: "提交记录",
@@ -570,6 +573,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			setSelfUpdateReady: "New version available:",
 			setSelfUpdateHint: "Updating downloads the new version; it takes effect after a restart.",
 			setSelfUpToDateHint: "",
+			setSelfHostManagedHint: "This copy was installed by the desktop host; update it from the desktop app.",
 			setSelfUpdate: "Update",
 			setSelfUpdatedHint: "Downloaded. Restart DeepSeek Harness for it to take effect — the frontend updates at once, the server does not.",
 			setRegion: "Download region",
@@ -684,6 +688,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			updateFail: "Update failed",
 			upToDate: "Up to date",
 			linkedDev: "local",
+			hostUpdateReady: "New version {0}",
+			hostUpdateHint: "Installed and updated by the desktop host; the market only reports it",
 			notesLink: "What changed",
 			notesRelease: "Release notes",
 			notesCommits: "Commits",
@@ -1267,6 +1273,14 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		*/
 		function installedForCatalog(installed, bundles) {
 			return Object.fromEntries([...bundles.map((name) => [name, "*"]), ...Object.entries(installed)]);
+		}
+		/**
+		* A `link:` the desktop host wrote for one of its generations (#497). The
+		* test the server applies (`isGenerationLink` in sources.ts), repeated here
+		* because the client bundle cannot import server modules.
+		*/
+		function isGenerationSpec(spec) {
+			return /^link:/i.test(spec) && /(?:^|[\\/])\.generations[\\/]live[\\/]/i.test(spec);
 		}
 		function groupSwitchState(members, disabled) {
 			const list = members ?? [];
@@ -9828,7 +9842,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									const missing = pendingBackup !== null && !installedFiles.includes(name);
 									const entry = data === null ? void 0 : catalogEntryForInstalled(data.plugins, name, String(spec), repoIdentities[name], repoHints[name]);
 									const status = updates[name];
-									const localDev = /^(?:link|file):/i.test(String(spec)) || status?.kind === "linked";
+									const generation = status?.kind === "generation" || isGenerationSpec(String(spec));
+									const localDev = !generation && (/^(?:link|file):/i.test(String(spec)) || status?.kind === "linked");
 									const act = activations[name];
 									const meta = act !== void 0 ? activationMeta(act.state, t) : null;
 									const version = status && status.version ? "v" + status.version : "";
@@ -9949,7 +9964,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 														]
 													});
 												})(),
-												status !== void 0 && status.updateAvailable && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+												status !== void 0 && (status.updateAvailable || generation && status.latest != null) && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 													className: Market_module_css_default.noteRow,
 													children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
 														type: "button",
@@ -10095,6 +10110,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 															className: Market_module_css_default.warnBtn,
 															disabled: true,
 															children: t("updating")
+														}) : status !== void 0 && generation && status.latest != null ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+															className: Market_module_css_default.metaTag,
+															title: t("hostUpdateHint"),
+															children: t("hostUpdateReady").replace("{0}", status.latest)
 														}) : status && status.updateAvailable ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 															variant: "primary",
 															size: "sm",
@@ -10734,7 +10753,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				updateAvailable: own.updateAvailable === true,
 				latest: own.latest ?? null,
 				channelSwitch: own.channelSwitch ?? null,
-				restoreRequired: own.restoreRequired === true
+				restoreRequired: own.restoreRequired === true,
+				hostManaged: own.kind === "generation"
 			};
 		}
 		/**
@@ -10960,7 +10980,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			}, [post, t]);
 			/** One label + hint block with an optional action, the host's row shape. */
 			const row = (label, hint, action) => (0, react.createElement)("div", { className: Market_module_css_default.setRow }, (0, react.createElement)("div", { className: Market_module_css_default.setLabelBox }, (0, react.createElement)("div", { className: Market_module_css_default.setLabel }, label), (0, react.createElement)("div", { className: Market_module_css_default.setHint }, hint)), action);
-			const body = phase === "removed" ? row(t("setSelfRemoved"), t("setSelfRemovedHint"), null) : (0, react.createElement)(react.Fragment, null, status?.selfManaged === true ? row(update?.updateAvailable === true && update.latest !== null ? `${t("setSelfUpdateReady")} ${update.latest}` : update?.channelSwitch != null ? `${t("setChannelSwitch")} ${update.channelSwitch}` : t("setSelfUpToDate"), phase === "updated" ? t("setSelfUpdatedHint") : update?.channelSwitch != null ? t("setChannelSwitchHint") : update?.updateAvailable === true ? t("setSelfUpdateHint") : t("setSelfUpToDateHint"), phase === "updated" ? null : update?.updateAvailable === true ? (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+			const body = phase === "removed" ? row(t("setSelfRemoved"), t("setSelfRemovedHint"), null) : (0, react.createElement)(react.Fragment, null, status?.selfManaged === true ? row((update?.updateAvailable === true || update?.hostManaged === true) && update.latest !== null ? `${t("setSelfUpdateReady")} ${update.latest}` : update?.channelSwitch != null ? `${t("setChannelSwitch")} ${update.channelSwitch}` : t("setSelfUpToDate"), phase === "updated" ? t("setSelfUpdatedHint") : update?.channelSwitch != null ? t("setChannelSwitchHint") : update?.updateAvailable === true ? t("setSelfUpdateHint") : update?.hostManaged === true && update.latest !== null ? t("setSelfHostManagedHint") : t("setSelfUpToDateHint"), phase === "updated" ? null : update?.updateAvailable === true ? (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 				variant: "primary",
 				size: "sm",
 				disabled: busy,
