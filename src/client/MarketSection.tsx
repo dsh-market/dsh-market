@@ -2964,7 +2964,11 @@ export function MarketSection(props: MarketSectionProps) {
   // mid-run, which would strand the remaining items.
   const selfName = installed['dshmarket'] !== undefined ? 'dshmarket' : 'dsh-market'
   const updatableNames = Object.keys(installed).filter(
-    name => name !== selfName && !updatedNames.includes(name) && updates[name] && updates[name].updateAvailable,
+    name => name !== selfName
+      && !updatedNames.includes(name)
+      && !effectiveDisabledSet.has(name)
+      && updates[name]
+      && updates[name].updateAvailable,
   )
   // Replacing a local source with its catalog source is deliberately not a
   // batch update: every such plugin has an existing, explicit confirmation
