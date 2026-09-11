@@ -5,7 +5,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import { createDesktopPluginRuntime, type DesktopPnpmLike } from './dsh-cli.ts'
-import { mountMarketRoutes, type MarketConfig, type MarketHost } from './routes.ts'
+import { mountMarketRoutes, type HostPluginActivation, type MarketConfig, type MarketHost } from './routes.ts'
 import { installMarketSettings } from './settings.ts'
 import type { AgentsServiceLike } from './agents.ts'
 
@@ -20,6 +20,12 @@ interface DesktopProfilesLike {
     readonly name: string
     readonly dir: string
   }
+  /**
+   * Present on Ellamaka's bun-hmr host. The host watcher owns activation and
+   * returns the completed composition replay instead of letting the market
+   * create a second temporary loader entry for the same package.
+   */
+  readonly pluginActivation?: HostPluginActivation
 }
 
 interface MarketEffectHost extends MarketHost {
@@ -98,7 +104,7 @@ export function apply(ctx: Context, config?: Config): void {
       }
       const desktopHost = desktopCtx as unknown as MarketEffectHost
       desktopHost.effect(() => {
-        const disposeRoutes = mountMarketRoutes(host, resolved, runtime, agentsLookupOf(ctx))
+        const disposeRoutes = mountMarketRoutes(host, resolved, runtime, agentsLookupOf(ctx), desktopProfiles.pluginActivation)
         return async () => {
           disposeRoutes()
           await runtime.dispose()
