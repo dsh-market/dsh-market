@@ -112,7 +112,7 @@ export async function withHoistRecovery(
       logEvent('warn', 'install', `a too-young release blocks pnpm's lockfile verification (#39) — retrying once with ${RELEASE_AGE_OVERRIDE}`)
       result = await run(profile, [pluginArgs[0], RELEASE_AGE_OVERRIDE, ...pluginArgs.slice(1)])
     } else if (
-      failure?.code === 'fetch-404'
+      (failure?.code === 'fetch-404' || failure?.code === 'no-matching-version')
       && isUnpublishedHostPeer(failure.pkg, profile, profileDirectory)
       && (pluginArgs[0] === 'add' || pluginArgs[0] === 'remove')
       && !pluginArgs.includes(AUTO_INSTALL_PEERS_OFF)
