@@ -1257,6 +1257,77 @@ export function MarketSection(props: MarketSectionProps) {
   const recoveredInstall = useRef<{ id: string; url: string; name?: string } | null>(null)
   /** The synthetic task rebuilt from dshm-updating after this section remounts. */
   const recoveredUpdateRecordId = useRef<string | null>(null)
+  /**
+   * The install queue: agents-busy 409s become `queued` records instead of
+   * failures, and drain automatically when agents go idle (see drainQueue).
+   * Persisted in localStorage so a refresh keeps the queue; only `queued`
+   * records persist — `running` recovery stays on the dshm-pending paths.
+   */
+  const queueRestoredRef = useRef(false)
+  useEffect(() => {
+    if (queueRestoredRef.current) return
+    let saved: unknown = null
+    try {
+      saved = JSON.parse(localStorage.getItem('dshm-queue-v1') ?? 'null')
+      // A queued drain consumes its record and fires the real operation, so
+      // a leftover that only this mount wrote would double-run once the
+      // restore below re-adds it. The restore is the queue's only reader,
+      // which makes consuming here race-free: nothing else drains it.
+      localStorage.removeItem('dshm-queue-v1')
+    } catch { saved = null }
+    if (!Array.isArray(saved) || saved.length === 0) {
+      queueRestoredRef.current = true
+      return
+    }
+    if (data === null) return
+    queueRestoredRef.current = true
+    const valid = (saved as unknown[]).filter((entry): entry is { kind: OperationRecord['kind']; name: string; url?: string } => {
+      if (entry === null || typeof entry !== 'object') return false
+      const row = entry as Record<string, unknown>
+      if (row.kind !== 'install' && row.kind !== 'update' && row.kind !== 'uninstall') return false
+      if (typeof row.name !== 'string' || row.name === '') return false
+      if (row.url !== undefined && typeof row.url !== 'string') return false
+      if (row.kind === 'install') {
+        if (typeof row.url !== 'string') return false
+        return data.plugins.some(plugin => plugin.url === row.url)
+      }
+      return true
+    })
+    if (valid.length === 0) {
+      return
+    }
+    setRecords(prev => {
+      const kept = [...prev]
+      for (const entry of valid) {
+        const dup = kept.some(record =>
+          record.state === 'queued'
+          && record.kind === entry.kind
+          && record.name === entry.name
+          && (entry.kind !== 'install' || record.url === entry.url))
+        if (dup) continue
+        recordSeq.current += 1
+        kept.push({
+          id: `op-${String(recordSeq.current)}`,
+          kind: entry.kind,
+          name: entry.name,
+          ...(entry.url === undefined ? {} : { url: entry.url }),
+          state: 'queued',
+          reason: t('agentBusyQueued'),
+        })
+      }
+      return kept
+    })
+    setOperationsOpen(true)
+  }, [data, t])
+  useEffect(() => {
+    try {
+      const queued = records
+        .filter(record => record.state === 'queued')
+        .map(record => ({ kind: record.kind, name: record.name, ...(record.url === undefined ? {} : { url: record.url }) }))
+      if (queued.length === 0) localStorage.removeItem('dshm-queue-v1')
+      else localStorage.setItem('dshm-queue-v1', JSON.stringify(queued))
+    } catch { /* storage unavailable */ }
+  }, [records])
   /** Raised by the card marker, so "查看详情" lands on the record itself. */
   const [operationsOpen, setOperationsOpen] = useState(false)
   const openOperations = useCallback(() => setOperationsOpen(true), [])
@@ -1543,6 +1614,14 @@ export function MarketSection(props: MarketSectionProps) {
   // changes. The sentinel just reports what's actually true on screen.
   const [catsStuck, setCatsStuck] = useState(false)
   const [catsSentinel, setCatsSentinel] = useState<HTMLDivElement | null>(null)
+  /**
+   * Latest /status sample for the queue drain: `busy` gates pnpm execution,
+   * `runningAgents` gates the agent-file guard. A ref (not state) because the
+   * drain interval is mount-once and must never read a stale closure.
+   */
+  const statusRef = useRef<{ busy: boolean; runningAgents: string[] }>({ busy: false, runningAgents: [] })
+  /** True while the drain is executing one queued request (no parallel starts). */
+  const drainingRef = useRef(false)
 
   const refreshInstalled = useCallback((force?: boolean) => {
     fetch(api('/dsh-market/installed'), { cache: 'no-store' })
@@ -1702,6 +1781,10 @@ export function MarketSection(props: MarketSectionProps) {
     fetch(api('/dsh-market/status'), { cache: 'no-store' })
       .then(res => res.json())
       .then(status => {
+        statusRef.current = {
+          busy: status.busy === true,
+          runningAgents: Array.isArray(status.runningAgents) ? status.runningAgents.map(String) : [],
+        }
         setEnvReady(status.pnpm !== false)
         // Applied before anything renders a github.com URL. The catalog this
         // page draws from is a larger request through the same server, so it
@@ -1842,6 +1925,10 @@ export function MarketSection(props: MarketSectionProps) {
       fetch(api('/dsh-market/status'), { cache: 'no-store' })
         .then(res => res.json())
         .then(status => {
+          statusRef.current = {
+            busy: status.busy === true,
+            runningAgents: Array.isArray(status.runningAgents) ? status.runningAgents.map(String) : [],
+          }
           setHostBusy(status.busy === true)
           setDebuggerLatch(typeof status.debugger === 'string' ? status.debugger : null)
           if (status.active) {
@@ -2163,10 +2250,16 @@ export function MarketSection(props: MarketSectionProps) {
           refreshInstalled()
         } else {
           if (status === 409) {
-            const busyReason = body.agentsBusy === true
-              ? t('agentBusyInstall') + (Array.isArray(body.runningAgents) && body.runningAgents.length > 0 ? ` (${body.runningAgents.join(', ')})` : '')
-              : t('busyWait')
-            setRecords(list => patchRecord(list, recordId, { state: 'failed', reason: busyReason }))
+            if (body.agentsBusy === true) {
+              // Agents-busy is a queue, not a failure: keep the record as
+              // `queued` so the drain below runs it when agents go idle.
+              // The host changed nothing (it refuses before touching pnpm),
+              // so there is nothing to roll back and nothing to decide.
+              setRecords(list => patchRecord(list, recordId, { state: 'queued', reason: t('agentBusyQueued') }))
+              setOperationsOpen(true)
+              return
+            }
+            setRecords(list => patchRecord(list, recordId, { state: 'failed', reason: t('busyWait') }))
             setOperationsOpen(true)
             return
           }
@@ -2414,9 +2507,11 @@ export function MarketSection(props: MarketSectionProps) {
         } else {
           if (status === 409) {
             if (body.agentsBusy === true) {
-              const running = Array.isArray(body.runningAgents) && body.runningAgents.length > 0 ? ` (${body.runningAgents.join(', ')})` : ''
-              setRecords(list => patchRecord(list, updateRecordId, { state: 'failed', reason: t('agentBusyUpdate') + running }))
-              setInstallError(t('agentBusyUpdate') + running)
+              // Same queue treatment as installs: the host refused before
+              // touching pnpm, so this becomes a `queued` record the drain
+              // runs when agents go idle.
+              setRecords(list => patchRecord(list, updateRecordId, { state: 'queued', reason: t('agentBusyUpdateQueued') }))
+              setOperationsOpen(true)
               return
             }
             setRecords(list => patchRecord(list, updateRecordId, { state: 'failed', reason: t('busyWait') }))
@@ -2725,6 +2820,10 @@ export function MarketSection(props: MarketSectionProps) {
     setInstallError(null)
     setActivationWarnings([])
     setRemovingName(name)
+    // Uninstalls join the same operation records as installs/updates, so an
+    // agents-busy refusal can queue them and the drain can run them later.
+    const uninstallRecordId = nextRecordId()
+    setRecords(list => enqueue(list, { id: uninstallRecordId, kind: 'uninstall', name, state: 'running' }))
     return fetch(api('/dsh-market/uninstall'), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -2732,6 +2831,12 @@ export function MarketSection(props: MarketSectionProps) {
     })
       .then(res => res.json().then(body => ({ status: res.status, body })))
       .then(({ status, body }) => {
+        if (status === 409 && body.agentsBusy === true) {
+          setRecords(list => patchRecord(list, uninstallRecordId, { state: 'queued', reason: t('agentBusyUninstallQueued') }))
+          setOperationsOpen(true)
+          return
+        }
+        setRecords(list => drop(list, uninstallRecordId))
         if (status === 200 && body.ok) {
           if (!body.hot) setRemovedCount(n => n + 1)
           // A client-part plugin stays injected until a page reload — the same
@@ -2776,7 +2881,98 @@ export function MarketSection(props: MarketSectionProps) {
       .finally(() => setRemovingName(null))
     // hotNames/refreshNames are read above to tell a plugin this page loaded
     // from one installed inside it, so they belong in the closure.
-  }, [refreshInstalled, hotNames, refreshNames])
+  }, [refreshInstalled, hotNames, refreshNames, nextRecordId, t])
+
+  // Drain-loop refs, assigned after doInstall/doUpdate/doUninstall exist
+  // (the mount-once drain effect below only reads refs, never closures).
+  const busyUrlRef = useRef<string | null>(null)
+  busyUrlRef.current = busyUrl
+  const updatingNameRef = useRef<string | null>(null)
+  updatingNameRef.current = updatingName
+  const removingNameRef = useRef<string | null>(null)
+  removingNameRef.current = removingName
+  const dataRef = useRef<typeof data>(null)
+  dataRef.current = data
+  const doInstallRef = useRef<((plugin: RegistryPlugin) => void) | null>(null)
+  doInstallRef.current = doInstall
+  const doUpdateRef = useRef<((name: string, force?: boolean, restore?: boolean) => Promise<void>) | null>(null)
+  doUpdateRef.current = doUpdate
+  const doUninstallRef = useRef<((name: string) => Promise<void>) | null>(null)
+  doUninstallRef.current = doUninstall
+
+  /**
+   * The install queue drain: agents-busy 409s no longer ask the user to come
+   * back later — the queued record runs itself once agents go idle and the
+   * operation lock is free. Self-sufficient by design: when every operation
+   * is queued, nothing else polls /status, so this loop fetches it itself
+   * (only while a queued record exists, so an idle page makes no requests).
+   * One mutation at a time — the host still serializes via its lock, and a
+   * re-refused drain simply re-queues instead of failing.
+   */
+  useEffect(() => {
+    let disposed = false
+    const timer = setInterval(() => {
+      if (drainingRef.current) return
+      if (busyUrlRef.current !== null || updatingNameRef.current !== null || removingNameRef.current !== null) return
+      void fetch(api('/dsh-market/status'), { cache: 'no-store' })
+        .then(res => res.json())
+        .then(status => {
+          if (disposed) return
+          const runningAgents: string[] = Array.isArray(status.runningAgents) ? status.runningAgents.map(String) : []
+          const busy = status.busy === true
+          statusRef.current = { busy, runningAgents }
+          if (busy || runningAgents.length > 0) return
+          if (busyUrlRef.current !== null || updatingNameRef.current !== null || removingNameRef.current !== null) return
+          let next: OperationRecord | null = null
+          let hasRunning = false
+          setRecords(prev => {
+            hasRunning = prev.some(record => record.state === 'running')
+            const found = prev.find(record => record.state === 'queued')
+            next = found ?? null
+            return found === undefined ? prev : prev.filter(record => record.id !== found.id)
+          })
+          if (next === null || hasRunning) return
+          const task: OperationRecord = next
+          drainingRef.current = true
+          try {
+            if (task.kind === 'install') {
+              const plugin = dataRef.current?.plugins.find(candidate => candidate.url === task.url)
+              if (plugin !== undefined) doInstallRef.current?.(plugin)
+            } else if (task.kind === 'update') {
+              void doUpdateRef.current?.(task.name)
+            } else {
+              void doUninstallRef.current?.(task.name)
+            }
+          } finally {
+            drainingRef.current = false
+          }
+        })
+        .catch(() => { /* retry on the next tick */ })
+    }, 2000)
+    return () => {
+      disposed = true
+      clearInterval(timer)
+    }
+  }, [])
+
+  /** A queued record's "run now": retry immediately instead of waiting for idle. */
+  const runQueuedNow = useCallback((record: OperationRecord) => {
+    if (record.kind === 'install') {
+      const plugin = data?.plugins.find(candidate => candidate.url === record.url)
+      if (plugin === undefined) {
+        setRecords(prev => drop(prev, record.id))
+        return
+      }
+      setRecords(prev => drop(prev, record.id))
+      doInstall(plugin)
+    } else if (record.kind === 'update') {
+      setRecords(prev => drop(prev, record.id))
+      void doUpdate(record.name)
+    } else {
+      setRecords(prev => drop(prev, record.id))
+      void doUninstall(record.name)
+    }
+  }, [data, doInstall, doUpdate, doUninstall])
 
   /** Live enable/disable of one installed plugin (#60). `reload` opts the
    * card-level theme flow into a page refresh so the visual result lands
@@ -3294,6 +3490,7 @@ export function MarketSection(props: MarketSectionProps) {
     // is the obvious next move — which is how the same clash gets hit twice.
     const record = recordForUrl(records, p.url)
     const blocked = record !== null && (record.state === 'input' || record.state === 'failed')
+    const queued = record !== null && record.state === 'queued'
     const compatibility = typeof p.npm === 'string' ? hostCompatibility[p.npm] : undefined
     const hostRequirementLabel = compatibility?.requirement !== null && compatibility?.requirement !== undefined
       ? t('hostRequirement').replace('{0}', compatibility.requirement)
@@ -3348,7 +3545,14 @@ export function MarketSection(props: MarketSectionProps) {
                 ? <span className={css.okState}>{t('alreadyInstalled')}</span>
                 : busy
                   ? <Button variant="primary" size="sm" className={css.installBtn} disabled>{t('installing')}</Button>
-                  : blocked
+                  : queued
+                    ? (
+                        <button type="button" className={css.cardBlockedMark} onClick={openOperations}>
+                          <IconWarningOutline16 size={13} />
+                          {t('queuedBadge')}
+                        </button>
+                      )
+                    : blocked
                     ? (
                         <button type="button" className={css.cardBlockedMark} onClick={openOperations}>
                           <IconWarningOutline16 size={13} />
@@ -3439,6 +3643,7 @@ export function MarketSection(props: MarketSectionProps) {
     const busy = busyUrl === p.url
     const record = recordForUrl(records, p.url)
     const blocked = record !== null && (record.state === 'input' || record.state === 'failed')
+    const themeQueued = record !== null && record.state === 'queued'
     // A theme switched off via the Installed-tab toggle (or a group switch)
     // stays in the boot manifest, so the disabled set must veto the badge.
     const mounted = instName !== null
@@ -3507,7 +3712,14 @@ export function MarketSection(props: MarketSectionProps) {
                   ? <span className={css.okState}>{t('installedBadge')}</span>
                   : busy
                     ? <Button variant="primary" size="sm" className={css.installBtn} disabled>{t('installing')}</Button>
-                    : blocked
+                    : themeQueued
+                      ? (
+                          <button type="button" className={css.cardBlockedMark} onClick={openOperations}>
+                            <IconWarningOutline16 size={13} />
+                            {t('queuedBadge')}
+                          </button>
+                        )
+                      : blocked
                       ? (
                           <button type="button" className={css.cardBlockedMark} onClick={openOperations}>
                             <IconWarningOutline16 size={13} />
@@ -3806,6 +4018,7 @@ export function MarketSection(props: MarketSectionProps) {
             onDismiss={record => setRecords(list => drop(list, record.id))}
             onRefresh={() => location.reload()}
             onResolveConflict={resolveConflict}
+            onRunNow={runQueuedNow}
             onApproveBuilds={(record) => {
               const names = record.blockedBuilds ?? []
               if (names.length === 0) return
