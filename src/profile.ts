@@ -431,6 +431,17 @@ export interface InstalledRepoEvidence {
  * Discover declared repository identities and weaker local-origin hints. A
  * package.json repository declaration is authoritative; Git origin is only a
  * disambiguation hint because a checkout may legitimately point at a fork.
+ *
+ * Read for EVERY spec kind, not only `link:`/`file:` (#544 by @QinYupan).
+ * Two same-named catalog entries and an ordinary npm install: the manifest's
+ * `repository` — `git+https://github.com/MrmoLabs/dsh-mermaid.git` — is the
+ * one fact that says WHICH of the two is installed, and it sits in the same
+ * package.json for an npm install as for a local one. This used to return
+ * empty for anything not `link:`/`file:`, so the client fell back to name
+ * matching, found two candidates, and matched NEITHER — the Discover card
+ * kept showing Install on a plugin that was running. What stays local-only:
+ * the git-origin hint (there is no checkout to read) and the local source
+ * directory walk.
  */
 export function readInstalledRepoEvidence(
   profile: string,
@@ -438,9 +449,9 @@ export function readInstalledRepoEvidence(
   spec: string,
   explicitDir?: string,
 ): InstalledRepoEvidence {
-  if (!PACKAGE_NAME_RE.test(name) || !/^(?:link|file):/i.test(spec)) return { identities: [], hints: [] }
+  if (!PACKAGE_NAME_RE.test(name)) return { identities: [], hints: [] }
   const root = profileDir(profile, explicitDir)
-  const sourceDir = localSpecDirectory(root, spec)
+  const sourceDir = /^(?:link|file):/i.test(spec) ? localSpecDirectory(root, spec) : null
   const installedDir = installedPackageDirectory(root, name)
   const manifestDir = installedDir ?? sourceDir
   const manifest = manifestDir === null ? readInstalledManifest(profile, name, explicitDir) : manifestAt(manifestDir)

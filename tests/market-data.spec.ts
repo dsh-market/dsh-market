@@ -48,6 +48,30 @@ describe('installedForCatalog', () => {
 })
 
 describe('matchInstalledName / isInstalled', () => {
+  it('a same-named entry is matched through manifest repo evidence; the other same-named entry is not (#544)', () => {
+    // @QinYupan's shape: two catalog entries named dsh-mermaid, an ordinary
+    // npm install, and the installed manifest's repository naming the
+    // MrmoLabs one. Without the evidence the client found two name
+    // candidates and matched neither, so Discover kept showing Install on a
+    // running plugin.
+    const mrmolabs = plugin({ name: 'dsh-mermaid', npm: 'dsh-mermaid', url: 'https://github.com/MrmoLabs/dsh-mermaid' })
+    const aks = plugin({ name: 'dsh-mermaid', url: 'https://github.com/AKS1st/dsh-mermaid' })
+    const catalog = [mrmolabs, aks]
+    const installed = { 'dsh-mermaid': '^0.4.0' }
+    const identities = { 'dsh-mermaid': ['mrmolabs/dsh-mermaid'] }
+
+    expect(matchInstalledName(mrmolabs, installed, identities, catalog)).toBe('dsh-mermaid')
+    expect(matchInstalledName(aks, installed, identities, catalog)).toBeNull()
+    // With no evidence at all — the pre-fix answer for an npm install —
+    // NEITHER matches, which is exactly the reported symptom: the running
+    // plugin's card keeps offering Install.
+    expect(matchInstalledName(mrmolabs, installed, {}, catalog)).toBeNull()
+    expect(matchInstalledName(aks, installed, {}, catalog)).toBeNull()
+    // The same evidence carries into entryForDep, which the Installed tab
+    // and restore dialogs use.
+    expect(entryForDep(catalog, 'dsh-mermaid', '^0.4.0', identities['dsh-mermaid'])?.url).toBe(mrmolabs.url)
+  })
+
   it('matches through each identity path exclusively; never by prefix', () => {
     // NAME path (scoped, registry npm field unset; url points elsewhere).
     expect(matchInstalledName(

@@ -202,6 +202,27 @@ describe('holdsNativeAddon (#441)', () => {
 })
 
 describe('readInstalledRepoEvidence (#141)', () => {
+  it('reads the repository of an ordinary npm install, which is the only tie-breaker between same-named entries (#544)', () => {
+    // @QinYupan: dsh-mermaid installed from npm, two same-named catalog
+    // entries, and the Discover card still said Install. The manifest's
+    // repository declaration names which of the two is on disk, and it sits
+    // in node_modules/<pkg>/package.json for an npm install exactly as it
+    // does for a local one — this used to return empty for any spec that
+    // was not link:/file:, so the client found two name candidates and
+    // matched neither.
+    const dir = writeProfile({ dependencies: { 'dsh-mermaid': '^0.4.0' } })
+    const installedDir = join(dir, 'node_modules', 'dsh-mermaid')
+    mkdirSync(installedDir, { recursive: true })
+    writeFileSync(join(installedDir, 'package.json'), JSON.stringify({
+      name: 'dsh-mermaid',
+      version: '0.4.0',
+      repository: { type: 'git', url: 'git+https://github.com/MrmoLabs/dsh-mermaid.git' },
+    }))
+
+    expect(readInstalledRepoEvidence('web', 'dsh-mermaid', '^0.4.0'))
+      .toEqual({ identities: ['mrmolabs/dsh-mermaid'], hints: [] })
+  })
+
   it('reads package.json repository metadata, including monorepo directories', () => {
     const target = mkdtempSync(join(tmpdir(), 'dshm-link-'))
     try {
