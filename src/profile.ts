@@ -8,7 +8,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync, renameSync, statSy
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { resolveDshHome } from './home-paths.ts'
-import { githubRemoteIdentities, githubRepoIdentities } from './sources.ts'
+import { githubRemoteIdentities, githubRepoIdentities, isGitHostedSpec } from './sources.ts'
 
 /**
  * Whether a profile name follows DSH's own directory-name contract.
@@ -432,16 +432,29 @@ export interface InstalledRepoEvidence {
  * package.json repository declaration is authoritative; Git origin is only a
  * disambiguation hint because a checkout may legitimately point at a fork.
  *
- * Read for EVERY spec kind, not only `link:`/`file:` (#544 by @QinYupan).
- * Two same-named catalog entries and an ordinary npm install: the manifest's
- * `repository` — `git+https://github.com/MrmoLabs/dsh-mermaid.git` — is the
- * one fact that says WHICH of the two is installed, and it sits in the same
- * package.json for an npm install as for a local one. This used to return
+ * Read for local AND registry specs, but never for a spec that already names
+ * its own source (#544 by @QinYupan; boundary from @bulingbuling688 in #548).
+ *
+ * The bug: two same-named catalog entries and an ordinary npm install. The
+ * manifest's `repository` — `git+https://github.com/MrmoLabs/dsh-mermaid.git`
+ * — is the one fact that says WHICH of the two is installed, and it sits in
+ * the same package.json for an npm install as for a local one. This returned
  * empty for anything not `link:`/`file:`, so the client fell back to name
- * matching, found two candidates, and matched NEITHER — the Discover card
- * kept showing Install on a plugin that was running. What stays local-only:
- * the git-origin hint (there is no checkout to read) and the local source
- * directory walk.
+ * matching, found two candidates, and matched NEITHER: the Discover card kept
+ * offering Install on a plugin that was running.
+ *
+ * Why a `github:`/URL install must NOT be read the same way: its spec already
+ * states the source, and the manifest can disagree with it. A fork installed
+ * as `github:myfork/plugin` usually still declares the UPSTREAM repository,
+ * because almost nobody edits that field when forking. Adding it as an
+ * identity made the upstream's card read as installed — measured, and the
+ * same mistake as #485: a weaker signal allowed to outvote a definite one.
+ * The first version of this fix widened to every spec kind and had exactly
+ * that hole.
+ *
+ * What stays local-only for the same reason it always was: the git-origin
+ * hint (there is no checkout to read for a registry install) and the local
+ * source directory walk.
  */
 export function readInstalledRepoEvidence(
   profile: string,
@@ -450,8 +463,13 @@ export function readInstalledRepoEvidence(
   explicitDir?: string,
 ): InstalledRepoEvidence {
   if (!PACKAGE_NAME_RE.test(name)) return { identities: [], hints: [] }
+  const local = /^(?:link|file):/i.test(spec)
+  // A spec that names its own source is the authority on it; see above.
+  if (!local && (isGitHostedSpec(spec) || /^https?:/i.test(spec.trim()))) {
+    return { identities: [], hints: [] }
+  }
   const root = profileDir(profile, explicitDir)
-  const sourceDir = /^(?:link|file):/i.test(spec) ? localSpecDirectory(root, spec) : null
+  const sourceDir = local ? localSpecDirectory(root, spec) : null
   const installedDir = installedPackageDirectory(root, name)
   const manifestDir = installedDir ?? sourceDir
   const manifest = manifestDir === null ? readInstalledManifest(profile, name, explicitDir) : manifestAt(manifestDir)

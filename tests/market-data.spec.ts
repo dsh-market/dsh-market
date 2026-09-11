@@ -72,6 +72,22 @@ describe('matchInstalledName / isInstalled', () => {
     expect(entryForDep(catalog, 'dsh-mermaid', '^0.4.0', identities['dsh-mermaid'])?.url).toBe(mrmolabs.url)
   })
 
+  it('never lets a fork\'s upstream manifest claim the upstream card (#548)', () => {
+    // The client half of the same boundary: even if evidence for a
+    // git-installed package ever arrived, the upstream's card must not read
+    // as installed. Both sides are guarded because both sides shipped the
+    // hole once — the server stopped producing the evidence, and this pins
+    // what would happen if it came back.
+    const upstream = plugin({ name: 'dsh-plug', url: 'https://github.com/upstream/dsh-plug' })
+    const fork = plugin({ name: 'dsh-plug', url: 'https://github.com/myfork/dsh-plug' })
+    const installed = { 'dsh-plug': 'github:myfork/dsh-plug' }
+
+    // With no manifest evidence — what the server now returns for a git spec
+    // — the fork matches on its own spec and the upstream does not.
+    expect(matchInstalledName(fork, installed, {}, [upstream, fork])).toBe('dsh-plug')
+    expect(matchInstalledName(upstream, installed, {}, [upstream, fork])).toBeNull()
+  })
+
   it('matches through each identity path exclusively; never by prefix', () => {
     // NAME path (scoped, registry npm field unset; url points elsewhere).
     expect(matchInstalledName(
