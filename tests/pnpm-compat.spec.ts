@@ -305,6 +305,59 @@ The lockfile contains entries that the active policies reject.`)
   })
 })
 
+describe('ERR_PNPM_NO_MATCHING_VERSION — host peer with only pre-releases (#569)', () => {
+  // Verbatim pnpm 12.4.1 output for:
+  //   pnpm add @deepseek-ai/dsh-tools@'>=0.1.0'
+  // where every published version of the package is a pre-release. Kept
+  // word-for-word (including the wrapped URL) per the house rule for
+  // classifier fixtures: if pnpm rewraps or rewords, a test breaks instead
+  // of a user-facing message.
+  const OUTPUT = [
+    'Error: ERR_PNPM_NO_MATCHING_VERSION',
+    '',
+    '  × adding a new package',
+    '  ╰─▶ Failed to resolve dependency tree: No matching version found for',
+    '      @deepseek-ai/dsh-tools@>=0.1.0 while fetching it from https://',
+    '      registry.npmjs.org/',
+    '  help: The latest release of @deepseek-ai/dsh-tools is "0.0.1-rc.1".',
+    '        ',
+    '        Other releases are:',
+    '          * alpha: 0.1.5-alpha.2',
+    '          * next: 0.1.5-rc.2',
+    '        ',
+    '        If you need the full list of all 21 published versions run "pnpm view',
+    '        @deepseek-ai/dsh-tools versions".',
+  ].join('\n')
+
+  it('gets its own code, not fetch-404', () => {
+    const failure = classifyPnpmFailure(OUTPUT)
+    expect(failure?.code).toBe('no-matching-version')
+    expect(failure?.code).not.toBe('fetch-404')
+  })
+
+  it('extracts the scoped host peer through the wrapped output', () => {
+    const failure = classifyPnpmFailure(OUTPUT)
+    expect(failure?.pkg).toBe('@deepseek-ai/dsh-tools')
+  })
+
+  it('explains the host-provided provision and the automatic retry', () => {
+    const failure = classifyPnpmFailure(OUTPUT)
+    expect(failure?.message).toContain('宿主包（@deepseek-ai/dsh-tools）')
+    expect(failure?.message).toContain('自动重试')
+  })
+
+  it('degrades to the unnamed wording when the package name cannot be read', () => {
+    const failure = classifyPnpmFailure('Error: ERR_PNPM_NO_MATCHING_VERSION\n  × adding a new package')
+    expect(failure?.code).toBe('no-matching-version')
+    expect(failure?.message).toContain('没有可满足的版本')
+    expect(failure?.message).not.toContain('宿主包（')
+  })
+
+  it('still names the plain-404 shape as fetch-404 (unchanged)', () => {
+    expect(classifyPnpmFailure('[ERR_PNPM_FETCH_404] GET https://registry.npmjs.org/ghost: Not Found - 404')?.code).toBe('fetch-404')
+  })
+})
+
 describe('provisionHint (#142 / #108 / #32)', () => {
   it('names the actual cause instead of a generic failure', async () => {
     const { provisionHint } = await import('../src/dsh-cli.ts')
