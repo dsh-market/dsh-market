@@ -79,6 +79,12 @@ function record(value: unknown): Record<string, unknown> | null {
 export function manifestFacts(value: unknown): NpmManifestFacts {
   const manifest = record(value) ?? {}
   const engines = record(manifest.engines)
+  // #577: the ecosystem declares the host requirement in BOTH shapes —
+  // top-level `engines.dsh` and `dsh.engines.dsh` under the manifest's own
+  // `dsh` field (the natural home, and what e.g. @linxin666/dsh-web-all
+  // publishes). Neither position is authoritative, so read both; when a
+  // manifest carries both, the top-level declaration wins.
+  const dshEngines = record(record(manifest.dsh)?.engines)
   const peers = record(manifest.peerDependencies)
   const peerDependencies: Record<string, string> = {}
   for (const [name, raw] of Object.entries(peers ?? {})) {
@@ -88,7 +94,7 @@ export function manifestFacts(value: unknown): NpmManifestFacts {
   }
   return {
     version: range(manifest.version),
-    enginesDsh: range(engines?.dsh),
+    enginesDsh: range(engines?.dsh) ?? range(dshEngines?.dsh),
     peerDependencies,
   }
 }

@@ -107,6 +107,42 @@ describe('manifestFacts', () => {
   })
 })
 
+describe('manifestFacts reads both host-requirement shapes (#577)', () => {
+  it('reads dsh.engines.dsh when the top-level engines field is absent', () => {
+    expect(manifestFacts({
+      version: '0.3.20',
+      dsh: { engines: { dsh: ' >=0.1.5-rc.1 ' } },
+    })).toEqual({
+      version: '0.3.20',
+      enginesDsh: '>=0.1.5-rc.1',
+      peerDependencies: {},
+    })
+  })
+
+  it('prefers the top-level engines.dsh when a manifest carries both shapes', () => {
+    expect(manifestFacts({
+      version: '1.0.0',
+      engines: { dsh: '^0.1.2-alpha.2' },
+      dsh: { engines: { dsh: '>=0.1.5-rc.1' } },
+    })).toEqual({
+      version: '1.0.0',
+      enginesDsh: '^0.1.2-alpha.2',
+      peerDependencies: {},
+    })
+  })
+
+  it('stays null when neither shape declares a host requirement', () => {
+    expect(manifestFacts({
+      version: '1.0.0',
+      dsh: { engines: { node: '>=20' } },
+    })).toEqual({
+      version: '1.0.0',
+      enginesDsh: null,
+      peerDependencies: {},
+    })
+  })
+})
+
 describe('DiscoveryManifestIndex', () => {
   const directories: string[] = []
   afterEach(() => {
