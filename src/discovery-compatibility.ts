@@ -181,6 +181,72 @@ export function deriveHostCompatibility(
   return { status, basis: 'manifest', requirement, declarations }
 }
 
+const SEMVER_LOOSE = /^(\d+)\.(\d+)\.(\d+)(?:-([\w.-]+))?/
+
+function parseSemverParts(v: string): readonly [number, number, number, string] | null {
+  const m = SEMVER_LOOSE.exec(v)
+  if (!m) return null
+  return [Number(m[1]), Number(m[2]), Number(m[3]), m[4] ?? ''] as const
+}
+
+/** Descending semver comparator; non-semver strings sort last. */
+function descendingVersion(a: string, b: string): number {
+  const pa = parseSemverParts(a)
+  const pb = parseSemverParts(b)
+  if (pa === null && pb === null) return 0
+  if (pa === null) return 1
+  if (pb === null) return -1
+  for (let i = 0; i < 3; i++) {
+    const d = (pb[i] as number) - (pa[i] as number)
+    if (d !== 0) return d
+  }
+  const aIsPre = pa[3] !== ''
+  const bIsPre = pb[3] !== ''
+  if (aIsPre !== bIsPre) return aIsPre ? 1 : -1
+  return pa[3].localeCompare(pb[3])
+}
+
+/**
+ * Walk a package's full npm version history (descending) and return the
+ * highest version whose declared `engines.dsh` / host-peer requirements this
+ * host satisfies.
+ *
+ * Only a CONFIRMED `compatible` result from `deriveHostCompatibility` passes;
+ * `unknown` (no declaration, or host version unreadable) is skipped to avoid
+ * mistakenly pinning an un-declared version as "compatible".
+ *
+ * Returns null when the packument cannot be fetched or no compatible version
+ * exists — callers should treat null as "not found" rather than a hard error.
+ */
+export async function findCompatibleVersion(
+  npmName: string,
+  hostVersion: string,
+  hostPackages: ReadonlySet<string>,
+  registry: string,
+  fetcher: FetchLike = marketFetch,
+): Promise<string | null> {
+  let doc: unknown
+  try {
+    const res = await fetcher(
+      `${registry}/${encodeURIComponent(npmName)}`,
+      { signal: AbortSignal.timeout(15_000), headers: { accept: 'application/json', 'user-agent': 'dsh-market' } },
+    )
+    if (!res.ok) return null
+    doc = await res.json()
+  } catch {
+    return null
+  }
+  const allVersions = record(record(doc)?.versions)
+  if (allVersions === null) return null
+  const sorted = Object.keys(allVersions)
+    .filter(v => parseSemverParts(v) !== null)
+    .sort(descendingVersion)
+  for (const v of sorted) {
+    if (deriveHostCompatibility(manifestFacts(allVersions[v]), hostVersion, hostPackages).status === 'compatible') return v
+  }
+  return null
+}
+
 /**
  * Durable, bounded lookup of npm `latest` manifests.
  *
