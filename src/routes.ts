@@ -2078,7 +2078,18 @@ export function mountMarketRoutes(
             }
           }
           let patchWrite: { ok: boolean; reason: string | null } | null = null
-          if (patchRows.length > 0) {
+          // #575: a failed ENABLE must not flip the durable patch layer.
+          // The hot-mount failure may be deterministic (a plugin that
+          // crashes on import), and persisting "enabled" turns a transient
+          // in-session error into a boot crash loop — the loader re-applies
+          // the flipped rows on every start. The frontend already shows the
+          // plugin as still disabled, and the next explicit enable retries
+          // cleanly. Disables keep their unconditional write: a failed
+          // unmount leaves the plugin live in-session, and the user asked
+          // for it OFF — the durable disable is then the contract, not an
+          // error.
+          const patchGate = ok || !enabled
+          if (patchRows.length > 0 && patchGate) {
             for (const rowId of patchRows) {
               const result = enabled ? await enableRow(userPatchPath, rowId) : await disableRow(userPatchPath, rowId)
               if (!result.ok && patchWrite === null) patchWrite = result
