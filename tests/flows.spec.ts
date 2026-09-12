@@ -18,7 +18,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 // ---------------------------------------------------------------- FakeDsh
 // Mutable per-test state driving the fake executor and fake npm API.
@@ -473,6 +473,7 @@ const REGISTRY = {
     { name: 'dsh-usage-stats', owner: 'a2', url: 'https://github.com/a2/dsh-usage-stats', category: 'tool', npm: null, description: {}, install: '', added: '' },
     { name: 'dsh-blue-whale', owner: 'o', url: 'https://github.com/o/blue-whale', category: 'tool', npm: null, description: {}, install: '', added: '' },
     { name: 'dsh-patchy', owner: 'o', url: 'https://github.com/o/dsh-patchy', category: 'tool', npm: null, description: {}, install: '', added: '' },
+    { name: 'dsh-crashy', owner: 'o', url: 'https://github.com/o/dsh-crashy', category: 'tool', npm: null, description: {}, install: '', added: '' },
     // Carries a prebuilt Release archive (#250): its install target is a
     // URL, not an npm name and not a github: shortcut.
     { name: 'dsh-prebuilt', owner: 'o', url: 'https://github.com/o/dsh-prebuilt', category: 'tool', npm: null, tarball: 'https://github.com/o/dsh-prebuilt/releases/download/v1.0.0/dsh-prebuilt.tgz', description: {}, install: '', added: '' },
@@ -3776,6 +3777,42 @@ describe('generic enable/disable toggle (#60)', () => {
     expect(on.json.ok).toBe(false)
     expect(on.json.restart).toBe(true)
     expect(on.json.reason).toMatch(/cannot hot-mount|restart/)
+  })
+
+  it('leaves the patch layer untouched when an enable fails (#575)', async () => {
+    // A bundle plugin with real patch rows (the dsh-plugin-codegraph shape
+    // from the report: enabling it crashes deterministically on import).
+    fake.repos['github:o/dsh-crashy'] = {
+      name: 'dsh-crashy',
+      manifest: { dsh: { bundle: { patch: './cordis.patch.yml' } }, main: 'lib/index.js' },
+      artifacts: ['lib/index.js', 'cordis.patch.yml'],
+    }
+    const installed = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-crashy' })
+    hot.mounts = []
+    const bundlePatch = join(profileDir('web'), 'node_modules', 'dsh-crashy', 'cordis.patch.yml')
+    mkdirSync(dirname(bundlePatch), { recursive: true })
+    writeFileSync(bundlePatch, "- insert:\n    - id: dsh-crashy\n      name: 'dsh-crashy'\n    - id: dsh-crashy-tool\n      name: 'dsh-crashy-tool'\n")
+    // Disable once: the user patch now durably holds the disabled rows.
+    const off = await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-crashy', enabled: false })
+    expect(off.status).toBe(200)
+    const patchPath = join(profileDir('web'), 'cordis.patch.yml')
+    const before = readFileSync(patchPath, 'utf8')
+    expect(before).toContain('- id: dsh-crashy\n  disabled: true')
+
+    // The enable fails in-session (the deterministic import crash of #575).
+    // The enable fails: with every row disabled at boot the loader holds no
+    // entry for the plugin (the real #575 shape), so the themes path finds
+    // nothing and the hotMount fallback is what fails.
+    hot.failNext = true
+    const on = await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-crashy', enabled: true })
+    expect(on.status).toBe(502)
+
+    // The durable patch layer must be untouched: persisting the flipped
+    // rows would turn the transient in-session failure into a boot crash
+    // loop.
+    const after = readFileSync(patchPath, 'utf8')
+    expect(after).toBe(before)
+    expect(after).toContain('disabled: true')
   })
 
   it('toggles a client-only shim (dsh.client without dsh.bundle) through the hot path', async () => {
