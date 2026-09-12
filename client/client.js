@@ -172,11 +172,15 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			restore: "恢复",
 			restoreOnline: "换用线上版本",
 			restoreHint: "会卸载本地版本，重新安装线上版本，并保持更新检测。无法回退，请二次确认。",
-			hostIncompatibleTitle: "这个新版本要求更新的 DSH",
-			hostIncompatibleBody: "{plugin} 声明它需要 DSH {requirement}，而你现在运行的是 {host}。装上去多半会直接报错，只能手动装回旧版。\n已经停下了，插件还是原来的版本。\n如果你确定这个版本号不准（例如桌面端捆绑的 DSH 不报告版本），也可以继续更新。",
+			hostIncompatibleTitle: "这个版本要求更新的 DSH",
+			hostIncompatibleBody: "{plugin} 声明它需要 DSH {requirement}，而你现在运行的是 {host}。装上去多半会直接报错，只能手动装回旧版。\n已经停下了，插件还是原来的版本。",
+			hostIncompatibleBodyInstall: "{plugin} 声明它需要 DSH {requirement}，而你现在运行的是 {host}。装上去多半会直接报错。\n已停止，没有安装任何东西。",
 			hostIncompatibleUnknown: "未知版本",
 			hostIncompatibleKeep: "保持现在的版本",
-			hostIncompatibleAnyway: "仍然更新",
+			hostIncompatibleCancel: "取消安装",
+			hostIncompatibleFindCompat: "查找兼容版本",
+			hostIncompatibleSearching: "正在查找…",
+			hostIncompatibleNoCompat: "未找到兼容版本",
 			restoreNameOnlyHint: "你本地这份没有写明来自哪个仓库，市场只能按包名去精选目录里找，找到的是下面这一个——它可能是同名的另一个作者写的插件，不是你这份的来源。确认前请先核对下面的作者和仓库地址。会卸载本地版本并安装它，无法回退。",
 			restoreContinue: "继续更新",
 			restoreProceed: "确认恢复",
@@ -702,11 +706,15 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			restore: "Restore",
 			restoreOnline: "Use online version",
 			restoreHint: "This will uninstall the local version, reinstall the catalog version, and keep update checks. This cannot be undone — please confirm again.",
-			hostIncompatibleTitle: "This release needs a newer DSH",
-			hostIncompatibleBody: "{plugin} declares that it needs DSH {requirement}, and you are running {host}. Installing it would most likely break the plugin, leaving a manual downgrade as the only way back.\nNothing was changed — the plugin is still on its current version.\nIf you know the version number is wrong (a bundled DSH that does not report one, for example), you can update anyway.",
+			hostIncompatibleTitle: "This version needs a newer DSH",
+			hostIncompatibleBody: "{plugin} declares that it needs DSH {requirement}, and you are running {host}. Installing it would most likely break the plugin, leaving a manual downgrade as the only way back.\nNothing was changed — the plugin is still on its current version.",
+			hostIncompatibleBodyInstall: "{plugin} declares that it needs DSH {requirement}, and you are running {host}. Installing it would most likely break the plugin.\nNothing was installed.",
 			hostIncompatibleUnknown: "an unknown version",
 			hostIncompatibleKeep: "Keep the current version",
-			hostIncompatibleAnyway: "Update anyway",
+			hostIncompatibleCancel: "Cancel",
+			hostIncompatibleFindCompat: "Find compatible version",
+			hostIncompatibleSearching: "Searching…",
+			hostIncompatibleNoCompat: "No compatible version found",
 			restoreNameOnlyHint: "Your local copy does not say which repository it came from, so the market could only match it by package name. The catalog entry below is what that found — it may be a different author's plugin that happens to share the name, not the source of your copy. Check the owner and repository below before confirming. This uninstalls the local version and installs that one, and cannot be undone.",
 			restoreContinue: "Continue update",
 			restoreProceed: "Confirm restore",
@@ -6260,8 +6268,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const [notesState, setNotesState] = (0, react.useState)("loading");
 			const [staleName, setStaleName] = (0, react.useState)(null);
 			const [restoreConfirm, setRestoreConfirm] = (0, react.useState)(null);
-			/** An update whose target declares a DSH version this host does not meet (#404). */
+			/** A release whose declared host requirement this host does not meet (#404). */
 			const [hostIncompatible, setHostIncompatible] = (0, react.useState)(null);
+			const [findingCompat, setFindingCompat] = (0, react.useState)("idle");
 			const [restoreBlocked, setRestoreBlocked] = (0, react.useState)(null);
 			const [migrationConfirm, setMigrationConfirm] = (0, react.useState)(null);
 			/** Determinate percent parsed from pnpm's Progress line, when available. */
@@ -6934,7 +6943,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				const rest = entries.length > 1 ? ` (+${entries.length - 1})` : "";
 				return `${first.name} — ${first.layers.join(" / ")}${rest}`;
 			};
-			const doInstall = (0, react.useCallback)((plugin) => {
+			const doInstall = (0, react.useCallback)((plugin, version) => {
 				setBuildsSkipped(null);
 				setConfirming(null);
 				setInstallError(null);
@@ -6955,7 +6964,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				fetch(api("/dsh-market/install"), {
 					method: "POST",
 					headers: { "content-type": "application/json" },
-					body: JSON.stringify({ url: plugin.url })
+					body: JSON.stringify({
+						url: plugin.url,
+						...version !== void 0 ? { version } : {}
+					})
 				}).then((res) => res.json().then((body) => ({
 					status: res.status,
 					body
@@ -7009,6 +7021,22 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 								reason: busyReason
 							}));
 							setOperationsOpen(true);
+							return;
+						}
+						if (status === 400 && body.hostIncompatible && typeof body.hostIncompatible === "object") {
+							const notice = body.hostIncompatible;
+							setRecords((list) => drop(list, recordId));
+							setBusyUrl(null);
+							setFindingCompat("idle");
+							setHostIncompatible({
+								kind: "install",
+								name: String(notice.name ?? plugin.name),
+								npmName: String(notice.npmName ?? plugin.npm ?? plugin.name),
+								version: String(notice.version ?? ""),
+								requirement: typeof notice.requirement === "string" ? notice.requirement : null,
+								hostVersion: typeof notice.hostVersion === "string" ? notice.hostVersion : null,
+								plugin
+							});
 							return;
 						}
 						if (Array.isArray(body.conflictGroups) && body.conflictGroups.length > 0) {
@@ -7181,7 +7209,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					body: "{}"
 				}).catch(() => {});
 			}, []);
-			const doUpdate = (0, react.useCallback)((name, force = false, restore = false) => {
+			const doUpdate = (0, react.useCallback)((name, force = false, restore = false, compatVersion) => {
 				setInstallError(null);
 				setActivationWarnings([]);
 				setStaleName((prev) => prev === name ? null : prev);
@@ -7203,7 +7231,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					body: JSON.stringify({
 						name,
 						...force ? { force: true } : {},
-						...restore ? { restore: true } : {}
+						...restore ? { restore: true } : {},
+						...compatVersion !== void 0 ? { compatVersion } : {}
 					})
 				}).then((res) => res.json().then((body) => ({
 					status: res.status,
@@ -7252,11 +7281,15 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						if (body.hostIncompatible && typeof body.hostIncompatible === "object") {
 							const notice = body.hostIncompatible;
 							setRecords((list) => drop(list, updateRecordId));
+							setFindingCompat("idle");
 							setHostIncompatible({
+								kind: "update",
 								name: String(notice.name ?? name),
+								npmName: String(notice.npmName ?? notice.name ?? name),
 								version: String(notice.version ?? ""),
 								requirement: typeof notice.requirement === "string" ? notice.requirement : null,
-								hostVersion: typeof notice.hostVersion === "string" ? notice.hostVersion : null
+								hostVersion: typeof notice.hostVersion === "string" ? notice.hostVersion : null,
+								plugin: null
 							});
 							return;
 						}
@@ -10375,22 +10408,41 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					}),
 					hostIncompatible !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Modal, {
 						open: true,
-						onClose: () => setHostIncompatible(null),
+						onClose: () => {
+							setFindingCompat("idle");
+							setHostIncompatible(null);
+						},
 						title: t("hostIncompatibleTitle"),
-						description: t("hostIncompatibleBody").replace("{plugin}", `${hostIncompatible.name} ${hostIncompatible.version}`).replace("{requirement}", hostIncompatible.requirement ?? t("hostIncompatibleUnknown")).replace("{host}", hostIncompatible.hostVersion ?? t("hostIncompatibleUnknown")),
+						description: t(hostIncompatible.kind === "install" ? "hostIncompatibleBodyInstall" : "hostIncompatibleBody").replace("{plugin}", `${hostIncompatible.name} ${hostIncompatible.version}`.trim()).replace("{requirement}", hostIncompatible.requirement ?? t("hostIncompatibleUnknown")).replace("{host}", hostIncompatible.hostVersion ?? t("hostIncompatibleUnknown")),
 						footer: /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 							variant: "primary",
-							onClick: () => setHostIncompatible(null),
-							children: t("hostIncompatibleKeep")
+							onClick: () => {
+								setFindingCompat("idle");
+								setHostIncompatible(null);
+							},
+							children: t(hostIncompatible.kind === "install" ? "hostIncompatibleCancel" : "hostIncompatibleKeep")
 						}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 							variant: "ghost",
-							disabled: updatingName !== null,
+							disabled: findingCompat === "loading",
 							onClick: () => {
-								const target = hostIncompatible.name;
-								setHostIncompatible(null);
-								doUpdate(target, true);
+								const snap = hostIncompatible;
+								setFindingCompat("loading");
+								fetch(api("/dsh-market/find-compatible"), {
+									method: "POST",
+									headers: { "content-type": "application/json" },
+									body: JSON.stringify({ npmName: snap.npmName })
+								}).then((r) => r.json()).then((data) => {
+									if (data.compatibleVersion) {
+										const { kind, name, plugin } = snap;
+										const cv = data.compatibleVersion;
+										setFindingCompat("idle");
+										setHostIncompatible(null);
+										if (kind === "install" && plugin !== null) doInstall(plugin, cv);
+										else doUpdate(name, false, false, cv);
+									} else setFindingCompat("not-found");
+								}).catch(() => setFindingCompat("not-found"));
 							},
-							children: t("hostIncompatibleAnyway")
+							children: findingCompat === "loading" ? t("hostIncompatibleSearching") : findingCompat === "not-found" ? t("hostIncompatibleNoCompat") : t("hostIncompatibleFindCompat")
 						})] })
 					}),
 					restoreBlocked !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Modal, {

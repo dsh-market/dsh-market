@@ -20,7 +20,7 @@ import {
 } from './hot.ts'
 import { createGroup, deleteGroup, removeFromGroups, renameGroup, setGroupMembers } from './groups.ts'
 import { dshHostInfo } from './dsh-install.ts'
-import { deriveHostCompatibility, DiscoveryManifestIndex } from './discovery-compatibility.ts'
+import { deriveHostCompatibility, DiscoveryManifestIndex, findCompatibleVersion } from './discovery-compatibility.ts'
 import { configurePersistentLog, exportLogs, logEvent, readPersistentLog } from './log.ts'
 import { marketFetch } from './net.ts'
 import { diagnosePackageManifests } from './diagnostics.ts'
@@ -2744,9 +2744,12 @@ sendJson(response, 200, { updates })
         }
         try {
           await withMutationLock(response, 'install', async () => {
-            const body = (await readJsonBody(request)) as { name?: unknown; force?: unknown; restore?: unknown }
+            const body = (await readJsonBody(request)) as { name?: unknown; force?: unknown; restore?: unknown; compatVersion?: unknown }
             const name = typeof body.name === 'string' ? body.name : ''
             const force = body.force === true
+            // A version already confirmed compatible by /dsh-market/find-compatible.
+            // When set, skip latest-fetch, downgrade guard, and compat check.
+            const compatVersion = typeof body.compatVersion === 'string' && /^\d+\.\d+\.\d+/.test(body.compatVersion) ? body.compatVersion : null
             const restore = body.restore === true
             const manifestCapture = captureUpdateManifest()
             if (!manifestCapture.ok) {
@@ -2894,6 +2897,12 @@ sendJson(response, 200, { updates })
             // Desktop boundary; it is what turns a silent skip into a
             // failure with a name.
             if (usesNpmUpdateTarget) {
+              if (compatVersion !== null) {
+                // User selected a pre-verified compatible version from the
+                // find-compatible dialog: skip latest-fetch and all guards,
+                // pin directly to the chosen version.
+                expectedNpmVersion = compatVersion
+              } else {
               const installedVersion = readInstalledVersion(config.profile, name, activeProfileDir)
               const registryLatest = selfChannel === null
                 ? await fetchNpmLatest(name)
@@ -2984,7 +2993,9 @@ sendJson(response, 200, { updates })
                   logEvent('warn', 'update-compat', `${name}@${registryLatest} declares ${verdict.requirement ?? 'a host requirement'}; this host is ${host?.version ?? 'unknown'} — refused before installing`)
                   sendJson(response, 400, {
                     hostIncompatible: {
+                      kind: 'update',
                       name,
+                      npmName: name,
                       version: registryLatest,
                       requirement: verdict.requirement,
                       hostVersion: host?.version ?? null,
@@ -2994,6 +3005,7 @@ sendJson(response, 200, { updates })
                   return
                 }
               }
+              } // end of else (compatVersion === null)
             }
             // Re-accelerated from the unpinned shortcut, never from the
             // installed URL: that one names the commit already on disk, so
@@ -4178,7 +4190,9 @@ sendJson(response, 200, { updates })
         }
         try {
           await withMutationLock(response, 'install', async () => {
-            const body = (await readJsonBody(request)) as { url?: unknown }
+            const body = (await readJsonBody(request)) as { url?: unknown; version?: unknown }
+            // A specific version pre-confirmed by /dsh-market/find-compatible.
+            const pinnedVersion = typeof body.version === 'string' && /^\d+\.\d+\.\d+/.test(body.version) ? body.version : null
             const busyAgents = runningAgentsForGuard()
             if (busyAgents.length > 0) {
               logEvent('warn', 'install-blocked', `refused while agents are running — ${busyAgents.join(', ')}`)
@@ -4202,13 +4216,19 @@ sendJson(response, 200, { updates })
               sendJson(response, 400, { error: 'unsupported source url' })
               return
             }
+            const npmName = typeof entry.npm === 'string' && NPM_NAME_RE.test(entry.npm) ? entry.npm : null
+            // When the user confirmed a specific compatible version via
+            // /dsh-market/find-compatible, install that exact version directly,
+            // skipping the compat guard (we already checked it) and the HEAD
+            // accelerator (no GitHub target to resolve).
+            const versionedTarget = (npmName !== null && pinnedVersion !== null) ? `${npmName}@${pinnedVersion}` : null
             // Resolve GitHub HEAD through the region's available routes, then
             // let pnpm fetch the canonical commit-pinned target.
             // Applied HERE, before the guards below, so every step downstream
             // reasons about the exact spec that will be installed. Returns
             // the original on any lookup failure (see accelerate.ts).
-            const target = await acceleratedTarget(plainTarget, region)
-            if (target !== plainTarget) {
+            const target = versionedTarget ?? await acceleratedTarget(plainTarget, region)
+            if (versionedTarget === null && target !== plainTarget) {
               logEvent('info', 'region', `${entry.name}: resolved HEAD through an available ${region} route; downloading the commit-pinned GitHub target directly for pnpm integrity`)
             }
             // Duplicate guard (#27): the same plugin listed under another name
@@ -4279,6 +4299,33 @@ sendJson(response, 200, { updates })
                   error: `同名冲突：已安装的「${clashName}」来自其他来源，两个同名插件无法共存于一个 profile，请先卸载再安装 / name conflict: an installed plugin already uses the name "${clashName}" but comes from a different source; two plugins with the same name cannot coexist in one profile — uninstall it first`,
                 })
                 return
+              }
+            }
+            // Pre-install host-compatibility guard: same logic as the update
+            // route (#404/#473). Only a CONFIRMED mismatch is refused; skip
+            // when the user pinned a specific version — that version was
+            // already verified by /dsh-market/find-compatible.
+            if (npmName !== null && pinnedVersion === null) {
+              const dshHost = dshHostInfo()
+              if (dshHost?.version != null) {
+                const installFacts = (await discoveryManifests.lookup([npmName], routesFor(region).npmRegistry))[npmName] ?? null
+                const installVerdict = deriveHostCompatibility(installFacts, dshHost.version, corePackageNames(dshHost.directory ?? null))
+                if (installVerdict.status === 'incompatible') {
+                  const incompatVersion = installFacts?.version ?? null
+                  logEvent('warn', 'install-compat', `${entry.name}@${incompatVersion ?? 'latest'} declares ${installVerdict.requirement ?? 'a host requirement'}; this host is ${dshHost.version} — refused before installing`)
+                  sendJson(response, 400, {
+                    hostIncompatible: {
+                      kind: 'install',
+                      name: entry.name,
+                      npmName,
+                      version: incompatVersion ?? '',
+                      requirement: installVerdict.requirement,
+                      hostVersion: dshHost.version,
+                    },
+                    error: `${entry.name} 声明需要 DSH ${installVerdict.requirement ?? '（未知）'}，而当前运行的是 ${dshHost.version}，装上多半会直接报错。已停止，没有安装任何东西。 / ${entry.name} declares it needs DSH ${installVerdict.requirement ?? '(unknown)'}, and this host is ${dshHost.version}; installing it would most likely break the plugin. Nothing was installed.`,
+                  })
+                  return
+                }
               }
             }
             const beforeSpecs = readInstalled(config.profile, activeProfileDir)
@@ -4490,6 +4537,52 @@ sendJson(response, 200, { updates })
           const message = error instanceof Error ? error.message : String(error)
           host.logger?.warn(`[dsh-market] install failed: ${message}`)
           logEvent('error', 'install', `route error: ${message}`)
+          sendJson(response, 500, { error: message })
+        }
+      },
+    }),
+
+    host.webServer.register({
+      kind: 'exact',
+      path: '/dsh-market/find-compatible',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) {
+          sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        try {
+          const body = (await readJsonBody(request)) as { npmName?: unknown }
+          const reqNpmName = typeof body.npmName === 'string' ? body.npmName : ''
+          if (!NPM_NAME_RE.test(reqNpmName)) {
+            sendJson(response, 400, { error: 'invalid npm package name' })
+            return
+          }
+          const reg = await loadRegistry()
+          const inCatalog = reg.plugins.some(p => p.npm === reqNpmName)
+          if (!inCatalog) {
+            sendJson(response, 400, { error: 'package is not in the curated registry' })
+            return
+          }
+          const dshHost = dshHostInfo()
+          if (dshHost?.version == null) {
+            sendJson(response, 200, { compatibleVersion: null, reason: 'host-version-unknown' })
+            return
+          }
+          const compatVer = await findCompatibleVersion(
+            reqNpmName,
+            dshHost.version,
+            corePackageNames(dshHost.directory ?? null),
+            routesFor(region).npmRegistry,
+          )
+          logEvent('info', 'find-compatible', `${reqNpmName}: host=${dshHost.version} → ${compatVer ?? 'none'}`)
+          sendJson(response, 200, { compatibleVersion: compatVer })
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
           sendJson(response, 500, { error: message })
         }
       },
