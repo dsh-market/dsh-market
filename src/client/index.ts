@@ -13,6 +13,7 @@ import { MarketErrorBoundary } from './ErrorBoundary.tsx'
 import { MarketSection } from './MarketSection.tsx'
 import { exportMarketLog } from './self-check.ts'
 import { SettingsCard } from './SettingsCard.tsx'
+import { installSettingsNavIcon } from './settings-nav-icon.ts'
 import type { ThemeSnapshot, Translate } from './market-data.ts'
 
 const NS = 'dsh-market'
@@ -95,6 +96,13 @@ export function apply(ctx: MarketClientContext): void {
 
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-market: dictionaries')
   const t = ctx.locale.bind(NS)
+
+  // The section's nav glyph. The shell picks nav icons from its own built-in
+  // ids and falls back to the settings gear, and a settings.section
+  // registration has no icon to pass — so the market claims its own row and
+  // swaps the gear for the block mark. Same label thunk as the registration
+  // below, so the row is re-claimed when the locale changes.
+  installSettingsNavIcon(ctx, () => t('nav'))
 
   // Kept so the removal flow can retire the market's own nav entry the
   // moment the package is gone: leaving "插件市场" in the left menu after
