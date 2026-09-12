@@ -2542,6 +2542,78 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			"warnLine": "nUhMVa_warnLine"
 		};
 		//#endregion
+		//#region src/client/market-mark.ts
+		/**
+		* The market's block mark as geometry rather than as a component.
+		*
+		* Two consumers draw this mark and they must not drift:
+		*
+		* - `MarketLogo` (MarketSection.tsx) renders it inside the section as an
+		*   ordinary React SVG in `currentColor`, including the animated variant;
+		* - `settings-nav-icon.ts` serialises it into a CSS mask for the settings
+		*   navigation glyph, which cannot use `currentColor` (a mask is an
+		*   independent image) and so needs it as standalone markup.
+		*
+		* Keeping the numbers here means a change to the mark is one edit, and the
+		* suite can hold both renderings to the same source.
+		*
+		* The mark is the brand asset in `assets/logo.svg`: an 8-cell grid plus the
+		* block being plugged into its empty corner, offset and tilted 9°.
+		*/
+		/** Side of one block, and its corner radius. */
+		const MARK_BLOCK_SIZE = 3.3;
+		const MARK_BLOCK_RADIUS = .53;
+		/** The eight grid cells, row-major. The ninth slot stays empty on purpose. */
+		const MARK_GRID_BLOCKS = [
+			{
+				x: 1.96,
+				y: 3.36
+			},
+			{
+				x: 5.71,
+				y: 3.36
+			},
+			{
+				x: 1.96,
+				y: 7.11
+			},
+			{
+				x: 5.71,
+				y: 7.11
+			},
+			{
+				x: 9.46,
+				y: 7.11
+			},
+			{
+				x: 1.96,
+				y: 10.86
+			},
+			{
+				x: 5.71,
+				y: 10.86
+			},
+			{
+				x: 9.46,
+				y: 10.86
+			}
+		];
+		/**
+		* The block being plugged in: OUTSIDE the grid's empty corner, offset
+		* (+1.28, -1.27) and tilted 9deg, exactly as in assets/logo.svg. The earlier
+		* icon sat it neatly in the empty slot, which reads as one crooked tile
+		* rather than a block arriving — the whole idea of the mark, and the reason
+		* it no longer matched the GitHub logo.
+		*/
+		const MARK_PLUG_BLOCK = {
+			x: 10.74,
+			y: 2.09,
+			degrees: 9,
+			/** Rotation origin: the plug block's own centre. */
+			originX: 12.39,
+			originY: 3.74
+		};
+		//#endregion
 		//#region src/client/comments.ts
 		/**
 		* giscus wiring for the in-market comment thread.
@@ -5875,86 +5947,36 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		* Official-style market glyph: the shared block-grid brand mark converted to
 		* the official monochrome icon form (16×16, fill="currentColor") so it
 		* follows the active theme. Mirrors the settings-nav glyph used for the
-		* "market" section id.
+		* "market" section id — both now draw the geometry in market-mark.ts, so the
+		* nav entry and the section it opens cannot drift apart.
 		*/
 		function MarketLogo({ size = 16, style, animated = false }) {
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("svg", {
 				width: size,
 				height: size,
-				viewBox: "0 0 16 16",
+				viewBox: `0 0 16 16`,
 				fill: "none",
 				xmlns: "http://www.w3.org/2000/svg",
 				"aria-hidden": "true",
 				style,
-				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("g", {
+				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("g", {
 					fill: "currentColor",
-					children: [
-						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("rect", {
-							x: "1.96",
-							y: "3.36",
-							width: "3.3",
-							height: "3.3",
-							rx: "0.53"
-						}),
-						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("rect", {
-							x: "5.71",
-							y: "3.36",
-							width: "3.3",
-							height: "3.3",
-							rx: "0.53"
-						}),
-						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("rect", {
-							x: "1.96",
-							y: "7.11",
-							width: "3.3",
-							height: "3.3",
-							rx: "0.53"
-						}),
-						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("rect", {
-							x: "5.71",
-							y: "7.11",
-							width: "3.3",
-							height: "3.3",
-							rx: "0.53"
-						}),
-						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("rect", {
-							x: "9.46",
-							y: "7.11",
-							width: "3.3",
-							height: "3.3",
-							rx: "0.53"
-						}),
-						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("rect", {
-							x: "1.96",
-							y: "10.86",
-							width: "3.3",
-							height: "3.3",
-							rx: "0.53"
-						}),
-						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("rect", {
-							x: "5.71",
-							y: "10.86",
-							width: "3.3",
-							height: "3.3",
-							rx: "0.53"
-						}),
-						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("rect", {
-							x: "9.46",
-							y: "10.86",
-							width: "3.3",
-							height: "3.3",
-							rx: "0.53"
-						})
-					]
+					children: MARK_GRID_BLOCKS.map((block) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)("rect", {
+						x: block.x,
+						y: block.y,
+						width: MARK_BLOCK_SIZE,
+						height: MARK_BLOCK_SIZE,
+						rx: MARK_BLOCK_RADIUS
+					}, `${block.x},${block.y}`))
 				}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("rect", {
 					className: animated ? Market_module_css_default.logoPlug : void 0,
-					x: "10.74",
-					y: "2.09",
-					width: "3.3",
-					height: "3.3",
-					rx: "0.53",
+					x: MARK_PLUG_BLOCK.x,
+					y: MARK_PLUG_BLOCK.y,
+					width: MARK_BLOCK_SIZE,
+					height: MARK_BLOCK_SIZE,
+					rx: MARK_BLOCK_RADIUS,
 					fill: "currentColor",
-					transform: animated ? void 0 : "rotate(9 12.39 3.74)"
+					transform: animated ? void 0 : `rotate(${MARK_PLUG_BLOCK.degrees} ${MARK_PLUG_BLOCK.originX} ${MARK_PLUG_BLOCK.originY})`
 				})]
 			});
 		}
@@ -11090,6 +11112,141 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			}, (0, react.createElement)("div", { className: Market_module_css_default.setHeadText }, (0, react.createElement)("div", { className: Market_module_css_default.setName }, t("nav"), version !== null ? (0, react.createElement)("span", { className: Market_module_css_default.version }, ` v${version}`) : null, prerelease ? (0, react.createElement)("span", { className: Market_module_css_default.setBetaTag }, t("setChannelBeta")) : null), (0, react.createElement)("div", { className: Market_module_css_default.setDesc }, t("setCardDesc"))), (0, react.createElement)("span", { className: open ? `${Market_module_css_default.setChevron} ${Market_module_css_default.setChevronOpen}` : Market_module_css_default.setChevron }, (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.IconChevronDownOutline14, { size: 14 }))), open ? (0, react.createElement)("div", { className: Market_module_css_default.setBody }, body) : null);
 		}
 		//#endregion
+		//#region src/client/settings-nav-icon.ts
+		/**
+		* The market's block mark in the settings navigation.
+		*
+		* The settings shell picks nav glyphs from a closed list of section ids
+		* (`models`, `agent-presets`, `plugins`) and falls back to its own gear for
+		* every other id; `settings.section` projects only `id` / `order` / `label`,
+		* so a registrant has no icon to pass — the slot contract in
+		* `@deepseek-ai/dsh-client-ui-settings` and the runtime slot inventory both
+		* list exactly those three options. Every third-party section therefore wears
+		* the gear, the market included.
+		*
+		* So the market claims its own row once the dialog is mounted and swaps the
+		* fallback gear for the block mark — the same mark `MarketLogo` draws inside
+		* the section (see market-mark.ts), which is what makes the nav entry read as
+		* the same thing as the page it opens. `dsh-better-sidebar` and
+		* `dsh-skill-mcp-panel` solve it the same way.
+		*
+		* Scope, deliberately narrow:
+		*
+		* - only the row whose visible text equals this plugin's own localized
+		*   section label is marked; no shell structure is touched;
+		* - the marker and the injected stylesheet belong to a `ctx.effect`, so they
+		*   are removed with the fiber;
+		* - a locale switch re-claims the row through the MutationObserver, so the
+		*   label and the glyph never disagree.
+		*
+		* Delete this module (and its call in index.ts) the day `settings.section`
+		* grows an `icon` field.
+		*/
+		/** Marks the one nav row this plugin owns. */
+		const NAV_ICON_MARKER = "data-dsh-market-nav-icon";
+		/**
+		* The nav rows of the settings dialog. The shell renders each
+		* `settings.section` entry as a `<button>` inside the panel's `<nav>`
+		* (SettingsPanel in dsh-client-ui-settings-general).
+		*/
+		const NAV_ROW_SELECTOR = "[role=\"dialog\"] nav button";
+		/**
+		* The mark as standalone SVG for a CSS `mask-image`.
+		*
+		* Painted pure black on purpose: a mask reads alpha only, and the visible
+		* colour comes from the element's `background-color: currentColor`. The
+		* plug block carries its tilt without the animated variant's transform
+		* classes — a mask cannot animate through CSS-module classes.
+		*/
+		function marketMaskSvg() {
+			const blocks = MARK_GRID_BLOCKS.map((block) => `<rect x="${block.x}" y="${block.y}" width="${MARK_BLOCK_SIZE}" height="${MARK_BLOCK_SIZE}" rx="${MARK_BLOCK_RADIUS}"/>`).join("");
+			const plug = MARK_PLUG_BLOCK;
+			return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="#000"><g>${blocks}</g><rect x="${plug.x}" y="${plug.y}" width="${MARK_BLOCK_SIZE}" height="${MARK_BLOCK_SIZE}" rx="${MARK_BLOCK_RADIUS}" transform="rotate(${plug.degrees} ${plug.originX} ${plug.originY})"/></svg>`;
+		}
+		/** The mask URL for the mark (encoded at runtime, never hand-escaped). */
+		function marketMaskUrl(svg = marketMaskSvg()) {
+			return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+		}
+		/**
+		* Whether a nav row is this plugin's own.
+		*
+		* Pure, and the only decision this feature makes: the row whose visible text
+		* is the section label the shell is currently projecting. An empty label
+		* matches nothing — a locale that has not resolved yet must not mark the
+		* whole nav.
+		*/
+		function isOwnNavRow(rowText, wantedLabel) {
+			const wanted = String(wantedLabel ?? "").trim();
+			if (wanted.length === 0) return false;
+			return String(rowText ?? "").trim() === wanted;
+		}
+		/** Stylesheet for the marked row: hide the shell's gear, draw the mark. */
+		function navIconCss(maskUrl) {
+			return [
+				`[${NAV_ICON_MARKER}] > svg { display: none; }`,
+				`[${NAV_ICON_MARKER}]::before {`,
+				`  content: '';`,
+				`  flex: none;`,
+				`  width: 16px;`,
+				`  height: 16px;`,
+				`  background-color: currentColor;`,
+				`  -webkit-mask-image: url("${maskUrl}");`,
+				`  mask-image: url("${maskUrl}");`,
+				`  -webkit-mask-repeat: no-repeat;`,
+				`  mask-repeat: no-repeat;`,
+				`  -webkit-mask-position: center;`,
+				`  mask-position: center;`,
+				`  -webkit-mask-size: 16px 16px;`,
+				`  mask-size: 16px 16px;`,
+				`}`
+			].join("\n");
+		}
+		/**
+		* Install the nav glyph.
+		*
+		* @param ctx - client context, for effect ownership.
+		* @param resolveLabel - this plugin's current section label (the same thunk
+		*   the `settings.section` registration passes), re-read on every sync so a
+		*   locale switch is picked up without re-registering.
+		*/
+		function installSettingsNavIcon(ctx, resolveLabel) {
+			if (typeof document === "undefined") return;
+			ctx.effect(() => {
+				const tag = document.createElement("style");
+				tag.dataset.plugin = "dshmarket";
+				tag.dataset.pluginCss = "dshmarket/settings-nav-icon";
+				tag.textContent = navIconCss(marketMaskUrl());
+				document.head.appendChild(tag);
+				let disposed = false;
+				let scheduled = false;
+				const sync = () => {
+					scheduled = false;
+					if (disposed) return;
+					const wanted = resolveLabel();
+					for (const row of document.querySelectorAll(NAV_ROW_SELECTOR)) if (isOwnNavRow(row.textContent, wanted)) row.setAttribute(NAV_ICON_MARKER, "");
+					else row.removeAttribute(NAV_ICON_MARKER);
+				};
+				const schedule = () => {
+					if (scheduled || disposed) return;
+					scheduled = true;
+					queueMicrotask(sync);
+				};
+				sync();
+				const observer = new MutationObserver(schedule);
+				observer.observe(document.body, {
+					childList: true,
+					subtree: true,
+					characterData: true
+				});
+				return () => {
+					disposed = true;
+					observer.disconnect();
+					for (const row of document.querySelectorAll(`[${NAV_ICON_MARKER}]`)) row.removeAttribute(NAV_ICON_MARKER);
+					tag.remove();
+				};
+			}, "dsh-market: settings nav icon");
+		}
+		//#endregion
 		//#region src/client/index.ts
 		/**
 		* dsh-market client: registers a "Market" settings section rendering the
@@ -11132,6 +11289,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				en
 			}), "dsh-market: dictionaries");
 			const t = ctx.locale.bind(NS);
+			installSettingsNavIcon(ctx, () => t("nav"));
 			let retireSection = null;
 			ctx.slots.inject("settings.section", () => {
 				const off = ctx.slots.register({
