@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const state = vi.hoisted(() => ({
-  mounts: [] as { host: unknown; config: Record<string, unknown>; runtime?: unknown }[],
+  mounts: [] as { host: unknown; config: Record<string, unknown>; runtime?: unknown; activation?: unknown }[],
   routeDisposals: 0,
   runtimeDisposals: 0,
   runtime: {
@@ -25,8 +25,8 @@ vi.mock('../src/dsh-cli.ts', () => ({
 }))
 
 vi.mock('../src/routes.ts', () => ({
-  mountMarketRoutes: (host: unknown, config: Record<string, unknown>, runtime?: unknown) => {
-    state.mounts.push({ host, config, runtime })
+  mountMarketRoutes: (host: unknown, config: Record<string, unknown>, runtime?: unknown, _agents?: unknown, activation?: unknown) => {
+    state.mounts.push({ host, config, runtime, activation })
     return () => { state.routeDisposals += 1 }
   },
 }))
@@ -108,6 +108,22 @@ describe('host adaptation', () => {
     await ctx.effects[0].dispose()
     expect(state.routeDisposals).toBe(1)
     expect(state.runtimeDisposals).toBe(1)
+  })
+
+  it('forwards an Ellamaka host activation capability so routes never create a second loader entry', () => {
+    const desktopPnpm = { runPlugin: vi.fn() }
+    const activation = { activate: vi.fn().mockResolvedValue({ ok: true }) }
+    const ctx = new FakeContext({
+      webServer: {},
+      loader: {},
+      desktopProfiles: { current: { name: 'web', dir: '/private/dsh/web' }, pluginActivation: activation },
+      desktopPnpm,
+    })
+
+    apply(ctx as never)
+
+    expect(state.mounts).toHaveLength(1)
+    expect(state.mounts[0].activation).toBe(activation)
   })
 
   it('uses the documented pre-Loader desktopProfiles discriminator and never falls back to ambient CLI', () => {
