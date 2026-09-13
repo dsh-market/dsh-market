@@ -3813,6 +3813,35 @@ describe('generic enable/disable toggle (#60)', () => {
     const after = readFileSync(patchPath, 'utf8')
     expect(after).toBe(before)
     expect(after).toContain('disabled: true')
+
+    // …and so must the market's OWN durable store. The patch layer and
+    // state.json are two persisted views of the same answer; leaving them
+    // disagreeing is worse than the original bug, because which one wins at
+    // the next boot depends on load order.
+    // …and so must the market's OWN durable answer. `disabled` in the reply
+    // is the same array handed to writeMarketState, so asserting it here is
+    // asserting what the next boot reads. Leaving the two persisted views
+    // disagreeing is worse than the original bug: which one wins at the next
+    // boot depends on load order.
+    expect(on.json.disabled).toContain('dsh-crashy')
+  })
+
+  it('a failed enable leaves a CLIENT-ONLY plugin disabled too (#575)', async () => {
+    // The path the patch gate cannot cover: a client-only package has no
+    // bundle rows, so `patchRows` is empty and the gate never runs. Its only
+    // durable state is state.json — which is exactly where the first version
+    // of this fix still wrote "enabled" after a failed mount, leaving the
+    // same crash loop for this kind of plugin.
+    await installNpm('dsh-loop', { client: './client.js' })
+    const off = await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-loop', enabled: false })
+    expect(off.status).toBe(200)
+    expect(off.json.disabled).toContain('dsh-loop')
+
+    hot.failNext = true
+    const on = await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-loop', enabled: true })
+    expect(on.status).toBe(502)
+
+    expect(on.json.disabled).toContain('dsh-loop')
   })
 
   it('toggles a client-only shim (dsh.client without dsh.bundle) through the hot path', async () => {
