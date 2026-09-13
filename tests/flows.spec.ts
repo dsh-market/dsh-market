@@ -381,6 +381,7 @@ const hot = vi.hoisted(() => ({
   failNext: false,
 }))
 vi.mock('../src/hot.ts', () => ({
+  hotMountDisposalError: () => undefined,
   MAX_NOTE: 200,
   MAX_FAVORITES: 500,
   cleanHotDir: () => {},
@@ -418,7 +419,7 @@ vi.mock('../src/hot.ts', () => ({
   hotMount: (_ctx: unknown, _dir: string, name: string) => {
     if (hot.failNext) {
       hot.failNext = false
-      return Promise.resolve({ ok: false, reason: 'test: host cannot hot-mount' })
+      return Promise.resolve({ ok: false, outcome: 'deferred', reason: 'test: host cannot hot-mount' })
     }
     hot.mounts.push(name)
     return Promise.resolve({ ok: true, reason: null })

@@ -113,3 +113,54 @@ describe('installedThemeNames', () => {
     expect(await names()).toEqual([])
   })
 })
+
+describe('strict entry enable for ordinary plugins (#575)', () => {
+  it('restores every touched entry if a later entry rejects, without touching other packages', async () => {
+    const entries = [true, true].map((disabled, i) => {
+      const entry = {
+        options: { name: 'ordinary', disabled: disabled as boolean | null },
+        fiber: undefined as unknown,
+        update: async (options: { disabled: boolean | null }) => {
+          entry.options.disabled = options.disabled
+          entry.fiber = options.disabled ? undefined : {}
+          if (!options.disabled && i === 1) throw new Error('second entry rejected')
+        },
+      }
+      return entry
+    })
+    const other = { options: { name: 'unrelated', disabled: true }, update: vi.fn() }
+    const manager = createThemeManager({ ...host, loader: { entries: () => [...entries, other] } }, 'web', new Set())
+    await expect(manager.setEntryDisabled('ordinary', false, true)).rejects.toThrow('second entry rejected')
+    for (const entry of entries) {
+      expect(entry.options.disabled).toBe(true)
+      expect(entry.fiber).toBeUndefined()
+    }
+    expect(other.update).not.toHaveBeenCalled()
+  })
+
+  it('reports failed restoration instead of claiming runtime rollback', async () => {
+    const entry = { options: { name: 'ordinary', disabled: true }, update: async () => { throw new Error('loader broken') } }
+    const manager = createThemeManager({ ...host, loader: { entries: () => [entry] } }, 'web', new Set())
+    await expect(manager.setEntryDisabled('ordinary', false, true)).rejects.toThrow('entry restoration failed: loader broken')
+  })
+
+  it('refuses a fulfilled update that never produced a live fiber', async () => {
+    const entry = { options: { name: 'ordinary', disabled: true as boolean | null }, update: async (options: { disabled: boolean | null }) => { entry.options.disabled = options.disabled } }
+    const manager = createThemeManager({ ...host, loader: { entries: () => [entry] } }, 'web', new Set())
+    await expect(manager.setEntryDisabled('ordinary', false, true)).rejects.toThrow('did not become live')
+    expect(entry.options.disabled).toBe(true)
+  })
+  it('bounds background disable replay without rejecting its best-effort caller', async () => {
+    const entry = { options: { name: 'ordinary', disabled: true }, update: () => new Promise<void>(() => {}) }
+    const manager = createThemeManager({ ...host, loader: { entries: () => [entry] } }, 'web', new Set())
+    vi.useFakeTimers()
+    try {
+      let result: boolean | undefined
+      const pending = manager.setEntryDisabled('ordinary', true).then(value => { result = value })
+      await vi.advanceTimersByTimeAsync(10_001)
+      expect(result).toBe(false)
+      await pending
+    } finally { vi.useRealTimers() }
+  })
+
+})

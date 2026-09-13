@@ -82,6 +82,7 @@ describe('hotMount activation timeout guard', () => {
       const assertion = pending.then(result => {
         expect(result.ok).toBe(false)
         expect(result.reason).toContain('did not settle')
+        expect(result.outcome).toBe('deferred')
         expect(disposed).toBe(true)
         expect(listHotMounts()).not.toContain('dsh-wedged-plugin')
       })
@@ -235,5 +236,25 @@ describe('parseSimplePatch — hot-mountable or restart-only', () => {
     expect(parseSimplePatch('')).toBeNull()
     expect(parseSimplePatch('# only a comment\n\n')).toBeNull()
     expect(parseSimplePatch('- insert:\n')).toBeNull()
+  })
+})
+
+// Test the production classification, with failure injected at handle.await.
+describe('hotMount outcomes (#575)', () => {
+  it('distinguishes a rejected apply from a live mount and restart-only patch', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dshm-hot-'))
+    try {
+      clientOnlyPkg(dir, 'dsh-outcome')
+      const rejected = await hotMount({ plugin: () => ({ await: async () => { throw new Error('apply rejected') }, dispose: () => {} }) }, dir, 'dsh-outcome')
+      expect(rejected).toMatchObject({ ok: false, outcome: 'failed' })
+      expect(rejected.reason).not.toContain('restart required')
+      expect(listHotMounts()).not.toContain('dsh-outcome')
+      expect(await hotMount(ctx, dir, 'dsh-outcome')).toMatchObject({ ok: true, outcome: 'live' })
+      await hotUnmount('dsh-outcome')
+      writeFileSync(join(dir, 'node_modules/dsh-outcome/cordis.patch.yml'), '- id: other\n  config:\n    limit: 7\n')
+      expect(await hotMount(ctx, dir, 'dsh-outcome')).toMatchObject({ ok: false, outcome: 'deferred' })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

@@ -449,7 +449,7 @@ function appendPatchEntry(patchPath: string, block: string): { ok: boolean; reas
 }
 
 /** Disable one row: append `- id: X` + `disabled: true` (idempotent). */
-export function disableRow(patchPath: string, rowId: string): Promise<{ ok: boolean; reason: string | null }> {
+export function disableRow(patchPath: string, rowId: string, logChange = true): Promise<{ ok: boolean; reason: string | null }> {
   return queuedWrite(async () => {
     if (!ROW_ID_RE.test(rowId)) {
       return { ok: false, reason: `行 id 含特殊字符,不支持写入补丁层 / row id ${rowId} cannot be written to the patch layer` }
@@ -457,14 +457,14 @@ export function disableRow(patchPath: string, rowId: string): Promise<{ ok: bool
     const state = readUserPatchState(patchPath)
     if (state.disables.includes(rowId)) return { ok: true, reason: null }
     const result = appendPatchEntry(patchPath, rowBlock(rowId, true))
-    if (result.ok) logEvent('info', 'patch', `disabled row ${rowId} in ${patchPath}`)
+    if (result.ok && logChange) logEvent('info', 'patch', `disabled row ${rowId} in ${patchPath}`)
     return result
   })
 }
 
 /** Enable one row: remove the `disabled: true` block; force-enable with
  * `disabled: false` when a lower layer (bundle/home patch) holds it down. */
-export function enableRow(patchPath: string, rowId: string): Promise<{ ok: boolean; reason: string | null }> {
+export function enableRow(patchPath: string, rowId: string, logChange = true): Promise<{ ok: boolean; reason: string | null }> {
   return queuedWrite(async () => {
     if (!ROW_ID_RE.test(rowId)) {
       return { ok: false, reason: `行 id 含特殊字符,不支持写入补丁层 / row id ${rowId} cannot be written to the patch layer` }
@@ -476,12 +476,12 @@ export function enableRow(patchPath: string, rowId: string): Promise<{ ok: boole
     })()
     if (blockRe.test(text)) {
       writeFileSync(patchPath, withPlaceholderRestored(text.replace(blockRe, '')))
-      logEvent('info', 'patch', `enabled row ${rowId} in ${patchPath}`)
+      if (logChange) logEvent('info', 'patch', `enabled row ${rowId} in ${patchPath}`)
       return { ok: true, reason: null }
     }
     if (state.forced.includes(rowId)) return { ok: true, reason: null }
     const result = appendPatchEntry(patchPath, rowBlock(rowId, false))
-    if (result.ok) logEvent('info', 'patch', `force-enabled row ${rowId} in ${patchPath}`)
+    if (result.ok && logChange) logEvent('info', 'patch', `force-enabled row ${rowId} in ${patchPath}`)
     return result
   })
 }
