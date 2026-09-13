@@ -1645,6 +1645,40 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			for (const id of entryIdentities(plugin)) if (dep.has(id)) return true;
 			return false;
 		}
+		/**
+		* Memo for the local-install catalog match, structurally the twin of
+		* looseMatchCountCache above and on the same hot path.
+		*
+		* findCatalogEntryForLocal walks the whole catalog to build the `/tree/`
+		* repo set, then walks it again per identity branch. Uncached, that ran
+		* once per local dependency per rendered card: the reporter measured ~300ms
+		* per repaint at 24 cards and 3,627 entries with a single `link:` install,
+		* against 1.1ms for a version-pinned one (#589). Every keystroke in the
+		* search box pays it.
+		*
+		* The inner key carries the identities and hints, not just the name,
+		* because the answer depends on all three and they refresh independently of
+		* the catalog: installing a plugin hands repoIdentities a new object while
+		* data.plugins stays the same array. Keying on the name alone would answer
+		* a post-install question with a pre-install result — and this matcher is
+		* the one that keeps a card from claiming someone else's fork is installed
+		* (#485). `\u0000` and `\u001f` cannot occur in a repo identity, so the
+		* joined key is unambiguous.
+		*/
+		const localMatchCache = /* @__PURE__ */ new WeakMap();
+		function cachedLocalMatch(plugins, name, identities, hints) {
+			let byKey = localMatchCache.get(plugins);
+			if (byKey === void 0) {
+				byKey = /* @__PURE__ */ new Map();
+				localMatchCache.set(plugins, byKey);
+			}
+			const key = `${name}\u0000${identities.join("")}\u0000${hints.join("")}`;
+			const hit = byKey.get(key);
+			if (hit !== void 0) return hit;
+			const entry = findCatalogEntryForLocal(plugins, name, identities, hints);
+			byKey.set(key, entry);
+			return entry;
+		}
 		/** The installed dependency name a registry entry corresponds to, or null. */
 		function matchInstalledName(plugin, installed, repoIdentities = {}, plugins, repoHints = {}) {
 			const ids = entryIdentities(plugin);
@@ -1653,7 +1687,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				const repos = repoIdentities[name] ?? [];
 				if (/^(?:link|file):/i.test(specStr)) {
 					if (plugins === void 0) continue;
-					const entry = findCatalogEntryForLocal(plugins, name, repos, repoHints[name] ?? []);
+					const entry = cachedLocalMatch(plugins, name, repos, repoHints[name] ?? []);
 					if (entry !== null && entry.url === plugin.url) return name;
 					continue;
 				}
@@ -2055,7 +2089,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		}
 		/** Catalog row for an installed dependency — strict for local link:/file: specs. */
 		function catalogEntryForInstalled(plugins, name, spec, repoIdentities = [], repoHints = []) {
-			if (/^(?:link|file):/i.test(spec)) return findCatalogEntryForLocal(plugins, name, repoIdentities, repoHints) ?? void 0;
+			if (/^(?:link|file):/i.test(spec)) return cachedLocalMatch(plugins, name, repoIdentities, repoHints) ?? void 0;
 			return entryForDep(plugins, name, spec, repoIdentities, repoHints);
 		}
 		//#endregion

@@ -754,6 +754,48 @@ function looseMatches(plugin: RegistryPlugin, name: string): boolean {
   return false
 }
 
+/**
+ * Memo for the local-install catalog match, structurally the twin of
+ * looseMatchCountCache above and on the same hot path.
+ *
+ * findCatalogEntryForLocal walks the whole catalog to build the `/tree/`
+ * repo set, then walks it again per identity branch. Uncached, that ran
+ * once per local dependency per rendered card: the reporter measured ~300ms
+ * per repaint at 24 cards and 3,627 entries with a single `link:` install,
+ * against 1.1ms for a version-pinned one (#589). Every keystroke in the
+ * search box pays it.
+ *
+ * The inner key carries the identities and hints, not just the name,
+ * because the answer depends on all three and they refresh independently of
+ * the catalog: installing a plugin hands repoIdentities a new object while
+ * data.plugins stays the same array. Keying on the name alone would answer
+ * a post-install question with a pre-install result — and this matcher is
+ * the one that keeps a card from claiming someone else's fork is installed
+ * (#485). `\u0000` and `\u001f` cannot occur in a repo identity, so the
+ * joined key is unambiguous.
+ */
+const localMatchCache = new WeakMap<RegistryPlugin[], Map<string, RegistryPlugin | null>>()
+
+function cachedLocalMatch(
+  plugins: RegistryPlugin[],
+  name: string,
+  identities: readonly string[],
+  hints: readonly string[],
+): RegistryPlugin | null {
+  let byKey = localMatchCache.get(plugins)
+  if (byKey === undefined) {
+    byKey = new Map<string, RegistryPlugin | null>()
+    localMatchCache.set(plugins, byKey)
+  }
+  const key = `${name}\u0000${identities.join('\u001f')}\u0000${hints.join('\u001f')}`
+  // A miss is undefined; a cached "no catalog row" is null, and stays cached.
+  const hit = byKey.get(key)
+  if (hit !== undefined) return hit
+  const entry = findCatalogEntryForLocal(plugins, name, identities, hints)
+  byKey.set(key, entry)
+  return entry
+}
+
 /** The installed dependency name a registry entry corresponds to, or null. */
 export function matchInstalledName(
   plugin: RegistryPlugin,
@@ -772,7 +814,7 @@ export function matchInstalledName(
     // else's fork as installed (#485).
     if (/^(?:link|file):/i.test(specStr)) {
       if (plugins === undefined) continue
-      const entry = findCatalogEntryForLocal(plugins, name, repos, repoHints[name] ?? [])
+      const entry = cachedLocalMatch(plugins, name, repos, repoHints[name] ?? [])
       if (entry !== null && entry.url === plugin.url) return name
       continue
     }
@@ -1316,7 +1358,7 @@ export function catalogEntryForInstalled(
   repoHints: readonly string[] = [],
 ): RegistryPlugin | undefined {
   if (/^(?:link|file):/i.test(spec)) {
-    return findCatalogEntryForLocal(plugins, name, repoIdentities, repoHints) ?? undefined
+    return cachedLocalMatch(plugins, name, repoIdentities, repoHints) ?? undefined
   }
   return entryForDep(plugins, name, spec, repoIdentities, repoHints)
 }

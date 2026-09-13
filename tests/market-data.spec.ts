@@ -281,6 +281,43 @@ describe('matchInstalledName / isInstalled', () => {
     expect(matchInstalledName(exact, pinned)).toBe('plugin-a')
     expect(matchInstalledName(sibling, pinned)).toBeNull()
   })
+
+  it('caches the local-install catalog match per catalog, and re-answers when the evidence changes (#589)', () => {
+    // findCatalogEntryForLocal walks the whole catalog twice; uncached it ran
+    // once per local dependency per card, which is the ~300ms-per-keystroke
+    // the reporter measured. The memo is keyed on the catalog array identity
+    // — a refetch is a new array — and on the name plus its identities and
+    // hints, because all three decide the answer.
+    const mine = plugin({ name: 'dsh-humanizer', url: 'https://github.com/me/dsh-humanizer' })
+    const theirs = plugin({ name: 'dsh-humanizer', url: 'https://github.com/them/dsh-humanizer' })
+    const catalog = [mine, theirs]
+    const installed = { 'dsh-humanizer': 'link:/home/me/src/dsh-humanizer' }
+
+    // Two same-named rows and no evidence: neither card may claim it (#485).
+    expect(matchInstalledName(mine, installed, {}, catalog)).toBeNull()
+    expect(matchInstalledName(theirs, installed, {}, catalog)).toBeNull()
+
+    // Evidence arrives for the same catalog array — the case that goes wrong
+    // if the memo keys on the name alone, because installing or refreshing
+    // hands repoIdentities a new object while the catalog array stays put.
+    const evidence = { 'dsh-humanizer': ['me/dsh-humanizer'] }
+    expect(matchInstalledName(mine, installed, evidence, catalog)).toBe('dsh-humanizer')
+    expect(matchInstalledName(theirs, installed, evidence, catalog)).toBeNull()
+
+    // Same question again: the cached answer is the same answer.
+    expect(matchInstalledName(mine, installed, evidence, catalog)).toBe('dsh-humanizer')
+
+    // Proof the memo is live: mutating the array behind the same identity is
+    // invisible to a cached answer. Production never mutates — a refetched
+    // catalog is a new array, which is a new cache — so this only asserts
+    // the key is the identity, not the contents.
+    catalog.length = 0
+    expect(matchInstalledName(mine, installed, evidence, catalog)).toBe('dsh-humanizer')
+
+    // A new array is a new catalog: with the row gone, nothing matches.
+    expect(matchInstalledName(mine, installed, evidence, [theirs])).toBeNull()
+  })
+
 })
 
 describe('entryForDep', () => {
