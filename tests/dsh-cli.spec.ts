@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { describe, expect, it, vi } from 'vitest'
 import { join } from 'node:path'
-import { cmdCommandLine, isCmdSafeProfileName, nodeExecutable, proxyEnvForPnpm, quoteCmdArg, TARGET_RE, toolSearchDirs } from '../src/dsh-cli.ts'
+import { cmdCommandLine, gitEnvForPnpm, isCmdSafeProfileName, nodeExecutable, proxyEnvForPnpm, quoteCmdArg, TARGET_RE, toolSearchDirs } from '../src/dsh-cli.ts'
 import { routesFor } from '../src/regions.ts'
 
 describe('cmd.exe command line building (DEP0190 shim)', () => {
@@ -276,3 +276,81 @@ describe('toolSearchDirs (#292)', () => {
     }
   })
 })
+
+describe('git is spawned non-interactively (#587)', () => {
+  // CI=true covers pnpm, which reads it; git does not. A
+  // `github:owner/repo#path:/sub` spec reaches pnpm's git fetcher rather
+  // than the codeload tarball path, and git's credential prompt opens the
+  // controlling terminal — which a spawned child does not have, so the
+  // question was asked where nobody could answer it and the clone sat
+  // there until the 15-minute install timeout.
+  it('refuses the terminal prompt when the caller said nothing', () => {
+    expect(gitEnvForPnpm({})).toEqual({ GIT_TERMINAL_PROMPT: '0' })
+  })
+
+  it('never overwrites a value the caller set', () => {
+    // Someone who turned prompting on has made a statement; a default must
+    // fill silence, not replace speech. Same rule proxyEnvForPnpm follows.
+    expect(gitEnvForPnpm({ GIT_TERMINAL_PROMPT: '1' })).toEqual({})
+  })
+
+  it('treats a blank value as unset', () => {
+    // Not a setting git can parse either: `git_env_bool` rejects it. An
+    // empty string is how a shell spells "I cleared this".
+    expect(gitEnvForPnpm({ GIT_TERMINAL_PROMPT: '' })).toEqual({ GIT_TERMINAL_PROMPT: '0' })
+    expect(gitEnvForPnpm({ GIT_TERMINAL_PROMPT: '   ' })).toEqual({ GIT_TERMINAL_PROMPT: '0' })
+  })
+
+  // Same reasoning as the proxy wiring assertion above: the pure function
+  // being right is worth nothing if spawnEnv never calls it.
+  it('puts the switch in the environment pnpm is spawned with', async () => {
+    const seen = await spawnedEnv(env => { delete env.GIT_TERMINAL_PROMPT })
+    expect(seen?.GIT_TERMINAL_PROMPT).toBe('0')
+  })
+
+  // The pure-function assertion above proves gitEnvForPnpm stays quiet; this
+  // proves the quiet actually reaches the child. Worth its own case because
+  // the two halves fail independently — a default that stopped being
+  // conditional would override the user here even though spawnEnv is wired
+  // correctly. (Spread ORDER is deliberately not asserted: gitEnvForPnpm
+  // returns {} exactly when process.env carries a value, so the two can
+  // never disagree and moving the spread is a no-op, not a defect.)
+  it('lets the caller value survive all the way into the spawned env', async () => {
+    const seen = await spawnedEnv(env => { env.GIT_TERMINAL_PROMPT = '1' })
+    expect(seen?.GIT_TERMINAL_PROMPT).toBe('1')
+  })
+})
+
+/**
+ * Run one real spawn through spawnEnv with `mutate` applied to process.env,
+ * and hand back the environment the child was given.
+ */
+async function spawnedEnv(
+  mutate: (env: NodeJS.ProcessEnv) => void,
+): Promise<NodeJS.ProcessEnv | undefined> {
+  vi.resetModules()
+  const seen: Array<NodeJS.ProcessEnv | undefined> = []
+  vi.doMock('node:child_process', () => ({
+    spawn: (_file: string, _args: readonly string[], options: { env?: NodeJS.ProcessEnv }) => {
+      seen.push(options.env)
+      const child = new EventEmitter() as EventEmitter & { pid?: number }
+      child.pid = 1
+      // Non-zero: probePnpm caches only success, so this leaves no state.
+      setImmediate(() => child.emit('close', 1))
+      return child
+    },
+  }))
+  const previous = process.env.GIT_TERMINAL_PROMPT
+  mutate(process.env)
+  try {
+    const { probePnpm } = await import('../src/dsh-cli.ts')
+    await probePnpm()
+    expect(seen.length).toBeGreaterThan(0)
+    return seen[0]
+  } finally {
+    if (previous === undefined) delete process.env.GIT_TERMINAL_PROMPT
+    else process.env.GIT_TERMINAL_PROMPT = previous
+    vi.doUnmock('node:child_process')
+    vi.resetModules()
+  }
+}

@@ -194,6 +194,44 @@ export function toolSearchDirs(
   return [...new Set(dirs.filter(dir => dir.trim() !== ''))]
 }
 
+/**
+ * Stop git asking for credentials down a channel nobody is listening on
+ * (#587).
+ *
+ * `CI=true` below is the same defence one layer up, and pnpm reads it. git
+ * does not — it has its own switch, and it was not set. The gap only opens
+ * when a spec reaches pnpm's git fetcher instead of the codeload tarball
+ * path `accelerate.ts` describes: `github:owner/repo#path:/sub` is one, and
+ * pnpm really does shell out to `git` for it, trying HTTPS first.
+ *
+ * git's credential prompt opens the controlling terminal, not stdin. There
+ * is no terminal here, so the question is never seen and never answered:
+ * the reporter caught `git.exe` alive for eight minutes having burned 0.05s
+ * of CPU, and only the fifteen-minute install timeout ended it. Refusing
+ * the prompt turns that into a fast, readable failure.
+ *
+ * It is a default, not an override: a value the caller set wins, and blank
+ * counts as unset because an empty `GIT_TERMINAL_PROMPT` is not a setting
+ * git can parse either. Credential helpers and `GIT_ASKPASS` are untouched
+ * and still answer first — this closes only the terminal fallback, which is
+ * precisely the branch that cannot work from a spawned child.
+ *
+ * Scope, stated plainly because it is narrower than the issue title
+ * suggests: this is the HTTPS half. pnpm falls back to `git@github.com:`
+ * when HTTPS fails, and the ssh side needs `GIT_SSH_COMMAND`, which
+ * overrides `core.sshCommand` and `GIT_SSH` — the two ordinary ways to
+ * choose an identity — and whose `BatchMode=yes` would disable
+ * `SSH_ASKPASS`, breaking key-passphrase installs that work today. That
+ * half needs a policy decision, so it is not made here. Note also that on
+ * POSIX `runDshPlugin` spawns detached, so the subtree has no controlling
+ * terminal and the prompt already dies instantly; the hang the issue
+ * reports needs Windows, where the spawn is not detached.
+ */
+export function gitEnvForPnpm(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  if ((env.GIT_TERMINAL_PROMPT ?? '').trim() !== '') return {}
+  return { GIT_TERMINAL_PROMPT: '0' }
+}
+
 function spawnEnv(): NodeJS.ProcessEnv {
   // pnpm v10+ blocks forever on a silent interactive prompt without a TTY;
   // CI mode forces it to act or fail instead of asking.
@@ -202,7 +240,13 @@ function spawnEnv(): NodeJS.ProcessEnv {
   for (const bin of toolSearchDirs()) {
     if (!parts.includes(bin)) parts.push(bin)
   }
-  return { ...process.env, ...proxyEnvForPnpm(process.env, activeRegion()), CI: 'true', PATH: parts.join(separator) }
+  return {
+    ...process.env,
+    ...proxyEnvForPnpm(process.env, activeRegion()),
+    ...gitEnvForPnpm(process.env),
+    CI: 'true',
+    PATH: parts.join(separator),
+  }
 }
 
 const INSTALL_TIMEOUT_MS = Number(process.env.DSH_MARKET_INSTALL_TIMEOUT_MS) || 15 * 60 * 1000
