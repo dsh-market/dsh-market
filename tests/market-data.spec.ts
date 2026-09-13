@@ -821,3 +821,113 @@ describe('installed-state matching stays cheap as the catalog grows (#262)', () 
     expect(isInstalled(after[0]!, installed, {}, after, {})).toBe(false)
   })
 })
+
+describe('local link:/file: matching stays cheap as the catalog grows (#589)', () => {
+  // The branch #262 left behind. A version-pinned dependency goes through
+  // looseMatchCount and its memo; a `link:` or `file:` one goes through
+  // findCatalogEntryForLocal, which had none — so the reporter measured
+  // ~300ms per repaint with a single local dependency against a 3,627-entry
+  // catalog, where the version-pinned path cost 1.1ms.
+  const catalog = (n: number): RegistryPlugin[] =>
+    Array.from({ length: n }, (_, i) => plugin({
+      name: `pkg-${i}`, npm: `pkg-${i}`, url: `https://github.com/o${i}/pkg-${i}`,
+    }))
+
+  it('makes a RE-render cheap, which is what typing in the search box costs', () => {
+    // Same property and the same sampling as the #262 test above: not a
+    // wall-clock budget, but "the catalog is scanned once, not once per
+    // render". Every keystroke re-renders the discover list.
+    const plugins = catalog(8000)
+    const installed: Record<string, string> = {}
+    for (let i = 0; i < 24; i++) installed[`pkg-${i}`] = `link:../pkg-${i}`
+    const render = (): number => {
+      const t0 = performance.now()
+      for (const p of plugins.slice(0, 48)) isInstalled(p, installed, {}, plugins, {})
+      return performance.now() - t0
+    }
+    const first = render()
+    let warm = Infinity
+    for (let i = 0; i < 5; i++) warm = Math.min(warm, render())
+    expect(first / Math.max(warm, 0.001)).toBeGreaterThan(10)
+  })
+
+  it('answers the post-install question, not the pre-install one (#485)', () => {
+    // The reason the key carries the evidence. Installing a plugin gives the
+    // next render a fresh identities array while the catalog array stays the
+    // same; a name-only key would hand back the verdict reached when the
+    // checkout still had no declared repo, which is how a different author's
+    // same-named plugin gets marked as installed.
+    const plugins = [
+      plugin({ name: 'dsh-humanizer', owner: 'lynote-ai', url: 'https://github.com/lynote-ai/dsh-humanizer', npm: 'dsh-humanizer' }),
+    ]
+    const spec = 'link:../dsh-humanizer'
+    expect(catalogEntryForInstalled(plugins, 'dsh-humanizer', spec)?.owner).toBe('lynote-ai')
+    // Same name, same catalog, evidence now says it is a fork.
+    expect(catalogEntryForInstalled(plugins, 'dsh-humanizer', spec, ['handsomeliu/dsh-humanizer'])).toBeUndefined()
+    // And back again, to prove neither answer poisoned the other.
+    expect(catalogEntryForInstalled(plugins, 'dsh-humanizer', spec, ['lynote-ai/dsh-humanizer'])?.owner).toBe('lynote-ai')
+    expect(catalogEntryForInstalled(plugins, 'dsh-humanizer', spec)?.owner).toBe('lynote-ai')
+  })
+
+  it('never lets a hint stand in for an identity', () => {
+    // The two are not interchangeable, so the key cannot treat them as one
+    // field. An identity is searched against the whole catalog; a hint only
+    // disambiguates rows that already matched by name. A local checkout the
+    // developer renamed, whose git origin still points at the catalog repo,
+    // matches on the identity and matches nothing on the hint.
+    const plugins = [plugin({ name: 'dsh-foo', npm: 'dsh-foo', url: 'https://github.com/x/dsh-foo' })]
+    const spec = 'link:../renamed'
+    expect(catalogEntryForInstalled(plugins, 'my-renamed-plugin', spec, [], ['x/dsh-foo'])).toBeUndefined()
+    expect(catalogEntryForInstalled(plugins, 'my-renamed-plugin', spec, ['x/dsh-foo'])?.url).toBe('https://github.com/x/dsh-foo')
+  })
+
+  it('does not leak a match between two different catalogs', () => {
+    // Keyed on the array identity, like looseMatchCountCache: a refetched
+    // catalog is a new array, so a verdict from the previous one cannot
+    // survive into it.
+    const before = [plugin({ name: 'solo', npm: 'solo', url: 'https://github.com/a/solo' })]
+    expect(catalogEntryForInstalled(before, 'solo', 'link:../solo')?.url).toBe('https://github.com/a/solo')
+    const after = [
+      plugin({ name: 'solo', npm: 'solo', url: 'https://github.com/a/solo' }),
+      plugin({ name: 'solo-two', npm: 'solo', url: 'https://github.com/b/solo-two' }),
+    ]
+    // Ambiguous in the NEW catalog, and with no evidence the matcher refuses.
+    expect(catalogEntryForInstalled(after, 'solo', 'link:../solo')).toBeUndefined()
+  })
+
+  it('caches a miss, instead of re-scanning to prove the absence again', () => {
+    // "No catalog row" costs the same full scan to establish as a hit does,
+    // so a miss is cached as null. Asserting only that it stays undefined
+    // would pass with no cache at all, and would not notice `if (hit)` in
+    // place of `if (hit !== undefined)` — which serves every cached null
+    // back as a fresh scan. So this is a ratio test like the one above, on
+    // a name the catalog does not have.
+    const plugins = catalog(8000)
+    const render = (): number => {
+      const t0 = performance.now()
+      for (let i = 0; i < 48; i++) catalogEntryForInstalled(plugins, 'absent', 'link:../absent')
+      return performance.now() - t0
+    }
+    const first = render()
+    let warm = Infinity
+    for (let i = 0; i < 5; i++) warm = Math.min(warm, render())
+    expect(first / Math.max(warm, 0.001)).toBeGreaterThan(10)
+    // ...and it is still a miss, however often it is asked.
+    expect(catalogEntryForInstalled(plugins, 'absent', 'link:../absent')).toBeUndefined()
+  })
+
+  it('tells an absent identity list from a present-but-empty one', () => {
+    // `[].join(sep)` and `[''].join(sep)` are the same string, and these are
+    // opposite questions: an empty-but-present list has size 1, enters the
+    // evidence branch, and refuses to guess; an absent one falls through to
+    // the unique-name match. A key built by joining answered both with
+    // whichever was asked first.
+    const plugins = [plugin({ name: 'solo', npm: 'solo', url: 'https://github.com/a/solo' })]
+    const spec = 'link:../solo'
+    expect(catalogEntryForInstalled(plugins, 'solo', spec, [], [])?.url).toBe('https://github.com/a/solo')
+    expect(catalogEntryForInstalled(plugins, 'solo', spec, [''], [])).toBeUndefined()
+    expect(catalogEntryForInstalled(plugins, 'solo', spec, [], [''])).toBeUndefined()
+    // Re-ask in the other order: the cached answers must not have merged.
+    expect(catalogEntryForInstalled(plugins, 'solo', spec, [], [])?.url).toBe('https://github.com/a/solo')
+  })
+})
