@@ -171,12 +171,8 @@
 /* Themes are a visual choice, not a repository list. Their page therefore
    owns a stable gallery instead of inheriting the generic masonry cards. */
 .themeToolbar{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px;padding:0 4px 12px}
-/* border-box, not the sheet's default content-box: the primitives' Input
-   renders a span with 8px padding and a 1px border, so `width:100%` resolved
-   to the grid cell (438px) and then rendered 18px WIDER than it — straight
-   under the filter and full-screen buttons (#305 by @lcthe). The same class
-   on the Discover tab never showed it: that row is flex, and a flex item
-   shrinks to fit where a grid item does not. */
+/* Keep the search field inside its grid cell beside the toolbar actions
+   (#305). SearchInput also sizes the padded host primitive with border-box. */
 .themeSearch{width:100%;min-width:0;box-sizing:border-box}
 .themeToolbarActions{display:flex;align-items:center;justify-content:flex-end;gap:8px}
 .themeFullscreenBtn.themeFullscreenBtn{width:28px;min-width:28px;padding:0}
@@ -584,6 +580,13 @@
 .irow button{white-space:nowrap;flex-shrink:0}
 .tabSearchRow{display:flex;padding:0 4px 6px}
 .tabSearch{width:100%}
+.searchField{position:relative;min-width:0;box-sizing:border-box}
+/* Input applies className to its padded outer span, not the native input.
+   Reserve the clear button's space here so long queries cannot cover it. */
+.searchInput.searchInput{width:100%;min-width:0;box-sizing:border-box;padding-right:34px}
+.searchClear{position:absolute;right:5px;top:50%;transform:translateY(-50%);display:flex;align-items:center;justify-content:center;width:24px;height:24px;padding:0;border:0;border-radius:4px;background:transparent;color:var(--dsw-alias-label-secondary,#59636e);font:inherit;font-size:20px;line-height:1;cursor:pointer}
+.searchClear:hover{background:var(--dsw-alias-bg-layer-2,#f3f4f6);color:var(--dsw-alias-label-primary,#1f2328)}
+.searchClear:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary,#4f6ef7);outline-offset:1px}
 /* Buttons sharing the row with a description must keep one line (#26, thanks @yanshuai2002) */
 .spec{font-size:11px;color:var(--dsw-alias-label-secondary,#9ca3af);font-family:ui-monospace,Menlo,monospace;overflow-wrap:anywhere;min-width:0}
 .specTag{display:inline-flex;align-items:center;height:16px;padding:0 5px;border-radius:4px;font-size:10px;font-weight:600;white-space:nowrap;flex-shrink:0}
