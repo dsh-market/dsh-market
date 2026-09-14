@@ -281,6 +281,51 @@ describe('matchInstalledName / isInstalled', () => {
     expect(matchInstalledName(exact, pinned)).toBe('plugin-a')
     expect(matchInstalledName(sibling, pinned)).toBeNull()
   })
+
+  it('reads an npm-installed monorepo subpackage through the bare root its manifest publishes (#605)', () => {
+    // The shape the ecosystem usually publishes: `repository` names the
+    // collection while `repository.directory` is absent, so the server's
+    // evidence is the bare root alone — the case the test above does not
+    // cover, because it feeds root AND #path together, which is what
+    // githubRepoIdentities returns only when a directory IS declared.
+    //
+    // entryIdentities still carries the entry's npm name here, but
+    // sameSourceConflict() read root-vs-#path:/sub as two different sources
+    // and returned before any identity was compared, so the strongest
+    // evidence available never got a chance to match and Discover kept
+    // offering Install on a running plugin.
+    const entry = plugin({
+      name: 'dsh-web#packages/dsh-task-board',
+      npm: '@linxin666/dsh-client-ui-task-board',
+      url: 'https://github.com/zhu1090093659/dsh-web/tree/main/packages/dsh-task-board',
+    })
+    const installed = { '@linxin666/dsh-client-ui-task-board': '^0.3.22' }
+    const repoIdentities = { '@linxin666/dsh-client-ui-task-board': ['zhu1090093659/dsh-web'] }
+
+    expect(matchInstalledName(entry, installed, repoIdentities, [entry]))
+      .toBe('@linxin666/dsh-client-ui-task-board')
+  })
+
+  it('keeps bare-root evidence from claiming a sibling subpackage of the same monorepo (#605)', () => {
+    // Root evidence says which repository, never which package inside it. The
+    // fix must not be "let the bare root satisfy entryIdentities" — that would
+    // hand the whole collection to whichever sibling the catalog lists first.
+    const sibling = plugin({
+      name: 'dsh-web#packages/dsh-git-graph',
+      url: 'https://github.com/zhu1090093659/dsh-web/tree/main/packages/dsh-git-graph',
+    })
+    const installed = { '@linxin666/dsh-client-ui-task-board': '^0.3.22' }
+    const repoIdentities = { '@linxin666/dsh-client-ui-task-board': ['zhu1090093659/dsh-web'] }
+
+    expect(matchInstalledName(sibling, installed, repoIdentities, [sibling])).toBeNull()
+
+    // The collection's own root entry, by contrast, has always identified the
+    // subpackage it contains (#170) — relaxing the conflict check must leave
+    // that working.
+    const root = plugin({ name: 'dsh-web', url: 'https://github.com/zhu1090093659/dsh-web' })
+    expect(matchInstalledName(root, installed, repoIdentities, [root]))
+      .toBe('@linxin666/dsh-client-ui-task-board')
+  })
 })
 
 describe('entryForDep', () => {

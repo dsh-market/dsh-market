@@ -691,10 +691,20 @@ function entryRepoIds(plugin: RegistryPlugin): Set<string> {
  * dependency's spec pins a github repo AND the entry states one, the repos
  * decide — the loose name/npm identities only apply when at least one side
  * carries no repo evidence (npm installs, non-github entries).
+ *
+ * Repo evidence only ever decides by repository ROOT. A monorepo catalog
+ * entry states `owner/repo#path:/pkg` while an npm-installed manifest
+ * usually states the bare `owner/repo` (it rarely declares
+ * `repository.directory`), and reading that asymmetry as a source conflict
+ * kept a genuinely installed subpackage from ever reading as installed.
  */
+/** Repository root: the part before any `#path:/…` subpath selection. */
+function repoRoots(ids: ReadonlySet<string>): Set<string> {
+  return new Set([...ids].map(id => id.split('#path:/')[0]!))
+}
 function sameSourceConflict(plugin: RegistryPlugin, spec: string, repoIdentities: readonly string[] = []): boolean {
-  const entry = entryRepoIds(plugin)
-  const dep = depRepoIds(spec, repoIdentities)
+  const entry = repoRoots(entryRepoIds(plugin))
+  const dep = repoRoots(depRepoIds(spec, repoIdentities))
   if (entry.size === 0 || dep.size === 0) return false
   for (const id of dep) if (entry.has(id)) return false
   return true
