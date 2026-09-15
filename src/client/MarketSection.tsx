@@ -37,6 +37,7 @@ import {
 import css from './Market.module.css'
 import { CommentsModal } from './CommentsModal.tsx'
 import { OperationsPanel } from './OperationsPanel.tsx'
+import { applyRecovery, fetchRecovery, RecoveryPanel, watchRestart, type RecoveryView } from './RecoveryPanel.tsx'
 import { clearSettled, drop, enqueue, patch as patchRecord, recordForUrl } from './operations.ts'
 import type { OperationRecord } from './operations.ts'
 import { Diagnostics } from './Diagnostics.tsx'
@@ -1293,6 +1294,15 @@ export function MarketSection(props: MarketSectionProps) {
   const updateIdleStrikes = useRef(0)
   const [doneUrls, setDoneUrls] = useState<string[]>([])
   const [installError, setInstallError] = useState<string | null>(null)
+  /**
+   * The recovery surface, when a restart this page asked for did not come
+   * back (#575's follow-up). Non-null means the origin answering /dsh-market/*
+   * is the recovery server, not the host — see RecoveryPanel.tsx.
+   */
+  const [recovery, setRecovery] = useState<RecoveryView | null>(null)
+  const [recoveryOpen, setRecoveryOpen] = useState(false)
+  const [recoveryKeep, setRecoveryKeep] = useState<Record<string, boolean>>({})
+  const [recoveryBusy, setRecoveryBusy] = useState(false)
   const [favoriteError, setFavoriteError] = useState<string | null>(null)
   /** Ignores out-of-order /dsh-market/favorite responses after a newer toggle. */
   const favoriteOpGen = useRef(0)
@@ -2293,21 +2303,49 @@ export function MarketSection(props: MarketSectionProps) {
   }, [data, doReplace, t])
 
   /**
+   * Turn the recovery surface into the failure prompt.
+   *
+   * The banner keeps the host's own words for what happened (the parsed boot
+   * failure), and the new option sits beside the other actions — the point of
+   * the exercise is that a dead end now has a way out, not that the failure
+   * is explained differently.
+   */
+  const enterRecovery = useCallback((view: RecoveryView) => {
+    setRecovery(view)
+    setRecoveryKeep(Object.fromEntries(view.plugins.map(plugin => [plugin.name, plugin.enabled])))
+    setRecoveryBusy(false)
+    setRestarting(false)
+    setInstallError(t('recoveryBanner') + (view.failure.summary || t('recoveryNoSummary')))
+  }, [t])
+
+  /**
    * Restart the host and reload once the boot id changes (#14 by @ysyyhhh).
    * The 202 races the process's SIGTERM, so network errors on the initial
    * request are expected and treated as "restart under way".
+   *
+   * A boot that never happens is now a first-class outcome rather than only a
+   * timeout: the market's restart helper starts the recovery surface on this
+   * same origin, so the poll below is how the tab that asked for the restart
+   * finds out WHICH plugin stopped the boot and gets to switch it off.
    */
   const doRestart = useCallback(() => {
-    if (bootId === null || restarting) return
+    // While the recovery surface is the thing answering this origin there is
+    // no host to restart: the failure banner's "adjust plugins" is the action.
+    if (bootId === null || restarting || recovery !== null) return
     const previousBoot = bootId
     setRestarting(true)
     setInstallError(null)
+    setRecovery(null)
     const awaitNewBoot = () => {
       const deadline = Date.now() + 60000
       const poll = () => {
         fetch(api('/dsh-market/status'), { cache: 'no-store' })
           .then(res => res.json())
           .then((next) => {
+            if (next.recovery === true) {
+              void fetchRecovery().then((view) => { if (view !== null) enterRecovery(view) })
+              return
+            }
             if (typeof next.boot === 'string' && next.boot !== previousBoot) {
               location.reload()
               return
@@ -2318,8 +2356,16 @@ export function MarketSection(props: MarketSectionProps) {
       }
       const retry = () => {
         if (Date.now() > deadline) {
-          setRestarting(false)
-          setInstallError(t('restartTimeout'))
+          // Last look before giving up on the clock: a failure that took the
+          // helper's whole window to become a verdict lands right here.
+          void fetchRecovery().then((view) => {
+            if (view !== null) {
+              enterRecovery(view)
+              return
+            }
+            setRestarting(false)
+            setInstallError(t('recoveryTimeout'))
+          })
           return
         }
         setTimeout(poll, 1500)
@@ -2348,7 +2394,41 @@ export function MarketSection(props: MarketSectionProps) {
         .catch(awaitNewBoot) // the host may die mid-response; keep polling
     }
     requestRestart(10)
-  }, [bootId, restarting, t])
+  }, [bootId, restarting, recovery, t, enterRecovery])
+
+  /**
+   * Write the chosen enable set through the recovery surface and wait for the
+   * next boot. The write goes to the profile's patch layer — the same durable
+   * mechanism the live toggles use — so the choice is what the loader applies
+   * on every later start, not just this one.
+   */
+  const applyRecoveryChoice = useCallback(() => {
+    if (recovery === null || recoveryBusy) return
+    setRecoveryBusy(true)
+    setInstallError(null)
+    const enabled = Object.entries(recoveryKeep).filter(([, on]) => on).map(([name]) => name)
+    void applyRecovery(enabled).then((result) => {
+      if (!result.ok) {
+        setRecoveryBusy(false)
+        setInstallError(t('recoveryApplyFailed') + (result.error ?? ''))
+        return
+      }
+      // The surface releases the port for the boot attempt, so a failure to
+      // reach it from here on is expected — watchRestart treats that as
+      // "still starting" rather than as an error.
+      setRecoveryOpen(false)
+      setRestarting(true)
+      void watchRestart(recovery.bootId, {
+        onBoot: () => { location.reload() },
+        onRecovery: (view) => { enterRecovery(view); setRecoveryOpen(true) },
+        onTimeout: () => {
+          setRecoveryBusy(false)
+          setRestarting(false)
+          setInstallError(t('recoveryTimeout'))
+        },
+      })
+    })
+  }, [recovery, recoveryBusy, recoveryKeep, t, enterRecovery])
 
   /** Cancel the running plugin command (#6 by @qichuang321). */
   const doCancel = useCallback(() => {
@@ -3888,7 +3968,7 @@ export function MarketSection(props: MarketSectionProps) {
             >
               <span className={css.bannerHint}><IconQuestionOutline14 size={14} /></span>
             </Tooltip>
-            {restartEnabled && debuggerLatch === null && (
+            {restartEnabled && debuggerLatch === null && recovery === null && (
               <Button
                 variant="primary"
                 size="sm"
@@ -3984,6 +4064,15 @@ export function MarketSection(props: MarketSectionProps) {
         <div className={css.err}>
           {installError}
           <div className={css.staleAction}>
+            {/* The new option beside the failure: when the restart this page
+                asked for never came back, every other action here is beside
+                the point — what the user needs is the list of plugins and the
+                ones DSH blamed, which the recovery surface is holding. */}
+            {recovery !== null && (
+              <Button variant="primary" size="sm" onClick={() => setRecoveryOpen(true)}>
+                {t('recoveryOption')}
+              </Button>
+            )}
             {/* Primary, because the banner's own words point at it ("点
                 「立即更新」不再等待") and it is the way out of the wait. With
                 the default variant it inherited the banner's 12px red text
@@ -4996,6 +5085,18 @@ export function MarketSection(props: MarketSectionProps) {
           })()}
           <p className={css.modalNote}><IconWarningOutline16 size={14} className={css.bannerIcon} />{' ' + t('confirmWarn')}</p>
         </Modal>
+      )}
+      {recovery !== null && (
+        <RecoveryPanel
+          open={recoveryOpen}
+          view={recovery}
+          keep={recoveryKeep}
+          busy={recoveryBusy}
+          onToggle={(name, on) => setRecoveryKeep(current => ({ ...current, [name]: on }))}
+          onApply={applyRecoveryChoice}
+          onClose={() => setRecoveryOpen(false)}
+          t={t}
+        />
       )}
       {commentsFor !== null && (
         <CommentsModal

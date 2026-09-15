@@ -48,14 +48,27 @@ jobs:
       # a catalog stale is not a degraded answer but a wrong one.
       - name: Fetch catalog
         run: |
+          # data/ is NOT in the repository: the only two files that ever lived
+          # there are both gitignored, so git tracks no such directory and a
+          # fresh checkout has none. `curl -o data/…` then fails to open its
+          # output and exits 23 before fetching anything, which under the
+          # runner's `bash -e` aborts the step (the failure read as a catalog
+          # problem; it was a missing directory).
+          mkdir -p data
+
           curl -sfL --retry 3 --retry-delay 5 \
             https://awesome-dsh-plugin.com/plugins.json -o data/registry-snapshot.json
+
           # READMEs are a nice-to-have: without them pages still build, they
           # just carry no body text. A catalog hiccup should degrade the pages,
-          # not cancel the deploy that would have refreshed them.
-          curl -sfL --retry 3 --retry-delay 5 \
-            https://awesome-dsh-plugin.com/readmes.json -o data/readmes-snapshot.json \
-            || echo "readmes.json unavailable — building without README bodies"
+          # not cancel the deploy that would have refreshed them — and that
+          # tolerance has to survive `bash -e`, so it is an explicit `if`
+          # rather than a trailing `|| echo` on a continued line, where a later
+          # edit that drops the backslash would silently make it fatal again.
+          if ! curl -sfL --retry 3 --retry-delay 5 \
+            https://awesome-dsh-plugin.com/readmes.json -o data/readmes-snapshot.json; then
+            echo "readmes.json unavailable — building without README bodies"
+          fi
 
       # Unset until the AdSense review clears these domains; while unset the
       # build emits no ad markup and no third-party script, so the site is
@@ -65,8 +78,20 @@ jobs:
         env:
           ADSENSE_CLIENT: ${{ vars.ADSENSE_CLIENT }}
 
+      # Artifacts are keyed by RUN, and a re-run of a failed job keeps the same
+      # run id while uploading a SECOND artifact under the same name — which is
+      # what makes actions/deploy-pages fail with "Multiple artifacts named
+      # github-pages were unexpectedly found for this workflow run. Artifact
+      # count is 2." Naming the artifact per ATTEMPT removes the ambiguity:
+      # `github.run_id` alone would not, because that is the one identifier the
+      # two attempts of a run share. `github.run_attempt` is what differs.
+      # (Old attempts' artifacts are not deleted; upload-pages-artifact keeps
+      # them for a day, and the deploy now only ever looks at its own.)
       - uses: actions/upload-pages-artifact@v3
         with:
           path: docs
+          name: github-pages-${{ github.run_id }}-${{ github.run_attempt }}
       - id: deployment
         uses: actions/deploy-pages@v4
+        with:
+          artifact_name: github-pages-${{ github.run_id }}-${{ github.run_attempt }}

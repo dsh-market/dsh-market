@@ -14,3 +14,13 @@ client/*.map
 # build fetches its own into a throwaway checkout, and the market reads the
 # live catalog.
 data/registry-snapshot.json
+
+# Demo material for the boot-recovery prompt: a deliberately broken example
+# plugin, and the test that keeps it usable. It is a manual aid, not part of
+# the published plugin, so it stays on disk for a demo run and out of the
+# commit — delete these two lines to commit it instead.
+examples/demo-broken-plugin/
+tests/demo-plugin.spec.ts
+# ...including the marker that arms its crash, if the directory is ever
+# committed again.
+examples/demo-broken-plugin/ARMED

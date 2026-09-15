@@ -432,7 +432,7 @@ vi.mock('../src/hot.ts', () => ({
 }))
 
 // ---------------------------------------------------------------- fake restart scheduler
-const restartCalls = vi.hoisted(() => ({ count: 0 }))
+const restartCalls = vi.hoisted(() => ({ count: 0, handoff: null as null | Record<string, unknown> }))
 const debuggerLatch = vi.hoisted(() => ({ value: undefined as 'inspector' | null | undefined }))
 vi.mock('../src/restart.ts', async (importOriginal) => {
   const original = await importOriginal<typeof import('../src/restart.ts')>()
@@ -440,10 +440,14 @@ vi.mock('../src/restart.ts', async (importOriginal) => {
     ...original,
     detectedDebugger: (...args: Parameters<typeof original.detectedDebugger>) =>
       debuggerLatch.value !== undefined ? debuggerLatch.value : original.detectedDebugger(...args),
-    // The real one SIGTERMs the process — fatal inside a test worker.
-    scheduleRestart: () => {
+    // The real one SIGTERMs the process — fatal inside a test worker. The
+    // shape still has to match (including the recovery handoff it reports),
+    // because the route logs it: a stub missing a field is a stub that turns
+    // a 202 into a 500 and hides whatever it was meant to be testing.
+    scheduleRestart: (_port: unknown, handoff?: Record<string, unknown>) => {
       restartCalls.count += 1
-      return { pid: 1, helperPid: 2, logOut: '/tmp/o', logErr: '/tmp/e' }
+      restartCalls.handoff = handoff ?? null
+      return { pid: 1, helperPid: 2, logOut: '/tmp/o', logErr: '/tmp/e', recovery: null }
     },
   }
 })
@@ -3647,6 +3651,27 @@ describe('one-click restart guards (#14)', () => {
       result: { ok: true },
     })
     expect(restartCalls.count).toBe(1)
+  })
+
+  it('hands the recovery surface everything it needs to offer a way out', async () => {
+    // The inventory travels with the restart because this process is the last
+    // one that can see the live loader tree: after a failed boot there is no
+    // host left to ask which plugins exist or which rows they own.
+    restartCalls.handoff = null
+    const r = await bed.dispatch('POST', '/dsh-market/restart', {})
+    expect(r.status).toBe(202)
+    const handoff = restartCalls.handoff as unknown as {
+      profile: string
+      profileDir: string
+      patchPath: string
+      bootId: string
+      plugins: unknown[]
+    }
+    expect(handoff.profile).toBe('web')
+    expect(handoff.profileDir).toBe(profileDir('web'))
+    expect(handoff.patchPath.endsWith('cordis.patch.yml')).toBe(true)
+    expect(handoff.bootId).not.toBe('')
+    expect(Array.isArray(handoff.plugins)).toBe(true)
   })
 
   it('schedules exactly once for a trusted loopback request; repeat is 409', async () => {
