@@ -791,7 +791,7 @@ export const BOOT_ID = `${String(process.pid)}-${String(Date.now())}`
 export const TARGET_RE = /^[A-Za-z0-9@:./_#+~^=-]+$/
 
 /** Mutating pnpm commands get the structured reporter appended. */
-const NDJSON_COMMANDS = new Set(['add', 'remove', 'install'])
+const NDJSON_COMMANDS = new Set(['add', 'remove', 'install', 'update'])
 
 /** Apply profile-specific pnpm compatibility and the structured reporter. */
 function preparePluginArgs(profileDirectory: string, pluginArgs: readonly string[]): {
