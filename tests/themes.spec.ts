@@ -25,7 +25,7 @@ vi.mock('../src/registry.ts', async (importOriginal) => ({
 }))
 
 import { createThemeManager } from '../src/themes.ts'
-import type { ThemeHost } from '../src/themes.ts'
+import type { LoaderEntry, ThemeHost } from '../src/themes.ts'
 
 const host: ThemeHost = {
   loader: { entries: () => [] },
@@ -111,5 +111,99 @@ describe('installedThemeNames', () => {
     registry.loadRegistry.mockRejectedValue(new Error('offline'))
     installed({ 'dsh-deep-whale': '^1.0.0' })
     expect(await names()).toEqual([])
+  })
+})
+
+/**
+ * The toggle half of the subpath problem #71 fixed only for the read-only
+ * verification path: a bundle patch whose entries are not named after the
+ * package must still be found by setEntryDisabled, or the market persists a
+ * "disabled" choice that never lands while the plugin keeps running (#619).
+ */
+function hostWith(entries: LoaderEntry[]): ThemeHost {
+  return {
+    loader: { entries: () => entries },
+    plugin: () => ({ await: async () => undefined, dispose: () => undefined }),
+  }
+}
+
+/** A package that declares a bundle patch, so its inserted ids are readable. */
+function bundlePatch(name: string, patch: string): void {
+  const dir = join(home, 'profiles', 'web', 'node_modules', ...name.split('/'))
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({
+    name,
+    dsh: { bundle: { patch: './cordis.patch.yml' } },
+  }))
+  writeFileSync(join(dir, 'cordis.patch.yml'), patch)
+}
+
+/**
+ * A loader entry whose fiber tracks update(), so the "retry until reality
+ * matches" loop breaks on the first pass instead of sleeping 200ms.
+ */
+function makeEntry(
+  options: { id?: string; name?: string },
+  initiallyLive = true,
+): { entry: LoaderEntry; updates: (boolean | null)[] } {
+  const updates: (boolean | null)[] = []
+  const entry: LoaderEntry = {
+    options,
+    fiber: initiallyLive ? {} : undefined,
+    update: async (next) => {
+      updates.push(next.disabled)
+      entry.fiber = next.disabled ? undefined : {}
+    },
+  }
+  return { entry, updates }
+}
+
+describe('setEntryDisabled', () => {
+  it('still matches the bare package name', async () => {
+    const { entry, updates } = makeEntry({ id: 'dsh-pocket', name: 'dsh-pocket' })
+    const manager = createThemeManager(hostWith([entry]), 'web', new Set())
+    expect(await manager.setEntryDisabled('dsh-pocket', true)).toBe(true)
+    expect(updates).toEqual([true])
+    expect(entry.fiber).toBeUndefined()
+  })
+
+  it('matches a subpath entry named after the package', async () => {
+    // aegis → aegis/extensions/dsh/index.js, toolshrink → toolshrink/harness
+    const { entry, updates } = makeEntry({ id: 'aegis-method-pack', name: 'aegis/extensions/dsh/index.js' })
+    const manager = createThemeManager(hostWith([entry]), 'web', new Set())
+    expect(await manager.setEntryDisabled('aegis', true)).toBe(true)
+    expect(updates).toEqual([true])
+  })
+
+  it('matches a carrier bundle by the ids its own patch inserts', async () => {
+    bundlePatch('@deepseek-ai/dsh-experimental-agent-team-profile', [
+      '- insert:',
+      '    - id: agent-team',
+      "      name: '@deepseek-ai/dsh-experimental-agent-team'",
+      '    - id: tool-agent-team',
+      "      name: '@deepseek-ai/dsh-experimental-tool-agent-team'",
+      '',
+    ].join('\n'))
+    const team = makeEntry({ id: 'agent-team', name: '@deepseek-ai/dsh-experimental-agent-team' })
+    // The loader may wrap ids in an include prefix; the bare id still matches.
+    const tools = makeEntry({ id: 'include:abc:tool-agent-team', name: '@deepseek-ai/dsh-experimental-tool-agent-team' })
+    const other = makeEntry({ id: 'unrelated', name: '@deepseek-ai/dsh-other' })
+    const manager = createThemeManager(hostWith([team.entry, tools.entry, other.entry]), 'web', new Set())
+    expect(await manager.setEntryDisabled('@deepseek-ai/dsh-experimental-agent-team-profile', true)).toBe(true)
+    expect(team.updates).toEqual([true])
+    expect(tools.updates).toEqual([true])
+    expect(other.updates).toEqual([])
+  })
+
+  it('does not match a differently-suffixed package (the / bound)', async () => {
+    const { entry, updates } = makeEntry({ id: 'tool', name: 'toolshrink-extra/harness' })
+    const manager = createThemeManager(hostWith([entry]), 'web', new Set())
+    expect(await manager.setEntryDisabled('toolshrink', true)).toBe(false)
+    expect(updates).toEqual([])
+  })
+
+  it('reports false when nothing matches', async () => {
+    const manager = createThemeManager(hostWith([]), 'web', new Set())
+    expect(await manager.setEntryDisabled('ghost', true)).toBe(false)
   })
 })
