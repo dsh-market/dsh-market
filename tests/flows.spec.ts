@@ -78,6 +78,16 @@ const fake = vi.hoisted(() => ({
   artifactContentsOnNextAdd: null as Record<string, string> | null,
   /** Fail one exact add target after writing, without affecting the update attempt before it. */
   failAddTargetOnce: null as { target: string; stderr: string } | null,
+  /**
+   * The running host holds this package's files open (#608): every npm add
+   * of it writes package.json the way the host does before pnpm runs (#65)
+   * and pnpm-lock.yaml the way pnpm does before it links, clears the listed
+   * files of the old build (pnpm removes what it can of the target directory
+   * before retrying the rename), then fails the rename with EPERM. The rest
+   * of node_modules stays as it was. Persists like the handle does, so a
+   * rollback add hits it too.
+   */
+  hostHoldsOpen: null as { name: string; cleared?: string[] } | null,
   /** Simulate dsh adding a profile bundle before that same add later fails (#339). */
   profileBundleOnNextAdd: null as string | null,
   /** Make restore's bulk install fail so its per-plugin fallback is exercised. */
@@ -317,6 +327,15 @@ vi.mock('../src/dsh-cli.ts', () => {
     }
     const previousSpec = readManifest().dependencies?.[name]
     const nextSpec = `^${version}`
+    if (fake.hostHoldsOpen?.name === name) {
+      writeDep(name, nextSpec)
+      writeNpmLock(name, nextSpec, version)
+      for (const rel of fake.hostHoldsOpen.cleared ?? []) rmSync(join(fake.profileDir, 'node_modules', name, rel), { force: true })
+      return {
+        exitCode: 1, timedOut: false, stdout: '', cancelled: false,
+        stderr: `ERR_PNPM_EPERM  EPERM: operation not permitted, rename 'C:\\dsh\\profiles\\web\\node_modules\\${name}_tmp_15548_10' -> 'C:\\dsh\\profiles\\web\\node_modules\\${name}'`,
+      }
+    }
     writeDep(name, nextSpec)
     const artifactContents = fake.artifactContentsOnNextAdd ?? pkg.versions[version].artifactContents
     fake.artifactContentsOnNextAdd = null
@@ -592,6 +611,7 @@ beforeEach(() => {
   fake.resolvedNpmVersionOnce = null
   fake.hoistDiffTimes = 0
   fake.youngLockfile = false
+  fake.hostHoldsOpen = null
   fake.gate = null
   fake.cancelNext = false
   fake.buildScriptOutputOnce = ''
@@ -1242,6 +1262,52 @@ describe('update flow — no npm publishing required', () => {
       return Promise.reject(new Error(`unexpected fetch: ${String(url)}`))
     })
   }
+
+  it('leaves a build the host holds open alone instead of a rollback that hits the same lock (#608)', async () => {
+    advanceNpmLatest('1.2.0')
+    const lockBefore = readFileSync(join(fake.profileDir, 'pnpm-lock.yaml'), 'utf8')
+    const specBefore = installedSpec('dsh-loop')
+    fake.hostHoldsOpen = { name: 'dsh-loop' }
+    const callsBefore = fake.calls.length
+
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+
+    expect(r.status).toBe(502)
+    expect(r.json.ok).toBe(false)
+    // One add: the update itself. A rollback add would run the same rename
+    // against the same open handles and fail the same way.
+    expect(fake.calls.slice(callsBefore).filter(call => call[0] === 'add')).toHaveLength(1)
+    // A short answer of its own: the client keeps only the tail of stderr,
+    // which would be the English half of the classifier's explanation.
+    expect(String(r.json.error)).toContain('did not apply')
+    expect(String(r.json.error)).not.toContain('could not be fully restored')
+    expect(String(r.json.error)).not.toContain('请先检查该 profile')
+    expect(String(r.json.stderr)).toContain('Windows')
+    // Durable state is back to the previous version (the host had already
+    // written the new spec); the build on disk is the previous one because
+    // pnpm never got to replace it.
+    expect(installedSpec('dsh-loop')).toBe(specBefore)
+    expect(readFileSync(join(fake.profileDir, 'pnpm-lock.yaml'), 'utf8')).toBe(lockBefore)
+    const installed = JSON.parse(readFileSync(join(fake.profileDir, 'node_modules', 'dsh-loop', 'package.json'), 'utf8')) as { version?: string }
+    expect(installed.version).toBe('1.0.0')
+  })
+
+  it('says so when the refused swap already took the previous entry file, instead of a rollback that cannot run (#608)', async () => {
+    advanceNpmLatest('1.2.0')
+    const specBefore = installedSpec('dsh-loop')
+    fake.hostHoldsOpen = { name: 'dsh-loop', cleared: ['lib/index.js'] }
+    const callsBefore = fake.calls.length
+
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+
+    expect(r.status).toBe(502)
+    expect(r.json.ok).toBe(false)
+    expect(fake.calls.slice(callsBefore).filter(call => call[0] === 'add')).toHaveLength(1)
+    expect(String(r.json.error)).toContain('could not be fully restored')
+    expect(String(r.json.error)).toContain('previous build is incomplete')
+    expect(String(r.json.error)).not.toContain('inspect this profile')
+    expect(installedSpec('dsh-loop')).toBe(specBefore)
+  })
 
   it('flags the update and applies it', async () => {
     advanceNpmLatest('1.2.0')
