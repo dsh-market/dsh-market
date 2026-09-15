@@ -1150,7 +1150,44 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		* rather than guessing; declared repo evidence that matches nothing in the
 		* catalog must not fall back to a coincidental unique name.
 		*/
+		/**
+		* Memo for findCatalogEntryForLocal, keyed on the catalog array identity and
+		* then the full lookup input (#589).
+		*
+		* The market client calls this once per rendered card for every link:/file:
+		* dependency, and each call filtered the whole catalog and walked every URL —
+		* measured ~300ms per render at 24 cards against a 3,627-entry catalog, on
+		* every keystroke of the search box. The result is a pure function of the
+		* catalog, the name, the identities, and the hints, so caching by the array
+		* identity never serves a stale answer: a refetched catalog is a new array,
+		* and the old inner map becomes collectable. Null results are cached too —
+		* they are the common answer for same-named forks without evidence.
+		*
+		* The input key is the JSON form of the whole tuple, not a delimiter join:
+		* an empty array and an array holding one empty string serialize
+		* differently, and the matcher treats them differently (`identitySet.size >
+		* 0` chooses the evidence branch), so the key must not conflate them
+		* (#485's lesson: weak signals must never override strong ones).
+		*/
+		const localMatchCache = /* @__PURE__ */ new WeakMap();
 		function findCatalogEntryForLocal(plugins, name, identities = [], hints = []) {
+			const cacheKey = JSON.stringify([
+				name,
+				identities,
+				hints
+			]);
+			let byCatalog = localMatchCache.get(plugins);
+			if (byCatalog === void 0) {
+				byCatalog = /* @__PURE__ */ new Map();
+				localMatchCache.set(plugins, byCatalog);
+			}
+			const hit = byCatalog.get(cacheKey);
+			if (hit !== void 0) return hit;
+			const result = findCatalogEntryForLocalUncached(plugins, name, identities, hints);
+			byCatalog.set(cacheKey, result);
+			return result;
+		}
+		function findCatalogEntryForLocalUncached(plugins, name, identities, hints) {
 			const nameKey = name.toLowerCase();
 			const byName = plugins.filter((plugin) => plugin.name.toLowerCase() === nameKey || typeof plugin.npm === "string" && plugin.npm.toLowerCase() === nameKey);
 			const identitySet = new Set(identities.map((value) => value.toLowerCase()));
@@ -1655,56 +1692,6 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			for (const id of entryIdentities(plugin)) if (dep.has(id)) return true;
 			return false;
 		}
-		/**
-		* The same memo, for the branch #262 left behind (#589).
-		*
-		* `looseMatchCount` above covers dependencies installed by version. A
-		* `link:` or `file:` dependency takes the other branch, into
-		* `findCatalogEntryForLocal`, which walks the whole catalog at least twice
-		* per call — once to filter by name, once to collect `/tree/` repos — and
-		* up to twice more when there are identities to probe. Both callers below
-		* run once per rendered card. The reporter profiled ~300ms per repaint at
-		* 24 cards against a 3,627-entry catalog where a version-pinned dependency
-		* paid 1.1ms; a local benchmark measured ~38ms per render at that shape,
-		* and ~1.4s at 96 cards with eight local dependencies.
-		*
-		* The inner key carries the EVIDENCE, not just the name. Installing a plugin
-		* hands the next render a fresh identities array while the catalog array
-		* stays the same, so a name-only key would answer the post-install question
-		* with the pre-install result — which is the same-named-fork confusion #485
-		* asked this matcher to stop making, reintroduced as a cache bug.
-		*
-		* A miss is cached as `null`, which is why the "not cached yet" sentinel
-		* has to be `undefined`: `null` is a real answer here, and it costs the
-		* same full scan to establish as a hit does. It is also the common case —
-		* a checkout you are developing is usually not in the catalog at all.
-		*
-		* The invariant this rests on, stated because the WeakMap cannot enforce it:
-		* the catalog array and the entries inside it are frozen once handed here. A
-		* refetch replaces the array — which is what the outer key is for — but an
-		* in-place `push`, `sort` or `reverse`, or editing a row's `url`, would keep
-		* the key and change the answer. Order is load-bearing too: the matcher
-		* returns the FIRST row that fits. Nothing in the client does any of this
-		* today; `visiblePlugins` and `themePlugins` both sort copies.
-		*/
-		const localMatchCache = /* @__PURE__ */ new WeakMap();
-		function cachedEntryForLocal(plugins, name, identities, hints) {
-			let byKey = localMatchCache.get(plugins);
-			if (byKey === void 0) {
-				byKey = /* @__PURE__ */ new Map();
-				localMatchCache.set(plugins, byKey);
-			}
-			const key = JSON.stringify([
-				name,
-				identities,
-				hints
-			]);
-			const hit = byKey.get(key);
-			if (hit !== void 0) return hit;
-			const entry = findCatalogEntryForLocal(plugins, name, identities, hints);
-			byKey.set(key, entry);
-			return entry;
-		}
 		/** The installed dependency name a registry entry corresponds to, or null. */
 		function matchInstalledName(plugin, installed, repoIdentities = {}, plugins, repoHints = {}) {
 			const ids = entryIdentities(plugin);
@@ -1713,7 +1700,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				const repos = repoIdentities[name] ?? [];
 				if (/^(?:link|file):/i.test(specStr)) {
 					if (plugins === void 0) continue;
-					const entry = cachedEntryForLocal(plugins, name, repos, repoHints[name] ?? []);
+					const entry = findCatalogEntryForLocal(plugins, name, repos, repoHints[name] ?? []);
 					if (entry !== null && entry.url === plugin.url) return name;
 					continue;
 				}
@@ -2115,7 +2102,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		}
 		/** Catalog row for an installed dependency — strict for local link:/file: specs. */
 		function catalogEntryForInstalled(plugins, name, spec, repoIdentities = [], repoHints = []) {
-			if (/^(?:link|file):/i.test(spec)) return cachedEntryForLocal(plugins, name, repoIdentities, repoHints) ?? void 0;
+			if (/^(?:link|file):/i.test(spec)) return findCatalogEntryForLocal(plugins, name, repoIdentities, repoHints) ?? void 0;
 			return entryForDep(plugins, name, spec, repoIdentities, repoHints);
 		}
 		//#endregion

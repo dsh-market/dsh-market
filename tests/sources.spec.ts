@@ -217,6 +217,40 @@ describe('findCatalogEntryForLocal', () => {
       .toBe('https://github.com/lynote-ai/dsh-humanizer')
   })
 
+  it('keeps answering correctly across repeated calls against one catalog array (#589 memo)', () => {
+    // The render loop calls this per card per keystroke; the memo must be
+    // invisible to behavior — same inputs, same answers, null included.
+    const plugins = [
+      { name: 'dsh-loop', npm: 'dsh-loop', url: 'https://github.com/o/dsh-loop' },
+      { name: 'dsh-vision-bridge', npm: null, url: 'https://github.com/ximengxiaolan/dsh-vision-bridge' },
+      { name: 'dsh-vision-bridge', npm: null, url: 'https://github.com/GXX182/dsh-vision-bridge' },
+    ]
+    for (let round = 0; round < 3; round += 1) {
+      expect(findCatalogEntryForLocal(plugins, 'dsh-loop')?.url).toBe('https://github.com/o/dsh-loop')
+      expect(findCatalogEntryForLocal(plugins, 'dsh-vision-bridge', ['gxx182/dsh-vision-bridge'])?.url)
+        .toBe('https://github.com/GXX182/dsh-vision-bridge')
+      expect(findCatalogEntryForLocal(plugins, 'dsh-vision-bridge')).toBeNull()
+      expect(findCatalogEntryForLocal(plugins, 'dsh-vision-bridge', [], ['ximengxiaolan/dsh-vision-bridge'])?.url)
+        .toBe('https://github.com/ximengxiaolan/dsh-vision-bridge')
+    }
+  })
+
+  it('treats a refetched catalog array as a fresh key, not a cache hit (#589)', () => {
+    // A refetch parses a new array; the memo keys on that identity, so a
+    // catalog that GAINED an entry answers with the new entry instead of a
+    // stale null cached under the old array.
+    const before = [
+      { name: 'dsh-loop', npm: 'dsh-loop', url: 'https://github.com/o/dsh-loop' },
+    ]
+    expect(findCatalogEntryForLocal(before, 'dsh-vision-bridge')).toBeNull()
+    const after = [
+      { name: 'dsh-loop', npm: 'dsh-loop', url: 'https://github.com/o/dsh-loop' },
+      { name: 'dsh-vision-bridge', npm: null, url: 'https://github.com/ximengxiaolan/dsh-vision-bridge' },
+    ]
+    expect(findCatalogEntryForLocal(after, 'dsh-vision-bridge')?.url)
+      .toBe('https://github.com/ximengxiaolan/dsh-vision-bridge')
+  })
+
   it('resolveCatalogRestore distinguishes missing catalog rows from repo mismatch', () => {
     const plugins = [
       { name: 'dsh-humanizer', npm: 'dsh-humanizer', url: 'https://github.com/lynote-ai/dsh-humanizer' },
@@ -390,3 +424,15 @@ describe('isGitHostedSpec / gitUpdateTarget (#525)', () => {
       .toBe('https://gitea.example.com/me/plug.git/info/refs?service=git-upload-pack')
   })
 })
+
+  it('does not conflate "no evidence" with "an empty-string identity" in the memo key (#589)', () => {
+    // `[]` and `['']` serialize differently under the JSON key; the matcher
+    // treats them differently (an empty-string identity enters the evidence
+    // branch and refuses to guess), so a cache hit must never collapse them.
+    const plugins = [
+      { name: 'dsh-loop', npm: 'dsh-loop', url: 'https://github.com/o/dsh-loop' },
+    ]
+    expect(findCatalogEntryForLocal(plugins, 'dsh-loop', [])?.url).toBe('https://github.com/o/dsh-loop')
+    expect(findCatalogEntryForLocal(plugins, 'dsh-loop', [''])).toBeNull()
+    expect(findCatalogEntryForLocal(plugins, 'dsh-loop', [])?.url).toBe('https://github.com/o/dsh-loop')
+  })
