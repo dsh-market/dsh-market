@@ -124,6 +124,16 @@ describe('classifyPnpmFailure', () => {
     expect(failed?.message).toContain('not a page refresh')
   })
 
+  it('classifies pnpm 12\'s wording of the refused swap the same way (#608)', () => {
+    // pnpm 12's native CLI reports the same refused swap without an
+    // ERR_PNPM_ code, seen on macOS with the target directory locked; the
+    // wording after the colon is the OS error and differs per platform.
+    const failed = classifyPnpmFailure('× adding a new package\n  ╰─▶ failed to remove existing directory "/p/web/node_modules/left-pad" prior to swap: Operation not permitted (os error 1)')
+    expect(failed?.code).toBe('windows-file-locked')
+    expect(failed?.recoverable).toBe(false)
+    expect(failed?.message).not.toContain('undefined')
+  })
+
   it('classifies a locked rename with no readable package name (#389)', () => {
     const generic = classifyPnpmFailure('ERR_PNPM_EPERM: something the reporter reworded')
     expect(generic?.code).toBe('windows-file-locked')

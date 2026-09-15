@@ -426,7 +426,10 @@ export function classifyPnpmFailure(output: string, exitCode?: number | null): P
   // win, because that process is the thing holding the handles; retrying
   // would only turn one clear failure into several slow ones. So this names
   // the cause and the ways out instead of guessing.
-  if (/ERR_PNPM_EPERM|EPERM: operation not permitted, rename/i.test(output)) {
+  // pnpm 12 (the native CLI) says it differently and carries no ERR_PNPM_
+  // code: `failed to remove existing directory "…" prior to swap: …` — same
+  // refused swap over the open directory, so the same answer.
+  if (/ERR_PNPM_EPERM|EPERM: operation not permitted, rename|failed to remove existing directory .* prior to swap/i.test(output)) {
     // Read through the NDJSON reporter like the integrity classifier does:
     // in production this arrives JSON-escaped, so every separator is doubled
     // and a single-character class silently matches nothing.

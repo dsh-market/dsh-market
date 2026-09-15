@@ -37,7 +37,7 @@ import { applyPreset, deletePreset, listPresets, previewPreset, savePreset } fro
 import { createProfileSnapshot, DEFAULT_MAX_SNAPSHOTS, deleteSnapshot, listSnapshots, restoreSnapshot } from './snapshot.ts'
 import { trialValidate } from './trial.ts'
 import { codeloadAllowBuildsKey, findCatalogEntryForLocal, findInstalledAlias, githubCommitOfTarget, githubTargetAtCommit, gitAllowBuildsKey, gitUpdateTarget, installTargetFor, isGenerationLink, isLocalSpec, NPM_NAME_RE, repoOfTarget, restoreBlockedByWorkspace, restoreTargetForLocal, workspaceProtocolDeps } from './sources.ts'
-import { failureDetail, groupConflictsByOwner, isStaleUpdate, parseIgnoredBuilds, parsePrepareNotAllowed, pnpmNeverStarted, RELEASE_AGE_OVERRIDE, retargetCollections, validateAddedPlugins, withHoistRecovery } from './install.ts'
+import { failureDetail, groupConflictsByOwner, isStaleUpdate, parseIgnoredBuilds, parsePrepareNotAllowed, pnpmBlockedByOpenFiles, pnpmNeverStarted, RELEASE_AGE_OVERRIDE, retargetCollections, validateAddedPlugins, withHoistRecovery } from './install.ts'
 import { asChannel, CHANNELS, DIST_TAG, resolveChannel, type Channel } from './channels.ts'
 import {
   asRegion, githubProxyManaged, normalizeGithubProxy, REGIONS, routesFor, setActiveRegion,
@@ -3226,16 +3226,54 @@ sendJson(response, 200, { updates })
             // rollback cannot be verified ("inspect this profile before
             // restarting") would be alarm over an untouched profile, on top
             // of a failure the user already cannot act on from here.
+            // The host holds the package's files open (#608): pnpm staged the
+            // new build beside the old one and the final rename was refused.
+            // Reinstalling the previous build would run that same rename
+            // against the same open handles, so it is not attempted. What can
+            // be put back from here is the durable state — package.json,
+            // which the host may have rewritten before pnpm ran (#65), and
+            // pnpm-lock.yaml, which pnpm rewrites before it links — and
+            // whether the previous build still has a loadable entry is checked
+            // rather than assumed: pnpm clears as much of the target directory
+            // as it can before retrying the rename, so files beside the locked
+            // one can already be gone.
+            const keepLockedBuild = (): { ok: boolean; detail: string | null } => {
+              restoreProfileManifest(config.profile, manifestBefore, activeProfileDir)
+              const lock = lockfileCapture.ok
+                ? restoreProfileLockfile(lockfileCapture.snapshot)
+                : { ok: false, detail: lockfileCapture.detail }
+              if (!lock.ok) return lock
+              if (!hasLoadableEntry(activeProfileDir, name)) {
+                return { ok: false, detail: 'the previous build is incomplete (package.json or its entry file is missing)' }
+              }
+              return { ok: true, detail: null }
+            }
             if ((result.exitCode !== 0 || result.timedOut) && !cancelled && result.busy !== true
               && !pnpmNeverStarted(result)) {
-              const rollback = await rollbackAttemptBuild()
-              rollbackOk = rollback.ok
-              rollbackDetail = rollback.detail
-              if (rollback.ok) {
-                logEvent('warn', 'update', `${name}: failed update command; previous build restored and verified`)
+              if (pnpmBlockedByOpenFiles(result)) {
+                const kept = keepLockedBuild()
+                rollbackOk = kept.ok
+                rollbackDetail = kept.detail
+                if (kept.ok) {
+                  // A short answer of its own: the client shows only the tail
+                  // of stderr, which would be the English half of the
+                  // classifier's explanation. The long form stays in stderr.
+                  hardFailureRollbackError = `${name} 更新未生效：运行中的 DSH 占用着它的文件，pnpm 无法替换目录；package.json 与 pnpm-lock.yaml 已恢复为更新前的版本，更新前构建的入口仍在。请完全退出 DSH 后再更新一次。 / ${name} update did not apply: the running DSH holds its files open and pnpm could not replace the directory; package.json and pnpm-lock.yaml are back to the previous version and the previous build still has its entry. Quit DSH completely and update again.`
+                  logEvent('warn', 'update', `${name}: the running host holds its files open, so the update did not apply; package.json and pnpm-lock.yaml restored, previous build still has a loadable entry, nothing reinstalled`)
+                } else {
+                  hardFailureRollbackError = `${name} 更新未生效：运行中的 DSH 占用着它的文件，pnpm 无法替换目录，且更新前的状态未能完整恢复（${kept.detail ?? 'unknown'}）。DSH 运行期间无法重装，请完全退出 DSH 后再更新一次。 / ${name} update did not apply: the running DSH holds its files open and pnpm could not replace the directory, and the previous state could not be fully restored (${kept.detail ?? 'unknown'}). It cannot be reinstalled while DSH is running; quit DSH completely and update again.`
+                  logEvent('error', 'update-rollback', `${name}: the running host holds its files open and the previous state could not be fully restored — ${kept.detail ?? 'unknown'}`)
+                }
               } else {
-                hardFailureRollbackError = `${name} 更新失败，且更新前的构建未能验证恢复（${rollback.detail ?? 'unknown'}）；请先检查该 profile，再重新启动。 / ${name} update failed and restoration of the previous build could not be verified (${rollback.detail ?? 'unknown'}); inspect this profile before restarting.`
-                logEvent('error', 'update-rollback', `${name}: failed update command and restoration of the previous build could not be verified — ${rollback.detail ?? 'unknown'}`)
+                const rollback = await rollbackAttemptBuild()
+                rollbackOk = rollback.ok
+                rollbackDetail = rollback.detail
+                if (rollback.ok) {
+                  logEvent('warn', 'update', `${name}: failed update command; previous build restored and verified`)
+                } else {
+                  hardFailureRollbackError = `${name} 更新失败，且更新前的构建未能验证恢复（${rollback.detail ?? 'unknown'}）；请先检查该 profile，再重新启动。 / ${name} update failed and restoration of the previous build could not be verified (${rollback.detail ?? 'unknown'}); inspect this profile before restarting.`
+                  logEvent('error', 'update-rollback', `${name}: failed update command and restoration of the previous build could not be verified — ${rollback.detail ?? 'unknown'}`)
+                }
               }
             }
             let ok = result.exitCode === 0 && !result.timedOut && !cancelled
