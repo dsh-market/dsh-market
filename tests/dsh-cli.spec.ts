@@ -190,7 +190,17 @@ describe('the proxy translation actually reaches spawned pnpm (#148)', () => {
         return child
       },
     }))
-    const previous = process.env.HTTPS_PROXY
+    // Every proxy variable the resolver reads is pinned, not just the one
+    // this case sets. A machine that exports HTTP_PROXY (which is common,
+    // and was true of the contributor who found this) otherwise leaves
+    // `npm_config_proxy` derived from the REAL value and the assertion below
+    // fails for a reason that has nothing to do with the code under test —
+    // a test that only passes on machines shaped like the author's.
+    const previous: Record<string, string | undefined> = {}
+    for (const key of ['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'NO_PROXY', 'no_proxy']) {
+      previous[key] = process.env[key]
+      delete process.env[key]
+    }
     process.env.HTTPS_PROXY = 'http://proxy.corp:3128'
     try {
       const { probePnpm } = await import('../src/dsh-cli.ts')
@@ -199,8 +209,10 @@ describe('the proxy translation actually reaches spawned pnpm (#148)', () => {
       expect(seen[0]?.npm_config_https_proxy).toBe('http://proxy.corp:3128')
       expect(seen[0]?.npm_config_proxy).toBe('http://proxy.corp:3128')
     } finally {
-      if (previous === undefined) delete process.env.HTTPS_PROXY
-      else process.env.HTTPS_PROXY = previous
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[key]
+        else process.env[key] = value
+      }
       vi.doUnmock('node:child_process')
       vi.resetModules()
     }
