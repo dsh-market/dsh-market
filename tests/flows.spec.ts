@@ -40,8 +40,10 @@ const fake = vi.hoisted(() => ({
   hoistDiffTimes: 0,
   /** Simulate a too-young release in the lockfile (#39): every mutation
    * fails pnpm's supply-chain verification unless the one-shot
-   * --config.minimumReleaseAge=0 override is passed (real pnpm 11 behavior
-   * pinned in tests/pnpm-behavior.compat.spec.ts). */
+   * --config.minimum-release-age=0 override is passed — the spelling every
+   * pnpm major honours; the native CLI from 12.3.0 ignores the camelCase
+   * one (#600). Real pnpm behavior is pinned in
+   * tests/pnpm-behavior.compat.spec.ts. */
   youngLockfile: false,
   /** When set, every command awaits this before acting (concurrency tests). */
   gate: null as Promise<void> | null,
@@ -178,7 +180,7 @@ vi.mock('../src/dsh-cli.ts', () => {
     const positional = args.filter(a => !a.startsWith('-'))
     const cmd = positional[0]
     const ok = { exitCode: 0, timedOut: false, stdout: '', stderr: '', cancelled: false }
-    if (fake.youngLockfile && !args.includes('--config.minimumReleaseAge=0')) {
+    if (fake.youngLockfile && !args.includes('--config.minimum-release-age=0')) {
       return {
         exitCode: 1, timedOut: false, stdout: '', cancelled: false,
         stderr: '[ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION] 1 lockfile entries failed verification:\n  dsh-loop@1.0.0 was published at 2026-08-15T00:00:00.000Z, within the minimumReleaseAge cutoff',
@@ -1954,7 +1956,7 @@ describe('update flow — no npm publishing required', () => {
     expect(existsSync(lockfilePath)).toBe(false)
     expect(fake.calls.slice(callsBefore).filter(call => call[0] === 'add')).toEqual([
       ['add', 'dsh-loop@1.3.0'],
-      ['add', '--force', '--config.minimumReleaseAge=0', 'dsh-loop@1.0.0'],
+      ['add', '--force', '--config.minimum-release-age=0', 'dsh-loop@1.0.0'],
     ])
   })
 
@@ -2157,7 +2159,7 @@ describe('update flow — no npm publishing required', () => {
     expect(rollback.json.rolledBack).toBe(true)
     const rollbackAdds = fake.calls.slice(callsBeforeRollback).filter(call => call[0] === 'add')
     expect(rollbackAdds).toEqual([
-      ['add', '--force', '--config.minimumReleaseAge=0', 'dsh-loop@1.0.0'],
+      ['add', '--force', '--config.minimum-release-age=0', 'dsh-loop@1.0.0'],
     ])
     expect(installedSpec('dsh-loop')).toBe('~1.0.0')
     const manifest = JSON.parse(readFileSync(join(fake.profileDir, 'node_modules', 'dsh-loop', 'package.json'), 'utf8')) as { version?: string }
@@ -2199,7 +2201,7 @@ describe('update flow — no npm publishing required', () => {
     expect(String(rollback.json.detail)).toContain('exact rollback failed')
     const rollbackAdds = fake.calls.slice(callsBeforeRollback).filter(call => call[0] === 'add')
     expect(rollbackAdds).toEqual([
-      ['add', '--force', '--config.minimumReleaseAge=0', 'dsh-loop@1.0.0'],
+      ['add', '--force', '--config.minimum-release-age=0', 'dsh-loop@1.0.0'],
     ])
     expect(installedSpec('dsh-loop')).toBe('~1.0.0')
   })
@@ -2615,7 +2617,7 @@ describe('update flow — no npm publishing required', () => {
     expect(forced.status).toBe(200)
     expect(installedSpec('dsh-loop')).toBe('^1.2.0')
     const lastAdd = fake.calls[fake.calls.length - 1]
-    expect(lastAdd).toContain('--config.minimumReleaseAge=0')
+    expect(lastAdd).toContain('--config.minimum-release-age=0')
   })
 
   it('restores the previous build when an update fails after pnpm wrote new files (#65 follow-up)', async () => {
@@ -2666,7 +2668,7 @@ describe('update flow — no npm publishing required', () => {
     expect(readFileSync(entry, 'utf8')).toBe('verified-old-bytes')
     const rollbackAdds = fake.calls.slice(callsBefore).filter(call => call[0] === 'add')
     expect(rollbackAdds.at(-1)).toEqual([
-      'add', '--force', '--config.minimumReleaseAge=0', 'dsh-loop@1.0.0',
+      'add', '--force', '--config.minimum-release-age=0', 'dsh-loop@1.0.0',
     ])
   })
 
@@ -3178,7 +3180,7 @@ describe('uninstall flow', () => {
     expect(r.json.ok).toBe(true)
     expect(installedSpec('dsh-loop')).toBeUndefined()
     const removes = fake.calls.filter(c => c[0] === 'remove')
-    expect(removes[removes.length - 1]).toContain('--config.minimumReleaseAge=0')
+    expect(removes[removes.length - 1]).toContain('--config.minimum-release-age=0')
   })
 
   it('reconciles the manifest when a remove fails halfway (half-uninstall)', async () => {

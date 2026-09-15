@@ -63,7 +63,7 @@ jobs:
       - run: node scripts/validate-registry.mjs
       - run: node scripts/smoke-spawn.mjs
 
-  # Real-pnpm matrix (9/10/11 via npx) pinning the failure signatures behind
+  # Real-pnpm matrix (9/10/11/12 via npx) pinning the failure signatures behind
   # #20/#21/#22 and the recovery paths the market automates. Network-bound and
   # slower, so it runs as its own lane on Linux only.
   pnpm-compat:

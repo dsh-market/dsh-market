@@ -308,7 +308,7 @@ export function classifyPnpmFailure(output: string, exitCode?: number | null): P
   // before ANY later mutation — uninstalling even an unrelated plugin fails
   // (MINIMUM_RELEASE_AGE_VIOLATION), and a later add can fail re-resolving
   // the young dep (NO_MATURE_MATCHING_VERSION). Recovery is a one-shot
-  // --config.minimumReleaseAge=0 retry, automated in withHoistRecovery.
+  // --config.minimum-release-age=0 retry, automated in withHoistRecovery.
   if (output.includes('ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION')
     || output.includes('ERR_PNPM_NO_MATURE_MATCHING_VERSION')) {
     return {

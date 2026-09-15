@@ -1,6 +1,6 @@
 /**
  * Real-pnpm compat matrix (`npm run test:compat`): pins the failure
- * signatures behind issues #20/#21/#22 against actual pnpm 9/10/11 in
+ * signatures behind issues #20/#21/#22 against actual pnpm 9/10/11/12 in
  * throwaway profile fixtures, and proves the market's argv decision works on
  * every combination. Needs network; several minutes on a cold npx cache.
  *
@@ -14,10 +14,11 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { RELEASE_AGE_OVERRIDE } from '../src/install.ts'
 import { classifyPnpmFailure, pluginArgsFor } from '../src/pnpm-compat.ts'
 
 /** Last release of each major the market supports; behavior is per-major. */
-const PNPM = { 9: '9.15.9', 10: '10.28.2', 11: '11.21.0' } as const
+const PNPM = { 9: '9.15.9', 10: '10.28.2', 11: '11.21.0', 12: '12.4.1' } as const
 /** Version pinned by the DSH Desktop 2.0.3 distribution reported in #385. */
 const DESKTOP_PNPM = '11.8.0'
 const GIT_FIXTURE_SHA = '6ebf1e03de0ada9e653d1f8ff82ad905ab761ad9'
@@ -273,7 +274,7 @@ describe('#39 — a too-young lockfile entry blocks every later mutation', () =>
   it('remove fails ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION on pnpm 11; the one-shot override recovers', () => {
     const dir = profileFixture({ workspace: true, extraWorkspaceYaml: `minimumReleaseAge: ${String(ageWindowMinutes())}\n` })
     // A young release lands in the lockfile via the bypass (force-update path).
-    const seed = pnpm(PNPM[11], ['add', '-w', '--config.minimumReleaseAge=0', 'is-odd@3.0.1'], dir)
+    const seed = pnpm(PNPM[11], ['add', '-w', RELEASE_AGE_OVERRIDE, 'is-odd@3.0.1'], dir)
     expect(seed.code, seed.out.slice(-400)).toBe(0)
 
     // pnpm verifies the WHOLE lockfile before applying the mutation — even
@@ -284,16 +285,43 @@ describe('#39 — a too-young lockfile entry blocks every later mutation', () =>
     expect(classifyPnpmFailure(blocked.out)?.code).toBe('release-age-violation')
 
     // The recovery the market automates: same command + the one-shot override.
-    const recovered = pnpm(PNPM[11], ['remove', '-w', '--config.minimumReleaseAge=0', 'is-odd'], dir)
+    const recovered = pnpm(PNPM[11], ['remove', '-w', RELEASE_AGE_OVERRIDE, 'is-odd'], dir)
     expect(recovered.code, recovered.out.slice(-400)).toBe(0)
     expect(installedVersion(dir, 'is-odd')).toBeNull()
+  })
+
+  it('add fails the same way on pnpm 12, and only the kebab-case override recovers (#600)', () => {
+    const dir = profileFixture({ workspace: true, extraWorkspaceYaml: `minimumReleaseAge: ${String(ageWindowMinutes())}\n` })
+    const seed = pnpm(PNPM[12], ['add', '-w', RELEASE_AGE_OVERRIDE, 'is-odd@3.0.1'], dir)
+    expect(seed.code, seed.out.slice(-400)).toBe(0)
+
+    // pnpm 12 re-applies the policy to the loaded lockfile before adding
+    // anything: a mature, unrelated package is refused because of the young
+    // one already there. Removing the young package itself passes on 12 (the
+    // lockfile it leaves behind is clean), so `add` is what pins the trap.
+    const blocked = pnpm(PNPM[12], ['add', '-w', 'is-even@1.0.0'], dir)
+    expect(blocked.code).not.toBe(0)
+    expect(blocked.out).toContain('ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION')
+    expect(classifyPnpmFailure(blocked.out)?.code).toBe('release-age-violation')
+
+    // What the market passed before #600. pnpm 11 accepted it; the native
+    // CLI from 12.3.0 ignores it without an "unknown option" error, so the
+    // retry failed exactly like the first attempt.
+    const ignored = pnpm(PNPM[12], ['add', '-w', '--config.minimumReleaseAge=0', 'is-even@1.0.0'], dir)
+    expect(ignored.code).not.toBe(0)
+    expect(ignored.out).toContain('ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION')
+    expect(installedVersion(dir, 'is-even')).toBeNull()
+
+    const recovered = pnpm(PNPM[12], ['add', '-w', RELEASE_AGE_OVERRIDE, 'is-even@1.0.0'], dir)
+    expect(recovered.code, recovered.out.slice(-400)).toBe(0)
+    expect(installedVersion(dir, 'is-even')).toBe('1.0.0')
   })
 
   it('the override flag is harmless on pnpm 9/10 remove', () => {
     for (const version of [PNPM[9], PNPM[10]]) {
       const dir = profileFixture({ workspace: true })
       expect(pnpm(version, ['add', '-w', 'is-odd@3.0.0'], dir).code, `pnpm ${version} add`).toBe(0)
-      const removed = pnpm(version, ['remove', '-w', '--config.minimumReleaseAge=0', 'is-odd'], dir)
+      const removed = pnpm(version, ['remove', '-w', RELEASE_AGE_OVERRIDE, 'is-odd'], dir)
       expect(removed.code, `pnpm ${version}: ${removed.out.slice(-300)}`).toBe(0)
     }
   })
