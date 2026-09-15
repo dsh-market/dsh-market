@@ -34,6 +34,15 @@ const fake = vi.hoisted(() => ({
   tarballs: {} as Record<string, { name: string; manifest: unknown; artifacts?: string[]; artifactContents?: Record<string, string> }>,
   /** Simulate pnpm minimumReleaseAge: adds resolve to the ALREADY INSTALLED version, exit 0. */
   staleUpdates: false,
+  /**
+   * pnpm's fresh-release hold on a FRESH install (#594): a bare name or
+   * dist-tag resolves to this mature version, exit 0, and says nothing. The
+   * exact young `latest` is modelled as the explicit-minimumReleaseAge case:
+   * refused with NO_MATURE_MATCHING_VERSION until the one-shot bypass is
+   * passed. (A profile on pnpm's default policy installs the exact version
+   * outright and records it in minimumReleaseAgeExclude.)
+   */
+  holdYoungLatest: null as string | null,
   /** Resolve the next npm add to this version even though the dist-tag points elsewhere. */
   resolvedNpmVersionOnce: null as string | null,
   /** Fail the next N mutating commands with the hoist-pattern drift error. */
@@ -301,7 +310,13 @@ vi.mock('../src/dsh-cli.ts', () => {
       return ok
     }
     const exactVersion = /@(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/.exec(target)?.[1] ?? null
-    const version = fake.resolvedNpmVersionOnce ?? exactVersion ?? pkg.latest
+    if (fake.holdYoungLatest !== null && exactVersion === pkg.latest && !args.includes(RELEASE_AGE_OVERRIDE)) {
+      return {
+        exitCode: 1, timedOut: false, stdout: '', cancelled: false,
+        stderr: `ERR_PNPM_NO_MATURE_MATCHING_VERSION  No matching version found for ${name}@${exactVersion} that satisfies the minimumReleaseAge constraint`,
+      }
+    }
+    const version = fake.resolvedNpmVersionOnce ?? exactVersion ?? fake.holdYoungLatest ?? pkg.latest
     fake.resolvedNpmVersionOnce = null
     const installedVersion = existsSync(installedManifestPath)
       ? (JSON.parse(readFileSync(installedManifestPath, 'utf8')) as { version?: unknown }).version
@@ -507,6 +522,7 @@ vi.mock('../src/region-probe.ts', async (importOriginal) => {
 
 // ---------------------------------------------------------------- testbed
 import { marketVersion, mountMarketRoutes } from '../src/routes.ts'
+import { RELEASE_AGE_OVERRIDE } from '../src/install.ts'
 import { resolveChannel } from '../src/channels.ts'
 import { profileDir } from '../src/profile.ts'
 import { runDshPlugin } from '../src/dsh-cli.ts'
@@ -589,6 +605,7 @@ beforeEach(() => {
   fake.repos = {}
   fake.tarballs = {}
   fake.staleUpdates = false
+  fake.holdYoungLatest = null
   fake.resolvedNpmVersionOnce = null
   fake.hoistDiffTimes = 0
   fake.youngLockfile = false
@@ -621,6 +638,20 @@ beforeEach(() => {
   regionProbe.pending = null
   hot.failNext = false
   bed = createTestbed()
+  // The install route asks the registry for `latest` before a fresh npm add
+  // (#594). Answer from the fake registry so no test reaches the network;
+  // everything else goes to the real fetch, or to whatever a test stubs.
+  const realFetch = globalThis.fetch
+  vi.stubGlobal('fetch', vi.fn((input: unknown, init?: RequestInit) => {
+    const m = /^https:\/\/registry\.(?:npmjs\.org|npmmirror\.com)\/(.+?)\/latest$/.exec(String(input))
+    if (m !== null) {
+      const pkg = fake.npm[decodeURIComponent(m[1]!)]
+      return Promise.resolve(pkg === undefined
+        ? new Response('{"error":"Not found"}', { status: 404 })
+        : new Response(JSON.stringify({ version: pkg.latest }), { status: 200 }))
+    }
+    return realFetch(input as string, init)
+  }))
 })
 afterEach(() => {
   bed.dispose()
@@ -1019,6 +1050,77 @@ describe('backup and restore (#55)', () => {
 })
 
 describe('install flow', () => {
+  it('pins a fresh npm install to the registry\'s latest so the release hold fails loudly instead of installing an older version (#594)', async () => {
+    fake.npm['dsh-loop'] = {
+      latest: '1.3.0',
+      versions: {
+        '1.2.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] },
+        '1.3.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] },
+      },
+    }
+    // 1.3.0 is inside pnpm's fresh-release window: a bare `add dsh-loop`
+    // would land on 1.2.0, exit 0, and write ^1.2.0 into the profile.
+    fake.holdYoungLatest = '1.2.0'
+
+    const r = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
+
+    expect(r.status).toBe(200)
+    expect(r.json.ok).toBe(true)
+    expect(fake.calls.filter(call => call[0] === 'add')).toEqual([
+      ['add', 'dsh-loop@1.3.0'],
+      ['add', RELEASE_AGE_OVERRIDE, 'dsh-loop@1.3.0'],
+    ])
+    // FakeDsh spells every npm add with a caret; real pnpm writes the exact
+    // version for an exact target. Either way the update check compares the
+    // installed version, not the spec.
+    expect(installedSpec('dsh-loop')).toBe('^1.3.0')
+    const installed = JSON.parse(readFileSync(join(fake.profileDir, 'node_modules', 'dsh-loop', 'package.json'), 'utf8')) as { version?: string }
+    expect(installed.version).toBe('1.3.0')
+  })
+
+  it('falls back to the bare name when the profile registry has not caught up with the pinned latest (#594)', async () => {
+    fake.npm['dsh-loop'] = { latest: '1.3.0', versions: { '1.3.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } } }
+    // A mirror behind registry.npmjs.org: the pinned version is not there yet.
+    fake.failNextAddStderrOnce = 'ERR_PNPM_NO_MATCHING_VERSION  No matching version found for dsh-loop@1.3.0 while fetching it from https://registry.npmmirror.com/'
+
+    const r = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
+
+    expect(r.status).toBe(200)
+    expect(r.json.ok).toBe(true)
+    expect(fake.calls.filter(call => call[0] === 'add')).toEqual([['add', 'dsh-loop@1.3.0'], ['add', 'dsh-loop']])
+    const installed = JSON.parse(readFileSync(join(fake.profileDir, 'node_modules', 'dsh-loop', 'package.json'), 'utf8')) as { version?: string }
+    expect(installed.version).toBe('1.3.0')
+  })
+
+  it('leaves a non-semver latest and a github target alone (#594)', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(JSON.stringify({ version: 'latest' }), { status: 200 }))))
+    fake.npm['dsh-loop'] = { latest: '1.0.0', versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } } }
+    const npm = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
+    expect(npm.json.ok).toBe(true)
+    expect(fake.calls.filter(call => call[0] === 'add')).toEqual([['add', 'dsh-loop']])
+
+    // A github: target never asks the registry at all.
+    const fetchMock = globalThis.fetch as unknown as { mock: { calls: unknown[][] } }
+    const before = fetchMock.mock.calls.length
+    fake.repos['github:o/blue-whale'] = { name: 'dsh-blue-whale', manifest: { dsh: {}, main: 'index.js' }, artifacts: ['index.js'] }
+    const git = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/blue-whale' })
+    expect(git.json.ok).toBe(true)
+    expect(fetchMock.mock.calls.slice(before).map(call => String(call[0])).filter(url => url.endsWith('/latest'))).toEqual([])
+    expect(fake.calls.filter(call => call[0] === 'add').at(-1)).toEqual(['add', 'github:o/blue-whale'])
+  })
+
+  it('keeps the bare name when the registry cannot say what latest is (#594)', async () => {
+    fake.npm['dsh-loop'] = { latest: '1.0.0', versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } } }
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('registry unreachable'))))
+
+    const r = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
+
+    expect(r.status).toBe(200)
+    expect(r.json.ok).toBe(true)
+    expect(fake.calls.filter(call => call[0] === 'add')).toEqual([['add', 'dsh-loop']])
+    expect(installedSpec('dsh-loop')).toBe('^1.0.0')
+  })
+
   it('installs a curated plugin end to end and reports it installed', async () => {
     fake.npm['dsh-loop'] = { latest: '1.0.0', versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } } }
     const r = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
@@ -1209,9 +1311,10 @@ describe('install flow', () => {
     const r = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
     expect(r.status).toBe(200)
     expect(r.json.ok).toBe(true)
-    // add(fail) → install --no-frozen-lockfile → add(retry) …
+    // add(fail) → install --no-frozen-lockfile → add(retry) … — the add is
+    // pinned to the registry's latest before it runs (#594).
     expect(fake.calls.slice(0, 3).map(c => c.filter(a => !a.startsWith('-')).join(' ')))
-      .toEqual(['add dsh-loop', 'install', 'add dsh-loop'])
+      .toEqual(['add dsh-loop@1.0.0', 'install', 'add dsh-loop@1.0.0'])
   })
 
   it('retargets a collection repo to its contained plugins via #path: (#18)', async () => {
@@ -1413,12 +1516,14 @@ describe('update flow — no npm publishing required', () => {
 
   it('pins the npm update target to the resolved version so Desktop cannot re-fetch latest (#496)', async () => {
     advanceNpmLatest('1.2.0')
+    // The seed install is pinned too (#594), so only the update's own add counts.
+    const callsBefore = fake.calls.length
     const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
     expect(r.json).toMatchObject({ ok: true })
     // One registry resolution, one install target: Desktop's install boundary
     // must not get `@latest` and fetch again (that drift was the false
     // RESOLVED_VERSION_MISMATCH rollback).
-    const add = fake.calls.find(call => call[0] === 'add' && call.some(arg => arg.startsWith('dsh-loop@')))
+    const add = fake.calls.slice(callsBefore).find(call => call[0] === 'add' && call.some(arg => arg.startsWith('dsh-loop@')))
     expect(add).toContain('dsh-loop@1.2.0')
     expect(add?.some(arg => arg === 'dsh-loop@latest')).toBe(false)
   })
