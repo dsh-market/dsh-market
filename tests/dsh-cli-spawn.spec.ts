@@ -201,3 +201,44 @@ describe('background process consoles (#530)', () => {
     expect(childProcess.spawn).not.toHaveBeenCalled()
   })
 })
+
+describe('non-interactive git environment (#587)', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('fills both variables a default environment leaves unset', async () => {
+    const { nonInteractiveGitEnv } = await import('../src/dsh-cli.ts')
+    expect(nonInteractiveGitEnv({ PATH: '/usr/bin' })).toEqual({
+      GIT_TERMINAL_PROMPT: '0',
+      GIT_SSH_COMMAND: 'ssh -oBatchMode=yes',
+    })
+  })
+
+  it('lets a caller-set value win verbatim and treats empty as silence', async () => {
+    const { nonInteractiveGitEnv } = await import('../src/dsh-cli.ts')
+    const env = {
+      GIT_SSH_COMMAND: 'ssh -i /tmp/custom_key',
+      // Empty string is silence, not speech — the same rule as proxyEnvForPnpm.
+      GIT_TERMINAL_PROMPT: '',
+    }
+    expect(nonInteractiveGitEnv(env)).toEqual({ GIT_TERMINAL_PROMPT: '0' })
+    expect(nonInteractiveGitEnv({ git_terminal_prompt: '1' })).toEqual({
+      GIT_SSH_COMMAND: 'ssh -oBatchMode=yes',
+    })
+  })
+
+  it('reaches the spawned pnpm alongside CI mode', async () => {
+    platform('linux')
+    const { runDshPlugin } = await import('../src/dsh-cli.ts')
+    const result = runDshPlugin('web', ['add', '@scope/plugin'])
+    child.stdout.emit('data', Buffer.from('progress\n'))
+    child.stderr.emit('data', Buffer.from('diagnostic\n'))
+    child.emit('close', 0)
+    await expect(result).resolves.toMatchObject({ exitCode: 0 })
+    const { env } = childProcess.spawn.mock.calls[0]![2]!
+    expect(env.CI).toBe('true')
+    expect(env.GIT_TERMINAL_PROMPT).toBe('0')
+    expect(env.GIT_SSH_COMMAND).toBe('ssh -oBatchMode=yes')
+  })
+})
