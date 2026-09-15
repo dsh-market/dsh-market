@@ -57,6 +57,8 @@ export interface OperationsPanelProps {
   onRefresh: () => void
   /** Resolve a clash: keep what is installed, or uninstall it and retry. */
   onResolveConflict: (record: OperationRecord, choice: 'keep' | 'swap') => void
+  /** Run a queued record now instead of waiting for the queue to drain. */
+  onRunNow?: ((record: OperationRecord) => void) | undefined
   /** Retry an operation the host refused for a fixable reason. */
   onRetry?: ((record: OperationRecord) => void) | undefined
   /** Approve the build scripts pnpm blocked, then retry — replaces the plain
@@ -340,7 +342,12 @@ export function OperationsPanel(props: OperationsPanelProps) {
                     <Button variant="outline" size="sm" onClick={() => props.onCancel(record)}>{t('cancelOp')}</Button>
                   )}
                   {record.state === 'queued' && (
-                    <Button variant="ghost" size="sm" onClick={() => props.onDismiss(record)}>{t('opDequeue')}</Button>
+                    <>
+                      {props.onRunNow !== undefined && (
+                        <Button variant="primary" size="sm" onClick={() => props.onRunNow?.(record)}>{t('opRunNow')}</Button>
+                      )}
+                      <Button variant="ghost" size="sm" onClick={() => props.onDismiss(record)}>{t('opDequeue')}</Button>
+                    </>
                   )}
                   {record.state === 'done' && record.needsRefresh === true && (
                     <Button variant="primary" size="sm" onClick={props.onRefresh}>{t('refresh')}</Button>
