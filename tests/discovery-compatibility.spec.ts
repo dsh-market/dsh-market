@@ -209,4 +209,112 @@ describe('DiscoveryManifestIndex', () => {
       .toMatchObject({ version: '1.0.0' })
     expect(retried).toBe(1)
   })
+
+  it('an advisory pre-flight leaves no failure cooldown behind (#619)', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'dshm-discovery-'))
+    directories.push(directory)
+    const cache = join(directory, '.dsh-market', 'discovery.json')
+
+    let online = false
+    let asked = 0
+    const index = new DiscoveryManifestIndex(cache, {
+      fetcher: async () => {
+        asked += 1
+        if (!online) throw new Error('offline')
+        return new Response(JSON.stringify({ version: '2.0.0' }), { status: 200 })
+      },
+      now: () => 1_000,
+    })
+
+    // The install guard runs its pre-flight while the registry is unreachable.
+    expect(await index.lookup(['plugin-a'], 'https://registry.example', { record: false }))
+      .toEqual({ 'plugin-a': null })
+
+    // The panel asks afterwards, with the registry back up. A recorded failure
+    // would answer null for the whole cooldown — that is the dsh-market#614
+    // shape: an install whose advice was never asked for decided the verdict
+    // of the next question.
+    online = true
+    expect((await index.lookup(['plugin-a'], 'https://registry.example'))['plugin-a'])
+      .toMatchObject({ version: '2.0.0' })
+    expect(asked).toBe(2)
+  })
+
+  it('an advisory pre-flight does not seed the durable cache either (#619)', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'dshm-discovery-'))
+    directories.push(directory)
+    const cache = join(directory, '.dsh-market', 'discovery.json')
+
+    let served = 0
+    const index = new DiscoveryManifestIndex(cache, {
+      fetcher: async () => {
+        served += 1
+        return new Response(JSON.stringify({ version: served === 1 ? '1.0.0' : '2.0.0' }), { status: 200 })
+      },
+      now: () => 1_000,
+    })
+
+    // The guard looks while the target's latest is still 1.0.0.
+    expect((await index.lookup(['plugin-a'], 'https://registry.example', { record: false }))['plugin-a'])
+      .toMatchObject({ version: '1.0.0' })
+
+    // The panel asks after 2.0.0 shipped and has to see 2.0.0, not the version
+    // the pre-flight happened to pin.
+    expect((await index.lookup(['plugin-a'], 'https://registry.example'))['plugin-a'])
+      .toMatchObject({ version: '2.0.0' })
+    expect(served).toBe(2)
+  })
+})
+
+describe('host-compatibility declaration semantics (Phase 1 additions)', () => {
+  it('derives incompatible from an engine-only declaration the host does not satisfy', () => {
+    const result = deriveHostCompatibility(
+      facts({ enginesDsh: '^0.1.1-rc.2' }),
+      '0.1.0-alpha.1',
+      HOST_PACKAGES,
+    )
+    expect(result.status).toBe('incompatible')
+    expect(result.basis).toBe('manifest')
+    expect(result.requirement).toBe('^0.1.1-rc.2')
+  })
+
+  it('is conjunctive: one failing peer refuses even when engines.dsh passes', () => {
+    const result = deriveHostCompatibility(
+      facts({
+        enginesDsh: '>=0.1.0',
+        peerDependencies: {
+          '@deepseek-ai/dsh-settings': '^0.1.1-rc.2',
+          '@deepseek-ai/dsh-tools': '^99.0.0',
+        },
+      }),
+      '0.1.2-alpha.2',
+      HOST_PACKAGES,
+    )
+    expect(result.status).toBe('incompatible')
+    expect(result.basis).toBe('manifest')
+    // All three declarations surface in the human-readable requirement.
+    expect(result.requirement).toContain('>=0.1.0')
+    expect(result.requirement).toContain('^0.1.1-rc.2')
+    expect(result.requirement).toContain('^99.0.0')
+  })
+
+  it('ignores non-lockstep @deepseek-ai peers that are not host packages', () => {
+    const result = deriveHostCompatibility(
+      facts({
+        enginesDsh: '>=0.1.0',
+        peerDependencies: {
+          // Shipped by the plugin but not part of the host's lockstep line:
+          // not a declaration about the host, must not change the verdict.
+          '@deepseek-ai/foo-extra': '^1.0.0',
+          '@deepseek-ai/cordis': '^4.0.1',
+          '@deepseek-ai/schemastery': '^3.18.1',
+        },
+      }),
+      '0.1.2-alpha.2',
+      HOST_PACKAGES,
+    )
+    expect(result.status).toBe('compatible')
+    expect(result.basis).toBe('manifest')
+    expect(result.requirement).toBe('>=0.1.0') // only the engine declaration remains
+  })
 })

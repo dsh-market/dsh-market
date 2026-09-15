@@ -489,6 +489,12 @@ vi.mock('../src/registry.ts', async (importOriginal) => ({
 }))
 registryModule.loadRegistry.mockImplementation(() => Promise.resolve(REGISTRY))
 
+// No stub for `dshHostInfo` here. Most flows have no locatable host, so the
+// install guard fails open on its own (`host?.version == null`) and the suite
+// stays off the network exactly as before. Stubbing it to `null` file-wide
+// would also blind the flat Desktop host consumers (#553) below, which build a
+// real resources/app fixture and assert the real locator finds it.
+
 // Most flow tests pin a region. These two hold the boot probe open so its
 // completion can be ordered deterministically against a manual choice or
 // route disposal.
