@@ -87,12 +87,20 @@ export function isUnpublishedHostPeer(
  * Any recognized failure that survives gets its bilingual explanation
  * appended to stderr so the UI shows an actionable message instead of a
  * wall of text (#20 bug 3). Cancelled runs are never recovered.
+ *
+ * The release-age bypass can be declined (`releaseAgeBypass: false`). Its
+ * safety argument above assumes the young package is already installed; a
+ * fresh install pinned to the registry's latest (#594) is the one case
+ * where it is not — there the bypass would be what installs the young
+ * version, over a minimumReleaseAge the profile set on purpose — so the
+ * install route declines it and falls back to the bare name instead.
  */
 export async function withHoistRecovery(
   run: PluginRunner,
   profile: string,
   pluginArgs: string[],
   profileDirectory?: string,
+  options: { releaseAgeBypass?: boolean } = {},
 ): Promise<InstallResult> {
   let result = await run(profile, pluginArgs)
   const ok = (r: InstallResult): boolean => r.exitCode === 0 && !r.timedOut && !r.cancelled
@@ -106,6 +114,7 @@ export async function withHoistRecovery(
       if (ok(rebuild)) result = await run(profile, pluginArgs)
     } else if (
       failure?.code === 'release-age-violation'
+      && options.releaseAgeBypass !== false
       && (pluginArgs[0] === 'add' || pluginArgs[0] === 'remove')
       && !pluginArgs.includes(RELEASE_AGE_OVERRIDE)
     ) {

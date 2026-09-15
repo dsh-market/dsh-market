@@ -38,6 +38,7 @@ import { createProfileSnapshot, DEFAULT_MAX_SNAPSHOTS, deleteSnapshot, listSnaps
 import { trialValidate } from './trial.ts'
 import { codeloadAllowBuildsKey, findCatalogEntryForLocal, findInstalledAlias, githubCommitOfTarget, githubTargetAtCommit, gitAllowBuildsKey, gitUpdateTarget, installTargetFor, isGenerationLink, isLocalSpec, NPM_NAME_RE, repoOfTarget, restoreBlockedByWorkspace, restoreTargetForLocal, workspaceProtocolDeps } from './sources.ts'
 import { failureDetail, groupConflictsByOwner, isStaleUpdate, parseIgnoredBuilds, parsePrepareNotAllowed, pnpmBlockedByOpenFiles, pnpmNeverStarted, RELEASE_AGE_OVERRIDE, retargetCollections, validateAddedPlugins, withHoistRecovery } from './install.ts'
+import { classifyPnpmFailure } from './pnpm-compat.ts'
 import { asChannel, CHANNELS, DIST_TAG, resolveChannel, type Channel } from './channels.ts'
 import {
   asRegion, githubProxyManaged, normalizeGithubProxy, REGIONS, routesFor, setActiveRegion,
@@ -594,6 +595,9 @@ export function mountMarketRoutes(
 
   /** Every plugin command goes through the pnpm-drift recovery wrapper (#20). */
   const runPlugin = (profile: string, args: string[]) => withHoistRecovery(commands.runPlugin, profile, args, activeProfileDir)
+  /** The same, minus the release-age bypass: for a fresh install pinned to a young release (#594). */
+  const runPluginKeepingReleaseAge = (profile: string, args: string[]) =>
+    withHoistRecovery(commands.runPlugin, profile, args, activeProfileDir, { releaseAgeBypass: false })
 
   /**
    * Undo a clean-exit update whose new build cannot boot. Restoring only the
@@ -4369,13 +4373,38 @@ sendJson(response, 200, { updates })
               sendJson(response, 400, { error: 'unsupported source url' })
               return
             }
+            // A bare registry name hands the choice of version to pnpm, and
+            // pnpm 11's fresh-release hold makes that choice silently: a
+            // release younger than minimumReleaseAge is skipped for the newest
+            // mature one, exit 0, so a fresh install lands one release behind
+            // and the `^0.x` it writes never floats to the next minor (#594).
+            // An exact target does not get that treatment. On a profile that
+            // leaves minimumReleaseAge at pnpm's default, pnpm installs the
+            // named version and records it in minimumReleaseAgeExclude
+            // (measured on 11.8.0, 11.21.0 and 12.4.1), no bypass involved.
+            // Where the key is set explicitly it fails with
+            // NO_MATURE_MATCHING_VERSION, and that policy is the profile's to
+            // keep: unlike the update route (#496/#531), a fresh install does
+            // not answer it with the one-shot bypass — the young version is
+            // not installed yet, so the bypass would be what installs it —
+            // but goes back to the bare name, which is what pnpm's hold was
+            // going to install anyway, and says so. A registry that cannot
+            // be read keeps the bare name too: the old behaviour, never a
+            // refused install.
+            const registryLatest = NPM_NAME_RE.test(plainTarget) ? await fetchNpmLatest(plainTarget) : null
+            const pinnedTarget = registryLatest !== null && /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(registryLatest)
+              ? `${plainTarget}@${registryLatest}`
+              : plainTarget
+            if (pinnedTarget !== plainTarget) {
+              logEvent('info', 'install', `${entry.name}: pinned to the registry's latest, ${registryLatest}, so pnpm's fresh-release hold cannot substitute an older version silently`)
+            }
             // Resolve GitHub HEAD through the region's available routes, then
             // let pnpm fetch the canonical commit-pinned target.
             // Applied HERE, before the guards below, so every step downstream
             // reasons about the exact spec that will be installed. Returns
             // the original on any lookup failure (see accelerate.ts).
-            const target = await acceleratedTarget(plainTarget, region)
-            if (target !== plainTarget) {
+            let target = await acceleratedTarget(pinnedTarget, region)
+            if (target !== pinnedTarget) {
               logEvent('info', 'region', `${entry.name}: resolved HEAD through an available ${region} route; downloading the commit-pinned GitHub target directly for pnpm integrity`)
             }
             // Duplicate guard (#27): the same plugin listed under another name
@@ -4466,7 +4495,35 @@ sendJson(response, 200, { updates })
             // keep their partial state on purpose (the user sees the diff
             // and decides).
             const manifestBefore = readProfileManifestSnapshot(config.profile, activeProfileDir)
-            const result = await runPlugin(config.profile, ['add', target])
+            const pinned = target === pinnedTarget && pinnedTarget !== plainTarget
+            let result = await (pinned ? runPluginKeepingReleaseAge : runPlugin)(config.profile, ['add', target])
+            // Two ways a pinned add can fail that a bare add would not, and
+            // both go back to the bare name once, with the reason logged.
+            // Any other failure keeps its own diagnosis.
+            if (pinned && (result.exitCode !== 0 || result.timedOut) && !result.cancelled) {
+              const failure = classifyPnpmFailure(`${result.stderr}\n${result.stdout}`, result.exitCode)
+              const aboutThisPackage = failure?.pkg === undefined || failure.pkg === plainTarget
+              // The profile's minimumReleaseAge, set on purpose, holds the
+              // pinned release back: let it pick the mature one as before,
+              // and leave the newer one for the update check to offer.
+              const heldBack = failure?.code === 'release-age-violation'
+              // The pin was resolved on the market's registry; pnpm resolves
+              // on the profile's, which can be a mirror that has not synced
+              // the newest release (NO_MATCHING_VERSION) or its tarball yet
+              // (a 404 for this package's own download: the classifier names
+              // the last path segment, the tarball file for that URL form).
+              const ownTarball = `${plainTarget.slice(plainTarget.lastIndexOf('/') + 1)}-${String(registryLatest)}.tgz`
+              const notOnMirror = (failure?.code === 'no-matching-version' && aboutThisPackage)
+                || (failure?.code === 'fetch-404' && (failure.pkg === plainTarget || failure.pkg === ownTarball))
+              if (heldBack || notOnMirror) {
+                logEvent('warn', 'install', heldBack
+                  ? `${entry.name}: ${String(registryLatest)} is younger than this profile's minimumReleaseAge — installing the version pnpm admits instead; the update check will offer ${String(registryLatest)} once it is old enough`
+                  : `${entry.name}: the profile's registry could not resolve ${String(registryLatest)} (a mirror behind the registry that answered latest) — retrying with the bare name`)
+                restoreProfileManifest(config.profile, manifestBefore, activeProfileDir)
+                target = plainTarget
+                result = await runPlugin(config.profile, ['add', target])
+              }
+            }
             const cancelled = result.cancelled
             if ((result.exitCode !== 0 || result.timedOut) && !cancelled) {
               const rolledBack = restoreProfileManifest(config.profile, manifestBefore, activeProfileDir)
