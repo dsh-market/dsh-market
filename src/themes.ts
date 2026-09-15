@@ -10,6 +10,8 @@ import { hotMount, hotUnmount, listHotMounts, writeDisabled } from './hot.ts'
 import { logEvent } from './log.ts'
 import { profileDir, readInstalled } from './profile.ts'
 import { repoOf } from './sources.ts'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 /** The slice of a cordis loader entry the market needs for live enable/disable. */
 export interface LoaderEntry {
@@ -43,6 +45,37 @@ export function createThemeManager(
   explicitDir?: string,
 ): ThemeManager {
   const activeProfileDir = profileDir(profile, explicitDir)
+  /**
+   * Loader entry names a package owns, resolved from its own
+   * `cordis.patch.yml` when the installed package declares one. A bundle
+   * whose patch rows insert under a sub-path entry name (`name:
+   * 'pkg/extensions/dsh/index.js'`) or a differently-named entry owns those
+   * entry names, not the bare package name — matching by package name alone
+   * found no live entry, so a toggle reported success while the fiber kept
+   * running, and re-enable failed with `no loader entry matched` (#619).
+   * Both `id:` and `name:` values are collected: the loader registers
+   * entries under the name a row inserts, and `id` alone can differ.
+   */
+  function ownedEntryNames(name: string): string[] {
+    const names = new Set<string>([name])
+    try {
+      const text = readFileSync(join(activeProfileDir, 'node_modules', name, 'cordis.patch.yml'), 'utf8')
+      for (const line of text.split(/\r?\n/u)) {
+        // A row opens with `- id: X`; its `name: Y` sits on an indented
+        // continuation line, and the loader registers the entry under that
+        // name — so both spellings have to be collected.
+        const id = /^[ \t]*-[ \t]*id:[ \t]*([^\s#]+)/u.exec(line)?.[1]
+        if (id !== undefined) {
+          names.add(id.replace(/^['"]|['"]$/g, ''))
+          continue
+        }
+        const entryName = /^[ \t]+name:[ \t]*(['"]?)([^\s#'"]+)\1/u.exec(line)?.[2]
+        if (entryName !== undefined) names.add(entryName)
+      }
+    } catch { /* no readable patch file — the bare package name is all we know */ }
+    return [...names]
+  }
+
   /** Installed package names classified as themes by the registry's theme category. */
   async function installedThemeNames(): Promise<Set<string>> {
     const names = new Set<string>()
@@ -73,8 +106,11 @@ export function createThemeManager(
    */
   async function setEntryDisabled(name: string, disabledFlag: boolean): Promise<boolean> {
     let found = false
+    const owned = ownedEntryNames(name)
     for (const entry of host.loader.entries()) {
-      if (entry.options.name !== name) continue
+      const entryName = entry.options.name
+      if (entryName === undefined) continue
+      if (!owned.includes(entryName)) continue
       // A disable can land while the entry's init is still in flight: the
       // options flip but the finishing init brings the fiber up anyway, and a
       // plain re-update no-ops on the empty diff. Force the update and verify
@@ -94,7 +130,7 @@ export function createThemeManager(
       logEvent('info', 'toggle',
         `${name} -> ${disabledFlag ? 'off' : 'on'}: fiber=${String(entry.fiber !== undefined)}`)
     }
-    if (!found) logEvent('info', 'toggle', `${name}: no loader entry matched`)
+    if (!found) logEvent('info', 'toggle', `${name}: no loader entry matched (owned: ${owned.join(', ')})`)
     return found
   }
 
