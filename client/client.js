@@ -105,7 +105,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			installing: "安装中…",
 			installedBadge: "✓ 已安装",
 			alreadyInstalled: "✓ 已安装",
-			restartBanner: "项变更完成，重启 DeepSeek Harness 后生效",
+			restartBanner: "项变更需重启 DeepSeek Harness 后生效",
 			uninstall: "卸载",
 			confirmRemove: "确认卸载？",
 			uninstalling: "卸载中…",
@@ -638,7 +638,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			installing: "Installing…",
 			installedBadge: "✓ Installed",
 			alreadyInstalled: "✓ Installed",
-			restartBanner: "change(s) done — restart DeepSeek Harness to apply",
+			restartBanner: "change(s) pending restart — restart DeepSeek Harness to apply",
 			uninstall: "Uninstall",
 			confirmRemove: "Uninstall?",
 			uninstalling: "Uninstalling…",
@@ -6348,6 +6348,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const [buildsSkipped, setBuildsSkipped] = (0, react.useState)(null);
 			const [updatingAll, setUpdatingAll] = (0, react.useState)(false);
 			const [updatedNames, setUpdatedNames] = (0, react.useState)([]);
+			const [restartNames, setRestartNames] = (0, react.useState)([]);
 			const [hotUrls, setHotUrls] = (0, react.useState)([]);
 			const [hotNames, setHotNames] = (0, react.useState)([]);
 			const [progressLine, setProgressLine] = (0, react.useState)(null);
@@ -6667,12 +6668,13 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				}
 				if (Array.isArray(saved.doneUrls) && saved.doneUrls.length > 0) setDoneUrls(saved.doneUrls);
 				if (Array.isArray(saved.updated) && saved.updated.length > 0) setUpdatedNames(saved.updated);
+				if (Array.isArray(saved.restartNames) && saved.restartNames.length > 0) setRestartNames(saved.restartNames);
 				if (typeof saved.removed === "number" && saved.removed > 0) setRemovedCount(saved.removed);
 				if (typeof saved.toggled === "number" && saved.toggled > 0) setToggleRestart(saved.toggled);
 			}, [bootId]);
 			(0, react.useEffect)(() => {
 				if (bootId === null) return;
-				if (doneUrls.length === 0 && updatedNames.length === 0 && removedCount === 0 && toggleRestart === 0) {
+				if (doneUrls.length === 0 && updatedNames.length === 0 && restartNames.length === 0 && removedCount === 0 && toggleRestart === 0) {
 					sessionStorage.removeItem("dshm-restart");
 					return;
 				}
@@ -6680,6 +6682,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					boot: bootId,
 					doneUrls,
 					updated: updatedNames,
+					restartNames,
 					removed: removedCount,
 					toggled: toggleRestart
 				}));
@@ -6687,6 +6690,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				bootId,
 				doneUrls,
 				updatedNames,
+				restartNames,
 				removedCount,
 				toggleRestart
 			]);
@@ -7307,6 +7311,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					if (status === 200 && body.ok) {
 						setRecords((list) => patch(list, updateRecordId, { state: "done" }));
 						setUpdatedNames((names) => names.concat(name));
+						const activation = body.activation && typeof body.activation === "object" ? body.activation[name] : void 0;
+						if (!activation || activation.state === "restart") setRestartNames((names) => names.includes(name) ? names : names.concat(name));
 						if (body.activation && typeof body.activation === "object") setActivations((prev) => ({
 							...prev,
 							...body.activation
@@ -8102,7 +8108,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				webdavUrl,
 				webdavUser
 			]);
-			const sessionPendingRestart = doneUrls.length + updatedNames.length + removedCount + toggleRestart + (backupRestored ? 1 : 0);
+			const sessionPendingRestart = doneUrls.length + restartNames.length + removedCount + toggleRestart + (backupRestored ? 1 : 0);
 			/**
 			* Plugins the HOST reports as restart-pending, independent of what this
 			* browser session happens to remember. Installing and then reloading the

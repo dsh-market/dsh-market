@@ -4304,3 +4304,125 @@ describe('Git to npm source migration (#461)', () => {
     })
   })
 })
+
+describe('restart banner counts only restart-requiring updates (#558)', () => {
+  const INSTALLED = { profile: 'web', installed: { 'dsh-loop': '^1.0.0', 'whale-skin': '^1.0.0' }, live: ['dsh-loop', 'whale-skin'], disabled: [], groups: {}, groupOrder: [], favorites: [] }
+  const STATUS = { active: false, busy: false, pnpm: true, boot: 'boot-1', restart: true, installed: { 'dsh-loop': '^1.0.0', 'whale-skin': '^1.0.0' } }
+  const UPDATES = {
+    updates: {
+      'dsh-loop': { kind: 'npm', version: '1.0.0', current: '1.0.0', latest: '1.2.0', updateAvailable: true },
+      'whale-skin': { kind: 'npm', version: '1.0.0', current: '1.0.0', latest: '1.1.0', updateAvailable: true },
+    },
+  }
+
+  /** One plugin the host parks behind a restart, one client-only that goes
+    * live immediately — the exact mix reported in #558. */
+  function stubMixedUpdateResponses() {
+    stubFetch({
+      '/dsh-market/installed': INSTALLED,
+      '/dsh-market/status': STATUS,
+      '/dsh-market/updates': UPDATES,
+      '/dsh-market/update': (body: unknown) => {
+        const name = (body as { name?: string }).name
+        return {
+          ok: true,
+          activation: name === 'dsh-loop'
+            ? { 'dsh-loop': { state: 'restart', hot: false, bundle: true, reasons: ['restart to apply'] } }
+            : { 'whale-skin': { state: 'inert', hot: true, bundle: false, reasons: ['client-only, live on refresh'] } },
+        }
+      },
+    })
+  }
+
+  const gotoInstalled = async () => {
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    await screen.findAllByRole('button', { name: en.update }, { timeout: 5000 })
+    return (name: string) => {
+      const rows = [...document.querySelectorAll('div[class*="irow"]')]
+        .filter(r => r.querySelector('button') && (r.textContent ?? '').includes(name))
+      const row = rows[rows.length - 1] as HTMLElement | undefined
+      if (!row) throw new Error(`no installed row found for ${name}`)
+      return within(row).getByRole('button', { name: en.update })
+    }
+  }
+
+  it('counts a client-only update as a change but not as restart-pending', async () => {
+    stubMixedUpdateResponses()
+    const updateOnRow = await gotoInstalled()
+
+    fireEvent.click(updateOnRow('dsh-loop'))
+    await screen.findByText(re(en.updated))
+    fireEvent.click(updateOnRow('whale-skin'))
+    await waitFor(() => {
+      expect(screen.getAllByText(re(en.updated)).length).toBeGreaterThanOrEqual(2)
+    })
+
+    // Both changes are done, but only one needs a restart: the banner must
+    // show the host-agreeing count (1), not the completed-change count (2).
+    const banner = await screen.findByText(re(en.restartBanner))
+    expect(within(banner).getByText('1')).toBeTruthy()
+  })
+
+  it('counts an update with no activation evidence as restart-pending (#558)', async () => {
+    // The conservative default the gate exists for: when the host reports no
+    // activation for the plugin at all, the update must still land in the
+    // restart count — under-reporting tells the user "no restart needed"
+    // while the old build is what answers.
+    stubFetch({
+      '/dsh-market/installed': { profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: ['dsh-loop'], disabled: [], groups: {}, groupOrder: [], favorites: [] },
+      '/dsh-market/status': { active: false, busy: false, pnpm: true, boot: 'boot-1', restart: true, installed: { 'dsh-loop': '^1.0.0' } },
+      '/dsh-market/updates': { updates: { 'dsh-loop': { kind: 'npm', version: '1.0.0', current: '1.0.0', latest: '1.2.0', updateAvailable: true } } },
+      '/dsh-market/update': { ok: true },
+    })
+
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    await screen.findByRole('button', { name: en.update })
+    fireEvent.click(screen.getByRole('button', { name: en.update }))
+    await screen.findByText(re(en.updated))
+
+    const banner = await screen.findByText(re(en.restartBanner))
+    expect(within(banner).getByText('1')).toBeTruthy()
+  })
+
+  it('keeps the banner consistent across a session loss (#558)', async () => {
+    stubMixedUpdateResponses()
+    const updateOnRow = await gotoInstalled()
+
+    fireEvent.click(updateOnRow('dsh-loop'))
+    await screen.findByText(re(en.updated))
+    fireEvent.click(updateOnRow('whale-skin'))
+    await waitFor(() => {
+      expect(screen.getAllByText(re(en.updated)).length).toBeGreaterThanOrEqual(2)
+    })
+
+    // Session storage lost (new tab): the host count is the only evidence
+    // left and must agree with what the banner showed before the loss.
+    sessionStorage.clear()
+    await waitFor(() => {
+      const banner = screen.getByText(re(en.restartBanner))
+      expect(within(banner).getByText('1')).toBeTruthy()
+    })
+  })
+})
+
+
+describe('Update all button visible for a single updatable plugin (#555)', () => {
+  function stubSingleUpdatable() {
+    stubFetch({
+      '/dsh-market/installed': { profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: ['dsh-loop'], disabled: [], groups: {}, groupOrder: [], favorites: [] },
+      '/dsh-market/status': { active: false, busy: false, pnpm: true, boot: 'boot-1', restart: true, installed: { 'dsh-loop': '^1.0.0' } },
+      '/dsh-market/updates': { updates: { 'dsh-loop': { kind: 'npm', version: '1.0.0', current: '1.0.0', latest: '1.2.0', updateAvailable: true } } },
+    })
+  }
+
+  it('shows the Update all button when only one plugin is updatable', async () => {
+    stubSingleUpdatable()
+    render(<MarketSection {...props()} />)
+    const btn = await screen.findByRole('button', { name: /Update all \(1\)/ })
+    expect(btn).toBeTruthy()
+  })
+})
