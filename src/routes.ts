@@ -2951,7 +2951,7 @@ sendJson(response, 200, { updates })
             // releases are daily. The second is an error the market already
             // recovers from: classifyPnpmFailure reads it as
             // release-age-violation and withHoistRecovery retries once with
-            // --config.minimumReleaseAge=0 (#39).
+            // --config.minimum-release-age=0 (#39).
             //
             // So a version resolved BEFORE the add is not only about the
             // Desktop boundary; it is what turns a silent skip into a

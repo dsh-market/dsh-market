@@ -13,8 +13,19 @@ import { conflictingEntryIds, dropFromManifest, hasDshManifest, hasLoadableEntry
 import { logEvent } from './log.ts'
 import { cleanOrphanedStore } from './store.ts'
 
-/** One-shot bypass for pnpm's fresh-release hold; scoped to a single command. */
-export const RELEASE_AGE_OVERRIDE = '--config.minimumReleaseAge=0'
+/**
+ * One-shot bypass for pnpm's fresh-release hold; scoped to a single command.
+ *
+ * Spelled like the .npmrc key, not the camelCase pnpm-workspace.yaml one:
+ * from pnpm 12.3.0 (the native CLI) `--config.minimumReleaseAge=0` is
+ * silently ignored — no unknown-option error — so the retry ran without the
+ * bypass and failed exactly like the first attempt (#600).
+ * `--config.minimum-release-age=0` is honoured by pnpm 10, 11 and 12 alike.
+ * That is specific to this key, not a rule for `--config.*`: the native CLI
+ * ignores `--config.fetch-timeout` in both spellings, which is why
+ * FETCH_TIMEOUT_OVERRIDE below is not respelled here (#615).
+ */
+export const RELEASE_AGE_OVERRIDE = '--config.minimum-release-age=0'
 
 /**
  * Longer per-request fetch timeout for one retried command. pnpm's default
