@@ -246,6 +246,10 @@ export function restartLaunch(): { file: string; args: string[]; cwd: string; vi
  * DSH sandbox tool runners) pops a visible node window. Wrapping the launch
  * in `powershell -WindowStyle Hidden` gives the host a HIDDEN console that
  * children inherit instead. POSIX keeps the plain detached spawn.
+ *
+ * The helper that runs this invocation spawns it with `windowsHide`, because
+ * the helper has no console of its own to hand down and Windows would
+ * otherwise create a visible one for PowerShell (#624).
  */
 export function respawnInvocation(
   launch: { file: string; args: string[]; viaShell: boolean },
@@ -347,7 +351,17 @@ export function restartHelperSource(
     '  try {',
     '    const out = fs.openSync(logOut, "a")',
     '    const err = fs.openSync(logErr, "a")',
-    '    child = spawn(file, args, { cwd, detached, stdio: ["ignore", out, err], env: process.env, shell: viaShell })',
+    // windowsHide (#624 by @davidekingsss): this helper is itself detached,
+    // so on Windows it has no console, and a console program spawned from a
+    // console-less parent is given a NEW, visible one — the "Windows
+    // PowerShell" window that owns the replacement and takes it down when
+    // closed. `-WindowStyle Hidden` cannot hide it: that flag governs the
+    // window PowerShell would create, not the console the spawn handed it.
+    // CREATE_NO_WINDOW keeps the console but never shows it, and the host's
+    // own console children inherit that hidden console rather than popping
+    // windows of their own (measured by the reporter with a console-less
+    // launcher: one PseudoConsoleWindow without the flag, none with it).
+    '    child = spawn(file, args, { cwd, detached, stdio: ["ignore", out, err], env: process.env, shell: viaShell, windowsHide: true })',
     // spawn reports a missing or unexecutable file ASYNCHRONOUSLY; the
     // try/catch below only covers the synchronous throw, so without this
     // listener that failure is exactly as silent as the bug being fixed.

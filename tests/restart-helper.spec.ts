@@ -76,6 +76,23 @@ async function until(predicate: () => boolean, timeoutMs: number): Promise<boole
 }
 
 describe('restartHelperSource (#177)', () => {
+  it('spawns the replacement with windowsHide, so a console-less helper does not leave a visible console owning it (#624)', () => {
+    // Only observable on Windows: the helper is detached, hence console-less,
+    // and without CREATE_NO_WINDOW the PowerShell it starts is handed a new,
+    // visible console that the replacement then lives in. The behaviour
+    // itself is pinned here as the rendered spawn call; the run-based specs
+    // below cover that the option does not change what happens elsewhere.
+    const source = restartHelperSource(
+      { file: 'powershell.exe', args: ['-NoProfile', '-WindowStyle', 'Hidden', '-Command', "& 'dsh.cmd' 'web'"], viaShell: false, detached: false },
+      { cwd: process.cwd() },
+      { out: 'out.log', err: 'err.log' },
+      null,
+    )
+    const spawnLine = source.split('\n').find(line => line.includes('spawn(file, args,'))
+    expect(spawnLine).toBeDefined()
+    expect(spawnLine).toContain('windowsHide: true')
+  })
+
   it('does not start the replacement while the old port is still held', async () => {
     const { port, release } = await hold()
     const dir = mkdtempSync(join(tmpdir(), 'dshm-restart-'))
