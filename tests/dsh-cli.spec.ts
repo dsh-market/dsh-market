@@ -1,7 +1,8 @@
 import { EventEmitter } from 'node:events'
 import { describe, expect, it, vi } from 'vitest'
 import { join } from 'node:path'
-import { cmdCommandLine, gitEnvForPnpm, isCmdSafeProfileName, nodeExecutable, proxyEnvForPnpm, quoteCmdArg, TARGET_RE, toolSearchDirs } from '../src/dsh-cli.ts'
+import { cmdCommandLine, gitEnvForPnpm, isCmdSafeProfileName, nodeExecutable, pnpmConfigEnvForArgs, proxyEnvForPnpm, quoteCmdArg, TARGET_RE, toolSearchDirs } from '../src/dsh-cli.ts'
+import { AUTO_INSTALL_PEERS_OFF, FETCH_TIMEOUT_OVERRIDE, RELEASE_AGE_OVERRIDE } from '../src/install.ts'
 import { routesFor } from '../src/regions.ts'
 
 describe('cmd.exe command line building (DEP0190 shim)', () => {
@@ -354,3 +355,26 @@ async function spawnedEnv(
     vi.resetModules()
   }
 }
+
+describe('pnpmConfigEnvForArgs (#615)', () => {
+  it('repeats each --config override as the PNPM_CONFIG_* variable pnpm 12 still reads', () => {
+    // The real constants, not copies: a respelling must keep matching or
+    // this is the test that says so.
+    expect(pnpmConfigEnvForArgs(['add', FETCH_TIMEOUT_OVERRIDE, 'dsh-loop'])).toEqual({ PNPM_CONFIG_FETCH_TIMEOUT: '600000' })
+    expect(pnpmConfigEnvForArgs(['add', AUTO_INSTALL_PEERS_OFF, 'dsh-loop'])).toEqual({ PNPM_CONFIG_AUTO_INSTALL_PEERS: 'false' })
+    expect(pnpmConfigEnvForArgs(['add', RELEASE_AGE_OVERRIDE, 'dsh-loop'])).toEqual({ PNPM_CONFIG_MINIMUM_RELEASE_AGE: '0' })
+    // Either spelling of a key lands on the same variable.
+    expect(pnpmConfigEnvForArgs(['add', '--config.fetchTimeout=12345'])).toEqual({ PNPM_CONFIG_FETCH_TIMEOUT: '12345' })
+    expect(pnpmConfigEnvForArgs(['add', '--config.fetch-timeout=12345'])).toEqual({ PNPM_CONFIG_FETCH_TIMEOUT: '12345' })
+    // Two overrides on one run: both travel.
+    expect(pnpmConfigEnvForArgs(['add', FETCH_TIMEOUT_OVERRIDE, AUTO_INSTALL_PEERS_OFF, 'dsh-loop']))
+      .toEqual({ PNPM_CONFIG_FETCH_TIMEOUT: '600000', PNPM_CONFIG_AUTO_INSTALL_PEERS: 'false' })
+  })
+
+  it('sets nothing for a run that carries no override', () => {
+    expect(pnpmConfigEnvForArgs(['add', 'dsh-loop'])).toEqual({})
+    expect(pnpmConfigEnvForArgs(['add', '--force', '--reporter=ndjson', 'dsh-loop@1.0.0'])).toEqual({})
+    // Not the override shape: no key, or no value.
+    expect(pnpmConfigEnvForArgs(['add', '--config.=x', '--config.fetchTimeout='])).toEqual({})
+  })
+})

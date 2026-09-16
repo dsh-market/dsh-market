@@ -22,6 +22,14 @@ export const RELEASE_AGE_OVERRIDE = '--config.minimumReleaseAge=0'
  * WHOLE repo even for a `#path:` subdirectory plugin) on slow networks; a
  * plain retry fails again at the same limit, so the recovery re-runs with
  * this override once. Scoped to a single command like RELEASE_AGE_OVERRIDE.
+ *
+ * pnpm 12 ignores this flag on the command line in either spelling (#615).
+ * On the CLI runner, runDshPlugin repeats every `--config.<key>` override
+ * as PNPM_CONFIG_<KEY>, which pnpm 11 and 12 both read, so the retried
+ * command really does get the longer limit there. The Desktop runtime hands
+ * its host argv only, so on a Desktop host the retry still depends on that
+ * host's pnpm reading the flag. The flag stays: pnpm 11 and earlier read
+ * it, and it costs nothing on the versions that do not.
  */
 export const FETCH_TIMEOUT_OVERRIDE = '--config.fetchTimeout=600000'
 
@@ -41,6 +49,10 @@ export const FETCH_TIMEOUT_OVERRIDE = '--config.fetchTimeout=600000'
  * Verified against pnpm 10.29.3: `peerDependencyRules.ignoreMissing` does
  * NOT prevent the fetch (it only silences the warning), so this flag is the
  * only lever that actually works.
+ *
+ * pnpm 12 ignores this flag on the command line too (12.4.1 auto-installs
+ * the peer regardless); runDshPlugin repeats it as
+ * PNPM_CONFIG_AUTO_INSTALL_PEERS, which 12 reads (#615).
  */
 export const AUTO_INSTALL_PEERS_OFF = '--config.auto-install-peers=false'
 

@@ -232,6 +232,33 @@ export function gitEnvForPnpm(env: NodeJS.ProcessEnv = process.env): NodeJS.Proc
   return { GIT_TERMINAL_PROMPT: '0' }
 }
 
+/**
+ * Every `--config.<key>=<value>` override in the argv, repeated as the
+ * `PNPM_CONFIG_<KEY>` environment variable that pnpm 12 still reads.
+ *
+ * pnpm 12 ignores some `--config.<key>` overrides on the command line, in
+ * either spelling, without a word: `fetchTimeout` (#615; measured on
+ * 12.2.1, 12.3.0 and 12.4.1) and `auto-install-peers` (12.4.1 auto-installs
+ * the peer with the flag present and not with the variable), so the retries
+ * that carry them ran exactly like the first attempt. `PNPM_CONFIG_*` is
+ * honoured by 11.8, 11.21 and 12.4 alike, so the argument stays for the
+ * versions that read it and the variable carries the same value for the
+ * ones that do not. Scoped to the run that carries the flag; nothing is set
+ * otherwise, so a user's own values are untouched on every other run. Keys
+ * are accepted in either spelling, so respelling a constant (as #600 did
+ * for the release-age one) cannot silently drop the variable.
+ */
+export function pnpmConfigEnvForArgs(pluginArgs: readonly string[]): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {}
+  for (const arg of pluginArgs) {
+    const match = /^--config\.([A-Za-z][A-Za-z0-9-]*)=(\S+)$/.exec(arg)
+    if (match === null) continue
+    const key = match[1]!.replace(/([a-z0-9])([A-Z])/g, '$1_$2').replace(/-/g, '_').toUpperCase()
+    env[`PNPM_CONFIG_${key}`] = match[2]!
+  }
+  return env
+}
+
 function spawnEnv(): NodeJS.ProcessEnv {
   // pnpm v10+ blocks forever on a silent interactive prompt without a TTY;
   // CI mode forces it to act or fail instead of asking.
@@ -913,7 +940,7 @@ export function runDshPlugin(profile: string, pluginArgs: string[]): Promise<Ins
       // pnpm v10 blocks forever on a silent interactive prompt without a TTY
       // (observed on re-add over a pinned git spec); CI mode forces it to act
       // or fail instead of asking.
-      env: spawnEnv(),
+      env: { ...spawnEnv(), ...pnpmConfigEnvForArgs(pluginArgs) },
       stdio: ['ignore', 'pipe', 'pipe'],
       viaShell,
       // Own process group on POSIX so cancel/timeout can kill the whole

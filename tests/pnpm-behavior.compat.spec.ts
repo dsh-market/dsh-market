@@ -1,6 +1,6 @@
 /**
  * Real-pnpm compat matrix (`npm run test:compat`): pins the failure
- * signatures behind issues #20/#21/#22 against actual pnpm 9/10/11 in
+ * signatures behind issues #20/#21/#22 against actual pnpm 9/10/11/12 in
  * throwaway profile fixtures, and proves the market's argv decision works on
  * every combination. Needs network; several minutes on a cold npx cache.
  *
@@ -17,7 +17,7 @@ import { join } from 'node:path'
 import { classifyPnpmFailure, pluginArgsFor } from '../src/pnpm-compat.ts'
 
 /** Last release of each major the market supports; behavior is per-major. */
-const PNPM = { 9: '9.15.9', 10: '10.28.2', 11: '11.21.0' } as const
+const PNPM = { 9: '9.15.9', 10: '10.28.2', 11: '11.21.0', 12: '12.4.1' } as const
 /** Version pinned by the DSH Desktop 2.0.3 distribution reported in #385. */
 const DESKTOP_PNPM = '11.8.0'
 const GIT_FIXTURE_SHA = '6ebf1e03de0ada9e653d1f8ff82ad905ab761ad9'
@@ -37,7 +37,7 @@ function profileFixture(options: { workspace: boolean; extraWorkspaceYaml?: stri
   return dir
 }
 
-function pnpm(version: string, args: string[], cwd: string): { code: number | null; out: string } {
+function pnpm(version: string, args: string[], cwd: string, extraEnv: NodeJS.ProcessEnv = {}): { code: number | null; out: string } {
   // `npx` is a cmd shim on Windows and cannot be spawned directly without a
   // shell. Keep argument arrays on both platforms; no package target is ever
   // interpolated into a command string.
@@ -47,7 +47,7 @@ function pnpm(version: string, args: string[], cwd: string): { code: number | nu
     : ['-y', `pnpm@${version}`, ...args]
   const r = spawnSync(command, commandArgs, {
     cwd, encoding: 'utf8', timeout: 240_000,
-    env: { ...process.env, CI: 'true', COREPACK_ENABLE_STRICT: '0' },
+    env: { ...process.env, CI: 'true', COREPACK_ENABLE_STRICT: '0', ...extraEnv },
   })
   const spawnError = r.error === undefined ? '' : `\n${r.error.name}: ${r.error.message}`
   return { code: r.status, out: `${r.stdout ?? ''}${r.stderr ?? ''}${spawnError}` }
@@ -325,4 +325,38 @@ describe('a dead file: dependency blocks the whole profile (#436)', () => {
       expect(failure?.message).toContain('ghost-plugin-1.0.0.tgz')
     }, 300_000)
   }
+})
+
+describe('#615 — pnpm 12 ignores some --config.<key> flags on the command line; PNPM_CONFIG_<KEY> is read', () => {
+  /** A workspace profile WITHOUT autoInstallPeers, so the flag is what decides. */
+  function peerFixture(): string {
+    const dir = mkdtempSync(join(tmpdir(), 'dshm-compat-peers-'))
+    dirs.push(dir)
+    writeFileSync(join(dir, 'package.json'), '{"name":"dsh-profile-fixture","private":true}')
+    writeFileSync(join(dir, 'pnpm-workspace.yaml'), 'packages:\n  - .\n\nnodeLinker: hoisted\n')
+    return dir
+  }
+
+  it('pnpm 12.4 auto-installs the peer despite --config.auto-install-peers=false, and honours the variable', () => {
+    const flagged = peerFixture()
+    const withFlag = pnpm(PNPM[12], ['add', '-w', '--config.auto-install-peers=false', 'use-sync-external-store@1.2.2'], flagged)
+    expect(withFlag.code, withFlag.out.slice(-400)).toBe(0)
+    // The flag the market's #289 retry relied on did nothing here.
+    expect(installedVersion(flagged, 'react')).not.toBeNull()
+
+    const viaEnv = peerFixture()
+    const withVar = pnpm(PNPM[12], ['add', '-w', 'use-sync-external-store@1.2.2'], viaEnv, { PNPM_CONFIG_AUTO_INSTALL_PEERS: 'false' })
+    expect(withVar.code, withVar.out.slice(-400)).toBe(0)
+    expect(installedVersion(viaEnv, 'react')).toBeNull()
+  })
+
+  it('pnpm 11 reads both the flag and the variable', () => {
+    const flagged = peerFixture()
+    expect(pnpm(PNPM[11], ['add', '-w', '--config.auto-install-peers=false', 'use-sync-external-store@1.2.2'], flagged).code).toBe(0)
+    expect(installedVersion(flagged, 'react')).toBeNull()
+
+    const viaEnv = peerFixture()
+    expect(pnpm(PNPM[11], ['add', '-w', 'use-sync-external-store@1.2.2'], viaEnv, { PNPM_CONFIG_AUTO_INSTALL_PEERS: 'false' }).code).toBe(0)
+    expect(installedVersion(viaEnv, 'react')).toBeNull()
+  })
 })
