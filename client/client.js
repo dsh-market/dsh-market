@@ -10720,6 +10720,48 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			});
 		}
 		//#endregion
+		//#region src/client/section-gate.ts
+		/**
+		* @param register - registers the entry and returns its disposer. Called
+		*   only when the entry should be visible; may be called again after a
+		*   retraction, which is why the disposer is required rather than optional.
+		* @returns the gate.
+		*/
+		function createSectionGate(register) {
+			let ready = false;
+			let wanted = true;
+			let removed = false;
+			let dispose = null;
+			const apply = () => {
+				if (!ready) return;
+				const shouldShow = wanted && !removed;
+				if (shouldShow && dispose === null) {
+					dispose = register();
+					return;
+				}
+				if (!shouldShow && dispose !== null) {
+					const stop = dispose;
+					dispose = null;
+					stop();
+				}
+			};
+			return {
+				available: () => {
+					ready = true;
+					apply();
+				},
+				setVisible: (visible) => {
+					wanted = visible;
+					apply();
+				},
+				visible: () => dispose !== null,
+				retire: () => {
+					removed = true;
+					apply();
+				}
+			};
+		}
+		//#endregion
 		//#region src/client/SettingsCard.tsx
 		/**
 		* The market's card on the plugin configuration page (dsh >= 0.1.0-rc.7).
@@ -11210,8 +11252,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				en
 			}), "dsh-market: dictionaries");
 			const t = ctx.locale.bind(NS);
-			let retireSection = null;
-			ctx.slots.inject("settings.section", () => {
+			const sectionGate = createSectionGate(() => {
 				const off = ctx.slots.register({
 					name: "settings.section",
 					id: "market",
@@ -11242,9 +11283,19 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					},
 					preferredSubsectionId: ownerProps.preferredSubsectionId
 				})));
-				if (typeof off === "function") retireSection = off;
-				return off;
+				return typeof off === "function" ? off : () => {};
 			});
+			ctx.slots.inject("settings.section", () => {
+				sectionGate.available();
+			});
+			const marketControl = {
+				version: 1,
+				setSettingsVisible: (visible) => {
+					sectionGate.setVisible(visible);
+				},
+				settingsVisible: () => sectionGate.visible()
+			};
+			if (typeof ctx.provide === "function") ctx.provide("market", marketControl);
 			ctx.inject(["settingsScope"], (scoped) => {
 				scoped.slots.inject("settings.plugin.item", () => scoped.slots.register({
 					name: "settings.plugin.item",
@@ -11254,9 +11305,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				}, () => (0, react.createElement)(SettingsCard, {
 					t,
 					onRemoved: () => {
-						const off = retireSection;
-						retireSection = null;
-						off?.();
+						sectionGate.retire();
 					}
 				})));
 			});

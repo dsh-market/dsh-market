@@ -11,6 +11,7 @@ import { en, zh } from './locales.ts'
 import { InstallToast } from './InstallToast.tsx'
 import { MarketErrorBoundary } from './ErrorBoundary.tsx'
 import { MarketSection } from './MarketSection.tsx'
+import { createSectionGate } from './section-gate.ts'
 import { exportMarketLog } from './self-check.ts'
 import { SettingsCard } from './SettingsCard.tsx'
 import type { ThemeSnapshot, Translate } from './market-data.ts'
@@ -96,15 +97,11 @@ export function apply(ctx: MarketClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-market: dictionaries')
   const t = ctx.locale.bind(NS)
 
-  // Kept so the removal flow can retire the market's own nav entry the
-  // moment the package is gone: leaving "插件市场" in the left menu after
-  // the user removed it is the card claiming something the profile no
-  // longer agrees with. `register` hands back its own disposer; calling it
-  // twice (here and again when the context unwinds) is harmless, but the
-  // reference is dropped after use so the intent stays readable.
-  let retireSection: (() => void) | null = null
-
-  ctx.slots.inject('settings.section', () => {
+  // One gate owns both questions about this entry — whether the HOST wants
+  // it (#602: a shell that renders the market itself does not want a
+  // duplicate nav item) and whether this package is being removed. See
+  // section-gate.ts for why the orderings, not the booleans, are the work.
+  const sectionGate = createSectionGate(() => {
     const off = ctx.slots.register({
       name: 'settings.section',
       id: 'market',
@@ -139,9 +136,30 @@ export function apply(ctx: MarketClientContext): void {
       },
       preferredSubsectionId: ownerProps.preferredSubsectionId,
     })))
-    if (typeof off === 'function') retireSection = off as () => void
-    return off
+    // `slots.register` may not hand back a disposer on every host; the gate
+    // needs one regardless, so the absence becomes a no-op rather than a
+    // silently unretractable entry.
+    return typeof off === 'function' ? off as () => void : () => {}
   })
+
+  ctx.slots.inject('settings.section', () => { sectionGate.available() })
+
+  // The control surface a host uses instead of reaching into our internals.
+  // Published as a service rather than a page global so it is discoverable
+  // and typed like every other client-side capability. Deliberately small:
+  // only what genuinely has to happen IN THE PAGE. Update counts are an HTTP
+  // concern and live in the v1 API, where a client with no market UI loaded
+  // can still ask for them.
+  const marketControl = {
+    version: 1 as const,
+    setSettingsVisible: (visible: boolean): void => { sectionGate.setVisible(visible) },
+    settingsVisible: (): boolean => sectionGate.visible(),
+  }
+  // Guarded: `provide` is cordis's, and a host old enough to be missing it
+  // should lose the control surface, not the whole market.
+  if (typeof (ctx as { provide?: unknown }).provide === 'function') {
+    ;(ctx as unknown as { provide: (name: string, value: unknown) => void }).provide('market', marketControl)
+  }
 
   // The settings card (dsh >= 0.1.0-rc.7). Registered through a NESTED
   // inject on purpose: naming settingsScope in the module-level `inject`
@@ -157,7 +175,7 @@ export function apply(ctx: MarketClientContext): void {
       key: NS,
       locale: NS,
       inject: () => ({ t }),
-    }, () => h(SettingsCard, { t, onRemoved: () => { const off = retireSection; retireSection = null; off?.() } })))
+    }, () => h(SettingsCard, { t, onRemoved: () => { sectionGate.retire() } })))
   })
 
   const Toast = () => h(InstallToast, { t })

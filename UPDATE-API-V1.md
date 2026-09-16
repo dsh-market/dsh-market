@@ -33,6 +33,37 @@ supported features, restart owner and endpoint paths. A client must hide its
 restart button when `restart.supported` is false. Desktop and supervised hosts
 normally delegate restart to their owning shell or operator.
 
+## Count what can be updated
+
+```http
+GET /dsh-market/api/v1/updates/summary
+```
+
+```json
+{
+  "schema": "dsh-market/update-api/v1",
+  "checked": 12,
+  "updatable": 3,
+  "packages": [
+    { "name": "dsh-mcp-connector", "source": "npm", "installedVersion": "1.1.0", "latestVersion": "1.2.0" }
+  ]
+}
+```
+
+`checked` is the denominator — how many installed plugins the answer looked
+at. Read it, or a badge cannot tell "nothing to update" from "nothing was
+looked at". The two are different answers and only one of them means the
+profile is up to date.
+
+`packages` carries the same objects the single-package endpoint below
+returns, and lists only plugins that can be updated. A badge needs
+`updatable`; a panel needs the rows; neither should have to filter the whole
+profile itself.
+
+`GET /dsh-market/api/v1/capabilities` reports this endpoint at
+`endpoints.updatesSummary` and sets `features.updatesSummary`. Check that
+rather than probing for the path.
+
 ## Check one installed package
 
 ```http

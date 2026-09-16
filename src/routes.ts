@@ -1198,6 +1198,45 @@ export function mountMarketRoutes(
     return target !== null && NPM_NAME_RE.test(target) ? target : null
   }
 
+  /**
+   * The two inputs `checkUpdates` needs beyond the profile itself: which
+   * packages follow a release channel, and which local/generation installs
+   * have a catalog source worth comparing against.
+   *
+   * Extracted so the market page's own listing, the single-package v1
+   * endpoint and the v1 summary cannot drift apart (#602). A client that
+   * renders a badge from the summary and a row from the single check has to
+   * get the same answer, and the only way to guarantee that is for both to
+   * ask the same question.
+   */
+  async function updateCheckInputs(): Promise<{
+    channelFor: Map<string, Channel>
+    onlineSourceFor: Map<string, string>
+  }> {
+    // Only the market itself follows the channel setting (see
+    // MarketSettings.channel): a user opting into betas is volunteering to
+    // try THIS plugin early, not to be handed every other author's
+    // unreleased work.
+    const channel = activeChannel()
+    const installed = readInstalled(config.profile, activeProfileDir)
+    const channelFor = new Map(
+      Object.keys(installed)
+        .filter(name => SELF_NAMES.has(name))
+        .map(name => [name, channel] as const),
+    )
+    const onlineSourceFor = new Map<string, string>()
+    try {
+      const registry = await loadRegistry()
+      for (const [name, spec] of Object.entries(installed)) {
+        const source = onlineSourceOf(registry.plugins, name, spec)
+        if (source !== null) onlineSourceFor.set(name, source)
+      }
+    } catch (error) {
+      logEvent('warn', 'updates', `package source lookup failed — ${error instanceof Error ? error.message : String(error)}`)
+    }
+    return { channelFor, onlineSourceFor }
+  }
+
   const disposers = [
     host.webServer.register({
       kind: 'exact',
@@ -1227,6 +1266,10 @@ export function mountMarketRoutes(
             progress: true,
             rollback: true,
             restart: canRestart,
+            // A capability bit, not just an endpoint path: a client that
+            // renders an update badge has to know the aggregate exists
+            // without probing for it (#602).
+            updatesSummary: true,
           },
           restart: {
             supported: canRestart,
@@ -1238,11 +1281,54 @@ export function mountMarketRoutes(
           operationLimit: MAX_UPDATE_OPERATIONS_V1,
           endpoints: {
             updates: '/dsh-market/api/v1/updates',
+            updatesSummary: '/dsh-market/api/v1/updates/summary',
             operations: '/dsh-market/api/v1/operations',
             rollback: '/dsh-market/api/v1/rollback',
             restart: '/dsh-market/api/v1/restart',
           },
         })
+      },
+    }),
+
+    host.webServer.register({
+      kind: 'exact',
+      path: '/dsh-market/api/v1/updates/summary',
+      handler: async (request, response) => {
+        if (request.method !== 'GET') {
+          response.writeHead(405, { allow: 'GET' })
+          response.end()
+          return
+        }
+        try {
+          const { channelFor, onlineSourceFor } = await updateCheckInputs()
+          const updates = await checkUpdates(config.profile, forceCheckFrom(request), activeProfileDir, channelFor, onlineSourceFor)
+          // `packages` carries the same objects the single-package endpoint
+          // returns, so one parser serves both. Only updatable ones: a badge
+          // wants the count, a panel wants the rows, and neither wants to
+          // filter the whole profile itself.
+          const packages = Object.entries(updates)
+            .filter(([, status]) => status.updateAvailable === true)
+            .map(([name, status]) => ({
+              name,
+              source: status.kind,
+              installedVersion: status.current ?? status.version,
+              latestVersion: status.latest,
+            }))
+          sendJson(response, 200, {
+            schema: UPDATE_API_V1_SCHEMA,
+            // The denominator, so a caller can tell "nothing to update" from
+            // "nothing was looked at" — which is the difference between a
+            // badge that is right and one that is merely quiet.
+            checked: Object.keys(readInstalled(config.profile, activeProfileDir)).length,
+            updatable: packages.length,
+            packages,
+          })
+        } catch (error) {
+          sendJson(response, 500, {
+            schema: UPDATE_API_V1_SCHEMA,
+            error: error instanceof Error ? error.message : String(error),
+          })
+        }
       },
     }),
 
@@ -1258,21 +1344,10 @@ export function mountMarketRoutes(
           }
           try {
             const force = forceCheckFrom(request)
-            const channel = activeChannel()
-            const channelFor = SELF_NAMES.has(name) ? new Map([[name, channel]]) : undefined
-            // The same source lookup the market page makes, so a generation
-            // (#497) or a catalog-matched local package answers here with the
+            // The same inputs the market page builds, so a generation (#497)
+            // or a catalog-matched local package answers here with the
             // release it can be compared against rather than with nothing.
-            const spec = readInstalled(config.profile, activeProfileDir)[name]
-            const onlineSourceFor = new Map<string, string>()
-            if (spec !== undefined && (spec.toLowerCase().startsWith('file:') || isGenerationLink(spec))) {
-              try {
-                const source = onlineSourceOf((await loadRegistry()).plugins, name, spec)
-                if (source !== null) onlineSourceFor.set(name, source)
-              } catch (error) {
-                logEvent('warn', 'updates', `package source lookup failed — ${error instanceof Error ? error.message : String(error)}`)
-              }
-            }
+            const { channelFor, onlineSourceFor } = await updateCheckInputs()
             const update = (await checkUpdates(config.profile, force, activeProfileDir, channelFor, onlineSourceFor))[name]
             if (update === undefined) {
               sendJson(response, 404, { schema: UPDATE_API_V1_SCHEMA, error: 'plugin is not installed' })
@@ -2518,26 +2593,17 @@ export function mountMarketRoutes(
         }
         try {
           const force = (request.url ?? '').includes('force=1')
-          // Only the market itself follows the channel setting (see
-          // MarketSettings.channel): a user opting into betas is volunteering
-          // to try THIS plugin early, not to be handed every other author's
-          // unreleased work.
-          const channel = activeChannel()
-          const installed = readInstalled(config.profile, activeProfileDir)
-          const channelFor = new Map(
-            Object.keys(installed)
-              .filter(name => SELF_NAMES.has(name))
-              .map(name => [name, channel] as const),
-          )
-          const onlineSourceFor = new Map<string, string>()
+          const { channelFor, onlineSourceFor } = await updateCheckInputs()
+          // Migration hints are this listing's own business: the market page
+          // is where "this could come from npm now" is offered, and no other
+          // caller acts on it.
           const sourceMigrationFor = new Map<string, { kind: 'git-to-npm'; repo: string; target: string }>()
           try {
             const registry = await loadRegistry()
+            const installed = readInstalled(config.profile, activeProfileDir)
             for (const [name, spec] of Object.entries(installed)) {
               const migration = findGitToNpmMigration(registry.plugins, spec)
               if (migration !== null) sourceMigrationFor.set(name, migration)
-              const source = onlineSourceOf(registry.plugins, name, spec)
-              if (source !== null) onlineSourceFor.set(name, source)
             }
           } catch (error) {
             logEvent('warn', 'updates', `package source lookup failed — ${error instanceof Error ? error.message : String(error)}`)
