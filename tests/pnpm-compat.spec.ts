@@ -97,7 +97,16 @@ describe('classifyPnpmFailure', () => {
     expect(failed?.pkg).toBe('dsh-passwords')
     // Says which plugin, that nothing was broken, and what to do about it.
     expect(failed?.message).toContain('dsh-passwords')
-    expect(failed?.message).toContain('没有被破坏')
+    // Deliberately NOT "the installed version is intact". That promise was
+    // here and it was false: pnpm's renameOverwrite clears as much of the
+    // target directory as it can before retrying the rename, so files beside
+    // the one it cannot remove may already be deleted (#608 by @Euezb, who
+    // measured it: with only the directory inode locked, `perf/*.js` was gone
+    // and `index.js` survived). The route now checks whether the entry
+    // survived instead of assuming, and the message points at that check.
+    expect(failed?.message).not.toContain('没有被破坏')
+    expect(failed?.message).toContain('旁边的内容可能已经被删')
+    expect(failed?.message).toContain('入口是否还在')
     expect(failed?.message).toContain('quit DeepSeek Harness')
     // Not retried: the process that would retry is the one holding the files.
     expect(failed?.recoverable).toBe(false)
