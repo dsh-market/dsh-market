@@ -9895,6 +9895,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 										if ((entry.owner || "").toLowerCase().includes(needle)) return true;
 									}
 									return false;
+								}).sort(([nameA, specA], [nameB, specB]) => {
+									const aUp = !updatedNames.includes(nameA) && updates[nameA] !== void 0 && (updates[nameA].updateAvailable === true || (updates[nameA].kind === "generation" || isGenerationSpec(String(specA))) && updates[nameA].latest != null) ? 1 : 0;
+									return (!updatedNames.includes(nameB) && updates[nameB] !== void 0 && (updates[nameB].updateAvailable === true || (updates[nameB].kind === "generation" || isGenerationSpec(String(specB))) && updates[nameB].latest != null) ? 1 : 0) - aUp;
 								}),
 								render: ([name, spec]) => {
 									const missing = pendingBackup !== null && !installedFiles.includes(name);
