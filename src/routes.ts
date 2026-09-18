@@ -46,7 +46,7 @@ import {
 import { resolveRegion } from './region-probe.ts'
 import { acceleratedTarget, resolveHeadCommit } from './accelerate.ts'
 import { updateNotesFor } from './changelog.ts'
-import { checkUpdates, compareVersions, fetchNpmLatest, invalidateUpdates, isUpgrade, latestPublishedRecently, setUpdateRegistry, versionOnChannel } from './updates.ts'
+import { checkUpdates, compareVersions, fetchNpmLatest, heldInstallVersion, invalidateUpdates, isUpgrade, latestPublishedRecently, setUpdateRegistry, versionOnChannel } from './updates.ts'
 import { createThemeManager, type LoaderEntry } from './themes.ts'
 import { readJsonBody, sameOrigin, sendJson } from './http.ts'
 import { detectedDebugger, detectedSupervisor, restartAllowed, scheduleRestart, servingPort, trustedRestartRequest, trustedDownloadRequest } from './restart.ts'
@@ -4345,7 +4345,7 @@ sendJson(response, 200, { updates })
         }
         try {
           await withMutationLock(response, 'install', async () => {
-            const body = (await readJsonBody(request)) as { url?: unknown }
+            const body = (await readJsonBody(request)) as { url?: unknown; force?: unknown }
             const busyAgents = runningAgentsForGuard()
             if (busyAgents.length > 0) {
               logEvent('warn', 'install-blocked', `refused while agents are running — ${busyAgents.join(', ')}`)
@@ -4357,6 +4357,11 @@ sendJson(response, 200, { updates })
               return
             }
             const url = typeof body.url === 'string' ? body.url : ''
+            // force: the user pressed "install the latest anyway" — the same
+            // one-shot release-age bypass the update route has always taken on
+            // its forced path, so a fresh release is fetched WITHOUT first
+            // failing the safety check (#531, install half).
+            const force = body.force === true
             const registry = await loadRegistry()
             const entry = registry.plugins.find(p => p.url.toLowerCase() === url.toLowerCase())
             if (entry === undefined) {
@@ -4422,7 +4427,11 @@ sendJson(response, 200, { updates })
                 // unreadable manifest — treat as active to stay safe
                 active = true
               }
-              if (active || !sameSource) {
+              // An explicit force is the user answering the fresh-release hold
+              // the market just reported (#531): re-run the install with the
+              // one-shot bypass instead of refusing the second click as a
+              // duplicate. Without force the guard is unchanged.
+              if ((active || !sameSource) && !force) {
                 logEvent('warn', 'install-rejected', `${entry.name}: same plugin already installed as ${aliasOf}`)
                 sendJson(response, 400, { error: `已以「${aliasOf}」安装过同一个插件，无需重复安装 / this plugin is already installed as "${aliasOf}"` })
                 return
@@ -4466,7 +4475,7 @@ sendJson(response, 200, { updates })
             // keep their partial state on purpose (the user sees the diff
             // and decides).
             const manifestBefore = readProfileManifestSnapshot(config.profile, activeProfileDir)
-            const result = await runPlugin(config.profile, ['add', target])
+            const result = await runPlugin(config.profile, force ? ['add', RELEASE_AGE_OVERRIDE, target] : ['add', target])
             const cancelled = result.cancelled
             if ((result.exitCode !== 0 || result.timedOut) && !cancelled) {
               const rolledBack = restoreProfileManifest(config.profile, manifestBefore, activeProfileDir)
@@ -4591,11 +4600,52 @@ sendJson(response, 200, { updates })
                 }
               }
             }
+            // #531 (install half): the install route hands pnpm a bare npm name
+            // (sources.ts installTargetFor), so a fresh-release hold finishes
+            // with exit 0 and an OLDER package — the page then reads
+            // "installed" while the registry's latest was never reached, and
+            // nothing in the run says so. Compare what landed against the
+            // registry's latest and answer with the same stale/forceable shape
+            // the update route uses, so the row grows a real remedy instead of
+            // a silent downgrade. Git/tarball targets have no dist-tag to
+            // compare, so they are unaffected.
+            let installStale: { expected: string; actual: string } | null = null
+            let installStaleReason: 'release-age' | 'unknown' | null = null
+            if (ok && typeof entry.npm === 'string' && entry.npm !== '') {
+              // Offline on purpose: the catalog row already carries the version
+              // the page shows, and a second live lookup here would re-open the
+              // double-fetch race #496 closed for updates. The local
+              // RegistryPlugin type never modelled this field, so read it as
+              // data instead of asserting a shape it does not declare.
+              const catalogVersion = (entry as { version?: unknown }).version
+              const held = heldInstallVersion(
+                typeof catalogVersion === 'string' ? catalogVersion : null,
+                readInstalledVersion(config.profile, entry.npm, activeProfileDir),
+              )
+              if (held !== null) {
+                installStale = held
+                // #45 evidence rule: name pnpm's fresh-release wait only when the
+                // release really is young; otherwise say the cause is unconfirmed.
+                installStaleReason = (await latestPublishedRecently(entry.npm)) === true ? 'release-age' : 'unknown'
+                ok = false
+                logEvent('warn', 'install-stale', `${entry.npm}: pnpm installed v${held.actual} while the catalog row publishes v${held.expected}; the client offers the one-shot bypass`)
+              }
+            }
             logEvent(ok || cancelled ? 'info' : 'error', 'install',
               `${target} exit=${String(result.exitCode)}${result.timedOut ? ' TIMEOUT' : ''}${cancelled ? ' CANCELLED' : ''}${ok ? ` hot=${String(hot)}` : cancelled ? '' : ` err=${failureDetail(result)}`}`)
             const ignoredBuilds = blockedBuilds(result)
             sendJson(response, ok || cancelled ? 200 : result.busy === true ? 409 : 502, {
               ok,
+              // The silent fresh-release hold, named (#531): forceable=true is
+              // what the client turns into "install the latest anyway".
+              ...(installStale !== null
+                ? {
+                    stale: true,
+                    staleReason: installStaleReason ?? 'unknown',
+                    forceable: installStaleReason === 'release-age',
+                    staleVersions: installStale,
+                  }
+                : {}),
               cancelled: cancelled || undefined,
               busy: result.busy || undefined,
               hot,
@@ -4627,7 +4677,11 @@ sendJson(response, 200, { updates })
               // owner while listing every id blamed one plugin for another's
               // ids.
               conflictGroups: conflictGroups.length > 0 ? conflictGroups : undefined,
-              error: conflictGroups.length > 0
+              error: installStale !== null
+                ? (installStaleReason === 'release-age'
+                  ? `已装入 v${installStale.actual}：catalog 的 v${installStale.expected} 刚发布不久，被 pnpm 的安全等待期保留——这既不是安装失败，也不是最新版。点「立即安装最新版」放行一次即可装上 v${installStale.expected} / installed v${installStale.actual}: the catalog's v${installStale.expected} was released too recently and is being held by pnpm's fresh-release safety window, so this is neither a failed install nor the latest version. Use "install the latest anyway" to bypass the wait once and get v${installStale.expected}`
+                  : `已装入 v${installStale.actual}：catalog 的 v${installStale.expected} 没有装上，而 pnpm 报告成功，原因未能确认。请重试一次；若仍装上旧版，请导出日志反馈 / installed v${installStale.actual}: the catalog's v${installStale.expected} did not land although pnpm reported success, and the cause could not be confirmed. Retry once; if the older version still lands, export the log and report it`)
+                : conflictGroups.length > 0
                 ? `「${conflicts[0].name}」与已安装的 ${conflictGroups.map(group => `「${group.owner}」（${group.ids.join('、')}）`).join('、')} 占用相同的 loader 条目 id，无法在同一环境中共存——保留会导致 DeepSeek Harness 下次启动失败，因此已自动移除。 / "${conflicts[0].name}" declares the same loader entry id(s) as the installed ${conflictGroups.map(group => `"${group.owner}" (${group.ids.join(', ')})`).join(', ')}; they cannot coexist in one environment — keeping it would stop DeepSeek Harness from starting, so it was removed.`
                 : addedNothing
                   // Blaming allowBuilds here sent a reporter chasing a build

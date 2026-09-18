@@ -133,6 +133,29 @@ export function compareVersions(a: string, b: string): number | null {
 }
 
 /**
+ * Whether a clean-exit install landed BELOW the version its catalog row
+ * publishes — the silent half of pnpm's fresh-release gate (#531). The install
+ * route hands pnpm a bare npm name, so pnpm resolves the newest MATURE release,
+ * exits 0, and the page reads "installed" while the version it displayed was
+ * never reached. Offline by construction: the catalog's own `version` is the
+ * value the user compared against, and a second live lookup in the route would
+ * re-open the double-fetch race #496 closed for updates.
+ * @param catalogVersion - the version the catalog row publishes, if any.
+ * @param installedVersion - the version that actually landed on disk.
+ * @returns the mismatch to surface, or null when there is nothing to report.
+ */
+export function heldInstallVersion(
+  catalogVersion: string | null | undefined,
+  installedVersion: string | null,
+): { expected: string; actual: string } | null {
+  if (typeof catalogVersion !== 'string' || catalogVersion === '') return null
+  if (installedVersion === null || installedVersion === '') return null
+  const order = compareVersions(installedVersion, catalogVersion)
+  if (order === null || order >= 0) return null
+  return { expected: catalogVersion, actual: installedVersion }
+}
+
+/**
  * True only when the registry's `latest` is semantically HIGHER than what the
  * profile has (#64 by @ZeroOrigin64). A plain `!==` also fires when a
  * package's `latest` dist-tag is left pointing at an OLDER release than the

@@ -314,7 +314,11 @@ export function classifyPnpmFailure(output: string, exitCode?: number | null): P
     return {
       code: 'release-age-violation',
       recoverable: false,
-      message: '这个 profile 里有一个刚发布不久的插件版本，pnpm 的安全等待期检查因此拒绝了本次改动（即使改的是别的插件）。市场已自动放行重试一次；若仍看到本条，请导出日志反馈 / a recently-published plugin version in this profile trips pnpm\'s fresh-release safety check, blocking any change (even to other plugins); the market retries once with a one-shot bypass — if you still see this, export the log and report it',
+      // The copy may only describe what actually happened. It is also shown on
+      // output from commands the retry set does not cover (it used to promise a
+      // retry unconditionally, which the install shape never received), so it
+      // names the remedy the UI offers instead of asserting an attempt.
+      message: '这个 profile 里有一个刚发布不久的插件版本，pnpm 的安全等待期检查因此拒绝了本次改动（即使改的是别的插件）。市场会带 --config.minimumReleaseAge=0 放行重试一次（add/remove/install）；本条出现时说明那次放行仍未通过，或本次命令在重试面之外。要立刻用上刚发布的版本，请在安装/更新行上点「立即安装最新版」 / a recently-published plugin version in this profile trips pnpm\'s fresh-release safety check, blocking any change (even to other plugins); the market retries once with a one-shot --config.minimumReleaseAge=0 bypass (add/remove/install), so seeing this means that bypass did not get through or the command is outside the retry set. To use the fresh release now, press "install the latest anyway" on the row',
     }
   }
   // #69: pnpm >= 10 blocks dependency build scripts by default. The install

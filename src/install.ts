@@ -106,7 +106,13 @@ export async function withHoistRecovery(
       if (ok(rebuild)) result = await run(profile, pluginArgs)
     } else if (
       failure?.code === 'release-age-violation'
-      && (pluginArgs[0] === 'add' || pluginArgs[0] === 'remove')
+      // add/remove hit NO_MATURE_MATCHING_VERSION while re-resolving a young
+      // dep; install hits MINIMUM_RELEASE_AGE_VIOLATION during the lockfile
+      // verification pnpm does before any mutation, and the market's own
+      // rollback/rebuild runs exactly that command (routes.ts), so leaving it
+      // out meant the one command whose failure the wrapper could not recover
+      // from was the one it issues itself.
+      && (pluginArgs[0] === 'add' || pluginArgs[0] === 'remove' || pluginArgs[0] === 'install')
       && !pluginArgs.includes(RELEASE_AGE_OVERRIDE)
     ) {
       logEvent('warn', 'install', `a too-young release blocks pnpm's lockfile verification (#39) — retrying once with ${RELEASE_AGE_OVERRIDE}`)

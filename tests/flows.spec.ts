@@ -2960,6 +2960,40 @@ describe('update flow — no npm publishing required', () => {
     // …but still an actionable next step (retry usually resolves it).
     expect(String(r.json.error)).toMatch(/立即更新|Update now/)
   })
+
+  it('install: a silent fresh-release hold is surfaced with a working force path (#531 install half)', async () => {
+    // Same phenomenon as the update route, different entry: the install route
+    // hands pnpm a bare npm name, so a held release finishes with exit 0 and an
+    // OLDER package, and the page read "installed" while never reaching latest.
+    advanceNpmLatest('1.2.0') // registry latest moved into the safety window
+    // The catalog row is what the page shows and the offline evidence the
+    // install route compares against; the fixture never declared one.
+    const catalogEntry = REGISTRY.plugins.find(p => p.url === 'https://github.com/o/dsh-loop') as { version?: string }
+    catalogEntry.version = '1.2.0'
+    try {
+      // The seeded profile already has dsh-loop from the shared beforeEach, and
+      // a second install of the same repo is refused before pnpm runs — this
+      // test is about the FIRST install of a plugin whose newest release is
+      // still young.
+      await bed.dispatch('POST', '/dsh-market/uninstall', { name: 'dsh-loop' })
+      fake.resolvedNpmVersionOnce = '1.0.0' // pnpm resolved the newest MATURE version, exit 0
+      const held = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
+      expect(held.status).toBe(502)
+      expect(held.json).toMatchObject({ ok: false, stale: true, staleReason: 'release-age', forceable: true })
+      expect(held.json.staleVersions).toEqual({ expected: '1.2.0', actual: '1.0.0' })
+      expect(String(held.json.error)).toMatch(/1.2.0/)
+      expect(installedSpec('dsh-loop')).toBe('^1.0.0')
+
+      // The row's remedy — "install the latest anyway" — sends the one-shot
+      // bypass up front, so the second click never fails first.
+      const forced = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop', force: true })
+      expect(forced.status).toBe(200)
+      expect(installedSpec('dsh-loop')).toBe('^1.2.0')
+      expect(fake.calls[fake.calls.length - 1]).toContain('--config.minimumReleaseAge=0')
+    } finally {
+      delete catalogEntry.version
+    }
+  })
 })
 
 describe('theme flow', () => {
