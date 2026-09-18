@@ -407,6 +407,32 @@ export function gitCommitOfTarget(spec: string): string | null {
 }
 
 /**
+ * Pin a non-shortcut git URL to one immutable commit: the remote as spelled,
+ * with any ref, pin or selector fragment replaced by the commit, which pnpm
+ * re-resolves to exactly that commit. GitHub shortcuts and codeload URLs keep
+ * `githubTargetAtCommit` (#632).
+ *
+ * Three spellings are refused rather than promised:
+ * - a `path:` selector, because the `&` that carries it alongside a commit is
+ *   outside the host's target grammar;
+ * - the scp-like `git@host:owner/repo.git`, which pnpm does not read as a git
+ *   source at all — measured on 9.15.4 and 12.4.1, `pnpm add git@host:o/r.git`
+ *   exits 0 having written a `link:` dependency literally named `git`;
+ * - a bare `https://host/owner/repo.git`, which pnpm 12 clones but pnpm 11 —
+ *   what DSH Desktop still bundles — downloads as a tarball; it is returned
+ *   with the `git+` prefix that means the same thing to both.
+ */
+export function gitTargetAtCommit(spec: string, sha: string): string | null {
+  if (!/^[0-9a-f]{40}$/.test(sha)) return null
+  if (!isGitHostedSpec(spec) || spec.startsWith('github:') || repoFromTarget(spec) !== null) return null
+  if (!/^(?:git\+)?(?:https?|ssh|git):\/\//i.test(spec)) return null
+  const hash = spec.indexOf('#')
+  if (hash !== -1 && /(?:^|&)path:/.test(spec.slice(hash + 1))) return null
+  const remote = hash === -1 ? spec : spec.slice(0, hash)
+  return `${/^https?:\/\//i.test(remote) ? `git+${remote}` : remote}#${sha}`
+}
+
+/**
  * pnpm add target for updating a non-shortcut git install: drop a full-SHA
  * pin so the remote re-resolves to HEAD, keep any branch/tag fragment.
  * GitHub-hosted `git+https://github.com/…` is rewritten to `github:` — the

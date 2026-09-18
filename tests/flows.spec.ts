@@ -128,6 +128,16 @@ vi.mock('../src/dsh-cli.ts', () => {
       : `lockfileVersion: 9\n  resolution: {tarball: https://codeload.github.com/${repo}/tar.gz/${commit}}\n`
     writeFileSync(path, replaced)
   }
+  // pnpm records a non-codeload git install as `resolution: {commit, repo, type: git}`.
+  function writeGitLockCommit(repo: string, commit: string): void {
+    const path = join(fake.profileDir, 'pnpm-lock.yaml')
+    const existing = existsSync(path) ? readFileSync(path, 'utf8') : ''
+    const line = `  resolution: {commit: ${commit}, repo: ${repo}, type: git}`
+    const own = new RegExp(`  resolution: \\{commit: [0-9a-f]{40}, repo: ${repo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}, type: git\\}`)
+    writeFileSync(path, own.test(existing)
+      ? existing.replace(own, line)
+      : `${existing === '' ? 'lockfileVersion: 9\n' : existing}${line}\n`)
+  }
   function writeNpmLock(name: string, spec: string, version: string): void {
     writeFileSync(join(fake.profileDir, 'pnpm-lock.yaml'), [
       "lockfileVersion: '9.0'",
@@ -283,11 +293,29 @@ vi.mock('../src/dsh-cli.ts', () => {
       if (repo === undefined) {
         return { exitCode: 1, timedOut: false, stdout: '', stderr: `fake dsh: unknown git remote ${target}`, cancelled: false }
       }
+      // A full-SHA fragment pins the commit the way it does for github: (#632).
+      const frag = target.slice(bare.length + 1).split(/[?&]/)[0] ?? ''
+      const commit = /^[0-9a-f]{40}$/i.test(frag) ? frag.toLowerCase() : undefined
+      const def = commit !== undefined ? repo.byCommit?.[commit] : undefined
       writeDep(repo.name, target)
-      writePkg(repo.name, repo.manifest, repo.artifacts)
+      writePkg(repo.name, def?.manifest ?? repo.manifest, def?.artifacts ?? repo.artifacts)
+      const nextCommit = commit ?? repo.lockCommit
+      if (nextCommit !== undefined) {
+        // Real pnpm resolves a github.com remote to a codeload tarball and a
+        // plain remote to `type: git` (measured on 12.4.1); the rollback
+        // reads whichever the host wrote.
+        const github = /github\.com[/:]([^/\s]+\/[^/\s]+?)(?:\.git)?$/.exec(bare.replace(/^git\+/i, ''))
+        if (github !== null) writeLockCommit(github[1]!, nextCommit)
+        else writeGitLockCommit(bare.replace(/^git\+/i, ''), nextCommit)
+      }
       if (fake.profileBundleOnNextAdd !== null) {
         appendProfileBundle(fake.profileBundleOnNextAdd)
         fake.profileBundleOnNextAdd = null
+      }
+      if (fake.failAfterWriteStderrOnce !== '') {
+        const stderr = fake.failAfterWriteStderrOnce
+        fake.failAfterWriteStderrOnce = ''
+        return { exitCode: 1, timedOut: false, stdout: '', stderr, cancelled: false }
       }
       return ok
     }
@@ -2852,6 +2880,236 @@ describe('update flow — no npm publishing required', () => {
     expect(installedSpec('dsh-loop')).toBe('~1.0.0')
     const installed = JSON.parse(readFileSync(join(fake.profileDir, 'node_modules', 'dsh-loop', 'package.json'), 'utf8')) as { version?: string }
     expect(installed.version).toBe('1.0.0')
+  })
+
+  it('restores the captured commit of a non-GitHub git remote after an update command fails post-write (#632)', async () => {
+    // Same failure as the GitHub case below, for a self-hosted remote: the
+    // identity is pnpm's git resolution in the lock, and the exact rollback
+    // target is the remote as spelled, pinned to that commit.
+    const OLD = 'a'.repeat(40)
+    const NEW = 'b'.repeat(40)
+    const gitea = 'git+https://gitea.example.com/me/themer.git'
+    fake.repos[gitea] = {
+      name: 'themer',
+      manifest: { name: 'themer', version: '2.0.0', dsh: {}, main: 'lib/index.js' },
+      artifacts: ['lib/index.js'],
+      lockCommit: NEW,
+      byCommit: {
+        [OLD]: { manifest: { name: 'themer', version: '1.0.0', dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] },
+      },
+    }
+    const manifestPath = join(fake.profileDir, 'package.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    manifest.dependencies = { ...(manifest.dependencies ?? {}), themer: gitea }
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+    const pkgDir = join(fake.profileDir, 'node_modules', 'themer')
+    mkdirSync(join(pkgDir, 'lib'), { recursive: true })
+    writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: 'themer', version: '1.0.0', dsh: {}, main: 'lib/index.js' }))
+    writeFileSync(join(pkgDir, 'lib', 'index.js'), 'old-git-build')
+    writeFileSync(join(fake.profileDir, 'pnpm-lock.yaml'),
+      `lockfileVersion: 9\n  resolution: {commit: ${OLD}, repo: https://gitea.example.com/me/themer.git, type: git}\n`)
+    fake.failAfterWriteStderrOnce = 'ELIFECYCLE: git update failed after replacing files'
+
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'themer' })
+
+    expect(r.status).toBe(502)
+    expect(r.json.error, 'the rollback must be verified, not just attempted').toBeUndefined()
+    expect(String(r.json.stderr)).toContain('git update failed')
+    expect(installedSpec('themer')).toBe(gitea)
+    expect(fake.calls.some(call => call.includes(`${gitea}#${OLD}`))).toBe(true)
+    expect(fake.calls.flat().some(arg => arg.includes('github:'))).toBe(false)
+    const lockfile = readFileSync(join(fake.profileDir, 'pnpm-lock.yaml'), 'utf8')
+    expect(lockfile).toContain(OLD)
+    expect(lockfile).not.toContain(NEW)
+    const installed = JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf8')) as { version?: string }
+    expect(installed.version).toBe('1.0.0')
+    expect(existsSync(join(pkgDir, 'lib', 'index.js'))).toBe(true)
+  })
+
+  it('re-adds the captured commit of a non-GitHub git remote when the update command fails outright (#632)', async () => {
+    // Reachable today: pnpm exits non-zero before touching the files, and
+    // the recovery used to stop at the manifest because the remote was not
+    // GitHub, telling the user the previous commit could not be verified.
+    const OLD = 'a'.repeat(40)
+    const NEW = 'b'.repeat(40)
+    const gitea = 'https://gitee.com/iJetLi/deepseek-harness-codearts.git'
+    fake.repos[`git+${gitea}`] = {
+      name: 'codearts',
+      manifest: { name: 'codearts', version: '2.0.0', dsh: {}, main: 'lib/index.js' },
+      artifacts: ['lib/index.js'],
+      lockCommit: NEW,
+      byCommit: {
+        [OLD]: { manifest: { name: 'codearts', version: '1.0.0', dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] },
+      },
+    }
+    const manifestPath = join(fake.profileDir, 'package.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    manifest.dependencies = { ...(manifest.dependencies ?? {}), codearts: `git+${gitea}` }
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+    const pkgDir = join(fake.profileDir, 'node_modules', 'codearts')
+    mkdirSync(join(pkgDir, 'lib'), { recursive: true })
+    writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: 'codearts', version: '1.0.0', dsh: {}, main: 'lib/index.js' }))
+    writeFileSync(join(pkgDir, 'lib', 'index.js'), '')
+    writeFileSync(join(fake.profileDir, 'pnpm-lock.yaml'),
+      `lockfileVersion: 9\n  resolution: {commit: ${OLD}, repo: ${gitea}, type: git}\n`)
+    fake.failNextAddStderrOnce = 'ERR_PNPM_GIT_FETCH  fatal: unable to access the remote'
+
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'codearts' })
+
+    expect(r.status).toBe(502)
+    expect(r.json.error, 'the rollback must be verified, not just attempted').toBeUndefined()
+    expect(String(r.json.stderr)).toContain('unable to access')
+    expect(JSON.stringify(r.json)).not.toMatch(/GitHub 提交|GitHub commit/)
+    expect(fake.calls.some(call => call.includes(`git+${gitea}#${OLD}`))).toBe(true)
+    expect(installedSpec('codearts')).toBe(`git+${gitea}`)
+    expect(readFileSync(join(fake.profileDir, 'pnpm-lock.yaml'), 'utf8')).toContain(OLD)
+  })
+
+  it('reports a non-GitHub git update whose remote did not move as stale, like a GitHub one (#632)', async () => {
+    const OLD = 'a'.repeat(40)
+    const gitea = 'git+https://gitea.example.com/me/themer.git'
+    fake.repos[gitea] = {
+      name: 'themer',
+      manifest: { name: 'themer', version: '1.0.0', dsh: {}, main: 'lib/index.js' },
+      artifacts: ['lib/index.js'],
+      lockCommit: OLD, // the remote re-resolves to the commit already installed
+    }
+    const manifestPath = join(fake.profileDir, 'package.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    manifest.dependencies = { ...(manifest.dependencies ?? {}), themer: gitea }
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+    const pkgDir = join(fake.profileDir, 'node_modules', 'themer')
+    mkdirSync(join(pkgDir, 'lib'), { recursive: true })
+    writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: 'themer', version: '1.0.0', dsh: {}, main: 'lib/index.js' }))
+    writeFileSync(join(pkgDir, 'lib', 'index.js'), '')
+    writeFileSync(join(fake.profileDir, 'pnpm-lock.yaml'),
+      `lockfileVersion: 9\n  resolution: {commit: ${OLD}, repo: https://gitea.example.com/me/themer.git, type: git}\n`)
+
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'themer' })
+
+    expect(r.status).toBe(502)
+    expect(r.json.ok).toBe(false)
+    expect(r.json.stale).toBe(true)
+    expect(installedSpec('themer')).toBe(gitea)
+  })
+
+  it('verifies the rollback of a github.com git URL, whose lock entry is a codeload tarball (#632)', async () => {
+    // `git+https://github.com/o/r.git` has no GitHub repo key (repoOfTarget
+    // knows shortcuts and codeload only), so it takes the generic path — but
+    // pnpm records it as a codeload tarball, not a `type: git` resolution.
+    // Reading only the git shape reported a rollback that really happened as
+    // "could not be verified".
+    const OLD = 'a'.repeat(40)
+    const NEW = 'b'.repeat(40)
+    const remote = 'git+https://github.com/me/themer.git'
+    // The update rewrites this remote to the market's canonical github:
+    // spelling (gitUpdateTarget), so the fake has to serve both keys.
+    fake.repos['github:me/themer'] = {
+      name: 'themer',
+      manifest: { name: 'themer', version: '2.0.0', dsh: {}, main: 'lib/index.js' },
+      artifacts: ['lib/index.js'],
+      lockCommit: NEW,
+      byCommit: {
+        [OLD]: { manifest: { name: 'themer', version: '1.0.0', dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] },
+      },
+    }
+    fake.repos[remote] = {
+      name: 'themer',
+      manifest: { name: 'themer', version: '2.0.0', dsh: {}, main: 'lib/index.js' },
+      artifacts: ['lib/index.js'],
+      lockCommit: NEW,
+      byCommit: {
+        [OLD]: { manifest: { name: 'themer', version: '1.0.0', dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] },
+      },
+    }
+    const manifestPath = join(fake.profileDir, 'package.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    manifest.dependencies = { ...(manifest.dependencies ?? {}), themer: `${remote}#${OLD}` }
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+    const pkgDir = join(fake.profileDir, 'node_modules', 'themer')
+    mkdirSync(join(pkgDir, 'lib'), { recursive: true })
+    writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: 'themer', version: '1.0.0', dsh: {}, main: 'lib/index.js' }))
+    writeFileSync(join(pkgDir, 'lib', 'index.js'), 'old-github-build')
+    writeFileSync(join(fake.profileDir, 'pnpm-lock.yaml'),
+      `lockfileVersion: 9\n  resolution: {tarball: https://codeload.github.com/me/themer/tar.gz/${OLD}}\n`)
+    fake.failAfterWriteStderrOnce = 'ELIFECYCLE: git update failed after replacing files'
+
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'themer' })
+
+    expect(r.status).toBe(502)
+    expect(r.json.error, 'the rollback must be verified, not just attempted').toBeUndefined()
+    const installed = JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf8')) as { version?: string }
+    expect(installed.version).toBe('1.0.0')
+    expect(readFileSync(join(fake.profileDir, 'pnpm-lock.yaml'), 'utf8')).toContain(OLD)
+  })
+
+  it('does not offer a rollback a non-GitHub monorepo subpath cannot express (#632)', async () => {
+    // The host's target grammar has no `&`, so a commit and a `path:`
+    // selector cannot be combined — the same limit the github: subpath case
+    // has, now reached by a self-hosted remote.
+    const remote = 'git+https://gitea.example.com/me/mono.git'
+    const spec = `${remote}#main&path:/packages/plug-a`
+    const hostPeerDir = join(fake.profileDir, 'node_modules', '@deepseek-ai', 'dsh-settings')
+    mkdirSync(hostPeerDir, { recursive: true })
+    writeFileSync(join(hostPeerDir, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh-settings', version: '0.1.0-rc.6' }))
+    const served = {
+      name: 'plug-a',
+      manifest: { dsh: {}, main: 'index.js', peerDependencies: { '@deepseek-ai/dsh-settings': '^0.1.0-rc.7' } },
+      artifacts: ['index.js'],
+    }
+    fake.repos[spec] = served
+    fake.repos[`${remote}#main`] = served
+    fake.repos[remote] = served
+    const manifestPath = join(fake.profileDir, 'package.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    manifest.dependencies = { ...(manifest.dependencies ?? {}), 'plug-a': spec }
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+    mkdirSync(join(fake.profileDir, 'node_modules', 'plug-a'), { recursive: true })
+    writeFileSync(join(fake.profileDir, 'node_modules', 'plug-a', 'package.json'), JSON.stringify({ name: 'plug-a', version: '1.0.0', dsh: {}, main: 'index.js' }))
+    writeFileSync(join(fake.profileDir, 'node_modules', 'plug-a', 'index.js'), '')
+
+    const updated = await bed.dispatch('POST', '/dsh-market/update', { name: 'plug-a' })
+
+    expect(updated.status).toBe(200)
+    expect(updated.json.compatibility).toMatchObject({
+      code: 'soft-incompatible',
+      rollbackUnavailable: expect.stringMatching(/子目录.*不可用|subpath.*unavailable/is),
+    })
+    expect(String(updated.json.compatibility.rollbackUnavailable)).not.toContain('GitHub')
+    expect(updated.json.compatibility.rollbackId).toBeUndefined()
+  })
+
+  it('names git, not GitHub, when a non-GitHub remote has no verified previous commit (#632)', async () => {
+    const NEW = 'b'.repeat(40)
+    const gitea = 'git+https://gitea.example.com/me/plug-b.git'
+    const hostPeerDir = join(fake.profileDir, 'node_modules', '@deepseek-ai', 'dsh-settings')
+    mkdirSync(hostPeerDir, { recursive: true })
+    writeFileSync(join(hostPeerDir, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh-settings', version: '0.1.0-rc.6' }))
+    fake.repos[gitea] = {
+      name: 'plug-b',
+      manifest: { dsh: {}, main: 'index.js', peerDependencies: { '@deepseek-ai/dsh-settings': '^0.1.0-rc.7' } },
+      artifacts: ['index.js'],
+      lockCommit: NEW,
+    }
+    const manifestPath = join(fake.profileDir, 'package.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    manifest.dependencies = { ...(manifest.dependencies ?? {}), 'plug-b': gitea }
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+    mkdirSync(join(fake.profileDir, 'node_modules', 'plug-b'), { recursive: true })
+    writeFileSync(join(fake.profileDir, 'node_modules', 'plug-b', 'package.json'), JSON.stringify({ name: 'plug-b', version: '1.0.0', dsh: {}, main: 'index.js' }))
+    writeFileSync(join(fake.profileDir, 'node_modules', 'plug-b', 'index.js'), '')
+    // No git resolution for this remote in the lock: nothing to roll back to.
+    writeFileSync(join(fake.profileDir, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n')
+
+    const updated = await bed.dispatch('POST', '/dsh-market/update', { name: 'plug-b' })
+
+    expect(updated.status).toBe(200)
+    expect(updated.json.compatibility).toMatchObject({
+      code: 'soft-incompatible',
+      rollbackUnavailable: expect.stringMatching(/previous git commit could not be verified/),
+    })
+    expect(String(updated.json.compatibility.rollbackUnavailable)).not.toContain('GitHub')
+    expect(updated.json.compatibility.rollbackId).toBeUndefined()
   })
 
   it('restores the captured GitHub commit after an update command fails post-write', async () => {

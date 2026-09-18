@@ -28,7 +28,7 @@ import {
   BOOT_ID, cancelActive, probePnpm, progress, provisionPnpm, runDshPlugin, TARGET_RE,
   type PluginCommandRuntime,
 } from './dsh-cli.ts'
-import { addProfileBundle, dropFromManifest, hasLoadableEntry, holdsNativeAddon, INBOX_BUNDLES, isDshProfileName, profileDir, readInstalled, readInstalledManifest, readInstalledRepoEvidence, readInstalledVersion, readLockCommits, readProfileBundles, readProfileManifestSnapshot, removeProfileBundle, restoreProfileManifest, setAllowBuilds, type ProfileManifestSnapshot } from './profile.ts'
+import { addProfileBundle, dropFromManifest, hasLoadableEntry, holdsNativeAddon, INBOX_BUNDLES, isDshProfileName, profileDir, readGitResolutionCommit, readInstalled, readInstalledManifest, readInstalledRepoEvidence, readInstalledVersion, readLockCommits, readProfileBundles, readProfileManifestSnapshot, removeProfileBundle, restoreProfileManifest, setAllowBuilds, type ProfileManifestSnapshot } from './profile.ts'
 import { assessProfile, classifyPeer, introducedDuplicateNames, introducedRisks, type CompatibilityRisk } from './compatibility.ts'
 import { runningAgentIds, type AgentsLookup } from './agents.ts'
 import { analyzeProfile, corePackageNames, type DuplicateName } from './check.ts'
@@ -36,7 +36,7 @@ import { applyBundleOrder, mergeOrder, readBundleRules, readBundleStack, validat
 import { applyPreset, deletePreset, listPresets, previewPreset, savePreset } from './presets.ts'
 import { createProfileSnapshot, DEFAULT_MAX_SNAPSHOTS, deleteSnapshot, listSnapshots, restoreSnapshot } from './snapshot.ts'
 import { trialValidate } from './trial.ts'
-import { codeloadAllowBuildsKey, findCatalogEntryForLocal, findInstalledAlias, githubCommitOfTarget, githubTargetAtCommit, gitAllowBuildsKey, gitUpdateTarget, installTargetFor, isGenerationLink, isLocalSpec, NPM_NAME_RE, repoOfTarget, restoreBlockedByWorkspace, restoreTargetForLocal, workspaceProtocolDeps } from './sources.ts'
+import { codeloadAllowBuildsKey, findCatalogEntryForLocal, findInstalledAlias, gitCommitOfTarget, githubCommitOfTarget, githubTargetAtCommit, gitAllowBuildsKey, gitTargetAtCommit, gitUpdateTarget, installTargetFor, isGenerationLink, isLocalSpec, parseGitHubRemote, NPM_NAME_RE, repoOfTarget, restoreBlockedByWorkspace, restoreTargetForLocal, workspaceProtocolDeps } from './sources.ts'
 import { failureDetail, groupConflictsByOwner, isStaleUpdate, parseIgnoredBuilds, parsePrepareNotAllowed, pnpmBlockedByOpenFiles, pnpmNeverStarted, RELEASE_AGE_OVERRIDE, retargetCollections, validateAddedPlugins, withHoistRecovery } from './install.ts'
 import { asChannel, CHANNELS, DIST_TAG, resolveChannel, type Channel } from './channels.ts'
 import {
@@ -637,7 +637,9 @@ export function mountMarketRoutes(
 
   type UpdateRollbackSource =
     | { kind: 'npm'; beforeVersion: string; lockfileBefore: ProfileLockfileSnapshot }
-    | { kind: 'github'; target: string; beforeCommit: string; lockfileBefore: ProfileLockfileSnapshot; keepRepairedLock: boolean }
+    // Any git-sourced install, GitHub or not (#632): the exact target is the
+    // source pinned to the commit captured before the update.
+    | { kind: 'git'; target: string; beforeCommit: string; lockfileBefore: ProfileLockfileSnapshot; keepRepairedLock: boolean }
     | { kind: 'manifest' }
 
   type UpdateRollbackPlan =
@@ -816,13 +818,37 @@ export function mountMarketRoutes(
     return { ok: true, detail: null }
   }
 
-  function exactGitRollbackTarget(target: string, beforeCommit: string): string | null {
-    return githubCommitOfTarget(target) === beforeCommit
-      ? target
-      : githubTargetAtCommit(target, beforeCommit)
+  /**
+   * The commit pnpm recorded for a git-sourced install, read the way pnpm
+   * wrote it: a `type: git` resolution for a plain remote, and the codeload
+   * tarball for a GitHub one — `git+https://github.com/o/r.git` resolves to
+   * a tarball, not a git entry, so reading only one of the two would report
+   * a rollback that really happened as unverified (#632).
+   */
+  function gitIdentityCommit(spec: string): string | null {
+    const fromGit = readGitResolutionCommit(config.profile, spec, activeProfileDir)
+    if (fromGit !== null) return fromGit
+    const github = repoOfTarget(spec)?.split('#')[0] ?? parseGitHubRemote(spec)?.repo ?? null
+    return github === null
+      ? null
+      : readLockCommits(config.profile, activeProfileDir).get(github.toLowerCase()) ?? null
   }
 
-  /** Restore a github: update by re-adding the commit captured before it. */
+  function exactGitRollbackTarget(target: string, beforeCommit: string): string | null {
+    if (repoOfTarget(target) !== null) {
+      return githubCommitOfTarget(target) === beforeCommit
+        ? target
+        : githubTargetAtCommit(target, beforeCommit)
+    }
+    // A non-GitHub remote (#632): the identity is the URL's own pin or the
+    // commit pnpm recorded for it, and the remote as spelled, pinned to that
+    // commit, is the exact target.
+    return gitCommitOfTarget(target) === beforeCommit
+      ? target
+      : gitTargetAtCommit(target, beforeCommit)
+  }
+
+  /** Restore a git-sourced update by re-adding the commit captured before it. */
   async function rollbackGitBuild(
     name: string,
     manifestBefore: ProfileManifestSnapshot,
@@ -837,18 +863,17 @@ export function mountMarketRoutes(
     // Floating shortcuts still need to be converted to an exact commit.
     const rollbackTarget = exactGitRollbackTarget(target, beforeCommit)
     if (rollbackTarget === null) {
-      return { ok: false, detail: 'the previous github target is invalid; nothing to roll back to' }
+      return { ok: false, detail: 'the previous git target is invalid; nothing to roll back to' }
     }
     const rollback = await rollbackExactTarget(name, manifestBefore, lockfileBefore, rollbackTarget, keepRepairedLock)
     if (!rollback.ok) return rollback
-    const repoKey = repoOfTarget(rollbackTarget)?.split('#')[0] ?? null
-    const restoredCommit = repoKey === null
-      ? null
-      : readLockCommits(config.profile, activeProfileDir).get(repoKey.toLowerCase()) ?? null
+    // What pnpm actually resolved, read back the way the identity was
+    // captured: the codeload tarball for GitHub, the git resolution otherwise.
+    const restoredCommit = gitIdentityCommit(rollbackTarget)
     if (restoredCommit !== beforeCommit) {
       return { ok: false, detail: `expected commit ${beforeCommit} after rollback, found ${restoredCommit ?? 'unknown'}` }
     }
-    logEvent('info', 'update-rollback', `${name}: restored github build at ${beforeCommit}`)
+    logEvent('info', 'update-rollback', `${name}: restored git build at ${beforeCommit}`)
     return { ok: true, detail: null }
   }
 
@@ -860,7 +885,7 @@ export function mountMarketRoutes(
     if (source.kind === 'npm') {
       return rollbackNpmBuild(name, manifestBefore, source.beforeVersion, source.lockfileBefore)
     }
-    if (source.kind === 'github') {
+    if (source.kind === 'git') {
       return rollbackGitBuild(name, manifestBefore, source.target, source.beforeCommit, source.lockfileBefore, source.keepRepairedLock)
     }
     return rollbackUpdateBuild(name, manifestBefore, true)
@@ -3146,11 +3171,17 @@ sendJson(response, 200, { updates })
                   : await acceleratedTarget(gitSpec!, region)
             const repoIdentity = isGit ? repoOfTarget(spec) : null
             const repoKey = repoIdentity?.split('#')[0] ?? null
+            // A non-GitHub remote (#632) has no repo key. Its identity is the
+            // URL's own pin or the commit pnpm recorded for the remote, the
+            // same two reads the update check already trusts for it.
+            const genericGit = isGit && repoKey === null
+            const sourceKind = repoKey !== null ? 'GitHub' : 'git'
             // dsh-cli's deliberately narrow target grammar rejects the `&`
             // required to combine an exact commit and a monorepo path. Do not
             // weaken that command boundary or offer a rollback action that
             // the real host can never execute.
-            const hasGitSubpath = repoIdentity?.includes('#path:/') ?? false
+            const hasGitSubpath = repoIdentity?.includes('#path:/')
+              ?? (genericGit && /#(?:[^#]*&)?path:/.test(spec))
             // Captured BEFORE pnpm replaces the files: afterwards the loader
             // inventory reads exactly the same, because replacing a package
             // on disk does not unload the module the process already imported.
@@ -3165,10 +3196,10 @@ sendJson(response, 200, { updates })
             // that lock and rollback must keep the repair. Floating Git specs
             // still derive identity from the captured lock, so their exact
             // importer bytes remain the authority after rematerialization.
-            const manifestPinnedCommit = repoKey !== null ? githubCommitOfTarget(spec) : null
-            const capturedLockCommit = repoKey !== null
-              ? readLockCommits(config.profile, activeProfileDir).get(repoKey) ?? null
-              : null
+            const manifestPinnedCommit = repoKey !== null
+              ? githubCommitOfTarget(spec)
+              : genericGit ? gitCommitOfTarget(spec) : null
+            const capturedLockCommit = isGit ? gitIdentityCommit(spec) : null
             const beforeCommit = manifestPinnedCommit ?? capturedLockCommit
             const keepRepairedGitLock = manifestPinnedCommit !== null
               && capturedLockCommit !== manifestPinnedCommit
@@ -3201,25 +3232,25 @@ sendJson(response, 200, { updates })
                   ? hasGitSubpath
                     ? {
                         available: false,
-                        detail: `更新前的 GitHub 来源使用 monorepo 子目录${beforeCommit === null ? '' : `（提交 ${beforeCommit}）`}，当前 DSH 命令无法表达该精确目标，因此自动回滚不可用；需要时请手工重新安装该提交。 / The previous GitHub source uses a monorepo subpath${beforeCommit === null ? '' : ` at commit ${beforeCommit}`}; the current DSH command cannot express that exact target, so automatic rollback is unavailable. Reinstall that commit manually if needed.`,
+                        detail: `更新前的 ${sourceKind} 来源使用 monorepo 子目录${beforeCommit === null ? '' : `（提交 ${beforeCommit}）`}，当前 DSH 命令无法表达该精确目标，因此自动回滚不可用；需要时请手工重新安装该提交。 / The previous ${sourceKind} source uses a monorepo subpath${beforeCommit === null ? '' : ` at commit ${beforeCommit}`}; the current DSH command cannot express that exact target, so automatic rollback is unavailable. Reinstall that commit manually if needed.`,
                         lockfileBefore: lockfileCapture.snapshot,
                       }
                     : beforeCommit === null
                       ? {
                           available: false,
-                          detail: '未能确认更新前的 GitHub 提交，因此自动回滚不可用；需要时请从可信来源手工重新安装先前版本。 / The previous GitHub commit could not be verified, so automatic rollback is unavailable. Reinstall the prior version manually from a trusted source if needed.',
+                          detail: `未能确认更新前的 ${sourceKind} 提交，因此自动回滚不可用；需要时请从可信来源手工重新安装先前版本。 / The previous ${sourceKind} commit could not be verified, so automatic rollback is unavailable. Reinstall the prior version manually from a trusted source if needed.`,
                           lockfileBefore: lockfileCapture.snapshot,
                         }
                       : gitRollbackTarget === null || !supportsExactRollbackTarget(gitRollbackTarget)
                         ? {
                             available: false,
-                            detail: `当前宿主无法安装更新前的精确 GitHub 提交 ${beforeCommit}，因此自动回滚不可用；需要时请手工重新安装该提交。 / This host cannot install the exact previous GitHub commit ${beforeCommit}, so automatic rollback is unavailable. Reinstall that commit manually if needed.`,
+                            detail: `当前宿主无法安装更新前的精确 ${sourceKind} 提交 ${beforeCommit}，因此自动回滚不可用；需要时请手工重新安装该提交。 / This host cannot install the exact previous ${sourceKind} commit ${beforeCommit}, so automatic rollback is unavailable. Reinstall that commit manually if needed.`,
                             lockfileBefore: lockfileCapture.snapshot,
                           }
                         : {
                             available: true,
                             source: {
-                              kind: 'github',
+                              kind: 'git',
                               target: spec,
                               beforeCommit,
                               lockfileBefore: lockfileCapture.snapshot,
@@ -3360,9 +3391,7 @@ sendJson(response, 200, { updates })
                   beforeVersion,
                   afterVersion: readInstalledVersion(config.profile, name, activeProfileDir),
                   beforeCommit,
-                  afterCommit: repoKey !== null
-                    ? readLockCommits(config.profile, activeProfileDir).get(repoKey) ?? null
-                    : null,
+                  afterCommit: isGit ? gitIdentityCommit(spec) : null,
                 })
                 if (stale) ok = false
               }

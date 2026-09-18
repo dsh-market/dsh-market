@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   githubRefOfTarget,
-  findCatalogEntryForLocal, findInstalledAlias, gitAllowBuildsKey, githubRemoteIdentities, githubRepoIdentities, githubRepoIdentity, githubTargetAtCommit,
+  findCatalogEntryForLocal, findInstalledAlias, gitAllowBuildsKey, githubRemoteIdentities, githubRepoIdentities, githubRepoIdentity, githubTargetAtCommit, gitTargetAtCommit,
   gitCommitOfTarget, gitUpdateTarget, gitUploadPackUrl, installTargetFor, isGitHostedSpec, isLocalSpec, lookupRepoFromUrl, parseGitHubRemote, parseGitHubRepository, parseSourceUrl, repoOf, resolveCatalogRestore, restoreBlockedByWorkspace, restoreTargetForLocal, workspaceProtocolDeps,
 } from '../src/sources.ts'
 
@@ -310,6 +310,32 @@ describe('findInstalledAlias (#27 duplicate guard)', () => {
     const pinned = { 'plug-a': `github:m/mono#${sha}&path:/packages/plug-a` }
     expect(findInstalledAlias(siblingB, pinned)).toBeNull()
     expect(findInstalledAlias(sameA, pinned)).toBe('plug-a')
+  })
+})
+
+describe('gitTargetAtCommit (#632)', () => {
+  const sha = 'a'.repeat(40)
+
+  it('pins a non-GitHub remote to the commit, replacing any ref or pin', () => {
+    expect(gitTargetAtCommit('git+https://gitea.example.com/me/themer.git', sha)).toBe(`git+https://gitea.example.com/me/themer.git#${sha}`)
+    expect(gitTargetAtCommit('https://gitee.com/o/r.git#main', sha)).toBe(`git+https://gitee.com/o/r.git#${sha}`)
+    expect(gitTargetAtCommit(`git+ssh://git@gitlab.example.com/o/r.git#${'b'.repeat(40)}`, sha)).toBe(`git+ssh://git@gitlab.example.com/o/r.git#${sha}`)
+    // A bare https remote comes back with the `git+` prefix: pnpm 11 would
+    // otherwise download it as a tarball while pnpm 12 clones it.
+    expect(gitTargetAtCommit('https://gitee.com/o/r.git', sha)).toBe(`git+https://gitee.com/o/r.git#${sha}`)
+  })
+
+  it('refuses what the host cannot express or what is not a plain git remote', () => {
+    expect(gitTargetAtCommit('git+https://gitea.example.com/me/mono.git#path:/packages/a', sha)).toBeNull()
+    expect(gitTargetAtCommit('git+https://gitea.example.com/me/mono.git#main&path:/packages/a', sha)).toBeNull()
+    expect(gitTargetAtCommit('github:o/r', sha)).toBeNull()
+    expect(gitTargetAtCommit(`https://codeload.github.com/o/r/tar.gz/${'c'.repeat(40)}`, sha)).toBeNull()
+    expect(gitTargetAtCommit('dsh-loop', sha)).toBeNull()
+    // pnpm does not read the scp-like spelling as a git source at all: on
+    // 9.15.4 and 12.4.1 `pnpm add git@host:o/r.git` exits 0 having written a
+    // `link:` dependency named `git`.
+    expect(gitTargetAtCommit('git@gitlab.example.com:o/r.git#v1.2.0', sha)).toBeNull()
+    expect(gitTargetAtCommit('git+https://gitea.example.com/me/themer.git', 'main')).toBeNull()
   })
 })
 

@@ -510,6 +510,11 @@ export function readLockCommits(profile: string, explicitDir?: string): Map<stri
  * Commit recorded for a non-codeload git resolution (`type: git` in pnpm's
  * lockfile). Matched against the install spec so a Gitea/GitLab URL can
  * compare HEAD without mistaking a same-named npm package (#525).
+ *
+ * Two packages of one monorepo resolve from the SAME remote and differ only
+ * by pnpm's `path:` selector, so the spec's subpath has to match too — and
+ * when the spec names no subpath while several entries of that remote do,
+ * there is no answer rather than the first sibling's commit (#632).
  */
 export function readGitResolutionCommit(
   profile: string,
@@ -518,6 +523,8 @@ export function readGitResolutionCommit(
 ): string | null {
   const want = normalizeGitRepoKey(spec)
   if (want === null) return null
+  const wantPath = gitSubpathSelector(spec)
+  const matches: string[] = []
   try {
     const lock = readFileSync(join(profileDir(profile, explicitDir), 'pnpm-lock.yaml'), 'utf8')
     for (const m of lock.matchAll(
@@ -527,10 +534,28 @@ export function readGitResolutionCommit(
       const commit = /\bcommit:\s*([0-9a-f]{40})\b/i.exec(body)
       const repo = /\brepo:\s*([^\s,}]+)/.exec(body)
       if (commit === null || repo === null) continue
-      if (normalizeGitRepoKey(repo[1]!) === want) return commit[1]!.toLowerCase()
+      if (normalizeGitRepoKey(repo[1]!) !== want) continue
+      const entryPath = /\bpath:\s*([^\s,}]+)/.exec(body)?.[1]?.replace(/^\/+|\/+$/g, '').toLowerCase() ?? null
+      if (wantPath !== null) {
+        if (entryPath === wantPath) return commit[1]!.toLowerCase()
+        continue
+      }
+      matches.push(commit[1]!.toLowerCase())
     }
   } catch { /* no lockfile */ }
-  return null
+  // Exactly one entry for this remote is an identity; several are siblings
+  // of one monorepo and none of them is THIS package's commit.
+  return matches.length === 1 ? matches[0]! : null
+}
+
+/** The `path:` selector of a git spec, normalized for comparison. */
+function gitSubpathSelector(spec: string): string | null {
+  const hash = spec.indexOf('#')
+  if (hash === -1) return null
+  const selector = /(?:^|&)path:([^&]*)/.exec(spec.slice(hash + 1))?.[1]
+  if (selector === undefined) return null
+  const trimmed = selector.replace(/^\/+|\/+$/g, '').toLowerCase()
+  return trimmed === '' ? null : trimmed
 }
 
 /** Lowercased transport-agnostic key for comparing two git remote spellings. */

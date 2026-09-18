@@ -10,7 +10,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { resolveDshHome } from '../src/home-paths.ts'
 import {
   addProfileBundle, conflictingEntryIds, dropFromManifest, entryArtifactExists, hasDshManifest, hasLoadableEntry, holdsNativeAddon, isDshProfileName, pluginSubdirs, profileDir,
-  readInstalled, readInstalledManifest, readInstalledRepoEvidence, readInstalledRepoIdentities, readInstalledVersion, readLockCommits,
+  readGitResolutionCommit, readInstalled, readInstalledManifest, readInstalledRepoEvidence, readInstalledRepoIdentities, readInstalledVersion, readLockCommits,
   removeProfileBundle,
 } from '../src/profile.ts'
 
@@ -309,6 +309,42 @@ describe('readLockCommits', () => {
     writeFileSync(join(profileDir('web'), 'pnpm-lock.yaml'),
       '  https://codeload.github.com/Owner/Repo/tar.gz/0123456789abcdef0123456789abcdef01234567:\n')
     expect(readLockCommits('web').get('owner/repo')).toBe('0123456789abcdef0123456789abcdef01234567')
+  })
+})
+
+describe('readGitResolutionCommit', () => {
+  const A = 'a'.repeat(40)
+  const B = 'b'.repeat(40)
+
+  function writeLock(body: string): void {
+    writeProfile({})
+    writeFileSync(join(profileDir('web'), 'pnpm-lock.yaml'), body)
+  }
+
+  it('reads the commit pnpm recorded for a remote, whatever the spelling', () => {
+    writeLock(`lockfileVersion: 9\n  resolution: {commit: ${A}, repo: https://gitea.example.com/me/themer.git, type: git}\n`)
+
+    expect(readGitResolutionCommit('web', 'git+https://gitea.example.com/me/themer.git')).toBe(A)
+    expect(readGitResolutionCommit('web', 'git+https://gitea.example.com/me/themer.git#main')).toBe(A)
+    expect(readGitResolutionCommit('web', 'git+https://other.example.com/me/themer.git')).toBeNull()
+  })
+
+  it('keeps two packages of one monorepo apart by their path selector (#632)', () => {
+    writeLock([
+      'lockfileVersion: 9',
+      `  resolution: {commit: ${A}, path: /packages/plug-a, repo: https://gitea.example.com/me/mono.git, type: git}`,
+      `  resolution: {commit: ${B}, path: /packages/plug-b, repo: https://gitea.example.com/me/mono.git, type: git}`,
+      '',
+    ].join('\n'))
+
+    const remote = 'git+https://gitea.example.com/me/mono.git'
+    expect(readGitResolutionCommit('web', `${remote}#main&path:/packages/plug-a`)).toBe(A)
+    expect(readGitResolutionCommit('web', `${remote}#path:/packages/plug-b`)).toBe(B)
+    expect(readGitResolutionCommit('web', `${remote}#path:/packages/plug-c`)).toBeNull()
+    // No selector while several siblings share the remote: none of them is
+    // this package's commit, and answering with the first would compare one
+    // sibling's identity against another's.
+    expect(readGitResolutionCommit('web', remote)).toBeNull()
   })
 })
 
