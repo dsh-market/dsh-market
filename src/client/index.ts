@@ -11,6 +11,7 @@ import { en, zh } from './locales.ts'
 import { InstallToast } from './InstallToast.tsx'
 import { MarketErrorBoundary } from './ErrorBoundary.tsx'
 import { MarketSection } from './MarketSection.tsx'
+import { marketElement } from './market-element.ts'
 import { createSectionGate } from './section-gate.ts'
 import { exportMarketLog } from './self-check.ts'
 import { SettingsCard } from './SettingsCard.tsx'
@@ -101,6 +102,30 @@ export function apply(ctx: MarketClientContext): void {
   // it (#602: a shell that renders the market itself does not want a
   // duplicate nav item) and whether this package is being removed. See
   // section-gate.ts for why the orderings, not the booleans, are the work.
+  /**
+   * The market's own panel, as an element — one builder for the settings
+   * section this package registers and for `market.render()` (#602). Built
+   * per call: the props are live (locale, theme, the host's preferred
+   * subsection), and a cached element would freeze the first caller's.
+   */
+  const buildMarketElement = (ownerProps: { preferredSubsectionId?: string } = {}): unknown => marketElement({
+    t,
+    locale: ctx.locale,
+    theme: ctx.theme,
+    themeStore: {
+      subscribe: (cb: () => void) => ctx.on('theme/change', cb),
+      getSnapshot: () => ctx.theme.getTheme(),
+    },
+    crashText: {
+      title: t('crashTitle'),
+      hint: t('crashHint'),
+      reload: t('crashReload'),
+      details: t('crashDetails'),
+    },
+    exportLog: () => { void exportMarketLog().catch(() => {}) },
+    preferredSubsectionId: ownerProps.preferredSubsectionId,
+  })
+
   const sectionGate = createSectionGate(() => {
     const off = ctx.slots.register({
       name: 'settings.section',
@@ -109,33 +134,7 @@ export function apply(ctx: MarketClientContext): void {
       label: () => t('nav'),
       locale: NS,
       inject: () => ({ t }),
-    }, (ownerProps: { preferredSubsectionId?: string } = {}) => h(MarketErrorBoundary, {
-      // Wrapped at the registration point, so the boundary is OUTSIDE
-      // everything the section renders — including its portalled layers.
-      // A crash inside used to unmount the whole tree and leave an empty
-      // settings panel with no export-log button, which is how #293 went
-      // months without a usable report (#513 fixed that trigger; this
-      // covers the next one).
-      text: {
-        title: t('crashTitle'),
-        hint: t('crashHint'),
-        reload: t('crashReload'),
-        details: t('crashDetails'),
-      },
-      actions: h('button', {
-        type: 'button',
-        onClick: () => { void exportMarketLog().catch(() => {}) },
-      }, t('exportLog')),
-    }, h(MarketSection, {
-      t,
-      locale: ctx.locale,
-      theme: ctx.theme,
-      themeStore: {
-        subscribe: (cb: () => void) => ctx.on('theme/change', cb),
-        getSnapshot: () => ctx.theme.getTheme(),
-      },
-      preferredSubsectionId: ownerProps.preferredSubsectionId,
-    })))
+    }, (ownerProps: { preferredSubsectionId?: string } = {}) => buildMarketElement(ownerProps))
     // `slots.register` may not hand back a disposer on every host; the gate
     // needs one regardless, so the absence becomes a no-op rather than a
     // silently unretractable entry.
@@ -154,6 +153,17 @@ export function apply(ctx: MarketClientContext): void {
     version: 1 as const,
     setSettingsVisible: (visible: boolean): void => { sectionGate.setVisible(visible) },
     settingsVisible: (): boolean => sectionGate.visible(),
+    /**
+     * The market's panel as an element, for a host that renders it inside
+     * its own container. Same page, same React instance — this package's
+     * bundle resolves react through the host's module table, so an element
+     * returned here mounts anywhere in that tree.
+     *
+     * What it is NOT: a way to rearrange the market. It hands over the whole
+     * panel, chrome included. Cutting the market into host-fillable regions
+     * is a different design and has not been asked for by a second host yet.
+     */
+    render: (props: { preferredSubsectionId?: string } = {}): unknown => buildMarketElement(props),
   }
   // Guarded: `provide` is cordis's, and a host old enough to be missing it
   // should lose the control surface, not the whole market.

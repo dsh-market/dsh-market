@@ -10720,6 +10720,44 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			});
 		}
 		//#endregion
+		//#region src/client/market-element.ts
+		/**
+		* The market's panel, as an element, built from explicit dependencies.
+		*
+		* Two callers want the same thing and must not drift apart:
+		*
+		* - the `settings.section` this package registers, whose slot passes down a
+		*   host-chosen `preferredSubsectionId`;
+		* - `market.render()`, for a host shell that renders the market inside its
+		*   own container (#602, from the Tauri desktop).
+		*
+		* A module function taking its dependencies rather than a closure over the
+		* cordis context, so the wiring — which locale, which theme, which log
+		* exporter reaches the panel — is something a test can assert instead of
+		* something only a running host can reveal.
+		*/
+		/**
+		* @param props - see {@link MarketElementProps}.
+		* @returns the panel wrapped in its error boundary.
+		*/
+		function marketElement(props) {
+			return (0, react.createElement)(MarketErrorBoundary, {
+				text: props.crashText,
+				actions: (0, react.createElement)("button", {
+					type: "button",
+					onClick: () => {
+						props.exportLog();
+					}
+				}, props.t("exportLog"))
+			}, (0, react.createElement)(MarketSection, {
+				t: props.t,
+				locale: props.locale,
+				theme: props.theme,
+				themeStore: props.themeStore,
+				preferredSubsectionId: props.preferredSubsectionId
+			}));
+		}
+		//#endregion
 		//#region src/client/section-gate.ts
 		/**
 		* @param register - registers the entry and returns its disposer. Called
@@ -11252,6 +11290,31 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				en
 			}), "dsh-market: dictionaries");
 			const t = ctx.locale.bind(NS);
+			/**
+			* The market's own panel, as an element — one builder for the settings
+			* section this package registers and for `market.render()` (#602). Built
+			* per call: the props are live (locale, theme, the host's preferred
+			* subsection), and a cached element would freeze the first caller's.
+			*/
+			const buildMarketElement = (ownerProps = {}) => marketElement({
+				t,
+				locale: ctx.locale,
+				theme: ctx.theme,
+				themeStore: {
+					subscribe: (cb) => ctx.on("theme/change", cb),
+					getSnapshot: () => ctx.theme.getTheme()
+				},
+				crashText: {
+					title: t("crashTitle"),
+					hint: t("crashHint"),
+					reload: t("crashReload"),
+					details: t("crashDetails")
+				},
+				exportLog: () => {
+					exportMarketLog().catch(() => {});
+				},
+				preferredSubsectionId: ownerProps.preferredSubsectionId
+			});
 			const sectionGate = createSectionGate(() => {
 				const off = ctx.slots.register({
 					name: "settings.section",
@@ -11260,29 +11323,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					label: () => t("nav"),
 					locale: NS,
 					inject: () => ({ t })
-				}, (ownerProps = {}) => (0, react.createElement)(MarketErrorBoundary, {
-					text: {
-						title: t("crashTitle"),
-						hint: t("crashHint"),
-						reload: t("crashReload"),
-						details: t("crashDetails")
-					},
-					actions: (0, react.createElement)("button", {
-						type: "button",
-						onClick: () => {
-							exportMarketLog().catch(() => {});
-						}
-					}, t("exportLog"))
-				}, (0, react.createElement)(MarketSection, {
-					t,
-					locale: ctx.locale,
-					theme: ctx.theme,
-					themeStore: {
-						subscribe: (cb) => ctx.on("theme/change", cb),
-						getSnapshot: () => ctx.theme.getTheme()
-					},
-					preferredSubsectionId: ownerProps.preferredSubsectionId
-				})));
+				}, (ownerProps = {}) => buildMarketElement(ownerProps));
 				return typeof off === "function" ? off : () => {};
 			});
 			ctx.slots.inject("settings.section", () => {
@@ -11293,7 +11334,18 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				setSettingsVisible: (visible) => {
 					sectionGate.setVisible(visible);
 				},
-				settingsVisible: () => sectionGate.visible()
+				settingsVisible: () => sectionGate.visible(),
+				/**
+				* The market's panel as an element, for a host that renders it inside
+				* its own container. Same page, same React instance — this package's
+				* bundle resolves react through the host's module table, so an element
+				* returned here mounts anywhere in that tree.
+				*
+				* What it is NOT: a way to rearrange the market. It hands over the whole
+				* panel, chrome included. Cutting the market into host-fillable regions
+				* is a different design and has not been asked for by a second host yet.
+				*/
+				render: (props = {}) => buildMarketElement(props)
 			};
 			if (typeof ctx.provide === "function") ctx.provide("market", marketControl);
 			ctx.inject(["settingsScope"], (scoped) => {

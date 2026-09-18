@@ -154,6 +154,37 @@ same-origin, no forwarding headers, no package mutation in progress, and a Host
 whose lifecycle is not owned by Desktop or a supervisor. Clients must feature
 detect it; they must not invent an alternative process-control path.
 
+## Rendering the market's panel elsewhere (client-side)
+
+A host shell that wants the market inside its own container — rather than in
+the settings page — reads the client service this package publishes:
+
+```ts
+const market = ctx.reflect.get('market')
+const element = market.render({ preferredSubsectionId: 'installed' })
+```
+
+`render()` returns the market's own panel wrapped in its error boundary, as a
+React element. Same page, same React instance: this package's client bundle
+resolves react through the host's module table, so the element mounts
+anywhere in that tree.
+
+| member | |
+|---|---|
+| `version` | `1` |
+| `render(props?)` | the panel element; `preferredSubsectionId` is optional |
+| `setSettingsVisible(visible)` | register or retract the market's own `settings.section` entry |
+| `settingsVisible()` | whether that entry is registered right now |
+
+`ctx.provide(name, value)` and `ctx.reflect.provide(name, value)` are the
+same call — cordis's `Service.provide` delegates to the reflect layer — so
+either idiom reaches this service.
+
+What `render()` is **not**: a way to rearrange the market. It hands over the
+whole panel, chrome included. Cutting the market into host-fillable regions
+is a different design, and one host asking is not yet evidence that it fits
+anyone else.
+
 ## Compatibility policy
 
 - New optional response fields may be added within v1.
