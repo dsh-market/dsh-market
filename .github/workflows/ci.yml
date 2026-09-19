@@ -63,6 +63,11 @@ jobs:
       # each needed a person to tell them the same sentence. A failure that
       # explains itself costs one step and saves that.
       - name: the committed client bundle must match src/client
+        # bash explicitly: `run:` defaults to PowerShell on windows-latest,
+        # where `if ! cmd` is a parser error rather than a test — so the step
+        # that exists to explain a failure died with a syntax error instead
+        # of explaining one.
+        shell: bash
         run: |
           if ! git diff --exit-code client/; then
             echo "::error file=client/client.js::client/ is a committed build artifact and no longer matches src/client/. Run \`npm run check\` (or \`npm run build:client\`) and commit the result. Do not hand-edit it — the next build overwrites any manual change."
