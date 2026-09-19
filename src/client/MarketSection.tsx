@@ -35,6 +35,7 @@ import {
   type MenuEntry,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import css from './Market.module.css'
+import { MARK_BLOCK_RADIUS, MARK_BLOCK_SIZE, MARK_GRID_BLOCKS, MARK_PLUG_BLOCK, MARK_VIEW_BOX } from './market-mark.ts'
 import { CommentsModal } from './CommentsModal.tsx'
 import { OperationsPanel } from './OperationsPanel.tsx'
 import { clearSettled, drop, enqueue, patch as patchRecord, recordForUrl } from './operations.ts'
@@ -980,20 +981,16 @@ export function resetMarketPortalHost(): void {
  * Official-style market glyph: the shared block-grid brand mark converted to
  * the official monochrome icon form (16×16, fill="currentColor") so it
  * follows the active theme. Mirrors the settings-nav glyph used for the
- * "market" section id.
+ * "market" section id — both now draw the geometry in market-mark.ts, so the
+ * nav entry and the section it opens cannot drift apart.
  */
 function MarketLogo({ size = 16, style, animated = false }: { size?: number; style?: CSSProperties; animated?: boolean }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" style={style}>
+    <svg width={size} height={size} viewBox={`0 0 ${MARK_VIEW_BOX} ${MARK_VIEW_BOX}`} fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" style={style}>
       <g fill="currentColor">
-        <rect x="1.96" y="3.36" width="3.3" height="3.3" rx="0.53" />
-        <rect x="5.71" y="3.36" width="3.3" height="3.3" rx="0.53" />
-        <rect x="1.96" y="7.11" width="3.3" height="3.3" rx="0.53" />
-        <rect x="5.71" y="7.11" width="3.3" height="3.3" rx="0.53" />
-        <rect x="9.46" y="7.11" width="3.3" height="3.3" rx="0.53" />
-        <rect x="1.96" y="10.86" width="3.3" height="3.3" rx="0.53" />
-        <rect x="5.71" y="10.86" width="3.3" height="3.3" rx="0.53" />
-        <rect x="9.46" y="10.86" width="3.3" height="3.3" rx="0.53" />
+        {MARK_GRID_BLOCKS.map(block => (
+          <rect key={`${block.x},${block.y}`} x={block.x} y={block.y} width={MARK_BLOCK_SIZE} height={MARK_BLOCK_SIZE} rx={MARK_BLOCK_RADIUS} />
+        ))}
       </g>
       {/* The block being plugged in: OUTSIDE the grid's empty corner, offset
           (+1.28, -1.27) and tilted 9deg, exactly as in assets/logo.svg. The
@@ -1002,8 +999,8 @@ function MarketLogo({ size = 16, style, animated = false }: { size?: number; sty
           mark, and the reason it no longer matched the GitHub logo. */}
       <rect
         className={animated ? css.logoPlug : undefined}
-        x="10.74" y="2.09" width="3.3" height="3.3" rx="0.53" fill="currentColor"
-        transform={animated ? undefined : 'rotate(9 12.39 3.74)'}
+        x={MARK_PLUG_BLOCK.x} y={MARK_PLUG_BLOCK.y} width={MARK_BLOCK_SIZE} height={MARK_BLOCK_SIZE} rx={MARK_BLOCK_RADIUS} fill="currentColor"
+        transform={animated ? undefined : `rotate(${MARK_PLUG_BLOCK.degrees} ${MARK_PLUG_BLOCK.originX} ${MARK_PLUG_BLOCK.originY})`}
       />
     </svg>
   )
