@@ -1295,6 +1295,84 @@ describe('install flow', () => {
     expect(listed.json.activation['dsh-loop'].state).toBe('live')
   })
 
+  it('names the plugin a dependency library came in with, instead of calling it inactive (#634)', async () => {
+    // A plugin's native binding lands in the profile manifest as a direct
+    // dependency (pnpm's auto-install-peers writes peers there), so the
+    // installed list showed it exactly like a plugin that failed to start.
+    const officeDir = join(fake.profileDir, 'node_modules', 'dsh-office')
+    mkdirSync(officeDir, { recursive: true })
+    writeFileSync(join(officeDir, 'package.json'), JSON.stringify({
+      name: 'dsh-office', version: '1.0.0', dsh: {}, main: 'index.js',
+      dependencies: { '@univer/engine-binding': '1.0.0', 'dsh-sub': '1.0.0', '@univer/gone': '1.0.0' },
+    }))
+    writeFileSync(join(officeDir, 'index.js'), 'export {}\n')
+
+    // A plugin one plugin depends on is still a plugin: being declared by
+    // somebody else must not relabel anything that has a dsh surface.
+    const subDir = join(fake.profileDir, 'node_modules', 'dsh-sub')
+    mkdirSync(subDir, { recursive: true })
+    writeFileSync(join(subDir, 'package.json'), JSON.stringify({
+      name: 'dsh-sub', version: '1.0.0', dsh: {}, main: 'index.js',
+    }))
+    writeFileSync(join(subDir, 'index.js'), 'export {}\n')
+
+    // The binding itself: no dsh surface, no entry, nobody loads it.
+    const bindingDir = join(fake.profileDir, 'node_modules', '@univer', 'engine-binding')
+    mkdirSync(bindingDir, { recursive: true })
+    writeFileSync(join(bindingDir, 'package.json'), JSON.stringify({ name: '@univer/engine-binding', version: '1.0.0' }))
+    const manifestPath = join(fake.profileDir, 'package.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    manifest.dependencies = {
+      ...(manifest.dependencies ?? {}),
+      'dsh-office': '^1.0.0',
+      'dsh-sub': '1.0.0',
+      '@univer/engine-binding': '1.0.0',
+      // Declared by dsh-office and listed in the profile, but absent from
+      // node_modules: a package that is not there is not somebody's healthy
+      // library, so the state has to keep saying so.
+      '@univer/gone': '1.0.0',
+    }
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+
+    const listed = await bed.dispatch('GET', '/dsh-market/installed')
+
+    expect(listed.status).toBe(200)
+    expect(listed.json.activation['@univer/engine-binding']).toMatchObject({
+      state: 'inert',
+      bundle: false,
+      dependencyOf: 'dsh-office',
+    })
+    // The plugin that brought it in keeps its own state and gets no owner,
+    // and neither does the plugin it depends on — only a package with no dsh
+    // surface of its own is somebody's library.
+    expect(listed.json.activation['dsh-office'].dependencyOf).toBeUndefined()
+    // dsh-sub is `inert` too — it is a plugin nothing has wired in yet, which
+    // is exactly why the state alone cannot decide this; its dsh surface is
+    // what keeps it out.
+    expect(listed.json.activation['dsh-sub'].state).toBe('inert')
+    expect(listed.json.activation['dsh-sub'].dependencyOf).toBeUndefined()
+    expect(listed.json.activation['@univer/gone']).toMatchObject({ state: 'missing' })
+    expect(listed.json.activation['@univer/gone'].dependencyOf).toBeUndefined()
+  })
+
+  it('leaves a plain dependency nobody declares as it was (#634)', async () => {
+    // Without an owner there is no evidence it is somebody's library, so the
+    // honest answer stays "installed, not active" — a plugin whose manifest
+    // really did lose its dsh field must not be relabelled into silence.
+    const orphanDir = join(fake.profileDir, 'node_modules', 'stray-package')
+    mkdirSync(orphanDir, { recursive: true })
+    writeFileSync(join(orphanDir, 'package.json'), JSON.stringify({ name: 'stray-package', version: '1.0.0' }))
+    const manifestPath = join(fake.profileDir, 'package.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    manifest.dependencies = { ...(manifest.dependencies ?? {}), 'stray-package': '1.0.0' }
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+
+    const listed = await bed.dispatch('GET', '/dsh-market/installed')
+
+    expect(listed.json.activation['stray-package']).toMatchObject({ state: 'inert', bundle: false })
+    expect(listed.json.activation['stray-package'].dependencyOf).toBeUndefined()
+  })
+
   it('reports host contracts declared as normal dependencies without rejecting the plugin', async () => {
     fake.npm['dsh-loop'] = {
       latest: '1.0.0',

@@ -29,7 +29,7 @@ import {
   type PluginCommandRuntime,
 } from './dsh-cli.ts'
 import { packageOfEntryName } from './entry-identity.ts'
-import { addProfileBundle, dropFromManifest, hasLoadableEntry, holdsNativeAddon, INBOX_BUNDLES, isDshProfileName, profileDir, readGitResolutionCommit, readInstalled, readInstalledManifest, readInstalledRepoEvidence, readInstalledVersion, readLockCommits, readProfileBundles, readProfileManifestSnapshot, removeProfileBundle, restoreProfileManifest, setAllowBuilds, type ProfileManifestSnapshot } from './profile.ts'
+import { addProfileBundle, dropFromManifest, hasLoadableEntry, holdsNativeAddon, INBOX_BUNDLES, isDshProfileName, profileDir, readDependencyOwners, readGitResolutionCommit, readInstalled, readInstalledManifest, readInstalledRepoEvidence, readInstalledVersion, readLockCommits, readProfileBundles, readProfileManifestSnapshot, removeProfileBundle, restoreProfileManifest, setAllowBuilds, type ProfileManifestSnapshot } from './profile.ts'
 import { assessProfile, classifyPeer, introducedDuplicateNames, introducedRisks, type CompatibilityRisk } from './compatibility.ts'
 import { runningAgentIds, type AgentsLookup } from './agents.ts'
 import { analyzeProfile, corePackageNames, type DuplicateName } from './check.ts'
@@ -1796,16 +1796,41 @@ export function mountMarketRoutes(
         const patchFlags = packagePatchFlags(host, activeProfileDir, Object.keys(installed), patch)
         const activation: Record<string, ReturnType<typeof verifyActivation>> = {}
         const live = liveNames()
+        // Read once for the whole list: a per-package answer would re-read
+        // every other package's manifest.
+        const dependencyOwners = readDependencyOwners(config.profile, Object.keys(installed), activeProfileDir)
+        const installedManifests = new Map(Object.keys(installed).map(
+          packageName => [packageName, readInstalledManifest(config.profile, packageName, activeProfileDir)] as const,
+        ))
+        const declaresDshSurface = (packageName: string): boolean => {
+          const manifest = installedManifests.get(packageName)
+          return typeof manifest === 'object' && manifest !== null
+            && (manifest as { dsh?: unknown }).dsh !== undefined
+        }
         for (const name of Object.keys(installed)) {
-          activation[name] = activationAfterReplace(
+          const result = activationAfterReplace(
             verifyActivation(config.profile, name, live, activeProfileDir,
               disabled.has(name) || patchFlags.disabled.includes(name)),
             replacedWhileLive.has(name),
           )
+          // A package with no dsh surface of its own, outside the bundle
+          // layer, that another installed package declares, is that package's
+          // library rather than a plugin that failed to start (#634). Saying
+          // "installed, not active" about a native binding sends the user
+          // hunting for a problem that is not there.
+          //
+          // The dsh surface is what keeps a real plugin out of this: `inert`
+          // also covers a plugin that simply is not wired into the running
+          // composition, and one plugin depending on another is ordinary.
+          const owner = dependencyOwners[name]
+          activation[name] = result.state === 'inert'
+            && owner !== undefined && !declaresDshSurface(name)
+            ? { ...result, dependencyOf: owner }
+            : result
         }
-        const diagnostics = diagnosePackageManifests(Object.keys(installed).map(packageName => ({
+        const diagnostics = diagnosePackageManifests([...installedManifests].map(([packageName, manifest]) => ({
           packageName,
-          manifest: readInstalledManifest(config.profile, packageName, activeProfileDir),
+          manifest,
         })))
         sendJson(response, 200, {
           profile: config.profile,

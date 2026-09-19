@@ -372,6 +372,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			stateLive: "已生效",
 			stateRestart: "已安装，重启后生效",
 			stateInert: "已安装，未生效",
+			stateDependencyLibrary: "{0} 的依赖库",
 			stateBroken: "已安装，校验未通过",
 			stateDisabled: "已停用",
 			phaseResolving: "解析依赖",
@@ -905,6 +906,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			stateLive: "Active",
 			stateRestart: "Installed — restart to apply",
 			stateInert: "Installed, not active",
+			stateDependencyLibrary: "Library of {0}",
 			stateBroken: "Installed, verification failed",
 			stateDisabled: "Disabled",
 			phaseResolving: "Resolving dependencies",
@@ -5104,7 +5106,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			});
 		}
 		/** The state label + dot for one activation result (P0-2). */
-		function activationMeta(state, t) {
+		function activationMeta(state, t, dependencyOf) {
+			if (state === "inert" && dependencyOf !== void 0) return {
+				label: t("stateDependencyLibrary").replace("{0}", dependencyOf),
+				dot: "done"
+			};
 			if (state === "live") return {
 				label: t("stateLive"),
 				dot: "done"
@@ -8926,7 +8932,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									children: activationWarnings.map(({ name, info }) => /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", { children: [
 										/* @__PURE__ */ (0, react_jsx_runtime.jsx)("b", { children: name }),
 										" — ",
-										activationMeta(info.state, t).label,
+										activationMeta(info.state, t, info.dependencyOf).label,
 										info.reasons.length > 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
 											className: Market_module_css_default.spec,
 											children: [
@@ -9896,7 +9902,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									const generation = status?.kind === "generation" || isGenerationSpec(String(spec));
 									const localDev = !generation && (/^(?:link|file):/i.test(String(spec)) || status?.kind === "linked");
 									const act = activations[name];
-									const meta = act !== void 0 ? activationMeta(act.state, t) : null;
+									const meta = act !== void 0 ? activationMeta(act.state, t, act.dependencyOf) : null;
 									const version = status && status.version ? "v" + status.version : "";
 									const specText = String(spec);
 									const specRedundant = version !== "" && /^[\^~]?\d/.test(specText);

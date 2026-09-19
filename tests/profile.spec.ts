@@ -10,7 +10,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { resolveDshHome } from '../src/home-paths.ts'
 import {
   addProfileBundle, conflictingEntryIds, dropFromManifest, entryArtifactExists, hasDshManifest, hasLoadableEntry, holdsNativeAddon, isDshProfileName, pluginSubdirs, profileDir,
-  readGitResolutionCommit, readInstalled, readInstalledManifest, readInstalledRepoEvidence, readInstalledRepoIdentities, readInstalledVersion, readLockCommits,
+  readDependencyOwners, readGitResolutionCommit, readInstalled, readInstalledManifest, readInstalledRepoEvidence, readInstalledRepoIdentities, readInstalledVersion, readLockCommits,
   removeProfileBundle,
 } from '../src/profile.ts'
 
@@ -299,6 +299,58 @@ describe('readInstalledRepoEvidence (#141)', () => {
     } finally {
       rmSync(target, { recursive: true, force: true })
     }
+  })
+})
+
+describe('readDependencyOwners (#634)', () => {
+  function installPackage(name: string, manifest: Record<string, unknown>): void {
+    const dir = join(profileDir('web'), 'node_modules', ...name.split('/'))
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name, version: '1.0.0', ...manifest }))
+  }
+
+  it('names the installed package that declares each of the others', () => {
+    writeProfile({})
+    installPackage('dsh-office', {
+      dsh: {},
+      dependencies: { '@univer/engine-binding': '1.0.0' },
+      peerDependencies: { '@univer/exchange-binding': '0.1.1' },
+    })
+    installPackage('@univer/engine-binding', {})
+    installPackage('@univer/exchange-binding', {})
+    installPackage('dsh-loop', { dsh: {} })
+
+    const owners = readDependencyOwners('web', ['dsh-office', '@univer/engine-binding', '@univer/exchange-binding', 'dsh-loop'])
+
+    expect(owners['@univer/engine-binding']).toBe('dsh-office')
+    // A peer dependency is what pnpm's auto-install-peers writes into the
+    // profile manifest, so it counts as ownership too.
+    expect(owners['@univer/exchange-binding']).toBe('dsh-office')
+    // A plugin nobody declares stays unowned, and so does the owner itself.
+    expect(owners['dsh-loop']).toBeUndefined()
+    expect(owners['dsh-office']).toBeUndefined()
+  })
+
+  it('ignores what is not installed, self-declarations, and manifest key order', () => {
+    writeProfile({})
+    installPackage('dsh-b', { dsh: {}, dependencies: { 'dsh-b': '1.0.0', 'not-installed': '1.0.0', shared: '1.0.0' } })
+    installPackage('dsh-a', { dsh: {}, dependencies: { shared: '1.0.0' } })
+    installPackage('shared', {})
+
+    const owners = readDependencyOwners('web', ['dsh-b', 'dsh-a', 'shared'])
+
+    expect(owners['not-installed']).toBeUndefined()
+    expect(owners['dsh-b']).toBeUndefined()
+    // Two owners declare it; the answer is the first in sorted order, not the
+    // order the caller happened to pass.
+    expect(owners.shared).toBe('dsh-a')
+    expect(readDependencyOwners('web', ['shared', 'dsh-b', 'dsh-a']).shared).toBe('dsh-a')
+  })
+
+  it('is empty when nothing is installed or a manifest cannot be read', () => {
+    writeProfile({})
+    expect(readDependencyOwners('web', [])).toEqual({})
+    expect(readDependencyOwners('web', ['absent'])).toEqual({})
   })
 })
 

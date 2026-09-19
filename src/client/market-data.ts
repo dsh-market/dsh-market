@@ -211,6 +211,8 @@ export interface ActivationInfo {
   reasons: string[]
   bundle: boolean
   hot: boolean
+  /** Set when this package is a library another installed plugin pulled in (#634). */
+  dependencyOf?: string
 }
 
 /** The /dsh-market/installed payload (fields the market UI consumes). */

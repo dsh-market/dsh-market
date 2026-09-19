@@ -42,6 +42,12 @@ export interface ActivationResult {
   bundle: boolean
   /** True when the package is live in the running composition. */
   hot: boolean
+  /**
+   * The installed package that declares this one, when this package is a
+   * plain library somebody else pulled in rather than a plugin the user
+   * chose (#634). Only ever set on `inert`.
+   */
+  dependencyOf?: string
 }
 
 /** The profile manifest's `dsh.profile.bundles` — what the CLI reconciled. */
