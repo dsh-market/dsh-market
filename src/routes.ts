@@ -50,7 +50,8 @@ import { updateNotesFor } from './changelog.ts'
 import { checkUpdates, compareVersions, fetchNpmLatest, invalidateUpdates, isUpgrade, latestPublishedRecently, setUpdateRegistry, versionOnChannel } from './updates.ts'
 import { createThemeManager, type LoaderEntry } from './themes.ts'
 import { readJsonBody, sameOrigin, sendJson } from './http.ts'
-import { detectedDebugger, detectedSupervisor, restartAllowed, scheduleRestart, servingPort, trustedRestartRequest, trustedDownloadRequest } from './restart.ts'
+import { detectedDebugger, detectedSupervisor, restartAllowed, scheduleRestart, servingPort, trustedRestartRequest, trustedDownloadRequest, type RecoveryHandoffConfig } from './restart.ts'
+import type { RecoveryPlugin } from './recovery.ts'
 import { activationAfterReplace, brokenClientBundles, checkClientBundle, hasHostHalf, newlyBrokenBundles, verifyActivation } from './verify.ts'
 import {
   carrierDisableIds, disableRow, enableRow, findUserPatchPath, isProtectedModule, packagePatchFlags,
@@ -549,6 +550,52 @@ export function mountMarketRoutes(
     }
     writeMarketState(dir, { disabled, groups, groupOrder })
     return { ok, reason }
+  }
+
+  /**
+   * The plugin inventory the recovery surface is allowed to switch.
+   *
+   * It has to be built HERE and handed over before the restart, because the
+   * process that can still see the live loader tree is the one being
+   * replaced: after a failed boot there is no loader to ask, and the whole
+   * point of the recovery page is to change what that tree looks like next
+   * time.
+   *
+   * Only plugins that can affect the HOST boot are listed — a package with no
+   * bundle rows and no carrier row cannot keep dsh from starting, so
+   * offering it a switch would be noise in the one screen that has to stay
+   * short. Host infrastructure is listed but not toggleable (same rule and
+   * same reason as the live toggle route: switching it off breaks the chain
+   * that would apply the fix).
+   */
+  function recoveryInventory(): RecoveryPlugin[] {
+    const installed = readInstalled(config.profile, activeProfileDir)
+    const patch = readUserPatchState(userPatchPath)
+    const names = Object.keys(installed)
+    const flags = packagePatchFlags(host, activeProfileDir, names, patch)
+    const plugins: RecoveryPlugin[] = []
+    for (const name of names) {
+      const rows = rowIdsForPackage(host, activeProfileDir, name)
+      const carrier = carrierDisableIds(activeProfileDir, name).length > 0
+      if (rows.length === 0 && !carrier) continue
+      const isProtected = isProtectedModule(name)
+      plugins.push({
+        name,
+        rows,
+        enabled: !(disabled.has(name) || flags.disabled.includes(name)),
+        protected: isProtected,
+        carrier,
+        // The market's own row IS switchable here, unlike in its live page:
+        // when the market's own update is what broke the boot, "turn the
+        // market off and start" is the escape hatch, and the user is already
+        // past the point where the market's UI keeps itself alive.
+        toggleable: !isProtected,
+        ...(isProtected ? { note: 'host infrastructure / 宿主基础设施' } : {}),
+      })
+    }
+    // Alphabetical: a recovery page is read top to bottom under stress, and
+    // loader order is not an order a user can predict.
+    return plugins.sort((a, b) => a.name.localeCompare(b.name, 'en'))
   }
 
   /**
@@ -3924,8 +3971,22 @@ sendJson(response, 200, { updates })
         }
         restarting = true
         try {
-          const result = scheduleRestart(servingPort(request))
-          logEvent('info', 'restart', `scheduled pid=${String(result.pid)} helper=${String(result.helperPid)}`)
+          // The recovery handoff (#575's follow-up): if the replacement does
+          // not come up, the failure prompt the user is about to meet has to
+          // offer a way out — which plugins to enable at the next start, with
+          // the ones this boot blamed marked. The inventory travels with the
+          // restart because this process is the last one that can see it.
+          const handoff: RecoveryHandoffConfig = {
+            profile: config.profile,
+            profileDir: activeProfileDir,
+            patchPath: userPatchPath,
+            bootId: BOOT_ID,
+            marketVersion: marketVersion(),
+            scheduledAt: new Date().toISOString(),
+            plugins: recoveryInventory(),
+          }
+          const result = scheduleRestart(servingPort(request), handoff)
+          logEvent('info', 'restart', `scheduled pid=${String(result.pid)} helper=${String(result.helperPid)}${result.recovery === null ? '' : ` recovery=${result.recovery.config}`}`)
           sendJson(response, 202, { ok: true, boot: BOOT_ID, ...result })
         } catch (error) {
           restarting = false
