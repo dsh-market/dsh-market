@@ -57,7 +57,18 @@ jobs:
       # hide). npm run check just rebuilt it; if the rebuild differs from
       # what is committed, either the source and artifact are out of sync or
       # the build is environment-dependent — both are things to know loudly.
-      - run: git diff --exit-code client/
+      # The output of a bare `git diff --exit-code client/` is a diff of a
+      # 560KB generated file: it shows WHAT changed and never what to do.
+      # Four contributors in one month hit this (#518, #563, #570, #538) and
+      # each needed a person to tell them the same sentence. A failure that
+      # explains itself costs one step and saves that.
+      - name: the committed client bundle must match src/client
+        run: |
+          if ! git diff --exit-code client/; then
+            echo "::error file=client/client.js::client/ is a committed build artifact and no longer matches src/client/. Run \`npm run check\` (or \`npm run build:client\`) and commit the result. Do not hand-edit it — the next build overwrites any manual change."
+            exit 1
+          fi
+          echo "client/ matches src/client"
       - run: npm test
       - run: node scripts/preflight.mjs
       - run: node scripts/validate-registry.mjs
