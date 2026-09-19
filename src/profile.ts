@@ -84,6 +84,41 @@ export function readManifestDeps(profile: string, explicitDir?: string): Record<
   }
 }
 
+/**
+ * For each installed package, the OTHER installed package that declares it —
+ * as a dependency or a peer dependency — in its own manifest.
+ *
+ * pnpm's auto-install-peers writes a plugin's peers into the profile manifest
+ * as direct dependencies, so a native binding a plugin needs shows up in the
+ * installed list looking exactly like a plugin the user chose (#634). What
+ * separates them is that somebody else asked for it.
+ *
+ * Ownership is decided by the first owner in sorted order, so the answer does
+ * not depend on the manifest's key order. A package that declares itself is
+ * ignored, and so is a cycle's other half once one owner is chosen.
+ */
+export function readDependencyOwners(
+  profile: string,
+  names: readonly string[],
+  explicitDir?: string,
+): Record<string, string> {
+  const installed = new Set(names)
+  const owners: Record<string, string> = {}
+  for (const owner of [...names].sort()) {
+    const manifest = readInstalledManifest(profile, owner, explicitDir)
+    if (typeof manifest !== 'object' || manifest === null) continue
+    const declared = manifest as { dependencies?: unknown; peerDependencies?: unknown }
+    for (const field of [declared.dependencies, declared.peerDependencies]) {
+      if (typeof field !== 'object' || field === null) continue
+      for (const dependency of Object.keys(field as Record<string, unknown>)) {
+        if (dependency === owner || !installed.has(dependency)) continue
+        owners[dependency] ??= owner
+      }
+    }
+  }
+  return owners
+}
+
 /** Exact rollback state owned by one profile package operation. */
 export interface ProfileManifestSnapshot {
   dependencies: Record<string, string>
