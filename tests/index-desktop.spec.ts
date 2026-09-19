@@ -62,6 +62,85 @@ beforeEach(() => {
   state.factoryArgs = []
 })
 
+describe('profile the launcher booted (#639)', () => {
+  const launcher = { name: 'desktop', dir: '/home/u/.dsh/profiles/desktop' }
+
+  it('uses the launcher profile when no flag and no desktopProfiles service exist', () => {
+    // The official desktop host starts a profile through the launcher's node
+    // entry: no `--profile` on argv, no `desktopProfiles` service. The market
+    // used to answer `web` and write every install there.
+    const ctx = new FakeContext({ webServer: {}, loader: {}, profileContext: launcher })
+
+    apply(ctx as never)
+
+    expect(state.mounts).toHaveLength(1)
+    expect(state.mounts[0].config).toMatchObject({
+      profile: 'desktop',
+      profileDirectory: '/home/u/.dsh/profiles/desktop',
+    })
+    // The CLI runtime stays: this branch is not the Desktop pnpm path.
+    expect(state.mounts[0].runtime).toBeUndefined()
+  })
+
+  it('lets an explicit cordis.yml profile win, and never carries the other profile\'s directory', () => {
+    const ctx = new FakeContext({ webServer: {}, loader: {}, profileContext: launcher })
+
+    apply(ctx as never, { profile: 'team' })
+
+    expect(state.mounts[0].config).toMatchObject({ profile: 'team' })
+    expect(state.mounts[0].config.profileDirectory).toBeUndefined()
+  })
+
+  it('falls back to the flag and then to web when the launcher says nothing usable', () => {
+    for (const context of [undefined, {}, { name: '  ', dir: '/d' }, { name: '../escape', dir: '/d' }, { name: 'ok', dir: '' }]) {
+      state.mounts = []
+      const ctx = new FakeContext({ webServer: {}, loader: {}, ...(context === undefined ? {} : { profileContext: context }) })
+
+      apply(ctx as never)
+
+      expect(state.mounts[0].config, `context=${JSON.stringify(context)}`).toMatchObject({ profile: 'web' })
+      expect(state.mounts[0].config.profileDirectory).toBeUndefined()
+    }
+  })
+
+  it('prefers the launcher over a --profile flag on this process', () => {
+    const argv = process.argv
+    process.argv = [...argv, '--profile', 'from-flag']
+    try {
+      const ctx = new FakeContext({ webServer: {}, loader: {}, profileContext: launcher })
+      apply(ctx as never)
+      expect(state.mounts[0].config).toMatchObject({ profile: 'desktop' })
+    } finally {
+      process.argv = argv
+    }
+  })
+
+  it('still reads the flag when the launcher service is absent', () => {
+    const argv = process.argv
+    process.argv = [...argv, '--profile', 'from-flag']
+    try {
+      const ctx = new FakeContext({ webServer: {}, loader: {} })
+      apply(ctx as never)
+      expect(state.mounts[0].config).toMatchObject({ profile: 'from-flag' })
+      expect(state.mounts[0].config.profileDirectory).toBeUndefined()
+    } finally {
+      process.argv = argv
+    }
+  })
+
+  it('leaves a Desktop shell that provides desktopProfiles on its own path', () => {
+    const ctx = new FakeContext({
+      webServer: {}, loader: {}, desktopPnpm: {},
+      profileContext: launcher,
+      desktopProfiles: { current: { name: 'shell', dir: '/shell/dir' } },
+    })
+
+    apply(ctx as never)
+
+    expect(state.mounts[0].config).toMatchObject({ profile: 'shell', profileDirectory: '/shell/dir' })
+  })
+})
+
 describe('host adaptation', () => {
   it('preserves the ordinary DSH profile and CLI runtime fallback', () => {
     const ctx = new FakeContext({ webServer: {}, loader: {} })
