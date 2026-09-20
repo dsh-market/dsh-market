@@ -5,6 +5,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import { createDesktopPluginRuntime, type DesktopPnpmLike } from './dsh-cli.ts'
+import { isDshProfileName } from './profile.ts'
 import { mountMarketRoutes, type MarketConfig, type MarketHost } from './routes.ts'
 import { installDesktopMarketSettings, installMarketSettings } from './settings.ts'
 import type { AgentsServiceLike } from './agents.ts'
@@ -13,6 +14,16 @@ export const name = 'dsh-market'
 
 /** Optional cordis.yml configuration; profile defaults to `web`. */
 export type Config = Partial<Pick<MarketConfig, 'profile' | 'allowRestart' | 'maxSnapshots'>>
+
+/**
+ * Structural subset of the dsh launcher's public `profileContext` service —
+ * "present only in a profile launched by dsh", provided on the host context
+ * before any config-tree entry mounts.
+ */
+interface ProfileContextLike {
+  readonly name: string
+  readonly dir: string
+}
 
 /** Structural subset of DSH Desktop's public `desktopProfiles` contract. */
 interface DesktopProfilesLike {
@@ -47,6 +58,29 @@ function argvProfile(): string | undefined {
 }
 
 /**
+ * The profile this process was launched into, as the launcher itself reports
+ * it. `argvProfile` only sees a `--profile` flag on this process's argv, and
+ * the official desktop host starts a profile through the launcher's node
+ * entry rather than the CLI — no flag, no `desktopProfiles` service either,
+ * so the market fell back to `web` and every install, update and uninstall
+ * landed in the web profile instead of the one the user was looking at
+ * (#639).
+ *
+ * The launcher's `dir` is taken with the name rather than derived from it:
+ * the launcher owns where a profile lives, and deriving the path would
+ * disagree with it for any profile that does not sit in the default place.
+ * A name the market could not use as a directory segment is refused rather
+ * than joined into a path.
+ */
+function launchedProfile(context: ProfileContextLike | undefined): { name: string; dir: string } | undefined {
+  if (context === undefined) return undefined
+  const name = typeof context.name === 'string' ? context.name.trim() : ''
+  const dir = typeof context.dir === 'string' ? context.dir.trim() : ''
+  if (!isDshProfileName(name) || dir === '') return undefined
+  return { name, dir }
+}
+
+/**
  * Resolve the host's `agents` inventory lazily — at request time, not at
  * market startup, so the guard sees whichever agents exist by the time an
  * update is asked for. Hosts without the service return undefined and the
@@ -61,8 +95,15 @@ export function apply(ctx: Context, config?: Config): void {
     const host = hostCtx as unknown as MarketEffectHost
     const desktopProfiles = ctx.get('desktopProfiles') as DesktopProfilesLike | undefined
     if (desktopProfiles === undefined) {
+      // An explicit `profile:` in cordis.yml is the operator speaking and
+      // still wins; the launcher's own answer comes next, and only then the
+      // flag-and-default guesswork. The launcher's directory rides along with
+      // its name, and never with somebody else's.
+      const launched = launchedProfile(ctx.get('profileContext') as ProfileContextLike | undefined)
+      const useLaunchedDir = config?.profile === undefined && launched !== undefined
       const resolved: MarketConfig = {
-        profile: config?.profile ?? argvProfile() ?? 'web',
+        profile: config?.profile ?? launched?.name ?? argvProfile() ?? 'web',
+        ...(useLaunchedDir ? { profileDirectory: launched.dir } : {}),
         // Left UNDEFINED when unconfigured, deliberately: `?? true` here
         // would turn "the operator said nothing" into "the operator said
         // yes", and restartAllowed() could no longer tell them apart — which

@@ -1167,6 +1167,7 @@ describe('MarketSection (jsdom)', () => {
 
   it('does not offer a rollback action when the server could not capture an exact source', async () => {
     const rollbackUnavailable = '更新前版本为 v1.0.0，但无法确认精确来源。 / The previous version was v1.0.0, but its exact source could not be verified.'
+    const englishHalf = 'The previous version was v1.0.0, but its exact source could not be verified.'
     const fetchMock = stubFetch({
       '/dsh-market/installed': { profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: [] },
       '/dsh-market/updates': { updates: { 'dsh-loop': { kind: 'npm', version: '1.0.0', current: '1.0.0', latest: '1.2.0', updateAvailable: true } } },
@@ -1186,7 +1187,8 @@ describe('MarketSection (jsdom)', () => {
     fireEvent.click(await screen.findByRole('button', { name: en.update }))
 
     expect(await screen.findByText(en.compatRiskBannerNoRollback)).toBeTruthy()
-    expect(screen.getByText(rollbackUnavailable)).toBeTruthy()
+    expect(screen.getByText(englishHalf)).toBeTruthy()
+    expect(screen.queryByText(rollbackUnavailable)).toBeNull()
     expect(screen.queryByText(en.rollbackUnavailable)).toBeNull()
     expect(screen.queryByRole('button', { name: en.rollbackNow })).toBeNull()
     expect(fetchMock.mock.calls.some(([url]) => url === '/dsh-market/rollback')).toBe(false)
@@ -4451,5 +4453,19 @@ describe('Update all button visible for a single updatable plugin (#555)', () =>
     render(<MarketSection {...props()} />)
     const btn = await screen.findByRole('button', { name: /Update all \(1\)/ })
     expect(btn).toBeTruthy()
+  })
+})
+
+describe('catalog version in discover byline (#348)', () => {
+  it('shows v{version} when the catalog supplies a string, and omits null/absent', async () => {
+    const registry = JSON.parse(JSON.stringify(REGISTRY))
+    registry.plugins[0].version = '1.2.3'
+    registry.plugins[1].version = null
+    stubFetch({ '/dsh-market/registry': { source: 'live', registry, hostVersion: '0.1.2-alpha.2' } })
+    render(<MarketSection {...props()} />)
+    const loop = (await screen.findByText('dsh-loop')).closest('[class*="card"]') as HTMLElement
+    const notify = screen.getByText('dsh-notify').closest('[class*="card"]') as HTMLElement
+    expect(within(loop).getByText('· v1.2.3')).toBeTruthy()
+    expect(within(notify).queryByText(/^· v/)).toBeNull()
   })
 })

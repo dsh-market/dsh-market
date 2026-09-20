@@ -48,6 +48,11 @@ export interface RegistryPlugin {
    * package. Absent means "no npm package" — a coverage gap, not a zero.
    */
   downloads?: number | null
+  /**
+   * Catalog npm `latest` (awesome-dsh-plugin / dsh-market#348). Shown in the
+   * discover byline only when it is a non-empty string.
+   */
+  version?: string | null
   added?: string
   install?: string
   /**
@@ -982,6 +987,34 @@ function safeScreenshot(value: unknown): string | null {
   return value
 }
 
+/**
+ * Prepare a GitHub release body for the update-notes dialog's tiny markdown
+ * renderer. HTML — especially pasted `<img>` tags — must not surface as
+ * literal text; markdown syntax is left intact for the dialog to render.
+ */
+export function sanitizeReleaseNotesBody(md: string): string {
+  let s = md.replace(/<!--[\s\S]*?-->/g, '')
+  s = s.replace(/<img\b[^>]*>/gi, '')
+  // Drop remaining tags, keep inner text (`<a href=…>label</a>` → `label`).
+  s = s.replace(/<\/?[a-zA-Z][\w:-]*\b[^>]*>/g, '')
+  s = s.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n')
+  return s.trim()
+}
+
+/**
+ * A whole-line markdown image with an allowlisted https URL, or null.
+ * Relative paths and non-GitHub hosts stay out of the dialog (same gate as
+ * install screenshots).
+ */
+export function releaseNotesHttpsImage(line: string): { alt: string; src: string } | null {
+  const match = /^!\[([^\]]*)\]\(\s*(?:<(https:\/\/[^>]+)>|(https:\/\/[^\s)]+))(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*\)$/u
+    .exec(line.trim())
+  if (match === null) return null
+  const src = safeScreenshot(match[2] ?? match[3] ?? '')
+  if (src === null) return null
+  return { alt: match[1] ?? '', src }
+}
+
 /** Keep only https URLs on allowlisted image hosts; SVG dropped (logos/badges). */
 export function safeScreenshots(urls: unknown): string[] {
   if (!Array.isArray(urls)) return []
@@ -1265,6 +1298,66 @@ export function humanOutput(raw: string): string {
     }
   }
   return kept.join('\n').trim()
+}
+
+/** CJK ideographs — enough to tell a Chinese half from a Latin one. */
+const CJK_RE = /[\u3400-\u9FFF\uF900-\uFAFF]/gu
+
+/** Count CJK code points in a string. */
+function cjkCount(text: string): number {
+  return text.match(CJK_RE)?.length ?? 0
+}
+
+/**
+ * Pick one language from a `中文 / English` (or reverse) pair. Ambiguous
+ * strings stay unchanged. Callers that prepend `t(…)` must localize the
+ * server half first, then concatenate — this function does not strip UI chrome.
+ */
+function pickBilingualPair(text: string, lang: 'zh' | 'en'): string {
+  const sep = ' / '
+  const parts = text.split(sep)
+  if (parts.length < 2) return text
+
+  // Prefer the split with the largest CJK contrast when the text has more
+  // than one ` / ` (English prose can contain the same separator).
+  let bestLeft = parts[0]
+  let bestRight = parts.slice(1).join(sep)
+  let bestScore = Math.abs(cjkCount(bestLeft) - cjkCount(bestRight))
+  for (let i = 1; i < parts.length - 1; i++) {
+    const left = parts.slice(0, i + 1).join(sep)
+    const right = parts.slice(i + 1).join(sep)
+    const score = Math.abs(cjkCount(left) - cjkCount(right))
+    if (score > bestScore) {
+      bestScore = score
+      bestLeft = left
+      bestRight = right
+    }
+  }
+  if (bestScore === 0) return text
+  const zhPart = cjkCount(bestLeft) > cjkCount(bestRight) ? bestLeft : bestRight
+  const enPart = cjkCount(bestLeft) > cjkCount(bestRight) ? bestRight : bestLeft
+  return lang === 'zh' ? zhPart : enPart
+}
+
+/**
+ * Pick the locale half of a server bilingual string (`中文 / English` or
+ * `English / 中文`). Multiline input is handled line by line. Ambiguous
+ * strings are returned unchanged.
+ */
+export function localizeBilingual(text: string, lang: 'zh' | 'en'): string {
+  if (text.includes('\n')) {
+    return text.split('\n').map(line => localizeBilingual(line, lang)).join('\n')
+  }
+  return pickBilingualPair(text, lang)
+}
+
+/**
+ * Localize each bilingual reason and join for display. Reasons are separate
+ * diagnoses; do not rejoin them with ` / `, which is the bilingual separator.
+ */
+export function localizeBilingualList(parts: string[], lang: 'zh' | 'en'): string {
+  const sep = lang === 'zh' ? '；' : '; '
+  return parts.map(part => localizeBilingual(part, lang)).filter(part => part !== '').join(sep)
 }
 
 /**

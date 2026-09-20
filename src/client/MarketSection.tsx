@@ -35,6 +35,7 @@ import {
   type MenuEntry,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import css from './Market.module.css'
+import { MARK_BLOCK_RADIUS, MARK_BLOCK_SIZE, MARK_GRID_BLOCKS, MARK_PLUG_BLOCK, MARK_VIEW_BOX } from './market-mark.ts'
 import { CommentsModal } from './CommentsModal.tsx'
 import { OperationsPanel } from './OperationsPanel.tsx'
 import { clearSettled, drop, enqueue, patch as patchRecord, recordForUrl } from './operations.ts'
@@ -42,8 +43,8 @@ import type { OperationRecord } from './operations.ts'
 import { Diagnostics } from './Diagnostics.tsx'
 import { exportMarketLog } from './self-check.ts'
 import {
-  api, applyGithubRouting, avatarColor, catalogEntryForInstalled, entryForDep, githubRouteCandidates, groupSwitchState, humanOutput, installedForCatalog, isGenerationSpec, isInstalled, looksTerminal, matchInstalledName, orderedCategories, pluginCategories,
-  formatCount, pageItems, pluginName, pluginScreenshotCandidates, pluginScreenshots, pluginsForFavorites, rankThemeScreenshots, readSession, rememberGithubRoute, resetScreenshotsCache, resolveCatalogRestore, safeScreenshots, staleFavoriteUrls, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
+  api, applyGithubRouting, avatarColor, catalogEntryForInstalled, entryForDep, githubRouteCandidates, groupSwitchState, humanOutput, installedForCatalog, isGenerationSpec, isInstalled, localizeBilingual, localizeBilingualList, looksTerminal, matchInstalledName, orderedCategories, pluginCategories,
+  formatCount, pageItems, pluginName, pluginScreenshotCandidates, pluginScreenshots, pluginsForFavorites, rankThemeScreenshots, readSession, releaseNotesHttpsImage, rememberGithubRoute, resetScreenshotsCache, resolveCatalogRestore, safeScreenshots, sanitizeReleaseNotesBody, staleFavoriteUrls, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
 } from './market-data.ts'
 import type {
 ActivationInfo, ActivationState, GistExportResult, InstalledMap, InstalledRepoHints, InstalledRepoIdentities, MarketStatus, Registry, RegistryPlugin,
@@ -363,9 +364,17 @@ function Pager({ currentPage, totalPages, pageSize, onGoToPage, onChangePageSize
  * Card avatar: the plugin owner's GitHub avatar (no API, browser-cached),
  * falling back to the initial-letter tile when it can't load.
  */
-/** Inline pass: `code` spans and **bold**, everything else plain text. */
+/** Inline pass: links, `code`, **bold**; everything else plain text. */
 function mdInline(text: string): Array<string | JSX.Element> {
-  return text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).map((part, i) => {
+  return text.split(/(\[[^\]]+\]\(\s*https:\/\/[^)\s]+\s*\)|\*\*[^*]+\*\*|`[^`]+`)/g).map((part, i) => {
+    const link = /^\[([^\]]+)\]\(\s*(https:\/\/[^)\s]+)\s*\)$/u.exec(part)
+    if (link !== null) {
+      return (
+        <a key={i} className={css.notesA} href={link[2]} target="_blank" rel="noreferrer">
+          {link[1]}
+        </a>
+      )
+    }
     if (part.startsWith('**') && part.endsWith('**') && part.length > 4) {
       return <strong key={i}>{part.slice(2, -2)}</strong>
     }
@@ -378,37 +387,79 @@ function mdInline(text: string): Array<string | JSX.Element> {
 
 /**
  * Release-body markdown, reduced to what a reading dialog needs: headings,
- * bullets, paragraphs, bold, inline code. Every character arrives as a React
- * text child (auto-escaped) — nothing from the repo is ever interpreted as
- * markup, so this stays free of the HTML surface real markdown parsers open.
+ * bullets, quotes, fenced code, paragraphs, bold, inline code, https links,
+ * and allowlisted https images. HTML from the repo is stripped first (never
+ * interpreted as markup); remaining text arrives as React children or
+ * controlled nodes only.
  */
 function renderMarkdown(md: string): Array<JSX.Element | string> {
   const out: Array<JSX.Element | string> = []
   let bullets: string[] | null = null
+  let fence: string[] | null = null
   const flushList = (): void => {
     if (bullets === null) return
     const items = bullets
-    out.push(<ul key={`l${out.length}`} className={css.notesList}>{items.map((item, i) => <li key={i}>{mdInline(item)}</li>)}</ul>)
+    out.push(<ul key={`l${out.length}`} className={css.notesBullets}>{items.map((item, i) => <li key={i}>{mdInline(item)}</li>)}</ul>)
     bullets = null
   }
-  for (const line of md.split('\n')) {
+  const flushFence = (): void => {
+    if (fence === null) return
+    const body = fence.join('\n')
+    out.push(<pre key={`c${out.length}`} className={css.notesFence}><code>{body}</code></pre>)
+    fence = null
+  }
+  for (const line of sanitizeReleaseNotesBody(md).split('\n')) {
     const trimmed = line.trim()
+    if (fence !== null) {
+      if (/^```/.test(trimmed)) {
+        flushFence()
+      } else {
+        fence.push(line.replace(/\s+$/u, ''))
+      }
+      continue
+    }
+    if (/^```/.test(trimmed)) {
+      flushList()
+      fence = []
+      continue
+    }
     if (trimmed === '') { flushList(); continue }
+    const image = releaseNotesHttpsImage(trimmed)
+    if (image !== null) {
+      flushList()
+      out.push(
+        <img
+          key={`i${out.length}`}
+          className={css.notesImg}
+          src={image.src}
+          alt={image.alt}
+          loading="lazy"
+        />,
+      )
+      continue
+    }
     const heading = /^#{1,6}\s+(.*)$/.exec(trimmed)
     if (heading !== null) {
       flushList()
-      out.push(<div key={`h${out.length}`} className={css.notesH}>{mdInline(heading[1])}</div>)
+      out.push(<div key={`h${out.length}`} className={css.notesH}>{mdInline(heading[1]!)}</div>)
+      continue
+    }
+    const quote = /^>\s?(.*)$/u.exec(trimmed)
+    if (quote !== null) {
+      flushList()
+      out.push(<div key={`q${out.length}`} className={css.notesQuote}>{mdInline(quote[1]!)}</div>)
       continue
     }
     const bullet = /^[-*]\s+(.*)$/.exec(trimmed)
     if (bullet !== null) {
-      ;(bullets ??= []).push(bullet[1])
+      ;(bullets ??= []).push(bullet[1]!)
       continue
     }
     flushList()
     out.push(<div key={`p${out.length}`} className={css.notesP}>{mdInline(line)}</div>)
   }
   flushList()
+  flushFence()
   return out
 }
 
@@ -989,20 +1040,16 @@ export function resetMarketPortalHost(): void {
  * Official-style market glyph: the shared block-grid brand mark converted to
  * the official monochrome icon form (16×16, fill="currentColor") so it
  * follows the active theme. Mirrors the settings-nav glyph used for the
- * "market" section id.
+ * "market" section id — both now draw the geometry in market-mark.ts, so the
+ * nav entry and the section it opens cannot drift apart.
  */
 function MarketLogo({ size = 16, style, animated = false }: { size?: number; style?: CSSProperties; animated?: boolean }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" style={style}>
+    <svg width={size} height={size} viewBox={`0 0 ${MARK_VIEW_BOX} ${MARK_VIEW_BOX}`} fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" style={style}>
       <g fill="currentColor">
-        <rect x="1.96" y="3.36" width="3.3" height="3.3" rx="0.53" />
-        <rect x="5.71" y="3.36" width="3.3" height="3.3" rx="0.53" />
-        <rect x="1.96" y="7.11" width="3.3" height="3.3" rx="0.53" />
-        <rect x="5.71" y="7.11" width="3.3" height="3.3" rx="0.53" />
-        <rect x="9.46" y="7.11" width="3.3" height="3.3" rx="0.53" />
-        <rect x="1.96" y="10.86" width="3.3" height="3.3" rx="0.53" />
-        <rect x="5.71" y="10.86" width="3.3" height="3.3" rx="0.53" />
-        <rect x="9.46" y="10.86" width="3.3" height="3.3" rx="0.53" />
+        {MARK_GRID_BLOCKS.map(block => (
+          <rect key={`${block.x},${block.y}`} x={block.x} y={block.y} width={MARK_BLOCK_SIZE} height={MARK_BLOCK_SIZE} rx={MARK_BLOCK_RADIUS} />
+        ))}
       </g>
       {/* The block being plugged in: OUTSIDE the grid's empty corner, offset
           (+1.28, -1.27) and tilted 9deg, exactly as in assets/logo.svg. The
@@ -1011,8 +1058,8 @@ function MarketLogo({ size = 16, style, animated = false }: { size?: number; sty
           mark, and the reason it no longer matched the GitHub logo. */}
       <rect
         className={animated ? css.logoPlug : undefined}
-        x="10.74" y="2.09" width="3.3" height="3.3" rx="0.53" fill="currentColor"
-        transform={animated ? undefined : 'rotate(9 12.39 3.74)'}
+        x={MARK_PLUG_BLOCK.x} y={MARK_PLUG_BLOCK.y} width={MARK_BLOCK_SIZE} height={MARK_BLOCK_SIZE} rx={MARK_BLOCK_RADIUS} fill="currentColor"
+        transform={animated ? undefined : `rotate(${MARK_PLUG_BLOCK.degrees} ${MARK_PLUG_BLOCK.originX} ${MARK_PLUG_BLOCK.originY})`}
       />
     </svg>
   )
@@ -1069,6 +1116,20 @@ function BookmarkMark({ size = 14, filled = false, className }: { size?: number;
             />
           )}
     </svg>
+  )
+}
+
+/**
+ * Catalog npm latest in the card byline (#348). Same quiet style as ↓ / ★;
+ * omitted when absent so github-only and not-yet-backfilled rows stay clean.
+ */
+function CatalogVersionMark({ version, tip }: { version: string | null | undefined; tip: string }) {
+  if (typeof version !== 'string' || version.length === 0) return null
+  const label = /^v/i.test(version) ? version : `v${version}`
+  return (
+    <Tooltip label={tip} side="top">
+      <span className={css.star}>{`· ${label}`}</span>
+    </Tooltip>
   )
 }
 
@@ -2226,7 +2287,7 @@ export function MarketSection(props: MarketSectionProps) {
           ].filter(Boolean).join('\n')
           // Carry the blocked names onto the record too: the panel is where
           // this failure is read, so it is where the one-click way out has to
-          // be (#314).
+          // be (#314). The reason stays bilingual; the panel localizes it.
           setRecords(list => patchRecord(list, recordId, {
             state: 'failed', reason: detail.trim().slice(-600),
             ...(blocked.length > 0 ? { blockedBuilds: blocked } : {}),
@@ -2359,12 +2420,12 @@ export function MarketSection(props: MarketSectionProps) {
             return
           }
           setRestarting(false)
-          setInstallError(t('restartFail') + ': ' + String(body.error || ('HTTP ' + String(status))))
+          setInstallError(t('restartFail') + ': ' + localizeBilingual(String(body.error || ('HTTP ' + String(status))), lang))
         })
         .catch(awaitNewBoot) // the host may die mid-response; keep polling
     }
     requestRestart(10)
-  }, [bootId, restarting, t])
+  }, [bootId, restarting, t, lang])
 
   /** Cancel the running plugin command (#6 by @qichuang321). */
   const doCancel = useCallback(() => {
@@ -2492,8 +2553,10 @@ export function MarketSection(props: MarketSectionProps) {
             staleEntry,
             failure,
           ].filter(Boolean).join('\n')
-          setRecords(list => patchRecord(list, updateRecordId, { state: 'failed', reason: detail.trim().slice(-600) }))
-          setInstallError((restore ? t('restoreFail') : t('updateFail')) + ': ' + name + ' — ' + detail.trim().slice(-600))
+          const clipped = detail.trim().slice(-600)
+          setRecords(list => patchRecord(list, updateRecordId, { state: 'failed', reason: clipped }))
+          // Localize the server half before prepending t() chrome.
+          setInstallError((restore ? t('restoreFail') : t('updateFail')) + ': ' + name + ' — ' + localizeBilingual(clipped, lang))
         }
       })
       .catch(() => {
@@ -2502,7 +2565,7 @@ export function MarketSection(props: MarketSectionProps) {
         // running row, and let the status poll converge the outcome instead
         // of declaring a false failure — mirroring the install flow's catch.
       })
-  }, [refreshInstalled, t])
+  }, [refreshInstalled, t, lang])
 
 
   const doSourceMigration = useCallback((name: string) => {
@@ -2534,13 +2597,13 @@ export function MarketSection(props: MarketSectionProps) {
           setInstallError(t('agentBusyUpdate') + running)
           return
         }
-        setInstallError(t('migrateFail') + ': ' + String(body.error || ('HTTP ' + String(status))))
+        setInstallError(t('migrateFail') + ': ' + localizeBilingual(String(body.error || ('HTTP ' + String(status))), lang))
       })
       .catch(error => {
         setUpdatingName(null)
         setInstallError(t('migrateFail') + ': ' + String(error))
       })
-  }, [refreshInstalled, t])
+  }, [refreshInstalled, t, lang])
 
   const askSourceMigration = useCallback((name: string) => {
     const migration = updates[name]?.sourceMigration
@@ -3364,6 +3427,7 @@ export function MarketSection(props: MarketSectionProps) {
             <div className={css.byline}>
               <OwnerAvatar name={p.name} owner={p.owner || ''} />
               <span className={css.owner} title={p.owner}>{p.owner}</span>
+              <CatalogVersionMark version={p.version} tip={t('catalogNpmLatest')} />
               {typeof p.downloads === 'number' && (
                 <Tooltip label={String(p.downloads)} side="top">
                   <span className={css.star}>{'· ↓ ' + formatCount(p.downloads)}</span>
@@ -3497,6 +3561,7 @@ export function MarketSection(props: MarketSectionProps) {
               <div className={css.byline}>
                 <OwnerAvatar name={p.name} owner={p.owner || ''} />
                 <span className={css.owner} title={p.owner}>{p.owner}</span>
+                <CatalogVersionMark version={p.version} tip={t('catalogNpmLatest')} />
                 {typeof p.downloads === 'number' && (
                   <Tooltip label={String(p.downloads)} side="top">
                     <span className={css.star}>{'· ↓ ' + formatCount(p.downloads)}</span>
@@ -3825,6 +3890,7 @@ export function MarketSection(props: MarketSectionProps) {
               switching tab all leave it — and any pending decision — in place. */}
           <OperationsPanel
             t={t}
+            lang={lang}
             describe={describePlugin}
             records={records}
             open={operationsOpen}
@@ -3950,7 +4016,7 @@ export function MarketSection(props: MarketSectionProps) {
               {activationWarnings.map(({ name, info }) => (
                 <div key={name}>
                   <b>{name}</b> — {activationMeta(info.state, t, info.dependencyOf).label}
-                  {info.reasons.length > 0 && <span className={css.spec}>（{info.reasons.join(' / ')}）</span>}
+                  {info.reasons.length > 0 && <span className={css.spec}>（{localizeBilingualList(info.reasons, lang)}）</span>}
                 </div>
               ))}
             </span>
@@ -4003,7 +4069,7 @@ export function MarketSection(props: MarketSectionProps) {
           </span>
           <Button variant="outline" size="sm" onClick={() => setTab('diagnostics')}>{t('goDiagnose')}</Button>
           {compatibilityNotice.rollbackId === undefined
-            ? <span>{compatibilityNotice.rollbackUnavailable ?? t('rollbackUnavailable')}</span>
+            ? <span>{compatibilityNotice.rollbackUnavailable ? localizeBilingual(compatibilityNotice.rollbackUnavailable, lang) : t('rollbackUnavailable')}</span>
             : (
                 <Button variant="primary" size="sm" disabled={rollingBack} onClick={() => void doRollback(compatibilityNotice.rollbackId!)}>
                   {rollingBack ? t('rollingBack') : t('rollbackNow')}
@@ -4013,7 +4079,7 @@ export function MarketSection(props: MarketSectionProps) {
       )}
       {installError !== null && (
         <div className={css.err}>
-          {installError}
+          {localizeBilingual(installError, lang)}
           <div className={css.staleAction}>
             {/* Primary, because the banner's own words point at it ("点
                 「立即更新」不再等待") and it is the way out of the wait. With
@@ -4786,7 +4852,7 @@ export function MarketSection(props: MarketSectionProps) {
                                               onToggle={() => setWhyOpen(whyOpen === name ? null : name)}
                                               className={css.actWhy}
                                             >
-                                              <div className={css.spec}>{act.reasons.join(' / ')}</div>
+                                              <div className={css.spec}>{localizeBilingualList(act.reasons, lang)}</div>
                                             </DisclosureRow>
                                           )}
                                         </div>
@@ -4961,12 +5027,13 @@ export function MarketSection(props: MarketSectionProps) {
           )}
         >
           {/* The detail dialog has to show at LEAST what the card already
-              does — owner, downloads, stars, published date, category — a
-              "detail" view that shows less than the summary it opened from
+              does — owner, version, downloads, stars, published date, category —
+              a "detail" view that shows less than the summary it opened from
               is backwards. */}
           <div className={css.byline}>
             <OwnerAvatar name={confirming.name} owner={confirming.owner || ''} />
             <span className={css.owner} title={confirming.owner}>{confirming.owner}</span>
+            <CatalogVersionMark version={confirming.version} tip={t('catalogNpmLatest')} />
             {typeof confirming.downloads === 'number' && (
               <Tooltip label={String(confirming.downloads)} side="top">
                 <span className={css.star}>{'· ↓ ' + formatCount(confirming.downloads)}</span>
@@ -5168,6 +5235,7 @@ export function MarketSection(props: MarketSectionProps) {
         <Modal
           open
           onClose={() => setNotesFor(null)}
+          className={notesState === 'ready' && updateNotes?.kind === 'release' ? css.notesModalWide : undefined}
           /* The host's Modal renders its title node verbatim; the hand-written
              primitives.d.ts narrows the prop to string, so this cast documents
              intent rather than defeating a runtime check. */
@@ -5175,7 +5243,7 @@ export function MarketSection(props: MarketSectionProps) {
             ? <a className={css.nameLink} href={notesFor.repoUrl + '#readme'} target="_blank" rel="noreferrer">{notesFor.name}</a>
             : notesFor.name) as unknown as string}
           footer={(
-            <Button variant="ghost" onClick={() => setNotesFor(null)}>{t('cancel')}</Button>
+            <Button variant="ghost" onClick={() => setNotesFor(null)}>{t('gotIt')}</Button>
           )}
         >
           {/* The version line reads as versions when both ends are semver and
@@ -5202,10 +5270,9 @@ export function MarketSection(props: MarketSectionProps) {
                   {updateNotes.release.tag !== null && <span>{' ' + updateNotes.release.tag}</span>}
                   {updateNotes.release.publishedAt !== null && <span>{' · ' + updateNotes.release.publishedAt.slice(0, 10)}</span>}
                 </div>
-                {/* Author-written markdown, rendered through a deliberately
-                    tiny converter: everything lands as React text children
-                    (auto-escaped), so no HTML from the repo can ever become
-                    markup — headings, bullets, bold and inline code only. */}
+                {/* Author-written markdown through the tiny converter: HTML is
+                    stripped first; headings, quotes, fences, bullets, bold,
+                    inline code, https links and allowlisted images only. */}
                 <div className={css.notesRendered}>{renderMarkdown(updateNotes.release.body || t('notesNone'))}</div>
               </div>
             )
@@ -5324,7 +5391,7 @@ export function MarketSection(props: MarketSectionProps) {
         <Toast text={t('exportLogFail')} icon={<IconWarningOutline16 size={14} />} onDone={exportToastDone} />
       )}
       {favoriteError !== null && (
-        <Toast text={favoriteError} icon={<IconWarningOutline16 size={14} />} onDone={favoriteErrorDone} />
+        <Toast text={localizeBilingual(favoriteError, lang)} icon={<IconWarningOutline16 size={14} />} onDone={favoriteErrorDone} />
       )}
       {toggled !== null && (
         <Toast

@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from 'vitest'
 import {
-  entryForDep, extractReadmeImageCandidates, extractReadmeImages, formatCount, groupSwitchState, installedForCatalog, isInstalled, isMarketItself, looksTerminal, matchInstalledName, orderedCategories, pageItems, pluginCategories, pluginsForFavorites, previewDimensionScore, rankThemeScreenshots, safeScreenshots, staleFavoriteUrls, themePlugins, visiblePlugins, humanOutput, catalogEntryForInstalled} from '../src/client/market-data.ts'
+  entryForDep, extractReadmeImageCandidates, extractReadmeImages, formatCount, groupSwitchState, installedForCatalog, isInstalled, isMarketItself, localizeBilingual, localizeBilingualList, looksTerminal, matchInstalledName, orderedCategories, pageItems, pluginCategories, pluginsForFavorites, previewDimensionScore, rankThemeScreenshots, releaseNotesHttpsImage, safeScreenshots, sanitizeReleaseNotesBody, staleFavoriteUrls, themePlugins, visiblePlugins, humanOutput, catalogEntryForInstalled} from '../src/client/market-data.ts'
 import type { RegistryPlugin, ScreenshotCandidate } from '../src/client/market-data.ts'
 
 function plugin(partial: Partial<RegistryPlugin>): RegistryPlugin {
@@ -676,6 +676,34 @@ describe('screenshots (#61)', () => {
     expect(safeScreenshots(many)).toHaveLength(6)
   })
 
+  it('sanitizeReleaseNotesBody drops pasted HTML images and other tags without eating prose', () => {
+    const body = [
+      'Open the Context tab from the chat stats line.',
+      '<img width="999" height="148" alt="image" src="https://github.com/user-attachments/assets/d732b30f-2649-4758-bc7a-c57a1cac6e14" />',
+      '',
+      'More <strong>detail</strong> with an <a href="https://example.com">label</a>.',
+      '![ok](https://github.com/user-attachments/assets/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee)',
+    ].join('\n')
+    const cleaned = sanitizeReleaseNotesBody(body)
+    expect(cleaned).not.toContain('<img')
+    expect(cleaned).not.toContain('<strong>')
+    expect(cleaned).toContain('Open the Context tab from the chat stats line.')
+    expect(cleaned).toContain('More detail with an label.')
+    expect(cleaned).toContain('![ok](https://github.com/user-attachments/assets/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee)')
+  })
+
+  it('releaseNotesHttpsImage accepts allowlisted https markdown images only', () => {
+    expect(releaseNotesHttpsImage(
+      '![shot](https://github.com/user-attachments/assets/d732b30f-2649-4758-bc7a-c57a1cac6e14)',
+    )).toEqual({
+      alt: 'shot',
+      src: 'https://github.com/user-attachments/assets/d732b30f-2649-4758-bc7a-c57a1cac6e14',
+    })
+    expect(releaseNotesHttpsImage('![x](https://evil.example/a.png)')).toBeNull()
+    expect(releaseNotesHttpsImage('![x](assets/local.png)')).toBeNull()
+    expect(releaseNotesHttpsImage('not an image')).toBeNull()
+  })
+
   it('extractReadmeImages ranks screenshot evidence ahead of title logos and keeps scanning past six images', () => {
     const md = [
       '# my-plugin',
@@ -757,6 +785,46 @@ describe('humanOutput', () => {
   it('leaves ordinary output and malformed lines alone', () => {
     expect(humanOutput('plain error\n{not json\n')).toBe('plain error\n{not json')
     expect(humanOutput('')).toBe('')
+  })
+})
+
+describe('localizeBilingual', () => {
+  it('picks the Chinese half of a zh-first activation reason', () => {
+    const text = '未声明 dsh.bundle,已作为普通依赖安装,不会成为 profile 层 / no dsh.bundle — installed as a plain dependency, never a profile-layer plugin'
+    expect(localizeBilingual(text, 'zh')).toBe('未声明 dsh.bundle,已作为普通依赖安装,不会成为 profile 层')
+    expect(localizeBilingual(text, 'en')).toBe('no dsh.bundle — installed as a plain dependency, never a profile-layer plugin')
+  })
+
+  it('picks the Chinese half when English comes first', () => {
+    const text = 'JSON body is required / 需要 JSON body'
+    expect(localizeBilingual(text, 'zh')).toBe('需要 JSON body')
+    expect(localizeBilingual(text, 'en')).toBe('JSON body is required')
+  })
+
+  it('splits on the language join when the English half contains an em-dash', () => {
+    const text = 'theme activation failed — restart required / 主题启用失败，需要重启'
+    expect(localizeBilingual(text, 'zh')).toBe('主题启用失败，需要重启')
+    expect(localizeBilingual(text, 'en')).toBe('theme activation failed — restart required')
+  })
+
+  it('leaves monolingual and ambiguous strings alone', () => {
+    expect(localizeBilingual('already localized', 'zh')).toBe('already localized')
+    expect(localizeBilingual('left / right', 'en')).toBe('left / right')
+  })
+
+  it('localizes multiline warnings line by line', () => {
+    const text = '第一行中文 / first line\n第二行中文 / second line'
+    expect(localizeBilingual(text, 'zh')).toBe('第一行中文\n第二行中文')
+    expect(localizeBilingual(text, 'en')).toBe('first line\nsecond line')
+  })
+
+  it('joins multiple reasons without reusing the bilingual separator', () => {
+    const reasons = [
+      '未声明 dsh.bundle / no dsh.bundle',
+      '需要重启 / restart required',
+    ]
+    expect(localizeBilingualList(reasons, 'zh')).toBe('未声明 dsh.bundle；需要重启')
+    expect(localizeBilingualList(reasons, 'en')).toBe('no dsh.bundle; restart required')
   })
 })
 
