@@ -1139,6 +1139,23 @@ function sameInstalledMap(left: InstalledMap, right: InstalledMap): boolean {
   return names.length === Object.keys(right).length && names.every(name => left[name] === right[name])
 }
 
+/**
+ * Whether one installed plugin has a pending update (either an ordinary
+ * upgrade via npm/git/restore, or a host-managed generation release),
+ * and has not already been updated in the current session.
+ */
+function isPluginUpdatable(
+  name: string,
+  spec: string,
+  status: UpdateStatus | undefined,
+  updatedNames: readonly string[],
+): boolean {
+  if (updatedNames.includes(name) || status === undefined) return false
+  if (status.updateAvailable === true) return true
+  const generation = status.kind === 'generation' || isGenerationSpec(spec)
+  return generation && status.latest != null
+}
+
 /** Sort field choices in the filter panel. */
 const SORT_FIELD_OPTIONS: ReadonlyArray<{ key: SortField; label: string }> = [
   { key: 'downloads', label: 'sortDownloads' },
@@ -3248,6 +3265,24 @@ export function MarketSection(props: MarketSectionProps) {
   const showHostPending = hostPendingNames.length > 0 && !restartNoticeDismissed && sessionPendingRestart === 0
   const pendingRestart = sessionPendingRestart > 0 ? sessionPendingRestart : (showHostPending ? hostPendingNames.length : 0)
   const displayedInstalled = pendingBackup === null ? installed : { ...pendingDependencies, ...installed }
+  /**
+   * Installed entries ordered for the list view.
+   *
+   * The order is frozen when entering the installed list view so that
+   * asynchronous updates arriving while the user is viewing or clicking
+   * rows do not reshuffle cards under their eyes (#631).
+   */
+  const isInstalledListActive = tab === 'installed' && installedView === 'list'
+  const orderedInstalledEntries = useMemo(() => {
+    return Object.entries(displayedInstalled)
+      .filter(([name]) => name !== selfName)
+      .sort(([nameA, specA], [nameB, specB]) => {
+        const aUp = isPluginUpdatable(nameA, String(specA), updates[nameA], updatedNames) ? 1 : 0
+        const bUp = isPluginUpdatable(nameB, String(specB), updates[nameB], updatedNames) ? 1 : 0
+        return bUp - aUp
+      })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- freezes order on entering the installed list; live updates/updatedNames must not reshuffle rows (#631)
+  }, [isInstalledListActive, displayedInstalled, selfName])
   const missingRestoreCount = Object.keys(pendingDependencies).filter(name => !installedFiles.includes(name)).length
   // Self-update lives in the header button and the settings card, not this
   // tab's row list (the market itself is filtered out below) — so a pending
@@ -4568,15 +4603,12 @@ export function MarketSection(props: MarketSectionProps) {
                                 })}
                           </>
                         )
-                      : Object.keys(displayedInstalled).filter(name => name !== selfName).length === 0
+                      : orderedInstalledEntries.length === 0
                         ? <div className={css.empty}>{t('installedEmpty')}</div>
                         : (
                           <Masonry
-                            items={Object.entries(displayedInstalled)
+                            items={orderedInstalledEntries
                             .filter(([name, spec]) => {
-                              // The market manages itself from its own settings
-                              // card, not as a row in this list (#188-adjacent).
-                              if (name === selfName) return false
                               const needle = qInstalled.trim().toLowerCase()
                               if (needle === '') return true
                               if (name.toLowerCase().includes(needle)) return true
@@ -4588,17 +4620,6 @@ export function MarketSection(props: MarketSectionProps) {
                                 if ((entry.owner || '').toLowerCase().includes(needle)) return true
                               }
                               return false
-                            })
-                            .sort(([nameA, specA], [nameB, specB]) => {
-                              const aUp = !updatedNames.includes(nameA) && updates[nameA] !== undefined && (
-                                updates[nameA].updateAvailable === true
-                                || ((updates[nameA].kind === 'generation' || isGenerationSpec(String(specA))) && updates[nameA].latest != null)
-                              ) ? 1 : 0
-                              const bUp = !updatedNames.includes(nameB) && updates[nameB] !== undefined && (
-                                updates[nameB].updateAvailable === true
-                                || ((updates[nameB].kind === 'generation' || isGenerationSpec(String(specB))) && updates[nameB].latest != null)
-                              ) ? 1 : 0
-                              return bUp - aUp
                             })}
                             render={([name, spec]) => {
                             const missing = pendingBackup !== null && !installedFiles.includes(name)

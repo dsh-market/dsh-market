@@ -2621,6 +2621,62 @@ describe('installed masonry layout (#273)', () => {
     expect([...columns[0]!.querySelectorAll('[class*="irowNameText"]')].map(row => row.textContent?.trim()))
       .toEqual(['gamma', 'alpha', 'beta', 'delta'])
   })
+
+  it('freezes installed sort order so late-arriving updates do not reshuffle rows while viewing (#631)', async () => {
+    const media = {
+      matches: false,
+      media: '(min-width: 681px)',
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(() => true),
+    }
+    vi.stubGlobal('matchMedia', vi.fn(() => media))
+
+    let updatesPayload: Record<string, unknown> = {}
+    stubFetch({
+      '/dsh-market/installed': {
+        profile: 'web',
+        installed: { alpha: '^1.0.0', beta: '^1.0.0', gamma: '^1.0.0', delta: '^1.0.0' },
+        live: [],
+      },
+      '/dsh-market/updates': () => ({ updates: updatesPayload }),
+    })
+
+    const { container } = render(<MarketSection {...props()} preferredSubsectionId="installed" />)
+    await screen.findByText('alpha')
+
+    const columns = [...container.querySelectorAll('[class*="masonryCol"]')] as HTMLElement[]
+    // When opened before updates arrive, order follows manifest order
+    expect([...columns[0]!.querySelectorAll('[class*="irowNameText"]')].map(row => row.textContent?.trim()))
+      .toEqual(['alpha', 'beta', 'gamma', 'delta'])
+
+    // Updates arrive for gamma in the background
+    updatesPayload = {
+      gamma: { kind: 'npm', version: '1.0.0', current: '1.0.0', latest: '2.0.0', updateAvailable: true },
+    }
+
+    // Searching and clearing filter keeps the frozen order intact (does not reshuffle)
+    const searchInput = screen.getByPlaceholderText(en.searchPh)
+    fireEvent.change(searchInput, { target: { value: 'a' } })
+    fireEvent.change(searchInput, { target: { value: '' } })
+
+    const stillFrozenCols = [...container.querySelectorAll('[class*="masonryCol"]')] as HTMLElement[]
+    expect([...stillFrozenCols[0]!.querySelectorAll('[class*="irowNameText"]')].map(row => row.textContent?.trim()))
+      .toEqual(['alpha', 'beta', 'gamma', 'delta'])
+
+    // Leaving and re-entering the installed list adopts the new order
+    fireEvent.click(screen.getByRole('button', { name: /Discover/ }))
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    await screen.findByText('gamma')
+
+    const reenteredCols = [...container.querySelectorAll('[class*="masonryCol"]')] as HTMLElement[]
+    expect([...reenteredCols[0]!.querySelectorAll('[class*="irowNameText"]')].map(row => row.textContent?.trim()))
+      .toEqual(['gamma', 'alpha', 'beta', 'delta'])
+  })
 })
 
 describe('browser page translation (#293)', () => {

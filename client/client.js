@@ -6148,6 +6148,16 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const names = Object.keys(left);
 			return names.length === Object.keys(right).length && names.every((name) => left[name] === right[name]);
 		}
+		/**
+		* Whether one installed plugin has a pending update (either an ordinary
+		* upgrade via npm/git/restore, or a host-managed generation release),
+		* and has not already been updated in the current session.
+		*/
+		function isPluginUpdatable(name, spec, status, updatedNames) {
+			if (updatedNames.includes(name) || status === void 0) return false;
+			if (status.updateAvailable === true) return true;
+			return (status.kind === "generation" || isGenerationSpec(spec)) && status.latest != null;
+		}
 		/** Sort field choices in the filter panel. */
 		const SORT_FIELD_OPTIONS = [
 			{
@@ -8120,6 +8130,16 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				...pendingDependencies,
 				...installed
 			};
+			const orderedInstalledEntries = (0, react.useMemo)(() => {
+				return Object.entries(displayedInstalled).filter(([name]) => name !== selfName).sort(([nameA, specA], [nameB, specB]) => {
+					const aUp = isPluginUpdatable(nameA, String(specA), updates[nameA], updatedNames) ? 1 : 0;
+					return (isPluginUpdatable(nameB, String(specB), updates[nameB], updatedNames) ? 1 : 0) - aUp;
+				});
+			}, [
+				tab === "installed" && installedView === "list",
+				displayedInstalled,
+				selfName
+			]);
 			const missingRestoreCount = Object.keys(pendingDependencies).filter((name) => !installedFiles.includes(name)).length;
 			const hasUpdates = reminderUpdatableNames.length > 0;
 			/** Live status line: structured phase, or the human-line fallback. */
@@ -9879,12 +9899,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 										]
 									}, "ug-" + name);
 								})
-							] }) : Object.keys(displayedInstalled).filter((name) => name !== selfName).length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+							] }) : orderedInstalledEntries.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 								className: Market_module_css_default.empty,
 								children: t("installedEmpty")
 							}) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)(Masonry, {
-								items: Object.entries(displayedInstalled).filter(([name, spec]) => {
-									if (name === selfName) return false;
+								items: orderedInstalledEntries.filter(([name, spec]) => {
 									const needle = qInstalled.trim().toLowerCase();
 									if (needle === "") return true;
 									if (name.toLowerCase().includes(needle)) return true;
@@ -9895,9 +9914,6 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 										if ((entry.owner || "").toLowerCase().includes(needle)) return true;
 									}
 									return false;
-								}).sort(([nameA, specA], [nameB, specB]) => {
-									const aUp = !updatedNames.includes(nameA) && updates[nameA] !== void 0 && (updates[nameA].updateAvailable === true || (updates[nameA].kind === "generation" || isGenerationSpec(String(specA))) && updates[nameA].latest != null) ? 1 : 0;
-									return (!updatedNames.includes(nameB) && updates[nameB] !== void 0 && (updates[nameB].updateAvailable === true || (updates[nameB].kind === "generation" || isGenerationSpec(String(specB))) && updates[nameB].latest != null) ? 1 : 0) - aUp;
 								}),
 								render: ([name, spec]) => {
 									const missing = pendingBackup !== null && !installedFiles.includes(name);
