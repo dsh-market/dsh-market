@@ -257,9 +257,19 @@ describe('origin enforcement (POST routes)', () => {
     expect(jsonBody(res)).toEqual({ error: 'untrusted origin' })
   })
 
-  it.each(mutating)('rejects a POST %s with no Origin header at all', async (path, body) => {
+  it.each(mutating)('accepts a POST %s with no Origin header at all (#648)', async (path, body) => {
+    // The Desktop app's proxy strips Origin before forwarding, so its
+    // requests arrive exactly like this. They must reach the route: refusing
+    // the header's absence answered 403 to every Desktop mutation while
+    // protecting nothing a browser-driven cross-site POST (the case just
+    // above, still refused) does not already cover.
+    //
+    // `not.toBe(403)` rather than 200 on purpose: this fixture may fail the
+    // request for its own reasons, and the assertion is about the origin
+    // gate, not about the route's outcome.
     const res = await hit(routes, path as string, { method: 'POST', url: path as string, host: HOST, body })
-    expect(res.status).toBe(403)
+    expect(res.status).not.toBe(403)
+    expect(jsonBody(res)).not.toEqual({ error: 'untrusted origin' })
   })
 
   it('passes a matching Origin through (same-origin success path)', async () => {
@@ -704,11 +714,37 @@ describe('sameOrigin', () => {
     expect(sameOrigin(req({ host: '127.0.0.1:3080', origin: 'http://127.0.0.1:9999' }))).toBe(false)
   })
 
-  it('refuses a request with no Origin or no Host', () => {
-    // Unlike the download navigation, a mutating POST must carry Origin.
-    expect(sameOrigin(req({ host: '127.0.0.1:3080' }))).toBe(false)
+  it('allows a request with no Origin at all (#648)', () => {
+    // INVERTED from what this asserted before, and the reason matters: the
+    // rule used to be "a mutating POST must carry Origin". Browsers do send
+    // it on every POST, so its absence means the caller is not a page — and
+    // a non-browser client can forge any Origin. Refusing the absence was
+    // therefore not a protection, while the Desktop app's proxy strips the
+    // header before forwarding and every Desktop mutation met 403.
+    expect(sameOrigin(req({ host: '127.0.0.1:3080' }))).toBe(true)
+    expect(sameOrigin(req({ host: '127.0.0.1:3080', origin: undefined as never }))).toBe(true)
+    expect(sameOrigin(req({}))).toBe(true)
+    // An Origin that is PRESENT but unparseable is still refused — including
+    // the empty string, which is a malformed header rather than an absent
+    // one. Only true absence is what a stripping proxy produces.
+    expect(sameOrigin(req({ host: '127.0.0.1:3080', origin: '' }))).toBe(false)
+    // And a present Origin still needs a Host to compare against.
     expect(sameOrigin(req({ origin: 'http://127.0.0.1:3080' }))).toBe(false)
-    expect(sameOrigin(req({}))).toBe(false)
+  })
+
+  it('still refuses a page whose Origin is present and different', () => {
+    // The half that has to survive: this is the CSRF case, and a browser
+    // always sends Origin here, so the check still sees it.
+    expect(sameOrigin(req({ host: '127.0.0.1:3080', origin: 'http://evil.example' }))).toBe(false)
+    expect(sameOrigin(req({ host: '127.0.0.1:3080', origin: 'http://127.0.0.1:9999' }))).toBe(false)
+  })
+
+  it('still refuses a sandboxed origin, which is present-but-unparseable', () => {
+    // `Origin: null` comes from a sandboxed iframe or a data: document. It is
+    // NOT an absent header, and reading it as one would reopen the CSRF hole
+    // this check exists for.
+    expect(sameOrigin(req({ host: '127.0.0.1:3080', origin: 'null' }))).toBe(false)
+    expect(sameOrigin(req({ host: '127.0.0.1:3080', origin: 'about:blank' }))).toBe(false)
   })
 
   it('refuses an Origin that does not parse, rather than trusting it', () => {
