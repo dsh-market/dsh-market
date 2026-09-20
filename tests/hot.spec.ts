@@ -34,6 +34,68 @@ afterEach(async () => {
   for (const name of listHotMounts()) await hotUnmount(name)
 })
 
+describe('hotMount finds a patch the package declares in a subdirectory (#646)', () => {
+  it('reads dsh.bundle.patch wherever it points, instead of only the package root', async () => {
+    // The reported shape: `aegis` declares `./extensions/dsh/cordis.patch.yml`,
+    // so the package root holds no cordis.patch.yml at all. Reading only the
+    // root found nothing, fell through to the `dsh.client` check, and told a
+    // user whose package plainly HAS a bundle patch that there was "nothing
+    // to hot-mount" — a message about our lookup, not about their package.
+    const dir = mkdtempSync(join(tmpdir(), 'dshm-hot-'))
+    try {
+      const pkg = join(dir, 'node_modules', 'subpath-patch')
+      mkdirSync(join(pkg, 'extensions', 'dsh'), { recursive: true })
+      writeFileSync(join(pkg, 'package.json'), JSON.stringify({
+        name: 'subpath-patch',
+        dsh: { bundle: { patch: './extensions/dsh/cordis.patch.yml' } },
+      }))
+      writeFileSync(join(pkg, 'extensions', 'dsh', 'cordis.patch.yml'),
+        '- insert:\n    - id: subpath-patch-host\n      name: subpath-patch/dist/host.js\n')
+
+      const result = await hotMount(ctx, dir, 'subpath-patch')
+      expect(result.ok).toBe(true)
+      expect(result.reason).toBeNull()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('still reads the package-root cordis.patch.yml when nothing is declared', async () => {
+    // The long-standing convention must keep working: this is the shape most
+    // bundles ship, and it has no manifest field at all.
+    const dir = mkdtempSync(join(tmpdir(), 'dshm-hot-'))
+    try {
+      const pkg = join(dir, 'node_modules', 'root-patch')
+      mkdirSync(pkg, { recursive: true })
+      writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name: 'root-patch' }))
+      writeFileSync(join(pkg, 'cordis.patch.yml'),
+        '- insert:\n    - id: root-patch-host\n      name: root-patch\n')
+
+      const result = await hotMount(ctx, dir, 'root-patch')
+      expect(result.ok).toBe(true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('still reports a package with neither a patch nor a client surface', async () => {
+    // The message the reporter saw must survive for the packages it is
+    // actually true of — a bare dependency with no dsh surface at all.
+    const dir = mkdtempSync(join(tmpdir(), 'dshm-hot-'))
+    try {
+      const pkg = join(dir, 'node_modules', 'plain-lib')
+      mkdirSync(pkg, { recursive: true })
+      writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name: 'plain-lib' }))
+
+      const result = await hotMount(ctx, dir, 'plain-lib')
+      expect(result.ok).toBe(false)
+      expect(String(result.reason)).toContain('无 bundle patch')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('mountClientOnlyDeps vs the user patch layer (#58)', () => {
   it('skips packages cordis.patch.yml already manages; still shims unmanaged ones', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'dshm-hot-'))

@@ -9,6 +9,7 @@ import { join } from 'node:path'
 import { loadRegistry, pluginCategories } from './registry.ts'
 import { hotMount, hotUnmount, listHotMounts, writeDisabled } from './hot.ts'
 import { logEvent } from './log.ts'
+import { nameMatchesPackage } from './entry-identity.ts'
 import { bundlePatchInsertedIds, profileDir, readInstalled } from './profile.ts'
 import { repoOf } from './sources.ts'
 
@@ -54,8 +55,7 @@ function ownsLoaderEntry(
   ownedIds: ReadonlySet<string>,
 ): boolean {
   const entryName = entry.options.name
-  if (entryName === packageName) return true
-  if (entryName !== undefined && entryName.startsWith(`${packageName}/`)) return true
+  if (nameMatchesPackage(entryName, packageName)) return true
   const id = entry.options.id
   if (id === undefined || id === '') return false
   // Loader ids may carry an include prefix (`include:<key>:<id>`); the bare

@@ -4412,6 +4412,36 @@ describe('generic enable/disable toggle (#60)', () => {
     expect(hot.disabled.has('dsh-blue-whale')).toBe(false)
   })
 
+  it('does not ask for a restart when the live entry is a SUBPATH one (#646)', async () => {
+    // The `restart` decision is `enabled ? !liveAfter : liveAfter`, and
+    // `liveAfter` asks `liveNames().has(packageName)`. An entry named
+    // `dsh-blue-whale/lib/index.js` never puts that string in the set, so a
+    // plugin that is UP was reported as needing a restart — the user
+    // restarts, nothing changes, and the plugin was running the whole time.
+    fake.repos['github:o/blue-whale'] = {
+      name: 'dsh-blue-whale',
+      manifest: { dsh: { bundle: { patch: './x.yml' } }, main: 'lib/index.js' },
+      artifacts: ['lib/index.js'],
+    }
+    await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/blue-whale' })
+    hot.mounts = [] // bundle-layer: the loader entry is what makes it live
+    const entry = {
+      options: { id: 'dsh-blue-whale-host', name: 'dsh-blue-whale/lib/index.js', disabled: null as boolean | null },
+      fiber: {} as unknown,
+      update: vi.fn(async (options: { disabled: boolean | null }) => {
+        entry.options.disabled = options.disabled
+        entry.fiber = options.disabled === true ? undefined : {}
+      }),
+    }
+    bed.loaderEntries.push(entry)
+
+    const on = await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-blue-whale', enabled: true })
+    expect(on.status).toBe(200)
+    expect(entry.fiber).toBeDefined()
+    expect(on.json.activation['dsh-blue-whale'].state).toBe('live')
+    expect(on.json.restart).toBeFalsy()
+  })
+
   it('writes the user patch layer on toggle (port of dsh-plugin-hub); activation reads disabled', async () => {
     // A bundle-layer plugin with a real insert row.
     fake.repos['github:o/dsh-patchy'] = {

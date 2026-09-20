@@ -29,6 +29,7 @@ import { Script } from 'node:vm'
 import { join } from 'node:path'
 import { listHotMounts, parseSimplePatch } from './hot.ts'
 import { userPatchPackageReferences } from './patch.ts'
+import { nameMatchesPackage } from './entry-identity.ts'
 import { bundlePatchInsertedIds, hasDshManifest, hasLoadableEntry, profileDir, readInstalled } from './profile.ts'
 
 export type ActivationState = 'live' | 'restart' | 'inert' | 'broken' | 'missing' | 'disabled'
@@ -73,9 +74,7 @@ interface PkgDsh {
  * must not — the `/` bound keeps the match a real subpath.
  */
 function liveIncludes(live: ReadonlySet<string>, packageName: string): boolean {
-  if (live.has(packageName)) return true
-  const prefix = `${packageName}/`
-  for (const name of live) if (name.startsWith(prefix)) return true
+  for (const name of live) if (nameMatchesPackage(name, packageName)) return true
   return false
 }
 

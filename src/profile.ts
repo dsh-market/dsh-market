@@ -708,15 +708,38 @@ export function parsePatchRows(text: string): { names: string[]; ids: string[]; 
 }
 
 /** Rows of the patch a package DECLARES through `dsh.bundle.patch`. */
-function readBundlePatchRows(dir: string): { names: string[]; ids: string[]; insertedIds: string[] } {
-  const empty = { names: [], ids: [], insertedIds: [] }
+/**
+ * Where a package's bundle patch lives, according to the package itself.
+ *
+ * `dsh.bundle.patch` is the package's own declaration and the only place the
+ * answer is written down: the path may be a subdirectory (`aegis` declares
+ * `./extensions/dsh/cordis.patch.yml`), not just the package root. Callers
+ * that assumed the root file made a plugin with a declared patch look like
+ * one with none (#646) — so the resolution rule lives here, once.
+ *
+ * @param dir - the installed package directory.
+ * @returns the declared patch file's path, or null when the manifest names
+ *   none (or the manifest cannot be read).
+ */
+export function declaredBundlePatchFile(dir: string): string | null {
   try {
     const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as {
       dsh?: { bundle?: { patch?: unknown } }
     }
     const declared = manifest.dsh?.bundle?.patch
-    if (typeof declared !== 'string' || declared === '') return empty
-    return parsePatchRows(readFileSync(join(dir, declared), 'utf8'))
+    if (typeof declared !== 'string' || declared === '') return null
+    return join(dir, declared)
+  } catch {
+    return null
+  }
+}
+
+function readBundlePatchRows(dir: string): { names: string[]; ids: string[]; insertedIds: string[] } {
+  const empty = { names: [], ids: [], insertedIds: [] }
+  const file = declaredBundlePatchFile(dir)
+  if (file === null) return empty
+  try {
+    return parsePatchRows(readFileSync(file, 'utf8'))
   } catch {
     return empty
   }

@@ -23,7 +23,7 @@ import { pathToFileURL } from 'node:url'
 import { asChannel, type Channel } from './channels.ts'
 import { asRegion, normalizeGithubProxy, type Region } from './regions.ts'
 import { logEvent } from './log.ts'
-import { entryArtifactExists } from './profile.ts'
+import { declaredBundlePatchFile, entryArtifactExists } from './profile.ts'
 
 interface HotRow {
   id: string
@@ -518,14 +518,22 @@ export async function hotMount(ctx: HotContext, profileDir: string, packageName:
         reason: '宿主不支持热挂载(include 插件不可导入),需重启 / the host cannot hot-mount (include plugin unavailable); restart required',
       }
     }
-    let patchText: string | null
-    try {
-      patchText = readFileSync(
-        join(profileDir, 'node_modules', packageName, 'cordis.patch.yml'),
-        'utf8',
-      )
-    } catch {
-      patchText = null
+    // Where the patch lives is the PACKAGE's decision, declared as
+    // `dsh.bundle.patch` — `aegis` keeps it in `./extensions/dsh/`. Reading
+    // only the package root made a plugin whose patch is declared elsewhere
+    // look like one with no bundle at all, and the user was told "no bundle
+    // patch … nothing to hot-mount" for a package that plainly has one
+    // (#646). The root file stays as the fallback: it is the long-standing
+    // convention, and `profile.ts` resolves the declared field for everything
+    // else, so the two now agree on where a patch is.
+    const packageRoot = join(profileDir, 'node_modules', packageName)
+    const declared = declaredBundlePatchFile(packageRoot)
+    let patchText: string | null = null
+    for (const file of declared !== null ? [declared] : [join(packageRoot, 'cordis.patch.yml')]) {
+      try {
+        patchText = readFileSync(file, 'utf8')
+        break
+      } catch { /* try the next location */ }
     }
     let rows: HotRow[] | null
     if (patchText !== null) {

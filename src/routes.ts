@@ -28,6 +28,7 @@ import {
   BOOT_ID, cancelActive, probePnpm, progress, provisionPnpm, runDshPlugin, TARGET_RE,
   type PluginCommandRuntime,
 } from './dsh-cli.ts'
+import { packageOfEntryName } from './entry-identity.ts'
 import { addProfileBundle, dropFromManifest, hasLoadableEntry, holdsNativeAddon, INBOX_BUNDLES, isDshProfileName, profileDir, readGitResolutionCommit, readInstalled, readInstalledManifest, readInstalledRepoEvidence, readInstalledVersion, readLockCommits, readProfileBundles, readProfileManifestSnapshot, removeProfileBundle, restoreProfileManifest, setAllowBuilds, type ProfileManifestSnapshot } from './profile.ts'
 import { assessProfile, classifyPeer, introducedDuplicateNames, introducedRisks, type CompatibilityRisk } from './compatibility.ts'
 import { runningAgentIds, type AgentsLookup } from './agents.ts'
@@ -561,7 +562,15 @@ export function mountMarketRoutes(
     const live = new Set(listHotMounts())
     for (const entry of host.loader.entries()) {
       if (entry.fiber === undefined) continue
-      if (entry.options.name !== undefined) live.add(entry.options.name)
+      if (entry.options.name !== undefined) {
+        live.add(entry.options.name)
+        // A SUBPATH entry is up, and its package is therefore up — but the
+        // package name never appears as an entry name (#646). Without this,
+        // a plugin mounted as `aegis/extensions/dsh/index.js` reads as "not
+        // enabled / needs restart" while its entry is visibly live.
+        const owner = packageOfEntryName(String(entry.options.name))
+        if (owner !== null) live.add(owner)
+      }
       // Entry IDS too, under a `#` prefix that cannot collide with a package
       // name. A CARRIER bundle's row names the package it mounts, not
       // itself (#156: @tt-a1i/archify-dsh inserts an entry named
