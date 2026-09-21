@@ -170,6 +170,17 @@ describe('holdsNativeAddon (#441)', () => {
     expect(holdsNativeAddon('web', 'dsh-music-huazai')).toBe(true)
   })
 
+  it('finds an addon in optionalDependencies, which is how SinglePlayer ships node-hid', () => {
+    // @fenglin-dev's 1.44.0 uninstall of SinglePlayer still offered a page
+    // refresh: node-hid is optional, and asking only `dependencies` treated
+    // the plugin as ordinary JavaScript. The files are not released until
+    // the process exits, so that prompt is the one that cannot help.
+    const dir = writeProfile({ dependencies: {} })
+    packageAt(dir, 'dsh-music-huazai', { name: 'dsh-music-huazai', optionalDependencies: { 'node-hid': '3.4.0' } })
+    packageAt(dir, 'node-hid', { name: 'node-hid' }, ['build/Release'])
+    expect(holdsNativeAddon('web', 'dsh-music-huazai')).toBe(true)
+  })
+
   it('recognizes all three conventional layouts, on the package itself too', () => {
     const dir = writeProfile({ dependencies: {} })
     packageAt(dir, 'gyp-built', { name: 'gyp-built' }, ['build/Release'])
@@ -186,7 +197,12 @@ describe('holdsNativeAddon (#441)', () => {
     const dir = writeProfile({ dependencies: {} })
     packageAt(dir, 'dsh-loop', { name: 'dsh-loop', dependencies: { 'plain-dep': '1.0.0' } }, ['dist', 'lib'])
     packageAt(dir, 'plain-dep', { name: 'plain-dep' }, ['dist'])
+    packageAt(dir, 'optional-plain', {
+      name: 'optional-plain',
+      optionalDependencies: { 'plain-dep': '1.0.0' },
+    }, ['dist', 'lib'])
     expect(holdsNativeAddon('web', 'dsh-loop')).toBe(false)
+    expect(holdsNativeAddon('web', 'optional-plain')).toBe(false)
     expect(holdsNativeAddon('web', 'never-installed')).toBe(false)
   })
 
@@ -198,6 +214,8 @@ describe('holdsNativeAddon (#441)', () => {
     expect(holdsNativeAddon('web', 'broken')).toBe(false)
     packageAt(dir, 'odd', { name: 'odd', dependencies: { '../escape': '1.0.0' } })
     expect(holdsNativeAddon('web', 'odd')).toBe(false)
+    packageAt(dir, 'odd-optional', { name: 'odd-optional', optionalDependencies: { '../escape': '1.0.0' } })
+    expect(holdsNativeAddon('web', 'odd-optional')).toBe(false)
   })
 })
 

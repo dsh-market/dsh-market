@@ -296,7 +296,8 @@ export function readInstalledManifest(profile: string, name: string, explicitDir
 }
 
 /**
- * Whether a package or one of its direct dependencies ships a native addon.
+ * Whether a package or one of its direct dependencies (including
+ * optionalDependencies) ships a native addon.
  *
  * The question behind it: can unloading this plugin actually free its files?
  * For ordinary JavaScript, yes — and on POSIX it does not even matter,
@@ -314,13 +315,16 @@ export function readInstalledManifest(profile: string, name: string, explicitDir
  * the conventional way: node-gyp's `build/Release`, prebuild's `prebuilds/`,
  * and the `binding.gyp` that names the addon in the first place.
  *
- * Direct dependencies are included because that is where these live: the
- * plugin is JavaScript and the addon is a package it depends on, hoisted to
- * the profile root beside it.
+ * Direct `dependencies` and `optionalDependencies` are included because
+ * that is where these live: the plugin is JavaScript and the addon is a
+ * package it depends on, hoisted to the profile root beside it.
+ * optionalDependencies is the same kind of direct declaration —
+ * SinglePlayer ships node-hid there (#441), and asking only `dependencies`
+ * treated that uninstall as ordinary JavaScript.
  * @param profile - profile name.
  * @param name - the installed package to ask about.
  * @param explicitDir - resolved profile directory, when the caller has it.
- * @returns true when a native addon is present in the package or a direct dependency.
+ * @returns true when a native addon is present in the package or a direct (optional) dependency.
  */
 export function holdsNativeAddon(profile: string, name: string, explicitDir?: string): boolean {
   const modules = join(profileDir(profile, explicitDir), 'node_modules')
@@ -333,11 +337,17 @@ export function holdsNativeAddon(profile: string, name: string, explicitDir?: st
   if (shipsAddon(name)) return true
   const manifest = readInstalledManifest(profile, name, explicitDir)
   if (manifest === null || typeof manifest !== 'object') return false
-  const dependencies = (manifest as { dependencies?: unknown }).dependencies
-  if (dependencies === null || typeof dependencies !== 'object') return false
-  return Object.keys(dependencies as Record<string, unknown>)
-    .filter(dependency => PACKAGE_NAME_RE.test(dependency))
-    .some(shipsAddon)
+  const names: string[] = []
+  for (const block of [
+    (manifest as { dependencies?: unknown }).dependencies,
+    (manifest as { optionalDependencies?: unknown }).optionalDependencies,
+  ]) {
+    if (block === null || typeof block !== 'object') continue
+    for (const dependency of Object.keys(block as Record<string, unknown>)) {
+      if (PACKAGE_NAME_RE.test(dependency)) names.push(dependency)
+    }
+  }
+  return names.some(shipsAddon)
 }
 
 const PACKAGE_NAME_RE = /^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/i

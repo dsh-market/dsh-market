@@ -3935,6 +3935,24 @@ describe('uninstall flow', () => {
     expect(installedSpec('dsh-loop')).toBeUndefined()
   })
 
+  it('does not call the uninstall hot when the addon is an optionalDependency (#441)', async () => {
+    // SinglePlayer keeps node-hid in optionalDependencies. The same
+    // uninstall must not report hot: the files are still held until exit.
+    fake.npm['dsh-loop'] = { latest: '1.0.0', versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } } }
+    await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
+    const installedManifest = join(fake.profileDir, 'node_modules', 'dsh-loop', 'package.json')
+    const manifest = JSON.parse(readFileSync(installedManifest, 'utf8')) as Record<string, unknown>
+    writeFileSync(installedManifest, JSON.stringify({ ...manifest, optionalDependencies: { 'node-hid': '3.4.0' } }))
+    mkdirSync(join(fake.profileDir, 'node_modules', 'node-hid', 'build', 'Release'), { recursive: true })
+    writeFileSync(join(fake.profileDir, 'node_modules', 'node-hid', 'package.json'), '{"name":"node-hid","version":"3.4.0"}')
+
+    const r = await bed.dispatch('POST', '/dsh-market/uninstall', { name: 'dsh-loop' })
+
+    expect(r.status).toBe(200)
+    expect(r.json.hot).toBe(false)
+    expect(installedSpec('dsh-loop')).toBeUndefined()
+  })
+
   it('removes the plugin (live when hot mounted) and protects the market itself', async () => {
     fake.npm['dsh-loop'] = { latest: '1.0.0', versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } } }
     await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
