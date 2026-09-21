@@ -8,7 +8,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync, renameSync, statSy
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { resolveDshHome } from './home-paths.ts'
-import { githubRemoteIdentities, githubRepoIdentities, isGitHostedSpec } from './sources.ts'
+import { githubRemoteIdentities, githubRepoIdentities, isGitHostedSpec, repoOfTarget } from './sources.ts'
 
 /**
  * Whether a profile name follows DSH's own directory-name contract.
@@ -499,9 +499,21 @@ export function readInstalledRepoEvidence(
 ): InstalledRepoEvidence {
   if (!PACKAGE_NAME_RE.test(name)) return { identities: [], hints: [] }
   const local = /^(?:link|file):/i.test(spec)
-  // A spec that names its own source is the authority on it; see above.
+  // A spec that names its own source is the authority on it; see above. It
+  // is also the ANSWER, not just the thing not to second-guess: deriving
+  // nothing left a plugin installed from a URL — the shape a China-region
+  // install produces, `https://<proxy>/https://codeload.github.com/o/r/
+  // tar.gz/<sha>` — with no identity at all, so its catalog card never read
+  // as installed (#432's symptom; its proposed mechanism, a `file:` spec
+  // with a sibling url-<hash>.json, is not the layout the current dsh CLI
+  // writes — measured, the spec keeps the https URL).
+  //
+  // The URL still must not be resolved through the package's OWN manifest:
+  // a fork installed as `github:myfork/plugin` carries upstream's repository
+  // field, and trusting it made upstream's card read as installed (#580).
   if (!local && (isGitHostedSpec(spec) || /^https?:/i.test(spec.trim()))) {
-    return { identities: [], hints: [] }
+    const repo = repoOfTarget(spec)
+    return repo === null ? { identities: [], hints: [] } : { identities: [repo], hints: [] }
   }
   const root = profileDir(profile, explicitDir)
   const sourceDir = local ? localSpecDirectory(root, spec) : null

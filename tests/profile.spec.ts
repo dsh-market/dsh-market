@@ -241,6 +241,27 @@ describe('readInstalledRepoEvidence (#141)', () => {
       .toEqual({ identities: [], hints: [] })
   })
 
+  it('reads the identity off a proxy-prefixed codeload URL (#432)', () => {
+    // What a China-region install actually leaves in the manifest —
+    // measured with the current dsh CLI, which keeps the https URL rather
+    // than rewriting it to a `file:` spec (the layout #432's fix assumed).
+    // No manifest, no checkout: the URL is the only evidence, and it is
+    // enough.
+    const dir = writeProfile({
+      dependencies: {
+        'dsh-plug': 'https://gh-proxy.com/https://codeload.github.com/owner/repo/tar.gz/666df7c10035f7e26f27ec214fe5ae3173435f34',
+      },
+    })
+    mkdirSync(join(dir, 'node_modules', 'dsh-plug'), { recursive: true })
+    const spec = 'https://gh-proxy.com/https://codeload.github.com/owner/repo/tar.gz/666df7c10035f7e26f27ec214fe5ae3173435f34'
+    expect(readInstalledRepoEvidence('web', 'dsh-plug', spec))
+      .toEqual({ identities: ['owner/repo'], hints: [] })
+    // A direct codeload install (no region) behaves the same.
+    expect(readInstalledRepoEvidence('web', 'dsh-plug',
+      'https://codeload.github.com/owner/repo/tar.gz/666df7c10035f7e26f27ec214fe5ae3173435f34').identities)
+      .toEqual(['owner/repo'])
+  })
+
   it('does NOT read the manifest for a spec that already names its source (#544/#548)', () => {
     // A fork installed as github:myfork/plugin almost always still declares
     // the UPSTREAM repository, because nobody edits that field when forking.
@@ -256,12 +277,18 @@ describe('readInstalledRepoEvidence (#141)', () => {
       repository: { type: 'git', url: 'git+https://github.com/upstream/dsh-plug.git' },
     }))
 
-    expect(readInstalledRepoEvidence('web', 'dsh-plug', 'github:myfork/dsh-plug'))
-      .toEqual({ identities: [], hints: [] })
-    // Same for a Release archive and a raw git+https spec: each states its
-    // own source already.
-    expect(readInstalledRepoEvidence('web', 'dsh-plug', 'https://github.com/myfork/dsh-plug/releases/download/v1/p.tgz'))
-      .toEqual({ identities: [], hints: [] })
+    // The property is "the manifest never supplies the identity here", and
+    // the sharpest way to state it is the fork's own repo — NOT an empty
+    // list. Emptiness was how this was written while the spec contributed
+    // nothing at all; now that it does (#432), empty would also mean a
+    // URL-installed plugin has no identity, which is the bug being fixed.
+    const fork = readInstalledRepoEvidence('web', 'dsh-plug', 'github:myfork/dsh-plug')
+    expect(fork.identities).toEqual(['myfork/dsh-plug'])
+    expect(fork.identities).not.toContain('upstream/dsh-plug')
+    // A Release archive states its own source too — and it is the fork's.
+    const asset = readInstalledRepoEvidence('web', 'dsh-plug', 'https://github.com/myfork/dsh-plug/releases/download/v1/p.tgz')
+    expect(asset.identities).not.toContain('upstream/dsh-plug')
+    // A host this build cannot parse yields nothing rather than a guess.
     expect(readInstalledRepoEvidence('web', 'dsh-plug', 'git+https://gitea.example/me/dsh-plug.git'))
       .toEqual({ identities: [], hints: [] })
   })
