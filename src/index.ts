@@ -4,7 +4,9 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import { dirname, isAbsolute } from 'node:path'
 import { createDesktopPluginRuntime, setHostPackageManager, type DesktopPnpmLike, type HostPackageManager } from './dsh-cli.ts'
+import { createOfficialDesktopRuntime, type OfficialPluginManagerLike } from './official-desktop.ts'
 import { isDshProfileName } from './profile.ts'
 import { mountMarketRoutes, type MarketConfig, type MarketHost } from './routes.ts'
 import { installDesktopMarketSettings, installMarketSettings } from './settings.ts'
@@ -29,6 +31,7 @@ export type Config = Partial<Pick<MarketConfig, 'profile' | 'allowRestart' | 'ma
 interface ProfileContextLike {
   readonly name: string
   readonly dir: string
+  readonly installAnchor?: string
   readonly packageManager?: unknown
 }
 
@@ -134,6 +137,38 @@ export function apply(ctx: Context, config?: Config): void {
       // its name, and never with somebody else's.
       const profileContext = ctx.get('profileContext') as ProfileContextLike | undefined
       const launched = launchedProfile(profileContext)
+      // The official Electron app owns this profile. Its CLI explicitly
+      // refuses `--profile desktop`; use the app's pluginManager service.
+      // Looking it up at request time lets the market mount before the
+      // service while still failing closed if it never becomes available.
+      const officialElectron = launched?.name === 'desktop'
+        && typeof profileContext?.installAnchor === 'string'
+        && /[/\\]app\.asar[/\\]dsh[/\\]package\.json$/iu.test(profileContext.installAnchor)
+      if (officialElectron && config?.profile === undefined) {
+        const runtime = createOfficialDesktopRuntime(
+          () => hostCtx.get('pluginManager') as OfficialPluginManagerLike | undefined,
+          launched.name,
+          launched.dir,
+        )
+        const resolved: MarketConfig = {
+          profile: launched.name,
+          profileDirectory: launched.dir,
+          desktopHost: true,
+          allowRestart: false,
+          maxSnapshots: config?.maxSnapshots,
+          ...(typeof profileContext?.installAnchor === 'string' && isAbsolute(profileContext.installAnchor)
+            ? { dshInstallDir: dirname(profileContext.installAnchor) } : {}),
+        }
+        installDesktopMarketSettings(ctx)
+        host.effect(() => {
+          const disposeRoutes = mountMarketRoutes(host, resolved, runtime, agentsLookupOf(ctx))
+          return async () => {
+            disposeRoutes()
+            await runtime.dispose()
+          }
+        }, 'dsh-market: official Desktop routes and package operations')
+        return
+      }
       // The launcher's own package manager, when it publishes one. Registering
       // it here covers both the pnpm probe and every install spawn, since the
       // invocation's environment reaches both through spawnEnv (#653).

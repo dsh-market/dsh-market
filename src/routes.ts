@@ -113,6 +113,8 @@ export interface MarketConfig {
   profile: string
   /** Host-authoritative profile directory; ordinary DSH derives it from DSH_HOME. */
   profileDirectory?: string
+  /** Installation-owned bundles live beside this host, outside the Desktop profile. */
+  dshInstallDir?: string
   /**
    * Whether a DSH Desktop shell serves this process — the shell owns the
    * window and the process lifecycle, which is what the capability bits mean
@@ -265,6 +267,9 @@ export function mountMarketRoutes(
     throw new Error(message)
   }
   const activeProfileDir = profileDir(config.profile, config.profileDirectory)
+  const analyzeActiveProfile = () => analyzeProfile(activeProfileDir, {
+    ...(config.dshInstallDir === undefined ? {} : { dshInstallDir: config.dshInstallDir }),
+  })
   const persistentLogFile = join(activeProfileDir, '.dsh-market', 'log.ndjson')
   const discoveryManifests = new DiscoveryManifestIndex(
     join(activeProfileDir, '.dsh-market', 'discovery-compatibility-v1.json'),
@@ -1057,7 +1062,7 @@ export function mountMarketRoutes(
    */
   function restoredBootErrors(): string[] {
     try {
-      return analyzeProfile(activeProfileDir).summary.errors
+      return analyzeActiveProfile().summary.errors
     } catch (error) {
       logEvent('warn', 'restore', `post-restore analysis failed: ${error instanceof Error ? error.message : String(error)}`)
       return []
@@ -1081,7 +1086,7 @@ export function mountMarketRoutes(
    */
   function orphanBundles(): string[] {
     try {
-      return analyzeProfile(activeProfileDir).bundles
+      return analyzeActiveProfile().bundles
         // Not an in-box bundle we merely could not locate (#369): those are
         // supplied by the dsh installation, and failing to find one is a gap
         // in what this process can see rather than a profile that will not
@@ -1978,7 +1983,7 @@ export function mountMarketRoutes(
           return
         }
         try {
-          const report = analyzeProfile(activeProfileDir)
+          const report = analyzeActiveProfile()
           // #201: attach the #200 directional verdict to every peer row so the
           // diagnostics UI can tier risk / warning / info without recomputing
           // (the client cannot see peerDependenciesMeta on disk).
@@ -2720,7 +2725,7 @@ export function mountMarketRoutes(
         // is invisible in a manifest listing on its own.
         const snapshot: string[] = []
         try {
-          const report = analyzeProfile(activeProfileDir)
+          const report = analyzeActiveProfile()
           const installed = readInstalled(config.profile, activeProfileDir)
           snapshot.push(`dependencies (${String(Object.keys(installed).length)}):`)
           for (const [name, spec] of Object.entries(installed)) snapshot.push(`  ${name}: ${spec}`)

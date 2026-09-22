@@ -17,6 +17,7 @@ const state = vi.hoisted(() => ({
     },
   },
   factoryArgs: [] as unknown[][],
+  officialFactoryArgs: [] as unknown[][],
   packageManagers: [] as unknown[],
 }))
 
@@ -27,6 +28,13 @@ vi.mock('../src/dsh-cli.ts', () => ({
   },
   setHostPackageManager: (invocation: unknown) => {
     state.packageManagers.push(invocation)
+  },
+}))
+
+vi.mock('../src/official-desktop.ts', () => ({
+  createOfficialDesktopRuntime: (...args: unknown[]) => {
+    state.officialFactoryArgs.push(args)
+    return state.runtime
   },
 }))
 
@@ -66,6 +74,7 @@ beforeEach(() => {
   state.routeDisposals = 0
   state.runtimeDisposals = 0
   state.factoryArgs = []
+  state.officialFactoryArgs = []
   state.packageManagers = []
 })
 
@@ -84,11 +93,14 @@ describe('profile the launcher booted (#639)', () => {
     expect(state.mounts[0].config.desktopHost).toBeUndefined()
   })
 
-  it('uses the launcher profile when no flag and no desktopProfiles service exist', () => {
+  it('uses the official manager rather than the forbidden CLI for Electron desktop', () => {
     // The official desktop host starts a profile through the launcher's node
     // entry: no `--profile` on argv, no `desktopProfiles` service. The market
     // used to answer `web` and write every install there.
-    const ctx = new FakeContext({ webServer: {}, loader: {}, profileContext: launcher })
+    const ctx = new FakeContext({
+      webServer: {}, loader: {},
+      profileContext: { ...launcher, installAnchor: '/Applications/DSH.app/Contents/Resources/app.asar/dsh/package.json' },
+    })
 
     apply(ctx as never)
 
@@ -97,8 +109,19 @@ describe('profile the launcher booted (#639)', () => {
       profile: 'desktop',
       profileDirectory: '/home/u/.dsh/profiles/desktop',
     })
-    // The CLI runtime stays: this branch is not the Desktop pnpm path.
-    expect(state.mounts[0].runtime).toBeUndefined()
+    expect(state.mounts[0].runtime).toBe(state.runtime)
+    expect(state.officialFactoryArgs).toHaveLength(1)
+    expect(state.officialFactoryArgs[0]?.slice(1)).toEqual(['desktop', launcher.dir])
+    expect(state.mounts[0].config).toMatchObject({ desktopHost: true, allowRestart: false })
+  })
+
+  it("uses the launcher's installation anchor for bundled package checks", () => {
+    const ctx = new FakeContext({
+      webServer: {}, loader: {},
+      profileContext: { ...launcher, installAnchor: '/Applications/DSH.app/Contents/Resources/app.asar/dsh/package.json' },
+    })
+    apply(ctx as never)
+    expect(state.mounts[0].config.dshInstallDir).toBe('/Applications/DSH.app/Contents/Resources/app.asar/dsh')
   })
 
   it('lets an explicit cordis.yml profile win, and never carries the other profile\'s directory', () => {

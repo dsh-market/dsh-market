@@ -34,6 +34,17 @@ import { findDshInstallDir } from './dsh-install.ts'
 import { resolveDshHome } from './home-paths.ts'
 import { INBOX_BUNDLES, readBundleRules, suggestOrder, validateOrder } from './order.ts'
 
+// Electron's app.asar packages can be loadable by the host while invisible to
+// filesystem probes made from a profile plugin. Keep this fallback limited to
+// packages confirmed to ship with the official Desktop app, and only use it
+// when the install anchor is the packaged app.
+const DESKTOP_HOST_BUNDLES = new Set(['@deepseek-ai/dsh-experimental-agent-team-profile'])
+const DESKTOP_HOST_LOADERS = new Set(['@deepseek-ai/dsh-mcp-client'])
+
+function isPackagedDesktopInstall(dshInstallDir: string | null): boolean {
+  return dshInstallDir !== null && /[/\\]app\.asar[/\\]dsh$/iu.test(dshInstallDir)
+}
+
 export { findDshInstallDir } from './dsh-install.ts'
 
 /** js-yaml dialect for `!!js` scalars — identical to dsh-app-boot's entryListSchema. */
@@ -888,13 +899,15 @@ export function buildBundleLayers(
   dshInstallDir: string | null,
 ): { bundles: BundleLayer[]; layers: LayerInput[] } {
   const bundles: BundleLayer[] = bundleNames.map((name) => {
+    const hostProvided = INBOX_BUNDLES.has(name)
+      || (isPackagedDesktopInstall(dshInstallDir) && DESKTOP_HOST_BUNDLES.has(name))
     // The real loader gives the DSH installation first refusal for in-box
     // bundles. Desktop keeps that installation private from plugins, so a
     // DIRECT profile-local copy with the same official name is only a stale
     // shadow, never evidence for the layer the running host loaded (#371).
     // Keep walking the profile anchor's parent search paths: Desktop heals an
     // authoritative host fallback at <profiles>/node_modules.
-    const ignoredProfilePackage = dshInstallDir === null && INBOX_BUNDLES.has(name)
+    const ignoredProfilePackage = dshInstallDir === null && hostProvided
       ? join(profileDirectory, 'node_modules', name)
       : undefined
     const anchors: Array<{ anchor: string | null; ignoredPackageDirectory?: string }> = [
@@ -913,7 +926,7 @@ export function buildBundleLayers(
     const layer: BundleLayer = {
       name,
       source: specs[name] ?? '(not a direct dependency)',
-      kind: INBOX_BUNDLES.has(name) ? 'official' : 'community',
+      kind: hostProvided ? 'official' : 'community',
       directory,
       patchPath: null,
       error: null,
@@ -931,7 +944,7 @@ export function buildBundleLayers(
       // fatal verdict and rolled back a good update (#369) — while `dsh
       // --dump-config` on the same profile exited 0. Unknown has to read as
       // unknown; the profile's own bundles are still judged normally.
-      if (INBOX_BUNDLES.has(name)) {
+      if (hostProvided) {
         layer.error = null
         layer.unresolvedInbox = true
         return layer
@@ -1136,6 +1149,14 @@ export function analyzeProfile(profileDirectory: string, options: CheckOptions =
   }
   for (const { row, packageName } of candidates.values()) {
     if (profilePackageInstalled(profileDirectory, packageName)) continue
+    // Official Electron keeps built-in packages beside app.asar, not inside
+    // the writable profile. The loader can resolve them from this anchor.
+    if (dshInstall !== null && core.has(packageName)
+      && resolvePackageDir(join(dshInstall, 'package.json'), packageName) !== null) continue
+    if (isPackagedDesktopInstall(dshInstall) && DESKTOP_HOST_LOADERS.has(packageName)) {
+      warnings.push(`${row.layer}: bundled Desktop loader ${packageName} could not be independently resolved from app.asar`)
+      continue
+    }
     const message = `${row.layer}: loader package ${packageName} is not installed in the profile`
     if (row.activation === 'required') errors.push(`${message} — the profile will fail to boot`)
     else warnings.push(`${message} — boot will fail if its disabled expression enables the entry`)

@@ -413,6 +413,63 @@ describe('user patch package resolution (#205)', () => {
     ])
   })
 
+  it('accepts an official host package in a Desktop user patch', () => {
+    const dir = pdir()
+    const dshInstall = join(tmp, 'dsh-install')
+    writeProfile(dir, { name: 'desktop-profile', dependencies: {} })
+    writeProfile(dshInstall, { name: '@deepseek-ai/dsh' })
+    writeLoadablePackage(dshInstall, '@deepseek-ai/dsh-mcp-client')
+    writeFileSync(join(dir, 'cordis.patch.yml'), dump([
+      { insert: [{ id: 'official-mcp', name: '@deepseek-ai/dsh-mcp-client' }] },
+    ]))
+
+    const report = analyzeProfile(dir, { dshInstallDir: dshInstall, homeDir: join(tmp, 'empty-home') })
+    expect(resolutionErrors(report.summary.errors)).toEqual([])
+  })
+
+  it('does not call confirmed app.asar host packages missing profile dependencies', () => {
+    const dir = pdir()
+    const dshInstall = join(tmp, 'resources', 'app.asar', 'dsh')
+    writeProfile(dir, {
+      name: 'desktop-profile',
+      dependencies: {},
+      dsh: { profile: { bundles: ['@deepseek-ai/dsh-experimental-agent-team-profile'] } },
+    })
+    writeProfile(dshInstall, { name: '@deepseek-ai/dsh' })
+    writeFileSync(join(dir, 'cordis.patch.yml'), dump([
+      { insert: [{ id: 'official-mcp', name: '@deepseek-ai/dsh-mcp-client' }] },
+    ]))
+
+    const report = analyzeProfile(dir, { dshInstallDir: dshInstall, homeDir: join(tmp, 'empty-home') })
+    expect(report.bundles[0]).toMatchObject({
+      kind: 'official',
+      error: null,
+      unresolvedInbox: true,
+    })
+    expect(report.summary.errors).toEqual([])
+    expect(report.summary.warnings).toContain(
+      'user-patch: bundled Desktop loader @deepseek-ai/dsh-mcp-client could not be independently resolved from app.asar',
+    )
+  })
+
+  it('keeps missing Agent Team and MCP packages fatal outside the packaged Desktop', () => {
+    const dir = pdir()
+    const dshInstall = join(tmp, 'dsh-install')
+    writeProfile(dir, {
+      name: 'web-profile',
+      dependencies: {},
+      dsh: { profile: { bundles: ['@deepseek-ai/dsh-experimental-agent-team-profile'] } },
+    })
+    writeProfile(dshInstall, { name: '@deepseek-ai/dsh' })
+    writeFileSync(join(dir, 'cordis.patch.yml'), dump([
+      { insert: [{ id: 'official-mcp', name: '@deepseek-ai/dsh-mcp-client' }] },
+    ]))
+
+    const report = analyzeProfile(dir, { dshInstallDir: dshInstall, homeDir: join(tmp, 'empty-home') })
+    expect(report.summary.errors.some(error => error.includes('dsh-experimental-agent-team-profile'))).toBe(true)
+    expect(report.summary.errors.some(error => error.includes('dsh-mcp-client'))).toBe(true)
+  })
+
   it('does not skip a broken nearer package directory for a healthy parent copy', () => {
     const profiles = join(tmp, 'profiles')
     const dir = join(profiles, 'web')
