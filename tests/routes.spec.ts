@@ -732,6 +732,26 @@ describe('sameOrigin', () => {
     expect(sameOrigin(req({ origin: 'http://127.0.0.1:3080' }))).toBe(false)
   })
 
+  it('refuses a DNS-rebinding request, where Origin and Host agree on the attacker (#678)', () => {
+    // The attack the equality check cannot see: the page is served from
+    // evil.com, that name resolves to 127.0.0.1, and the browser therefore
+    // connects to the loopback listener while sending Origin AND Host as
+    // evil.com. Equality holds for the attacker; Host is the only part of
+    // it they cannot forge, so it is what has to name a loopback authority.
+    expect(sameOrigin(req({ host: 'evil.com', origin: 'http://evil.com' }))).toBe(false)
+    expect(sameOrigin(req({ host: 'evil.com:3080', origin: 'http://evil.com:3080' }))).toBe(false)
+    // …including when the attacker omits Origin, which no browser does.
+    expect(sameOrigin(req({ host: 'evil.com' }))).toBe(false)
+  })
+
+  it('accepts every loopback spelling, because that is what the UI is served from', () => {
+    for (const host of ['127.0.0.1:3080', 'localhost:3080', '[::1]:3080']) {
+      expect(sameOrigin(req({ host, origin: `http://${host}` })), host).toBe(true)
+    }
+    // `localhost.evil.com` is a subdomain, not `localhost`.
+    expect(sameOrigin(req({ host: 'localhost.evil.com', origin: 'http://localhost.evil.com' }))).toBe(false)
+  })
+
   it('still refuses a page whose Origin is present and different', () => {
     // The half that has to survive: this is the CSRF case, and a browser
     // always sends Origin here, so the check still sees it.
