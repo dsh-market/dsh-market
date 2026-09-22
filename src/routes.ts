@@ -37,7 +37,7 @@ import { applyBundleOrder, mergeOrder, readBundleRules, readBundleStack, validat
 import { applyPreset, deletePreset, listPresets, previewPreset, savePreset } from './presets.ts'
 import { createProfileSnapshot, DEFAULT_MAX_SNAPSHOTS, deleteSnapshot, listSnapshots, restoreSnapshot } from './snapshot.ts'
 import { trialValidate } from './trial.ts'
-import { codeloadAllowBuildsKey, findCatalogEntryForLocal, findInstalledAlias, gitCommitOfTarget, githubCommitOfTarget, githubTargetAtCommit, gitAllowBuildsKey, gitTargetAtCommit, gitUpdateTarget, hostedRepoKey, installTargetFor, isGenerationLink, isLocalSpec, NPM_NAME_RE, repoOfTarget, restoreBlockedByWorkspace, restoreTargetForLocal, workspaceProtocolDeps } from './sources.ts'
+import { codeloadAllowBuildsKey, findCatalogEntryForLocal, findInstalledAlias, gitCommitOfTarget, githubCommitOfTarget, githubTargetAtCommit, gitAllowBuildsKey, gitRefOfTarget, gitTargetAtCommit, gitUpdateTarget, hostedRepoKey, pinnedGitAllowBuildsKey, installTargetFor, isGenerationLink, isLocalSpec, NPM_NAME_RE, repoOfTarget, restoreBlockedByWorkspace, restoreTargetForLocal, workspaceProtocolDeps } from './sources.ts'
 import { failureDetail, groupConflictsByOwner, isStaleUpdate, parseIgnoredBuilds, parsePrepareNotAllowed, pnpmBlockedByOpenFiles, pnpmNeverStarted, RELEASE_AGE_OVERRIDE, retargetCollections, validateAddedPlugins, withHoistRecovery } from './install.ts'
 import { classifyPnpmFailure } from './pnpm-compat.ts'
 import { asChannel, CHANNELS, DIST_TAG, resolveChannel, type Channel } from './channels.ts'
@@ -48,7 +48,7 @@ import {
 import { resolveRegion } from './region-probe.ts'
 import { acceleratedTarget, resolveHeadCommit } from './accelerate.ts'
 import { updateNotesFor } from './changelog.ts'
-import { checkUpdates, compareVersions, fetchNpmLatest, invalidateUpdates, isUpgrade, latestPublishedRecently, setUpdateRegistry, versionOnChannel } from './updates.ts'
+import { checkUpdates, compareVersions, fetchNpmLatest, invalidateUpdates, resolveGitRemoteHead, isUpgrade, latestPublishedRecently, setUpdateRegistry, versionOnChannel } from './updates.ts'
 import { createThemeManager, type LoaderEntry } from './themes.ts'
 import { readJsonBody, sameOrigin, sendJson } from './http.ts'
 import { detectedDebugger, detectedSupervisor, restartAllowed, scheduleRestart, servingPort, trustedRestartRequest, trustedDownloadRequest, type RecoveryHandoffConfig } from './restart.ts'
@@ -4188,12 +4188,19 @@ sendJson(response, 200, { updates })
             const repo = repoOfTarget(spec)?.split('#')[0] ?? null
             // A proxied legacy install and the mirror-resolved github form
             // both already carry their commit; only a bare shortcut asks.
-            const pinned = githubCommitOfTarget(spec)
-              ?? (repo === null ? null : await resolveHeadCommit(repo, region))
-            const codeload = pinned === null || pinned === undefined
-              ? null
-              : codeloadAllowBuildsKey(name, spec, pinned)
-            return codeload === null ? [stable] : [stable, codeload]
+            // Off GitHub the same question is asked of the remote itself, over
+            // the ref advertisement the update check already uses — there is no
+            // api.github.com to ask, and the spec's own pin is preferred when
+            // it has one.
+            const pinned = repo !== null
+              ? githubCommitOfTarget(spec) ?? await resolveHeadCommit(repo, region)
+              : gitCommitOfTarget(spec)
+                ?? await resolveGitRemoteHead(spec, gitRefOfTarget(spec) ?? undefined)
+            if (pinned === null || pinned === undefined) return [stable]
+            const pinnedKey = repo !== null
+              ? codeloadAllowBuildsKey(name, spec, pinned)
+              : pinnedGitAllowBuildsKey(name, spec, pinned)
+            return pinnedKey === null ? [stable] : [stable, pinnedKey]
           }
           for (const name of requested) {
             if (installed.includes(name)) {

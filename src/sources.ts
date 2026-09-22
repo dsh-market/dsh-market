@@ -313,7 +313,19 @@ export function gitAllowBuildsKey(name: string, spec: string): string | null {
   // as a literal string, so it has to name the repo the way the spec did.
   // Subpath entries authorize under the repo itself — the `#path:` selector
   // picks a directory out of the same download.
-  return parsed === null ? null : `${name}@git+https://github.com/${parsed.repo}.git`
+  if (parsed !== null) return `${name}@git+https://github.com/${parsed.repo}.git`
+  // Every other git host takes the same shape — the clone URL of the source.
+  // Being GitHub-only here was a hole, not a scope: a gitlab/bitbucket or
+  // self-hosted plugin with a build script got no key at all, so the "allow
+  // build scripts and retry" button wrote the bare name, which pnpm ignores
+  // (#68/#69), and the retry failed exactly as before. Measured on pnpm
+  // 12.4.1: `name@git+https://bitbucket.org/owner/repo.git` and
+  // `name@git+file:///…/repo.git` each authorize the build; the bare name
+  // does not.
+  const shorthand = parseHostShorthand(spec)
+  if (shorthand !== null) return `${name}@git+https://${shorthand.host}/${shorthand.path}.git`
+  const remote = gitRemoteSpelling(spec)
+  return remote === null ? null : `${name}@${remote}`
 }
 
 /**
@@ -336,6 +348,42 @@ export function gitAllowBuildsKey(name: string, spec: string): string | null {
  * @param sha - the commit the install will actually fetch.
  * @returns the key, or null when the spec is not github-hosted.
  */
+/**
+ * The pinned allowBuilds key for a NON-GitHub git source — the other half of
+ * the pair `codeloadAllowBuildsKey` gives GitHub, for the same reason (#285):
+ * the stable clone-URL key is what pnpm 12 matches, while pnpm 11.8.0 — the
+ * version DSH Desktop bundles — matches only the commit-pinned id it names in
+ * its own error.
+ *
+ * Measured on 11.8.0: the stable key leaves a bitbucket install's build
+ * ignored, and `name@https://bitbucket.org/owner/repo/get/<sha>.tar.gz`
+ * authorizes it; for a plain remote the working key is
+ * `name@git+<remote>#<sha>`. Like the codeload one this goes stale the moment
+ * the repository is pushed to, which is why it is written ALONGSIDE the
+ * stable key and never instead of it.
+ */
+export function pinnedGitAllowBuildsKey(name: string, spec: string, sha: string): string | null {
+  if (!/^[0-9a-f]{40}$/.test(sha)) return null
+  const shorthand = parseHostShorthand(spec)
+  if (shorthand !== null) {
+    // GitHub keeps `codeloadAllowBuildsKey`, which knows the proxied spelling
+    // a region install carries.
+    if (shorthand.scheme === 'github') return null
+    const repo = shorthand.path.split('/').pop()!
+    // The archive each host serves — the id pnpm gives the dependency, and
+    // the key its own hint names. Both URLs are pnpm 11/12's spelling, read
+    // off real lockfiles. pnpm 9/10 fetch GitLab through its REST API
+    // instead, but those majors gate builds with `onlyBuiltDependencies`
+    // rather than the `allowBuilds` map this key is written into (measured on
+    // 10.34.5), so their spelling is not this function's business.
+    return shorthand.scheme === 'bitbucket'
+      ? `${name}@https://${shorthand.host}/${shorthand.path}/get/${sha}.tar.gz`
+      : `${name}@https://${shorthand.host}/${shorthand.path}/-/archive/${sha}/${repo}-${sha}.tar.gz`
+  }
+  const remote = gitRemoteSpelling(spec)
+  return remote === null ? null : `${name}@${remote}#${sha}`
+}
+
 export function codeloadAllowBuildsKey(name: string, spec: string, sha: string): string | null {
   const parsed = repoFromTarget(spec)
   if (parsed === null || !/^[0-9a-f]{40}$/.test(sha)) return null
@@ -582,11 +630,26 @@ export function gitTargetAtCommit(spec: string, sha: string): string | null {
     // that declines.
     return /(?:^|&)path:/.test(shorthand.fragment) ? null : `${shorthand.scheme}:${shorthand.path}#${sha}`
   }
-  if (!/^(?:git\+)?(?:https?|ssh|git):\/\//i.test(spec)) return null
   const hash = spec.indexOf('#')
   if (hash !== -1 && /(?:^|&)path:/.test(spec.slice(hash + 1))) return null
-  const remote = hash === -1 ? spec : spec.slice(0, hash)
-  return `${/^https?:\/\//i.test(remote) ? `git+${remote}` : remote}#${sha}`
+  const remote = gitRemoteSpelling(spec)
+  return remote === null ? null : `${remote}#${sha}`
+}
+
+/**
+ * The remote as pnpm spells it: no fragment, and `git+` in front of a plain
+ * `https://` so pnpm 11 and 12 both read it as a git source rather than a
+ * tarball. Null for anything that is not a git transport — including the
+ * scp-like `git@host:owner/repo.git`, which pnpm does not read as git at all.
+ * The transports are the ones `gitTargetAtCommit` already accepted; this
+ * function was factored out of it and must not widen them.
+ */
+function gitRemoteSpelling(spec: string): string | null {
+  const trimmed = spec.trim()
+  if (!/^(?:git\+)?(?:https?|ssh|git):\/\//i.test(trimmed)) return null
+  const hash = trimmed.indexOf('#')
+  const remote = hash === -1 ? trimmed : trimmed.slice(0, hash)
+  return /^https?:\/\//i.test(remote) ? `git+${remote}` : remote
 }
 
 /**

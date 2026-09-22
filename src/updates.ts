@@ -61,7 +61,7 @@ let updatesCache: { key: string; at: number; data: Record<string, UpdateStatus> 
  * advertisement format as GitHub's info/refs; kept here so accelerate.ts
  * does not need to import sources.ts.
  */
-async function resolveGitRemoteHead(spec: string, ref?: string): Promise<string | null> {
+export async function resolveGitRemoteHead(spec: string, ref?: string): Promise<string | null> {
   const url = gitUploadPackUrl(spec)
   if (url === null) return null
   const controller = new AbortController()

@@ -1105,17 +1105,38 @@ export function setAllowBuilds(profile: string, packages: string[], explicitDir?
       map[key] = m[2] ?? 'true'
     }
   }
-  // Bare package names, or the server-derived stable git form
-  // `name@git+https://github.com/owner/repo.git` (#68) — nothing else.
-  const GIT_KEY_RE = /^[A-Za-z0-9@/_.-]+@git\+https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\.git$/
-  // The commit-pinned form pnpm below 11.21 matches instead (#285). Held to
-  // the same shape as the one above rather than loosened into "anything with
-  // a URL in it": this list is what stops a caller writing arbitrary text
-  // into a file pnpm parses, and a wider pattern would spend that guarantee
-  // to save a line.
-  const CODELOAD_KEY_RE = /^[A-Za-z0-9@/_.-]+@https:\/\/codeload\.github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/tar\.gz\/[0-9a-f]{40}$/
+  // What may be written, and nothing else. The allowlist is not a host
+  // trust boundary — every key here is derived from the profile's OWN
+  // manifest or the curated catalog — it is what stops a caller writing
+  // arbitrary text into a file pnpm parses, so each form is spelled out
+  // exactly rather than loosened into "anything with a URL in it".
+  //
+  // A path segment must start with something other than a dot, which is how
+  // `..` traversal would otherwise enter a shape that looks like a repo.
+  const SEG = '[A-Za-z0-9_-][A-Za-z0-9_.-]*'
+  const NAME = '[A-Za-z0-9@/_.-]+'
+  const SHA = '[0-9a-f]{40}'
+  // The stable clone-URL key: github's (#68) and, since #637, every other
+  // host's — pnpm keys a git dependency by the remote it would clone, whoever
+  // serves it. Optionally pinned to a commit, which is the form pnpm 11.8.0
+  // names for a plain remote. https only: the market installs from https
+  // remotes, and an http key would authorize a source it never writes.
+  const GIT_KEY_RE = new RegExp(
+    `^${NAME}@git\\+https://[A-Za-z0-9_.-]+(?::\\d{1,5})?/${SEG}(?:/${SEG})*\\.git(?:#${SHA})?$`,
+  )
+  // The commit-pinned download a host serves, which is what pnpm below 11.21
+  // matches instead (#285): codeload for github, the project archive for
+  // gitlab.com and bitbucket.org (#637). Each branch names its host and its
+  // exact path shape.
+  const ARCHIVE_KEY_RE = new RegExp(
+    `^${NAME}@https://(?:`
+    + `codeload\\.github\\.com/${SEG}/${SEG}/tar\\.gz/${SHA}`
+    + `|bitbucket\\.org/${SEG}/${SEG}/get/${SHA}\\.tar\\.gz`
+    + `|gitlab\\.com/${SEG}(?:/${SEG})+/-/archive/${SHA}/${SEG}-${SHA}\\.tar\\.gz`
+    + ')$',
+  )
   for (const pkg of packages) {
-    if (/^[A-Za-z0-9@/_.-]+$/.test(pkg) || GIT_KEY_RE.test(pkg) || CODELOAD_KEY_RE.test(pkg)) map[pkg] = 'true'
+    if (/^[A-Za-z0-9@/_.-]+$/.test(pkg) || GIT_KEY_RE.test(pkg) || ARCHIVE_KEY_RE.test(pkg)) map[pkg] = 'true'
   }
   // Write back in the file's OWN line ending. Rewriting a CRLF workspace
   // file with LF would leave it mixed, which is the same class of mess this

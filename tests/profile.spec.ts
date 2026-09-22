@@ -724,6 +724,44 @@ describe('manifest rollback (#65)', () => {
 })
 
 describe('setAllowBuilds (#6)', () => {
+  it('accepts the clone-URL and archive keys off GitHub, and only in those exact shapes (#637)', async () => {
+    // Same bargain as the codeload widening below: the allowlist is what
+    // stops a caller writing arbitrary text into a file pnpm parses, so each
+    // new branch names its host and path shape, and the near-misses are
+    // asserted alongside the hits.
+    const { setAllowBuilds } = await import('../src/profile.ts')
+    writeProfile({})
+    const sha = 'b0e6c57ebeeb4796017864f5cd5c66e6ba0899ec'
+    const approved = setAllowBuilds('web', [
+      // Hits: the clone URL of any host, with an optional commit pin, and
+      // the archive gitlab.com / bitbucket.org serve.
+      'p@git+https://gitlab.com/group/sub/plug.git',
+      'p@git+https://gitea.example.com:8443/me/plug.git',
+      `p@git+https://gitea.example.com/me/plug.git#${sha}`,
+      `p@https://bitbucket.org/o/r/get/${sha}.tar.gz`,
+      `p@https://gitlab.com/group/sub/plug/-/archive/${sha}/plug-${sha}.tar.gz`,
+      // Near-misses. A different host wearing an archive shape…
+      `p@https://evil.example.com/o/r/get/${sha}.tar.gz`,
+      // …the right host with no commit pin…
+      'p@https://bitbucket.org/o/r/get/HEAD.tar.gz',
+      // …a path traversal dressed as a repo…
+      `p@https://gitlab.com/../../etc/-/archive/${sha}/x-${sha}.tar.gz`,
+      // …a clone URL over plain http…
+      'p@git+http://gitea.example.com/me/plug.git',
+      // …a local path, which is not a source the market installs from…
+      'p@git+file:///tmp/plug.git',
+      // …and another entry smuggled through a newline.
+      'p@git+https://gitea.example.com/me/plug.git\n  evil: true',
+    ])
+    expect(approved).toEqual([
+      'p@git+https://gitlab.com/group/sub/plug.git',
+      'p@git+https://gitea.example.com:8443/me/plug.git',
+      `p@git+https://gitea.example.com/me/plug.git#${sha}`,
+      `p@https://bitbucket.org/o/r/get/${sha}.tar.gz`,
+      `p@https://gitlab.com/group/sub/plug/-/archive/${sha}/plug-${sha}.tar.gz`,
+    ])
+  })
+
   it('accepts the commit-pinned codeload key, and only in that exact shape (#285)', async () => {
     // The allowlist is what stops a caller writing arbitrary text into a
     // file pnpm parses. Widening it for pnpm <11.21 must not widen it into
@@ -786,11 +824,22 @@ describe('setAllowBuilds (#6)', () => {
     // such entries on every rewrite.
     writeFileSync(join(dir, 'pnpm-workspace.yaml'),
       'packages:\n  - .\n\nallowBuilds:\n  keep-me@git+https://github.com/o/keep-me.git: true\n  plain: false\n')
-    const approved = setAllowBuilds('web', ['dsh-audit@git+https://github.com/omdsh-dev/dsh-audit.git', 'dsh-audit', 'evil@git+https://evil.example/x.git'])
+    // Another host's clone URL is now written too (#637): these keys come
+    // from the profile's own manifest, so refusing them only stopped
+    // gitlab/bitbucket/self-hosted plugins from ever authorizing a build.
+    // What the allowlist still refuses is a key that is not one of the
+    // shapes — here, one carrying a second YAML entry.
+    const approved = setAllowBuilds('web', [
+      'dsh-audit@git+https://github.com/omdsh-dev/dsh-audit.git',
+      'dsh-audit',
+      'other@git+https://gitea.example.com/me/x.git',
+      'evil@git+https://evil.example/x.git\n  evil: true',
+    ])
     expect(approved).toContain('keep-me@git+https://github.com/o/keep-me.git')
     expect(approved).toContain('dsh-audit@git+https://github.com/omdsh-dev/dsh-audit.git')
     expect(approved).toContain('dsh-audit')
-    expect(approved).not.toContain('evil@git+https://evil.example/x.git')
+    expect(approved).toContain('other@git+https://gitea.example.com/me/x.git')
+    expect(approved).not.toContain('evil@git+https://evil.example/x.git\n  evil: true')
     const yaml = readFileSync(join(dir, 'pnpm-workspace.yaml'), 'utf8')
     expect(yaml).toContain('keep-me@git+https://github.com/o/keep-me.git: true')
     expect(yaml).toMatch(/plain: false/)

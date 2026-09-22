@@ -13,7 +13,7 @@ import {
   activeRegion, asRegion, DEFAULT_NPM_REGISTRY, githubRoutesFor, REGIONS, rememberGithubRoute,
   resetGithubRoutePreferences, routesFor, setActiveRegion, setCustomGithubProxy, throughProxy,
 } from '../src/regions.ts'
-import { codeloadAllowBuildsKey, codeloadTarball, githubCommitOfTarget, gitAllowBuildsKey, repoOfTarget } from '../src/sources.ts'
+import { codeloadAllowBuildsKey, codeloadTarball, githubCommitOfTarget, gitAllowBuildsKey, pinnedGitAllowBuildsKey, repoOfTarget } from '../src/sources.ts'
 import { githubProxyInUse, githubUrl, setGithubProxy } from '../src/client/market-data.ts'
 
 const SHA = 'b0e6c57ebeeb4796017864f5cd5c66e6ba0899ec'
@@ -280,5 +280,52 @@ describe('browser-side github URLs', () => {
     setGithubProxy(null)
     expect(githubUrl('https://raw.githubusercontent.com/o/r/HEAD/README.md'))
       .toBe('https://raw.githubusercontent.com/o/r/HEAD/README.md')
+  })
+})
+
+describe('allowBuilds keys off GitHub (#637 follow-up)', () => {
+  const SHA = 'b0e6c57ebeeb4796017864f5cd5c66e6ba0899ec'
+
+  it('gives every git host the clone-URL key pnpm 12 matches', () => {
+    // Measured on 12.4.1: this key authorizes a bitbucket install's build and
+    // a local remote's; the bare name authorizes neither (#68/#69).
+    expect(gitAllowBuildsKey('p', 'gitlab:o/r')).toBe('p@git+https://gitlab.com/o/r.git')
+    expect(gitAllowBuildsKey('p', 'gitlab:group/sub/r')).toBe('p@git+https://gitlab.com/group/sub/r.git')
+    expect(gitAllowBuildsKey('p', 'bitbucket:o/r')).toBe('p@git+https://bitbucket.org/o/r.git')
+    expect(gitAllowBuildsKey('p', 'git+https://gitea.example.com/me/plug.git'))
+      .toBe('p@git+https://gitea.example.com/me/plug.git')
+    // A bare https remote is keyed the way pnpm reads it — with `git+`.
+    expect(gitAllowBuildsKey('p', 'https://gitea.example.com/me/plug.git'))
+      .toBe('p@git+https://gitea.example.com/me/plug.git')
+    // The fragment selects a version of the same source, not another source.
+    expect(gitAllowBuildsKey('p', `git+https://gitea.example.com/me/plug.git#${SHA}`))
+      .toBe('p@git+https://gitea.example.com/me/plug.git')
+  })
+
+  it('refuses specs pnpm does not install as git', () => {
+    // pnpm reads `git@host:owner/repo.git` as a `link:` dependency literally
+    // named `git`, so there is no git key to write for it (#632).
+    expect(gitAllowBuildsKey('p', 'git@gitea.example.com:me/plug.git')).toBeNull()
+    expect(gitAllowBuildsKey('p', 'themer')).toBeNull()
+    expect(gitAllowBuildsKey('p', '^1.2.3')).toBeNull()
+    expect(gitAllowBuildsKey('p', 'link:../themer')).toBeNull()
+  })
+
+  it('pins the key the way each host names the download', () => {
+    // pnpm 11.8.0 — what Desktop bundles — matches only this form.
+    expect(pinnedGitAllowBuildsKey('p', 'bitbucket:o/r', SHA))
+      .toBe(`p@https://bitbucket.org/o/r/get/${SHA}.tar.gz`)
+    expect(pinnedGitAllowBuildsKey('p', 'gitlab:group/sub/r', SHA))
+      .toBe(`p@https://gitlab.com/group/sub/r/-/archive/${SHA}/r-${SHA}.tar.gz`)
+    expect(pinnedGitAllowBuildsKey('p', 'git+https://gitea.example.com/me/plug.git', SHA))
+      .toBe(`p@git+https://gitea.example.com/me/plug.git#${SHA}`)
+  })
+
+  it('leaves GitHub to codeloadAllowBuildsKey, and refuses a non-sha', () => {
+    expect(pinnedGitAllowBuildsKey('p', 'github:o/r', SHA)).toBeNull()
+    expect(codeloadAllowBuildsKey('p', 'github:o/r', SHA))
+      .toBe(`p@https://codeload.github.com/o/r/tar.gz/${SHA}`)
+    expect(pinnedGitAllowBuildsKey('p', 'bitbucket:o/r', 'main')).toBeNull()
+    expect(pinnedGitAllowBuildsKey('p', 'themer', SHA)).toBeNull()
   })
 })

@@ -4382,6 +4382,56 @@ describe('build-script approval flow (#6)', () => {
     expect(yaml).toContain(`plug-c@https://codeload.github.com/o/r/tar.gz/${sha}: true`)
   })
 
+  it('writes both allowBuilds key forms for a gitlab-sourced dependency (#637)', async () => {
+    // Until #637 these installs were replaced by a same-named npm package on
+    // update, so nobody reached the build-approval layer with one. Now they
+    // survive, and the approval has to work: the key was GitHub-only, so the
+    // button wrote a bare name pnpm ignores and the retry failed unchanged.
+    const sha = 'b0e6c57ebeeb4796017864f5cd5c66e6ba0899ec'
+    mkdirSync(join(profileDir('web'), 'node_modules', 'plug-gl'), { recursive: true })
+    writeFileSync(join(profileDir('web'), 'node_modules', 'plug-gl', 'package.json'), '{"name":"plug-gl"}')
+    const manifestPath = join(profileDir('web'), 'package.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    manifest.dependencies = { ...manifest.dependencies, 'plug-gl': `gitlab:group/sub/plug#${sha}` }
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+    // The installed pin is authoritative; an approval must not need the network.
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('offline') }))
+
+    const approve = await bed.dispatch('POST', '/dsh-market/approve-builds', { packages: ['plug-gl'] })
+
+    expect(approve.status).toBe(200)
+    const yaml = readFileSync(join(profileDir('web'), 'pnpm-workspace.yaml'), 'utf8')
+    // pnpm 12 matches the clone URL…
+    expect(yaml).toContain('plug-gl@git+https://gitlab.com/group/sub/plug.git: true')
+    // …and 11.8.0, the version Desktop bundles, only the archive it names.
+    expect(yaml).toContain(`plug-gl@https://gitlab.com/group/sub/plug/-/archive/${sha}/plug-${sha}.tar.gz: true`)
+  })
+
+  it('resolves a self-hosted remote\'s HEAD from its ref advertisement for the pinned key (#637)', async () => {
+    const sha = 'c1d2e3f405162738495a6b7c8d9e0f1122334455'
+    mkdirSync(join(profileDir('web'), 'node_modules', 'plug-gitea'), { recursive: true })
+    writeFileSync(join(profileDir('web'), 'node_modules', 'plug-gitea', 'package.json'), '{"name":"plug-gitea"}')
+    const manifestPath = join(profileDir('web'), 'package.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    manifest.dependencies = { ...manifest.dependencies, 'plug-gitea': 'git+https://gitea.example.com/me/plug.git' }
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+    // No api.github.com to ask off GitHub: the commit comes from the same
+    // smart-HTTP advertisement the update check reads.
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true, status: 200,
+      headers: { get: () => 'application/x-git-upload-pack-advertisement' },
+      json: async () => ({}),
+      text: async () => `001e# service=git-upload-pack\n00000155${sha} HEAD\0multi_ack\n`,
+    })))
+
+    const approve = await bed.dispatch('POST', '/dsh-market/approve-builds', { packages: ['plug-gitea'] })
+
+    expect(approve.status).toBe(200)
+    const yaml = readFileSync(join(profileDir('web'), 'pnpm-workspace.yaml'), 'utf8')
+    expect(yaml).toContain('plug-gitea@git+https://gitea.example.com/me/plug.git: true')
+    expect(yaml).toContain(`plug-gitea@git+https://gitea.example.com/me/plug.git#${sha}: true`)
+  })
+
   it('uses a commit-pinned github spec for old-pnpm build approval without re-resolving HEAD (#385)', async () => {
     const sha = 'b0e6c57ebeeb4796017864f5cd5c66e6ba0899ec'
     mkdirSync(join(profileDir('web'), 'node_modules', 'plug-pinned'), { recursive: true })
