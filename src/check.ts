@@ -946,23 +946,33 @@ export function buildBundleLayers(
       layer.error = 'bundle package.json is unreadable'
       return layer
     }
+    // A bundle may declare ONE patch file or a LIST of them: dsh 0.1.7's own
+    // `@deepseek-ai/dsh-web-app` ships five (a base patch plus four presets),
+    // and the official headless template includes that bundle — so requiring
+    // a string reported "the profile will fail to boot" for the DEFAULT
+    // layout, while `dsh --dump-config` composed it fine (#676).
     const declared = bundleManifest.dsh?.bundle?.patch
-    if (typeof declared !== 'string') {
+    const declaredList = typeof declared === 'string'
+      ? [declared]
+      : Array.isArray(declared) ? declared.filter((item): item is string => typeof item === 'string') : []
+    if (declaredList.length === 0) {
       layer.error = 'bundle declares no dsh.bundle.patch — the profile will fail to boot'
       return layer
     }
-    const patchPath = join(directory, declared)
-    if (!existsSync(patchPath)) {
-      layer.error = `declared patch ${declared} is missing — the profile will fail to boot`
+    const missing = declaredList.find(relative => !existsSync(join(directory, relative)))
+    if (missing !== undefined) {
+      layer.error = `declared patch ${missing} is missing — the profile will fail to boot`
       return layer
     }
-    layer.patchPath = patchPath
-    const patches = parsePatchFile(patchPath)
-    if (patches === null) {
+    // The first declared file is the layer's patch for reporting; every one
+    // of them contributes entries, because the composer applies them all.
+    layer.patchPath = join(directory, declaredList[0]!)
+    const parsed = declaredList.map(relative => parsePatchFile(join(directory, relative)))
+    if (parsed.some(patches => patches === null)) {
       layer.parseError = 'patch file is not a valid entry list'
       return layer
     }
-    layer.entries = collectInsertIds(patches)
+    layer.entries = parsed.flatMap(patches => collectInsertIds(patches!))
     const order = bundleManifest.dsh?.bundle?.order
     if (order !== null && typeof order === 'object' && !Array.isArray(order)) {
       const listOf = (value: unknown): string[] | undefined => Array.isArray(value)

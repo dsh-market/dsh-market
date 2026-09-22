@@ -86,6 +86,81 @@ function writeBundle(
   return dir
 }
 
+describe('a bundle that declares several patch files (#676)', () => {
+  it('accepts a patch LIST and collects entries from every file', () => {
+    // dsh 0.1.7's own `@deepseek-ai/dsh-web-app` declares five patch files —
+    // a base one plus four presets — and the official headless template
+    // includes that bundle. Requiring a string therefore reported "the
+    // profile will fail to boot" for the DEFAULT layout, while
+    // `dsh --dump-config` composed it with exit 0.
+    const dir = pdir()
+    writeProfile(dir, {
+      name: 'web-profile',
+      dsh: { profile: { bundles: ['@deepseek-ai/dsh-web-app'] } },
+      dependencies: { '@deepseek-ai/dsh-web-app': '^0.1.7-alpha.1' },
+    })
+    const bundle = writePackage(dir, '@deepseek-ai/dsh-web-app', {
+      name: '@deepseek-ai/dsh-web-app',
+      version: '0.1.7-alpha.1',
+      dsh: { bundle: { patch: ['./cordis.patch.yml', './presets/standard.patch.yml'] } },
+    })
+    writeLoadablePackage(dir, 'web-app-core')
+    writeLoadablePackage(dir, 'preset-standard')
+    mkdirSync(join(bundle, 'presets'), { recursive: true })
+    writeFileSync(join(bundle, 'cordis.patch.yml'), dump([
+      { insert: [{ id: 'web-app-core', name: 'web-app-core' }] },
+    ]))
+    writeFileSync(join(bundle, 'presets', 'standard.patch.yml'), dump([
+      { insert: [{ id: 'preset-standard', name: 'preset-standard' }] },
+    ]))
+
+    const report = analyzeProfile(dir, { dshInstallDir: dir })
+
+    expect(report.summary.errors).toEqual([])
+    // BOTH files contribute: a reader who only parsed the first would see
+    // the second patch's rows as unknown ids everywhere downstream.
+    const layer = report.bundles.find(entry => entry.name === '@deepseek-ai/dsh-web-app')
+    expect(layer?.entries).toEqual(expect.arrayContaining(['web-app-core', 'preset-standard']))
+  })
+
+  it('still reports a declared file that is missing, naming the one that is', () => {
+    const dir = pdir()
+    writeProfile(dir, {
+      name: 'web-profile',
+      dsh: { profile: { bundles: ['multi'] } },
+      dependencies: { multi: '^1.0.0' },
+    })
+    const bundle = writePackage(dir, 'multi', {
+      name: 'multi',
+      version: '1.0.0',
+      dsh: { bundle: { patch: ['./cordis.patch.yml', './presets/gone.patch.yml'] } },
+    })
+    writeFileSync(join(bundle, 'cordis.patch.yml'), dump([{ insert: [] }]))
+
+    const report = analyzeProfile(dir, { dshInstallDir: dir })
+
+    expect(report.summary.errors).toEqual([
+      'bundle multi: declared patch ./presets/gone.patch.yml is missing — the profile will fail to boot',
+    ])
+  })
+
+  it('still reports a bundle that declares no patch at all', () => {
+    const dir = pdir()
+    writeProfile(dir, {
+      name: 'web-profile',
+      dsh: { profile: { bundles: ['bare'] } },
+      dependencies: { bare: '^1.0.0' },
+    })
+    writePackage(dir, 'bare', { name: 'bare', version: '1.0.0', dsh: { bundle: {} } })
+
+    const report = analyzeProfile(dir, { dshInstallDir: dir })
+
+    expect(report.summary.errors).toEqual([
+      'bundle bare: bundle declares no dsh.bundle.patch — the profile will fail to boot',
+    ])
+  })
+})
+
 describe('bundle stack (#98 diagnostics)', () => {
   it('keeps dsh.profile.bundles order and classifies official vs community', () => {
     const dir = pdir()
