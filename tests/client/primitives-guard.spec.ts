@@ -30,11 +30,21 @@ describe('missingPrimitives', () => {
 })
 
 describe('apply() icon gaps (#671)', () => {
-  it('treats a 0.1.7-only icon table as complete for missingIcons', () => {
+  it('treats a 0.1.7-only Regular icon table as complete for missingIcons', () => {
     const mod: Record<string, unknown> = {}
     for (const name of REQUIRED_PRIMITIVES) mod[name] = () => null
     for (const [, newer] of ICON_ALIASES) mod[newer] = () => null
-    expect([...missingPrimitives(mod), ...missingIcons(mod)]).toEqual([])
+    expect(missingPrimitives(mod)).toEqual([])
+    expect(missingIcons(mod)).toEqual([])
+  })
+
+  it('does not treat icon gaps as a hard apply() disable', () => {
+    // Missing Menu still disables; missing icons alone must not — icons.ts
+    // skips the glyph so a rename costs one icon, not the settings page.
+    const mod: Record<string, unknown> = {}
+    for (const name of REQUIRED_PRIMITIVES) mod[name] = () => null
+    expect(missingPrimitives(mod)).toEqual([])
+    expect(missingIcons(mod).length).toBeGreaterThan(0)
   })
 })
 

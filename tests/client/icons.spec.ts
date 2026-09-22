@@ -1,5 +1,5 @@
 /**
- * Icon alias resolution for host 0.1.7's …14/…16 → …Regular/…Medium rename (#671).
+ * Icon alias resolution for host 0.1.7's …14/…16 → weight rename (#670/#671).
  */
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import {
   ICON_ALIASES,
+  fromHost,
   isIconComponent,
   missingIcons,
   resolveIcon,
@@ -29,20 +30,20 @@ function moduleFromNames(names: Set<string>): Record<string, unknown> {
 }
 
 describe('resolveIcon (#671)', () => {
-  it('prefers the 0.1.7 weight name when both spellings exist', () => {
+  it('prefers the 0.1.7 Regular name when both spellings exist', () => {
     const newer = (): null => null
     const older = (): null => null
     expect(resolveIcon({
-      IconWarningOutlineMedium: newer,
+      IconWarningOutlineRegular: newer,
       IconWarningOutline16: older,
-    }, 'IconWarningOutlineMedium', 'IconWarningOutline16')).toBe(newer)
+    }, 'IconWarningOutlineRegular', 'IconWarningOutline16')).toBe(newer)
   })
 
   it('falls back to the pre-0.1.7 size name on older hosts', () => {
     const older = (): null => null
     expect(resolveIcon({
       IconWarningOutline16: older,
-    }, 'IconWarningOutlineMedium', 'IconWarningOutline16')).toBe(older)
+    }, 'IconWarningOutlineRegular', 'IconWarningOutline16')).toBe(older)
   })
 
   it('accepts a host that only ships the new names', () => {
@@ -53,8 +54,8 @@ describe('resolveIcon (#671)', () => {
   })
 
   it('returns null when neither spelling exists', () => {
-    expect(resolveIcon({}, 'IconWarningOutlineMedium', 'IconWarningOutline16')).toBeNull()
-    expect(resolveIcon({ IconWarningOutline16: 1 }, 'IconWarningOutlineMedium', 'IconWarningOutline16')).toBeNull()
+    expect(resolveIcon({}, 'IconWarningOutlineRegular', 'IconWarningOutline16')).toBeNull()
+    expect(resolveIcon({ IconWarningOutline16: 1 }, 'IconWarningOutlineRegular', 'IconWarningOutline16')).toBeNull()
   })
 
   it('accepts memo / forwardRef-shaped exports, not only plain functions', () => {
@@ -63,11 +64,24 @@ describe('resolveIcon (#671)', () => {
     expect(isIconComponent(memoLike)).toBe(true)
     expect(isIconComponent(forwardLike)).toBe(true)
     expect(resolveIcon({
-      IconWarningOutlineMedium: memoLike,
-    }, 'IconWarningOutlineMedium', 'IconWarningOutline16')).toBe(memoLike)
+      IconWarningOutlineRegular: memoLike,
+    }, 'IconWarningOutlineRegular', 'IconWarningOutline16')).toBe(memoLike)
     expect(resolveIcon({
       IconWarningOutline16: forwardLike,
-    }, 'IconWarningOutlineMedium', 'IconWarningOutline16')).toBe(forwardLike)
+    }, 'IconWarningOutlineRegular', 'IconWarningOutline16')).toBe(forwardLike)
+  })
+
+  it('does not throw when the host table refuses an unknown key', () => {
+    const mod = new Proxy({} as Record<string, unknown>, {
+      get(_t, prop) {
+        if (prop === 'IconWarningOutlineRegular' || prop === 'IconWarningOutline16') {
+          throw new Error('refused')
+        }
+        return undefined
+      },
+    })
+    expect(fromHost(mod, 'IconWarningOutlineRegular')).toBeUndefined()
+    expect(resolveIcon(mod, 'IconWarningOutlineRegular', 'IconWarningOutline16')).toBeNull()
   })
 })
 
@@ -86,8 +100,8 @@ describe('missingIcons (#671)', () => {
 
   it('names icons that exist under neither spelling', () => {
     const mod: Record<string, unknown> = {}
-    for (const [, newer, older] of ICON_ALIASES) {
-      if (older === 'IconWarningOutline16') continue
+    for (const [, newer] of ICON_ALIASES) {
+      if (newer === 'IconWarningOutlineRegular') continue
       mod[newer] = () => null
     }
     expect(missingIcons(mod)).toEqual(['IconWarningOutline16'])
@@ -104,10 +118,10 @@ describe('real package export tables (#671)', () => {
     expect(missingIcons(moduleFromNames(names))).toEqual([])
   })
 
-  it('resolves every market icon against the 0.1.7-alpha.1 export list', () => {
+  it('resolves every market icon against the 0.1.7-alpha.1 Regular exports', () => {
     const names = loadIconFixture('0.1.7-alpha.1')
     for (const [, newer, older] of ICON_ALIASES) {
-      expect(names.has(newer), `0.1.7 export missing: ${newer}`).toBe(true)
+      expect(names.has(newer), `0.1.7 Regular export missing: ${newer}`).toBe(true)
       expect(names.has(older), `0.1.7 must not keep ${older}`).toBe(false)
     }
     expect(missingIcons(moduleFromNames(names))).toEqual([])

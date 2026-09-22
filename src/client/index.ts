@@ -91,14 +91,19 @@ export function apply(ctx: MarketClientContext): void {
   // Older hosts resolve the primitives module but lack the rc.6 exports the
   // market renders with. Skip registration (market simply absent from the
   // settings list) rather than throwing mid-render and blanking the dialog.
-  // Icon gaps are the same class (#671): 0.1.7 renamed …14/…16 to
-  // …Regular/…Medium with no alias; icons.ts accepts either spelling, and
-  // only disables when BOTH are missing.
+  // Icons are different (#671): 0.1.7 renamed …14/…16 to weight names with no
+  // alias. icons.ts accepts either spelling and skips a missing glyph so the
+  // next rename costs one icon, not the whole page — do not fold icon gaps
+  // into this hard disable.
   const mod = primitives as unknown as Record<string, unknown>
-  const gaps = [...missingPrimitives(mod), ...missingIcons(mod)]
+  const gaps = missingPrimitives(mod)
   if (gaps.length > 0) {
     console.warn('[dsh-market] host ui-primitives missing ' + gaps.join(', ') + ' — market section disabled (dsh web >= 0.1.0-rc.6 required)')
     return
+  }
+  const iconGaps = missingIcons(mod)
+  if (iconGaps.length > 0) {
+    console.warn('[dsh-market] host ui-primitives missing icons ' + iconGaps.join(', ') + ' — rendering without them')
   }
 
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-market: dictionaries')

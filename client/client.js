@@ -33,14 +33,13 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		let react_dom = require("react-dom");
 		//#region src/client/icons.ts
 		/**
-		* Each entry: the name this package imports, then the 0.1.7+ export, then the
-		* pre-0.1.7 export. 14 → Regular, 16 → Medium (measured on the official
-		* tarballs for #671).
+		* Each entry: the name this package imports, then the 0.1.7+ Regular export,
+		* then the pre-0.1.7 size-suffixed export.
 		*/
 		const ICON_ALIASES = [
 			[
 				"IconCheckOutline16",
-				"IconCheckOutlineMedium",
+				"IconCheckOutlineRegular",
 				"IconCheckOutline16"
 			],
 			[
@@ -65,7 +64,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			],
 			[
 				"IconCodeOutline16",
-				"IconCodeOutlineMedium",
+				"IconCodeOutlineRegular",
 				"IconCodeOutline16"
 			],
 			[
@@ -75,17 +74,17 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			],
 			[
 				"IconDownloadOutline16",
-				"IconDownloadOutlineMedium",
+				"IconDownloadOutlineRegular",
 				"IconDownloadOutline16"
 			],
 			[
 				"IconFolderOpen16",
-				"IconFolderOpenMedium",
+				"IconFolderOpenRegular",
 				"IconFolderOpen16"
 			],
 			[
 				"IconFullscreenOutline16",
-				"IconFullscreenOutlineMedium",
+				"IconFullscreenOutlineRegular",
 				"IconFullscreenOutline16"
 			],
 			[
@@ -95,7 +94,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			],
 			[
 				"IconLoadingOutline16",
-				"IconLoadingOutlineMedium",
+				"IconLoadingOutlineRegular",
 				"IconLoadingOutline16"
 			],
 			[
@@ -110,72 +109,85 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			],
 			[
 				"IconSearchOutline16",
-				"IconSearchOutlineMedium",
+				"IconSearchOutlineRegular",
 				"IconSearchOutline16"
 			],
 			[
 				"IconSparkle16",
-				"IconSparkleMedium",
+				"IconSparkleRegular",
 				"IconSparkle16"
 			],
 			[
 				"IconWarningOutline16",
-				"IconWarningOutlineMedium",
+				"IconWarningOutlineRegular",
 				"IconWarningOutline16"
 			]
 		];
 		/**
 		* True for a value React will accept as an element type. Plain functions are
 		* the common case today; memo / forwardRef wrappers are objects tagged with
-		* $$typeof and must not be treated as "missing" (#671 follow-up).
+		* $$typeof and must not be treated as "missing".
 		*/
 		function isIconComponent(value) {
 			if (typeof value === "function") return true;
 			if (typeof value !== "object" || value === null) return false;
 			return typeof value.$$typeof === "symbol";
 		}
+		/**
+		* Read one name out of a primitives-shaped table. A strict namespace proxy may
+		* throw on unknown keys; that must not be what blanks the market.
+		*/
+		function fromHost(mod, name) {
+			try {
+				return mod[name];
+			} catch {
+				return;
+			}
+		}
 		/** Resolve one icon from a primitives-shaped module; null when both names are absent. */
 		function resolveIcon(mod, newer, older) {
-			const candidate = mod[newer] ?? mod[older];
+			const candidate = fromHost(mod, newer) ?? fromHost(mod, older);
 			return isIconComponent(candidate) ? candidate : null;
 		}
 		/**
-		* Names for which neither the 0.1.7 nor the pre-0.1.7 export exists on the
-		* injected module. Used by apply() so a half-renamed host disables the
-		* market instead of rendering `undefined` (React #130).
+		* Names for which neither the 0.1.7 nor the pre-0.1.7 export exists.
+		* Informational — apply() does not disable the market for these; pickIcon
+		* renders nothing instead so a rename costs one glyph, not the page.
 		*/
 		function missingIcons(mod) {
 			const gaps = [];
 			for (const [stable, newer, older] of ICON_ALIASES) if (resolveIcon(mod, newer, older) === null) gaps.push(stable);
 			return gaps;
 		}
+		/** Rendered when a host exports neither spelling — see the module comment. */
+		function renderNothing() {
+			return null;
+		}
 		function pickIcon(newer, older) {
 			const resolved = resolveIcon(_deepseek_ai_dsh_client_ui_primitives, newer, older);
 			if (resolved === null) {
-				const missing = () => {
-					throw new Error(`[dsh-market] host ui-primitives missing ${newer} / ${older}`);
-				};
-				return missing;
+				console.warn(`[dsh-market] host ui-primitives missing ${newer} / ${older} — icon skipped`);
+				return renderNothing;
 			}
 			return resolved;
 		}
-		const IconCheckOutline16 = pickIcon("IconCheckOutlineMedium", "IconCheckOutline16");
+		const IconCheckOutline16 = pickIcon("IconCheckOutlineRegular", "IconCheckOutline16");
 		const IconChevronDownOutline14 = pickIcon("IconChevronDownOutlineRegular", "IconChevronDownOutline14");
 		const IconChevronLeftOutline14 = pickIcon("IconChevronLeftOutlineRegular", "IconChevronLeftOutline14");
 		const IconChevronRightOutline14 = pickIcon("IconChevronRightOutlineRegular", "IconChevronRightOutline14");
 		const IconChevronUpOutline14 = pickIcon("IconChevronUpOutlineRegular", "IconChevronUpOutline14");
-		const IconCodeOutline16 = pickIcon("IconCodeOutlineMedium", "IconCodeOutline16");
+		const IconCodeOutline16 = pickIcon("IconCodeOutlineRegular", "IconCodeOutline16");
 		const IconCordisPluginOutline14 = pickIcon("IconCordisPluginOutlineRegular", "IconCordisPluginOutline14");
-		const IconDownloadOutline16 = pickIcon("IconDownloadOutlineMedium", "IconDownloadOutline16");
-		const IconFolderOpen16 = pickIcon("IconFolderOpenMedium", "IconFolderOpen16");
-		const IconFullscreenOutline16 = pickIcon("IconFullscreenOutlineMedium", "IconFullscreenOutline16");
+		const IconDownloadOutline16 = pickIcon("IconDownloadOutlineRegular", "IconDownloadOutline16");
+		const IconFolderOpen16 = pickIcon("IconFolderOpenRegular", "IconFolderOpen16");
+		const IconFullscreenOutline16 = pickIcon("IconFullscreenOutlineRegular", "IconFullscreenOutline16");
 		const IconLinkOutline14 = pickIcon("IconLinkOutlineRegular", "IconLinkOutline14");
-		const IconLoadingOutline16 = pickIcon("IconLoadingOutlineMedium", "IconLoadingOutline16");
+		const IconLoadingOutline16 = pickIcon("IconLoadingOutlineRegular", "IconLoadingOutline16");
 		const IconQuestionOutline14 = pickIcon("IconQuestionOutlineRegular", "IconQuestionOutline14");
 		const IconRefreshOutline14 = pickIcon("IconRefreshOutlineRegular", "IconRefreshOutline14");
-		const IconSearchOutline16 = pickIcon("IconSearchOutlineMedium", "IconSearchOutline16");
-		const IconSparkle16 = pickIcon("IconSparkleMedium", "IconSparkle16");
-		const IconWarningOutline16 = pickIcon("IconWarningOutlineMedium", "IconWarningOutline16");
+		const IconSearchOutline16 = pickIcon("IconSearchOutlineRegular", "IconSearchOutline16");
+		const IconSparkle16 = pickIcon("IconSparkleRegular", "IconSparkle16");
+		const IconWarningOutline16 = pickIcon("IconWarningOutlineRegular", "IconWarningOutline16");
 		//#endregion
 		//#region src/client/locales.ts
 		/** zh/en dictionaries for the Market settings section and install toast. */
@@ -12588,11 +12600,13 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		];
 		function apply(ctx) {
 			const mod = _deepseek_ai_dsh_client_ui_primitives;
-			const gaps = [...missingPrimitives(mod), ...missingIcons(mod)];
+			const gaps = missingPrimitives(mod);
 			if (gaps.length > 0) {
 				console.warn("[dsh-market] host ui-primitives missing " + gaps.join(", ") + " — market section disabled (dsh web >= 0.1.0-rc.6 required)");
 				return;
 			}
+			const iconGaps = missingIcons(mod);
+			if (iconGaps.length > 0) console.warn("[dsh-market] host ui-primitives missing icons " + iconGaps.join(", ") + " — rendering without them");
 			ctx.effect(() => ctx.locale.register(NS, {
 				zh,
 				en
