@@ -5,35 +5,8 @@
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import {
-  Button,
-  DisclosureRow,
-  IconChevronDownOutline14,
-  IconChevronLeftOutline14,
-  IconChevronRightOutline14,
-  IconChevronUpOutline14,
-  IconCheckOutline16,
-  IconCodeOutline16,
-  IconCordisPluginOutline14,
-  IconDownloadOutline16,
-  IconFolderOpen16,
-  IconFullscreenOutline16,
-  IconLinkOutline14,
-  IconLoadingOutline16,
-  IconQuestionOutline14,
-  IconRefreshOutline14,
-  IconSearchOutline16,
-  IconSparkle16,
-  IconWarningOutline16,
-  Input,
-  Menu,
-  Modal,
-  Pill,
-  StateDot,
-  Toast,
-  Tooltip,
-  type MenuEntry,
-} from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, DisclosureRow, Input, Menu, Modal, Pill, StateDot, Toast, Tooltip, type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCheck, IconChevronDown, IconChevronLeft, IconChevronRight, IconChevronUp, IconCode, IconCordisPlugin, IconDownload, IconFolderOpen, IconFullscreen, IconLink, IconLoading, IconQuestion, IconRefresh, IconSearch, IconSparkle, IconWarning } from './icons.ts'
 import css from './Market.module.css'
 import { MARK_BLOCK_RADIUS, MARK_BLOCK_SIZE, MARK_GRID_BLOCKS, MARK_PLUG_BLOCK, MARK_VIEW_BOX } from './market-mark.ts'
 import { CommentsModal } from './CommentsModal.tsx'
@@ -108,7 +81,7 @@ function HostDependencyDiagnostics({
   const remaining = findings.length - preview.length
   return (
     <div className={css.banner}>
-      <IconWarningOutline16 size={14} className={css.bannerIcon} />
+      <IconWarning size={14} className={css.bannerIcon} />
       <span className={css.grow}>
         <div>{t('hostDependencyWarning')}</div>
         {preview.map(finding => (
@@ -268,7 +241,7 @@ function FilterMenu({
         <Button
           variant="outline"
           size="sm"
-          icon={open ? <IconChevronUpOutline14 size={14} /> : <IconChevronDownOutline14 size={14} />}
+          icon={open ? <IconChevronUp size={14} /> : <IconChevronDown size={14} />}
           onClick={() => setOpen(o => !o)}
         >{t('filter')}</Button>
       )}
@@ -307,7 +280,7 @@ function Pager({ currentPage, totalPages, pageSize, onGoToPage, onChangePageSize
             <Button
               variant="outline"
               size="sm"
-              icon={<IconChevronLeftOutline14 size={14} />}
+              icon={<IconChevronLeft size={14} />}
               disabled={currentPage === 1}
               onClick={() => onGoToPage(currentPage - 1)}
             >{t('prevPage')}</Button>
@@ -328,7 +301,7 @@ function Pager({ currentPage, totalPages, pageSize, onGoToPage, onChangePageSize
               size="sm"
               disabled={currentPage === totalPages}
               onClick={() => onGoToPage(currentPage + 1)}
-            >{t('nextPage')}<IconChevronRightOutline14 size={14} /></Button>
+            >{t('nextPage')}<IconChevronRight size={14} /></Button>
           </>
         )}
       </div>
@@ -351,7 +324,7 @@ function Pager({ currentPage, totalPages, pageSize, onGoToPage, onChangePageSize
             <Button
               variant="outline"
               size="sm"
-              icon={<IconChevronDownOutline14 size={14} />}
+              icon={<IconChevronDown size={14} />}
               onClick={() => setSizeOpen(o => !o)}
             >{t('perPage') + ' ' + pageSize}</Button>
           )}
@@ -760,8 +733,8 @@ function ThemeCover({ plugin, onOpen, t }: {
         disabled
       >
         {fallback.loading
-          ? <span className={css.spin}><IconLoadingOutline16 size={20} /></span>
-          : <IconSparkle16 size={20} />}
+          ? <span className={css.spin}><IconLoading size={20} /></span>
+          : <IconSparkle size={20} />}
         <span>{fallback.loading ? t('themePreviewLoading') : t('themePreviewMissing')}</span>
       </button>
     )
@@ -786,7 +759,7 @@ function ThemeCover({ plugin, onOpen, t }: {
         onError={() => setBroken(prev => prev.includes(src) ? prev : prev.concat(src))}
       />
       <span className={css.themePreviewAction}>
-        <IconSearchOutline16 size={14} />
+        <IconSearch size={14} />
         {t('themePreview')}
       </span>
       {visible.length > 1 && (
@@ -881,7 +854,7 @@ function CardDesc({ text, t }: { text: string; t: Translate }) {
           aria-label={expanded ? t('descCollapse') : t('descExpand')}
           onClick={() => setExpanded(e => !e)}
         >
-          {expanded ? <IconChevronUpOutline14 size={14} /> : <IconChevronDownOutline14 size={14} />}
+          {expanded ? <IconChevronUp size={14} /> : <IconChevronDown size={14} />}
         </button>
       )}
     </div>
@@ -941,7 +914,7 @@ function ScreenshotLightbox({ shots, startIndex, onClose, t }: { shots: string[]
   // mounts or unmounts happens inside it.
   return createPortal(
     <div className={css.lightbox} onClick={onClose}>
-      {/* A literal "×" rather than IconCloseOutline16: the primitives
+      {/* A literal "×" rather than IconClose: the primitives
           package's own Modal uses that icon at runtime, but this package
           version's public type surface doesn't resolve it — `tsc` reports
           "no exported member" even though icons/index.d.ts declares it.
@@ -954,12 +927,12 @@ function ScreenshotLightbox({ shots, startIndex, onClose, t }: { shots: string[]
             className={`${css.lightboxNav} ${css.lightboxPrev}`}
             aria-label={t('lightboxPrev')}
             onClick={(e) => { e.stopPropagation(); setIndex(index - 1) }}
-          ><IconChevronLeftOutline14 size={18} /></button>
+          ><IconChevronLeft size={18} /></button>
           <button
             className={`${css.lightboxNav} ${css.lightboxNext}`}
             aria-label={t('lightboxNext')}
             onClick={(e) => { e.stopPropagation(); setIndex(index + 1) }}
-          ><IconChevronRightOutline14 size={18} /></button>
+          ><IconChevronRight size={18} /></button>
           <div className={css.lightboxDots} onClick={e => e.stopPropagation()}>
             {shots.map((src, i) => (
               <span
@@ -3601,7 +3574,7 @@ export function MarketSection(props: MarketSectionProps) {
                   : blocked
                     ? (
                         <button type="button" className={css.cardBlockedMark} onClick={openOperations}>
-                          <IconWarningOutline16 size={13} />
+                          <IconWarning size={13} />
                           {t('opBlockedCard')}
                         </button>
                       )
@@ -3660,7 +3633,7 @@ export function MarketSection(props: MarketSectionProps) {
         </div>
         {busy && (
           <div className={css.progress}>
-            <span className={css.spin}><IconLoadingOutline16 size={14} /></span>
+            <span className={css.spin}><IconLoading size={14} /></span>
             <code className={css.grow}>{progressText}</code>
             {progressPct !== null && <span className={css.pct}>{progressPct}%</span>}
             <Button variant="outline" size="sm" disabled={cancelling} onClick={doCancel}>
@@ -3769,7 +3742,7 @@ export function MarketSection(props: MarketSectionProps) {
                     : blocked
                       ? (
                           <button type="button" className={css.cardBlockedMark} onClick={openOperations}>
-                            <IconWarningOutline16 size={13} />
+                            <IconWarning size={13} />
                             {t('opBlockedCard')}
                           </button>
                         )
@@ -3804,7 +3777,7 @@ export function MarketSection(props: MarketSectionProps) {
 
           {busy && (
             <div className={css.progress}>
-              <span className={css.spin}><IconLoadingOutline16 size={14} /></span>
+              <span className={css.spin}><IconLoading size={14} /></span>
               <code className={css.grow}>{progressText}</code>
               {progressPct !== null && <span className={css.pct}>{progressPct}%</span>}
               <Button variant="outline" size="sm" disabled={cancelling} onClick={doCancel}>
@@ -4061,7 +4034,7 @@ export function MarketSection(props: MarketSectionProps) {
             variant="outline"
             size="sm"
             className={css.exportLogBtn}
-            icon={<IconDownloadOutline16 size={14} />}
+            icon={<IconDownload size={14} />}
             disabled={exportState === 'busy'}
             onClick={doExportLog}
           >{exportState === 'busy' ? t('exportingLog') : t('exportLog')}</Button>
@@ -4122,7 +4095,7 @@ export function MarketSection(props: MarketSectionProps) {
         )}
         {!envReady && (
           <div className={css.banner}>
-            <IconCordisPluginOutline14 size={14} className={css.bannerIcon} />
+            <IconCordisPlugin size={14} className={css.bannerIcon} />
             <span className={css.grow}>{envFailed ? t('envFixFail') : t('envMissing')}</span>
             {!envFailed && (
               <Button variant="primary" size="sm" disabled={envFixing} onClick={fixEnv}>
@@ -4134,7 +4107,7 @@ export function MarketSection(props: MarketSectionProps) {
         {backupMessage !== null && <div className={css.backupMessage}>{backupMessage}</div>}
         {restoreErrors.length > 0 && (
           <div className={css.banner}>
-            <IconWarningOutline16 size={14} className={css.bannerIcon} />
+            <IconWarning size={14} className={css.bannerIcon} />
             <span className={css.grow}>
               <div><b>{t('restorePartial')}</b></div>
               {restoreErrors.map(error => <div key={error} className={css.spec}>{error}</div>)}
@@ -4143,7 +4116,7 @@ export function MarketSection(props: MarketSectionProps) {
         )}
         {tab === 'installed' && pendingBackup !== null && (
           <div className={css.banner}>
-            <IconRefreshOutline14 size={14} className={css.bannerIcon} />
+            <IconRefresh size={14} className={css.bannerIcon} />
             <span className={css.grow}>{t('restoreMissing').replace('{0}', String(missingRestoreCount))}</span>
             <Button variant="primary" size="sm" disabled={backupBusy} onClick={() => setRestoreConfirmOpen(true)}>
               {backupBusy ? t('backupWorking') : t('restoreStart')}
@@ -4152,7 +4125,7 @@ export function MarketSection(props: MarketSectionProps) {
         )}
         {pendingRefreshNames.length > 0 && (
           <div className={css.banner}>
-            <IconSparkle16 size={14} className={css.bannerIcon} />
+            <IconSparkle size={14} className={css.bannerIcon} />
             <span className={css.grow}><b>{pendingRefreshNames.length}</b> {t('refreshBanner')}</span>
             <Button
               variant="primary"
@@ -4167,7 +4140,7 @@ export function MarketSection(props: MarketSectionProps) {
         )}
         {pendingRestart > 0 && (
           <div className={css.banner}>
-            <IconRefreshOutline14 size={14} className={css.bannerIcon} />
+            <IconRefresh size={14} className={css.bannerIcon} />
             <span className={css.grow}><b>{pendingRestart}</b> {t('restartBanner')}</span>
             <Tooltip
               label={
@@ -4179,7 +4152,7 @@ export function MarketSection(props: MarketSectionProps) {
               }
               side="bottom"
             >
-              <span className={css.bannerHint}><IconQuestionOutline14 size={14} /></span>
+              <span className={css.bannerHint}><IconQuestion size={14} /></span>
             </Tooltip>
             {restartEnabled && debuggerLatch === null && recovery === null && (
               <Button
@@ -4207,7 +4180,7 @@ export function MarketSection(props: MarketSectionProps) {
         )}
         {activationWarnings.length > 0 && (
           <div className={css.banner}>
-            <IconWarningOutline16 size={14} className={css.bannerIcon} />
+            <IconWarning size={14} className={css.bannerIcon} />
             <span className={css.grow}>
               {activationWarnings.map(({ name, info }) => (
                 <div key={name}>
@@ -4222,7 +4195,7 @@ export function MarketSection(props: MarketSectionProps) {
       </div>
       {buildsSkipped !== null && (
         <div className={css.banner}>
-          <IconWarningOutline16 size={14} className={css.bannerIcon} />
+          <IconWarning size={14} className={css.bannerIcon} />
           <span className={css.grow}>{t('buildsSkipped')} {buildsSkipped.names.join(', ')}</span>
           <Button
             size="sm"
@@ -4300,7 +4273,7 @@ export function MarketSection(props: MarketSectionProps) {
             <Button
               size="sm"
               variant="outline"
-              icon={<IconDownloadOutline16 size={14} />}
+              icon={<IconDownload size={14} />}
               disabled={exportState === 'busy'}
               onClick={doExportLog}
             >
@@ -4328,14 +4301,14 @@ export function MarketSection(props: MarketSectionProps) {
                     <Button
                       variant="primary"
                       size="sm"
-                      icon={<IconDownloadOutline16 size={14} />}
+                      icon={<IconDownload size={14} />}
                       disabled={backupBusy}
                       onClick={() => downloadFile(api('/dsh-market/backup'), 'dsh-profile-backup.json')}
                     >{backupBusy ? t('backupWorking') : t('backupDownload')}</Button>
                     <Button
                       variant="outline"
                       size="sm"
-                      icon={<IconFolderOpen16 size={14} />}
+                      icon={<IconFolderOpen size={14} />}
                       disabled={backupBusy}
                       onClick={() => fileInputRef.current?.click()}
                     >{backupBusy ? t('backupWorking') : t('backupImport')}</Button>
@@ -4373,7 +4346,7 @@ export function MarketSection(props: MarketSectionProps) {
                       <Button
                         variant="outline"
                         size="sm"
-                        icon={<IconChevronDownOutline14 size={14} />}
+                        icon={<IconChevronDown size={14} />}
                         onClick={() => setPresetOpen(o => !o)}
                       >{t('webdavPreset')}</Button>
                     )}
@@ -4384,7 +4357,7 @@ export function MarketSection(props: MarketSectionProps) {
                       { id: 'nextcloud', label: 'Nextcloud' },
                     ]}
                   />
-                  <Input className={css.backupInput} icon={<IconLinkOutline14 size={14} />} type="url" value={webdavUrl} placeholder={t('webdavUrl')} onChange={e => setWebdavUrl(e.target.value)} />
+                  <Input className={css.backupInput} icon={<IconLink size={14} />} type="url" value={webdavUrl} placeholder={t('webdavUrl')} onChange={e => setWebdavUrl(e.target.value)} />
                   <Input className={css.backupInput} autoComplete="username" value={webdavUser} placeholder={t('webdavUser')} onChange={e => setWebdavUser(e.target.value)} />
                   <Input className={css.backupInput} type="password" autoComplete="current-password" value={webdavPassword} placeholder={t('webdavPassword')} onChange={e => setWebdavPassword(e.target.value)} />
                   <div className={css.backupActions}>
@@ -4407,7 +4380,7 @@ export function MarketSection(props: MarketSectionProps) {
                   />
                   <Input
                     className={css.backupInput}
-                    icon={<IconLinkOutline14 size={14} />}
+                    icon={<IconLink size={14} />}
                     value={gistId}
                     placeholder={t('gistId')}
                     onChange={e => setGistId(e.target.value)}
@@ -4493,7 +4466,7 @@ export function MarketSection(props: MarketSectionProps) {
                                 variant="ghost"
                                 size="sm"
                                 className={css.catsToggle}
-                                icon={catsExpanded ? <IconChevronUpOutline14 size={14} /> : <IconChevronDownOutline14 size={14} />}
+                                icon={catsExpanded ? <IconChevronUp size={14} /> : <IconChevronDown size={14} />}
                                 aria-label={catsExpanded ? t('catsLess') : t('catsMore')}
                                 onClick={() => {
                                   const next = !catsExpanded
@@ -4661,7 +4634,7 @@ export function MarketSection(props: MarketSectionProps) {
                           variant="outline"
                           size="sm"
                           className={css.themeFullscreenBtn}
-                          icon={<IconFullscreenOutline16 size={16} />}
+                          icon={<IconFullscreen size={16} />}
                           aria-label={themesFullscreen ? t('themeExitFullscreen') : t('themeFullscreen')}
                           aria-pressed={themesFullscreen}
                           onClick={() => setThemesFullscreen(value => !value)}
@@ -4766,8 +4739,8 @@ export function MarketSection(props: MarketSectionProps) {
                                           onClick={() => toggleCollapsedGroup(gid)}
                                         >
                                           {collapsed
-                                            ? <IconChevronRightOutline14 size={14} />
-                                            : <IconChevronDownOutline14 size={14} />}
+                                            ? <IconChevronRight size={14} />
+                                            : <IconChevronDown size={14} />}
                                         </button>
                                         <button
                                           type="button"
@@ -4936,7 +4909,7 @@ export function MarketSection(props: MarketSectionProps) {
                                                   variant="outline"
                                                   size="sm"
                                                   disabled={groupOrder.length === 0}
-                                                  icon={assignFor === name ? <IconChevronUpOutline14 size={14} /> : <IconChevronDownOutline14 size={14} />}
+                                                  icon={assignFor === name ? <IconChevronUp size={14} /> : <IconChevronDown size={14} />}
                                                   onClick={() => setAssignFor(open => open === name ? null : name)}
                                                 >{t('groupAssign')}</Button>
                                               )}
@@ -5142,7 +5115,7 @@ export function MarketSection(props: MarketSectionProps) {
                                           )}
                                           {act.state !== 'live' && act.reasons.length > 0 && (
                                             <DisclosureRow
-                                              icon={<IconQuestionOutline14 size={14} />}
+                                              icon={<IconQuestion size={14} />}
                                               title={t('actWhy')}
                                               open={whyOpen === name}
                                               expandable
@@ -5167,7 +5140,7 @@ export function MarketSection(props: MarketSectionProps) {
                                   )}
                                   {updatingName === name && (
                                     <div className={css.progress}>
-                                      <span className={css.spin}><IconLoadingOutline16 size={14} /></span>
+                                      <span className={css.spin}><IconLoading size={14} /></span>
                                       <code className={css.grow}>{progressText}</code>
                                       {progressPct !== null && <span className={css.pct}>{progressPct}%</span>}
                                       <Button variant="outline" size="sm" disabled={cancelling} onClick={doCancel}>
@@ -5308,7 +5281,7 @@ export function MarketSection(props: MarketSectionProps) {
               className={css.topBtn}
               aria-label={t('backTop')}
               onClick={() => { const el = bodyRef.current; if (el) el.scrollTo({ top: 0, behavior: 'smooth' }) }}
-            ><IconChevronUpOutline14 size={16} /></Button>
+            ><IconChevronUp size={16} /></Button>
           </span>
         </Tooltip>
       )}
@@ -5496,7 +5469,7 @@ export function MarketSection(props: MarketSectionProps) {
           <CardDesc text={(confirming.description && (confirming.description[lang] || confirming.description.en)) || ''} t={t} />
           <ScreenshotStrip plugin={confirming} onOpen={openLightbox} />
           <DisclosureRow
-            icon={<IconCodeOutline16 size={16} />}
+            icon={<IconCode size={16} />}
             title={t('cmdDetails')}
             open={cmdOpen}
             expandable
@@ -5507,7 +5480,7 @@ export function MarketSection(props: MarketSectionProps) {
           </DisclosureRow>
           {looksTerminal(confirming, lang) && (
             <p className={css.warnLine}>
-              <IconWarningOutline16 size={14} className={css.bannerIcon} />
+              <IconWarning size={14} className={css.bannerIcon} />
               {' ' + t('terminalWarn') + ' '}
               <a className={css.src} href={confirming.url + '#readme'} target="_blank" rel="noreferrer">{t('readme')}</a>
             </p>
@@ -5527,7 +5500,7 @@ export function MarketSection(props: MarketSectionProps) {
               </div>
             )
           })()}
-          <p className={css.modalNote}><IconWarningOutline16 size={14} className={css.bannerIcon} />{' ' + t('confirmWarn')}</p>
+          <p className={css.modalNote}><IconWarning size={14} className={css.bannerIcon} />{' ' + t('confirmWarn')}</p>
         </Modal>
       )}
       {recovery !== null && (
@@ -5602,7 +5575,7 @@ export function MarketSection(props: MarketSectionProps) {
             </div>
           </div>
           <p className={css.migrationWarning}>
-            <IconWarningOutline16 size={14} />
+            <IconWarning size={14} />
             {t('migrateWarning')}
           </p>
         </Modal>
@@ -5835,18 +5808,18 @@ export function MarketSection(props: MarketSectionProps) {
       {/* Log-export feedback via the Toast primitive — body portal, so it
         never squeezes the subtitle row or the error banner. */}
       {exportState === 'done' && (
-        <Toast text={t('exportedLog')} icon={<IconCheckOutline16 size={14} />} onDone={exportToastDone} />
+        <Toast text={t('exportedLog')} icon={<IconCheck size={14} />} onDone={exportToastDone} />
       )}
       {exportState === 'fail' && (
-        <Toast text={t('exportLogFail')} icon={<IconWarningOutline16 size={14} />} onDone={exportToastDone} />
+        <Toast text={t('exportLogFail')} icon={<IconWarning size={14} />} onDone={exportToastDone} />
       )}
       {favoriteError !== null && (
-        <Toast text={localizeBilingual(favoriteError, lang)} icon={<IconWarningOutline16 size={14} />} onDone={favoriteErrorDone} />
+        <Toast text={localizeBilingual(favoriteError, lang)} icon={<IconWarning size={14} />} onDone={favoriteErrorDone} />
       )}
       {toggled !== null && (
         <Toast
           text={toggled.name + ' ' + t(toggled.enabled ? 'toastToggledOn' : 'toastToggledOff')}
-          icon={toggled.enabled ? <IconCheckOutline16 size={14} /> : <IconWarningOutline16 size={14} />}
+          icon={toggled.enabled ? <IconCheck size={14} /> : <IconWarning size={14} />}
           onDone={toggledDone}
         />
       )}

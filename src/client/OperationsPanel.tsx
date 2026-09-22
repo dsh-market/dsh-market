@@ -8,14 +8,8 @@
  * 3 / 7") instead of one line per plugin.
  */
 
-import {
-  Button,
-  IconCheckOutline16,
-  IconLoadingOutline16,
-  IconWarningOutline16,
-  IconChevronDownOutline14,
-  IconChevronUpOutline14,
-} from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCheck, IconChevronDown, IconChevronUp, IconLoading, IconWarning } from './icons.ts'
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import css from './Market.module.css'
@@ -161,7 +155,7 @@ function ConflictChoice(props: {
           onClick={() => setWhyOpen(open => !open)}
         >
           {t('conflictDetails')}
-          {whyOpen ? <IconChevronUpOutline14 size={12} /> : <IconChevronDownOutline14 size={12} />}
+          {whyOpen ? <IconChevronUp size={12} /> : <IconChevronDown size={12} />}
         </button>
         <span className={css.grow} />
         <Button
@@ -189,11 +183,11 @@ function BucketIcon(props: { record: OperationRecord }) {
   const bucket = bucketOf(props.record.state)
   if (bucket === 'busy') {
     return props.record.state === 'running'
-      ? <span className={css.spin}><IconLoadingOutline16 size={13} /></span>
+      ? <span className={css.spin}><IconLoading size={13} /></span>
       : <span className={css.opQueuedIcon}>⋯</span>
   }
-  if (bucket === 'ok') return <IconCheckOutline16 size={13} className={css.reassureOk} />
-  return <IconWarningOutline16 size={14} className={css.conflictIcon} />
+  if (bucket === 'ok') return <IconCheck size={13} className={css.reassureOk} />
+  return <IconWarning size={14} className={css.conflictIcon} />
 }
 
 /** The one-line status under a record's name; the bucket carries the rest. */
@@ -265,7 +259,7 @@ export function OperationsPanel(props: OperationsPanelProps) {
         aria-expanded={open}
         onClick={() => setOpen(quiet ? true : !open)}
       >
-        {!quiet && busy && <span className={css.spin}><IconLoadingOutline16 size={12} /></span>}
+        {!quiet && busy && <span className={css.spin}><IconLoading size={12} /></span>}
         {quiet ? t('opTitle') : label}
         {!quiet && summary.attention > 0 && <span className={css.opDot} />}
       </button>
@@ -284,7 +278,7 @@ export function OperationsPanel(props: OperationsPanelProps) {
               title={t('opClose')}
               className={css.opCloseBtn}
               onClick={() => setOpen(false)}
-            ><IconChevronUpOutline14 size={14} /></Button>
+            ><IconChevronUp size={14} /></Button>
           </div>
           {busy && (
             <div className={css.opAggregate}>

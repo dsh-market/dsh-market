@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { IconSearchOutline16, Input } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Input } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconSearch } from './icons.ts'
 
 export const SEARCH_DELAY_MS = 250
 
@@ -42,7 +43,7 @@ export function SearchInput({ value, onCommit, className, placeholder, resetToke
 
   return <Input
     className={className}
-    icon={<IconSearchOutline16 size={14} />}
+    icon={<IconSearch size={14} />}
     placeholder={placeholder}
     value={draft}
     onChange={event => {

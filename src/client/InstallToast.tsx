@@ -4,7 +4,8 @@
  * back in their flow with visible proof.
  */
 import { useState } from 'react'
-import { IconSparkle16, Toast } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Toast } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconSparkle } from './icons.ts'
 import { readSession } from './market-data.ts'
 import type { Translate } from './market-data.ts'
 
@@ -24,7 +25,7 @@ export function InstallToast(props: { t: Translate }) {
   return (
     <Toast
       text={names.join(', ') + ' ' + t(mode === 'theme' ? 'toastTheme' : 'toastReady')}
-      icon={<IconSparkle16 size={14} />}
+      icon={<IconSparkle size={14} />}
       onDone={() => setNames([])}
     />
   )

@@ -35,7 +35,8 @@
 
 import { createElement as h, Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
-import { Button, IconChevronDownOutline14, IconLoadingOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconChevronDown, IconLoading } from './icons.ts'
 import css from './Market.module.css'
 import { api, applyGithubRouting } from './market-data.ts'
 import type { MarketStatus } from './market-data.ts'
@@ -578,7 +579,7 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
                   size: 'sm',
                   className: css.setDanger,
                   disabled: busy,
-                  icon: busy ? h('span', { className: css.spin }, h(IconLoadingOutline16, { size: 16 })) : undefined,
+                  icon: busy ? h('span', { className: css.spin }, h(IconLoading, { size: 16 })) : undefined,
                   onClick: onRemove,
                 }, busy ? t('setSelfWorking') : t('setSelfRemoveConfirm')),
               ),
@@ -611,7 +612,7 @@ export function SettingsCard({ t, onRemoved }: SettingsCardProps): ReactElement 
         h('div', { className: css.setDesc }, t('setCardDesc')),
       ),
       h('span', { className: open ? `${css.setChevron} ${css.setChevronOpen}` : css.setChevron },
-        h(IconChevronDownOutline14, { size: 14 }),
+        h(IconChevronDown, { size: 14 }),
       ),
     ),
     open ? h('div', { className: css.setBody }, body) : null,

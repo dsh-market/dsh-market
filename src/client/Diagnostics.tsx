@@ -15,7 +15,8 @@
  * here because the client bundle is built independently of the host tree.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react'
-import { Button, IconChevronDownOutline14, IconChevronRightOutline14, IconLoadingOutline16, IconRefreshOutline14, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconChevronDown, IconChevronRight, IconLoading, IconRefresh } from './icons.ts'
 import css from './Market.module.css'
 import { api } from './market-data.ts'
 import type { Translate } from './market-data.ts'
@@ -144,7 +145,7 @@ function Section(props: {
     <section className={css.diagSection}>
       <button type="button" className={css.collapseHead} onClick={() => setOpen(o => !o)} aria-expanded={open}>
         <span className={css.collapseIcon}>
-          {open ? <IconChevronDownOutline14 size={14} /> : <IconChevronRightOutline14 size={14} />}
+          {open ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
         </span>
         {alert && <span className={css.diagAlert}>⚠</span>}
         <span className={`${css.collapseTitle}${alert ? ` ${css.diagAlert}` : ''}`}>{title}</span>
@@ -170,7 +171,7 @@ function CollapsibleSection(props: { title: string; count?: number; open: boolea
     <section className={css.diagSection}>
       <button type="button" className={css.collapseHead} onClick={onToggle} aria-expanded={open}>
         <span className={css.collapseIcon}>
-          {open ? <IconChevronDownOutline14 size={14} /> : <IconChevronRightOutline14 size={14} />}
+          {open ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
         </span>
         <span className={css.collapseTitle}>{title}</span>
         {count !== undefined && <span className={css.diagCount}>({count})</span>}
@@ -392,7 +393,7 @@ export function Diagnostics(props: { t: Translate }) {
   if (report === null) {
     return (
       <div className={css.loading}>
-        <span className={css.spin}><IconLoadingOutline16 size={22} /></span>
+        <span className={css.spin}><IconLoading size={22} /></span>
         {t('checkLoading')}
       </div>
     )
@@ -532,7 +533,7 @@ export function Diagnostics(props: { t: Translate }) {
           </Button>
         )}
         <Button variant="ghost" size="sm" aria-label={t('checkRefresh')} onClick={refresh}>
-          <IconRefreshOutline14 size={14} />
+          <IconRefresh size={14} />
         </Button>
         <span className={css.diagSummaryMeta} title={report.profile}>{t('checkProfile')}: {report.profile}</span>
         <span className={css.diagSummaryMeta}>{new Date(report.scannedAt).toLocaleString()}</span>

@@ -18,7 +18,8 @@
  */
 
 import { useCallback, useEffect, useMemo, useState, type ReactElement } from 'react'
-import { Button, IconWarningOutline16, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconWarning } from './icons.ts'
 import css from './Market.module.css'
 import { api, type Translate } from './market-data.ts'
 
@@ -225,12 +226,12 @@ export function RecoveryPanel(props: RecoveryPanelProps): ReactElement | null {
       )}
     >
       <div className={css.recoverySummary}>
-        <IconWarningOutline16 size={14} className={css.bannerIcon} />
+        <IconWarning size={14} className={css.bannerIcon} />
         <span>{view.failure.summary || t('recoveryNoSummary')}</span>
       </div>
       {view.lastErrors.length > 0 && (
         <div className={css.recoverySummary}>
-          <IconWarningOutline16 size={14} className={css.bannerIcon} />
+          <IconWarning size={14} className={css.bannerIcon} />
           <span>{t('recoveryWriteFailed')}{view.lastErrors.join('; ')}</span>
         </div>
       )}

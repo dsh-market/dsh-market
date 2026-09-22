@@ -109,27 +109,17 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
     children: ReactElement
   }): ReactElement
 
+  /**
+   * Shape every product glyph takes. Icon *components* are deliberately not
+   * declared here: their names are what moved between host versions (the
+   * 0.1.7-alpha.1 rename dropped the size-suffixed exports this plugin used),
+   * so src/client/icons.ts resolves them from the host table by name at
+   * runtime and needs only this props shape.
+   */
   export interface IconProps {
     size?: number
     className?: string
   }
-  export function IconChevronDownOutline14(props: IconProps): ReactElement
-  export function IconChevronUpOutline14(props: IconProps): ReactElement
-  export function IconCheckOutline16(props: IconProps): ReactElement
-  export function IconChevronLeftOutline14(props: IconProps): ReactElement
-  export function IconChevronRightOutline14(props: IconProps): ReactElement
-  export function IconSearchOutline16(props: IconProps): ReactElement
-  export function IconRefreshOutline14(props: IconProps): ReactElement
-  export function IconWarningOutline16(props: IconProps): ReactElement
-  export function IconQuestionOutline14(props: IconProps): ReactElement
-  export function IconSparkle16(props: IconProps): ReactElement
-  export function IconCodeOutline16(props: IconProps): ReactElement
-  export function IconCordisPluginOutline14(props: IconProps): ReactElement
-  export function IconLoadingOutline16(props: IconProps): ReactElement
-  export function IconLinkOutline14(props: IconProps): ReactElement
-  export function IconDownloadOutline16(props: IconProps): ReactElement
-  export function IconFullscreenOutline16(props: IconProps): ReactElement
-  export function IconFolderOpen16(props: IconProps): ReactElement
 
   export type StateDotState = 'done' | 'warning' | 'ongoing' | 'error'
   export function StateDot(props: {
