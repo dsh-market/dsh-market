@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { IconSearchOutline16, Input } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Input } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconSearchOutline16 } from './icons.ts'
 
 export const SEARCH_DELAY_MS = 250
 

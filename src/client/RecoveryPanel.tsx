@@ -18,7 +18,8 @@
  */
 
 import { useCallback, useEffect, useMemo, useState, type ReactElement } from 'react'
-import { Button, IconWarningOutline16, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconWarningOutline16 } from './icons.ts'
 import css from './Market.module.css'
 import { api, type Translate } from './market-data.ts'
 

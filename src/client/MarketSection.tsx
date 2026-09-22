@@ -8,6 +8,16 @@ import { createPortal } from 'react-dom'
 import {
   Button,
   DisclosureRow,
+  Input,
+  Menu,
+  Modal,
+  Pill,
+  StateDot,
+  Toast,
+  Tooltip,
+  type MenuEntry,
+} from '@deepseek-ai/dsh-client-ui-primitives'
+import {
   IconChevronDownOutline14,
   IconChevronLeftOutline14,
   IconChevronRightOutline14,
@@ -25,15 +35,7 @@ import {
   IconSearchOutline16,
   IconSparkle16,
   IconWarningOutline16,
-  Input,
-  Menu,
-  Modal,
-  Pill,
-  StateDot,
-  Toast,
-  Tooltip,
-  type MenuEntry,
-} from '@deepseek-ai/dsh-client-ui-primitives'
+} from './icons.ts'
 import css from './Market.module.css'
 import { MARK_BLOCK_RADIUS, MARK_BLOCK_SIZE, MARK_GRID_BLOCKS, MARK_PLUG_BLOCK, MARK_VIEW_BOX } from './market-mark.ts'
 import { CommentsModal } from './CommentsModal.tsx'

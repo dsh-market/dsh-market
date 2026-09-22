@@ -8,14 +8,14 @@
  * 3 / 7") instead of one line per plugin.
  */
 
+import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import {
-  Button,
   IconCheckOutline16,
   IconLoadingOutline16,
   IconWarningOutline16,
   IconChevronDownOutline14,
   IconChevronUpOutline14,
-} from '@deepseek-ai/dsh-client-ui-primitives'
+} from './icons.ts'
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import css from './Market.module.css'

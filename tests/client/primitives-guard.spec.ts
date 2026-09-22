@@ -6,6 +6,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import { apply, missingPrimitives, REQUIRED_PRIMITIVES } from '../../src/client/index.ts'
+import { ICON_ALIASES, missingIcons } from '../../src/client/icons.ts'
 
 describe('missingPrimitives', () => {
   it('reports no gaps when every required export exists', () => {
@@ -25,6 +26,15 @@ describe('missingPrimitives', () => {
 
   it('accepts a custom requirement list', () => {
     expect(missingPrimitives({ A: 1 }, ['A', 'B', 'C'])).toEqual(['B', 'C'])
+  })
+})
+
+describe('apply() icon gaps (#671)', () => {
+  it('treats a 0.1.7-only icon table as complete for missingIcons', () => {
+    const mod: Record<string, unknown> = {}
+    for (const name of REQUIRED_PRIMITIVES) mod[name] = () => null
+    for (const [, newer] of ICON_ALIASES) mod[newer] = () => null
+    expect([...missingPrimitives(mod), ...missingIcons(mod)]).toEqual([])
   })
 })
 

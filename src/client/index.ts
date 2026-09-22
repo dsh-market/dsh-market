@@ -7,6 +7,7 @@
  */
 import { createElement as h } from 'react'
 import * as primitives from '@deepseek-ai/dsh-client-ui-primitives'
+import { missingIcons } from './icons.ts'
 import { en, zh } from './locales.ts'
 import { InstallToast } from './InstallToast.tsx'
 import { MarketErrorBoundary } from './ErrorBoundary.tsx'
@@ -90,7 +91,11 @@ export function apply(ctx: MarketClientContext): void {
   // Older hosts resolve the primitives module but lack the rc.6 exports the
   // market renders with. Skip registration (market simply absent from the
   // settings list) rather than throwing mid-render and blanking the dialog.
-  const gaps = missingPrimitives(primitives as unknown as Record<string, unknown>)
+  // Icon gaps are the same class (#671): 0.1.7 renamed …14/…16 to
+  // …Regular/…Medium with no alias; icons.ts accepts either spelling, and
+  // only disables when BOTH are missing.
+  const mod = primitives as unknown as Record<string, unknown>
+  const gaps = [...missingPrimitives(mod), ...missingIcons(mod)]
   if (gaps.length > 0) {
     console.warn('[dsh-market] host ui-primitives missing ' + gaps.join(', ') + ' — market section disabled (dsh web >= 0.1.0-rc.6 required)')
     return
