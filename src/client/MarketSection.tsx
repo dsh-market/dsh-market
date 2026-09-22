@@ -2128,6 +2128,16 @@ export function MarketSection(props: MarketSectionProps) {
   const favoritePageThemes = favoriteThemes.slice(
     (favoriteThemePagination.currentPage - 1) * favoriteThemePagination.pageSize,
     favoriteThemePagination.currentPage * favoriteThemePagination.pageSize)
+  // Favorites reuse pluginCard (and its host-requirement badge). Discover
+  // already loads compatibility for the current page; without the same
+  // fetch here the badge stays on "Reading host requirement…" forever.
+  const favoritePageHostPackages = [...new Set(favoritePagePlugins.flatMap(plugin =>
+    typeof plugin.npm === 'string' && plugin.npm !== '' ? [plugin.npm] : []))]
+  const favoritePageHostPackagesKey = favoritePageHostPackages.join('\u0000')
+  useEffect(() => {
+    if (tab === 'favorites') void loadHostCompatibility(favoritePageHostPackages)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, favoritePageHostPackagesKey, loadHostCompatibility])
   const favoriteStale = useMemo(
     () => (data === null ? [] : staleFavoriteUrls(favoriteUrls, data.plugins)),
     [data, favoriteUrls])

@@ -2005,6 +2005,64 @@ describe('favorites (#414)', () => {
     expect(screen.queryByText('dsh-loop')).toBeNull()
   })
 
+  it('loads host-requirement badges on the favorites tab', async () => {
+    // Discover only fetches compatibility for the current page (24). Put the
+    // favorite past that window so favorites must request it itself — otherwise
+    // the badge would already be warm from discover and this would not catch
+    // the missing favorites load.
+    const fillers = Array.from({ length: 30 }, (_, i) => ({
+      ...REGISTRY.plugins[0],
+      name: `filler-${String(i).padStart(2, '0')}`,
+      npm: `filler-${String(i).padStart(2, '0')}`,
+      url: `https://github.com/fill/filler-${String(i).padStart(2, '0')}`,
+      stars: 1000 - i,
+      added: '2026-08-01',
+    }))
+    const favorite = {
+      ...REGISTRY.plugins[0],
+      name: 'fav-only',
+      npm: 'fav-only',
+      url: 'https://github.com/fav/fav-only',
+      stars: 1,
+      added: '2026-07-01',
+    }
+    const plugins = [...fillers, favorite]
+    stubFetch({
+      '/dsh-market/registry': {
+        source: 'live',
+        hostVersion: '0.1.2-alpha.2',
+        registry: { ...REGISTRY, count: plugins.length, plugins },
+      },
+      '/dsh-market/installed': {
+        profile: 'web', installed: {}, live: [], disabled: [], groups: {}, groupOrder: [],
+        favorites: [favorite.url],
+      },
+      '/dsh-market/discovery-compatibility': (body: any) => ({
+        hostVersion: '0.1.2-alpha.2',
+        plugins: Object.fromEntries(body.packages.map((name: string) => [name, {
+          status: 'compatible',
+          basis: 'manifest',
+          requirement: name === 'fav-only' ? '^9.9.9' : '^0.1.2-alpha.2',
+          declarations: [{ kind: 'peer', package: '@deepseek-ai/dsh-tools', range: name === 'fav-only' ? '^9.9.9' : '^0.1.2-alpha.2' }],
+        }])),
+      }),
+    })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('filler-00')
+    expect(screen.queryByText('fav-only')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: re(en.tabFavorites) }))
+    await screen.findByText('fav-only')
+    await waitFor(() => {
+      expect(fetchCalls.some(call =>
+        call.path === '/dsh-market/discovery-compatibility'
+        && call.method === 'POST'
+        && Array.isArray((call.body as { packages?: unknown })?.packages)
+        && ((call.body as { packages: string[] }).packages).includes('fav-only'))).toBe(true)
+    })
+    await screen.findByText(en.hostRequirement.replace('{0}', '^9.9.9'))
+    expect(screen.queryByText(en.hostRequirementLoading)).toBeNull()
+  })
+
   it('removing a favorite drops it from the favorites tab', async () => {
     const state = favoritesStub(['https://github.com/alice/dsh-loop'])
     render(<MarketSection {...props()} />)
