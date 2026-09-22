@@ -3268,11 +3268,18 @@ export function MarketSection(props: MarketSectionProps) {
   /**
    * Installed entries ordered for the list view.
    *
-   * The order is frozen when entering the installed list view so that
-   * asynchronous updates arriving while the user is viewing or clicking
-   * rows do not reshuffle cards under their eyes (#631).
+   * The order settles once and then holds, so rows never reshuffle under a
+   * pointer that is already aiming at one (#631). The single moment that has
+   * to reorder is when the update check lands: `/installed` is a local read
+   * and `/updates` is a network probe over every package, so the list is
+   * always rendered BEFORE the answer exists — freezing on the view alone
+   * would leave it in manifest order forever. `updatesLoaded` is therefore
+   * the one part of `updates` allowed in, as a boolean: it flips once when
+   * the result arrives, and every later change (a newer check, a row the user
+   * just updated) leaves the boolean and the order alone.
    */
   const isInstalledListActive = tab === 'installed' && installedView === 'list'
+  const updatesLoaded = Object.keys(updates).length > 0
   const orderedInstalledEntries = useMemo(() => {
     return Object.entries(displayedInstalled)
       .filter(([name]) => name !== selfName)
@@ -3281,8 +3288,8 @@ export function MarketSection(props: MarketSectionProps) {
         const bUp = isPluginUpdatable(nameB, String(specB), updates[nameB], updatedNames) ? 1 : 0
         return bUp - aUp
       })
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- freezes order on entering the installed list; live updates/updatedNames must not reshuffle rows (#631)
-  }, [isInstalledListActive, displayedInstalled, selfName])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `updatesLoaded` stands in for `updates`/`updatedNames`: reorder when the check lands, then hold (#631)
+  }, [isInstalledListActive, displayedInstalled, selfName, updatesLoaded])
   const missingRestoreCount = Object.keys(pendingDependencies).filter(name => !installedFiles.includes(name)).length
   // Self-update lives in the header button and the settings card, not this
   // tab's row list (the market itself is filtered out below) — so a pending

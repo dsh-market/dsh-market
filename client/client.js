@@ -8130,15 +8130,31 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				...pendingDependencies,
 				...installed
 			};
+			/**
+			* Installed entries ordered for the list view.
+			*
+			* The order settles once and then holds, so rows never reshuffle under a
+			* pointer that is already aiming at one (#631). The single moment that has
+			* to reorder is when the update check lands: `/installed` is a local read
+			* and `/updates` is a network probe over every package, so the list is
+			* always rendered BEFORE the answer exists — freezing on the view alone
+			* would leave it in manifest order forever. `updatesLoaded` is therefore
+			* the one part of `updates` allowed in, as a boolean: it flips once when
+			* the result arrives, and every later change (a newer check, a row the user
+			* just updated) leaves the boolean and the order alone.
+			*/
+			const isInstalledListActive = tab === "installed" && installedView === "list";
+			const updatesLoaded = Object.keys(updates).length > 0;
 			const orderedInstalledEntries = (0, react.useMemo)(() => {
 				return Object.entries(displayedInstalled).filter(([name]) => name !== selfName).sort(([nameA, specA], [nameB, specB]) => {
 					const aUp = isPluginUpdatable(nameA, String(specA), updates[nameA], updatedNames) ? 1 : 0;
 					return (isPluginUpdatable(nameB, String(specB), updates[nameB], updatedNames) ? 1 : 0) - aUp;
 				});
 			}, [
-				tab === "installed" && installedView === "list",
+				isInstalledListActive,
 				displayedInstalled,
-				selfName
+				selfName,
+				updatesLoaded
 			]);
 			const missingRestoreCount = Object.keys(pendingDependencies).filter((name) => !installedFiles.includes(name)).length;
 			const hasUpdates = reminderUpdatableNames.length > 0;
