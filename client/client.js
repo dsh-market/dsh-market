@@ -7504,6 +7504,15 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const favoriteThemePagination = usePagination(favoriteThemes.length, favResetDeps, scrollToTop);
 			const favoritePagePlugins = favoritePlugins.slice((favoritePluginPagination.currentPage - 1) * favoritePluginPagination.pageSize, favoritePluginPagination.currentPage * favoritePluginPagination.pageSize);
 			const favoritePageThemes = favoriteThemes.slice((favoriteThemePagination.currentPage - 1) * favoriteThemePagination.pageSize, favoriteThemePagination.currentPage * favoriteThemePagination.pageSize);
+			const favoritePageHostPackages = [...new Set(favoritePagePlugins.flatMap((plugin) => typeof plugin.npm === "string" && plugin.npm !== "" ? [plugin.npm] : []))];
+			const favoritePageHostPackagesKey = favoritePageHostPackages.join("\0");
+			(0, react.useEffect)(() => {
+				if (tab === "favorites") loadHostCompatibility(favoritePageHostPackages);
+			}, [
+				tab,
+				favoritePageHostPackagesKey,
+				loadHostCompatibility
+			]);
 			const favoriteStale = (0, react.useMemo)(() => data === null ? [] : staleFavoriteUrls(favoriteUrls, data.plugins), [data, favoriteUrls]);
 			const favoritesAllStale = favoriteUrls.length > 0 && favoriteStale.length === favoriteUrls.length && qFavorites.trim() === "";
 			/** Tab badge counts catalog-visible bookmarks once the registry is loaded. */
