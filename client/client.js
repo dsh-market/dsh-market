@@ -124,10 +124,20 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				"IconWarningOutline16"
 			]
 		];
+		/**
+		* True for a value React will accept as an element type. Plain functions are
+		* the common case today; memo / forwardRef wrappers are objects tagged with
+		* $$typeof and must not be treated as "missing" (#671 follow-up).
+		*/
+		function isIconComponent(value) {
+			if (typeof value === "function") return true;
+			if (typeof value !== "object" || value === null) return false;
+			return typeof value.$$typeof === "symbol";
+		}
 		/** Resolve one icon from a primitives-shaped module; null when both names are absent. */
 		function resolveIcon(mod, newer, older) {
 			const candidate = mod[newer] ?? mod[older];
-			return typeof candidate === "function" ? candidate : null;
+			return isIconComponent(candidate) ? candidate : null;
 		}
 		/**
 		* Names for which neither the 0.1.7 nor the pre-0.1.7 export exists on the
@@ -139,7 +149,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			for (const [stable, newer, older] of ICON_ALIASES) if (resolveIcon(mod, newer, older) === null) gaps.push(stable);
 			return gaps;
 		}
-		function pick(newer, older) {
+		function pickIcon(newer, older) {
 			const resolved = resolveIcon(_deepseek_ai_dsh_client_ui_primitives, newer, older);
 			if (resolved === null) {
 				const missing = () => {
@@ -149,23 +159,23 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			}
 			return resolved;
 		}
-		const IconCheckOutline16 = pick("IconCheckOutlineMedium", "IconCheckOutline16");
-		const IconChevronDownOutline14 = pick("IconChevronDownOutlineRegular", "IconChevronDownOutline14");
-		const IconChevronLeftOutline14 = pick("IconChevronLeftOutlineRegular", "IconChevronLeftOutline14");
-		const IconChevronRightOutline14 = pick("IconChevronRightOutlineRegular", "IconChevronRightOutline14");
-		const IconChevronUpOutline14 = pick("IconChevronUpOutlineRegular", "IconChevronUpOutline14");
-		const IconCodeOutline16 = pick("IconCodeOutlineMedium", "IconCodeOutline16");
-		const IconCordisPluginOutline14 = pick("IconCordisPluginOutlineRegular", "IconCordisPluginOutline14");
-		const IconDownloadOutline16 = pick("IconDownloadOutlineMedium", "IconDownloadOutline16");
-		const IconFolderOpen16 = pick("IconFolderOpenMedium", "IconFolderOpen16");
-		const IconFullscreenOutline16 = pick("IconFullscreenOutlineMedium", "IconFullscreenOutline16");
-		const IconLinkOutline14 = pick("IconLinkOutlineRegular", "IconLinkOutline14");
-		const IconLoadingOutline16 = pick("IconLoadingOutlineMedium", "IconLoadingOutline16");
-		const IconQuestionOutline14 = pick("IconQuestionOutlineRegular", "IconQuestionOutline14");
-		const IconRefreshOutline14 = pick("IconRefreshOutlineRegular", "IconRefreshOutline14");
-		const IconSearchOutline16 = pick("IconSearchOutlineMedium", "IconSearchOutline16");
-		const IconSparkle16 = pick("IconSparkleMedium", "IconSparkle16");
-		const IconWarningOutline16 = pick("IconWarningOutlineMedium", "IconWarningOutline16");
+		const IconCheckOutline16 = pickIcon("IconCheckOutlineMedium", "IconCheckOutline16");
+		const IconChevronDownOutline14 = pickIcon("IconChevronDownOutlineRegular", "IconChevronDownOutline14");
+		const IconChevronLeftOutline14 = pickIcon("IconChevronLeftOutlineRegular", "IconChevronLeftOutline14");
+		const IconChevronRightOutline14 = pickIcon("IconChevronRightOutlineRegular", "IconChevronRightOutline14");
+		const IconChevronUpOutline14 = pickIcon("IconChevronUpOutlineRegular", "IconChevronUpOutline14");
+		const IconCodeOutline16 = pickIcon("IconCodeOutlineMedium", "IconCodeOutline16");
+		const IconCordisPluginOutline14 = pickIcon("IconCordisPluginOutlineRegular", "IconCordisPluginOutline14");
+		const IconDownloadOutline16 = pickIcon("IconDownloadOutlineMedium", "IconDownloadOutline16");
+		const IconFolderOpen16 = pickIcon("IconFolderOpenMedium", "IconFolderOpen16");
+		const IconFullscreenOutline16 = pickIcon("IconFullscreenOutlineMedium", "IconFullscreenOutline16");
+		const IconLinkOutline14 = pickIcon("IconLinkOutlineRegular", "IconLinkOutline14");
+		const IconLoadingOutline16 = pickIcon("IconLoadingOutlineMedium", "IconLoadingOutline16");
+		const IconQuestionOutline14 = pickIcon("IconQuestionOutlineRegular", "IconQuestionOutline14");
+		const IconRefreshOutline14 = pickIcon("IconRefreshOutlineRegular", "IconRefreshOutline14");
+		const IconSearchOutline16 = pickIcon("IconSearchOutlineMedium", "IconSearchOutline16");
+		const IconSparkle16 = pickIcon("IconSparkleMedium", "IconSparkle16");
+		const IconWarningOutline16 = pickIcon("IconWarningOutlineMedium", "IconWarningOutline16");
 		//#endregion
 		//#region src/client/locales.ts
 		/** zh/en dictionaries for the Market settings section and install toast. */

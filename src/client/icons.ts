@@ -44,6 +44,17 @@ export const ICON_ALIASES = [
 
 export type MarketIconName = (typeof ICON_ALIASES)[number][0]
 
+/**
+ * True for a value React will accept as an element type. Plain functions are
+ * the common case today; memo / forwardRef wrappers are objects tagged with
+ * $$typeof and must not be treated as "missing" (#671 follow-up).
+ */
+export function isIconComponent(value: unknown): value is IconComponent {
+  if (typeof value === 'function') return true
+  if (typeof value !== 'object' || value === null) return false
+  return typeof (value as { $$typeof?: unknown }).$$typeof === 'symbol'
+}
+
 /** Resolve one icon from a primitives-shaped module; null when both names are absent. */
 export function resolveIcon(
   mod: Record<string, unknown>,
@@ -51,7 +62,7 @@ export function resolveIcon(
   older: string,
 ): IconComponent | null {
   const candidate = mod[newer] ?? mod[older]
-  return typeof candidate === 'function' ? (candidate as IconComponent) : null
+  return isIconComponent(candidate) ? candidate : null
 }
 
 /**
@@ -67,7 +78,7 @@ export function missingIcons(mod: Record<string, unknown>): string[] {
   return gaps
 }
 
-function pick(newer: string, older: string): IconComponent {
+function pickIcon(newer: string, older: string): IconComponent {
   const resolved = resolveIcon(primitives as unknown as Record<string, unknown>, newer, older)
   // apply() refuses to register when any icon is missing; a throw here is
   // only reachable if a call site bypasses that guard.
@@ -80,20 +91,20 @@ function pick(newer: string, older: string): IconComponent {
   return resolved
 }
 
-export const IconCheckOutline16 = pick('IconCheckOutlineMedium', 'IconCheckOutline16')
-export const IconChevronDownOutline14 = pick('IconChevronDownOutlineRegular', 'IconChevronDownOutline14')
-export const IconChevronLeftOutline14 = pick('IconChevronLeftOutlineRegular', 'IconChevronLeftOutline14')
-export const IconChevronRightOutline14 = pick('IconChevronRightOutlineRegular', 'IconChevronRightOutline14')
-export const IconChevronUpOutline14 = pick('IconChevronUpOutlineRegular', 'IconChevronUpOutline14')
-export const IconCodeOutline16 = pick('IconCodeOutlineMedium', 'IconCodeOutline16')
-export const IconCordisPluginOutline14 = pick('IconCordisPluginOutlineRegular', 'IconCordisPluginOutline14')
-export const IconDownloadOutline16 = pick('IconDownloadOutlineMedium', 'IconDownloadOutline16')
-export const IconFolderOpen16 = pick('IconFolderOpenMedium', 'IconFolderOpen16')
-export const IconFullscreenOutline16 = pick('IconFullscreenOutlineMedium', 'IconFullscreenOutline16')
-export const IconLinkOutline14 = pick('IconLinkOutlineRegular', 'IconLinkOutline14')
-export const IconLoadingOutline16 = pick('IconLoadingOutlineMedium', 'IconLoadingOutline16')
-export const IconQuestionOutline14 = pick('IconQuestionOutlineRegular', 'IconQuestionOutline14')
-export const IconRefreshOutline14 = pick('IconRefreshOutlineRegular', 'IconRefreshOutline14')
-export const IconSearchOutline16 = pick('IconSearchOutlineMedium', 'IconSearchOutline16')
-export const IconSparkle16 = pick('IconSparkleMedium', 'IconSparkle16')
-export const IconWarningOutline16 = pick('IconWarningOutlineMedium', 'IconWarningOutline16')
+export const IconCheckOutline16 = pickIcon('IconCheckOutlineMedium', 'IconCheckOutline16')
+export const IconChevronDownOutline14 = pickIcon('IconChevronDownOutlineRegular', 'IconChevronDownOutline14')
+export const IconChevronLeftOutline14 = pickIcon('IconChevronLeftOutlineRegular', 'IconChevronLeftOutline14')
+export const IconChevronRightOutline14 = pickIcon('IconChevronRightOutlineRegular', 'IconChevronRightOutline14')
+export const IconChevronUpOutline14 = pickIcon('IconChevronUpOutlineRegular', 'IconChevronUpOutline14')
+export const IconCodeOutline16 = pickIcon('IconCodeOutlineMedium', 'IconCodeOutline16')
+export const IconCordisPluginOutline14 = pickIcon('IconCordisPluginOutlineRegular', 'IconCordisPluginOutline14')
+export const IconDownloadOutline16 = pickIcon('IconDownloadOutlineMedium', 'IconDownloadOutline16')
+export const IconFolderOpen16 = pickIcon('IconFolderOpenMedium', 'IconFolderOpen16')
+export const IconFullscreenOutline16 = pickIcon('IconFullscreenOutlineMedium', 'IconFullscreenOutline16')
+export const IconLinkOutline14 = pickIcon('IconLinkOutlineRegular', 'IconLinkOutline14')
+export const IconLoadingOutline16 = pickIcon('IconLoadingOutlineMedium', 'IconLoadingOutline16')
+export const IconQuestionOutline14 = pickIcon('IconQuestionOutlineRegular', 'IconQuestionOutline14')
+export const IconRefreshOutline14 = pickIcon('IconRefreshOutlineRegular', 'IconRefreshOutline14')
+export const IconSearchOutline16 = pickIcon('IconSearchOutlineMedium', 'IconSearchOutline16')
+export const IconSparkle16 = pickIcon('IconSparkleMedium', 'IconSparkle16')
+export const IconWarningOutline16 = pickIcon('IconWarningOutlineMedium', 'IconWarningOutline16')
