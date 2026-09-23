@@ -80,17 +80,43 @@ beforeEach(() => {
 
 describe('profile the launcher booted (#639)', () => {
   const launcher = { name: 'desktop', dir: '/home/u/.dsh/profiles/desktop' }
+  // A profile the dsh CLI can launch. It cannot be named `desktop`: the CLI
+  // refuses that name outright, so a `desktop` profile only ever comes from
+  // the Electron app (#702). "Ordinary launcher profile" cases use this.
+  const ordinary = { name: 'work', dir: '/home/u/.dsh/profiles/work' }
+
+  it('routes a `desktop` profile to the official manager even without an app.asar anchor (#702)', () => {
+    // The CLI rejects the profile by NAME (`profile.toLowerCase() ===
+    // "desktop"`, @deepseek-ai/dsh 0.1.7-alpha.2). Keying detection on an
+    // install-anchor shape let a host with a different layout fall through
+    // to the CLI and fail every install.
+    const ctx = new FakeContext({ webServer: {}, loader: {}, profileContext: launcher })
+
+    apply(ctx as never)
+
+    expect(state.officialFactoryArgs).toHaveLength(1)
+    expect(state.mounts[0].config).toMatchObject({ profile: 'desktop', desktopHost: true, allowRestart: false })
+  })
+
+  it('matches the name case-insensitively, as the CLI does', () => {
+    const ctx = new FakeContext({ webServer: {}, loader: {}, profileContext: { name: 'Desktop', dir: '/home/u/.dsh/profiles/Desktop' } })
+
+    apply(ctx as never)
+
+    expect(state.officialFactoryArgs).toHaveLength(1)
+  })
 
   it('does not call an ordinary launcher profile a desktop shell', () => {
     // The launcher hands every profile its own directory, so the capability
     // bits must not read that directory as "a Desktop shell serves us" (#639
     // follow-up).
-    const ctx = new FakeContext({ webServer: {}, loader: {}, profileContext: launcher })
+    const ctx = new FakeContext({ webServer: {}, loader: {}, profileContext: ordinary })
 
     apply(ctx as never)
 
-    expect(state.mounts[0].config.profileDirectory).toBe(launcher.dir)
+    expect(state.mounts[0].config.profileDirectory).toBe(ordinary.dir)
     expect(state.mounts[0].config.desktopHost).toBeUndefined()
+    expect(state.officialFactoryArgs).toHaveLength(0)
   })
 
   it('uses the official manager rather than the forbidden CLI for Electron desktop', () => {
@@ -395,9 +421,13 @@ describe('host settings registration (#516)', () => {
 })
 
 describe('the launcher\'s own package manager (#653)', () => {
+  // Not `desktop`: that name only ever comes from the Electron app, whose
+  // installs go through the app's plugin manager and never through pnpm
+  // (#702). These cases are about the CLI path, which is where a launcher's
+  // own package manager is used.
   const published = {
-    name: 'desktop',
-    dir: '/home/u/.dsh/profiles/desktop',
+    name: 'work',
+    dir: '/home/u/.dsh/profiles/work',
     packageManager: {
       command: '/Applications/DSH.app/Contents/Resources/runtime/node',
       args: ['/Applications/DSH.app/Contents/Resources/runtime/pnpm.mjs'],
@@ -444,7 +474,7 @@ describe('the launcher\'s own package manager (#653)', () => {
     // Half an invocation is worse than none: it would aim the probe at a
     // command it cannot run and keep the PATH fallback from ever being tried.
     const ctx = new FakeContext({
-      webServer: {}, loader: {}, profileContext: { name: 'desktop', dir: '/d', packageManager },
+      webServer: {}, loader: {}, profileContext: { name: 'work', dir: '/d', packageManager },
     })
 
     apply(ctx as never)
@@ -457,7 +487,7 @@ describe('the launcher\'s own package manager (#653)', () => {
       webServer: {},
       loader: {},
       profileContext: {
-        name: 'desktop',
+        name: 'work',
         dir: '/d',
         packageManager: { command: 'node', args: [], env: { KEEP: 'yes', DROP_NUMBER: 7, DROP_OBJECT: {} } },
       },

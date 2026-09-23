@@ -1,8 +1,6 @@
 /** The official Electron profile is owned by DSH's in-process plugin manager. */
 
 import { randomUUID } from 'node:crypto'
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { progress, TARGET_RE, type DesktopPluginRuntime, type InstallResult } from './dsh-cli.ts'
 
 interface ManagedResult {
@@ -16,6 +14,13 @@ export interface OfficialPluginManagerLike {
   removeBundle(name: string): Promise<ManagedResult>
   cancelInstall(requestId: string): Promise<unknown>
 }
+
+/**
+ * What a user can actually do when the market cannot perform an operation on
+ * the official Desktop profile: the app's own Plugins page runs the same
+ * managed pipeline. Bilingual, because it is read in the operations panel.
+ */
+export const OFFICIAL_PAGE_HINT = '官方桌面客户端的这个插件操作需要在「设置 → 插件」里完成；市场无法通过命令行修改桌面端的 profile。 / On the official desktop app, do this from Settings → Plugins; the market cannot change the desktop profile through the command line.'
 
 function failure(message: string, exitCode = 1): InstallResult {
   return { exitCode, timedOut: false, stdout: '', stderr: message, cancelled: false }
@@ -32,7 +37,7 @@ function detail(error: unknown): string {
 export function createOfficialDesktopRuntime(
   managerLookup: () => OfficialPluginManagerLike | undefined,
   profileName: string,
-  profileDirectory: string,
+  _profileDirectory: string,
 ): DesktopPluginRuntime {
   let disposed = false
   let active: { requestId?: string; cancelled: boolean; done: Promise<InstallResult> } | undefined
@@ -46,7 +51,7 @@ export function createOfficialDesktopRuntime(
       || typeof manager.installBundle !== 'function'
       || typeof manager.removeBundle !== 'function'
       || typeof manager.cancelInstall !== 'function') {
-      return Promise.resolve(failure('official desktop plugin manager is unavailable; no CLI fallback is allowed', 127))
+      return Promise.resolve(failure(OFFICIAL_PAGE_HINT, 127))
     }
 
     // Market sends pnpm argv. Only operations representable by the official
@@ -55,22 +60,13 @@ export function createOfficialDesktopRuntime(
     if (extra.length !== 0 || typeof target !== 'string' || !TARGET_RE.test(target)) {
       return Promise.resolve(failure('this desktop operation is not supported by the official plugin manager', 127))
     }
-    let spec = target
-    if (command === 'update') {
-      try {
-        const manifest = JSON.parse(readFileSync(join(profileDirectory, 'package.json'), 'utf8')) as {
-          dependencies?: Record<string, string>
-        }
-        const current = manifest.dependencies?.[target]
-        if (current === undefined || /^(?:file:|link:|github:|git\+|https?:)/.test(current)) {
-          return Promise.resolve(failure('updating this source requires the official Plugins page', 127))
-        }
-        spec = `${target}@latest`
-      } catch {
-        return Promise.resolve(failure('cannot read the desktop profile manifest', 127))
-      }
-    } else if (command !== 'add' && command !== 'remove') {
-      return Promise.resolve(failure('this desktop operation requires the official Plugins page', 127))
+    const spec = target
+    // Only `add` and `remove` map onto the manager. `update` reached here
+    // only for the #564 in-place re-resolve of a floating git spec; turning
+    // it into `name@latest` (as a first draft did) would cross the installed
+    // range and ignore the release channel, which is a different operation.
+    if (command !== 'add' && command !== 'remove') {
+      return Promise.resolve(failure(OFFICIAL_PAGE_HINT, 127))
     }
 
     const requestId = command === 'remove' ? undefined : randomUUID()
@@ -92,12 +88,24 @@ export function createOfficialDesktopRuntime(
     const current = { requestId, cancelled: false, done: Promise.resolve(failure('not started')) }
     active = current
     current.done = operation.then((result): InstallResult => {
-      const ok = result.application === 'applied' || result.application === 'restart-required'
-      const output = result.packageResult?.output ?? ''
+      // `overridden` is a change the manager KEPT (`changed: true`) whose live
+      // state differs because another layer — a user patch — overrides it.
+      // It is not a failed install: reporting it as one sent the update route
+      // into a rollback of a change the manager had already kept.
+      const ok = result.application === 'applied'
+        || result.application === 'restart-required'
+        || result.application === 'overridden'
+      const output = [
+        result.packageResult?.output ?? '',
+        result.application === 'overridden' ? 'the plugin manager kept this change, but another layer overrides whether it is enabled' : '',
+      ].filter(Boolean).join('\n')
       const message = ok ? '' : detail(result.error)
       if (!ok) progress.error = message
       return {
-        exitCode: ok ? 0 : (result.packageResult?.exitCode ?? 1),
+        // `||`, not `??`: a failure at stage `enable` follows a SUCCESSFUL
+        // pnpm step, so packageResult.exitCode is 0 there — and every route
+        // reads exit 0 as success. A failed application must never be 0.
+        exitCode: ok ? 0 : (result.packageResult?.exitCode || 1),
         timedOut: false,
         stdout: output,
         stderr: message,

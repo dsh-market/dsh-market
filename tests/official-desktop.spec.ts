@@ -46,17 +46,48 @@ describe('official Electron profile runtime', () => {
     await expect(runtime.runPlugin('desktop', ['install'])).resolves.toMatchObject({ exitCode: 127 })
     expect(service.installBundle).not.toHaveBeenCalled()
     const missing = createOfficialDesktopRuntime(() => undefined, 'desktop', profile())
-    await expect(missing.runPlugin('desktop', ['add', 'example'])).resolves.toMatchObject({ exitCode: 127, stderr: expect.stringContaining('no CLI fallback') })
+    // Absent service: a message the user can act on, pointing at the app's
+    // own Plugins page — never the CLI, which refuses this profile by name.
+    await expect(missing.runPlugin('desktop', ['add', 'example'])).resolves.toMatchObject({ exitCode: 127, stderr: expect.stringContaining('Settings → Plugins') })
   })
 
-  it('updates only an npm dependency and removes through the manager', async () => {
+  it('refuses `update` rather than rewriting it to name@latest, and removes through the manager', async () => {
+    // `update` reaches a runtime only for #564's in-place re-resolve of a
+    // floating git spec. `name@latest` would cross the installed range and
+    // ignore the release channel — a different operation — so it is refused
+    // with the pointer to the official page instead.
     const service = manager()
     const runtime = createOfficialDesktopRuntime(() => service, 'desktop', profile())
-    await expect(runtime.runPlugin('desktop', ['update', 'example'])).resolves.toMatchObject({ exitCode: 0 })
-    expect(service.installBundle).toHaveBeenCalledWith('example@latest', { requestId: expect.any(String) })
-    await expect(runtime.runPlugin('desktop', ['update', 'gitplug'])).resolves.toMatchObject({ exitCode: 127 })
+    await expect(runtime.runPlugin('desktop', ['update', 'example'])).resolves.toMatchObject({ exitCode: 127, stderr: expect.stringContaining('Settings → Plugins') })
+    expect(service.installBundle).not.toHaveBeenCalled()
     await expect(runtime.runPlugin('desktop', ['remove', 'example'])).resolves.toMatchObject({ exitCode: 0 })
     expect(service.removeBundle).toHaveBeenCalledWith('example')
+  })
+
+  it('never reports exit 0 for a failed application, even after a successful pnpm step', async () => {
+    // The official ChangeResult: "successful installation can proceed to
+    // enablement" — so stage `enable` + application `failed` follows a pnpm
+    // run that EXITED 0. Taking packageResult.exitCode there reported the
+    // failed enablement as a successful install; every route reads exit 0
+    // as success.
+    const service = manager()
+    service.installBundle.mockResolvedValueOnce({ application: 'failed', stage: 'enable', changed: true, error: 'entry failed to start', packageResult: { exitCode: 0, output: 'Done' } })
+    const runtime = createOfficialDesktopRuntime(() => service, 'desktop', profile())
+    const result = await runtime.runPlugin('desktop', ['add', 'example'])
+    expect(result.exitCode).not.toBe(0)
+    expect(result.stderr).toBe('entry failed to start')
+  })
+
+  it('treats `overridden` as a kept change, not a failure', async () => {
+    // `changed: true`: the manager persisted it, and a user patch decides
+    // whether it runs. Calling that a failure sent the update route into a
+    // rollback of a change the manager had kept.
+    const service = manager()
+    service.installBundle.mockResolvedValueOnce({ application: 'overridden', stage: 'enable', changed: true, packageResult: { exitCode: 0, output: 'Done' } })
+    const runtime = createOfficialDesktopRuntime(() => service, 'desktop', profile())
+    const result = await runtime.runPlugin('desktop', ['add', 'example'])
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain('another layer overrides')
   })
 
   it('maps manager failure without reporting success', async () => {
