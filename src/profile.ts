@@ -1121,8 +1121,14 @@ export function setAllowBuilds(profile: string, packages: string[], explicitDir?
   // serves it. Optionally pinned to a commit, which is the form pnpm 11.8.0
   // names for a plain remote. https only: the market installs from https
   // remotes, and an http key would authorize a source it never writes.
+  //
+  // The `.git` suffix is optional because pnpm keys the remote exactly as it
+  // was spelled: measured on 12.4.1, a remote installed without `.git`
+  // authorizes under `name@git+…/repo` and NOT under `…/repo.git`, so
+  // requiring the suffix dropped a correctly derived key on its way out, and
+  // appending it would have written one pnpm never reads.
   const GIT_KEY_RE = new RegExp(
-    `^${NAME}@git\\+https://[A-Za-z0-9_.-]+(?::\\d{1,5})?/${SEG}(?:/${SEG})*\\.git(?:#${SHA})?$`,
+    `^${NAME}@git\\+https://[A-Za-z0-9_.-]+(?::\\d{1,5})?/${SEG}(?:/${SEG})*(?:\\.git)?(?:#${SHA})?$`,
   )
   // The commit-pinned download a host serves, which is what pnpm below 11.21
   // matches instead (#285): codeload for github, the project archive for

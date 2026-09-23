@@ -543,11 +543,15 @@ export function mountMarketRoutes(
         const result = await hotMount(host, dir, name)
         ok = result.ok
         reason = result.reason ?? undefined
-        // A mount that succeeded imported the module as it is on disk NOW,
-        // so whatever was replaced under the old instance is no longer what
-        // this process is serving. Off-and-on is a real way out of the
-        // restart notice, and holding it after that would be wrong.
-        if (result.ok) replacedWhileLive.delete(name)
+        // Deliberately NOT clearing replacedWhileLive here (#685). This used
+        // to say "a mount that succeeded imported the module as it is on
+        // disk NOW", which is false exactly when the flag is set: it is only
+        // set when the host half was LIVE at update time, i.e. this process
+        // has already evaluated that module URL, and Node's ESM cache serves
+        // any later import of the same URL — the profile layout is hoisted,
+        // so an update rewrites the files in place and the URL never changes.
+        // Off-and-on re-creates the fiber around the OLD module. Only a
+        // restart ends the process that holds it, and the flag with it.
       }
     } else {
       ok = await hotUnmount(name) || await themes.setEntryDisabled(name, true)
@@ -2426,7 +2430,14 @@ export function mountMarketRoutes(
           // A carrier toggle moves the bundle in/out of dsh.profile.bundles,
           // which only takes effect on the next composition — always a restart.
           // Non-carrier plugins keep the live-mount based decision.
-          const restart = isCarrier ? true : enabled ? !liveAfter : liveAfter
+          // A plugin replaced on disk while its host half was running is
+          // still serving the module this process imported, whatever the
+          // loader's inventory says — re-enabling it re-creates the fiber
+          // around the cached old build (#685, measured end to end with a
+          // module-scope version marker). Enabling cannot make it current;
+          // only a restart can.
+          const staleModule = enabled && replacedWhileLive.has(name)
+          const restart = isCarrier || staleModule ? true : enabled ? !liveAfter : liveAfter
           // A client-part plugin's UI is in the page already — toggling it
           // needs a browser refresh to show the change (same signal the
           // install flow uses for the hot banner).
@@ -2437,7 +2448,16 @@ export function mountMarketRoutes(
               enabled,
               disabled: [...disabled],
               live: listHotMounts(),
-              activation: { [name]: verifyActivation(config.profile, name, liveNames(), activeProfileDir, offNow) },
+              // The same verdict the listing gives (#685): the reply used the
+              // loader inventory alone and said `live` for a plugin serving
+              // its old build, while a refresh of the listing — which applies
+              // activationAfterReplace — said `restart`. One moment, one story.
+              activation: {
+                [name]: activationAfterReplace(
+                  verifyActivation(config.profile, name, liveNames(), activeProfileDir, offNow),
+                  replacedWhileLive.has(name),
+                ),
+              },
               reason,
               patchRows,
               patchWrite: patchWrite ?? { ok: true, reason: null },
@@ -3646,7 +3666,15 @@ sendJson(response, 200, { updates })
               const trial = trialValidate(activeProfileDir, stack.community)
               if (!trial.ok) {
                 ok = false
-                const first = trial.errors[0]?.message ?? 'the composition would not boot'
+                // Name the LAYER, not only the message: the first error is
+                // often about a different bundle than the one being updated
+                // (#688 — the official dsh-web-app's patch list, blamed on
+                // whatever plugin the user happened to update), and a message
+                // without the layer reads as an accusation of the wrong package.
+                const firstIssue = trial.errors[0]
+                const first = firstIssue === undefined
+                  ? 'the composition would not boot'
+                  : `${firstIssue.layer}: ${firstIssue.message}`
                 const rollback = await rollbackAttemptBuild()
                 rollbackOk = rollback.ok
                 rollbackDetail = rollback.detail
@@ -4168,13 +4196,14 @@ sendJson(response, 200, { updates })
           // pnpm only matches a git-hosted dep's allowBuilds entry under its
           // stable `name@git+https://…` key (#68/#69) — a bare name entry is
           // ignored (verified against pnpm 11.21). Derive that key wherever
-          // the github source is known: from the profile spec for installed
-          // deps, from the curated registry for pending ones. The bare name
-          // is kept alongside — it authorizes the npm-sourced case.
+          // the git source is known — any host since #637: from the profile
+          // spec for installed deps, from the curated registry for pending
+          // ones. The bare name is kept alongside — it authorizes the
+          // npm-sourced case.
           const specs = readInstalled(config.profile, activeProfileDir)
           const packages: string[] = []
           /**
-           * Both key forms for one github source (#285).
+           * Both key forms for one git source (#285 for GitHub, #637 for the rest).
            *
            * pnpm 11.21+ matches the stable `git+https://…` key; 11.8.0 — what
            * DSH Desktop bundles — matches only a commit-pinned codeload URL,

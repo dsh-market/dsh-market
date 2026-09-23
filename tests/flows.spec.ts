@@ -1777,17 +1777,28 @@ describe('update flow — no npm publishing required', () => {
     expect(listed.json.activation['dsh-loop']).toMatchObject({ state: 'restart', hot: false })
   })
 
-  it('drops the restart notice once the plugin is genuinely remounted', async () => {
-    // Off and on again imports the module as it is on disk now, so this
-    // process really is serving the new build — the one way out of the
-    // notice that is not a restart, and it has to be honoured.
+  it('keeps the restart notice through an off-and-on, which re-imports the CACHED module (#685)', async () => {
+    // INVERTED. This used to assert the notice cleared, on the belief that
+    // off and on again "imports the module as it is on disk now". That was
+    // never measured, and it is false: the host half was live when the files
+    // were replaced, so this process has already evaluated that module URL,
+    // and the profile layout is hoisted — an update rewrites the package in
+    // place, the URL does not change, and Node's ESM cache hands the
+    // re-created fiber the OLD module. Measured end to end in
+    // tests/web/update.e2e.ts with a fixture that reads its version at module
+    // scope: after update → off → on it still reports 1.0.0. The market's
+    // hot tree adds nothing that would bust that cache (MarketHotTree.import
+    // is a plain super.import), so the hot-mount branch this case exercises
+    // is in the same position as the bundle branch the e2e measures.
     advanceNpmLatest('1.2.0')
     await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
     await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-loop', enabled: false })
-    await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-loop', enabled: true })
+    const on = await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-loop', enabled: true })
 
+    expect(on.json.activation['dsh-loop']?.state).toBe('restart')
+    expect(on.json.restart).toBe(true)
     const listed = await bed.dispatch('GET', '/dsh-market/installed')
-    expect(listed.json.activation['dsh-loop']?.state).toBe('live')
+    expect(listed.json.activation['dsh-loop']?.state).toBe('restart')
   })
 
   it('refuses an update before mutation when package.json cannot be captured exactly', async () => {
@@ -4430,6 +4441,28 @@ describe('build-script approval flow (#6)', () => {
     const yaml = readFileSync(join(profileDir('web'), 'pnpm-workspace.yaml'), 'utf8')
     expect(yaml).toContain('plug-gitea@git+https://gitea.example.com/me/plug.git: true')
     expect(yaml).toContain(`plug-gitea@git+https://gitea.example.com/me/plug.git#${sha}: true`)
+  })
+
+  it('writes both keys for a self-hosted remote spelled without .git (#665 review)', async () => {
+    // The key was derived correctly and then dropped by the allowlist, which
+    // required `.git` — the same silent hole #665 closed, one spelling over.
+    const sha = 'c1d2e3f405162738495a6b7c8d9e0f1122334455'
+    mkdirSync(join(profileDir('web'), 'node_modules', 'plug-nogit'), { recursive: true })
+    writeFileSync(join(profileDir('web'), 'node_modules', 'plug-nogit', 'package.json'), '{"name":"plug-nogit"}')
+    const manifestPath = join(profileDir('web'), 'package.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    manifest.dependencies = { ...manifest.dependencies, 'plug-nogit': `git+https://gitea.example.com/me/plug#${sha}` }
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('offline') }))
+
+    const approve = await bed.dispatch('POST', '/dsh-market/approve-builds', { packages: ['plug-nogit'] })
+
+    expect(approve.status).toBe(200)
+    const yaml = readFileSync(join(profileDir('web'), 'pnpm-workspace.yaml'), 'utf8')
+    expect(yaml).toContain('plug-nogit@git+https://gitea.example.com/me/plug: true')
+    expect(yaml).toContain(`plug-nogit@git+https://gitea.example.com/me/plug#${sha}: true`)
+    // Not "repaired" into a spelling pnpm would not match.
+    expect(yaml).not.toContain('plug-nogit@git+https://gitea.example.com/me/plug.git')
   })
 
   it('uses a commit-pinned github spec for old-pnpm build approval without re-resolving HEAD (#385)', async () => {

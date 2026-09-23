@@ -738,9 +738,15 @@ describe('setAllowBuilds (#6)', () => {
       'p@git+https://gitlab.com/group/sub/plug.git',
       'p@git+https://gitea.example.com:8443/me/plug.git',
       `p@git+https://gitea.example.com/me/plug.git#${sha}`,
+      // A remote spelled without `.git`, which pnpm keys exactly as spelled.
+      'p@git+https://gitea.example.com/me/plug',
+      `p@git+https://gitea.example.com/me/plug#${sha}`,
       `p@https://bitbucket.org/o/r/get/${sha}.tar.gz`,
       `p@https://gitlab.com/group/sub/plug/-/archive/${sha}/plug-${sha}.tar.gz`,
-      // Near-misses. A different host wearing an archive shape…
+      // Near-misses. A traversal in the final segment, now that it may end
+      // without `.git`…
+      'p@git+https://gitea.example.com/me/..',
+      // …a different host wearing an archive shape…
       `p@https://evil.example.com/o/r/get/${sha}.tar.gz`,
       // …the right host with no commit pin…
       'p@https://bitbucket.org/o/r/get/HEAD.tar.gz',
@@ -757,6 +763,8 @@ describe('setAllowBuilds (#6)', () => {
       'p@git+https://gitlab.com/group/sub/plug.git',
       'p@git+https://gitea.example.com:8443/me/plug.git',
       `p@git+https://gitea.example.com/me/plug.git#${sha}`,
+      'p@git+https://gitea.example.com/me/plug',
+      `p@git+https://gitea.example.com/me/plug#${sha}`,
       `p@https://bitbucket.org/o/r/get/${sha}.tar.gz`,
       `p@https://gitlab.com/group/sub/plug/-/archive/${sha}/plug-${sha}.tar.gz`,
     ])

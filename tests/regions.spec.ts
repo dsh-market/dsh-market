@@ -297,6 +297,12 @@ describe('allowBuilds keys off GitHub (#637 follow-up)', () => {
     // A bare https remote is keyed the way pnpm reads it — with `git+`.
     expect(gitAllowBuildsKey('p', 'https://gitea.example.com/me/plug.git'))
       .toBe('p@git+https://gitea.example.com/me/plug.git')
+    // Spelled as installed: pnpm keys a remote without `.git` exactly that way,
+    // and measured on 12.4.1 the key with `.git` appended does NOT authorize it.
+    expect(gitAllowBuildsKey('p', 'git+https://gitea.example.com/me/plug'))
+      .toBe('p@git+https://gitea.example.com/me/plug')
+    expect(pinnedGitAllowBuildsKey('p', 'git+https://gitea.example.com/me/plug', SHA))
+      .toBe(`p@git+https://gitea.example.com/me/plug#${SHA}`)
     // The fragment selects a version of the same source, not another source.
     expect(gitAllowBuildsKey('p', `git+https://gitea.example.com/me/plug.git#${SHA}`))
       .toBe('p@git+https://gitea.example.com/me/plug.git')
