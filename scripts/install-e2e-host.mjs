@@ -26,6 +26,12 @@
  * PATH for the steps that follow. Nothing about the market itself changes:
  * this is the harness, not the product.
  *
+ * pnpm, not npm, and with `node-linker=hoisted` so the tree is shaped like the
+ * global npm install it replaces. npm resolved the rc.8 tree under these
+ * overrides in 403s locally and 15 minutes on the ubuntu runner (arborist
+ * backtracking; 0.1.2-alpha.2 was quick); pnpm installs the same versions in
+ * about 8s. The full e2e suite passes against either.
+ *
  * Remove the overrides once the pinned CLIs resolve to a set that boots
  * again; the job going green without them is the signal.
  *
@@ -54,13 +60,14 @@ mkdirSync(root, { recursive: true })
 writeFileSync(join(root, 'package.json'), JSON.stringify({
   private: true,
   dependencies: { '@deepseek-ai/dsh': version },
-  overrides: OVERRIDES,
+  pnpm: { overrides: OVERRIDES },
 }, null, 2))
+writeFileSync(join(root, '.npmrc'), 'node-linker=hoisted\n')
 
-const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm'
-const install = spawnSync(npm, ['install', '--no-audit', '--no-fund'], {
+const install = spawnSync('pnpm', ['install', '--no-frozen-lockfile'], {
   cwd: root,
   stdio: 'inherit',
+  // pnpm is a .cmd shim on Windows, which spawn only finds through a shell.
   shell: process.platform === 'win32',
 })
 if (install.status !== 0) process.exit(install.status ?? 1)
