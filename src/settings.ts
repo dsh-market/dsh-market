@@ -46,13 +46,20 @@
  *   SyntaxError: The requested module '@deepseek-ai/dsh-settings' does not
  *   provide an export named 'installSettingsSection'
  *
- * The service itself never changed — `sctx.settings.register(ns, schema,
- * { base })` is identical in 0.1.0-rc.7 and 0.1.2-alpha.2. Only the two
- * wrappers went away. So this inlines what the wrapper did (verified against
- * its source: an inject, a register, a watch, and an unload effect) and
- * validates the namespace here. Nothing about the graceful-degradation story
- * changes; it just stops being conditional on an export that upstream is
- * free to move.
+ * The service itself did not change then — `sctx.settings.register(ns,
+ * schema, { base })` is identical in 0.1.0-rc.7 and 0.1.2-alpha.2. Only the
+ * two wrappers went away. So this inlines what the wrapper did (verified
+ * against its source: an inject, a register, a watch, and an unload effect)
+ * and validates the namespace here.
+ *
+ * It DID change in 0.1.7 (#677): `SettingsService` there has `describe` and
+ * `update` and no `register` — namespaces are derived from a plugin's Config
+ * schema instead. The `settings` service still exists, so the inject callback
+ * runs and `register` threw a TypeError that cordis swallowed. Both entry
+ * points now check for the method and, without it, leave the composed entry
+ * standing and say so once in the host log. That is a stop-gap, not the
+ * migration: on 0.1.7 the allowRestart switch is absent until the market
+ * moves to the new model.
  */
 
 import type { Context } from '@deepseek-ai/cordis'
@@ -100,10 +107,30 @@ export const MarketSettings: z<MarketSettings> = z.object({
   allowRestart: z.boolean().default(true),
 })
 
+/**
+ * Whether this host's settings service still has the pre-0.1.7 `register`.
+ *
+ * @param service - the injected `settings` service.
+ * @param ctx - for the one-line explanation when it does not.
+ * @returns true when `register` can be called.
+ */
+function canRegister(service: SettingsService, ctx: Context): boolean {
+  if (typeof (service as { register?: unknown }).register === 'function') return true
+  const logger = (ctx as unknown as { logger?: (name: string) => { warn(message: string): void } }).logger
+  try {
+    logger?.('dsh-market').warn(
+      'this host\'s settings service has no register() (dsh 0.1.7 derives settings from a plugin Config schema); '
+      + 'the market keeps its composed configuration and shows no allowRestart switch on this host yet (#677)',
+    )
+  } catch { /* a logger is a nicety here, not a dependency */ }
+  return false
+}
+
 /** Serve the Desktop card without claiming settings-controlled restart. */
 export function installDesktopMarketSettings(ctx: Context): void {
   ctx.inject(['settings'], (scopedCtx: Context) => {
     const scoped = scopedCtx as unknown as Context & { settings: SettingsService }
+    if (!canRegister(scoped.settings, scoped)) return
     // The host dispatches cards only for registered namespaces. An empty
     // schema offers no fields; old stored allowRestart values stay untouched
     // and are never read or watched into the shell-owned runtime config.
@@ -140,6 +167,7 @@ export function installMarketSettings(ctx: Context, resolved: { allowRestart?: b
   // settings service the callback never runs and the composed entry stands.
   ctx.inject(['settings'], (scopedCtx: Context) => {
     const scoped = scopedCtx as unknown as Context & { settings: SettingsService }
+    if (!canRegister(scoped.settings, scoped)) return
     const scope = scoped.settings.register(MARKET_SETTINGS_NS, MarketSettings, { base: entry })
     source = () => scope.get()
     // Unload restores the composed entry, so a disabled section cannot leave

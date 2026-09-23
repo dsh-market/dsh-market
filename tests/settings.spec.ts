@@ -69,6 +69,48 @@ describe('installMarketSettings', () => {
     expect(ctx.injected.flat()).not.toContain('webServer')
   })
 
+  it('does not throw on a dsh 0.1.7 settings service, which has no register (#677)', () => {
+    // 0.1.7's SettingsService exposes describe/update only; namespaces are
+    // derived from a plugin's Config schema. The service still EXISTS, so the
+    // inject callback runs — and calling register threw a TypeError that
+    // cordis swallowed. The composed entry has to stand, and the host log
+    // has to say why the switch is absent rather than stay silent.
+    const warnings: string[] = []
+    const ctx = {
+      inject(services: string[], callback: (scoped: unknown) => void) {
+        if (services.includes('settings')) callback(ctx)
+      },
+      settings: { describe: () => [], update: async () => {} },
+      effect: (run: () => unknown) => { run() },
+      logger: () => ({ warn: (message: string) => { warnings.push(message) } }),
+    }
+    const resolved = { allowRestart: false }
+    expect(() => installMarketSettings(ctx as never, resolved)).not.toThrow()
+    expect(resolved.allowRestart).toBe(false)
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]).toMatch(/no register\(\)/)
+  })
+
+  it('still registers on a pre-0.1.7 settings service', () => {
+    // The guard must not swallow a host where register works: that would
+    // quietly remove the switch from every host that has it today.
+    const registered: string[] = []
+    const ctx = {
+      inject(services: string[], callback: (scoped: unknown) => void) {
+        if (services.includes('settings')) callback(ctx)
+      },
+      settings: {
+        register: (ns: string, _schema: unknown, options: { base: unknown }) => {
+          registered.push(ns)
+          return { get: () => options.base, watch: () => () => {} }
+        },
+      },
+      effect: (run: () => unknown) => { run() },
+    }
+    installMarketSettings(ctx as never, { allowRestart: true })
+    expect(registered).toEqual(['dsh-market'])
+  })
+
   it('takes nothing from @deepseek-ai/dsh-settings at runtime', () => {
     // dsh 0.1.2-alpha.1 deleted `installSettingsSection` and moved
     // `settingsNamespace` elsewhere. This module imported both, and the
