@@ -1777,17 +1777,28 @@ describe('update flow — no npm publishing required', () => {
     expect(listed.json.activation['dsh-loop']).toMatchObject({ state: 'restart', hot: false })
   })
 
-  it('drops the restart notice once the plugin is genuinely remounted', async () => {
-    // Off and on again imports the module as it is on disk now, so this
-    // process really is serving the new build — the one way out of the
-    // notice that is not a restart, and it has to be honoured.
+  it('keeps the restart notice through an off-and-on, which re-imports the CACHED module (#685)', async () => {
+    // INVERTED. This used to assert the notice cleared, on the belief that
+    // off and on again "imports the module as it is on disk now". That was
+    // never measured, and it is false: the host half was live when the files
+    // were replaced, so this process has already evaluated that module URL,
+    // and the profile layout is hoisted — an update rewrites the package in
+    // place, the URL does not change, and Node's ESM cache hands the
+    // re-created fiber the OLD module. Measured end to end in
+    // tests/web/update.e2e.ts with a fixture that reads its version at module
+    // scope: after update → off → on it still reports 1.0.0. The market's
+    // hot tree adds nothing that would bust that cache (MarketHotTree.import
+    // is a plain super.import), so the hot-mount branch this case exercises
+    // is in the same position as the bundle branch the e2e measures.
     advanceNpmLatest('1.2.0')
     await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
     await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-loop', enabled: false })
-    await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-loop', enabled: true })
+    const on = await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-loop', enabled: true })
 
+    expect(on.json.activation['dsh-loop']?.state).toBe('restart')
+    expect(on.json.restart).toBe(true)
     const listed = await bed.dispatch('GET', '/dsh-market/installed')
-    expect(listed.json.activation['dsh-loop']?.state).toBe('live')
+    expect(listed.json.activation['dsh-loop']?.state).toBe('restart')
   })
 
   it('refuses an update before mutation when package.json cannot be captured exactly', async () => {
