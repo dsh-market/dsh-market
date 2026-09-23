@@ -20,6 +20,7 @@ import {
 } from '../src/check.ts'
 import { dshHostInfo } from '../src/dsh-install.ts'
 import { readBundleRules } from '../src/order.ts'
+import { canCreateSymlink } from './symlink-support.ts'
 import { trialValidate } from '../src/trial.ts'
 
 let tmp: string
@@ -993,7 +994,10 @@ describe('host version for the exported log (REIN-280)', () => {
       .toEqual({ version: '0.1.1-rc.2', directory: cliInstall })
   })
 
-  it('follows the bin symlink a global install actually puts on PATH', () => {
+  // Needs a *file* symlink, and a file link has no unprivileged fallback:
+  // `junction` is directory-only. Without the privilege this asserted a link
+  // that was never created, so it skips instead (tests/symlink-support.ts).
+  it.skipIf(!canCreateSymlink('file'))('follows the bin symlink a global install actually puts on PATH', () => {
     // `npm i -g` and Homebrew both install the package under lib/ and link
     // it into bin/, so process.argv[1] is the LINK. Walking up from there
     // reaches / without ever passing the package, and every consumer of the

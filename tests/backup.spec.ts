@@ -17,6 +17,7 @@ import {
   createProfileBackup, downloadWebdav, isPublicTarget, restoreProfileBackup, unportableDeps, uploadWebdav,
 } from '../src/backup.ts'
 import { profileDir } from '../src/profile.ts'
+import { canCreateSymlink } from './symlink-support.ts'
 
 function respondWith(body: string, statusCode: number, headers: Record<string, string> = {}): void {
   network.request.mockImplementationOnce((_options, callback) => {
@@ -30,24 +31,13 @@ function respondWith(body: string, statusCode: number, headers: Record<string, s
 
 /**
  * Windows without Developer Mode / elevated privileges rejects symlinkSync
- * with EPERM (an environment limitation unrelated to issue #98). Probe once
- * with the exact same call shape the symlink test uses; when unavailable the
- * test is skipped so the suite stays green on locked-down machines/CI.
+ * with EPERM (an environment limitation unrelated to issue #98). The shared
+ * probe below creates a directory link, which is what the test at :128 needs;
+ * when unavailable that test is skipped so the suite stays green on locked-down
+ * machines. File-symlink tests cannot fall back to a junction and probe
+ * separately — see tests/symlink-support.ts.
  */
-const symlinksAvailable = ((): boolean => {
-  const dir = mkdtempSync(join(tmpdir(), 'dshm-symlink-probe-'))
-  try {
-    const target = join(dir, 'target')
-    const link = join(dir, 'link')
-    mkdirSync(target)
-    symlinkSync(target, link)
-    return existsSync(link)
-  } catch {
-    return false
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
-  }
-})()
+const symlinksAvailable = canCreateSymlink('dir')
 
 let home: string
 beforeEach(() => {
