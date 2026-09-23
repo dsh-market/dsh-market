@@ -133,7 +133,12 @@ jobs:
       # flaky "dsh boot timeout" (and, on longer specs, an hours-long stuck
       # job) with nothing wrong in this repo's own code. rc.8 added
       # `--no-open`, which tests/web/scaffold.ts now passes.
-      - run: npm install -g @deepseek-ai/dsh@${{ matrix.dsh }}
+      # Not `npm install -g`: the CLI is pinned but its cordis plugins float,
+      # and since 2026-09-22 the newest of them no longer boot (#684). The
+      # script installs the host under npm `overrides`, which a global install
+      # ignores, and puts it on PATH. See the script for the bisect. It uses
+      # the pnpm set up above.
+      - run: node scripts/install-e2e-host.mjs ${{ matrix.dsh }}
       # --with-deps installs system libraries and is Linux-only.
       - run: npx playwright install --with-deps chromium
         if: runner.os == 'Linux'
