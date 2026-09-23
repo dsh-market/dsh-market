@@ -244,6 +244,16 @@ function packageHasClientPart(profileDirectory: string, name: string): boolean {
  * the package, and the key written is the one pnpm printed, never text from
  * the request.
  */
+/** Whether an installed package's manifest declares a bundle. */
+function declaresBundle(profileDirectory: string, name: string): boolean {
+  try {
+    const manifest = JSON.parse(readFileSync(join(profileDirectory, 'node_modules', name, 'package.json'), 'utf8')) as { dsh?: { bundle?: unknown } }
+    return manifest.dsh?.bundle !== undefined
+  } catch {
+    return false
+  }
+}
+
 const prepareRefusals = new Map<string, string | null>()
 
 function blockedBuilds(result: { ignoredBuilds?: unknown; stdout: string; stderr: string }): string[] | undefined {
@@ -435,6 +445,34 @@ export function mountMarketRoutes(
     setCustomGithubProxy(fresh.githubProxy ?? null)
   }
 
+  /**
+   * Follow an enable made OUTSIDE the market (#696).
+   *
+   * The market keeps its own disable list in state.json, and the self-heal
+   * guard below and the boot replay put any plugin on that list back down.
+   * DSH's own Settings → Plugins page enables a row by flipping it to
+   * `disabled: false` in the shared patch layer — it has never heard of
+   * state.json — so its enable was silently undone within a second and again
+   * on every boot, and the official switch looked broken.
+   *
+   * The patch layer is the one truth both managers share. A row explicitly
+   * enabled there while no row of the same package is disabled can only be a
+   * newer decision than the market's list (the market removes a name from
+   * its list BEFORE writing its own enable row), so the list follows it.
+   *
+   * @returns true when the package was re-enabled elsewhere and has been
+   *   dropped from the market's disable list.
+   */
+  function followOutsideEnable(name: string): boolean {
+    const patch = readUserPatchState(userPatchPath)
+    const flags = packagePatchFlags(host, activeProfileDir, [name], patch)
+    if (!flags.forced.includes(name) || flags.disabled.includes(name)) return false
+    disabled.delete(name)
+    writeMarketState(activeProfileDir, { disabled, groups, groupOrder })
+    logEvent('info', 'toggle', `${name}: its rows were re-enabled outside the market (#696) — following that instead of switching it back off`)
+    return true
+  }
+
   // Client-only packages (dsh.client without dsh.bundle) are invisible to the
   // bundle layer in every boot; the market shim-mounts them so their client
   // bundles are actually served.
@@ -444,7 +482,8 @@ export function mountMarketRoutes(
     // switched away from get live-disabled again (bundle trees are
     // in-memory, so the disable never persists on its own). Client-only
     // shims for disabled plugins were already skipped by mountClientOnlyDeps.
-    for (const name of disabled) {
+    for (const name of [...disabled]) {
+      if (followOutsideEnable(name)) continue
       if (await themes.setEntryDisabled(name, true)) logEvent('info', 'boot', `plugin kept off: ${name}`)
     }
   })
@@ -454,7 +493,7 @@ export function mountMarketRoutes(
   // up for a plugin the user switched off, put it back down.
   host.on?.('internal/plugin', (fiber) => {
     const name = fiber.entry?.options?.name
-    if (name !== undefined && disabled.has(name)) void themes.setEntryDisabled(name, true)
+    if (name !== undefined && disabled.has(name) && !followOutsideEnable(name)) void themes.setEntryDisabled(name, true)
   })
   let installing = false
   let restarting = false
@@ -1948,10 +1987,21 @@ export function mountMarketRoutes(
           return typeof manifest === 'object' && manifest !== null
             && (manifest as { dsh?: unknown }).dsh !== undefined
         }
+        // A package that declares a bundle but is not in dsh.profile.bundles
+        // is not composed at boot: DSH's own plugin page turns a package off
+        // by removing it from that list, and nothing the market recorded
+        // says so (#696). Reported as off, unless it is live right now — a
+        // hot mount from this session still runs until the next restart.
+        const composedBundles = new Set(readProfileBundles(activeProfileDir))
+        const unbundled = Object.keys(installed).filter(name => {
+          if (INBOX_BUNDLES.has(name) || composedBundles.has(name) || live.has(name)) return false
+          const manifest = installedManifests.get(name) as { dsh?: { bundle?: unknown } } | null | undefined
+          return typeof manifest === 'object' && manifest !== null && manifest.dsh?.bundle !== undefined
+        })
         for (const name of Object.keys(installed)) {
           const result = activationAfterReplace(
             verifyActivation(config.profile, name, live, activeProfileDir,
-              disabled.has(name) || patchFlags.disabled.includes(name)),
+              disabled.has(name) || patchFlags.disabled.includes(name) || unbundled.includes(name)),
             replacedWhileLive.has(name),
           )
           // A package with no dsh surface of its own, outside the bundle
@@ -1989,6 +2039,7 @@ export function mountMarketRoutes(
           favorites: readMarketState(activeProfileDir).favorites ?? [],
           patch: { disables: patch.disables, forced: patch.forced, inserts: patch.inserts },
           patchDisabled: patchFlags.disabled,
+          unbundled,
           patchForced: patchFlags.forced,
           bundles: readProfileBundles(activeProfileDir).filter(name => !INBOX_BUNDLES.has(name)),
         })
@@ -2399,13 +2450,23 @@ export function mountMarketRoutes(
           // disabled) is NOT dropped: #147 requires disabling it to leave the
           // neighbour live, and the e2e fixture-cross re-enable breaks otherwise.
           const disablesOthers = carrierDisableIds(activeProfileDir, name)
+          // Turned off by DSH's own plugin page, which removes a package from
+          // dsh.profile.bundles (#696): enabling it here has to put it back,
+          // or the patch rows flip, the switch reads on, and nothing composes
+          // it on the next boot. Unlike a carrier this does NOT force a
+          // restart: the enable below still brings it up in this process, and
+          // whether a restart is needed is whether it is live afterwards.
+          const reBundle = enabled && disablesOthers.length === 0 && !INBOX_BUNDLES.has(name)
+            && declaresBundle(activeProfileDir, name) && !readProfileBundles(activeProfileDir).includes(name)
           const isCarrier = disablesOthers.length > 0
           let bundleSwitch: { ok: boolean; reason: string | null } = { ok: true, reason: null }
-          if (isCarrier) {
+          if (isCarrier || reBundle) {
             try {
               if (enabled) addProfileBundle(activeProfileDir, name)
               else removeProfileBundle(activeProfileDir, name)
-              logEvent('info', 'toggle', `${name}: disable-carrier ${enabled ? 're-added to' : 'removed from'} dsh.profile.bundles (disables: ${disablesOthers.join(', ')})`)
+              logEvent('info', 'toggle', reBundle
+                ? `${name}: re-added to dsh.profile.bundles, which another manager had removed it from (#696)`
+                : `${name}: disable-carrier ${enabled ? 're-added to' : 'removed from'} dsh.profile.bundles (disables: ${disablesOthers.join(', ')})`)
             } catch (error) {
               bundleSwitch = { ok: false, reason: error instanceof Error ? error.message : String(error) }
               logEvent('warn', 'toggle', `${name}: carrier bundle switch failed — ${bundleSwitch.reason}`)

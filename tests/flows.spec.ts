@@ -661,6 +661,8 @@ type Handler = (request: unknown, response: unknown) => void | Promise<void>
 interface Testbed {
   dispatch(method: string, path: string, body?: unknown, options?: { crossOrigin?: boolean; remoteAddress?: string; forwarded?: boolean }): Promise<{ status: number; json: any }>
   loaderEntries: { options: { name: string; disabled?: boolean | null }; fiber?: unknown; update(o: { disabled: boolean | null }): Promise<void> }[]
+  /** Fire a host event the market subscribes to, e.g. a plugin fiber coming up. */
+  emit(event: string, payload: unknown): void
   dispose(): void
 }
 
@@ -671,6 +673,7 @@ function createTestbed(
 ): Testbed {
   const routes = new Map<string, Handler>()
   const loaderEntries: Testbed['loaderEntries'] = []
+  const listeners = new Map<string, ((payload: unknown) => void)[]>()
   const host = {
     webServer: {
       register(route: { path: string; handler: Handler }) {
@@ -680,7 +683,12 @@ function createTestbed(
     },
     loader: { entries: () => loaderEntries },
     plugin: () => ({ await: () => Promise.resolve(), dispose: () => {} }),
-    on: () => () => {},
+    on: (event: string, callback: (payload: unknown) => void) => {
+      const list = listeners.get(event) ?? []
+      list.push(callback)
+      listeners.set(event, list)
+      return () => { listeners.set(event, (listeners.get(event) ?? []).filter(fn => fn !== callback)) }
+    },
   }
   // Pinned so no test reaches the network to decide one. An unpinned region
   // probes at mount and lands a few milliseconds later, which would make
@@ -713,7 +721,10 @@ function createTestbed(
     try { json = JSON.parse(payload) } catch { /* non-JSON (logs route) */ }
     return { status, json, text: payload }
   }
-  return { dispatch, loaderEntries, dispose }
+  function emit(event: string, payload: unknown): void {
+    for (const callback of listeners.get(event) ?? []) callback(payload)
+  }
+  return { dispatch, loaderEntries, emit, dispose }
 }
 
 // ---------------------------------------------------------------- suite
@@ -4900,6 +4911,102 @@ describe('generic enable/disable toggle (#60)', () => {
     expect(entry.fiber).toBeDefined()
     expect(on.json.activation['dsh-blue-whale'].state).toBe('live')
     expect(on.json.restart).toBeFalsy()
+  })
+
+  /** Whether the entry was pushed down: setEntryDisabled calls update(options, false, true). */
+  const pushedDown = (entry: Testbed['loaderEntries'][number]): boolean =>
+    (entry.update as ReturnType<typeof vi.fn>).mock.calls.some(call => (call[0] as { disabled?: unknown })?.disabled === true)
+
+  /** A bundle-layer plugin with a real row, installed and live, as the tests below need. */
+  async function installPatchy(): Promise<{ userPatch: string; entry: Testbed['loaderEntries'][number] }> {
+    fake.repos['github:o/dsh-patchy'] = {
+      name: 'dsh-patchy',
+      manifest: { dsh: { bundle: { patch: './cordis.patch.yml' } }, main: 'lib/index.js' },
+      artifacts: ['lib/index.js', 'cordis.patch.yml'],
+    }
+    await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-patchy' })
+    hot.mounts = []
+    writeFileSync(join(profileDir('web'), 'node_modules', 'dsh-patchy', 'cordis.patch.yml'), "- insert:\n    - id: dsh-patchy\n      name: 'dsh-patchy'\n")
+    const entry: Testbed['loaderEntries'][number] = {
+      options: { id: 'dsh-patchy', name: 'dsh-patchy', disabled: null as boolean | null } as never,
+      fiber: {},
+      update: vi.fn(async (options: { disabled: boolean | null }) => {
+        entry.options.disabled = options.disabled
+        entry.fiber = options.disabled === true ? undefined : {}
+      }),
+    }
+    bed.loaderEntries.push(entry)
+    return { userPatch: join(profileDir('web'), 'cordis.patch.yml'), entry }
+  }
+
+  it('follows an enable made on DSH\'s own plugin page instead of switching it back off (#696)', async () => {
+    // The market disables; DSH's Settings → Plugins page then enables the
+    // row the way it does — flipping it in place to `disabled: false`. The
+    // self-heal guard used to see the name still on the market's own list
+    // and push the fiber straight back down, so the official switch looked
+    // broken. The shared patch layer is the newer decision.
+    const { userPatch, entry } = await installPatchy()
+    await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-patchy', enabled: false })
+    expect(readFileSync(userPatch, 'utf8')).toContain('- id: dsh-patchy\n  disabled: true\n')
+
+    writeFileSync(userPatch, readFileSync(userPatch, 'utf8').replace('- id: dsh-patchy\n  disabled: true\n', '- id: dsh-patchy\n  disabled: false\n'))
+    // The fiber comes back up with the runtime flag cleared, as it does when
+    // the host re-applies the patch layer. Without clearing it the guard
+    // would have nothing to undo, and this test would pass for no reason.
+    entry.options.disabled = null
+    entry.fiber = {}
+    ;(entry.update as ReturnType<typeof vi.fn>).mockClear()
+    bed.emit('internal/plugin', { entry: { options: { name: 'dsh-patchy' } } })
+    // Give a fire-and-forget push-down the tick it would need, so "not
+    // called" means not called rather than not called YET.
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(pushedDown(entry)).toBe(false)
+    const listed = await bed.dispatch('GET', '/dsh-market/installed')
+    expect(listed.json.disabled).not.toContain('dsh-patchy')
+  })
+
+  it('still keeps a plugin off when nothing outside the market re-enabled it', async () => {
+    // The guard exists because DSH's own overlay can re-update an entry
+    // during activation and wipe the runtime flag; that must still be undone.
+    const { entry } = await installPatchy()
+    await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-patchy', enabled: false })
+    entry.options.disabled = null
+    entry.fiber = {}
+    ;(entry.update as ReturnType<typeof vi.fn>).mockClear()
+    bed.emit('internal/plugin', { entry: { options: { name: 'dsh-patchy' } } })
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(pushedDown(entry)).toBe(true)
+    const listed = await bed.dispatch('GET', '/dsh-market/installed')
+    expect(listed.json.disabled).toContain('dsh-patchy')
+  })
+
+  it('reads a bundle DSH\'s own page removed from dsh.profile.bundles as off, and puts it back on enable (#696)', async () => {
+    // DSH's package-level switch removes a package from dsh.profile.bundles;
+    // the market never looked there, so it showed the plugin enabled while
+    // nothing loaded, and toggling it in the market flipped patch rows and
+    // left it out of the composition for good.
+    await installPatchy()
+    bed.loaderEntries.length = 0  // after a restart, nothing loaded it
+    const manifestPath = join(profileDir('web'), 'package.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    manifest.dsh = { ...(manifest.dsh ?? {}), profile: { ...(manifest.dsh?.profile ?? {}), bundles: [] } }
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+
+    const listed = await bed.dispatch('GET', '/dsh-market/installed')
+    expect(listed.json.unbundled).toEqual(['dsh-patchy'])
+    expect(listed.json.activation['dsh-patchy'].state).toBe('disabled')
+
+    const on = await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-patchy', enabled: true })
+    expect(on.status).toBe(200)
+    // Back in the composition, so the next boot loads it…
+    expect(JSON.parse(readFileSync(manifestPath, 'utf8')).dsh.profile.bundles).toContain('dsh-patchy')
+    // …and the enable itself brought it up now, so no restart is asked for.
+    expect(on.json.activation['dsh-patchy'].state).toBe('live')
+    expect(on.json.restart).toBe(false)
+    const again = await bed.dispatch('GET', '/dsh-market/installed')
+    expect(again.json.unbundled).toEqual([])
   })
 
   it('writes the user patch layer on toggle (port of dsh-plugin-hub); activation reads disabled', async () => {

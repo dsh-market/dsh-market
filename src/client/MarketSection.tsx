@@ -1490,6 +1490,8 @@ export function MarketSection(props: MarketSectionProps) {
    * real switch state so hand-edited cordis.patch.yml toggles are visible.
    */
   const [patchDisabledNames, setPatchDisabledNames] = useState<string[]>([])
+  /** Bundle packages DSH's own plugin page turned off by leaving them out of dsh.profile.bundles (#696). */
+  const [unbundledNames, setUnbundledNames] = useState<string[]>([])
   const [groups, setGroups] = useState<Record<string, string[]>>({})
   const [groupOrder, setGroupOrder] = useState<string[]>([])
   /** Installed-tab sub-view: flat list or groups (All-plugins was removed —
@@ -1669,6 +1671,7 @@ export function MarketSection(props: MarketSectionProps) {
           setNotes(body.notes as Record<string, string>)
         }
         if (Array.isArray(body.patchDisabled)) setPatchDisabledNames(body.patchDisabled)
+        if (Array.isArray(body.unbundled)) setUnbundledNames(body.unbundled)
         if (body.groups && typeof body.groups === 'object') setGroups(body.groups)
         if (Array.isArray(body.groupOrder)) setGroupOrder(body.groupOrder)
         if (Array.isArray(body.favorites)) setFavoriteUrls(body.favorites.filter((url: unknown): url is string => typeof url === 'string'))
@@ -1697,8 +1700,8 @@ export function MarketSection(props: MarketSectionProps) {
   const favoriteUrlSet = useMemo(() => new Set(favoriteUrls), [favoriteUrls])
   /** Effective switch state: market disable list ∪ user-patch-layer disables. */
   const effectiveDisabledSet = useMemo(
-    () => new Set([...disabledNames, ...patchDisabledNames]),
-    [disabledNames, patchDisabledNames],
+    () => new Set([...disabledNames, ...patchDisabledNames, ...unbundledNames]),
+    [disabledNames, patchDisabledNames, unbundledNames],
   )
 
   useEffect(() => {

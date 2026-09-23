@@ -7139,6 +7139,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			* real switch state so hand-edited cordis.patch.yml toggles are visible.
 			*/
 			const [patchDisabledNames, setPatchDisabledNames] = (0, react.useState)([]);
+			/** Bundle packages DSH's own plugin page turned off by leaving them out of dsh.profile.bundles (#696). */
+			const [unbundledNames, setUnbundledNames] = (0, react.useState)([]);
 			const [groups, setGroups] = (0, react.useState)({});
 			const [groupOrder, setGroupOrder] = (0, react.useState)([]);
 			/** Installed-tab sub-view: flat list or groups (All-plugins was removed —
@@ -7309,6 +7311,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					}
 					if (body.notes !== null && typeof body.notes === "object" && !Array.isArray(body.notes)) setNotes(body.notes);
 					if (Array.isArray(body.patchDisabled)) setPatchDisabledNames(body.patchDisabled);
+					if (Array.isArray(body.unbundled)) setUnbundledNames(body.unbundled);
 					if (body.groups && typeof body.groups === "object") setGroups(body.groups);
 					if (Array.isArray(body.groupOrder)) setGroupOrder(body.groupOrder);
 					if (Array.isArray(body.favorites)) setFavoriteUrls(body.favorites.filter((url) => typeof url === "string"));
@@ -7324,7 +7327,15 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			(0, react.useMemo)(() => new Set(disabledNames), [disabledNames]);
 			const favoriteUrlSet = (0, react.useMemo)(() => new Set(favoriteUrls), [favoriteUrls]);
 			/** Effective switch state: market disable list ∪ user-patch-layer disables. */
-			const effectiveDisabledSet = (0, react.useMemo)(() => /* @__PURE__ */ new Set([...disabledNames, ...patchDisabledNames]), [disabledNames, patchDisabledNames]);
+			const effectiveDisabledSet = (0, react.useMemo)(() => /* @__PURE__ */ new Set([
+				...disabledNames,
+				...patchDisabledNames,
+				...unbundledNames
+			]), [
+				disabledNames,
+				patchDisabledNames,
+				unbundledNames
+			]);
 			(0, react.useEffect)(() => {
 				if (tab !== "themes" && themesFullscreen) setThemesFullscreen(false);
 			}, [tab, themesFullscreen]);
