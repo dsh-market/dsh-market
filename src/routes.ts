@@ -29,7 +29,7 @@ import {
   type PluginCommandRuntime,
 } from './dsh-cli.ts'
 import { packageOfEntryName } from './entry-identity.ts'
-import { addProfileBundle, dropFromManifest, hasLoadableEntry, holdsNativeAddon, INBOX_BUNDLES, isDshProfileName, profileDir, readDependencyOwners, readGitResolutionCommit, readInstalled, readInstalledManifest, readInstalledRepoEvidence, readInstalledVersion, readLockCommits, readProfileBundles, readProfileManifestSnapshot, removeProfileBundle, restoreProfileManifest, setAllowBuilds, type ProfileManifestSnapshot } from './profile.ts'
+import { addProfileBundle, dropFromManifest, hasLoadableEntry, holdsNativeAddon, INBOX_BUNDLES, isDshProfileName, profileDir, readDependencyOwners, readGitResolutionCommit, readInstalled, readInstalledManifest, readInstalledPackageName, readInstalledRepoEvidence, readInstalledVersion, readLockCommits, readProfileBundles, readProfileManifestSnapshot, removeProfileBundle, restoreProfileManifest, setAllowBuilds, type ProfileManifestSnapshot } from './profile.ts'
 import { assessProfile, classifyPeer, introducedDuplicateNames, introducedRisks, type CompatibilityRisk } from './compatibility.ts'
 import { runningAgentIds, type AgentsLookup } from './agents.ts'
 import { analyzeProfile, corePackageNames, type DuplicateName } from './check.ts'
@@ -3345,6 +3345,7 @@ sendJson(response, 200, { updates })
             const wasLive = verifyActivation(config.profile, name, liveNames(), activeProfileDir, disabled.has(name)).state === 'live'
               && hasHostHalf(config.profile, name, activeProfileDir)
             const beforeVersion = readInstalledVersion(config.profile, name, activeProfileDir)
+            const beforePackageName = readInstalledPackageName(config.profile, name, activeProfileDir)
             // A durable manifest pin is independently authoritative. When its
             // captured lock is missing or stale, the exact OLD re-add repairs
             // that lock and rollback must keep the repair. Floating Git specs
@@ -3640,6 +3641,27 @@ sendJson(response, 200, { updates })
             // ITSELF still reports live, because the running fiber belongs to
             // the OLD code that is already in memory. The failure only
             // surfaces on the next boot, as a profile that will not start.
+            // The directory a dependency is installed under must hold the
+            // package it is named for: DSH Desktop composes a profile by that
+            // rule and refuses to start otherwise ("profile package identity
+            // is invalid", #694). An upstream rename lands exactly there — the
+            // new commit's package.json names another package, pnpm installs
+            // it under the old dependency key and exits 0, and nothing above
+            // looks at the name. Only a mismatch THIS update introduced counts;
+            // whatever the directory held before is not this run's to judge.
+            let renamedTo: string | null = null
+            if (ok && beforePackageName === name) {
+              const afterPackageName = readInstalledPackageName(config.profile, name, activeProfileDir)
+              if (afterPackageName !== null && afterPackageName !== name) {
+                renamedTo = afterPackageName
+                ok = false
+                const rollback = await rollbackAttemptBuild()
+                rollbackOk = rollback.ok
+                rollbackDetail = rollback.detail
+                logEvent('error', 'update',
+                  `${name}: the update installed a package named ${afterPackageName} (renamed upstream) — ${rollback.ok ? 'previous build restored' : `could not restore previous files: ${rollback.detail ?? 'unknown'}`}`)
+              }
+            }
             let brokenEntry = false
             if (ok && !hasLoadableEntry(activeProfileDir, name)) {
               brokenEntry = true
@@ -3768,6 +3790,14 @@ sendJson(response, 200, { updates })
                 ? `${name} 更新后缺少入口文件（package.json 的 main/exports 指向的文件不存在），已自动回滚并重新安装原版本文件，下次启动不受影响。这通常是镜像源在新版本刚发布时同步不完整；若仍需这个版本，请先卸载再从官方源重装。 / ${name} arrived without the entry file its package.json points at; the previous build was restored, so the next boot is unaffected. A registry mirror serving an incomplete tarball for a just-published version is the usual cause — remove the package and reinstall from the official registry if you still want this version.`
                 : `${name} 更新后缺少入口文件（package.json 的 main/exports 指向的文件不存在），且未能验证恢复原版本文件（${rollbackDetail ?? 'unknown'}）；请先检查该 profile，再重新启动。 / ${name} arrived without the entry file its package.json points at, and restoration of the previous build could not be verified (${rollbackDetail ?? 'unknown'}); inspect this profile before restarting.`
 
+            // Actionable for the same reason: the fix is a reinstall under the
+            // new name, which the market cannot do on its own without also
+            // rewriting the profile's bundle list.
+            const renamedError = renamedTo === null ? null
+              : rollbackOk
+                ? `${name} 的上游已把包改名为 ${renamedTo}：新版本会装在旧名字下，DSH 下次启动会拒绝这个 profile，所以本次更新已自动回滚、原版本已恢复。要用新版本，请卸载 ${name} 后按新名字 ${renamedTo} 重新安装。 / ${name} was renamed upstream to ${renamedTo}: the new version would sit under the old name and DSH would refuse to start this profile, so the update was rolled back and the previous build restored. To move to the new version, remove ${name} and install ${renamedTo}.`
+                : `${name} 的上游已把包改名为 ${renamedTo}，且未能验证恢复原版本（${rollbackDetail ?? 'unknown'}）；在卸载 ${name} 之前 DSH 会拒绝启动这个 profile，卸载后再按新名字 ${renamedTo} 重新安装。 / ${name} was renamed upstream to ${renamedTo}, and restoration of the previous build could not be verified (${rollbackDetail ?? 'unknown'}); DSH will refuse to start this profile until ${name} is removed — then install ${renamedTo}.`
+
             const cancelDiff = cancelled ? changedSince(beforeInstalled) : null
             // Build-script blocks hit updates too (#69): a leftover invalid
             // allowBuilds entry (pnpm's placeholder bug, #56) or a newly
@@ -3794,7 +3824,8 @@ sendJson(response, 200, { updates })
               ...(() => { const orphans = orphanBundles(); return orphans.length > 0 ? { orphanBundles: orphans } : {} })(),
               staleReason: staleReason ?? undefined,
               failureCode: versionFailureCode ?? undefined,
-              error: versionFailureError ?? trialError ?? brokenEntryError ?? hardFailureRollbackError ?? staleError ?? undefined,
+              renamedTo: renamedTo ?? undefined,
+              error: versionFailureError ?? renamedError ?? trialError ?? brokenEntryError ?? hardFailureRollbackError ?? staleError ?? undefined,
               exitCode: result.exitCode,
               timedOut: result.timedOut,
               stdout: result.stdout,

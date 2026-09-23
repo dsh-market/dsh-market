@@ -284,6 +284,21 @@ export function readInstalledVersion(profile: string, name: string, explicitDir?
   }
 }
 
+/**
+ * The `name` in the package.json of the directory a dependency is installed
+ * under, or null. DSH Desktop requires it to equal the dependency key (#694).
+ */
+export function readInstalledPackageName(profile: string, name: string, explicitDir?: string): string | null {
+  try {
+    const manifest = JSON.parse(
+      readFileSync(join(profileDir(profile, explicitDir), 'node_modules', name, 'package.json'), 'utf8'),
+    ) as { name?: unknown }
+    return typeof manifest.name === 'string' ? manifest.name : null
+  } catch {
+    return null
+  }
+}
+
 /** The installed package manifest, or null when absent or malformed. */
 export function readInstalledManifest(profile: string, name: string, explicitDir?: string): unknown | null {
   try {

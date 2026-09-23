@@ -3131,6 +3131,87 @@ describe('update flow — no npm publishing required', () => {
     expect(existsSync(join(fake.profileDir, 'node_modules', 'dsh-loop'))).toBe(false)
   })
 
+  it('rolls back an update whose new commit renamed the package, and names the new name (#694)', async () => {
+    // Upstream changed package.json's `name` in the target commit. pnpm
+    // installs it under the old dependency key and exits 0; DSH Desktop then
+    // refuses to compose the profile ("profile package identity is invalid")
+    // and the app does not start. The update must not be reported as a
+    // success that bricks the next boot.
+    const OLD = 'a'.repeat(40)
+    const NEW = 'b'.repeat(40)
+    const name = '@dsh-external/dsh-visualize'
+    fake.repos['github:Nagi-ovo/dsh-visualize'] = {
+      name,
+      manifest: { name: '@nagi-ovo/dsh-visualize', version: '0.1.2', dsh: {}, main: 'lib/index.js' },
+      artifacts: ['lib/index.js'],
+      lockCommit: NEW,
+      byCommit: {
+        [OLD]: { manifest: { name, version: '0.1.1', dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] },
+      },
+    }
+    const manifestPath = join(fake.profileDir, 'package.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, unknown>
+    manifest.dependencies = { ...(manifest.dependencies as Record<string, string> ?? {}), [name]: 'github:Nagi-ovo/dsh-visualize' }
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+    const pkgDir = join(fake.profileDir, 'node_modules', name)
+    mkdirSync(join(pkgDir, 'lib'), { recursive: true })
+    writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name, version: '0.1.1', dsh: {}, main: 'lib/index.js' }))
+    writeFileSync(join(pkgDir, 'lib', 'index.js'), '')
+    writeFileSync(join(fake.profileDir, 'pnpm-lock.yaml'),
+      `lockfileVersion: 9\n  resolution: {tarball: https://codeload.github.com/Nagi-ovo/dsh-visualize/tar.gz/${OLD}}\n`)
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(
+      `001e# service=git-upload-pack\n00000155${NEW} HEAD\0multi_ack\n0000`,
+      { status: 200 },
+    )))
+
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name })
+
+    expect(r.status).toBe(502)
+    expect(r.json.ok).toBe(false)
+    expect(r.json.renamedTo).toBe('@nagi-ovo/dsh-visualize')
+    expect(String(r.json.error)).toContain('@nagi-ovo/dsh-visualize')
+    expect(String(r.json.error)).toContain('rolled back')
+    // What DSH Desktop checks at the next boot: the directory holds the
+    // package it is named for again.
+    const restored = JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf8')) as { name?: string, version?: string }
+    expect(restored.name).toBe(name)
+    expect(restored.version).toBe('0.1.1')
+  })
+
+  it('does not blame an update for a name mismatch that was already there (#694)', async () => {
+    // An install whose directory already held a differently named package
+    // (an npm alias, a legacy install) is not this update's doing; the check
+    // only rejects a mismatch the update introduced.
+    const OLD = 'a'.repeat(40)
+    const NEW = 'b'.repeat(40)
+    const name = 'viz-alias'
+    fake.repos['github:o/viz'] = {
+      name,
+      manifest: { name: 'viz-real', version: '2.0.0', dsh: {}, main: 'lib/index.js' },
+      artifacts: ['lib/index.js'],
+      lockCommit: NEW,
+    }
+    const manifestPath = join(fake.profileDir, 'package.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, unknown>
+    manifest.dependencies = { ...(manifest.dependencies as Record<string, string> ?? {}), [name]: 'github:o/viz' }
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+    const pkgDir = join(fake.profileDir, 'node_modules', name)
+    mkdirSync(join(pkgDir, 'lib'), { recursive: true })
+    writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: 'viz-real', version: '1.0.0', dsh: {}, main: 'lib/index.js' }))
+    writeFileSync(join(pkgDir, 'lib', 'index.js'), '')
+    writeFileSync(join(fake.profileDir, 'pnpm-lock.yaml'),
+      `lockfileVersion: 9\n  resolution: {tarball: https://codeload.github.com/o/viz/tar.gz/${OLD}}\n`)
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(
+      `001e# service=git-upload-pack\n00000155${NEW} HEAD\0multi_ack\n0000`,
+      { status: 200 },
+    )))
+
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name })
+
+    expect(r.json.renamedTo).toBeUndefined()
+    expect(String(r.json.error ?? '')).not.toContain('renamed upstream')
+  })
+
   it('rolls a github update back to the captured commit (#195)', async () => {
     const OLD = 'a'.repeat(40)
     const NEW = 'b'.repeat(40)
