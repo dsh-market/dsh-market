@@ -82,6 +82,8 @@ const fake = vi.hoisted(() => ({
   buildScriptOutputOnce: '',
 /** Fail the next add with exit 1 and this stderr (e.g. ERR_PNPM_IGNORED_BUILDS, #68/#69). */
   failNextAddStderrOnce: '',
+  /** Written to pnpm-lock.yaml just before failNextAddStderrOnce fails the add (#701). */
+  lockOnFailure: null as string | null,
   /**
    * Fail the next npm add with exit 1 and this stderr AFTER writing
    * package.json/node_modules — pnpm's real order (#65, #69): the manifest
@@ -303,6 +305,9 @@ vi.mock('../src/dsh-cli.ts', () => {
     if (fake.failNextAddStderrOnce !== '') {
       const stderr = fake.failNextAddStderrOnce
       fake.failNextAddStderrOnce = ''
+      // pnpm writes the lockfile before it links; a crash between the two
+      // leaves the new lock behind a package.json that never got the entry.
+      if (fake.lockOnFailure !== null) writeFileSync(join(fake.profileDir, 'pnpm-lock.yaml'), fake.lockOnFailure)
       return { exitCode: 1, timedOut: false, stdout: '', stderr, cancelled: false }
     }
     if (target.startsWith('github:')) {
@@ -4590,6 +4595,21 @@ describe('build-script approval flow (#6)', () => {
     const retry = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/omdsh-dev/dsh-security-audit' })
     expect(retry.status).toBe(200)
     expect(retry.json.ok).toBe(true)
+  })
+
+  it('restores the lockfile, not only the manifest, when a fresh install dies half-way (#701)', async () => {
+    // pnpm writes the lockfile before it links. A run that aborts in between
+    // left a lock naming a package package.json never got — the update route
+    // always restored both, a fresh install only the manifest.
+    const lockPath = join(fake.profileDir, 'pnpm-lock.yaml')
+    const before = "lockfileVersion: '9.0'\n\nimporters:\n\n  .: {}\n"
+    writeFileSync(lockPath, before)
+    fake.lockOnFailure = "lockfileVersion: '9.0'\n\nimporters:\n\n  .:\n    dependencies:\n      dsh-blue-whale:\n        specifier: github:o/blue-whale\n"
+    fake.failNextAddStderrOnce = 'memory allocation of 5368709120 bytes failed'
+    const r = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/blue-whale' })
+    fake.lockOnFailure = null
+    expect(r.status).toBe(502)
+    expect(readFileSync(lockPath, 'utf8')).toBe(before)
   })
 
   it('approves a TRANSITIVE git dependency pnpm refused, with the key pnpm printed (#698)', async () => {

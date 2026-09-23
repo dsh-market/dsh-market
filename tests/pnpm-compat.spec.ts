@@ -591,3 +591,26 @@ describe('a local file: dependency whose file is gone (#436)', () => {
     expect(classifyPnpmFailure("ENOENT: no such file or directory, open '/tmp/whatever'", 1)).toBeNull()
   })
 })
+
+describe('pnpm 12 native engine out of memory (#701)', () => {
+  // The reported text, from a Windows dshmarket log: a Rust abort in
+  // pnpm-native, then dsh's own wrapper line. Exit 3221226505 is 0xC0000409,
+  // how a Rust abort ends on Windows.
+  const REPORTED = 'memory allocation of 5368709120 bytes failed\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\ndsh: pnpm failed in profile directory C:\\Users\\x\\.dsh\\profiles\\web'
+
+  it('names it, instead of showing the raw abort', () => {
+    const failure = classifyPnpmFailure(REPORTED, 3221226505)
+    expect(failure?.code).toBe('native-oom')
+    // The two things a user needs: it is not the plugin, and what to do.
+    expect(failure?.message).toMatch(/和要安装的插件无关/)
+    expect(failure?.message).toContain('pnpm@11')
+  })
+
+  it('recognises the Windows abort code even when the text was lost', () => {
+    expect(classifyPnpmFailure('dsh: pnpm failed in profile directory x', 3221226505)?.code).toBe('native-oom')
+  })
+
+  it('does not claim an ordinary failure', () => {
+    expect(classifyPnpmFailure('dsh: pnpm failed in profile directory x', 1)?.code).not.toBe('native-oom')
+  })
+})

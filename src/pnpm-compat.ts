@@ -48,7 +48,7 @@ export interface PnpmFailure {
     | 'ignored-builds' | 'git-prepare-not-allowed' | 'git-prepare-failed' | 'tarball-url-mismatch'
     | 'fetch-404' | 'no-matching-version' | 'transient-network' | 'fetch-timeout'
     | 'unexpected-store' | 'patch-failed' | 'missing-tarball-integrity' | 'windows-file-locked'
-    | 'pnpm-unusable' | 'missing-local-dependency' | 'unparseable-build-key'
+    | 'pnpm-unusable' | 'missing-local-dependency' | 'unparseable-build-key' | 'native-oom'
   /** Bilingual, actionable message shown to the user instead of the raw wall of text. */
   message: string
   /** True when re-running `pnpm install` in the profile is the documented recovery. */
@@ -350,6 +350,21 @@ export function classifyPnpmFailure(output: string, exitCode?: number | null): P
   // pnpm's FETCHER, before anything lands in node_modules — so the package
   // the user must approve is not installed yet, and pnpm's own hint names a
   // commit-pinned codeload URL that changes on every push.
+  // #701: pnpm 12's native engine (pnpm-native) aborting on an allocation it
+  // cannot get — "memory allocation of 5368709120 bytes failed", Windows exit
+  // 3221226505 (0xC0000409, how a Rust abort ends there). Reported with an
+  // A/B: on pnpm 12.5.1 every run with `autoInstallPeers: false` in the
+  // workspace file (DSH writes it into every profile) aborted at ~5 GB peak
+  // RSS, every run without it passed at ~80 MB, with free memory to spare.
+  // Nothing about the plugin being installed; not something a retry of the
+  // same command changes on the reporter's data, so none is attempted.
+  if (/memory allocation of \d+ bytes failed/.test(output) || exitCode === 3221226505) {
+    return {
+      code: 'native-oom',
+      recoverable: false,
+      message: 'pnpm 12 的原生引擎在处理这个 profile 时耗尽了内存并中止——和要安装的插件无关。在 pnpm 修复之前，请改用 pnpm 11（npm install -g pnpm@11）后再试。 / pnpm 12\'s native engine ran out of memory on this profile and aborted — the plugin being installed is not the cause. Until pnpm fixes it, switch to pnpm 11 (npm install -g pnpm@11) and try again.',
+    }
+  }
   // #698: pnpm 10.26+ and 11.0–11.5 read an allowBuilds key as
   // `name@<version union>`, so a git or archive source there fails the WHOLE
   // workspace file — every pnpm command in the profile, not the one plugin.

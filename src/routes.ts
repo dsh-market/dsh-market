@@ -4792,6 +4792,12 @@ sendJson(response, 200, { updates })
             // keep their partial state on purpose (the user sees the diff
             // and decides).
             const manifestBefore = readProfileManifestSnapshot(config.profile, activeProfileDir)
+            // The lockfile too (#701): pnpm writes it before it links, so a
+            // run that dies in between — a native crash, a kill — leaves a
+            // lock that names a package the manifest never got. The update
+            // route has always restored both; a fresh install restored only
+            // the manifest and left the half for the next pnpm run to trip on.
+            const lockfileBefore = captureProfileLockfile()
             const pinned = target === pinnedTarget && pinnedTarget !== plainTarget
             let result = await (pinned ? runPluginKeepingReleaseAge : runPlugin)(config.profile, ['add', target])
             // Two ways a pinned add can fail that a bare add would not, and
@@ -4825,6 +4831,10 @@ sendJson(response, 200, { updates })
             if ((result.exitCode !== 0 || result.timedOut) && !cancelled) {
               const rolledBack = restoreProfileManifest(config.profile, manifestBefore, activeProfileDir)
               if (rolledBack.length > 0) logEvent('warn', 'install', `${target}: rolled back manifest residue of the failed run: ${rolledBack.join(', ')}`)
+              if (lockfileBefore.ok) {
+                const lock = restoreProfileLockfile(lockfileBefore.snapshot)
+                if (!lock.ok) logEvent('warn', 'install', `${target}: could not restore pnpm-lock.yaml after the failed run: ${lock.detail ?? 'unknown'}`)
+              }
             }
             let ok = result.exitCode === 0 && !result.timedOut && !cancelled
             const cancelDiff = cancelled ? changedSince(beforeSpecs) : null
