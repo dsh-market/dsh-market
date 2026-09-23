@@ -38,7 +38,7 @@ import { applyPreset, deletePreset, listPresets, previewPreset, savePreset } fro
 import { createProfileSnapshot, DEFAULT_MAX_SNAPSHOTS, deleteSnapshot, listSnapshots, restoreSnapshot } from './snapshot.ts'
 import { trialValidate } from './trial.ts'
 import { codeloadAllowBuildsKey, findCatalogEntryForLocal, findInstalledAlias, gitCommitOfTarget, githubCommitOfTarget, githubTargetAtCommit, gitAllowBuildsKey, gitRefOfTarget, gitTargetAtCommit, gitUpdateTarget, hostedRepoKey, pinnedGitAllowBuildsKey, installTargetFor, isGenerationLink, isLocalSpec, NPM_NAME_RE, repoOfTarget, restoreBlockedByWorkspace, restoreTargetForLocal, workspaceProtocolDeps } from './sources.ts'
-import { failureDetail, groupConflictsByOwner, isStaleUpdate, parseIgnoredBuilds, parsePrepareNotAllowed, pnpmBlockedByOpenFiles, pnpmNeverStarted, RELEASE_AGE_OVERRIDE, retargetCollections, validateAddedPlugins, withHoistRecovery } from './install.ts'
+import { failureDetail, groupConflictsByOwner, isStaleUpdate, parseIgnoredBuilds, parsePrepareKey, parsePrepareNotAllowed, pnpmBlockedByOpenFiles, pnpmNeverStarted, RELEASE_AGE_OVERRIDE, retargetCollections, validateAddedPlugins, withHoistRecovery } from './install.ts'
 import { classifyPnpmFailure } from './pnpm-compat.ts'
 import { asChannel, CHANNELS, DIST_TAG, resolveChannel, type Channel } from './channels.ts'
 import {
@@ -228,12 +228,30 @@ function packageHasClientPart(profileDirectory: string, name: string): boolean {
  * which fires BEFORE the package lands in node_modules (#68). Undefined when
  * none, so the field can be spread straight into a JSON response.
  */
+/**
+ * Packages this process watched pnpm refuse to prepare, with the key pnpm
+ * printed for each (#698).
+ *
+ * The approve route only allows names it can anchor to something the user
+ * cannot type in freely: node_modules, the profile manifest, the curated
+ * catalog. A transitive git dependency is in none of them — its install
+ * failed before it landed, it is not a direct dependency, and the catalog
+ * lists the plugin that depends on it, not it — so "Allow build scripts and
+ * retry" answered `no installed packages given` and the user looped. What
+ * pnpm said in THIS process is an anchor of the same kind: the client names
+ * the package, and the key written is the one pnpm printed, never text from
+ * the request.
+ */
+const prepareRefusals = new Map<string, string | null>()
+
 function blockedBuilds(result: { ignoredBuilds?: unknown; stdout: string; stderr: string }): string[] | undefined {
   if (Array.isArray(result.ignoredBuilds) && result.ignoredBuilds.length > 0) return result.ignoredBuilds as string[]
   const list = parseIgnoredBuilds(result.stdout, result.stderr)
   if (list.length > 0) return list
   const pending = parsePrepareNotAllowed(result.stdout, result.stderr)
-  return pending !== null ? [pending] : undefined
+  if (pending === null) return undefined
+  prepareRefusals.set(pending, parsePrepareKey(result.stdout, result.stderr))
+  return [pending]
 }
 
 /**
@@ -4278,13 +4296,24 @@ sendJson(response, 200, { updates })
               entry = (await loadRegistry()).plugins.find(p => p.name === name || p.npm === name)
             } catch (error) {
               logEvent('warn', 'approve-builds', `catalog unavailable, authorizing ${name} by name only: ${error instanceof Error ? error.message : String(error)}`)
-              packages.push(name)
+              const printed = prepareRefusals.get(name)
+              packages.push(name, ...(printed === null || printed === undefined ? [] : [printed]))
               continue
             }
             const target = entry === undefined ? null : installTargetFor(entry)
             const keys = target === null ? [] : await buildKeys(name, target)
-            if (keys.length > 0) {
-              packages.push(name, ...keys)
+            // A package pnpm refused to prepare in this process (#698) — a
+            // transitive git dependency, typically, which no anchor above
+            // knows. After the catalog, not before: for a catalog plugin the
+            // derived keys are what pnpm 11.21 matches, and a refusal record
+            // must add to them, never replace them. The bare name authorizes
+            // it on pnpm 10.26+ and 11.0–11.5; the key pnpm printed, when it
+            // printed one, is what the others match.
+            const refused = prepareRefusals.has(name)
+            const printed = prepareRefusals.get(name)
+            const printedKeys = printed === null || printed === undefined ? [] : [printed]
+            if (keys.length > 0 || refused) {
+              packages.push(name, ...keys, ...printedKeys)
             }
           }
           if (packages.length === 0) {

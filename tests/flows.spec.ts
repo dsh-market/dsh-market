@@ -4592,6 +4592,34 @@ describe('build-script approval flow (#6)', () => {
     expect(retry.json.ok).toBe(true)
   })
 
+  it('approves a TRANSITIVE git dependency pnpm refused, with the key pnpm printed (#698)', async () => {
+    // The refused package is a dependency of the plugin: not in node_modules
+    // (the install failed first), not in package.json, not a catalog entry.
+    // Every anchor the route had came up empty and it answered 400 — the
+    // button looped. pnpm's own refusal in this process is the anchor now.
+    // Text is pnpm 11.8.0's, captured against the reported plugin.
+    const printed = '@dsh-external/dsh-super-injector@https://codeload.github.com/omdsh-dev/dsh-security-audit/tar.gz/195273352f23bff7f9023ebe2ec0cdbdf9c98f10'
+    fake.failNextAddStderrOnce = '[ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED] Failed to prepare git-hosted package fetched from "https://codeload.github.com/omdsh-dev/dsh-security-audit/tar.gz/195273352f23bff7f9023ebe2ec0cdbdf9c98f10": The git-hosted package "@dsh-external/dsh-super-injector@0.3.3" needs to execute build scripts but is not in the "allowBuilds" allowlist.\n'
+      + 'Add the package to "allowBuilds" in your project\'s pnpm-workspace.yaml to allow it to run scripts. For example:\n'
+      + `allowBuilds:\n  ${printed}: true\n`
+    const first = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/omdsh-dev/dsh-security-audit' })
+    expect(first.status).toBe(502)
+    expect(first.json.ignoredBuilds).toEqual(['@dsh-external/dsh-super-injector'])
+
+    const approve = await bed.dispatch('POST', '/dsh-market/approve-builds', { packages: ['@dsh-external/dsh-super-injector'] })
+    expect(approve.status).toBe(200)
+    const yaml = readFileSync(join(profileDir('web'), 'pnpm-workspace.yaml'), 'utf8')
+    // The bare name (what pnpm 10.26+ and 11.0–11.5 match) and the printed
+    // key (what 11.6+ matches) — and nothing the request supplied.
+    expect(yaml).toContain("'@dsh-external/dsh-super-injector': true")
+    expect(yaml).toContain(printed)
+  })
+
+  it('still refuses a name pnpm never refused, so the approval is not free input', async () => {
+    const approve = await bed.dispatch('POST', '/dsh-market/approve-builds', { packages: ['@evil/anything'] })
+    expect(approve.status).toBe(400)
+  })
+
   it('writes the stable git allowBuilds key for an installed github-sourced dependency (#69)', async () => {
     fake.repos['github:o/blue-whale'] = { name: 'dsh-blue-whale', manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] }
     await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/blue-whale' })

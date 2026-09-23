@@ -13,7 +13,7 @@ import {
   failureDetail, FETCH_TIMEOUT_OVERRIDE, groupConflictsByOwner, isStaleUpdate, parseIgnoredBuilds,
   parsePrepareNotAllowed, pnpmNeverStarted, retargetCollections, validateAddedPlugins, withHoistRecovery,
 } from '../src/install.ts'
-import { profileDir } from '../src/profile.ts'
+import { dropUnparseableBuildKeys, profileDir } from '../src/profile.ts'
 
 let home: string
 beforeEach(() => {
@@ -299,6 +299,75 @@ describe('validateAddedPlugins (#18 / #21)', () => {
     expect(keep.sort()).toEqual(['@linxin666/dsh-client-ui-skin-center', '@linxin666/dsh-skins'])
     expect(removedBroken).toEqual([])
     expect(calls).toEqual([])
+  })
+})
+
+describe('allowBuilds keys a pnpm cannot parse (#698)', () => {
+  // pnpm 10.26 → 10.29 and 11.0 → 11.5 read an allowBuilds key as
+  // `name@<version union>`: a git or archive source there fails the WHOLE
+  // workspace file, so every later pnpm command in the profile fails — the
+  // exact text below is pnpm 10.29.3's, measured on a profile holding the
+  // key the market writes for a git source.
+  const INVALID = ' ERR_PNPM_INVALID_VERSION_UNION  Invalid versions union. Found: "some-plugin@git+https://github.com/o/r.git". Use exact versions only.'
+
+  function writeWorkspace(allowBuilds: string): string {
+    const dir = writeProfile({})
+    writeFileSync(join(dir, 'pnpm-workspace.yaml'), `packages:\n  - .\n\nallowBuilds:\n${allowBuilds}`)
+    return dir
+  }
+
+  it('drops only the source-form keys, keeping bare names and the rest of the file', () => {
+    const dir = writeWorkspace(
+      '  some-plugin: true\n'
+      + '  "some-plugin@git+https://github.com/o/r.git": true\n'
+      + `  "some-plugin@https://codeload.github.com/o/r/tar.gz/${SHA}": true\n`
+      + "  '@scope/pkg': true\n"
+      + '  esbuild: false\n',
+    )
+    expect(dropUnparseableBuildKeys('web').sort()).toEqual([
+      'some-plugin@git+https://github.com/o/r.git',
+      `some-plugin@https://codeload.github.com/o/r/tar.gz/${SHA}`,
+    ].sort())
+    const yaml = readFileSync(join(dir, 'pnpm-workspace.yaml'), 'utf8')
+    expect(yaml).toContain('packages:\n  - .')
+    expect(yaml).toContain('some-plugin: true')
+    expect(yaml).toContain("'@scope/pkg': true")
+    // A user's explicit `false` is a decision, not a key form; it stays.
+    expect(yaml).toContain('esbuild: false')
+    expect(yaml).not.toContain('git+https')
+    expect(yaml).not.toContain('codeload')
+  })
+
+  it('leaves the file untouched when nothing matches', () => {
+    const dir = writeWorkspace('  some-plugin: true\n')
+    const before = readFileSync(join(dir, 'pnpm-workspace.yaml'), 'utf8')
+    expect(dropUnparseableBuildKeys('web')).toEqual([])
+    expect(readFileSync(join(dir, 'pnpm-workspace.yaml'), 'utf8')).toBe(before)
+  })
+
+  it('repairs the profile and retries once when pnpm names such a key', async () => {
+    writeWorkspace('  some-plugin: true\n  "some-plugin@git+https://github.com/o/r.git": true\n')
+    const calls: string[][] = []
+    const run = (_profile: string, args: string[]): Promise<InstallResult> => {
+      calls.push(args)
+      return Promise.resolve(calls.length === 1 ? { ...ok, exitCode: 1, stderr: INVALID } : ok)
+    }
+    const result = await withHoistRecovery(run, 'web', ['add', 'is-odd'])
+    expect(result.exitCode).toBe(0)
+    expect(calls).toEqual([['add', 'is-odd'], ['add', 'is-odd']])
+  })
+
+  it('does not retry when there was nothing to repair', async () => {
+    writeWorkspace('  some-plugin: true\n')
+    const calls: string[][] = []
+    const run = (_profile: string, args: string[]): Promise<InstallResult> => {
+      calls.push(args)
+      return Promise.resolve({ ...ok, exitCode: 1, stderr: INVALID })
+    }
+    await withHoistRecovery(run, 'web', ['add', 'is-odd'])
+    // Only the add counts: a failed run is followed by the store cleanup's
+    // own query, which is not a retry.
+    expect(calls.filter(args => args[0] === 'add')).toHaveLength(1)
   })
 })
 

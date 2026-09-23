@@ -1074,23 +1074,12 @@ function quoteYamlKey(key: string): string {
   return key
 }
 
-/**
- * Allow the given packages' build scripts in the profile's
- * pnpm-workspace.yaml `allowBuilds` block (the key dsh profiles use),
- * merging with existing entries and leaving the rest of the yaml intact.
- * (#6 by @qichuang321.)
- * @returns every package now allowed.
- */
-export function setAllowBuilds(profile: string, packages: string[], explicitDir?: string): string[] {
-  const file = join(profileDir(profile, explicitDir), 'pnpm-workspace.yaml')
-  let yaml = ''
-  try { yaml = readFileSync(file, 'utf8') } catch { /* created below */ }
-  // `\r?\n`, not `\n`: a CRLF pnpm-workspace.yaml (every Windows editor, and
-  // git with core.autocrlf=true) put a `\r` between `allowBuilds:` and the
-  // newline, so the old pattern never matched an EXISTING block and appended
-  // a second one. Two top-level `allowBuilds:` keys is invalid YAML, and pnpm
-  // then refuses every install in that profile — not just the one that
-  // triggered it (#231 by @MichengAI).
+/** The allowBuilds block(s) of a pnpm-workspace.yaml, read into one map. */
+function readAllowBuildsMap(yaml: string): {
+  map: Record<string, string>
+  blockRe: RegExp
+  blockMatch: RegExpMatchArray | null
+} {
   const blockRe = /allowBuilds:[ \t]*\r?\n((?:[ \t]+[^\r\n]*\r?\n?)*)/g
   const map: Record<string, string> = {}
   // Every block, not just the first: a profile already broken by the bug
@@ -1120,6 +1109,54 @@ export function setAllowBuilds(profile: string, packages: string[], explicitDir?
       map[key] = m[2] ?? 'true'
     }
   }
+  return { map, blockRe, blockMatch }
+}
+
+/** Write `map` back as the file's single allowBuilds block, in its own line endings. */
+function writeAllowBuildsMap(
+  file: string,
+  yaml: string,
+  map: Record<string, string>,
+  blockRe: RegExp,
+  blockMatch: RegExpMatchArray | null,
+): void {
+  // Write back in the file's OWN line ending. Rewriting a CRLF workspace
+  // file with LF would leave it mixed, which is the same class of mess this
+  // fix exists to clean up.
+  const eol = /\r\n/.test(yaml) ? '\r\n' : '\n'
+  const block = Object.entries(map).map(([k, v]) => `  ${quoteYamlKey(k)}: ${v}`).join(eol)
+  const blockText = `allowBuilds:${eol}${block}${eol}`
+  let next: string
+  if (blockMatch === null) {
+    next = `${yaml.replace(/\r?\n?$/, eol)}${blockText}`
+  } else {
+    // The merged block replaces the first occurrence; any further ones are
+    // the duplicates this bug created and are dropped — their entries are
+    // already folded into `map` above, so nothing is lost.
+    let seen = 0
+    next = yaml.replace(blockRe, () => (seen++ === 0 ? blockText : ''))
+  }
+  writeFileSync(file, next)
+}
+
+/**
+ * Allow the given packages' build scripts in the profile's
+ * pnpm-workspace.yaml `allowBuilds` block (the key dsh profiles use),
+ * merging with existing entries and leaving the rest of the yaml intact.
+ * (#6 by @qichuang321.)
+ * @returns every package now allowed.
+ */
+export function setAllowBuilds(profile: string, packages: string[], explicitDir?: string): string[] {
+  const file = join(profileDir(profile, explicitDir), 'pnpm-workspace.yaml')
+  let yaml = ''
+  try { yaml = readFileSync(file, 'utf8') } catch { /* created below */ }
+  // `\r?\n`, not `\n`: a CRLF pnpm-workspace.yaml (every Windows editor, and
+  // git with core.autocrlf=true) put a `\r` between `allowBuilds:` and the
+  // newline, so the old pattern never matched an EXISTING block and appended
+  // a second one. Two top-level `allowBuilds:` keys is invalid YAML, and pnpm
+  // then refuses every install in that profile — not just the one that
+  // triggered it (#231 by @MichengAI).
+  const { map, blockRe, blockMatch } = readAllowBuildsMap(yaml)
   // What may be written, and nothing else. The allowlist is not a host
   // trust boundary — every key here is derived from the profile's OWN
   // manifest or the curated catalog — it is what stops a caller writing
@@ -1159,22 +1196,45 @@ export function setAllowBuilds(profile: string, packages: string[], explicitDir?
   for (const pkg of packages) {
     if (/^[A-Za-z0-9@/_.-]+$/.test(pkg) || GIT_KEY_RE.test(pkg) || ARCHIVE_KEY_RE.test(pkg)) map[pkg] = 'true'
   }
-  // Write back in the file's OWN line ending. Rewriting a CRLF workspace
-  // file with LF would leave it mixed, which is the same class of mess this
-  // fix exists to clean up.
-  const eol = /\r\n/.test(yaml) ? '\r\n' : '\n'
-  const block = Object.entries(map).map(([k, v]) => `  ${quoteYamlKey(k)}: ${v}`).join(eol)
-  const blockText = `allowBuilds:${eol}${block}${eol}`
-  let next: string
-  if (blockMatch === null) {
-    next = `${yaml.replace(/\r?\n?$/, eol)}${blockText}`
-  } else {
-    // The merged block replaces the first occurrence; any further ones are
-    // the duplicates this bug created and are dropped — their entries are
-    // already folded into `map` above, so nothing is lost.
-    let seen = 0
-    next = yaml.replace(blockRe, () => (seen++ === 0 ? blockText : ''))
-  }
-  writeFileSync(file, next)
+  writeAllowBuildsMap(file, yaml, map, blockRe, blockMatch)
   return Object.keys(map)
+}
+
+/**
+ * Remove the allowBuilds keys pnpm cannot parse as a version range, and say
+ * which (#698).
+ *
+ * pnpm reads an allowBuilds key as `name@<version union>`, and on 10.26 to
+ * the latest 10.x and on 11.0 to 11.5 a git or archive source there —
+ * `name@git+https://…`, `name@https://codeload…` — is rejected as
+ * "Invalid versions union … Use exact versions only". Not the one entry: the
+ * whole workspace file, so EVERY later pnpm command in the profile fails,
+ * including installs that have nothing to do with it. Measured on 9.15,
+ * 10.0 through 10.29, 11.0 through 11.8, 11.21 and 12.4; 10.25 and below
+ * ignore allowBuilds and 11.6 and above accept these keys.
+ *
+ * Those are exactly the keys the market writes for a git source (#68, #285,
+ * #637), because the pnpm versions that need them to authorize anything
+ * read them fine. On the versions in between, a bare name is what
+ * authorizes a git dependency — measured on 10.29 — and it is kept.
+ *
+ * @returns the keys removed; empty when nothing matched, in which case the
+ *   file is left untouched.
+ */
+export function dropUnparseableBuildKeys(profile: string, explicitDir?: string): string[] {
+  const file = join(profileDir(profile, explicitDir), 'pnpm-workspace.yaml')
+  let yaml: string
+  try { yaml = readFileSync(file, 'utf8') } catch { return [] }
+  const { map, blockRe, blockMatch } = readAllowBuildsMap(yaml)
+  // A key is a source rather than a version when what follows the name's own
+  // `@` starts a URL scheme. Scoped names begin with `@`, so the separator is
+  // the first `@` after position 0.
+  const removed = Object.keys(map).filter(key => {
+    const at = key.indexOf('@', 1)
+    return at > 0 && /^(?:git\+|https?:)/.test(key.slice(at + 1))
+  })
+  if (removed.length === 0) return []
+  for (const key of removed) delete map[key]
+  writeAllowBuildsMap(file, yaml, map, blockRe, blockMatch)
+  return removed
 }

@@ -48,7 +48,7 @@ export interface PnpmFailure {
     | 'ignored-builds' | 'git-prepare-not-allowed' | 'git-prepare-failed' | 'tarball-url-mismatch'
     | 'fetch-404' | 'no-matching-version' | 'transient-network' | 'fetch-timeout'
     | 'unexpected-store' | 'patch-failed' | 'missing-tarball-integrity' | 'windows-file-locked'
-    | 'pnpm-unusable' | 'missing-local-dependency'
+    | 'pnpm-unusable' | 'missing-local-dependency' | 'unparseable-build-key'
   /** Bilingual, actionable message shown to the user instead of the raw wall of text. */
   message: string
   /** True when re-running `pnpm install` in the profile is the documented recovery. */
@@ -350,6 +350,22 @@ export function classifyPnpmFailure(output: string, exitCode?: number | null): P
   // pnpm's FETCHER, before anything lands in node_modules — so the package
   // the user must approve is not installed yet, and pnpm's own hint names a
   // commit-pinned codeload URL that changes on every push.
+  // #698: pnpm 10.26+ and 11.0–11.5 read an allowBuilds key as
+  // `name@<version union>`, so a git or archive source there fails the WHOLE
+  // workspace file — every pnpm command in the profile, not the one plugin.
+  // Named separately from any install failure because the cure is in the
+  // profile's own pnpm-workspace.yaml, which withHoistRecovery repairs.
+  {
+    const found = /ERR_PNPM_INVALID_VERSION_UNION[\s\S]*?Found: \\?"([^"\\]+)\\?"/.exec(output)
+    if (found !== null && /@(?:git\+|https?:)/.test(found[1]!.slice(1))) {
+      return {
+        code: 'unparseable-build-key',
+        recoverable: false,
+        pkg: found[1],
+        message: `这个版本的 pnpm 读不懂 allowBuilds 里的 git 来源键（${found[1]}），整个 profile 的包操作都会因此失败 / this pnpm version cannot read a git-source key in allowBuilds (${found[1]}), which fails every package operation in the profile`,
+      }
+    }
+  }
   if (output.includes('ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED')) {
     return {
       code: 'git-prepare-not-allowed',

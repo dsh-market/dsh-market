@@ -9,7 +9,7 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import type { InstallResult, PluginRunner } from './dsh-cli.ts'
 import { classifyPnpmFailure, HOST_NAMESPACE_RE, isTransientPnpmFailure } from './pnpm-compat.ts'
-import { conflictingEntryIds, dropFromManifest, hasDshManifest, hasLoadableEntry, pluginSubdirs, profileDir, readInstalled, readManifestDeps, readProfileBundles } from './profile.ts'
+import { conflictingEntryIds, dropFromManifest, hasDshManifest, hasLoadableEntry, pluginSubdirs, profileDir, readInstalled, readManifestDeps, readProfileBundles, dropUnparseableBuildKeys } from './profile.ts'
 import { logEvent } from './log.ts'
 import { cleanOrphanedStore } from './store.ts'
 
@@ -129,7 +129,18 @@ export async function withHoistRecovery(
   const ok = (r: InstallResult): boolean => r.exitCode === 0 && !r.timedOut && !r.cancelled
   if (!ok(result) && !result.cancelled) {
     const failure = classifyPnpmFailure(`${result.stderr}\n${result.stdout}`, result.exitCode)
-    if (failure?.code === 'hoist-pattern-diff') {
+    if (failure?.code === 'unparseable-build-key') {
+      // The profile's own allowBuilds block is what fails, so no retry of the
+      // same command can pass until it is repaired (#698). Drop only the
+      // source-form keys this pnpm cannot parse — bare names stay, and on
+      // these versions a bare name is what authorizes a git dependency — then
+      // run the command once more.
+      const removed = dropUnparseableBuildKeys(profile, profileDirectory)
+      if (removed.length > 0) {
+        logEvent('warn', 'install', `this pnpm cannot parse git-source allowBuilds keys; removed ${removed.join(', ')} from pnpm-workspace.yaml and retrying once (#698)`)
+        result = await run(profile, pluginArgs)
+      }
+    } else if (failure?.code === 'hoist-pattern-diff') {
       logEvent('warn', 'install', `modules dir was built by a different pnpm major — rebuilding (pnpm install) and retrying once`)
       // --no-frozen-lockfile: the market runs pnpm with CI=true (TTY hangs),
       // where a lockfile written by the old major would otherwise be refused.
@@ -447,6 +458,31 @@ export function parsePrepareNotAllowed(stdout: string, stderr: string): string |
   const raw = m[1].trim()
   const at = raw.lastIndexOf('@')
   return at > 0 ? raw.slice(0, at) : raw
+}
+
+/**
+ * The allowBuilds key pnpm itself printed for a prepare refusal, when it
+ * printed one (#698).
+ *
+ * pnpm 11 ends ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED with the exact line to
+ * add — measured on 11.8.0 against the reported plugin:
+ *
+ *     For example:
+ *     allowBuilds:
+ *       @dsh-external/dsh-super-injector@https://codeload.github.com/…/tar.gz/<sha>: true
+ *
+ * For a TRANSITIVE git dependency that key is the only knowledge anyone has
+ * of its source: the package is in neither node_modules, package.json nor
+ * the catalog. pnpm 10 prints an `onlyBuiltDependencies` example with the
+ * bare name instead, and gets null here — the bare name is what it needs.
+ *
+ * @returns the key, or null when the output carries no allowBuilds example.
+ */
+export function parsePrepareKey(stdout: string, stderr: string): string | null {
+  // ndjson carries this inside a JSON string: quotes and newlines escaped.
+  const text = `${stdout}\n${stderr}`.replace(/\\"/g, '"').replace(/\\n/g, '\n')
+  const m = /For example:\s*\n\s*allowBuilds:\s*\n[ \t]+("?)([^\s"]+)\1:\s*true/.exec(text)
+  return m === null ? null : m[2]!
 }
 
 /**
