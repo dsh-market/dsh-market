@@ -947,7 +947,19 @@ export function buildBundleLayers(
       // fatal verdict and rolled back a good update (#369) — while `dsh
       // --dump-config` on the same profile exited 0. Unknown has to read as
       // unknown; the profile's own bundles are still judged normally.
-      if (hostProvided) {
+      //
+      // The same holds for any official bundle while the installation itself
+      // cannot be located (#676): a desktop build ships more in-box bundles
+      // than the three named in INBOX_BUNDLES —
+      // `@deepseek-ai/dsh-experimental-agent-team-profile` among them — and a
+      // fixed list, or an install-path shape, cannot know which. Two
+      // reporters saw that bundle called "not installed — will fail to boot"
+      // while its three entries were active in the running host. Only
+      // DeepSeek publishes under `@deepseek-ai/`, so while the installation
+      // is out of sight such a bundle is unknown, not missing. When the
+      // installation IS located and the bundle is in neither it nor the
+      // profile, the fatal verdict below still applies.
+      if (hostProvided || (dshInstallDir === null && name.startsWith('@deepseek-ai/'))) {
         layer.error = null
         layer.unresolvedInbox = true
         return layer

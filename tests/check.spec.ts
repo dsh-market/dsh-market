@@ -968,6 +968,57 @@ describe('in-box bundles that cannot be located (#369)', () => {
     expect(report.summary.errors.join('\n')).not.toMatch(/is not installed/)
   })
 
+  it('does not call an unlisted OFFICIAL bundle missing while the installation is out of sight (#676)', () => {
+    // A desktop build ships more in-box bundles than INBOX_BUNDLES names —
+    // this one reported "not installed — will fail to boot" while its three
+    // entries were active in the running host. With the installation not
+    // locatable, an `@deepseek-ai/` bundle is unknown, not missing.
+    const dir = pdir()
+    writeProfile(dir, {
+      name: 'web-profile',
+      dependencies: {},
+      dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-experimental-agent-team-profile'] } },
+    })
+
+    const report = analyzeProfile(dir, desktop())
+
+    const team = report.bundles.find(layer => layer.name === '@deepseek-ai/dsh-experimental-agent-team-profile')
+    expect(team?.error).toBeNull()
+    expect(team?.unresolvedInbox).toBe(true)
+    expect(report.summary.errors.join('\n')).not.toMatch(/is not installed/)
+  })
+
+  it('still calls a COMMUNITY bundle missing while the installation is out of sight', () => {
+    // The relaxation is for what the installation may supply. A community
+    // bundle only ever comes from the profile, so its absence is certain.
+    const dir = pdir()
+    writeProfile(dir, {
+      name: 'web-profile',
+      dependencies: {},
+      dsh: { profile: { bundles: ['dsh-community-gone'] } },
+    })
+
+    const report = analyzeProfile(dir, desktop())
+
+    expect(report.bundles[0]?.error).toMatch(/is not installed/)
+  })
+
+  it('still calls an official bundle missing when the installation IS located and lacks it', () => {
+    const dir = pdir()
+    const install = join(tmp, 'dsh-install')
+    mkdirSync(install, { recursive: true })
+    writeFileSync(join(install, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh', version: '0.1.7' }))
+    writeProfile(dir, {
+      name: 'web-profile',
+      dependencies: {},
+      dsh: { profile: { bundles: ['@deepseek-ai/dsh-experimental-agent-team-profile'] } },
+    })
+
+    const report = analyzeProfile(dir, { dshInstallDir: install })
+
+    expect(report.bundles[0]?.error).toMatch(/is not installed/)
+  })
+
   it('does not inspect a stale profile copy when the in-box host is hidden', () => {
     const dir = pdir()
     writeProfile(dir, {
