@@ -16,7 +16,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -667,7 +667,7 @@ interface Testbed {
 }
 
 function createTestbed(
-  config: { profile?: string; allowRestart?: boolean; profileDirectory?: string; desktopHost?: boolean; region?: 'global' | 'china' } = {},
+  config: { profile?: string; allowRestart?: boolean; profileDirectory?: string; desktopHost?: boolean; region?: 'global' | 'china'; dshInstallDir?: string } = {},
   runtime?: Parameters<typeof mountMarketRoutes>[2],
   agents?: AgentsServiceLike,
 ): Testbed {
@@ -4078,6 +4078,71 @@ describe('uninstall flow', () => {
 
     expect((await bed.dispatch('POST', '/dsh-market/uninstall', { name: 'dshmarket' })).status).toBe(400)
     expect((await bed.dispatch('POST', '/dsh-market/uninstall', { name: 'ghost' })).status).toBe(400)
+  })
+
+  it('removes the dangling host bridge link a Desktop boot projected for the plugin (#662)', async () => {
+    fake.npm['dsh-loop'] = { latest: '1.0.0', versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } } }
+    // A flat-layout Desktop deployment: its pnpm-managed node_modules is
+    // <dsh install dir>/node_modules, reached through config.dshInstallDir.
+    const hostDeploy = join(home, 'host-deploy')
+    const desktop = createTestbed({ dshInstallDir: hostDeploy })
+    try {
+      await desktop.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
+      // The boot-time projection dsh-app-boot performs: the host's own
+      // node_modules keeps a link (junction on Windows, dir symlink
+      // elsewhere) pointing at the profile copy of the plugin.
+      const bridge = join(hostDeploy, 'node_modules', 'dsh-loop')
+      mkdirSync(join(hostDeploy, 'node_modules'), { recursive: true })
+      symlinkSync(join(fake.profileDir, 'node_modules', 'dsh-loop'), bridge, process.platform === 'win32' ? 'junction' : 'dir')
+
+      const r = await desktop.dispatch('POST', '/dsh-market/uninstall', { name: 'dsh-loop' })
+
+      expect(r.status).toBe(200)
+      expect(r.json.ok).toBe(true)
+      // The remove is confirmed and the profile copy is gone — the bridge
+      // that pointed at it must not survive as a dangling link (#662).
+      // existsSync follows links and answers false for a dangling one, so
+      // the link's own presence is checked with lstat.
+      expect(existsSync(join(fake.profileDir, 'node_modules', 'dsh-loop'))).toBe(false)
+      expect(() => lstatSync(bridge)).toThrowError(/ENOENT/)
+    } finally {
+      desktop.dispose()
+    }
+  })
+
+  it('removes the dangling host bridge link when a half-failed remove is reconciled from disk truth (#662)', async () => {
+    fake.npm['dsh-loop'] = { latest: '1.0.0', versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } } }
+    const hostDeploy = join(home, 'host-deploy')
+    const desktop = createTestbed({ dshInstallDir: hostDeploy })
+    try {
+      await desktop.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
+      const bridge = join(hostDeploy, 'node_modules', 'dsh-loop')
+      mkdirSync(join(hostDeploy, 'node_modules'), { recursive: true })
+      symlinkSync(join(fake.profileDir, 'node_modules', 'dsh-loop'), bridge, process.platform === 'win32' ? 'junction' : 'dir')
+      // pnpm's half-uninstall (#65 mirror image): node_modules deleted,
+      // manifest entry left behind, exit 1.
+      fake.failNextRemoveHalfGone = true
+
+      const r = await desktop.dispatch('POST', '/dsh-market/uninstall', { name: 'dsh-loop' })
+
+      // Same shape as the existing half-uninstall contract (#65): the CLI
+      // failed, so the status is 502, but disk truth reconciled the removal
+      // — and the reconciliation must include the dangling host bridge.
+      expect(r.status).toBe(502)
+      expect(r.json.ok).toBe(false)
+      expect(r.json.reconciled).toBe(true)
+      expect(() => lstatSync(bridge)).toThrowError(/ENOENT/)
+    } finally {
+      desktop.dispose()
+    }
+  })
+
+  it('rejects a package name that is not an npm name before any bridge path is built (#662)', async () => {
+    // The bridge cleanup joins the name into a host node_modules path; a
+    // hand-edited manifest carrying `../../evil` must not reach that join.
+    const r = await bed.dispatch('POST', '/dsh-market/uninstall', { name: '../../evil' })
+    expect(r.status).toBe(400)
+    expect(fake.calls.some(call => call[0] === 'remove')).toBe(false)
   })
 
   it('refuses to remove a package still inserted by the user patch (#165)', async () => {

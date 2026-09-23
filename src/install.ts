@@ -5,9 +5,10 @@
  * parameter so tests can substitute a recording fake.
  */
 
-import { existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, lstatSync, readlinkSync, rmSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
 import type { InstallResult, PluginRunner } from './dsh-cli.ts'
+import { findDshInstallDir } from './dsh-install.ts'
 import { classifyPnpmFailure, HOST_NAMESPACE_RE, isTransientPnpmFailure } from './pnpm-compat.ts'
 import { conflictingEntryIds, dropFromManifest, hasDshManifest, hasLoadableEntry, pluginSubdirs, profileDir, readInstalled, readManifestDeps, readProfileBundles, dropUnparseableBuildKeys } from './profile.ts'
 import { logEvent } from './log.ts'
@@ -330,7 +331,7 @@ export async function retargetCollections(
  * anything wrong with the plugin (#258).
  */
 export async function validateAddedPlugins(
-  run: PluginRunner, profile: string, before: Set<string>, explicitDir?: string,
+  run: PluginRunner, profile: string, before: Set<string>, explicitDir?: string, hostDirectory?: string | null,
 ): Promise<{ added: string[]; keep: string[]; removedBroken: string[]; conflicts: { name: string; id: string; owner: string }[] }> {
   const dir = profileDir(profile, explicitDir)
   const addedNow = Object.keys(readInstalled(profile, dir)).filter(n => !before.has(n))
@@ -346,7 +347,7 @@ export async function validateAddedPlugins(
     // ship no entry of their own (#103) and must not be uninstalled here.
     if (!hasDshManifest(packageDir) || !hasLoadableEntry(dir, n)) {
       removedBroken.push(n)
-      await removeAndReconcile(run, profile, dir, n)
+      await removeAndReconcile(run, profile, dir, n, hostDirectory)
       continue
     }
     const clash = conflictingEntryIds(dir, n, existingBundles)
@@ -356,7 +357,7 @@ export async function validateAddedPlugins(
       removedBroken.push(n)
       logEvent('error', 'install',
         `${n}: loader entry id conflict with ${clash[0].owner} (${clash.map(hit => hit.id).join(', ')}) — removing, it would break the next boot`)
-      await removeAndReconcile(run, profile, dir, n)
+      await removeAndReconcile(run, profile, dir, n, hostDirectory)
       continue
     }
     keep.push(n)
@@ -382,11 +383,14 @@ export async function validateAddedPlugins(
  * @param profile - the profile name for manifest writes.
  * @param dir - the profile directory the validation reads.
  * @param name - the package being removed.
+ * @param hostDirectory - the DSH host deployment directory whose node_modules
+ * may hold a bridge link for this package (#662); resolved when omitted.
  */
-async function removeAndReconcile(run: PluginRunner, profile: string, dir: string, name: string): Promise<void> {
+async function removeAndReconcile(run: PluginRunner, profile: string, dir: string, name: string, hostDirectory: string | null = findDshInstallDir()): Promise<void> {
   const result = await run(profile, ['remove', name])
   const gone = !existsSync(join(dir, 'node_modules', name, 'package.json'))
   if (gone) {
+    removeDanglingHostBridge(name, dir, hostDirectory)
     if (dropFromManifest(profile, name, dir)) {
       logEvent('error', 'install',
         `${name}: remove ${result.exitCode === 0 ? 'skipped the manifest reconcile' : `failed (exit ${String(result.exitCode)})`} but the package is gone from disk — dropped its dependency/bundle rows so the next boot stays loadable`)
@@ -397,6 +401,99 @@ async function removeAndReconcile(run: PluginRunner, profile: string, dir: strin
     logEvent('error', 'install',
       `${name}: remove failed (exit ${String(result.exitCode)})${result.timedOut ? ' timed out' : ''}${result.cancelled ? ' cancelled' : ''} and the package is still installed — its rows stay in the manifest; retry the uninstall`)
   }
+}
+
+/**
+ * The node_modules root of the DSH host deployment `directory` belongs to.
+ *
+ * CLI layouts install the host as `<prefix>/node_modules/@deepseek-ai/dsh`,
+ * so the shared root is two dirname steps up; a flat Desktop layout keeps
+ * the host package at the deployment root (#662's
+ * `<desktop-app>\dependencies\dsh`), with its pnpm-managed node_modules
+ * directly beside its package.json. `dshHostInfo()` already distinguishes
+ * the two — this is pure path arithmetic on whichever directory it returned.
+ */
+export function hostNodeModulesRoot(directory: string): string {
+  const segments = directory.split(/[/\\]+/).filter(segment => segment !== '')
+  const n = segments.length
+  if (n >= 3 && segments[n - 3].toLowerCase() === 'node_modules' && segments[n - 2].toLowerCase() === '@deepseek-ai') {
+    return resolve(dirname(dirname(directory)))
+  }
+  return resolve(directory, 'node_modules')
+}
+
+/**
+ * Normalize a link target for path comparison: restore the UNC device form
+ * (`\\?\UNC\server\share` back to `\\server\share` — stripped of its prefix
+ * it is no longer absolute and resolve() would re-root it against the
+ * cwd), then remove the NT device prefixes `\\?\` and the subst-style
+ * `\??\` mklink stores. Measured on Node 24/win32: readlinkSync returns
+ * the plain absolute path, so these branches only matter for links created
+ * outside Node — but a comparison must not silently miss because of them.
+ */
+export function normalizedLinkTarget(target: string): string {
+  return target
+    .replace(/^\\\\\?\\UNC\\/, '\\\\')
+    .replace(/^(?:\\\\\?\\|\\\?\?\\)/, '')
+}
+
+/**
+ * Whether a link target names the profile's copy of a package. Junction
+ * targets keep the case they were created with, so the comparison is
+ * case-insensitive on win32, where the filesystem itself is.
+ */
+function pointsAtProfilePackage(target: string, expected: string): boolean {
+  const left = resolve(normalizedLinkTarget(target))
+  const right = resolve(expected)
+  return process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right
+}
+
+/**
+ * Remove the host-side bridge link a confirmed uninstall leaves dangling
+ * (#662). The official boot projects profile packages into the host
+ * deployment's node_modules as links (Junction or SymbolicLink — lstat
+ * reports both as symlinks) and never reclaims them, and `dsh plugin
+ * remove` knows nothing about them, so without this the link outlives the
+ * package it pointed at and every tool that lstats its way through
+ * node_modules (rg first among them) fails on it.
+ *
+ * The gate is deliberately total: only `<host node_modules>/<name>` is ever
+ * touched, only when that entry is a link whose normalized target is
+ * exactly this profile's copy of `name`, and only when that copy is really
+ * gone — a live bridge for a package that is still installed must survive.
+ * A null `hostDirectory` (no host locatable — a plain `dsh web` from a
+ * global install) is a documented no-op.
+ *
+ * @returns whether a dangling bridge was removed. Never throws: the removal
+ * this cleans up after already succeeded, and a cleanup failure must not
+ * fail the uninstall that triggered it.
+ */
+export function removeDanglingHostBridge(name: string, profileDirectory: string, hostDirectory: string | null): boolean {
+  if (hostDirectory === null) return false
+  const bridge = join(hostNodeModulesRoot(hostDirectory), name)
+  const unlinked = join(profileDirectory, 'node_modules', name)
+  try {
+    if (!lstatSync(bridge).isSymbolicLink()) return false
+    // The gone-check mirrors removeAndReconcile's manifest truth: a package
+    // whose package.json is gone is uninstalled even if an empty directory
+    // lingered behind, and its bridge is exactly the dangling link #662 is
+    // about.
+    if (!pointsAtProfilePackage(readlinkSync(bridge), unlinked) || existsSync(join(unlinked, 'package.json'))) return false
+    // No `recursive`: rmSync on a link unlinks the link itself only
+    // (measured on win32/Node 24 for live and dangling junctions and dir
+    // symlinks), and leaving it off keeps a race that swaps the link for a
+    // real directory from ever deleting that directory's tree.
+    rmSync(bridge, { force: true })
+  } catch (error) {
+    // ENOENT is the ordinary "no bridge there" answer (and a lost race
+    // while unlinking); anything else is worth a line in the log.
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      logEvent('warn', 'uninstall', `${name}: host bridge cleanup skipped — ${error instanceof Error ? error.message : String(error)}`)
+    }
+    return false
+  }
+  logEvent('info', 'uninstall', `${name}: removed the dangling host bridge the boot projection left at ${bridge}`)
+  return true
 }
 
 /**

@@ -19,7 +19,7 @@ import {
   mountClientOnlyDeps, purgeMarketState, readMarketState, writeMarketState,
 } from './hot.ts'
 import { createGroup, deleteGroup, removeFromGroups, renameGroup, setGroupMembers } from './groups.ts'
-import { dshHostInfo } from './dsh-install.ts'
+import { dshHostInfo, findDshInstallDir } from './dsh-install.ts'
 import { deriveHostCompatibility, DiscoveryManifestIndex } from './discovery-compatibility.ts'
 import { configurePersistentLog, exportLogs, logEvent, readPersistentLog } from './log.ts'
 import { marketFetch } from './net.ts'
@@ -38,7 +38,7 @@ import { applyPreset, deletePreset, listPresets, previewPreset, savePreset } fro
 import { createProfileSnapshot, DEFAULT_MAX_SNAPSHOTS, deleteSnapshot, listSnapshots, restoreSnapshot } from './snapshot.ts'
 import { trialValidate } from './trial.ts'
 import { codeloadAllowBuildsKey, findCatalogEntryForLocal, findInstalledAlias, gitCommitOfTarget, githubCommitOfTarget, githubTargetAtCommit, gitAllowBuildsKey, gitRefOfTarget, gitTargetAtCommit, gitUpdateTarget, hostedRepoKey, pinnedGitAllowBuildsKey, installTargetFor, isGenerationLink, isLocalSpec, NPM_NAME_RE, repoOfTarget, restoreBlockedByWorkspace, restoreTargetForLocal, workspaceProtocolDeps } from './sources.ts'
-import { failureDetail, groupConflictsByOwner, isStaleUpdate, parseIgnoredBuilds, parsePrepareKey, parsePrepareNotAllowed, pnpmBlockedByOpenFiles, pnpmNeverStarted, RELEASE_AGE_OVERRIDE, retargetCollections, validateAddedPlugins, withHoistRecovery } from './install.ts'
+import { failureDetail, groupConflictsByOwner, isStaleUpdate, parseIgnoredBuilds, parsePrepareKey, parsePrepareNotAllowed, pnpmBlockedByOpenFiles, pnpmNeverStarted, RELEASE_AGE_OVERRIDE, removeDanglingHostBridge, retargetCollections, validateAddedPlugins, withHoistRecovery } from './install.ts'
 import { classifyPnpmFailure } from './pnpm-compat.ts'
 import { asChannel, CHANNELS, DIST_TAG, resolveChannel, type Channel } from './channels.ts'
 import {
@@ -1094,6 +1094,9 @@ export function mountMarketRoutes(
     // with two activation sources must not have the second one skipped
     // because the first succeeded.
     const unmounted = await hotUnmount(name)
+    // #662: the removal is confirmed — drop the host bridge link the boot
+    // projection may have left pointing at the now-gone package.
+    removeDanglingHostBridge(name, activeProfileDir, config.dshInstallDir ?? findDshInstallDir())
     const entryDisabled = await themes.setEntryDisabled(name, true)
     const hot = (unmounted || entryDisabled) && !native
     if (native) {
@@ -4158,6 +4161,10 @@ sendJson(response, 200, { updates })
             // has just been removed. Only rows belonging to packages on the
             // market's own disable list are touched — a hand-written row is
             // the user's, not ours.
+            // #662 first, while the filesystem is the only thing touched:
+            // the market's own host bridge dangles the moment the remove
+            // succeeds, and this route is the last code of ours to run.
+            removeDanglingHostBridge(selfName, activeProfileDir, config.dshInstallDir ?? findDshInstallDir())
             const purge = body.purge === true
             const restored: string[] = []
             if (purge) {
@@ -4447,6 +4454,13 @@ sendJson(response, 200, { updates })
               sendJson(response, 400, { error: 'the market cannot uninstall itself; use the dsh CLI' })
               return
             }
+            // The bridge cleanup this route performs joins the package name
+            // into a host node_modules path (#662); a hand-edited manifest
+            // carrying `../../evil` must not escape that join.
+            if (!NPM_NAME_RE.test(name)) {
+              sendJson(response, 400, { error: 'plugin is not installed' })
+              return
+            }
             if (readInstalled(config.profile, activeProfileDir)[name] === undefined) {
               sendJson(response, 400, { error: 'plugin is not installed' })
               return
@@ -4532,6 +4546,10 @@ sendJson(response, 200, { updates })
             let hot = false
             if (ok || halfGone) {
               invalidateUpdates()
+              // #662: the removal is final (confirmed exit or reconciled
+              // from disk truth) — the host node_modules bridge the boot
+              // projection left for this package must not outlive it.
+              removeDanglingHostBridge(name, activeProfileDir, config.dshInstallDir ?? findDshInstallDir())
               hot = await hotUnmount(name)
               // Bundle-layer plugins never hot-mount, but their loader entry
               // is still LIVE in this process — after the remove deleted the
