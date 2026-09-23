@@ -3641,7 +3641,15 @@ sendJson(response, 200, { updates })
               const trial = trialValidate(activeProfileDir, stack.community)
               if (!trial.ok) {
                 ok = false
-                const first = trial.errors[0]?.message ?? 'the composition would not boot'
+                // Name the LAYER, not only the message: the first error is
+                // often about a different bundle than the one being updated
+                // (#688 — the official dsh-web-app's patch list, blamed on
+                // whatever plugin the user happened to update), and a message
+                // without the layer reads as an accusation of the wrong package.
+                const firstIssue = trial.errors[0]
+                const first = firstIssue === undefined
+                  ? 'the composition would not boot'
+                  : `${firstIssue.layer}: ${firstIssue.message}`
                 const rollback = await rollbackAttemptBuild()
                 rollbackOk = rollback.ok
                 rollbackDetail = rollback.detail

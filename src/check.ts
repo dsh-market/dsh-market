@@ -62,6 +62,8 @@ export interface BundleLayer {
   directory: string | null
   /** Absolute path of the layer's patch file; null when undeclared/missing. */
   patchPath: string | null
+  /** Every declared patch file, in declaration order; `patchPath` is the first (#688). */
+  patchPaths: string[]
   /**
    * An in-box bundle whose directory could not be located — a gap in what
    * this process can see, not a defect in the profile (#369). Distinct from
@@ -916,6 +918,7 @@ export function buildBundleLayers(
       kind: INBOX_BUNDLES.has(name) ? 'official' : 'community',
       directory,
       patchPath: null,
+      patchPaths: [],
       error: null,
       entries: [],
       parseError: null,
@@ -967,6 +970,7 @@ export function buildBundleLayers(
     // The first declared file is the layer's patch for reporting; every one
     // of them contributes entries, because the composer applies them all.
     layer.patchPath = join(directory, declaredList[0]!)
+    layer.patchPaths = declaredList.map(relative => join(directory, relative))
     const parsed = declaredList.map(relative => parsePatchFile(join(directory, relative)))
     if (parsed.some(patches => patches === null)) {
       layer.parseError = 'patch file is not a valid entry list'
@@ -989,7 +993,12 @@ export function buildBundleLayers(
   const layers: LayerInput[] = bundles.map((bundle) => ({
     label: bundle.name,
     kind: 'bundle' as const,
-    patches: bundle.patchPath !== null && bundle.parseError === null ? parsePatchFile(bundle.patchPath) ?? [] : [],
+    // EVERY declared file, not the first: the composer applies them all, and
+    // a composition built from one file would miss the preset rows — so a
+    // duplicate id or an orphan in a second file was invisible here (#688).
+    patches: bundle.parseError === null
+      ? bundle.patchPaths.flatMap(path => parsePatchFile(path) ?? [])
+      : [],
     parseError: bundle.parseError,
   }))
   return { bundles, layers }
