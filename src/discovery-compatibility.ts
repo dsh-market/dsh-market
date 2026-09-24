@@ -325,17 +325,17 @@ export class DiscoveryManifestIndex {
     }
   }
 
-  private async fetchOne(name: string, registry: string, record = true): Promise<NpmManifestFacts | null> {
+  private async fetchOne(name: string, registry: string, record = true, refresh = false): Promise<NpmManifestFacts | null> {
     this.load()
     const now = this.now()
     const cached = this.entries.get(name)
-    if (cached !== undefined && now - cached.checkedAt < this.ttlMs) return cached.facts
-    if ((this.failures.get(name) ?? 0) > now || this.unavailableUntil > now) return null
+    if (!refresh && cached !== undefined && now - cached.checkedAt < this.ttlMs) return cached.facts
+    if (!refresh && ((this.failures.get(name) ?? 0) > now || this.unavailableUntil > now)) return null
     // Advisory and recording lookups keep separate in-flight slots: an
     // advisory call must not be answered by — or hand its answer to — a
     // recording one, or `record` would stop meaning anything when the two
     // overlap on the same package.
-    const key = record ? name : `${name}\u0000advisory`
+    const key = `${name}\u0000${record ? 'record' : 'advisory'}\u0000${refresh ? 'refresh' : 'cached'}`
     const pending = this.inflight.get(key)
     if (pending !== undefined) return await pending
 
@@ -359,6 +359,7 @@ export class DiscoveryManifestIndex {
         return facts
       } catch {
         if (record) {
+          if (refresh && this.entries.delete(name)) this.dirty = true
           const failedAt = this.now()
           this.failures.set(name, failedAt + FAILURE_COOLDOWN_MS)
           this.consecutiveFailures += 1
@@ -387,7 +388,7 @@ export class DiscoveryManifestIndex {
   async lookup(
     names: readonly string[],
     registry: string,
-    options: { record?: boolean } = {},
+    options: { record?: boolean; refresh?: boolean } = {},
   ): Promise<Record<string, NpmManifestFacts | null>> {
     const record = options.record !== false
     const unique = [...new Set(names)]
@@ -396,7 +397,7 @@ export class DiscoveryManifestIndex {
     const worker = async (): Promise<void> => {
       while (next < unique.length) {
         const name = unique[next++]!
-        result[name] = await this.fetchOne(name, registry, record)
+        result[name] = await this.fetchOne(name, registry, record, options.refresh === true)
       }
     }
     await Promise.all(Array.from({ length: Math.min(this.concurrency, unique.length) }, worker))
@@ -405,5 +406,20 @@ export class DiscoveryManifestIndex {
       this.persist()
     }
     return result
+  }
+
+  /** Read the exact release about to be installed, independent of discovery's 24h latest cache. */
+  async lookupVersion(name: string, version: string, registry: string): Promise<NpmManifestFacts | null> {
+    try {
+      const response = await this.withFetchPermit(async () => await this.fetcher(
+        `${registry}/${encodeURIComponent(name)}/${encodeURIComponent(version)}`,
+        { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS), headers: { accept: 'application/json', 'user-agent': 'dsh-market' } },
+      ))
+      if (!response.ok) return null
+      const facts = manifestFacts(await response.json())
+      return facts.version === version ? facts : null
+    } catch {
+      return null
+    }
   }
 }

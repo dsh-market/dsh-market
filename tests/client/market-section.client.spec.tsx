@@ -4583,16 +4583,28 @@ describe('Update all button visible for a single updatable plugin (#555)', () =>
   })
 })
 
-describe('catalog version in discover byline (#348)', () => {
-  it('shows v{version} when the catalog supplies a string, and omits null/absent', async () => {
+describe('live npm version in discover byline', () => {
+  it('shows the current npm release instead of an older catalog version', async () => {
     const registry = JSON.parse(JSON.stringify(REGISTRY))
     registry.plugins[0].version = '1.2.3'
-    registry.plugins[1].version = null
-    stubFetch({ '/dsh-market/registry': { source: 'live', registry, hostVersion: '0.1.2-alpha.2' } })
+    registry.plugins[1].version = '8.8.8'
+    stubFetch({
+      '/dsh-market/registry': { source: 'live', registry, hostVersion: '0.1.2-alpha.2' },
+      '/dsh-market/discovery-compatibility': (body: any) => ({
+        hostVersion: '0.1.2-alpha.2',
+        plugins: Object.fromEntries(body.packages.map((name: string) => [name, {
+          status: 'unknown', basis: 'undeclared', requirement: null, declarations: [],
+        }])),
+        versions: { 'dsh-loop': '1.2.4', 'dsh-notify': null },
+      }),
+    })
     render(<MarketSection {...props()} />)
     const loop = (await screen.findByText('dsh-loop')).closest('[class*="card"]') as HTMLElement
     const notify = screen.getByText('dsh-notify').closest('[class*="card"]') as HTMLElement
-    expect(within(loop).getByText('· v1.2.3')).toBeTruthy()
+    await waitFor(() => expect(within(loop).getByText('· v1.2.4')).toBeTruthy())
+    expect(within(loop).queryByText('· v1.2.3')).toBeNull()
     expect(within(notify).queryByText(/^· v/)).toBeNull()
+    expect(fetchCalls.some(call => call.path === '/dsh-market/discovery-compatibility'
+      && (call.body as { refresh?: boolean })?.refresh === true)).toBe(true)
   })
 })

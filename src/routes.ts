@@ -1427,13 +1427,13 @@ export function mountMarketRoutes(
     // would answer `unknown` and pass anyway, so skip the manifest fetch
     // entirely (one less network round-trip, identical verdict).
     if (host?.version == null) return false
-    // Advisory only: this runs before the operation is allowed to proceed, so
-    // it must not seed the index the diagnostics panel reads from (#619). A
-    // lookup that recorded here decided the panel's next verdict for it — a
-    // failed pre-flight left a failure cooldown behind, and a successful one
-    // pinned the version being installed, so the panel answered "unknown" or
-    // the wrong version for a package it had never actually asked about.
-    const facts = (await discoveryManifests.lookup([npmName], routesFor(region).npmRegistry, { record: false }))[npmName] ?? null
+    // A cached /latest response can describe an older release than the exact
+    // target chosen above. Read that release's manifest without recording it
+    // in the discovery index, whose cache represents the catalog view (#619).
+    const registry = routesFor(region).npmRegistry
+    const facts = version === null
+      ? (await discoveryManifests.lookup([npmName], registry, { record: false, refresh: true }))[npmName] ?? null
+      : await discoveryManifests.lookupVersion(npmName, version, registry)
     const verdict = deriveHostCompatibility(
       facts,
       host?.version ?? null,
@@ -1926,9 +1926,10 @@ export function mountMarketRoutes(
           sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) })
           return
         }
-        const requested = body !== null && typeof body === 'object' && !Array.isArray(body)
-          ? (body as { packages?: unknown }).packages
-          : undefined
+        const input = body !== null && typeof body === 'object' && !Array.isArray(body)
+          ? body as { packages?: unknown; refresh?: unknown }
+          : {}
+        const requested = input.packages
         if (!Array.isArray(requested) || requested.length > 64
           || !requested.every(name => typeof name === 'string' && NPM_NAME_RE.test(name))) {
           sendJson(response, 400, { error: 'packages must be an array of at most 64 npm package names' })
@@ -1939,12 +1940,13 @@ export function mountMarketRoutes(
           const host = dshHostInfo()
           const hostVersion = host?.version ?? null
           const hostPackages = corePackageNames(host?.directory ?? null)
-          const facts = await discoveryManifests.lookup(packages, routesFor(region).npmRegistry)
+          const facts = await discoveryManifests.lookup(packages, routesFor(region).npmRegistry, { refresh: input.refresh === true })
           const plugins = Object.fromEntries(packages.map(name => [
             name,
             deriveHostCompatibility(facts[name] ?? null, hostVersion, hostPackages),
           ]))
-          sendJson(response, 200, { hostVersion, plugins })
+          const versions = Object.fromEntries(packages.map(name => [name, facts[name]?.version ?? null]))
+          sendJson(response, 200, { hostVersion, plugins, versions })
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
         }
@@ -4847,7 +4849,7 @@ sendJson(response, 200, { updates })
             // route (#404/#473). Only a CONFIRMED mismatch is refused; skip
             // when the user pinned a specific version — that version was
             // already verified by /dsh-market/find-compatible.
-            if (npmName !== null && pinnedVersion === null && await refuseHostIncompatible(npmName, entry.name, registryLatest, false, response, region, 'install-compat')) return
+            if (npmName !== null && await refuseHostIncompatible(npmName, entry.name, pinnedVersion ?? registryLatest, false, response, region, 'install-compat')) return
             const beforeSpecs = readInstalled(config.profile, activeProfileDir)
             const before = new Set(Object.keys(beforeSpecs))
             if (retryAlias !== null) before.delete(retryAlias)

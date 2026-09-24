@@ -149,6 +149,66 @@ describe('DiscoveryManifestIndex', () => {
     for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true })
   })
 
+  it('refreshes the visible release instead of showing a day-old catalog version', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'dshm-discovery-'))
+    directories.push(directory)
+    let latest = '0.19.1'
+    let calls = 0
+    const index = new DiscoveryManifestIndex(join(directory, 'facts.json'), {
+      fetcher: async () => {
+        calls += 1
+        return new Response(JSON.stringify({ version: latest, peerDependencies: {
+          '@deepseek-ai/dsh-settings': latest === '0.19.1' ? '^0.1.5-rc.1' : '^0.1.7-rc.1',
+        } }), { status: 200 })
+      },
+      now: () => 1_000,
+    })
+    expect((await index.lookup(['dsh-better-sidebar'], 'https://registry.example'))['dsh-better-sidebar']?.version).toBe('0.19.1')
+    latest = '0.21.1'
+    expect((await index.lookup(['dsh-better-sidebar'], 'https://registry.example', { refresh: true }))['dsh-better-sidebar'])
+      .toMatchObject({ version: '0.21.1', peerDependencies: { '@deepseek-ai/dsh-settings': '^0.1.7-rc.1' } })
+    expect(calls).toBe(2)
+  })
+
+  it('does not fall back to an old version when the live refresh fails', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'dshm-discovery-'))
+    directories.push(directory)
+    let online = true
+    const index = new DiscoveryManifestIndex(join(directory, 'facts.json'), {
+      fetcher: async () => {
+        if (!online) throw new Error('offline')
+        return new Response(JSON.stringify({ version: '0.19.1' }), { status: 200 })
+      },
+      now: () => 1_000,
+    })
+    await index.lookup(['dsh-better-sidebar'], 'https://registry.example')
+    online = false
+    expect((await index.lookup(['dsh-better-sidebar'], 'https://registry.example', { refresh: true }))['dsh-better-sidebar']).toBeNull()
+    expect((await index.lookup(['dsh-better-sidebar'], 'https://registry.example'))['dsh-better-sidebar']).toBeNull()
+  })
+
+  it('checks the exact install target without trusting or replacing cached latest facts', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'dshm-discovery-'))
+    directories.push(directory)
+    const urls: string[] = []
+    const index = new DiscoveryManifestIndex(join(directory, 'facts.json'), {
+      fetcher: async (url) => {
+        urls.push(url)
+        const version = url.endsWith('/latest') ? '0.19.1' : '0.21.1'
+        return new Response(JSON.stringify({ version, peerDependencies: {
+          '@deepseek-ai/dsh-settings': version === '0.19.1' ? '^0.1.5-rc.1' : '^0.1.7-rc.1',
+        } }), { status: 200 })
+      },
+      now: () => 1_000,
+    })
+    await index.lookup(['dsh-better-sidebar'], 'https://registry.example')
+    const target = await index.lookupVersion('dsh-better-sidebar', '0.21.1', 'https://registry.example')
+    expect(target?.version).toBe('0.21.1')
+    expect(deriveHostCompatibility(target, '0.1.5-rc.2', HOST_PACKAGES).status).toBe('incompatible')
+    expect((await index.lookup(['dsh-better-sidebar'], 'https://registry.example'))['dsh-better-sidebar']?.version).toBe('0.19.1')
+    expect(urls).toEqual(['https://registry.example/dsh-better-sidebar/latest', 'https://registry.example/dsh-better-sidebar/0.21.1'])
+  })
+
   it('bounds concurrency and reuses the durable cache in a new index', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'dshm-discovery-'))
     directories.push(directory)

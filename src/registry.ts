@@ -25,9 +25,8 @@ export interface RegistryPlugin {
    */
   downloads?: number | null
   /**
-   * Registry `dist-tags.latest` from awesome-dsh-plugin (#348). A string when
-   * known; `null`/absent when github-only or not yet backfilled — the UI
-   * omits the byline segment rather than showing a placeholder.
+   * Catalog snapshot of npm `dist-tags.latest` (#348). This may lag npm;
+   * the UI reads the visible cards' current versions separately.
    */
   version?: string | null
   install: string

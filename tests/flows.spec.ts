@@ -851,6 +851,10 @@ describe('flat Desktop host consumers (#553)', () => {
     const expectedVersion = conflict ? 'unknown' : '0.1.0-rc.12'
     fake.npm['dsh-loop'] = { latest: '1.0.0', versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } } }
     expect((await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })).status).toBe(200)
+    // Prime discovery with the former latest. The update guard must not
+    // evaluate this cached 1.0.0 manifest after the target becomes 2.0.0.
+    const former = await bed.dispatch('POST', '/dsh-market/discovery-compatibility', { packages: ['dsh-loop'] })
+    expect(former.json.versions['dsh-loop']).toBe('1.0.0')
     fake.npm['dsh-loop'].latest = '2.0.0'
     fake.npm['dsh-loop'].versions['2.0.0'] = { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] }
     vi.stubGlobal('fetch', async () => new Response(JSON.stringify({
@@ -864,7 +868,7 @@ describe('flat Desktop host consumers (#553)', () => {
     expect(logs.status).toBe(200)
     expect(logs.text).toContain(`dsh host: ${expectedVersion} (`)
     expect(logs.text).not.toContain('dsh host: not locatable')
-    const discovery = await bed.dispatch('POST', '/dsh-market/discovery-compatibility', { packages: ['dsh-loop'] })
+    const discovery = await bed.dispatch('POST', '/dsh-market/discovery-compatibility', { packages: ['dsh-loop'], refresh: true })
     expect(discovery.json.hostVersion).toBe(expectedVersion)
     expect(discovery.json.plugins['dsh-loop'].status).toBe(conflict ? 'unknown' : 'incompatible')
     const callsBeforeUpdate = fake.calls.length

@@ -1123,7 +1123,7 @@ function BookmarkMark({ size = 14, filled = false, className }: { size?: number;
 }
 
 /**
- * Catalog npm latest in the card byline (#348). Same quiet style as ↓ / ★;
+ * Live npm latest in the card byline. Same quiet style as ↓ / ★;
  * omitted when absent so github-only and not-yet-backfilled rows stay clean.
  */
 function CatalogVersionMark({ version, tip }: { version: string | null | undefined; tip: string }) {
@@ -1612,9 +1612,11 @@ export function MarketSection(props: MarketSectionProps) {
   /** v1 is deliberately opt-in: undeclared/unknown entries stay visible even when enabled. */
   const [compatibleWithHost, setCompatibleWithHost] = useState(false)
   const [hostCompatibility, setHostCompatibility] = useState<HostCompatibilityMap>({})
+  const [liveNpmVersions, setLiveNpmVersions] = useState<Record<string, string | null>>({})
   const [hostCompatibilityPending, setHostCompatibilityPending] = useState(0)
   /** Names already resolved or in flight; failed/unavailable names are released for an explicit retry. */
   const requestedHostCompatibility = useRef(new Set<string>())
+  const requestedLiveVersions = useRef(new Set<string>())
   const [catsOpen, setCatsOpen] = useState(false)
   /** Themes tab: independent from Discover's sort/time state above — a
    * search or sort choice in one tab has no business resetting the other. */
@@ -1757,10 +1759,11 @@ export function MarketSection(props: MarketSectionProps) {
       .catch((error: unknown) => { setLoadError(error instanceof Error ? error.message : String(error)) })
   }, [])
 
-  const loadHostCompatibility = useCallback(async (names: readonly string[]): Promise<void> => {
+  const loadHostCompatibility = useCallback(async (names: readonly string[], refresh = false): Promise<void> => {
     const unique = [...new Set(names)].filter(name => {
-      if (name === '' || requestedHostCompatibility.current.has(name)) return false
+      if (name === '' || (refresh ? requestedLiveVersions.current : requestedHostCompatibility.current).has(name)) return false
       requestedHostCompatibility.current.add(name)
+      if (refresh) requestedLiveVersions.current.add(name)
       return true
     })
     if (unique.length === 0) return
@@ -1771,11 +1774,12 @@ export function MarketSection(props: MarketSectionProps) {
         const response = await fetch(api('/dsh-market/discovery-compatibility'), {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ packages: chunk }),
+          body: JSON.stringify({ packages: chunk, refresh }),
         })
         const body = await response.json() as {
           hostVersion?: string | null
           plugins?: Record<string, HostCompatibility>
+          versions?: Record<string, string | null>
         }
         if (!response.ok || body.plugins === null || typeof body.plugins !== 'object') {
           throw new Error(`HTTP ${String(response.status)}`)
@@ -1801,8 +1805,14 @@ export function MarketSection(props: MarketSectionProps) {
           if (item.basis === 'unavailable') requestedHostCompatibility.current.delete(name)
         }
         setHostCompatibility(current => ({ ...current, ...accepted }))
+        if (refresh) {
+          setLiveNpmVersions(current => ({ ...current, ...Object.fromEntries(chunk.map(name => [
+            name, typeof body.versions?.[name] === 'string' ? body.versions[name] : null,
+          ])) }))
+        }
       } catch {
         for (const name of chunk) requestedHostCompatibility.current.delete(name)
+        if (refresh) for (const name of chunk) requestedLiveVersions.current.delete(name)
         setHostCompatibility(current => ({
           ...current,
           ...Object.fromEntries(chunk.map(name => [name, UNAVAILABLE_HOST_COMPATIBILITY])),
@@ -2097,7 +2107,7 @@ export function MarketSection(props: MarketSectionProps) {
   const pageHostPackagesKey = pageHostPackages.join('\u0000')
   const allHostPackagesKey = allHostPackages.join('\u0000')
   useEffect(() => {
-    if (tab === 'discover') void loadHostCompatibility(pageHostPackages)
+    if (tab === 'discover') void loadHostCompatibility(pageHostPackages, true)
     // The key is the stable identity of this page's npm package set; the
     // array itself is recreated as compatibility results arrive.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2121,6 +2131,11 @@ export function MarketSection(props: MarketSectionProps) {
     themePlugins.length, [qThemes, themeSortField, themeSortDir, themeTimeRange], scrollToTop)
   const themePagePlugins = themePlugins.slice(
     (themePagination.currentPage - 1) * themePagination.pageSize, themePagination.currentPage * themePagination.pageSize)
+  const themePageHostPackagesKey = [...new Set(themePagePlugins.flatMap(plugin =>
+    typeof plugin.npm === 'string' && plugin.npm !== '' ? [plugin.npm] : []))].join('\u0000')
+  useEffect(() => {
+    if (tab === 'themes') void loadHostCompatibility(themePageHostPackagesKey === '' ? [] : themePageHostPackagesKey.split('\u0000'), true)
+  }, [tab, themePageHostPackagesKey, loadHostCompatibility])
 
   const favoriteListed = useMemo(
     () => (data === null ? [] : pluginsForFavorites(data.plugins, favoriteUrlSet, {
@@ -2153,7 +2168,7 @@ export function MarketSection(props: MarketSectionProps) {
     typeof plugin.npm === 'string' && plugin.npm !== '' ? [plugin.npm] : []))]
   const favoritePageHostPackagesKey = favoritePageHostPackages.join('\u0000')
   useEffect(() => {
-    if (tab === 'favorites') void loadHostCompatibility(favoritePageHostPackages)
+    if (tab === 'favorites') void loadHostCompatibility(favoritePageHostPackages, true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, favoritePageHostPackagesKey, loadHostCompatibility])
   const favoriteStale = useMemo(
@@ -3590,7 +3605,7 @@ export function MarketSection(props: MarketSectionProps) {
             <div className={css.byline}>
               <OwnerAvatar name={p.name} owner={p.owner || ''} />
               <span className={css.owner} title={p.owner}>{p.owner}</span>
-              <CatalogVersionMark version={p.version} tip={t('catalogNpmLatest')} />
+              <CatalogVersionMark version={typeof p.npm === 'string' ? liveNpmVersions[p.npm] : null} tip={t('catalogNpmLatest')} />
               {typeof p.downloads === 'number' && (
                 <Tooltip label={String(p.downloads)} side="top">
                   <span className={css.star}>{'· ↓ ' + formatCount(p.downloads)}</span>
@@ -3732,7 +3747,7 @@ export function MarketSection(props: MarketSectionProps) {
               <div className={css.byline}>
                 <OwnerAvatar name={p.name} owner={p.owner || ''} />
                 <span className={css.owner} title={p.owner}>{p.owner}</span>
-                <CatalogVersionMark version={p.version} tip={t('catalogNpmLatest')} />
+                <CatalogVersionMark version={typeof p.npm === 'string' ? liveNpmVersions[p.npm] : null} tip={t('catalogNpmLatest')} />
                 {typeof p.downloads === 'number' && (
                   <Tooltip label={String(p.downloads)} side="top">
                     <span className={css.star}>{'· ↓ ' + formatCount(p.downloads)}</span>
@@ -5484,7 +5499,7 @@ export function MarketSection(props: MarketSectionProps) {
           <div className={css.byline}>
             <OwnerAvatar name={confirming.name} owner={confirming.owner || ''} />
             <span className={css.owner} title={confirming.owner}>{confirming.owner}</span>
-            <CatalogVersionMark version={confirming.version} tip={t('catalogNpmLatest')} />
+            <CatalogVersionMark version={typeof confirming.npm === 'string' ? liveNpmVersions[confirming.npm] : null} tip={t('catalogNpmLatest')} />
             {typeof confirming.downloads === 'number' && (
               <Tooltip label={String(confirming.downloads)} side="top">
                 <span className={css.star}>{'· ↓ ' + formatCount(confirming.downloads)}</span>

@@ -6817,7 +6817,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			});
 		}
 		/**
-		* Catalog npm latest in the card byline (#348). Same quiet style as ↓ / ★;
+		* Live npm latest in the card byline. Same quiet style as ↓ / ★;
 		* omitted when absent so github-only and not-yet-backfilled rows stay clean.
 		*/
 		function CatalogVersionMark({ version, tip }) {
@@ -7263,9 +7263,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			/** v1 is deliberately opt-in: undeclared/unknown entries stay visible even when enabled. */
 			const [compatibleWithHost, setCompatibleWithHost] = (0, react.useState)(false);
 			const [hostCompatibility, setHostCompatibility] = (0, react.useState)({});
+			const [liveNpmVersions, setLiveNpmVersions] = (0, react.useState)({});
 			const [hostCompatibilityPending, setHostCompatibilityPending] = (0, react.useState)(0);
 			/** Names already resolved or in flight; failed/unavailable names are released for an explicit retry. */
 			const requestedHostCompatibility = (0, react.useRef)(/* @__PURE__ */ new Set());
+			const requestedLiveVersions = (0, react.useRef)(/* @__PURE__ */ new Set());
 			const [catsOpen, setCatsOpen] = (0, react.useState)(false);
 			/** Themes tab: independent from Discover's sort/time state above — a
 			* search or sort choice in one tab has no business resetting the other. */
@@ -7372,10 +7374,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					setLoadError(error instanceof Error ? error.message : String(error));
 				});
 			}, []);
-			const loadHostCompatibility = (0, react.useCallback)(async (names) => {
+			const loadHostCompatibility = (0, react.useCallback)(async (names, refresh = false) => {
 				const unique = [...new Set(names)].filter((name) => {
-					if (name === "" || requestedHostCompatibility.current.has(name)) return false;
+					if (name === "" || (refresh ? requestedLiveVersions.current : requestedHostCompatibility.current).has(name)) return false;
 					requestedHostCompatibility.current.add(name);
+					if (refresh) requestedLiveVersions.current.add(name);
 					return true;
 				});
 				if (unique.length === 0) return;
@@ -7386,7 +7389,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						const response = await fetch(api("/dsh-market/discovery-compatibility"), {
 							method: "POST",
 							headers: { "content-type": "application/json" },
-							body: JSON.stringify({ packages: chunk })
+							body: JSON.stringify({
+								packages: chunk,
+								refresh
+							})
 						});
 						const body = await response.json();
 						if (!response.ok || body.plugins === null || typeof body.plugins !== "object") throw new Error(`HTTP ${String(response.status)}`);
@@ -7414,8 +7420,13 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 							...current,
 							...accepted
 						}));
+						if (refresh) setLiveNpmVersions((current) => ({
+							...current,
+							...Object.fromEntries(chunk.map((name) => [name, typeof body.versions?.[name] === "string" ? body.versions[name] : null]))
+						}));
 					} catch {
 						for (const name of chunk) requestedHostCompatibility.current.delete(name);
+						if (refresh) for (const name of chunk) requestedLiveVersions.current.delete(name);
 						setHostCompatibility((current) => ({
 							...current,
 							...Object.fromEntries(chunk.map((name) => [name, UNAVAILABLE_HOST_COMPATIBILITY]))
@@ -7690,7 +7701,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const pageHostPackagesKey = pageHostPackages.join("\0");
 			const allHostPackagesKey = allHostPackages.join("\0");
 			(0, react.useEffect)(() => {
-				if (tab === "discover") loadHostCompatibility(pageHostPackages);
+				if (tab === "discover") loadHostCompatibility(pageHostPackages, true);
 			}, [
 				tab,
 				pageHostPackagesKey,
@@ -7726,6 +7737,14 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				themeTimeRange
 			], scrollToTop);
 			const themePagePlugins = themePlugins$1.slice((themePagination.currentPage - 1) * themePagination.pageSize, themePagination.currentPage * themePagination.pageSize);
+			const themePageHostPackagesKey = [...new Set(themePagePlugins.flatMap((plugin) => typeof plugin.npm === "string" && plugin.npm !== "" ? [plugin.npm] : []))].join("\0");
+			(0, react.useEffect)(() => {
+				if (tab === "themes") loadHostCompatibility(themePageHostPackagesKey === "" ? [] : themePageHostPackagesKey.split("\0"), true);
+			}, [
+				tab,
+				themePageHostPackagesKey,
+				loadHostCompatibility
+			]);
 			const favoriteListed = (0, react.useMemo)(() => data === null ? [] : pluginsForFavorites(data.plugins, favoriteUrlSet, {
 				query: qFavorites,
 				lang,
@@ -7756,7 +7775,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const favoritePageHostPackages = [...new Set(favoritePagePlugins.flatMap((plugin) => typeof plugin.npm === "string" && plugin.npm !== "" ? [plugin.npm] : []))];
 			const favoritePageHostPackagesKey = favoritePageHostPackages.join("\0");
 			(0, react.useEffect)(() => {
-				if (tab === "favorites") loadHostCompatibility(favoritePageHostPackages);
+				if (tab === "favorites") loadHostCompatibility(favoritePageHostPackages, true);
 			}, [
 				tab,
 				favoritePageHostPackagesKey,
@@ -9127,7 +9146,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 												children: p.owner
 											}),
 											/* @__PURE__ */ (0, react_jsx_runtime.jsx)(CatalogVersionMark, {
-												version: p.version,
+												version: typeof p.npm === "string" ? liveNpmVersions[p.npm] : null,
 												tip: t("catalogNpmLatest")
 											}),
 											typeof p.downloads === "number" && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {
@@ -9304,7 +9323,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 													children: p.owner
 												}),
 												/* @__PURE__ */ (0, react_jsx_runtime.jsx)(CatalogVersionMark, {
-													version: p.version,
+													version: typeof p.npm === "string" ? liveNpmVersions[p.npm] : null,
 													tip: t("catalogNpmLatest")
 												}),
 												typeof p.downloads === "number" && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {
@@ -11454,7 +11473,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 										children: confirming.owner
 									}),
 									/* @__PURE__ */ (0, react_jsx_runtime.jsx)(CatalogVersionMark, {
-										version: confirming.version,
+										version: typeof confirming.npm === "string" ? liveNpmVersions[confirming.npm] : null,
 										tip: t("catalogNpmLatest")
 									}),
 									typeof confirming.downloads === "number" && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {
