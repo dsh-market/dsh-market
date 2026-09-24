@@ -592,6 +592,18 @@ describe('a local file: dependency whose file is gone (#436)', () => {
   })
 })
 
+describe('ssh authentication failed with the prompt closed (#596)', () => {
+  it('points at ssh-agent and at GIT_SSH_COMMAND, not at the key', () => {
+    // git's own words ("Permission denied (publickey)") read as "your key is
+    // wrong", and the key is usually fine — it wants a passphrase, and the
+    // channel that would have asked is exactly what the market shut.
+    const failure = classifyPnpmFailure('git@github.com: Permission denied (publickey).\nfatal: Could not read from remote repository.', 128)
+    expect(failure?.code).toBe('ssh-auth-failed')
+    expect(failure?.message).toContain('ssh-agent')
+    expect(failure?.message).toContain('GIT_SSH_COMMAND')
+  })
+})
+
 describe('pnpm 12 native engine out of memory (#701)', () => {
   // The reported text, from a Windows dshmarket log: a Rust abort in
   // pnpm-native, then dsh's own wrapper line. Exit 3221226505 is 0xC0000409,

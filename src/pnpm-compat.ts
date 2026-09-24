@@ -48,7 +48,7 @@ export interface PnpmFailure {
     | 'ignored-builds' | 'git-prepare-not-allowed' | 'git-prepare-failed' | 'tarball-url-mismatch'
     | 'fetch-404' | 'no-matching-version' | 'transient-network' | 'fetch-timeout'
     | 'unexpected-store' | 'patch-failed' | 'missing-tarball-integrity' | 'windows-file-locked'
-    | 'pnpm-unusable' | 'missing-local-dependency' | 'unparseable-build-key' | 'native-oom'
+    | 'pnpm-unusable' | 'missing-local-dependency' | 'unparseable-build-key' | 'native-oom' | 'ssh-auth-failed'
   /** Bilingual, actionable message shown to the user instead of the raw wall of text. */
   message: string
   /** True when re-running `pnpm install` in the profile is the documented recovery. */
@@ -379,6 +379,21 @@ export function classifyPnpmFailure(output: string, exitCode?: number | null): P
         pkg: found[1],
         message: `这个版本的 pnpm 读不懂 allowBuilds 里的 git 来源键（${found[1]}），整个 profile 的包操作都会因此失败 / this pnpm version cannot read a git-source key in allowBuilds (${found[1]}), which fails every package operation in the profile`,
       }
+    }
+  }
+  // #596: the ssh half of #587. git asks for a passphrase (or a host-key
+  // confirmation) on a terminal a spawned child does not have; the market
+  // closes that prompt with `BatchMode=yes` so the question becomes a fast
+  // failure instead of a fifteen-minute hang. This is that failure, and it
+  // needs its own message because git's own words send the reader to the
+  // wrong place: `Permission denied (publickey)` reads as "your key is
+  // wrong", and the key is usually fine — it wants a passphrase, and the
+  // channel that would have asked for it is exactly what was shut.
+  if (/Permission denied \(publickey\)|Could not read from remote repository/.test(output)) {
+    return {
+      code: 'ssh-auth-failed',
+      recoverable: false,
+      message: 'git 无法在无人值守的情况下完成 SSH 认证。如果你的 SSH key 设了密码，请用 ssh-agent（ssh-add），或自己设置 GIT_SSH_COMMAND 指向你的命令，市场不会覆盖它。 / git could not complete SSH authentication unattended. If your SSH key has a passphrase, use ssh-agent (ssh-add), or set GIT_SSH_COMMAND to your own command — the market leaves yours alone.',
     }
   }
   if (output.includes('ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED')) {

@@ -1,7 +1,9 @@
 import { EventEmitter } from 'node:events'
 import { describe, expect, it, vi } from 'vitest'
 import { join } from 'node:path'
-import { cmdCommandLine, gitEnvForPnpm, isCmdSafeProfileName, nodeExecutable, pnpmConfigEnvForArgs, proxyEnvForPnpm, quoteCmdArg, TARGET_RE, toolSearchDirs } from '../src/dsh-cli.ts'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { cmdCommandLine, gitEnvForPnpm, probeCoreSshCommand, isCmdSafeProfileName, nodeExecutable, pnpmConfigEnvForArgs, proxyEnvForPnpm, quoteCmdArg, TARGET_RE, toolSearchDirs } from '../src/dsh-cli.ts'
 import { AUTO_INSTALL_PEERS_OFF, FETCH_TIMEOUT_OVERRIDE, RELEASE_AGE_OVERRIDE } from '../src/install.ts'
 import { routesFor } from '../src/regions.ts'
 
@@ -297,28 +299,71 @@ describe('git is spawned non-interactively (#587)', () => {
   // controlling terminal — which a spawned child does not have, so the
   // question was asked where nobody could answer it and the clone sat
   // there until the 15-minute install timeout.
+  // The third argument is the `core.sshCommand` probe; null here means "git
+  // has none configured", the state of a machine that never set one.
   it('refuses the terminal prompt when the caller said nothing', () => {
-    expect(gitEnvForPnpm({})).toEqual({ GIT_TERMINAL_PROMPT: '0' })
+    expect(gitEnvForPnpm({}, null)).toEqual({ GIT_TERMINAL_PROMPT: '0', GIT_SSH_COMMAND: 'ssh -oBatchMode=yes' })
   })
 
   it('never overwrites a value the caller set', () => {
     // Someone who turned prompting on has made a statement; a default must
     // fill silence, not replace speech. Same rule proxyEnvForPnpm follows.
-    expect(gitEnvForPnpm({ GIT_TERMINAL_PROMPT: '1' })).toEqual({})
+    expect(gitEnvForPnpm({ GIT_TERMINAL_PROMPT: '1' }, null).GIT_TERMINAL_PROMPT).toBeUndefined()
   })
 
   it('treats a blank value as unset', () => {
     // Not a setting git can parse either: `git_env_bool` rejects it. An
     // empty string is how a shell spells "I cleared this".
-    expect(gitEnvForPnpm({ GIT_TERMINAL_PROMPT: '' })).toEqual({ GIT_TERMINAL_PROMPT: '0' })
-    expect(gitEnvForPnpm({ GIT_TERMINAL_PROMPT: '   ' })).toEqual({ GIT_TERMINAL_PROMPT: '0' })
+    expect(gitEnvForPnpm({ GIT_TERMINAL_PROMPT: '' }, null).GIT_TERMINAL_PROMPT).toBe('0')
+    expect(gitEnvForPnpm({ GIT_TERMINAL_PROMPT: '   ' }, null).GIT_TERMINAL_PROMPT).toBe('0')
+  })
+
+  it('closes the ssh prompt only when the user has expressed no ssh identity (#596)', () => {
+    // `GIT_SSH_COMMAND` overrides `core.sshCommand` and `GIT_SSH` — measured,
+    // with core.sshCommand set the environment wins and the configured
+    // command never runs — so setting ours unconditionally would replace the
+    // identity of every user who chose one, and `BatchMode=yes` would then
+    // break the passphrase installs that work today. All three count as a
+    // statement, and the blank rule is the same one.
+    expect(gitEnvForPnpm({ GIT_SSH_COMMAND: 'ssh -i /k' }, null).GIT_SSH_COMMAND).toBeUndefined()
+    expect(gitEnvForPnpm({ GIT_SSH: '/usr/bin/ssh2' }, null).GIT_SSH_COMMAND).toBeUndefined()
+    expect(gitEnvForPnpm({}, 'ssh -i /from/gitconfig').GIT_SSH_COMMAND).toBeUndefined()
+    // Blank is still silence, wherever it is written.
+    expect(gitEnvForPnpm({ GIT_SSH_COMMAND: '  ' }, '').GIT_SSH_COMMAND).toBe('ssh -oBatchMode=yes')
+  })
+
+  it('reads core.sshCommand from git, and treats an unanswerable probe as no choice', () => {
+    // Not "the machine has none": a controlled git configuration, so this
+    // asserts the reading rather than the author's machine. The env argument
+    // bypasses the process-wide memo for exactly this reason.
+    const dir = mkdtempSync(join(tmpdir(), 'dshm-sshcmd-'))
+    try {
+      const config = join(dir, 'gitconfig')
+      writeFileSync(config, '[core]\n\tsshCommand = ssh -i /from/gitconfig\n')
+      expect(probeCoreSshCommand({ ...process.env, GIT_CONFIG_GLOBAL: config, GIT_CONFIG_SYSTEM: '/dev/null' }))
+        .toBe('ssh -i /from/gitconfig')
+      writeFileSync(config, '[core]\n\tbare = false\n')
+      expect(probeCoreSshCommand({ ...process.env, GIT_CONFIG_GLOBAL: config, GIT_CONFIG_SYSTEM: '/dev/null' }))
+        .toBeNull()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   // Same reasoning as the proxy wiring assertion above: the pure function
   // being right is worth nothing if spawnEnv never calls it.
-  it('puts the switch in the environment pnpm is spawned with', async () => {
-    const seen = await spawnedEnv(env => { delete env.GIT_TERMINAL_PROMPT })
+  it('puts both switches in the environment pnpm is spawned with', async () => {
+    const seen = await spawnedEnv(env => {
+      delete env.GIT_TERMINAL_PROMPT
+      delete env.GIT_SSH_COMMAND
+      delete env.GIT_SSH
+    })
     expect(seen?.GIT_TERMINAL_PROMPT).toBe('0')
+    // `ssh -oBatchMode=yes` reaches the child too — unless this machine's git
+    // has a core.sshCommand, in which case the rule says to leave its owner
+    // alone, and the assertion follows the rule rather than the machine.
+    if (probeCoreSshCommand() === null) expect(seen?.GIT_SSH_COMMAND).toBe('ssh -oBatchMode=yes')
+    else expect(seen?.GIT_SSH_COMMAND).toBeUndefined()
   })
 
   // The pure-function assertion above proves gitEnvForPnpm stays quiet; this
@@ -329,8 +374,9 @@ describe('git is spawned non-interactively (#587)', () => {
   // returns {} exactly when process.env carries a value, so the two can
   // never disagree and moving the spread is a no-op, not a defect.)
   it('lets the caller value survive all the way into the spawned env', async () => {
-    const seen = await spawnedEnv(env => { env.GIT_TERMINAL_PROMPT = '1' })
+    const seen = await spawnedEnv(env => { env.GIT_TERMINAL_PROMPT = '1'; env.GIT_SSH_COMMAND = 'ssh -i /mine' })
     expect(seen?.GIT_TERMINAL_PROMPT).toBe('1')
+    expect(seen?.GIT_SSH_COMMAND).toBe('ssh -i /mine')
   })
 })
 

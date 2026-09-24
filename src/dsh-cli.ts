@@ -7,7 +7,7 @@
  * the agent's sandboxed executor and denies writes to the profile directory.
  */
 
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import type { ChildProcess, SpawnOptions } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -217,19 +217,77 @@ export function toolSearchDirs(
  * precisely the branch that cannot work from a spawned child.
  *
  * Scope, stated plainly because it is narrower than the issue title
- * suggests: this is the HTTPS half. pnpm falls back to `git@github.com:`
- * when HTTPS fails, and the ssh side needs `GIT_SSH_COMMAND`, which
- * overrides `core.sshCommand` and `GIT_SSH` — the two ordinary ways to
- * choose an identity — and whose `BatchMode=yes` would disable
- * `SSH_ASKPASS`, breaking key-passphrase installs that work today. That
- * half needs a policy decision, so it is not made here. Note also that on
- * POSIX `runDshPlugin` spawns detached, so the subtree has no controlling
- * terminal and the prompt already dies instantly; the hang the issue
- * reports needs Windows, where the spawn is not detached.
+ * suggests: this is the HTTPS half, and the FIRST attempt HTTPS is. Measured
+ * with a `GIT_SSH_COMMAND` sentinel that always fails: pnpm's clone of a
+ * `github:owner/repo#path:/sub` spec succeeds without ever calling it, so
+ * ssh is the fallback that runs after HTTPS fails — which is the private
+ * repository case, not the common one.
+ *
+ * The ssh half (#596, @JINITAIMI121) is a policy decision, and it is made
+ * here: `BatchMode=yes`, so a passphrase or host-key question fails fast
+ * instead of waiting on a terminal nobody is watching. The cost is real and
+ * is why it is conditional — `BatchMode` also disables `SSH_ASKPASS`, so a
+ * key that NEEDS a passphrase stops prompting even where something could
+ * have answered, and the install fails where it used to work.
+ *
+ * So it is set only when the user has expressed NO ssh preference at all:
+ * `GIT_SSH_COMMAND` and `GIT_SSH` in the environment, and `core.sshCommand`
+ * in git config — the three ordinary ways to choose an identity, and
+ * `GIT_SSH_COMMAND` would silently override all three (measured: with
+ * `core.sshCommand` set, ours wins and theirs is never run). A user who
+ * has an agent or a specific key configured keeps exactly what they have;
+ * the prompt is closed for everyone else, and `classifyPnpmFailure` says
+ * what to do if that turns out to be the passphrase case.
  */
-export function gitEnvForPnpm(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  if ((env.GIT_TERMINAL_PROMPT ?? '').trim() !== '') return {}
-  return { GIT_TERMINAL_PROMPT: '0' }
+let coreSshCommandProbe: string | null | undefined
+
+/**
+ * `core.sshCommand` from the user's git configuration, or null.
+ *
+ * The third place an ssh identity hides, and the one the environment cannot
+ * show: `git config --get` answers it. Memoized for the process — a user
+ * does not reconfigure git mid-install, and this runs on every spawn.
+ *
+ * @returns the configured command, or null when git has none (including
+ *   when git is absent — an unreadable answer is not a choice).
+ */
+export function probeCoreSshCommand(env?: NodeJS.ProcessEnv): string | null {
+  // Memoized only for the caller that has no opinion: a test that supplies
+  // its own environment is asking a different question and must get the
+  // fresh answer.
+  if (env === undefined && coreSshCommandProbe !== undefined) return coreSshCommandProbe ?? null
+  try {
+    const out = spawnSync('git', ['config', '--get', 'core.sshCommand'], {
+      encoding: 'utf8',
+      timeout: 5_000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+      ...(env === undefined ? {} : { env }),
+      // A user's git may be a shim that prints to a console; nothing here
+      // wants a window.
+      windowsHide: true,
+    })
+    const answer = out.status === 0 && typeof out.stdout === 'string' && out.stdout.trim() !== ''
+      ? out.stdout.trim()
+      : null
+    if (env === undefined) coreSshCommandProbe = answer
+    return answer
+  } catch {
+    if (env === undefined) coreSshCommandProbe = null
+    return null
+  }
+}
+
+export function gitEnvForPnpm(
+  env: NodeJS.ProcessEnv = process.env,
+  coreSshCommand: string | null = probeCoreSshCommand(),
+): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = {}
+  // Blank counts as unset: an empty value is not a setting git can parse.
+  const speaks = (value: string | undefined): boolean => (value ?? '').trim() !== ''
+  if (!speaks(env.GIT_TERMINAL_PROMPT)) out.GIT_TERMINAL_PROMPT = '0'
+  const choseElsewhere = speaks(env.GIT_SSH_COMMAND) || speaks(env.GIT_SSH) || speaks(coreSshCommand ?? '')
+  if (!choseElsewhere) out.GIT_SSH_COMMAND = 'ssh -oBatchMode=yes'
+  return out
 }
 
 /**
