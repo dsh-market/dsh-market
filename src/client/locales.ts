@@ -245,6 +245,11 @@ export const zh = {
   sortDownloads: 'npm 下载量(近 30 天)',
   /** Discover/theme card byline tooltip for catalog `version`. */
   catalogNpmLatest: 'npm 当前 latest',
+  // #712: the number is the CATALOG's copy, refreshed daily — not a live npm
+  // lookup. Saying "npm latest" beside a number that is not npm's latest is
+  // how a stale display turns into a bug report.
+  catalogVersionDated: '目录数据（{0} 刷新）里记录的 npm 版本；在那之后发布的版本要等下一次目录刷新才会出现',
+  catalogVersionUndated: '目录数据里记录的 npm 版本；目录每日刷新，所以可能滞后于 npm 上的实际 latest',
   sortStars: 'Star 数',
   sortAdded: '发布时间',
   sortDesc: '降序',
@@ -841,6 +846,8 @@ export const en: Record<MarketKey, string> = {
   sortDownloads: 'npm downloads (30d)',
   /** Discover/theme card byline tooltip for catalog `version`. */
   catalogNpmLatest: 'npm latest',
+  catalogVersionDated: "the npm version as of the catalog's last refresh ({0}); a release published since then appears after the next refresh",
+  catalogVersionUndated: "the npm version as of the catalog's last refresh — the catalog updates daily, so this can lag npm's actual latest",
   sortStars: 'Stars',
   sortAdded: 'Release date',
   sortDesc: 'Descending',

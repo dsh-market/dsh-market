@@ -436,6 +436,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			sortDownloads: "npm 下载量(近 30 天)",
 			/** Discover/theme card byline tooltip for catalog `version`. */
 			catalogNpmLatest: "npm 当前 latest",
+			catalogVersionDated: "目录数据（{0} 刷新）里记录的 npm 版本；在那之后发布的版本要等下一次目录刷新才会出现",
+			catalogVersionUndated: "目录数据里记录的 npm 版本；目录每日刷新，所以可能滞后于 npm 上的实际 latest",
 			sortStars: "Star 数",
 			sortAdded: "发布时间",
 			sortDesc: "降序",
@@ -1024,6 +1026,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			sortDownloads: "npm downloads (30d)",
 			/** Discover/theme card byline tooltip for catalog `version`. */
 			catalogNpmLatest: "npm latest",
+			catalogVersionDated: "the npm version as of the catalog's last refresh ({0}); a release published since then appears after the next refresh",
+			catalogVersionUndated: "the npm version as of the catalog's last refresh — the catalog updates daily, so this can lag npm's actual latest",
 			sortStars: "Stars",
 			sortAdded: "Release date",
 			sortDesc: "Descending",
@@ -7175,6 +7179,15 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			* first reply always has to ask which one it was.
 			*/
 			const [version, setVersion] = (0, react.useState)(null);
+			/**
+			* The catalog's own build date (#712). The version on a card is the
+			* catalog's copy, not a live npm lookup, so a plugin published after the
+			* last refresh shows the older number — the tooltip has to say so, or
+			* "npm latest" beside a number that is not npm's latest is a bug report
+			* waiting to be filed. Null until the catalog answers.
+			*/
+			const [catalogUpdated, setCatalogUpdated] = (0, react.useState)(null);
+			const catalogVersionTip = (0, react.useMemo)(() => catalogUpdated === null ? t("catalogVersionUndated") : t("catalogVersionDated").replace("{0}", catalogUpdated), [catalogUpdated, t]);
 			/** Non-live activation results from the last operation, shown as a banner. */
 			const [activationWarnings, setActivationWarnings] = (0, react.useState)([]);
 			const [hostDependencyFindings, setHostDependencyFindings] = (0, react.useState)([]);
@@ -7363,6 +7376,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					}
 					cachedRegistry = body.registry;
 					setData(body.registry);
+					const catalogDate = body.registry.updated;
+					setCatalogUpdated(typeof catalogDate === "string" && catalogDate.trim() !== "" ? catalogDate : null);
 					setHostVersion(typeof body.hostVersion === "string" ? body.hostVersion : null);
 					setLoadError(null);
 				}).catch((error) => {
@@ -9119,7 +9134,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 											}),
 											/* @__PURE__ */ (0, react_jsx_runtime.jsx)(CatalogVersionMark, {
 												version: p.version,
-												tip: t("catalogNpmLatest")
+												tip: catalogVersionTip
 											}),
 											typeof p.downloads === "number" && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {
 												label: String(p.downloads),
@@ -9296,7 +9311,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 												}),
 												/* @__PURE__ */ (0, react_jsx_runtime.jsx)(CatalogVersionMark, {
 													version: p.version,
-													tip: t("catalogNpmLatest")
+													tip: catalogVersionTip
 												}),
 												typeof p.downloads === "number" && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {
 													label: String(p.downloads),
@@ -11446,7 +11461,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									}),
 									/* @__PURE__ */ (0, react_jsx_runtime.jsx)(CatalogVersionMark, {
 										version: confirming.version,
-										tip: t("catalogNpmLatest")
+										tip: catalogVersionTip
 									}),
 									typeof confirming.downloads === "number" && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {
 										label: String(confirming.downloads),

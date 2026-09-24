@@ -4595,4 +4595,33 @@ describe('catalog version in discover byline (#348)', () => {
     expect(within(loop).getByText('· v1.2.3')).toBeTruthy()
     expect(within(notify).queryByText(/^· v/)).toBeNull()
   })
+
+  it('says the number comes from the catalog, with the date it was built (#712)', async () => {
+    // Reported as "the card shows v0.3.4 but npm has v0.3.6". The number is
+    // the catalog's copy, refreshed daily, and the tooltip used to call it
+    // "npm latest" — which is how a data-age question becomes a bug report.
+    const registry = JSON.parse(JSON.stringify(REGISTRY))
+    registry.plugins[0].version = '1.2.3'
+    registry.updated = '2026-09-24'
+    stubFetch({ '/dsh-market/registry': { source: 'live', registry, hostVersion: '0.1.2-alpha.2' } })
+    render(<MarketSection {...props()} />)
+    const mark = await screen.findByText('· v1.2.3')
+    fireEvent.mouseEnter(mark)
+    const tip = await screen.findByText(/2026-09-24/)
+    // The test's locale is English; assert the claim, not the translation.
+    expect(tip.textContent).toMatch(/catalog's last refresh/)
+    expect(tip.textContent).not.toMatch(/^npm latest$/)
+  })
+
+  it('falls back to "updates daily" when the catalog carries no date', async () => {
+    const registry = JSON.parse(JSON.stringify(REGISTRY))
+    registry.plugins[0].version = '1.2.3'
+    registry.updated = ''
+    stubFetch({ '/dsh-market/registry': { source: 'live', registry, hostVersion: '0.1.2-alpha.2' } })
+    render(<MarketSection {...props()} />)
+    const mark = await screen.findByText('· v1.2.3')
+    fireEvent.mouseEnter(mark)
+    const tip = await screen.findByText(/updates daily/)
+    expect(tip.textContent).not.toMatch(/\(\)/)
+  })
 })

@@ -1527,6 +1527,20 @@ export function MarketSection(props: MarketSectionProps) {
    * first reply always has to ask which one it was.
    */
   const [version, setVersion] = useState<string | null>(null)
+  /**
+   * The catalog's own build date (#712). The version on a card is the
+   * catalog's copy, not a live npm lookup, so a plugin published after the
+   * last refresh shows the older number — the tooltip has to say so, or
+   * "npm latest" beside a number that is not npm's latest is a bug report
+   * waiting to be filed. Null until the catalog answers.
+   */
+  const [catalogUpdated, setCatalogUpdated] = useState<string | null>(null)
+  const catalogVersionTip = useMemo(
+    () => (catalogUpdated === null
+      ? t('catalogVersionUndated')
+      : t('catalogVersionDated').replace('{0}', catalogUpdated)),
+    [catalogUpdated, t],
+  )
   /** Non-live activation results from the last operation, shown as a banner. */
   const [activationWarnings, setActivationWarnings] = useState<{ name: string; info: ActivationInfo }[]>([])
   const [hostDependencyFindings, setHostDependencyFindings] = useState<SharedHostPackageDependencyFinding[]>([])
@@ -1739,6 +1753,8 @@ export function MarketSection(props: MarketSectionProps) {
         }
         cachedRegistry = body.registry
         setData(body.registry)
+        const catalogDate = body.registry.updated
+        setCatalogUpdated(typeof catalogDate === 'string' && catalogDate.trim() !== '' ? catalogDate : null)
         setHostVersion(typeof body.hostVersion === 'string' ? body.hostVersion : null)
         setLoadError(null)
       })
@@ -3579,7 +3595,7 @@ export function MarketSection(props: MarketSectionProps) {
             <div className={css.byline}>
               <OwnerAvatar name={p.name} owner={p.owner || ''} />
               <span className={css.owner} title={p.owner}>{p.owner}</span>
-              <CatalogVersionMark version={p.version} tip={t('catalogNpmLatest')} />
+              <CatalogVersionMark version={p.version} tip={catalogVersionTip} />
               {typeof p.downloads === 'number' && (
                 <Tooltip label={String(p.downloads)} side="top">
                   <span className={css.star}>{'· ↓ ' + formatCount(p.downloads)}</span>
@@ -3721,7 +3737,7 @@ export function MarketSection(props: MarketSectionProps) {
               <div className={css.byline}>
                 <OwnerAvatar name={p.name} owner={p.owner || ''} />
                 <span className={css.owner} title={p.owner}>{p.owner}</span>
-                <CatalogVersionMark version={p.version} tip={t('catalogNpmLatest')} />
+                <CatalogVersionMark version={p.version} tip={catalogVersionTip} />
                 {typeof p.downloads === 'number' && (
                   <Tooltip label={String(p.downloads)} side="top">
                     <span className={css.star}>{'· ↓ ' + formatCount(p.downloads)}</span>
@@ -5473,7 +5489,7 @@ export function MarketSection(props: MarketSectionProps) {
           <div className={css.byline}>
             <OwnerAvatar name={confirming.name} owner={confirming.owner || ''} />
             <span className={css.owner} title={confirming.owner}>{confirming.owner}</span>
-            <CatalogVersionMark version={confirming.version} tip={t('catalogNpmLatest')} />
+            <CatalogVersionMark version={confirming.version} tip={catalogVersionTip} />
             {typeof confirming.downloads === 'number' && (
               <Tooltip label={String(confirming.downloads)} side="top">
                 <span className={css.star}>{'· ↓ ' + formatCount(confirming.downloads)}</span>
