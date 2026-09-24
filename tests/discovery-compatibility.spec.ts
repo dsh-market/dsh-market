@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   deriveHostCompatibility,
   DiscoveryManifestIndex,
+  findCompatibleVersion,
   manifestFacts,
   type NpmManifestFacts,
 } from '../src/discovery-compatibility.ts'
@@ -16,6 +17,20 @@ const HOST_PACKAGES = new Set([
   '@deepseek-ai/cordis',
   '@deepseek-ai/schemastery',
 ])
+
+describe('compatible version lookup', () => {
+  it('checks only versions newer than the installed release for updates', async () => {
+    const fetcher = async () => new Response(JSON.stringify({ versions: {
+      '0.1.15': { version: '0.1.15', engines: { dsh: '>=0.1.0' } },
+      '0.1.18': { version: '0.1.18', engines: { dsh: '>=99.0.0' } },
+      '0.1.19': { version: '0.1.19', engines: { dsh: '>=99.0.0' } },
+    } }), { status: 200 })
+    expect(await findCompatibleVersion('plugin-a', '0.1.5', HOST_PACKAGES, 'https://registry.example', fetcher))
+      .toBe('0.1.15')
+    expect(await findCompatibleVersion('plugin-a', '0.1.5', HOST_PACKAGES, 'https://registry.example', fetcher, '0.1.18'))
+      .toBeNull()
+  })
+})
 
 function facts(over: Partial<NpmManifestFacts> = {}): NpmManifestFacts {
   return {

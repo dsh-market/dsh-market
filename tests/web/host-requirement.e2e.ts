@@ -70,11 +70,12 @@ describe.skipIf(!HAS_DSH).sequential('web e2e: the host-version pre-check (#404)
     const refused = await post('/dsh-market/update', { name: A })
 
     expect(refused.status).toBe(400)
-    const body = await refused.json() as { hostIncompatible?: { requirement?: string; hostVersion?: string } }
+    const body = await refused.json() as { hostIncompatible?: { requirement?: string; hostVersion?: string; currentVersion?: string } }
     expect(body.hostIncompatible).toBeDefined()
     expect(body.hostIncompatible?.requirement).toContain('99')
     // The host's real version, which is the half a fake host cannot supply.
     expect(body.hostIncompatible?.hostVersion).toMatch(/^\d+\.\d+\./)
+    expect(body.hostIncompatible?.currentVersion).toBe('1.0.0')
     // Refused BEFORE the install: the profile is untouched.
     expect(installedVersion()).toBe('1.0.0')
   }, 300_000)

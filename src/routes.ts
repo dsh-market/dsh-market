@@ -1451,6 +1451,7 @@ export function mountMarketRoutes(
         version,
         requirement: verdict.requirement,
         hostVersion: host?.version ?? null,
+        ...(nothingWasInstalled ? {} : { currentVersion: readInstalledVersion(config.profile, displayName, activeProfileDir) }),
       },
       error: nothingWasInstalled
         ? `${displayName} ${version ?? ''} 要求的 DSH 版本是 ${verdict.requirement ?? '未知'}，而当前运行的是 ${host?.version ?? '未知版本'}，装上多半会直接报错。已停止，没有安装任何东西。 / ${displayName} ${version ?? ''} declares it needs DSH ${verdict.requirement ?? '(unknown)'}, and this host is ${host?.version ?? 'unknown'}; installing it would most likely break the plugin. Nothing was installed.`
@@ -3314,9 +3315,23 @@ sendJson(response, 200, { updates })
             // failure with a name.
             if (usesNpmUpdateTarget) {
               if (compatVersion !== null) {
-                // User selected a pre-verified compatible version from the
-                // find-compatible dialog: skip latest-fetch and all guards,
-                // pin directly to the chosen version.
+                // A compatible release may be OLDER than the installed one.
+                // The update route must never turn that lookup into a downgrade.
+                const installedVersion = readInstalledVersion(config.profile, name, activeProfileDir)
+                const comparison = installedVersion === null ? null : compareVersions(compatVersion, installedVersion)
+                if (comparison === 0) {
+                  sendJson(response, 200, { ok: true, skipped: 'current', name, version: installedVersion })
+                  return
+                }
+                if (comparison === null || comparison < 0) {
+                  sendJson(response, 400, {
+                    error: comparison === null
+                      ? `无法确认 ${compatVersion} 是否高于已安装版本，已停止更新。 / Cannot confirm that ${compatVersion} is newer than the installed version; update stopped.`
+                      : `更新会降级：兼容版本 ${compatVersion} 低于已安装版本 ${installedVersion}，已停止。 / Updating would downgrade this plugin: compatible version ${compatVersion} is older than installed ${installedVersion}; nothing was changed.`,
+                  })
+                  return
+                }
+                // The chosen version is both host-compatible and newer.
                 expectedNpmVersion = compatVersion
               } else {
               const installedVersion = readInstalledVersion(config.profile, name, activeProfileDir)
@@ -5116,8 +5131,9 @@ sendJson(response, 200, { updates })
           return
         }
         try {
-          const body = (await readJsonBody(request)) as { npmName?: unknown }
+          const body = (await readJsonBody(request)) as { npmName?: unknown; upgradeOnly?: unknown }
           const reqNpmName = typeof body.npmName === 'string' ? body.npmName : ''
+          const upgradeOnly = body.upgradeOnly === true
           if (!NPM_NAME_RE.test(reqNpmName)) {
             sendJson(response, 400, { error: 'invalid npm package name' })
             return
@@ -5133,14 +5149,21 @@ sendJson(response, 200, { updates })
             sendJson(response, 200, { compatibleVersion: null, reason: 'host-version-unknown' })
             return
           }
+          const currentVersion = upgradeOnly ? readInstalledVersion(config.profile, reqNpmName, activeProfileDir) : null
+          if (upgradeOnly && currentVersion === null) {
+            sendJson(response, 200, { compatibleVersion: null, reason: 'installed-version-unknown' })
+            return
+          }
           const compatVer = await findCompatibleVersion(
             reqNpmName,
             dshHost.version,
             corePackageNames(dshHost.directory ?? null),
             routesFor(region).npmRegistry,
+            marketFetch,
+            currentVersion,
           )
-          logEvent('info', 'find-compatible', `${reqNpmName}: host=${dshHost.version} → ${compatVer ?? 'none'}`)
-          sendJson(response, 200, { compatibleVersion: compatVer })
+          logEvent('info', 'find-compatible', `${reqNpmName}: host=${dshHost.version}, after=${currentVersion ?? 'none'} → ${compatVer ?? 'none'}`)
+          sendJson(response, 200, { compatibleVersion: compatVer, currentVersion, upgradeOnly })
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
           sendJson(response, 500, { error: message })

@@ -14,6 +14,7 @@ import { dirname } from 'node:path'
 import { satisfiesRange } from './check.ts'
 import { classifyPeer } from './compatibility.ts'
 import { marketFetch } from './net.ts'
+import { compareVersions } from './updates.ts'
 
 export type HostCompatibilityStatus = 'compatible' | 'incompatible' | 'unknown'
 export type HostCompatibilityBasis = 'manifest' | 'undeclared' | 'unavailable'
@@ -223,6 +224,8 @@ function descendingVersion(a: string, b: string): number {
  *
  * Returns null when the packument cannot be fetched or no compatible version
  * exists — callers should treat null as "not found" rather than a hard error.
+ * Updates can pass minimumVersionExclusive to search only releases newer than
+ * the installed one; fresh installs search the complete history.
  */
 export async function findCompatibleVersion(
   npmName: string,
@@ -230,6 +233,7 @@ export async function findCompatibleVersion(
   hostPackages: ReadonlySet<string>,
   registry: string,
   fetcher: FetchLike = marketFetch,
+  minimumVersionExclusive: string | null = null,
 ): Promise<string | null> {
   let doc: unknown
   try {
@@ -245,7 +249,8 @@ export async function findCompatibleVersion(
   const allVersions = record(record(doc)?.versions)
   if (allVersions === null) return null
   const sorted = Object.keys(allVersions)
-    .filter(v => parseSemverParts(v) !== null)
+    .filter(v => parseSemverParts(v) !== null
+      && (minimumVersionExclusive === null || (compareVersions(v, minimumVersionExclusive) ?? -1) > 0))
     .sort(descendingVersion)
   for (const v of sorted) {
     if (deriveHostCompatibility(manifestFacts(allVersions[v]), hostVersion, hostPackages).status === 'compatible') return v

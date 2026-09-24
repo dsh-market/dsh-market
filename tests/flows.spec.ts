@@ -2068,6 +2068,20 @@ describe('update flow — no npm publishing required', () => {
     expect(fake.calls).toHaveLength(callsBefore)
   })
 
+  it('never applies a pinned compatible version that is not newer than the installed version', async () => {
+    const callsBefore = fake.calls.length
+    const older = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop', compatVersion: '0.9.0' })
+    expect(older.status).toBe(400)
+    expect(String(older.json.error)).toMatch(/更新会降级|would downgrade/)
+    expect(fake.calls).toHaveLength(callsBefore)
+    expect(installedSpec('dsh-loop')).toBe('^1.0.0')
+
+    const same = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop', compatVersion: '1.0.0' })
+    expect(same.status).toBe(200)
+    expect(same.json).toMatchObject({ ok: true, skipped: 'current' })
+    expect(fake.calls).toHaveLength(callsBefore)
+  })
+
   it('calls the runtime desktop only when a Desktop shell serves it, not when the profile directory is known', async () => {
     // Before #639 an explicit profile directory meant "a Desktop shell put us
     // here". The launcher now hands every profile its own directory, so the

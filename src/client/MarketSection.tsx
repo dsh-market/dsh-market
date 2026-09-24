@@ -1448,13 +1448,47 @@ export function MarketSection(props: MarketSectionProps) {
     kind: 'install' | 'update'
     name: string
     npmName: string
-    version: string
-    requirement: string | null
+    latestVersion: string | null
     hostVersion: string | null
+    currentVersion: string | null
     /** Kept for the install path so doInstall can be retried with a pinned version. */
     plugin: RegistryPlugin | null
   } | null>(null)
-  const [findingCompat, setFindingCompat] = useState<'idle' | 'loading' | 'not-found'>('idle')
+  const [findingCompat, setFindingCompat] = useState<
+    { status: 'loading' | 'not-found' | 'error' } | { status: 'found'; version: string }
+  >({ status: 'loading' })
+  const [compatRetry, setCompatRetry] = useState(0)
+  useEffect(() => {
+    if (hostIncompatible === null) return
+    const controller = new AbortController()
+    setFindingCompat({ status: 'loading' })
+    fetch(api('/dsh-market/find-compatible'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ npmName: hostIncompatible.npmName, upgradeOnly: hostIncompatible.kind === 'update' }),
+      signal: controller.signal,
+    })
+      .then(async response => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        return await response.json() as { compatibleVersion?: string | null; upgradeOnly?: boolean; reason?: string }
+      })
+      .then(data => {
+        if (controller.signal.aborted) return
+        if (hostIncompatible.kind === 'update' && data.upgradeOnly !== true) {
+          // Older servers searched the entire history and could return a
+          // downgrade. Do not offer that answer as an update.
+          setFindingCompat({ status: 'error' })
+          return
+        }
+        if (typeof data.compatibleVersion === 'string' && data.compatibleVersion !== '') {
+          setFindingCompat({ status: 'found', version: data.compatibleVersion })
+        } else {
+          setFindingCompat({ status: data.reason === 'installed-version-unknown' ? 'error' : 'not-found' })
+        }
+      })
+      .catch(() => { if (!controller.signal.aborted) setFindingCompat({ status: 'error' }) })
+    return () => controller.abort()
+  }, [hostIncompatible, compatRetry])
   const [restoreBlocked, setRestoreBlocked] = useState<{ name: string; reason: 'no-catalog' | 'repo-mismatch' } | null>(null)
   // Snapshot the source switch the user agreed to review; later renders must not change it under the dialog.
   const [migrationConfirm, setMigrationConfirm] = useState<SourceMigrationConfirm | null>(null)
@@ -2314,20 +2348,19 @@ export function MarketSection(props: MarketSectionProps) {
             return
           }
           // The install was refused because the latest release declares a DSH
-          // version this host does not satisfy. Show the compat dialog so the
-          // user can search for an older compatible version.
+          // version this host does not satisfy. Show the refused release and
+          // look up the newest compatible version before offering installation.
           if (status === 400 && body.hostIncompatible && typeof body.hostIncompatible === 'object') {
-            const notice = body.hostIncompatible as { name?: unknown; npmName?: unknown; version?: unknown; requirement?: unknown; hostVersion?: unknown }
+            const notice = body.hostIncompatible as { name?: unknown; npmName?: unknown; version?: unknown; hostVersion?: unknown }
             setRecords(list => drop(list, recordId))
             setBusyUrl(null)
-            setFindingCompat('idle')
             setHostIncompatible({
               kind: 'install',
               name: String(notice.name ?? plugin.name),
               npmName: String(notice.npmName ?? plugin.npm ?? plugin.name),
-              version: String(notice.version ?? ''),
-              requirement: typeof notice.requirement === 'string' ? notice.requirement : null,
+              latestVersion: typeof notice.version === 'string' ? notice.version : null,
               hostVersion: typeof notice.hostVersion === 'string' ? notice.hostVersion : null,
+              currentVersion: null,
               plugin,
             })
             return
@@ -2665,21 +2698,20 @@ export function MarketSection(props: MarketSectionProps) {
             setInstallError(t('busyWait'))
             return
           }
-          // The target says it needs a newer host than this one (#404). Not
-          // a failure to report and move on from — a decision, so it gets a
-          // dialog with the two facts and a way past. The row is dropped
-          // rather than marked failed: nothing was attempted.
+          // The target needs a newer host. Search only releases above the
+          // installed version; an older compatible release is not an update.
+          // Drop the operation row because nothing was changed.
           if (body.hostIncompatible && typeof body.hostIncompatible === 'object') {
-            const notice = body.hostIncompatible as { name?: unknown; npmName?: unknown; version?: unknown; requirement?: unknown; hostVersion?: unknown }
+            const notice = body.hostIncompatible as { name?: unknown; npmName?: unknown; currentVersion?: unknown }
             setRecords(list => drop(list, updateRecordId))
-            setFindingCompat('idle')
             setHostIncompatible({
               kind: 'update',
               name: String(notice.name ?? name),
               npmName: String(notice.npmName ?? notice.name ?? name),
-              version: String(notice.version ?? ''),
-              requirement: typeof notice.requirement === 'string' ? notice.requirement : null,
-              hostVersion: typeof notice.hostVersion === 'string' ? notice.hostVersion : null,
+              latestVersion: null,
+              hostVersion: null,
+              currentVersion: typeof notice.currentVersion === 'string'
+                ? notice.currentVersion : updates[name]?.current ?? updates[name]?.version ?? null,
               plugin: null,
             })
             return
@@ -5673,59 +5705,58 @@ export function MarketSection(props: MarketSectionProps) {
       {hostIncompatible !== null && (
         <Modal
           open
-          onClose={() => { setFindingCompat('idle'); setHostIncompatible(null) }}
-          title={t('hostIncompatibleTitle')}
-          description={t(hostIncompatible.kind === 'install' ? 'hostIncompatibleBodyInstall' : 'hostIncompatibleBody')
-            .replace('{plugin}', `${hostIncompatible.name} ${hostIncompatible.version}`.trim())
-            .replace('{requirement}', hostIncompatible.requirement ?? t('hostIncompatibleUnknown'))
-            .replace('{host}', hostIncompatible.hostVersion ?? t('hostIncompatibleUnknown'))}
+          onClose={() => setHostIncompatible(null)}
+          title={t('hostCompatibilityTitle')}
           footer={(
             <>
-              {/* Staying put is the recommended action, so it is the primary
-                  one — the opposite of the usual dialog, because here the
-                  safe choice is to do nothing. */}
               <Button
-                variant="primary"
-                onClick={() => { setFindingCompat('idle'); setHostIncompatible(null) }}
+                variant={hostIncompatible.kind === 'update' && findingCompat.status === 'not-found' ? 'primary' : 'ghost'}
+                onClick={() => setHostIncompatible(null)}
               >
-                {t(hostIncompatible.kind === 'install' ? 'hostIncompatibleCancel' : 'hostIncompatibleKeep')}
+                {t(hostIncompatible.kind === 'install' ? 'hostIncompatibleCancel'
+                  : findingCompat.status === 'not-found' ? 'hostIncompatibleClose' : 'hostIncompatibleKeep')}
               </Button>
-              <Button
-                variant="ghost"
-                disabled={findingCompat === 'loading'}
-                onClick={() => {
-                  const snap = hostIncompatible
-                  setFindingCompat('loading')
-                  fetch(api('/dsh-market/find-compatible'), {
-                    method: 'POST',
-                    headers: { 'content-type': 'application/json' },
-                    body: JSON.stringify({ npmName: snap.npmName }),
-                  })
-                    .then(r => r.json() as Promise<{ compatibleVersion?: string | null }>)
-                    .then(data => {
-                      if (data.compatibleVersion) {
-                        const { kind, name, plugin } = snap
-                        const cv = data.compatibleVersion
-                        setFindingCompat('idle')
-                        setHostIncompatible(null)
-                        if (kind === 'install' && plugin !== null) doInstall(plugin, cv)
-                        else doUpdate(name, false, false, cv)
-                      } else {
-                        setFindingCompat('not-found')
-                      }
-                    })
-                    .catch(() => setFindingCompat('not-found'))
-                }}
-              >
-                {findingCompat === 'loading'
-                  ? t('hostIncompatibleSearching')
-                  : findingCompat === 'not-found'
-                    ? t('hostIncompatibleNoCompat')
-                    : t('hostIncompatibleFindCompat')}
-              </Button>
+              {findingCompat.status === 'found' && (
+                <Button variant="primary" onClick={() => {
+                  const { kind, name, plugin } = hostIncompatible
+                  const version = findingCompat.version
+                  setHostIncompatible(null)
+                  if (kind === 'install' && plugin !== null) doInstall(plugin, version)
+                  else doUpdate(name, false, false, version)
+                }}>
+                  {t(hostIncompatible.kind === 'install' ? 'hostIncompatibleInstallCompat' : 'hostIncompatibleUpdateCompat')
+                    .replace('{version}', findingCompat.version)}
+                </Button>
+              )}
+              {findingCompat.status === 'error' && (
+                <Button variant="primary" onClick={() => setCompatRetry(value => value + 1)}>
+                  {t('hostIncompatibleRetry')}
+                </Button>
+              )}
             </>
           )}
-        />
+        >
+          <div className={css.hostCompatText}>
+            {hostIncompatible.kind === 'install' && (
+              <p>
+                {t('hostIncompatibleInstallWarning')
+                  .replace('{host}', hostIncompatible.hostVersion ?? t('hostIncompatibleUnknownVersion'))
+                  .replace('{latest}', hostIncompatible.latestVersion ?? t('hostIncompatibleUnknownVersion'))}
+              </p>
+            )}
+            <p className={findingCompat.status === 'found' ? css.hostCompatPrimary : undefined} role="status">
+              {t(hostIncompatible.kind === 'install'
+                ? findingCompat.status === 'found' ? 'hostIncompatibleInstallFound'
+                  : findingCompat.status === 'loading' ? 'hostIncompatibleSearching'
+                    : findingCompat.status === 'error' ? 'hostIncompatibleSearchError' : 'hostIncompatibleNoCompat'
+                : findingCompat.status === 'found' ? 'hostIncompatibleUpdateFound'
+                  : findingCompat.status === 'loading' ? 'hostIncompatibleSearching'
+                    : findingCompat.status === 'error' ? 'hostIncompatibleSearchError' : 'hostIncompatibleNoCompatUpdate')
+                .replace('{plugin}', hostIncompatible.name)
+                .replace('{version}', findingCompat.status === 'found' ? findingCompat.version : hostIncompatible.currentVersion ?? t('hostIncompatibleCurrentVersionUnknown'))}
+            </p>
+          </div>
+        </Modal>
       )}
       {restoreBlocked !== null && (
         <Modal

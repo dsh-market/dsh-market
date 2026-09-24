@@ -4461,6 +4461,92 @@ describe('Git to npm source migration (#461)', () => {
   })
 })
 
+describe('compatible version prompt', () => {
+  it('shows the latest compatible version automatically and installs it only after confirmation', async () => {
+    stubFetch({
+      '/dsh-market/install': (body: unknown) => (body as { version?: string }).version === '1.4.0'
+        ? { ok: true, installed: {} }
+        : { __status: 400, hostIncompatible: {
+          name: 'dsh-loop', npmName: 'dsh-loop', version: '2.0.0',
+          requirement: '>=0.2.0', hostVersion: '0.1.5',
+        } },
+      '/dsh-market/find-compatible': { compatibleVersion: '1.4.0' },
+    })
+    render(<MarketSection {...props()} />)
+    const card = (await screen.findByText('dsh-loop')).closest('div[class*="card"]') as HTMLElement
+    fireEvent.click(within(card).getByRole('button', { name: en.install }))
+    fireEvent.click(await screen.findByRole('button', { name: en.confirmInstall }))
+
+    const dialog = await screen.findByRole('dialog', {
+      name: '⚠️ Compatibility check',
+    })
+    expect(within(dialog).getByText('DSH 0.1.5 does not support the latest version (2.0.0).')).toBeTruthy()
+    await within(dialog).findByText('Latest compatible version available: 1.4.0')
+    expect(fetchCalls.filter(call => call.path === '/dsh-market/find-compatible')).toHaveLength(1)
+    expect(fetchCalls.filter(call => call.path === '/dsh-market/install')).toHaveLength(1)
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Install 1.4.0' }))
+    await waitFor(() => expect(fetchCalls.filter(call => call.path === '/dsh-market/install')).toHaveLength(2))
+    expect(fetchCalls.filter(call => call.path === '/dsh-market/install')[1]?.body).toMatchObject({
+      url: 'https://github.com/alice/dsh-loop', version: '1.4.0',
+    })
+  })
+
+  it('shows an update action and sends the selected compatible version', async () => {
+    stubFetch({
+      '/dsh-market/installed': { profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: [] },
+      '/dsh-market/updates': { updates: {
+        'dsh-loop': { kind: 'npm', version: '1.0.0', current: '1.0.0', latest: '2.0.0', updateAvailable: true },
+      } },
+      '/dsh-market/update': (body: unknown) => (body as { compatVersion?: string }).compatVersion === '1.4.0'
+        ? { ok: true }
+        : { __status: 400, hostIncompatible: {
+          name: 'dsh-loop', npmName: 'dsh-loop', version: '2.0.0',
+          requirement: '>=0.2.0', hostVersion: '0.1.5',
+        } },
+      '/dsh-market/find-compatible': { compatibleVersion: '1.4.0', upgradeOnly: true },
+    })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    fireEvent.click(await screen.findByRole('button', { name: en.update }))
+
+    const dialog = await screen.findByRole('dialog', { name: en.hostCompatibilityTitle })
+    await within(dialog).findByText('The latest version compatible with this DSH is 1.4.0.')
+    expect(fetchCalls.find(call => call.path === '/dsh-market/find-compatible')?.body)
+      .toMatchObject({ npmName: 'dsh-loop', upgradeOnly: true })
+    expect(fetchCalls.filter(call => call.path === '/dsh-market/update')).toHaveLength(1)
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Update to 1.4.0' }))
+    await waitFor(() => expect(fetchCalls.filter(call => call.path === '/dsh-market/update')).toHaveLength(2))
+    expect(fetchCalls.filter(call => call.path === '/dsh-market/update')[1]?.body).toMatchObject({
+      name: 'dsh-loop', compatVersion: '1.4.0',
+    })
+  })
+
+  it('does not suggest an older compatible release as an update', async () => {
+    stubFetch({
+      '/dsh-market/installed': { profile: 'web', installed: { 'dsh-loop': '^0.1.18' }, live: [] },
+      '/dsh-market/updates': { updates: {
+        'dsh-loop': { kind: 'npm', version: '0.1.18', current: '0.1.18', latest: '0.1.19', updateAvailable: true },
+      } },
+      '/dsh-market/update': { __status: 400, hostIncompatible: {
+        name: 'dsh-loop', npmName: 'dsh-loop', version: '0.1.19', currentVersion: '0.1.18',
+        requirement: '>=0.2.0', hostVersion: '0.1.5',
+      } },
+      '/dsh-market/find-compatible': { compatibleVersion: null, upgradeOnly: true },
+    })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    fireEvent.click(await screen.findByRole('button', { name: en.update }))
+
+    const dialog = await screen.findByRole('dialog', { name: en.hostCompatibilityTitle })
+    expect(within(dialog).getByText('No version newer than 0.1.18 is compatible with this DSH.')).toBeTruthy()
+    expect(within(dialog).getByText(en.hostIncompatibleClose)).toBeTruthy()
+    expect(within(dialog).queryByRole('button', { name: /Update to/ })).toBeNull()
+    expect(fetchCalls.filter(call => call.path === '/dsh-market/update')).toHaveLength(1)
+  })
+})
+
 describe('restart banner counts only restart-requiring updates (#558)', () => {
   const INSTALLED = { profile: 'web', installed: { 'dsh-loop': '^1.0.0', 'whale-skin': '^1.0.0' }, live: ['dsh-loop', 'whale-skin'], disabled: [], groups: {}, groupOrder: [], favorites: [] }
   const STATUS = { active: false, busy: false, pnpm: true, boot: 'boot-1', restart: true, installed: { 'dsh-loop': '^1.0.0', 'whale-skin': '^1.0.0' } }
