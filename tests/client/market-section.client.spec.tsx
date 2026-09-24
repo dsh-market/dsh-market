@@ -4540,7 +4540,7 @@ describe('compatible version prompt', () => {
     fireEvent.click(await screen.findByRole('button', { name: en.update }))
 
     const dialog = await screen.findByRole('dialog', { name: en.hostCompatibilityTitle })
-    expect(within(dialog).getByText('No version newer than 0.1.18 is compatible with this DSH.')).toBeTruthy()
+    expect(within(dialog).getByText('Cannot update: the latest version of this plugin is incompatible with the current DSH version.')).toBeTruthy()
     expect(within(dialog).getByText(en.hostIncompatibleClose)).toBeTruthy()
     expect(within(dialog).queryByRole('button', { name: /Update to/ })).toBeNull()
     expect(fetchCalls.filter(call => call.path === '/dsh-market/update')).toHaveLength(1)
