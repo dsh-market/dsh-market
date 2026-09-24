@@ -72,6 +72,33 @@ function expectTaskkill(index: number) {
   expect(child.kill).not.toHaveBeenCalled()
 }
 
+describe('--config overrides reach pnpm as environment variables (#615)', () => {
+  it('sets PNPM_CONFIG_* only on the run that carries the override', async () => {
+    platform('linux')
+    const { runDshPlugin } = await import('../src/dsh-cli.ts')
+    const retried = runDshPlugin('web', ['add', '--config.fetchTimeout=600000', '@scope/plugin@^1.0.0'])
+    child.emit('close', 0)
+    await retried
+    const [, , retriedOptions] = childProcess.spawn.mock.calls[0]!
+    expect(retriedOptions.env.PNPM_CONFIG_FETCH_TIMEOUT).toBe('600000')
+    expect(retriedOptions.env.PNPM_CONFIG_AUTO_INSTALL_PEERS).toBeUndefined()
+
+    const peers = runDshPlugin('web', ['add', '--config.auto-install-peers=false', '@scope/plugin@^1.0.0'])
+    childProcess.spawn.mock.results[1]!.value.emit('close', 0)
+    await peers
+    const [, , peersOptions] = childProcess.spawn.mock.calls[1]!
+    expect(peersOptions.env.PNPM_CONFIG_AUTO_INSTALL_PEERS).toBe('false')
+    expect(peersOptions.env.PNPM_CONFIG_FETCH_TIMEOUT).toBeUndefined()
+
+    const plain = runDshPlugin('web', ['add', '@scope/plugin@^1.0.0'])
+    childProcess.spawn.mock.results[2]!.value.emit('close', 0)
+    await plain
+    const [, , plainOptions] = childProcess.spawn.mock.calls[2]!
+    expect(plainOptions.env.PNPM_CONFIG_FETCH_TIMEOUT).toBeUndefined()
+    expect(plainOptions.env.PNPM_CONFIG_AUTO_INSTALL_PEERS).toBeUndefined()
+  })
+})
+
 describe('background process consoles (#530)', () => {
   describe.each(['win32', 'linux'])('%s', (os) => {
     describe.each(['node', 'fallback'])('%s launcher', (launcher) => {

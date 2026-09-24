@@ -1,6 +1,6 @@
 /**
  * Real-pnpm compat matrix (`npm run test:compat`): pins the failure
- * signatures behind issues #20/#21/#22 against actual pnpm 9/10/11 in
+ * signatures behind issues #20/#21/#22 against actual pnpm 9/10/11/12 in
  * throwaway profile fixtures, and proves the market's argv decision works on
  * every combination. Needs network; several minutes on a cold npx cache.
  *
@@ -14,10 +14,12 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { RELEASE_AGE_OVERRIDE } from '../src/install.ts'
+import { readLockCommits } from '../src/profile.ts'
 import { classifyPnpmFailure, pluginArgsFor } from '../src/pnpm-compat.ts'
 
 /** Last release of each major the market supports; behavior is per-major. */
-const PNPM = { 9: '9.15.9', 10: '10.28.2', 11: '11.21.0' } as const
+const PNPM = { 9: '9.15.9', 10: '10.28.2', 11: '11.21.0', 12: '12.4.1' } as const
 /** Version pinned by the DSH Desktop 2.0.3 distribution reported in #385. */
 const DESKTOP_PNPM = '11.8.0'
 const GIT_FIXTURE_SHA = '6ebf1e03de0ada9e653d1f8ff82ad905ab761ad9'
@@ -37,7 +39,7 @@ function profileFixture(options: { workspace: boolean; extraWorkspaceYaml?: stri
   return dir
 }
 
-function pnpm(version: string, args: string[], cwd: string): { code: number | null; out: string } {
+function pnpm(version: string, args: string[], cwd: string, extraEnv: NodeJS.ProcessEnv = {}): { code: number | null; out: string } {
   // `npx` is a cmd shim on Windows and cannot be spawned directly without a
   // shell. Keep argument arrays on both platforms; no package target is ever
   // interpolated into a command string.
@@ -47,7 +49,7 @@ function pnpm(version: string, args: string[], cwd: string): { code: number | nu
     : ['-y', `pnpm@${version}`, ...args]
   const r = spawnSync(command, commandArgs, {
     cwd, encoding: 'utf8', timeout: 240_000,
-    env: { ...process.env, CI: 'true', COREPACK_ENABLE_STRICT: '0' },
+    env: { ...process.env, CI: 'true', COREPACK_ENABLE_STRICT: '0', ...extraEnv },
   })
   const spawnError = r.error === undefined ? '' : `\n${r.error.name}: ${r.error.message}`
   return { code: r.status, out: `${r.stdout ?? ''}${r.stderr ?? ''}${spawnError}` }
@@ -107,18 +109,68 @@ describe('the market argv decision works on every pnpm major × profile shape', 
   })
 })
 
+const GIT_FIXTURE_REPO = 'pnpm/test-git-fetch'
+
+/** Lock shapes for `github:owner/repo#sha` — older pnpm used codeload tarballs
+ *  with `gitHosted: true`; current pnpm writes `git+https` / `git+ssh` /
+ *  `type: git`. */
+function githubShortcutLockShape(lockfile: string, sha: string): {
+  hasCodeload: boolean
+  hasGitUrl: boolean
+} {
+  return {
+    hasCodeload: lockfile.includes(`codeload.github.com/${GIT_FIXTURE_REPO}/tar.gz/${sha}`),
+    hasGitUrl: lockfile.includes(`git+https://github.com/${GIT_FIXTURE_REPO}.git#${sha}`)
+      || lockfile.includes(`git+ssh://git@github.com/${GIT_FIXTURE_REPO}.git#${sha}`)
+      || (lockfile.includes(GIT_FIXTURE_REPO) && lockfile.includes('type: git') && lockfile.includes(sha)),
+  }
+}
+
+/** Prefix-proxied codeload lock entry without `gitHosted` — the durable
+ *  orphan v1.34 left behind. Hand-written so the probe does not depend on
+ *  current pnpm's lock shape. */
+function orphanedProxyLockfile(proxied: string): string {
+  return [
+    "lockfileVersion: '9.0'",
+    '',
+    'settings:',
+    '  autoInstallPeers: false',
+    '  excludeLinksFromLockfile: false',
+    '',
+    'importers:',
+    '',
+    '  .:',
+    '    dependencies:',
+    '      test-git-fetch:',
+    `        specifier: ${proxied}`,
+    `        version: ${proxied}`,
+    '',
+    'packages:',
+    '',
+    `  test-git-fetch@${proxied}:`,
+    `    resolution: {tarball: ${proxied}}`,
+    '    version: 1.0.0',
+    '',
+    'snapshots:',
+    '',
+    `  test-git-fetch@${proxied}: {}`,
+    '',
+  ].join('\n')
+}
+
 describe('#385 — pnpm keeps a commit-pinned github shortcut inside its git-hosted trust boundary', () => {
   it('installs on Desktop and current pnpm, then survives the next dependency mutation', () => {
     for (const version of [DESKTOP_PNPM, PNPM[11]]) {
       const dir = profileFixture({ workspace: true })
-      const target = `github:pnpm/test-git-fetch#${GIT_FIXTURE_SHA}`
+      const target = `github:${GIT_FIXTURE_REPO}#${GIT_FIXTURE_SHA}`
 
       const installed = pnpm(version, ['add', '-w', '--ignore-scripts', target], dir)
       expect(installed.code, `pnpm ${version}\n${installed.out.slice(-600)}`).toBe(0)
 
       const lockfile = readFileSync(join(dir, 'pnpm-lock.yaml'), 'utf8')
-      expect(lockfile).toContain(`codeload.github.com/pnpm/test-git-fetch/tar.gz/${GIT_FIXTURE_SHA}`)
-      expect(lockfile).toContain('gitHosted: true')
+      const { hasCodeload, hasGitUrl } = githubShortcutLockShape(lockfile, GIT_FIXTURE_SHA)
+      expect(hasCodeload || hasGitUrl, `pnpm ${version} lock shape:\n${lockfile.slice(0, 800)}`).toBe(true)
+      if (hasCodeload) expect(lockfile).toContain('gitHosted: true')
 
       // A prefix-proxied codeload URL loses that marker and #385 fails here
       // with ERR_PNPM_MISSING_TARBALL_INTEGRITY. The pinned github shortcut
@@ -134,33 +186,39 @@ describe('#385 — pnpm keeps a commit-pinned github shortcut inside its git-hos
 
   it('repairs the orphaned proxy lock entry left by a failed Desktop install', () => {
     const dir = profileFixture({ workspace: true })
-    const target = `github:pnpm/test-git-fetch#${GIT_FIXTURE_SHA}`
-    const canonical = `https://codeload.github.com/pnpm/test-git-fetch/tar.gz/${GIT_FIXTURE_SHA}`
+    const target = `github:${GIT_FIXTURE_REPO}#${GIT_FIXTURE_SHA}`
+    const canonical = `https://codeload.github.com/${GIT_FIXTURE_REPO}/tar.gz/${GIT_FIXTURE_SHA}`
     const proxied = `https://gh-proxy.com/${canonical}`
-
-    const seed = pnpm(DESKTOP_PNPM, ['add', '-w', '--ignore-scripts', target], dir)
-    expect(seed.code, seed.out.slice(-600)).toBe(0)
-
-    // Recreate the durable state left by v1.34 after the failed install:
-    // package.json was restored, but pnpm's prefix-proxy resolution remained
-    // orphaned in the lockfile without its git-hosted trust marker.
-    const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as Record<string, unknown>
-    manifest.dependencies = {}
-    writeFileSync(join(dir, 'package.json'), JSON.stringify(manifest))
     const lockPath = join(dir, 'pnpm-lock.yaml')
-    const poisoned = readFileSync(lockPath, 'utf8')
-      .replaceAll(canonical, proxied)
-      .replaceAll('gitHosted: true, ', '')
+    const manifestPath = join(dir, 'package.json')
+
+    // Hand-write the bricked profile: manifest + lock both name a
+    // prefix-proxied codeload tarball without gitHosted. Current pnpm writes
+    // git+https/ssh, so poisoning a live seed cannot recreate this mode.
+    const poisoned = orphanedProxyLockfile(proxied)
     expect(poisoned).toContain(proxied)
     expect(poisoned).not.toContain('gitHosted: true')
     writeFileSync(lockPath, poisoned)
+    writeFileSync(manifestPath, JSON.stringify({
+      name: 'dsh-profile-fixture',
+      private: true,
+      dependencies: { 'test-git-fetch': proxied },
+    }))
+
+    const before = pnpm(DESKTOP_PNPM, ['add', '-w', '--ignore-scripts', 'is-odd@3.0.1'], dir)
+    expect(before.out).toContain('ERR_PNPM_MISSING_TARBALL_INTEGRITY')
+
+    // v1.34 restored package.json after the failed install but left the
+    // proxied lock entry behind.
+    writeFileSync(manifestPath, JSON.stringify({ name: 'dsh-profile-fixture', private: true }))
 
     const repaired = pnpm(DESKTOP_PNPM, ['add', '-w', '--ignore-scripts', target], dir)
     expect(repaired.code, repaired.out.slice(-600)).toBe(0)
     const repairedLock = readFileSync(lockPath, 'utf8')
     expect(repairedLock).not.toContain('gh-proxy.com')
-    expect(repairedLock).toContain(canonical)
-    expect(repairedLock).toContain('gitHosted: true')
+    const repairedShape = githubShortcutLockShape(repairedLock, GIT_FIXTURE_SHA)
+    expect(repairedShape.hasCodeload || repairedShape.hasGitUrl).toBe(true)
+    if (repairedShape.hasCodeload) expect(repairedLock).toContain('gitHosted: true')
 
     const mutation = pnpm(DESKTOP_PNPM, ['add', '-w', '--ignore-scripts', 'is-odd@3.0.1'], dir)
     expect(mutation.code, mutation.out.slice(-600)).toBe(0)
@@ -217,7 +275,7 @@ describe('#39 — a too-young lockfile entry blocks every later mutation', () =>
   it('remove fails ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION on pnpm 11; the one-shot override recovers', () => {
     const dir = profileFixture({ workspace: true, extraWorkspaceYaml: `minimumReleaseAge: ${String(ageWindowMinutes())}\n` })
     // A young release lands in the lockfile via the bypass (force-update path).
-    const seed = pnpm(PNPM[11], ['add', '-w', '--config.minimumReleaseAge=0', 'is-odd@3.0.1'], dir)
+    const seed = pnpm(PNPM[11], ['add', '-w', RELEASE_AGE_OVERRIDE, 'is-odd@3.0.1'], dir)
     expect(seed.code, seed.out.slice(-400)).toBe(0)
 
     // pnpm verifies the WHOLE lockfile before applying the mutation — even
@@ -228,16 +286,43 @@ describe('#39 — a too-young lockfile entry blocks every later mutation', () =>
     expect(classifyPnpmFailure(blocked.out)?.code).toBe('release-age-violation')
 
     // The recovery the market automates: same command + the one-shot override.
-    const recovered = pnpm(PNPM[11], ['remove', '-w', '--config.minimumReleaseAge=0', 'is-odd'], dir)
+    const recovered = pnpm(PNPM[11], ['remove', '-w', RELEASE_AGE_OVERRIDE, 'is-odd'], dir)
     expect(recovered.code, recovered.out.slice(-400)).toBe(0)
     expect(installedVersion(dir, 'is-odd')).toBeNull()
+  })
+
+  it('add fails the same way on pnpm 12, and only the kebab-case override recovers (#600)', () => {
+    const dir = profileFixture({ workspace: true, extraWorkspaceYaml: `minimumReleaseAge: ${String(ageWindowMinutes())}\n` })
+    const seed = pnpm(PNPM[12], ['add', '-w', RELEASE_AGE_OVERRIDE, 'is-odd@3.0.1'], dir)
+    expect(seed.code, seed.out.slice(-400)).toBe(0)
+
+    // pnpm 12 re-applies the policy to the loaded lockfile before adding
+    // anything: a mature, unrelated package is refused because of the young
+    // one already there. Removing the young package itself passes on 12 (the
+    // lockfile it leaves behind is clean), so `add` is what pins the trap.
+    const blocked = pnpm(PNPM[12], ['add', '-w', 'is-even@1.0.0'], dir)
+    expect(blocked.code).not.toBe(0)
+    expect(blocked.out).toContain('ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION')
+    expect(classifyPnpmFailure(blocked.out)?.code).toBe('release-age-violation')
+
+    // What the market passed before #600. pnpm 11 accepted it; the native
+    // CLI from 12.3.0 ignores it without an "unknown option" error, so the
+    // retry failed exactly like the first attempt.
+    const ignored = pnpm(PNPM[12], ['add', '-w', '--config.minimumReleaseAge=0', 'is-even@1.0.0'], dir)
+    expect(ignored.code).not.toBe(0)
+    expect(ignored.out).toContain('ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION')
+    expect(installedVersion(dir, 'is-even')).toBeNull()
+
+    const recovered = pnpm(PNPM[12], ['add', '-w', RELEASE_AGE_OVERRIDE, 'is-even@1.0.0'], dir)
+    expect(recovered.code, recovered.out.slice(-400)).toBe(0)
+    expect(installedVersion(dir, 'is-even')).toBe('1.0.0')
   })
 
   it('the override flag is harmless on pnpm 9/10 remove', () => {
     for (const version of [PNPM[9], PNPM[10]]) {
       const dir = profileFixture({ workspace: true })
       expect(pnpm(version, ['add', '-w', 'is-odd@3.0.0'], dir).code, `pnpm ${version} add`).toBe(0)
-      const removed = pnpm(version, ['remove', '-w', '--config.minimumReleaseAge=0', 'is-odd'], dir)
+      const removed = pnpm(version, ['remove', '-w', RELEASE_AGE_OVERRIDE, 'is-odd'], dir)
       expect(removed.code, `pnpm ${version}: ${removed.out.slice(-300)}`).toBe(0)
     }
   })
@@ -269,4 +354,82 @@ describe('a dead file: dependency blocks the whole profile (#436)', () => {
       expect(failure?.message).toContain('ghost-plugin-1.0.0.tgz')
     }, 300_000)
   }
+})
+
+describe('#615 — pnpm 12 ignores some --config.<key> flags on the command line; PNPM_CONFIG_<KEY> is read', () => {
+  /** A workspace profile WITHOUT autoInstallPeers, so the flag is what decides. */
+  function peerFixture(): string {
+    const dir = mkdtempSync(join(tmpdir(), 'dshm-compat-peers-'))
+    dirs.push(dir)
+    writeFileSync(join(dir, 'package.json'), '{"name":"dsh-profile-fixture","private":true}')
+    writeFileSync(join(dir, 'pnpm-workspace.yaml'), 'packages:\n  - .\n\nnodeLinker: hoisted\n')
+    return dir
+  }
+
+  it('pnpm 12.4 auto-installs the peer despite --config.auto-install-peers=false, and honours the variable', () => {
+    const flagged = peerFixture()
+    const withFlag = pnpm(PNPM[12], ['add', '-w', '--config.auto-install-peers=false', 'use-sync-external-store@1.2.2'], flagged)
+    expect(withFlag.code, withFlag.out.slice(-400)).toBe(0)
+    // The flag the market's #289 retry relied on did nothing here.
+    expect(installedVersion(flagged, 'react')).not.toBeNull()
+
+    const viaEnv = peerFixture()
+    const withVar = pnpm(PNPM[12], ['add', '-w', 'use-sync-external-store@1.2.2'], viaEnv, { PNPM_CONFIG_AUTO_INSTALL_PEERS: 'false' })
+    expect(withVar.code, withVar.out.slice(-400)).toBe(0)
+    expect(installedVersion(viaEnv, 'react')).toBeNull()
+  })
+
+  it('pnpm 11 reads both the flag and the variable', () => {
+    const flagged = peerFixture()
+    expect(pnpm(PNPM[11], ['add', '-w', '--config.auto-install-peers=false', 'use-sync-external-store@1.2.2'], flagged).code).toBe(0)
+    expect(installedVersion(flagged, 'react')).toBeNull()
+
+    const viaEnv = peerFixture()
+    expect(pnpm(PNPM[11], ['add', '-w', 'use-sync-external-store@1.2.2'], viaEnv, { PNPM_CONFIG_AUTO_INSTALL_PEERS: 'false' }).code).toBe(0)
+    expect(installedVersion(viaEnv, 'react')).toBeNull()
+  })
+})
+
+/**
+ * #637 — the host shorthands pnpm writes back into package.json.
+ *
+ * Two things are pinned here per major, because the market reads both and
+ * neither is guessable from the docs: the manifest pnpm leaves behind (the
+ * shorthand, whatever spelling the install was typed as), and the archive URL
+ * it resolves to, which is where the commit lives. The URL is NOT stable
+ * across majors — 9 and 10 fetch GitLab through the REST API
+ * (`/api/v4/projects/<owner>%2F<repo>/repository/archive.tar.gz?sha=`) while
+ * 11 and 12 take the project archive (`/-/archive/<sha>/`) — so what is
+ * asserted is the identity the market derives, not the string.
+ *
+ * `--lockfile-only`: the commit is in the lockfile, and none of these
+ * repositories needs to be extracted or built to prove it.
+ */
+describe('#637 — host shorthands resolve to an archive whose URL carries the commit', () => {
+  // gitlab-org/gitlab-svgs, not a nested group: pnpm 9 percent-encodes only
+  // the last separator and 404s on `group/subgroup/repo`, which is a bug in
+  // that major, not something the market can read its way out of.
+  const SHORTHANDS = [
+    { spec: 'gitlab:gitlab-org/gitlab-svgs', key: 'gitlab.com/gitlab-org/gitlab-svgs' },
+    { spec: 'bitbucket:atlassian/aui', key: 'bitbucket.org/atlassian/aui' },
+  ] as const
+
+  it('writes the shorthand back and records a readable commit on every major', () => {
+    for (const version of [...Object.values(PNPM), DESKTOP_PNPM]) {
+      for (const { spec, key } of SHORTHANDS) {
+        const dir = profileFixture({ workspace: false })
+        const added = pnpm(version, ['add', '--lockfile-only', spec], dir)
+        expect(added.code, `pnpm ${version} ${spec}\n${added.out.slice(-600)}`).toBe(0)
+
+        const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as {
+          dependencies?: Record<string, string>
+        }
+        expect(Object.values(manifest.dependencies ?? {}), `pnpm ${version} manifest`).toEqual([spec])
+
+        const commit = readLockCommits('ignored', dir).get(key)
+        expect(commit, `pnpm ${version} ${spec} lock:\n${readFileSync(join(dir, 'pnpm-lock.yaml'), 'utf8').slice(0, 700)}`)
+          .toMatch(/^[0-9a-f]{40}$/)
+      }
+    }
+  })
 })

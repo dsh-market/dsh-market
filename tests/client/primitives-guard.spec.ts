@@ -5,7 +5,8 @@
  * must detect the gap and skip registration instead of throwing mid-render.
  */
 import { describe, expect, it } from 'vitest'
-import { missingPrimitives, REQUIRED_PRIMITIVES } from '../../src/client/index.ts'
+import { apply, missingPrimitives, REQUIRED_PRIMITIVES } from '../../src/client/index.ts'
+import { ICON_ALIASES, missingIcons } from '../../src/client/icons.ts'
 
 describe('missingPrimitives', () => {
   it('reports no gaps when every required export exists', () => {
@@ -26,4 +27,44 @@ describe('missingPrimitives', () => {
   it('accepts a custom requirement list', () => {
     expect(missingPrimitives({ A: 1 }, ['A', 'B', 'C'])).toEqual(['B', 'C'])
   })
+})
+
+describe('apply() icon gaps (#671)', () => {
+  it('treats a 0.1.7-only Regular icon table as complete for missingIcons', () => {
+    const mod: Record<string, unknown> = {}
+    for (const name of REQUIRED_PRIMITIVES) mod[name] = () => null
+    for (const [, newer] of ICON_ALIASES) mod[newer] = () => null
+    expect(missingPrimitives(mod)).toEqual([])
+    expect(missingIcons(mod)).toEqual([])
+  })
+
+  it('does not treat icon gaps as a hard apply() disable', () => {
+    // Missing Menu still disables; missing icons alone must not — icons.ts
+    // skips the glyph so a rename costs one icon, not the settings page.
+    const mod: Record<string, unknown> = {}
+    for (const name of REQUIRED_PRIMITIVES) mod[name] = () => null
+    expect(missingPrimitives(mod)).toEqual([])
+    expect(missingIcons(mod).length).toBeGreaterThan(0)
+  })
+})
+
+it('keeps the main market on hosts without settingsScope (#516)', () => {
+  const registrations: Record<string, unknown>[] = []
+  const injections: string[][] = []
+  apply({
+    effect: (run: () => unknown) => { run() },
+    on: () => () => {},
+    locale: {
+      register: () => () => {}, bind: () => (key: string) => key,
+      subscribe: () => () => {}, getSnapshot: () => ({ active: 'en' }),
+    },
+    theme: { getTheme: () => null, setTheme: () => {} },
+    slots: {
+      inject: (_slot: string, register: () => unknown) => { register() },
+      register: (options: Record<string, unknown>) => { registrations.push(options); return () => {} },
+    },
+    inject: (services: string[]) => { injections.push(services) },
+  } as Parameters<typeof apply>[0])
+  expect(injections).toEqual([['settingsScope']])
+  expect(registrations.map(entry => entry.name)).toEqual(['settings.section', 'shell.overlay'])
 })

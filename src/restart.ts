@@ -10,12 +10,23 @@
  */
 
 import { spawn } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { loopbackAuthority } from './http.ts'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import inspector from 'node:inspector'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { IncomingMessage } from 'node:http'
 import { dshArgv, nodeExecutable } from './dsh-cli.ts'
+import type { RecoveryConfig } from './recovery.ts'
+
+/**
+ * What a caller has to know to schedule a restart with a recovery surface:
+ * the plugin inventory and the profile paths, but NOT the port, the log
+ * files, or the respawn invocation — those are decided here, where the
+ * restart actually happens, so no caller can get them subtly wrong.
+ */
+export type RecoveryHandoffConfig = Omit<RecoveryConfig, 'port' | 'logs' | 'spawn' | 'cwd'>
 
 /** Vitest / flows can pin detection without opening a real inspector port. */
 let debuggerOverride: 'inspector' | null | undefined
@@ -193,6 +204,11 @@ export function trustedRestartRequest(request: Pick<IncomingMessage, 'headers' |
     || request.headers['x-real-ip'] !== undefined) return false
   const origin = request.headers.origin
   const host = request.headers.host
+  // A loopback PEER is not enough: a DNS-rebinding page reaches 127.0.0.1
+  // through a name it controls, so the address proves nothing and Host/Origin
+  // both carry the attacker's domain (#678). Host is what the attack cannot
+  // forge, so it has to name a loopback authority.
+  if (!loopbackAuthority(host)) return false
   if (origin === undefined || host === undefined) return false
   try {
     const parsed = new URL(origin)
@@ -219,7 +235,8 @@ export function trustedDownloadRequest(request: Pick<IncomingMessage, 'headers' 
     || request.headers['x-real-ip'] !== undefined) return false
   const origin = request.headers.origin
   const host = request.headers.host
-  if (host === undefined) return false
+  // Same rebinding rule as the restart fence above (#678).
+  if (!loopbackAuthority(host)) return false
   if (origin === undefined) return true // plain browser download navigation
   try {
     const parsed = new URL(origin)
@@ -246,6 +263,10 @@ export function restartLaunch(): { file: string; args: string[]; cwd: string; vi
  * DSH sandbox tool runners) pops a visible node window. Wrapping the launch
  * in `powershell -WindowStyle Hidden` gives the host a HIDDEN console that
  * children inherit instead. POSIX keeps the plain detached spawn.
+ *
+ * The helper that runs this invocation spawns it with `windowsHide`, because
+ * the helper has no console of its own to hand down and Windows would
+ * otherwise create a visible one for PowerShell (#624).
  */
 export function respawnInvocation(
   launch: { file: string; args: string[]; viaShell: boolean },
@@ -278,6 +299,29 @@ export interface RestartResult {
   helperPid: number | undefined
   logOut: string
   logErr: string
+  /** The recovery handoff, when one was written for this restart. */
+  recovery: { config: string; script: string } | null
+}
+
+/**
+ * Where the recovery script lives beside this module.
+ *
+ * The built layout is `lib/restart.js` + `lib/recovery.js`, and the source
+ * layout has no runnable sibling at all (a spawned `node` cannot load a `.ts`
+ * file), so the answer is the built path or nothing. Nothing is a supported
+ * outcome, not a failure: the helper then behaves exactly as it did before the
+ * recovery surface existed — it notes the failure and exits — and every test
+ * that drives the handoff passes its own script instead of relying on a build
+ * having happened.
+ * @returns the absolute path, or null when this checkout has no built copy.
+ */
+export function recoveryScriptPath(): string | null {
+  try {
+    const candidate = fileURLToPath(new URL('./recovery.js', import.meta.url))
+    return existsSync(candidate) ? candidate : null
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -308,6 +352,7 @@ export function restartHelperSource(
   launch: { cwd: string },
   logs: { out: string; err: string },
   port: number | null,
+  recovery: { script: string; config: string } | null = null,
 ): string {
   return [
     "const { spawn } = require('node:child_process')",
@@ -321,8 +366,16 @@ export function restartHelperSource(
     `const logOut = ${JSON.stringify(logs.out)}`,
     `const logErr = ${JSON.stringify(logs.err)}`,
     `const port = ${JSON.stringify(port)}`,
+    `const recoveryScript = ${JSON.stringify(recovery?.script ?? null)}`,
+    `const recoveryConfig = ${JSON.stringify(recovery?.config ?? null)}`,
     'const sleep = (ms) => new Promise(r => setTimeout(r, ms))',
     'const note = (line) => { try { fs.appendFileSync(logErr, `[dsh-market] ${line}\n`) } catch {} }',
+    // How the helper itself ended. A restart that fails leaves this file as
+    // the only account of what happened, and "the helper vanished" and "the
+    // helper exited" are different bugs with the same symptom.
+    'process.on("exit", (code) => note("helper exiting (code " + code + ")"))',
+    'process.on("uncaughtException", (error) => note("helper crashed: " + (error && error.stack ? error.stack : error)))',
+    'process.on("unhandledRejection", (error) => note("helper rejection: " + (error && error.stack ? error.stack : error)))',
     // "Free" means nothing accepts a connection. Checked by connecting rather
     // than by binding: binding to test would itself hold the port for the
     // moment the replacement needs it.
@@ -333,13 +386,42 @@ export function restartHelperSource(
     '  probe.on("error", () => done(false))',
     '  setTimeout(() => done(false), 500)',
     '})',
+    // The recovery surface is a separate process on purpose: it has to
+    // outlive this helper AND the DSH package tree it protects, and it must
+    // be startable when the composition that just failed is the market's own.
+    // A script that cannot be spawned degrades to the pre-recovery behaviour
+    // — one line in the log — rather than to no restart at all.
+    // How the replacement ended, when it ended before it bound the port.
+    // Top level rather than inside main() because the handoff reads it.
+    'let exited = null',
+    'const handOff = async () => {',
+    '  if (!recoveryScript || !recoveryConfig) return',
+    '  try {',
+    // windowsHide with the detached spawn: this helper has no console, so a
+    // console program spawned from it is handed a new, visible one (#624).
+    // Measured on Windows 11: the flag combination is accepted and the child
+    // runs (the two flags are documented as mutually exclusive on MSDN, so
+    // the probe matters more than the docs here).
+    '    const child = spawn(process.execPath, [recoveryScript, recoveryConfig, "--exit=" + String(exited), "--bound=0"], { detached: true, stdio: "ignore", env: process.env, windowsHide: true })',
+    '    child.on("error", (error) => note(`could not start the recovery surface: ${error && error.message ? error.message : error}`))',
+    '    child.unref()',
+    '    note("the replacement never came up — starting the recovery surface")',
+    '  } catch (error) {',
+    '    note(`could not start the recovery surface: ${error && error.message ? error.message : error}`)',
+    '  }',
+    '}',
     'const main = async () => {',
+    // Stage lines, not debugging: a restart that fails leaves this file as the
+    // only account of what the helper did, and "the replacement never came up"
+    // reads very differently depending on whether the port was ever released.
+    '  note(`helper up (pid ${process.pid}) for port ${port}`)',
     '  if (port) {',
     '    const until = Date.now() + 30000',
     '    while (Date.now() < until && await listening()) await sleep(250)',
     '    if (await listening()) note(`port ${port} was still in use after 30s; starting anyway`)',
     // A released socket can still be in TIME_WAIT for a moment on Windows.
     '    await sleep(300)',
+    '    note(`port ${port} is free; starting the replacement`)',
     '  } else {',
     '    await sleep(1500)',
     '  }',
@@ -347,12 +429,28 @@ export function restartHelperSource(
     '  try {',
     '    const out = fs.openSync(logOut, "a")',
     '    const err = fs.openSync(logErr, "a")',
-    '    child = spawn(file, args, { cwd, detached, stdio: ["ignore", out, err], env: process.env, shell: viaShell })',
+    // windowsHide (#624 by @davidekingsss): this helper is itself detached,
+    // so on Windows it has no console, and a console program spawned from a
+    // console-less parent is given a NEW, visible one — the "Windows
+    // PowerShell" window that owns the replacement and takes it down when
+    // closed. `-WindowStyle Hidden` cannot hide it: that flag governs the
+    // window PowerShell would create, not the console the spawn handed it.
+    // CREATE_NO_WINDOW keeps the console but never shows it, and the host's
+    // own console children inherit that hidden console rather than popping
+    // windows of their own (measured by the reporter with a console-less
+    // launcher: one PseudoConsoleWindow without the flag, none with it).
+    '    child = spawn(file, args, { cwd, detached, stdio: ["ignore", out, err], env: process.env, shell: viaShell, windowsHide: true })',
     // spawn reports a missing or unexecutable file ASYNCHRONOUSLY; the
     // try/catch below only covers the synchronous throw, so without this
     // listener that failure is exactly as silent as the bug being fixed.
     '    child.on("error", (error) => note(`could not start the replacement: ${error && error.message ? error.message : error}`))',
+    // A replacement that has already exited is a verdict, not a wait: polling
+    // out the whole window for a process that is gone is the difference
+    // between a recovery page in seconds and one after twenty, and the market
+    // page's own poll is racing that same clock.
+    '    child.on("exit", (code) => { exited = code === null ? -1 : code })',
     '    child.unref()',
+    '    note(`replacement started (pid ${child.pid})`)',
     '  } catch (error) {',
     '    note(`could not start the replacement: ${error && error.message ? error.message : error}`)',
     '    return',
@@ -364,9 +462,34 @@ export function restartHelperSource(
     // the path that has no port to poll. CI on windows-latest caught it —
     // locally it passes either way.
     "  if (!port) { await sleep(3000); return }",
-    '  const upBy = Date.now() + 20000',
-    '  while (Date.now() < upBy && !(await listening())) await sleep(500)',
-    '  if (!(await listening())) note(`the replacement did not bind port ${port} within 20s — see the output log beside this one`)',
+    // Success is not 'the port answered once'. A boot that fails its
+    // activation audit has ALREADY bound the web port by the time the audit
+    // runs — the tree mounts, the server listens, and only then does DSH
+    // refuse the whole composition and exit. Judging on a single answer
+    // therefore reports success for a harness that is mid-collapse, and the
+    // recovery surface never starts: exactly the failure this handoff exists
+    // for. The port has to answer CONTINUOUSLY for SETTLE_MS instead, which
+    // is far longer than an audit takes to refuse a tree and much shorter
+    // than a user would notice. (src/recovery.ts keeps the same rule for the
+    // boots it supervises.)
+    '  const SETTLE_MS = 8000',
+    '  const upBy = Date.now() + 20000 + SETTLE_MS',
+    '  let steadySince = null',
+    '  while (Date.now() < upBy) {',
+    '    if (await listening()) {',
+    '      if (steadySince === null) steadySince = Date.now()',
+    '      else if (Date.now() - steadySince >= SETTLE_MS) return',
+    '    } else {',
+    '      steadySince = null',
+    '      if (exited !== null) break',
+    '    }',
+    '    await sleep(500)',
+    '  }',
+    '  note(`the replacement never came up on port ${port}${exited === null ? "" : ` (it exited with code ${exited})`} — see the output log beside this one`)',
+    // The host is not coming back on its own. Everything the user can still
+    // do about it lives in the recovery surface, so start it while the
+    // browser tab that asked for the restart is still open.
+    '  await handOff()',
     '}',
     'main()',
   ].join('\n')
@@ -376,21 +499,49 @@ export function restartHelperSource(
  * Relaunch this exact DSH entry after a detached handoff, then stop this
  * process. The helper outlives us (detached + unref), waits for our port to
  * be released before starting the replacement, and logs under tmpdir.
+ *
+ * When a recovery config is supplied it is written out BEFORE the helper
+ * starts, because it describes the state of the world this process is about
+ * to leave behind: the plugin inventory as the live loader sees it, and the
+ * exact invocation the replacement needs. Nothing downstream could
+ * reconstruct either — the process that knows them is the one being replaced.
  * @param port - the port this process is serving on, so the helper can wait
  *   for it rather than guessing at a delay.
+ * @param recovery - what the recovery surface needs, when the restart should
+ *   leave one behind; omitted by callers that do not want one.
  */
-export function scheduleRestart(port: number | null = null): RestartResult {
+export function scheduleRestart(port: number | null = null, recovery?: RecoveryHandoffConfig): RestartResult {
   const launch = restartLaunch()
   const spawned = respawnInvocation(launch)
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
   const logOut = join(tmpdir(), `dsh-market-restart-${stamp}.out.log`)
   const logErr = join(tmpdir(), `dsh-market-restart-${stamp}.err.log`)
-  const helper = spawn(nodeExecutable(), ['-e', restartHelperSource(spawned, launch, { out: logOut, err: logErr }, port)], {
+  let handoff: { script: string; config: string } | null = null
+  const script = recoveryScriptPath()
+  // No port means no origin to serve the recovery page on, and no script
+  // means no recovery server to serve it with; in both cases the helper keeps
+  // its pre-recovery behaviour instead of leaving a config file nobody reads.
+  if (recovery !== undefined && port !== null && script !== null) {
+    const configPath = join(tmpdir(), `dsh-market-restart-${stamp}.recovery.json`)
+    try {
+      writeFileSync(configPath, JSON.stringify({
+        ...recovery,
+        port,
+        logs: { out: logOut, err: logErr },
+        spawn: spawned,
+        cwd: launch.cwd,
+      }, null, 2))
+      handoff = { script, config: configPath }
+    } catch {
+      handoff = null
+    }
+  }
+  const helper = spawn(nodeExecutable(), ['-e', restartHelperSource(spawned, launch, { out: logOut, err: logErr }, port, handoff)], {
     detached: true,
     stdio: 'ignore',
     env: process.env,
   })
   helper.unref()
   setTimeout(() => process.kill(process.pid, 'SIGTERM'), 500)
-  return { pid: process.pid, helperPid: helper.pid, logOut, logErr }
+  return { pid: process.pid, helperPid: helper.pid, logOut, logErr, recovery: handoff }
 }

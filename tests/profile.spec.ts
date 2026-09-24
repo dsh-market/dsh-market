@@ -10,7 +10,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { resolveDshHome } from '../src/home-paths.ts'
 import {
   addProfileBundle, conflictingEntryIds, dropFromManifest, entryArtifactExists, hasDshManifest, hasLoadableEntry, holdsNativeAddon, isDshProfileName, pluginSubdirs, profileDir,
-  readInstalled, readInstalledManifest, readInstalledRepoEvidence, readInstalledRepoIdentities, readInstalledVersion, readLockCommits,
+  readDependencyOwners, readGitResolutionCommit, readInstalled, readInstalledManifest, readInstalledRepoEvidence, readInstalledRepoIdentities, readInstalledVersion, readLockCommits,
   removeProfileBundle,
 } from '../src/profile.ts'
 
@@ -170,6 +170,17 @@ describe('holdsNativeAddon (#441)', () => {
     expect(holdsNativeAddon('web', 'dsh-music-huazai')).toBe(true)
   })
 
+  it('finds an addon in optionalDependencies, which is how SinglePlayer ships node-hid', () => {
+    // @fenglin-dev's 1.44.0 uninstall of SinglePlayer still offered a page
+    // refresh: node-hid is optional, and asking only `dependencies` treated
+    // the plugin as ordinary JavaScript. The files are not released until
+    // the process exits, so that prompt is the one that cannot help.
+    const dir = writeProfile({ dependencies: {} })
+    packageAt(dir, 'dsh-music-huazai', { name: 'dsh-music-huazai', optionalDependencies: { 'node-hid': '3.4.0' } })
+    packageAt(dir, 'node-hid', { name: 'node-hid' }, ['build/Release'])
+    expect(holdsNativeAddon('web', 'dsh-music-huazai')).toBe(true)
+  })
+
   it('recognizes all three conventional layouts, on the package itself too', () => {
     const dir = writeProfile({ dependencies: {} })
     packageAt(dir, 'gyp-built', { name: 'gyp-built' }, ['build/Release'])
@@ -186,7 +197,12 @@ describe('holdsNativeAddon (#441)', () => {
     const dir = writeProfile({ dependencies: {} })
     packageAt(dir, 'dsh-loop', { name: 'dsh-loop', dependencies: { 'plain-dep': '1.0.0' } }, ['dist', 'lib'])
     packageAt(dir, 'plain-dep', { name: 'plain-dep' }, ['dist'])
+    packageAt(dir, 'optional-plain', {
+      name: 'optional-plain',
+      optionalDependencies: { 'plain-dep': '1.0.0' },
+    }, ['dist', 'lib'])
     expect(holdsNativeAddon('web', 'dsh-loop')).toBe(false)
+    expect(holdsNativeAddon('web', 'optional-plain')).toBe(false)
     expect(holdsNativeAddon('web', 'never-installed')).toBe(false)
   })
 
@@ -198,6 +214,8 @@ describe('holdsNativeAddon (#441)', () => {
     expect(holdsNativeAddon('web', 'broken')).toBe(false)
     packageAt(dir, 'odd', { name: 'odd', dependencies: { '../escape': '1.0.0' } })
     expect(holdsNativeAddon('web', 'odd')).toBe(false)
+    packageAt(dir, 'odd-optional', { name: 'odd-optional', optionalDependencies: { '../escape': '1.0.0' } })
+    expect(holdsNativeAddon('web', 'odd-optional')).toBe(false)
   })
 })
 
@@ -223,6 +241,45 @@ describe('readInstalledRepoEvidence (#141)', () => {
       .toEqual({ identities: ['mrmolabs/dsh-mermaid'], hints: [] })
   })
 
+  it('treats a host shorthand as a spec that names its own source (#637)', () => {
+    // Same rule as `github:` above, now reached by the two hosts pnpm writes
+    // back as shorthands: a gitlab-installed fork almost always still
+    // declares the upstream GitHub repository, and trusting that would mark
+    // the upstream's Discover card as installed.
+    const dir = writeProfile({ dependencies: { 'dsh-plug': 'gitlab:myfork/dsh-plug' } })
+    const installedDir = join(dir, 'node_modules', 'dsh-plug')
+    mkdirSync(installedDir, { recursive: true })
+    writeFileSync(join(installedDir, 'package.json'), JSON.stringify({
+      name: 'dsh-plug',
+      version: '1.0.0',
+      repository: { type: 'git', url: 'git+https://github.com/upstream/dsh-plug.git' },
+    }))
+
+    expect(readInstalledRepoEvidence('web', 'dsh-plug', 'gitlab:myfork/dsh-plug'))
+      .toEqual({ identities: [], hints: [] })
+  })
+
+  it('reads the identity off a proxy-prefixed codeload URL (#432)', () => {
+    // What a China-region install actually leaves in the manifest —
+    // measured with the current dsh CLI, which keeps the https URL rather
+    // than rewriting it to a `file:` spec (the layout #432's fix assumed).
+    // No manifest, no checkout: the URL is the only evidence, and it is
+    // enough.
+    const dir = writeProfile({
+      dependencies: {
+        'dsh-plug': 'https://gh-proxy.com/https://codeload.github.com/owner/repo/tar.gz/666df7c10035f7e26f27ec214fe5ae3173435f34',
+      },
+    })
+    mkdirSync(join(dir, 'node_modules', 'dsh-plug'), { recursive: true })
+    const spec = 'https://gh-proxy.com/https://codeload.github.com/owner/repo/tar.gz/666df7c10035f7e26f27ec214fe5ae3173435f34'
+    expect(readInstalledRepoEvidence('web', 'dsh-plug', spec))
+      .toEqual({ identities: ['owner/repo'], hints: [] })
+    // A direct codeload install (no region) behaves the same.
+    expect(readInstalledRepoEvidence('web', 'dsh-plug',
+      'https://codeload.github.com/owner/repo/tar.gz/666df7c10035f7e26f27ec214fe5ae3173435f34').identities)
+      .toEqual(['owner/repo'])
+  })
+
   it('does NOT read the manifest for a spec that already names its source (#544/#548)', () => {
     // A fork installed as github:myfork/plugin almost always still declares
     // the UPSTREAM repository, because nobody edits that field when forking.
@@ -238,12 +295,18 @@ describe('readInstalledRepoEvidence (#141)', () => {
       repository: { type: 'git', url: 'git+https://github.com/upstream/dsh-plug.git' },
     }))
 
-    expect(readInstalledRepoEvidence('web', 'dsh-plug', 'github:myfork/dsh-plug'))
-      .toEqual({ identities: [], hints: [] })
-    // Same for a Release archive and a raw git+https spec: each states its
-    // own source already.
-    expect(readInstalledRepoEvidence('web', 'dsh-plug', 'https://github.com/myfork/dsh-plug/releases/download/v1/p.tgz'))
-      .toEqual({ identities: [], hints: [] })
+    // The property is "the manifest never supplies the identity here", and
+    // the sharpest way to state it is the fork's own repo — NOT an empty
+    // list. Emptiness was how this was written while the spec contributed
+    // nothing at all; now that it does (#432), empty would also mean a
+    // URL-installed plugin has no identity, which is the bug being fixed.
+    const fork = readInstalledRepoEvidence('web', 'dsh-plug', 'github:myfork/dsh-plug')
+    expect(fork.identities).toEqual(['myfork/dsh-plug'])
+    expect(fork.identities).not.toContain('upstream/dsh-plug')
+    // A Release archive states its own source too — and it is the fork's.
+    const asset = readInstalledRepoEvidence('web', 'dsh-plug', 'https://github.com/myfork/dsh-plug/releases/download/v1/p.tgz')
+    expect(asset.identities).not.toContain('upstream/dsh-plug')
+    // A host this build cannot parse yields nothing rather than a guess.
     expect(readInstalledRepoEvidence('web', 'dsh-plug', 'git+https://gitea.example/me/dsh-plug.git'))
       .toEqual({ identities: [], hints: [] })
   })
@@ -302,13 +365,176 @@ describe('readInstalledRepoEvidence (#141)', () => {
   })
 })
 
+describe('readDependencyOwners (#634)', () => {
+  function installPackage(name: string, manifest: Record<string, unknown>): void {
+    const dir = join(profileDir('web'), 'node_modules', ...name.split('/'))
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name, version: '1.0.0', ...manifest }))
+  }
+
+  it('names the installed package that declares each of the others', () => {
+    writeProfile({})
+    installPackage('dsh-office', {
+      dsh: {},
+      dependencies: { '@univer/engine-binding': '1.0.0' },
+      peerDependencies: { '@univer/exchange-binding': '0.1.1' },
+    })
+    installPackage('@univer/engine-binding', {})
+    installPackage('@univer/exchange-binding', {})
+    installPackage('dsh-loop', { dsh: {} })
+
+    const owners = readDependencyOwners('web', ['dsh-office', '@univer/engine-binding', '@univer/exchange-binding', 'dsh-loop'])
+
+    expect(owners['@univer/engine-binding']).toBe('dsh-office')
+    // A peer dependency is what pnpm's auto-install-peers writes into the
+    // profile manifest, so it counts as ownership too.
+    expect(owners['@univer/exchange-binding']).toBe('dsh-office')
+    // A plugin nobody declares stays unowned, and so does the owner itself.
+    expect(owners['dsh-loop']).toBeUndefined()
+    expect(owners['dsh-office']).toBeUndefined()
+  })
+
+  it('ignores what is not installed, self-declarations, and manifest key order', () => {
+    writeProfile({})
+    installPackage('dsh-b', { dsh: {}, dependencies: { 'dsh-b': '1.0.0', 'not-installed': '1.0.0', shared: '1.0.0' } })
+    installPackage('dsh-a', { dsh: {}, dependencies: { shared: '1.0.0' } })
+    installPackage('shared', {})
+
+    const owners = readDependencyOwners('web', ['dsh-b', 'dsh-a', 'shared'])
+
+    expect(owners['not-installed']).toBeUndefined()
+    expect(owners['dsh-b']).toBeUndefined()
+    // Two owners declare it; the answer is the first in sorted order, not the
+    // order the caller happened to pass.
+    expect(owners.shared).toBe('dsh-a')
+    expect(readDependencyOwners('web', ['shared', 'dsh-b', 'dsh-a']).shared).toBe('dsh-a')
+  })
+
+  it('is empty when nothing is installed or a manifest cannot be read', () => {
+    writeProfile({})
+    expect(readDependencyOwners('web', [])).toEqual({})
+    expect(readDependencyOwners('web', ['absent'])).toEqual({})
+  })
+})
+
 describe('readLockCommits', () => {
-  it('extracts pinned commits from codeload URLs keyed lowercase; empty without a lockfile', () => {
+  const SHA = '0123456789abcdef0123456789abcdef01234567'
+  const OTHER = 'fedcba9876543210fedcba9876543210fedcba98'
+
+  function writeLock(body: string): void {
+    writeProfile({})
+    writeFileSync(join(profileDir('web'), 'pnpm-lock.yaml'), body)
+  }
+
+  it('extracts pinned commits from codeload URLs keyed lowercase by host; empty without a lockfile', () => {
     writeProfile({})
     expect(readLockCommits('web').size).toBe(0)
-    writeFileSync(join(profileDir('web'), 'pnpm-lock.yaml'),
-      '  https://codeload.github.com/Owner/Repo/tar.gz/0123456789abcdef0123456789abcdef01234567:\n')
-    expect(readLockCommits('web').get('owner/repo')).toBe('0123456789abcdef0123456789abcdef01234567')
+    writeLock(`  https://codeload.github.com/Owner/Repo/tar.gz/${SHA}:\n`)
+    expect(readLockCommits('web').get('github.com/owner/repo')).toBe(SHA)
+  })
+
+  // The two lockfile lines below are pnpm 12.4.1's own output, copied from a
+  // real install of each host (#637) — not a guess at the shape.
+  it('reads the GitLab archive tarball, nested group path and all', () => {
+    writeLock('  \'@gitlab/eslint-plugin@https://gitlab.com/gitlab-org/frontend/eslint-plugin/-/archive/'
+      + `${SHA}/eslint-plugin-${SHA}.tar.gz':\n    resolution: {gitHosted: true, tarball: `
+      + `https://gitlab.com/gitlab-org/frontend/eslint-plugin/-/archive/${SHA}/eslint-plugin-${SHA}.tar.gz}\n`)
+    expect(readLockCommits('web').get('gitlab.com/gitlab-org/frontend/eslint-plugin')).toBe(SHA)
+  })
+
+  it('reads the GitLab archive the way pnpm 9 and 10 write it, under the same key', () => {
+    // Those majors fetch through the REST API instead: the repository is
+    // percent-encoded into one path segment and the commit is a query
+    // parameter. Same repository, same commit, so the same key as the
+    // `/-/archive/` shape above — this line is pnpm 9.15.4's own output.
+    writeLock(`  version: https://gitlab.com/api/v4/projects/gitlab-org%2Fgitlab-svgs/repository/archive.tar.gz?sha=${SHA}\n`)
+    expect(readLockCommits('web').get('gitlab.com/gitlab-org/gitlab-svgs')).toBe(SHA)
+  })
+
+  it('reads the Bitbucket archive tarball', () => {
+    writeLock(`  '@atlassian/aui-workspace@https://bitbucket.org/Atlassian/AUI/get/${SHA}.tar.gz':\n`)
+    expect(readLockCommits('web').get('bitbucket.org/atlassian/aui')).toBe(SHA)
+  })
+
+  // The reason the key carries a host at all: one plugin's commit must never
+  // be able to answer for another plugin that happens to share owner/repo.
+  it('keeps the same owner/repo apart across hosts', () => {
+    writeLock(`  https://gitlab.com/me/themer/-/archive/${SHA}/themer-${SHA}.tar.gz\n`
+      + `  https://bitbucket.org/me/themer/get/${OTHER}.tar.gz\n`)
+    const commits = readLockCommits('web')
+    expect(commits.get('gitlab.com/me/themer')).toBe(SHA)
+    expect(commits.get('bitbucket.org/me/themer')).toBe(OTHER)
+    expect(commits.get('me/themer')).toBeUndefined()
+  })
+
+  it('keeps a port in the key, and takes the host from the URL even behind a proxy', () => {
+    writeLock(`  https://git.example.com:8443/me/themer/-/archive/${SHA}/themer-${SHA}.tar.gz\n`
+      + `  https://proxy.example.com/https://gitlab.com/you/themer/-/archive/${OTHER}/themer-${OTHER}.tar.gz\n`)
+    const commits = readLockCommits('web')
+    expect(commits.get('git.example.com:8443/me/themer')).toBe(SHA)
+    expect(commits.get('git.example.com/me/themer')).toBeUndefined()
+    // A proxy in front of the URL is not the repository's host.
+    expect(commits.get('gitlab.com/you/themer')).toBe(OTHER)
+    expect(commits.get('proxy.example.com/https://gitlab.com/you/themer')).toBeUndefined()
+  })
+
+  it('keys a self-hosted GitLab archive under its own host, not gitlab.com', () => {
+    writeLock(`  https://git.example.com/me/themer/-/archive/${SHA}/themer-${SHA}.tar.gz\n`)
+    const commits = readLockCommits('web')
+    expect(commits.get('git.example.com/me/themer')).toBe(SHA)
+    expect(commits.get('gitlab.com/me/themer')).toBeUndefined()
+  })
+})
+
+describe('readGitResolutionCommit', () => {
+  const A = 'a'.repeat(40)
+  const B = 'b'.repeat(40)
+
+  function writeLock(body: string): void {
+    writeProfile({})
+    writeFileSync(join(profileDir('web'), 'pnpm-lock.yaml'), body)
+  }
+
+  it('gives a host shorthand nothing rather than another repository\'s commit (#637)', () => {
+    // No pnpm the market supports resolves gitlab.com / bitbucket.org by
+    // cloning — 9.15.4, 10.34.5, 11.8.0 and 12.4.1 all write an archive
+    // tarball, which `readLockCommits` reads — so a `type: git` entry for one
+    // of these hosts does not occur today. This pins the direction the miss
+    // takes if some future pnpm writes one: nothing, which disables rollback
+    // with a clear reason, rather than a same-named repository's commit,
+    // which would roll back to the wrong tree.
+    writeLock(`lockfileVersion: 9\n  resolution: {commit: ${A}, repo: https://gitlab.com/me/themer.git, type: git}\n`)
+
+    expect(readGitResolutionCommit('web', 'gitlab:me/themer')).toBeNull()
+    expect(readGitResolutionCommit('web', 'bitbucket:me/themer')).toBeNull()
+    // The URL spelling of the same install still reads, untouched by #637.
+    expect(readGitResolutionCommit('web', 'git+https://gitlab.com/me/themer.git')).toBe(A)
+  })
+
+  it('reads the commit pnpm recorded for a remote, whatever the spelling', () => {
+    writeLock(`lockfileVersion: 9\n  resolution: {commit: ${A}, repo: https://gitea.example.com/me/themer.git, type: git}\n`)
+
+    expect(readGitResolutionCommit('web', 'git+https://gitea.example.com/me/themer.git')).toBe(A)
+    expect(readGitResolutionCommit('web', 'git+https://gitea.example.com/me/themer.git#main')).toBe(A)
+    expect(readGitResolutionCommit('web', 'git+https://other.example.com/me/themer.git')).toBeNull()
+  })
+
+  it('keeps two packages of one monorepo apart by their path selector (#632)', () => {
+    writeLock([
+      'lockfileVersion: 9',
+      `  resolution: {commit: ${A}, path: /packages/plug-a, repo: https://gitea.example.com/me/mono.git, type: git}`,
+      `  resolution: {commit: ${B}, path: /packages/plug-b, repo: https://gitea.example.com/me/mono.git, type: git}`,
+      '',
+    ].join('\n'))
+
+    const remote = 'git+https://gitea.example.com/me/mono.git'
+    expect(readGitResolutionCommit('web', `${remote}#main&path:/packages/plug-a`)).toBe(A)
+    expect(readGitResolutionCommit('web', `${remote}#path:/packages/plug-b`)).toBe(B)
+    expect(readGitResolutionCommit('web', `${remote}#path:/packages/plug-c`)).toBeNull()
+    // No selector while several siblings share the remote: none of them is
+    // this package's commit, and answering with the first would compare one
+    // sibling's identity against another's.
+    expect(readGitResolutionCommit('web', remote)).toBeNull()
   })
 })
 
@@ -498,6 +724,52 @@ describe('manifest rollback (#65)', () => {
 })
 
 describe('setAllowBuilds (#6)', () => {
+  it('accepts the clone-URL and archive keys off GitHub, and only in those exact shapes (#637)', async () => {
+    // Same bargain as the codeload widening below: the allowlist is what
+    // stops a caller writing arbitrary text into a file pnpm parses, so each
+    // new branch names its host and path shape, and the near-misses are
+    // asserted alongside the hits.
+    const { setAllowBuilds } = await import('../src/profile.ts')
+    writeProfile({})
+    const sha = 'b0e6c57ebeeb4796017864f5cd5c66e6ba0899ec'
+    const approved = setAllowBuilds('web', [
+      // Hits: the clone URL of any host, with an optional commit pin, and
+      // the archive gitlab.com / bitbucket.org serve.
+      'p@git+https://gitlab.com/group/sub/plug.git',
+      'p@git+https://gitea.example.com:8443/me/plug.git',
+      `p@git+https://gitea.example.com/me/plug.git#${sha}`,
+      // A remote spelled without `.git`, which pnpm keys exactly as spelled.
+      'p@git+https://gitea.example.com/me/plug',
+      `p@git+https://gitea.example.com/me/plug#${sha}`,
+      `p@https://bitbucket.org/o/r/get/${sha}.tar.gz`,
+      `p@https://gitlab.com/group/sub/plug/-/archive/${sha}/plug-${sha}.tar.gz`,
+      // Near-misses. A traversal in the final segment, now that it may end
+      // without `.git`…
+      'p@git+https://gitea.example.com/me/..',
+      // …a different host wearing an archive shape…
+      `p@https://evil.example.com/o/r/get/${sha}.tar.gz`,
+      // …the right host with no commit pin…
+      'p@https://bitbucket.org/o/r/get/HEAD.tar.gz',
+      // …a path traversal dressed as a repo…
+      `p@https://gitlab.com/../../etc/-/archive/${sha}/x-${sha}.tar.gz`,
+      // …a clone URL over plain http…
+      'p@git+http://gitea.example.com/me/plug.git',
+      // …a local path, which is not a source the market installs from…
+      'p@git+file:///tmp/plug.git',
+      // …and another entry smuggled through a newline.
+      'p@git+https://gitea.example.com/me/plug.git\n  evil: true',
+    ])
+    expect(approved).toEqual([
+      'p@git+https://gitlab.com/group/sub/plug.git',
+      'p@git+https://gitea.example.com:8443/me/plug.git',
+      `p@git+https://gitea.example.com/me/plug.git#${sha}`,
+      'p@git+https://gitea.example.com/me/plug',
+      `p@git+https://gitea.example.com/me/plug#${sha}`,
+      `p@https://bitbucket.org/o/r/get/${sha}.tar.gz`,
+      `p@https://gitlab.com/group/sub/plug/-/archive/${sha}/plug-${sha}.tar.gz`,
+    ])
+  })
+
   it('accepts the commit-pinned codeload key, and only in that exact shape (#285)', async () => {
     // The allowlist is what stops a caller writing arbitrary text into a
     // file pnpm parses. Widening it for pnpm <11.21 must not widen it into
@@ -560,11 +832,22 @@ describe('setAllowBuilds (#6)', () => {
     // such entries on every rewrite.
     writeFileSync(join(dir, 'pnpm-workspace.yaml'),
       'packages:\n  - .\n\nallowBuilds:\n  keep-me@git+https://github.com/o/keep-me.git: true\n  plain: false\n')
-    const approved = setAllowBuilds('web', ['dsh-audit@git+https://github.com/omdsh-dev/dsh-audit.git', 'dsh-audit', 'evil@git+https://evil.example/x.git'])
+    // Another host's clone URL is now written too (#637): these keys come
+    // from the profile's own manifest, so refusing them only stopped
+    // gitlab/bitbucket/self-hosted plugins from ever authorizing a build.
+    // What the allowlist still refuses is a key that is not one of the
+    // shapes — here, one carrying a second YAML entry.
+    const approved = setAllowBuilds('web', [
+      'dsh-audit@git+https://github.com/omdsh-dev/dsh-audit.git',
+      'dsh-audit',
+      'other@git+https://gitea.example.com/me/x.git',
+      'evil@git+https://evil.example/x.git\n  evil: true',
+    ])
     expect(approved).toContain('keep-me@git+https://github.com/o/keep-me.git')
     expect(approved).toContain('dsh-audit@git+https://github.com/omdsh-dev/dsh-audit.git')
     expect(approved).toContain('dsh-audit')
-    expect(approved).not.toContain('evil@git+https://evil.example/x.git')
+    expect(approved).toContain('other@git+https://gitea.example.com/me/x.git')
+    expect(approved).not.toContain('evil@git+https://evil.example/x.git\n  evil: true')
     const yaml = readFileSync(join(dir, 'pnpm-workspace.yaml'), 'utf8')
     expect(yaml).toContain('keep-me@git+https://github.com/o/keep-me.git: true')
     expect(yaml).toMatch(/plain: false/)

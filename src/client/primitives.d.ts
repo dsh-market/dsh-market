@@ -113,6 +113,10 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
     size?: number
     className?: string
   }
+  // Pre-0.1.7 size suffixes. Host 0.1.7-alpha.1 renamed these to weight
+  // names (below) with no alias; the market resolves Regular first, then
+  // the size-suffixed spelling, via icons.ts (#671). Pixel size stays a
+  // separate `size` prop on each call site.
   export function IconChevronDownOutline14(props: IconProps): ReactElement
   export function IconChevronUpOutline14(props: IconProps): ReactElement
   export function IconCheckOutline16(props: IconProps): ReactElement
@@ -130,6 +134,34 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
   export function IconDownloadOutline16(props: IconProps): ReactElement
   export function IconFullscreenOutline16(props: IconProps): ReactElement
   export function IconFolderOpen16(props: IconProps): ReactElement
+  // 0.1.7-alpha.1 weight names. Market call sites use Regular (default
+  // product stroke); Medium is the emphasized 1.3px variant.
+  export function IconChevronDownOutlineRegular(props: IconProps): ReactElement
+  export function IconChevronUpOutlineRegular(props: IconProps): ReactElement
+  export function IconCheckOutlineRegular(props: IconProps): ReactElement
+  export function IconCheckOutlineMedium(props: IconProps): ReactElement
+  export function IconChevronLeftOutlineRegular(props: IconProps): ReactElement
+  export function IconChevronRightOutlineRegular(props: IconProps): ReactElement
+  export function IconSearchOutlineRegular(props: IconProps): ReactElement
+  export function IconSearchOutlineMedium(props: IconProps): ReactElement
+  export function IconRefreshOutlineRegular(props: IconProps): ReactElement
+  export function IconWarningOutlineRegular(props: IconProps): ReactElement
+  export function IconWarningOutlineMedium(props: IconProps): ReactElement
+  export function IconQuestionOutlineRegular(props: IconProps): ReactElement
+  export function IconSparkleRegular(props: IconProps): ReactElement
+  export function IconSparkleMedium(props: IconProps): ReactElement
+  export function IconCodeOutlineRegular(props: IconProps): ReactElement
+  export function IconCodeOutlineMedium(props: IconProps): ReactElement
+  export function IconCordisPluginOutlineRegular(props: IconProps): ReactElement
+  export function IconLoadingOutlineRegular(props: IconProps): ReactElement
+  export function IconLoadingOutlineMedium(props: IconProps): ReactElement
+  export function IconLinkOutlineRegular(props: IconProps): ReactElement
+  export function IconDownloadOutlineRegular(props: IconProps): ReactElement
+  export function IconDownloadOutlineMedium(props: IconProps): ReactElement
+  export function IconFullscreenOutlineRegular(props: IconProps): ReactElement
+  export function IconFullscreenOutlineMedium(props: IconProps): ReactElement
+  export function IconFolderOpenRegular(props: IconProps): ReactElement
+  export function IconFolderOpenMedium(props: IconProps): ReactElement
 
   export type StateDotState = 'done' | 'warning' | 'ongoing' | 'error'
   export function StateDot(props: {

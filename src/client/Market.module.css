@@ -80,7 +80,13 @@
 }
 .topBtn{width:38px;height:38px;border-radius:99px;padding:0}
 .tag{border:1px solid var(--dsw-alias-border-l3,#d9dde3);color:var(--dsw-alias-label-secondary,#6b7280);border-radius:4px;flex-shrink:0;padding:1px 6px;font-size:11px;line-height:16px}
+/* Same quiet chrome as `.tag`. Compatible / undeclared / unknown stay here —
+   declaration satisfaction is the common case and must not outshout category
+   tags. Only a confirmed mismatch (.hostRequirementBad) takes colour.
+   "Compatible" means the declared range is satisfied, not that the plugin
+   was tested on this host (RFC 2714 §4.4). */
 .hostRequirement{border:1px solid var(--dsw-alias-border-l3,#d9dde3);color:var(--dsw-alias-label-secondary,#6b7280);border-radius:4px;min-width:0;max-width:100%;padding:1px 6px;font-size:11px;line-height:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hostRequirementBad{border-color:var(--dsw-alias-state-error-primary,#dc2626);color:var(--dsw-alias-state-error-primary,#dc2626);background:#dc262614}
 .hostFilterNote{margin-top:6px;color:var(--dsw-alias-label-tertiary,#8b93a1);font-size:11px;line-height:16px}
 .okState{font-size:12px;font-weight:600;color:var(--dsw-alias-state-success-primary,#16a34a);white-space:nowrap}
 .catsWrap{display:flex;gap:6px;flex-wrap:wrap;flex:1;min-width:0;align-items:center}
@@ -582,8 +588,8 @@
 .irowMissing{filter:grayscale(1);opacity:.5}
 .irow>.src,.irow>.owner{white-space:nowrap;flex-shrink:0}
 .irow button{white-space:nowrap;flex-shrink:0}
-.tabSearchRow{display:flex;padding:0 4px 6px}
-.tabSearch{width:100%}
+.tabSearchRow{display:flex;align-items:center;gap:8px;padding:0 4px 12px}
+.tabSearch{flex:1;min-width:0}
 /* Buttons sharing the row with a description must keep one line (#26, thanks @yanshuai2002) */
 .spec{font-size:11px;color:var(--dsw-alias-label-secondary,#9ca3af);font-family:ui-monospace,Menlo,monospace;overflow-wrap:anywhere;min-width:0}
 .specTag{display:inline-flex;align-items:center;height:16px;padding:0 5px;border-radius:4px;font-size:10px;font-weight:600;white-space:nowrap;flex-shrink:0}
@@ -630,18 +636,54 @@
 .viewBtn:hover{color:var(--dsw-alias-brand-primary,#4f6ef7)}
 .viewOn{background:var(--dsw-alias-bg-layer-2,#eef0f4);color:var(--dsw-alias-label-primary,#1f2328);font-weight:600}
 .groupRow{background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:12px;padding:12px 14px;margin-bottom:10px}
-.groupHead{display:flex;align-items:center;gap:10px;min-width:0}
+.groupHead{display:flex;align-items:center;gap:10px;min-width:0;flex-wrap:wrap}
+.groupCollapse{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0;border:none;border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary,#6b7280);cursor:pointer;flex-shrink:0}
+.groupCollapse:hover{background:var(--dsw-alias-bg-layer-2,#eef0f4);color:var(--dsw-alias-label-primary,#1f2328)}
+.groupTitle{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1 1 auto}
+.groupTitle .groupHint{margin-top:0}
 .groupName{font-weight:600;font-size:13px;line-height:20px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.groupActions{display:flex;align-items:center;gap:6px;flex-shrink:0}
+.groupMeta{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#8b93a1)}
+.groupActions{display:flex;align-items:center;gap:6px;flex-shrink:0;flex-wrap:wrap;margin-left:auto}
 .groupMembers{display:flex;flex-direction:column;gap:6px;margin-top:10px}
-.groupMember{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:8px;background:var(--dsw-alias-bg-layer-2,#f7f8fa);font-size:12px;line-height:18px}
+.groupMember{display:flex;align-items:center;gap:8px;min-width:0;padding:6px 8px;border-radius:8px;background:var(--dsw-alias-bg-layer-2,#f7f8fa);font-size:12px;line-height:18px}
 .groupMember .nm{font-size:12px;flex:1;min-width:0}
+/* Name takes the row up to the switch. Do not add a flex spacer beside it —
+   that spacer was splitting the row and ellipsizing the name early. */
+.memberName{display:flex;align-items:center;gap:6px;min-width:0;flex:1 1 auto}
+.memberName .nm{flex:0 1 auto;min-width:0}
+.memberKind{flex:0 0 auto;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#8b93a1);white-space:nowrap}
+.themeSlot{box-shadow:inset 0 -1px 0 var(--dsw-alias-border-l2,#e5e7eb);border-radius:8px 8px 0 0;margin-bottom:4px}
+.groupMember>.switch,.groupMember>button{flex-shrink:0}
+.groupMemberAction{flex:0 0 auto;margin-left:auto}
+.groupMemberAction button{white-space:nowrap}
 .groupAddPanel{display:flex;flex-direction:column;gap:6px;margin-top:10px;padding-top:10px;border-top:1px dashed var(--dsw-alias-border-l2,#e5e7eb)}
+.groupAddModalBody{display:flex;flex-direction:column;gap:10px;min-width:0}
+.groupAddFilters{display:flex;flex-wrap:wrap;gap:6px}
+.groupAddModalList{display:flex;flex-direction:column;gap:6px;max-height:min(50vh,360px);overflow-y:auto;padding-right:2px}
+.groupAddModalHint{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#6b7280);margin:0}
+.groupAddPick{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;background:var(--dsw-alias-bg-layer-2,#f7f8fa);cursor:pointer;min-width:0}
+.groupAddPick:hover{background:var(--dsw-alias-bg-layer-2,#eef0f4)}
+.groupAddPick input{flex-shrink:0;margin:0}
+.groupAddPick .nm{font-size:12px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.groupAddFooterMeta{margin-right:auto;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#6b7280);align-self:center}
+.groupOrgHint{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#8b93a1);margin:4px 0 0}
+.groupRenameField{display:flex;flex-direction:column;gap:6px;min-width:min(100%,320px)}
+.groupRenameField label{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#6b7280)}
+.groupRenameField .inlineInput{width:100%}
 .groupCreate{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.groupCreateInline{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.groupCreateInline .inlineInput{width:160px;flex:none}
 .inlineInput{flex:1;min-width:120px}
-.assignRow{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.assignSelect{border:1px solid var(--dsw-alias-border-l2,#e5e7eb);background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary,#1f2328);border-radius:6px;padding:3px 6px;font:inherit;font-size:12px;line-height:18px}
+/* One flex row: name, state, truncated note, assign. Do not reuse .act —
+   that class carries the card's margin-top and drops the state off the line. */
+.ungroupedRow{flex-wrap:nowrap}
+.ungroupedRow>.nm{flex:0 1 auto;font-size:12px;line-height:18px;max-width:42%}
+.ungroupedState{display:inline-flex;align-items:center;flex:0 1 auto;min-width:0;max-width:46%;margin:0}
+.ungroupedState > span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ungroupedDesc{flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#8b93a1)}
+.ungroupedDesc.noteMine{color:var(--dsw-alias-label-primary,#1f2328)}
 .groupHint{font-size:11px;color:var(--dsw-alias-label-tertiary,#8b93a1)}
+.sect{margin:14px 2px 8px;font-size:12px;font-weight:600;color:var(--dsw-alias-label-secondary,#6b7280)}
 .sectAction{margin:14px 2px 8px;font-size:12px;font-weight:600;color:var(--dsw-alias-label-secondary,#6b7280);display:flex;align-items:center;gap:8px}
 
 /* #61: profile backup & restore */
@@ -796,19 +838,32 @@
    an action competing with 更新/卸载 on the trailing edge. */
 .notesLink{display:block;background:0 0;border:none;padding:0;margin:2px 0 0;font:inherit;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#6b7280);cursor:pointer;text-align:left}
 .notesLink:hover{color:var(--dsw-alias-label-primary,#1f2328)}
-.notesBody{display:flex;flex-direction:column;gap:8px;min-width:0}
+/* Wider only for prose release notes — npm/commit lists stay at the default
+   Modal width so a short changelog does not sit in a half-empty box. */
+.notesModalWide{width:min(640px,92vw);max-width:min(640px,92vw)}
+/* Cap height so a long release body scrolls inside the dialog instead of
+   stretching the Modal past the viewport (same idea as .notesPre / .commentsMount).
+   flex:0 keeps short lists from growing into empty space above the footer. */
+.notesBody{display:flex;flex-direction:column;gap:10px;min-width:0;flex:0 1 auto;max-height:min(60vh,520px);overflow-y:auto;overscroll-behavior:contain;padding:0 2px 8px 0}
 /* 弹窗内的层级：范围行弱化、区块标题小而重、正文有承载面 */
 .notesRange{display:flex;align-items:center;gap:8px;font-size:12px;line-height:18px;margin-bottom:4px}
 .notesArrow{color:var(--dsw-alias-label-tertiary,#8b93a1)}
-.notesMeta{font-size:12px;line-height:18px;letter-spacing:.02em;text-transform:uppercase;color:var(--dsw-alias-label-secondary,#6b7280);display:flex;gap:6px;flex-wrap:wrap;align-items:baseline;margin-top:12px}
+.notesMeta{font-size:12px;line-height:18px;letter-spacing:.02em;text-transform:uppercase;color:var(--dsw-alias-label-secondary,#6b7280);display:flex;gap:6px;flex-wrap:wrap;align-items:baseline;margin-top:4px}
+.notesBody>.notesMeta:first-child{margin-top:0}
 .notesPre{margin:0;white-space:pre-wrap;word-break:break-word;font-size:13px;line-height:20px;padding:10px 12px;background:var(--dsw-alias-bg-layer-2,#eef0f4);border-radius:8px;max-height:40vh;overflow:auto}
-.notesList{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px;font-size:13px;line-height:20px}
-/* markdown轻渲染的层级：标题、段落、行内代码 */
-.notesRendered{display:flex;flex-direction:column;gap:6px;min-width:0}
-.notesH{font-size:13px;font-weight:650;line-height:20px;margin-top:6px}
+/* markdown轻渲染的层级：标题、段落、引用、围栏代码、行内代码与链接 */
+.notesRendered{display:flex;flex-direction:column;gap:8px;min-width:0}
+.notesImg{display:block;max-width:100%;height:auto;border-radius:6px;margin:4px 0}
+.notesH{font-size:13px;font-weight:650;line-height:20px;margin-top:4px}
 .notesP{font-size:13px;line-height:20px}
+.notesQuote{font-size:13px;line-height:20px;margin:0;padding:8px 10px;border-left:3px solid var(--dsw-alias-border-l3,#d9dde3);background:var(--dsw-alias-bg-layer-2,#f7f8fa);border-radius:0 6px 6px 0;color:var(--dsw-alias-label-primary,#1f2328)}
+.notesFence{margin:0;padding:10px 12px;background:var(--dsw-alias-bg-layer-2,#eef0f4);border-radius:8px;overflow-x:auto;font-family:var(--dsw-alias-font-mono,ui-monospace,Menlo,monospace);font-size:12px;line-height:18px;white-space:pre}
+.notesFence code{font:inherit;background:transparent;padding:0}
+.notesBullets{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px;font-size:13px;line-height:20px}
+.notesA{color:var(--dsw-alias-brand-primary,#4f6ef7);text-decoration:none}
+.notesA:hover{text-decoration:underline}
 .notesCode{font-family:var(--dsw-alias-font-mono,ui-monospace,monospace);font-size:12px;padding:1px 5px;border-radius:5px;background:var(--dsw-alias-bg-layer-2,#eef0f4)}
-/* 列表行：日期一列弱化对齐，内容一列自适应换行 */
+/* commit / npm 列表行：日期一列弱化对齐，内容一列自适应换行 */
 .notesList{margin:0;padding:0;list-style:none;display:flex;flex-direction:column}
 .notesRow{display:flex;gap:12px;align-items:baseline;padding:6px 0;border-bottom:1px solid var(--dsw-alias-border-l2,#e5e7eb)}
 .notesRow:last-child{border-bottom:none}
@@ -817,6 +872,20 @@
 /* commit行：消息限高两行，短sha右对齐可点 */
 .notesMsg{min-width:0;word-break:break-word;font-size:13px;line-height:20px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 .notesSha{margin-left:auto;flex-shrink:0;font-size:12px;color:var(--dsw-alias-label-secondary,#6b7280);text-decoration:none;font-variant-numeric:tabular-nums}
+/* 启动失败恢复面板：红=本次启动点名报错的插件，勾选=下次启动启用 */
+.recoverySummary{display:flex;gap:8px;align-items:flex-start;font-size:12px;color:var(--dsw-alias-state-error-primary,#dc2626);margin-bottom:8px;word-break:break-word}
+.recoveryHint{font-size:12px;color:var(--dsw-alias-label-secondary,#6b7280);margin:8px 0}
+.recoveryList{display:flex;flex-direction:column;border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:8px;overflow:hidden;max-height:320px;overflow-y:auto}
+.recoveryRow{display:flex;gap:8px;align-items:flex-start;padding:6px 10px;font-size:12px;border-top:1px solid var(--dsw-alias-border-l2,#eef0f4)}
+.recoveryRow:first-child{border-top:none}
+.recoveryBlamed{background:rgba(220,38,38,.07);box-shadow:inset 3px 0 0 var(--dsw-alias-state-error-primary,#dc2626)}
+.recoveryMuted{opacity:.6}
+.recoveryName{display:flex;flex-direction:column;gap:2px;min-width:0;word-break:break-word}
+.recoveryReason{font-size:11px;color:var(--dsw-alias-state-error-primary,#dc2626);word-break:break-word}
+.recoveryNote{font-size:11px;color:var(--dsw-alias-label-tertiary,#8b93a1);margin-top:8px;word-break:break-word}
+.recoveryBadge{margin-left:6px;font-size:10px;padding:0 5px;border-radius:5px;background:var(--dsw-alias-bg-layer-2,#eef0f4);color:var(--dsw-alias-label-secondary,#6b7280)}
+.recoveryLog{font-size:11px;color:var(--dsw-alias-label-secondary,#6b7280);margin:4px 0 8px}
+.recoveryLog pre{white-space:pre-wrap;word-break:break-word;max-height:180px;overflow:auto;margin:6px 0 0}
 .notesSha:hover{color:var(--dsw-alias-label-primary,#1f2328);text-decoration:underline}
 .notesVer{color:inherit;text-decoration:none;font-weight:600}
 .notesVer:hover{text-decoration:underline}

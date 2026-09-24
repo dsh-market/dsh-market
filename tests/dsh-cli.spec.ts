@@ -1,7 +1,8 @@
 import { EventEmitter } from 'node:events'
 import { describe, expect, it, vi } from 'vitest'
 import { join } from 'node:path'
-import { cmdCommandLine, isCmdSafeProfileName, nodeExecutable, proxyEnvForPnpm, quoteCmdArg, TARGET_RE, toolSearchDirs } from '../src/dsh-cli.ts'
+import { cmdCommandLine, gitEnvForPnpm, isCmdSafeProfileName, nodeExecutable, pnpmConfigEnvForArgs, proxyEnvForPnpm, quoteCmdArg, TARGET_RE, toolSearchDirs } from '../src/dsh-cli.ts'
+import { AUTO_INSTALL_PEERS_OFF, FETCH_TIMEOUT_OVERRIDE, RELEASE_AGE_OVERRIDE } from '../src/install.ts'
 import { routesFor } from '../src/regions.ts'
 
 describe('cmd.exe command line building (DEP0190 shim)', () => {
@@ -190,7 +191,17 @@ describe('the proxy translation actually reaches spawned pnpm (#148)', () => {
         return child
       },
     }))
-    const previous = process.env.HTTPS_PROXY
+    // Every proxy variable the resolver reads is pinned, not just the one
+    // this case sets. A machine that exports HTTP_PROXY (which is common,
+    // and was true of the contributor who found this) otherwise leaves
+    // `npm_config_proxy` derived from the REAL value and the assertion below
+    // fails for a reason that has nothing to do with the code under test —
+    // a test that only passes on machines shaped like the author's.
+    const previous: Record<string, string | undefined> = {}
+    for (const key of ['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'NO_PROXY', 'no_proxy']) {
+      previous[key] = process.env[key]
+      delete process.env[key]
+    }
     process.env.HTTPS_PROXY = 'http://proxy.corp:3128'
     try {
       const { probePnpm } = await import('../src/dsh-cli.ts')
@@ -199,8 +210,10 @@ describe('the proxy translation actually reaches spawned pnpm (#148)', () => {
       expect(seen[0]?.npm_config_https_proxy).toBe('http://proxy.corp:3128')
       expect(seen[0]?.npm_config_proxy).toBe('http://proxy.corp:3128')
     } finally {
-      if (previous === undefined) delete process.env.HTTPS_PROXY
-      else process.env.HTTPS_PROXY = previous
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[key]
+        else process.env[key] = value
+      }
       vi.doUnmock('node:child_process')
       vi.resetModules()
     }
@@ -274,5 +287,106 @@ describe('toolSearchDirs (#292)', () => {
     for (const platform of ['win32', 'darwin', 'linux']) {
       expect(toolSearchDirs(platform, {}, '/home/u').filter(d => d.trim() === '')).toEqual([])
     }
+  })
+})
+
+describe('git is spawned non-interactively (#587)', () => {
+  // CI=true covers pnpm, which reads it; git does not. A
+  // `github:owner/repo#path:/sub` spec reaches pnpm's git fetcher rather
+  // than the codeload tarball path, and git's credential prompt opens the
+  // controlling terminal — which a spawned child does not have, so the
+  // question was asked where nobody could answer it and the clone sat
+  // there until the 15-minute install timeout.
+  it('refuses the terminal prompt when the caller said nothing', () => {
+    expect(gitEnvForPnpm({})).toEqual({ GIT_TERMINAL_PROMPT: '0' })
+  })
+
+  it('never overwrites a value the caller set', () => {
+    // Someone who turned prompting on has made a statement; a default must
+    // fill silence, not replace speech. Same rule proxyEnvForPnpm follows.
+    expect(gitEnvForPnpm({ GIT_TERMINAL_PROMPT: '1' })).toEqual({})
+  })
+
+  it('treats a blank value as unset', () => {
+    // Not a setting git can parse either: `git_env_bool` rejects it. An
+    // empty string is how a shell spells "I cleared this".
+    expect(gitEnvForPnpm({ GIT_TERMINAL_PROMPT: '' })).toEqual({ GIT_TERMINAL_PROMPT: '0' })
+    expect(gitEnvForPnpm({ GIT_TERMINAL_PROMPT: '   ' })).toEqual({ GIT_TERMINAL_PROMPT: '0' })
+  })
+
+  // Same reasoning as the proxy wiring assertion above: the pure function
+  // being right is worth nothing if spawnEnv never calls it.
+  it('puts the switch in the environment pnpm is spawned with', async () => {
+    const seen = await spawnedEnv(env => { delete env.GIT_TERMINAL_PROMPT })
+    expect(seen?.GIT_TERMINAL_PROMPT).toBe('0')
+  })
+
+  // The pure-function assertion above proves gitEnvForPnpm stays quiet; this
+  // proves the quiet actually reaches the child. Worth its own case because
+  // the two halves fail independently — a default that stopped being
+  // conditional would override the user here even though spawnEnv is wired
+  // correctly. (Spread ORDER is deliberately not asserted: gitEnvForPnpm
+  // returns {} exactly when process.env carries a value, so the two can
+  // never disagree and moving the spread is a no-op, not a defect.)
+  it('lets the caller value survive all the way into the spawned env', async () => {
+    const seen = await spawnedEnv(env => { env.GIT_TERMINAL_PROMPT = '1' })
+    expect(seen?.GIT_TERMINAL_PROMPT).toBe('1')
+  })
+})
+
+/**
+ * Run one real spawn through spawnEnv with `mutate` applied to process.env,
+ * and hand back the environment the child was given.
+ */
+async function spawnedEnv(
+  mutate: (env: NodeJS.ProcessEnv) => void,
+): Promise<NodeJS.ProcessEnv | undefined> {
+  vi.resetModules()
+  const seen: Array<NodeJS.ProcessEnv | undefined> = []
+  vi.doMock('node:child_process', () => ({
+    spawn: (_file: string, _args: readonly string[], options: { env?: NodeJS.ProcessEnv }) => {
+      seen.push(options.env)
+      const child = new EventEmitter() as EventEmitter & { pid?: number }
+      child.pid = 1
+      // Non-zero: probePnpm caches only success, so this leaves no state.
+      setImmediate(() => child.emit('close', 1))
+      return child
+    },
+  }))
+  const previous = process.env.GIT_TERMINAL_PROMPT
+  mutate(process.env)
+  try {
+    const { probePnpm } = await import('../src/dsh-cli.ts')
+    await probePnpm()
+    expect(seen.length).toBeGreaterThan(0)
+    return seen[0]
+  } finally {
+    if (previous === undefined) delete process.env.GIT_TERMINAL_PROMPT
+    else process.env.GIT_TERMINAL_PROMPT = previous
+    vi.doUnmock('node:child_process')
+    vi.resetModules()
+  }
+}
+
+describe('pnpmConfigEnvForArgs (#615)', () => {
+  it('repeats each --config override as the PNPM_CONFIG_* variable pnpm 12 still reads', () => {
+    // The real constants, not copies: a respelling must keep matching or
+    // this is the test that says so.
+    expect(pnpmConfigEnvForArgs(['add', FETCH_TIMEOUT_OVERRIDE, 'dsh-loop'])).toEqual({ PNPM_CONFIG_FETCH_TIMEOUT: '600000' })
+    expect(pnpmConfigEnvForArgs(['add', AUTO_INSTALL_PEERS_OFF, 'dsh-loop'])).toEqual({ PNPM_CONFIG_AUTO_INSTALL_PEERS: 'false' })
+    expect(pnpmConfigEnvForArgs(['add', RELEASE_AGE_OVERRIDE, 'dsh-loop'])).toEqual({ PNPM_CONFIG_MINIMUM_RELEASE_AGE: '0' })
+    // Either spelling of a key lands on the same variable.
+    expect(pnpmConfigEnvForArgs(['add', '--config.fetchTimeout=12345'])).toEqual({ PNPM_CONFIG_FETCH_TIMEOUT: '12345' })
+    expect(pnpmConfigEnvForArgs(['add', '--config.fetch-timeout=12345'])).toEqual({ PNPM_CONFIG_FETCH_TIMEOUT: '12345' })
+    // Two overrides on one run: both travel.
+    expect(pnpmConfigEnvForArgs(['add', FETCH_TIMEOUT_OVERRIDE, AUTO_INSTALL_PEERS_OFF, 'dsh-loop']))
+      .toEqual({ PNPM_CONFIG_FETCH_TIMEOUT: '600000', PNPM_CONFIG_AUTO_INSTALL_PEERS: 'false' })
+  })
+
+  it('sets nothing for a run that carries no override', () => {
+    expect(pnpmConfigEnvForArgs(['add', 'dsh-loop'])).toEqual({})
+    expect(pnpmConfigEnvForArgs(['add', '--force', '--reporter=ndjson', 'dsh-loop@1.0.0'])).toEqual({})
+    // Not the override shape: no key, or no value.
+    expect(pnpmConfigEnvForArgs(['add', '--config.=x', '--config.fetchTimeout='])).toEqual({})
   })
 })

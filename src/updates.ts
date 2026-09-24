@@ -9,10 +9,17 @@ import { resolveHeadCommit } from './accelerate.ts'
 import { marketFetch } from './net.ts'
 import { activeRegion } from './regions.ts'
 import { profileDir, readGitResolutionCommit, readInstalled, readInstalledVersion, readLockCommits } from './profile.ts'
-import { gitCommitOfTarget, gitUploadPackUrl, githubCommitOfTarget, githubRefOfTarget, isGitHostedSpec, repoOfTarget } from './sources.ts'
+import { gitCommitOfTarget, gitRefOfTarget, gitUploadPackUrl, hostedRepoKey, githubCommitOfTarget, githubRefOfTarget, isGenerationLink, isGitHostedSpec, repoOfTarget } from './sources.ts'
 
 export interface UpdateStatus {
-  kind: 'github' | 'npm' | 'linked'
+  /**
+   * `generation` is a `link:` the desktop host wrote (#497): the host
+   * installs it and reconciles it at startup, so the market names a newer
+   * release under `latest` and never offers to apply it. For that kind
+   * `latest` is null when the installed build is current or nothing newer
+   * can be confirmed.
+   */
+  kind: 'github' | 'npm' | 'linked' | 'generation'
   version: string | null
   current: string | null
   latest: string | null
@@ -54,7 +61,7 @@ let updatesCache: { key: string; at: number; data: Record<string, UpdateStatus> 
  * advertisement format as GitHub's info/refs; kept here so accelerate.ts
  * does not need to import sources.ts.
  */
-async function resolveGitRemoteHead(spec: string, ref?: string): Promise<string | null> {
+export async function resolveGitRemoteHead(spec: string, ref?: string): Promise<string | null> {
   const url = gitUploadPackUrl(spec)
   if (url === null) return null
   const controller = new AbortController()
@@ -293,9 +300,10 @@ export async function checkUpdates(
    */
   channelFor: ReadonlyMap<string, Channel> = new Map(),
   /**
-   * Curated npm sources for `file:` installs that were matched to the market
-   * catalog. `link:` workspaces remain development sources and are never
-   * opted into online updates.
+   * Curated npm sources for the installs that carry no registry spec of
+   * their own: `file:` packages matched to the market catalog (#429) and
+   * the generations the desktop host links in (#497). Any other `link:` is
+   * a development workspace and is never opted into online updates.
    */
   onlineSourceFor: ReadonlyMap<string, string> = new Map(),
 ): Promise<Record<string, UpdateStatus>> {
@@ -329,6 +337,28 @@ export async function checkUpdates(
       return
     }
     if (normalizedSpec.startsWith('link:')) {
+      if (isGenerationLink(spec)) {
+        // The desktop host's production install, not a checkout (#497): it
+        // came from the registry and has a release history to compare
+        // against. Reported, never offered — the host reconciles `live/`
+        // against its own desired.json at startup, so an update applied
+        // here would appear to work and silently revert on the next boot.
+        // Only a release that is actually newer is named; current and
+        // unknown both read as null, so a lagging `latest` tag (#64) can't
+        // advertise a downgrade either.
+        const onlineSource = onlineSourceFor.get(name)
+        const stable = onlineSource === undefined ? null : await fetchNpmLatest(onlineSource)
+        const channel = channelFor.get(name)
+        const newest = channel === undefined || onlineSource === undefined
+          ? stable
+          : await versionOnChannel(onlineSource, channel, stable)
+        result[name] = {
+          kind: 'generation', version, current: version,
+          latest: isUpgrade(version, newest) ? newest : null,
+          updateAvailable: false,
+        }
+        return
+      }
       result[name] = { kind: 'linked', version, current: null, latest: null, updateAvailable: false }
       return
     }
@@ -344,7 +374,7 @@ export async function checkUpdates(
         // A proxied legacy URL or exact `github:#sha` carries its pin in the
         // spec; a mutable `github:` shortcut keeps it in the lockfile. Prefer
         // the spec because it is authoritative even if the lockfile is stale.
-        const current = githubCommitOfTarget(spec) ?? lockCommits.get(repo) ?? null
+        const current = githubCommitOfTarget(spec) ?? lockCommits.get(`github.com/${repo}`) ?? null
         // git's own ref advertisement, NOT api.github.com/repos/…/commits.
         // The REST API allows 60 requests an hour per IP unauthenticated,
         // shared across every plugin AND every check — a handful of
@@ -368,9 +398,17 @@ export async function checkUpdates(
         // as an update and then installed over the git source (#525).
         // Reuse kind `github` as "git-sourced" so the existing Installed UI
         // keeps treating the row as a VCS install without a client change.
+        // Three readings, because pnpm records a git install in three
+        // different ways: the spec's own pin, a `type: git` resolution for a
+        // cloned remote, and — for the hosts that serve an archive tarball —
+        // the commit inside that tarball's URL (#637).
+        const archiveKey = hostedRepoKey(spec)
         const current = gitCommitOfTarget(spec)
           ?? readGitResolutionCommit(profile, spec, activeProfileDir)
-        const latest = await resolveGitRemoteHead(spec)
+          ?? (archiveKey === null ? null : lockCommits.get(archiveKey) ?? null)
+        // Ask about the ref the install actually names, exactly as the
+        // github branch above does (#446).
+        const latest = await resolveGitRemoteHead(spec, gitRefOfTarget(spec) ?? undefined)
         result[name] = {
           kind: 'github', version, current, latest,
           updateAvailable: current !== null && latest !== null && current !== latest,

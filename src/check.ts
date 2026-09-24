@@ -34,6 +34,17 @@ import { findDshInstallDir } from './dsh-install.ts'
 import { resolveDshHome } from './home-paths.ts'
 import { INBOX_BUNDLES, readBundleRules, suggestOrder, validateOrder } from './order.ts'
 
+// Electron's app.asar packages can be loadable by the host while invisible to
+// filesystem probes made from a profile plugin. Keep this fallback limited to
+// packages confirmed to ship with the official Desktop app, and only use it
+// when the install anchor is the packaged app.
+const DESKTOP_HOST_BUNDLES = new Set(['@deepseek-ai/dsh-experimental-agent-team-profile'])
+const DESKTOP_HOST_LOADERS = new Set(['@deepseek-ai/dsh-mcp-client'])
+
+function isPackagedDesktopInstall(dshInstallDir: string | null): boolean {
+  return dshInstallDir !== null && /[/\\]app\.asar[/\\]dsh$/iu.test(dshInstallDir)
+}
+
 export { findDshInstallDir } from './dsh-install.ts'
 
 /** js-yaml dialect for `!!js` scalars — identical to dsh-app-boot's entryListSchema. */
@@ -62,6 +73,8 @@ export interface BundleLayer {
   directory: string | null
   /** Absolute path of the layer's patch file; null when undeclared/missing. */
   patchPath: string | null
+  /** Every declared patch file, in declaration order; `patchPath` is the first (#688). */
+  patchPaths: string[]
   /**
    * An in-box bundle whose directory could not be located — a gap in what
    * this process can see, not a defect in the profile (#369). Distinct from
@@ -888,13 +901,15 @@ export function buildBundleLayers(
   dshInstallDir: string | null,
 ): { bundles: BundleLayer[]; layers: LayerInput[] } {
   const bundles: BundleLayer[] = bundleNames.map((name) => {
+    const hostProvided = INBOX_BUNDLES.has(name)
+      || (isPackagedDesktopInstall(dshInstallDir) && DESKTOP_HOST_BUNDLES.has(name))
     // The real loader gives the DSH installation first refusal for in-box
     // bundles. Desktop keeps that installation private from plugins, so a
     // DIRECT profile-local copy with the same official name is only a stale
     // shadow, never evidence for the layer the running host loaded (#371).
     // Keep walking the profile anchor's parent search paths: Desktop heals an
     // authoritative host fallback at <profiles>/node_modules.
-    const ignoredProfilePackage = dshInstallDir === null && INBOX_BUNDLES.has(name)
+    const ignoredProfilePackage = dshInstallDir === null && hostProvided
       ? join(profileDirectory, 'node_modules', name)
       : undefined
     const anchors: Array<{ anchor: string | null; ignoredPackageDirectory?: string }> = [
@@ -913,9 +928,10 @@ export function buildBundleLayers(
     const layer: BundleLayer = {
       name,
       source: specs[name] ?? '(not a direct dependency)',
-      kind: INBOX_BUNDLES.has(name) ? 'official' : 'community',
+      kind: hostProvided ? 'official' : 'community',
       directory,
       patchPath: null,
+      patchPaths: [],
       error: null,
       entries: [],
       parseError: null,
@@ -931,7 +947,19 @@ export function buildBundleLayers(
       // fatal verdict and rolled back a good update (#369) — while `dsh
       // --dump-config` on the same profile exited 0. Unknown has to read as
       // unknown; the profile's own bundles are still judged normally.
-      if (INBOX_BUNDLES.has(name)) {
+      //
+      // The same holds for any official bundle while the installation itself
+      // cannot be located (#676): a desktop build ships more in-box bundles
+      // than the three named in INBOX_BUNDLES —
+      // `@deepseek-ai/dsh-experimental-agent-team-profile` among them — and a
+      // fixed list, or an install-path shape, cannot know which. Two
+      // reporters saw that bundle called "not installed — will fail to boot"
+      // while its three entries were active in the running host. Only
+      // DeepSeek publishes under `@deepseek-ai/`, so while the installation
+      // is out of sight such a bundle is unknown, not missing. When the
+      // installation IS located and the bundle is in neither it nor the
+      // profile, the fatal verdict below still applies.
+      if (hostProvided || (dshInstallDir === null && name.startsWith('@deepseek-ai/'))) {
         layer.error = null
         layer.unresolvedInbox = true
         return layer
@@ -946,23 +974,34 @@ export function buildBundleLayers(
       layer.error = 'bundle package.json is unreadable'
       return layer
     }
+    // A bundle may declare ONE patch file or a LIST of them: dsh 0.1.7's own
+    // `@deepseek-ai/dsh-web-app` ships five (a base patch plus four presets),
+    // and the official headless template includes that bundle — so requiring
+    // a string reported "the profile will fail to boot" for the DEFAULT
+    // layout, while `dsh --dump-config` composed it fine (#676).
     const declared = bundleManifest.dsh?.bundle?.patch
-    if (typeof declared !== 'string') {
+    const declaredList = typeof declared === 'string'
+      ? [declared]
+      : Array.isArray(declared) ? declared.filter((item): item is string => typeof item === 'string') : []
+    if (declaredList.length === 0) {
       layer.error = 'bundle declares no dsh.bundle.patch — the profile will fail to boot'
       return layer
     }
-    const patchPath = join(directory, declared)
-    if (!existsSync(patchPath)) {
-      layer.error = `declared patch ${declared} is missing — the profile will fail to boot`
+    const missing = declaredList.find(relative => !existsSync(join(directory, relative)))
+    if (missing !== undefined) {
+      layer.error = `declared patch ${missing} is missing — the profile will fail to boot`
       return layer
     }
-    layer.patchPath = patchPath
-    const patches = parsePatchFile(patchPath)
-    if (patches === null) {
+    // The first declared file is the layer's patch for reporting; every one
+    // of them contributes entries, because the composer applies them all.
+    layer.patchPath = join(directory, declaredList[0]!)
+    layer.patchPaths = declaredList.map(relative => join(directory, relative))
+    const parsed = declaredList.map(relative => parsePatchFile(join(directory, relative)))
+    if (parsed.some(patches => patches === null)) {
       layer.parseError = 'patch file is not a valid entry list'
       return layer
     }
-    layer.entries = collectInsertIds(patches)
+    layer.entries = parsed.flatMap(patches => collectInsertIds(patches!))
     const order = bundleManifest.dsh?.bundle?.order
     if (order !== null && typeof order === 'object' && !Array.isArray(order)) {
       const listOf = (value: unknown): string[] | undefined => Array.isArray(value)
@@ -979,7 +1018,12 @@ export function buildBundleLayers(
   const layers: LayerInput[] = bundles.map((bundle) => ({
     label: bundle.name,
     kind: 'bundle' as const,
-    patches: bundle.patchPath !== null && bundle.parseError === null ? parsePatchFile(bundle.patchPath) ?? [] : [],
+    // EVERY declared file, not the first: the composer applies them all, and
+    // a composition built from one file would miss the preset rows — so a
+    // duplicate id or an orphan in a second file was invisible here (#688).
+    patches: bundle.parseError === null
+      ? bundle.patchPaths.flatMap(path => parsePatchFile(path) ?? [])
+      : [],
     parseError: bundle.parseError,
   }))
   return { bundles, layers }
@@ -1126,6 +1170,14 @@ export function analyzeProfile(profileDirectory: string, options: CheckOptions =
   }
   for (const { row, packageName } of candidates.values()) {
     if (profilePackageInstalled(profileDirectory, packageName)) continue
+    // Official Electron keeps built-in packages beside app.asar, not inside
+    // the writable profile. The loader can resolve them from this anchor.
+    if (dshInstall !== null && core.has(packageName)
+      && resolvePackageDir(join(dshInstall, 'package.json'), packageName) !== null) continue
+    if (isPackagedDesktopInstall(dshInstall) && DESKTOP_HOST_LOADERS.has(packageName)) {
+      warnings.push(`${row.layer}: bundled Desktop loader ${packageName} could not be independently resolved from app.asar`)
+      continue
+    }
     const message = `${row.layer}: loader package ${packageName} is not installed in the profile`
     if (row.activation === 'required') errors.push(`${message} — the profile will fail to boot`)
     else warnings.push(`${message} — boot will fail if its disabled expression enables the entry`)

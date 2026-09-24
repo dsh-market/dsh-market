@@ -158,3 +158,47 @@ describe('acceleratedTarget', () => {
     expect(seen).toHaveLength(2)
   })
 })
+
+/** Build one pkt-line of a git ref advertisement. */
+function pkt(line: string): string {
+  return `${(4 + line.length).toString(16).padStart(4, '0')}${line}\n`
+}
+
+/**
+ * A git ref advertisement carrying one tag. Annotated tags (tagObject set)
+ * advertise the tag object AND its peeled commit; lightweight tags only the
+ * direct line.
+ */
+function tagAdvertisement(commit: string, tag: string, tagObject?: string): string {
+  const lines = [
+    '# service=git-upload-pack',
+    `${commit} HEAD\0multi_ack thin-pack side-band side-band-64k ofs-delta`,
+    `${commit} refs/heads/main`,
+    `${tagObject ?? commit} refs/tags/${tag}`,
+  ]
+  if (tagObject !== undefined) lines.push(`${commit} refs/tags/${tag}^{}`)
+  return '001e# service=git-upload-pack\n0000' + lines.map(pkt).join('') + '0000'
+}
+
+describe('tag ref resolution (#597)', () => {
+  afterEach(() => { vi.unstubAllGlobals(); resetGithubRoutePreferences() })
+
+  it('prefers the peeled commit for an annotated tag, never the tag object', async () => {
+    const tagObject = '769ec5e093fb58d694fa8db09a5d555469646b49'
+    const commit = 'a3341ec2b28e3fb3b5fc3569012fc39acacc9fb2'
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(tagAdvertisement(commit, 'v0.1.5', tagObject), { status: 200 })))
+    await expect(resolveHeadCommit('o/r', 'china', {}, 'v0.1.5')).resolves.toBe(commit)
+  })
+
+  it('uses the direct line when the tag is lightweight (no peeled line exists)', async () => {
+    const commit = 'a3341ec2b28e3fb3b5fc3569012fc39acacc9fb2'
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(tagAdvertisement(commit, 'v0.1.5'), { status: 200 })))
+    await expect(resolveHeadCommit('o/r', 'china', {}, 'v0.1.5')).resolves.toBe(commit)
+  })
+
+  it('still anchors the tag name: `publish` never matches `publish-old`', async () => {
+    const commit = 'a3341ec2b28e3fb3b5fc3569012fc39acacc9fb2'
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(tagAdvertisement(commit, 'publish-old'), { status: 200 })))
+    await expect(resolveHeadCommit('o/r', 'china', {}, 'publish')).resolves.toBeNull()
+  })
+})

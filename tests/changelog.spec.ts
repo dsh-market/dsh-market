@@ -7,7 +7,7 @@
  */
 
 import { gzipSync } from 'node:zlib'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -232,5 +232,75 @@ describe('updateNotesFor', () => {
       kind: 'commits',
       commits: { items: [{ sha: SHA_C, message: 'third', date: '2026-08-26T03:00:00Z' }], found: true },
     })
+  })
+
+  it('prefers the catalog entry whose repository matches the installed npm package over a same-named entry (#598)', async () => {
+    writeProfile(dir, { 'dsh-cost-meter': '^1.7.21' }, [['han-1413141/dsh-cost-meter', SHA_B]])
+    mkdirSync(join(dir, 'node_modules', 'dsh-cost-meter'), { recursive: true })
+    writeFileSync(join(dir, 'node_modules', 'dsh-cost-meter', 'package.json'), JSON.stringify({
+      name: 'dsh-cost-meter',
+      version: '1.7.21',
+      repository: { type: 'git', url: 'git+https://github.com/Han-1413141/dsh-cost-meter.git' },
+    }))
+    const payload = {
+      count: 1,
+      updates: { 'https://github.com/han-1413141/dsh-cost-meter': { commits: COMMITS } },
+    }
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL) => {
+      const url = String(input)
+      if (url.endsWith('/dsh-plugin-updates/latest')) return new Response('no', { status: 404 })
+      if (url.endsWith('updates.json')) return new Response(JSON.stringify(payload), { status: 200 })
+      if (url.includes('/commits/HEAD')) return new Response(JSON.stringify({ sha: SHA_C }), { status: 200 })
+      if (url.includes('awesome-dsh-plugin.com') || url.includes('plugins.json')) {
+        // Two same-named entries; the first one's repo is unrelated to the
+        // installed package, so a bare name match would hit it and report
+        // "no notes" (#598).
+        return new Response(JSON.stringify({
+          plugins: [
+            { name: 'dsh-cost-meter', npm: 'dsh-cost-meter', url: 'https://github.com/GooDAnDReaDY/dsh-cost-meter', category: 'utility' },
+            { name: 'dsh-cost-meter', npm: 'dsh-cost-meter', url: 'https://github.com/Han-1413141/dsh-cost-meter', category: 'utility' },
+          ],
+        }), { status: 200 })
+      }
+      return new Response('{}', { status: 200 })
+    }))
+    await expect(updateNotesFor('web', dir, 'dsh-cost-meter')).resolves.toEqual({
+      kind: 'commits',
+      commits: { items: [{ sha: SHA_C, message: 'third', date: '2026-08-26T03:00:00Z' }], found: true },
+    })
+  })
+
+  it('answers npm publish times when no catalog entry matches the installed repository (#598)', async () => {
+    writeProfile(dir, { 'dsh-cost-meter-nomatch': '^1.7.21' }, [['han-1413141/dsh-cost-meter', SHA_B]])
+    mkdirSync(join(dir, 'node_modules', 'dsh-cost-meter-nomatch'), { recursive: true })
+    writeFileSync(join(dir, 'node_modules', 'dsh-cost-meter-nomatch', 'package.json'), JSON.stringify({
+      name: 'dsh-cost-meter-nomatch',
+      version: '1.7.21',
+      repository: { type: 'git', url: 'git+https://github.com/Han-1413141/dsh-cost-meter.git' },
+    }))
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL) => {
+      const url = String(input)
+      if (url.endsWith('/dsh-plugin-updates/latest')) return new Response('no', { status: 404 })
+      if (url.endsWith('updates.json')) return new Response(JSON.stringify({}), { status: 200 })
+      if (url.includes('/commits/HEAD')) return new Response(JSON.stringify({ sha: SHA_C }), { status: 200 })
+      if (url.includes('awesome-dsh-plugin.com') || url.includes('plugins.json')) {
+        // Same-named entries, neither matching the installed repository.
+        return new Response(JSON.stringify({
+          plugins: [
+            { name: 'dsh-cost-meter-nomatch', npm: 'dsh-cost-meter-nomatch', url: 'https://github.com/GooDAnDReaDY/dsh-cost-meter', category: 'utility' },
+            { name: 'dsh-cost-meter-nomatch', npm: 'dsh-cost-meter-nomatch', url: 'https://github.com/Sttrevens/dsh-cost-meter', category: 'utility' },
+          ],
+        }), { status: 200 })
+      }
+      if (url.includes('registry.npmjs.org') || url.includes('/dsh-cost-meter-nomatch')) {
+        return new Response(JSON.stringify({
+          time: { created: '2025-01-01T00:00:00Z', modified: '2026-09-01T00:00:00Z', '1.7.21': '2026-08-01T00:00:00Z', '1.7.22': '2026-09-02T00:00:00Z' },
+        }), { status: 200 })
+      }
+      return new Response('{}', { status: 200 })
+    }))
+    const notes = await updateNotesFor('web', dir, 'dsh-cost-meter-nomatch')
+    expect(notes.kind).toBe('npm')
+    expect(notes.npmTimes?.[0]).toEqual({ version: '1.7.22', date: '2026-09-02T00:00:00Z' })
   })
 })

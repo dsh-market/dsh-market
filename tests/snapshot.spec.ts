@@ -17,6 +17,7 @@ import {
   restoreSnapshot,
   type ProfileSnapshot,
 } from '../src/snapshot.ts'
+import { canCreateSymlink } from './symlink-support.ts'
 
 let tmp: string
 beforeEach(() => {
@@ -128,7 +129,7 @@ describe('createProfileSnapshot', () => {
     expect(existsSync(snapshotsDir(dir))).toBe(false)
   })
 
-  it('does not mislabel a dangling optional-file symlink as absent', () => {
+  it.skipIf(!canCreateSymlink('file'))('does not mislabel a dangling optional-file symlink as absent', () => {
     const dir = pdir()
     writeProfile(dir, SAMPLE_MANIFEST)
     symlinkSync(join(dir, 'missing-cordis.patch.yml'), join(dir, 'cordis.patch.yml'), 'file')
@@ -259,7 +260,9 @@ describe('restoreSnapshot', () => {
     expect(JSON.parse(readFileSync(join(dir, '.dsh-market', 'state.json'), 'utf8'))).toEqual({ disabled: ['later'] })
   })
 
-  it('refuses to replace a live symlink with a regular file', () => {
+  // A file link, so there is no junction fallback to reach for; see
+  // tests/symlink-support.ts for why this skips rather than fails.
+  it.skipIf(!canCreateSymlink('file'))('refuses to replace a live symlink with a regular file', () => {
     const dir = pdir()
     writeProfile(dir, SAMPLE_MANIFEST)
     writeFileSync(join(dir, 'cordis.patch.yml'), SAMPLE_PATCH)

@@ -8,7 +8,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync, renameSync, statSy
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { resolveDshHome } from './home-paths.ts'
-import { githubRemoteIdentities, githubRepoIdentities, isGitHostedSpec } from './sources.ts'
+import { githubRemoteIdentities, githubRepoIdentities, isGitHostedSpec, repoOfTarget } from './sources.ts'
 
 /**
  * Whether a profile name follows DSH's own directory-name contract.
@@ -82,6 +82,41 @@ export function readManifestDeps(profile: string, explicitDir?: string): Record<
   } catch {
     return {}
   }
+}
+
+/**
+ * For each installed package, the OTHER installed package that declares it —
+ * as a dependency or a peer dependency — in its own manifest.
+ *
+ * pnpm's auto-install-peers writes a plugin's peers into the profile manifest
+ * as direct dependencies, so a native binding a plugin needs shows up in the
+ * installed list looking exactly like a plugin the user chose (#634). What
+ * separates them is that somebody else asked for it.
+ *
+ * Ownership is decided by the first owner in sorted order, so the answer does
+ * not depend on the manifest's key order. A package that declares itself is
+ * ignored, and so is a cycle's other half once one owner is chosen.
+ */
+export function readDependencyOwners(
+  profile: string,
+  names: readonly string[],
+  explicitDir?: string,
+): Record<string, string> {
+  const installed = new Set(names)
+  const owners: Record<string, string> = {}
+  for (const owner of [...names].sort()) {
+    const manifest = readInstalledManifest(profile, owner, explicitDir)
+    if (typeof manifest !== 'object' || manifest === null) continue
+    const declared = manifest as { dependencies?: unknown; peerDependencies?: unknown }
+    for (const field of [declared.dependencies, declared.peerDependencies]) {
+      if (typeof field !== 'object' || field === null) continue
+      for (const dependency of Object.keys(field as Record<string, unknown>)) {
+        if (dependency === owner || !installed.has(dependency)) continue
+        owners[dependency] ??= owner
+      }
+    }
+  }
+  return owners
 }
 
 /** Exact rollback state owned by one profile package operation. */
@@ -249,6 +284,21 @@ export function readInstalledVersion(profile: string, name: string, explicitDir?
   }
 }
 
+/**
+ * The `name` in the package.json of the directory a dependency is installed
+ * under, or null. DSH Desktop requires it to equal the dependency key (#694).
+ */
+export function readInstalledPackageName(profile: string, name: string, explicitDir?: string): string | null {
+  try {
+    const manifest = JSON.parse(
+      readFileSync(join(profileDir(profile, explicitDir), 'node_modules', name, 'package.json'), 'utf8'),
+    ) as { name?: unknown }
+    return typeof manifest.name === 'string' ? manifest.name : null
+  } catch {
+    return null
+  }
+}
+
 /** The installed package manifest, or null when absent or malformed. */
 export function readInstalledManifest(profile: string, name: string, explicitDir?: string): unknown | null {
   try {
@@ -261,7 +311,8 @@ export function readInstalledManifest(profile: string, name: string, explicitDir
 }
 
 /**
- * Whether a package or one of its direct dependencies ships a native addon.
+ * Whether a package or one of its direct dependencies (including
+ * optionalDependencies) ships a native addon.
  *
  * The question behind it: can unloading this plugin actually free its files?
  * For ordinary JavaScript, yes — and on POSIX it does not even matter,
@@ -279,13 +330,16 @@ export function readInstalledManifest(profile: string, name: string, explicitDir
  * the conventional way: node-gyp's `build/Release`, prebuild's `prebuilds/`,
  * and the `binding.gyp` that names the addon in the first place.
  *
- * Direct dependencies are included because that is where these live: the
- * plugin is JavaScript and the addon is a package it depends on, hoisted to
- * the profile root beside it.
+ * Direct `dependencies` and `optionalDependencies` are included because
+ * that is where these live: the plugin is JavaScript and the addon is a
+ * package it depends on, hoisted to the profile root beside it.
+ * optionalDependencies is the same kind of direct declaration —
+ * SinglePlayer ships node-hid there (#441), and asking only `dependencies`
+ * treated that uninstall as ordinary JavaScript.
  * @param profile - profile name.
  * @param name - the installed package to ask about.
  * @param explicitDir - resolved profile directory, when the caller has it.
- * @returns true when a native addon is present in the package or a direct dependency.
+ * @returns true when a native addon is present in the package or a direct (optional) dependency.
  */
 export function holdsNativeAddon(profile: string, name: string, explicitDir?: string): boolean {
   const modules = join(profileDir(profile, explicitDir), 'node_modules')
@@ -298,11 +352,17 @@ export function holdsNativeAddon(profile: string, name: string, explicitDir?: st
   if (shipsAddon(name)) return true
   const manifest = readInstalledManifest(profile, name, explicitDir)
   if (manifest === null || typeof manifest !== 'object') return false
-  const dependencies = (manifest as { dependencies?: unknown }).dependencies
-  if (dependencies === null || typeof dependencies !== 'object') return false
-  return Object.keys(dependencies as Record<string, unknown>)
-    .filter(dependency => PACKAGE_NAME_RE.test(dependency))
-    .some(shipsAddon)
+  const names: string[] = []
+  for (const block of [
+    (manifest as { dependencies?: unknown }).dependencies,
+    (manifest as { optionalDependencies?: unknown }).optionalDependencies,
+  ]) {
+    if (block === null || typeof block !== 'object') continue
+    for (const dependency of Object.keys(block as Record<string, unknown>)) {
+      if (PACKAGE_NAME_RE.test(dependency)) names.push(dependency)
+    }
+  }
+  return names.some(shipsAddon)
 }
 
 const PACKAGE_NAME_RE = /^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/i
@@ -464,9 +524,21 @@ export function readInstalledRepoEvidence(
 ): InstalledRepoEvidence {
   if (!PACKAGE_NAME_RE.test(name)) return { identities: [], hints: [] }
   const local = /^(?:link|file):/i.test(spec)
-  // A spec that names its own source is the authority on it; see above.
+  // A spec that names its own source is the authority on it; see above. It
+  // is also the ANSWER, not just the thing not to second-guess: deriving
+  // nothing left a plugin installed from a URL — the shape a China-region
+  // install produces, `https://<proxy>/https://codeload.github.com/o/r/
+  // tar.gz/<sha>` — with no identity at all, so its catalog card never read
+  // as installed (#432's symptom; its proposed mechanism, a `file:` spec
+  // with a sibling url-<hash>.json, is not the layout the current dsh CLI
+  // writes — measured, the spec keeps the https URL).
+  //
+  // The URL still must not be resolved through the package's OWN manifest:
+  // a fork installed as `github:myfork/plugin` carries upstream's repository
+  // field, and trusting it made upstream's card read as installed (#580).
   if (!local && (isGitHostedSpec(spec) || /^https?:/i.test(spec.trim()))) {
-    return { identities: [], hints: [] }
+    const repo = repoOfTarget(spec)
+    return repo === null ? { identities: [], hints: [] } : { identities: [repo], hints: [] }
   }
   const root = profileDir(profile, explicitDir)
   const sourceDir = local ? localSpecDirectory(root, spec) : null
@@ -494,13 +566,77 @@ export function readInstalledRepoEvidence(
   return { identities: [], hints: [] }
 }
 
-/** Pinned commit per `owner/repo` from the profile lockfile's codeload tarball URLs. */
+/**
+ * Where each git host puts the commit in the archive tarball it serves.
+ * Every capture is `1` host, `2` repo path, `3` commit.
+ *
+ * Measured on every major the market supports (9.15.4 / 10.34.5 / 11.8.0 /
+ * 12.4.1): an install from github.com, gitlab.com or bitbucket.org resolves
+ * to an archive of that host and writes NO `type: git` entry, which is why
+ * `readGitResolutionCommit` cannot see any of them. The URL is not the same
+ * on every major, which is what the GitLab pair below is about.
+ *
+ * The host comes out of the URL rather than being assumed from the shape,
+ * so a self-hosted GitLab — which serves the same `/-/archive/` path — keys
+ * under its own hostname instead of sharing gitlab.com's.
+ */
+const ARCHIVE_COMMIT_SHAPES: readonly RegExp[] = [
+  // GitHub. Matched as a substring, not anchored, because a region proxy sits
+  // in FRONT of the real URL: anchoring would only ever see the proxy's own
+  // hostname, while the literal `codeload.github.com` here cannot be anything
+  // but the repository's host.
+  /(codeload\.github\.com)\/([^/\s]+\/[^/\s]+)\/tar\.gz\/([0-9a-f]{40})/g,
+  // GitLab: `…/<group>/<repo>/-/archive/<sha>/<repo>-<sha>.tar.gz`, where the
+  // group may itself be nested. The path excludes `:` so that a proxied URL
+  // cannot be read as one long group path under the proxy's hostname — the
+  // match then starts at the inner URL instead, which is the real host.
+  /https?:\/\/([^/\s]+)\/([^:\s]+?)\/-\/archive\/([0-9a-f]{40})\//g,
+  // Bitbucket: `…/<owner>/<repo>/get/<sha>.tar.gz`.
+  /https?:\/\/([^/\s]+)\/([^/\s]+\/[^/\s]+)\/get\/([0-9a-f]{40})\.tar\.gz/g,
+  // GitLab as pnpm 9 and 10 fetch it — the REST API instead of the project
+  // archive, with the repository percent-encoded into one path segment and
+  // the commit in the query:
+  // `…/api/v4/projects/<owner>%2F<repo>/repository/archive.tar.gz?sha=<sha>`.
+  // Same repository, same commit, different URL; the decode below puts it
+  // back under the same key as the 11/12 shape.
+  /https?:\/\/([^/\s]+)\/api\/v4\/projects\/([^/\s?]+)\/repository\/archive[^\s?]*\?sha=([0-9a-f]{40})/g,
+]
+
+/**
+ * The repository path a shape captured. Percent-decoded because pnpm 9/10
+ * encode the whole `owner/repo` into one segment; the other shapes carry no
+ * `%` at all, so decoding them is a no-op.
+ */
+function archivePath(raw: string): string {
+  try {
+    return decodeURIComponent(raw)
+  } catch {
+    return raw
+  }
+}
+
+/**
+ * Pinned commit per `host/owner/repo` from the archive tarball URLs in the
+ * profile lockfile.
+ *
+ * Keyed by host, not by `owner/repo` alone: gitlab.com and bitbucket.org
+ * hand out the same short owner/repo names GitHub does, and an unqualified
+ * key would let one host's commit answer for a plugin installed from
+ * another — reporting a rollback or an update check against a repository
+ * the user never installed. `hostedRepoKey` builds the same key from a
+ * spec, and is how callers should look one up.
+ */
 export function readLockCommits(profile: string, explicitDir?: string): Map<string, string> {
   const commits = new Map<string, string>()
   try {
     const lock = readFileSync(join(profileDir(profile, explicitDir), 'pnpm-lock.yaml'), 'utf8')
-    for (const m of lock.matchAll(/codeload\.github\.com\/([^/\s]+\/[^/\s]+)\/tar\.gz\/([0-9a-f]{40})/g)) {
-      commits.set(m[1].toLowerCase(), m[2])
+    for (const shape of ARCHIVE_COMMIT_SHAPES) {
+      for (const m of lock.matchAll(shape)) {
+        // codeload is GitHub's download host, not a repository host of its
+        // own: the identity of `codeload.github.com/o/r` is `github.com/o/r`.
+        const host = m[1]!.toLowerCase() === 'codeload.github.com' ? 'github.com' : m[1]!.toLowerCase()
+        commits.set(`${host}/${archivePath(m[2]!).toLowerCase()}`, m[3]!.toLowerCase())
+      }
     }
   } catch { /* no lockfile — no git installs to report */ }
   return commits
@@ -510,6 +646,11 @@ export function readLockCommits(profile: string, explicitDir?: string): Map<stri
  * Commit recorded for a non-codeload git resolution (`type: git` in pnpm's
  * lockfile). Matched against the install spec so a Gitea/GitLab URL can
  * compare HEAD without mistaking a same-named npm package (#525).
+ *
+ * Two packages of one monorepo resolve from the SAME remote and differ only
+ * by pnpm's `path:` selector, so the spec's subpath has to match too — and
+ * when the spec names no subpath while several entries of that remote do,
+ * there is no answer rather than the first sibling's commit (#632).
  */
 export function readGitResolutionCommit(
   profile: string,
@@ -518,6 +659,8 @@ export function readGitResolutionCommit(
 ): string | null {
   const want = normalizeGitRepoKey(spec)
   if (want === null) return null
+  const wantPath = gitSubpathSelector(spec)
+  const matches: string[] = []
   try {
     const lock = readFileSync(join(profileDir(profile, explicitDir), 'pnpm-lock.yaml'), 'utf8')
     for (const m of lock.matchAll(
@@ -527,10 +670,28 @@ export function readGitResolutionCommit(
       const commit = /\bcommit:\s*([0-9a-f]{40})\b/i.exec(body)
       const repo = /\brepo:\s*([^\s,}]+)/.exec(body)
       if (commit === null || repo === null) continue
-      if (normalizeGitRepoKey(repo[1]!) === want) return commit[1]!.toLowerCase()
+      if (normalizeGitRepoKey(repo[1]!) !== want) continue
+      const entryPath = /\bpath:\s*([^\s,}]+)/.exec(body)?.[1]?.replace(/^\/+|\/+$/g, '').toLowerCase() ?? null
+      if (wantPath !== null) {
+        if (entryPath === wantPath) return commit[1]!.toLowerCase()
+        continue
+      }
+      matches.push(commit[1]!.toLowerCase())
     }
   } catch { /* no lockfile */ }
-  return null
+  // Exactly one entry for this remote is an identity; several are siblings
+  // of one monorepo and none of them is THIS package's commit.
+  return matches.length === 1 ? matches[0]! : null
+}
+
+/** The `path:` selector of a git spec, normalized for comparison. */
+function gitSubpathSelector(spec: string): string | null {
+  const hash = spec.indexOf('#')
+  if (hash === -1) return null
+  const selector = /(?:^|&)path:([^&]*)/.exec(spec.slice(hash + 1))?.[1]
+  if (selector === undefined) return null
+  const trimmed = selector.replace(/^\/+|\/+$/g, '').toLowerCase()
+  return trimmed === '' ? null : trimmed
 }
 
 /** Lowercased transport-agnostic key for comparing two git remote spellings. */
@@ -683,15 +844,38 @@ export function parsePatchRows(text: string): { names: string[]; ids: string[]; 
 }
 
 /** Rows of the patch a package DECLARES through `dsh.bundle.patch`. */
-function readBundlePatchRows(dir: string): { names: string[]; ids: string[]; insertedIds: string[] } {
-  const empty = { names: [], ids: [], insertedIds: [] }
+/**
+ * Where a package's bundle patch lives, according to the package itself.
+ *
+ * `dsh.bundle.patch` is the package's own declaration and the only place the
+ * answer is written down: the path may be a subdirectory (`aegis` declares
+ * `./extensions/dsh/cordis.patch.yml`), not just the package root. Callers
+ * that assumed the root file made a plugin with a declared patch look like
+ * one with none (#646) — so the resolution rule lives here, once.
+ *
+ * @param dir - the installed package directory.
+ * @returns the declared patch file's path, or null when the manifest names
+ *   none (or the manifest cannot be read).
+ */
+export function declaredBundlePatchFile(dir: string): string | null {
   try {
     const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as {
       dsh?: { bundle?: { patch?: unknown } }
     }
     const declared = manifest.dsh?.bundle?.patch
-    if (typeof declared !== 'string' || declared === '') return empty
-    return parsePatchRows(readFileSync(join(dir, declared), 'utf8'))
+    if (typeof declared !== 'string' || declared === '') return null
+    return join(dir, declared)
+  } catch {
+    return null
+  }
+}
+
+function readBundlePatchRows(dir: string): { names: string[]; ids: string[]; insertedIds: string[] } {
+  const empty = { names: [], ids: [], insertedIds: [] }
+  const file = declaredBundlePatchFile(dir)
+  if (file === null) return empty
+  try {
+    return parsePatchRows(readFileSync(file, 'utf8'))
   } catch {
     return empty
   }
@@ -890,23 +1074,12 @@ function quoteYamlKey(key: string): string {
   return key
 }
 
-/**
- * Allow the given packages' build scripts in the profile's
- * pnpm-workspace.yaml `allowBuilds` block (the key dsh profiles use),
- * merging with existing entries and leaving the rest of the yaml intact.
- * (#6 by @qichuang321.)
- * @returns every package now allowed.
- */
-export function setAllowBuilds(profile: string, packages: string[], explicitDir?: string): string[] {
-  const file = join(profileDir(profile, explicitDir), 'pnpm-workspace.yaml')
-  let yaml = ''
-  try { yaml = readFileSync(file, 'utf8') } catch { /* created below */ }
-  // `\r?\n`, not `\n`: a CRLF pnpm-workspace.yaml (every Windows editor, and
-  // git with core.autocrlf=true) put a `\r` between `allowBuilds:` and the
-  // newline, so the old pattern never matched an EXISTING block and appended
-  // a second one. Two top-level `allowBuilds:` keys is invalid YAML, and pnpm
-  // then refuses every install in that profile — not just the one that
-  // triggered it (#231 by @MichengAI).
+/** The allowBuilds block(s) of a pnpm-workspace.yaml, read into one map. */
+function readAllowBuildsMap(yaml: string): {
+  map: Record<string, string>
+  blockRe: RegExp
+  blockMatch: RegExpMatchArray | null
+} {
   const blockRe = /allowBuilds:[ \t]*\r?\n((?:[ \t]+[^\r\n]*\r?\n?)*)/g
   const map: Record<string, string> = {}
   // Every block, not just the first: a profile already broken by the bug
@@ -936,18 +1109,17 @@ export function setAllowBuilds(profile: string, packages: string[], explicitDir?
       map[key] = m[2] ?? 'true'
     }
   }
-  // Bare package names, or the server-derived stable git form
-  // `name@git+https://github.com/owner/repo.git` (#68) — nothing else.
-  const GIT_KEY_RE = /^[A-Za-z0-9@/_.-]+@git\+https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\.git$/
-  // The commit-pinned form pnpm below 11.21 matches instead (#285). Held to
-  // the same shape as the one above rather than loosened into "anything with
-  // a URL in it": this list is what stops a caller writing arbitrary text
-  // into a file pnpm parses, and a wider pattern would spend that guarantee
-  // to save a line.
-  const CODELOAD_KEY_RE = /^[A-Za-z0-9@/_.-]+@https:\/\/codeload\.github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/tar\.gz\/[0-9a-f]{40}$/
-  for (const pkg of packages) {
-    if (/^[A-Za-z0-9@/_.-]+$/.test(pkg) || GIT_KEY_RE.test(pkg) || CODELOAD_KEY_RE.test(pkg)) map[pkg] = 'true'
-  }
+  return { map, blockRe, blockMatch }
+}
+
+/** Write `map` back as the file's single allowBuilds block, in its own line endings. */
+function writeAllowBuildsMap(
+  file: string,
+  yaml: string,
+  map: Record<string, string>,
+  blockRe: RegExp,
+  blockMatch: RegExpMatchArray | null,
+): void {
   // Write back in the file's OWN line ending. Rewriting a CRLF workspace
   // file with LF would leave it mixed, which is the same class of mess this
   // fix exists to clean up.
@@ -965,5 +1137,104 @@ export function setAllowBuilds(profile: string, packages: string[], explicitDir?
     next = yaml.replace(blockRe, () => (seen++ === 0 ? blockText : ''))
   }
   writeFileSync(file, next)
+}
+
+/**
+ * Allow the given packages' build scripts in the profile's
+ * pnpm-workspace.yaml `allowBuilds` block (the key dsh profiles use),
+ * merging with existing entries and leaving the rest of the yaml intact.
+ * (#6 by @qichuang321.)
+ * @returns every package now allowed.
+ */
+export function setAllowBuilds(profile: string, packages: string[], explicitDir?: string): string[] {
+  const file = join(profileDir(profile, explicitDir), 'pnpm-workspace.yaml')
+  let yaml = ''
+  try { yaml = readFileSync(file, 'utf8') } catch { /* created below */ }
+  // `\r?\n`, not `\n`: a CRLF pnpm-workspace.yaml (every Windows editor, and
+  // git with core.autocrlf=true) put a `\r` between `allowBuilds:` and the
+  // newline, so the old pattern never matched an EXISTING block and appended
+  // a second one. Two top-level `allowBuilds:` keys is invalid YAML, and pnpm
+  // then refuses every install in that profile — not just the one that
+  // triggered it (#231 by @MichengAI).
+  const { map, blockRe, blockMatch } = readAllowBuildsMap(yaml)
+  // What may be written, and nothing else. The allowlist is not a host
+  // trust boundary — every key here is derived from the profile's OWN
+  // manifest or the curated catalog — it is what stops a caller writing
+  // arbitrary text into a file pnpm parses, so each form is spelled out
+  // exactly rather than loosened into "anything with a URL in it".
+  //
+  // A path segment must start with something other than a dot, which is how
+  // `..` traversal would otherwise enter a shape that looks like a repo.
+  const SEG = '[A-Za-z0-9_-][A-Za-z0-9_.-]*'
+  const NAME = '[A-Za-z0-9@/_.-]+'
+  const SHA = '[0-9a-f]{40}'
+  // The stable clone-URL key: github's (#68) and, since #637, every other
+  // host's — pnpm keys a git dependency by the remote it would clone, whoever
+  // serves it. Optionally pinned to a commit, which is the form pnpm 11.8.0
+  // names for a plain remote. https only: the market installs from https
+  // remotes, and an http key would authorize a source it never writes.
+  //
+  // The `.git` suffix is optional because pnpm keys the remote exactly as it
+  // was spelled: measured on 12.4.1, a remote installed without `.git`
+  // authorizes under `name@git+…/repo` and NOT under `…/repo.git`, so
+  // requiring the suffix dropped a correctly derived key on its way out, and
+  // appending it would have written one pnpm never reads.
+  const GIT_KEY_RE = new RegExp(
+    `^${NAME}@git\\+https://[A-Za-z0-9_.-]+(?::\\d{1,5})?/${SEG}(?:/${SEG})*(?:\\.git)?(?:#${SHA})?$`,
+  )
+  // The commit-pinned download a host serves, which is what pnpm below 11.21
+  // matches instead (#285): codeload for github, the project archive for
+  // gitlab.com and bitbucket.org (#637). Each branch names its host and its
+  // exact path shape.
+  const ARCHIVE_KEY_RE = new RegExp(
+    `^${NAME}@https://(?:`
+    + `codeload\\.github\\.com/${SEG}/${SEG}/tar\\.gz/${SHA}`
+    + `|bitbucket\\.org/${SEG}/${SEG}/get/${SHA}\\.tar\\.gz`
+    + `|gitlab\\.com/${SEG}(?:/${SEG})+/-/archive/${SHA}/${SEG}-${SHA}\\.tar\\.gz`
+    + ')$',
+  )
+  for (const pkg of packages) {
+    if (/^[A-Za-z0-9@/_.-]+$/.test(pkg) || GIT_KEY_RE.test(pkg) || ARCHIVE_KEY_RE.test(pkg)) map[pkg] = 'true'
+  }
+  writeAllowBuildsMap(file, yaml, map, blockRe, blockMatch)
   return Object.keys(map)
+}
+
+/**
+ * Remove the allowBuilds keys pnpm cannot parse as a version range, and say
+ * which (#698).
+ *
+ * pnpm reads an allowBuilds key as `name@<version union>`, and on 10.26 to
+ * the latest 10.x and on 11.0 to 11.5 a git or archive source there —
+ * `name@git+https://…`, `name@https://codeload…` — is rejected as
+ * "Invalid versions union … Use exact versions only". Not the one entry: the
+ * whole workspace file, so EVERY later pnpm command in the profile fails,
+ * including installs that have nothing to do with it. Measured on 9.15,
+ * 10.0 through 10.29, 11.0 through 11.8, 11.21 and 12.4; 10.25 and below
+ * ignore allowBuilds and 11.6 and above accept these keys.
+ *
+ * Those are exactly the keys the market writes for a git source (#68, #285,
+ * #637), because the pnpm versions that need them to authorize anything
+ * read them fine. On the versions in between, a bare name is what
+ * authorizes a git dependency — measured on 10.29 — and it is kept.
+ *
+ * @returns the keys removed; empty when nothing matched, in which case the
+ *   file is left untouched.
+ */
+export function dropUnparseableBuildKeys(profile: string, explicitDir?: string): string[] {
+  const file = join(profileDir(profile, explicitDir), 'pnpm-workspace.yaml')
+  let yaml: string
+  try { yaml = readFileSync(file, 'utf8') } catch { return [] }
+  const { map, blockRe, blockMatch } = readAllowBuildsMap(yaml)
+  // A key is a source rather than a version when what follows the name's own
+  // `@` starts a URL scheme. Scoped names begin with `@`, so the separator is
+  // the first `@` after position 0.
+  const removed = Object.keys(map).filter(key => {
+    const at = key.indexOf('@', 1)
+    return at > 0 && /^(?:git\+|https?:)/.test(key.slice(at + 1))
+  })
+  if (removed.length === 0) return []
+  for (const key of removed) delete map[key]
+  writeAllowBuildsMap(file, yaml, map, blockRe, blockMatch)
+  return removed
 }

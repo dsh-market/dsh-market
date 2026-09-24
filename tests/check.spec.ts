@@ -20,6 +20,8 @@ import {
 } from '../src/check.ts'
 import { dshHostInfo } from '../src/dsh-install.ts'
 import { readBundleRules } from '../src/order.ts'
+import { canCreateSymlink } from './symlink-support.ts'
+import { trialValidate } from '../src/trial.ts'
 
 let tmp: string
 const originalResourcesPath = Object.getOwnPropertyDescriptor(process, 'resourcesPath')
@@ -84,6 +86,81 @@ function writeBundle(
   writeFileSync(join(dir, 'cordis.patch.yml'), dump(patch))
   return dir
 }
+
+describe('a bundle that declares several patch files (#676)', () => {
+  it('accepts a patch LIST and collects entries from every file', () => {
+    // dsh 0.1.7's own `@deepseek-ai/dsh-web-app` declares five patch files —
+    // a base one plus four presets — and the official headless template
+    // includes that bundle. Requiring a string therefore reported "the
+    // profile will fail to boot" for the DEFAULT layout, while
+    // `dsh --dump-config` composed it with exit 0.
+    const dir = pdir()
+    writeProfile(dir, {
+      name: 'web-profile',
+      dsh: { profile: { bundles: ['@deepseek-ai/dsh-web-app'] } },
+      dependencies: { '@deepseek-ai/dsh-web-app': '^0.1.7-alpha.1' },
+    })
+    const bundle = writePackage(dir, '@deepseek-ai/dsh-web-app', {
+      name: '@deepseek-ai/dsh-web-app',
+      version: '0.1.7-alpha.1',
+      dsh: { bundle: { patch: ['./cordis.patch.yml', './presets/standard.patch.yml'] } },
+    })
+    writeLoadablePackage(dir, 'web-app-core')
+    writeLoadablePackage(dir, 'preset-standard')
+    mkdirSync(join(bundle, 'presets'), { recursive: true })
+    writeFileSync(join(bundle, 'cordis.patch.yml'), dump([
+      { insert: [{ id: 'web-app-core', name: 'web-app-core' }] },
+    ]))
+    writeFileSync(join(bundle, 'presets', 'standard.patch.yml'), dump([
+      { insert: [{ id: 'preset-standard', name: 'preset-standard' }] },
+    ]))
+
+    const report = analyzeProfile(dir, { dshInstallDir: dir })
+
+    expect(report.summary.errors).toEqual([])
+    // BOTH files contribute: a reader who only parsed the first would see
+    // the second patch's rows as unknown ids everywhere downstream.
+    const layer = report.bundles.find(entry => entry.name === '@deepseek-ai/dsh-web-app')
+    expect(layer?.entries).toEqual(expect.arrayContaining(['web-app-core', 'preset-standard']))
+  })
+
+  it('still reports a declared file that is missing, naming the one that is', () => {
+    const dir = pdir()
+    writeProfile(dir, {
+      name: 'web-profile',
+      dsh: { profile: { bundles: ['multi'] } },
+      dependencies: { multi: '^1.0.0' },
+    })
+    const bundle = writePackage(dir, 'multi', {
+      name: 'multi',
+      version: '1.0.0',
+      dsh: { bundle: { patch: ['./cordis.patch.yml', './presets/gone.patch.yml'] } },
+    })
+    writeFileSync(join(bundle, 'cordis.patch.yml'), dump([{ insert: [] }]))
+
+    const report = analyzeProfile(dir, { dshInstallDir: dir })
+
+    expect(report.summary.errors).toEqual([
+      'bundle multi: declared patch ./presets/gone.patch.yml is missing — the profile will fail to boot',
+    ])
+  })
+
+  it('still reports a bundle that declares no patch at all', () => {
+    const dir = pdir()
+    writeProfile(dir, {
+      name: 'web-profile',
+      dsh: { profile: { bundles: ['bare'] } },
+      dependencies: { bare: '^1.0.0' },
+    })
+    writePackage(dir, 'bare', { name: 'bare', version: '1.0.0', dsh: { bundle: {} } })
+
+    const report = analyzeProfile(dir, { dshInstallDir: dir })
+
+    expect(report.summary.errors).toEqual([
+      'bundle bare: bundle declares no dsh.bundle.patch — the profile will fail to boot',
+    ])
+  })
+})
 
 describe('bundle stack (#98 diagnostics)', () => {
   it('keeps dsh.profile.bundles order and classifies official vs community', () => {
@@ -335,6 +412,63 @@ describe('user patch package resolution (#205)', () => {
     expect(resolutionErrors(report.summary.errors)).toEqual([
       'user-patch: loader package @issue205/host-only-plugin is not installed in the profile — the profile will fail to boot',
     ])
+  })
+
+  it('accepts an official host package in a Desktop user patch', () => {
+    const dir = pdir()
+    const dshInstall = join(tmp, 'dsh-install')
+    writeProfile(dir, { name: 'desktop-profile', dependencies: {} })
+    writeProfile(dshInstall, { name: '@deepseek-ai/dsh' })
+    writeLoadablePackage(dshInstall, '@deepseek-ai/dsh-mcp-client')
+    writeFileSync(join(dir, 'cordis.patch.yml'), dump([
+      { insert: [{ id: 'official-mcp', name: '@deepseek-ai/dsh-mcp-client' }] },
+    ]))
+
+    const report = analyzeProfile(dir, { dshInstallDir: dshInstall, homeDir: join(tmp, 'empty-home') })
+    expect(resolutionErrors(report.summary.errors)).toEqual([])
+  })
+
+  it('does not call confirmed app.asar host packages missing profile dependencies', () => {
+    const dir = pdir()
+    const dshInstall = join(tmp, 'resources', 'app.asar', 'dsh')
+    writeProfile(dir, {
+      name: 'desktop-profile',
+      dependencies: {},
+      dsh: { profile: { bundles: ['@deepseek-ai/dsh-experimental-agent-team-profile'] } },
+    })
+    writeProfile(dshInstall, { name: '@deepseek-ai/dsh' })
+    writeFileSync(join(dir, 'cordis.patch.yml'), dump([
+      { insert: [{ id: 'official-mcp', name: '@deepseek-ai/dsh-mcp-client' }] },
+    ]))
+
+    const report = analyzeProfile(dir, { dshInstallDir: dshInstall, homeDir: join(tmp, 'empty-home') })
+    expect(report.bundles[0]).toMatchObject({
+      kind: 'official',
+      error: null,
+      unresolvedInbox: true,
+    })
+    expect(report.summary.errors).toEqual([])
+    expect(report.summary.warnings).toContain(
+      'user-patch: bundled Desktop loader @deepseek-ai/dsh-mcp-client could not be independently resolved from app.asar',
+    )
+  })
+
+  it('keeps missing Agent Team and MCP packages fatal outside the packaged Desktop', () => {
+    const dir = pdir()
+    const dshInstall = join(tmp, 'dsh-install')
+    writeProfile(dir, {
+      name: 'web-profile',
+      dependencies: {},
+      dsh: { profile: { bundles: ['@deepseek-ai/dsh-experimental-agent-team-profile'] } },
+    })
+    writeProfile(dshInstall, { name: '@deepseek-ai/dsh' })
+    writeFileSync(join(dir, 'cordis.patch.yml'), dump([
+      { insert: [{ id: 'official-mcp', name: '@deepseek-ai/dsh-mcp-client' }] },
+    ]))
+
+    const report = analyzeProfile(dir, { dshInstallDir: dshInstall, homeDir: join(tmp, 'empty-home') })
+    expect(report.summary.errors.some(error => error.includes('dsh-experimental-agent-team-profile'))).toBe(true)
+    expect(report.summary.errors.some(error => error.includes('dsh-mcp-client'))).toBe(true)
   })
 
   it('does not skip a broken nearer package directory for a healthy parent copy', () => {
@@ -835,6 +969,57 @@ describe('in-box bundles that cannot be located (#369)', () => {
     expect(report.summary.errors.join('\n')).not.toMatch(/is not installed/)
   })
 
+  it('does not call an unlisted OFFICIAL bundle missing while the installation is out of sight (#676)', () => {
+    // A desktop build ships more in-box bundles than INBOX_BUNDLES names —
+    // this one reported "not installed — will fail to boot" while its three
+    // entries were active in the running host. With the installation not
+    // locatable, an `@deepseek-ai/` bundle is unknown, not missing.
+    const dir = pdir()
+    writeProfile(dir, {
+      name: 'web-profile',
+      dependencies: {},
+      dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-experimental-agent-team-profile'] } },
+    })
+
+    const report = analyzeProfile(dir, desktop())
+
+    const team = report.bundles.find(layer => layer.name === '@deepseek-ai/dsh-experimental-agent-team-profile')
+    expect(team?.error).toBeNull()
+    expect(team?.unresolvedInbox).toBe(true)
+    expect(report.summary.errors.join('\n')).not.toMatch(/is not installed/)
+  })
+
+  it('still calls a COMMUNITY bundle missing while the installation is out of sight', () => {
+    // The relaxation is for what the installation may supply. A community
+    // bundle only ever comes from the profile, so its absence is certain.
+    const dir = pdir()
+    writeProfile(dir, {
+      name: 'web-profile',
+      dependencies: {},
+      dsh: { profile: { bundles: ['dsh-community-gone'] } },
+    })
+
+    const report = analyzeProfile(dir, desktop())
+
+    expect(report.bundles[0]?.error).toMatch(/is not installed/)
+  })
+
+  it('still calls an official bundle missing when the installation IS located and lacks it', () => {
+    const dir = pdir()
+    const install = join(tmp, 'dsh-install')
+    mkdirSync(install, { recursive: true })
+    writeFileSync(join(install, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh', version: '0.1.7' }))
+    writeProfile(dir, {
+      name: 'web-profile',
+      dependencies: {},
+      dsh: { profile: { bundles: ['@deepseek-ai/dsh-experimental-agent-team-profile'] } },
+    })
+
+    const report = analyzeProfile(dir, { dshInstallDir: install })
+
+    expect(report.bundles[0]?.error).toMatch(/is not installed/)
+  })
+
   it('does not inspect a stale profile copy when the in-box host is hidden', () => {
     const dir = pdir()
     writeProfile(dir, {
@@ -917,7 +1102,10 @@ describe('host version for the exported log (REIN-280)', () => {
       .toEqual({ version: '0.1.1-rc.2', directory: cliInstall })
   })
 
-  it('follows the bin symlink a global install actually puts on PATH', () => {
+  // Needs a *file* symlink, and a file link has no unprivileged fallback:
+  // `junction` is directory-only. Without the privilege this asserted a link
+  // that was never created, so it skips instead (tests/symlink-support.ts).
+  it.skipIf(!canCreateSymlink('file'))('follows the bin symlink a global install actually puts on PATH', () => {
     // `npm i -g` and Homebrew both install the package under lib/ and link
     // it into bin/, so process.argv[1] is the LINK. Walking up from there
     // reaches / without ever passing the package, and every consumer of the
@@ -1077,6 +1265,150 @@ describe('Desktop host discovery (#405)', () => {
     expect(report.summary.warnings).not.toContain(
       'dsh-vision-router: attachment-local — patch target not found',
     )
+  })
+})
+
+describe('flat Desktop host discovery (#553)', () => {
+  // Report-derived layout, not an extracted rc.12 installer. In particular,
+  // app.asar below is an ordinary directory, NOT Electron's virtual fs.
+  const packages = ['dsh-base', 'dsh-web-app', 'dsh-web', 'dsh-settings']
+  const version = '0.1.0-rc.12'
+  function desktop(applicationRoot = 'app'): string {
+    const resources = join(tmp, 'flat-resources')
+    const app = join(resources, applicationRoot)
+    writeProfile(app, { name: '@deepseek-ai/dsh-desktop', version })
+    for (const name of packages) {
+      writePackage(app, `@deepseek-ai/${name}`, { name: `@deepseek-ai/${name}`, version })
+    }
+    Object.defineProperty(process, 'resourcesPath', { value: resources, configurable: true })
+    return app
+  }
+
+  it('finds the flat dependency anchor from the process entry without resourcesPath', () => {
+    const app = desktop()
+    delete (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath
+    expect(findDshInstallDir(join(app, 'lib', 'main.js'))).toBe(app)
+    expect(dshHostInfo(join(app, 'lib', 'main.js'))).toEqual({ directory: app, version })
+  })
+
+  it.each(['app', 'app.asar', 'app.asar.unpacked'])(
+    'falls back to resources/%s with an unhelpful entry (filesystem fixture)', root => {
+      const app = desktop(root)
+      expect(dshHostInfo(join(tmp, 'unrelated', 'main.js'))).toEqual({ directory: app, version })
+    },
+  )
+
+  it('preserves legacy nested-host priority over a flat shell reached by argv', () => {
+    const app = desktop()
+    const cli = writePackage(app, '@deepseek-ai/dsh', { name: '@deepseek-ai/dsh', version: '0.1.1-rc.2' })
+    expect(dshHostInfo(join(app, 'lib', 'main.js'))).toEqual({ directory: cli, version: '0.1.1-rc.2' })
+  })
+
+  it.each([undefined, '', ' ', 'not-a-version', '0.1', 12, null, '9.9.9'])(
+    'retains the dependency anchor but not an uncorroborated shell version %j', shellVersion => {
+      const app = desktop()
+      writeProfile(app, { name: '@deepseek-ai/dsh-desktop', version: shellVersion })
+      expect(dshHostInfo(join(app, 'lib', 'main.js'))).toEqual({ directory: app, version: 'unknown' })
+    },
+  )
+
+  it.each(packages)('does not choose a version when %s disagrees', name => {
+    const app = desktop()
+    writePackage(app, `@deepseek-ai/${name}`, { name: `@deepseek-ai/${name}`, version: '0.1.1-rc.2' })
+    expect(dshHostInfo(join(app, 'lib', 'main.js'))).toEqual({ directory: app, version: 'unknown' })
+  })
+
+  it.each(['garbage', '01.2.3', '1.2.3-01', '1.2.3-rc..1'])(
+    'does not report an invalid version even if every manifest agrees: %s', invalidVersion => {
+      const app = desktop()
+      writeProfile(app, { name: '@deepseek-ai/dsh-desktop', version: invalidVersion })
+      for (const name of packages) {
+        writePackage(app, `@deepseek-ai/${name}`, { name: `@deepseek-ai/${name}`, version: invalidVersion })
+      }
+      expect(dshHostInfo(join(app, 'lib', 'main.js'))).toEqual({ directory: app, version: 'unknown' })
+    },
+  )
+
+  it.each([false, true])('accepts bundled package links but not profile links (external=%s)', external => {
+    const app = desktop()
+    const name = '@deepseek-ai/dsh-web'
+    const target = writePackage(external ? pdir() : join(app, 'node_modules', '.pnpm', 'runtime'), name, { name, version })
+    const link = join(app, 'node_modules', name)
+    rmSync(link, { recursive: true })
+    symlinkSync(target, link, process.platform === 'win32' ? 'junction' : 'dir')
+    expect(dshHostInfo(join(app, 'lib', 'main.js'))).toEqual({ directory: app, version: external ? 'unknown' : version })
+  })
+
+  it('uses resources when argv has no entry', () => {
+    const app = desktop()
+    const argv = process.argv
+    try {
+      process.argv = [argv[0]!]
+      expect(dshHostInfo()).toEqual({ directory: app, version })
+    } finally {
+      process.argv = argv
+    }
+  })
+
+  it.each(['missing', 'unreadable', 'json', 'identity', 'version'])(
+    'keeps a confirmed bundle anchor when another witness is %s', defect => {
+      const app = desktop()
+      const manifest = join(app, 'node_modules', '@deepseek-ai', 'dsh-web-app', 'package.json')
+      if (defect === 'missing' || defect === 'unreadable') {
+        rmSync(manifest)
+        // A directory at the file path produces a read failure on both OSes.
+        if (defect === 'unreadable') mkdirSync(manifest)
+      } else {
+        writeFileSync(manifest, defect === 'json' ? '{' : JSON.stringify(
+          defect === 'identity' ? { name: 'impostor', version } : { name: '@deepseek-ai/dsh-web-app' },
+        ))
+      }
+      expect(dshHostInfo(join(app, 'lib', 'main.js'))).toEqual({ directory: app, version: 'unknown' })
+    },
+  )
+
+  it.each(['null', '{', '{"name":"other-desktop","version":"0.1.0-rc.12"}'])(
+    'rejects a malformed or wrong shell manifest: %s', content => {
+      const app = desktop()
+      writeFileSync(join(app, 'package.json'), content)
+      expect(dshHostInfo(join(app, 'lib', 'main.js'))).toBeNull()
+    },
+  )
+
+  it('does not treat a shell-only directory or profile packages as a bundled runtime', () => {
+    const app = desktop()
+    rmSync(join(app, 'node_modules'), { recursive: true })
+    for (const name of packages) {
+      writePackage(pdir(), `@deepseek-ai/${name}`, { name: `@deepseek-ai/${name}`, version })
+      // Node's ancestor search must not supply version evidence either.
+      writePackage(tmp, `@deepseek-ai/${name}`, { name: `@deepseek-ai/${name}`, version })
+    }
+    expect(dshHostInfo(join(app, 'lib', 'main.js'))).toBeNull()
+  })
+
+  it('resolves built-in bundle composition, inventory, ordering and trial from the flat anchor', () => {
+    const app = desktop()
+    const base = writeBundle(app, '@deepseek-ai/dsh-base', version, [
+      { insert: [{ id: 'attachment-local', name: '@deepseek-ai/dsh-attachment-local' }] },
+    ], { before: ['community'] })
+    const dir = pdir()
+    writeProfile(dir, {
+      dependencies: { community: '1.0.0' },
+      dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', 'community'] } },
+    })
+    writeBundle(dir, 'community', '1.0.0', [{ id: 'attachment-local', config: { local: true } }])
+    writeBundle(dir, '@deepseek-ai/dsh-base', '9.9.9', [])
+
+    const report = analyzeProfile(dir, { homeDir: join(tmp, 'empty-home') })
+    expect(report.bundles[0]).toMatchObject({ directory: base, entries: ['attachment-local'] })
+    expect(report.orphans).toEqual([])
+    expect(report.overrides).toContainEqual({
+      id: 'attachment-local', layer: 'community', overriddenLayers: ['@deepseek-ai/dsh-base'],
+    })
+    expect(corePackageNames(findDshInstallDir())).toContain('@deepseek-ai/dsh-web')
+    expect(readBundleRules(dir)).toContainEqual({ name: '@deepseek-ai/dsh-base', before: ['community'], after: [] })
+    expect(trialValidate(dir, ['community'], { homeDir: join(tmp, 'empty-home') })).toMatchObject({ ok: true })
+    expect(dshHostInfo()).toEqual({ directory: app, version })
   })
 })
 

@@ -29,6 +29,7 @@ import { Script } from 'node:vm'
 import { join } from 'node:path'
 import { listHotMounts, parseSimplePatch } from './hot.ts'
 import { userPatchPackageReferences } from './patch.ts'
+import { nameMatchesPackage } from './entry-identity.ts'
 import { bundlePatchInsertedIds, hasDshManifest, hasLoadableEntry, profileDir, readInstalled } from './profile.ts'
 
 export type ActivationState = 'live' | 'restart' | 'inert' | 'broken' | 'missing' | 'disabled'
@@ -41,6 +42,12 @@ export interface ActivationResult {
   bundle: boolean
   /** True when the package is live in the running composition. */
   hot: boolean
+  /**
+   * The installed package that declares this one, when this package is a
+   * plain library somebody else pulled in rather than a plugin the user
+   * chose (#634). Only ever set on `inert`.
+   */
+  dependencyOf?: string
 }
 
 /** The profile manifest's `dsh.profile.bundles` — what the CLI reconciled. */
@@ -73,9 +80,7 @@ interface PkgDsh {
  * must not — the `/` bound keeps the match a real subpath.
  */
 function liveIncludes(live: ReadonlySet<string>, packageName: string): boolean {
-  if (live.has(packageName)) return true
-  const prefix = `${packageName}/`
-  for (const name of live) if (name.startsWith(prefix)) return true
+  for (const name of live) if (nameMatchesPackage(name, packageName)) return true
   return false
 }
 

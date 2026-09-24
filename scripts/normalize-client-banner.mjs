@@ -53,9 +53,20 @@ if (!code.startsWith(required)) {
 
 // --- 2. machine-independent CSS virtual ids -------------------------------
 // `\0dsh-css:<abs>/src/client/Market.module.css.mjs` → `\0dsh-css:src/client/…`
+//
+// The prefix match is GREEDY so the tail anchors on the LAST `src/`. It used
+// to be lazy, which stripped an absolute prefix correctly but left a doubled
+// segment alone: a build that emitted `src/src/client/Market.module.css.mjs`
+// stayed that way, and its bundle then differed from every other machine's
+// by exactly that one line. Two contributor PRs sat red on it (#563, #570)
+// with nothing in the failure to suggest their build was the variable — the
+// CI step only says the artefact does not match.
+//
+// This file exists because build environments differ; a rule that only
+// handles the difference it was written for is half a rule.
 const root = process.cwd().replaceAll('\\', '/')
 const before = code
-code = code.replace(/(dsh-css:)([^\n"]*?)(src[/\\][^\n"]*?\.css\.mjs)/g, (_all, prefix, _dir, rel) =>
+code = code.replace(/(dsh-css:)([^\n"]*)(src[/\\][^\n"]*?\.css\.mjs)/g, (_all, prefix, _dir, rel) =>
   prefix + rel.replaceAll('\\', '/'))
 // Guard: this builder's own checkout path must not survive anywhere, and no
 // virtual id may stay absolute. Deliberately narrow — the bundle legitimately

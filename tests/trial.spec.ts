@@ -93,6 +93,42 @@ describe('an unlocatable in-box bundle must not fail the trial (#369)', () => {
     expect(result.ok, 'a passing composition was called unbootable').toBe(true)
   })
 
+  it('passes the trial when the in-box bundle declares a patch LIST (#688, #676)', () => {
+    // dsh 0.1.7's own @deepseek-ai/dsh-web-app declares five patch files,
+    // and an in-box bundle is supplied by the dsh INSTALLATION — so it has to
+    // be modelled there, not in the profile (a profile copy is a stale
+    // shadow the trial ignores). The trial is what the update route runs
+    // before it lets an update stand: a string-only reading did not just
+    // mis-diagnose, on 0.1.7-alpha.1 it rejected EVERY plugin update and
+    // rolled it back, with a message blaming a field the updated package
+    // plainly declared.
+    const dir = pdir()
+    writeProfile(dir, ['@deepseek-ai/dsh-web-app', 'dsh-cost-meter'])
+    writeBundle(dir, 'dsh-cost-meter', '1.7.34', [{ insert: [{ id: 'cost-meter', name: 'dsh-cost-meter' }] }])
+    const dshInstall = join(tmp, 'dsh-install')
+    mkdirSync(dshInstall, { recursive: true })
+    writeFileSync(join(dshInstall, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh', version: '0.1.7-alpha.1' }))
+    const official = join(dshInstall, 'node_modules', '@deepseek-ai', 'dsh-web-app')
+    mkdirSync(join(official, 'presets'), { recursive: true })
+    writeFileSync(join(official, 'package.json'), JSON.stringify({
+      name: '@deepseek-ai/dsh-web-app',
+      version: '0.1.7-alpha.1',
+      dsh: { bundle: { patch: ['./cordis.patch.yml', './presets/standard.patch.yml'] } },
+    }))
+    writeFileSync(join(official, 'cordis.patch.yml'), dump([{ insert: [{ id: 'web-app', name: '@deepseek-ai/dsh-web-app' }] }]))
+    writeFileSync(join(official, 'presets', 'standard.patch.yml'), dump([{ insert: [{ id: 'preset-standard', name: 'preset-standard' }] }]))
+
+    const result = trialValidate(dir, ['dsh-cost-meter'], {
+      dshInstallDir: dshInstall,
+      homeDir: join(tmp, 'empty-home'),
+    })
+
+    expect(result.errors.map(e => `${e.layer}: ${e.message}`)).toEqual([])
+    expect(result.ok, 'an update on the official 0.1.7 layout was called unbootable').toBe(true)
+    // Both of the official bundle's files contributed rows.
+    expect(result.rows.map(r => r.id)).toEqual(expect.arrayContaining(['web-app', 'preset-standard', 'cost-meter']))
+  })
+
   it('ignores a stale profile copy that the hidden in-box host outranks', () => {
     const dir = pdir()
     writeProfile(dir, ['@deepseek-ai/dsh-base', 'dsh-smooth-stream'])

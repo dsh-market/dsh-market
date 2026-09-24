@@ -132,6 +132,15 @@ async function tryHeadCommit(
     // metacharacters (`.` is legal in a branch name).
     const quoted = ref.replace(/[.*+?^${}()|[\]\\]/gu, String.raw`\$&`)
     for (const namespace of ['heads', 'tags']) {
+      // An annotated tag advertises two refs — the tag object and its
+      // peeled commit (`refs/tags/<ref>^{}`). pnpm resolves the tag to the
+      // peeled commit and codeload records that sha in the lockfile, so the
+      // peeled line is the one that must equal `current`; answering with
+      // the tag-object sha made annotated-tag installs report an update
+      // forever (#597). Lightweight tags have no peeled line and fall
+      // through to the direct one.
+      const peeled = new RegExp(String.raw`([0-9a-f]{40}) refs/${namespace}/${quoted}\^\{\}(?![^\s])`, 'u').exec(body)
+      if (peeled !== null) return { kind: 'valid', sha: peeled[1]! }
       const found = new RegExp(String.raw`([0-9a-f]{40}) refs/${namespace}/${quoted}(?![^\s])`, 'u').exec(body)
       if (found !== null) return { kind: 'valid', sha: found[1]! }
     }

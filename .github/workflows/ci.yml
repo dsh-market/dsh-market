@@ -57,13 +57,29 @@ jobs:
       # hide). npm run check just rebuilt it; if the rebuild differs from
       # what is committed, either the source and artifact are out of sync or
       # the build is environment-dependent — both are things to know loudly.
-      - run: git diff --exit-code client/
+      # The output of a bare `git diff --exit-code client/` is a diff of a
+      # 560KB generated file: it shows WHAT changed and never what to do.
+      # Four contributors in one month hit this (#518, #563, #570, #538) and
+      # each needed a person to tell them the same sentence. A failure that
+      # explains itself costs one step and saves that.
+      - name: the committed client bundle must match src/client
+        # bash explicitly: `run:` defaults to PowerShell on windows-latest,
+        # where `if ! cmd` is a parser error rather than a test — so the step
+        # that exists to explain a failure died with a syntax error instead
+        # of explaining one.
+        shell: bash
+        run: |
+          if ! git diff --exit-code client/; then
+            echo "::error file=client/client.js::client/ is a committed build artifact and no longer matches src/client/. Run \`npm run check\` (or \`npm run build:client\`) and commit the result. Do not hand-edit it — the next build overwrites any manual change."
+            exit 1
+          fi
+          echo "client/ matches src/client"
       - run: npm test
       - run: node scripts/preflight.mjs
       - run: node scripts/validate-registry.mjs
       - run: node scripts/smoke-spawn.mjs
 
-  # Real-pnpm matrix (9/10/11 via npx) pinning the failure signatures behind
+  # Real-pnpm matrix (9/10/11/12 via npx) pinning the failure signatures behind
   # #20/#21/#22 and the recovery paths the market automates. Network-bound and
   # slower, so it runs as its own lane on Linux only.
   pnpm-compat:
@@ -117,7 +133,12 @@ jobs:
       # flaky "dsh boot timeout" (and, on longer specs, an hours-long stuck
       # job) with nothing wrong in this repo's own code. rc.8 added
       # `--no-open`, which tests/web/scaffold.ts now passes.
-      - run: npm install -g @deepseek-ai/dsh@${{ matrix.dsh }}
+      # Not `npm install -g`: the CLI is pinned but its cordis plugins float,
+      # and since 2026-09-22 the newest of them no longer boot (#684). The
+      # script installs the host under npm `overrides`, which a global install
+      # ignores, and puts it on PATH. See the script for the bisect. It uses
+      # the pnpm set up above.
+      - run: node scripts/install-e2e-host.mjs ${{ matrix.dsh }}
       # --with-deps installs system libraries and is Linux-only.
       - run: npx playwright install --with-deps chromium
         if: runner.os == 'Linux'

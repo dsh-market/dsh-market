@@ -21,10 +21,10 @@
 import { fileFromTarball } from './catalog-npm.ts'
 import { marketFetch } from './net.ts'
 import { activeRegion, routesFor } from './regions.ts'
-import { profileDir, readInstalled, readLockCommits } from './profile.ts'
-import { lookupRepoFromUrl, repoOfTarget } from './sources.ts'
+import { profileDir, readInstalled, readInstalledRepoEvidence, readLockCommits } from './profile.ts'
+import { lookupRepoFromUrl, repoOf, repoOfTarget } from './sources.ts'
 import { checkUpdates } from './updates.ts'
-import { loadRegistry } from './registry.ts'
+import { loadRegistry, type RegistryPlugin } from './registry.ts'
 
 const UPDATES_PACKAGE = 'dsh-plugin-updates'
 const UPDATES_FILE = 'package/updates.json'
@@ -236,7 +236,24 @@ export async function updateNotesFor(
     if (key === null) {
       try {
         const registry = await loadRegistry()
-        const plugin = registry.plugins.find(p => p.name === name)
+        const candidates = registry.plugins.filter(p => p.name === name)
+        let plugin: RegistryPlugin | undefined
+        if (candidates.length === 1) {
+          plugin = candidates[0]!
+        } else if (candidates.length > 1) {
+          // Same-named packages exist in the catalog; a bare name match can
+          // pick someone else's repo and answer "no notes" for a plugin that
+          // ships updates data under its own repository (#598). The installed
+          // package declares its repository, so prefer the catalog entry that
+          // agrees with it; only a unique agreement is trusted — an ambiguous
+          // name falls through to npm publish times, which are honest for any
+          // installed npm package.
+          const evidence = readInstalledRepoEvidence(profile, name, spec, explicitDir)
+          const matches = candidates.filter(p => evidence.identities.some(
+            id => repoOf(p.url)?.toLowerCase() === id.split('#')[0]!.toLowerCase(),
+          ))
+          if (matches.length === 1) plugin = matches[0]!
+        }
         if (plugin !== undefined) {
           key = plugin.url
         }
@@ -251,7 +268,7 @@ export async function updateNotesFor(
     let current: string | null = null
     if (key !== null && key.startsWith('https://github.com/')) {
       const repo = key.slice('https://github.com/'.length).split('#')[0]!.toLowerCase()
-      current = readLockCommits(profile, activeProfileDir).get(repo) ?? null
+      current = readLockCommits(profile, activeProfileDir).get(`github.com/${repo}`) ?? null
     } else {
       const statuses = await checkUpdates(profile, false, explicitDir).catch(() => null)
       current = statuses?.[name]?.current ?? null

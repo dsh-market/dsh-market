@@ -5,6 +5,9 @@ import { defineConfig } from 'vitest/config'
 // (`npm run test:compat`).
 export default defineConfig({
   test: {
+    // Strips the developer's proxy variables first: with one exported, the
+    // fetch stubs below marketFetch never see a request (tests/setup/no-proxy.ts).
+    setupFiles: ['tests/setup/no-proxy.ts'],
     include: ['tests/**/*.spec.ts', 'tests/**/*.spec.tsx'],
     exclude: ['tests/**/*.compat.spec.ts', '**/node_modules/**'],
     pool: 'forks',

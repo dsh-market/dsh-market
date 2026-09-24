@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from 'vitest'
 import {
-  entryForDep, extractReadmeImageCandidates, extractReadmeImages, formatCount, groupSwitchState, installedForCatalog, isInstalled, isMarketItself, looksTerminal, matchInstalledName, orderedCategories, pageItems, pluginCategories, pluginsForFavorites, previewDimensionScore, rankThemeScreenshots, safeScreenshots, staleFavoriteUrls, themePlugins, visiblePlugins, humanOutput, catalogEntryForInstalled} from '../src/client/market-data.ts'
+  entryForDep, extractReadmeImageCandidates, extractReadmeImages, formatCount, groupSwitchState, installedForCatalog, isInstalled, isMarketItself, localizeBilingual, localizeBilingualList, looksTerminal, matchInstalledName, orderedCategories, pageItems, pluginCategories, pluginsForFavorites, previewDimensionScore, rankThemeScreenshots, releaseNotesHttpsImage, safeScreenshots, sanitizeReleaseNotesBody, staleFavoriteUrls, themePlugins, visiblePlugins, humanOutput, catalogEntryForInstalled} from '../src/client/market-data.ts'
 import type { RegistryPlugin, ScreenshotCandidate } from '../src/client/market-data.ts'
 
 function plugin(partial: Partial<RegistryPlugin>): RegistryPlugin {
@@ -280,6 +280,51 @@ describe('matchInstalledName / isInstalled', () => {
     expect(matchInstalledName(root, pinned)).toBe('plugin-a')
     expect(matchInstalledName(exact, pinned)).toBe('plugin-a')
     expect(matchInstalledName(sibling, pinned)).toBeNull()
+  })
+
+  it('reads an npm-installed monorepo subpackage through the bare root its manifest publishes (#605)', () => {
+    // The shape the ecosystem usually publishes: `repository` names the
+    // collection while `repository.directory` is absent, so the server's
+    // evidence is the bare root alone — the case the test above does not
+    // cover, because it feeds root AND #path together, which is what
+    // githubRepoIdentities returns only when a directory IS declared.
+    //
+    // entryIdentities still carries the entry's npm name here, but
+    // sameSourceConflict() read root-vs-#path:/sub as two different sources
+    // and returned before any identity was compared, so the strongest
+    // evidence available never got a chance to match and Discover kept
+    // offering Install on a running plugin.
+    const entry = plugin({
+      name: 'dsh-web#packages/dsh-task-board',
+      npm: '@linxin666/dsh-client-ui-task-board',
+      url: 'https://github.com/zhu1090093659/dsh-web/tree/main/packages/dsh-task-board',
+    })
+    const installed = { '@linxin666/dsh-client-ui-task-board': '^0.3.22' }
+    const repoIdentities = { '@linxin666/dsh-client-ui-task-board': ['zhu1090093659/dsh-web'] }
+
+    expect(matchInstalledName(entry, installed, repoIdentities, [entry]))
+      .toBe('@linxin666/dsh-client-ui-task-board')
+  })
+
+  it('keeps bare-root evidence from claiming a sibling subpackage of the same monorepo (#605)', () => {
+    // Root evidence says which repository, never which package inside it. The
+    // fix must not be "let the bare root satisfy entryIdentities" — that would
+    // hand the whole collection to whichever sibling the catalog lists first.
+    const sibling = plugin({
+      name: 'dsh-web#packages/dsh-git-graph',
+      url: 'https://github.com/zhu1090093659/dsh-web/tree/main/packages/dsh-git-graph',
+    })
+    const installed = { '@linxin666/dsh-client-ui-task-board': '^0.3.22' }
+    const repoIdentities = { '@linxin666/dsh-client-ui-task-board': ['zhu1090093659/dsh-web'] }
+
+    expect(matchInstalledName(sibling, installed, repoIdentities, [sibling])).toBeNull()
+
+    // The collection's own root entry, by contrast, has always identified the
+    // subpackage it contains (#170) — relaxing the conflict check must leave
+    // that working.
+    const root = plugin({ name: 'dsh-web', url: 'https://github.com/zhu1090093659/dsh-web' })
+    expect(matchInstalledName(root, installed, repoIdentities, [root]))
+      .toBe('@linxin666/dsh-client-ui-task-board')
   })
 })
 
@@ -631,6 +676,34 @@ describe('screenshots (#61)', () => {
     expect(safeScreenshots(many)).toHaveLength(6)
   })
 
+  it('sanitizeReleaseNotesBody drops pasted HTML images and other tags without eating prose', () => {
+    const body = [
+      'Open the Context tab from the chat stats line.',
+      '<img width="999" height="148" alt="image" src="https://github.com/user-attachments/assets/d732b30f-2649-4758-bc7a-c57a1cac6e14" />',
+      '',
+      'More <strong>detail</strong> with an <a href="https://example.com">label</a>.',
+      '![ok](https://github.com/user-attachments/assets/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee)',
+    ].join('\n')
+    const cleaned = sanitizeReleaseNotesBody(body)
+    expect(cleaned).not.toContain('<img')
+    expect(cleaned).not.toContain('<strong>')
+    expect(cleaned).toContain('Open the Context tab from the chat stats line.')
+    expect(cleaned).toContain('More detail with an label.')
+    expect(cleaned).toContain('![ok](https://github.com/user-attachments/assets/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee)')
+  })
+
+  it('releaseNotesHttpsImage accepts allowlisted https markdown images only', () => {
+    expect(releaseNotesHttpsImage(
+      '![shot](https://github.com/user-attachments/assets/d732b30f-2649-4758-bc7a-c57a1cac6e14)',
+    )).toEqual({
+      alt: 'shot',
+      src: 'https://github.com/user-attachments/assets/d732b30f-2649-4758-bc7a-c57a1cac6e14',
+    })
+    expect(releaseNotesHttpsImage('![x](https://evil.example/a.png)')).toBeNull()
+    expect(releaseNotesHttpsImage('![x](assets/local.png)')).toBeNull()
+    expect(releaseNotesHttpsImage('not an image')).toBeNull()
+  })
+
   it('extractReadmeImages ranks screenshot evidence ahead of title logos and keeps scanning past six images', () => {
     const md = [
       '# my-plugin',
@@ -712,6 +785,46 @@ describe('humanOutput', () => {
   it('leaves ordinary output and malformed lines alone', () => {
     expect(humanOutput('plain error\n{not json\n')).toBe('plain error\n{not json')
     expect(humanOutput('')).toBe('')
+  })
+})
+
+describe('localizeBilingual', () => {
+  it('picks the Chinese half of a zh-first activation reason', () => {
+    const text = '未声明 dsh.bundle,已作为普通依赖安装,不会成为 profile 层 / no dsh.bundle — installed as a plain dependency, never a profile-layer plugin'
+    expect(localizeBilingual(text, 'zh')).toBe('未声明 dsh.bundle,已作为普通依赖安装,不会成为 profile 层')
+    expect(localizeBilingual(text, 'en')).toBe('no dsh.bundle — installed as a plain dependency, never a profile-layer plugin')
+  })
+
+  it('picks the Chinese half when English comes first', () => {
+    const text = 'JSON body is required / 需要 JSON body'
+    expect(localizeBilingual(text, 'zh')).toBe('需要 JSON body')
+    expect(localizeBilingual(text, 'en')).toBe('JSON body is required')
+  })
+
+  it('splits on the language join when the English half contains an em-dash', () => {
+    const text = 'theme activation failed — restart required / 主题启用失败，需要重启'
+    expect(localizeBilingual(text, 'zh')).toBe('主题启用失败，需要重启')
+    expect(localizeBilingual(text, 'en')).toBe('theme activation failed — restart required')
+  })
+
+  it('leaves monolingual and ambiguous strings alone', () => {
+    expect(localizeBilingual('already localized', 'zh')).toBe('already localized')
+    expect(localizeBilingual('left / right', 'en')).toBe('left / right')
+  })
+
+  it('localizes multiline warnings line by line', () => {
+    const text = '第一行中文 / first line\n第二行中文 / second line'
+    expect(localizeBilingual(text, 'zh')).toBe('第一行中文\n第二行中文')
+    expect(localizeBilingual(text, 'en')).toBe('first line\nsecond line')
+  })
+
+  it('joins multiple reasons without reusing the bilingual separator', () => {
+    const reasons = [
+      '未声明 dsh.bundle / no dsh.bundle',
+      '需要重启 / restart required',
+    ]
+    expect(localizeBilingualList(reasons, 'zh')).toBe('未声明 dsh.bundle；需要重启')
+    expect(localizeBilingualList(reasons, 'en')).toBe('no dsh.bundle; restart required')
   })
 })
 
@@ -819,5 +932,115 @@ describe('installed-state matching stays cheap as the catalog grows (#262)', () 
     ]
     // Now ambiguous in the NEW catalog — the old count of 1 must not survive.
     expect(isInstalled(after[0]!, installed, {}, after, {})).toBe(false)
+  })
+})
+
+describe('local link:/file: matching stays cheap as the catalog grows (#589)', () => {
+  // The branch #262 left behind. A version-pinned dependency goes through
+  // looseMatchCount and its memo; a `link:` or `file:` one goes through
+  // findCatalogEntryForLocal, which had none — so the reporter measured
+  // ~300ms per repaint with a single local dependency against a 3,627-entry
+  // catalog, where the version-pinned path cost 1.1ms.
+  const catalog = (n: number): RegistryPlugin[] =>
+    Array.from({ length: n }, (_, i) => plugin({
+      name: `pkg-${i}`, npm: `pkg-${i}`, url: `https://github.com/o${i}/pkg-${i}`,
+    }))
+
+  it('makes a RE-render cheap, which is what typing in the search box costs', () => {
+    // Same property and the same sampling as the #262 test above: not a
+    // wall-clock budget, but "the catalog is scanned once, not once per
+    // render". Every keystroke re-renders the discover list.
+    const plugins = catalog(8000)
+    const installed: Record<string, string> = {}
+    for (let i = 0; i < 24; i++) installed[`pkg-${i}`] = `link:../pkg-${i}`
+    const render = (): number => {
+      const t0 = performance.now()
+      for (const p of plugins.slice(0, 48)) isInstalled(p, installed, {}, plugins, {})
+      return performance.now() - t0
+    }
+    const first = render()
+    let warm = Infinity
+    for (let i = 0; i < 5; i++) warm = Math.min(warm, render())
+    expect(first / Math.max(warm, 0.001)).toBeGreaterThan(10)
+  })
+
+  it('answers the post-install question, not the pre-install one (#485)', () => {
+    // The reason the key carries the evidence. Installing a plugin gives the
+    // next render a fresh identities array while the catalog array stays the
+    // same; a name-only key would hand back the verdict reached when the
+    // checkout still had no declared repo, which is how a different author's
+    // same-named plugin gets marked as installed.
+    const plugins = [
+      plugin({ name: 'dsh-humanizer', owner: 'lynote-ai', url: 'https://github.com/lynote-ai/dsh-humanizer', npm: 'dsh-humanizer' }),
+    ]
+    const spec = 'link:../dsh-humanizer'
+    expect(catalogEntryForInstalled(plugins, 'dsh-humanizer', spec)?.owner).toBe('lynote-ai')
+    // Same name, same catalog, evidence now says it is a fork.
+    expect(catalogEntryForInstalled(plugins, 'dsh-humanizer', spec, ['handsomeliu/dsh-humanizer'])).toBeUndefined()
+    // And back again, to prove neither answer poisoned the other.
+    expect(catalogEntryForInstalled(plugins, 'dsh-humanizer', spec, ['lynote-ai/dsh-humanizer'])?.owner).toBe('lynote-ai')
+    expect(catalogEntryForInstalled(plugins, 'dsh-humanizer', spec)?.owner).toBe('lynote-ai')
+  })
+
+  it('never lets a hint stand in for an identity', () => {
+    // The two are not interchangeable, so the key cannot treat them as one
+    // field. An identity is searched against the whole catalog; a hint only
+    // disambiguates rows that already matched by name. A local checkout the
+    // developer renamed, whose git origin still points at the catalog repo,
+    // matches on the identity and matches nothing on the hint.
+    const plugins = [plugin({ name: 'dsh-foo', npm: 'dsh-foo', url: 'https://github.com/x/dsh-foo' })]
+    const spec = 'link:../renamed'
+    expect(catalogEntryForInstalled(plugins, 'my-renamed-plugin', spec, [], ['x/dsh-foo'])).toBeUndefined()
+    expect(catalogEntryForInstalled(plugins, 'my-renamed-plugin', spec, ['x/dsh-foo'])?.url).toBe('https://github.com/x/dsh-foo')
+  })
+
+  it('does not leak a match between two different catalogs', () => {
+    // Keyed on the array identity, like looseMatchCountCache: a refetched
+    // catalog is a new array, so a verdict from the previous one cannot
+    // survive into it.
+    const before = [plugin({ name: 'solo', npm: 'solo', url: 'https://github.com/a/solo' })]
+    expect(catalogEntryForInstalled(before, 'solo', 'link:../solo')?.url).toBe('https://github.com/a/solo')
+    const after = [
+      plugin({ name: 'solo', npm: 'solo', url: 'https://github.com/a/solo' }),
+      plugin({ name: 'solo-two', npm: 'solo', url: 'https://github.com/b/solo-two' }),
+    ]
+    // Ambiguous in the NEW catalog, and with no evidence the matcher refuses.
+    expect(catalogEntryForInstalled(after, 'solo', 'link:../solo')).toBeUndefined()
+  })
+
+  it('caches a miss, instead of re-scanning to prove the absence again', () => {
+    // "No catalog row" costs the same full scan to establish as a hit does,
+    // so a miss is cached as null. Asserting only that it stays undefined
+    // would pass with no cache at all, and would not notice `if (hit)` in
+    // place of `if (hit !== undefined)` — which serves every cached null
+    // back as a fresh scan. So this is a ratio test like the one above, on
+    // a name the catalog does not have.
+    const plugins = catalog(8000)
+    const render = (): number => {
+      const t0 = performance.now()
+      for (let i = 0; i < 48; i++) catalogEntryForInstalled(plugins, 'absent', 'link:../absent')
+      return performance.now() - t0
+    }
+    const first = render()
+    let warm = Infinity
+    for (let i = 0; i < 5; i++) warm = Math.min(warm, render())
+    expect(first / Math.max(warm, 0.001)).toBeGreaterThan(10)
+    // ...and it is still a miss, however often it is asked.
+    expect(catalogEntryForInstalled(plugins, 'absent', 'link:../absent')).toBeUndefined()
+  })
+
+  it('tells an absent identity list from a present-but-empty one', () => {
+    // `[].join(sep)` and `[''].join(sep)` are the same string, and these are
+    // opposite questions: an empty-but-present list has size 1, enters the
+    // evidence branch, and refuses to guess; an absent one falls through to
+    // the unique-name match. A key built by joining answered both with
+    // whichever was asked first.
+    const plugins = [plugin({ name: 'solo', npm: 'solo', url: 'https://github.com/a/solo' })]
+    const spec = 'link:../solo'
+    expect(catalogEntryForInstalled(plugins, 'solo', spec, [], [])?.url).toBe('https://github.com/a/solo')
+    expect(catalogEntryForInstalled(plugins, 'solo', spec, [''], [])).toBeUndefined()
+    expect(catalogEntryForInstalled(plugins, 'solo', spec, [], [''])).toBeUndefined()
+    // Re-ask in the other order: the cached answers must not have merged.
+    expect(catalogEntryForInstalled(plugins, 'solo', spec, [], [])?.url).toBe('https://github.com/a/solo')
   })
 })

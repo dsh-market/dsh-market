@@ -113,6 +113,21 @@ afterEach(() => {
   resetGithubRouting()
 })
 
+describe('search input scheduling', () => {
+  it('keeps the list unchanged while typing and filters after a pause', async () => {
+    const { container } = render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    const before = rankedNames(container)
+    const input = screen.getByPlaceholderText(en.searchPh) as HTMLInputElement
+    fireEvent.change(input, { target: { value: 'loop' } })
+    expect(input.value).toBe('loop')
+    expect(rankedNames(container)).toEqual(before)
+    await waitFor(() => expect(rankedNames(container)).toEqual(['dsh-loop']))
+    fireEvent.change(input, { target: { value: '' } })
+    expect(rankedNames(container)).toEqual(before)
+  })
+})
+
 describe('api() base resolution (#345)', () => {
   /** Behind a reverse proxy that mounts dsh under a prefix, a root-absolute
    * `/dsh-market/...` resolves against the ORIGIN and misses the prefix rule,
@@ -232,6 +247,27 @@ describe('api() base resolution (#345)', () => {
 })
 
 describe('MarketSection (jsdom)', () => {
+  it('offers the top update-all button when exactly one plugin is updatable (#555)', async () => {
+    stubFetch({
+      '/dsh-market/installed': {
+        profile: 'web',
+        installed: { 'dsh-loop': '^1.0.0' },
+        live: ['dsh-loop'],
+        disabled: [],
+        notes: {},
+      },
+      '/dsh-market/updates': {
+        updates: {
+          'dsh-loop': {
+            kind: 'npm', version: '1.0.0', current: '1.0.0', latest: '1.2.0', updateAvailable: true,
+          },
+        },
+      },
+    })
+    render(<MarketSection {...props()} />)
+    expect(await screen.findByRole('button', { name: /Update all \(1\)/ })).toBeTruthy()
+  })
+
   it('renders the catalog with install buttons once the registry loads', async () => {
     render(<MarketSection {...props()} />)
     expect(await screen.findByText('dsh-loop')).toBeTruthy()
@@ -1146,6 +1182,7 @@ describe('MarketSection (jsdom)', () => {
 
   it('does not offer a rollback action when the server could not capture an exact source', async () => {
     const rollbackUnavailable = '更新前版本为 v1.0.0，但无法确认精确来源。 / The previous version was v1.0.0, but its exact source could not be verified.'
+    const englishHalf = 'The previous version was v1.0.0, but its exact source could not be verified.'
     const fetchMock = stubFetch({
       '/dsh-market/installed': { profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: [] },
       '/dsh-market/updates': { updates: { 'dsh-loop': { kind: 'npm', version: '1.0.0', current: '1.0.0', latest: '1.2.0', updateAvailable: true } } },
@@ -1165,7 +1202,8 @@ describe('MarketSection (jsdom)', () => {
     fireEvent.click(await screen.findByRole('button', { name: en.update }))
 
     expect(await screen.findByText(en.compatRiskBannerNoRollback)).toBeTruthy()
-    expect(screen.getByText(rollbackUnavailable)).toBeTruthy()
+    expect(screen.getByText(englishHalf)).toBeTruthy()
+    expect(screen.queryByText(rollbackUnavailable)).toBeNull()
     expect(screen.queryByText(en.rollbackUnavailable)).toBeNull()
     expect(screen.queryByRole('button', { name: en.rollbackNow })).toBeNull()
     expect(fetchMock.mock.calls.some(([url]) => url === '/dsh-market/rollback')).toBe(false)
@@ -1967,6 +2005,64 @@ describe('favorites (#414)', () => {
     expect(screen.queryByText('dsh-loop')).toBeNull()
   })
 
+  it('loads host-requirement badges on the favorites tab', async () => {
+    // Discover only fetches compatibility for the current page (24). Put the
+    // favorite past that window so favorites must request it itself — otherwise
+    // the badge would already be warm from discover and this would not catch
+    // the missing favorites load.
+    const fillers = Array.from({ length: 30 }, (_, i) => ({
+      ...REGISTRY.plugins[0],
+      name: `filler-${String(i).padStart(2, '0')}`,
+      npm: `filler-${String(i).padStart(2, '0')}`,
+      url: `https://github.com/fill/filler-${String(i).padStart(2, '0')}`,
+      stars: 1000 - i,
+      added: '2026-08-01',
+    }))
+    const favorite = {
+      ...REGISTRY.plugins[0],
+      name: 'fav-only',
+      npm: 'fav-only',
+      url: 'https://github.com/fav/fav-only',
+      stars: 1,
+      added: '2026-07-01',
+    }
+    const plugins = [...fillers, favorite]
+    stubFetch({
+      '/dsh-market/registry': {
+        source: 'live',
+        hostVersion: '0.1.2-alpha.2',
+        registry: { ...REGISTRY, count: plugins.length, plugins },
+      },
+      '/dsh-market/installed': {
+        profile: 'web', installed: {}, live: [], disabled: [], groups: {}, groupOrder: [],
+        favorites: [favorite.url],
+      },
+      '/dsh-market/discovery-compatibility': (body: any) => ({
+        hostVersion: '0.1.2-alpha.2',
+        plugins: Object.fromEntries(body.packages.map((name: string) => [name, {
+          status: 'compatible',
+          basis: 'manifest',
+          requirement: name === 'fav-only' ? '^9.9.9' : '^0.1.2-alpha.2',
+          declarations: [{ kind: 'peer', package: '@deepseek-ai/dsh-tools', range: name === 'fav-only' ? '^9.9.9' : '^0.1.2-alpha.2' }],
+        }])),
+      }),
+    })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('filler-00')
+    expect(screen.queryByText('fav-only')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: re(en.tabFavorites) }))
+    await screen.findByText('fav-only')
+    await waitFor(() => {
+      expect(fetchCalls.some(call =>
+        call.path === '/dsh-market/discovery-compatibility'
+        && call.method === 'POST'
+        && Array.isArray((call.body as { packages?: unknown })?.packages)
+        && ((call.body as { packages: string[] }).packages).includes('fav-only'))).toBe(true)
+    })
+    await screen.findByText(en.hostRequirement.replace('{0}', '^9.9.9'))
+    expect(screen.queryByText(en.hostRequirementLoading)).toBeNull()
+  })
+
   it('removing a favorite drops it from the favorites tab', async () => {
     const state = favoritesStub(['https://github.com/alice/dsh-loop'])
     render(<MarketSection {...props()} />)
@@ -2176,12 +2272,13 @@ describe('#60 catalog deprecation', () => {
 
 describe('#60 groups view', () => {
   /** Stateful fake: mirrors the server-side group/toggle semantics in memory. */
-  function makeFake(installed: Record<string, string>) {
+  function makeFake(installed: Record<string, string>, activationOverride?: Record<string, unknown>) {
     const state = { disabled: [] as string[], groups: {} as Record<string, string[]>, groupOrder: [] as string[] }
     const activation: Record<string, unknown> = {}
     for (const name of Object.keys(installed)) {
       activation[name] = { state: 'live', reasons: [], bundle: true, hot: true }
     }
+    if (activationOverride !== undefined) Object.assign(activation, activationOverride)
     stubFetch({
       '/dsh-market/installed': () => ({
         profile: 'web',
@@ -2243,6 +2340,13 @@ describe('#60 groups view', () => {
     await openGroupsView()
     expect(await screen.findByText(en.noGroups)).toBeTruthy()
 
+    // Leaving the inline editor restores the New group button.
+    fireEvent.click(screen.getByRole('button', { name: en.groupNew }))
+    fireEvent.change(screen.getByPlaceholderText(en.groupNamePh), { target: { value: 'draft' } })
+    fireEvent.focusOut(screen.getByPlaceholderText(en.groupNamePh))
+    expect(screen.getByRole('button', { name: en.groupNew })).toBeTruthy()
+    expect(screen.queryByPlaceholderText(en.groupNamePh)).toBeNull()
+
     // Create.
     fireEvent.click(screen.getByRole('button', { name: en.groupNew }))
     fireEvent.change(screen.getByPlaceholderText(en.groupNamePh), { target: { value: 'work' } })
@@ -2250,10 +2354,9 @@ describe('#60 groups view', () => {
     expect(await screen.findByText('work')).toBeTruthy()
 
     // Assign dsh-loop into the group from the ungrouped list.
-    const loopRow = screen.getByText('dsh-loop').closest('[class*="irow"]') as HTMLElement
+    const loopRow = screen.getByText('dsh-loop').closest('[class*="groupMember"]') as HTMLElement
     fireEvent.click(within(loopRow).getByRole('button', { name: en.groupAssign }))
-    fireEvent.change(within(loopRow).getByRole('combobox'), { target: { value: 'work' } })
-    fireEvent.click(within(loopRow).getByRole('button', { name: en.groupAssign }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'work' }))
     await waitFor(() => {
       const row = screen.getByText('dsh-loop').closest('[class*="groupMember"]') as HTMLElement | null
       expect(row).not.toBeNull()
@@ -2264,17 +2367,20 @@ describe('#60 groups view', () => {
     fireEvent.click(within(memberRow).getByRole('button', { name: en.groupRemove }))
     await waitFor(() => expect(screen.getByText(en.groupEmpty)).toBeTruthy())
 
-    // Rename.
+    // Rename via overflow menu.
     const groupRow = screen.getByText('work').closest('[class*="groupRow"]') as HTMLElement
-    fireEvent.click(within(groupRow).getByRole('button', { name: en.groupRename }))
-    fireEvent.change(within(groupRow).getByPlaceholderText(en.groupNamePh), { target: { value: 'daily' } })
-    fireEvent.click(within(groupRow).getByRole('button', { name: en.groupRename }))
+    fireEvent.click(within(groupRow).getByRole('button', { name: en.groupMore }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: en.groupRename }))
+    const renameDialog = await screen.findByRole('dialog')
+    fireEvent.change(within(renameDialog).getByPlaceholderText(en.groupNamePh), { target: { value: 'daily' } })
+    fireEvent.click(within(renameDialog).getByRole('button', { name: en.groupRenameSave }))
     expect(await screen.findByText('daily')).toBeTruthy()
     expect(screen.queryByText('work')).toBeNull()
 
-    // Delete.
+    // Delete via overflow menu + confirm.
     const dailyRow = screen.getByText('daily').closest('[class*="groupRow"]') as HTMLElement
-    fireEvent.click(within(dailyRow).getByRole('button', { name: en.groupDelete }))
+    fireEvent.click(within(dailyRow).getByRole('button', { name: en.groupMore }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: en.groupDelete }))
     fireEvent.click(within(dailyRow).getByRole('button', { name: en.groupConfirmDelete }))
     expect(await screen.findByText(en.noGroups)).toBeTruthy()
   })
@@ -2342,7 +2448,7 @@ describe('#60 groups view', () => {
     expect(screen.getByText(en.disabledState)).toBeTruthy()
   })
 
-  it('the Add plugin button lists installed plugins and adds them via set-members', async () => {
+  it('the Add members button lists installed plugins and adds them via set-members', async () => {
     const state = makeFake({ 'dsh-loop': '^1.0.0', 'dsh-notify': '^1.0.0' })
     state.groups['work'] = ['dsh-loop']
     state.groupOrder.push('work')
@@ -2352,9 +2458,9 @@ describe('#60 groups view', () => {
 
     // Only dsh-notify is a candidate: dsh-loop is already a member.
     fireEvent.click(await screen.findByRole('button', { name: en.groupAdd }))
-    const addButtons = screen.getAllByRole('button', { name: en.groupAdd })
-    expect(addButtons.length).toBe(2) // header toggle + the candidate row
-    fireEvent.click(addButtons[1])
+    const addDialog = await screen.findByRole('dialog')
+    fireEvent.click(within(addDialog).getByRole('checkbox', { name: /dsh-notify/ }))
+    fireEvent.click(within(addDialog).getByRole('button', { name: en.groupAddConfirm.replace('{0}', '1') }))
     await waitFor(() => {
       const set = fetchCalls.find(c => c.path === '/dsh-market/groups' && c.body?.action === 'set-members')
       expect(set?.body).toEqual({ action: 'set-members', name: 'work', members: ['dsh-loop', 'dsh-notify'] })
@@ -2366,20 +2472,20 @@ describe('#60 groups view', () => {
     })
   })
 
-  it('disables Add theme when the group already holds a theme', async () => {
+  it('keeps themes out of the plugin member picker', async () => {
     const state = makeFake({ 'dsh-loop': '^1.0.0', 'whale-skin': '^1.0.0' })
-    state.groups['looks'] = ['whale-skin']
+    state.groups['looks'] = []
     state.groupOrder.push('looks')
     render(<MarketSection {...props()} />)
     await screen.findByText('whale-skin')
     await openGroupsView()
-    const addTheme = await screen.findByRole('button', { name: en.groupAddTheme })
-    expect((addTheme as HTMLButtonElement).disabled).toBe(true)
-    // Ordinary plugin adds stay available.
-    expect((screen.getByRole('button', { name: en.groupAdd }) as HTMLButtonElement).disabled).toBe(false)
+    fireEvent.click(await screen.findByRole('button', { name: en.groupAdd }))
+    const addDialog = await screen.findByRole('dialog')
+    expect(within(addDialog).queryByRole('checkbox', { name: /whale-skin/ })).toBeNull()
+    expect(within(addDialog).getByRole('checkbox', { name: /dsh-loop/ })).toBeTruthy()
   })
 
-  it('Add theme lists installed theme plugins and adds one via set-members', async () => {
+  it('chooses one theme for a group from the theme slot', async () => {
     const state = makeFake({ 'dsh-loop': '^1.0.0', 'whale-skin': '^1.0.0' })
     state.groups['looks'] = ['dsh-loop']
     state.groupOrder.push('looks')
@@ -2387,17 +2493,61 @@ describe('#60 groups view', () => {
     await screen.findByText('whale-skin')
     await openGroupsView()
 
-    fireEvent.click(await screen.findByRole('button', { name: en.groupAddTheme }))
-    const themeAddButtons = screen.getAllByRole('button', { name: en.groupAddTheme })
-    expect(themeAddButtons.length).toBe(2) // header toggle + the theme candidate
-    fireEvent.click(themeAddButtons[1])
+    fireEvent.click(await screen.findByRole('button', { name: en.groupPickTheme }))
+    const themeDialog = await screen.findByRole('dialog')
+    fireEvent.click(within(themeDialog).getByRole('radio', { name: /whale-skin/ }))
+    fireEvent.click(within(themeDialog).getByRole('button', { name: en.groupThemeUse }))
     await waitFor(() => {
       const set = fetchCalls.find(c => c.path === '/dsh-market/groups' && c.body?.action === 'set-members')
       expect(set?.body).toEqual({ action: 'set-members', name: 'looks', members: ['dsh-loop', 'whale-skin'] })
     })
-    // Once the group holds a theme, the Add theme button disables.
+    fireEvent.click(await screen.findByRole('button', { name: en.groupChangeTheme }))
+    const again = await screen.findByRole('dialog')
+    expect(within(again).getByText(en.groupThemeCurrent)).toBeTruthy()
+    fireEvent.click(within(again).getByRole('button', { name: en.groupThemeRemove }))
     await waitFor(() => {
-      expect((screen.getByRole('button', { name: en.groupAddTheme }) as HTMLButtonElement).disabled).toBe(true)
+      const set = fetchCalls.filter(c => c.path === '/dsh-market/groups' && c.body?.action === 'set-members')
+      expect(set.at(-1)?.body).toEqual({ action: 'set-members', name: 'looks', members: ['dsh-loop'] })
+    })
+  })
+
+  it('dismisses a pending group delete', async () => {
+    const state = makeFake({ 'dsh-loop': '^1.0.0' })
+    state.groups['work'] = ['dsh-loop']
+    state.groupOrder.push('work')
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    await openGroupsView()
+    const groupRow = screen.getByText('work').closest('[class*="groupRow"]') as HTMLElement
+    fireEvent.click(within(groupRow).getByRole('button', { name: en.groupMore }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: en.groupDelete }))
+    fireEvent.click(within(groupRow).getByRole('button', { name: en.cancel }))
+    expect(within(groupRow).getByRole('button', { name: en.groupMore })).toBeTruthy()
+    expect(within(groupRow).queryByRole('button', { name: en.groupConfirmDelete })).toBeNull()
+  })
+
+  it('shows the real activation state instead of Active for an inert plugin', async () => {
+    makeFake(
+      { 'dsh-loop': '^1.0.0' },
+      { 'dsh-loop': { state: 'inert', reasons: [], bundle: false, hot: false } },
+    )
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    await openGroupsView()
+    const row = screen.getByText('dsh-loop').closest('[class*="ungroupedRow"]') as HTMLElement
+    expect(within(row).getByText(en.groupStateInert)).toBeTruthy()
+    expect(within(row).queryByText(en.stateLive)).toBeNull()
+  })
+
+  it('filters the groups view from the installed search box', async () => {
+    makeFake({ 'dsh-loop': '^1.0.0', 'dsh-notify': '^1.0.0' })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    await openGroupsView()
+    fireEvent.change(screen.getByPlaceholderText(en.searchPh), { target: { value: 'notify' } })
+    await waitFor(() => {
+      expect(screen.queryByText('dsh-loop')).toBeNull()
+      expect(screen.getByText('dsh-notify')).toBeTruthy()
     })
   })
 })
@@ -2667,6 +2817,33 @@ describe('local-dev restore', () => {
     expect(fetchCalls.some(call => call.body?.restore === true)).toBe(false)
   })
 
+  it('skips disabled plugins from Update all', async () => {
+    stubFetch({
+      '/dsh-market/installed': {
+        profile: 'web',
+        installed: { 'dsh-loop': '^1.0.0', 'dsh-notify': '^1.0.0', 'dsh-third': '^1.0.0' },
+        live: [],
+        disabled: ['dsh-third'],
+      },
+      '/dsh-market/updates': {
+        updates: {
+          'dsh-loop': { kind: 'npm', version: '1.0.0', latest: '1.1.0', updateAvailable: true },
+          'dsh-notify': { kind: 'npm', version: '1.0.0', latest: '1.1.0', updateAvailable: true },
+          'dsh-third': { kind: 'npm', version: '1.0.0', latest: '1.1.0', updateAvailable: true },
+        },
+      },
+      '/dsh-market/update': { ok: true },
+    })
+    render(<MarketSection {...props()} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /Update all \(2\)/ }))
+    await waitFor(() => {
+      expect(fetchCalls.filter(call => call.path === '/dsh-market/update')).toHaveLength(2)
+    })
+    expect(fetchCalls.filter(call => call.path === '/dsh-market/update').map(call => call.body?.name).sort())
+      .toEqual(['dsh-loop', 'dsh-notify'])
+  })
+
   it('says a name-only catalog match is unverified, and names whose plugin it is (#485)', async () => {
     // The local copy declares no repository, so the catalog row below agreed
     // on nothing but the package name — and its owner may be a stranger.
@@ -2728,6 +2905,30 @@ describe('local-dev restore', () => {
         call.path === '/dsh-market/update' && call.body?.name === 'dsh-loop' && call.body?.restore === true,
       )).toBe(true)
     })
+  })
+
+  it('names a newer release for a host-installed generation without a button (#497)', async () => {
+    stubFetch({
+      '/dsh-market/installed': {
+        profile: 'web',
+        installed: { 'dsh-loop': 'link:../.generations/live/dsh-loop+1.0.0+7aba605c3145/node_modules/dsh-loop' },
+        live: [],
+      },
+      '/dsh-market/updates': {
+        updates: { 'dsh-loop': { kind: 'generation', version: '1.0.0', current: '1.0.0', latest: '1.1.0', updateAvailable: false } },
+      },
+    })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    expect(await screen.findByText(en.hostUpdateReady.replace('{0}', '1.1.0'))).toBeTruthy()
+    // The host reconciles its generations at startup: an update applied here
+    // would silently revert, and a restore would tear down the host's own
+    // install. Neither is offered, and the row is not tagged as local work.
+    expect(screen.queryByRole('button', { name: en.update })).toBeNull()
+    expect(screen.queryByRole('button', { name: en.restoreOnline })).toBeNull()
+    expect(screen.queryByRole('button', { name: en.restore })).toBeNull()
+    expect(screen.queryByText(en.linkedDev)).toBeNull()
   })
 
   it('does not offer restore when the linked plugin is not in the catalog', async () => {
@@ -3850,20 +4051,19 @@ describe('category row expansion', () => {
       // would use — proves the stuck path swapped budgets, not just re-ran
       // the ordinary collapse.
       expect(chipCount()).toBe(3) // "all" pill + 2 categories
-      // The auto-collapse is a REAL catsOpen flip, so the chevron now reads
-      // "more" (collapsed), not "less" — and, critically, clicking it must
-      // still work. An earlier version computed a display-only "effectively
-      // open" value while leaving catsOpen genuinely true, so the chevron's
-      // click handler toggled a value the render path had stopped
-      // consulting — clicking it while stuck did nothing visible (reported:
-      // "吸顶滚动了之后，展开没反应了").
+      // Auto-collapse is render-derived (`catsExpanded = stuckExpanded` while
+      // pinned, starting false) — not a follow-up catsOpen flip. Chevron still
+      // tracks catsExpanded, and clicking it while stuck must keep working
+      // (earlier display-only overrides left catsOpen true and ignored the
+      // click — "吸顶滚动了之后，展开没反应了").
       const moreButton = screen.getByLabelText(re(en.catsMore))
       fireEvent.click(moreButton)
       await waitFor(() => expect(chipCount()).toBe(openCount))
       expect(screen.getByLabelText(re(en.catsLess))).toBeTruthy()
 
       // An explicit re-open while still stuck must survive scrolling back to
-      // the top — the auto-collapse must not fight the user's own choice.
+      // the top — catsOpen stays aligned with the chevron so unstuck keeps
+      // the open row.
       onChange!({ isIntersecting: true })
       await waitFor(() => expect(chipCount()).toBe(openCount))
       expect(screen.getByLabelText(re(en.catsLess))).toBeTruthy()
@@ -4258,5 +4458,141 @@ describe('Git to npm source migration (#461)', () => {
         body: { name: 'dsh-loop' },
       })
     })
+  })
+})
+
+describe('restart banner counts only restart-requiring updates (#558)', () => {
+  const INSTALLED = { profile: 'web', installed: { 'dsh-loop': '^1.0.0', 'whale-skin': '^1.0.0' }, live: ['dsh-loop', 'whale-skin'], disabled: [], groups: {}, groupOrder: [], favorites: [] }
+  const STATUS = { active: false, busy: false, pnpm: true, boot: 'boot-1', restart: true, installed: { 'dsh-loop': '^1.0.0', 'whale-skin': '^1.0.0' } }
+  const UPDATES = {
+    updates: {
+      'dsh-loop': { kind: 'npm', version: '1.0.0', current: '1.0.0', latest: '1.2.0', updateAvailable: true },
+      'whale-skin': { kind: 'npm', version: '1.0.0', current: '1.0.0', latest: '1.1.0', updateAvailable: true },
+    },
+  }
+
+  /** One plugin the host parks behind a restart, one client-only that goes
+    * live immediately — the exact mix reported in #558. */
+  function stubMixedUpdateResponses() {
+    stubFetch({
+      '/dsh-market/installed': INSTALLED,
+      '/dsh-market/status': STATUS,
+      '/dsh-market/updates': UPDATES,
+      '/dsh-market/update': (body: unknown) => {
+        const name = (body as { name?: string }).name
+        return {
+          ok: true,
+          activation: name === 'dsh-loop'
+            ? { 'dsh-loop': { state: 'restart', hot: false, bundle: true, reasons: ['restart to apply'] } }
+            : { 'whale-skin': { state: 'inert', hot: true, bundle: false, reasons: ['client-only, live on refresh'] } },
+        }
+      },
+    })
+  }
+
+  const gotoInstalled = async () => {
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    await screen.findAllByRole('button', { name: en.update }, { timeout: 5000 })
+    return (name: string) => {
+      const rows = [...document.querySelectorAll('div[class*="irow"]')]
+        .filter(r => r.querySelector('button') && (r.textContent ?? '').includes(name))
+      const row = rows[rows.length - 1] as HTMLElement | undefined
+      if (!row) throw new Error(`no installed row found for ${name}`)
+      return within(row).getByRole('button', { name: en.update })
+    }
+  }
+
+  it('counts a client-only update as a change but not as restart-pending', async () => {
+    stubMixedUpdateResponses()
+    const updateOnRow = await gotoInstalled()
+
+    fireEvent.click(updateOnRow('dsh-loop'))
+    await screen.findByText(re(en.updated))
+    fireEvent.click(updateOnRow('whale-skin'))
+    await waitFor(() => {
+      expect(screen.getAllByText(re(en.updated)).length).toBeGreaterThanOrEqual(2)
+    })
+
+    // Both changes are done, but only one needs a restart: the banner must
+    // show the host-agreeing count (1), not the completed-change count (2).
+    const banner = await screen.findByText(re(en.restartBanner))
+    expect(within(banner).getByText('1')).toBeTruthy()
+  })
+
+  it('counts an update with no activation evidence as restart-pending (#558)', async () => {
+    // The conservative default the gate exists for: when the host reports no
+    // activation for the plugin at all, the update must still land in the
+    // restart count — under-reporting tells the user "no restart needed"
+    // while the old build is what answers.
+    stubFetch({
+      '/dsh-market/installed': { profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: ['dsh-loop'], disabled: [], groups: {}, groupOrder: [], favorites: [] },
+      '/dsh-market/status': { active: false, busy: false, pnpm: true, boot: 'boot-1', restart: true, installed: { 'dsh-loop': '^1.0.0' } },
+      '/dsh-market/updates': { updates: { 'dsh-loop': { kind: 'npm', version: '1.0.0', current: '1.0.0', latest: '1.2.0', updateAvailable: true } } },
+      '/dsh-market/update': { ok: true },
+    })
+
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    await screen.findByRole('button', { name: en.update })
+    fireEvent.click(screen.getByRole('button', { name: en.update }))
+    await screen.findByText(re(en.updated))
+
+    const banner = await screen.findByText(re(en.restartBanner))
+    expect(within(banner).getByText('1')).toBeTruthy()
+  })
+
+  it('keeps the banner consistent across a session loss (#558)', async () => {
+    stubMixedUpdateResponses()
+    const updateOnRow = await gotoInstalled()
+
+    fireEvent.click(updateOnRow('dsh-loop'))
+    await screen.findByText(re(en.updated))
+    fireEvent.click(updateOnRow('whale-skin'))
+    await waitFor(() => {
+      expect(screen.getAllByText(re(en.updated)).length).toBeGreaterThanOrEqual(2)
+    })
+
+    // Session storage lost (new tab): the host count is the only evidence
+    // left and must agree with what the banner showed before the loss.
+    sessionStorage.clear()
+    await waitFor(() => {
+      const banner = screen.getByText(re(en.restartBanner))
+      expect(within(banner).getByText('1')).toBeTruthy()
+    })
+  })
+})
+
+
+describe('Update all button visible for a single updatable plugin (#555)', () => {
+  function stubSingleUpdatable() {
+    stubFetch({
+      '/dsh-market/installed': { profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: ['dsh-loop'], disabled: [], groups: {}, groupOrder: [], favorites: [] },
+      '/dsh-market/status': { active: false, busy: false, pnpm: true, boot: 'boot-1', restart: true, installed: { 'dsh-loop': '^1.0.0' } },
+      '/dsh-market/updates': { updates: { 'dsh-loop': { kind: 'npm', version: '1.0.0', current: '1.0.0', latest: '1.2.0', updateAvailable: true } } },
+    })
+  }
+
+  it('shows the Update all button when only one plugin is updatable', async () => {
+    stubSingleUpdatable()
+    render(<MarketSection {...props()} />)
+    const btn = await screen.findByRole('button', { name: /Update all \(1\)/ })
+    expect(btn).toBeTruthy()
+  })
+})
+
+describe('catalog version in discover byline (#348)', () => {
+  it('shows v{version} when the catalog supplies a string, and omits null/absent', async () => {
+    const registry = JSON.parse(JSON.stringify(REGISTRY))
+    registry.plugins[0].version = '1.2.3'
+    registry.plugins[1].version = null
+    stubFetch({ '/dsh-market/registry': { source: 'live', registry, hostVersion: '0.1.2-alpha.2' } })
+    render(<MarketSection {...props()} />)
+    const loop = (await screen.findByText('dsh-loop')).closest('[class*="card"]') as HTMLElement
+    const notify = screen.getByText('dsh-notify').closest('[class*="card"]') as HTMLElement
+    expect(within(loop).getByText('· v1.2.3')).toBeTruthy()
+    expect(within(notify).queryByText(/^· v/)).toBeNull()
   })
 })

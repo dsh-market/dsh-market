@@ -97,7 +97,16 @@ describe('classifyPnpmFailure', () => {
     expect(failed?.pkg).toBe('dsh-passwords')
     // Says which plugin, that nothing was broken, and what to do about it.
     expect(failed?.message).toContain('dsh-passwords')
-    expect(failed?.message).toContain('没有被破坏')
+    // Deliberately NOT "the installed version is intact". That promise was
+    // here and it was false: pnpm's renameOverwrite clears as much of the
+    // target directory as it can before retrying the rename, so files beside
+    // the one it cannot remove may already be deleted (#608 by @Euezb, who
+    // measured it: with only the directory inode locked, `perf/*.js` was gone
+    // and `index.js` survived). The route now checks whether the entry
+    // survived instead of assuming, and the message points at that check.
+    expect(failed?.message).not.toContain('没有被破坏')
+    expect(failed?.message).toContain('旁边的内容可能已经被删')
+    expect(failed?.message).toContain('入口是否还在')
     expect(failed?.message).toContain('quit DeepSeek Harness')
     // Not retried: the process that would retry is the one holding the files.
     expect(failed?.recoverable).toBe(false)
@@ -122,6 +131,16 @@ describe('classifyPnpmFailure', () => {
     // A page refresh is what the uninstall flow suggests, and it is exactly
     // the thing that does not release a native module.
     expect(failed?.message).toContain('not a page refresh')
+  })
+
+  it('classifies pnpm 12\'s wording of the refused swap the same way (#608)', () => {
+    // pnpm 12's native CLI reports the same refused swap without an
+    // ERR_PNPM_ code, seen on macOS with the target directory locked; the
+    // wording after the colon is the OS error and differs per platform.
+    const failed = classifyPnpmFailure('× adding a new package\n  ╰─▶ failed to remove existing directory "/p/web/node_modules/left-pad" prior to swap: Operation not permitted (os error 1)')
+    expect(failed?.code).toBe('windows-file-locked')
+    expect(failed?.recoverable).toBe(false)
+    expect(failed?.message).not.toContain('undefined')
   })
 
   it('classifies a locked rename with no readable package name (#389)', () => {
@@ -305,6 +324,59 @@ The lockfile contains entries that the active policies reject.`)
   })
 })
 
+describe('ERR_PNPM_NO_MATCHING_VERSION — host peer with only pre-releases (#569)', () => {
+  // Verbatim pnpm 12.4.1 output for:
+  //   pnpm add @deepseek-ai/dsh-tools@'>=0.1.0'
+  // where every published version of the package is a pre-release. Kept
+  // word-for-word (including the wrapped URL) per the house rule for
+  // classifier fixtures: if pnpm rewraps or rewords, a test breaks instead
+  // of a user-facing message.
+  const OUTPUT = [
+    'Error: ERR_PNPM_NO_MATCHING_VERSION',
+    '',
+    '  × adding a new package',
+    '  ╰─▶ Failed to resolve dependency tree: No matching version found for',
+    '      @deepseek-ai/dsh-tools@>=0.1.0 while fetching it from https://',
+    '      registry.npmjs.org/',
+    '  help: The latest release of @deepseek-ai/dsh-tools is "0.0.1-rc.1".',
+    '        ',
+    '        Other releases are:',
+    '          * alpha: 0.1.5-alpha.2',
+    '          * next: 0.1.5-rc.2',
+    '        ',
+    '        If you need the full list of all 21 published versions run "pnpm view',
+    '        @deepseek-ai/dsh-tools versions".',
+  ].join('\n')
+
+  it('gets its own code, not fetch-404', () => {
+    const failure = classifyPnpmFailure(OUTPUT)
+    expect(failure?.code).toBe('no-matching-version')
+    expect(failure?.code).not.toBe('fetch-404')
+  })
+
+  it('extracts the scoped host peer through the wrapped output', () => {
+    const failure = classifyPnpmFailure(OUTPUT)
+    expect(failure?.pkg).toBe('@deepseek-ai/dsh-tools')
+  })
+
+  it('explains the host-provided provision and the automatic retry', () => {
+    const failure = classifyPnpmFailure(OUTPUT)
+    expect(failure?.message).toContain('宿主包（@deepseek-ai/dsh-tools）')
+    expect(failure?.message).toContain('自动重试')
+  })
+
+  it('degrades to the unnamed wording when the package name cannot be read', () => {
+    const failure = classifyPnpmFailure('Error: ERR_PNPM_NO_MATCHING_VERSION\n  × adding a new package')
+    expect(failure?.code).toBe('no-matching-version')
+    expect(failure?.message).toContain('没有可满足的版本')
+    expect(failure?.message).not.toContain('宿主包（')
+  })
+
+  it('still names the plain-404 shape as fetch-404 (unchanged)', () => {
+    expect(classifyPnpmFailure('[ERR_PNPM_FETCH_404] GET https://registry.npmjs.org/ghost: Not Found - 404')?.code).toBe('fetch-404')
+  })
+})
+
 describe('provisionHint (#142 / #108 / #32)', () => {
   it('names the actual cause instead of a generic failure', async () => {
     const { provisionHint } = await import('../src/dsh-cli.ts')
@@ -380,6 +452,39 @@ pnpm now wants to use the store at "C:\\Users\\lenovo\\AppData\\Local\\pnpm\\sto
     const failure = classifyPnpmFailure('ERR_PNPM_UNEXPECTED_STORE something reworded upstream')
     expect(failure?.code).toBe('unexpected-store')
     expect(failure?.message).toContain('--store-dir')
+  })
+
+  const STAGING_OUTPUT = ` ERR_PNPM_UNEXPECTED_STORE  Unexpected store location
+The dependencies at "/Users/panda/Library/Application Support/dsh-desktop/harness/profiles/.generations/staging/1b4f/node_modules" are currently linked from the store at "/Users/panda/Library/pnpm/store/v11".
+pnpm now wants to use the store at "/Users/panda/Library/pnpm/store/v10" to link dependencies.`
+
+  it('names the staging directory and both stores when the mismatch is inside .generations/staging', () => {
+    // DSH Desktop installs in a disposable staging workspace; when an
+    // ancestor pnpm-workspace.yaml claims it, the profile-relink advice is
+    // wrong — the profile's node_modules is not the one that mismatched.
+    const failure = classifyPnpmFailure(STAGING_OUTPUT)
+    expect(failure?.code).toBe('unexpected-store')
+    expect(failure?.message).toContain('.generations/staging/1b4f')
+    expect(failure?.message).toContain('/Users/panda/Library/pnpm/store/v11')
+    expect(failure?.message).toContain('/Users/panda/Library/pnpm/store/v10')
+    expect(failure?.message).toContain('这不是 profile 的 node_modules')
+    expect(failure?.message).toContain('暂存目录')
+    expect(failure?.message).toContain("This is not the profile's node_modules")
+    expect(failure?.message).toContain('relink that outer workspace')
+    expect(failure?.message).toContain('remove that ancestor pnpm-workspace.yaml')
+    expect(failure?.message).not.toContain('--store-dir')
+    expect(failure?.message).not.toContain('allowBuilds')
+    expect(failure?.message).not.toContain('update DSH Desktop')
+  })
+
+  it('keeps the profile-relink advice for a .generations/live path', () => {
+    // live/ is not the disposable staging workspace; do not mis-describe it.
+    const live = STAGING_OUTPUT.replace('.generations/staging/1b4f', '.generations/live/1b4f')
+    const failure = classifyPnpmFailure(live)
+    expect(failure?.code).toBe('unexpected-store')
+    expect(failure?.message).toContain('--store-dir')
+    expect(failure?.message).not.toContain('Staging directory')
+    expect(failure?.message).not.toContain('暂存目录')
   })
 })
 
@@ -484,5 +589,28 @@ describe('a local file: dependency whose file is gone (#436)', () => {
     // A build script opening a missing file is a different failure and must
     // keep pnpm's own words.
     expect(classifyPnpmFailure("ENOENT: no such file or directory, open '/tmp/whatever'", 1)).toBeNull()
+  })
+})
+
+describe('pnpm 12 native engine out of memory (#701)', () => {
+  // The reported text, from a Windows dshmarket log: a Rust abort in
+  // pnpm-native, then dsh's own wrapper line. Exit 3221226505 is 0xC0000409,
+  // how a Rust abort ends on Windows.
+  const REPORTED = 'memory allocation of 5368709120 bytes failed\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\ndsh: pnpm failed in profile directory C:\\Users\\x\\.dsh\\profiles\\web'
+
+  it('names it, instead of showing the raw abort', () => {
+    const failure = classifyPnpmFailure(REPORTED, 3221226505)
+    expect(failure?.code).toBe('native-oom')
+    // The two things a user needs: it is not the plugin, and what to do.
+    expect(failure?.message).toMatch(/和要安装的插件无关/)
+    expect(failure?.message).toContain('pnpm@11')
+  })
+
+  it('recognises the Windows abort code even when the text was lost', () => {
+    expect(classifyPnpmFailure('dsh: pnpm failed in profile directory x', 3221226505)?.code).toBe('native-oom')
+  })
+
+  it('does not claim an ordinary failure', () => {
+    expect(classifyPnpmFailure('dsh: pnpm failed in profile directory x', 1)?.code).not.toBe('native-oom')
   })
 })

@@ -43,6 +43,7 @@ dsh plugin --profile web add dshmarket
 - **卸载**——两步确认防误触；本次会话装的插件即点即卸
 - **热禁用 / 启用**——开关会往 profile 的 `cordis.patch.yml`（官方补丁层，机制移植自 [dsh-plugin-hub](https://github.com/Noob-stupid/dsh-plugin-hub)）写入 `- id: …` + `disabled: true|false`：DSH 的 HMR 约 1 秒内重新组合，无需重启，loader 每次启动都会重新应用这个选择；手工改过的补丁行会显示成徽标，宿主基础设施插件禁止开关，补丁文件格式不对时绝不会被写得更糟
 - **按需重启**——无法热加载的变更会在待重启提示旁显示一键重启；操作仅接受本机同源请求
+- **重启没起来时的恢复**——DSH 的启动是全有全无：一个插件加载失败，整个进程就退出，市场自己的界面也随宿主一起消失。现在这个失败提示处多了一个 **调整插件**：DSH 点名的插件会标红并默认取消勾选，你自己选下次启动要启用哪些，选择写进市场开关用的同一套 `cordis.patch.yml` 停用行（停用载体还会同步 `dsh.profile.bundles`），然后自动重试启动。这个恢复界面由脱离终端的重启助手在同一个地址上提供——页面原本就在轮询它，所以宿主已经没了也照样能打开；直接访问地址则会渲染同一份内容的独立页面。DSH 正常启动时，这一切都不会出现
 - **零术语**——缺组件（pnpm）时市场自己发现、一键自动装好，全程不见命令行
 - **导出日志**——一键生成脱敏纯文本日志方便反馈（home 路径与密钥形状已打码；任何数据都不会被上传）。市场版本号就在标题旁边，截图反馈时自带版本信息
 - **设置卡片**——dsh 0.1.0-rc.7 起，市场在 **设置 → 插件 → 插件配置** 里管理**它自己**，和其它插件并排：看当前版本、选择**更新通道**（稳定版，或 Beta 抢先试用还在验证中的版本——只影响市场自己，不影响你装的其它插件；打开开发者模式后还会多出「开发版」通道，直接取开发分支上的构建）、更新、或者移除市场。移除时可勾选一并清理——包括市场写进补丁层的停用行，被它关掉的插件会恢复运行，而不是保持停用却再没有界面能打开它们
@@ -119,6 +120,10 @@ DSHM_REGISTRY_URL=https://your-mirror.example/plugins.json dsh web
 ### Local DSH
 
 [local-dsh](https://github.com/liangchen-harold/local-dsh)——可以把模型跑在本机的 DeepSeek Harness 桌面客户端：发行包内置 llama.cpp 与 Node、pnpm、DSH，下载一个 GGUF 模型就能对话，不必接外部 API。基于 Tauri 构建；目前支持 Apple 芯片的 Mac。[localdsh.com](https://localdsh.com)
+
+### dsh desktop（MochiNek0）
+
+[dsh-desktop](https://github.com/MochiNek0/dsh-desktop)——基于 Tauri 构建的跨平台 DeepSeek Harness 桌面客户端（Windows / macOS / Linux），界面走系统 webview，安装包只有几 MB（Windows 2.3 MB、macOS 5.8 MB）。启动时自动在后台拉起 `dsh web` 并嵌入原生窗口，会话与配置和 CLI 共享；内置插件面板的推荐位第一条就是本市场，点一下即可装上。另有「运行环境」面板枚举与切换本机 Node、安装或升级 dsh，全程无需管理员权限；回合结束或 dsh 等待你确认时发出系统通知。[dsh-desktop.cc.cd](https://dsh-desktop.cc.cd/)
 
 ### DSH Get
 

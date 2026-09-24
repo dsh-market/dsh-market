@@ -46,11 +46,52 @@ function catalogEntryMatchesHints(
  * rather than guessing; declared repo evidence that matches nothing in the
  * catalog must not fall back to a coincidental unique name.
  */
+
+/**
+ * Memo for findCatalogEntryForLocal, keyed on the catalog array identity and
+ * then the full lookup input (#589).
+ *
+ * The market client calls this once per rendered card for every link:/file:
+ * dependency, and each call filtered the whole catalog and walked every URL —
+ * measured ~300ms per render at 24 cards against a 3,627-entry catalog, on
+ * every keystroke of the search box. The result is a pure function of the
+ * catalog, the name, the identities, and the hints, so caching by the array
+ * identity never serves a stale answer: a refetched catalog is a new array,
+ * and the old inner map becomes collectable. Null results are cached too —
+ * they are the common answer for same-named forks without evidence.
+ *
+ * The input key is the JSON form of the whole tuple, not a delimiter join:
+ * an empty array and an array holding one empty string serialize
+ * differently, and the matcher treats them differently (`identitySet.size >
+ * 0` chooses the evidence branch), so the key must not conflate them
+ * (#485's lesson: weak signals must never override strong ones).
+ */
+const localMatchCache = new WeakMap<object, Map<string, unknown>>()
+
 export function findCatalogEntryForLocal<T extends { name: string; npm?: string | null; url: string }>(
   plugins: readonly T[],
   name: string,
   identities: readonly string[] = [],
   hints: readonly string[] = [],
+): T | null {
+  const cacheKey = JSON.stringify([name, identities, hints])
+  let byCatalog = localMatchCache.get(plugins)
+  if (byCatalog === undefined) {
+    byCatalog = new Map()
+    localMatchCache.set(plugins, byCatalog)
+  }
+  const hit = byCatalog.get(cacheKey)
+  if (hit !== undefined) return hit as T | null
+  const result = findCatalogEntryForLocalUncached(plugins, name, identities, hints)
+  byCatalog.set(cacheKey, result)
+  return result
+}
+
+function findCatalogEntryForLocalUncached<T extends { name: string; npm?: string | null; url: string }>(
+  plugins: readonly T[],
+  name: string,
+  identities: readonly string[],
+  hints: readonly string[],
 ): T | null {
   const nameKey = name.toLowerCase()
   const byName = plugins.filter(plugin =>

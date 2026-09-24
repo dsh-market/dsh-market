@@ -4,7 +4,8 @@
  * back in their flow with visible proof.
  */
 import { useState } from 'react'
-import { IconSparkle16, Toast } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Toast } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconSparkle16 } from './icons.ts'
 import { readSession } from './market-data.ts'
 import type { Translate } from './market-data.ts'
 

@@ -194,15 +194,98 @@ export function toolSearchDirs(
   return [...new Set(dirs.filter(dir => dir.trim() !== ''))]
 }
 
+/**
+ * Stop git asking for credentials down a channel nobody is listening on
+ * (#587).
+ *
+ * `CI=true` below is the same defence one layer up, and pnpm reads it. git
+ * does not — it has its own switch, and it was not set. The gap only opens
+ * when a spec reaches pnpm's git fetcher instead of the codeload tarball
+ * path `accelerate.ts` describes: `github:owner/repo#path:/sub` is one, and
+ * pnpm really does shell out to `git` for it, trying HTTPS first.
+ *
+ * git's credential prompt opens the controlling terminal, not stdin. There
+ * is no terminal here, so the question is never seen and never answered:
+ * the reporter caught `git.exe` alive for eight minutes having burned 0.05s
+ * of CPU, and only the fifteen-minute install timeout ended it. Refusing
+ * the prompt turns that into a fast, readable failure.
+ *
+ * It is a default, not an override: a value the caller set wins, and blank
+ * counts as unset because an empty `GIT_TERMINAL_PROMPT` is not a setting
+ * git can parse either. Credential helpers and `GIT_ASKPASS` are untouched
+ * and still answer first — this closes only the terminal fallback, which is
+ * precisely the branch that cannot work from a spawned child.
+ *
+ * Scope, stated plainly because it is narrower than the issue title
+ * suggests: this is the HTTPS half. pnpm falls back to `git@github.com:`
+ * when HTTPS fails, and the ssh side needs `GIT_SSH_COMMAND`, which
+ * overrides `core.sshCommand` and `GIT_SSH` — the two ordinary ways to
+ * choose an identity — and whose `BatchMode=yes` would disable
+ * `SSH_ASKPASS`, breaking key-passphrase installs that work today. That
+ * half needs a policy decision, so it is not made here. Note also that on
+ * POSIX `runDshPlugin` spawns detached, so the subtree has no controlling
+ * terminal and the prompt already dies instantly; the hang the issue
+ * reports needs Windows, where the spawn is not detached.
+ */
+export function gitEnvForPnpm(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  if ((env.GIT_TERMINAL_PROMPT ?? '').trim() !== '') return {}
+  return { GIT_TERMINAL_PROMPT: '0' }
+}
+
+/**
+ * Every `--config.<key>=<value>` override in the argv, repeated as the
+ * `PNPM_CONFIG_<KEY>` environment variable that pnpm 12 still reads.
+ *
+ * pnpm 12 ignores some `--config.<key>` overrides on the command line, in
+ * either spelling, without a word: `fetchTimeout` (#615; measured on
+ * 12.2.1, 12.3.0 and 12.4.1) and `auto-install-peers` (12.4.1 auto-installs
+ * the peer with the flag present and not with the variable), so the retries
+ * that carry them ran exactly like the first attempt. `PNPM_CONFIG_*` is
+ * honoured by 11.8, 11.21 and 12.4 alike, so the argument stays for the
+ * versions that read it and the variable carries the same value for the
+ * ones that do not. Scoped to the run that carries the flag; nothing is set
+ * otherwise, so a user's own values are untouched on every other run. Keys
+ * are accepted in either spelling, so respelling a constant (as #600 did
+ * for the release-age one) cannot silently drop the variable.
+ */
+export function pnpmConfigEnvForArgs(pluginArgs: readonly string[]): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {}
+  for (const arg of pluginArgs) {
+    const match = /^--config\.([A-Za-z][A-Za-z0-9-]*)=(\S+)$/.exec(arg)
+    if (match === null) continue
+    const key = match[1]!.replace(/([a-z0-9])([A-Z])/g, '$1_$2').replace(/-/g, '_').toUpperCase()
+    env[`PNPM_CONFIG_${key}`] = match[2]!
+  }
+  return env
+}
+
 function spawnEnv(): NodeJS.ProcessEnv {
   // pnpm v10+ blocks forever on a silent interactive prompt without a TTY;
   // CI mode forces it to act or fail instead of asking.
   const separator = process.platform === 'win32' ? ';' : ':'
-  const parts = (process.env.PATH ?? '').split(separator).filter(part => part !== '')
+  // A packaged host ships its runtime rather than relying on PATH, and says
+  // where it is through the invocation's own `env` (#653). That environment
+  // goes FIRST so its bundled Node wins on a machine where nothing else is
+  // on the process PATH — and it reaches every child, including the
+  // `dsh plugin` forwarder, which is the only way an install can run there.
+  const hostEnv = hostPackageManager?.env ?? {}
+  const parts = `${hostEnv.PATH ?? ''}${separator}${process.env.PATH ?? ''}`
+    .split(separator).filter(part => part !== '')
   for (const bin of toolSearchDirs()) {
     if (!parts.includes(bin)) parts.push(bin)
   }
-  return { ...process.env, ...proxyEnvForPnpm(process.env, activeRegion()), CI: 'true', PATH: parts.join(separator) }
+  // hostEnv follows process.env. PATH is `parts` below: host entries, then
+  // the inherited PATH. That PATH is never empty, so dropping the host
+  // entries whenever it is already set would leave the bundled Node off
+  // the path (#653).
+  return {
+    ...process.env,
+    ...hostEnv,
+    ...proxyEnvForPnpm(process.env, activeRegion()),
+    ...gitEnvForPnpm(process.env),
+    CI: 'true',
+    PATH: parts.join(separator),
+  }
 }
 
 const INSTALL_TIMEOUT_MS = Number(process.env.DSH_MARKET_INSTALL_TIMEOUT_MS) || 15 * 60 * 1000
@@ -549,6 +632,64 @@ export function cancelActive(): boolean {
   return true
 }
 
+/**
+ * The package manager the host itself supplies, as the launcher hands it
+ * over (`profileContext.packageManager`).
+ *
+ * This is not a PATH executable. A packaged host ships its own runtime and
+ * describes it as a whole invocation — command, args AND env — because each
+ * part carries meaning: the desktop host passes the location of its embedded
+ * Node through `env`, so an implementation that keeps only `command` reaches
+ * a tool it still cannot execute, which is the reported failure (#653).
+ */
+export interface HostPackageManager {
+  readonly command: string
+  readonly args: readonly string[]
+  readonly env: NodeJS.ProcessEnv
+}
+
+let hostPackageManager: HostPackageManager | null = null
+
+/** Whether the host-supplied package manager answered `--version`. */
+let hostPnpmReady = false
+
+/**
+ * Why the host-supplied package manager failed — kept apart from the PATH
+ * probe's own failure so a hint can name the component that actually failed.
+ */
+let hostProbeFailure: { command: string; output: string } | null = null
+
+/**
+ * Register the host's package manager for this process, or clear it with
+ * `null`. Cached probe answers are dropped only when the invocation really
+ * changes, so a repeated mount does not re-probe a toolchain that works.
+ */
+export function setHostPackageManager(invocation: HostPackageManager | null): void {
+  const previous = hostPackageManager
+  const unchanged = previous === invocation || (
+    previous !== null && invocation !== null &&
+    previous.command === invocation.command &&
+    previous.args.length === invocation.args.length &&
+    previous.args.every((arg, index) => arg === invocation.args[index])
+  )
+  if (unchanged) return
+  hostPackageManager = invocation
+  hostPnpmReady = false
+  pnpmReady = false
+  pnpmProbeFailure = null
+  hostProbeFailure = null
+}
+
+/** The host-supplied package manager, for callers that must name it. */
+export function hostPackageManagerInvocation(): HostPackageManager | null {
+  return hostPackageManager
+}
+
+/** Why the host-supplied package manager last failed, or null. */
+export function lastHostPackageManagerFailure(): { command: string; output: string } | null {
+  return hostProbeFailure
+}
+
 /** Whether `pnpm` resolves on PATH; success is cached, absence is re-probed. */
 let pnpmReady = false
 
@@ -569,8 +710,55 @@ export function lastPnpmProbeFailure(): { kind: 'missing' | 'failed'; output: st
   return pnpmProbeFailure
 }
 
-/** Probe `pnpm --version` on PATH. */
+/**
+ * Probe the host-supplied package manager: `<command> <args…> --version`,
+ * with the invocation's own environment (see spawnEnv). Its answers are
+ * cached exactly like the PATH probe's.
+ */
+function probeHostPackageManager(): Promise<boolean> {
+  if (hostPnpmReady) return Promise.resolve(true)
+  const invocation = hostPackageManager
+  if (invocation === null) return Promise.resolve(false)
+  return new Promise((resolvePromise) => {
+    const child = spawnShim(invocation.command, [...invocation.args, '--version'], {
+      stdio: ['ignore', 'pipe', 'pipe'], viaShell: winCmdShim, env: spawnEnv(),
+    })
+    let output = ''
+    const collect = (chunk: Buffer): void => { output = (output + chunk.toString()).slice(-2000) }
+    child.stdout?.on('data', collect)
+    child.stderr?.on('data', collect)
+    child.on('error', (error) => {
+      hostProbeFailure = { command: invocation.command, output: error.message }
+      resolvePromise(false)
+    })
+    child.on('close', (code) => {
+      hostPnpmReady = code === 0
+      hostProbeFailure = hostPnpmReady ? null : { command: invocation.command, output: output.trim() }
+      resolvePromise(hostPnpmReady)
+    })
+  })
+}
+
+/**
+ * Whether a package manager is usable — the host-supplied one first.
+ *
+ * The tiers are ordered by what the machine can actually run: a packaged
+ * host's bundled runtime exists whether or not PATH was inherited from a
+ * shell, and on the reported machine only that tier can work at all (#653).
+ * A host tier that fails falls through to the PATH probe, so a host that
+ * publishes a broken invocation cannot make things worse than they were.
+ */
 export function probePnpm(): Promise<boolean> {
+  if (pnpmReady || hostPnpmReady) return Promise.resolve(true)
+  // Deliberately not `async`: with no host tier this returns the PATH probe's
+  // own promise, so the observable timing of every existing caller is exactly
+  // what it was before this tier existed.
+  if (hostPackageManager === null) return probePnpmOnPath()
+  return probeHostPackageManager().then(ready => ready ? true : probePnpmOnPath())
+}
+
+/** Probe `pnpm --version` on PATH. */
+function probePnpmOnPath(): Promise<boolean> {
   if (pnpmReady) return Promise.resolve(true)
   return new Promise((resolvePromise) => {
     // Piped, not ignored: the output of a pnpm that exists but will not run
@@ -616,6 +804,15 @@ function runQuiet(file: string, args: string[], timeoutMs: number): Promise<{ co
  * @returns true when `pnpm --version` succeeds afterwards.
  */
 export async function provisionPnpm(): Promise<{ ok: boolean; hint?: string }> {
+  // A host that ships a package manager has nothing to provision, and asking
+  // corepack or npm to fetch another one cannot help: on the reported machine
+  // both are unreachable, which is precisely why the host bundles a runtime
+  // (#653). Probe what we were handed and report that honestly rather than
+  // running two commands that cannot succeed.
+  if (hostPackageManager !== null) {
+    if (await probePnpm()) return { ok: true }
+    return { ok: false, hint: hostPackageManagerHint() }
+  }
   const corepack = await runQuiet('corepack', ['enable', 'pnpm'], 60 * 1000)
   logEvent(corepack.code === 0 ? 'info' : 'warn', 'setup-pnpm', `corepack enable: exit=${String(corepack.code)} ${corepack.output.slice(-200)}`)
   if (await probePnpm()) return { ok: true }
@@ -674,6 +871,25 @@ export function toolOnPath(name: string): boolean {
 }
 
 /**
+ * Why a host-supplied package manager will not run.
+ *
+ * Separate from `provisionHint` on purpose: nothing was provisioned and
+ * nothing is misinstalled, so every PATH-shaped explanation (install it,
+ * set PNPM_HOME, restart dsh) is advice for a problem this user does not
+ * have (#653). Name the invocation the host published, because that is what
+ * has to change.
+ * @returns a bilingual, actionable hint.
+ */
+function hostPackageManagerHint(): string {
+  const invocation = hostPackageManager
+  const command = invocation === null ? '' : invocation.command
+  const args = invocation === null ? '' : invocation.args.join(' ')
+  const failure = hostProbeFailure
+  const detail = failure === null || failure.output === '' ? '' : `\n\n${failure.output}`
+  return `这台机器的宿主自己带了一个包管理器，dsh 进程优先用它，但它连 \`--version\` 都跑不起来——所以这次不是你装错了东西，设 PNPM_HOME 也没有用。宿主给的调用是：${command} ${args}。常见原因是宿主的内嵌运行时目录被移动、被清理，或正处在升级中途。请重启宿主（桌面端）让它重新注入运行时；这条链只负责使用宿主给的运行时，没有它时会照旧回落到 PATH 上的 pnpm。原始输出：${detail} / The host supplies its own package manager and this dsh process prefers it, but it cannot even run \`--version\` — so nothing is misinstalled and PNPM_HOME will not help. The host published: ${command} ${args}. The usual cause is the host's bundled runtime having been moved, cleaned up, or caught mid-upgrade. Restart the host so it injects its runtime again; this tier only consumes what the host publishes and still falls back to a PATH pnpm without it. Its output:${detail}`
+}
+
+/**
  * Why the one-click pnpm setup failed, in terms the user can act on.
  *
  * Every one of these was a real report where the market said only "自动准备
@@ -728,6 +944,15 @@ export function provisionHint(
   // which is exactly what #228 reported. Its own output is the explanation.
   if (probeFailure?.kind === 'failed') {
     const detail = probeFailure.output === '' ? '' : `\n\n${probeFailure.output}`
+    // pnpm's own output names the culprit, and the reported case is not the
+    // shim (#653): `env: node:` is the interpreter lookup of a
+    // `#!/usr/bin/env node` shebang, so pnpm is here and could not start
+    // because THIS PROCESS has no node on PATH — a launch that never
+    // inherited a shell profile. Sending that user to check corepack's
+    // network is advice for a different machine.
+    if (/^\s*env:\s*node:/m.test(probeFailure.output)) {
+      return `找到 pnpm 了，但运行 \`pnpm --version\` 失败，而它自己的输出已经说明了原因：env: node: No such file or directory。这不是 corepack 要联网下载的问题，是 node 不在这个进程的 PATH 上——pnpm 的真身是 \`#!/usr/bin/env node\` 脚本，env 找不到任何 node 就启动不了它。典型场景是 node 装在 brew 的 keg-only 目录或用户目录里、只由 shell 配置注入 PATH，而这个宿主是图形界面启动的，继承不到那份配置。两条路：从终端启动 dsh（继承 shell 的 PATH），或让宿主提供它自带的运行时。pnpm 的原始输出：${detail} / pnpm was found but \`pnpm --version\` fails, and its own output says why: env: node: No such file or directory. That is not the corepack shim failing to reach the network — node is missing from THIS process's PATH. pnpm itself is a \`#!/usr/bin/env node\` script, so env cannot start it without one. The usual shape is node installed keg-only (brew) or under a user directory and injected only by a shell profile, with the host launched from a GUI. Two ways out: start dsh from a terminal, or have the host supply its own runtime. pnpm's own output:${detail}`
+    }
     return `找到 pnpm 了，但运行 \`pnpm --version\` 失败——所以问题不在路径上，设 PNPM_HOME 没有用。最常见的原因是 corepack 的 shim 需要联网下载 pnpm 本体，而这台机器下不到。请在终端执行一次 \`pnpm --version\`：如果同样失败，按它的提示修（受限网络可用 \`brew install pnpm\` 或 \`npm i -g pnpm --registry <你的镜像>\` 装一个完整的 pnpm，绕开 shim）；如果在终端里正常，说明 dsh 进程的环境和你的终端不同，请从该终端启动 dsh。pnpm 的原始输出：${detail} / pnpm was found, but \`pnpm --version\` fails — so this is not a path problem and PNPM_HOME will not help. The usual cause is a corepack shim that has to download pnpm itself and cannot reach the network. Run \`pnpm --version\` in a terminal: if it fails the same way, follow what it says (on a restricted network install a real pnpm with \`brew install pnpm\` or \`npm i -g pnpm --registry <your mirror>\` to bypass the shim); if it works there, the dsh process has a different environment than your shell — start dsh from that terminal. pnpm's own output:${detail}`
   }
   const searched = toolSearchDirs().join(process.platform === 'win32' ? ' ; ' : ' : ')
@@ -791,7 +1016,7 @@ export const BOOT_ID = `${String(process.pid)}-${String(Date.now())}`
 export const TARGET_RE = /^[A-Za-z0-9@:./_#+~^=-]+$/
 
 /** Mutating pnpm commands get the structured reporter appended. */
-const NDJSON_COMMANDS = new Set(['add', 'remove', 'install'])
+const NDJSON_COMMANDS = new Set(['add', 'remove', 'install', 'update'])
 
 /** Apply profile-specific pnpm compatibility and the structured reporter. */
 function preparePluginArgs(profileDirectory: string, pluginArgs: readonly string[]): {
@@ -869,7 +1094,7 @@ export function runDshPlugin(profile: string, pluginArgs: string[]): Promise<Ins
       // pnpm v10 blocks forever on a silent interactive prompt without a TTY
       // (observed on re-add over a pinned git spec); CI mode forces it to act
       // or fail instead of asking.
-      env: spawnEnv(),
+      env: { ...spawnEnv(), ...pnpmConfigEnvForArgs(pluginArgs) },
       stdio: ['ignore', 'pipe', 'pipe'],
       viaShell,
       // Own process group on POSIX so cancel/timeout can kill the whole

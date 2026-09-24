@@ -5,15 +5,17 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import type { InstallResult } from '../src/dsh-cli.ts'
 import {
-  failureDetail, FETCH_TIMEOUT_OVERRIDE, groupConflictsByOwner, isStaleUpdate, parseIgnoredBuilds,
-  parsePrepareNotAllowed, pnpmNeverStarted, retargetCollections, validateAddedPlugins, withHoistRecovery,
+  diagnosticsTail, failureDetail, FETCH_TIMEOUT_OVERRIDE, groupConflictsByOwner, hostNodeModulesRoot, isStaleUpdate, normalizedLinkTarget,
+  parseIgnoredBuilds, parsePrepareNotAllowed, pnpmNeverStarted, removeDanglingHostBridge, retargetCollections,
+  validateAddedPlugins, withHoistRecovery,
 } from '../src/install.ts'
-import { profileDir } from '../src/profile.ts'
+import { dropUnparseableBuildKeys, profileDir } from '../src/profile.ts'
+import { canCreateSymlink } from './symlink-support.ts'
 
 let home: string
 beforeEach(() => {
@@ -302,6 +304,134 @@ describe('validateAddedPlugins (#18 / #21)', () => {
   })
 })
 
+describe('surfacing the dsh CLI diagnostics file (#672)', () => {
+  // The CLI's literal line, from @deepseek-ai/dsh's plugin-CnNK4cws.js:
+  //   process.stderr.write(`dsh: pnpm failed; diagnostics: ${result.logPath}\n`)
+  const line = (path: string): string => `dsh: pnpm failed; diagnostics: ${path}\n`
+
+  it('shows the tail of the file the CLI pointed at', async () => {
+    const dir = writeProfile({})
+    const log = join(dir, 'run.log')
+    writeFileSync(log, 'Progress: resolved 12\nERR_PNPM_FETCH_404  @scope/thing is not in the registry\n')
+    const run = (): Promise<InstallResult> => Promise.resolve({ ...ok, exitCode: 1, stderr: line(log) })
+    const result = await withHoistRecovery(run, 'web', ['add', 'thing'])
+    expect(result.stderr).toContain('ERR_PNPM_FETCH_404')
+    expect(result.stderr).toContain(log)
+  })
+
+  it('keeps only the END of a large file', async () => {
+    const dir = writeProfile({})
+    const log = join(dir, 'big.log')
+    writeFileSync(log, `${'x'.repeat(40_000)}\nTHE ACTUAL CAUSE\n`)
+    const run = (): Promise<InstallResult> => Promise.resolve({ ...ok, exitCode: 1, stderr: line(log) })
+    const result = await withHoistRecovery(run, 'web', ['add', 'thing'])
+    expect(result.stderr).toContain('THE ACTUAL CAUSE')
+    expect(result.stderr.length).toBeLessThan(20_000)
+  })
+
+  it('leaves the output alone when the path is unusable', async () => {
+    // A directory, and a path that does not exist: the market only ever
+    // wants the end of a log file, so anything else is ignored.
+    const dir = writeProfile({})
+    for (const bad of [dir, join(dir, 'missing.log')]) {
+      const stderr = line(bad)
+      const run = (): Promise<InstallResult> => Promise.resolve({ ...ok, exitCode: 1, stderr })
+      const result = await withHoistRecovery(run, 'web', ['add', 'thing'])
+      expect(result.stderr, bad).not.toContain('--- dsh diagnostics')
+    }
+  })
+
+  it('refuses a RELATIVE path even when such a file exists', () => {
+    // The child's stderr names a path in whatever cwd the child had, which is
+    // not necessarily this process's — so a relative path has no reliable
+    // meaning here. Asserted against a file that really does exist, or the
+    // refusal would be indistinguishable from a failed read.
+    const probe = 'dshm-diagnostics-probe.log'
+    writeFileSync(probe, 'should not be read by this market')
+    try {
+      expect(diagnosticsTail({ stdout: '', stderr: line(probe) })).toBeNull()
+    } finally {
+      rmSync(probe, { force: true })
+    }
+  })
+
+  it('says nothing when the CLI named no diagnostics file', async () => {
+    writeProfile({})
+    const run = (): Promise<InstallResult> => Promise.resolve({ ...ok, exitCode: 1, stderr: 'dsh: pnpm failed in profile directory x\n' })
+    const result = await withHoistRecovery(run, 'web', ['add', 'thing'])
+    expect(result.stderr).not.toContain('--- dsh diagnostics')
+  })
+})
+
+describe('allowBuilds keys a pnpm cannot parse (#698)', () => {
+  // pnpm 10.26 → 10.29 and 11.0 → 11.5 read an allowBuilds key as
+  // `name@<version union>`: a git or archive source there fails the WHOLE
+  // workspace file, so every later pnpm command in the profile fails — the
+  // exact text below is pnpm 10.29.3's, measured on a profile holding the
+  // key the market writes for a git source.
+  const INVALID = ' ERR_PNPM_INVALID_VERSION_UNION  Invalid versions union. Found: "some-plugin@git+https://github.com/o/r.git". Use exact versions only.'
+
+  function writeWorkspace(allowBuilds: string): string {
+    const dir = writeProfile({})
+    writeFileSync(join(dir, 'pnpm-workspace.yaml'), `packages:\n  - .\n\nallowBuilds:\n${allowBuilds}`)
+    return dir
+  }
+
+  it('drops only the source-form keys, keeping bare names and the rest of the file', () => {
+    const dir = writeWorkspace(
+      '  some-plugin: true\n'
+      + '  "some-plugin@git+https://github.com/o/r.git": true\n'
+      + `  "some-plugin@https://codeload.github.com/o/r/tar.gz/${SHA}": true\n`
+      + "  '@scope/pkg': true\n"
+      + '  esbuild: false\n',
+    )
+    expect(dropUnparseableBuildKeys('web').sort()).toEqual([
+      'some-plugin@git+https://github.com/o/r.git',
+      `some-plugin@https://codeload.github.com/o/r/tar.gz/${SHA}`,
+    ].sort())
+    const yaml = readFileSync(join(dir, 'pnpm-workspace.yaml'), 'utf8')
+    expect(yaml).toContain('packages:\n  - .')
+    expect(yaml).toContain('some-plugin: true')
+    expect(yaml).toContain("'@scope/pkg': true")
+    // A user's explicit `false` is a decision, not a key form; it stays.
+    expect(yaml).toContain('esbuild: false')
+    expect(yaml).not.toContain('git+https')
+    expect(yaml).not.toContain('codeload')
+  })
+
+  it('leaves the file untouched when nothing matches', () => {
+    const dir = writeWorkspace('  some-plugin: true\n')
+    const before = readFileSync(join(dir, 'pnpm-workspace.yaml'), 'utf8')
+    expect(dropUnparseableBuildKeys('web')).toEqual([])
+    expect(readFileSync(join(dir, 'pnpm-workspace.yaml'), 'utf8')).toBe(before)
+  })
+
+  it('repairs the profile and retries once when pnpm names such a key', async () => {
+    writeWorkspace('  some-plugin: true\n  "some-plugin@git+https://github.com/o/r.git": true\n')
+    const calls: string[][] = []
+    const run = (_profile: string, args: string[]): Promise<InstallResult> => {
+      calls.push(args)
+      return Promise.resolve(calls.length === 1 ? { ...ok, exitCode: 1, stderr: INVALID } : ok)
+    }
+    const result = await withHoistRecovery(run, 'web', ['add', 'is-odd'])
+    expect(result.exitCode).toBe(0)
+    expect(calls).toEqual([['add', 'is-odd'], ['add', 'is-odd']])
+  })
+
+  it('does not retry when there was nothing to repair', async () => {
+    writeWorkspace('  some-plugin: true\n')
+    const calls: string[][] = []
+    const run = (_profile: string, args: string[]): Promise<InstallResult> => {
+      calls.push(args)
+      return Promise.resolve({ ...ok, exitCode: 1, stderr: INVALID })
+    }
+    await withHoistRecovery(run, 'web', ['add', 'is-odd'])
+    // Only the add counts: a failed run is followed by the store cleanup's
+    // own query, which is not a retry.
+    expect(calls.filter(args => args[0] === 'add')).toHaveLength(1)
+  })
+})
+
 describe('withHoistRecovery', () => {
   it('retries a per-request fetch timeout once with a longer fetchTimeout (#…)', async () => {
     const calls: string[][] = []
@@ -544,5 +674,183 @@ describe('validateAddedPlugins separates "added nothing" from "added junk" (#258
     expect(result.keep).toEqual([])
     expect(result.removedBroken).toEqual(['junk'])
     expect(removed).toEqual(['junk'])
+  })
+})
+
+describe('host bridge cleanup after removal (#662)', () => {
+  // A runner that performs the real filesystem effect of `dsh plugin remove`
+  // (the profile package directory disappears), unlike recordingRunner.
+  function removingRunner(dir: string): { calls: string[][]; run: (profile: string, args: string[]) => Promise<InstallResult> } {
+    const calls: string[][] = []
+    return {
+      calls,
+      run: (_profile, args) => {
+        calls.push(args)
+        if (args[0] === 'remove') rmSync(join(dir, 'node_modules', String(args[1])), { recursive: true, force: true })
+        return Promise.resolve(ok)
+      },
+    }
+  }
+
+  function makeBridge(hostDeploy: string, name: string, target: string): string {
+    const bridge = join(hostDeploy, 'node_modules', name)
+    mkdirSync(dirname(bridge), { recursive: true })
+    symlinkSync(target, bridge, process.platform === 'win32' ? 'junction' : 'dir')
+    return bridge
+  }
+
+  // existsSync follows links, so a DANGLING link answers false; only lstat
+  // says whether the link itself is still on disk.
+  function linkPresent(path: string): boolean {
+    try {
+      lstatSync(path)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  it('drops the host-side bridge link of a package the post-install validation removed', async () => {
+    const dir = writeProfile({ broken: 'github:o/broken' })
+    // dsh manifest present but the built artifact is not → removed on the spot.
+    writePkg(dir, 'broken', { dsh: {}, main: 'lib/index.js' })
+    const hostDeploy = join(home, 'host-deploy')
+    const bridge = makeBridge(hostDeploy, 'broken', join(dir, 'node_modules', 'broken'))
+    const { calls, run } = removingRunner(dir)
+
+    const { removedBroken } = await validateAddedPlugins(run, 'web', new Set(), undefined, hostDeploy)
+
+    expect(removedBroken).toEqual(['broken'])
+    expect(calls).toEqual([['remove', 'broken']])
+    // The profile copy is gone (the runner removed it) and the host bridge
+    // that pointed at it must not survive as a dangling link.
+    expect(existsSync(join(dir, 'node_modules', 'broken'))).toBe(false)
+    expect(linkPresent(bridge)).toBe(false)
+  })
+
+  it('derives the host node_modules root for both host layouts', () => {
+    // CLI: the host package sits inside the shared install's node_modules.
+    expect(hostNodeModulesRoot(join(home, 'prefix', 'node_modules', '@deepseek-ai', 'dsh')))
+      .toBe(join(home, 'prefix', 'node_modules'))
+    // Forward slashes (an Electron resourcesPath, a hand-written config)
+    // must not defeat the tail check either.
+    expect(hostNodeModulesRoot([home, 'prefix', 'node_modules', '@deepseek-ai', 'dsh'].join('/')))
+      .toBe(join(home, 'prefix', 'node_modules'))
+    // Flat Desktop (#662's <desktop-app>\dependencies\dsh): node_modules
+    // lives beside the host package's own package.json.
+    expect(hostNodeModulesRoot(join(home, 'app', 'dependencies', 'dsh')))
+      .toBe(join(home, 'app', 'dependencies', 'dsh', 'node_modules'))
+  })
+
+  it('removes a dangling junction pointing at the uninstalled package', () => {
+    const dir = writeProfile({})
+    const pkg = join(dir, 'node_modules', 'pkg-gone')
+    mkdirSync(pkg, { recursive: true })
+    const hostDeploy = join(home, 'host-deploy')
+    const bridge = makeBridge(hostDeploy, 'pkg-gone', pkg)
+    rmSync(pkg, { recursive: true, force: true })
+
+    expect(removeDanglingHostBridge('pkg-gone', dir, hostDeploy)).toBe(true)
+    expect(linkPresent(bridge)).toBe(false)
+  })
+
+  it('matches the target case-insensitively on win32 (junctions keep the created case)', () => {
+    const dir = writeProfile({})
+    const pkg = join(dir, 'node_modules', 'pkg-case')
+    mkdirSync(pkg, { recursive: true })
+    const hostDeploy = join(home, 'host-deploy')
+    // The projection stored an upper-case spelling of the same path.
+    const cased = pkg.toUpperCase() === pkg ? pkg : pkg.toUpperCase()
+    const bridge = makeBridge(hostDeploy, 'pkg-case', cased)
+    rmSync(pkg, { recursive: true, force: true })
+
+    expect(removeDanglingHostBridge('pkg-case', dir, hostDeploy)).toBe(process.platform === 'win32')
+    expect(linkPresent(bridge)).toBe(process.platform !== 'win32')
+  })
+
+  it.runIf(canCreateSymlink('dir'))('removes a dangling directory symlink too (the other bridge form)', () => {
+    const dir = writeProfile({})
+    const pkg = join(dir, 'node_modules', 'pkg-link')
+    mkdirSync(pkg, { recursive: true })
+    const hostDeploy = join(home, 'host-deploy')
+    const bridge = join(hostDeploy, 'node_modules', 'pkg-link')
+    mkdirSync(dirname(bridge), { recursive: true })
+    symlinkSync(pkg, bridge, 'dir')
+    rmSync(pkg, { recursive: true, force: true })
+
+    expect(removeDanglingHostBridge('pkg-link', dir, hostDeploy)).toBe(true)
+    expect(linkPresent(bridge)).toBe(false)
+  })
+
+  it('keeps a real directory the host shipped there itself', () => {
+    const dir = writeProfile({})
+    const hostDeploy = join(home, 'host-deploy')
+    const real = join(hostDeploy, 'node_modules', 'pkg-real')
+    mkdirSync(real, { recursive: true })
+    writeFileSync(join(real, 'package.json'), '{"name":"pkg-real"}')
+
+    expect(removeDanglingHostBridge('pkg-real', dir, hostDeploy)).toBe(false)
+    expect(existsSync(join(real, 'package.json'))).toBe(true)
+  })
+
+  it('keeps a link whose target is another profile (not this package)', () => {
+    const dir = writeProfile({})
+    const elsewhere = join(home, 'other-profile', 'node_modules', 'pkg-x')
+    mkdirSync(elsewhere, { recursive: true })
+    const hostDeploy = join(home, 'host-deploy')
+    const bridge = makeBridge(hostDeploy, 'pkg-x', elsewhere)
+
+    expect(removeDanglingHostBridge('pkg-x', dir, hostDeploy)).toBe(false)
+    expect(linkPresent(bridge)).toBe(true)
+  })
+
+  it('keeps a live bridge while the profile package still exists', () => {
+    // A remove that silently failed must not take a still-working
+    // projection down with it. Alive follows the same manifest truth as
+    // removeAndReconcile's gone-check: package.json present.
+    const dir = writeProfile({})
+    const pkg = join(dir, 'node_modules', 'pkg-live')
+    mkdirSync(pkg, { recursive: true })
+    writeFileSync(join(pkg, 'package.json'), '{"name":"pkg-live"}')
+    const hostDeploy = join(home, 'host-deploy')
+    const bridge = makeBridge(hostDeploy, 'pkg-live', pkg)
+
+    expect(removeDanglingHostBridge('pkg-live', dir, hostDeploy)).toBe(false)
+    expect(linkPresent(bridge)).toBe(true)
+    expect(existsSync(pkg)).toBe(true)
+  })
+
+  it('removes the bridge when only package.json is gone but the directory lingers', () => {
+    // The gone-check mirrors removeAndReconcile's: an uninstall that took
+    // package.json but left stray files behind is still gone, and keeping
+    // the bridge up would be exactly #662's dangling link.
+    const dir = writeProfile({})
+    const pkg = join(dir, 'node_modules', 'pkg-husk')
+    mkdirSync(pkg, { recursive: true })
+    writeFileSync(join(pkg, 'stray.txt'), 'left behind by a partial remove')
+    const hostDeploy = join(home, 'host-deploy')
+    const bridge = makeBridge(hostDeploy, 'pkg-husk', pkg)
+
+    expect(removeDanglingHostBridge('pkg-husk', dir, hostDeploy)).toBe(true)
+    expect(linkPresent(bridge)).toBe(false)
+    // The stray file itself is not ours to touch.
+    expect(existsSync(join(pkg, 'stray.txt'))).toBe(true)
+  })
+
+  it('normalizes NT device prefixes and the UNC device form off link targets', () => {
+    expect(normalizedLinkTarget('\\\\?\\C:\\profile\\node_modules\\pkg')).toBe('C:\\profile\\node_modules\\pkg')
+    expect(normalizedLinkTarget('\\??\\C:\\profile\\node_modules\\pkg')).toBe('C:\\profile\\node_modules\\pkg')
+    expect(normalizedLinkTarget('C:\\profile\\node_modules\\pkg')).toBe('C:\\profile\\node_modules\\pkg')
+    // Stripped of the UNC device prefix the path would no longer be
+    // absolute — it must be restored to the \\\\server\\share form instead.
+    expect(normalizedLinkTarget('\\\\?\\UNC\\server\\share\\profile\\node_modules\\pkg')).toBe('\\\\server\\share\\profile\\node_modules\\pkg')
+  })
+
+  it('is a no-op when no host is locatable, and when no bridge exists', () => {
+    const dir = writeProfile({})
+    const hostDeploy = join(home, 'host-deploy')
+    mkdirSync(join(hostDeploy, 'node_modules'), { recursive: true })
+    expect(removeDanglingHostBridge('pkg-any', dir, null)).toBe(false)
+    expect(removeDanglingHostBridge('pkg-any', dir, hostDeploy)).toBe(false)
   })
 })
