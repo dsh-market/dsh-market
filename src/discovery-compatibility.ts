@@ -340,6 +340,21 @@ export class DiscoveryManifestIndex {
     }
     return result
   }
+
+  /** Read an exact release without changing the discovery cache for latest. */
+  async lookupVersion(name: string, version: string, registry: string): Promise<NpmManifestFacts | null> {
+    try {
+      const response = await this.withFetchPermit(async () => await this.fetcher(
+        `${registry}/${encodeURIComponent(name)}/${encodeURIComponent(version)}`,
+        { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS), headers: { accept: 'application/json', 'user-agent': 'dsh-market' } },
+      ))
+      if (!response.ok) return null
+      const facts = manifestFacts(await response.json())
+      return facts.version === version ? facts : null
+    } catch {
+      return null
+    }
+  }
 }
 
 /**

@@ -1488,7 +1488,10 @@ export function mountMarketRoutes(
     // failed pre-flight left a failure cooldown behind, and a successful one
     // pinned the version being installed, so the panel answered "unknown" or
     // the wrong version for a package it had never actually asked about.
-    const facts = (await discoveryManifests.lookup([npmName], routesFor(region).npmRegistry, { record: false }))[npmName] ?? null
+    const registry = routesFor(region).npmRegistry
+    const facts = version === null
+      ? (await discoveryManifests.lookup([npmName], registry, { record: false }))[npmName] ?? null
+      : await discoveryManifests.lookupVersion(npmName, version, registry)
     const verdict = deriveHostCompatibility(
       facts,
       host?.version ?? null,
@@ -5159,10 +5162,8 @@ sendJson(response, 200, { updates })
             // (absence of a claim is not a verdict). force is the escape
             // hatch for a bundled host that misreports its version.
             const npmName = typeof entry.npm === 'string' && NPM_NAME_RE.test(entry.npm) ? entry.npm : null
-            // Judged on the release being installed: passing null here would
-            // re-read `latest`'s manifest and refuse the very version the
-            // dialog just found for this host — a loop with the user in it.
-            if (npmName !== null && await refuseHostIncompatible(npmName, entry.name, requestedVersion, force, response, region, 'install-compat')) return
+            const installVersion = NPM_NAME_RE.test(plainTarget) ? requestedVersion ?? registryLatest : null
+            if (npmName !== null && await refuseHostIncompatible(npmName, entry.name, installVersion, force, response, region, 'install-compat')) return
             const beforeSpecs = readInstalled(config.profile, activeProfileDir)
             const before = new Set(Object.keys(beforeSpecs))
             if (retryAlias !== null) before.delete(retryAlias)

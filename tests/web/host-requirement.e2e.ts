@@ -103,7 +103,7 @@ describe.skipIf(!HAS_DSH).sequential('web e2e: the fresh-install host-version pr
     // move it, because there the refusal belongs to the UPDATE path.)
     scaffold = await launchMarketScaffold({
       fixtures: [
-        { dir: 'fixture-b', version: '1.0.0' },
+        { dir: 'fixture-b', version: '1.0.0', manifest: { engines: { dsh: '>=0.0.0' } } },
         { dir: 'fixture-b', version: '2.0.0', manifest: { engines: { dsh: '>=99.0.0' } } },
       ],
     })
@@ -129,6 +129,19 @@ describe.skipIf(!HAS_DSH).sequential('web e2e: the fresh-install host-version pr
       return null
     }
   }
+
+  it('installs a selected compatible release while latest is incompatible', async () => {
+    const installed = await post('/dsh-market/install', {
+      url: `https://github.com/dshm-e2e/${B}`,
+      version: '1.0.0',
+    })
+    expect(installed.status).toBe(200)
+    expect(installedVersion()).toBe('1.0.0')
+
+    const removed = await post('/dsh-market/uninstall', { name: B })
+    expect(removed.status).toBe(200)
+    expect(installedVersion()).toBeNull()
+  }, 300_000)
 
   it('refuses a fresh install whose release declares an incompatible host', async () => {
     const refused = await post('/dsh-market/install', { url: `https://github.com/dshm-e2e/${B}` })
