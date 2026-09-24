@@ -5,8 +5,8 @@
  * parameter so tests can substitute a recording fake.
  */
 
-import { existsSync, lstatSync, readlinkSync, rmSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { closeSync, existsSync, lstatSync, openSync, readlinkSync, readSync, rmSync, statSync } from 'node:fs'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
 import type { InstallResult, PluginRunner } from './dsh-cli.ts'
 import { findDshInstallDir } from './dsh-install.ts'
 import { classifyPnpmFailure, HOST_NAMESPACE_RE, isTransientPnpmFailure } from './pnpm-compat.ts'
@@ -195,6 +195,7 @@ export async function withHoistRecovery(
     // construction: directories are only removed when their owning pid is
     // gone (the name carries it), so a live download is never touched.
     await cleanOrphanedStore(run, profile)
+    const diagnostics = diagnosticsTail(result)
     const failure = classifyPnpmFailure(`${result.stderr}\n${result.stdout}`, result.exitCode)
     if (failure !== null) {
       result = {
@@ -202,6 +203,12 @@ export async function withHoistRecovery(
         stderr: failure.replaceOutput === true ? failure.message : `${result.stderr}\n\n${failure.message}`,
         ...(failure.replaceOutput === true ? { stdout: '' } : {}),
       }
+    } else if (diagnostics !== null) {
+      // The dsh CLI redirects the whole pnpm run into a file and leaves one
+      // line on stderr: `dsh: pnpm failed; diagnostics: <path>` (its own
+      // literal message). Everything a user or a report needs is in that
+      // file, so show its tail rather than the one line (#672).
+      result = { ...result, stderr: `${result.stderr}\n\n--- dsh diagnostics (${diagnostics.path}) ---\n${diagnostics.text}` }
     } else if (result.pnpmError !== undefined && result.pnpmError !== '') {
       // Nothing matched, but pnpm DID say what went wrong — in its ndjson
       // stream, which never reaches stderr. Without this the user is shown
@@ -218,6 +225,51 @@ export async function withHoistRecovery(
   }
   return result
 }
+
+/**
+ * The tail of the diagnostics file the dsh CLI pointed at, when it pointed at
+ * one (#672).
+ *
+ * `dsh plugin` writes pnpm's entire output to a file and prints only
+ * `dsh: pnpm failed; diagnostics: <path>`. For a failure the market cannot
+ * classify, that line is all it has — the reasons people reported (#244,
+ * #192, #138) were all "the UI shows one unhelpful line" for causes that
+ * were written down somewhere the UI never looked.
+ *
+ * Bounded on purpose: absolute paths only, a regular file, and at most the
+ * last {@link DIAGNOSTICS_TAIL_BYTES}. The path comes from our own child, but
+ * the market only ever needs the end of a log, and reading an arbitrary
+ * amount of an arbitrary file is not worth anything it could add.
+ *
+ * @returns the path and the text, or null when the output names no readable
+ *   diagnostics file.
+ */
+export function diagnosticsTail(result: { stdout: string; stderr: string }): { path: string; text: string } | null {
+  const match = /(?:^|\n)\s*dsh: [^\n]*diagnostics:\s*(\S+)\s*$/m.exec(result.stderr)
+    ?? /(?:^|\n)\s*dsh: [^\n]*diagnostics:\s*(\S+)\s*$/m.exec(result.stdout)
+  if (match === null) return null
+  const path = match[1]!
+  if (!isAbsolute(path)) return null
+  try {
+    if (!statSync(path).isFile()) return null
+    const size = statSync(path).size
+    const start = Math.max(0, size - DIAGNOSTICS_TAIL_BYTES)
+    const handle = openSync(path, 'r')
+    try {
+      const buffer = Buffer.alloc(Math.min(DIAGNOSTICS_TAIL_BYTES, size))
+      readSync(handle, buffer, 0, buffer.length, start)
+      const text = buffer.toString('utf8').trim()
+      return text === '' ? null : { path, text }
+    } finally {
+      closeSync(handle)
+    }
+  } catch {
+    return null
+  }
+}
+
+/** How much of a diagnostics file is worth showing. */
+const DIAGNOSTICS_TAIL_BYTES = 8192
 
 /**
  * Whether pnpm never started at all, so the profile cannot have been touched.

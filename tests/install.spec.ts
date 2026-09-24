@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { InstallResult } from '../src/dsh-cli.ts'
 import {
-  failureDetail, FETCH_TIMEOUT_OVERRIDE, groupConflictsByOwner, hostNodeModulesRoot, isStaleUpdate, normalizedLinkTarget,
+  diagnosticsTail, failureDetail, FETCH_TIMEOUT_OVERRIDE, groupConflictsByOwner, hostNodeModulesRoot, isStaleUpdate, normalizedLinkTarget,
   parseIgnoredBuilds, parsePrepareNotAllowed, pnpmNeverStarted, removeDanglingHostBridge, retargetCollections,
   validateAddedPlugins, withHoistRecovery,
 } from '../src/install.ts'
@@ -301,6 +301,65 @@ describe('validateAddedPlugins (#18 / #21)', () => {
     expect(keep.sort()).toEqual(['@linxin666/dsh-client-ui-skin-center', '@linxin666/dsh-skins'])
     expect(removedBroken).toEqual([])
     expect(calls).toEqual([])
+  })
+})
+
+describe('surfacing the dsh CLI diagnostics file (#672)', () => {
+  // The CLI's literal line, from @deepseek-ai/dsh's plugin-CnNK4cws.js:
+  //   process.stderr.write(`dsh: pnpm failed; diagnostics: ${result.logPath}\n`)
+  const line = (path: string): string => `dsh: pnpm failed; diagnostics: ${path}\n`
+
+  it('shows the tail of the file the CLI pointed at', async () => {
+    const dir = writeProfile({})
+    const log = join(dir, 'run.log')
+    writeFileSync(log, 'Progress: resolved 12\nERR_PNPM_FETCH_404  @scope/thing is not in the registry\n')
+    const run = (): Promise<InstallResult> => Promise.resolve({ ...ok, exitCode: 1, stderr: line(log) })
+    const result = await withHoistRecovery(run, 'web', ['add', 'thing'])
+    expect(result.stderr).toContain('ERR_PNPM_FETCH_404')
+    expect(result.stderr).toContain(log)
+  })
+
+  it('keeps only the END of a large file', async () => {
+    const dir = writeProfile({})
+    const log = join(dir, 'big.log')
+    writeFileSync(log, `${'x'.repeat(40_000)}\nTHE ACTUAL CAUSE\n`)
+    const run = (): Promise<InstallResult> => Promise.resolve({ ...ok, exitCode: 1, stderr: line(log) })
+    const result = await withHoistRecovery(run, 'web', ['add', 'thing'])
+    expect(result.stderr).toContain('THE ACTUAL CAUSE')
+    expect(result.stderr.length).toBeLessThan(20_000)
+  })
+
+  it('leaves the output alone when the path is unusable', async () => {
+    // A directory, and a path that does not exist: the market only ever
+    // wants the end of a log file, so anything else is ignored.
+    const dir = writeProfile({})
+    for (const bad of [dir, join(dir, 'missing.log')]) {
+      const stderr = line(bad)
+      const run = (): Promise<InstallResult> => Promise.resolve({ ...ok, exitCode: 1, stderr })
+      const result = await withHoistRecovery(run, 'web', ['add', 'thing'])
+      expect(result.stderr, bad).not.toContain('--- dsh diagnostics')
+    }
+  })
+
+  it('refuses a RELATIVE path even when such a file exists', () => {
+    // The child's stderr names a path in whatever cwd the child had, which is
+    // not necessarily this process's — so a relative path has no reliable
+    // meaning here. Asserted against a file that really does exist, or the
+    // refusal would be indistinguishable from a failed read.
+    const probe = 'dshm-diagnostics-probe.log'
+    writeFileSync(probe, 'should not be read by this market')
+    try {
+      expect(diagnosticsTail({ stdout: '', stderr: line(probe) })).toBeNull()
+    } finally {
+      rmSync(probe, { force: true })
+    }
+  })
+
+  it('says nothing when the CLI named no diagnostics file', async () => {
+    writeProfile({})
+    const run = (): Promise<InstallResult> => Promise.resolve({ ...ok, exitCode: 1, stderr: 'dsh: pnpm failed in profile directory x\n' })
+    const result = await withHoistRecovery(run, 'web', ['add', 'thing'])
+    expect(result.stderr).not.toContain('--- dsh diagnostics')
   })
 })
 
