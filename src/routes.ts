@@ -51,7 +51,7 @@ import { acceleratedTarget, resolveHeadCommit } from './accelerate.ts'
 import { updateNotesFor } from './changelog.ts'
 import { checkUpdates, compareVersions, fetchNpmLatest, invalidateUpdates, resolveGitRemoteHead, isUpgrade, latestPublishedRecently, setUpdateRegistry, versionOnChannel } from './updates.ts'
 import { createThemeManager, type LoaderEntry } from './themes.ts'
-import { readJsonBody, sameOrigin, sendJson } from './http.ts'
+import { readJsonBody, sameOrigin as baseSameOrigin, sendJson } from './http.ts'
 import { detectedDebugger, detectedSupervisor, restartAllowed, scheduleRestart, servingPort, trustedRestartRequest, trustedDownloadRequest, type RecoveryHandoffConfig } from './restart.ts'
 import type { RecoveryPlugin } from './recovery.ts'
 import { activationAfterReplace, brokenClientBundles, checkClientBundle, hasHostHalf, newlyBrokenBundles, verifyActivation } from './verify.ts'
@@ -160,6 +160,18 @@ export interface MarketConfig {
    * the market computes for its children.
    */
   buildEnv?: Record<string, string>
+  /**
+   * Non-loopback authorities this deployment serves, beyond loopback.
+   *
+   * DSH already fences its own /api on this list: `dsh web --trusted-host
+   * <name>` exists so a deployment reached through a reverse proxy or a
+   * declared LAN name can be used at all, and by default the market reads the
+   * very same declaration from the host (#678 then refused every mutating
+   * route behind such a proxy with 403 `untrusted origin`). Set this only for
+   * a host that publishes no `webRuntime` service, or to add a name the host
+   * does not know; see trusted-hosts.ts for what counts as an entry.
+   */
+  trustedHosts?: readonly string[]
 }
 
 /**
@@ -322,6 +334,12 @@ export function mountMarketRoutes(
     logEvent('error', 'mount', message)
     throw new Error(message)
   }
+  // The fence every mutating route calls, bound once to the authorities this
+  // deployment declared (#678's rebinding rule, applied to the list DSH itself
+  // fences its /api with). Behind a reverse proxy the browser's own authority
+  // arrives in Host, so a loopback-only fence refused the page it was serving;
+  // binding it here keeps every `sameOrigin(request)` call site as it was.
+  const sameOrigin = (request: IncomingMessage): boolean => baseSameOrigin(request, config.trustedHosts ?? [])
   const activeProfileDir = profileDir(config.profile, config.profileDirectory)
   const analyzeActiveProfile = () => analyzeProfile(activeProfileDir, {
     ...(config.dshInstallDir === undefined ? {} : { dshInstallDir: config.dshInstallDir }),

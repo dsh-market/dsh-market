@@ -10,12 +10,13 @@ import { createOfficialDesktopRuntime, type OfficialPluginManagerLike } from './
 import { isDshProfileName } from './profile.ts'
 import { mountMarketRoutes, type HostPluginActivation, type MarketConfig, type MarketHost } from './routes.ts'
 import { installDesktopMarketSettings, installMarketSettings } from './settings.ts'
+import { resolveTrustedHosts } from './trusted-hosts.ts'
 import type { AgentsServiceLike } from './agents.ts'
 
 export const name = 'dsh-market'
 
 /** Optional cordis.yml configuration; profile defaults to `web`. */
-export type Config = Partial<Pick<MarketConfig, 'profile' | 'allowRestart' | 'maxSnapshots' | 'buildEnv'>>
+export type Config = Partial<Pick<MarketConfig, 'profile' | 'allowRestart' | 'maxSnapshots' | 'buildEnv' | 'trustedHosts'>>
 
 /**
  * Structural subset of the dsh launcher's public `profileContext` service —
@@ -135,6 +136,17 @@ function agentsLookupOf(ctx: Context): () => AgentsServiceLike | undefined {
 export function apply(ctx: Context, config?: Config): void {
   ctx.inject(['webServer', 'loader'], (hostCtx: Context) => {
     const host = hostCtx as unknown as MarketEffectHost
+    // The authorities this deployment serves (#678 follow-up): DSH publishes
+    // its `--trusted-host` list — plus the LAN literals it derived — on
+    // `webRuntime`, and the market's mutation fence has to accept the same
+    // names it does, or a GUI reached through a reverse proxy answers 403
+    // `untrusted origin` on every install, update and uninstall, while every
+    // read keeps working. An operator-configured list is unioned in for a
+    // host that publishes none; see src/trusted-hosts.ts.
+    const trusted = resolveTrustedHosts(hostCtx.get('webRuntime'), config?.trustedHosts)
+    if (trusted.rejected.length > 0) {
+      hostCtx.logger.warn(`[dsh-market] ignoring trustedHosts ${trusted.rejected.map(entry => JSON.stringify(entry)).join(', ')}: not a bare host[:port] authority`)
+    }
     const desktopProfiles = ctx.get('desktopProfiles') as DesktopProfilesLike | undefined
     if (desktopProfiles === undefined) {
       // An explicit `profile:` in cordis.yml is the operator speaking and
@@ -175,6 +187,7 @@ export function apply(ctx: Context, config?: Config): void {
           // dropped on the official desktop host — the very host the feature
           // exists for (a GUI launch inherits no shell environment).
           buildEnv: config?.buildEnv,
+          trustedHosts: trusted.authorities,
           ...(typeof profileContext?.installAnchor === 'string' && isAbsolute(profileContext.installAnchor)
             ? { dshInstallDir: dirname(profileContext.installAnchor) } : {}),
         }
@@ -205,6 +218,7 @@ export function apply(ctx: Context, config?: Config): void {
         // Build-time environment (#336); undefined means "inherit", and the
         // settings wiring below is what makes it editable at runtime.
         buildEnv: config?.buildEnv,
+        trustedHosts: trusted.authorities,
       }
       // Web settings may control restart; Desktop only registers the card's
       // namespace below. Both no-op on a host without a settings service.
@@ -236,6 +250,7 @@ export function apply(ctx: Context, config?: Config): void {
         // The operator's pinned build environment applies in Desktop mode
         // too: Desktop's packaged pnpm still runs plugin build scripts.
         buildEnv: config?.buildEnv,
+        trustedHosts: trusted.authorities,
       }
       const desktopHost = desktopCtx as unknown as MarketEffectHost
       installDesktopMarketSettings(desktopCtx)

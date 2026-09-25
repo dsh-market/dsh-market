@@ -20,7 +20,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { dump } from 'js-yaml'
-import { mountMarketRoutes, type MarketHost } from '../src/routes.ts'
+import { mountMarketRoutes, type MarketConfig, type MarketHost } from '../src/routes.ts'
 import { sameOrigin } from '../src/http.ts'
 import * as orderApi from '../src/order.ts'
 import type { PluginCommandRuntime } from '../src/dsh-cli.ts'
@@ -37,7 +37,7 @@ const HOST = '127.0.0.1:3080'
  * Mount the market routes against a stub host. The returned `routes` map is
  * keyed by path so tests can invoke each handler directly.
  */
-function mount(commandRuntime?: PluginCommandRuntime): { host: MarketHost; routes: Map<string, RouteHandler> } {
+function mount(commandRuntime?: PluginCommandRuntime, config: Partial<MarketConfig> = {}): { host: MarketHost; routes: Map<string, RouteHandler> } {
   const routes = new Map<string, RouteHandler>()
   const host: MarketHost = {
     webServer: {
@@ -50,7 +50,7 @@ function mount(commandRuntime?: PluginCommandRuntime): { host: MarketHost; route
     loader: { entries: () => [] },
     plugin: () => ({ await: async () => undefined, dispose: async () => undefined }),
   }
-  mountMarketRoutes(host, { profile: 'web' }, commandRuntime)
+  mountMarketRoutes(host, { profile: 'web', ...config }, commandRuntime)
   return { host, routes }
 }
 
@@ -276,6 +276,49 @@ describe('origin enforcement (POST routes)', () => {
     writeStandardProfile()
     const res = await hit(routes, '/dsh-market/bundle-order', post('/dsh-market/bundle-order', { order: ['beta', 'alpha'] }))
     expect(res.status).toBe(200)
+  })
+
+  it.each(mutating)('accepts a POST %s whose Host is a declared authority, which is what a proxy forwards', async (path, body) => {
+    // `dsh web --trusted-host <name>` behind nginx: `proxy_set_header Host
+    // $http_host` forwards the name the browser typed, so the browser's own
+    // authority has to be one the fence accepts or every mutation answers 403
+    // while every read keeps working. `not.toBe(403)` rather than 200 on
+    // purpose: this fixture may fail the request for its own reasons, and the
+    // assertion is about the origin gate, not about the route's outcome.
+    const proxied = mount(undefined, { trustedHosts: ['dsh.example.org'] })
+    const res = await hit(proxied.routes, path as string, {
+      method: 'POST',
+      url: path as string,
+      host: 'dsh.example.org',
+      origin: 'https://dsh.example.org',
+      body,
+    })
+    expect(res.status).not.toBe(403)
+    expect(jsonBody(res)).not.toEqual({ error: 'untrusted origin' })
+  })
+
+  it('still refuses rebinding and cross-site POSTs once authorities are declared (#678)', async () => {
+    // A declaration widens WHO may reach the routes, never what counts as
+    // same-origin: the caller still has to be the deployment's own page.
+    const proxied = mount(undefined, { trustedHosts: ['dsh.example.org'] })
+    const attempt = (host: string, origin: string): RequestOpts => ({
+      method: 'POST', url: '/dsh-market/bundle-order', host, origin, body: { order: [] },
+    })
+    // The rebinding page names itself in Host AND Origin; no declaration matches.
+    const rebinding = await hit(proxied.routes, '/dsh-market/bundle-order', attempt('evil.example', 'http://evil.example'))
+    expect(rebinding.status).toBe(403)
+    // A cross-site page aimed at the declared host is still cross-site.
+    const crossSite = await hit(proxied.routes, '/dsh-market/bundle-order', attempt('dsh.example.org', 'https://evil.example'))
+    expect(crossSite.status).toBe(403)
+    // A sibling name is not the declared name.
+    const sibling = await hit(proxied.routes, '/dsh-market/bundle-order', attempt('dsh.example.org.evil.example', 'http://dsh.example.org.evil.example'))
+    expect(sibling.status).toBe(403)
+    // A declaration carrying a port matches that authority and no other port.
+    const ported = mount(undefined, { trustedHosts: ['dsh.example.org:8443'] })
+    const otherPort = await hit(ported.routes, '/dsh-market/bundle-order', attempt('dsh.example.org:9443', 'https://dsh.example.org:9443'))
+    expect(otherPort.status).toBe(403)
+    const declaredPort = await hit(ported.routes, '/dsh-market/bundle-order', attempt('dsh.example.org:8443', 'https://dsh.example.org:8443'))
+    expect(declaredPort.status).not.toBe(403)
   })
 })
 
@@ -771,6 +814,42 @@ describe('sameOrigin', () => {
     for (const origin of ['not a url', '://', 'http://', '']) {
       expect(sameOrigin(req({ host: '127.0.0.1:3080', origin })), origin).toBe(false)
     }
+  })
+
+  it('accepts a Host this deployment declared, because that is what a proxy forwards', () => {
+    // #678's rule applied to the list DSH already fences its own /api with:
+    // `dsh web --trusted-host <name>` plus a reverse proxy that forwards the
+    // name the browser typed is a supported deployment, and a loopback-only
+    // fence answered every mutation on it with 403 `untrusted origin`.
+    const declared = ['dsh.example.org', '192.168.0.194']
+    expect(sameOrigin(req({ host: 'dsh.example.org', origin: 'https://dsh.example.org' }), declared)).toBe(true)
+    expect(sameOrigin(req({ host: '192.168.0.194:3080', origin: 'http://192.168.0.194:3080' }), declared)).toBe(true)
+    // A port-less declaration covers any port: the port a proxy forwards is
+    // not the port the market listens on.
+    expect(sameOrigin(req({ host: 'dsh.example.org:8443', origin: 'https://dsh.example.org:8443' }), declared)).toBe(true)
+    // The absent-Origin rule (#648) does not become stricter for them.
+    expect(sameOrigin(req({ host: 'dsh.example.org' }), declared)).toBe(true)
+    // Without the declaration the very same request is refused — that is the
+    // behaviour this switches on.
+    expect(sameOrigin(req({ host: 'dsh.example.org', origin: 'https://dsh.example.org' }))).toBe(false)
+    expect(sameOrigin(req({ host: 'dsh.example.org' }))).toBe(false)
+  })
+
+  it('never lets a declaration decide what is same-origin (#678)', () => {
+    const declared = ['dsh.example.org:8443']
+    // An exact-port declaration matches that authority and no other port.
+    expect(sameOrigin(req({ host: 'dsh.example.org:8443', origin: 'https://dsh.example.org:8443' }), declared)).toBe(true)
+    expect(sameOrigin(req({ host: 'dsh.example.org:9443', origin: 'https://dsh.example.org:9443' }), declared)).toBe(false)
+    // A cross-site page against a declared host is still cross-site.
+    expect(sameOrigin(req({ host: 'dsh.example.org:8443', origin: 'https://evil.example' }), declared)).toBe(false)
+    // The rebinding page names itself in Host AND Origin; no declaration matches.
+    expect(sameOrigin(req({ host: 'evil.example', origin: 'http://evil.example' }), declared)).toBe(false)
+    expect(sameOrigin(req({ host: 'evil.example' }), declared)).toBe(false)
+    // A sibling name is not the declared name.
+    expect(sameOrigin(req({ host: 'dsh.example.org.evil.example', origin: 'http://dsh.example.org.evil.example' }), declared)).toBe(false)
+    // An Origin that does not parse is refused whatever the Host is.
+    expect(sameOrigin(req({ host: 'dsh.example.org:8443', origin: '' }), declared)).toBe(false)
+    expect(sameOrigin(req({ host: 'dsh.example.org:8443', origin: 'null' }), declared)).toBe(false)
   })
 })
 describe('GET/POST /dsh-market/snapshots', () => {

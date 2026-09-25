@@ -5,6 +5,7 @@
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { authorityParts } from './trusted-hosts.ts'
 
 /** Write a JSON payload with no-store caching. */
 export function sendJson(response: ServerResponse, status: number, payload: unknown): void {
@@ -43,7 +44,17 @@ export function sendJson(response: ServerResponse, status: number, payload: unkn
  * The header's absence is a statement about the client, not about intent, and
  * the intent is the only thing this can judge.
  *
+ * The loopback rule below is the DNS-rebinding defence and stays exactly as it
+ * was for every authority nobody declared (#678). What it could not express is
+ * the deployment DSH already supports: `dsh web --trusted-host <name>` behind
+ * a reverse proxy hands the market `Host: <name>` on every request, so the
+ * page the UI was served to was refused on every mutating route. Those
+ * declarations — the same list DSH's own /api fence uses — are accepted here,
+ * and they come from the deployment, never from the request, so a rebinding
+ * page still cannot name itself into trust.
+ *
  * @param request - the incoming request.
+ * @param declared - non-loopback authorities this deployment declared.
  * @returns whether the request may mutate market state.
  */
 /**
@@ -71,7 +82,48 @@ export function loopbackAuthority(host: string | undefined): boolean {
   return name === '127.0.0.1' || name === 'localhost' || name === '[::1]'
 }
 
-export function sameOrigin(request: IncomingMessage): boolean {
+/**
+ * Whether a `Host` names an authority this deployment declared.
+ *
+ * The loopback rule above is what stops DNS rebinding, and it still applies to
+ * every authority nobody declared. A declaration is what lets a deployment
+ * reached through a reverse proxy or a declared LAN name mutate at all, since
+ * that is the only Host its browser ever sends (#678's own rule applied to the
+ * list DSH already fences its /api with).
+ *
+ * A declaration without a port matches that hostname on any port, the portless
+ * shape DSH derives for LAN literals; one carrying a port matches exactly.
+ *
+ * @param host - the request's `Host` header.
+ * @param declared - authorities this deployment declared; see trusted-hosts.ts.
+ * @returns whether the request's authority is one of them.
+ */
+export function deploymentAuthority(host: string | undefined, declared: readonly string[]): boolean {
+  if (host === undefined || declared.length === 0) return false
+  const parsed = authorityParts(host)
+  if (parsed === null) return false
+  return declared.some((entry) => {
+    const known = authorityParts(entry)
+    if (known === null) return false
+    return known.port === ''
+      ? known.host === parsed.host
+      : known.host === parsed.host && known.port === parsed.port
+  })
+}
+
+/**
+ * Whether a `Host` names an authority this deployment serves: the loopback
+ * listener, or one this deployment declared.
+ *
+ * @param host - the request's `Host` header.
+ * @param declared - authorities this deployment declared.
+ * @returns whether the request may be answered at all.
+ */
+export function servedAuthority(host: string | undefined, declared: readonly string[]): boolean {
+  return loopbackAuthority(host) || deploymentAuthority(host, declared)
+}
+
+export function sameOrigin(request: IncomingMessage, declared: readonly string[] = []): boolean {
   // The rebinding defence (#678): a page on `evil.com` aimed at 127.0.0.1
   // sends a matching Origin/Host pair, so the equality below cannot see the
   // attack — Host is what it cannot forge.
@@ -83,7 +135,7 @@ export function sameOrigin(request: IncomingMessage): boolean {
   // authority is only checked when it is present, and a rebinding page can
   // never reach the branch that skips it.
   const host = request.headers.host
-  if (host !== undefined && !loopbackAuthority(host)) return false
+  if (host !== undefined && !servedAuthority(host, declared)) return false
   const origin = request.headers.origin
   // A missing Origin is not a cross-site request: browsers send it on every
   // POST, same-origin included, so its absence means the caller is not a
