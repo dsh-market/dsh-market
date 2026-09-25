@@ -8,6 +8,7 @@ import { dirname, isAbsolute } from 'node:path'
 import { createDesktopPluginRuntime, setHostPackageManager, type DesktopPnpmLike, type HostPackageManager } from './dsh-cli.ts'
 import { createOfficialDesktopRuntime, type OfficialPluginManagerLike } from './official-desktop.ts'
 import { isDshProfileName } from './profile.ts'
+import { setTrustedHostsSource } from './http.ts'
 import { mountMarketRoutes, type HostPluginActivation, type MarketConfig, type MarketHost } from './routes.ts'
 import { installDesktopMarketSettings, installMarketSettings } from './settings.ts'
 import type { AgentsServiceLike } from './agents.ts'
@@ -132,6 +133,31 @@ function agentsLookupOf(ctx: Context): () => AgentsServiceLike | undefined {
   return () => ctx.get('agents') as AgentsServiceLike | undefined
 }
 
+/**
+ * The deployment's declared authorities, read from the host (#729).
+ *
+ * DSH's own /api fence accepts loopback OR an authority the operator declared
+ * (`dsh web --trusted-host <name>`, plus the LAN literals the CLI derives when
+ * bound to 0.0.0.0). The market's routes are `exact` registrations on the bare
+ * webServer, and exact matches win over that fence's prefix, so they never
+ * pass through it — and a loopback-only rule of its own made every mutating
+ * route 403 on any deployment reached by a name.
+ *
+ * The `connection` service is optional: a host without it leaves the fence
+ * exactly as it was, which is the behaviour every release so far has had.
+ * @returns a restore function for the effect that installed it.
+ */
+function useTrustedHosts(ctx: Context): () => void {
+  const connection = ctx.get('connection') as { trustedHosts?: unknown } | undefined
+  const declared = Array.isArray(connection?.trustedHosts)
+    ? connection.trustedHosts.filter((entry): entry is string => typeof entry === 'string')
+    : []
+  const previous = setTrustedHostsSource(() => declared)
+  // The setter returns the PREVIOUS source, not a restore closure — the same
+  // contract as setBuildEnvSource in dsh-cli.ts.
+  return () => { setTrustedHostsSource(previous) }
+}
+
 export function apply(ctx: Context, config?: Config): void {
   ctx.inject(['webServer', 'loader'], (hostCtx: Context) => {
     const host = hostCtx as unknown as MarketEffectHost
@@ -180,9 +206,11 @@ export function apply(ctx: Context, config?: Config): void {
         }
         installDesktopMarketSettings(ctx)
         host.effect(() => {
+          const restoreTrustedHosts = useTrustedHosts(ctx)
           const disposeRoutes = mountMarketRoutes(host, resolved, runtime, agentsLookupOf(ctx))
           return async () => {
             disposeRoutes()
+            restoreTrustedHosts()
             await runtime.dispose()
           }
         }, 'dsh-market: official Desktop routes and package operations')
@@ -209,7 +237,14 @@ export function apply(ctx: Context, config?: Config): void {
       // Web settings may control restart; Desktop only registers the card's
       // namespace below. Both no-op on a host without a settings service.
       installMarketSettings(ctx, resolved)
-      host.effect(() => mountMarketRoutes(host, resolved, undefined, agentsLookupOf(ctx)), 'dsh-market: http routes')
+      host.effect(() => {
+        const restoreTrustedHosts = useTrustedHosts(ctx)
+        const disposeRoutes = mountMarketRoutes(host, resolved, undefined, agentsLookupOf(ctx))
+        return () => {
+          disposeRoutes()
+          restoreTrustedHosts()
+        }
+      }, 'dsh-market: http routes')
       return
     }
 

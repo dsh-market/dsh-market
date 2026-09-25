@@ -691,12 +691,13 @@ import { RELEASE_AGE_OVERRIDE } from '../src/install.ts'
 import { resolveChannel } from '../src/channels.ts'
 import { profileDir } from '../src/profile.ts'
 import { runDshPlugin } from '../src/dsh-cli.ts'
+import { setTrustedHostsSource } from '../src/http.ts'
 import type { AgentsServiceLike } from '../src/agents.ts'
 
 type Handler = (request: unknown, response: unknown) => void | Promise<void>
 
 interface Testbed {
-  dispatch(method: string, path: string, body?: unknown, options?: { crossOrigin?: boolean; remoteAddress?: string; forwarded?: boolean }): Promise<{ status: number; json: any }>
+  dispatch(method: string, path: string, body?: unknown, options?: { crossOrigin?: boolean; remoteAddress?: string; forwarded?: boolean; host?: string; origin?: string }): Promise<{ status: number; json: any }>
   loaderEntries: { options: { name: string; disabled?: boolean | null }; fiber?: unknown; update(o: { disabled: boolean | null }): Promise<void> }[]
   /** Every `host.plugin()` call — how a market hot mount shows itself. */
   hostPluginCalls: unknown[]
@@ -743,15 +744,15 @@ function createTestbed(
   // and, as this suite proved once, would let a spec resolve a REAL commit
   // through a REAL proxy. Specs that care about the mirrors set it.
   const dispose = mountMarketRoutes(host as never, { profile: 'web', region: 'global', ...config }, runtime, () => agents, activation)
-  async function dispatch(method: string, path: string, body?: unknown, options?: { crossOrigin?: boolean }) {
+  async function dispatch(method: string, path: string, body?: unknown, options?: { crossOrigin?: boolean; host?: string; origin?: string }) {
     const handler = routes.get(path.split('?')[0])
     if (handler === undefined) throw new Error(`no route: ${path}`)
     const chunks = body === undefined ? [] : [Buffer.from(JSON.stringify(body))]
     const request = {
       method, url: path,
       headers: {
-        host: 'localhost:3080',
-        origin: options?.crossOrigin ? 'https://evil.example' : 'http://localhost:3080',
+        host: options?.host ?? 'localhost:3080',
+        origin: options?.origin ?? (options?.crossOrigin ? 'https://evil.example' : 'http://localhost:3080'),
         ...(options?.forwarded ? { 'x-forwarded-for': '10.0.0.9' } : {}),
       },
       socket: { remoteAddress: options?.remoteAddress ?? '127.0.0.1' },
@@ -5895,6 +5896,32 @@ describe('download region', () => {
     // The market has nothing left to explain: the answer is the user's now.
     expect((await bed.dispatch('GET', '/dsh-market/status')).json.regionAuto).toBe(false)
     await bed.dispatch('POST', '/dsh-market/region', { region: 'global' })
+  })
+})
+
+describe('the deployment own authority (#729)', () => {
+  // The reported repro, end to end: reached by a NAME — reverse proxy, tunnel,
+  // LAN DNS — every mutating route answered 403 while every read worked, so it
+  // read as "the install button does nothing". The market registers `exact`
+  // routes on the bare webServer, so DSH's own /api fence never sees them and
+  // it has to accept the authorities the host declares.
+  const previous: Array<() => readonly string[]> = []
+  afterEach(() => { while (previous.length > 0) setTrustedHostsSource(previous.pop()!) })
+
+  it('refuses a name the deployment did not declare', async () => {
+    const refused = await bed.dispatch('POST', '/dsh-market/region', { region: 'china' }, { host: 'dsh.example.org', origin: 'https://dsh.example.org' })
+    expect(refused.status).toBe(403)
+  })
+
+  it('accepts a mutating request from the declared name', async () => {
+    previous.push(setTrustedHostsSource(() => ['dsh.example.org']))
+    // A real browser sends Origin alongside Host, both naming the deployment.
+    const at = { host: 'dsh.example.org', origin: 'https://dsh.example.org' }
+    // The read was never the problem — it is here to show the same host works.
+    expect((await bed.dispatch('GET', '/dsh-market/status', undefined, at)).status).toBe(200)
+    const accepted = await bed.dispatch('POST', '/dsh-market/region', { region: 'china' }, at)
+    expect(accepted.status).toBe(200)
+    expect(accepted.json.region).toBe('china')
   })
 })
 

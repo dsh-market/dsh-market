@@ -16,6 +16,74 @@ export function sendJson(response: ServerResponse, status: number, payload: unkn
 }
 
 /**
+ * Authorities this deployment serves besides loopback, as the HOST declared
+ * them (`dsh web --trusted-host <name>`, plus the LAN literals it derives when
+ * bound to 0.0.0.0). Installed once at mount from the host's `connection`
+ * service — see src/index.ts — and empty when the host is older than that
+ * service, which leaves every rule below exactly as it was.
+ *
+ * This is the half of #678 the market was missing (#729). DSH's own /api fence
+ * accepts "loopback OR a declared authority"; the market's routes are `exact`
+ * registrations on the bare webServer, and exact matches win over the fence's
+ * prefix, so it never sees them and has to decide for itself. Deciding
+ * loopback-only made every mutating route answer 403 on any deployment reached
+ * by a name — a reverse proxy, a tunnel, a LAN hostname — while every read
+ * kept working, so it read to the user as "the install button does nothing".
+ *
+ * The security argument is unchanged: the rebinding defence is that Host is
+ * the one header an attacker's page cannot forge, and an authority reaches
+ * this list only by being written into the deployment's configuration. An
+ * undeclared name is still refused.
+ */
+let trustedHostsSource: () => readonly string[] = () => []
+
+/** Point the fence at the host's declared authorities. Returns the previous source. */
+export function setTrustedHostsSource(source: () => readonly string[]): () => readonly string[] {
+  const previous = trustedHostsSource
+  trustedHostsSource = source
+  return previous
+}
+
+/**
+ * Parse a bare `host[:port]` authority, or null when the value is not one.
+ *
+ * "Not one" is narrower than "`new URL` accepted it": an entry must survive
+ * WHATWG parsing UNCHANGED. `dsh.example.org/path` parses to the hostname
+ * `dsh.example.org`, and treating that as a declaration would authorize a name
+ * the operator never wrote (the host's own fence refuses such entries when the
+ * configuration loads, loudly, for the same reason).
+ */
+function parseAuthority(value: string): URL | null {
+  try {
+    const url = new URL(`http://${value}`)
+    const canonical = url.port === '' ? url.hostname : `${url.hostname}:${url.port}`
+    return canonical === value.toLowerCase() ? url : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Whether a request authority is one of the declared ones.
+ *
+ * Mirrors @deepseek-ai/dsh-client-connection's rule, because the two fences
+ * have to agree: an entry with an explicit port matches that exact authority,
+ * a port-less entry matches the hostname on any port (the shape the CLI
+ * derives for IP-literal LAN serving, where the bound port may be assigned by
+ * the OS). Both sides compare through WHATWG normalization, so case and a
+ * redundant `:80` never decide trust.
+ */
+export function trustedAuthority(host: string, trustedHosts: readonly string[]): boolean {
+  const hostUrl = parseAuthority(host)
+  if (hostUrl === null) return false
+  return trustedHosts.some(entry => {
+    const entryUrl = parseAuthority(entry)
+    if (entryUrl === null) return false
+    return entryUrl.port === '' ? entryUrl.hostname === hostUrl.hostname : entryUrl.host === hostUrl.host
+  })
+}
+
+/**
  * True when the request's Origin, IF IT HAS ONE, matches its Host — required
  * on every POST route.
  *
@@ -83,7 +151,11 @@ export function sameOrigin(request: IncomingMessage): boolean {
   // authority is only checked when it is present, and a rebinding page can
   // never reach the branch that skips it.
   const host = request.headers.host
-  if (host !== undefined && !loopbackAuthority(host)) return false
+  if (host !== undefined && !loopbackAuthority(host) && !trustedAuthority(host, trustedHostsSource())) return false
+  // A browser states when IT considers a request cross-site, and the host's
+  // own fence refuses that outright. Cheap, and it covers what the Origin
+  // equality cannot: a cross-site request whose Origin happens to match.
+  if (request.headers['sec-fetch-site'] === 'cross-site') return false
   const origin = request.headers.origin
   // A missing Origin is not a cross-site request: browsers send it on every
   // POST, same-origin included, so its absence means the caller is not a
