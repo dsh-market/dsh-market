@@ -23,6 +23,8 @@ import { pathToFileURL } from 'node:url'
 import { asChannel, type Channel } from './channels.ts'
 import { asRegion, normalizeGithubProxy, type Region } from './regions.ts'
 import { logEvent } from './log.ts'
+import { writeFileAtomic } from './atomic-write.ts'
+import { waitForLifecycle } from './lifecycle.ts'
 import { declaredBundlePatchFile, entryArtifactExists } from './profile.ts'
 
 interface HotRow {
@@ -508,7 +510,10 @@ export function writeMarketState(profileDir: string, state: MarketState): void {
   const broken = Object.prototype.hasOwnProperty.call(state, 'brokenPlugins')
     ? state.brokenPlugins
     : onDisk.brokenPlugins
-  writeFileSync(stateFile(profileDir), JSON.stringify({
+  // Written atomically: a crash or a refused rename mid-write must not
+  // leave a truncated state.json behind, because the next boot reads it as
+  // the user‘s disable list and the toggle that produced it is gone (#582).
+  const text = JSON.stringify({
     disabled: [...state.disabled],
     groups: state.groups,
     groupOrder: state.groupOrder,
@@ -532,7 +537,8 @@ export function writeMarketState(profileDir: string, state: MarketState): void {
     // Omitted while not saved, so a card that was never touched keeps
     // inheriting the composition's buildEnv on every boot.
     ...(state.buildEnv === undefined ? {} : { buildEnv: state.buildEnv }),
-  }))
+  })
+  writeFileAtomic(stateFile(profileDir), text)
 }
 
 /** Plugins the user switched off; skipped by the boot re-mount. */
@@ -587,11 +593,18 @@ function raceActivationTimeout<T>(awaitable: T | Promise<T>): Promise<T> {
 }
 
 /** Outcome of one hot-mount attempt; `reason` explains non-`ok` results. */
-export interface HotMountResult {
-  ok: boolean
-  /** Bilingual reason shown to the user instead of a bare restart banner. */
-  reason: string | null
-}
+export type HotMountResult =
+  /** Live without a restart. */
+  | { ok: true; outcome: 'live'; reason: null }
+  /**
+   * Not live, and the host is the reason: an activation that did not settle in
+   * time. A restart is the established remedy, and the boot replay will apply
+   * the same choice again — so this is NOT evidence about the plugin, and it
+   * must not become a durable "do not enable this" anywhere.
+   */
+  | { ok: false; outcome: 'deferred'; reason: string }
+  /** Not live because activation was rejected: different evidence, same shape. */
+  | { ok: false; outcome: 'failed'; reason: string }
 
 /**
  * Dispose a plugin hot-mounted earlier in this session, removing it from the
@@ -599,17 +612,52 @@ export interface HotMountResult {
  * @param packageName - package to unmount.
  * @returns true when a live hot mount was found and disposed.
  */
-export async function hotUnmount(packageName: string): Promise<boolean> {
+const hotDisposalErrors = new Map<string, string>()
+
+/**
+ * Why the last disposal of this package failed, if it did.
+ *
+ * A rejected disposal leaves runtime state nobody can describe, so the toggle
+ * must refuse to enable that package again until a disposal has been seen
+ * through. The message is kept addressable for exactly that refusal.
+ */
+export function hotMountDisposalError(packageName: string): string | undefined {
+  return hotDisposalErrors.get(packageName)
+}
+
+/**
+ * Remove a live market hot mount.
+ *
+ * @param strict - a toggle caller: retain the handle when disposal fails (so
+ * the failure stays addressable for a retry) and propagate the error instead
+ * of reporting a removal that did not happen. Legacy callers keep best-effort
+ * removal, which is what the boot replay and the recovery paths expect.
+ */
+export async function hotUnmount(packageName: string, strict = false): Promise<boolean> {
   const handle = hotHandles.get(packageName)
   if (handle === undefined) return false
-  hotHandles.delete(packageName)
-  shimNames.delete(packageName)
+  if (!strict) {
+    hotHandles.delete(packageName)
+    shimNames.delete(packageName)
+    hotDisposalErrors.delete(packageName)
+  }
   try {
-    await handle.dispose()
+    if (strict) await waitForLifecycle(handle, () => handle.dispose(), `${packageName}: dispose`)
+    else await handle.dispose()
+    if (!strict || hotHandles.get(packageName) === handle) {
+      hotHandles.delete(packageName)
+      shimNames.delete(packageName)
+      hotDisposalErrors.delete(packageName)
+    }
     logEvent('info', 'hot-unmount', `${packageName}: removed live`)
     return true
   } catch (error) {
-    logEvent('warn', 'hot-unmount', `${packageName}: dispose failed — ${error instanceof Error ? error.message : String(error)}`)
+    const reason = `${packageName}: dispose failed — ${error instanceof Error ? error.message : String(error)}`
+    if (strict) {
+      hotDisposalErrors.set(packageName, reason)
+      throw new Error(reason)
+    }
+    logEvent('warn', 'hot-unmount', reason)
     return false
   }
 }
@@ -630,6 +678,7 @@ export async function hotMount(ctx: HotContext, profileDir: string, packageName:
     if (HotTree === null) {
       return {
         ok: false,
+        outcome: 'deferred',
         reason: '宿主不支持热挂载(include 插件不可导入),需重启 / the host cannot hot-mount (include plugin unavailable); restart required',
       }
     }
@@ -656,6 +705,7 @@ export async function hotMount(ctx: HotContext, profileDir: string, packageName:
       if (rows === null) {
         return {
           ok: false,
+          outcome: 'deferred',
           reason: 'bundle patch 含配置行/表达式,热挂载仅支持纯 insert,重启后生效 / the bundle patch contains config/expression rows; hot-mount only supports plain inserts — it activates on restart',
         }
       }
@@ -668,6 +718,7 @@ export async function hotMount(ctx: HotContext, profileDir: string, packageName:
       if (dsh === null || dsh.client === undefined || dsh.bundle !== undefined) {
         return {
           ok: false,
+          outcome: 'failed',
           reason: '该包无 bundle patch 且未声明 dsh.client,没有可热挂载的内容 / no bundle patch and no dsh.client surface — nothing to hot-mount',
         }
       }
@@ -709,14 +760,26 @@ export async function hotMount(ctx: HotContext, profileDir: string, packageName:
       throw error
     }
     hotHandles.set(packageName, handle)
+    hotDisposalErrors.delete(packageName)
     ctx.logger?.info?.(`[dsh-market] hot-mounted ${packageName}`)
     logEvent('info', 'hot-mount', `${packageName}: live${shimNames.has(packageName) ? ' (client-only shim)' : ''}`)
-    return { ok: true, reason: null }
+    return { ok: true, outcome: 'live', reason: null }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    ctx.logger?.warn(`[dsh-market] hot mount of ${packageName} failed, restart required: ${message}`)
-    logEvent('warn', 'hot-mount', `${packageName}: fell back to restart — ${message}`)
-    return { ok: false, reason: `热挂载失败,重启后生效 — ${message} / hot-mount failed — restart required: ${message}` }
+    // The distinction the toggle needs: a timeout is the host failing to
+    // settle, a rejection is the plugin failing. The first keeps the restart
+    // contract the market has always shown; the second is evidence a durable
+    // enable must not be published from.
+    const deferred = error instanceof ActivationTimeout
+    ctx.logger?.warn(`[dsh-market] hot mount of ${packageName} failed: ${message}`)
+    logEvent('warn', 'hot-mount', `${packageName}: ${deferred ? 'fell back to restart' : 'activation failed'} — ${message}`)
+    return {
+      ok: false,
+      outcome: deferred ? 'deferred' : 'failed',
+      reason: deferred
+        ? `热挂载超时,需重启 — ${message} / hot-mount timed out — restart required: ${message}`
+        : `热挂载失败 — ${message} / hot-mount failed: ${message}`,
+    }
   }
 }
 

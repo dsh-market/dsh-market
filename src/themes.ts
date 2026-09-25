@@ -7,7 +7,7 @@
 
 import { join } from 'node:path'
 import { loadRegistry, pluginCategories } from './registry.ts'
-import { hotMount, hotUnmount, listHotMounts, writeDisabled } from './hot.ts'
+import { hotMount, hotMountDisposalError, hotUnmount, listHotMounts, writeDisabled, type HotMountResult } from './hot.ts'
 import { logEvent } from './log.ts'
 import { LifecycleWaitError, waitForLifecycle } from './lifecycle.ts'
 import { nameMatchesPackage } from './entry-identity.ts'
@@ -31,6 +31,17 @@ export interface ThemeHost {
 export interface ThemeManager {
   installedThemeNames(): Promise<Set<string>>
   setEntryDisabled(name: string, disabledFlag: boolean, requireLive?: boolean, rejectPending?: boolean): Promise<boolean>
+  /**
+   * One toggle transaction over several names: stage the durable writes, drive
+   * the live composition, publish state last. Restores the runtime it touched
+   * when anything fails, and reports `deferred` when the host could not settle
+   * (restart is the remedy) rather than `failed`.
+   */
+  changeEnabled(choices: readonly { name: string; enabled: boolean }[], commit: (next: Set<string>) => void): Promise<HotMountResult>
+  /** True while a changeEnabled call owns these names (#582). */
+  isChanging(name: string): boolean
+  /** True when the name is live right now, by hot mount or by loader entry. */
+  isLive(name: string): boolean
   activateTheme(name: string): Promise<boolean>
 }
 
@@ -157,7 +168,12 @@ export function createThemeManager(
         // options flip but the finishing init brings the fiber up anyway, and a
         // plain re-update no-ops on the empty diff. Force the update and verify
         // the live state, retrying until reality matches the flag.
-        for (let attempt = 0; attempt < 3; attempt++) {
+        // More attempts than the legacy loop's three: a strict caller is
+        // waiting for a state it can verify, and on a real host the fiber does
+        // not always drop within the first few hundred milliseconds (measured
+        // in tests/web/failed-enable.e2e.ts, where a theme replacement stopped
+        // being reported as a failure once the wait was long enough).
+        for (let attempt = 0; attempt < 12; attempt++) {
           try {
             await updateEntry(entry, disabledFlag ? true : null)
             found = true
@@ -206,50 +222,111 @@ export function createThemeManager(
    * (market hot mounts unmount; bundle-layer entries live-disable) and bring
    * it up. The choice persists in state.json and is replayed at boot.
    */
+  /** Names a changeEnabled call currently owns; the boot replay skips them. */
+  const changing = new Set<string>()
+  const isLive = (name: string): boolean =>
+    listHotMounts().includes(name) || matchingEntries(name).some(entry => entry.fiber !== undefined)
+
+  /**
+   * One toggle transaction: stage, activate, publish.
+   *
+   * The order is the point. `commit` is called only after every choice is
+   * live (or deferred, which is the host's answer and not a failure), so a
+   * failure never publishes a state.json that claims a plugin is enabled while
+   * its fiber is not there — and the runtime this call touched is restored to
+   * what it was before (#575, #582).
+   *
+   * @returns `live` when everything the caller asked for is up, `deferred` when
+   * the host could not settle it in time (restart applies it), `failed` when
+   * activation was rejected.
+   */
+  async function changeEnabled(
+    choices: readonly { name: string; enabled: boolean }[],
+    commit: (next: Set<string>) => void,
+  ): Promise<HotMountResult> {
+    const names = new Set(choices.map(choice => choice.name))
+    const hotBefore = new Set(listHotMounts().filter(name => names.has(name)))
+    const entries = [...new Set([...names].flatMap(matchingEntries))]
+      .map(entry => ({ entry, disabled: entry.options.disabled, live: entry.fiber !== undefined }))
+    const restore = async (): Promise<void> => {
+      const errors: string[] = []
+      for (const name of names) {
+        try {
+          if (!hotBefore.has(name) && listHotMounts().includes(name)) await hotUnmount(name, true)
+          if (hotBefore.has(name) && !listHotMounts().includes(name)) {
+            const restored = await hotMount(host, activeProfileDir, name)
+            if (!restored.ok) throw new Error(restored.reason)
+          }
+        } catch (error) { errors.push(`${name}: ${String(error)}`) }
+      }
+      for (const { entry, disabled, live } of entries.reverse()) {
+        try {
+          if (entry.options.disabled !== disabled || (entry.fiber !== undefined) !== live) {
+            await updateEntry(entry, disabled ?? null, true)
+            if (disabled === undefined) delete entry.options.disabled
+            if ((entry.fiber !== undefined) !== live) throw new Error('previous live state was not restored')
+          }
+        } catch (error) { errors.push(`${entry.options.name ?? ''}: ${String(error)}`) }
+      }
+      if (errors.length) throw new Error(`runtime restoration failed: ${errors.join('; ')}`)
+    }
+    for (const name of names) changing.add(name)
+    try {
+      const next = new Set(disabledThemes)
+      let result: HotMountResult = { ok: true, outcome: 'live', reason: null }
+      for (const { name, enabled } of choices) {
+        if (enabled) {
+          const disposalError = hotMountDisposalError(name)
+          if (disposalError !== undefined) {
+            throw new Error(`${disposalError}; runtime state is uncertain; retry disabling before enabling`)
+          }
+          if (!listHotMounts().includes(name) && !await setEntryDisabled(name, false, true)) {
+            result = await hotMount(host, activeProfileDir, name)
+            if (result.outcome === 'failed') throw new Error(result.reason)
+          }
+          next.delete(name)
+        } else {
+          // A theme replacement has to wait for the old entry to actually stop
+          // (two themes live at once is the state the Themes tab exists to
+          // prevent). An ordinary disable keeps the deferred fallback, but a
+          // hung update is still an error the caller asked to hear about.
+          await hotUnmount(name, true)
+          await setEntryDisabled(name, true, choices.length > 1, true)
+          next.add(name)
+        }
+      }
+      commit(next)
+      disabledThemes.clear()
+      for (const name of next) disabledThemes.add(name)
+      return result
+    } catch (error) {
+      let reason = error instanceof Error ? error.message : String(error)
+      try { await restore() } catch (restoreError) { reason += `; ${String(restoreError)}` }
+      return { ok: false, outcome: 'failed', reason }
+    } finally {
+      for (const name of names) changing.delete(name)
+    }
+  }
+
   /**
    * Make `name` the one active theme.
    *
-   * Switching stops every other theme first, because they are mutually
-   * exclusive by construction. That makes the failure case the interesting
-   * one: if the new theme then cannot come up, the user is left with NO theme
-   * — the old one stopped, the new one never started, and the tab shows the
-   * plugin as enabled while the interface has lost its skin (#582, where the
-   * reported assertion was simply "the previous theme's fiber is undefined").
-   *
-   * So what this stopped is remembered, and a failed switch puts it back —
-   * both the live fiber and the disable flag that followed it. The attempted
-   * theme keeps neither: it never came up, and leaving it out of the disable
-   * set is what lets the next attempt try it again.
+   * A theme switch is a two-choice transaction: every other theme goes off and
+   * this one comes on, staged and published as one thing (see changeEnabled).
+   * The failure case is why it is a transaction — stopping the old theme is
+   * part of switching, so a switch that then fails would leave the user with NO
+   * theme at all: the old one stopped, the new one never started, while the tab
+   * listed the plugin as enabled (#582). The transaction restores the old one.
    */
   async function activateTheme(name: string): Promise<boolean> {
-    const themes = await installedThemeNames()
-    const stopped: { name: string; kind: 'hot' | 'entry' }[] = []
-    for (const other of themes) {
-      if (other === name) continue
-      if (listHotMounts().includes(other)) {
-        if (await hotUnmount(other)) stopped.push({ name: other, kind: 'hot' })
-        disabledThemes.add(other)
-      } else if (await setEntryDisabled(other, true)) {
-        stopped.push({ name: other, kind: 'entry' })
-        disabledThemes.add(other)
-      }
-    }
-    disabledThemes.delete(name)
-    writeDisabled(activeProfileDir, disabledThemes)
-    const live = listHotMounts().includes(name)
-      || await setEntryDisabled(name, false)
-      || (await hotMount(host, activeProfileDir, name)).ok
-    if (live) return true
-    for (const previous of stopped) {
-      const back = previous.kind === 'hot'
-        ? (await hotMount(host, activeProfileDir, previous.name)).ok
-        : await setEntryDisabled(previous.name, false)
-      if (back) disabledThemes.delete(previous.name)
-      else logEvent('warn', 'theme', `${previous.name}: could not be restored after ${name} failed to start`)
-    }
-    writeDisabled(activeProfileDir, disabledThemes)
-    return false
+    const choices = [...await installedThemeNames()]
+      .filter(other => other !== name && (!disabledThemes.has(other) || isLive(other)))
+      .map(other => ({ name: other, enabled: false }))
+    choices.push({ name, enabled: true })
+    return (await changeEnabled(choices, next => {
+      writeDisabled(activeProfileDir, next)
+    })).ok
   }
 
-  return { installedThemeNames, setEntryDisabled, activateTheme }
+  return { installedThemeNames, setEntryDisabled, activateTheme, changeEnabled, isChanging: name => changing.has(name), isLive }
 }

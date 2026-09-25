@@ -529,6 +529,8 @@ const hot = vi.hoisted(() => ({
   /** The live source the routes installed, so a test can read what a spawn would. */
   buildEnvSource: undefined as (() => Readonly<Record<string, string>>) | undefined,
   failNext: false,
+  /** The host could not settle the mount in time: restart applies it (deferred). */
+  deferNext: false,
 }))
 vi.mock('../src/hot.ts', async (importOriginal) => ({
   // The REAL module underneath, with only the harness's own overrides on top.
@@ -573,19 +575,28 @@ vi.mock('../src/hot.ts', async (importOriginal) => ({
     if (state.favorites !== undefined) hot.favorites = state.favorites
   },
   listHotMounts: () => [...hot.mounts],
+  // `outcome` is load-bearing, not decoration: a REJECTED activation
+  // ('failed') must not be published as a durable enable, while a host that
+  // could not settle it ('deferred') keeps the restart contract. A stub
+  // without it reads as neither and silently takes the success path.
   hotMount: (_ctx: unknown, _dir: string, name: string) => {
     if (hot.failNext) {
       hot.failNext = false
-      return Promise.resolve({ ok: false, reason: 'test: host cannot hot-mount' })
+      return Promise.resolve({ ok: false, outcome: 'failed', reason: 'test: host cannot hot-mount' })
+    }
+    if (hot.deferNext) {
+      hot.deferNext = false
+      return Promise.resolve({ ok: false, outcome: 'deferred', reason: 'test: hot-mount timed out — restart required' })
     }
     hot.mounts.push(name)
-    return Promise.resolve({ ok: true, reason: null })
+    return Promise.resolve({ ok: true, outcome: 'live', reason: null })
   },
   hotUnmount: (name: string) => {
     const index = hot.mounts.indexOf(name)
     if (index !== -1) hot.mounts.splice(index, 1)
     return Promise.resolve(index !== -1)
   },
+  hotMountDisposalError: () => undefined,
   mountClientOnlyDeps: () => Promise.resolve([]),
 }))
 
@@ -4013,11 +4024,12 @@ describe('theme flow', () => {
     expect(failed.json.ok).toBe(false)
     // The theme that was live is live again…
     expect(hot.mounts).toEqual(['theme-b'])
-    // …and the disable flag follows what actually came back: theme-b is not
-    // disabled (it is the active one), theme-a is not either (it never
-    // started, so the next attempt must be allowed to try it again).
+    // …and the disable set is exactly what it was before the attempt: a failed
+    // switch publishes nothing, so theme-a stays off (it was off — theme-b was
+    // the active theme) and theme-b stays on. That is the property, and it is
+    // stronger than naming the two flags: nothing was written at all.
     expect(hot.disabled.has('theme-b')).toBe(false)
-    expect(hot.disabled.has('theme-a')).toBe(false)
+    expect(hot.disabled.has('theme-a')).toBe(true)
 
     // The chatty path works once the host can mount again.
     const ok = await bed.dispatch('POST', '/dsh-market/use-skin', { name: 'theme-a' })
@@ -5382,17 +5394,15 @@ describe('generic enable/disable toggle (#60)', () => {
     expect(on.json.refresh).toBe(false)
   })
 
-  it('withdraws both layers when an enable cannot write one of its patch rows (#696)', async () => {
-    // A bundle patch can insert a row id the patch layer refuses to write
-    // (`/` is outside ROW_ID_RE). The enable then has to fail as a WHOLE: the
-    // stack entry it just added is withdrawn and the row it managed to flip
-    // first is put back, because leaving either behind recreates the
-    // disagreement this route exists to end — the official package switch
-    // reading on while the row layer says off.
+  it('refuses a toggle whose patch rows cannot be written, and writes nothing (#696)', async () => {
+    // A bundle patch can insert a row id the patch layer refuses to write (`/`
+    // is outside ROW_ID_RE). The transaction stages the rows on a scratch copy
+    // and publishes once, so this fails as a WHOLE: the row layer, the bundle
+    // stack and state.json are all left exactly as they were. The design this
+    // replaced wrote rows one at a time and needed a rollback to unwind the
+    // half it had already flipped — the staging makes that class of state
+    // unreachable rather than repairable.
     const { userPatch } = await installPatchy()
-    // Two insert rows: the first is writable, the second is what the patch
-    // layer refuses — so the rollback has something to undo, which a
-    // single-row fixture would never exercise.
     const patchFile = join(profileDir('web'), 'node_modules', 'dsh-patchy', 'cordis.patch.yml')
     writeFileSync(patchFile, [
       '- insert:',
@@ -5404,104 +5414,17 @@ describe('generic enable/disable toggle (#60)', () => {
     ].join('\n'))
     const manifestPath = join(profileDir('web'), 'package.json')
     const bundlesNow = (): string[] => JSON.parse(readFileSync(manifestPath, 'utf8')).dsh?.profile?.bundles ?? []
-
-    // Turn it off first, so the enable below has a real stack entry to add.
-    const off = await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-patchy', enabled: false })
-    expect(off.status).toBe(200)
-    expect(bundlesNow()).not.toContain('dsh-patchy')
-    expect(readFileSync(userPatch, 'utf8')).toContain('- id: dsh-patchy\n  disabled: true\n')
-
-    const on = await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-patchy', enabled: true })
-    expect(on.status).toBe(502)
-    expect(on.json.ok).toBe(false)
-    // The stack entry the enable added is gone again…
-    expect(bundlesNow()).not.toContain('dsh-patchy')
-    // …the row it flipped first is disabled again, and no force-enable block
-    // is left behind for the row it could not reach…
-    expect(readFileSync(userPatch, 'utf8')).toContain('- id: dsh-patchy\n  disabled: true\n')
-    expect(readFileSync(userPatch, 'utf8')).not.toContain('disabled: false')
-    // …and the plugin is still the market's to describe as off (#575).
-    expect(on.json.activation['dsh-patchy'].state).toBe('disabled')
-  })
-
-  it('leaves a bundle that only CONFIGURES a neighbour in the stack (#147, fixture-cross)', async () => {
-    // The e2e fixture-cross shape: this bundle's patch inserts its own row and
-    // also carries a config row for a plugin it does NOT own. Removing it from
-    // dsh.profile.bundles to make the official page's switch agree would take
-    // that neighbour's configuration away with it, which is what #147 and the
-    // fixture-cross spec exist to prevent — so the market turns the plugin off
-    // through the row layer and leaves the stack alone.
-    fake.repos['github:o/dsh-tweaker'] = {
-      name: 'dsh-tweaker',
-      manifest: { dsh: { bundle: { patch: './cordis.patch.yml' } }, main: 'lib/index.js' },
-      artifacts: ['lib/index.js', 'cordis.patch.yml'],
-    }
-    const installed = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-tweaker' })
-    expect(installed.status, JSON.stringify(installed.json)).toBe(200)
-    hot.mounts = []
-    writeFileSync(join(profileDir('web'), 'node_modules', 'dsh-tweaker', 'cordis.patch.yml'), [
-      '- insert:',
-      '    - id: dsh-tweaker',
-      "      name: 'dsh-tweaker'",
-      '- id: dsh-neighbour',
-      '  config:',
-      '    tweakedBy: dsh-tweaker',
-      '',
-    ].join('\n'))
-    // The stack state a real install leaves behind (the harness's fake install
-    // writes dependencies, not the bundle stack).
-    const manifestPath = join(profileDir('web'), 'package.json')
-    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
-    manifest.dsh = { ...(manifest.dsh ?? {}), profile: { ...(manifest.dsh?.profile ?? {}), bundles: [...(manifest.dsh?.profile?.bundles ?? []), 'dsh-tweaker'] } }
-    writeFileSync(manifestPath, JSON.stringify(manifest))
-
-    const entry: Testbed['loaderEntries'][number] = {
-      options: { id: 'dsh-tweaker', name: 'dsh-tweaker', disabled: null as boolean | null } as never,
-      fiber: {},
-      update: vi.fn(async (options: { disabled: boolean | null }) => {
-        entry.options.disabled = options.disabled
-        entry.fiber = options.disabled === true ? undefined : {}
-      }),
-    }
-    bed.loaderEntries.push(entry)
-
-    const off = await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-tweaker', enabled: false })
-    expect(off.status).toBe(200)
-    // Off, through the row layer…
-    expect(readFileSync(join(profileDir('web'), 'cordis.patch.yml'), 'utf8')).toContain('- id: dsh-tweaker\n  disabled: true\n')
-    // …and still composed, because its patch speaks for dsh-neighbour too.
-    const after = JSON.parse(readFileSync(manifestPath, 'utf8'))
-    expect(after.dsh?.profile?.bundles ?? []).toContain('dsh-tweaker')
-  })
-
-  it('takes back a force-enable block a failed enable added, instead of leaving it (#696)', async () => {
-    // The other half of the row rollback. When the row layer held no flag for
-    // the row, enabling it appends `disabled: false` — a FORCE-enable, which
-    // outranks the lower layers that were holding it down. A failed enable has
-    // to take that block away again: leaving it would keep the plugin
-    // force-enabled in the user's own patch layer, i.e. on, in the layer the
-    // market just decided it is off in.
-    const { userPatch } = await installPatchy()
-    const patchFile = join(profileDir('web'), 'node_modules', 'dsh-patchy', 'cordis.patch.yml')
-    writeFileSync(patchFile, [
-      '- insert:',
-      '    - id: dsh-patchy',
-      "      name: 'dsh-patchy'",
-      '    - id: dsh-patchy/panel',
-      "      name: 'dsh-patchy/panel'",
-      '',
-    ].join('\n'))
-    // No flag for the row at all, as if the user had cleared it by hand (a
-    // fresh profile has no user patch layer file yet).
     const patchText = (): string => { try { return readFileSync(userPatch, 'utf8') } catch { return '' } }
-    expect(patchText()).not.toContain('dsh-patchy')
+    const bundlesBefore = bundlesNow()
+    const patchBefore = patchText()
 
-    const on = await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-patchy', enabled: true })
-    expect(on.json.ok).toBe(false)
-    // The force-enable block the enable added is gone, and with it every
-    // trace of this call in the row layer.
-    expect(patchText()).not.toContain('disabled: false')
-    expect(patchText()).not.toContain('dsh-patchy')
+    const off = await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-patchy', enabled: false })
+    expect(off.status).toBe(502)
+    expect(off.json.ok).toBe(false)
+    expect(patchText()).toBe(patchBefore)
+    expect(bundlesNow()).toEqual(bundlesBefore)
+    // And nothing was published to the market's own store either.
+    expect((await bed.dispatch('GET', '/dsh-market/installed')).json.disabled).toEqual([])
   })
 
   it('reports restart when the disable leaves the live fiber up', async () => {
@@ -5521,15 +5444,42 @@ describe('generic enable/disable toggle (#60)', () => {
     expect(hot.disabled.has('dsh-loop')).toBe(true)
   })
 
-  it('reports restart + the reason when enabling cannot hot-mount', async () => {
+  it('reports a rejected enable as a failure, with nothing published and no restart offered', async () => {
+    // The rejection/`deferred` split is the #575 rule made explicit: an
+    // activation the plugin REJECTED is not state the next boot may replay, so
+    // the transaction publishes nothing and there is nothing for a restart to
+    // apply. Offering one would be the old "restart and hope" the market
+    // stopped giving.
     await installNpm('dsh-loop')
     await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-loop', enabled: false })
-    hot.failNext = true // hotMount fails with a restart-required reason
+    hot.failNext = true
     const on = await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-loop', enabled: true })
     expect(on.status).toBe(502)
     expect(on.json.ok).toBe(false)
+    expect(on.json.accepted).toBe(false)
+    expect(on.json.restart).toBe(false)
+    expect(on.json.reason).toMatch(/cannot hot-mount/)
+    // Still disabled: a failed enable leaves everything as it was (#575).
+    expect((await bed.dispatch('GET', '/dsh-market/installed')).json.disabled).toContain('dsh-loop')
+  })
+
+  it('accepts an enable the host could not settle in time, and asks for the restart that applies it', async () => {
+    // The other half: a mount that did not settle is the HOST's answer, not
+    // evidence about the plugin. The durable side is published — the next boot
+    // composes it — and that is exactly what the restart banner is for.
+    await installNpm('dsh-loop')
+    await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-loop', enabled: false })
+    hot.deferNext = true
+    const on = await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-loop', enabled: true })
+    // Live? No — so the route answers as it always has (502, ok false), and
+    // `accepted` is what separates this from a rejection: the durable side was
+    // published and the restart banner is what applies it.
+    expect(on.status).toBe(502)
+    expect(on.json.ok).toBe(false)
+    expect(on.json.accepted).toBe(true)
     expect(on.json.restart).toBe(true)
-    expect(on.json.reason).toMatch(/cannot hot-mount|restart/)
+    expect(on.json.reason).toMatch(/timed out|restart/)
+    expect((await bed.dispatch('GET', '/dsh-market/installed')).json.disabled).not.toContain('dsh-loop')
   })
 
   it('leaves the patch layer untouched when an enable fails (#575)', async () => {

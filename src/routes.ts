@@ -59,6 +59,7 @@ import {
   carrierDisableIds, disableRow, enableRow, findUserPatchPath, foreignRowIds, isProtectedModule, packagePatchFlags,
   readUserPatchState, removeRowBlocks, rowIdsForPackage, userPatchPackageReferences,
 } from './patch.ts'
+import { prepareToggleWrites } from './toggle-state.ts'
 import {
   createProfileBackup, downloadWebdav, MAX_BACKUP_BYTES, mergeRestoreManifest, restoreProfileBackup, secretFileCount, unportableDeps, uploadWebdav,
   type ProfileBackup,
@@ -609,71 +610,121 @@ export function mountMarketRoutes(
   }
 
   /**
-   * Apply one enable/disable request: drive the live composition, then
-   * persist the choice in state.json. Covers every mount form — hot mounts
-   * and client-only shims go through hotUnmount/hotMount, bundle-layer
-   * entries through setEntryDisabled. Enabling a THEME goes through the
-   * caller's activateTheme instead so the Themes tab's exclusivity stays
-   * intact.
+   * Whether a toggle of this package moves it in and out of
+   * `dsh.profile.bundles`.
    *
-   * A FAILED ENABLE LEAVES EVERYTHING AS IT WAS (#575). The choice used to be
-   * recorded before the mount was attempted and persisted whatever happened,
-   * so enabling a plugin that crashes on import — deterministically, every
-   * time — wrote "enabled" into state.json anyway. The next boot tried the
-   * import again and died again; the reporter measured 24 restarts before
-   * restoring the disable by hand. The toggle route's patch-layer gate
-   * (@JINITAIMEI121 in #584) closed the same hole in cordis.patch.yml; this
-   * closes it in the market's own store, which is the ONLY durable state a
-   * client-only plugin has — that plugin kind has no bundle rows, so the
-   * patch gate never runs for it.
+   * This is #696 B, and it is what `prepareToggleWrites` needs to know: for a
+   * carrier (a bundle whose patch DISABLES a plugin it does not own, like
+   * dsh-postgres-backends disabling the JSONL session backend) leaving the
+   * stack is the only thing that stops its whole patch at once; for an ordinary
+   * community bundle it is what makes the official plugins page's package
+   * switch agree with the market.
    *
-   * A failed DISABLE still persists, and that asymmetry is deliberate: the
-   * user asked for OFF, and a failed unmount leaves the plugin live only for
-   * this session. There the durable disable is the contract, not an error.
+   * Two shapes stay out. An IN-BOX bundle is not the market's to drop from the
+   * stack (order.ts refuses to reorder them for the same reason). And a bundle
+   * whose patch names rows it does NOT insert speaks for a neighbour too —
+   * leaving the stack would take that neighbour's configuration with it, which
+   * is the shape #147 and the fixture-cross e2e exist to prevent.
    */
-  async function setPluginEnabled(name: string, enabled: boolean): Promise<{ ok: boolean; reason?: string }> {
-    const dir = activeProfileDir
-    const wasDisabled = disabled.has(name)
-    if (enabled) disabled.delete(name)
-    else disabled.add(name)
-    let ok: boolean
-    let reason: string | undefined
-    if (enabled) {
-      if (listHotMounts().includes(name)) {
-        ok = true
-      } else if (await themes.setEntryDisabled(name, false)) {
-        ok = true
-      } else {
-        const result = await hotMount(host, dir, name)
-        ok = result.ok
-        reason = result.reason ?? undefined
-        // Deliberately NOT clearing replacedWhileLive here (#685). This used
-        // to say "a mount that succeeded imported the module as it is on
-        // disk NOW", which is false exactly when the flag is set: it is only
-        // set when the host half was LIVE at update time, i.e. this process
-        // has already evaluated that module URL, and Node's ESM cache serves
-        // any later import of the same URL — the profile layout is hoisted,
-        // so an update rewrites the files in place and the URL never changes.
-        // Off-and-on re-creates the fiber around the OLD module. Only a
-        // restart ends the process that holds it, and the flag with it.
+  function stackToggleFor(name: string): boolean {
+    const isCarrier = carrierDisableIds(activeProfileDir, name).length > 0
+    return !INBOX_BUNDLES.has(name) && declaresBundle(activeProfileDir, name)
+      && (isCarrier || foreignRowIds(activeProfileDir, name).length === 0)
+  }
+
+  /**
+   * Apply one enable/disable request.
+   *
+   * One operation for every entry point — the single toggle, the Themes tab and
+   * groups — because the parts have to move together: the durable writes are
+   * staged (`prepareToggleWrites`) and published only after the live
+   * composition accepted the change, and a failure restores the runtime it
+   * touched. Doing it per call site is how the durable half and the runtime
+   * half drifted apart (#575, #582).
+   *
+   * A failed ENABLE leaves everything as it was (#575), and a failed DISABLE
+   * still publishes: the user asked for OFF, and a failed unmount leaves the
+   * plugin live only for this session.
+   *
+   * @param themeNames - the installed themes, when the caller knows: enabling a
+   * theme switches the previous one off in the same transaction.
+   */
+  async function setPluginEnabled(
+    name: string,
+    enabled: boolean,
+    themeNames: ReadonlySet<string> = new Set<string>(),
+  ): Promise<{
+    ok: boolean
+    accepted: boolean
+    reason?: string
+    patchRows: string[]
+    carrier: string[]
+    patchWrite: { ok: boolean; reason: string | null }
+    bundleSwitch: { ok: boolean; reason: string | null }
+    restart: boolean
+    refresh: boolean
+  }> {
+    const patchRows = rowIdsForPackage(host, activeProfileDir, name)
+    const carrier = carrierDisableIds(activeProfileDir, name)
+    const success = { ok: true, reason: null } as { ok: boolean; reason: string | null }
+    const base = { patchRows, carrier, patchWrite: success, bundleSwitch: success, restart: false, refresh: false }
+    let choices: { name: string; enabled: boolean }[] = []
+    let prepared: Awaited<ReturnType<typeof prepareToggleWrites>>
+    try {
+      const statePath = join(activeProfileDir, '.dsh-market', 'state.json')
+      if (existsSync(statePath)) {
+        // Validate before refreshing: readMarketState deliberately tolerates a
+        // broken file, but a toggle must not replace one with empty defaults.
+        const saved: unknown = JSON.parse(readFileSync(statePath, 'utf8'))
+        if (saved === null || typeof saved !== 'object' || Array.isArray(saved)) throw new Error('invalid market state')
+        refreshMarketState()
       }
-    } else {
-      ok = await hotUnmount(name) || await themes.setEntryDisabled(name, true)
-      if (!ok) {
-        // Nothing was live (boot-skipped client shim, user-patch-managed
-        // entry, or already off): the persisted flag is the contract.
-        ok = true
+      choices = enabled && themeNames.has(name)
+        ? [...themeNames]
+            .filter(other => other !== name && (!disabled.has(other) || themes.isLive(other)))
+            .map(other => ({ name: other, enabled: false }))
+        : []
+      choices.push({ name, enabled })
+      for (const choice of choices) {
+        if (isProtectedModule(choice.name) || choice.name === 'dshmarket' || choice.name === 'dsh-market') {
+          throw new Error(`${choice.name}: protected module cannot be toggled`)
+        }
       }
+      prepared = await prepareToggleWrites(activeProfileDir, userPatchPath, choices.map(choice => ({
+        ...choice,
+        rows: rowIdsForPackage(host, activeProfileDir, choice.name),
+        carrier: stackToggleFor(choice.name),
+      })))
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error)
+      return { ...base, ok: false, accepted: false, reason, patchWrite: { ok: false, reason } }
     }
-    if (!ok && enabled) {
-      // Put the in-memory view back before persisting: it is the same object
-      // the route reports as `disabled`, so restoring it keeps the reply, the
-      // store and the patch layer telling one story.
-      if (wasDisabled) disabled.add(name)
-      logEvent('warn', 'toggle', `${name}: enable failed; leaving it disabled rather than persisting a state that crashes at boot (#575)`)
-    }
-    writeMarketState(dir, { disabled, groups, groupOrder })
-    return { ok, reason }
+    try {
+      const result = await themes.changeEnabled(choices, next => {
+        prepared.commit(() => writeMarketState(activeProfileDir, { disabled: next, groups, groupOrder }))
+      })
+      const accepted = result.outcome !== 'failed'
+      // `replacedWhileLive` is deliberately NOT cleared here (#685): a mount
+      // that succeeded imported the module as it is on disk NOW, but the
+      // profile layout is hoisted and this process already evaluated that
+      // module URL — Node's ESM cache serves the OLD build to the re-created
+      // fiber, and only a restart ends the process that holds it.
+      return {
+        ...base,
+        ok: result.ok,
+        accepted,
+        reason: result.reason ?? undefined,
+        // A CARRIER moves the bundle in and out of the stack, and only the
+        // next composition applies that — always a restart. An ordinary
+        // bundle's stack move (#696) does not need the banner: its runtime
+        // state is already correct in this session, and the stack row is what
+        // the next boot reads. Otherwise it is whether the switch is live now.
+        restart: accepted && (carrier.length > 0 || (enabled ? !themes.isLive(name) : themes.isLive(name))),
+        refresh: accepted && choices.some(choice => packageHasClientPart(activeProfileDir, choice.name)),
+      }
+    } catch (error) {
+      return { ...base, ok: false, accepted: false, reason: error instanceof Error ? error.message : String(error) }
+    } finally { prepared.dispose() }
   }
 
   /**
@@ -2522,18 +2573,33 @@ export function mountMarketRoutes(
           return
         }
         try {
-          const body = (await readJsonBody(request)) as { name?: unknown }
-          const name = typeof body.name === 'string' ? body.name : ''
-          const installed = readInstalled(config.profile, activeProfileDir)
-          const themeNames = await themes.installedThemeNames()
-          if (installed[name] === undefined || !themeNames.has(name)) {
-            sendJson(response, 400, { error: 'not an installed theme' })
-            return
-          }
-          pendingRollbacks.clear()
-          const activated = await themes.activateTheme(name)
-          logEvent(activated ? 'info' : 'error', 'use-skin', `${name}: ${activated ? 'active' : 'failed'}`)
-          sendJson(response, activated ? 200 : 502, { ok: activated, live: listHotMounts() })
+          // Same lock as the single toggle: a theme switch writes the patch
+          // layer and the profile manifest, and two of them interleaving is how
+          // a half-applied pair gets published (#582).
+          await withMutationLock(response, 'write', async () => {
+            const body = (await readJsonBody(request)) as { name?: unknown }
+            const name = typeof body.name === 'string' ? body.name : ''
+            const installed = readInstalled(config.profile, activeProfileDir)
+            const themeNames = await themes.installedThemeNames()
+            if (installed[name] === undefined || !themeNames.has(name)) {
+              sendJson(response, 400, { error: 'not an installed theme' })
+              return
+            }
+            pendingRollbacks.clear()
+            // Through the toggle transaction, not straight at the theme
+            // manager: the switch has to write the incoming AND outgoing
+            // themes' patch rows as one thing, which is what makes its failure
+            // case restorable at all.
+            const result = await setPluginEnabled(name, true, themeNames)
+            logEvent(result.ok ? 'info' : 'error', 'use-skin', `${name}: ${result.ok ? 'active' : 'failed'}`)
+            sendJson(response, result.ok ? 200 : 502, {
+              ok: result.ok,
+              accepted: result.accepted,
+              live: listHotMounts(),
+              reason: result.reason,
+              restart: result.restart,
+            })
+          })
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
           logEvent('error', 'use-skin', `route error: ${message}`)
@@ -2578,147 +2644,13 @@ export function mountMarketRoutes(
             return
           }
           pendingRollbacks.clear()
-          let ok: boolean
-          let reason: string | undefined
-          if (enabled && (await themes.installedThemeNames()).has(name)) {
-            // Theme exclusivity stays a Themes-page concern: enabling a theme
-            // deactivates the previously active one, so only the last-enabled
-            // theme is live (same semantics as use-skin).
-            ok = await themes.activateTheme(name)
-            if (!ok) reason = 'theme activation failed — restart required / 主题启用失败，需要重启'
-          } else {
-            const result = await setPluginEnabled(name, enabled)
-            ok = result.ok
-            reason = result.reason
-          }
-          // Durable patch-layer write (port of dsh-plugin-hub): the package's
-          // bundle rows get 'disabled: true|false' in the user patch layer,
-          // which DSH's HMR applies within ~1s AND the loader re-applies on
-          // every boot. Client-only packages have no bundle rows — the
-          // market's own state.json replay covers those.
-          const patchRows = rowIdsForPackage(host, activeProfileDir, name)
-          // Disable-carrier (#224): a bundle whose patch DISABLES a plugin it
-          // does not own (dsh-postgres-backends disables session-persistence-jsonl).
-          // Disabling only its inserted rows leaves that foreign disable applying
-          // on every boot — the bundle stays in the stack — so drop it from
-          // dsh.profile.bundles entirely, which stops its whole patch at once
-          // (including any config side effects it carries). Enabling re-adds it.
-          // A bundle that merely reconfigures a neighbour (config without
-          // disabled) is NOT dropped: #147 requires disabling it to leave the
-          // neighbour live, and the e2e fixture-cross re-enable breaks otherwise.
-          const disablesOthers = carrierDisableIds(activeProfileDir, name)
-          const foreignRows = foreignRowIds(activeProfileDir, name)
-          const isCarrier = disablesOthers.length > 0
-          // Both layers, or neither (#696 B). `dsh.profile.bundles` is the
-          // package-level declaration the official plugins page's switch reads
-          // and the loader composes; the patch rows above are the runtime
-          // truth the market's own inference reads. Writing one and not the
-          // other is the whole of that issue — the market said off while the
-          // official page said on, and each layer was right about itself.
-          //
-          // Two shapes stay out of it. An IN-BOX bundle is not the market's to
-          // drop from the stack (order.ts refuses to reorder them for the same
-          // reason). A bundle whose patch names rows it does NOT insert speaks
-          // for a neighbour as well, and leaving the stack would take that
-          // neighbour's configuration with it — the shape #147 and the
-          // fixture-cross e2e exist to prevent.
-          const stackToggle = !INBOX_BUNDLES.has(name) && declaresBundle(activeProfileDir, name)
-            && (isCarrier || foreignRows.length === 0)
-          // Enabling something the stack no longer carries (another manager
-          // removed it, or this route did when it was last turned off) has to
-          // put it back, or the rows flip, the switch reads on and nothing
-          // composes it on the next boot. Unlike a carrier this does NOT force
-          // a restart: the enable below still brings it up in this process.
-          const reBundle = enabled && !isCarrier && !readProfileBundles(activeProfileDir).includes(name)
-          let stackChanged = false
-          let bundleSwitch: { ok: boolean; reason: string | null } = { ok: true, reason: null }
-          if (stackToggle) {
-            try {
-              stackChanged = enabled
-                ? addProfileBundle(activeProfileDir, name)
-                : removeProfileBundle(activeProfileDir, name)
-              logEvent('info', 'toggle', isCarrier
-                ? `${name}: disable-carrier ${enabled ? 're-added to' : 'removed from'} dsh.profile.bundles (disables: ${disablesOthers.join(', ')})`
-                : reBundle
-                  ? `${name}: re-added to dsh.profile.bundles, which nothing was composing (#696)`
-                  : `${name}: dsh.profile.bundles ${enabled ? 're-added' : 'removed'} so the official page's package switch agrees (#696)`)
-            } catch (error) {
-              bundleSwitch = { ok: false, reason: error instanceof Error ? error.message : String(error) }
-              logEvent('warn', 'toggle', `${name}: dsh.profile.bundles switch failed — ${bundleSwitch.reason}`)
-            }
-          }
-          let patchWrite: { ok: boolean; reason: string | null } | null = null
-          // #575: a failed ENABLE must not flip the durable patch layer.
-          // The hot-mount failure may be deterministic (a plugin that
-          // crashes on import), and persisting "enabled" turns a transient
-          // in-session error into a boot crash loop — the loader re-applies
-          // the flipped rows on every start. The frontend already shows the
-          // plugin as still disabled, and the next explicit enable retries
-          // cleanly. Disables keep their unconditional write: a failed
-          // unmount leaves the plugin live in-session, and the user asked
-          // for it OFF — the durable disable is then the contract, not an
-          // error.
-          // An enable that could not move the package back into the stack has
-          // nothing to say in the row layer either: flipping the rows alone
-          // would leave the two layers disagreeing, which is what this route
-          // now exists not to do. The disable direction still writes: the user
-          // asked for off, and the row layer is one of the places that holds
-          // it off.
-          const patchGate = (ok || !enabled) && (enabled ? bundleSwitch.ok : true)
-          // What the row layer said before this call, so a rollback can put
-          // each row back the way it was rather than the other way round.
-          const prePatch = patchGate ? readUserPatchState(userPatchPath) : null
-          if (patchRows.length > 0 && patchGate) {
-            const flipped: string[] = []
-            for (const rowId of patchRows) {
-              const result = enabled ? await enableRow(userPatchPath, rowId) : await disableRow(userPatchPath, rowId)
-              if (result.ok) {
-                flipped.push(rowId)
-                continue
-              }
-              patchWrite = result
-              break
-            }
-            if (patchWrite === null) {
-              logEvent('info', 'toggle', `${name}: patch layer ${enabled ? 'enabled' : 'disabled'} rows ${patchRows.join(', ')}`)
-            } else {
-              logEvent('warn', 'toggle', `${name}: patch layer write refused — ${patchWrite.reason}`)
-              // The two layers move together or neither does (#696): an enable
-              // that wrote some of its rows and then met a refusal goes all
-              // the way back — every row it flipped, then the stack. The
-              // disable direction keeps what it got, because a row the patch
-              // layer refuses to flip does not make the plugin live again.
-              if (enabled) {
-                for (const rowId of flipped) {
-                  // A row that was disabled gets its block back; a row that was
-                  // not loses the block this enable added. Leaving a
-                  // `disabled: false` behind would force-enable it in the
-                  // user's own patch layer — the same disagreement this route
-                  // exists to end, one row smaller.
-                  if (prePatch !== null && prePatch.disables.includes(rowId)) {
-                    const back = await disableRow(userPatchPath, rowId)
-                    if (!back.ok) logEvent('warn', 'toggle', `${name}: patch row ${rowId} could not be put back — ${back.reason}`)
-                  } else {
-                    removeRowBlocks(userPatchPath, [rowId])
-                  }
-                }
-                if (stackChanged) {
-                  try {
-                    removeProfileBundle(activeProfileDir, name)
-                    logEvent('info', 'toggle', `${name}: dsh.profile.bundles entry withdrawn — the enable did not happen`)
-                  } catch (error) {
-                    bundleSwitch = { ok: false, reason: error instanceof Error ? error.message : String(error) }
-                    logEvent('warn', 'toggle', `${name}: dsh.profile.bundles rollback failed — ${bundleSwitch.reason}`)
-                  }
-                }
-                // #575: a failed enable leaves the plugin as it was, and the
-                // reply has to say so — otherwise the switch shows a state the
-                // rollback just undid.
-                ok = false
-                reason ??= patchWrite.reason ?? undefined
-              }
-            }
-          }
+          // One transaction for every path (see setPluginEnabled): stage the
+          // durable writes, drive the live composition — including switching
+          // the previous theme off when a theme is being enabled — and publish
+          // state only after the runtime accepted it.
+          const result = await setPluginEnabled(name, enabled, await themes.installedThemeNames())
+          const { ok, accepted, reason, patchRows, patchWrite, carrier: disablesOthers, bundleSwitch, refresh } = result
+
           logEvent(ok ? 'info' : 'error', 'toggle', `${name}: ${enabled ? 'on' : 'off'} ok=${String(ok)}`)
           // Activation reads the post-write truth: the switch state OR the
           // patch layer, so a disabled plugin never reports "restart to
@@ -2727,26 +2659,28 @@ export function mountMarketRoutes(
           const offNow = disabled.has(name) || patchRows.some(id => patchNow.disables.includes(id))
           // When the live composition does not match the requested state
           // (enable failed to hot-mount / disable left the fiber up), the
-          // change lands on the next boot via the patch layer + state.json —
-          // the client reuses the market's pending-restart banner for it.
-          const liveAfter = liveNames().has(name)
-          // A carrier toggle moves the bundle in/out of dsh.profile.bundles,
-          // which only takes effect on the next composition — always a restart.
-          // Non-carrier plugins keep the live-mount based decision.
-          // A plugin replaced on disk while its host half was running is
+          // #685: a plugin replaced on disk while its host half was running is
           // still serving the module this process imported, whatever the
           // loader's inventory says — re-enabling it re-creates the fiber
-          // around the cached old build (#685, measured end to end with a
+          // around the cached old build (measured end to end with a
           // module-scope version marker). Enabling cannot make it current;
-          // only a restart can.
+          // only a restart can. Everything else is the transaction's verdict.
           const staleModule = enabled && replacedWhileLive.has(name)
-          const restart = isCarrier || staleModule ? true : enabled ? !liveAfter : liveAfter
-          // A client-part plugin's UI is in the page already — toggling it
-          // needs a browser refresh to show the change (same signal the
-          // install flow uses for the hot banner).
-          const refresh = packageHasClientPart(activeProfileDir, name)
+          // A CARRIER toggle moves the bundle in/out of the stack and only the
+          // next composition applies that — always a restart. An ordinary
+          // bundle's stack move (#696) does not need the banner: its runtime
+          // state is already correct in this session, and the stack row is
+          // what the next boot reads.
+          const restart = staleModule || result.restart
+            // The status follows LIVENESS, which is the contract this route
+            // has always had (`ok` false → 502) — `accepted` is the additive
+            // field that says the durable half was published anyway, for
+            // callers that need to tell "not live yet" from "rejected". An
+            // enable the host could not settle is 502 with restart: true: the
+            // same answer the market has always given, now with the reason.
             sendJson(response, ok ? 200 : 502, {
               ok,
+              accepted,
               name,
               enabled,
               disabled: [...disabled],
@@ -2883,76 +2817,91 @@ export function mountMarketRoutes(
           return
         }
         try {
-          const body = (await readJsonBody(request)) as {
-            action?: unknown
-            name?: unknown
-            newName?: unknown
-            members?: unknown
-            enabled?: unknown
-          }
-          const action = typeof body.action === 'string' ? body.action : ''
-          const known = action === 'create' || action === 'rename' || action === 'delete'
-            || action === 'set-members' || action === 'toggle'
-          if (!known) {
-            sendJson(response, 400, { ok: false, error: 'unknown group action' })
-            return
-          }
-          const installed = new Set(Object.keys(readInstalled(config.profile, activeProfileDir)))
-          // Theme members follow the global one-active-theme rule: a group
-          // holds at most one, and enabling one deactivates every other.
-          const themeNames = await themes.installedThemeNames()
-          let ok = true
-          let error: string | undefined
-          let restartMembers: string[] = []
-          let refreshMembers: string[] = []
-          if (action === 'toggle') {
-            const name = typeof body.name === 'string' ? body.name : ''
-            const enabled = body.enabled === true
-            if (groups[name] === undefined) {
-              sendJson(response, 400, { ok: false, error: 'group not found / 分组不存在' })
+          // Serialised with the single toggle: a group switch loops over
+          // the same transaction, and two of those interleaving would stage
+          // and publish the same files at once (#582).
+          await withMutationLock(response, 'write', async () => {
+            const body = (await readJsonBody(request)) as {
+              action?: unknown
+              name?: unknown
+              newName?: unknown
+              members?: unknown
+              enabled?: unknown
+            }
+            const action = typeof body.action === 'string' ? body.action : ''
+            const known = action === 'create' || action === 'rename' || action === 'delete'
+              || action === 'set-members' || action === 'toggle'
+            if (!known) {
+              sendJson(response, 400, { ok: false, error: 'unknown group action' })
               return
             }
-            pendingRollbacks.clear()
-            // Batch toggle: on = every installed member enabled, off = every
-            // member disabled. Each member keeps its own persisted flag, so
-            // later individual toggles still work (the group switch itself is
-            // derived state and never stored).
-            const failures: string[] = []
-            for (const member of groups[name]) {
-              if (!installed.has(member)) continue
-              const result = enabled && themeNames.has(member)
-                ? { ok: await themes.activateTheme(member), reason: undefined }
-                : await setPluginEnabled(member, enabled)
-              if (!result.ok) failures.push(member)
-              // Same live-mismatch signal as the single toggle: a member
-              // whose fiber did not follow the switch needs a boot.
-              const liveAfter = liveNames().has(member)
-              if ((enabled && !liveAfter) || (!enabled && liveAfter)) restartMembers.push(member)
-              // Client-part members need a page refresh to show the change.
-              if (packageHasClientPart(activeProfileDir, member)) refreshMembers.push(member)
+            const installed = new Set(Object.keys(readInstalled(config.profile, activeProfileDir)))
+            // Theme members follow the global one-active-theme rule: a group
+            // holds at most one, and enabling one deactivates every other.
+            const themeNames = await themes.installedThemeNames()
+            let ok = true
+            let error: string | undefined
+            let restartMembers: string[] = []
+            let refreshMembers: string[] = []
+            if (action === 'toggle') {
+              const name = typeof body.name === 'string' ? body.name : ''
+              const enabled = body.enabled === true
+              if (groups[name] === undefined) {
+                sendJson(response, 400, { ok: false, error: 'group not found / 分组不存在' })
+                return
+              }
+              pendingRollbacks.clear()
+              // Batch toggle: on = every installed member enabled, off = every
+              // member disabled. Each member keeps its own persisted flag, so
+              // later individual toggles still work (the group switch itself is
+              // derived state and never stored).
+              const failures: string[] = []
+              for (const member of groups[name]) {
+                if (!installed.has(member)) continue
+                // Every member goes through the same transaction as the single
+                // toggle, themes included: a theme member is enabled by the same
+                // call that switches the previous theme off, so a group cannot
+                // end up with two live themes or a member half-applied.
+                const result = await setPluginEnabled(member, enabled, themeNames)
+                // A member that is not live is reported as a failure, exactly
+                // as the single toggle reports it (`ok` false): the group's
+                // `restartMembers` is what separates "needs a boot" from
+                // "rejected", and a group answering ok while a member was not
+                // up would be the old lie in a different shape.
+                if (!result.ok) failures.push(result.reason ? `${member}: ${result.reason}` : member)
+                if (!result.accepted) continue
+                // Same live-mismatch signal as the single toggle: a member
+                // whose fiber did not follow the switch needs a boot.
+                if (result.restart) restartMembers.push(member)
+                // Client-part members need a page refresh to show the change.
+                if (result.refresh) refreshMembers.push(member)
+              }
+              ok = failures.length === 0
+              if (!ok) error = `failed to ${enabled ? 'enable' : 'disable'}: ${failures.join(', ')}`
+            } else {
+              const state = { groups, groupOrder }
+              const result = action === 'create' ? createGroup(state, body.name)
+                : action === 'rename' ? renameGroup(state, body.name, body.newName)
+                : action === 'delete' ? deleteGroup(state, body.name)
+                : setGroupMembers(state, body.name, body.members, installed, themeNames)
+              ok = result.ok
+              error = result.error
             }
-            ok = failures.length === 0
-            if (!ok) error = `failed to ${enabled ? 'enable' : 'disable'}: ${failures.join(', ')}`
-          } else {
-            const state = { groups, groupOrder }
-            const result = action === 'create' ? createGroup(state, body.name)
-              : action === 'rename' ? renameGroup(state, body.name, body.newName)
-              : action === 'delete' ? deleteGroup(state, body.name)
-              : setGroupMembers(state, body.name, body.members, installed, themeNames)
-            ok = result.ok
-            error = result.error
-          }
-          if (ok) writeMarketState(activeProfileDir, { disabled, groups, groupOrder })
-          logEvent(ok ? 'info' : 'warn', 'groups',
-            `${action}${typeof body.name === 'string' ? ' ' + body.name : ''}${ok ? '' : ` — ${error ?? ''}`}`)
-          sendJson(response, ok ? 200 : 400, {
-            ok,
-            error,
-            groups,
-            groupOrder,
-            disabled: [...disabled],
-            restartMembers,
-            refreshMembers,
+            // A toggle already published its own state inside the transaction;
+            // writing it again here is harmless but claims an authority this
+            // branch does not have for that action.
+            if (ok && action !== 'toggle') writeMarketState(activeProfileDir, { disabled, groups, groupOrder })
+            logEvent(ok ? 'info' : 'warn', 'groups',
+              `${action}${typeof body.name === 'string' ? ' ' + body.name : ''}${ok ? '' : ` — ${error ?? ''}`}`)
+            sendJson(response, ok ? 200 : 400, {
+              ok,
+              error,
+              groups,
+              groupOrder,
+              disabled: [...disabled],
+              restartMembers,
+              refreshMembers,
+            })
           })
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
