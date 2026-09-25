@@ -48,6 +48,10 @@ export interface RegistryPlugin {
    * package. Absent means "no npm package" — a coverage gap, not a zero.
    */
   downloads?: number | null
+  /** Source-reported download window; absent dates must not be inferred. */
+  downloadsStart?: string | null
+  downloadsEnd?: string | null
+  downloadsCheckedAt?: string | null
   /**
    * Catalog npm `latest` (awesome-dsh-plugin / dsh-market#348). Shown in the
    * discover byline only when it is a non-empty string.

@@ -40,6 +40,7 @@ import css from './Market.module.css'
 import { MARK_BLOCK_RADIUS, MARK_BLOCK_SIZE, MARK_GRID_BLOCKS, MARK_PLUG_BLOCK, MARK_VIEW_BOX } from './market-mark.ts'
 import { CommentsModal } from './CommentsModal.tsx'
 import { SearchInput } from './SearchInput.tsx'
+import { downloadStatsText } from './download-stats.ts'
 import { OperationsPanel } from './OperationsPanel.tsx'
 import { applyRecovery, fetchRecovery, initialKeep, RecoveryPanel, watchRestart, type RecoveryView } from './RecoveryPanel.tsx'
 import { clearSettled, drop, enqueue, patch as patchRecord, recordForUrl } from './operations.ts'
@@ -1122,10 +1123,20 @@ function BookmarkMark({ size = 14, filled = false, className }: { size?: number;
   )
 }
 
-/**
- * Catalog npm latest in the card byline (#348). Same quiet style as ↓ / ★;
- * omitted when absent so github-only and not-yet-backfilled rows stay clean.
- */
+/** A compact rolling-period label, with source metadata on hover or focus. */
+function DownloadCount({ plugin, t }: { plugin: RegistryPlugin; t: Translate }) {
+  const tip = downloadStatsText(plugin, t)
+  if (tip === null) return null
+  return (
+    <Tooltip label={tip} side="top">
+      <span className={css.star} tabIndex={0} aria-label={tip}>
+        {'· ↓ ' + formatCount(plugin.downloads!) + ' / ' + t('downloadsPeriod')}
+      </span>
+    </Tooltip>
+  )
+}
+
+/** Catalog npm latest, omitted for github-only and not-yet-backfilled rows. */
 function CatalogVersionMark({ version, tip }: { version: string | null | undefined; tip: string }) {
   if (typeof version !== 'string' || version.length === 0) return null
   const label = /^v/i.test(version) ? version : `v${version}`
@@ -4002,11 +4013,7 @@ export function MarketSection(props: MarketSectionProps) {
               <OwnerAvatar name={p.name} owner={p.owner || ''} />
               <span className={css.owner} title={p.owner}>{p.owner}</span>
               <CatalogVersionMark version={p.version} tip={catalogVersionTip} />
-              {typeof p.downloads === 'number' && (
-                <Tooltip label={String(p.downloads)} side="top">
-                  <span className={css.star}>{'· ↓ ' + formatCount(p.downloads)}</span>
-                </Tooltip>
-              )}
+              <DownloadCount plugin={p} t={t} />
               {typeof p.stars === 'number' && (
                 <Tooltip label={String(p.stars)} side="top">
                   <span className={css.star}>{'· ★ ' + formatCount(p.stars)}</span>
@@ -4170,11 +4177,7 @@ export function MarketSection(props: MarketSectionProps) {
                 <OwnerAvatar name={p.name} owner={p.owner || ''} />
                 <span className={css.owner} title={p.owner}>{p.owner}</span>
                 <CatalogVersionMark version={p.version} tip={catalogVersionTip} />
-                {typeof p.downloads === 'number' && (
-                  <Tooltip label={String(p.downloads)} side="top">
-                    <span className={css.star}>{'· ↓ ' + formatCount(p.downloads)}</span>
-                  </Tooltip>
-                )}
+                <DownloadCount plugin={p} t={t} />
                 {typeof p.stars === 'number' && (
                   <Tooltip label={String(p.stars)} side="top">
                     <span className={css.star}>{'· ★ ' + formatCount(p.stars)}</span>
@@ -5958,11 +5961,7 @@ export function MarketSection(props: MarketSectionProps) {
             <OwnerAvatar name={confirming.name} owner={confirming.owner || ''} />
             <span className={css.owner} title={confirming.owner}>{confirming.owner}</span>
             <CatalogVersionMark version={confirming.version} tip={catalogVersionTip} />
-            {typeof confirming.downloads === 'number' && (
-              <Tooltip label={String(confirming.downloads)} side="top">
-                <span className={css.star}>{'· ↓ ' + formatCount(confirming.downloads)}</span>
-              </Tooltip>
-            )}
+            <DownloadCount plugin={confirming} t={t} />
             {typeof confirming.stars === 'number' && (
               <Tooltip label={String(confirming.stars)} side="top">
                 <span className={css.star}>{'· ★ ' + formatCount(confirming.stars)}</span>
@@ -5976,6 +5975,9 @@ export function MarketSection(props: MarketSectionProps) {
             ))}
           </div>
           {confirming.added && <div className={css.metaInline}>{t('published') + ' ' + confirming.added}</div>}
+          {downloadStatsText(confirming, t) !== null && (
+            <div className={css.metaInline}>{downloadStatsText(confirming, t)}</div>
+          )}
           {/* The Modal primitive's own `description` prop is sized for a
               one-line subtitle under the title — a full plugin description
               rendered there read as an oversized heading, not body text

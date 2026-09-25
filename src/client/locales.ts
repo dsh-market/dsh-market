@@ -287,6 +287,12 @@ export const zh = {
   hostRequirementUndeclared: '未声明宿主要求',
   hostRequirementUnavailable: '宿主要求未知',
   sortDownloads: 'npm 下载量(近 30 天)',
+  downloadsPeriod: '近30天',
+  downloadsMeaning: 'npm 近30天滚动下载量：{0}；非累计下载量，也不代表独立用户数。npm 统计可能延迟，来源核验时间不保证数据完整。',
+  downloadsWindow: '统计区间：{0} 至 {1}。',
+  downloadsWindowUnknown: '统计区间：来源未提供完整有效日期。',
+  downloadsChecked: '来源核验时间：{0}。',
+  downloadsCheckedUnknown: '来源核验时间：未提供。',
   /** Discover/theme card byline tooltip for catalog `version`. */
   catalogNpmLatest: 'npm 当前 latest',
   // #712: the number is the CATALOG's copy, refreshed daily — not a live npm
@@ -942,6 +948,12 @@ export const en: Record<MarketKey, string> = {
   hostRequirementUndeclared: 'Host requirement undeclared',
   hostRequirementUnavailable: 'Host requirement unknown',
   sortDownloads: 'npm downloads (30d)',
+  downloadsPeriod: '30d',
+  downloadsMeaning: 'npm rolling 30-day downloads: {0}; not lifetime downloads or unique users. npm statistics may be delayed; the source check time does not guarantee completeness.',
+  downloadsWindow: 'Period: {0} to {1}.',
+  downloadsWindowUnknown: 'Period: the source did not provide a complete valid date range.',
+  downloadsChecked: 'Source checked at: {0}.',
+  downloadsCheckedUnknown: 'Source checked at: not provided.',
   /** Discover/theme card byline tooltip for catalog `version`. */
   catalogNpmLatest: 'npm latest',
   catalogVersionDated: "the npm version as of the catalog's last refresh ({0}); a release published since then appears after the next refresh",

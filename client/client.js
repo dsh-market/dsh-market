@@ -475,6 +475,12 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			hostRequirementUndeclared: "未声明宿主要求",
 			hostRequirementUnavailable: "宿主要求未知",
 			sortDownloads: "npm 下载量(近 30 天)",
+			downloadsPeriod: "近30天",
+			downloadsMeaning: "npm 近30天滚动下载量：{0}；非累计下载量，也不代表独立用户数。npm 统计可能延迟，来源核验时间不保证数据完整。",
+			downloadsWindow: "统计区间：{0} 至 {1}。",
+			downloadsWindowUnknown: "统计区间：来源未提供完整有效日期。",
+			downloadsChecked: "来源核验时间：{0}。",
+			downloadsCheckedUnknown: "来源核验时间：未提供。",
 			/** Discover/theme card byline tooltip for catalog `version`. */
 			catalogNpmLatest: "npm 当前 latest",
 			catalogVersionDated: "目录数据（{0} 刷新）里记录的 npm 版本；在那之后发布的版本要等下一次目录刷新才会出现",
@@ -1116,6 +1122,12 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			hostRequirementUndeclared: "Host requirement undeclared",
 			hostRequirementUnavailable: "Host requirement unknown",
 			sortDownloads: "npm downloads (30d)",
+			downloadsPeriod: "30d",
+			downloadsMeaning: "npm rolling 30-day downloads: {0}; not lifetime downloads or unique users. npm statistics may be delayed; the source check time does not guarantee completeness.",
+			downloadsWindow: "Period: {0} to {1}.",
+			downloadsWindowUnknown: "Period: the source did not provide a complete valid date range.",
+			downloadsChecked: "Source checked at: {0}.",
+			downloadsCheckedUnknown: "Source checked at: not provided.",
 			/** Discover/theme card byline tooltip for catalog `version`. */
 			catalogNpmLatest: "npm latest",
 			catalogVersionDated: "the npm version as of the catalog's last refresh ({0}); a release published since then appears after the next refresh",
@@ -3462,6 +3474,31 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					})
 				})]
 			});
+		}
+		//#endregion
+		//#region src/client/download-stats.ts
+		/** Date-only values stay date-only; never derive a window from today's date. */
+		function dateOnly(value) {
+			if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+			const parsed = new Date(value);
+			return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+		}
+		function checkedAt(value) {
+			if (dateOnly(value)) return true;
+			if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(value)) return false;
+			return dateOnly(value.slice(0, 10)) && Number.isFinite(Date.parse(value));
+		}
+		/** All text comes from this entry's source metadata, not registry.updated. */
+		function downloadStatsText(plugin, t) {
+			const count = plugin.downloads;
+			if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0) return null;
+			const window = dateOnly(plugin.downloadsStart) && dateOnly(plugin.downloadsEnd) && plugin.downloadsStart <= plugin.downloadsEnd ? t("downloadsWindow").replace("{0}", plugin.downloadsStart).replace("{1}", plugin.downloadsEnd) : t("downloadsWindowUnknown");
+			const checked = checkedAt(plugin.downloadsCheckedAt) ? t("downloadsChecked").replace("{0}", plugin.downloadsCheckedAt) : t("downloadsCheckedUnknown");
+			return [
+				t("downloadsMeaning").replace("{0}", String(count)),
+				window,
+				checked
+			].join(" ");
 		}
 		//#endregion
 		//#region src/client/operations.ts
@@ -7031,10 +7068,22 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				})
 			});
 		}
-		/**
-		* Catalog npm latest in the card byline (#348). Same quiet style as ↓ / ★;
-		* omitted when absent so github-only and not-yet-backfilled rows stay clean.
-		*/
+		/** A compact rolling-period label, with source metadata on hover or focus. */
+		function DownloadCount({ plugin, t }) {
+			const tip = downloadStatsText(plugin, t);
+			if (tip === null) return null;
+			return /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {
+				label: tip,
+				side: "top",
+				children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+					className: Market_module_css_default.star,
+					tabIndex: 0,
+					"aria-label": tip,
+					children: "· ↓ " + formatCount(plugin.downloads) + " / " + t("downloadsPeriod")
+				})
+			});
+		}
+		/** Catalog npm latest, omitted for github-only and not-yet-backfilled rows. */
 		function CatalogVersionMark({ version, tip }) {
 			if (typeof version !== "string" || version.length === 0) return null;
 			const label = /^v/i.test(version) ? version : `v${version}`;
@@ -9735,13 +9784,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 												version: p.version,
 												tip: catalogVersionTip
 											}),
-											typeof p.downloads === "number" && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {
-												label: String(p.downloads),
-												side: "top",
-												children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-													className: Market_module_css_default.star,
-													children: "· ↓ " + formatCount(p.downloads)
-												})
+											/* @__PURE__ */ (0, react_jsx_runtime.jsx)(DownloadCount, {
+												plugin: p,
+												t
 											}),
 											typeof p.stars === "number" && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {
 												label: String(p.stars),
@@ -9947,13 +9992,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 													version: p.version,
 													tip: catalogVersionTip
 												}),
-												typeof p.downloads === "number" && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {
-													label: String(p.downloads),
-													side: "top",
-													children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-														className: Market_module_css_default.star,
-														children: "· ↓ " + formatCount(p.downloads)
-													})
+												/* @__PURE__ */ (0, react_jsx_runtime.jsx)(DownloadCount, {
+													plugin: p,
+													t
 												}),
 												typeof p.stars === "number" && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {
 													label: String(p.stars),
@@ -12132,13 +12173,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 										version: confirming.version,
 										tip: catalogVersionTip
 									}),
-									typeof confirming.downloads === "number" && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {
-										label: String(confirming.downloads),
-										side: "top",
-										children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-											className: Market_module_css_default.star,
-											children: "· ↓ " + formatCount(confirming.downloads)
-										})
+									/* @__PURE__ */ (0, react_jsx_runtime.jsx)(DownloadCount, {
+										plugin: confirming,
+										t
 									}),
 									typeof confirming.stars === "number" && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {
 										label: String(confirming.stars),
@@ -12158,6 +12195,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 							confirming.added && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 								className: Market_module_css_default.metaInline,
 								children: t("published") + " " + confirming.added
+							}),
+							downloadStatsText(confirming, t) !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+								className: Market_module_css_default.metaInline,
+								children: downloadStatsText(confirming, t)
 							}),
 							/* @__PURE__ */ (0, react_jsx_runtime.jsx)(CardDesc, {
 								text: confirming.description && (confirming.description[lang] || confirming.description.en) || "",

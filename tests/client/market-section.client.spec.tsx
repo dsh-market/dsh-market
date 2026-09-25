@@ -4826,6 +4826,28 @@ describe('card thumbnail + lightbox (curated screenshots only)', () => {
     return registry
   }
 
+  it('labels the rolling download count and exposes source dates on cards and install details', async () => {
+    const registry = registryWithShots()
+    Object.assign(registry.plugins[0], {
+      downloadsStart: '2026-08-25', downloadsEnd: '2026-09-23', downloadsCheckedAt: '2026-09-24',
+    })
+    stubFetch({ '/dsh-market/registry': { source: 'live', registry } })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    const count = screen.getByLabelText(/npm rolling 30-day downloads: 4200/)
+    expect(count.textContent).toContain('4.2k / 30d')
+    expect(count.getAttribute('tabindex')).toBe('0')
+    expect(count.getAttribute('aria-label')).toContain('2026-08-25 to 2026-09-23')
+    expect(count.getAttribute('aria-label')).toContain('2026-09-24')
+    let card: HTMLElement | null = screen.getByText('dsh-loop')
+    while (card !== null && within(card).queryAllByRole('button', { name: en.install }).length === 0) card = card.parentElement
+    fireEvent.click(within(card!).getAllByRole('button', { name: en.install })[0]!)
+    await screen.findByRole('button', { name: en.confirmInstall })
+    const dialog = within(screen.getByRole('dialog'))
+    expect(dialog.getByText(/npm rolling 30-day downloads: 4200/).textContent).toContain('not lifetime downloads or unique users')
+    expect(dialog.getByText(/Source checked at: 2026-09-24/)).toBeTruthy()
+  })
+
   it('shows a scrollable thumbnail strip only on the card with curated screenshots', async () => {
     stubFetch({ '/dsh-market/registry': { source: 'live', registry: registryWithShots() } })
     const { container } = render(<MarketSection {...props()} />)

@@ -24,6 +24,11 @@ export interface RegistryPlugin {
    * zero — so sorting must not read it as "less popular than 0".
    */
   downloads?: number | null
+  /** Source-reported download window (YYYY-MM-DD), not lifetime totals. */
+  downloadsStart?: string | null
+  downloadsEnd?: string | null
+  /** When the source checked this statistic; never the client's fetch time. */
+  downloadsCheckedAt?: string | null
   /**
    * Registry `dist-tags.latest` from awesome-dsh-plugin (#348). A string when
    * known; `null`/absent when github-only or not yet backfilled — the UI

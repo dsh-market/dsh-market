@@ -98,6 +98,21 @@ const ok = (body: unknown): Response =>
   new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } })
 
 describe('loadRegistry', () => {
+  it('passes through source download dates without inventing them for legacy entries', async () => {
+    const stats = { downloads: 42, downloadsStart: '2026-08-25', downloadsEnd: '2026-09-23', downloadsCheckedAt: '2026-09-24' }
+    scriptedFetch(ok({
+      ...CATALOG,
+      count: 2,
+      plugins: [{ ...CATALOG.plugins[0], ...stats }, { ...CATALOG.plugins[0], name: 'legacy', downloads: 0 }],
+    }))
+    const registry = await loadRegistry()
+    expect(registry.plugins[0]).toMatchObject(stats)
+    expect(registry.plugins[1]).not.toHaveProperty('downloadsStart')
+    expect(registry.plugins[1]).not.toHaveProperty('downloadsEnd')
+    expect(registry.plugins[1]).not.toHaveProperty('downloadsCheckedAt')
+    expect(registry.plugins[1]?.downloads).toBe(0)
+  })
+
   it('goes to the network every single time it is asked', async () => {
     // The one-hour cache is gone deliberately. The catalog grows by roughly
     // 250 entries a day, so an hour-old listing answers "does this plugin
