@@ -147,12 +147,31 @@ function agentsLookupOf(ctx: Context): () => AgentsServiceLike | undefined {
  * exactly as it was, which is the behaviour every release so far has had.
  * @returns a restore function for the effect that installed it.
  */
-function useTrustedHosts(ctx: Context): () => void {
-  const connection = ctx.get('connection') as { trustedHosts?: unknown } | undefined
-  const declared = Array.isArray(connection?.trustedHosts)
-    ? connection.trustedHosts.filter((entry): entry is string => typeof entry === 'string')
-    : []
-  const previous = setTrustedHostsSource(() => declared)
+export function useTrustedHosts(ctx: Context): () => void {
+  // Resolved per request, not at mount -- the same reason `agentsLookupOf` is
+  // lazy. The host provides `connection` only after its own async init
+  // (`HostConnectionService` is constructed behind `await BrowserAuth.create`),
+  // and the market mounts on `webServer` + `loader`, which are ready first: a
+  // mount-time read therefore sees no service on a web host, and the [] fallback
+  // then narrows the fence to loopback for the life of the process -- every
+  // mutating route 403 on a deployment that is reached by a name, while loopback
+  // keeps working (#729).
+  //
+  // Exported for the spec that covers this wiring; the fence it feeds is tested
+  // through `sameOrigin` in tests/http.spec.ts.
+  let warned = false
+  const previous = setTrustedHostsSource(() => {
+    const connection = ctx.get('connection') as { trustedHosts?: unknown } | undefined
+    if (connection === undefined && !warned) {
+      // The silent version of this is what hid #729: "no service" and "no
+      // authorities declared" produced the same fence.
+      warned = true
+      console.warn('dsh-market: the host connection service is not available; the origin fence accepts loopback only')
+    }
+    return Array.isArray(connection?.trustedHosts)
+      ? connection.trustedHosts.filter((entry): entry is string => typeof entry === 'string')
+      : []
+  })
   // The setter returns the PREVIOUS source, not a restore closure — the same
   // contract as setBuildEnvSource in dsh-cli.ts.
   return () => { setTrustedHostsSource(previous) }
