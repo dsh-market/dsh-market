@@ -3821,7 +3821,7 @@ describe('capability disclosure (#401)', () => {
       ['uses plaintext http:// to schemas.example.org', en.capRedPlaintextHttp.replace('{0}', 'schemas.example.org')],
       ['uses literal IP 169.254.169.254 for network access', en.capRedLiteralIp.replace('{0}', '169.254.169.254')],
       ['runs code at install time (postinstall, preinstall)', en.capRedInstallScriptScripts.replace('{0}', 'postinstall, preinstall')],
-      ['tampers with a core bundle (dsh-base)', en.capRedCoreTamperDetail.replace('{0}', 'dsh-base')],
+      ['tampers with a core bundle (overrides bundle @deepseek-ai/dsh-base)', en.capRedCoreOverride.replace('{0}', '@deepseek-ai/dsh-base')],
     ]
     withEntry({ capabilities: ['network'], capabilityRedLines: families.map(([line]) => line) })
     render(<MarketSection {...props()} />)
@@ -3834,6 +3834,41 @@ describe('capability disclosure (#401)', () => {
     }
     fireEvent.click(dialog.getByText(en.capabilityTitle))
     for (const [, label] of families) expect(dialog.getByText(label)).toBeTruthy()
+  })
+
+  it('says whether a core part is overridden or disabled, instead of leaving the verb in English', async () => {
+    // These two sentences are the only core-tamper details the scanner emits.
+    // The verb is the fact a reader has to weigh before installing; a translation
+    // that still says "overrides bundle" has not translated it.
+    const override = 'tampers with a core bundle (overrides bundle @deepseek-ai/dsh-base)'
+    const disable = 'tampers with a core bundle (disables bundle @deepseek-ai/dsh-core)'
+    withEntry({
+      capabilities: ['host-runtime'],
+      capabilityRedLines: [override, disable],
+    })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-probe-target')
+    const dialog = await openDetail()
+    expect(dialog.getByText(en.capRedCoreOverride.replace('{0}', '@deepseek-ai/dsh-base'))).toBeTruthy()
+    expect(dialog.getByText(en.capRedCoreDisable.replace('{0}', '@deepseek-ai/dsh-core'))).toBeTruthy()
+    expect(dialog.queryByText(/overrides bundle/)).toBeNull()
+    expect(dialog.queryByText(/disables bundle/)).toBeNull()
+  })
+
+  it('keeps an unrecognized core-bundle detail on the generic sentence', async () => {
+    // Not a shape the scanner emits. The two known details name the verb;
+    // anything else stays on the generic sentence instead of being guessed
+    // into an override or a disable.
+    withEntry({
+      capabilities: ['host-runtime'],
+      capabilityRedLines: ['tampers with a core bundle (dsh-base)'],
+    })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-probe-target')
+    const dialog = await openDetail()
+    expect(dialog.getByText(en.capRedCoreTamperDetail.replace('{0}', 'dsh-base'))).toBeTruthy()
+    expect(dialog.queryByText(en.capRedCoreOverride.replace('{0}', 'dsh-base'))).toBeNull()
+    expect(dialog.queryByText(en.capRedCoreDisable.replace('{0}', 'dsh-base'))).toBeNull()
   })
 
   it('separates "nothing found" from "never scanned"', async () => {
