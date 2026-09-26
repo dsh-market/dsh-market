@@ -1229,7 +1229,21 @@ export function analyzeProfile(profileDirectory: string, options: CheckOptions =
       const key = `${plugin}\u0000${name}\u0000peer`
       if (seenDeps.has(key)) continue
       seenDeps.add(key)
-      const hoisted = readProfileVisibleVersion(profileDirectory, name)
+      // A HOST-PLANE peer never takes its version from the shared workspace
+      // root: `<profiles>/node_modules` is shared by every profile, and on a
+      // machine that also runs a second DSH installation — a global npm CLI
+      // beside the Desktop app — that tree is the OTHER installation's
+      // closure. Reading a host version from it reported a healthy install as
+      // "introduced host-compatibility risks … vs 0.1.5-rc.2" and offered a
+      // rollback, while the running host was 0.1.7-rc.2 (#726). What the
+      // plugin itself resolves still counts (a nested copy, a profile-local
+      // one), and the located installation is asked as `host` below; with
+      // neither, the version is unknown rather than wrong — the rule #676
+      // settled for bundles. Non-host peers keep the hoisted fallback.
+      const hostPlane = name.startsWith('@deepseek-ai/')
+      const hoisted = hostPlane
+        ? readNodeModulesVersion(profileDirectory, name)
+        : readProfileVisibleVersion(profileDirectory, name)
       const nested = readNodeModulesVersion(pluginDir, name)
       const host = dshInstall !== null ? readNodeModulesVersion(dshInstall, name) : null
       // Node resolves a plugin's peer from its OWN node_modules first

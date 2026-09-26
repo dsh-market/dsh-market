@@ -253,6 +253,42 @@ describe('workspace-root hoisted bundles (#98 review B1)', () => {
   })
 })
 
+describe('a host peer is not read from another installation (#726)', () => {
+  /** The reporter's machine: the Desktop app, plus a global npm CLI whose closure sits in the shared root. */
+  function fixture(): string {
+    const dir = pdir('desktop-profile')
+    writeProfile(dir, { name: 'desktop-profile', dependencies: { 'dsh-plugin-x': '^1.0.0' } })
+    writePackage(dir, 'dsh-plugin-x', {
+      name: 'dsh-plugin-x',
+      version: '1.0.0',
+      peerDependencies: { '@deepseek-ai/dsh': '>=0.1.7-rc.2' },
+    })
+    // <profiles>/node_modules is shared by every profile. Here it belongs to
+    // the OTHER installation — the global CLI, four minor versions behind.
+    writePackage(tmp, '@deepseek-ai/dsh', { name: '@deepseek-ai/dsh', version: '0.1.5-rc.2' })
+    return dir
+  }
+
+  it('leaves a host-plane peer unknown when the install dir cannot be located', () => {
+    // Reading that shared copy as "the host" reported a healthy install as
+    // "introduced host-compatibility risks … vs 0.1.5-rc.2" and offered a
+    // rollback. Unknown is not wrong — the rule #676 settled for bundles.
+    const report = analyzeProfile(fixture(), { dshInstallDir: null })
+    const peer = report.peerMismatches.find(mismatch => mismatch.name === '@deepseek-ai/dsh')
+    expect(peer?.resolved).toBeNull()
+    expect(peer?.satisfied).toBeNull()
+  })
+
+  it('still asks the located installation itself, which satisfies the peer', () => {
+    const install = pdir('dsh-install')
+    writePackage(install, '@deepseek-ai/dsh', { name: '@deepseek-ai/dsh', version: '0.1.7-rc.2' })
+    const report = analyzeProfile(fixture(), { dshInstallDir: install })
+    const peer = report.peerMismatches.find(mismatch => mismatch.name === '@deepseek-ai/dsh')
+    expect(peer?.resolved).toBe('0.1.7-rc.2')
+    expect(peer?.satisfied).toBe(true)
+  })
+})
+
 describe('shared DSH home resolution', () => {
   it('does not treat the process directory as home when DSH_HOME is empty', () => {
     const dir = pdir('blank-home-profile')
