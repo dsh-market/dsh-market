@@ -3980,6 +3980,15 @@ export function MarketSection(props: MarketSectionProps) {
         ? t('capRedInstallScript')
         : t('capRedInstallScriptScripts').replace('{0}', installScript[1])
     }
+    // The parenthesised detail is not a name. The scanner emits exactly two
+    // shapes — "overrides bundle <id>" and "disables bundle <id>" — and pasting
+    // either through leaves the verb in English. That verb is the fact: the
+    // install would replace a part of DSH, or switch one off.
+    const coreVerb = /^tampers with a core bundle \((overrides|disables) bundle (.+)\)$/.exec(line)
+    if (coreVerb !== null) {
+      const key = coreVerb[1] === 'overrides' ? 'capRedCoreOverride' : 'capRedCoreDisable'
+      return t(key).replace('{0}', coreVerb[2]!)
+    }
     const coreTamper = /^tampers with a core bundle(?: \((.+)\))?$/.exec(line)
     if (coreTamper !== null) {
       return coreTamper[1] === undefined

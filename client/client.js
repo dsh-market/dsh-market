@@ -272,6 +272,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			capRedInstallScriptScripts: "安装时会立刻运行 {0}，不需要你打开插件",
 			capRedCoreTamper: "会改动 DSH 自带的组件",
 			capRedCoreTamperDetail: "会改动 DSH 自带的组件（{0}）",
+			capRedCoreOverride: "会覆盖 DSH 自带的组件（{0}）",
+			capRedCoreDisable: "会禁用 DSH 自带的组件（{0}）",
 			favoriteAdd: "加入收藏",
 			favoriteRemove: "取消收藏",
 			favoritesEmpty: "还没有收藏。在「发现」或「主题」里点书签图标即可收藏。",
@@ -920,6 +922,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			capRedInstallScriptScripts: "runs {0} the moment you install — you do not have to open the plugin",
 			capRedCoreTamper: "replaces parts of DSH itself",
 			capRedCoreTamperDetail: "replaces parts of DSH itself ({0})",
+			capRedCoreOverride: "overrides a part of DSH itself ({0})",
+			capRedCoreDisable: "disables a part of DSH itself ({0})",
 			favoriteAdd: "Add to favorites",
 			favoriteRemove: "Remove from favorites",
 			favoritesEmpty: "No favorites yet. Click the bookmark icon in Discover or Themes to add one.",
@@ -9764,6 +9768,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				if (literalIp !== null) return t("capRedLiteralIp").replace("{0}", literalIp[1]);
 				const installScript = /^runs code at install time(?: \((.+)\))?$/.exec(line);
 				if (installScript !== null) return installScript[1] === void 0 ? t("capRedInstallScript") : t("capRedInstallScriptScripts").replace("{0}", installScript[1]);
+				const coreVerb = /^tampers with a core bundle \((overrides|disables) bundle (.+)\)$/.exec(line);
+				if (coreVerb !== null) {
+					const key = coreVerb[1] === "overrides" ? "capRedCoreOverride" : "capRedCoreDisable";
+					return t(key).replace("{0}", coreVerb[2]);
+				}
 				const coreTamper = /^tampers with a core bundle(?: \((.+)\))?$/.exec(line);
 				if (coreTamper !== null) return coreTamper[1] === void 0 ? t("capRedCoreTamper") : t("capRedCoreTamperDetail").replace("{0}", coreTamper[1]);
 				return line;
