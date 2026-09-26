@@ -35,6 +35,23 @@ afterEach(async () => {
 })
 
 describe('hotMount finds a patch the package declares in a subdirectory (#646)', () => {
+  it('distinguishes deferred bundle activation from a failed hot mount', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dshm-deferred-'))
+    try {
+      const pkg = join(dir, 'node_modules', 'configured-plugin')
+      mkdirSync(pkg, { recursive: true })
+      writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name: 'configured-plugin',
+        dsh: { bundle: { patch: './cordis.patch.yml' } } }))
+      writeFileSync(join(pkg, 'cordis.patch.yml'),
+        '- insert:\n    - id: configured-plugin\n      name: configured-plugin\n      config:\n        feature: false\n')
+      const plugin = vi.fn()
+      const result = await hotMount({ plugin }, dir, 'configured-plugin')
+      expect(result).toMatchObject({ ok: false, restartRequired: true })
+      expect(plugin).not.toHaveBeenCalled()
+      expect(listHotMounts()).not.toContain('configured-plugin')
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
   it('reads dsh.bundle.patch wherever it points, instead of only the package root', async () => {
     // The reported shape: `aegis` declares `./extensions/dsh/cordis.patch.yml`,
     // so the package root holds no cordis.patch.yml at all. Reading only the

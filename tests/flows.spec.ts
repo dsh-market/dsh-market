@@ -529,6 +529,7 @@ const hot = vi.hoisted(() => ({
   /** The live source the routes installed, so a test can read what a spawn would. */
   buildEnvSource: undefined as (() => Readonly<Record<string, string>>) | undefined,
   failNext: false,
+  deferNext: false,
 }))
 vi.mock('../src/hot.ts', async (importOriginal) => ({
   // The REAL module underneath, with only the harness's own overrides on top.
@@ -574,6 +575,10 @@ vi.mock('../src/hot.ts', async (importOriginal) => ({
   },
   listHotMounts: () => [...hot.mounts],
   hotMount: (_ctx: unknown, _dir: string, name: string) => {
+    if (hot.deferNext) {
+      hot.deferNext = false
+      return Promise.resolve({ ok: false, restartRequired: true, reason: 'Restart DSH to load this plugin' })
+    }
     if (hot.failNext) {
       hot.failNext = false
       return Promise.resolve({ ok: false, reason: 'test: host cannot hot-mount' })
@@ -5536,6 +5541,26 @@ describe('generic enable/disable toggle (#60)', () => {
     expect(on.json.ok).toBe(false)
     expect(on.json.restart).toBe(true)
     expect(on.json.reason).toMatch(/cannot hot-mount|restart/)
+  })
+
+  it('persists an enable deferred to restart and retains it when routes remount', async () => {
+    await installNpm('dsh-loop', { bundle: { patch: './cordis.patch.yml' } })
+    hot.mounts = []
+    writeFileSync(join(profileDir('web'), 'node_modules/dsh-loop/cordis.patch.yml'),
+      '- insert:\n    - id: dsh-loop\n      name: dsh-loop\n      config:\n        enabled: true\n')
+    await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-loop', enabled: false })
+    hot.deferNext = true
+    const on = await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-loop', enabled: true })
+    expect(on.status).toBe(200)
+    expect(on.json.ok).toBe(true)
+    expect(on.json.restart).toBe(true)
+    expect(on.json.disabled).not.toContain('dsh-loop')
+    expect(hot.disabled.has('dsh-loop')).toBe(false)
+    expect(readFileSync(join(profileDir('web'), 'cordis.patch.yml'), 'utf8')).not.toContain('disabled: true')
+    const restarted = createTestbed()
+    expect(hot.disabled.has('dsh-loop')).toBe(false)
+    expect(restarted).toBeDefined()
+    restarted.dispose()
   })
 
   it('leaves the patch layer untouched when an enable fails (#575)', async () => {

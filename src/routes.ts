@@ -658,7 +658,10 @@ export function mountMarketRoutes(
         ok = true
       } else {
         const result = await hotMount(host, dir, name)
-        ok = result.ok
+        // Unsupported hot mounting is deferred activation, not a failed load.
+        // Persist the user's enable choice; actual import/activation errors
+        // still return false and retain the #575 rollback below.
+        ok = result.ok || result.restartRequired === true
         reason = result.reason ?? undefined
         // Deliberately NOT clearing replacedWhileLive here (#685). This used
         // to say "a mount that succeeded imported the module as it is on

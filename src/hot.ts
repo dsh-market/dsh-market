@@ -589,6 +589,8 @@ function raceActivationTimeout<T>(awaitable: T | Promise<T>): Promise<T> {
 /** Outcome of one hot-mount attempt; `reason` explains non-`ok` results. */
 export interface HotMountResult {
   ok: boolean
+  /** No mount was attempted; a declared bundle can load on the next boot. */
+  restartRequired?: boolean
   /** Bilingual reason shown to the user instead of a bare restart banner. */
   reason: string | null
 }
@@ -656,7 +658,8 @@ export async function hotMount(ctx: HotContext, profileDir: string, packageName:
       if (rows === null) {
         return {
           ok: false,
-          reason: 'bundle patch 含配置行/表达式,热挂载仅支持纯 insert,重启后生效 / the bundle patch contains config/expression rows; hot-mount only supports plain inserts — it activates on restart',
+          restartRequired: readPkgDsh(profileDir, packageName)?.bundle !== undefined,
+          reason: '此插件需要重启后加载 / Restart DSH to load this plugin',
         }
       }
     } else {
