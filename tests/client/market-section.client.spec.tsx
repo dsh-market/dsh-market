@@ -3855,6 +3855,22 @@ describe('capability disclosure (#401)', () => {
     expect(dialog.queryByText(/disables bundle/)).toBeNull()
   })
 
+  it('keeps an unrecognized core-bundle detail on the generic sentence', async () => {
+    // Not a shape the scanner emits. The two known details name the verb;
+    // anything else stays on the generic sentence instead of being guessed
+    // into an override or a disable.
+    withEntry({
+      capabilities: ['host-runtime'],
+      capabilityRedLines: ['tampers with a core bundle (dsh-base)'],
+    })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-probe-target')
+    const dialog = await openDetail()
+    expect(dialog.getByText(en.capRedCoreTamperDetail.replace('{0}', 'dsh-base'))).toBeTruthy()
+    expect(dialog.queryByText(en.capRedCoreOverride.replace('{0}', 'dsh-base'))).toBeNull()
+    expect(dialog.queryByText(en.capRedCoreDisable.replace('{0}', 'dsh-base'))).toBeNull()
+  })
+
   it('separates "nothing found" from "never scanned"', async () => {
     withEntry({ capabilities: [], capabilityRedLines: [] })
     render(<MarketSection {...props()} />)
