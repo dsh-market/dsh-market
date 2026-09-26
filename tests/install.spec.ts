@@ -515,24 +515,29 @@ describe('withHoistRecovery', () => {
     expect(calls[1]).toEqual(['add', RELEASE_AGE_OVERRIDE, 'thing'])
   })
 
-  it('repairs the shadowed rules even where the caller declined the bypass (#594)', async () => {
-    // The repair is not the bypass: it restores what the file already
-    // declares, so a caller that declined to relax the profile's age policy
-    // still gets the file fixed — and the command still runs unchanged.
+  it('repairs a broken entry before running, even where the caller declined the bypass (#594)', async () => {
+    // The repair is not the bypass: it is a rewrite of a form pnpm cannot read
+    // back, so a caller that declined to relax the profile's age policy still
+    // gets the file fixed — and it happens before the first run, because that
+    // is when pnpm would be resolving the entry.
     const dir = writeProfile({})
     const workspace = join(dir, 'pnpm-workspace.yaml')
     writeFileSync(workspace, 'minimumReleaseAgeExclude:\n  - keep@1.0.0\n  - keep@2.0.0\n')
     const calls: string[][] = []
+    const seen: string[] = []
     const run = async (_profile: string, args: string[]): Promise<InstallResult> => {
       calls.push(args)
+      seen.push(readFileSync(workspace, 'utf8'))
       return { exitCode: 1, timedOut: false, stdout: '', stderr: AGE_VIOLATION_STDERR, cancelled: false }
     }
     await withHoistRecovery(run, 'web', ['add', 'thing'], dir, { releaseAgeBypass: false })
-    expect(calls).toEqual([['add', 'thing'], ['add', 'thing'], ['store', 'path']])
-    expect(readFileSync(workspace, 'utf8')).toBe('minimumReleaseAgeExclude:\n  - keep@1.0.0 || 2.0.0\n')
+    expect(calls).toEqual([['add', 'thing'], ['store', 'path']])
+    expect(seen[0]).toBe('minimumReleaseAgeExclude:\n  - keep\n')
   })
 
-  it('leaves the policy alone when the caller declined the bypass and nothing was shadowed', async () => {
+  it('leaves the policy alone when the caller declined the bypass and nothing was broken', async () => {
+    // A single exact version is a form pnpm reads fine: nothing to rewrite,
+    // and the entry keeps naming that version only.
     const dir = writeProfile({})
     const workspace = join(dir, 'pnpm-workspace.yaml')
     writeFileSync(workspace, 'minimumReleaseAgeExclude:\n  - keep@1.0.0\n')
@@ -546,30 +551,57 @@ describe('withHoistRecovery', () => {
     expect(readFileSync(workspace, 'utf8')).toBe('minimumReleaseAgeExclude:\n  - keep@1.0.0\n')
   })
 
-  it('merges the shadowed duplicate exclude rules instead, and needs no option (#732)', async () => {
-    // pnpm appends a second rule for a package that already has one and then
-    // honours only the first, so its own new entry is dead and every later
-    // command in the profile fails verification. Merging is a repair of the
-    // file, so it works on the host that refuses options too.
+  it('normalizes a broken entry before the command runs, not after a failure (#732, #733)', async () => {
+    // The union shape aborts pnpm 12.4.1 on a single 80 GiB allocation with NO
+    // error output, so a repair that waited for a failure to classify would
+    // never fire. The runner below reads the file as pnpm would.
     const dir = writeProfile({})
     const workspace = join(dir, 'pnpm-workspace.yaml')
-    writeFileSync(workspace, 'minimumReleaseAgeExclude:\n  - dshmarket@1.38.1 || 1.65.1\n  - dshmarket@1.65.4\n')
+    writeFileSync(workspace, 'minimumReleaseAgeExclude:\n  - billion-context@0.1.138 || 0.1.147\n  - dshmarket@1.38.1\n  - dshmarket@1.65.4\n')
+    const seen: string[] = []
+    const run = async (_profile: string, _args: string[]): Promise<InstallResult> => {
+      seen.push(readFileSync(workspace, 'utf8'))
+      return ok
+    }
+    const result = await withHoistRecovery(run, 'web', ['add', 'billion-context@0.1.147'], dir)
+    expect(result.exitCode).toBe(0)
+    expect(seen[0]).toBe('minimumReleaseAgeExclude:\n  - billion-context\n  - dshmarket\n')
+  })
+
+  it('repairs a broken entry pnpm wrote during the run, and retries the same argv (#732)', async () => {
+    // A repair is a file rewrite, so it needs no option: the host that refuses
+    // options gets the same recovery as the one that does not.
+    const dir = writeProfile({})
+    const workspace = join(dir, 'pnpm-workspace.yaml')
     const calls: string[][] = []
     let failFirst = true
     const run = async (_profile: string, args: string[]): Promise<InstallResult> => {
       calls.push(args)
       if (failFirst) {
         failFirst = false
+        // pnpm appends its own rule for the version it just let through.
+        writeFileSync(workspace, 'minimumReleaseAgeExclude:\n  - dshmarket@1.38.1 || 1.65.1\n  - dshmarket@1.65.4\n')
         return { exitCode: 1, timedOut: false, stdout: '', stderr: AGE_VIOLATION_STDERR, cancelled: false }
       }
       return ok
     }
     const result = await withHoistRecovery(run, 'web', ['add', 'dshmarket@1.65.4'], dir, { marketFlags: false })
     expect(result.exitCode).toBe(0)
-    // The SAME argv is retried: the repair, not an option, is what unblocks it.
-    expect(calls[0]).toEqual(['add', 'dshmarket@1.65.4'])
-    expect(calls[1]).toEqual(['add', 'dshmarket@1.65.4'])
-    expect(readFileSync(workspace, 'utf8')).toBe('minimumReleaseAgeExclude:\n  - dshmarket@1.38.1 || 1.65.1 || 1.65.4\n')
+    expect(calls).toEqual([['add', 'dshmarket@1.65.4'], ['add', 'dshmarket@1.65.4']])
+    expect(readFileSync(workspace, 'utf8')).toBe('minimumReleaseAgeExclude:\n  - dshmarket\n')
+  })
+
+  it('normalizes before an `install` too, which resolves the same key (#733)', async () => {
+    const dir = writeProfile({})
+    const workspace = join(dir, 'pnpm-workspace.yaml')
+    writeFileSync(workspace, 'minimumReleaseAgeExclude:\n  - billion-context@0.1.138 || 0.1.147\n')
+    const seen: string[] = []
+    const run = async (_profile: string, _args: string[]): Promise<InstallResult> => {
+      seen.push(readFileSync(workspace, 'utf8'))
+      return ok
+    }
+    await withHoistRecovery(run, 'web', ['--no-frozen-lockfile', 'install'], dir)
+    expect(seen[0]).toBe('minimumReleaseAgeExclude:\n  - billion-context\n')
   })
 })
 

@@ -10,7 +10,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path'
 import type { InstallResult, PluginRunner } from './dsh-cli.ts'
 import { findDshInstallDir } from './dsh-install.ts'
 import { classifyPnpmFailure, HOST_NAMESPACE_RE, isTransientPnpmFailure } from './pnpm-compat.ts'
-import { conflictingEntryIds, dropFromManifest, hasDshManifest, hasLoadableEntry, mergeDuplicateReleaseAgeExcludes, pluginSubdirs, profileDir, readInstalled, readManifestDeps, readProfileBundles, dropUnparseableBuildKeys } from './profile.ts'
+import { conflictingEntryIds, dropFromManifest, hasDshManifest, hasLoadableEntry, normalizeReleaseAgeExcludes, pluginSubdirs, profileDir, readInstalled, readManifestDeps, readProfileBundles, dropUnparseableBuildKeys } from './profile.ts'
 import { logEvent } from './log.ts'
 import { cleanOrphanedStore } from './store.ts'
 
@@ -135,6 +135,20 @@ export async function withHoistRecovery(
   const marketFlags = options.marketFlags !== false
   /** The option a recovery step needed and this host does not accept (#732). */
   let unavailableOption: string | null = null
+  // Before the FIRST run, not after a failure: the two shapes pnpm writes into
+  // `minimumReleaseAgeExclude` (a shadowed duplicate rule, #732; a version
+  // union, #733) hurt pnpm while it RESOLVES the dependency graph, and the
+  // union one aborts the process on an 80 GiB allocation with no error output
+  // at all — nothing to classify, so a repair that waited for a failure would
+  // never fire. Every verb that resolves the graph is covered, not just add and
+  // remove: an `install` or an in-place `update` consults the same key.
+  const verb = pluginArgs.find(argument => !argument.startsWith('-'))
+  if (verb === 'add' || verb === 'remove' || verb === 'install' || verb === 'update') {
+    const normalized = normalizeReleaseAgeExcludes(profile, profileDirectory)
+    if (normalized.length > 0) {
+      logEvent('warn', 'install', `minimumReleaseAgeExclude held a form pnpm cannot read back for ${normalized.join(', ')} (a shadowed duplicate rule, #732, or a version union, which pnpm 12.4.1 aborts on — #733) — rewrote each as one bare package name before running`)
+    }
+  }
   let result = await run(profile, pluginArgs)
   const ok = (r: InstallResult): boolean => r.exitCode === 0 && !r.timedOut && !r.cancelled
   if (!ok(result) && !result.cancelled) {
@@ -164,20 +178,14 @@ export async function withHoistRecovery(
       failure?.code === 'release-age-violation'
       && (pluginArgs[0] === 'add' || pluginArgs[0] === 'remove')
     ) {
-      // #732 first, because it is the breakage itself: pnpm appends a second
-      // `minimumReleaseAgeExclude` rule for a package that already has one and
-      // then honours only the FIRST per name, so its own new entry is shadowed
-      // and verification fails for every later command in that profile.
-      //
-      // Merging the duplicates repairs the file and needs no option at all, so
-      // it is the one recovery that also works on the desktop bridge — and it
-      // runs however the bypass is set below, because it is a repair of what
-      // the file already declares, not a relaxation of the policy. A file that
-      // picks a rule that is already order-independent (a bare package name)
-      // keeps it: the merge keeps a bare name a bare name.
-      const mergedDuplicates = mergeDuplicateReleaseAgeExcludes(profile, profileDirectory)
-      if (mergedDuplicates.length > 0) {
-        logEvent('warn', 'install', `pnpm appended a second minimumReleaseAgeExclude rule for ${mergedDuplicates.join(', ')} and honours only the first, shadowing its own entry (#732) — merged the duplicates and retrying once`)
+      // The repair ran before this command, so a rewrite here means pnpm wrote
+      // one of the two broken shapes DURING it — appending a shadowed rule
+      // (#732) or extending a version union (#733). Either way the same
+      // rewrite fixes it, needs no option at all, and so also works on the
+      // desktop bridge that refuses options. Retry the SAME argv afterwards.
+      const normalized = normalizeReleaseAgeExcludes(profile, profileDirectory)
+      if (normalized.length > 0) {
+        logEvent('warn', 'install', `pnpm wrote a minimumReleaseAgeExclude entry it cannot read back for ${normalized.join(', ')} (#732/#733) — rewrote each as one bare package name and retrying once`)
         result = await run(profile, pluginArgs)
       } else if (options.releaseAgeBypass === false) {
         // The caller declined the bypass (#594), and the duplicates were not
