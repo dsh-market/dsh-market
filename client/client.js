@@ -7866,6 +7866,14 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const [modeMenuFor, setModeMenuFor] = (0, react.useState)(null);
 			const [collapsedModes, setCollapsedModes] = (0, react.useState)(() => /* @__PURE__ */ new Set());
 			/** Open "add to mode" multi-select for this plugin name. */
+			/**
+			* The open membership menu, identified by ROW.
+			*
+			* A plugin in two modes has a row in each, and every one of those rows draws
+			* the same "add to mode" control — so keying this by the plugin name opened
+			* all of them at once: click one, and two menus drop down together. The row
+			* is what the user clicked, so the row is what opens.
+			*/
 			const [modeAssignFor, setModeAssignFor] = (0, react.useState)(null);
 			const [modeCurrentOpen, setModeCurrentOpen] = (0, react.useState)(false);
 			/**
@@ -10479,6 +10487,15 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				})]
 			});
 			/**
+			* Row identity for the membership menu: which mode's list the row is in,
+			* plus the plugin.
+			*
+			* `mode` is empty for the "not in any mode" list, whose rows belong to no
+			* mode. A NUL cannot appear in a mode name (the name rule allows letters,
+			* digits, spaces, `_` and `-`), so the pair cannot collide with another row.
+			*/
+			const modeAssignKey = (mode, plugin) => `${mode}\u0000${plugin}`;
+			/**
 			* The multi-select menu that files one plugin into modes.
 			*
 			* A checkbox list rather than a "move to" list, because a plugin may belong
@@ -10489,18 +10506,19 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			* into three modes is three clicks instead of three round trips through the
 			* trigger.
 			*/
-			const modeMembershipMenu = (name) => {
-				const mine = modesForPlugin(modes, modeOrder, name);
-				const isTheme = installedThemeNames.has(name);
+			const modeMembershipMenu = (mode, plugin) => {
+				const mine = modesForPlugin(modes, modeOrder, plugin);
+				const isTheme = installedThemeNames.has(plugin);
+				const key = modeAssignKey(mode, plugin);
 				/** Themes stay exclusive: a mode cannot hold two and then switch them both on. */
-				const blocksTheme = (mode) => !mine.includes(mode) && isTheme && (modes[mode] ?? []).some((member) => installedThemeNames.has(member));
+				const blocksTheme = (target) => !mine.includes(target) && isTheme && (modes[target] ?? []).some((member) => installedThemeNames.has(member));
 				return /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Menu, {
-					open: modeAssignFor === name,
+					open: modeAssignFor === key,
 					onClose: () => setModeAssignFor(null),
 					selectedIds: mine,
 					onSelect: (id) => {
 						if (blocksTheme(id)) return;
-						setModeMembership(name, id, mine.includes(id));
+						setModeMembership(plugin, id, mine.includes(id));
 					},
 					align: "end",
 					portal: true,
@@ -10508,8 +10526,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						variant: "outline",
 						size: "sm",
 						disabled: modeOrder.length === 0,
-						icon: modeAssignFor === name ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(IconChevronUpOutline14, { size: 14 }) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)(IconChevronDownOutline14, { size: 14 }),
-						onClick: () => setModeAssignFor((open) => open === name ? null : name),
+						icon: modeAssignFor === key ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(IconChevronUpOutline14, { size: 14 }) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)(IconChevronDownOutline14, { size: 14 }),
+						onClick: () => setModeAssignFor((open) => open === key ? null : key),
 						children: t("modeAssign")
 					}),
 					items: modeOrder.map((mode) => {
@@ -12664,7 +12682,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 														disabled: togglingName !== null,
 														toggle: () => doToggle(member, effectiveDisabledSet.has(member))
 													}),
-													modeMembershipMenu(member)
+													modeMembershipMenu(name, member)
 												]
 											}, member))]
 										})]
@@ -12715,7 +12733,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 													disabled: togglingName !== null,
 													toggle: () => doToggle(name, effectiveDisabledSet.has(name))
 												}),
-												!protectedSet.has(name) && modeMembershipMenu(name)
+												!protectedSet.has(name) && modeMembershipMenu("", name)
 											]
 										}, "nomode-" + name))
 									})]

@@ -1935,6 +1935,14 @@ export function MarketSection(props: MarketSectionProps) {
   const [modeMenuFor, setModeMenuFor] = useState<string | null>(null)
   const [collapsedModes, setCollapsedModes] = useState<Set<string>>(() => new Set())
   /** Open "add to mode" multi-select for this plugin name. */
+  /**
+   * The open membership menu, identified by ROW.
+   *
+   * A plugin in two modes has a row in each, and every one of those rows draws
+   * the same "add to mode" control — so keying this by the plugin name opened
+   * all of them at once: click one, and two menus drop down together. The row
+   * is what the user clicked, so the row is what opens.
+   */
   const [modeAssignFor, setModeAssignFor] = useState<string | null>(null)
   const [modeCurrentOpen, setModeCurrentOpen] = useState(false)
   /**
@@ -4676,6 +4684,16 @@ export function MarketSection(props: MarketSectionProps) {
   )
 
   /**
+   * Row identity for the membership menu: which mode's list the row is in,
+   * plus the plugin.
+   *
+   * `mode` is empty for the "not in any mode" list, whose rows belong to no
+   * mode. A NUL cannot appear in a mode name (the name rule allows letters,
+   * digits, spaces, `_` and `-`), so the pair cannot collide with another row.
+   */
+  const modeAssignKey = (mode: string, plugin: string): string => `${mode}\u0000${plugin}`
+
+  /**
    * The multi-select menu that files one plugin into modes.
    *
    * A checkbox list rather than a "move to" list, because a plugin may belong
@@ -4686,20 +4704,21 @@ export function MarketSection(props: MarketSectionProps) {
    * into three modes is three clicks instead of three round trips through the
    * trigger.
    */
-  const modeMembershipMenu = (name: string) => {
-    const mine = modesForPlugin(modes, modeOrder, name)
-    const isTheme = installedThemeNames.has(name)
+  const modeMembershipMenu = (mode: string, plugin: string) => {
+    const mine = modesForPlugin(modes, modeOrder, plugin)
+    const isTheme = installedThemeNames.has(plugin)
+    const key = modeAssignKey(mode, plugin)
     /** Themes stay exclusive: a mode cannot hold two and then switch them both on. */
-    const blocksTheme = (mode: string): boolean =>
-      !mine.includes(mode) && isTheme && (modes[mode] ?? []).some(member => installedThemeNames.has(member))
+    const blocksTheme = (target: string): boolean =>
+      !mine.includes(target) && isTheme && (modes[target] ?? []).some(member => installedThemeNames.has(member))
     return (
       <Menu
-        open={modeAssignFor === name}
+        open={modeAssignFor === key}
         onClose={() => setModeAssignFor(null)}
         selectedIds={mine}
         onSelect={id => {
           if (blocksTheme(id)) return
-          setModeMembership(name, id, mine.includes(id))
+          setModeMembership(plugin, id, mine.includes(id))
         }}
         align="end"
         portal
@@ -4708,8 +4727,8 @@ export function MarketSection(props: MarketSectionProps) {
             variant="outline"
             size="sm"
             disabled={modeOrder.length === 0}
-            icon={modeAssignFor === name ? <IconChevronUpOutline14 size={14} /> : <IconChevronDownOutline14 size={14} />}
-            onClick={() => setModeAssignFor(open => open === name ? null : name)}
+            icon={modeAssignFor === key ? <IconChevronUpOutline14 size={14} /> : <IconChevronDownOutline14 size={14} />}
+            onClick={() => setModeAssignFor(open => open === key ? null : key)}
           >{t('modeAssign')}</Button>
         )}
         items={modeOrder.map(mode => {
@@ -6438,7 +6457,7 @@ export function MarketSection(props: MarketSectionProps) {
                                                       disabled: togglingName !== null,
                                                       toggle: () => doToggle(member, effectiveDisabledSet.has(member)),
                                                     })}
-                                                    {modeMembershipMenu(member)}
+                                                    {modeMembershipMenu(name, member)}
                                                   </div>
                                                 ))}
                                               </div>
@@ -6479,7 +6498,7 @@ export function MarketSection(props: MarketSectionProps) {
                                                   disabled: togglingName !== null,
                                                   toggle: () => doToggle(name, effectiveDisabledSet.has(name)),
                                                 })}
-                                                {!protectedSet.has(name) && modeMembershipMenu(name)}
+                                                {!protectedSet.has(name) && modeMembershipMenu('', name)}
                                               </div>
                                             ))}
                                       </div>

@@ -6170,6 +6170,33 @@ describe('modes view', () => {
     expect(within(infraPick).getByText(en.modeProtected)).toBeTruthy()
     expect((within(dialog).getByText('dsh-loop').closest('label')!.querySelector('input') as HTMLInputElement).disabled).toBe(false)
   })
+
+  it('opens one menu, not one per mode that lists the plugin', async () => {
+    // A plugin in two modes has a ROW in each, and both rows draw the same
+    // "add to mode" control. Keying the open menu by the plugin name opened
+    // every one of those rows at once: click one, two menus drop down.
+    const state = makeFake({ 'dsh-loop': '^1.0.0', 'dsh-notify': '^1.0.0' })
+    state.modes['科研'] = ['dsh-loop']
+    state.modes['代码'] = ['dsh-loop']
+    state.modeOrder.push('科研', '代码')
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    await openModesView()
+
+    const menus = () => document.querySelectorAll('[role="menu"]').length
+    // dsh-loop is a member of both modes plus unfiled… no: it is filed, so it
+    // has exactly two rows, and dsh-notify has the third.
+    const triggers = screen.getAllByRole('button', { name: en.modeAssign })
+    expect(triggers).toHaveLength(3)
+
+    for (const trigger of triggers) {
+      fireEvent.click(trigger)
+      expect(menus()).toBe(1)
+    }
+    // Clicking the open one again closes it rather than leaving it behind.
+    fireEvent.click(triggers[2]!)
+    expect(menus()).toBe(0)
+  })
 })
 
 describe('a batch switch that skipped something says so', () => {
