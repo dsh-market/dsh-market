@@ -6115,6 +6115,28 @@ describe('modes view', () => {
     expect(state.modes['编程']).toEqual(['dsh-loop'])
   })
 
+  it('takes one plugin out of a mode, and only that plugin', async () => {
+    const state = makeFake({ 'dsh-loop': '^1.0.0', 'dsh-notify': '^1.0.0' })
+    state.modes['编程'] = ['dsh-loop', 'dsh-notify']
+    state.modeOrder.push('编程')
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    await openModesView()
+
+    // Unchecking the mode inside "add to mode" is the same edit, but it is a
+    // detour: it asks the user to find the mode's name in a list before they
+    // can drop the row in front of them. The group card settled this with a
+    // plain row button, so the mode row has one too.
+    const loopRow = screen.getByText('dsh-loop').closest('[class*="groupMember"]') as HTMLElement
+    fireEvent.click(within(loopRow).getByRole('button', { name: en.groupRemove }))
+    await waitFor(() => expect(state.modes['编程']).toEqual(['dsh-notify']))
+    // Removing a member is not deleting the mode: the card and its other
+    // members stay exactly as they were.
+    const modeRow = screen.getByText('编程').closest('[class*="groupRow"]') as HTMLElement
+    expect(within(modeRow).getByText('dsh-notify')).toBeTruthy()
+    expect(within(modeRow).getByRole('button', { name: en.modeAdd })).toBeTruthy()
+  })
+
   it('switching to another mode turns the first mode own plugins off', async () => {
     const state = makeFake({ 'dsh-loop': '^1.0.0', 'dsh-share': '^1.0.0' })
     state.modes['编程'] = ['dsh-loop']

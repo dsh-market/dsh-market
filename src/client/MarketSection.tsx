@@ -6458,6 +6458,7 @@ export function MarketSection(props: MarketSectionProps) {
                                                       toggle: () => doToggle(member, effectiveDisabledSet.has(member)),
                                                     })}
                                                     {modeMembershipMenu(name, member)}
+                                                    <Button variant="ghost" size="sm" onClick={() => doRemoveModeMember(name, member)}>{t('groupRemove')}</Button>
                                                   </div>
                                                 ))}
                                               </div>
