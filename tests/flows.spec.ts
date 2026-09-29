@@ -530,6 +530,9 @@ const hot = vi.hoisted(() => ({
   disabled: new Set<string>(),
   groups: {} as Record<string, string[]>,
   groupOrder: [] as string[],
+  modes: {} as Record<string, string[]>,
+  modeOrder: [] as string[],
+  activeMode: null as string | null,
   /** Stands in for the channel line of state.json; undefined = never chosen. */
   channel: undefined as 'stable' | 'beta' | 'dev' | undefined,
   region: undefined as 'global' | 'china' | undefined,
@@ -560,6 +563,7 @@ vi.mock('../src/hot.ts', async (importOriginal) => ({
   writeDisabled: (_dir: string, set: Set<string>) => { hot.disabled = new Set(set) },
   readMarketState: () => ({
     disabled: hot.disabled, groups: hot.groups, groupOrder: hot.groupOrder,
+    modes: hot.modes, modeOrder: hot.modeOrder, activeMode: hot.activeMode,
     channel: hot.channel, region: hot.region, regionAuto: hot.regionAuto,
     githubProxy: hot.githubProxy,
     notes: hot.notes, favorites: hot.favorites, blocked: hot.blocked,
@@ -568,9 +572,13 @@ vi.mock('../src/hot.ts', async (importOriginal) => ({
   // Carries `channel` because the real one does. A stand-in that silently
   // drops a field cannot fail when the code under test forgets to persist
   // it — which is exactly how the channel choice reached this suite with
-  // zero coverage while four route tests passed. Same rule for `buildEnv`.
+  // zero coverage while four route tests passed. Same rule for `buildEnv`,
+  // and same rule for `modes` (a dropped field here would make every route
+  // that writes state throw on Object.keys(undefined), which is a loud
+  // failure — but a dropped field would also hide a genuine drop).
   writeMarketState: (_dir: string, state: {
     disabled: Set<string>; groups: Record<string, string[]>; groupOrder: string[]
+    modes: Record<string, string[]>; modeOrder: string[]
     channel?: 'stable' | 'beta' | 'dev'; region?: 'global' | 'china'; regionAuto?: true
     githubProxy?: string
     notes?: Record<string, string>; favorites?: string[]; blocked?: string[]
@@ -579,6 +587,9 @@ vi.mock('../src/hot.ts', async (importOriginal) => ({
     hot.disabled = new Set(state.disabled)
     hot.groups = state.groups
     hot.groupOrder = state.groupOrder
+    hot.modes = state.modes
+    hot.modeOrder = state.modeOrder
+    if (Object.prototype.hasOwnProperty.call(state, 'activeMode')) hot.activeMode = state.activeMode ?? null
     hot.channel = state.channel
     hot.buildEnv = state.buildEnv
     if (Object.prototype.hasOwnProperty.call(state, 'region')) hot.region = state.region
@@ -5846,6 +5857,190 @@ describe('custom groups (#60)', () => {
     const off = await bed.dispatch('POST', '/dsh-market/groups', { action: 'toggle', name: 'looks', enabled: false })
     expect(off.status).toBe(200)
     expect(hot.disabled.has('theme-a')).toBe(true)
+  })
+})
+
+describe('modes', () => {
+  async function seedMembers(): Promise<void> {
+    fake.npm['dsh-loop'] = {
+      latest: '1.0.0',
+      versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } },
+    }
+    fake.npm['dsh-share'] = {
+      latest: '0.2.0',
+      versions: { '0.2.0': { manifest: { dsh: {}, main: 'index.js' }, artifacts: ['index.js'] } },
+    }
+    fake.npm['dsh-notify'] = {
+      latest: '0.3.0',
+      versions: { '0.3.0': { manifest: { dsh: {}, main: 'index.js' }, artifacts: ['index.js'] } },
+    }
+    await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
+    await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/h/dsh-share' })
+    await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/n/dsh-notify' })
+  }
+
+  /**
+   * Put a host infrastructure package in the profile.
+   *
+   * Written straight to the profile rather than installed, because that IS
+   * the shape it arrives in: base bundles are the profile's own dependencies,
+   * so the market lists them from the first boot and may never switch them.
+   * The curated-registry gate would (correctly) refuse to install one.
+   */
+  function seedProtected(): void {
+    const manifestPath = join(fake.profileDir, 'package.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    manifest.dependencies['@deepseek-ai/dsh-web'] = '^0.0.1-rc.1'
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+    const dir = join(fake.profileDir, 'node_modules', '@deepseek-ai', 'dsh-web')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({
+      name: '@deepseek-ai/dsh-web',
+      version: '0.0.1-rc.1',
+      main: 'index.js',
+    }))
+  }
+
+  it('create/rename/delete keeps modes, modeOrder and activeMode consistent', async () => {
+    const created = await bed.dispatch('POST', '/dsh-market/modes', { action: 'create', name: '科研' })
+    expect(created.status).toBe(200)
+    expect(created.json.modes).toEqual({ 科研: [] })
+    expect(created.json.modeOrder).toEqual(['科研'])
+    expect(created.json.activeMode).toBeNull()
+
+    expect((await bed.dispatch('POST', '/dsh-market/modes', { action: 'create', name: '科研' })).status).toBe(400)
+    expect((await bed.dispatch('POST', '/dsh-market/modes', { action: 'create', name: '../evil' })).status).toBe(400)
+
+    // Renaming the mode in force must move the selection with it, or the
+    // picker would point at a name that no longer exists.
+    await bed.dispatch('POST', '/dsh-market/modes', { action: 'activate', name: '科研' })
+    const renamed = await bed.dispatch('POST', '/dsh-market/modes', { action: 'rename', name: '科研', newName: '论文' })
+    expect(renamed.status).toBe(200)
+    expect(renamed.json.modes).toEqual({ 论文: [] })
+    expect(renamed.json.modeOrder).toEqual(['论文'])
+    expect(renamed.json.activeMode).toBe('论文')
+
+    const deleted = await bed.dispatch('POST', '/dsh-market/modes', { action: 'delete', name: '论文' })
+    expect(deleted.status).toBe(200)
+    expect(deleted.json.modes).toEqual({})
+    expect(deleted.json.activeMode).toBeNull()
+    expect((await bed.dispatch('POST', '/dsh-market/modes', { action: 'delete', name: 'ghost' })).status).toBe(400)
+    expect((await bed.dispatch('POST', '/dsh-market/modes', { action: 'explode' })).status).toBe(400)
+  })
+
+  it('set-members keeps only installed plugins, and uninstall prunes membership', async () => {
+    await seedMembers()
+    await bed.dispatch('POST', '/dsh-market/modes', { action: 'create', name: '编程' })
+    const set = await bed.dispatch('POST', '/dsh-market/modes', {
+      action: 'set-members', name: '编程', members: ['dsh-loop', 'dsh-share', 'ghost', 'dshmarket'],
+    })
+    expect(set.status).toBe(200)
+    expect(set.json.modes['编程'].sort()).toEqual(['dsh-loop', 'dsh-share'])
+    expect(set.json.modes['编程']).not.toContain('dshmarket')
+
+    await bed.dispatch('POST', '/dsh-market/uninstall', { name: 'dsh-loop' })
+    const listed = await bed.dispatch('GET', '/dsh-market/installed')
+    expect(listed.json.modes['编程']).toEqual(['dsh-share'])
+    // The client reads the modes from the same listing it reads plugins from.
+    expect(listed.json.modeOrder).toEqual(['编程'])
+  })
+
+  it('activating a mode opens its members and closes every other mode', async () => {
+    await seedMembers()
+    await bed.dispatch('POST', '/dsh-market/modes', { action: 'create', name: '编程' })
+    await bed.dispatch('POST', '/dsh-market/modes', { action: 'create', name: '科研' })
+    // dsh-notify is in both — the shared plugin that must survive the switch.
+    await bed.dispatch('POST', '/dsh-market/modes', { action: 'set-members', name: '编程', members: ['dsh-loop', 'dsh-notify'] })
+    await bed.dispatch('POST', '/dsh-market/modes', { action: 'set-members', name: '科研', members: ['dsh-share', 'dsh-notify'] })
+
+    // A fresh install leaves everything on, so the first switch's real work is
+    // closing the other mode.
+    const on = await bed.dispatch('POST', '/dsh-market/modes', { action: 'activate', name: '编程' })
+    expect(on.status).toBe(200)
+    expect(on.json.activeMode).toBe('编程')
+    expect(on.json.turnedOn).toEqual([])
+    expect(on.json.turnedOff).toEqual(['dsh-share'])
+    expect(hot.disabled).toEqual(new Set(['dsh-share']))
+
+    const over = await bed.dispatch('POST', '/dsh-market/modes', { action: 'activate', name: '科研' })
+    expect(over.status).toBe(200)
+    expect(over.json.activeMode).toBe('科研')
+    expect(over.json.turnedOn).toEqual(['dsh-share'])
+    expect(over.json.turnedOff).toEqual(['dsh-loop'])
+    // The plugin both modes list was in neither list, and is still on.
+    expect(hot.disabled).toEqual(new Set(['dsh-loop']))
+    expect(hot.disabled.has('dsh-notify')).toBe(false)
+  })
+
+  it('never touches a plugin that is in no mode', async () => {
+    await seedMembers()
+    await bed.dispatch('POST', '/dsh-market/modes', { action: 'create', name: '科研' })
+    await bed.dispatch('POST', '/dsh-market/modes', { action: 'set-members', name: '科研', members: ['dsh-share'] })
+    // dsh-loop and dsh-notify are installed and in NO mode. Switching must not
+    // turn them on, and must not take back a switch the user made by hand.
+    await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-loop', enabled: false })
+    expect(hot.disabled.has('dsh-loop')).toBe(true)
+
+    const on = await bed.dispatch('POST', '/dsh-market/modes', { action: 'activate', name: '科研' })
+    expect(on.status).toBe(200)
+    expect(on.json.turnedOn).toEqual([])
+    expect(on.json.turnedOff).toEqual([])
+    expect(hot.disabled.has('dsh-loop')).toBe(true)
+    expect(hot.disabled.has('dsh-notify')).toBe(false)
+  })
+
+  it('deactivating closes the active mode and leaves other modes alone', async () => {
+    await seedMembers()
+    await bed.dispatch('POST', '/dsh-market/modes', { action: 'create', name: '编程' })
+    await bed.dispatch('POST', '/dsh-market/modes', { action: 'create', name: '科研' })
+    await bed.dispatch('POST', '/dsh-market/modes', { action: 'set-members', name: '编程', members: ['dsh-loop'] })
+    await bed.dispatch('POST', '/dsh-market/modes', { action: 'set-members', name: '科研', members: ['dsh-share'] })
+    await bed.dispatch('POST', '/dsh-market/modes', { action: 'activate', name: '编程' })
+
+    const off = await bed.dispatch('POST', '/dsh-market/modes', { action: 'deactivate' })
+    expect(off.status).toBe(200)
+    expect(off.json.activeMode).toBeNull()
+    expect(off.json.turnedOff).toEqual(['dsh-loop'])
+    // 科研's member was already off — "no mode" turns off the mode you were
+    // in, it does not flatten every mode you own.
+    expect(hot.disabled.has('dsh-share')).toBe(true)
+  })
+
+  it('drops host infrastructure instead of building a switch that cannot move it', async () => {
+    await seedMembers()
+    seedProtected()
+    const installed = (await bed.dispatch('GET', '/dsh-market/installed')).json
+    expect(Object.keys(installed.installed)).toContain('@deepseek-ai/dsh-web')
+    // The client needs the list to mark these rows unselectable.
+    expect(installed.protected).toEqual(['@deepseek-ai/dsh-web'])
+
+    await bed.dispatch('POST', '/dsh-market/modes', { action: 'create', name: '编程' })
+    const set = await bed.dispatch('POST', '/dsh-market/modes', {
+      action: 'set-members', name: '编程', members: ['dsh-loop', '@deepseek-ai/dsh-web'],
+    })
+    expect(set.status).toBe(200)
+    expect(set.json.modes['编程']).toEqual(['dsh-loop'])
+  })
+
+  it('a group holding host infrastructure can no longer switch it off (#infrastructure)', async () => {
+    await seedMembers()
+    seedProtected()
+    // A group built before the rule existed. The route captured the `hot`
+    // state object at boot, so adding a key in place (rather than replacing
+    // the object) is what a state.json from the old build projects — and it
+    // must not be able to take the HMR chain down.
+    hot.groups.legacy = ['dsh-loop', '@deepseek-ai/dsh-web']
+    const off = await bed.dispatch('POST', '/dsh-market/groups', { action: 'toggle', name: 'legacy', enabled: false })
+    expect(off.status).toBe(200)
+    expect(off.json.disabled).toEqual(['dsh-loop'])
+    expect(off.json.skippedProtected).toEqual(['@deepseek-ai/dsh-web'])
+    expect(hot.disabled.has('@deepseek-ai/dsh-web')).toBe(false)
+  })
+
+  it('refuses cross-origin requests', async () => {
+    const created = await bed.dispatch('POST', '/dsh-market/modes', { action: 'create', name: '科研' }, { crossOrigin: true })
+    expect(created.status).toBe(403)
+    expect((await bed.dispatch('GET', '/dsh-market/modes')).status).toBe(405)
   })
 })
 

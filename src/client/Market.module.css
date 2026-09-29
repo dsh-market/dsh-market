@@ -761,6 +761,15 @@
 .groupAddPick .nm{font-size:12px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .groupAddFooterMeta{margin-right:auto;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#6b7280);align-self:center}
 .groupOrgHint{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#8b93a1);margin:4px 0 0}
+/* The current-mode picker sits above the mode list: it is the mode's control,
+   and the rows below it hold membership. */
+.modeBar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 10px}
+/* What the last batch switch did. Quiet on purpose — it is a receipt, not an
+   alert — and it goes away on the next switch or when dismissed. */
+.viewNotice{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;background:var(--dsw-alias-bg-layer-2,#f2f4f7);margin:0 0 10px}
+.viewNoticeText{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#4b5563);min-width:0;flex:1}
+.modeCurrentBadge{font-size:11px;line-height:16px;padding:1px 6px;border-radius:6px;background:var(--dsw-alias-bg-layer-3,#e5e8ee);color:var(--dsw-alias-label-secondary,#4b5563);flex-shrink:0}
+.groupImportChips{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .groupRenameField{display:flex;flex-direction:column;gap:6px;min-width:min(100%,320px)}
 .groupRenameField label{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#6b7280)}
 .groupRenameField .inlineInput{width:100%}

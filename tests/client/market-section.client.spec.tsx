@@ -50,11 +50,12 @@ function stubFetch(overrides: Record<string, unknown> = {}, mountPath = '') {
             status: 'unknown', basis: 'undeclared', requirement: null, declarations: [],
           }])),
         }
-      : route === '/dsh-market/installed' ? { profile: 'web', installed: {}, live: [], disabled: [], groups: {}, groupOrder: [], favorites: [], blocked: [] }
+      : route === '/dsh-market/installed' ? { profile: 'web', installed: {}, live: [], disabled: [], groups: {}, groupOrder: [], modes: {}, modeOrder: [], activeMode: null, protected: [], favorites: [], blocked: [] }
       : route === '/dsh-market/status' ? { active: false, pnpm: true, boot: 'boot-1', restart: true, installed: {} }
       : route === '/dsh-market/updates' ? { updates: {} }
       : route === '/dsh-market/toggle' ? { ok: true, disabled: [], live: [], activation: {} }
       : route === '/dsh-market/groups' ? { ok: true, groups: {}, groupOrder: [], disabled: [] }
+      : route === '/dsh-market/modes' ? { ok: true, modes: {}, modeOrder: [], activeMode: null, disabled: [] }
       : route === '/dsh-market/favorite' ? { ok: true, favorites: [] }
       : route === '/dsh-market/block' ? { ok: true, blocked: [] }
       : null
@@ -5965,5 +5966,245 @@ describe('catalog version in discover byline (#348)', () => {
     fireEvent.mouseEnter(mark)
     const tip = await screen.findByText(/updates daily/)
     expect(tip.textContent).not.toMatch(/\(\)/)
+  })
+})
+
+describe('modes view', () => {
+  /**
+   * Stateful fake mirroring src/modes.ts, exclusivity included.
+   *
+   * ECHOING A PAYLOAD WOULD TEST NOTHING HERE: the modes view exists to make
+   * "switching one mode moves the others" legible, so the fake has to actually
+   * move them — otherwise the spec would pass with a view that never switches
+   * anything.
+   */
+  function makeFake(installed: Record<string, string>, protectedNames: string[] = []) {
+    const state = {
+      disabled: [] as string[],
+      modes: {} as Record<string, string[]>,
+      modeOrder: [] as string[],
+      activeMode: null as string | null,
+    }
+    const activation: Record<string, unknown> = {}
+    for (const name of Object.keys(installed)) {
+      activation[name] = { state: 'live', reasons: [], bundle: true, hot: true }
+    }
+    const keep = (names: unknown): string[] => (Array.isArray(names) ? names : [])
+      .filter((name): name is string => typeof name === 'string')
+      .filter(name => installed[name] !== undefined && !protectedNames.includes(name))
+    stubFetch({
+      '/dsh-market/installed': () => ({
+        profile: 'web',
+        installed,
+        live: [],
+        disabled: [...state.disabled],
+        modes: JSON.parse(JSON.stringify(state.modes)),
+        modeOrder: [...state.modeOrder],
+        activeMode: state.activeMode,
+        protected: protectedNames,
+        activation,
+      }),
+      '/dsh-market/toggle': (body: any) => {
+        const index = state.disabled.indexOf(body.name)
+        if (body.enabled === true && index !== -1) state.disabled.splice(index, 1)
+        if (body.enabled === false && index === -1) state.disabled.push(body.name)
+        return { ok: true, disabled: [...state.disabled], live: [], activation: {} }
+      },
+      '/dsh-market/modes': (body: any) => {
+        let turnedOn: string[] = []
+        let turnedOff: string[] = []
+        if (body.action === 'create') {
+          state.modes[body.name] = []
+          state.modeOrder.push(body.name)
+        } else if (body.action === 'rename') {
+          state.modes[body.newName] = state.modes[body.name] ?? []
+          delete state.modes[body.name]
+          const index = state.modeOrder.indexOf(body.name)
+          if (index !== -1) state.modeOrder[index] = body.newName
+          if (state.activeMode === body.name) state.activeMode = body.newName
+        } else if (body.action === 'delete') {
+          delete state.modes[body.name]
+          state.modeOrder = state.modeOrder.filter(name => name !== body.name)
+          if (state.activeMode === body.name) state.activeMode = null
+        } else if (body.action === 'set-members') {
+          state.modes[body.name] = keep(body.members)
+        } else if (body.action === 'activate') {
+          const target = new Set(keep(state.modes[body.name]))
+          const owned = new Set(state.modeOrder.flatMap(name => keep(state.modes[name])))
+          turnedOn = [...target].filter(name => state.disabled.includes(name))
+          turnedOff = [...owned].filter(name => !target.has(name) && !state.disabled.includes(name))
+          for (const name of turnedOn) state.disabled.splice(state.disabled.indexOf(name), 1)
+          for (const name of turnedOff) state.disabled.push(name)
+          state.activeMode = body.name
+        } else if (body.action === 'deactivate') {
+          turnedOff = keep(state.activeMode === null ? [] : state.modes[state.activeMode])
+            .filter(name => !state.disabled.includes(name))
+          for (const name of turnedOff) state.disabled.push(name)
+          state.activeMode = null
+        }
+        return {
+          ok: true,
+          modes: JSON.parse(JSON.stringify(state.modes)),
+          modeOrder: [...state.modeOrder],
+          activeMode: state.activeMode,
+          disabled: [...state.disabled],
+          turnedOn,
+          turnedOff,
+          restartMembers: [],
+          refreshMembers: [],
+          skippedProtected: [],
+        }
+      },
+    })
+    return state
+  }
+
+  async function openModesView(): Promise<void> {
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    fireEvent.click(await screen.findByRole('button', { name: en.tabModes }))
+  }
+
+  it('creates a mode, adds plugins from the picker, and switches with the current-mode menu', async () => {
+    const state = makeFake({ 'dsh-loop': '^1.0.0', 'dsh-notify': '^1.0.0' })
+    // Both start switched off, so the first switch has something to open and
+    // the receipt has something to say.
+    state.disabled = ['dsh-loop', 'dsh-notify']
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    await openModesView()
+    expect(await screen.findByText(en.modeEmptyState)).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: en.modeNew }))
+    fireEvent.change(screen.getByPlaceholderText(en.modeNamePh), { target: { value: '编程' } })
+    fireEvent.click(screen.getByRole('button', { name: en.groupCreate }))
+    expect(await screen.findByText('编程')).toBeTruthy()
+
+    // Add both plugins through the mode's own picker.
+    const modeRow = screen.getByText('编程').closest('[class*="groupRow"]') as HTMLElement
+    fireEvent.click(within(modeRow).getByRole('button', { name: en.modeAdd }))
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.click(within(dialog).getAllByRole('checkbox')[0]!)
+    fireEvent.click(within(dialog).getAllByRole('checkbox')[1]!)
+    fireEvent.click(within(dialog).getByRole('button', { name: en.modeAddConfirm.replace('{0}', '2') }))
+    await waitFor(() => expect(state.modes['编程']).toEqual(['dsh-loop', 'dsh-notify']))
+
+    // The picker starts at "no mode" and switching is one item away.
+    const picker = screen.getByRole('button', { name: en.modeCurrentLabel.replace('{0}', en.modeCurrentNone) })
+    fireEvent.click(picker)
+    fireEvent.click(await screen.findByRole('menuitem', { name: '编程' }))
+    await waitFor(() => expect(state.activeMode).toBe('编程'))
+    // The receipt: what the switch did, in the user's own counts.
+    expect(await screen.findByText(en.modeSwitched.replace('{0}', '编程').replace('{1}', '2').replace('{2}', '0'))).toBeTruthy()
+  })
+
+  it('a plugin can join a second mode without leaving the first', async () => {
+    const state = makeFake({ 'dsh-loop': '^1.0.0', 'dsh-share': '^1.0.0' })
+    state.modes['编程'] = ['dsh-loop']
+    state.modes['科研'] = ['dsh-share']
+    state.modeOrder.push('编程', '科研')
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    await openModesView()
+
+    // Multi-membership is why a shared plugin survives a switch, so it has to
+    // be reachable from the plugin's own row, not only from a mode.
+    const loopRow = screen.getByText('dsh-loop').closest('[class*="groupMember"]') as HTMLElement
+    fireEvent.click(within(loopRow).getByRole('button', { name: en.modeAssign }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: '科研' }))
+    await waitFor(() => expect(state.modes['科研'].slice().sort()).toEqual(['dsh-loop', 'dsh-share']))
+    expect(state.modes['编程']).toEqual(['dsh-loop'])
+  })
+
+  it('switching to another mode turns the first mode own plugins off', async () => {
+    const state = makeFake({ 'dsh-loop': '^1.0.0', 'dsh-share': '^1.0.0' })
+    state.modes['编程'] = ['dsh-loop']
+    state.modes['科研'] = ['dsh-share']
+    state.modeOrder.push('编程', '科研')
+    state.activeMode = '编程'
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    await openModesView()
+
+    fireEvent.click(screen.getByRole('button', { name: en.modeCurrentLabel.replace('{0}', '编程') }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: '科研' }))
+    await waitFor(() => expect(state.disabled).toEqual(['dsh-loop']))
+    // And the receipt says both halves, in plain counts. 科研's member was
+    // already on, so only the closing half happened.
+    expect(await screen.findByText(en.modeSwitched.replace('{0}', '科研').replace('{1}', '0').replace('{2}', '1'))).toBeTruthy()
+  })
+
+  it('offers no-mode, and it closes only the mode you were in', async () => {
+    const state = makeFake({ 'dsh-loop': '^1.0.0', 'dsh-share': '^1.0.0' })
+    state.modes['编程'] = ['dsh-loop']
+    state.modes['科研'] = ['dsh-share']
+    state.modeOrder.push('编程', '科研')
+    state.activeMode = '编程'
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    await openModesView()
+
+    fireEvent.click(screen.getByRole('button', { name: en.modeCurrentLabel.replace('{0}', '编程') }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: en.modeCurrentNone }))
+    await waitFor(() => expect(state.activeMode).toBeNull())
+    expect(state.disabled).toEqual(['dsh-loop'])
+    expect(await screen.findByText(en.modeSwitchedNone.replace('{0}', '1'))).toBeTruthy()
+  })
+
+  it('lists host infrastructure in the picker as unselectable, with the reason', async () => {
+    makeFake({ 'dsh-loop': '^1.0.0', '@deepseek-ai/dsh-web': '^0.0.1' }, ['@deepseek-ai/dsh-web'])
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    await openModesView()
+
+    fireEvent.click(screen.getByRole('button', { name: en.modeNew }))
+    fireEvent.change(screen.getByPlaceholderText(en.modeNamePh), { target: { value: '编程' } })
+    fireEvent.click(screen.getByRole('button', { name: en.groupCreate }))
+    const modeRow = (await screen.findByText('编程')).closest('[class*="groupRow"]') as HTMLElement
+    fireEvent.click(within(modeRow).getByRole('button', { name: en.modeAdd }))
+    const dialog = await screen.findByRole('dialog')
+
+    // Present, disabled, and explained — a plugin the user installed that
+    // simply vanished from the list would be a question the panel created.
+    const infraPick = within(dialog).getByText('@deepseek-ai/dsh-web').closest('label') as HTMLElement
+    expect((within(infraPick).getByRole('checkbox') as HTMLInputElement).disabled).toBe(true)
+    expect(within(infraPick).getByText(en.modeProtected)).toBeTruthy()
+    expect((within(dialog).getByText('dsh-loop').closest('label')!.querySelector('input') as HTMLInputElement).disabled).toBe(false)
+  })
+})
+
+describe('a batch switch that skipped something says so', () => {
+  it('names the host infrastructure member a legacy group cannot move', async () => {
+    stubFetch({
+      '/dsh-market/installed': {
+        profile: 'web',
+        installed: { 'dsh-loop': '^1.0.0', '@deepseek-ai/dsh-web': '^0.0.1' },
+        live: [],
+        disabled: [],
+        groups: { legacy: ['dsh-loop', '@deepseek-ai/dsh-web'] },
+        groupOrder: ['legacy'],
+        modes: {},
+        modeOrder: [],
+        activeMode: null,
+        protected: ['@deepseek-ai/dsh-web'],
+      },
+      '/dsh-market/groups': {
+        ok: true,
+        groups: { legacy: ['dsh-loop', '@deepseek-ai/dsh-web'] },
+        groupOrder: ['legacy'],
+        disabled: ['dsh-loop'],
+        skippedProtected: ['@deepseek-ai/dsh-web'],
+      },
+    })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    fireEvent.click(await screen.findByRole('button', { name: en.tabGroups }))
+
+    const row = (await screen.findByText('legacy')).closest('[class*="groupRow"]') as HTMLElement
+    // The row switch comes before the per-member ones in the DOM.
+    fireEvent.click(within(row).getAllByRole('switch')[0]!)
+    // A member that just stays where it was reads as a dead switch; the
+    // receipt is what turns it into a deliberate skip.
+    expect(await screen.findByText(en.protectedSkipped.replace('{0}', '1'))).toBeTruthy()
   })
 })

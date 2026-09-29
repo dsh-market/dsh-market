@@ -70,15 +70,15 @@ describe('market state.json (#60)', () => {
    * partial snapshot dropped a field nobody was thinking about. */
   it('a partial write keeps notes that the caller never mentioned', () => {
     const dir = stateDir()
-    writeMarketState(dir, { disabled: new Set(['a']), groups: {}, groupOrder: [], notes: { 'dsh-loop': 'mine' } })
+    writeMarketState(dir, { disabled: new Set(['a']), groups: {}, groupOrder: [], modes: {}, modeOrder: [], notes: { 'dsh-loop': 'mine' } })
     expect(readMarketState(dir).notes).toEqual({ 'dsh-loop': 'mine' })
 
     // A caller that knows nothing about notes.
-    writeMarketState(dir, { disabled: new Set(['a', 'b']), groups: {}, groupOrder: [] })
+    writeMarketState(dir, { disabled: new Set(['a', 'b']), groups: {}, groupOrder: [], modes: {}, modeOrder: [] })
     expect(readMarketState(dir).notes).toEqual({ 'dsh-loop': 'mine' })
 
     // Only an explicit empty object clears them.
-    writeMarketState(dir, { disabled: new Set(), groups: {}, groupOrder: [], notes: {} })
+    writeMarketState(dir, { disabled: new Set(), groups: {}, groupOrder: [], modes: {}, modeOrder: [], notes: {} })
     expect(readMarketState(dir).notes).toEqual({})
   })
 
@@ -94,7 +94,7 @@ describe('market state.json (#60)', () => {
     const dir = stateDir()
     try {
       writeMarketState(dir, {
-        disabled: new Set(), groups: {}, groupOrder: [],
+        disabled: new Set(), groups: {}, groupOrder: [], modes: {}, modeOrder: [],
         favorites: [
           'https://github.com/o/a',
           'https://github.com/o/a',
@@ -118,15 +118,15 @@ describe('market state.json (#60)', () => {
     const dir = stateDir()
     try {
       writeMarketState(dir, {
-        disabled: new Set(), groups: {}, groupOrder: [],
+        disabled: new Set(), groups: {}, groupOrder: [], modes: {}, modeOrder: [],
         blocked: ['dsh-loop', 'dsh-notify'],
       })
       expect(readMarketState(dir).blocked).toEqual(['dsh-loop', 'dsh-notify'])
 
-      writeMarketState(dir, { disabled: new Set(['a']), groups: {}, groupOrder: [] })
+      writeMarketState(dir, { disabled: new Set(['a']), groups: {}, groupOrder: [], modes: {}, modeOrder: [] })
       expect(readMarketState(dir).blocked).toEqual(['dsh-loop', 'dsh-notify'])
 
-      writeMarketState(dir, { disabled: new Set(), groups: {}, groupOrder: [], blocked: [] })
+      writeMarketState(dir, { disabled: new Set(), groups: {}, groupOrder: [], modes: {}, modeOrder: [], blocked: [] })
       expect(readMarketState(dir).blocked).toEqual([])
       expect('blocked' in readRaw(dir)).toBe(false)
     } finally {
@@ -138,7 +138,7 @@ describe('market state.json (#60)', () => {
     const dir = stateDir()
     try {
       writeMarketState(dir, {
-        disabled: new Set(), groups: {}, groupOrder: [],
+        disabled: new Set(), groups: {}, groupOrder: [], modes: {}, modeOrder: [],
         blocked: ['dsh-loop', 'dsh-loop', '', 'dsh-notify'],
       })
       expect(readMarketState(dir).blocked).toEqual(['dsh-loop', 'dsh-notify'])
@@ -157,7 +157,7 @@ describe('market state.json (#60)', () => {
     const dir = stateDir()
     try {
       writeFileSync(join(dir, '.dsh-market', 'state.json'), 'not json')
-      expect(readMarketState(dir)).toEqual({ disabled: new Set(), groups: {}, groupOrder: [], notes: {}, favorites: [], blocked: [] })
+      expect(readMarketState(dir)).toEqual({ disabled: new Set(), groups: {}, groupOrder: [], modes: {}, modeOrder: [], activeMode: null, notes: {}, favorites: [], blocked: [] })
       writeFileSync(join(dir, '.dsh-market', 'state.json'), JSON.stringify({
         disabled: ['a', 'a', '', 7],
         groups: { work: ['x', 'x', 3] },
@@ -178,7 +178,7 @@ describe('market state.json (#60)', () => {
     // stand-in cannot vouch for the writer it stands in for.
     const dir = stateDir()
     try {
-      const base = { disabled: new Set(['dsh-loop']), groups: { work: ['dsh-loop'] }, groupOrder: ['work'] }
+      const base = { disabled: new Set(['dsh-loop']), groups: { work: ['dsh-loop'] }, groupOrder: ['work'], modes: {}, modeOrder: [] }
       writeMarketState(dir, { ...base, channel: 'beta' })
       expect(readRaw(dir).channel).toBe('beta')
       expect(readMarketState(dir).channel).toBe('beta')
@@ -203,7 +203,7 @@ describe('market state.json (#60)', () => {
     // user and then claim they had answered it.
     const dir = stateDir()
     try {
-      writeMarketState(dir, { disabled: new Set(), groups: {}, groupOrder: [] })
+      writeMarketState(dir, { disabled: new Set(), groups: {}, groupOrder: [], modes: {}, modeOrder: [] })
       expect('channel' in readRaw(dir)).toBe(false)
       expect(readMarketState(dir).channel).toBeUndefined()
 
@@ -220,7 +220,7 @@ describe('market state.json (#60)', () => {
     // back. Every field it fails to carry is erased by an unrelated click.
     const dir = stateDir()
     try {
-      writeMarketState(dir, { disabled: new Set(), groups: {}, groupOrder: [], channel: 'beta' })
+      writeMarketState(dir, { disabled: new Set(), groups: {}, groupOrder: [], modes: {}, modeOrder: [], channel: 'beta' })
       writeDisabled(dir, new Set(['theme-a']))
       expect(readMarketState(dir).channel).toBe('beta')
     } finally {
@@ -231,7 +231,7 @@ describe('market state.json (#60)', () => {
   it('persists a saved build environment and forgives junk on the way in (#336)', () => {
     const dir = stateDir()
     try {
-      const base = { disabled: new Set(), groups: {}, groupOrder: [] }
+      const base = { disabled: new Set(), groups: {}, groupOrder: [], modes: {}, modeOrder: [] }
       writeMarketState(dir, { ...base, buildEnv: { CC: '/usr/bin/gcc-11', CXX: '/usr/bin/g++-11' } })
       expect(readRaw(dir).buildEnv).toEqual({ CC: '/usr/bin/gcc-11', CXX: '/usr/bin/g++-11' })
       expect(readMarketState(dir).buildEnv).toEqual({ CC: '/usr/bin/gcc-11', CXX: '/usr/bin/g++-11' })
@@ -250,7 +250,7 @@ describe('market state.json (#60)', () => {
   it('an absent or emptied build environment is absent, not a blank override', () => {
     const dir = stateDir()
     try {
-      writeMarketState(dir, { disabled: new Set(), groups: {}, groupOrder: [] })
+      writeMarketState(dir, { disabled: new Set(), groups: {}, groupOrder: [], modes: {}, modeOrder: [] })
       expect('buildEnv' in readRaw(dir)).toBe(false)
       expect(readMarketState(dir).buildEnv).toBeUndefined()
       // An all-junk map on disk reads as "never saved" — the composition
@@ -273,12 +273,12 @@ describe('a partial write must not erase the rest of the state (#435)', () => {
     // always the caller having nothing to say.
     const dir = stateDir()
     writeMarketState(dir, {
-      disabled: new Set(), groups: {}, groupOrder: [],
+      disabled: new Set(), groups: {}, groupOrder: [], modes: {}, modeOrder: [],
       notes: { alpha: 'my note' }, channel: 'beta', region: 'china',
     })
 
     const before = readMarketState(dir)
-    writeMarketState(dir, { disabled: new Set(['x']), groups: before.groups, groupOrder: before.groupOrder })
+    writeMarketState(dir, { disabled: new Set(['x']), groups: before.groups, groupOrder: before.groupOrder, modes: before.modes, modeOrder: before.modeOrder })
 
     const after = readMarketState(dir)
     expect(after.channel).toBe('beta')
@@ -293,7 +293,7 @@ describe('a partial write must not erase the rest of the state (#435)', () => {
     // note route re-reads first, so its empty object is a real statement
     // about the world rather than a stale one.
     const dir = stateDir()
-    writeMarketState(dir, { disabled: new Set(), groups: {}, groupOrder: [], notes: { only: 'note' } })
+    writeMarketState(dir, { disabled: new Set(), groups: {}, groupOrder: [], modes: {}, modeOrder: [], notes: { only: 'note' } })
     const current = readMarketState(dir)
     writeMarketState(dir, { ...current, notes: {} })
 
@@ -304,11 +304,11 @@ describe('a partial write must not erase the rest of the state (#435)', () => {
   it('keeps favorites when a partial write only touches disabled/groups', () => {
     const dir = stateDir()
     writeMarketState(dir, {
-      disabled: new Set(), groups: {}, groupOrder: [],
+      disabled: new Set(), groups: {}, groupOrder: [], modes: {}, modeOrder: [],
       favorites: ['https://github.com/o/dsh-loop'],
     })
 
-    writeMarketState(dir, { disabled: new Set(['x']), groups: {}, groupOrder: [] })
+    writeMarketState(dir, { disabled: new Set(['x']), groups: {}, groupOrder: [], modes: {}, modeOrder: [] })
 
     expect(readMarketState(dir).favorites).toEqual(['https://github.com/o/dsh-loop'])
     rmSync(dir, { recursive: true, force: true })
@@ -318,7 +318,7 @@ describe('a partial write must not erase the rest of the state (#435)', () => {
     // An absent region is what makes the probe run at boot; writing a
     // default here would mean it never does.
     const dir = stateDir()
-    writeMarketState(dir, { disabled: new Set(['a']), groups: {}, groupOrder: [] })
+    writeMarketState(dir, { disabled: new Set(['a']), groups: {}, groupOrder: [], modes: {}, modeOrder: [] })
 
     const written = JSON.parse(readFileSync(join(dir, '.dsh-market', 'state.json'), 'utf8')) as Record<string, unknown>
     expect('channel' in written).toBe(false)
@@ -330,11 +330,11 @@ describe('a partial write must not erase the rest of the state (#435)', () => {
     const dir = stateDir()
     try {
       writeMarketState(dir, {
-        disabled: new Set(), groups: {}, groupOrder: [], region: 'china', regionAuto: true,
+        disabled: new Set(), groups: {}, groupOrder: [], modes: {}, modeOrder: [], region: 'china', regionAuto: true,
       })
 
       // Partial writers still omit the field and must preserve the marker.
-      writeMarketState(dir, { disabled: new Set(['dsh-loop']), groups: {}, groupOrder: [] })
+      writeMarketState(dir, { disabled: new Set(['dsh-loop']), groups: {}, groupOrder: [], modes: {}, modeOrder: [] })
       expect(readMarketState(dir).regionAuto).toBe(true)
 
       // The manual-region route spreads the current state, changes region,
@@ -355,11 +355,11 @@ describe('a partial write must not erase the rest of the state (#435)', () => {
     const dir = stateDir()
     try {
       writeMarketState(dir, {
-        disabled: new Set(), groups: {}, groupOrder: [], githubProxy: 'https://mirror.example/prefix/',
+        disabled: new Set(), groups: {}, groupOrder: [], modes: {}, modeOrder: [], githubProxy: 'https://mirror.example/prefix/',
       })
       expect(readMarketState(dir).githubProxy).toBe('https://mirror.example/prefix')
 
-      writeMarketState(dir, { disabled: new Set(['dsh-loop']), groups: {}, groupOrder: [] })
+      writeMarketState(dir, { disabled: new Set(['dsh-loop']), groups: {}, groupOrder: [], modes: {}, modeOrder: [] })
       expect(readMarketState(dir).githubProxy).toBe('https://mirror.example/prefix')
 
       const current = readMarketState(dir)
@@ -417,6 +417,22 @@ describe('group CRUD (groups.ts)', () => {
     expect(state.groups.work).toEqual(['dsh-loop'])
     expect(setGroupMembers(state, 'ghost', [], installed, themes).ok).toBe(false)
     expect(setGroupMembers(state, 'work', 'nope', installed, themes).ok).toBe(false)
+  })
+
+  it('set-members drops host infrastructure, which no batch switch may move', () => {
+    // The row is refused at the source so a group cannot claim a member the
+    // switch will skip. Groups built before this rule keep their rows — the
+    // route reports them as skippedProtected instead of moving them.
+    const state = { groups: { work: [] }, groupOrder: ['work'] }
+    const installed = new Set(['dsh-loop', '@deepseek-ai/dsh-web'])
+    const themes = new Set<string>()
+    const protectedNames = new Set(['@deepseek-ai/dsh-web'])
+    expect(setGroupMembers(state, 'work', ['dsh-loop', '@deepseek-ai/dsh-web'], installed, themes, protectedNames).ok).toBe(true)
+    expect(state.groups.work).toEqual(['dsh-loop'])
+    // Omitting the set (a pre-existing caller) keeps the old behaviour, for
+    // a group whose membership was written before the rule existed.
+    expect(setGroupMembers(state, 'work', ['dsh-loop', '@deepseek-ai/dsh-web'], installed, themes).ok).toBe(true)
+    expect(state.groups.work).toEqual(['dsh-loop', '@deepseek-ai/dsh-web'])
   })
 
   it('set-members rejects a second theme in one group', () => {

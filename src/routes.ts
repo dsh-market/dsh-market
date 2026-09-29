@@ -20,6 +20,7 @@ import {
   mountClientOnlyDeps, purgeMarketState, readMarketState, writeMarketState,
 } from './hot.ts'
 import { createGroup, deleteGroup, removeFromGroups, renameGroup, setGroupMembers } from './groups.ts'
+import { createMode, deleteMode, planModeActivation, planModeClear, removeFromModes, renameInModes, renameMode, setModeMembers } from './modes.ts'
 import { dshHostInfo, findDshInstallDir } from './dsh-install.ts'
 import { deriveHostCompatibility, DiscoveryManifestIndex, findCompatibleVersion } from './discovery-compatibility.ts'
 import { configurePersistentLog, exportLogs, logEvent, readPersistentLog } from './log.ts'
@@ -386,8 +387,9 @@ export function mountMarketRoutes(
   // survive into a composition where the bundle layer already covers them.
   cleanHotDir(activeProfileDir)
   // The user's persisted choices: the generic disable list (legacy
-  // disabledSkins loads transparently) plus custom groups. Every toggle,
-  // group, install and uninstall mutates this shared state and persists it.
+  // disabledSkins loads transparently) plus custom groups and modes. Every
+  // toggle, group, mode, install and uninstall mutates this shared state and
+  // persists it.
   const marketState = readMarketState(activeProfileDir)
   setCustomGithubProxy(marketState.githubProxy ?? null)
   const disabled = marketState.disabled
@@ -409,6 +411,30 @@ export function mountMarketRoutes(
   const replacedWhileLive = new Set<string>()
   const groups = marketState.groups
   const groupOrder = marketState.groupOrder
+  // Modes share the same alias convention as groups: routes.ts hands these
+  // LIVE objects to the pure CRUD in src/modes.ts, which mutates them in
+  // place so every captured reference and the serialized response agree.
+  const modes = marketState.modes
+  const modeOrder = marketState.modeOrder
+  // activeMode is read and written through marketState itself (see
+  // writeMarketState's omission-preserves contract): it is UI state, not a
+  // collection the CRUD mutates in place.
+
+  /**
+   * Of these installed packages, the ones on the host infrastructure chain.
+   *
+   * They cannot be switched off (see isProtectedModule), so every batch
+   * control that moves plugins as a unit has to know about them: a group or
+   * mode that silently contained one would be a switch whose effect differs
+   * from its member list. The single toggle route has always refused them;
+   * the batch paths now do too, and the client gets this list so the picker
+   * can say why instead of offering a row that does nothing.
+   */
+  function protectedOf(names: Iterable<string>): Set<string> {
+    const out = new Set<string>()
+    for (const name of names) if (isProtectedModule(name)) out.add(name)
+    return out
+  }
   // A choice made in a previous session outranks whatever the entry layer
   // composed, which is only ever a default.
   if (marketState.channel !== undefined) config.channel = marketState.channel
@@ -467,11 +493,11 @@ export function mountMarketRoutes(
   /**
    * Re-sync the live closure state from disk. Snapshot restore writes
    * state.json directly (it must, to survive the next boot), which would
-   * leave this in-memory `disabled`/`groups`/`groupOrder` stale —
-   * the next toggle/groups write would then overwrite the restored values.
-   * The objects are mutated in place (clear + refill) so every captured
-   * reference (themes manager, live handlers) sees the fresh state (issue
-   * #98 review M2).
+   * leave this in-memory `disabled`/`groups`/`groupOrder`/`modes` stale —
+   * the next toggle/groups/modes write would then overwrite the restored
+   * values. The objects are mutated in place (clear + refill) so every
+   * captured reference (themes manager, live handlers) sees the fresh state
+   * (issue #98 review M2).
    */
   function refreshMarketState(): void {
     const fresh = readMarketState(activeProfileDir)
@@ -481,6 +507,11 @@ export function mountMarketRoutes(
     Object.assign(groups, fresh.groups)
     groupOrder.length = 0
     groupOrder.push(...fresh.groupOrder)
+    for (const key of Object.keys(modes)) delete modes[key]
+    Object.assign(modes, fresh.modes)
+    modeOrder.length = 0
+    modeOrder.push(...fresh.modeOrder)
+    marketState.activeMode = fresh.activeMode
     // The three above are aliased objects other closures hold, so they are
     // mutated in place. These three are read off `marketState` itself and
     // were not being refreshed at all — which is #435: a note written
@@ -529,7 +560,7 @@ export function mountMarketRoutes(
     const flags = packagePatchFlags(host, activeProfileDir, [name], patch)
     if (!flags.forced.includes(name) || flags.disabled.includes(name)) return false
     disabled.delete(name)
-    writeMarketState(activeProfileDir, { disabled, groups, groupOrder })
+    writeMarketState(activeProfileDir, { disabled, groups, groupOrder, modes, modeOrder, activeMode: marketState.activeMode ?? null })
     logEvent('info', 'toggle', `${name}: its rows were re-enabled outside the market (#696) — following that instead of switching it back off`)
     return true
   }
@@ -686,8 +717,59 @@ export function mountMarketRoutes(
       if (wasDisabled) disabled.add(name)
       logEvent('warn', 'toggle', `${name}: enable failed; leaving it disabled rather than persisting a state that crashes at boot (#575)`)
     }
-    writeMarketState(dir, { disabled, groups, groupOrder })
+    writeMarketState(dir, { disabled, groups, groupOrder, modes, modeOrder, activeMode: marketState.activeMode ?? null })
     return { ok, reason }
+  }
+
+  /**
+   * Move a batch of installed plugins on or off as one unit, and report which
+   * of them still need a boot or a page refresh to show it.
+   *
+   * Shared by the group switch and the mode switch: the two differ in WHICH
+   * plugins they move, never in how one is moved. Doing this in one place is
+   * also what makes the infrastructure guard below apply to both — the group
+   * path used to bypass the check the single toggle route has always had, so
+   * a group containing a host infrastructure plugin could switch off the very
+   * HMR chain that applies the write.
+   *
+   * A protected member is SKIPPED, not a failure: refusing the whole switch
+   * because one row cannot move would leave the user with a switch that does
+   * nothing and no way to find out why. It comes back in `skippedProtected`
+   * so the caller can say what it did not do.
+   */
+  async function switchBatch(names: readonly string[], enabled: boolean): Promise<{
+    failures: string[]
+    restartMembers: string[]
+    refreshMembers: string[]
+    skippedProtected: string[]
+  }> {
+    const installed = new Set(Object.keys(readInstalled(config.profile, activeProfileDir)))
+    // Theme members follow the global one-active-theme rule: enabling one
+    // deactivates every other, so a batch enables a theme through the theme
+    // manager rather than through the plain entry switch.
+    const themeNames = await themes.installedThemeNames()
+    const failures: string[] = []
+    const restartMembers: string[] = []
+    const refreshMembers: string[] = []
+    const skippedProtected: string[] = []
+    for (const member of names) {
+      if (!installed.has(member)) continue
+      if (isProtectedModule(member)) {
+        skippedProtected.push(member)
+        continue
+      }
+      const result = enabled && themeNames.has(member)
+        ? { ok: await themes.activateTheme(member) }
+        : await setPluginEnabled(member, enabled)
+      if (!result.ok) failures.push(member)
+      // Same live-mismatch signal as the single toggle: a member whose fiber
+      // did not follow the switch needs a boot.
+      const liveAfter = liveNames().has(member)
+      if ((enabled && !liveAfter) || (!enabled && liveAfter)) restartMembers.push(member)
+      // Client-part members need a page refresh to show the change.
+      if (packageHasClientPart(activeProfileDir, member)) refreshMembers.push(member)
+    }
+    return { failures, restartMembers, refreshMembers, skippedProtected }
   }
 
   /**
@@ -1220,7 +1302,8 @@ export function mountMarketRoutes(
     disabled.delete(name)
     replacedWhileLive.delete(name)
     removeFromGroups({ groups, groupOrder }, name)
-    writeMarketState(activeProfileDir, { disabled, groups, groupOrder })
+    removeFromModes(modes, name)
+    writeMarketState(activeProfileDir, { disabled, groups, groupOrder, modes, modeOrder, activeMode: marketState.activeMode ?? null })
     return { ok: true, hot, detail: null }
   }
 
@@ -2242,6 +2325,13 @@ export function mountMarketRoutes(
           disabled: [...disabled],
           groups,
           groupOrder,
+          modes,
+          modeOrder,
+          activeMode: marketState.activeMode ?? null,
+          // Host infrastructure rows: the pickers must show them as
+          // unselectable rather than let a membership be built that no
+          // switch can honour.
+          protected: [...protectedOf(Object.keys(installed))],
           notes: readMarketState(activeProfileDir).notes ?? {},
           favorites: readMarketState(activeProfileDir).favorites ?? [],
           blocked: readMarketState(activeProfileDir).blocked ?? [],
@@ -3011,10 +3101,12 @@ export function mountMarketRoutes(
           // Theme members follow the global one-active-theme rule: a group
           // holds at most one, and enabling one deactivates every other.
           const themeNames = await themes.installedThemeNames()
+          const protectedNames = protectedOf(installed)
           let ok = true
           let error: string | undefined
           let restartMembers: string[] = []
           let refreshMembers: string[] = []
+          let skippedProtected: string[] = []
           if (action === 'toggle') {
             const name = typeof body.name === 'string' ? body.name : ''
             const enabled = body.enabled === true
@@ -3027,32 +3119,26 @@ export function mountMarketRoutes(
             // member disabled. Each member keeps its own persisted flag, so
             // later individual toggles still work (the group switch itself is
             // derived state and never stored).
-            const failures: string[] = []
-            for (const member of groups[name]) {
-              if (!installed.has(member)) continue
-              const result = enabled && themeNames.has(member)
-                ? { ok: await themes.activateTheme(member), reason: undefined }
-                : await setPluginEnabled(member, enabled)
-              if (!result.ok) failures.push(member)
-              // Same live-mismatch signal as the single toggle: a member
-              // whose fiber did not follow the switch needs a boot.
-              const liveAfter = liveNames().has(member)
-              if ((enabled && !liveAfter) || (!enabled && liveAfter)) restartMembers.push(member)
-              // Client-part members need a page refresh to show the change.
-              if (packageHasClientPart(activeProfileDir, member)) refreshMembers.push(member)
-            }
-            ok = failures.length === 0
-            if (!ok) error = `failed to ${enabled ? 'enable' : 'disable'}: ${failures.join(', ')}`
+            const batch = await switchBatch(groups[name], enabled)
+            restartMembers = batch.restartMembers
+            refreshMembers = batch.refreshMembers
+            skippedProtected = batch.skippedProtected
+            ok = batch.failures.length === 0
+            if (!ok) error = `failed to ${enabled ? 'enable' : 'disable'}: ${batch.failures.join(', ')}`
           } else {
             const state = { groups, groupOrder }
             const result = action === 'create' ? createGroup(state, body.name)
               : action === 'rename' ? renameGroup(state, body.name, body.newName)
               : action === 'delete' ? deleteGroup(state, body.name)
-              : setGroupMembers(state, body.name, body.members, installed, themeNames)
+              : setGroupMembers(state, body.name, body.members, installed, themeNames, protectedNames)
             ok = result.ok
             error = result.error
           }
-          if (ok) writeMarketState(activeProfileDir, { disabled, groups, groupOrder })
+          if (ok) writeMarketState(activeProfileDir, { disabled, groups, groupOrder, modes, modeOrder, activeMode: marketState.activeMode ?? null })
+          if (skippedProtected.length > 0) {
+            logEvent('warn', 'groups',
+              `${action}${typeof body.name === 'string' ? ' ' + body.name : ''}: skipped host infrastructure ${skippedProtected.join(', ')}`)
+          }
           logEvent(ok ? 'info' : 'warn', 'groups',
             `${action}${typeof body.name === 'string' ? ' ' + body.name : ''}${ok ? '' : ` — ${error ?? ''}`}`)
           sendJson(response, ok ? 200 : 400, {
@@ -3063,10 +3149,125 @@ export function mountMarketRoutes(
             disabled: [...disabled],
             restartMembers,
             refreshMembers,
+            skippedProtected,
           })
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
           logEvent('error', 'groups', `route error: ${message}`)
+          sendJson(response, 500, { error: message })
+        }
+      },
+    }),
+
+    /**
+     * Modes: named sets of installed plugins that switch as a unit.
+     *
+     * The switch is EXCLUSIVE — activating one turns its members on and every
+     * other mode's members off, while a plugin in no mode is never touched.
+     * src/modes.ts owns that rule; this route only carries it out, in the same
+     * shape as /dsh-market/groups so the two read alike.
+     */
+    host.webServer.register({
+      kind: 'exact',
+      path: '/dsh-market/modes',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) {
+          sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        try {
+          const body = (await readJsonBody(request)) as {
+            action?: unknown
+            name?: unknown
+            newName?: unknown
+            members?: unknown
+          }
+          const action = typeof body.action === 'string' ? body.action : ''
+          const known = action === 'create' || action === 'rename' || action === 'delete'
+            || action === 'set-members' || action === 'activate' || action === 'deactivate'
+          if (!known) {
+            sendJson(response, 400, { ok: false, error: 'unknown mode action' })
+            return
+          }
+          const installed = new Set(Object.keys(readInstalled(config.profile, activeProfileDir)))
+          const themeNames = await themes.installedThemeNames()
+          const protectedNames = protectedOf(installed)
+          // A plain object over the LIVE `modes`/`modeOrder` records: the CRUD
+          // in src/modes.ts mutates them in place, so this stays a view of the
+          // same state the response serializes.
+          const modeState = { modes, modeOrder, activeMode: marketState.activeMode ?? null }
+          let ok = true
+          let error: string | undefined
+          let turnedOn: string[] = []
+          let turnedOff: string[] = []
+          let restartMembers: string[] = []
+          let refreshMembers: string[] = []
+          let skippedProtected: string[] = []
+
+          if (action === 'activate' || action === 'deactivate') {
+            const name = typeof body.name === 'string' ? body.name : ''
+            const plan = action === 'deactivate'
+              ? planModeClear(modeState, installed, disabled, protectedNames)
+              : planModeActivation(modeState, name, installed, disabled, protectedNames)
+            if (!plan.ok) {
+              sendJson(response, 400, { ok: false, error: plan.error })
+              return
+            }
+            pendingRollbacks.clear()
+            // Two passes rather than one: switchBatch owns "how one plugin is
+            // moved" and the plan has already decided which direction each
+            // plugin goes. Failure of either pass leaves the mode unrecorded,
+            // so the selector never claims a switch that did not happen.
+            const batchOn = await switchBatch(plan.turnedOn, true)
+            const batchOff = await switchBatch(plan.turnedOff, false)
+            restartMembers = [...batchOn.restartMembers, ...batchOff.restartMembers]
+            refreshMembers = [...batchOn.refreshMembers, ...batchOff.refreshMembers]
+            skippedProtected = [...plan.skippedProtected, ...batchOn.skippedProtected, ...batchOff.skippedProtected]
+            const failures = [...batchOn.failures, ...batchOff.failures]
+            ok = failures.length === 0
+            if (!ok) error = `failed to switch: ${failures.join(', ')}`
+            if (ok) modeState.activeMode = action === 'deactivate' ? null : name
+            turnedOn = plan.turnedOn
+            turnedOff = plan.turnedOff
+          } else {
+            const result = action === 'create' ? createMode(modeState, body.name)
+              : action === 'rename' ? renameMode(modeState, body.name, body.newName)
+              : action === 'delete' ? deleteMode(modeState, body.name)
+              : setModeMembers(modeState, body.name, body.members, installed, themeNames, protectedNames)
+            ok = result.ok
+            error = result.error
+          }
+          // rename/delete can move or clear activeMode on the throwaway view;
+          // carry it back so memory, the reply and the file agree.
+          marketState.activeMode = modeState.activeMode
+          if (ok) writeMarketState(activeProfileDir, { disabled, groups, groupOrder, modes, modeOrder, activeMode: marketState.activeMode ?? null })
+          if (skippedProtected.length > 0) {
+            logEvent('warn', 'modes',
+              `${action}${typeof body.name === 'string' ? ' ' + body.name : ''}: skipped host infrastructure ${skippedProtected.join(', ')}`)
+          }
+          logEvent(ok ? 'info' : 'warn', 'modes',
+            `${action}${typeof body.name === 'string' ? ' ' + body.name : ''}${ok ? '' : ` — ${error ?? ''}`}`)
+          sendJson(response, ok ? 200 : 400, {
+            ok,
+            error,
+            modes,
+            modeOrder,
+            activeMode: marketState.activeMode ?? null,
+            disabled: [...disabled],
+            turnedOn,
+            turnedOff,
+            restartMembers,
+            refreshMembers,
+            skippedProtected,
+          })
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          logEvent('error', 'modes', `route error: ${message}`)
           sendJson(response, 500, { error: message })
         }
       },
@@ -3442,6 +3643,7 @@ sendJson(response, 200, { updates })
                 }
                 groups[group] = next
               }
+              renameInModes(modes, name, targetName)
               const marketNotes = marketState.notes ?? (marketState.notes = {})
               if (marketNotes[name] !== undefined) {
                 if (marketNotes[targetName] === undefined) marketNotes[targetName] = marketNotes[name]
@@ -5115,11 +5317,12 @@ sendJson(response, 200, { updates })
               // mounts is a boot-time orphan (port of dsh-plugin-hub).
               removeRowBlocks(userPatchPath, rowIdsForPackage(host, activeProfileDir, name))
               // The disable list must not keep a removed plugin: a later
-              // reinstall starts enabled. Group memberships follow the same
-              // rule so no group toggle ever targets a ghost member.
+              // reinstall starts enabled. Group and mode memberships follow
+              // the same rule so no batch switch ever targets a ghost member.
               disabled.delete(name)
               removeFromGroups({ groups, groupOrder }, name)
-              writeMarketState(activeProfileDir, { disabled, groups, groupOrder })
+              removeFromModes(modes, name)
+              writeMarketState(activeProfileDir, { disabled, groups, groupOrder, modes, modeOrder, activeMode: marketState.activeMode ?? null })
             }
             logEvent(ok || cancelled ? 'info' : 'error', 'uninstall',
               `${name} exit=${String(result.exitCode)}${cancelled ? ' CANCELLED' : ''}${ok ? ` live-removed=${String(hot)}` : cancelled ? '' : ` err=${failureDetail(result)}`}`)
@@ -5548,7 +5751,7 @@ sendJson(response, 200, { updates })
                 // (e.g. reinstall after an uninstall while this process kept
                 // running) and persist before the activation loop.
                 for (const name of added) disabled.delete(name)
-                writeMarketState(activeProfileDir, { disabled, groups, groupOrder })
+                writeMarketState(activeProfileDir, { disabled, groups, groupOrder, modes, modeOrder, activeMode: marketState.activeMode ?? null })
                 // Theme installs auto-activate (and deactivate the previous
                 // theme) so the result is visible right after the refresh.
                 if (hostActivation) {

@@ -49,7 +49,7 @@ import type { OperationRecord } from './operations.ts'
 import { Diagnostics } from './Diagnostics.tsx'
 import { exportMarketLog } from './self-check.ts'
 import {
-  api, applyGithubRouting, avatarColor, catalogEntryForInstalled, entryForDep, githubRouteCandidates, groupSwitchState, humanOutput, installedForCatalog, isGenerationSpec, isInstalled, localizeBilingual, localizeBilingualList, looksTerminal, matchInstalledName, orderedCategories, pluginCategories,
+  api, applyGithubRouting, avatarColor, catalogEntryForInstalled, entryForDep, githubRouteCandidates, groupSwitchState, humanOutput, installedForCatalog, isGenerationSpec, isInstalled, localizeBilingual, localizeBilingualList, looksTerminal, matchInstalledName, modeOwnedNames, modeSwitchNotice, modesForPlugin, orderedCategories, pluginCategories,
   formatCount, pageItems, pluginName, blockAliases, pluginScreenshotCandidates, pluginScreenshots, pluginsForFavorites, queuedRowApplies, rankThemeScreenshots, readSession, releaseNotesHttpsImage, rememberGithubRoute, resetScreenshotsCache, resolveCatalogRestore, safeScreenshots, sanitizeReleaseNotesBody, staleFavoriteUrls, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
 } from './market-data.ts'
 import type {
@@ -72,6 +72,16 @@ function isHostDependencyFinding(value: unknown): value is SharedHostPackageDepe
 
 const HOST_DEPENDENCY_PREVIEW_LIMIT = 5
 const IGNORED_UPDATES_SESSION_KEY = 'dshm-updates-ignored'
+/**
+ * The "no mode" row in the current-mode picker.
+ *
+ * Mode names are user text, and the rule allows letters, digits, spaces, `_`
+ * and `-` — so any *readable* sentinel ("none", "mode-none") is itself a name
+ * someone could type, and the picker would then highlight the wrong row and
+ * switch to it. `@` is outside the allowed set, which is what makes this one
+ * unable to collide.
+ */
+const NONE_MODE_ID = '@none'
 const UNAVAILABLE_HOST_COMPATIBILITY: HostCompatibility = {
   status: 'unknown',
   basis: 'unavailable',
@@ -1881,9 +1891,22 @@ export function MarketSection(props: MarketSectionProps) {
   const [unbundledNames, setUnbundledNames] = useState<string[]>([])
   const [groups, setGroups] = useState<Record<string, string[]>>({})
   const [groupOrder, setGroupOrder] = useState<string[]>([])
-  /** Installed-tab sub-view: flat list or groups (All-plugins was removed —
-   * it duplicated the Discover tab). */
-  const [installedView, setInstalledView] = useState<'list' | 'groups'>('list')
+  /**
+   * Modes: mode name → member package names, plus which one is switched on.
+   * A plugin may belong to several modes — see the modes view below and
+   * src/modes.ts for the switch rule these three feed.
+   */
+  const [modes, setModes] = useState<Record<string, string[]>>({})
+  const [modeOrder, setModeOrder] = useState<string[]>([])
+  const [activeMode, setActiveMode] = useState<string | null>(null)
+  /** Installed packages on the host infrastructure chain (never switchable). */
+  const [protectedNames, setProtectedNames] = useState<string[]>([])
+  /**
+   * Installed-tab sub-view. `list` is the flat list, `groups` files plugins
+   * (a label), `modes` switches sets of them (a switch) — the two are
+   * deliberately separate views with separate controls.
+   */
+  const [installedView, setInstalledView] = useState<'list' | 'groups' | 'modes'>('list')
   const [togglingName, setTogglingName] = useState<string | null>(null)
   // Group editor state (create / rename / delete / assign).
   const [creatingGroup, setCreatingGroup] = useState(false)
@@ -1901,6 +1924,32 @@ export function MarketSection(props: MarketSectionProps) {
   const [groupMenuFor, setGroupMenuFor] = useState<string | null>(null)
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set())
   const [assignFor, setAssignFor] = useState<string | null>(null)
+  // Mode editor state, mirroring the group editor above.
+  const [creatingMode, setCreatingMode] = useState(false)
+  const [newModeName, setNewModeName] = useState('')
+  const [renamingMode, setRenamingMode] = useState<string | null>(null)
+  const [deletingMode, setDeletingMode] = useState<string | null>(null)
+  /** Open add-plugins picker for this mode name. */
+  const [modeAddPanel, setModeAddPanel] = useState<string | null>(null)
+  const [modeAddSelected, setModeAddSelected] = useState<string[]>([])
+  const [modeMenuFor, setModeMenuFor] = useState<string | null>(null)
+  const [collapsedModes, setCollapsedModes] = useState<Set<string>>(() => new Set())
+  /** Open "add to mode" multi-select for this plugin name. */
+  const [modeAssignFor, setModeAssignFor] = useState<string | null>(null)
+  const [modeCurrentOpen, setModeCurrentOpen] = useState(false)
+  /**
+   * What the last switch did, in the user's words — the one thing a switch
+   * owes them is a landing. Null means nothing to report.
+   */
+  const [modeNotice, setModeNotice] = useState<string | null>(null)
+  /**
+   * The same receipt for the group switch, used only for the one thing it can
+   * decline to do: a group that predates the infrastructure rule may still
+   * hold a host plugin, and skipping it silently would be a member that stays
+   * on with no explanation.
+   */
+  const [groupNotice, setGroupNotice] = useState<string | null>(null)
+  const [modeSwitching, setModeSwitching] = useState(false)
   /** Structured progress from pnpm ndjson (P1-6). */
   const [progressPhase, setProgressPhase] = useState<MarketStatus['phase']>(null)
   const [progressCurrent, setProgressCurrent] = useState<string | null>(null)
@@ -2098,6 +2147,10 @@ export function MarketSection(props: MarketSectionProps) {
         if (Array.isArray(body.unbundled)) setUnbundledNames(body.unbundled)
         if (body.groups && typeof body.groups === 'object') setGroups(body.groups)
         if (Array.isArray(body.groupOrder)) setGroupOrder(body.groupOrder)
+        if (body.modes && typeof body.modes === 'object') setModes(body.modes)
+        if (Array.isArray(body.modeOrder)) setModeOrder(body.modeOrder)
+        setActiveMode(typeof body.activeMode === 'string' ? body.activeMode : null)
+        if (Array.isArray(body.protected)) setProtectedNames(body.protected.filter((name: unknown): name is string => typeof name === 'string'))
         if (Array.isArray(body.favorites)) setFavoriteUrls(body.favorites.filter((url: unknown): url is string => typeof url === 'string'))
         if (Array.isArray(body.blocked)) setBlockedNames(body.blocked.filter((name: unknown): name is string => typeof name === 'string'))
         setInstalledBundles(Array.isArray(body.bundles) ? body.bundles.filter((name: unknown): name is string => typeof name === 'string') : [])
@@ -3742,6 +3795,7 @@ export function MarketSection(props: MarketSectionProps) {
   /** One POST /dsh-market/groups round trip (create/rename/delete/members/toggle). */
   const doGroupAction = useCallback((payload: Record<string, unknown>): Promise<boolean> => {
     setInstallError(null)
+    setGroupNotice(null)
     return fetch(api('/dsh-market/groups'), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -3758,6 +3812,13 @@ export function MarketSection(props: MarketSectionProps) {
           }
           if (Array.isArray(body.refreshMembers) && body.refreshMembers.length > 0) {
             setRefreshNames(names => [...new Set([...names, ...body.refreshMembers])])
+          }
+          // A member the switch refused to move (host infrastructure, in a
+          // group that predates the rule) has to be said out loud: the row
+          // would otherwise just stay where it was, which reads as a dead
+          // switch rather than a deliberate skip.
+          if (Array.isArray(body.skippedProtected) && body.skippedProtected.length > 0) {
+            setGroupNotice(t('protectedSkipped').replace('{0}', String(body.skippedProtected.length)))
           }
           refreshInstalled()
           return true
@@ -3872,6 +3933,157 @@ export function MarketSection(props: MarketSectionProps) {
       const next = new Set(prev)
       if (next.has(gid)) next.delete(gid)
       else next.add(gid)
+      return next
+    })
+  }, [])
+
+  /** Adopt the modes payload returned by POST /dsh-market/modes. */
+  const setModePayload = useCallback((body: {
+    modes?: Record<string, string[]>
+    modeOrder?: string[]
+    activeMode?: string | null
+    disabled?: string[]
+  }) => {
+    if (body.modes && typeof body.modes === 'object') setModes(body.modes)
+    if (Array.isArray(body.modeOrder)) setModeOrder(body.modeOrder)
+    setActiveMode(typeof body.activeMode === 'string' ? body.activeMode : null)
+    if (Array.isArray(body.disabled)) setDisabledNames(body.disabled)
+  }, [])
+
+  /** One POST /dsh-market/modes round trip (create/rename/delete/members/switch). */
+  const doModeAction = useCallback((payload: Record<string, unknown>): Promise<boolean> => {
+    // Only a switch moved anything, so only a switch gets a receipt: the
+    // reply carries empty turnedOn/turnedOff for every action, and reading
+    // those as "a switch happened, and it changed nothing" would put a
+    // notice about the current mode under a rename.
+    const switched = payload.action === 'activate' || payload.action === 'deactivate'
+    setInstallError(null)
+    return fetch(api('/dsh-market/modes'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+      .then(res => res.json().then(body => ({ status: res.status, body })))
+      .then(({ status, body }) => {
+        if (status === 200 && body.ok) {
+          setModePayload(body)
+          // Mode members that did not follow the switch join the same
+          // pending-restart banner individual toggles use.
+          if (Array.isArray(body.restartMembers) && body.restartMembers.length > 0) {
+            setToggleRestart(n => n + body.restartMembers.length)
+          }
+          if (Array.isArray(body.refreshMembers) && body.refreshMembers.length > 0) {
+            setRefreshNames(names => [...new Set([...names, ...body.refreshMembers])])
+          }
+          if (switched) setModeNotice(modeSwitchNotice(body, t))
+          refreshInstalled()
+          return true
+        }
+        const text = (v: unknown) => typeof v === 'string' ? v : v == null ? '' : JSON.stringify(v)
+        setInstallError(text(body.error) || t('toggleFail'))
+        if (Array.isArray(body.restartMembers) && body.restartMembers.length > 0) {
+          setToggleRestart(n => n + body.restartMembers.length)
+        }
+        if (Array.isArray(body.refreshMembers) && body.refreshMembers.length > 0) {
+          setRefreshNames(names => [...new Set([...names, ...body.refreshMembers])])
+        }
+        return false
+      })
+      .catch(error => { setInstallError(String(error)); return false })
+  }, [refreshInstalled, setModePayload, t])
+
+  /**
+   * Switch to a mode, or to "no mode" when `name` is null.
+   *
+   * No confirmation: the whole point of the exclusive rule is that switching
+   * back puts every mode-managed plugin where it was, and plugins outside
+   * every mode were never moved. An undo the user can see beats a dialog they
+   * have to read.
+   */
+  const doSwitchMode = useCallback((name: string | null) => {
+    setModeSwitching(true)
+    setModeNotice(null)
+    void doModeAction(name === null ? { action: 'deactivate' } : { action: 'activate', name })
+      .finally(() => setModeSwitching(false))
+  }, [doModeAction])
+
+  const cancelCreateMode = useCallback(() => {
+    setCreatingMode(false)
+    setNewModeName('')
+  }, [])
+
+  const doCreateMode = useCallback(() => {
+    const name = newModeName.trim()
+    if (name === '') return
+    void doModeAction({ action: 'create', name }).then(ok => {
+      if (ok) cancelCreateMode()
+    })
+  }, [cancelCreateMode, doModeAction, newModeName])
+
+  const doRenameMode = useCallback((name: string) => {
+    const newName = renamingValue.trim()
+    if (newName === '' || newName === name) {
+      setRenamingMode(null)
+      return
+    }
+    void doModeAction({ action: 'rename', name, newName }).then(ok => {
+      if (ok) {
+        setRenamingMode(null)
+        setRenamingValue('')
+      }
+    })
+  }, [doModeAction, renamingValue])
+
+  const doDeleteMode = useCallback((name: string) => {
+    void doModeAction({ action: 'delete', name }).then(ok => {
+      if (ok) setDeletingMode(null)
+    })
+  }, [doModeAction])
+
+  /**
+   * One plugin's membership in one mode — the multi-select menu. Membership
+   * is a set, so this adds or removes exactly one name and leaves the rest
+   * alone; a plugin in two modes is the normal case, not a conflict.
+   */
+  const setModeMembership = useCallback((plugin: string, mode: string, inMode: boolean) => {
+    const members = modes[mode] ?? []
+    const next = inMode ? members.filter(member => member !== plugin) : [...members, plugin]
+    void doModeAction({ action: 'set-members', name: mode, members: next })
+  }, [doModeAction, modes])
+
+  const doRemoveModeMember = useCallback((mode: string, plugin: string) => {
+    const members = (modes[mode] ?? []).filter(member => member !== plugin)
+    void doModeAction({ action: 'set-members', name: mode, members })
+  }, [doModeAction, modes])
+
+  /** Open the multi-select add-plugins dialog for a mode. */
+  const openModeAddPanel = useCallback((mode: string) => {
+    setRenamingMode(null)
+    setDeletingMode(null)
+    setModeMenuFor(null)
+    setAddQuery('')
+    setModeAddSelected([])
+    setModeAddPanel(mode)
+  }, [])
+
+  /** Commit the current multi-select into the open mode. */
+  const doAddSelectedToMode = useCallback(() => {
+    if (modeAddPanel === null || modeAddSelected.length === 0) return
+    const members = modes[modeAddPanel] ?? []
+    const next = [...members]
+    for (const name of modeAddSelected) {
+      if (!next.includes(name)) next.push(name)
+    }
+    void doModeAction({ action: 'set-members', name: modeAddPanel, members: next }).then(ok => {
+      if (ok) setModeAddPanel(null)
+    })
+  }, [doModeAction, modeAddPanel, modeAddSelected, modes])
+
+  const toggleCollapsedMode = useCallback((name: string) => {
+    setCollapsedModes(prev => {
+      const next = new Set(prev)
+      if (next.has(name)) next.delete(name)
+      else next.add(name)
       return next
     })
   }, [])
@@ -4450,6 +4662,69 @@ export function MarketSection(props: MarketSectionProps) {
       ))
 
   /**
+   * What a batch switch did, or what it declined to do.
+   *
+   * One implementation for the group switch and the mode switch: the two
+   * move different sets of plugins, but the receipt is the same object, and
+   * two copies of it would drift the moment one gained a line.
+   */
+  const viewNotice = (text: string | null, dismiss: () => void) => text === null ? null : (
+    <div className={css.viewNotice}>
+      <span className={css.viewNoticeText}>{text}</span>
+      <Button variant="ghost" size="sm" aria-label={t('dismiss')} onClick={dismiss}>×</Button>
+    </div>
+  )
+
+  /**
+   * The multi-select menu that files one plugin into modes.
+   *
+   * A checkbox list rather than a "move to" list, because a plugin may belong
+   * to several modes and that is the feature — the plugin useful in two
+   * contexts (a theme, a translation helper) is exactly what keeps a switch
+   * from turning everything unfamiliar off. The menu stays open across
+   * selections (the host's `selectedIds` menu does), so putting one plugin
+   * into three modes is three clicks instead of three round trips through the
+   * trigger.
+   */
+  const modeMembershipMenu = (name: string) => {
+    const mine = modesForPlugin(modes, modeOrder, name)
+    const isTheme = installedThemeNames.has(name)
+    /** Themes stay exclusive: a mode cannot hold two and then switch them both on. */
+    const blocksTheme = (mode: string): boolean =>
+      !mine.includes(mode) && isTheme && (modes[mode] ?? []).some(member => installedThemeNames.has(member))
+    return (
+      <Menu
+        open={modeAssignFor === name}
+        onClose={() => setModeAssignFor(null)}
+        selectedIds={mine}
+        onSelect={id => {
+          if (blocksTheme(id)) return
+          setModeMembership(name, id, mine.includes(id))
+        }}
+        align="end"
+        portal
+        anchor={(
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={modeOrder.length === 0}
+            icon={modeAssignFor === name ? <IconChevronUpOutline14 size={14} /> : <IconChevronDownOutline14 size={14} />}
+            onClick={() => setModeAssignFor(open => open === name ? null : name)}
+          >{t('modeAssign')}</Button>
+        )}
+        items={modeOrder.map(mode => {
+          const blocked = blocksTheme(mode)
+          return {
+            id: mode,
+            disabled: blocked,
+            label: blocked ? mode + ' · ' + t('groupThemeTaken') : mode,
+          }
+        })}
+      />
+    )
+  }
+
+  /**
    * A labelled checkbox: the host's when it has one, the market's label+input
    * otherwise. Only the simple ones go through here — see `HostCheckbox` for
    * why the export rows and the recovery panel keep their own markup.
@@ -4907,6 +5182,26 @@ export function MarketSection(props: MarketSectionProps) {
     }
     return names
   }, [data, installed, repoIdentities, repoHints])
+
+  /**
+   * Plugins that belong to at least one mode. The switch never touches
+   * anything outside this set, so it is what separates the two buckets in
+   * the modes view — and what lets the "not in any mode" hint promise that
+   * switching is safe for the rows it lists.
+   */
+  const modeOwned = useMemo(() => modeOwnedNames(modes, modeOrder), [modes, modeOrder])
+  const modeLessNames = groupableNames.filter(name => !modeOwned.has(name))
+  const visibleModeIds = modeOrder.filter(name => {
+    if (groupQuery === '') return true
+    if (name.toLowerCase().includes(groupQuery)) return true
+    return (modes[name] ?? []).some(matchesInstalledQuery)
+  })
+  const visibleModeLess = modeLessNames.filter(matchesInstalledQuery)
+  const protectedSet = useMemo(() => new Set(protectedNames), [protectedNames])
+  /** The picker's own label: the mode name, or "no mode" — never a blank. */
+  const currentModeLabel = activeMode !== null && modes[activeMode] !== undefined
+    ? activeMode
+    : t('modeCurrentNone')
 
   const openThemePanel = useCallback((group: string) => {
     const current = (groups[group] ?? []).find(name => installedThemeNames.has(name)) ?? null
@@ -5714,6 +6009,7 @@ export function MarketSection(props: MarketSectionProps) {
                   <div className={css.viewBar}>
                     <button type="button" className={installedView === 'list' ? `${css.viewBtn} ${css.viewOn}` : css.viewBtn} onClick={() => setInstalledView('list')}>{t('tabList')}</button>
                     <button type="button" className={installedView === 'groups' ? `${css.viewBtn} ${css.viewOn}` : css.viewBtn} onClick={() => setInstalledView('groups')}>{t('tabGroups')}</button>
+                    <button type="button" className={installedView === 'modes' ? `${css.viewBtn} ${css.viewOn}` : css.viewBtn} onClick={() => setInstalledView('modes')}>{t('tabModes')}</button>
                   </div>
                   <div className={css.tabSearchRow}>
                     <SearchInput key="installed" resetToken={installedSearchReset} className={css.tabSearch} placeholder={t('searchPh')} value={qInstalled} onCommit={setQInstalled} t={t} />
@@ -5735,10 +6031,29 @@ export function MarketSection(props: MarketSectionProps) {
                           )
                         : <Button variant="outline" size="sm" onClick={() => setCreatingGroup(true)}>{t('groupNew')}</Button>
                     )}
+                    {installedView === 'modes' && (
+                      creatingMode
+                        ? (
+                            <div
+                              className={css.groupCreateInline}
+                              onBlur={event => {
+                                const next = event.relatedTarget
+                                if (next instanceof Node && event.currentTarget.contains(next)) return
+                                cancelCreateMode()
+                              }}
+                            >
+                              <Input className={css.inlineInput} placeholder={t('modeNamePh')} value={newModeName} onChange={e => setNewModeName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') doCreateMode(); if (e.key === 'Escape') cancelCreateMode() }} autoFocus />
+                              <Button variant="primary" size="sm" onClick={doCreateMode}>{t('groupCreate')}</Button>
+                              <Button variant="ghost" size="sm" onClick={cancelCreateMode}>{t('cancel')}</Button>
+                            </div>
+                          )
+                        : <Button variant="outline" size="sm" onClick={() => setCreatingMode(true)}>{t('modeNew')}</Button>
+                    )}
                   </div>
                   {installedView === 'groups'
                       ? (
                           <>
+                            {viewNotice(groupNotice, () => setGroupNotice(null))}
                             {groupQuery === '' && groupOrder.length === 0
                               ? <div className={css.empty}>{t('noGroups')}</div>
                               : visibleGroupIds.map(gid => {
@@ -5937,7 +6252,11 @@ export function MarketSection(props: MarketSectionProps) {
                                                 <Button
                                                   variant="outline"
                                                   size="sm"
-                                                  disabled={groupOrder.length === 0}
+                                                  // Host infrastructure can never be a
+                                                  // member: the group switch skips it, so
+                                                  // offering the menu would be offering a
+                                                  // choice that gets dropped.
+                                                  disabled={groupOrder.length === 0 || protectedSet.has(name)}
                                                   icon={assignFor === name ? <IconChevronUpOutline14 size={14} /> : <IconChevronDownOutline14 size={14} />}
                                                   onClick={() => setAssignFor(open => open === name ? null : name)}
                                                 >{t('groupAssign')}</Button>
@@ -5963,6 +6282,213 @@ export function MarketSection(props: MarketSectionProps) {
                               <div className={css.empty}>{t('groupSearchEmpty')}</div>
                             )}
                             <p className={css.groupOrgHint}>{t('groupOrgHint')}</p>
+                          </>
+                        )
+                      : installedView === 'modes'
+                        ? (
+                          <>
+                            {/*
+                              The mode's control is a PICKER, not a switch, and
+                              that is the whole reason groups and modes can sit
+                              in one tab without competing: a group switch moves
+                              that group and nothing else, while switching a mode
+                              moves every mode's members. One control whose
+                              meaning depends on which row it is on is the
+                              fastest way to make both unguessable, so the two
+                              get different controls rather than different
+                              tooltips.
+                            */}
+                            <div className={css.modeBar}>
+                              <Menu
+                                open={modeCurrentOpen}
+                                onClose={() => setModeCurrentOpen(false)}
+                                selectedId={activeMode ?? NONE_MODE_ID}
+                                onSelect={id => { doSwitchMode(id === NONE_MODE_ID ? null : id) }}
+                                align="start"
+                                portal
+                                anchor={(
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    disabled={modeSwitching || modeOrder.length === 0}
+                                    icon={modeCurrentOpen ? <IconChevronUpOutline14 size={14} /> : <IconChevronDownOutline14 size={14} />}
+                                    onClick={() => setModeCurrentOpen(open => !open)}
+                                  >{t('modeCurrentLabel').replace('{0}', currentModeLabel)}</Button>
+                                )}
+                                items={[
+                                  { type: 'label' as const, id: 'mode-cur', text: t('modeCurrent') },
+                                  { id: NONE_MODE_ID, label: t('modeCurrentNone') },
+                                  ...modeOrder.map(name => {
+                                    const empty = (modes[name] ?? []).length === 0
+                                    return {
+                                      id: name,
+                                      // An empty mode is not offered: switching to
+                                      // it would only turn other modes off, which
+                                      // is not what a row with no members promises.
+                                      disabled: empty,
+                                      label: empty ? name + ' · ' + t('modeEmptyMembers') : name,
+                                    }
+                                  }),
+                                ]}
+                              />
+                            </div>
+                            {viewNotice(modeNotice, () => setModeNotice(null))}
+                            {/* The switch is the one action here that can move
+                                a dozen plugins at once, so it owes the user a
+                                landing: what opened, what closed, what still
+                                needs a restart. */}
+                            {groupQuery !== '' && visibleModeIds.length === 0 && visibleModeLess.length === 0
+                              ? <div className={css.empty}>{t('groupSearchEmpty')}</div>
+                              : (
+                                <>
+                                  {modeOrder.length === 0 && groupQuery === ''
+                                    ? <div className={css.empty}>{t('modeEmptyState')}</div>
+                                    : visibleModeIds.map(name => {
+                                        const members = modes[name] ?? []
+                                        const nameHit = groupQuery !== '' && name.toLowerCase().includes(groupQuery)
+                                        const visibleMembers = groupQuery === '' || nameHit
+                                          ? members
+                                          : members.filter(matchesInstalledQuery)
+                                        if (groupQuery !== '' && !nameHit && visibleMembers.length === 0) return null
+                                        const enabledCount = members.filter(member => !effectiveDisabledSet.has(member)).length
+                                        const collapsed = groupQuery === '' && collapsedModes.has(name)
+                                        const meta = t('modeMembersMeta')
+                                          .replace('{0}', String(members.length))
+                                          .replace('{1}', String(enabledCount))
+                                        return (
+                                          <div className={css.groupRow} key={name}>
+                                            <div className={css.groupHead}>
+                                              <button
+                                                type="button"
+                                                className={css.groupCollapse}
+                                                aria-expanded={!collapsed}
+                                                aria-label={(collapsed ? t('groupExpand') : t('groupFold')).replace('{0}', name)}
+                                                onClick={() => toggleCollapsedMode(name)}
+                                              >
+                                                {collapsed
+                                                  ? <IconChevronRightOutline14 size={14} />
+                                                  : <IconChevronDownOutline14 size={14} />}
+                                              </button>
+                                              <div className={css.groupTitle}>
+                                                <span className={css.groupName}>{name}</span>
+                                                {activeMode === name && <span className={css.modeCurrentBadge}>{t('modeCurrentBadge')}</span>}
+                                                <span className={css.groupMeta}>{meta}</span>
+                                              </div>
+                                              <div className={css.groupActions}>
+                                                <Button
+                                                  variant="outline"
+                                                  size="sm"
+                                                  onClick={() => openModeAddPanel(name)}
+                                                >{t('modeAdd')}</Button>
+                                                {deletingMode === name
+                                                  ? (
+                                                      <>
+                                                        <Button variant="primary" size="sm" className={css.dangerArmed} onClick={() => doDeleteMode(name)}>{t('modeConfirmDelete')}</Button>
+                                                        <Button variant="ghost" size="sm" onClick={() => setDeletingMode(null)}>{t('cancel')}</Button>
+                                                      </>
+                                                    )
+                                                  : (
+                                                      <Menu
+                                                        open={modeMenuFor === name}
+                                                        onClose={() => setModeMenuFor(null)}
+                                                        onSelect={id => {
+                                                          setModeMenuFor(null)
+                                                          if (id === 'rename') {
+                                                            setModeAddPanel(null)
+                                                            setDeletingMode(null)
+                                                            setRenamingMode(name)
+                                                            setRenamingValue(name)
+                                                          } else if (id === 'delete') {
+                                                            setModeAddPanel(null)
+                                                            setRenamingMode(null)
+                                                            setDeletingMode(name)
+                                                          }
+                                                        }}
+                                                        align="end"
+                                                        portal
+                                                        anchor={(
+                                                          <Button
+                                                            variant="ghost"
+                                                            size="sm"
+                                                            aria-label={t('groupMore')}
+                                                            onClick={() => setModeMenuFor(open => open === name ? null : name)}
+                                                          >···</Button>
+                                                        )}
+                                                        items={[
+                                                          { id: 'rename', label: t('groupRename') },
+                                                          { id: 'delete', label: t('modeDelete') },
+                                                        ]}
+                                                      />
+                                                    )}
+                                              </div>
+                                            </div>
+                                            {!collapsed && (
+                                              <div className={css.groupMembers}>
+                                                {members.length === 0 && <div className={css.groupHint}>{t('modeEmptyMembers')}</div>}
+                                                {visibleMembers.map(member => (
+                                                  <div className={css.groupMember} key={member}>
+                                                    <span className={css.memberName}>
+                                                      <span className={css.nm}>{member}</span>
+                                                      {installedThemeNames.has(member) && <span className={css.memberKind}>· {t('groupThemeBadge')}</span>}
+                                                    </span>
+                                                    {effectiveDisabledSet.has(member) && <span className={css.spec}>{t('disabledState')}</span>}
+                                                    {onOffSwitch({
+                                                      label: (effectiveDisabledSet.has(member) ? t('enable') : t('disable')) + ' ' + member,
+                                                      on: !effectiveDisabledSet.has(member),
+                                                      disabled: togglingName !== null,
+                                                      toggle: () => doToggle(member, effectiveDisabledSet.has(member)),
+                                                    })}
+                                                    {modeMembershipMenu(member)}
+                                                  </div>
+                                                ))}
+                                              </div>
+                                            )}
+                                          </div>
+                                        )
+                                      })}
+                                  {groupQuery === '' && (
+                                    <div className={css.groupRow}>
+                                      <div className={css.groupHead}>
+                                        <div className={css.groupTitle}>
+                                          <span className={css.groupName}>{t('modeNotInAny')}</span>
+                                          <span className={css.groupMeta}>
+                                            {t('modeMembersMeta')
+                                              .replace('{0}', String(modeLessNames.length))
+                                              .replace('{1}', String(modeLessNames.filter(name => !effectiveDisabledSet.has(name)).length))}
+                                          </span>
+                                        </div>
+                                      </div>
+                                      <div className={css.groupMembers}>
+                                        {modeLessNames.length === 0
+                                          ? <div className={css.empty}>{t('installedEmpty')}</div>
+                                          : visibleModeLess.map(name => (
+                                              <div className={css.groupMember} key={'nomode-' + name}>
+                                                <span className={css.memberName}>
+                                                  <span className={css.nm}>{name}</span>
+                                                  {installedThemeNames.has(name) && <span className={css.memberKind}>· {t('groupThemeBadge')}</span>}
+                                                </span>
+                                                {/* Host infrastructure is in no mode and never can be:
+                                                    neither the switch nor the mode menu may move it, so
+                                                    the row says why instead of offering two controls
+                                                    that would both refuse. */}
+                                                {protectedSet.has(name) && <span className={css.spec}>{t('modeProtected')}</span>}
+                                                {!protectedSet.has(name) && effectiveDisabledSet.has(name) && <span className={css.spec}>{t('disabledState')}</span>}
+                                                {!protectedSet.has(name) && onOffSwitch({
+                                                  label: (effectiveDisabledSet.has(name) ? t('enable') : t('disable')) + ' ' + name,
+                                                  on: !effectiveDisabledSet.has(name),
+                                                  disabled: togglingName !== null,
+                                                  toggle: () => doToggle(name, effectiveDisabledSet.has(name)),
+                                                })}
+                                                {!protectedSet.has(name) && modeMembershipMenu(name)}
+                                              </div>
+                                            ))}
+                                      </div>
+                                    </div>
+                                  )}
+                                </>
+                              )}
+                            <p className={css.groupOrgHint}>{t('modeHint')}</p>
+                            <p className={css.groupOrgHint}>{t('modePresetHint')}</p>
                           </>
                         )
                       : orderedInstalledEntries.length === 0
@@ -6322,6 +6848,123 @@ export function MarketSection(props: MarketSectionProps) {
           </div>
         </Modal>
       )}
+      {renamingMode !== null && (
+        <Modal
+          open
+          onClose={() => { setRenamingMode(null); setRenamingValue('') }}
+          title={t('modeRenameTitle')}
+          description={t('modeRenameHint')}
+          footer={(
+            <>
+              <Button variant="ghost" onClick={() => { setRenamingMode(null); setRenamingValue('') }}>{t('cancel')}</Button>
+              <Button
+                variant="primary"
+                disabled={renamingValue.trim() === '' || renamingValue.trim() === renamingMode}
+                onClick={() => doRenameMode(renamingMode)}
+              >{t('groupRenameSave')}</Button>
+            </>
+          )}
+        >
+          <div className={css.groupRenameField}>
+            <label htmlFor="dsh-market-mode-rename">{t('modeNamePh')}</label>
+            <Input
+              id="dsh-market-mode-rename"
+              className={css.inlineInput}
+              placeholder={t('modeNamePh')}
+              value={renamingValue}
+              onChange={e => setRenamingValue(e.target.value)}
+              onFocus={e => e.currentTarget.select()}
+              onKeyDown={e => { if (e.key === 'Enter') doRenameMode(renamingMode) }}
+              autoFocus
+            />
+          </div>
+        </Modal>
+      )}
+      {modeAddPanel !== null && (() => {
+        const members = modes[modeAddPanel] ?? []
+        // Everything installed the mode can still take. Host infrastructure
+        // stays in the list and reads as unselectable, rather than vanishing:
+        // a plugin the user installed and cannot find in here is a question
+        // the panel should answer, not create.
+        const candidates = groupableNames.filter(name => !members.includes(name))
+        const needle = addQuery.trim().toLowerCase()
+        const shown = needle === '' ? candidates : candidates.filter(name => name.toLowerCase().includes(needle))
+        return (
+          <Modal
+            open
+            onClose={() => setModeAddPanel(null)}
+            title={t('modeAddTitle').replace('{0}', modeAddPanel)}
+            footer={(
+              <>
+                <span className={css.groupAddFooterMeta}>
+                  {t('modeAddSelected').replace('{0}', String(modeAddSelected.length))}
+                </span>
+                <Button variant="ghost" onClick={() => setModeAddPanel(null)}>{t('cancel')}</Button>
+                <Button
+                  variant="primary"
+                  disabled={modeAddSelected.length === 0}
+                  onClick={doAddSelectedToMode}
+                >{t('modeAddConfirm').replace('{0}', String(modeAddSelected.length))}</Button>
+              </>
+            )}
+          >
+            <div className={css.groupAddModalBody}>
+              <SearchInput
+                value={addQuery}
+                onCommit={setAddQuery}
+                placeholder={t('groupAddSearchPh')}
+                t={t}
+              />
+              {/* A shortcut, not a rule: picking the same set again because it
+                  was already filed in a group is work with no decisions in it. */}
+              {groupOrder.length > 0 && (
+                <div className={css.groupImportChips}>
+                  <span className={css.groupAddModalHint}>{t('modeImportFromGroup')}</span>
+                  {groupOrder.map(gid => (
+                    <Button
+                      key={gid}
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setModeAddSelected(prev => {
+                        const next = [...prev]
+                        for (const name of groups[gid] ?? []) {
+                          if (next.includes(name) || protectedSet.has(name)) continue
+                          next.push(name)
+                        }
+                        return next
+                      })}
+                    >{gid}</Button>
+                  ))}
+                </div>
+              )}
+              {shown.length === 0
+                ? <p className={css.groupAddModalHint}>{t('modeAddEmpty')}</p>
+                : (
+                    <div className={css.groupAddModalList}>
+                      {shown.map(name => {
+                        const locked = protectedSet.has(name)
+                        return (
+                          <label className={css.groupAddPick} key={name}>
+                            <input
+                              type="checkbox"
+                              checked={modeAddSelected.includes(name)}
+                              disabled={locked}
+                              onChange={() => setModeAddSelected(prev => prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name])}
+                            />
+                            <span className={css.nm}>{name}</span>
+                            {locked
+                              ? <span className={css.spec}>{t('modeProtected')}</span>
+                              : effectiveDisabledSet.has(name) && <span className={css.spec}>{t('disabledState')}</span>}
+                          </label>
+                        )
+                      })}
+                    </div>
+                  )}
+              <p className={css.groupAddModalHint}>{t('modeAddHint')}</p>
+            </div>
+          </Modal>
+        )
+      })()}
       {addPanel !== null && (() => {
         const members = groups[addPanel] ?? []
         const pluginCandidates = ungroupedNames.filter(name => !installedThemeNames.has(name) && !members.includes(name))
@@ -6359,17 +7002,26 @@ export function MarketSection(props: MarketSectionProps) {
                 ? <p className={css.groupAddModalHint}>{t('groupAddEmpty')}</p>
                 : (
                     <div className={css.groupAddModalList}>
-                      {candidates.map(name => (
-                        <label className={css.groupAddPick} key={name}>
-                          <input
-                            type="checkbox"
-                            checked={addSelected.includes(name)}
-                            onChange={() => setAddSelected(prev => prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name])}
-                          />
-                          <span className={css.nm}>{name}</span>
-                          {effectiveDisabledSet.has(name) && <span className={css.spec}>{t('disabledState')}</span>}
-                        </label>
-                      ))}
+                      {candidates.map(name => {
+                        // Host infrastructure is listed and locked, not hidden:
+                        // the switch would skip it, so joining one has to look
+                        // like something that cannot happen.
+                        const locked = protectedSet.has(name)
+                        return (
+                          <label className={css.groupAddPick} key={name}>
+                            <input
+                              type="checkbox"
+                              checked={addSelected.includes(name)}
+                              disabled={locked}
+                              onChange={() => setAddSelected(prev => prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name])}
+                            />
+                            <span className={css.nm}>{name}</span>
+                            {locked
+                              ? <span className={css.spec}>{t('modeProtected')}</span>
+                              : effectiveDisabledSet.has(name) && <span className={css.spec}>{t('disabledState')}</span>}
+                          </label>
+                        )
+                      })}
                     </div>
                   )}
               <p className={css.groupAddModalHint}>{t('groupAddHint')}</p>

@@ -297,6 +297,23 @@ export interface InstalledPayload {
   groups?: Record<string, string[]>
   /** Display order of group names. */
   groupOrder?: string[]
+  /**
+   * Modes: mode name → member package names. A plugin may be in several —
+   * that is the difference from a group, and the whole reason a shared
+   * plugin (a theme, a translation helper) survives a switch between two
+   * modes that both list it.
+   */
+  modes?: Record<string, string[]>
+  /** Display order of mode names. */
+  modeOrder?: string[]
+  /** The mode the user last switched to, or null for "no mode". */
+  activeMode?: string | null
+  /**
+   * Installed packages on the host infrastructure chain. They cannot be
+   * switched off, so the pickers must show them as unselectable — a row that
+   * looks selectable and does nothing is worse than one that says why.
+   */
+  protected?: string[]
   /** Catalog entry URLs bookmarked for later install (#414). */
   favorites?: string[]
 }
@@ -318,6 +335,63 @@ export function groupSwitchState(members: string[] | undefined, disabled: Readon
     else anyOn = true
   }
   return anyOn && anyOff ? 'mixed' : anyOff ? 'off' : 'on'
+}
+
+/** Names of the modes a plugin belongs to, in display order. */
+export function modesForPlugin(modes: Record<string, string[]> | undefined, modeOrder: readonly string[], name: string): string[] {
+  if (modes === undefined) return []
+  return modeOrder.filter(mode => (modes[mode] ?? []).includes(name))
+}
+
+/**
+ * Every installed plugin that appears in at least one mode.
+ *
+ * What this set is NOT is as important as what it is: the mode switch never
+ * touches a plugin outside it, so the Installed tab uses it to sort plugins
+ * into "in a mode" and "not in a mode", and the second bucket's hint can
+ * promise exactly that — filing a plugin under a mode is the only way to make
+ * it switchable, and leaving it out is the only way to keep it always on.
+ */
+export function modeOwnedNames(modes: Record<string, string[]> | undefined, modeOrder: readonly string[]): Set<string> {
+  const owned = new Set<string>()
+  if (modes === undefined) return owned
+  for (const mode of modeOrder) for (const member of modes[mode] ?? []) owned.add(member)
+  return owned
+}
+
+/** The parts of the POST /dsh-market/modes reply that describe what moved. */
+export interface ModeSwitchSummary {
+  activeMode?: string | null
+  turnedOn?: string[]
+  turnedOff?: string[]
+  restartMembers?: string[]
+  skippedProtected?: string[]
+}
+
+/**
+ * One line saying what a switch did, or null when there is nothing to say.
+ *
+ * The switch is the one action in this view that can move a dozen plugins at
+ * once, so it owes the user a landing: what opened, what closed, and what
+ * still needs a restart. Built from the reply rather than from a before/after
+ * diff of the client's own state, so the sentence describes what the host
+ * actually did rather than what the page expected.
+ */
+export function modeSwitchNotice(summary: ModeSwitchSummary, t: Translate): string | null {
+  const on = summary.turnedOn?.length ?? 0
+  const off = summary.turnedOff?.length ?? 0
+  const target = summary.activeMode ?? null
+  if (on === 0 && off === 0) {
+    return target === null ? null : t('modeSwitchedNoop').replace('{0}', target)
+  }
+  const parts = [target === null
+    ? t('modeSwitchedNone').replace('{0}', String(off))
+    : t('modeSwitched').replace('{0}', target).replace('{1}', String(on)).replace('{2}', String(off))]
+  const restart = summary.restartMembers?.length ?? 0
+  if (restart > 0) parts.push(t('modeRestart').replace('{0}', String(restart)))
+  const skipped = summary.skippedProtected?.length ?? 0
+  if (skipped > 0) parts.push(t('protectedSkipped').replace('{0}', String(skipped)))
+  return parts.join(' ')
 }
 
 /** Registered theme definition surfaced by the theme service snapshot. */

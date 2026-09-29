@@ -72,6 +72,12 @@ export function deleteGroup(state: GroupState, name: unknown): GroupMutationResu
  * collapse, so the persisted list stays clean. Themes are exclusive: a group
  * may hold at most one theme plugin, mirroring the global one-active-theme
  * rule (only one theme can be enabled at a time).
+ *
+ * Plugins on the host infrastructure chain are dropped rather than kept as
+ * members that the group switch will skip: a member list that names a plugin
+ * the switch refuses to move is a list that lies. Existing groups built
+ * before this rule keep their rows (this only filters what is written next),
+ * and the switch skips such a row and reports it.
  */
 export function setGroupMembers(
   state: GroupState,
@@ -79,6 +85,7 @@ export function setGroupMembers(
   members: unknown,
   installed: ReadonlySet<string>,
   themes: ReadonlySet<string>,
+  protectedNames: ReadonlySet<string> = new Set(),
 ): GroupMutationResult {
   if (typeof name !== 'string' || state.groups[name] === undefined) {
     return { ok: false, error: 'group not found / 分组不存在' }
@@ -90,6 +97,7 @@ export function setGroupMembers(
     if (typeof member !== 'string' || member === '' || seen.has(member)) continue
     // The market itself never participates in groups (#60 assumptions).
     if (member === 'dsh-market' || member === 'dshmarket') continue
+    if (protectedNames.has(member)) continue
     seen.add(member)
     if (installed.has(member)) kept.push(member)
   }

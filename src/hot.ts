@@ -211,7 +211,7 @@ function stateFile(profileDir: string): string {
   return join(profileDir, HOT_DIR, 'state.json')
 }
 
-/** Persisted market state: the generic disable list plus custom groups. */
+/** Persisted market state: the generic disable list plus custom groups and modes. */
 export interface MarketState {
   /** Plugins the user switched off; replayed at every boot. */
   disabled: Set<string>
@@ -219,6 +219,27 @@ export interface MarketState {
   groups: Record<string, string[]>
   /** Display order of group names; "ungrouped" is implicit and never listed. */
   groupOrder: string[]
+  /**
+   * User-defined modes: mode name → member package names.
+   *
+   * Same shape as `groups` and a different meaning, so a separate field: a
+   * group is a label (one plugin, one group, organising only), a mode is an
+   * exclusive switch (a plugin may be in several; switching one turns the
+   * others off). See src/modes.ts.
+   */
+  modes: Record<string, string[]>
+  /** Display order of mode names. */
+  modeOrder: string[]
+  /**
+   * The mode the user last switched to, or null for "no mode".
+   *
+   * UI state only — the activation rule in src/modes.ts is derived from
+   * membership alone, so a stale value cannot make a switch misbehave. It
+   * says which radio is filled in, and it is what "no mode" turns off.
+   * Optional on the way in, like `notes`: most callers have nothing to say
+   * about it and an omitted one must not reset it.
+   */
+  activeMode?: string | null
   /**
    * The user's own one-line note per installed plugin (#347).
    *
@@ -433,6 +454,20 @@ export function buildEnvFromUnknown(value: unknown): Record<string, string> | un
  * grow without limit from a paste. */
 export const MAX_NOTE = 200
 
+/**
+ * A name → member-names map from untrusted JSON. Anything that is not a
+ * plain object reads as empty rather than throwing the whole state away;
+ * member lists go through the same dedupe every other string list does.
+ * Shared by `groups` and `modes`, which have the same shape and different
+ * meanings (see src/modes.ts).
+ */
+function memberMapFromUnknown(value: unknown): Record<string, string[]> {
+  const out: Record<string, string[]> = {}
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return out
+  for (const [name, members] of Object.entries(value)) out[name] = uniqueStrings(members)
+  return out
+}
+
 export function readMarketState(profileDir: string): MarketState {
   try {
     const state = JSON.parse(readFileSync(stateFile(profileDir), 'utf8')) as {
@@ -440,6 +475,9 @@ export function readMarketState(profileDir: string): MarketState {
       disabledSkins?: unknown
       groups?: unknown
       groupOrder?: unknown
+      modes?: unknown
+      modeOrder?: unknown
+      activeMode?: unknown
       channel?: unknown
       region?: unknown
       regionAuto?: unknown
@@ -451,12 +489,13 @@ export function readMarketState(profileDir: string): MarketState {
       brokenPlugins?: unknown
     }
     const disabled = uniqueStrings(state.disabled !== undefined ? state.disabled : state.disabledSkins)
-    const groups: Record<string, string[]> = {}
-    if (state.groups !== null && typeof state.groups === 'object' && !Array.isArray(state.groups)) {
-      for (const [name, members] of Object.entries(state.groups)) {
-        groups[name] = uniqueStrings(members)
-      }
-    }
+    const groups = memberMapFromUnknown(state.groups)
+    const modes = memberMapFromUnknown(state.modes)
+    // A name with no mode behind it is not a mode: a radio pointing at a
+    // deleted mode would leave "no mode" unreachable.
+    const activeMode = typeof state.activeMode === 'string' && modes[state.activeMode] !== undefined
+      ? state.activeMode
+      : null
     const notes: Record<string, string> = {}
     if (state.notes !== null && typeof state.notes === 'object' && !Array.isArray(state.notes)) {
       for (const [name, text] of Object.entries(state.notes)) {
@@ -472,6 +511,9 @@ export function readMarketState(profileDir: string): MarketState {
       groups,
       notes,
       groupOrder: uniqueStrings(state.groupOrder),
+      modes,
+      modeOrder: uniqueStrings(state.modeOrder),
+      activeMode,
       channel: asChannel(state.channel) ?? undefined,
       region: asRegion(state.region) ?? undefined,
       // Only meaningful beside a region, and only when true: a stray flag
@@ -484,7 +526,7 @@ export function readMarketState(profileDir: string): MarketState {
       buildEnv: buildEnvFromUnknown(state.buildEnv),
     }
   } catch {
-    return { disabled: new Set(), groups: {}, groupOrder: [], notes: {}, favorites: [], blocked: [] }
+    return { disabled: new Set(), groups: {}, groupOrder: [], modes: {}, modeOrder: [], activeMode: null, notes: {}, favorites: [], blocked: [] }
   }
 }
 
@@ -493,8 +535,9 @@ export function readMarketState(profileDir: string): MarketState {
  *
  * Every field a caller does not carry forward is taken from disk rather than
  * dropped. Several callers legitimately know about only one part of the
- * state — `writeMarketState(dir, { disabled, groups, groupOrder })` appears
- * at five call sites in routes.ts — and before #435 that shape silently
+ * state — `writeMarketState(dir, { disabled, groups, groupOrder, modes,
+ * modeOrder, activeMode })` appears at five call sites in routes.ts — and
+ * before #435 that shape silently
  * erased whatever else the user had chosen:
  *
  * - `channel` and `region` had no fallback at all, so toggling any plugin
@@ -539,10 +582,18 @@ export function writeMarketState(profileDir: string, state: MarketState): void {
   const broken = Object.prototype.hasOwnProperty.call(state, 'brokenPlugins')
     ? state.brokenPlugins
     : onDisk.brokenPlugins
+  // activeMode has an explicit clear path ("no mode"), so — like regionAuto —
+  // omission preserves while an explicit null clears.
+  const activeMode = Object.prototype.hasOwnProperty.call(state, 'activeMode')
+    ? state.activeMode ?? null
+    : onDisk.activeMode ?? null
   writeFileSync(stateFile(profileDir), JSON.stringify({
     disabled: [...state.disabled],
     groups: state.groups,
     groupOrder: state.groupOrder,
+    modes: state.modes,
+    modeOrder: state.modeOrder,
+    ...(activeMode === null ? {} : { activeMode }),
     ...(favorites.length > 0 ? { favorites } : {}),
     ...(blocked.length > 0 ? { blocked } : {}),
     ...(Object.keys(notes).length > 0 ? { notes } : {}),
