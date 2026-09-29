@@ -646,6 +646,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			enable: "启用",
 			disable: "停用",
 			toggleFail: "切换失败",
+			serverOutdated: "服务端还没加载这个功能。重启 DeepSeek Harness 后重试。",
 			deprecatedBadge: "已废弃",
 			deprecatedWarn: "该插件已被目录标记为废弃，不建议新用户安装。",
 			brokenPluginTitle: "{0} 更新失败后被移除了",
@@ -1346,6 +1347,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			enable: "Enable",
 			disable: "Disable",
 			toggleFail: "Toggle failed",
+			serverOutdated: "The server half has not loaded this feature yet. Restart DeepSeek Harness and try again.",
 			deprecatedBadge: "Deprecated",
 			deprecatedWarn: "This plugin is marked as deprecated by the catalog; new users are advised against installing it.",
 			brokenPluginTitle: "{0} was removed after a failed update",
@@ -1787,6 +1789,49 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const relative = path.replace(/^\/+/, "");
 			if (typeof document === "undefined") return `/${relative}`;
 			return new URL(relative, document.baseURI).pathname;
+		}
+		/**
+		* Read a market route's JSON reply, and give "there was nothing to read" a
+		* sentence with a next step in it.
+		*
+		* A route the running server does not have answers with an EMPTY body (dsh's
+		* web server has no handler to write one), and `res.json()` on that throws
+		* `SyntaxError: Unexpected end of JSON input` — an error that names neither
+		* what happened nor what to do, which this project's own rules do not allow.
+		*
+		* It is the ordinary state of affairs rather than an exotic one: `client.js`
+		* is read from disk on every page load, while the server half is a module the
+		* host loaded once at boot and never re-imports (the ESM-cache problem #685
+		* describes). So a rebuilt or freshly updated page with a still-old running
+		* server is one refresh away at any time — including right after the market
+		* updates itself, which is exactly when a user is least likely to know that
+		* "restart" was the missing step.
+		*
+		* `unreadable` is the caller's own words for that state, so this stays a
+		* reader rather than a place where copy lives.
+		*
+		* Returns the same `{ status, body }` shape the call sites already destructure,
+		* with a body their existing error branch can render: `{ ok: false, error }`.
+		*/
+		async function readRouteReply(res, unreadable) {
+			try {
+				return {
+					status: res.status,
+					body: await res.json()
+				};
+			} catch {
+				return {
+					status: res.status,
+					body: {
+						ok: false,
+						error: unreadable
+					}
+				};
+			}
+		}
+		/** `readRouteReply` for the call sites that only want the body. */
+		async function readReplyBody(res, unreadable) {
+			return (await readRouteReply(res, unreadable)).body;
 		}
 		/** Category ids for one entry, de-duplicated in declaration order. */
 		function pluginCategories(plugin) {
@@ -8840,16 +8885,13 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					method: "POST",
 					headers: { "content-type": "application/json" },
 					body: JSON.stringify({ rollbackId })
-				}).then((res) => res.json().then((body) => ({
-					status: res.status,
-					body
-				}))).then(({ status, body }) => {
+				}).then((res) => readRouteReply(res, t("serverOutdated"))).then(({ status, body }) => {
 					if (status === 200 && body.ok) {
 						setCompatibilityNotice(null);
 						refreshInstalled();
 					} else setInstallError(String(body.error || body.detail || "rollback failed"));
 				}).catch((error) => setInstallError(String(error))).finally(() => setRollingBack(false));
-			}, [refreshInstalled]);
+			}, [refreshInstalled, t]);
 			const compatibilitySummary = (risks) => {
 				if (risks.length === 0) return "";
 				const first = risks[0];
@@ -8888,10 +8930,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						...force ? { force: true } : {},
 						...version !== void 0 ? { version } : {}
 					})
-				}).then((res) => res.json().then((body) => ({
-					status: res.status,
-					body
-				}))).then(({ status, body }) => {
+				}).then((res) => readRouteReply(res, t("serverOutdated"))).then(({ status, body }) => {
 					setBusyUrl(null);
 					sessionStorage.removeItem("dshm-pending");
 					if (status === 200 && body.ok && body.hot && pluginCategories(plugin).includes("theme")) {
@@ -9142,10 +9181,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						method: "POST",
 						headers: { "content-type": "application/json" },
 						body: "{}"
-					}).then((res) => res.json().then((body) => ({
-						status: res.status,
-						body
-					}))).then(({ status, body }) => {
+					}).then((res) => readRouteReply(res, t("serverOutdated"))).then(({ status, body }) => {
 						if (status === 202 && body.ok === true) {
 							awaitNewBoot();
 							return;
@@ -9240,10 +9276,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						...restore ? { restore: true } : {},
 						...compatVersion !== void 0 ? { compatVersion } : {}
 					})
-				}).then((res) => res.json().then((body) => ({
-					status: res.status,
-					body
-				}))).then(({ status, body }) => {
+				}).then((res) => readRouteReply(res, t("serverOutdated"))).then(({ status, body }) => {
 					sessionStorage.removeItem("dshm-updating");
 					setUpdatingName(null);
 					if (body.cancelled === true) {
@@ -9336,10 +9369,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					method: "POST",
 					headers: { "content-type": "application/json" },
 					body: JSON.stringify({ name })
-				}).then((res) => res.json().then((body) => ({
-					status: res.status,
-					body
-				}))).then(({ status, body }) => {
+				}).then((res) => readRouteReply(res, t("serverOutdated"))).then(({ status, body }) => {
 					setUpdatingName(null);
 					if (status === 200 && body.ok === true) {
 						const targetName = typeof body.to?.name === "string" ? body.to.name : name;
@@ -9454,10 +9484,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					method: "POST",
 					headers: { "content-type": "application/json" },
 					body: JSON.stringify({ name })
-				}).then((res) => res.json().then((body) => ({
-					status: res.status,
-					body
-				}))).then(({ status, body }) => {
+				}).then((res) => readRouteReply(res, t("serverOutdated"))).then(({ status, body }) => {
 					if (status === 200 && body.ok) {
 						sessionStorage.setItem("dshm-toast", JSON.stringify([name]));
 						sessionStorage.setItem("dshm-toast-mode", "theme");
@@ -9465,7 +9492,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						location.reload();
 					} else setInstallError(String(body.error || "failed"));
 				}).catch((error) => setInstallError(String(error)));
-			}, []);
+			}, [t]);
 			/**
 			* Forget a pending page-refresh for a plugin that is no longer here.
 			*
@@ -9485,11 +9512,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						name,
 						text
 					})
-				}).then((res) => res.json()).then((body) => {
+				}).then((res) => readReplyBody(res, t("serverOutdated"))).then((body) => {
 					if (body.ok && body.notes !== null && typeof body.notes === "object") setNotes(body.notes);
 					else setInstallError(String(body.error || "note failed"));
 				}).catch((error) => setInstallError(String(error)));
-			}, []);
+			}, [t]);
 			const toggleFavorite = (0, react.useCallback)((url) => {
 				const gen = ++favoriteOpGen.current;
 				const favorited = !favoriteUrlSet.has(url);
@@ -9657,10 +9684,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					method: "POST",
 					headers: { "content-type": "application/json" },
 					body: JSON.stringify({ name })
-				}).then((res) => res.json().then((body) => ({
-					status: res.status,
-					body
-				}))).then(({ status, body }) => {
+				}).then((res) => readRouteReply(res, t("serverOutdated"))).then(({ status, body }) => {
 					if (status === 409 && body.agentsBusy === true) {
 						setRecords((list) => patch(list, uninstallRecordId, {
 							state: "queued",
@@ -9811,10 +9835,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						name,
 						enabled
 					})
-				}).then((res) => res.json().then((body) => ({
-					status: res.status,
-					body
-				}))).then(({ status, body }) => {
+				}).then((res) => readRouteReply(res, t("serverOutdated"))).then(({ status, body }) => {
 					if (status === 200 && body.ok) {
 						if (Array.isArray(body.disabled)) setDisabledNames(body.disabled);
 						if (Array.isArray(body.live)) setSkins(body.live);
@@ -9864,10 +9885,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					method: "POST",
 					headers: { "content-type": "application/json" },
 					body: JSON.stringify(payload)
-				}).then((res) => res.json().then((body) => ({
-					status: res.status,
-					body
-				}))).then(({ status, body }) => {
+				}).then((res) => readRouteReply(res, t("serverOutdated"))).then(({ status, body }) => {
 					if (status === 200 && body.ok) {
 						setGroupPayload(body);
 						if (Array.isArray(body.restartMembers) && body.restartMembers.length > 0) setToggleRestart((n) => n + body.restartMembers.length);
@@ -9896,11 +9914,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					method: "POST",
 					headers: { "content-type": "application/json" },
 					body: JSON.stringify({ packages: names })
-				}).then((res) => res.json()).then((body) => {
+				}).then((res) => readReplyBody(res, t("serverOutdated"))).then((body) => {
 					if (!body.ok) setInstallError(String(body.error || "approve failed"));
 					else resume();
 				}).catch((error) => setInstallError(String(error)));
-			}, []);
+			}, [t]);
 			const doGroupToggle = (0, react.useCallback)((name, enabled) => {
 				return doGroupAction({
 					action: "toggle",
@@ -10021,10 +10039,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					method: "POST",
 					headers: { "content-type": "application/json" },
 					body: JSON.stringify(payload)
-				}).then((res) => res.json().then((body) => ({
-					status: res.status,
-					body
-				}))).then(({ status, body }) => {
+				}).then((res) => readRouteReply(res, t("serverOutdated"))).then(({ status, body }) => {
 					if (status === 200 && body.ok) {
 						setModePayload(body);
 						if (Array.isArray(body.restartMembers) && body.restartMembers.length > 0) setToggleRestart((n) => n + body.restartMembers.length);

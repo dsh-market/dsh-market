@@ -33,6 +33,45 @@ export function api(path: string): string {
   return new URL(relative, document.baseURI).pathname
 }
 
+/**
+ * Read a market route's JSON reply, and give "there was nothing to read" a
+ * sentence with a next step in it.
+ *
+ * A route the running server does not have answers with an EMPTY body (dsh's
+ * web server has no handler to write one), and `res.json()` on that throws
+ * `SyntaxError: Unexpected end of JSON input` — an error that names neither
+ * what happened nor what to do, which this project's own rules do not allow.
+ *
+ * It is the ordinary state of affairs rather than an exotic one: `client.js`
+ * is read from disk on every page load, while the server half is a module the
+ * host loaded once at boot and never re-imports (the ESM-cache problem #685
+ * describes). So a rebuilt or freshly updated page with a still-old running
+ * server is one refresh away at any time — including right after the market
+ * updates itself, which is exactly when a user is least likely to know that
+ * "restart" was the missing step.
+ *
+ * `unreadable` is the caller's own words for that state, so this stays a
+ * reader rather than a place where copy lives.
+ *
+ * Returns the same `{ status, body }` shape the call sites already destructure,
+ * with a body their existing error branch can render: `{ ok: false, error }`.
+ */
+export async function readRouteReply(
+  res: Response,
+  unreadable: string,
+): Promise<{ status: number; body: any }> {
+  try {
+    return { status: res.status, body: await res.json() }
+  } catch {
+    return { status: res.status, body: { ok: false, error: unreadable } }
+  }
+}
+
+/** `readRouteReply` for the call sites that only want the body. */
+export async function readReplyBody(res: Response, unreadable: string): Promise<any> {
+  return (await readRouteReply(res, unreadable)).body
+}
+
 export interface RegistryPlugin {
   name: string
   owner: string

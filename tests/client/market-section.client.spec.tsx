@@ -6257,3 +6257,45 @@ describe('a batch switch that skipped something says so', () => {
     expect(await screen.findByText(en.protectedSkipped.replace('{0}', '1'))).toBeTruthy()
   })
 })
+
+describe('a route the running server does not have', () => {
+  it('says to restart, instead of leaking a JSON parse error', async () => {
+    // `client.js` is read from disk on every page load; the server half is a
+    // module the host loaded once at boot and never re-imports. So a rebuilt
+    // (or freshly updated) page against an old running server is one refresh
+    // away — and the route that server does not have answers with an EMPTY
+    // body, which res.json() reports as "Unexpected end of JSON input": an
+    // error naming neither the cause nor the next step.
+    const base = stubFetch({
+      '/dsh-market/installed': {
+        profile: 'web',
+        installed: { 'dsh-loop': '^1.0.0' },
+        live: [],
+        disabled: [],
+        groups: {},
+        groupOrder: [],
+        modes: {},
+        modeOrder: [],
+        activeMode: null,
+        protected: [],
+      },
+    })
+    const passthrough = base.getMockImplementation() as (input: unknown, init?: RequestInit) => Promise<Response>
+    vi.stubGlobal('fetch', vi.fn((input: unknown, init?: RequestInit) => (
+      String(input).startsWith('/dsh-market/modes')
+        ? Promise.resolve(new Response('', { status: 404 }))
+        : passthrough(input, init)
+    )))
+
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    fireEvent.click(await screen.findByRole('button', { name: en.tabModes }))
+    fireEvent.click(screen.getByRole('button', { name: en.modeNew }))
+    fireEvent.change(screen.getByPlaceholderText(en.modeNamePh), { target: { value: '编程' } })
+    fireEvent.click(screen.getByRole('button', { name: en.groupCreate }))
+
+    expect(await screen.findByText(en.serverOutdated)).toBeTruthy()
+    expect(document.body.textContent).not.toMatch(/Unexpected end of JSON input/)
+  })
+})

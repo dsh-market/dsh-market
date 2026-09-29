@@ -455,6 +455,7 @@ export const zh = {
   enable: '启用',
   disable: '停用',
   toggleFail: '切换失败',
+  serverOutdated: '服务端还没加载这个功能。重启 DeepSeek Harness 后重试。',
   deprecatedBadge: '已废弃',
   deprecatedWarn: '该插件已被目录标记为废弃，不建议新用户安装。',
   // A plugin the market had to stop declaring (#663). Plain about what
@@ -1166,6 +1167,7 @@ export const en: Record<MarketKey, string> = {
   enable: 'Enable',
   disable: 'Disable',
   toggleFail: 'Toggle failed',
+  serverOutdated: 'The server half has not loaded this feature yet. Restart DeepSeek Harness and try again.',
   deprecatedBadge: 'Deprecated',
   deprecatedWarn: 'This plugin is marked as deprecated by the catalog; new users are advised against installing it.',
   brokenPluginTitle: '{0} was removed after a failed update',

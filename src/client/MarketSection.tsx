@@ -49,7 +49,7 @@ import type { OperationRecord } from './operations.ts'
 import { Diagnostics } from './Diagnostics.tsx'
 import { exportMarketLog } from './self-check.ts'
 import {
-  api, applyGithubRouting, avatarColor, catalogEntryForInstalled, entryForDep, githubRouteCandidates, groupSwitchState, humanOutput, installedForCatalog, isGenerationSpec, isInstalled, localizeBilingual, localizeBilingualList, looksTerminal, matchInstalledName, modeOwnedNames, modeSwitchNotice, modesForPlugin, orderedCategories, pluginCategories,
+  api, applyGithubRouting, avatarColor, catalogEntryForInstalled, entryForDep, githubRouteCandidates, groupSwitchState, humanOutput, installedForCatalog, isGenerationSpec, isInstalled, localizeBilingual, localizeBilingualList, looksTerminal, matchInstalledName, modeOwnedNames, modeSwitchNotice, modesForPlugin, orderedCategories, pluginCategories, readReplyBody, readRouteReply,
   formatCount, pageItems, pluginName, blockAliases, pluginScreenshotCandidates, pluginScreenshots, pluginsForFavorites, queuedRowApplies, rankThemeScreenshots, readSession, releaseNotesHttpsImage, rememberGithubRoute, resetScreenshotsCache, resolveCatalogRestore, safeScreenshots, sanitizeReleaseNotesBody, staleFavoriteUrls, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
 } from './market-data.ts'
 import type {
@@ -2722,7 +2722,7 @@ export function MarketSection(props: MarketSectionProps) {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ rollbackId }),
     })
-      .then(res => res.json().then(body => ({ status: res.status, body })))
+      .then(res => readRouteReply(res, t('serverOutdated')))
       .then(({ status, body }) => {
         if (status === 200 && body.ok) {
           setCompatibilityNotice(null)
@@ -2733,7 +2733,7 @@ export function MarketSection(props: MarketSectionProps) {
       })
       .catch(error => setInstallError(String(error)))
       .finally(() => setRollingBack(false))
-  }, [refreshInstalled])
+  }, [refreshInstalled, t])
 
   const compatibilitySummary = (risks: CompatibilityNotice['risks']): string => {
     if (risks.length === 0) return ''
@@ -2770,7 +2770,7 @@ export function MarketSection(props: MarketSectionProps) {
       // which is the release that was just refused (#581).
       body: JSON.stringify({ url: plugin.url, ...(force ? { force: true } : {}), ...(version !== undefined ? { version } : {}) }),
     })
-      .then(res => res.json().then(body => ({ status: res.status, body })))
+      .then(res => readRouteReply(res, t('serverOutdated')))
       .then(({ status, body }) => {
         setBusyUrl(null)
         sessionStorage.removeItem('dshm-pending')
@@ -3057,7 +3057,7 @@ export function MarketSection(props: MarketSectionProps) {
     }
     const requestRestart = (attemptsLeft: number) => {
       fetch(api('/dsh-market/restart'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
-        .then(res => res.json().then(body => ({ status: res.status, body })))
+        .then(res => readRouteReply(res, t('serverOutdated')))
         .then(({ status, body }) => {
           if (status === 202 && body.ok === true) {
             awaitNewBoot()
@@ -3148,7 +3148,7 @@ export function MarketSection(props: MarketSectionProps) {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ name, ...(force ? { force: true } : {}), ...(restore ? { restore: true } : {}), ...(compatVersion !== undefined ? { compatVersion } : {}) }),
     })
-      .then(res => res.json().then(body => ({ status: res.status, body })))
+      .then(res => readRouteReply(res, t('serverOutdated')))
       .then(({ status, body }) => {
         // A response means the host settled the request (even a 4xx/5xx), so
         // the running row can hand back now. Only a lost response keeps the
@@ -3274,7 +3274,7 @@ export function MarketSection(props: MarketSectionProps) {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ name }),
     })
-      .then(res => res.json().then(body => ({ status: res.status, body })))
+      .then(res => readRouteReply(res, t('serverOutdated')))
       .then(({ status, body }) => {
         setUpdatingName(null)
         if (status === 200 && body.ok === true) {
@@ -3376,7 +3376,7 @@ export function MarketSection(props: MarketSectionProps) {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ name }),
     })
-      .then(res => res.json().then(body => ({ status: res.status, body })))
+      .then(res => readRouteReply(res, t('serverOutdated')))
       .then(({ status, body }) => {
         if (status === 200 && body.ok) {
           sessionStorage.setItem('dshm-toast', JSON.stringify([name]))
@@ -3388,7 +3388,7 @@ export function MarketSection(props: MarketSectionProps) {
         }
       })
       .catch(error => setInstallError(String(error)))
-  }, [])
+  }, [t])
 
   /**
    * Forget a pending page-refresh for a plugin that is no longer here.
@@ -3407,14 +3407,14 @@ export function MarketSection(props: MarketSectionProps) {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ name, text }),
     })
-      .then(res => res.json())
+      .then(res => readReplyBody(res, t('serverOutdated')))
       .then((body) => {
         if (body.ok && body.notes !== null && typeof body.notes === 'object') {
           setNotes(body.notes as Record<string, string>)
         } else setInstallError(String(body.error || 'note failed'))
       })
       .catch(error => setInstallError(String(error)))
-  }, [])
+  }, [t])
 
   const toggleFavorite = useCallback((url: string) => {
     const gen = ++favoriteOpGen.current
@@ -3564,7 +3564,7 @@ export function MarketSection(props: MarketSectionProps) {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ name }),
     })
-      .then(res => res.json().then(body => ({ status: res.status, body })))
+      .then(res => readRouteReply(res, t('serverOutdated')))
       .then(({ status, body }) => {
         if (status === 409 && body.agentsBusy === true) {
           setRecords(list => patchRecord(list, uninstallRecordId, {
@@ -3741,7 +3741,7 @@ export function MarketSection(props: MarketSectionProps) {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ name, enabled }),
     })
-      .then(res => res.json().then(body => ({ status: res.status, body })))
+      .then(res => readRouteReply(res, t('serverOutdated')))
       .then(({ status, body }) => {
         if (status === 200 && body.ok) {
           if (Array.isArray(body.disabled)) setDisabledNames(body.disabled)
@@ -3809,7 +3809,7 @@ export function MarketSection(props: MarketSectionProps) {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload),
     })
-      .then(res => res.json().then(body => ({ status: res.status, body })))
+      .then(res => readRouteReply(res, t('serverOutdated')))
       .then(({ status, body }) => {
         if (status === 200 && body.ok) {
           setGroupPayload(body)
@@ -3854,13 +3854,13 @@ export function MarketSection(props: MarketSectionProps) {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ packages: names }),
     })
-      .then(res => res.json())
+      .then(res => readReplyBody(res, t('serverOutdated')))
       .then((body) => {
         if (!body.ok) setInstallError(String(body.error || 'approve failed'))
         else resume()
       })
       .catch(error => setInstallError(String(error)))
-  }, [])
+  }, [t])
 
   const doGroupToggle = useCallback((name: string, enabled: boolean) => {
     return doGroupAction({ action: 'toggle', name, enabled })
@@ -3971,7 +3971,7 @@ export function MarketSection(props: MarketSectionProps) {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload),
     })
-      .then(res => res.json().then(body => ({ status: res.status, body })))
+      .then(res => readRouteReply(res, t('serverOutdated')))
       .then(({ status, body }) => {
         if (status === 200 && body.ok) {
           setModePayload(body)
