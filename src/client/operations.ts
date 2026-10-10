@@ -40,6 +40,8 @@ export interface OperationRecord {
   name: string
   /** Catalog url, present for installs — what a card is keyed by. */
   url?: string
+  /** Original update options survive queueing; agent consent is never persisted. */
+  updateOptions?: { force?: boolean; restore?: boolean; compatVersion?: string | undefined }
   state: OperationState
   /** 0-100 while running; null when the host reports no total to divide by. */
   percent?: number | null

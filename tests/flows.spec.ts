@@ -3413,28 +3413,68 @@ describe('update flow — no npm publishing required', () => {
     busyBed.dispose()
   })
 
-  it('refuses install and uninstall while any agent is running, before pnpm is touched', async () => {
-    const callsBefore = fake.calls.length
-    const defaultStatus = await bed.dispatch('GET', '/dsh-market/status')
-    expect(defaultStatus.json.agentGuardAvailable).toBe(false)
+  it.each(['update', 'uninstall'])('requires a strict, per-request busy-agent confirmation for %s (#779)', async operation => {
+    advanceNpmLatest('1.2.0')
     const busyBed = createTestbed({}, undefined, {
       list: () => [{ id: 'main', status: 'running' }],
     })
-    const busyStatus = await busyBed.dispatch('GET', '/dsh-market/status')
-    expect(busyStatus.json.agentGuardAvailable).toBe(true)
-    const install = await busyBed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
-    expect(install.status).toBe(409)
-    expect(install.json.agentsBusy).toBe(true)
-    expect(install.json.runningAgents).toEqual(['main'])
+    try {
+      const callsBefore = fake.calls.length
+      for (const confirmAgentsRunning of [false, 'true']) {
+        const refused = await busyBed.dispatch('POST', `/dsh-market/${operation}`, { name: 'dsh-loop', confirmAgentsRunning })
+        expect(refused.status).toBe(409)
+        expect(refused.json).toMatchObject({ agentsBusy: true, runningAgents: ['main'] })
+        expect(fake.calls.length).toBe(callsBefore)
+      }
+      const confirmed = await busyBed.dispatch('POST', `/dsh-market/${operation}`, { name: 'dsh-loop', confirmAgentsRunning: true })
+      expect(confirmed.status, JSON.stringify(confirmed.json)).toBe(200)
+      expect(confirmed.json.ok).toBe(true)
+      expect(fake.calls.length).toBeGreaterThan(callsBefore)
+      expect(installedSpec('dsh-loop')).toBe(operation === 'update' ? '^1.2.0' : undefined)
 
-    const uninstall = await busyBed.dispatch('POST', '/dsh-market/uninstall', { name: 'dsh-loop' })
-    expect(uninstall.status).toBe(409)
-    expect(uninstall.json.agentsBusy).toBe(true)
-    expect(uninstall.json.runningAgents).toEqual(['main'])
+      // A confirmed request never authorizes another mutation on this mount.
+      if (operation === 'uninstall') {
+        expect((await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })).status).toBe(200)
+      }
+      const afterConfirmed = fake.calls.length
+      const next = await busyBed.dispatch('POST', `/dsh-market/${operation}`, { name: 'dsh-loop' })
+      expect(next.status).toBe(409)
+      expect(next.json.agentsBusy).toBe(true)
+      expect(fake.calls.length).toBe(afterConfirmed)
+    } finally { busyBed.dispose() }
+  })
 
-    expect(installedSpec('dsh-loop')).toBe('^1.0.0')
-    expect(fake.calls.length).toBe(callsBefore)
-    busyBed.dispose()
+  it('allows a fresh install while agents run without confirmation (#779)', async () => {
+    fake.npm.dshmarket = {
+      latest: '1.0.0',
+      versions: { '1.0.0': { manifest: { dsh: {}, main: 'index.js' }, artifacts: ['index.js'] } },
+    }
+    const busyBed = createTestbed({}, undefined, {
+      list: () => [{ id: 'main', status: 'running' }],
+    })
+    try {
+      expect((await bed.dispatch('GET', '/dsh-market/status')).json.agentGuardAvailable).toBe(false)
+      expect((await busyBed.dispatch('GET', '/dsh-market/status')).json.agentGuardAvailable).toBe(true)
+      const callsBefore = fake.calls.length
+      expect((await busyBed.dispatch('POST', '/dsh-market/install', { url: 'file:///untrusted' })).status).toBe(400)
+      expect(fake.calls.length).toBe(callsBefore)
+      const installed = await busyBed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dshmarket' })
+      expect(installed.status, JSON.stringify(installed.json)).toBe(200)
+      expect(installed.json.ok).toBe(true)
+      expect(installedSpec('dshmarket')).toBe('^1.0.0')
+      expect(fake.calls.some(call => call[0] === 'add' && call.includes('dshmarket@1.0.0'))).toBe(true)
+
+      fake.npm['dsh-share'] = {
+        latest: '1.0.0',
+        versions: { '1.0.0': { manifest: { dsh: {}, main: 'missing.js' }, artifacts: [] } },
+      }
+      const failed = await busyBed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/h/dsh-share' })
+      expect(failed.json.ok).toBe(false)
+      expect(String(failed.json.error)).toMatch(/nothing installable|prebuilt artifacts/)
+      expect(installedSpec('dsh-share')).toBeUndefined()
+      expect(existsSync(join(fake.profileDir, 'node_modules', 'dsh-share'))).toBe(false)
+      expect(installedSpec('dshmarket')).toBe('^1.0.0')
+    } finally { busyBed.dispose() }
   })
 
   it('allows the same update when no agent reports running', async () => {
@@ -7463,7 +7503,26 @@ describe('the dev channel is an ordinary choice', () => {
                 target: '@changfenhuang/dsh-genui',
               })
 
-              const migrated = await bed.dispatch('POST', '/dsh-market/migrate-source', { name: 'dsh-genui' })
+              const busyBed = createTestbed({}, undefined, {
+                list: () => [{ id: 'main', status: 'running' }],
+              })
+              let migrated: Awaited<ReturnType<Testbed['dispatch']>>
+              try {
+                const callsBefore = fake.calls.length
+                for (const confirmAgentsRunning of [undefined, false, 'true']) {
+                  const refused = await busyBed.dispatch('POST', '/dsh-market/migrate-source', { name: 'dsh-genui', confirmAgentsRunning })
+                  expect(refused.status).toBe(409)
+                  expect(refused.json.agentsBusy).toBe(true)
+                  expect(fake.calls.length).toBe(callsBefore)
+                }
+                migrated = await busyBed.dispatch('POST', '/dsh-market/migrate-source', { name: 'dsh-genui', confirmAgentsRunning: true })
+                expect(migrated.status, JSON.stringify(migrated.json)).toBe(200)
+                const callsAfter = fake.calls.length
+                const next = await busyBed.dispatch('POST', '/dsh-market/uninstall', { name: '@changfenhuang/dsh-genui' })
+                expect(next.status).toBe(409)
+                expect(next.json.agentsBusy).toBe(true)
+                expect(fake.calls.length).toBe(callsAfter)
+              } finally { busyBed.dispose() }
               expect(migrated.status).toBe(200)
               expect(migrated.json).toMatchObject({
                 ok: true,

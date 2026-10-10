@@ -376,7 +376,7 @@ export function OperationsPanel(props: OperationsPanelProps) {
                   {record.state === 'queued' && (
                     <>
                       {props.onRunNow !== undefined && (
-                        <Button variant="primary" size="sm" onClick={() => props.onRunNow?.(record)}>{t('opRunNow')}</Button>
+                        <Button variant="primary" size="sm" onClick={() => props.onRunNow?.(record)}>{t(record.kind === 'update' ? 'opUpdateNow' : record.kind === 'uninstall' ? 'opUninstallNow' : 'opRunNow')}</Button>
                       )}
                       <Button variant="ghost" size="sm" onClick={() => props.onDismiss(record)}>{t('opDequeue')}</Button>
                     </>

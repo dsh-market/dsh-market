@@ -1798,7 +1798,9 @@ export function MarketSection(props: MarketSectionProps) {
    * Persisted in localStorage so a refresh keeps the queue; only `queued`
    * records persist — `running` recovery stays on the dshm-pending paths.
    */
+  const [updates, setUpdates] = useState<Record<string, UpdateStatus>>({})
   const queueRestoredRef = useRef(false)
+  const [queueSnapshotReady, setQueueSnapshotReady] = useState({ installed: false, updates: false })
   useEffect(() => {
     if (queueRestoredRef.current) return
     let saved: unknown = null
@@ -1810,6 +1812,9 @@ export function MarketSection(props: MarketSectionProps) {
       return
     }
     if (data === null) return
+    // Cached or not-yet-loaded maps cannot judge a replacement's saved queue.
+    if (saved.some(row => row?.kind === 'update' || row?.kind === 'uninstall') && !queueSnapshotReady.installed) return
+    if (saved.some(row => row?.kind === 'update') && !queueSnapshotReady.updates) return
     queueRestoredRef.current = true
     // Consumed only once the rows can actually be restored. Removing it
     // earlier lost the queue outright: this effect runs on the first render,
@@ -1829,7 +1834,7 @@ export function MarketSection(props: MarketSectionProps) {
      * user is told what became of it.
      */
     const judged = (saved as unknown[]).flatMap((entry): Array<
-      { ok: true; row: { kind: OperationRecord['kind']; name: string; url?: string } }
+      { ok: true; row: { kind: OperationRecord['kind']; name: string; url?: string; updateOptions: OperationRecord['updateOptions'] } }
       | { ok: false; kind: OperationRecord['kind']; name: string; url?: string; reason: string }
     > => {
       if (entry === null || typeof entry !== 'object') return []
@@ -1842,10 +1847,17 @@ export function MarketSection(props: MarketSectionProps) {
       const name = row.name
       const url = typeof row.url === 'string' ? row.url : undefined
       const stale = (reason: string) => [{ ok: false as const, kind, name, url, reason }]
-      const verdict = queuedRowApplies({ kind, name, ...(url === undefined ? {} : { url }) }, { installed, updates, plugins: data.plugins })
+      const options = row.updateOptions !== null && typeof row.updateOptions === 'object'
+        ? row.updateOptions as Record<string, unknown> : {}
+      const verdict = queuedRowApplies({ kind, name, restore: options.restore === true, ...(url === undefined ? {} : { url }) }, { installed, updates, plugins: data.plugins })
       if (verdict !== null) return stale(verdict === 'gone' ? t('agentQueueStaleGone') : t('agentQueueStaleNoUpdate'))
       if (kind === 'install' && url === undefined) return []
-      return [{ ok: true as const, row: { kind, name, ...(url === undefined ? {} : { url }) } }]
+      const updateOptions = kind === 'update' ? {
+        force: options.force === true,
+        restore: options.restore === true,
+        ...(typeof options.compatVersion === 'string' ? { compatVersion: options.compatVersion } : {}),
+      } : undefined
+      return [{ ok: true as const, row: { kind, name, ...(url === undefined ? {} : { url }), updateOptions } }]
     })
     const valid = judged.flatMap(verdict => verdict.ok ? [verdict.row] : [])
     const stale = judged.flatMap(verdict => verdict.ok ? [] : [verdict])
@@ -1867,6 +1879,7 @@ export function MarketSection(props: MarketSectionProps) {
           kind: entry.kind,
           name: entry.name,
           ...(entry.url === undefined ? {} : { url: entry.url }),
+          ...(entry.updateOptions === undefined ? {} : { updateOptions: entry.updateOptions }),
           state: 'queued',
           reason: t('agentBusyQueued'),
         })
@@ -1887,7 +1900,7 @@ export function MarketSection(props: MarketSectionProps) {
       return kept
     })
     setOperationsOpen(true)
-  }, [data, t])
+  }, [data, t, queueSnapshotReady, installed, updates])
   useEffect(() => {
     // Never write before the restore has read. On the first render `records`
     // is empty, and this effect would then delete the stored queue that the
@@ -1899,7 +1912,7 @@ export function MarketSection(props: MarketSectionProps) {
     try {
       const queued = records
         .filter(record => record.state === 'queued')
-        .map(record => ({ kind: record.kind, name: record.name, ...(record.url === undefined ? {} : { url: record.url }) }))
+        .map(record => ({ kind: record.kind, name: record.name, ...(record.url === undefined ? {} : { url: record.url }), ...(record.updateOptions === undefined ? {} : { updateOptions: record.updateOptions }) }))
       if (queued.length === 0) localStorage.removeItem('dshm-queue-v1')
       else localStorage.setItem('dshm-queue-v1', JSON.stringify(queued))
     } catch { /* storage unavailable */ }
@@ -2013,7 +2026,6 @@ export function MarketSection(props: MarketSectionProps) {
   const blockNoticeDone = useCallback(() => setBlockNotice(null), [])
   const updateExemptErrorDone = useCallback(() => setUpdateExemptError(null), [])
   const updateExemptNoticeDone = useCallback(() => setUpdateExemptNotice(null), [])
-  const [updates, setUpdates] = useState<Record<string, UpdateStatus>>({})
   /** Update reminders dismissed for this host boot. The Installed tab still
    * shows these plugins and their update actions; only proactive prompts use
    * this set. */
@@ -2184,6 +2196,7 @@ export function MarketSection(props: MarketSectionProps) {
   const [hostDependencyFindings, setHostDependencyFindings] = useState<SharedHostPackageDependencyFinding[]>([])
   /** Plugin name awaiting uninstall confirmation (Modal). */
   const [removeConfirm, setRemoveConfirm] = useState<string | null>(null)
+  const [agentsConfirm, setAgentsConfirm] = useState<{ name: string; kind: 'update' | 'uninstall'; run: () => void } | null>(null)
   const [removingName, setRemovingName] = useState<string | null>(null)
   const [removedCount, setRemovedCount] = useState(0)
   /** Toggles whose live fiber did not follow the switch — restart to apply. */
@@ -2385,11 +2398,15 @@ export function MarketSection(props: MarketSectionProps) {
         setBrokenPlugins(isRecordOfRecords(body.brokenPlugins) ? body.brokenPlugins : {})
         installedReadGen.current += 1
         setHostDependencyFindings(findings)
+        setQueueSnapshotReady(ready => ({ ...ready, installed: true }))
       })
       .catch(() => {})
     fetch(api('/dsh-market/updates') + (force === true ? '?force=1' : ''), { cache: 'no-store' })
       .then(res => res.json())
-      .then(body => setUpdates(body.updates || {}))
+      .then(body => {
+        setUpdates(body.updates || {})
+        setQueueSnapshotReady(ready => ({ ...ready, updates: true }))
+      })
       .catch(() => {})
   }, [])
 
@@ -3351,7 +3368,7 @@ export function MarketSection(props: MarketSectionProps) {
       .catch(() => {})
   }, [])
 
-  const doUpdate = useCallback((name: string, force = false, restore = false, compatVersion?: string) => {
+  const doUpdate = useCallback((name: string, force = false, restore = false, compatVersion?: string, confirmAgentsRunning = false) => {
     setInstallError(null)
     setActivationWarnings([])
     // Only THIS row's stale marker is cleared. "Update all" walks the list
@@ -3374,11 +3391,11 @@ export function MarketSection(props: MarketSectionProps) {
     // "update all" left the panel empty while several plugins were mid-flight
     // (#295 by @sanyecao88). One record per attempt, like the install flow.
     const updateRecordId = nextRecordId()
-    setRecords(list => enqueue(list, { id: updateRecordId, kind: 'update', name, state: 'running' }))
+    setRecords(list => enqueue(list, { id: updateRecordId, kind: 'update', name, state: 'running', updateOptions: { force, restore, compatVersion } }))
     return fetch(api('/dsh-market/update'), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name, ...(force ? { force: true } : {}), ...(restore ? { restore: true } : {}), ...(compatVersion !== undefined ? { compatVersion } : {}) }),
+      body: JSON.stringify({ name, ...(force ? { force: true } : {}), ...(restore ? { restore: true } : {}), ...(compatVersion !== undefined ? { compatVersion } : {}), ...(confirmAgentsRunning ? { confirmAgentsRunning: true } : {}) }),
     })
       .then(res => res.json().then(body => ({ status: res.status, body })))
       .then(({ status, body }) => {
@@ -3502,7 +3519,7 @@ export function MarketSection(props: MarketSectionProps) {
   }, [refreshInstalled, t, lang])
 
 
-  const doSourceMigration = useCallback((name: string) => {
+  const doSourceMigration = useCallback((name: string, confirmAgentsRunning = false) => {
     setInstallError(null)
     setActivationWarnings([])
     setMigrationConfirm(null)
@@ -3510,7 +3527,7 @@ export function MarketSection(props: MarketSectionProps) {
     return fetch(api('/dsh-market/migrate-source'), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name, ...(confirmAgentsRunning ? { confirmAgentsRunning: true } : {}) }),
     })
       .then(res => res.json().then(body => ({ status: res.status, body })))
       .then(({ status, body }) => {
@@ -3527,8 +3544,7 @@ export function MarketSection(props: MarketSectionProps) {
           return
         }
         if (status === 409 && body.agentsBusy === true) {
-          const running = Array.isArray(body.runningAgents) && body.runningAgents.length > 0 ? ` (${body.runningAgents.join(', ')})` : ''
-          setInstallError(t('agentBusyUpdate') + running)
+          setAgentsConfirm({ name, kind: 'update', run: () => { void doSourceMigration(name, true) } })
           return
         }
         setInstallError(t('migrateFail') + ': ' + localizeBilingual(String(body.error || ('HTTP ' + String(status))), lang))
@@ -3928,7 +3944,7 @@ export function MarketSection(props: MarketSectionProps) {
     setRefreshNames(names => names.filter(entry => entry !== name))
   }, [])
 
-  const doUninstall = useCallback((name: string) => {
+  const doUninstall = useCallback((name: string, confirmAgentsRunning = false) => {
     setRemoveConfirm(null)
     setInstallError(null)
     setActivationWarnings([])
@@ -3940,7 +3956,7 @@ export function MarketSection(props: MarketSectionProps) {
     return fetch(api('/dsh-market/uninstall'), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name, ...(confirmAgentsRunning ? { confirmAgentsRunning: true } : {}) }),
     })
       .then(res => res.json().then(body => ({ status: res.status, body })))
       .then(({ status, body }) => {
@@ -4026,7 +4042,7 @@ export function MarketSection(props: MarketSectionProps) {
   dataRef.current = data
   const doInstallRef = useRef<((plugin: RegistryPlugin) => void) | null>(null)
   doInstallRef.current = doInstall
-  const doUpdateRef = useRef<((name: string, force?: boolean, restore?: boolean) => Promise<void>) | null>(null)
+  const doUpdateRef = useRef<((name: string, force?: boolean, restore?: boolean, compatVersion?: string) => Promise<void>) | null>(null)
   doUpdateRef.current = doUpdate
   const doUninstallRef = useRef<((name: string) => Promise<void>) | null>(null)
   doUninstallRef.current = doUninstall
@@ -4053,9 +4069,9 @@ export function MarketSection(props: MarketSectionProps) {
   [])
 
   /**
-   * The install queue drain: agents-busy 409s no longer ask the user to come
-   * back later — the queued record runs itself once agents go idle and the
-   * operation lock is free. Self-sufficient by design: when every operation
+   * Installs wait only for the mutation lock; replacements also wait for
+   * running sessions unless the user confirms a single request. Legacy hosts
+   * can still refuse installs, so retain their queue fallback. When every operation
    * is queued, nothing else polls /status, so this loop fetches it itself
    * (only while a queued record exists, so an idle page makes no requests).
    * One mutation at a time — the host still serializes via its lock, and a
@@ -4073,9 +4089,9 @@ export function MarketSection(props: MarketSectionProps) {
           const runningAgents: string[] = Array.isArray(status.runningAgents) ? status.runningAgents.map(String) : []
           const busy = status.busy === true
           statusRef.current = { busy, runningAgents }
-          if (busy || runningAgents.length > 0) return
+          if (busy) return
           if (operationInFlight()) return
-          const task = recordsRef.current.find(record => record.state === 'queued')
+          const task = recordsRef.current.find(record => record.state === 'queued' && (record.kind === 'install' || runningAgents.length === 0))
           if (task === undefined || recordsRef.current.some(record => record.state === 'running')) return
           setRecords(list => list.filter(record => record.id !== task.id))
           drainingRef.current = true
@@ -4084,7 +4100,7 @@ export function MarketSection(props: MarketSectionProps) {
               const plugin = dataRef.current?.plugins.find(candidate => candidate.url === task.url)
               if (plugin !== undefined) doInstallRef.current?.(plugin)
             } else if (task.kind === 'update') {
-              void doUpdateRef.current?.(task.name)
+              void doUpdateRef.current?.(task.name, task.updateOptions?.force, task.updateOptions?.restore, task.updateOptions?.compatVersion)
             } else {
               void doUninstallRef.current?.(task.name)
             }
@@ -4101,16 +4117,11 @@ export function MarketSection(props: MarketSectionProps) {
   }, [])
 
   /** A queued record's "run now": retry immediately instead of waiting for idle. */
-  const runQueuedNow = useCallback((record: OperationRecord) => {
-    // The host's guard will refuse this while anything is running, so asking
-    // produced a pixel-identical panel: the 409 handler re-queued the record
-    // and nothing else changed, which reads as a broken button (#752). Say
-    // what is in the way instead, and leave the row queued for the drain —
-    // that is the path which will actually run it.
-    const blockers = statusRef.current.runningAgents
-    if (blockers.length > 0) {
-      setInstallError(t('queuedRunBlocked').replace('{0}', String(blockers.length)))
-      setOperationsOpen(true)
+  const runQueuedNow = useCallback((record: OperationRecord, confirmAgentsRunning = false) => {
+    if (!recordsRef.current.some(item => item.id === record.id && item.state === 'queued')) return
+    if (record.kind !== 'install' && !confirmAgentsRunning &&
+        (statusRef.current.runningAgents.length > 0 || (record.blockedBy?.length ?? 0) > 0)) {
+      setAgentsConfirm({ name: record.name, kind: record.kind, run: () => runQueuedNow(record, true) })
       return
     }
     // The agent guard is not the only thing that can hold this row: the host's
@@ -4139,10 +4150,10 @@ export function MarketSection(props: MarketSectionProps) {
       doInstall(plugin)
     } else if (record.kind === 'update') {
       setRecords(prev => drop(prev, record.id))
-      void doUpdate(record.name)
+      void doUpdate(record.name, record.updateOptions?.force, record.updateOptions?.restore, record.updateOptions?.compatVersion, confirmAgentsRunning)
     } else {
       setRecords(prev => drop(prev, record.id))
-      void doUninstall(record.name)
+      void doUninstall(record.name, confirmAgentsRunning)
     }
   }, [data, doInstall, doUpdate, doUninstall, operationInFlight, t])
 
@@ -7264,6 +7275,23 @@ export function MarketSection(props: MarketSectionProps) {
             {t('migrateWarning')}
           </p>
         </Modal>
+      )}
+      {agentsConfirm !== null && (
+        <Modal
+          open
+          onClose={() => setAgentsConfirm(null)}
+          title={t('agentsRunningConfirm') + ' ' + agentsConfirm.name}
+          description={t('agentsRunningRisk')}
+          footer={(
+            <>
+              <Button variant="ghost" onClick={() => setAgentsConfirm(null)}>{t('cancel')}</Button>
+              <Button variant="primary" disabled={busyUrl !== null || updatingName !== null || removingName !== null} onClick={() => {
+                setAgentsConfirm(null)
+                agentsConfirm.run()
+              }}>{t(agentsConfirm.kind === 'uninstall' ? 'opUninstallNow' : 'opUpdateNow')}</Button>
+            </>
+          )}
+        />
       )}
       {removeConfirm !== null && (
         <Modal

@@ -3653,7 +3653,7 @@ sendJson(response, 200, { updates })
         }
         try {
           await withMutationLock(response, 'install', async () => {
-            const body = (await readJsonBody(request)) as { name?: unknown }
+            const body = (await readJsonBody(request)) as { name?: unknown; confirmAgentsRunning?: unknown }
             const name = typeof body.name === 'string' ? body.name : ''
             if (!NPM_NAME_RE.test(name) || INBOX_BUNDLES.has(name)) {
               sendJson(response, 400, { error: 'plugin is not installed' })
@@ -3696,7 +3696,7 @@ sendJson(response, 200, { updates })
             }
 
             const busyAgents = runningAgentsForGuard()
-            if (busyAgents.length > 0) {
+            if (busyAgents.length > 0 && body.confirmAgentsRunning !== true) {
               sendJson(response, 409, {
                 error: `有 agent 正在运行（${busyAgents.join(', ')}）。来源迁移会替换插件文件，请等它完成或取消后再迁移。 / ${busyAgents.length === 1 ? 'An agent is running' : 'Agents are running'} (${busyAgents.join(', ')}). Source migration replaces plugin files; wait for the running work to finish (or cancel it) before migrating.`,
                 agentsBusy: true,
@@ -3878,7 +3878,7 @@ sendJson(response, 200, { updates })
         }
         try {
           await withMutationLock(response, 'install', async () => {
-            const body = (await readJsonBody(request)) as { name?: unknown; force?: unknown; restore?: unknown; compatVersion?: unknown }
+            const body = (await readJsonBody(request)) as { name?: unknown; force?: unknown; restore?: unknown; compatVersion?: unknown; confirmAgentsRunning?: unknown }
             const name = typeof body.name === 'string' ? body.name : ''
             const force = body.force === true
             // A release the refusal dialog's own search confirmed compatible
@@ -3944,9 +3944,9 @@ sendJson(response, 200, { updates })
             // hazard the "restart" verdict cannot fix: the running module keeps
             // executing while its files change under it, so lazily imported
             // assets and data reads can fail or change version mid-turn.
-            // No bypass is offered — the user can wait or cancel the agent.
+            // Only explicit consent on this request bypasses the running-agent guard.
             const busyAgents = runningAgentsForGuard()
-            if (busyAgents.length > 0) {
+            if (busyAgents.length > 0 && body.confirmAgentsRunning !== true) {
               logEvent('warn', 'update-blocked', `${name}: refused while agents are running — ${busyAgents.join(', ')}`)
               sendJson(response, 409, {
                 error: `有 agent 正在运行（${busyAgents.join(', ')}）。更新会直接替换插件文件，正在工作的 agent 可能在执行中途读到缺失或新版本的文件而报错；请等它完成或取消后再更新。 / ${busyAgents.length === 1 ? 'An agent is running' : 'Agents are running'} (${busyAgents.join(', ')}). Updating replaces plugin files in place, so a working agent can fail or mix versions mid-turn; wait for it to finish (or cancel it) before updating.`,
@@ -5495,7 +5495,7 @@ sendJson(response, 200, { updates })
         }
         try {
           await withMutationLock(response, 'install', async () => {
-            const body = (await readJsonBody(request)) as { name?: unknown; force?: unknown }
+            const body = (await readJsonBody(request)) as { name?: unknown; force?: unknown; confirmAgentsRunning?: unknown }
             const name = typeof body.name === 'string' ? body.name : ''
             // Only the INDETERMINATE patch case is forceable, below. A patch
             // that definitely names the package stays refused: there the user
@@ -5547,7 +5547,7 @@ sendJson(response, 200, { updates })
               return
             }
             const busyAgents = runningAgentsForGuard()
-            if (busyAgents.length > 0) {
+            if (busyAgents.length > 0 && body.confirmAgentsRunning !== true) {
               logEvent('warn', 'uninstall-blocked', `${name}: refused while agents are running — ${busyAgents.join(', ')}`)
               sendJson(response, 409, {
                 error: `有 agent 正在运行（${busyAgents.join(', ')}）。卸载会修改插件文件，正在工作的 agent 可能在中途报错；请等它完成或取消后再卸载。 / ${busyAgents.length === 1 ? 'An agent is running' : 'Agents are running'} (${busyAgents.join(', ')}). Uninstalling changes plugin files, so a working agent can fail mid-turn; wait for it to finish (or cancel it) before uninstalling.`,
@@ -5786,16 +5786,6 @@ sendJson(response, 200, { updates })
           await withMutationLock(response, 'install', async () => {
             const body = (await readJsonBody(request)) as { url?: unknown; force?: unknown; version?: unknown }
             const force = body.force === true
-            const busyAgents = runningAgentsForGuard()
-            if (busyAgents.length > 0) {
-              logEvent('warn', 'install-blocked', `refused while agents are running — ${busyAgents.join(', ')}`)
-              sendJson(response, 409, {
-                error: `有 agent 正在运行（${busyAgents.join(', ')}）。安装会修改插件文件，正在工作的 agent 可能在中途报错；请等它完成或取消后再安装。 / ${busyAgents.length === 1 ? 'An agent is running' : 'Agents are running'} (${busyAgents.join(', ')}). Installing changes plugin files, so a working agent can fail mid-turn; wait for it to finish (or cancel it) before installing.`,
-                agentsBusy: true,
-                runningAgents: busyAgents,
-              })
-              return
-            }
             const url = typeof body.url === 'string' ? body.url : ''
             // A release the user picked from the refusal dialog's own search
             // (#581): it was confirmed compatible by /dsh-market/find-compatible,
