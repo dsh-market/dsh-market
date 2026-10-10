@@ -45,6 +45,15 @@ describe('queuedRowApplies', () => {
     expect(queuedRowApplies({ kind: 'uninstall', name: 'dsh-loop' }, world({ installed: { 'dsh-loop': '^1.0.0' } }))).toBeNull()
   })
 
+  it('keeps an explicit local restore but not a completed or delisted restore (#779)', () => {
+    const row = { kind: 'update' as const, name: 'dsh-loop', restore: true }
+    const installed = { 'dsh-loop': 'link:../dsh-loop' }
+    const updates = { 'dsh-loop': { kind: 'linked', updateAvailable: false } }
+    expect(queuedRowApplies(row, world({ installed, updates }))).toBeNull()
+    expect(queuedRowApplies(row, world({ installed, updates, plugins: [] }))).toBe('no-update')
+    expect(queuedRowApplies(row, world({ installed: { 'dsh-loop': '^1.0.0' }, updates: { 'dsh-loop': { kind: 'npm', updateAvailable: false } } }))).toBe('no-update')
+  })
+
   it('stops an update that has landed or disappeared since it was queued', () => {
     const installed = { 'dsh-loop': '^1.0.0' }
     expect(queuedRowApplies({ kind: 'update', name: 'dsh-loop' }, world({ installed }))).toBe('no-update')

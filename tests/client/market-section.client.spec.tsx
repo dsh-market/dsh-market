@@ -1556,6 +1556,79 @@ describe('MarketSection (jsdom)', () => {
     expect(screen.queryByText(en.busyWait)).toBeNull()
   })
 
+  it.each(['update', 'uninstall'] as const)('confirms a queued %s only after the risk modal, without leaking consent (#779)', async kind => {
+    for (const wording of ['会话', '中途报错', '取消']) expect(zh.agentsRunningRisk).toContain(wording)
+    for (const wording of ['sessions', 'fail mid-turn', 'Cancel']) expect(en.agentsRunningRisk).toContain(wording)
+    const path = `/dsh-market/${kind}`
+    stubFetch({
+      '/dsh-market/installed': { profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: [] },
+      '/dsh-market/updates': { updates: { 'dsh-loop': { kind: 'npm', current: '1.0.0', latest: '1.2.0', updateAvailable: true } } },
+      '/dsh-market/status': { active: false, busy: false, pnpm: true, boot: 'boot-1', restart: true, installed: {}, runningAgents: ['main'] },
+      [path]: { ok: false, agentsBusy: true, runningAgents: ['main'], __status: 409 },
+    })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    if (kind === 'update') {
+      fireEvent.click(await screen.findByRole('button', { name: en.update }))
+    } else {
+      await openRowMenu('dsh-loop')
+      fireEvent.click(await screen.findByRole('menuitem', { name: en.uninstall }))
+      fireEvent.click(await screen.findByRole('button', { name: en.uninstall }))
+    }
+    const posts = () => fetchCalls.filter(call => call.path === path && call.method === 'POST')
+    await waitFor(() => expect(posts()).toHaveLength(1))
+    expect(posts()[0]!.body).toEqual({ name: 'dsh-loop' })
+    const label = kind === 'update' ? en.opUpdateNow : en.opUninstallNow
+    fireEvent.click(await screen.findByRole('button', { name: label }))
+    const dialog = await screen.findByRole('dialog', { name: re(en.agentsRunningConfirm) })
+    expect(within(dialog).getByText(en.agentsRunningRisk)).toBeTruthy()
+    expect(posts()).toHaveLength(1)
+    fireEvent.click(within(dialog).getByRole('button', { name: en.cancel }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: re(en.agentsRunningConfirm) })).toBeNull())
+    expect(posts()).toHaveLength(1)
+
+    fireEvent.click(screen.getByRole('button', { name: label }))
+    const reopened = await screen.findByRole('dialog', { name: re(en.agentsRunningConfirm) })
+    fireEvent.click(within(reopened).getByRole('button', { name: label }))
+    await waitFor(() => expect(posts()).toHaveLength(2))
+    expect(posts()[1]!.body).toEqual({ name: 'dsh-loop', confirmAgentsRunning: true })
+    await waitFor(() => expect(JSON.parse(localStorage.getItem('dshm-queue-v1') ?? '[]')).toEqual([
+      expect.objectContaining({ kind, name: 'dsh-loop' }),
+    ]))
+    expect(localStorage.getItem('dshm-queue-v1')).not.toContain('confirmAgentsRunning')
+    // Even a re-queued confirmed request needs a new decision next time.
+    fireEvent.click(await screen.findByRole('button', { name: label }))
+    await screen.findByRole('dialog', { name: re(en.agentsRunningConfirm) })
+    expect(posts()).toHaveLength(2)
+  })
+
+  it('preserves queued update force, restore and compatVersion through busy confirmation (#779)', async () => {
+    const updateOptions = { force: true, restore: true, compatVersion: '1.1.0' }
+    localStorage.setItem('dshm-queue-v1', JSON.stringify([{ kind: 'update', name: 'dsh-loop', updateOptions }]))
+    stubFetch({
+      '/dsh-market/installed': { profile: 'web', installed: { 'dsh-loop': 'link:../dsh-loop' }, live: [] },
+      '/dsh-market/updates': { updates: { 'dsh-loop': { kind: 'linked', updateAvailable: false } } },
+      '/dsh-market/status': { active: false, busy: false, pnpm: true, boot: 'boot-1', restart: true, installed: {}, runningAgents: ['main'] },
+      '/dsh-market/update': { ok: true, activation: {} },
+    })
+    render(<MarketSection {...props()} />)
+    await screen.findAllByText('dsh-loop')
+    const runNow = await screen.findByRole('button', { name: en.opUpdateNow })
+    expect(JSON.parse(localStorage.getItem('dshm-queue-v1') ?? '[]')).toEqual([
+      expect.objectContaining({ kind: 'update', name: 'dsh-loop', updateOptions }),
+    ])
+    expect(localStorage.getItem('dshm-queue-v1')).not.toContain('confirmAgentsRunning')
+    fireEvent.click(runNow)
+    const dialog = await screen.findByRole('dialog', { name: re(en.agentsRunningConfirm) })
+    expect(fetchCalls.filter(call => call.path === '/dsh-market/update')).toHaveLength(0)
+    fireEvent.click(within(dialog).getByRole('button', { name: en.opUpdateNow }))
+    await waitFor(() => expect(fetchCalls).toContainEqual({
+      path: '/dsh-market/update', method: 'POST',
+      body: { name: 'dsh-loop', ...updateOptions, confirmAgentsRunning: true },
+    }))
+  })
+
   it('queues an install when agents are busy instead of failing it', async () => {
     // Agents-busy is a queue, not a failure: the 409 becomes a `queued`
     // record the drain runs once agents go idle, and the card shows the
@@ -1620,11 +1693,7 @@ describe('MarketSection (jsdom)', () => {
     })
   })
 
-  it('answers "run now" with what is in the way instead of doing nothing (#752)', async () => {
-    // Sending it anyway came back 409, the handler re-queued the record, and
-    // the panel was pixel-identical before and after: the one button on that
-    // row read as broken. The guard is a thing we can see, so the click says
-    // so — and the row stays queued for the drain that will really run it.
+  it('retries a legacy busy-agent install on "run now" without risk confirmation (#779)', async () => {
     const fetchMock = vi.fn((input: unknown, init?: RequestInit) => {
       const path = String(input).split('?')[0]
       const method = (init?.method ?? 'GET').toUpperCase()
@@ -1665,15 +1734,11 @@ describe('MarketSection (jsdom)', () => {
 
       fireEvent.click(runNow)
 
-      // It says what is in the way, naming how many sessions…
-      const banner = await screen.findByText(en.queuedRunBlocked.replace('{0}', '2'))
-      expect(banner).toBeTruthy()
-      // …and it does not pretend to try: no second POST, and the row is still
-      // queued (the drain owns it, and will run it when they go idle).
-      const after = fetchMock.mock.calls.filter(([url, init]) =>
+      await waitFor(() => expect(fetchMock.mock.calls.filter(([url, init]) =>
         String(url).endsWith('/dsh-market/install') && (init?.method ?? 'GET').toUpperCase() === 'POST',
-      ).length
-      expect(after).toBe(before)
+      )).toHaveLength(before + 1))
+      expect(screen.queryByRole('dialog', { name: re(en.agentsRunningConfirm) })).toBeNull()
+      expect(screen.queryByText(en.queuedRunBlocked.replace('{0}', '2'))).toBeNull()
       expect(document.querySelector('[class*="opPanel"]')!.textContent).toContain(en.opQueued)
     } finally {
       vi.unstubAllGlobals()
@@ -1815,7 +1880,7 @@ describe('MarketSection (jsdom)', () => {
     }
   })
 
-  it('drains a queued install once agents go idle', async () => {
+  it('drains a queued install even while agents remain busy (#779)', async () => {
     // NOTE: no fake timers here — the drain fires on a real 2s interval and
     // the install POST resolves on the microtask queue. Fake timers freeze
     // the real-interval drain while waitFor's own timers fight it.
@@ -1834,15 +1899,15 @@ describe('MarketSection (jsdom)', () => {
       if (path === '/dsh-market/status') {
         return Promise.resolve(new Response(JSON.stringify({
           active: false, busy: false, pnpm: true, boot: 'boot-1', restart: true, installed: {},
-          runningAgents: [],
+          runningAgents: ['main'],
         }), { status: 200 }))
       }
       if (path === '/dsh-market/install' && method === 'POST') {
         const count = fetchMock.mock.calls.filter(([url, init]) =>
           String(url).endsWith('/dsh-market/install') && (init?.method ?? 'GET').toUpperCase() === 'POST',
         ).length
-        // First attempt: the agent is still busy, so the host refuses and the
-        // record queues. The drain then refetches /status (idle) and retries.
+        // A legacy host can still refuse; the drain retries the install even
+        // while /status continues reporting the running agent.
         if (count === 1) {
           return Promise.resolve(new Response(JSON.stringify({
             ok: false, agentsBusy: true, runningAgents: ['main'], error: 'agents are running',
@@ -1866,7 +1931,7 @@ describe('MarketSection (jsdom)', () => {
         const panel = document.querySelector('[class*="opPanel"]')
         expect(panel!.textContent).toContain(en.opQueued)
       })
-      // …agents go idle, the drain fires and the install succeeds.
+      // …the drain fires and the install succeeds without waiting for idle.
       // (A non-hot success needs a refresh, so the record reads
       // "Installed · refresh the page to apply", not "Done".)
       await waitFor(() => {
@@ -6906,7 +6971,7 @@ describe('card owner name and description overflow', () => {
 
 
 describe('Git to npm source migration (#461)', () => {
-  it('requires modal confirmation before source migration', async () => {
+  it.each([false, true])('requires source and busy-risk confirmations for migration (busy=%s, #779)', async busy => {
     stubFetch({
       '/dsh-market/installed': {
         profile: 'web',
@@ -6932,13 +6997,15 @@ describe('Git to npm source migration (#461)', () => {
           },
         },
       },
-      '/dsh-market/migrate-source': {
-        ok: true,
-        from: { name: 'dsh-loop', source: 'github:alice/dsh-loop' },
-        to: { name: '@alice/dsh-loop', source: 'npm' },
-        activation: {},
-        warnings: [],
-      },
+      '/dsh-market/migrate-source': (body: unknown) => busy && (body as { confirmAgentsRunning?: boolean }).confirmAgentsRunning !== true
+        ? { ok: false, agentsBusy: true, runningAgents: ['main'], __status: 409 }
+        : {
+          ok: true,
+          from: { name: 'dsh-loop', source: 'github:alice/dsh-loop' },
+          to: { name: '@alice/dsh-loop', source: 'npm' },
+          activation: {},
+          warnings: [],
+        },
     })
 
     render(<MarketSection {...props()} />)
@@ -6966,6 +7033,24 @@ describe('Git to npm source migration (#461)', () => {
         body: { name: 'dsh-loop' },
       })
     })
+    if (busy) {
+      const posts = () => fetchCalls.filter(call => call.path === '/dsh-market/migrate-source' && call.method === 'POST')
+      const risk = await screen.findByRole('dialog', { name: re(en.agentsRunningConfirm) })
+      expect(within(risk).getByText(en.agentsRunningRisk)).toBeTruthy()
+      expect(posts()).toHaveLength(1)
+      fireEvent.click(within(risk).getByRole('button', { name: en.cancel }))
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: re(en.agentsRunningConfirm) })).toBeNull())
+      expect(posts()).toHaveLength(1)
+
+      fireEvent.click(await screen.findByRole('button', { name: en.migrateNpm }))
+      const source = await screen.findByRole('dialog', { name: re(en.migrateTitle) })
+      fireEvent.click(within(source).getByRole('button', { name: en.migrateContinue }))
+      const retryRisk = await screen.findByRole('dialog', { name: re(en.agentsRunningConfirm) })
+      expect(posts()).toHaveLength(2)
+      fireEvent.click(within(retryRisk).getByRole('button', { name: en.opUpdateNow }))
+      await waitFor(() => expect(posts()).toHaveLength(3))
+      expect(posts()[2]!.body).toEqual({ name: 'dsh-loop', confirmAgentsRunning: true })
+    }
   })
 })
 

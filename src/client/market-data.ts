@@ -143,7 +143,7 @@ export type QueuedRowStaleReason = 'gone' | 'no-update'
  * have landed already).
  */
 export function queuedRowApplies(
-  row: { kind: 'install' | 'update' | 'uninstall'; name: string; url?: string },
+  row: { kind: 'install' | 'update' | 'uninstall'; name: string; url?: string; restore?: boolean },
   world: { installed: InstalledMap; updates: Record<string, UpdateStatus>; plugins: readonly RegistryPlugin[] },
 ): QueuedRowStaleReason | null {
   if (row.kind === 'install') {
@@ -151,7 +151,12 @@ export function queuedRowApplies(
     return world.plugins.some(plugin => plugin.url === row.url) ? null : 'gone'
   }
   if (world.installed[row.name] === undefined) return 'gone'
-  if (row.kind === 'update' && world.updates[row.name]?.updateAvailable !== true) return 'no-update'
+  if (row.kind === 'update' && world.updates[row.name]?.updateAvailable !== true) {
+    // A local restore replaces a checkout, not a newer release.
+    if (row.restore === true && world.updates[row.name]?.kind === 'linked' &&
+        findCatalogEntryForLocal(world.plugins, row.name) !== null) return null
+    return 'no-update'
+  }
   return null
 }
 

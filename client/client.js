@@ -476,6 +476,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			opClear: "清空已完成",
 			opDequeue: "移出队列",
 			opRunNow: "立即执行",
+			opUpdateNow: "现在更新",
+			opUninstallNow: "现在卸载",
+			agentsRunningConfirm: "仍要继续？",
+			agentsRunningRisk: "有会话正在运行。此操作会替换或删除插件文件。运行中的会话可能中途报错。不想冒险可取消，等会话结束再试。",
 			opRetry: "重试",
 			opKind_install: "安装",
 			opKind_update: "更新",
@@ -1173,6 +1177,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			opClear: "Clear finished",
 			opDequeue: "Remove from queue",
 			opRunNow: "Run now",
+			opUpdateNow: "Update now",
+			opUninstallNow: "Uninstall now",
+			agentsRunningConfirm: "Continue anyway?",
+			agentsRunningRisk: "Sessions are running. This operation replaces or removes plugin files, so running sessions may fail mid-turn. Cancel and wait for them to finish if you do not want to take this risk.",
 			opRetry: "Retry",
 			opKind_install: "Install",
 			opKind_update: "Update",
@@ -1816,7 +1824,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				return world.plugins.some((plugin) => plugin.url === row.url) ? null : "gone";
 			}
 			if (world.installed[row.name] === void 0) return "gone";
-			if (row.kind === "update" && world.updates[row.name]?.updateAvailable !== true) return "no-update";
+			if (row.kind === "update" && world.updates[row.name]?.updateAvailable !== true) {
+				if (row.restore === true && world.updates[row.name]?.kind === "linked" && findCatalogEntryForLocal(world.plugins, row.name) !== null) return null;
+				return "no-update";
+			}
 			return null;
 		}
 		function installedForCatalog(installed, bundles) {
@@ -4164,7 +4175,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 												variant: "primary",
 												size: "sm",
 												onClick: () => props.onRunNow?.(record),
-												children: t("opRunNow")
+												children: t(record.kind === "update" ? "opUpdateNow" : record.kind === "uninstall" ? "opUninstallNow" : "opRunNow")
 											}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 												variant: "ghost",
 												size: "sm",
@@ -7991,7 +8002,12 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			* Persisted in localStorage so a refresh keeps the queue; only `queued`
 			* records persist — `running` recovery stays on the dshm-pending paths.
 			*/
+			const [updates, setUpdates] = (0, react.useState)({});
 			const queueRestoredRef = (0, react.useRef)(false);
+			const [queueSnapshotReady, setQueueSnapshotReady] = (0, react.useState)({
+				installed: false,
+				updates: false
+			});
 			(0, react.useEffect)(() => {
 				if (queueRestoredRef.current) return;
 				let saved = null;
@@ -8005,6 +8021,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					return;
 				}
 				if (data === null) return;
+				if (saved.some((row) => row?.kind === "update" || row?.kind === "uninstall") && !queueSnapshotReady.installed) return;
+				if (saved.some((row) => row?.kind === "update") && !queueSnapshotReady.updates) return;
 				queueRestoredRef.current = true;
 				try {
 					localStorage.removeItem("dshm-queue-v1");
@@ -8037,9 +8055,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						url,
 						reason
 					}];
+					const options = row.updateOptions !== null && typeof row.updateOptions === "object" ? row.updateOptions : {};
 					const verdict = queuedRowApplies({
 						kind,
 						name,
+						restore: options.restore === true,
 						...url === void 0 ? {} : { url }
 					}, {
 						installed,
@@ -8048,12 +8068,18 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					});
 					if (verdict !== null) return stale(verdict === "gone" ? t("agentQueueStaleGone") : t("agentQueueStaleNoUpdate"));
 					if (kind === "install" && url === void 0) return [];
+					const updateOptions = kind === "update" ? {
+						force: options.force === true,
+						restore: options.restore === true,
+						...typeof options.compatVersion === "string" ? { compatVersion: options.compatVersion } : {}
+					} : void 0;
 					return [{
 						ok: true,
 						row: {
 							kind,
 							name,
-							...url === void 0 ? {} : { url }
+							...url === void 0 ? {} : { url },
+							updateOptions
 						}
 					}];
 				});
@@ -8070,6 +8096,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 							kind: entry.kind,
 							name: entry.name,
 							...entry.url === void 0 ? {} : { url: entry.url },
+							...entry.updateOptions === void 0 ? {} : { updateOptions: entry.updateOptions },
 							state: "queued",
 							reason: t("agentBusyQueued")
 						});
@@ -8088,14 +8115,21 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					return kept;
 				});
 				setOperationsOpen(true);
-			}, [data, t]);
+			}, [
+				data,
+				t,
+				queueSnapshotReady,
+				installed,
+				updates
+			]);
 			(0, react.useEffect)(() => {
 				if (!queueRestoredRef.current) return;
 				try {
 					const queued = records.filter((record) => record.state === "queued").map((record) => ({
 						kind: record.kind,
 						name: record.name,
-						...record.url === void 0 ? {} : { url: record.url }
+						...record.url === void 0 ? {} : { url: record.url },
+						...record.updateOptions === void 0 ? {} : { updateOptions: record.updateOptions }
 					}));
 					if (queued.length === 0) localStorage.removeItem("dshm-queue-v1");
 					else localStorage.setItem("dshm-queue-v1", JSON.stringify(queued));
@@ -8189,7 +8223,6 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const blockNoticeDone = (0, react.useCallback)(() => setBlockNotice(null), []);
 			const updateExemptErrorDone = (0, react.useCallback)(() => setUpdateExemptError(null), []);
 			const updateExemptNoticeDone = (0, react.useCallback)(() => setUpdateExemptNotice(null), []);
-			const [updates, setUpdates] = (0, react.useState)({});
 			/** Update reminders dismissed for this host boot. The Installed tab still
 			* shows these plugins and their update actions; only proactive prompts use
 			* this set. */
@@ -8331,6 +8364,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const [hostDependencyFindings, setHostDependencyFindings] = (0, react.useState)([]);
 			/** Plugin name awaiting uninstall confirmation (Modal). */
 			const [removeConfirm, setRemoveConfirm] = (0, react.useState)(null);
+			const [agentsConfirm, setAgentsConfirm] = (0, react.useState)(null);
 			const [removingName, setRemovingName] = (0, react.useState)(null);
 			const [removedCount, setRemovedCount] = (0, react.useState)(0);
 			/** Toggles whose live fiber did not follow the switch — restart to apply. */
@@ -8519,8 +8553,18 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					setBrokenPlugins(isRecordOfRecords(body.brokenPlugins) ? body.brokenPlugins : {});
 					installedReadGen.current += 1;
 					setHostDependencyFindings(findings);
+					setQueueSnapshotReady((ready) => ({
+						...ready,
+						installed: true
+					}));
 				}).catch(() => {});
-				fetch(api("/dsh-market/updates") + (force === true ? "?force=1" : ""), { cache: "no-store" }).then((res) => res.json()).then((body) => setUpdates(body.updates || {})).catch(() => {});
+				fetch(api("/dsh-market/updates") + (force === true ? "?force=1" : ""), { cache: "no-store" }).then((res) => res.json()).then((body) => {
+					setUpdates(body.updates || {});
+					setQueueSnapshotReady((ready) => ({
+						...ready,
+						updates: true
+					}));
+				}).catch(() => {});
 			}, []);
 			/** Active Bundles count as installed in Discover without becoming package-manager targets. */
 			const catalogInstalled = (0, react.useMemo)(() => installedForCatalog(installed, installedBundles), [installed, installedBundles]);
@@ -9418,7 +9462,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					body: "{}"
 				}).catch(() => {});
 			}, []);
-			const doUpdate = (0, react.useCallback)((name, force = false, restore = false, compatVersion) => {
+			const doUpdate = (0, react.useCallback)((name, force = false, restore = false, compatVersion, confirmAgentsRunning = false) => {
 				setInstallError(null);
 				setActivationWarnings([]);
 				setStaleName((prev) => prev === name ? null : prev);
@@ -9432,7 +9476,12 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					id: updateRecordId,
 					kind: "update",
 					name,
-					state: "running"
+					state: "running",
+					updateOptions: {
+						force,
+						restore,
+						compatVersion
+					}
 				}));
 				return fetch(api("/dsh-market/update"), {
 					method: "POST",
@@ -9441,7 +9490,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						name,
 						...force ? { force: true } : {},
 						...restore ? { restore: true } : {},
-						...compatVersion !== void 0 ? { compatVersion } : {}
+						...compatVersion !== void 0 ? { compatVersion } : {},
+						...confirmAgentsRunning ? { confirmAgentsRunning: true } : {}
 					})
 				}).then((res) => res.json().then((body) => ({
 					status: res.status,
@@ -9528,7 +9578,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				t,
 				lang
 			]);
-			const doSourceMigration = (0, react.useCallback)((name) => {
+			const doSourceMigration = (0, react.useCallback)((name, confirmAgentsRunning = false) => {
 				setInstallError(null);
 				setActivationWarnings([]);
 				setMigrationConfirm(null);
@@ -9536,7 +9586,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				return fetch(api("/dsh-market/migrate-source"), {
 					method: "POST",
 					headers: { "content-type": "application/json" },
-					body: JSON.stringify({ name })
+					body: JSON.stringify({
+						name,
+						...confirmAgentsRunning ? { confirmAgentsRunning: true } : {}
+					})
 				}).then((res) => res.json().then((body) => ({
 					status: res.status,
 					body
@@ -9555,8 +9608,13 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						return;
 					}
 					if (status === 409 && body.agentsBusy === true) {
-						const running = Array.isArray(body.runningAgents) && body.runningAgents.length > 0 ? ` (${body.runningAgents.join(", ")})` : "";
-						setInstallError(t("agentBusyUpdate") + running);
+						setAgentsConfirm({
+							name,
+							kind: "update",
+							run: () => {
+								doSourceMigration(name, true);
+							}
+						});
 						return;
 					}
 					setInstallError(t("migrateFail") + ": " + localizeBilingual(String(body.error || "HTTP " + String(status)), lang));
@@ -9971,7 +10029,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				setHotNames((names) => names.filter((entry) => entry !== name));
 				setRefreshNames((names) => names.filter((entry) => entry !== name));
 			}, []);
-			const doUninstall = (0, react.useCallback)((name) => {
+			const doUninstall = (0, react.useCallback)((name, confirmAgentsRunning = false) => {
 				setRemoveConfirm(null);
 				setInstallError(null);
 				setActivationWarnings([]);
@@ -9986,7 +10044,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				return fetch(api("/dsh-market/uninstall"), {
 					method: "POST",
 					headers: { "content-type": "application/json" },
-					body: JSON.stringify({ name })
+					body: JSON.stringify({
+						name,
+						...confirmAgentsRunning ? { confirmAgentsRunning: true } : {}
+					})
 				}).then((res) => res.json().then((body) => ({
 					status: res.status,
 					body
@@ -10078,9 +10139,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			*/
 			const operationInFlight = (0, react.useCallback)(() => busyUrlRef.current !== null || updatingNameRef.current !== null || removingNameRef.current !== null, []);
 			/**
-			* The install queue drain: agents-busy 409s no longer ask the user to come
-			* back later — the queued record runs itself once agents go idle and the
-			* operation lock is free. Self-sufficient by design: when every operation
+			* Installs wait only for the mutation lock; replacements also wait for
+			* running sessions unless the user confirms a single request. Legacy hosts
+			* can still refuse installs, so retain their queue fallback. When every operation
 			* is queued, nothing else polls /status, so this loop fetches it itself
 			* (only while a queued record exists, so an idle page makes no requests).
 			* One mutation at a time — the host still serializes via its lock, and a
@@ -10099,9 +10160,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 							busy,
 							runningAgents
 						};
-						if (busy || runningAgents.length > 0) return;
+						if (busy) return;
 						if (operationInFlight()) return;
-						const task = recordsRef.current.find((record) => record.state === "queued");
+						const task = recordsRef.current.find((record) => record.state === "queued" && (record.kind === "install" || runningAgents.length === 0));
 						if (task === void 0 || recordsRef.current.some((record) => record.state === "running")) return;
 						setRecords((list) => list.filter((record) => record.id !== task.id));
 						drainingRef.current = true;
@@ -10109,7 +10170,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 							if (task.kind === "install") {
 								const plugin = dataRef.current?.plugins.find((candidate) => candidate.url === task.url);
 								if (plugin !== void 0) doInstallRef.current?.(plugin);
-							} else if (task.kind === "update") doUpdateRef.current?.(task.name);
+							} else if (task.kind === "update") doUpdateRef.current?.(task.name, task.updateOptions?.force, task.updateOptions?.restore, task.updateOptions?.compatVersion);
 							else doUninstallRef.current?.(task.name);
 						} finally {
 							drainingRef.current = false;
@@ -10122,11 +10183,14 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				};
 			}, []);
 			/** A queued record's "run now": retry immediately instead of waiting for idle. */
-			const runQueuedNow = (0, react.useCallback)((record) => {
-				const blockers = statusRef.current.runningAgents;
-				if (blockers.length > 0) {
-					setInstallError(t("queuedRunBlocked").replace("{0}", String(blockers.length)));
-					setOperationsOpen(true);
+			const runQueuedNow = (0, react.useCallback)((record, confirmAgentsRunning = false) => {
+				if (!recordsRef.current.some((item) => item.id === record.id && item.state === "queued")) return;
+				if (record.kind !== "install" && !confirmAgentsRunning && (statusRef.current.runningAgents.length > 0 || (record.blockedBy?.length ?? 0) > 0)) {
+					setAgentsConfirm({
+						name: record.name,
+						kind: record.kind,
+						run: () => runQueuedNow(record, true)
+					});
 					return;
 				}
 				if (operationInFlight() || statusRef.current.busy) {
@@ -10146,10 +10210,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					doInstall(plugin);
 				} else if (record.kind === "update") {
 					setRecords((prev) => drop(prev, record.id));
-					doUpdate(record.name);
+					doUpdate(record.name, record.updateOptions?.force, record.updateOptions?.restore, record.updateOptions?.compatVersion, confirmAgentsRunning);
 				} else {
 					setRecords((prev) => drop(prev, record.id));
-					doUninstall(record.name);
+					doUninstall(record.name, confirmAgentsRunning);
 				}
 			}, [
 				data,
@@ -13726,6 +13790,25 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 							className: Market_module_css_default.migrationWarning,
 							children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(IconWarningOutline16, { size: 14 }), t("migrateWarning")]
 						})]
+					}),
+					agentsConfirm !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Modal, {
+						open: true,
+						onClose: () => setAgentsConfirm(null),
+						title: t("agentsRunningConfirm") + " " + agentsConfirm.name,
+						description: t("agentsRunningRisk"),
+						footer: /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+							variant: "ghost",
+							onClick: () => setAgentsConfirm(null),
+							children: t("cancel")
+						}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+							variant: "primary",
+							disabled: busyUrl !== null || updatingName !== null || removingName !== null,
+							onClick: () => {
+								setAgentsConfirm(null);
+								agentsConfirm.run();
+							},
+							children: t(agentsConfirm.kind === "uninstall" ? "opUninstallNow" : "opUpdateNow")
+						})] })
 					}),
 					removeConfirm !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Modal, {
 						open: true,
