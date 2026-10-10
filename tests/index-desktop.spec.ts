@@ -322,6 +322,8 @@ describe('host adaptation', () => {
         profile: '工作 profile',
         profileDirectory: '/private/dsh/desktop',
         allowRestart: false,
+        // No pluginActivation to ask, so the shell's own replay is awaited (#814).
+        hostReplayWaitMs: 8000,
       },
       runtime: state.runtime,
     })
@@ -349,6 +351,8 @@ describe('host adaptation', () => {
     // routes — the whole seam in one assertion: a host that publishes it gets
     // host-owned activation, and one that does not publishes nothing.
     expect(state.mounts[0]?.activation).toBe(activation)
+    // It is asked to replay, so nothing waits for it to do so unasked (#814).
+    expect((state.mounts[0] as { config: { hostReplayWaitMs?: number } }).config.hostReplayWaitMs).toBeUndefined()
   })
 
   it('uses the documented pre-Loader desktopProfiles discriminator and never falls back to ambient CLI', () => {

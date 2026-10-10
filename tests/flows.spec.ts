@@ -796,7 +796,7 @@ interface Testbed {
 }
 
 function createTestbed(
-  config: { profile?: string; allowRestart?: boolean; profileDirectory?: string; desktopHost?: boolean; region?: 'global' | 'china'; dshInstallDir?: string } = {},
+  config: { profile?: string; allowRestart?: boolean; profileDirectory?: string; desktopHost?: boolean; region?: 'global' | 'china'; dshInstallDir?: string; hostReplayWaitMs?: number } = {},
   runtime?: Parameters<typeof mountMarketRoutes>[2],
   agents?: AgentsServiceLike,
   activation?: Parameters<typeof mountMarketRoutes>[4],
@@ -1714,6 +1714,37 @@ describe('install flow', () => {
     // one activation source. This is what the duplicate prefix-route
     // collision was made of.
     expect(bed.hostPluginCalls).toHaveLength(before)
+  })
+
+  it('waits for a shell that replays on its own and adopts its entry instead of mounting a second one (#814)', async () => {
+    // The reporter's shell publishes desktopProfiles but no pluginActivation,
+    // and replays the profile about 2 s after the manifest lands. Mounting
+    // first made that replay fail with "already registered".
+    bed.dispose()
+    fake.npm['dsh-loop'] = { latest: '1.0.0', versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } } }
+    bed = createTestbed({ hostReplayWaitMs: 5000 })
+    const replay = setTimeout(() => {
+      bed.loaderEntries.push({ options: { id: 'dsh-loop', name: 'dsh-loop' } as never, fiber: {}, update: vi.fn() })
+    }, 600)
+    try {
+      const r = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
+      expect(r.status).toBe(200)
+      expect(r.json.hot).toBe(true)
+      expect(hot.mounts).not.toContain('dsh-loop')
+      expect(r.json.activation['dsh-loop'].state).toBe('live')
+    } finally {
+      clearTimeout(replay)
+    }
+  })
+
+  it('still mounts it itself when the expected replay never comes (#814)', async () => {
+    bed.dispose()
+    fake.npm['dsh-loop'] = { latest: '1.0.0', versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } } }
+    bed = createTestbed({ hostReplayWaitMs: 300 })
+    const r = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
+    expect(r.status).toBe(200)
+    expect(r.json.hot).toBe(true)
+    expect(hot.mounts).toContain('dsh-loop')
   })
 
   it('reports restart only when the host replay itself failed (#551)', async () => {

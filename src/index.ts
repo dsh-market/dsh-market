@@ -348,6 +348,9 @@ export function apply(ctx: Context, config?: Config): void {
         // capability bits report that, and an explicit profile directory no
         // longer implies it (#639).
         desktopHost: true,
+        // A shell that cannot be asked to replay still replays on its own,
+        // shortly after the install lands (#814): wait for it and adopt.
+        ...(desktopProfiles.pluginActivation === undefined ? { hostReplayWaitMs: 8000 } : {}),
         // Relaunching a raw Electron process would bypass Desktop's launcher
         // lifecycle. The shell remains responsible for restart in this mode.
         allowRestart: false,

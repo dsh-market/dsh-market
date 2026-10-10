@@ -145,6 +145,15 @@ export interface MarketConfig {
    * no longer tells a desktop shell apart from an ordinary `dsh` run.
    */
   desktopHost?: boolean
+  /**
+   * How long to wait for the host's own replay of a fresh install before
+   * hot-mounting it (#814). A desktop shell that watches the profile replays
+   * the composition itself, about two seconds after the manifest lands; one
+   * that does not publish `pluginActivation` gives the market no way to ask,
+   * and mounting first made the host's replay fail as a duplicate. Unset
+   * means no host replay is expected.
+   */
+  hostReplayWaitMs?: number
   /** Detached self-restart is unsafe under systemd/launchd/pm2; operators can disable it (#14). */
   allowRestart?: boolean
   /** Which release channel the market offers ITSELF from; other plugins never follow it. */
@@ -6117,10 +6126,24 @@ sendJson(response, 200, { updates })
                     // inventory (live names and `#<id>`) is the fact
                     // "already active this session", the same source
                     // verifyActivation reads below.
-                    const adopted = liveNames().has(name)
-                      || liveNames().has(`#${name}`)
-                      || bundlePatchInsertedIds(join(activeProfileDir, 'node_modules', name))
-                        .some(id => liveNames().has(`#${id}`))
+                    const isAdopted = (): boolean => {
+                      const names = liveNames()
+                      return names.has(name)
+                        || names.has(`#${name}`)
+                        || bundlePatchInsertedIds(join(activeProfileDir, 'node_modules', name))
+                          .some(id => names.has(`#${id}`))
+                    }
+                    let adopted = isAdopted()
+                    // The replay lands after pnpm returns, not before (#814):
+                    // give a host that replays on its own the time to do it.
+                    const waitUntil = Date.now() + (config.hostReplayWaitMs ?? 0)
+                    while (!adopted && Date.now() < waitUntil) {
+                      await new Promise(resolve => setTimeout(resolve, 250))
+                      adopted = isAdopted()
+                    }
+                    if (adopted && config.hostReplayWaitMs !== undefined) {
+                      logEvent('info', 'install', `${name}: the host's own replay activated it; adopted instead of mounting a second copy (#814)`)
+                    }
                     let live = adopted
                     if (!adopted && !pluginCategories(entry).includes('theme')) {
                       // #758: this fallback hot-mount bypasses the host's own
