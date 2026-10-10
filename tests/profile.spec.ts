@@ -1161,10 +1161,11 @@ describe('mergeDuplicateReleaseAgeExcludes (#732)', () => {
   })
 
   it('does not touch a block it cannot read exactly', () => {
-    // A comment on an entry, or a flow list, is a line this cannot re-emit
-    // without losing something: leaving it alone beats guessing.
+    // A `#` that is not a YAML comment (no whitespace before it), or a flow
+    // list, is a line this cannot re-emit without losing something: leaving
+    // it alone beats guessing.
     for (const contents of [
-      'minimumReleaseAgeExclude:\n  - a@1.0.0 # keep\n  - a@2.0.0\n',
+      'minimumReleaseAgeExclude:\n  - a@1.0.0#keep\n  - a@2.0.0\n',
       'minimumReleaseAgeExclude: [a@1.0.0, a@2.0.0]\n',
       'minimumReleaseAgeExclude:\n  - a@1.0.0\n  - a@\n',
     ]) {
@@ -1172,6 +1173,64 @@ describe('mergeDuplicateReleaseAgeExcludes (#732)', () => {
       expect(mergeDuplicateReleaseAgeExcludes('web')).toEqual([])
       expect(readFileSync(join(dir, 'pnpm-workspace.yaml'), 'utf8')).toBe(contents)
     }
+  })
+
+  it('merges past comment lines inside the block and keeps every comment (#816)', () => {
+    // The reporter's file: they had merged a duplicate by hand and written
+    // down why, inside the block. The host then appended another rule below
+    // the comment. The comment used to end the block (or veto the repair), so
+    // the new duplicate stayed shadowed and every command kept failing.
+    const dir = workspace([
+      'minimumReleaseAgeExclude:',
+      '  - billion-context@0.1.187 || 0.1.188',
+      '  # 注意：同一个包名只能出现一条 —— pnpm 11.7.0 只认每个包名的第一条匹配项，',
+      '  # 必须合并成一条用 ` || ` 连接（2026-10-09 修复）。',
+      '  - dshmarket@1.66.12 || 1.66.14',
+      '  - dsh-think-translate@1.2.7',
+      '  - dshmarket@1.66.15',
+      'allowBuilds:',
+      '  esbuild: true',
+      '',
+    ].join('\n'))
+    expect(mergeDuplicateReleaseAgeExcludes('web')).toEqual(['dshmarket'])
+    expect(readFileSync(join(dir, 'pnpm-workspace.yaml'), 'utf8')).toBe([
+      'minimumReleaseAgeExclude:',
+      '  - billion-context@0.1.187 || 0.1.188',
+      '  # 注意：同一个包名只能出现一条 —— pnpm 11.7.0 只认每个包名的第一条匹配项，',
+      '  # 必须合并成一条用 ` || ` 连接（2026-10-09 修复）。',
+      '  - dshmarket@1.66.12 || 1.66.14 || 1.66.15',
+      '  - dsh-think-translate@1.2.7',
+      'allowBuilds:',
+      '  esbuild: true',
+      '',
+    ].join('\n'))
+  })
+
+  it('keeps comments written at the end of entries, including on a dropped duplicate (#816)', () => {
+    const dir = workspace([
+      'minimumReleaseAgeExclude:',
+      '# exempted by hand',
+      '  - dshmarket@1.66.12 || 1.66.14  # 保留',
+      '  - other@1.0.0',
+      '  - dshmarket@1.66.15 # host added this',
+      '',
+    ].join('\n'))
+    expect(mergeDuplicateReleaseAgeExcludes('web')).toEqual(['dshmarket'])
+    expect(readFileSync(join(dir, 'pnpm-workspace.yaml'), 'utf8')).toBe([
+      'minimumReleaseAgeExclude:',
+      '# exempted by hand',
+      '  - dshmarket@1.66.12 || 1.66.14 || 1.66.15 # 保留',
+      '  - other@1.0.0',
+      '  # host added this',
+      '',
+    ].join('\n'))
+  })
+
+  it('leaves a commented block with no duplicates byte-for-byte alone (#816)', () => {
+    const original = 'minimumReleaseAgeExclude:\n  # why\n  - a@1.0.0   # keep\n  - b\n'
+    const dir = workspace(original)
+    expect(mergeDuplicateReleaseAgeExcludes('web')).toEqual([])
+    expect(readFileSync(join(dir, 'pnpm-workspace.yaml'), 'utf8')).toBe(original)
   })
 
   it('keeps a bare name meaning every version when it is one of the duplicates', () => {

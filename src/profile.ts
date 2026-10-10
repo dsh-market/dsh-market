@@ -1405,23 +1405,43 @@ export function mergeDuplicateReleaseAgeExcludes(profile: string, explicitDir?: 
   const file = join(profileDir(profile, explicitDir), 'pnpm-workspace.yaml')
   let yaml: string
   try { yaml = readFileSync(file, 'utf8') } catch { return [] }
-  // Block form only: `minimumReleaseAgeExclude:` then `- <entry>` lines.
-  const blockRe = /^minimumReleaseAgeExclude:[ \t]*\r?\n((?:[ \t]+-[^\r\n]*\r?\n?)*)/m
+  // Block form only: `minimumReleaseAgeExclude:` then `- <entry>` lines, with
+  // comment lines allowed among them. Users annotate why a version is exempt,
+  // and a comment line used to end the block — or veto the whole repair — so
+  // the very profiles someone had tended by hand stayed broken (#816).
+  const blockRe = /^minimumReleaseAgeExclude:[ \t]*\r?\n((?:(?:[ \t]+-[^\r\n]*|[ \t]*#[^\r\n]*)\r?\n?)*)/m
   const block = blockRe.exec(yaml)
   if (block === null) return []
   const eol = /\r\n/.test(yaml) ? '\r\n' : '\n'
-  const indentMatch = /^([ \t]+)-/.exec(block[1])
+  const indentMatch = /^([ \t]+)-/m.exec(block[1])
   const indent = indentMatch === null ? '  ' : indentMatch[1]
-  const entries: { rule: ReleaseAgeExcludeRule; quoted: boolean; line: string }[] = []
+  /**
+   * The block in its original order. Comment lines are kept verbatim; an
+   * entry keeps its trailing ` # …` comment, which YAML only recognises after
+   * whitespace. A `#` anywhere else in an entry is not something this can
+   * read exactly, so the file is left alone.
+   */
+  type Item =
+    | { kind: 'comment'; line: string }
+    | { kind: 'entry'; rule: ReleaseAgeExcludeRule; quoted: boolean; bare: string; comment: string | null }
+  const items: Item[] = []
   for (const line of block[1].split(/\r?\n/)) {
     if (line.trim() === '') continue
-    const m = /^[ \t]+-[ \t]*(.*?)[ \t]*$/.exec(line)
-    // A `#` on the line is a comment this cannot re-emit without losing it.
-    if (m === null || m[1].includes('#')) return []
-    const rule = splitReleaseAgeExclude(m[1])
+    if (/^[ \t]*#/.test(line)) {
+      items.push({ kind: 'comment', line })
+      continue
+    }
+    const m = /^([ \t]+-[ \t]*)(.*?)[ \t]*$/.exec(line)
+    if (m === null) return []
+    const commentAt = /[ \t]+#/.exec(m[2])
+    const value = commentAt === null ? m[2] : m[2].slice(0, commentAt.index)
+    const comment = commentAt === null ? null : m[2].slice(commentAt.index).trim()
+    if (value.includes('#')) return []
+    const rule = splitReleaseAgeExclude(value)
     if (rule === null) return []
-    entries.push({ rule, quoted: /^['"]/.test(m[1]), line })
+    items.push({ kind: 'entry', rule, quoted: /^['"]/.test(value), bare: `${m[1]}${value}`, comment })
   }
+  const entries = items.flatMap(item => item.kind === 'entry' ? [{ ...item, line: item.bare }] : [])
   const byName = new Map<string, {
     selectors: Set<string>
     originals: string[]
@@ -1470,7 +1490,16 @@ export function mergeDuplicateReleaseAgeExcludes(profile: string, explicitDir?: 
     return group.count > 1 || group.lines[0] !== produced(name)
   })
   if (rewritten.length === 0) return []
-  const lines = order.map(produced)
+  // Each package's one line goes where its FIRST rule was. A later duplicate
+  // is dropped, but a comment it carried stays, as a comment line in its place.
+  const written = new Set<string>()
+  const lines = items.flatMap(item => {
+    if (item.kind === 'comment') return [item.line]
+    const suffix = item.comment === null ? '' : ` ${item.comment}`
+    if (written.has(item.rule.name)) return item.comment === null ? [] : [`${indent}${item.comment}`]
+    written.add(item.rule.name)
+    return [`${produced(item.rule.name)}${suffix}`]
+  })
   const blockText = `minimumReleaseAgeExclude:${eol}${lines.join(eol)}${eol}`
   // A function replacement: `$&` and friends in a string replacement would
   // be read as capture references.
