@@ -320,19 +320,29 @@ const printedBuildKeys = new Map<string, string | null>()
 // Harness home; every failure here degrades to the in-memory behavior.
 //
 // The path is resolved lazily (not at module load) so the home in force when
-// the first failure is recorded is the one the file lands under.
+// the first failure is recorded is the one the file lands under. The load is
+// also lazy — but every reader (blockedBuilds before it records, printedKeysFor
+// before it answers) goes through printedBuildKeysFile() first, so a key from
+// a previous process is on the map before this one either adds to or reads it.
+// Stored keys never overwrite a fresher in-memory one, so the order of the
+// two calls cannot resurrect a stale entry either way.
+let printedBuildKeysHome: string | null = null
 let printedBuildKeysFilePath: string | null = null
 function printedBuildKeysFile(): string {
-  if (printedBuildKeysFilePath === null) {
-    printedBuildKeysFilePath = join(resolveDshHome(), 'dsh-market', 'printed-build-keys.json')
+  const home = resolveDshHome()
+  // Cached per home, not per process: the tests swap DSH_HOME per case, and
+  // a restart handoff can change it under a long-lived process too.
+  if (printedBuildKeysHome !== home) {
+    printedBuildKeysHome = home
+    printedBuildKeysFilePath = join(home, 'dsh-market', 'printed-build-keys.json')
     try {
       const stored = JSON.parse(readFileSync(printedBuildKeysFilePath, 'utf8')) as Record<string, unknown>
       for (const [storedName, storedKey] of Object.entries(stored)) {
-        if (typeof storedKey === 'string') printedBuildKeys.set(storedName, storedKey)
+        if (typeof storedKey === 'string' && !printedBuildKeys.has(storedName)) printedBuildKeys.set(storedName, storedKey)
       }
     } catch { /* absent or unreadable: start empty */ }
   }
-  return printedBuildKeysFilePath
+  return printedBuildKeysFilePath!
 }
 
 function persistPrintedBuildKeys(): void {
@@ -357,7 +367,10 @@ function blockedBuilds(result: { ignoredBuilds?: unknown; stdout: string; stderr
   // back byte-identical.
   //
   // Only entries that name a source are worth recording: a registry dep's dep
-  // path IS its bare name, which the bare entry already authorizes.
+  // path IS its bare name, which the bare entry already authorizes. The
+  // persisted file is loaded FIRST (PR #822 review): a key recorded before
+  // the load ran would otherwise be replaced by the older one in the file.
+  printedBuildKeysFile()
   for (const entry of parseIgnoredBuildEntries(result.stdout, result.stderr)) {
     if (entry.key !== entry.name) printedBuildKeys.set(entry.name, entry.key)
   }
@@ -5456,6 +5469,10 @@ sendJson(response, 200, { updates })
            * naming the dep path it wants allowlisted.
            */
           const printedKeysFor = (name: string): string[] => {
+            // Load FIRST (PR #822 review): the in-memory map starts empty in a
+            // new process, and the key pnpm printed before the restart lives
+            // in the persisted file until this call brings it back.
+            printedBuildKeysFile()
             const printed = printedBuildKeys.get(name)
             return printed === null || printed === undefined ? [] : [printed]
           }

@@ -5957,6 +5957,23 @@ describe('build-script approval flow (#6)', () => {
     expect(yaml).toContain(printed)
   })
 
+  it('persists pnpm\'s printed key across a restart (#784)', async () => {
+    // The printed key named the commit the pending install fetches — the one
+    // thing the approve button could not derive. It used to live in an
+    // in-memory map, so a DSH restart between the failure and the click
+    // dropped it. The write side is asserted here: the refusal below must
+    // land in <dsh-home>/dsh-market/printed-build-keys.json, from where the
+    // (lazily loaded) map serves it to a later approve.
+    const printed = 'dsh-keep-key@https://codeload.github.com/omdsh-dev/dsh-security-audit/tar.gz/b0e6c57ebeeb4796017864f5cd5c66e6ba0899ec'
+    fake.failNextAddStderrOnce = '[ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED] Failed to prepare git-hosted package fetched from "https://codeload.github.com/omdsh-dev/dsh-security-audit/tar.gz/b0e6c57ebeeb4796017864f5cd5c66e6ba0899ec": The git-hosted package "dsh-keep-key@0.3.3" needs to execute build scripts but is not in the "allowBuilds" allowlist.\n'
+      + 'Add the package to "allowBuilds" in your project\'s pnpm-workspace.yaml to allow it to run scripts. For example:\n'
+      + `allowBuilds:\n  ${printed}: true\n`
+    const first = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/omdsh-dev/dsh-security-audit' })
+    expect(first.status).toBe(502)
+    const persisted = JSON.parse(readFileSync(join(home, 'dsh-market', 'printed-build-keys.json'), 'utf8')) as Record<string, string>
+    expect(persisted['dsh-keep-key']).toBe(printed)
+  })
+
   it('approves a git UPDATE with the key pnpm printed, not the stale installed pin', async () => {
     // The reported failure, reproduced end to end. A git-hosted plugin is
     // updated: upstream master moved from OLD to NEW, so pnpm's fetcher
