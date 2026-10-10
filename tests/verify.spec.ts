@@ -602,3 +602,61 @@ describe('checkClientBundle (#222)', () => {
     expect(checkClientBundle('web', 'nope').ok).toBe(true)
   })
 })
+
+/**
+ * #813: a plugin whose own bundle patch is an empty list, wired in by an Agent
+ * preset row in the user's patch. Preset trees never enter the host loader,
+ * so it never reads as live — and with the bundle row it read "restart" on
+ * every boot, without it the #696 inference called it disabled.
+ */
+describe('a bundle whose own patch is empty (#813)', () => {
+  const EMPTY_PATCH = '# the model-facing row belongs in an authored Agent Preset\n[]\n'
+  const PRESET_PATCH = [
+    '- id: agent-preset',
+    '  config:',
+    '    presets:',
+    '      - id: desktop',
+    '        plugins:',
+    '          - id: computer-use',
+    "            name: 'some-plugin'",
+    '',
+  ].join('\n')
+  function install(bundles: string[]): string {
+    const dir = profile(bundles)
+    pkg('some-plugin', { name: 'some-plugin', main: 'lib/index.js', dsh: { bundle: { patch: './cordis.patch.yml' } } }, {
+      'lib/index.js': '',
+      'cordis.patch.yml': EMPTY_PATCH,
+    })
+    return dir
+  }
+
+  it('says the user\'s setup loads it, in or out of the bundle list, and never asks for a restart', () => {
+    for (const bundles of [['some-plugin'], []]) {
+      const dir = install(bundles)
+      writeFileSync(join(dir, 'cordis.patch.yml'), PRESET_PATCH)
+      expect(verifyActivation('web', 'some-plugin', new Set())).toMatchObject({
+        state: 'inert', loadedByProfile: true, bundle: bundles.length > 0, hot: false,
+      })
+    }
+  })
+
+  it('says nothing loads it when the user\'s setup does not name it', () => {
+    install(['some-plugin'])
+    const result = verifyActivation('web', 'some-plugin', new Set())
+    expect(result.state).toBe('inert')
+    expect(result.loadedByProfile).toBeUndefined()
+  })
+
+  it('leaves a bundle with rows, or with an unreadable patch, to the old verdicts', () => {
+    install(['some-plugin'])
+    pkg('some-plugin', { name: 'some-plugin', main: 'lib/index.js', dsh: { bundle: { patch: './cordis.patch.yml' } } }, {
+      'lib/index.js': '',
+      'cordis.patch.yml': SIMPLE_PATCH,
+    })
+    expect(verifyActivation('web', 'some-plugin', new Set())).toMatchObject({ state: 'restart' })
+    pkg('some-plugin', { name: 'some-plugin', main: 'lib/index.js', dsh: { bundle: { patch: './missing.yml' } } }, {
+      'lib/index.js': '',
+    })
+    expect(verifyActivation('web', 'some-plugin', new Set())).toMatchObject({ state: 'restart' })
+  })
+})

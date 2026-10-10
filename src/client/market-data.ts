@@ -302,6 +302,8 @@ export interface ActivationInfo {
   hot: boolean
   /** Set when this package is a library another installed plugin pulled in (#634). */
   dependencyOf?: string
+  /** Loaded by the user's own setup, which the market cannot see (#813). */
+  loadedByProfile?: true
 }
 
 /** The /dsh-market/installed payload (fields the market UI consumes). */

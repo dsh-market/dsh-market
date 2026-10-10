@@ -33,8 +33,8 @@ import { join } from 'node:path'
 import { listHotMounts, parseSimplePatch } from './hot.ts'
 import { userPatchPackageReferences } from './patch.ts'
 import { nameMatchesPackage } from './entry-identity.ts'
-import { bundlePatchInsertedIds, hasDshManifest, hasLoadableEntry, profileDir, readInstalled } from './profile.ts'
-import { compareSemver, satisfiesRange } from './check.ts'
+import { bundlePatchInsertedIds, declaredBundlePatchFiles, hasDshManifest, hasLoadableEntry, profileDir, readInstalled } from './profile.ts'
+import { compareSemver, parsePatchFile, satisfiesRange } from './check.ts'
 import { dshHostInfo } from './dsh-install.ts'
 
 export type ActivationState = 'live' | 'restart' | 'incompatible' | 'inert' | 'broken' | 'missing' | 'disabled'
@@ -53,6 +53,47 @@ export interface ActivationResult {
    * chose (#634). Only ever set on `inert`.
    */
   dependencyOf?: string
+  /**
+   * Set on `inert` when the package's own bundle patch loads nothing but the
+   * user's own patch names it somewhere — an Agent preset's plugin row, say
+   * (#813). The market cannot see those trees, so it neither promises a
+   * restart nor calls the plugin off; it says where the plugin comes from.
+   */
+  loadedByProfile?: true
+}
+
+/**
+ * Whether every bundle patch the package declares parses to an empty list.
+ *
+ * Such a bundle row loads nothing at boot: listing it in `dsh.profile.bundles`
+ * or taking it out changes nothing, so neither "restart to apply" nor the
+ * #696 "removed from bundles means off" inference applies to it (#813). A
+ * patch that is missing or unreadable is NOT empty — other verdicts own it.
+ */
+export function bundlePatchIsEmpty(packageDir: string): boolean {
+  const files = declaredBundlePatchFiles(packageDir)
+  return files.length > 0 && files.every(file => parsePatchFile(file)?.length === 0)
+}
+
+/**
+ * Whether the profile's own `cordis.patch.yml` names this package anywhere,
+ * at any depth — including rows nested in another plugin's config, such as
+ * an Agent preset's `plugins:` list, which never enter the host loader.
+ * Evidence of where the plugin comes from, not of whether it is running.
+ */
+function profilePatchMentions(activeProfileDir: string, name: string): boolean {
+  const rows = parsePatchFile(join(activeProfileDir, 'cordis.patch.yml'))
+  if (rows === null) return false
+  const seen = new Set<unknown>()
+  const visit = (value: unknown): boolean => {
+    if (value === null || typeof value !== 'object' || seen.has(value)) return false
+    seen.add(value)
+    if (Array.isArray(value)) return value.some(visit)
+    const row = value as Record<string, unknown>
+    if (nameMatchesPackage(row.name, name)) return true
+    return Object.values(row).some(visit)
+  }
+  return rows.some(visit)
 }
 
 /** The profile manifest's `dsh.profile.bundles` — what the CLI reconciled. */
@@ -397,6 +438,27 @@ export function verifyActivation(
       bundle: inBundles,
       hot: true,
     }
+  }
+
+  // An empty bundle patch (#813): the bundle row brings nothing in, so a
+  // restart cannot change the verdict and "restart to apply" would stand
+  // forever. Say where the plugin comes from instead, when the profile's own
+  // patch names it; otherwise nothing loads it, and that is the truth.
+  if (dsh.client === undefined && bundlePatchIsEmpty(dir)) {
+    return profilePatchMentions(activeProfileDir, name)
+      ? {
+          state: 'inert',
+          loadedByProfile: true,
+          reasons: ['它自带的 bundle 补丁是空的，由你的配置（例如 Agent 预设）加载；市场看不到它是否正在运行 / its own bundle patch is empty, so your own setup (an Agent preset, for example) loads it; the market cannot see whether it is running'],
+          bundle: inBundles,
+          hot: false,
+        }
+      : {
+          state: 'inert',
+          reasons: ['它自带的 bundle 补丁是空的，你的配置里也没有引用它，所以不会加载 / its own bundle patch is empty and your setup does not reference it, so nothing loads it'],
+          bundle: inBundles,
+          hot: false,
+        }
   }
 
   if (inBundles) {

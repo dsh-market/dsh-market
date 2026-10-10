@@ -6412,6 +6412,23 @@ describe('generic enable/disable toggle (#60)', () => {
     expect(again.json.unbundled).toEqual([])
   })
 
+  it('does not read a bundle whose own patch is empty as off when it leaves the list (#813)', async () => {
+    // Its bundle row loads nothing, so being out of dsh.profile.bundles is not
+    // a switch; an Agent preset row in the user's patch is what loads it.
+    await installPatchy()
+    bed.loaderEntries.length = 0
+    writeFileSync(join(profileDir('web'), 'node_modules', 'dsh-patchy', 'cordis.patch.yml'), '# loaded by a preset\n[]\n')
+    writeFileSync(join(profileDir('web'), 'cordis.patch.yml'), "- id: agent-preset\n  config:\n    presets:\n      - id: desktop\n        plugins:\n          - id: patchy\n            name: 'dsh-patchy'\n")
+    const manifestPath = join(profileDir('web'), 'package.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    manifest.dsh = { ...(manifest.dsh ?? {}), profile: { ...(manifest.dsh?.profile ?? {}), bundles: [] } }
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+
+    const listed = await bed.dispatch('GET', '/dsh-market/installed')
+    expect(listed.json.unbundled).toEqual([])
+    expect(listed.json.activation['dsh-patchy']).toMatchObject({ state: 'inert', loadedByProfile: true })
+  })
+
   it('puts an unbundled member back when its GROUP is switched on, as the single switch does (#696)', async () => {
     // @snmtg1008's fourth shape: a plugin that had left dsh.profile.bundles
     // failed to enable six times in a row ("no loader entry matched"), then

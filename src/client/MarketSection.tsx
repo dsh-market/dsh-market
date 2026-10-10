@@ -137,7 +137,11 @@ function activationMeta(
   state: ActivationState,
   t: Translate,
   dependencyOf?: string,
+  loadedByProfile?: true,
 ): { label: string; dot: 'done' | 'warning' | 'error' } {
+  // Loaded by the user's own setup, out of the market's sight (#813): a fact
+  // about where it comes from, not a warning.
+  if (state === 'inert' && loadedByProfile === true) return { label: t('stateLoadedByProfile'), dot: 'done' }
   // A library another plugin pulled in is not a plugin that failed to start,
   // so it gets its own label and no warning dot (#634).
   if (state === 'inert' && dependencyOf !== undefined) {
@@ -3010,7 +3014,7 @@ export function MarketSection(props: MarketSectionProps) {
           if (body.activation && typeof body.activation === 'object') {
             setActivations(prev => ({ ...prev, ...body.activation }))
             const warns = Object.entries(body.activation as Record<string, ActivationInfo>)
-              .filter(([, info]) => info.state !== 'live' && info.state !== 'missing')
+              .filter(([, info]) => info.state !== 'live' && info.state !== 'missing' && info.loadedByProfile !== true)
               .map(([name, info]) => ({ name, info }))
             setActivationWarnings(warns)
           }
@@ -5726,7 +5730,7 @@ export function MarketSection(props: MarketSectionProps) {
             <span className={css.grow}>
               {activationWarnings.map(({ name, info }) => (
                 <div key={name}>
-                  <b>{name}</b> — {activationMeta(info.state, t, info.dependencyOf).label}
+                  <b>{name}</b> — {activationMeta(info.state, t, info.dependencyOf, info.loadedByProfile).label}
                   {info.reasons.length > 0 && <span className={css.spec}>（{localizeBilingualList(info.reasons, lang)}）</span>}
                 </div>
               ))}
@@ -6478,13 +6482,13 @@ export function MarketSection(props: MarketSectionProps) {
                                       const entry = data === null ? undefined : catalogEntryForInstalled(data.plugins, name, String(installed[name]), repoIdentities[name], repoHints[name])
                                       const off = effectiveDisabledSet.has(name)
                                       const act = activations[name]
-                                      const meta = !off && act !== undefined ? activationMeta(act.state, t, act.dependencyOf) : null
+                                      const meta = !off && act !== undefined ? activationMeta(act.state, t, act.dependencyOf, act.loadedByProfile) : null
                                       const note = notes[name]
                                       const authored = (entry?.description && (entry.description[lang] || entry.description.en)) || ''
                                       const shown = note ?? authored
                                       const stateLabel = off
                                         ? t('disabledState')
-                                        : act?.state === 'inert' && act.dependencyOf === undefined
+                                        : act?.state === 'inert' && act.dependencyOf === undefined && act.loadedByProfile !== true
                                           ? t('groupStateInert')
                                           : act?.state === 'restart'
                                             ? t('groupStateRestart')
@@ -6585,7 +6589,7 @@ export function MarketSection(props: MarketSectionProps) {
                             const generation = status?.kind === 'generation' || isGenerationSpec(String(spec))
                             const localDev = isLocalDev(String(spec), status)
                             const act = activations[name]
-                            const meta = act !== undefined ? activationMeta(act.state, t, act.dependencyOf) : null
+                            const meta = act !== undefined ? activationMeta(act.state, t, act.dependencyOf, act.loadedByProfile) : null
                             const version = status && status.version ? 'v' + status.version : ''
                             const specText = String(spec)
                             // A plain range beside the resolved version says the

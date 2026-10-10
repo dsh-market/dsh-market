@@ -55,7 +55,7 @@ import { createThemeManager, type LoaderEntry } from './themes.ts'
 import { readJsonBody, refuseUnadmitted, sameOrigin, sendJson } from './http.ts'
 import { detectedDebugger, detectedSupervisor, restartAllowed, scheduleRestart, servingPort, trustedRestartRequest, trustedDownloadRequest, type RecoveryHandoffConfig, restartReachableFrom } from './restart.ts'
 import type { RecoveryPlugin } from './recovery.ts'
-import { activationAfterReplace, brokenClientBundles, checkClientBundle, defaultHostRuntimeFacts, hasHostHalf, hostPeerGate, newlyBrokenBundles, peerGateRemedy, verifyActivation } from './verify.ts'
+import { activationAfterReplace, brokenClientBundles, bundlePatchIsEmpty, checkClientBundle, defaultHostRuntimeFacts, hasHostHalf, hostPeerGate, newlyBrokenBundles, peerGateRemedy, verifyActivation } from './verify.ts'
 import {
   carrierDisableIds, disableRow, enableRow, findUserPatchPath, foreignRowIds, isProtectedModule, packagePatchFlags,
   readUserPatchState, removeRowBlocks, rowIdsForPackage, userPatchPackageReferences,
@@ -2521,7 +2521,10 @@ export function mountMarketRoutes(
         const unbundled = Object.keys(installed).filter(name => {
           if (INBOX_BUNDLES.has(name) || composedBundles.has(name) || live.has(name)) return false
           const manifest = installedManifests.get(name) as { dsh?: { bundle?: unknown } } | null | undefined
+          // A bundle whose own patch is empty loads nothing either way, so
+          // its absence from the list says nothing about a switch (#813).
           return typeof manifest === 'object' && manifest !== null && manifest.dsh?.bundle !== undefined
+            && !bundlePatchIsEmpty(join(activeProfileDir, 'node_modules', name))
         })
         for (const name of Object.keys(installed)) {
           const result = activationAfterReplace(

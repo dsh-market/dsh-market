@@ -642,6 +642,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			stateIncompatible: "已安装，与当前 dsh 不兼容",
 			stateInert: "已安装，未生效",
 			stateDependencyLibrary: "{0} 的依赖库",
+			stateLoadedByProfile: "由你的配置加载",
 			stateBroken: "已安装，校验未通过",
 			stateDisabled: "已停用",
 			phaseResolving: "准备依赖",
@@ -1338,6 +1339,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			stateIncompatible: "Installed — incompatible with this dsh",
 			stateInert: "Installed, not active",
 			stateDependencyLibrary: "Library for {0}",
+			stateLoadedByProfile: "Loaded by your setup",
 			stateBroken: "Installed, verification failed",
 			stateDisabled: "Disabled",
 			phaseResolving: "Preparing dependencies",
@@ -6325,7 +6327,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			});
 		}
 		/** The state label + dot for one activation result (P0-2). */
-		function activationMeta(state, t, dependencyOf) {
+		function activationMeta(state, t, dependencyOf, loadedByProfile) {
+			if (state === "inert" && loadedByProfile === true) return {
+				label: t("stateLoadedByProfile"),
+				dot: "done"
+			};
 			if (state === "inert" && dependencyOf !== void 0) return {
 				label: t("stateDependencyLibrary").replace("{0}", dependencyOf),
 				dot: "done"
@@ -9114,7 +9120,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 								...prev,
 								...body.activation
 							}));
-							const warns = Object.entries(body.activation).filter(([, info]) => info.state !== "live" && info.state !== "missing").map(([name, info]) => ({
+							const warns = Object.entries(body.activation).filter(([, info]) => info.state !== "live" && info.state !== "missing" && info.loadedByProfile !== true).map(([name, info]) => ({
 								name,
 								info
 							}));
@@ -11895,7 +11901,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									children: activationWarnings.map(({ name, info }) => /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", { children: [
 										/* @__PURE__ */ (0, react_jsx_runtime.jsx)("b", { children: name }),
 										" — ",
-										activationMeta(info.state, t, info.dependencyOf).label,
+										activationMeta(info.state, t, info.dependencyOf, info.loadedByProfile).label,
 										info.reasons.length > 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
 											className: Market_module_css_default.spec,
 											children: [
@@ -12849,11 +12855,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 											const entry = data === null ? void 0 : catalogEntryForInstalled(data.plugins, name, String(installed[name]), repoIdentities[name], repoHints[name]);
 											const off = effectiveDisabledSet.has(name);
 											const act = activations[name];
-											const meta = !off && act !== void 0 ? activationMeta(act.state, t, act.dependencyOf) : null;
+											const meta = !off && act !== void 0 ? activationMeta(act.state, t, act.dependencyOf, act.loadedByProfile) : null;
 											const note = notes[name];
 											const authored = entry?.description && (entry.description[lang] || entry.description.en) || "";
 											const shown = note ?? authored;
-											const stateLabel = off ? t("disabledState") : act?.state === "inert" && act.dependencyOf === void 0 ? t("groupStateInert") : act?.state === "restart" ? t("groupStateRestart") : act?.state === "broken" ? t("groupStateBroken") : meta?.label;
+											const stateLabel = off ? t("disabledState") : act?.state === "inert" && act.dependencyOf === void 0 && act.loadedByProfile !== true ? t("groupStateInert") : act?.state === "restart" ? t("groupStateRestart") : act?.state === "broken" ? t("groupStateBroken") : meta?.label;
 											const stateDot = off ? "warning" : meta?.dot === "error" ? "error" : meta?.dot === "warning" ? "warning" : "done";
 											const stateClass = stateDot === "error" ? Market_module_css_default.actBroken : stateDot === "warning" ? Market_module_css_default.actWarn : Market_module_css_default.actLive;
 											return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
@@ -12957,7 +12963,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									const generation = status?.kind === "generation" || isGenerationSpec(String(spec));
 									const localDev = isLocalDev(String(spec), status);
 									const act = activations[name];
-									const meta = act !== void 0 ? activationMeta(act.state, t, act.dependencyOf) : null;
+									const meta = act !== void 0 ? activationMeta(act.state, t, act.dependencyOf, act.loadedByProfile) : null;
 									const version = status && status.version ? "v" + status.version : "";
 									const specText = String(spec);
 									const specRedundant = version !== "" && /^[\^~]?\d/.test(specText);

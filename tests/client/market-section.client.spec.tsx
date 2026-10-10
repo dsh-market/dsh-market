@@ -1463,6 +1463,23 @@ describe('MarketSection (jsdom)', () => {
     }
   })
 
+  it('labels a plugin loaded by the user\'s own setup as such, not as inactive (#813)', async () => {
+    stubFetch({
+      '/dsh-market/installed': {
+        profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: [],
+        activation: { 'dsh-loop': { state: 'inert', loadedByProfile: true, hot: false, bundle: true, reasons: ['loaded by your setup'] } },
+      },
+    })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    // A fact about where it comes from, not news: no warning chip, and the
+    // reason stays one click away like every non-live row's.
+    await screen.findByText(en.actWhy)
+    expect(screen.queryByText(en.stateInert)).toBeNull()
+    expect(screen.queryByText(re(en.restartBanner))).toBeNull()
+  })
+
   it('a stale update response arms the Update-now button (#22 flow)', async () => {
     stubFetch({
       '/dsh-market/installed': { profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: [] },
