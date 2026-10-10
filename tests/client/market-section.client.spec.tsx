@@ -3622,6 +3622,39 @@ describe('incompatible install (#758)', () => {
   })
 })
 
+describe('landing tab after an install (#825)', () => {
+  it('opens on Discover the next time, not on Installed', async () => {
+    // The success path wrote the one-shot "open on Installed" key without
+    // reloading, so it waited in sessionStorage and the NEXT visit to the
+    // market landed on Installed. Only a reload hands a tab over.
+    stubFetch({
+      '/dsh-market/installed': { profile: 'web', installed: {}, live: [] },
+      '/dsh-market/updates': { updates: {} },
+      '/dsh-market/install': {
+        ok: true,
+        hot: true,
+        installed: { 'dsh-loop': '^1.0.0' },
+        activation: { 'dsh-loop': { state: 'live', hot: true, bundle: true, reasons: ['live via hot mount'] } },
+      },
+    })
+    render(<MarketSection {...props()} />)
+    await vi.waitFor(() => { screen.getByText('dsh-loop') })
+    await vi.waitFor(() => { screen.getByRole('button', { name: en.tabInstalled }) })
+    let card: HTMLElement | null = screen.getByText('dsh-loop')
+    while (card !== null && within(card).queryAllByRole('button', { name: en.install }).length === 0) {
+      card = card.parentElement
+    }
+    fireEvent.click(within(card!).getByRole('button', { name: en.install }))
+    await vi.waitFor(() => { screen.getByRole('button', { name: en.confirmInstall }) })
+    fireEvent.click(screen.getByRole('button', { name: en.confirmInstall }))
+    await vi.waitFor(() => {
+      expect(fetchCalls.some(call => call.path === '/dsh-market/install')).toBe(true)
+      expect(screen.getAllByText(re(en.refreshBanner)).length).toBeGreaterThan(0)
+    })
+    expect(sessionStorage.getItem('dshm-tab')).toBeNull()
+  })
+})
+
 describe('uninstall confirmation Modal', () => {
   const installedFixture = {
     '/dsh-market/installed': { profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: [] },

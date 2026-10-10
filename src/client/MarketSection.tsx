@@ -3010,7 +3010,6 @@ export function MarketSection(props: MarketSectionProps) {
           return
         }
         if (status === 200 && body.ok) {
-          sessionStorage.setItem('dshm-tab', 'installed')
           if (body.activation && typeof body.activation === 'object') {
             setActivations(prev => ({ ...prev, ...body.activation }))
             const warns = Object.entries(body.activation as Record<string, ActivationInfo>)

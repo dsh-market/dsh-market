@@ -9114,7 +9114,6 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						return;
 					}
 					if (status === 200 && body.ok) {
-						sessionStorage.setItem("dshm-tab", "installed");
 						if (body.activation && typeof body.activation === "object") {
 							setActivations((prev) => ({
 								...prev,
