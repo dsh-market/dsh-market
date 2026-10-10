@@ -407,6 +407,70 @@ export function pinnedGitAllowBuildsKey(name: string, spec: string, sha: string)
 }
 
 /**
+ * The repo (`owner/repo`, original case) of a GitHub remote spelled as a URL
+ * (`git+https://github.com/owner/repo.git`), or null for anything else.
+ *
+ * pnpm itself writes this spelling into the manifest for a GitHub source —
+ * the market sends `github:owner/repo`, pnpm 11.7.0 answers with
+ * `git+https://owner/repo.git` (#803) — and the allowBuilds key that pnpm
+ * then checks follows the MANIFEST's spelling, not the target's (#784).
+ */
+export function githubRepoOfRemote(spec: string): string | null {
+  const remote = gitRemoteSpelling(spec)
+  if (remote === null) return null
+  const url = /^git\+https:\/\/github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:\.git)?$/i.exec(remote)
+  if (url === null) return null
+  return url[1]!.endsWith('.git') ? url[1]!.slice(0, -4) : url[1]!
+}
+
+/**
+ * Every commit-pinned allowBuilds key for one git source at one known commit
+ * (#784 by @sanqi-normal follow-up).
+ *
+ * The key form follows the spelling pnpm will read, and that varies by pnpm
+ * version AND by how the manifest spells the dependency:
+ * - pnpm 11.21+ matches the stable unpinned clone-URL key (`gitAllowBuildsKey`).
+ * - pnpm 11.8-ish matches the commit-pinned codeload tarball URL.
+ * - pnpm 11.7.0 — what DSH Desktop bundles — matches the commit-pinned
+ *   `name@git+https://…#<sha>` form, and only when it matches how the
+ *   manifest spells the remote (with or without `.git`, #695).
+ *
+ * Writing ONE pinned form was the structural gap: a GitHub source derived
+ * only its codeload key, which pnpm 11.7.0 never reads, so the derived key
+ * missed entirely and only pnpm's own printed key could save the retry
+ * (#784's evidence). When the commit is known, BOTH pinned forms are
+ * written — one extra line in a YAML file versus the only button that could
+ * have unblocked the user.
+ *
+ * Non-GitHub remotes keep `pinnedGitAllowBuildsKey`'s single form: their
+ * pnpm-checked key does not vary by spelling the way GitHub's does.
+ *
+ * @param sha - the commit the install will actually fetch.
+ * @returns the pinned keys (empty for no known git shape); callers merge the
+ *   stable key from `gitAllowBuildsKey` alongside.
+ */
+export function pinnedAllowBuildsKeys(name: string, spec: string, sha: string): string[] {
+  if (!/^[0-9a-f]{40}$/.test(sha)) return []
+  const githubRepo = repoFromTarget(spec)?.repo ?? githubRepoOfRemote(spec)
+  if (githubRepo !== null) {
+    // The git+https pinned form keeps the manifest's own spelling of the
+    // remote (`.git` or not), which is what pnpm matches literally (#695):
+    // reuse the stable key when one was derived, and only fall back to the
+    // canonical `.git` spelling when it was not.
+    const stable = gitAllowBuildsKey(name, spec)
+    const gitHttps = stable !== null && stable.startsWith(`${name}@git+https://`)
+      ? `${stable}#${sha}`
+      : `${name}@git+https://github.com/${githubRepo}.git#${sha}`
+    return [
+      `${name}@https://codeload.github.com/${githubRepo}/tar.gz/${sha}`,
+      gitHttps,
+    ]
+  }
+  const pinned = pinnedGitAllowBuildsKey(name, spec, sha)
+  return pinned === null ? [] : [pinned]
+}
+
+/**
  * The pnpm install target for a registry entry. Repo-verified npm packages
  * win, followed by author-supplied prebuilt GitHub Release tarballs; both avoid
  * full-repo downloads and local build scripts.

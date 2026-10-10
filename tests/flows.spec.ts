@@ -5696,6 +5696,111 @@ describe('build-script approval flow (#6)', () => {
     expect(yaml).toContain(`plug-c@https://codeload.github.com/o/r/tar.gz/${sha}: true`)
   })
 
+  it('writes both pinned spellings for a git+https-spelled GitHub dependency (#784)', async () => {
+    // The market sends `github:owner/repo`, but pnpm writes
+    // `git+https://owner/repo.git` back into the manifest (#803) — and pnpm
+    // 11.7.0 keys the allowBuilds entry by THAT spelling, pinned to the
+    // commit it fetches. Deriving only the codeload form left this install
+    // with no key pnpm would read: the reporter's pre-written codeload key
+    // was rejected while pnpm's own printed git+https#sha key passed (#784).
+    const sha = 'b0e6c57ebeeb4796017864f5cd5c66e6ba0899ec'
+    mkdirSync(join(profileDir('web'), 'node_modules', 'better-sidebar'), { recursive: true })
+    writeFileSync(join(profileDir('web'), 'node_modules', 'better-sidebar', 'package.json'), '{"name":"better-sidebar"}')
+    const manifestPath = join(profileDir('web'), 'package.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    manifest.dependencies = { ...manifest.dependencies, 'better-sidebar': `git+https://github.com/o/better-sidebar.git#${sha}` }
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+    // The installed pin is authoritative; an approval must not need the network.
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('offline') }))
+
+    const approve = await bed.dispatch('POST', '/dsh-market/approve-builds', { packages: ['better-sidebar'] })
+
+    expect(approve.status).toBe(200)
+    const yaml = readFileSync(join(profileDir('web'), 'pnpm-workspace.yaml'), 'utf8')
+    // pnpm 11.21+ matches the stable clone URL…
+    expect(yaml).toContain('better-sidebar@git+https://github.com/o/better-sidebar.git: true')
+    // …11.8-ish the commit-pinned codeload tarball…
+    expect(yaml).toContain(`better-sidebar@https://codeload.github.com/o/better-sidebar/tar.gz/${sha}: true`)
+    // …and 11.7.0 — what DSH Desktop bundles — the pinned git+https spelling.
+    expect(yaml).toContain(`better-sidebar@git+https://github.com/o/better-sidebar.git#${sha}: true`)
+  })
+
+  it('pre-writes the incoming commit\'s build keys before a git update runs (#784)', async () => {
+    // The updater knows the commit the add will fetch, so the pinned keys for
+    // THAT commit are written BEFORE pnpm runs — the update no longer has to
+    // fail first and come back through the approve-and-retry banner. The
+    // consent anchor is an allowBuilds entry the profile already carries for
+    // the package: the updater extends an approval, it never creates one.
+    const OLD = 'a'.repeat(40)
+    const NEW = 'c1d2e3f405162738495a6b7c8d9e0f1122334455'
+    fake.repos['github:o/plug-pw'] = {
+      name: 'plug-pw', manifest: { name: 'plug-pw', version: '0.2.0', dsh: {}, main: 'lib/index.js' },
+      artifacts: ['lib/index.js'], lockCommit: NEW,
+    }
+    const manifestPath = join(fake.profileDir, 'package.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    manifest.dependencies = { ...(manifest.dependencies ?? {}), 'plug-pw': `github:o/plug-pw#${OLD}` }
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+    const pkgDir = join(fake.profileDir, 'node_modules', 'plug-pw')
+    mkdirSync(join(pkgDir, 'lib'), { recursive: true })
+    writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: 'plug-pw', version: '0.1.0', dsh: {}, main: 'lib/index.js' }))
+    writeFileSync(join(pkgDir, 'lib', 'index.js'), '')
+    writeFileSync(join(fake.profileDir, 'pnpm-lock.yaml'),
+      `lockfileVersion: 9\n  resolution: {commit: ${OLD}, repo: https://github.com/o/plug-pw, type: git}\n`)
+    // The profile already authorizes this package's builds.
+    writeFileSync(join(fake.profileDir, 'pnpm-workspace.yaml'), 'packages:\n  - .\n\nallowBuilds:\n  plug-pw: true\n')
+    // HEAD resolution (the same advertisement acceleratedTarget reads) — and
+    // the add itself fails on something unrelated, which is precisely the
+    // point: the keys must already be in place BEFORE the run.
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true, status: 200,
+      headers: { get: () => 'application/x-git-upload-pack-advertisement' },
+      json: async () => ({}),
+      text: async () => `001e# service=git-upload-pack\n00000155${NEW} HEAD\0multi_ack\n`,
+    })))
+    fake.failNextAddStderrOnce = 'memory allocation of 5368709120 bytes failed'
+
+    const update = await bed.dispatch('POST', '/dsh-market/update', { name: 'plug-pw' })
+    expect(update.status).toBe(502)
+    const yaml = readFileSync(join(fake.profileDir, 'pnpm-workspace.yaml'), 'utf8')
+    expect(yaml).toContain(`plug-pw@https://codeload.github.com/o/plug-pw/tar.gz/${NEW}: true`)
+    expect(yaml).toContain(`plug-pw@git+https://github.com/o/plug-pw.git#${NEW}: true`)
+  })
+
+  it('pre-writes no build keys when the profile never approved the package (#784)', async () => {
+    // No allowBuilds entry for this package → the updater must not author its
+    // build scripts on the user's behalf; the failure path (banner →
+    // approve-and-retry) is where that consent is asked for.
+    const OLD = 'a'.repeat(40)
+    const NEW = 'c1d2e3f405162738495a6b7c8d9e0f1122334455'
+    fake.repos['github:o/plug-na'] = {
+      name: 'plug-na', manifest: { name: 'plug-na', version: '0.2.0', dsh: {}, main: 'lib/index.js' },
+      artifacts: ['lib/index.js'], lockCommit: NEW,
+    }
+    const manifestPath = join(fake.profileDir, 'package.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    manifest.dependencies = { ...(manifest.dependencies ?? {}), 'plug-na': `github:o/plug-na#${OLD}` }
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+    const pkgDir = join(fake.profileDir, 'node_modules', 'plug-na')
+    mkdirSync(join(pkgDir, 'lib'), { recursive: true })
+    writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: 'plug-na', version: '0.1.0', dsh: {}, main: 'lib/index.js' }))
+    writeFileSync(join(pkgDir, 'lib', 'index.js'), '')
+    writeFileSync(join(fake.profileDir, 'pnpm-lock.yaml'),
+      `lockfileVersion: 9\n  resolution: {commit: ${OLD}, repo: https://github.com/o/plug-na, type: git}\n`)
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true, status: 200,
+      headers: { get: () => 'application/x-git-upload-pack-advertisement' },
+      json: async () => ({}),
+      text: async () => `001e# service=git-upload-pack\n00000155${NEW} HEAD\0multi_ack\n`,
+    })))
+    fake.failNextAddStderrOnce = 'memory allocation of 5368709120 bytes failed'
+
+    const update = await bed.dispatch('POST', '/dsh-market/update', { name: 'plug-na' })
+    expect(update.status).toBe(502)
+    const yaml = readFileSync(join(fake.profileDir, 'pnpm-workspace.yaml'), 'utf8')
+    expect(yaml).not.toContain('plug-na@')
+  })
+
   it('writes both allowBuilds key forms for a gitlab-sourced dependency (#637)', async () => {
     // Until #637 these installs were replaced by a same-named npm package on
     // update, so nobody reached the build-approval layer with one. Now they

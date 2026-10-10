@@ -8,8 +8,8 @@
  * same-origin POSTs and only sources present in the curated registry.
  */
 
-import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { Readable } from 'node:stream'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { load as loadYaml } from 'js-yaml'
@@ -31,7 +31,7 @@ import {
   type PluginCommandRuntime,
 } from './dsh-cli.ts'
 import { packageOfEntryName } from './entry-identity.ts'
-import { addProfileBundle, bundlePatchInsertedIds, bundlesDroppedFromProfile, declareProfileDependency, dropFromManifest, hasLoadableEntry, holdsNativeAddon, INBOX_BUNDLES, isDshProfileName, profileDir, readDependencyOwners, readGitResolutionCommit, readInstalled, readInstalledManifest, readInstalledPackageName, readInstalledRepoEvidence, readInstalledVersion, readLockCommits, readProfileBundles, readProfileManifestSnapshot, removeProfileBundle, restoreProfileManifest, setAllowBuilds, type ProfileManifestSnapshot } from './profile.ts'
+import { addProfileBundle, allowBuildsNames, bundlePatchInsertedIds, bundlesDroppedFromProfile, declareProfileDependency, dropFromManifest, hasLoadableEntry, holdsNativeAddon, INBOX_BUNDLES, isDshProfileName, profileDir, readDependencyOwners, readGitResolutionCommit, readInstalled, readInstalledManifest, readInstalledPackageName, readInstalledRepoEvidence, readInstalledVersion, readLockCommits, readProfileBundles, readProfileManifestSnapshot, removeProfileBundle, restoreProfileManifest, setAllowBuilds, type ProfileManifestSnapshot } from './profile.ts'
 import { assessProfile, classifyPeer, introducedDuplicateNames, introducedRisks, type CompatibilityRisk } from './compatibility.ts'
 import { runningAgentIds, type AgentsLookup } from './agents.ts'
 import { analyzeProfile, corePackageNames, type DuplicateName } from './check.ts'
@@ -39,7 +39,7 @@ import { applyBundleOrder, mergeOrder, readBundleRules, readBundleStack, validat
 import { applyPreset, deletePreset, listPresets, previewPreset, savePreset } from './presets.ts'
 import { createProfileSnapshot, DEFAULT_MAX_SNAPSHOTS, deleteSnapshot, listSnapshots, restoreSnapshot } from './snapshot.ts'
 import { trialValidate } from './trial.ts'
-import { catalogRepoKey, codeloadAllowBuildsKey, findCatalogEntryForLocal, findInstalledAlias, gitCommitOfTarget, githubCommitOfTarget, githubTargetAtCommit, gitAllowBuildsKey, gitRefOfTarget, gitTargetAtCommit, gitUpdateTarget, hostedRepoKey, lookupRepoFromUrl, pinnedGitAllowBuildsKey, installTargetFor, isGenerationLink, isLocalSpec, NPM_NAME_RE, repoOfTarget, restoreBlockedByWorkspace, restoreTargetForLocal, sourceFallbackFor, workspaceProtocolDeps } from './sources.ts'
+import { catalogRepoKey, findCatalogEntryForLocal, findInstalledAlias, gitCommitOfTarget, githubCommitOfTarget, githubTargetAtCommit, gitAllowBuildsKey, gitRefOfTarget, gitTargetAtCommit, gitUpdateTarget, hostedRepoKey, lookupRepoFromUrl, pinnedAllowBuildsKeys, installTargetFor, isGenerationLink, isLocalSpec, NPM_NAME_RE, repoOfTarget, restoreBlockedByWorkspace, restoreTargetForLocal, sourceFallbackFor, workspaceProtocolDeps } from './sources.ts'
 import { failureDetail, groupConflictsByOwner, isStaleUpdate, parseIgnoredBuildEntries, parseIgnoredBuilds, parsePrepareKey, parsePrepareNotAllowed, pnpmBlockedByOpenFiles, pnpmNeverStarted, RELEASE_AGE_OVERRIDE, removeDanglingHostBridge, retargetCollections, validateAddedPlugins, withHoistRecovery } from './install.ts'
 import { classifyPnpmFailure } from './pnpm-compat.ts'
 import { asChannel, CHANNELS, DIST_TAG, resolveChannel, type Channel } from './channels.ts'
@@ -53,6 +53,7 @@ import { updateNotesFor } from './changelog.ts'
 import { checkUpdates, isUpdatablePlugin, compareVersions, fetchNpmLatest, invalidateUpdates, resolveGitRemoteHead, isUpgrade, latestPublishedRecently, setUpdateRegistry, versionOnChannel } from './updates.ts'
 import { createThemeManager, type LoaderEntry } from './themes.ts'
 import { readJsonBody, refuseUnadmitted, sameOrigin, sendJson } from './http.ts'
+import { resolveDshHome } from './home-paths.ts'
 import { detectedDebugger, detectedSupervisor, restartAllowed, scheduleRestart, servingPort, trustedRestartRequest, trustedDownloadRequest, type RecoveryHandoffConfig, restartReachableFrom } from './restart.ts'
 import type { RecoveryPlugin } from './recovery.ts'
 import { activationAfterReplace, brokenClientBundles, checkClientBundle, defaultHostRuntimeFacts, hasHostHalf, hostPeerGate, newlyBrokenBundles, peerGateRemedy, verifyActivation } from './verify.ts'
@@ -311,6 +312,41 @@ function declaresBundle(profileDirectory: string, name: string): boolean {
  */
 const printedBuildKeys = new Map<string, string | null>()
 
+// #784: pnpm's printed key is the most authoritative spelling of what the
+// PENDING install needs allowlisted, and it used to live only in the map
+// above — a DSH restart between the failure and the "allow build scripts"
+// click dropped it, leaving the button to derive keys from the OLD installed
+// pin and the retry to fail byte-identically. Persisted best-effort under the
+// Harness home; every failure here degrades to the in-memory behavior.
+//
+// The path is resolved lazily (not at module load) so the home in force when
+// the first failure is recorded is the one the file lands under.
+let printedBuildKeysFilePath: string | null = null
+function printedBuildKeysFile(): string {
+  if (printedBuildKeysFilePath === null) {
+    printedBuildKeysFilePath = join(resolveDshHome(), 'dsh-market', 'printed-build-keys.json')
+    try {
+      const stored = JSON.parse(readFileSync(printedBuildKeysFilePath, 'utf8')) as Record<string, unknown>
+      for (const [storedName, storedKey] of Object.entries(stored)) {
+        if (typeof storedKey === 'string') printedBuildKeys.set(storedName, storedKey)
+      }
+    } catch { /* absent or unreadable: start empty */ }
+  }
+  return printedBuildKeysFilePath
+}
+
+function persistPrintedBuildKeys(): void {
+  try {
+    const file = printedBuildKeysFile()
+    // Bounded: one entry per package name that ever failed a build here.
+    while (printedBuildKeys.size > 500) {
+      printedBuildKeys.delete(printedBuildKeys.keys().next().value as string)
+    }
+    mkdirSync(dirname(file), { recursive: true })
+    writeFileSync(file, JSON.stringify(Object.fromEntries(printedBuildKeys), null, 2))
+  } catch { /* best-effort: an unwritable home keeps the in-memory map */ }
+}
+
 function blockedBuilds(result: { ignoredBuilds?: unknown; stdout: string; stderr: string }): string[] | undefined {
   // Record pnpm's own dep path for every ignored build BEFORE deciding what to
   // report. Both returns below hand back BARE names, so a git plugin whose
@@ -325,12 +361,14 @@ function blockedBuilds(result: { ignoredBuilds?: unknown; stdout: string; stderr
   for (const entry of parseIgnoredBuildEntries(result.stdout, result.stderr)) {
     if (entry.key !== entry.name) printedBuildKeys.set(entry.name, entry.key)
   }
+  persistPrintedBuildKeys()
   if (Array.isArray(result.ignoredBuilds) && result.ignoredBuilds.length > 0) return result.ignoredBuilds as string[]
   const list = parseIgnoredBuilds(result.stdout, result.stderr)
   if (list.length > 0) return list
   const pending = parsePrepareNotAllowed(result.stdout, result.stderr)
   if (pending === null) return undefined
   printedBuildKeys.set(pending, parsePrepareKey(result.stdout, result.stderr))
+  persistPrintedBuildKeys()
   return [pending]
 }
 
@@ -4389,6 +4427,39 @@ sendJson(response, 200, { updates })
             if (pinnedForIdentification) {
               declareProfileDependency(config.profile, name, pinValue, activeProfileDir)
             }
+            // #784: the updater already knows the commit the add below will
+            // fetch, so the pinned allowBuilds keys for THAT commit are
+            // written BEFORE pnpm runs, instead of failing the run and making
+            // the user press "allow build scripts" on the way back. Both
+            // pinned spellings go in (codeload and git+https#sha) because the
+            // form pnpm matches varies with its version and with the
+            // manifest's own spelling of the remote.
+            //
+            // Consent anchor: only when the profile ALREADY carries an
+            // allowBuilds entry for this package — the updater extends an
+            // approval the user gave, it never creates one. Best-effort by
+            // design: a resolution or write that fails here changes nothing,
+            // and the failure path (banner → approve-and-retry) still works.
+            if (isGit && !restore) {
+              try {
+                const alreadyAllowed = allowBuildsNames(config.profile, activeProfileDir)
+                  .some(key => key === name || key.startsWith(`${name}@`))
+                if (alreadyAllowed) {
+                  const nextCommit = repoKey !== null
+                    ? githubCommitOfTarget(target) ?? await resolveHeadCommit(repoKey, region)
+                    : gitCommitOfTarget(target) ?? await resolveGitRemoteHead(spec, gitRefOfTarget(spec) ?? undefined)
+                  if (nextCommit != null) {
+                    const preKeys = pinnedAllowBuildsKeys(name, spec, nextCommit)
+                    if (preKeys.length > 0) {
+                      setAllowBuilds(config.profile, preKeys, activeProfileDir)
+                      logEvent('info', 'update', `${name}: pre-authorized build keys for the incoming commit ${nextCommit.slice(0, 7)} (#784)`)
+                    }
+                  }
+                }
+              } catch (error) {
+                logEvent('warn', 'update', `${name}: build-key prewrite skipped — ${error instanceof Error ? error.message : String(error)}`)
+              }
+            }
             const result = await runPlugin(config.profile, addArgs)
             const cancelled = result.cancelled
             // The pin above is the market's own write, so it is undone whenever
@@ -5363,10 +5434,14 @@ sendJson(response, 200, { updates })
               : gitCommitOfTarget(spec)
                 ?? await resolveGitRemoteHead(spec, gitRefOfTarget(spec) ?? undefined)
             if (pinned === null || pinned === undefined) return [stable]
-            const pinnedKey = repo !== null
-              ? codeloadAllowBuildsKey(name, spec, pinned)
-              : pinnedGitAllowBuildsKey(name, spec, pinned)
-            return pinnedKey === null ? [stable] : [stable, pinnedKey]
+            // Both pinned forms per spelling (#784): pnpm 11.8-ish matches the
+            // codeload key, 11.7.0 — what DSH Desktop bundles — matches the
+            // commit-pinned git+https key that follows the MANIFEST's own
+            // spelling of the remote. Deriving only codeload left every
+            // git+https-spelled GitHub dependency with no key pnpm would
+            // read.
+            const pinnedKeys = pinnedAllowBuildsKeys(name, spec, pinned)
+            return pinnedKeys.length === 0 ? [stable] : [stable, ...pinnedKeys]
           }
           /**
            * The allowBuilds key pnpm itself printed when it refused this

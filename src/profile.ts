@@ -1295,6 +1295,20 @@ export function setAllowBuilds(profile: string, packages: string[], explicitDir?
 }
 
 /**
+ * The allowBuilds keys a profile currently carries (#784).
+ *
+ * This is the consent anchor for pre-writing a git update's pinned keys: the
+ * updater may extend an approval the user already gave this package (any key
+ * form — bare name or `name@<source>`), and never create one.
+ */
+export function allowBuildsNames(profile: string, explicitDir?: string): string[] {
+  const file = join(profileDir(profile, explicitDir), 'pnpm-workspace.yaml')
+  let yaml: string
+  try { yaml = readFileSync(file, 'utf8') } catch { return [] }
+  return Object.keys(readAllowBuildsMap(yaml).map)
+}
+
+/**
  * Remove the allowBuilds keys pnpm cannot parse as a version range, and say
  * which (#698).
  *
