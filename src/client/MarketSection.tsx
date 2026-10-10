@@ -286,6 +286,16 @@ function FilterMenu({
   )
 }
 
+/** Keep an empty search actionable without changing the user's sort or block list. */
+function EmptyResults({ blocked, onClear, t }: { blocked: boolean; onClear?: () => void; t: Translate }) {
+  return <div className={css.empty}>
+    <div>{t(blocked ? 'blockedFilteredEmpty' : 'empty')}</div>
+    {onClear && <Button variant="outline" size="sm" className={css.retryBtn} onClick={onClear}>
+      {t('clearFilters')}
+    </Button>}
+  </div>
+}
+
 /** Prev/numbered/next controls plus a per-page-size menu — one
  * implementation for every paged list, driven entirely by `usePagination`'s
  * return value. Owns its own page-size dropdown open state for the same
@@ -1747,6 +1757,7 @@ export function MarketSection(props: MarketSectionProps) {
   const [installedSearchReset, resetInstalledSearch] = useState(0)
   /** Per-tab searches stay independent: discover / themes / installed. */
   const [qThemes, setQThemes] = useState('')
+  const [themeSearchReset, resetThemeSearch] = useState(0)
   const [qFavorites, setQFavorites] = useState('')
   const [qInstalled, setQInstalled] = useState('')
   const [cat, setCat] = useState('all')
@@ -6099,7 +6110,13 @@ export function MarketSection(props: MarketSectionProps) {
                     </div>
                     </div>
                     {plugins.length === 0
-                      ? <div className={css.empty}>{pluginsAll.length > 0 ? t('blockedFilteredEmpty') : t('empty')}</div>
+                      ? <EmptyResults blocked={pluginsAll.length > 0} t={t}
+                          onClear={data.plugins.length > 0 && (q !== '' || cat !== 'all' || timeRange !== 'all' || compatibleWithHost) ? () => {
+                            setQ(''); resetDiscoverSearch(value => value + 1)
+                            setCat('all'); setTimeRange('all'); setCompatibleWithHost(false)
+                            bodyRef.current?.querySelector('input')?.focus()
+                          } : undefined}
+                        />
                       : (
                           <>
                             <Masonry items={pagePlugins} render={pluginCard} />
@@ -6215,7 +6232,7 @@ export function MarketSection(props: MarketSectionProps) {
             ? (
                 <>
                   <div className={css.themeToolbar}>
-                    <SearchInput key="themes" className={css.themeSearch} placeholder={t('searchPh')} value={qThemes} onCommit={setQThemes} t={t} />
+                    <SearchInput key="themes" resetToken={themeSearchReset} className={css.themeSearch} placeholder={t('searchPh')} value={qThemes} onCommit={setQThemes} t={t} />
                     <div className={css.themeToolbarActions}>
                       <FilterMenu
                         sortField={themeSortField}
@@ -6255,7 +6272,13 @@ export function MarketSection(props: MarketSectionProps) {
                     : anyThemePlugins.length === 0
                       ? <div className={css.empty}>{t('themeEmpty')}</div>
                       : themePlugins.length === 0
-                        ? <div className={css.empty}>{themePluginsAll.length > 0 ? t('blockedFilteredEmpty') : t('empty')}</div>
+                        ? <EmptyResults blocked={themePluginsAll.length > 0} t={t}
+                            onClear={qThemes !== '' || themeTimeRange !== 'all' ? () => {
+                              setQThemes(''); resetThemeSearch(value => value + 1)
+                              setThemeTimeRange('all')
+                              bodyRef.current?.querySelector('input')?.focus()
+                            } : undefined}
+                          />
                         : (
                             <>
                               <div className={css.themeResultBar}>

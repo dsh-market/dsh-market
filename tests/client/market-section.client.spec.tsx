@@ -7083,3 +7083,70 @@ describe('catalog version in discover byline (#348)', () => {
     expect(tip.textContent).not.toMatch(/\(\)/)
   })
 })
+
+describe('empty filter recovery', () => {
+  it('clears Discover search and category without changing the chosen sort', async () => {
+    stubFetch({ '/dsh-market/installed': { profile: 'web', installed: {}, live: [], blocked: ['whale-skin'] } })
+    const { container } = render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: 'Skills' }))
+    fireEvent.click(screen.getByRole('button', { name: en.filter }))
+    fireEvent.click(screen.getByRole('menuitem', { name: en.sortStars }))
+    fireEvent.click(screen.getByRole('menuitem', { name: en.sortAsc }))
+    fireEvent.click(screen.getByRole('button', { name: en.filter }))
+    const input = screen.getByPlaceholderText(en.searchPh) as HTMLInputElement
+    fireEvent.change(input, { target: { value: 'not-a-plugin' } })
+    await screen.findByText(en.empty)
+    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }))
+    await screen.findByText('dsh-notify')
+    expect(screen.queryByText('whale-skin')).toBeNull()
+    expect(document.activeElement).toBe(input)
+    expect(input.value).toBe('')
+    expect(rankedNames(container)).toEqual(['dsh-loop', 'dsh-notify'])
+  })
+
+  it('recovers from an empty time range and cancels a pending search draft', async () => {
+    const plugins = REGISTRY.plugins.map(plugin => ({ ...plugin, added: '2020-01-01' }))
+    stubFetch({ '/dsh-market/registry': { source: 'live', registry: { ...REGISTRY, plugins } } })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: en.filter }))
+    fireEvent.click(screen.getByRole('menuitem', { name: en.timeWeek }))
+    await screen.findByText(en.empty)
+    const input = screen.getByPlaceholderText(en.searchPh) as HTMLInputElement
+    fireEvent.change(input, { target: { value: 'pending-query' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }))
+    expect(input.value).toBe('')
+    await screen.findByText('dsh-loop')
+    await new Promise(resolve => setTimeout(resolve, SEARCH_DELAY_MS * 2))
+    expect(screen.getByText('dsh-loop')).toBeTruthy()
+  })
+
+  it('clears Themes filters independently of Discover', async () => {
+    const snapshot = { preference: 'light', themes: [] as Array<{ id: string }> }
+    render(<MarketSection {...props()} themeStore={{ subscribe: () => () => {}, getSnapshot: () => snapshot }} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.change(screen.getByPlaceholderText(en.searchPh), { target: { value: 'loop' } })
+    await waitFor(() => expect(screen.queryByText('dsh-notify')).toBeNull())
+    fireEvent.click(screen.getAllByRole('button', { name: en.tabThemes })[0]!)
+    await screen.findByText('whale-skin')
+    const input = screen.getByPlaceholderText(en.searchPh) as HTMLInputElement
+    fireEvent.change(input, { target: { value: 'missing-theme' } })
+    await screen.findByText(en.empty)
+    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }))
+    await screen.findByText('whale-skin')
+    expect(input.value).toBe('')
+    expect(document.activeElement).toBe(input)
+    fireEvent.click(screen.getByRole('button', { name: en.tabDiscover }))
+    expect((screen.getByPlaceholderText(en.searchPh) as HTMLInputElement).value).toBe('loop')
+    expect(screen.getByText('dsh-loop')).toBeTruthy()
+    expect(screen.queryByText('dsh-notify')).toBeNull()
+  })
+
+  it('does not offer a filter reset for an empty catalog', async () => {
+    stubFetch({ '/dsh-market/registry': { source: 'live', registry: { ...REGISTRY, count: 0, plugins: [] } } })
+    render(<MarketSection {...props()} />)
+    await screen.findByText(en.empty)
+    expect(screen.queryByRole('button', { name: 'Clear filters' })).toBeNull()
+  })
+})
