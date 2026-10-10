@@ -143,4 +143,52 @@ describe.skipIf(!dshAvailable())('web e2e: search clear controls and sticky head
     }
     await page.setViewportSize({ width: 1200, height: 800 })
   })
+
+  it.each([/^(发现|Discover)$/, /^(主题|Themes)$/])('clears empty filters in %s and returns keyboard focus', async tab => {
+    await page.getByRole('button', { name: tab }).click()
+    const search = page.getByPlaceholder(/搜索插件|Search plugins/)
+    await search.fill('no-such-plugin-empty-filter-recovery')
+    const clear = page.getByRole('button', { name: /^(清除筛选|Clear filters)$/ })
+    await clear.waitFor()
+    for (const width of [1200, 640]) {
+      await page.setViewportSize({ width, height: 800 })
+      await clear.click({ trial: true })
+      const box = await clear.boundingBox()
+      expect(box).not.toBeNull()
+      expect(box!.x).toBeGreaterThanOrEqual(0)
+      expect(box!.x + box!.width).toBeLessThanOrEqual(width)
+    }
+    await page.setViewportSize({ width: 1200, height: 800 })
+    await clear.focus()
+    await page.keyboard.press('Enter')
+    expect(await search.inputValue()).toBe('')
+    expect(await search.evaluate(input => input === input.ownerDocument.activeElement)).toBe(true)
+    await expect.poll(() => clear.count()).toBe(0)
+  })
+
+  it('keeps navigation and task controls inside a narrow panel', async () => {
+    await page.setViewportSize({ width: 640, height: 800 })
+    const tabs = page.locator('[data-dsh-market-root] [class$="_tabs"]').first()
+    const stripBox = await tabs.boundingBox()
+    expect(stripBox).not.toBeNull()
+    for (const button of await tabs.getByRole('button').all()) {
+      await button.focus()
+      const box = await button.boundingBox()
+      expect(box).not.toBeNull()
+      expect(box!.x).toBeGreaterThanOrEqual(stripBox!.x - 1)
+      expect(box!.x + box!.width).toBeLessThanOrEqual(stripBox!.x + stripBox!.width + 1)
+      await button.click({ trial: true })
+    }
+    const tasks = tabs.getByRole('button', { name: /^(任务|Tasks)$/ })
+    await tasks.click()
+    const panel = page.locator('[data-dsh-market-root] [class$="_opPanel"]')
+    await panel.waitFor()
+    expect(await panel.evaluate(el => {
+      const box = el.getBoundingClientRect()
+      return el.contains(el.ownerDocument.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2))
+    })).toBe(true)
+    await page.keyboard.press('Escape')
+    await panel.waitFor({ state: 'detached' })
+    await page.setViewportSize({ width: 1200, height: 800 })
+  })
 })
