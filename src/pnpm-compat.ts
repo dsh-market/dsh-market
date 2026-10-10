@@ -50,7 +50,7 @@ export interface PnpmFailure {
     | 'unexpected-store' | 'patch-failed' | 'unused-patch' | 'missing-tarball-integrity' | 'windows-file-locked'
     | 'profile-file-locked'
     | 'pnpm-unusable' | 'missing-local-dependency' | 'unparseable-build-key' | 'native-oom' | 'ssh-auth-failed'
-    | 'lockfile-broken' | 'lockfile-outdated'
+    | 'lockfile-broken' | 'lockfile-outdated' | 'pnpm-stalled'
   /** Bilingual, actionable message shown to the user instead of the raw wall of text. */
   message: string
   /** True when re-running `pnpm install` in the profile is the documented recovery. */
@@ -186,6 +186,26 @@ function integrityViolators(diagnostic: string): string[] {
  * @returns the classified failure, or null when unrecognized (raw output is then shown as-is).
  */
 export function classifyPnpmFailure(output: string, exitCode?: number | null): PnpmFailure | null {
+  // #817: the host's silence watchdog (@deepseek-ai/dsh-plugin-manager,
+  // `idleTimeoutMs`, 10 minutes by default) killed pnpm. Checked first: it is
+  // the last thing that happened, so whatever pnpm printed before is not the
+  // cause. The usual culprit is a dependency's install script downloading a
+  // binary from a host this network cannot reach — the reporter's cloudflared
+  // postinstall fetching from GitHub Releases — so the last lifecycle line
+  // pnpm printed names the package that went quiet.
+  const stalled = /printed nothing for (\d+)ms and was terminated/.exec(output)
+  if (stalled !== null) {
+    const minutes = Math.max(1, Math.round(Number(stalled[1]) / 60000))
+    const scripts = [...output.matchAll(/node_modules[\\/]((?:@[^\\/\s]+[\\/])?[^\\/\s]+) (?:pre|post)?install[:$]/g)]
+    const culprit = scripts.at(-1)?.[1]?.replace('\\', '/')
+    return {
+      code: 'pnpm-stalled',
+      recoverable: false,
+      message: culprit !== undefined
+        ? `依赖 ${culprit} 的安装脚本 ${minutes} 分钟没有任何输出，被终止了，什么都没装上。这类脚本通常在从网上下载文件，多半是当前网络连不上下载地址；插件本身没有问题。换个网络或开启代理后重试；仍然不行就联系插件作者。 / the install script of the dependency ${culprit} printed nothing for ${minutes} minutes and was stopped, so nothing was installed. Scripts like this usually download a file, and this network most likely cannot reach where it comes from; the plugin itself is not at fault. Try again on another network or through a proxy, and contact the plugin's author if it still fails.`
+        : `pnpm ${minutes} 分钟没有任何输出，被终止了，什么都没装上。通常是网络卡住了。检查网络后重试。 / pnpm printed nothing for ${minutes} minutes and was stopped, so nothing was installed. This usually means the network stalled. Check the connection and try again.`,
+    }
+  }
   if (output.includes('ERR_PNPM_PUBLIC_HOIST_PATTERN_DIFF')
     || output.includes('ERR_PNPM_VIRTUAL_STORE_DIR_MAX_LENGTH_DIFF')) {
     return {

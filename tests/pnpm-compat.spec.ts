@@ -869,3 +869,35 @@ describe('pnpm 12 native engine out of memory (#701)', () => {
     expect(classifyPnpmFailure('dsh: pnpm failed in profile directory x', 1)?.code).not.toBe('native-oom')
   })
 })
+
+describe('a pnpm run the host stopped for silence (#817)', () => {
+  // The reporter's tail, verbatim: cloudflared's postinstall downloading its
+  // binary from GitHub Releases on a network that cannot reach it.
+  const TAIL = [
+    'Resolved 241, reused 4, downloaded 0, added 0, done',
+    'node_modules/cloudflared postinstall$ node scripts/postinstall.mjs && node lib/cloudflared.js bin install',
+    'node_modules/cloudflared postinstall: Installing latest version of cloudflared',
+    'dsh: pnpm printed nothing for 600000ms and was terminated',
+  ].join('\n')
+
+  it('names the dependency whose install script went quiet, and says what to do', () => {
+    const failed = classifyPnpmFailure(TAIL, 1)
+    expect(failed?.code).toBe('pnpm-stalled')
+    expect(failed?.recoverable).toBe(false)
+    expect(failed?.pkg).toBeUndefined()
+    expect(failed?.message).toContain('依赖 cloudflared 的安装脚本 10 分钟')
+    expect(failed?.message).toContain('the dependency cloudflared printed nothing for 10 minutes')
+  })
+
+  it('keeps a scoped name whole, Windows separators included', () => {
+    const failed = classifyPnpmFailure('node_modules\\@scope\\bin-fetcher postinstall: fetching\ndsh: pnpm printed nothing for 120000ms and was terminated', 1)
+    expect(failed?.message).toContain('依赖 @scope/bin-fetcher 的安装脚本 2 分钟')
+  })
+
+  it('blames the network, not a package, when no install script was running', () => {
+    const failed = classifyPnpmFailure('Progress: resolved 12\ndsh: pnpm printed nothing for 600000ms and was terminated', 1)
+    expect(failed?.code).toBe('pnpm-stalled')
+    expect(failed?.message).toContain('pnpm 10 分钟没有任何输出')
+    expect(failed?.message).not.toContain('依赖')
+  })
+})
