@@ -2083,8 +2083,8 @@ describe('MarketSection (jsdom)', () => {
         registry: { updated: '', count: 2, categories: { tools: { en: 'Tools', zh: '工具' } }, plugins },
       },
     })
-    render(<MarketSection {...props()} />)
-    await screen.findByText('dsh-fresh')
+    const { container } = render(<MarketSection {...props()} />)
+    await waitFor(() => expect(rankedNames(container)).toContain('dsh-fresh'))
     expect(screen.getByText('dsh-stale')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: en.filter }))
     fireEvent.click(screen.getByRole('menuitem', { name: en.timeWeek }))
@@ -7131,5 +7131,214 @@ describe('catalog version in discover byline (#348)', () => {
     fireEvent.mouseEnter(mark)
     const tip = await screen.findByText(/updates daily/)
     expect(tip.textContent).not.toMatch(/\(\)/)
+  })
+})
+
+describe('recently added Discover row (#780)', () => {
+  const now = Date.parse('2026-09-30T12:00:00Z')
+  const daysAgo = (days: number) => new Date(now - days * 86_400_000).toISOString()
+  const entry = (name: string, downloads: number | null, stars: number, added = daysAgo(2)) => ({
+    name, owner: 'alice', url: `https://github.com/alice/${name}`, category: 'tools',
+    npm: downloads === null ? null : name, downloads, stars, added,
+    description: { en: `${name} description` }, install: '',
+  })
+  const rows = () => [
+    entry('github-low', null, 5), entry('zero', 0, 2),
+    entry('cutoff', 10, 999, daysAgo(7)), entry('github-high', null, 500),
+    entry('recent-high', 900, 1), entry('old-high', 9999, 1000, daysAgo(7) + 'invalid'),
+    entry('old', 8000, 1000, daysAgo(7 + 1 / 86_400_000)),
+    entry('future', 7000, 1000, daysAgo(-1)), entry('undated', 6000, 1000, ''),
+  ]
+  const recentNames = ['recent-high', 'cutoff', 'zero', 'github-high', 'github-low']
+  const registry = (plugins = rows()) => ({
+    source: 'live', hostVersion: '0.1.2-alpha.2',
+    registry: { ...REGISTRY, count: plugins.length, plugins },
+  })
+  const recent = () => screen.getByRole('region', { name: en.recentlyAdded })
+  const names = (element: HTMLElement) => [...element.querySelectorAll<HTMLAnchorElement>(`.${css.nmLink}`)]
+    .map(link => link.title)
+  const expectHidden = () => expect(screen.queryByRole('region', { name: en.recentlyAdded })).toBeNull()
+
+  let resizeRecent: (width: number) => void
+  let observedRecent: Element | undefined
+  beforeEach(() => {
+    vi.spyOn(Date, 'now').mockReturnValue(now)
+    resizeRecent = () => { throw new Error('recent row is not observed') }
+    observedRecent = undefined
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(private callback: ResizeObserverCallback) {}
+      observe(target: Element) {
+        // jsdom has no layout; deliver row widths without resizing CardDesc.
+        if (!target.classList.contains(css.recentRow)) return
+        observedRecent = target
+        resizeRecent = width => this.callback([
+          { target, contentRect: { width } } as ResizeObserverEntry,
+        ], this as unknown as ResizeObserver)
+        resizeRecent(1600)
+      }
+      unobserve() {}
+      disconnect() {}
+    })
+  })
+  afterEach(() => { vi.restoreAllMocks() })
+
+  it('keeps only the ranked cards that fit one row as the container resizes', async () => {
+    stubFetch({ '/dsh-market/registry': registry() })
+    const { container } = render(<MarketSection {...props()} />)
+    await screen.findByRole('region', { name: en.recentlyAdded })
+    expect(recent().getAttribute('aria-labelledby')).toBe('dshm-recently-added')
+    expect(within(recent()).getByRole('heading', { name: en.recentlyAdded }).id).toBe('dshm-recently-added')
+    const main = rankedNames(container)
+    for (const [width, count] of [[280, 1], [569, 1], [570, 2], [859, 2], [860, 3], [1150, 4], [1440, 5], [280, 1]] as const) {
+      act(() => resizeRecent(width))
+      expect(names(recent())).toEqual(recentNames.slice(0, count))
+      expect(within(recent()).getAllByRole('button', { name: en.install })).toHaveLength(count)
+      expect(rankedNames(container)).toEqual(main)
+    }
+  })
+
+  it('observes the replacement row after retrying a failed cached catalog refresh', async () => {
+    stubFetch({ '/dsh-market/registry': registry() })
+    render(<MarketSection {...props()} />)
+    await screen.findByRole('region', { name: en.recentlyAdded })
+    cleanup()
+    stubFetch({ '/dsh-market/registry': { __status: 503, error: 'catalog unavailable' } })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('catalog unavailable')
+    expectHidden()
+    const detachedRow = observedRecent
+    stubFetch({ '/dsh-market/registry': registry() })
+    fireEvent.click(screen.getByRole('button', { name: en.loadRetry }))
+    await screen.findByRole('region', { name: en.recentlyAdded })
+    expect(observedRecent).not.toBe(detachedRow)
+    expect(observedRecent?.isConnected).toBe(true)
+    act(() => resizeRecent(280))
+    expect(names(recent())).toEqual(recentNames.slice(0, 1))
+  })
+
+  it('opens only one menu for either copy of a recent plugin', async () => {
+    stubFetch({ '/dsh-market/registry': registry([entry('duplicated-recent', 100, 1)]) })
+    const { container } = render(<MarketSection {...props()} />)
+    await screen.findByRole('region', { name: en.recentlyAdded })
+    const recentMore = within(recent()).getByRole('button', { name: en.groupMore })
+    const mainMore = within(container.querySelector(`.${css.masonry}`)!).getByRole('button', { name: en.groupMore })
+    for (const [opened, other] of [[recentMore, mainMore], [mainMore, recentMore]] as const) {
+      fireEvent.click(opened)
+      expect(screen.getAllByRole('menu')).toHaveLength(1)
+      expect(opened.getAttribute('aria-expanded')).toBe('true')
+      expect(other.getAttribute('aria-expanded')).toBe('false')
+      fireEvent.click(opened)
+      expect(screen.queryByRole('menu')).toBeNull()
+      expect(opened.getAttribute('aria-expanded')).toBe('false')
+    }
+  })
+
+  it('uses a seven-day downloads/Stars rank without changing the main default or selected sort', async () => {
+    stubFetch({ '/dsh-market/registry': registry() })
+    const { container } = render(<MarketSection {...props()} />)
+    await screen.findByRole('region', { name: en.recentlyAdded })
+    expect(names(recent())).toEqual(recentNames)
+    // Old, future and dateless entries still belong to the all-time main list.
+    expect(rankedNames(container)).toEqual([
+      'old-high', 'old', 'future', 'undated', 'recent-high', 'cutoff', 'zero', 'github-high', 'github-low',
+    ])
+    fireEvent.click(screen.getByRole('button', { name: en.filter }))
+    fireEvent.click(screen.getByRole('menuitem', { name: en.sortStars }))
+    await waitFor(() => {
+      const main = rankedNames(container)
+      expect(main.indexOf('cutoff')).toBeLessThan(main.indexOf('recent-high'))
+    })
+    expect(names(recent())).toEqual(recentNames)
+    fireEvent.click(screen.getByRole('button', { name: en.filter }))
+  })
+
+  it('appears only without a search, category or time filter, and only in Discover', async () => {
+    stubFetch({ '/dsh-market/registry': registry() })
+    const themeSnapshot = { preference: 'light', themes: [] as Array<{ id: string }> }
+    render(<MarketSection {...props()} themeStore={{ subscribe: () => () => {}, getSnapshot: () => themeSnapshot }} />)
+    await screen.findByRole('region', { name: en.recentlyAdded })
+    const search = screen.getByPlaceholderText(en.searchPh)
+    fireEvent.change(search, { target: { value: 'recent-high' } })
+    fireEvent.keyDown(search, { key: 'Enter' })
+    await waitFor(expectHidden)
+    fireEvent.change(search, { target: { value: '' } })
+    await screen.findByRole('region', { name: en.recentlyAdded })
+    fireEvent.click(screen.getByRole('button', { name: 'Tools' }))
+    expectHidden()
+    fireEvent.click(screen.getByRole('button', { name: /^All \(\d/ }))
+    await screen.findByRole('region', { name: en.recentlyAdded })
+    fireEvent.click(screen.getByRole('button', { name: en.filter }))
+    fireEvent.click(screen.getByRole('menuitem', { name: en.timeWeek }))
+    expectHidden()
+    fireEvent.click(screen.getByRole('menuitem', { name: en.timeAll }))
+    await screen.findByRole('region', { name: en.recentlyAdded })
+    fireEvent.click(screen.getByRole('button', { name: en.filter }))
+    for (const tab of [en.tabThemes, en.tabFavorites, en.tabInstalled, en.tabBlocked, en.tabAdvanced]) {
+      fireEvent.click(within(document.getElementsByClassName(css.tabs)[0] as HTMLElement).getByRole('button', { name: tab }))
+      expectHidden()
+      fireEvent.click(screen.getByRole('button', { name: en.tabDiscover }))
+      await screen.findByRole('region', { name: en.recentlyAdded })
+    }
+  })
+
+  it('hides an empty recent selection, including when its only recent entry is hidden', async () => {
+    stubFetch({ '/dsh-market/registry': registry([entry('old-only', 100, 1, daysAgo(8))]) })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('old-only')
+    expectHidden()
+    cleanup()
+    stubFetch({
+      '/dsh-market/registry': registry([entry('hidden-recent', 100, 1), entry('old-only', 100, 1, daysAgo(8))]),
+      '/dsh-market/installed': {
+        profile: 'web', installed: {}, live: [], disabled: [], groups: {}, groupOrder: [],
+        favorites: [], blocked: ['hidden-recent'],
+      },
+    })
+    render(<MarketSection {...props()} />)
+    await waitFor(() => {
+      expect(screen.getByText('old-only')).toBeTruthy()
+      expect(screen.queryByText('hidden-recent')).toBeNull()
+      expectHidden()
+    })
+  })
+
+  it('loads an off-page recent card requirement and opens its real install dialog', async () => {
+    const plugins = [
+      ...Array.from({ length: 24 }, (_, index) => entry(`old-${index}`, 1000 - index, 1, daysAgo(30))),
+      entry('off-page-recent', 1, 1),
+    ]
+    stubFetch({
+      '/dsh-market/registry': registry(plugins),
+      '/dsh-market/discovery-compatibility': (body: unknown) => ({
+        hostVersion: '0.1.2-alpha.2',
+        plugins: Object.fromEntries(((body as { packages: string[] }).packages).map(name => [name, {
+          status: 'compatible', basis: 'manifest', requirement: '^0.1.2-alpha.2',
+          declarations: [{ kind: 'engine', range: '^0.1.2-alpha.2' }],
+        }])),
+      }),
+    })
+    const { container } = render(<MarketSection {...props()} />)
+    await screen.findByRole('region', { name: en.recentlyAdded })
+    expect(names(recent())).toEqual(['off-page-recent'])
+    expect(rankedNames(container)).toEqual(plugins.slice(0, 24).map(plugin => plugin.name))
+    expect(screen.getByRole('button', { name: en.nextPage })).toBeTruthy()
+    await waitFor(() => {
+      expect(fetchCalls.some(call => call.path === '/dsh-market/discovery-compatibility'
+        && (call.body as { packages?: string[] } | undefined)?.packages?.includes('off-page-recent'))).toBe(true)
+      expect(within(recent()).getByText(en.hostRequirement.replace('{0}', '^0.1.2-alpha.2'))).toBeTruthy()
+    })
+    fireEvent.click(within(recent()).getByRole('button', { name: en.install }))
+    const dialog = within(await screen.findByRole('dialog'))
+    expect(dialog.getByText('off-page-recent description')).toBeTruthy()
+    expect(dialog.getByTitle('Date added').textContent).toContain(daysAgo(2))
+    expect(dialog.getByRole('button', { name: en.confirmInstall })).toBeTruthy()
+    fireEvent.click(dialog.getByRole('button', { name: en.cancel }))
+    await waitFor(() => expect(screen.queryByRole('button', { name: en.confirmInstall })).toBeNull())
+  })
+
+  it('calls catalog dates Date added / 收录时间 in both locale keys', () => {
+    expect([en.recentlyAdded, zh.recentlyAdded]).toEqual(['Recently added', '最近收录'])
+    expect([en.sortAdded, en.published]).toEqual(['Date added', 'Date added'])
+    expect([zh.sortAdded, zh.published]).toEqual(['收录时间', '收录时间'])
   })
 })

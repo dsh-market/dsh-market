@@ -208,6 +208,9 @@
 .installCautionLink:hover{text-decoration:underline}
 .confirmFineprint{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#6b7280)}
 .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:start;gap:10px}
+/* One row; its observer counts 280px cards plus the 10px gap at the actual panel width. */
+.recentRow{display:grid;align-items:start;gap:10px;margin-bottom:16px}
+.recentRow > *{min-width:0}
 /* Masonry: two independent columns, each packing its own cards tight.
    A CSS grid cannot do this — its rows are as tall as their tallest cell, so
    a card with screenshots left a matching hole beside a card without them,

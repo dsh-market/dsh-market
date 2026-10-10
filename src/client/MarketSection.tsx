@@ -2814,10 +2814,32 @@ export function MarketSection(props: MarketSectionProps) {
     // pluginBlocked closes over the installed map and the catalog match.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [pluginsAll, blockedNameSet, installed, repoIdentities, data, repoHints])
+  const recentlyAdded = useMemo(
+    () => data === null || tab !== 'discover' || q.trim() !== '' || cat !== 'all' || timeRange !== 'all'
+      ? []
+      : visiblePlugins(data.plugins, {
+          category: 'all', query: '', lang, sort: 'downloads-desc', sinceDays: 7,
+          hostCompatibility, compatibleWithHost,
+        }).filter(plugin => !pluginBlocked(plugin)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [data, tab, q, cat, timeRange, lang, hostCompatibility, compatibleWithHost, blockedNameSet, installed, repoIdentities, repoHints])
+  const recentRowRef = useRef<HTMLDivElement>(null)
+  const [recentColumns, setRecentColumns] = useState(1)
+  const hasRecent = recentlyAdded.length > 0
+  useLayoutEffect(() => {
+    const row = recentRowRef.current
+    if (row === null || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry !== undefined) setRecentColumns(Math.max(1, Math.floor((entry.contentRect.width + 10) / 290)))
+    })
+    observer.observe(row)
+    return () => observer.disconnect()
+  }, [hasRecent, loadError])
+  const recentPlugins = recentlyAdded.slice(0, recentColumns)
   const { currentPage, totalPages, pageSize, goToPage, changePageSize } =
     usePagination(plugins.length, [q, cat, sortField, sortDir, timeRange, compatibleWithHost], scrollToTop)
   const pagePlugins = plugins.slice((currentPage - 1) * pageSize, currentPage * pageSize)
-  const pageHostPackages = [...new Set(pagePlugins.flatMap(plugin =>
+  const pageHostPackages = [...new Set([...pagePlugins, ...recentPlugins].flatMap(plugin =>
     typeof plugin.npm === 'string' && plugin.npm !== '' ? [plugin.npm] : []))]
   const allHostPackages = useMemo(
     () => [...new Set((data?.plugins ?? []).flatMap(plugin =>
@@ -4735,12 +4757,12 @@ export function MarketSection(props: MarketSectionProps) {
     )
   }
 
-  const renderPluginMenu = (plugin: RegistryPlugin) => {
+  const renderPluginMenu = (plugin: RegistryPlugin, key = plugin.url) => {
     const aliases = blockAliases(plugin, matchInstalledName(plugin, installed, repoIdentities, data?.plugins, repoHints))
     const hidden = aliases.some(name => blockedNameSet.has(name))
     return (
       <Menu
-        open={pluginMenuUrl === plugin.url}
+        open={pluginMenuUrl === key}
         onClose={() => setPluginMenuUrl(null)}
         onSelect={(id) => {
           setPluginMenuUrl(null)
@@ -4753,8 +4775,8 @@ export function MarketSection(props: MarketSectionProps) {
             type="button"
             className={css.cardMore}
             aria-label={t('groupMore')}
-            aria-expanded={pluginMenuUrl === plugin.url}
-            onClick={() => setPluginMenuUrl(open => open === plugin.url ? null : plugin.url)}
+            aria-expanded={pluginMenuUrl === key}
+            onClick={() => setPluginMenuUrl(open => open === key ? null : key)}
           >···</button>
         )}
         items={[{ id: 'block', label: hidden ? t('blockRemove') : t('blockAdd') }]}
@@ -5032,7 +5054,7 @@ export function MarketSection(props: MarketSectionProps) {
         </label>
       ))
 
-  const pluginCard = (p: RegistryPlugin) => {
+  const pluginCard = (p: RegistryPlugin, menuKey = p.url) => {
     const desc = (p.description && (p.description[lang] || p.description.en)) || ''
     const done = doneUrls.includes(p.url) || hotUrls.includes(p.url)
     const already = isInstalled(p, catalogInstalled, repoIdentities, data?.plugins, repoHints)
@@ -5160,7 +5182,7 @@ export function MarketSection(props: MarketSectionProps) {
             <button type="button" className={css.commentsLink} onClick={() => setCommentsFor(p)}>
               {t('comments')}
             </button>
-            {renderPluginMenu(p)}
+            {renderPluginMenu(p, menuKey)}
           </span>
         </div>
         {busy && (
@@ -6101,11 +6123,19 @@ export function MarketSection(props: MarketSectionProps) {
                       )}
                     </div>
                     </div>
+                    {hasRecent && (
+                      <section aria-labelledby="dshm-recently-added">
+                        <h3 id="dshm-recently-added" className={css.favoritesSectionHead}>{t('recentlyAdded')}</h3>
+                        <div ref={recentRowRef} className={css.recentRow} style={{ gridTemplateColumns: `repeat(${recentPlugins.length}, minmax(0, 1fr))` }}>
+                          {recentPlugins.map(plugin => pluginCard(plugin, `recent:${plugin.url}`))}
+                        </div>
+                      </section>
+                    )}
                     {plugins.length === 0
                       ? <div className={css.empty}>{pluginsAll.length > 0 ? t('blockedFilteredEmpty') : t('empty')}</div>
                       : (
                           <>
-                            <Masonry items={pagePlugins} render={pluginCard} />
+                            <Masonry items={pagePlugins} render={plugin => pluginCard(plugin)} />
                             <Pager
                               currentPage={currentPage}
                               totalPages={totalPages}
@@ -6181,7 +6211,7 @@ export function MarketSection(props: MarketSectionProps) {
                                   <h3 className={css.favoritesSectionHead}>
                                     {t('favoritesPluginsSection').replace('{0}', String(favoritePlugins.length))}
                                   </h3>
-                                  <Masonry items={favoritePagePlugins} render={pluginCard} />
+                                  <Masonry items={favoritePagePlugins} render={plugin => pluginCard(plugin)} />
                                   <Pager
                                     currentPage={favoritePluginPagination.currentPage}
                                     totalPages={favoritePluginPagination.totalPages}
@@ -6289,7 +6319,7 @@ export function MarketSection(props: MarketSectionProps) {
                   : (
                       <>
                         <div className={css.blockedTabHint}>{t('blockedTabHint')}</div>
-                        {blockedPlugins.length > 0 && <Masonry items={blockedPlugins} render={pluginCard} />}
+                        {blockedPlugins.length > 0 && <Masonry items={blockedPlugins} render={plugin => pluginCard(plugin)} />}
                         {blockedMissing.length > 0 && (
                           <div className={css.blockedMissing}>
                             {blockedMissing.map(name => (
