@@ -397,6 +397,21 @@ describe('discover list (visiblePlugins)', () => {
     ])
   })
 
+  it('lets the selected sort order names that start with the query and names that contain it (#815)', () => {
+    // The reporter's search: both names hold `computer-use` as a phrase; only
+    // the less popular one happens to start with it.
+    const rows: RegistryPlugin[] = [
+      plugin({ name: 'computer-use-vision', downloads: 355, stars: 1 }),
+      plugin({ name: 'dsh-computer-use', downloads: 3_600, stars: 53 }),
+    ]
+    const names = (sort: string) => visiblePlugins(rows, {
+      category: 'all', query: 'computer-use', lang: 'zh', sort,
+    }).map(p => p.name)
+    expect(names('downloads-desc')).toEqual(['dsh-computer-use', 'computer-use-vision'])
+    expect(names('stars-desc')).toEqual(['dsh-computer-use', 'computer-use-vision'])
+    expect(names('downloads-asc')).toEqual(['computer-use-vision', 'dsh-computer-use'])
+  })
+
   it('normalizes punctuation and keeps exact package names ahead of longer prefixes', () => {
     const rows: RegistryPlugin[] = [
       plugin({ name: 'dsh-mcp-connector-guide', downloads: 50_000 }),

@@ -489,8 +489,13 @@ function cachedPluginSearchText(plugin: RegistryPlugin, value: string): string {
 }
 
 /**
- * Relevance within one field. Exact and prefix matches beat phrase matches;
- * for a multi-word query every word must occur in the same field.
+ * Relevance within one field. Exact matches beat phrase matches, which beat
+ * words scattered through the field; for a multi-word query every word must
+ * occur in the same field. A prefix match is NOT ranked above a phrase match
+ * anywhere else in the field: most catalog names start with `dsh-`, so that
+ * distinction mostly punished the naming convention and overrode the sort
+ * the user picked (#815: `computer-use-vision` with 355 downloads above
+ * `dsh-computer-use` with 3.6k, under "downloads").
  */
 function fieldRelevance(
   plugin: RegistryPlugin,
@@ -503,7 +508,6 @@ function fieldRelevance(
   const text = cachedPluginSearchText(plugin, value)
   if (text === '' || !tokens.every(token => text.includes(token))) return 0
   if (text === query) return weight + 300
-  if (text.startsWith(query)) return weight + 250
   if (text.includes(query)) return weight + 200
   return weight + 150
 }
