@@ -54,7 +54,7 @@ import type { SidebarEntry } from './sidebar-entry.ts'
 import {
   installCommandFor,
   api, applyGithubRouting, avatarColor, catalogEntryForInstalled, entryForDep, failureText, githubRouteCandidates, groupSwitchState, installedForCatalog, isGenerationSpec, isInstalled, localizeBilingual, localizeBilingualList, looksTerminal, matchInstalledName, orderedCategories, pluginCategories,
-  formatCount, pageItems, pluginName, blockAliases, pluginScreenshotCandidates, pluginScreenshots, pluginsForFavorites, queuedRowApplies, rankThemeScreenshots, readSession, releaseNotesHttpsImage, rememberGithubRoute, resetScreenshotsCache, resolveCatalogRestore, safeScreenshots, sanitizeReleaseNotesBody, staleFavoriteUrls, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins, restartHintKey,
+  formatCount, pageItems, pluginName, blockAliases, pluginScreenshotCandidates, pluginScreenshots, pluginsForFavorites, queuedRowApplies, rankThemeScreenshots, readSession, safeIcon, releaseNotesHttpsImage, rememberGithubRoute, resetScreenshotsCache, resolveCatalogRestore, safeScreenshots, sanitizeReleaseNotesBody, staleFavoriteUrls, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins, restartHintKey,
 } from './market-data.ts'
 import type {
 ActivationInfo, ActivationState, GistExportResult, InstalledMap, InstalledRepoHints, InstalledRepoIdentities, MarketStatus, Registry, RegistryPlugin,
@@ -491,9 +491,24 @@ function renderMarkdown(md: string): Array<JSX.Element | string> {
   return out
 }
 
-export function OwnerAvatar({ name, owner }: { name: string; owner: string }) {
+export function OwnerAvatar({ name, owner, icon }: { name: string; owner: string; icon?: string | null }) {
   const [failed, setFailed] = useState(false)
   const [routeIndex, setRouteIndex] = useState(0)
+  const [iconFailed, setIconFailed] = useState(false)
+  const tile = iconFailed ? null : safeIcon(icon)
+  if (tile !== null) {
+    return (
+      <img
+        className={css.av}
+        src={tile}
+        alt=""
+        loading="lazy"
+        decoding="async"
+        referrerPolicy="no-referrer"
+        onError={() => setIconFailed(true)}
+      />
+    )
+  }
   if (failed || owner === '') {
     return (
       <div className={css.av} style={{ background: avatarColor(name) }}>
@@ -2109,7 +2124,7 @@ export function MarketSection(props: MarketSectionProps) {
     return {
       title: pluginName(entry.name),
       author: entry.owner === '' ? undefined : entry.owner,
-      avatar: <OwnerAvatar name={entry.name} owner={entry.owner || ''} />,
+      avatar: <OwnerAvatar name={entry.name} owner={entry.owner || ''} icon={entry.icon ?? undefined} />,
     }
   }, [data])
   /** Ids are sequential rather than random so a replayed session is stable. */
@@ -5412,7 +5427,7 @@ export function MarketSection(props: MarketSectionProps) {
               {p.deprecated === true && <span className={css.depBadge}>{t('deprecatedBadge')}</span>}
             </a>
             <div className={css.byline}>
-              <OwnerAvatar name={p.name} owner={p.owner || ''} />
+              <OwnerAvatar name={p.name} owner={p.owner || ''} icon={p.icon ?? undefined} />
               <span className={css.owner} title={p.owner}>{p.owner}</span>
               <CatalogVersionMark version={p.version} tip={catalogVersionTip} />
               <DownloadCount plugin={p} t={t} />
@@ -5559,7 +5574,7 @@ export function MarketSection(props: MarketSectionProps) {
                 <GithubRepoMark className={css.repoMark} />
               </a>
               <div className={css.byline}>
-                <OwnerAvatar name={p.name} owner={p.owner || ''} />
+                <OwnerAvatar name={p.name} owner={p.owner || ''} icon={p.icon ?? undefined} />
                 <span className={css.owner} title={p.owner}>{p.owner}</span>
                 <CatalogVersionMark version={p.version} tip={catalogVersionTip} />
                 <DownloadCount plugin={p} t={t} />
@@ -7558,7 +7573,7 @@ export function MarketSection(props: MarketSectionProps) {
               first paragraph made the methodology louder than the blurb (#739). */}
           <div className={css.confirmBody}>
           <div className={css.byline}>
-            <OwnerAvatar name={confirming.name} owner={confirming.owner || ''} />
+            <OwnerAvatar name={confirming.name} owner={confirming.owner || ''} icon={confirming.icon ?? undefined} />
             <span className={css.owner} title={confirming.owner}>{confirming.owner}</span>
             <CatalogVersionMark version={confirming.version} tip={catalogVersionTip} />
             <DownloadCount plugin={confirming} t={t} />

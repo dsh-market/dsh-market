@@ -8375,3 +8375,19 @@ describe('sidebar shortcut tip (#846)', () => {
     expect(screen.queryByText(en.sidebarTip)).toBeNull()
   })
 })
+
+describe('OwnerAvatar icon', () => {
+  it('prefers the catalog-declared icon over the owner avatar', () => {
+    const icon = 'https://raw.githubusercontent.com/alice/dsh-loop/main/assets/icon.png'
+    const { container } = render(<OwnerAvatar name="dsh-loop" owner="alice" icon={icon} />)
+    expect(container.querySelector('img')?.getAttribute('src')).toBe(icon)
+  })
+
+  it('refuses an icon outside the GitHub image hosts and falls back', () => {
+    const { container } = render(
+      <OwnerAvatar name="dsh-loop" owner="" icon="https://evil.example/icon.png" />,
+    )
+    expect(container.querySelector('img')).toBeNull()
+    expect(container.textContent).toBe('L')
+  })
+})
