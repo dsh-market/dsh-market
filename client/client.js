@@ -376,7 +376,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			favoriteBusy: "插件操作未结束，收藏未保存，请稍后重试",
 			compatRiskBanner: "检测到兼容性风险，建议重启前到诊断页处理，或回滚本次操作。",
 			compatRiskBannerNoRollback: "检测到兼容性风险，建议重启前到诊断页处理。",
-			shadowNameBanner: "此操作后，同一个插件名出现在两处，重启后只有一个会生效：",
+			shadowNameBanner: "此操作后，同一个插件名出现在两处（仅供参考，不算冲突）：",
 			brokenBundleBanner: "下列插件的界面文件已损坏，刷新后页面可能空白，建议回滚：",
 			goDiagnose: "查看诊断",
 			rollbackNow: "回滚",
@@ -1115,7 +1115,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			favoriteBusy: "A plugin operation is still running. Favorites were not saved — try again shortly.",
 			compatRiskBanner: "Compatibility risk detected — open Diagnostics before restarting, or roll this operation back.",
 			compatRiskBannerNoRollback: "Compatibility risk detected — open Diagnostics before restarting.",
-			shadowNameBanner: "One plugin name is now defined in two places; only one will load after a restart:",
+			shadowNameBanner: "One plugin name is now defined in two places (informational only, not a conflict):",
 			brokenBundleBanner: "These plugins have damaged UI files. The page may be blank after a refresh; rolling back is recommended:",
 			goDiagnose: "Open Diagnostics",
 			rollbackNow: "Roll back",
@@ -9845,7 +9845,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 							state: "warned",
 							reason: t("heldReleaseNotice").replace("{0}", String(body.heldRelease.latest)).replace("{1}", String(body.heldRelease.installed ?? "")),
 							heldRelease: body.heldRelease
-						} : body.compatibility?.code === "soft-incompatible" ? {
+						} : body.compatibility?.code === "soft-incompatible" && (body.compatibility.risks.length > 0 || (body.compatibility.brokenBundles?.length ?? 0) > 0) ? {
 							state: "warned",
 							reason: t("compatRiskBanner")
 						} : {
@@ -12826,7 +12826,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 								onClick: () => setTab("diagnostics"),
 								children: t("goDiagnose")
 							}),
-							compatibilityNotice.rollbackId === void 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: compatibilityNotice.rollbackUnavailable ? localizeBilingual(compatibilityNotice.rollbackUnavailable, lang) : t("rollbackUnavailable") }) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+							compatibilityNotice.risks.length === 0 && (compatibilityNotice.brokenBundles?.length ?? 0) === 0 ? null : compatibilityNotice.rollbackId === void 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: compatibilityNotice.rollbackUnavailable ? localizeBilingual(compatibilityNotice.rollbackUnavailable, lang) : t("rollbackUnavailable") }) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 								variant: "primary",
 								size: "sm",
 								disabled: rollingBack,

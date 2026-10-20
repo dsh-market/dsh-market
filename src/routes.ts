@@ -5093,8 +5093,12 @@ sendJson(response, 200, { updates })
                   ...brokenClientBundles(config.profile, activeProfileDir),
                 ].filter((entry, index, all) => all.findIndex(other => other.name === entry.name) === index),
               )
-              if (risks.length > 0 || shadowed.length > 0 || brokenBundles.length > 0) {
-                const rollbackId = rollbackPlan.available
+              const needsRollback = risks.length > 0 || brokenBundles.length > 0
+              // Shadowing alone stays informational (#913): still reported so the
+              // operator can look, but it proves nothing broke — so it must not
+              // arm a rollback button or claim the previous state was lost.
+              if (needsRollback || shadowed.length > 0) {
+                const rollbackId = needsRollback && rollbackPlan.available
                   ? savePendingRollback({
                       kind: 'update',
                       names: [name],
@@ -5107,13 +5111,15 @@ sendJson(response, 200, { updates })
                   risks,
                   shadowedNames: shadowed.length > 0 ? shadowed : undefined,
                   brokenBundles: brokenBundles.length > 0 ? brokenBundles : undefined,
-                  ...(rollbackId !== null
-                    ? { rollbackId }
-                    : {
+                  ...(needsRollback
+                    ? rollbackId !== null
+                      ? { rollbackId }
+                      : {
                         rollbackUnavailable: rollbackPlan.available
                           ? `更新完成后无法安全捕获 profile 状态（${previousVersionZh}），因此自动回滚不可用；需要时请从可信来源手工重新安装先前版本。 / The post-update profile state could not be captured safely (${previousVersionEn}), so automatic rollback is unavailable. Reinstall the prior version manually from a trusted source if needed.`
                           : rollbackPlan.detail,
-                      }),
+                        }
+                    : {}),
                 }
                 if (brokenBundles.length > 0) {
                   logEvent('error', 'update-bundle', `${brokenBundles.map(entry => `${entry.name}: ${entry.reason}`).join('; ')}`)
@@ -6618,16 +6624,19 @@ sendJson(response, 200, { updates })
                   ...brokenClientBundles(config.profile, activeProfileDir),
                 ].filter((entry, index, all) => all.findIndex(other => other.name === entry.name) === index),
               )
-              if (risks.length > 0 || shadowed.length > 0 || brokenBundles.length > 0) {
-                const rollbackId = savePendingRollback({ kind: 'install', names: addedPackages })
+              const needsRollback = risks.length > 0 || brokenBundles.length > 0
+              if (needsRollback || shadowed.length > 0) {
+                const rollbackId = needsRollback ? savePendingRollback({ kind: 'install', names: addedPackages }) : null
                 compatibility = {
                   code: 'soft-incompatible',
                   risks,
                   shadowedNames: shadowed.length > 0 ? shadowed : undefined,
                   brokenBundles: brokenBundles.length > 0 ? brokenBundles : undefined,
-                  ...(rollbackId !== null
-                    ? { rollbackId }
-                    : { rollbackUnavailable: '安装完成后无法安全捕获 profile 状态，因此自动回滚不可用；需要时请手工卸载新安装的插件。 / The post-install profile state could not be captured safely, so automatic rollback is unavailable. Remove the newly installed plugin manually if needed.' }),
+                  ...(needsRollback
+                    ? rollbackId !== null
+                      ? { rollbackId }
+                      : { rollbackUnavailable: '安装完成后无法安全捕获 profile 状态，因此自动回滚不可用；需要时请手工卸载新安装的插件。 / The post-install profile state could not be captured safely, so automatic rollback is unavailable. Remove the newly installed plugin manually if needed.' }
+                    : {}),
                 }
                 if (brokenBundles.length > 0) {
                   logEvent('error', 'install-bundle', `${brokenBundles.map(entry => `${entry.name}: ${entry.reason}`).join('; ')}`)

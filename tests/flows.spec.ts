@@ -4600,8 +4600,11 @@ describe('update flow — no npm publishing required', () => {
     ])
     // Two layers, named, so the banner can say which.
     expect(r.json.compatibility.shadowedNames[0].layers.length).toBeGreaterThanOrEqual(2)
-    // The same rollback that undoes a peer risk undoes this.
-    expect(typeof r.json.compatibility.rollbackId).toBe('string')
+    // Nothing here is proven broken — the two rows can legitimately both
+    // mount (#913) — so the report is informational: no rollback is armed
+    // and no "the previous state was lost" claim is made.
+    expect(r.json.compatibility.rollbackId).toBeUndefined()
+    expect(r.json.compatibility.rollbackUnavailable).toBeUndefined()
   })
 
   it('flags a soft host-incompatible install and rolls back the newly added plugin (#195)', async () => {

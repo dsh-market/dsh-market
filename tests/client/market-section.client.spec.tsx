@@ -2596,6 +2596,36 @@ describe('MarketSection (jsdom)', () => {
     expect(screen.queryByText(en.compatRiskBanner)).toBeNull()
   })
 
+  it('reports a same-name row as informational, with no rollback (#913)', async () => {
+    // The #913 shape: the install mounts a second instance of an existing
+    // plugin name from a bundle patch. Both rows can load, so the banner must
+    // not promise that one wins, and nothing is armed for rollback.
+    const fetchMock = stubFetch({
+      '/dsh-market/installed': { profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: [] },
+      '/dsh-market/updates': { updates: { 'dsh-loop': { kind: 'npm', version: '1.0.0', current: '1.0.0', latest: '1.2.0', updateAvailable: true } } },
+      '/dsh-market/update': {
+        ok: true,
+        activation: { 'dsh-loop': { state: 'restart', hot: false, bundle: true, reasons: ['restart to apply'] } },
+        compatibility: {
+          code: 'soft-incompatible',
+          risks: [],
+          shadowedNames: [{ name: '@deepseek-ai/dsh-skill-filesystem', layers: ['bundle:dsh-base', 'bundle:dsh-loop'], count: 2 }],
+        },
+      },
+    })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    fireEvent.click(await screen.findByRole('button', { name: en.update }))
+
+    expect(await screen.findByText(en.shadowNameBanner)).toBeTruthy()
+    // #913: the copy no longer claims only one of the two rows will load.
+    expect(en.shadowNameBanner).not.toContain('only one will load')
+    expect(screen.queryByRole('button', { name: en.rollbackNow })).toBeNull()
+    expect(screen.queryByText(en.rollbackUnavailable)).toBeNull()
+    expect(fetchMock.mock.calls.some(([url]) => url === '/dsh-market/rollback')).toBe(false)
+  })
+
   it('does not offer a rollback action when the server could not capture an exact source', async () => {
     const rollbackUnavailable = '更新前版本为 v1.0.0，但无法确认精确来源。 / The previous version was v1.0.0, but its exact source could not be verified.'
     const englishHalf = 'The previous version was v1.0.0, but its exact source could not be verified.'
