@@ -14158,10 +14158,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 																else doUpdate(name);
 															},
 															children: status.restoreRequired === true ? t("restoreOnline") : t("update")
-														}) : status?.heldRelease !== void 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+														}) : status?.heldUpdate !== void 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 															className: Market_module_css_default.metaTag,
-															title: t("updateHeldHint").replace("{1}", String(Math.max(1, Math.ceil((Date.parse(status.heldRelease.until) - Date.now()) / 36e5)))),
-															children: t("updateHeldTag").replace("{0}", displayLatest(status.heldRelease.latest))
+															title: t("updateHeldHint").replace("{1}", String(Math.max(1, Math.ceil((Date.parse(status.heldUpdate.until) - Date.now()) / 36e5)))),
+															children: t("updateHeldTag").replace("{0}", displayLatest(status.heldUpdate.latest))
 														}) : localDev ? null : status?.unreleasedCommit != null ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 															className: Market_module_css_default.metaTag,
 															title: t("unreleasedCommitsHint"),
