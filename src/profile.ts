@@ -135,12 +135,16 @@ export function readManifestDeps(profile: string, explicitDir?: string): Record<
 
 /**
  * For each installed package, the OTHER installed package that declares it —
- * as a dependency or a peer dependency — in its own manifest.
+ * as a dependency, an optional dependency, or a peer dependency — in its own
+ * manifest.
  *
  * pnpm's auto-install-peers writes a plugin's peers into the profile manifest
  * as direct dependencies, so a native binding a plugin needs shows up in the
  * installed list looking exactly like a plugin the user chose (#634). What
- * separates them is that somebody else asked for it.
+ * separates them is that somebody else asked for it. Optional dependencies
+ * count for the same reason (#941): a platform-specific binary a plugin lists
+ * under `optionalDependencies` is payload, not a plugin the user chose, even
+ * when pnpm installed that package and the card rendered.
  *
  * Ownership is decided by the first owner in sorted order, so the answer does
  * not depend on the manifest's key order. A package that declares itself is
@@ -162,8 +166,12 @@ export function readDependencyOwners(
   for (const owner of topLevelPackageNames(profile, names, explicitDir)) {
     const manifest = readInstalledManifest(profile, owner, explicitDir)
     if (typeof manifest !== 'object' || manifest === null) continue
-    const declared = manifest as { dependencies?: unknown; peerDependencies?: unknown }
-    for (const field of [declared.dependencies, declared.peerDependencies]) {
+    const declared = manifest as {
+      dependencies?: unknown
+      optionalDependencies?: unknown
+      peerDependencies?: unknown
+    }
+    for (const field of [declared.dependencies, declared.optionalDependencies, declared.peerDependencies]) {
       if (typeof field !== 'object' || field === null) continue
       for (const dependency of Object.keys(field as Record<string, unknown>)) {
         if (dependency === owner || !installed.has(dependency)) continue

@@ -395,6 +395,23 @@ describe('readDependencyOwners (#634)', () => {
     expect(owners['dsh-office']).toBeUndefined()
   })
 
+  it('counts an optional dependency as ownership (#941)', () => {
+    // A platform-specific binary is payload, not a plugin the user chose. pnpm
+    // installs it, so it reaches the installed list; the manifest that asked
+    // for it must still name the owner so the card is not shown as a plugin.
+    writeProfile({})
+    installPackage('dsh-ops', {
+      dsh: {},
+      optionalDependencies: { '@dsh-ops/bash-win32-x64': '0.3.2' },
+    })
+    installPackage('@dsh-ops/bash-win32-x64', {})
+
+    const owners = readDependencyOwners('web', ['dsh-ops', '@dsh-ops/bash-win32-x64'])
+
+    expect(owners['@dsh-ops/bash-win32-x64']).toBe('dsh-ops')
+    expect(owners['dsh-ops']).toBeUndefined()
+  })
+
   it('ignores what is not installed, self-declarations, and manifest key order', () => {
     writeProfile({})
     installPackage('dsh-b', { dsh: {}, dependencies: { 'dsh-b': '1.0.0', 'not-installed': '1.0.0', shared: '1.0.0' } })
