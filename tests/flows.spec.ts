@@ -2829,8 +2829,11 @@ describe('update flow — no npm publishing required', () => {
     expect(error).toContain('dshmarket@1.66.44')
     expect(error).toMatch(/拦住|blocking you|is holding/i)
     // The remedy is offered here too: #944's reporter fixed it in one line
-    // rather than waiting out the window.
+    // rather than waiting out the window. Scoped names are written quoted in
+    // pnpm-workspace.yaml, so "append at end of line" would corrupt the file —
+    // the copy has to say the version goes inside the quotes.
     expect(error).toContain('minimumReleaseAgeExclude')
+    expect(error).toMatch(/引号里面|inside the quotes/)
     // It must NOT still blame the package the user asked to install.
     expect(error).not.toMatch(/这个插件的新版本比本机的新版本等待期还新/)
     expect(error).not.toMatch(/The plugin's new version is younger/)

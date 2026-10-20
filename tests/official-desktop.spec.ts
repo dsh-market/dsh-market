@@ -262,9 +262,30 @@ describe('official Electron profile runtime', () => {
       // row: a second row is shadowed by pnpm 11.7.0 (#883), so "add a line"
       // would be advice that does not work.
       expect(result.stderr).toContain('minimumReleaseAgeExclude')
-      expect(result.stderr).toMatch(/同名那一行|the same row/)
+      expect(result.stderr).toMatch(/这个名字的那一行|the row for/)
       expect(result.stderr).toMatch(/\|\| 1\.66\.44/)
-      expect(result.stderr).toMatch(/不要新增一行|not a new row/)
+      // Scoped rows are written quoted, so "append at end of line" would
+      // produce `- '@scope/pkg@1.0.0' || 1.0.1`, which is not YAML. The copy
+      // says where the version goes.
+      expect(result.stderr).toMatch(/引号里面|inside the quotes/)
+      expect(result.stderr).toMatch(/只读第一条|reads only the first/)
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('omits the append remedy when the spec names a dist-tag, not a version', async () => {
+    // `routes.ts` falls back to `${name}@${tag}` when registry metadata is
+    // unavailable; ` || beta` is not a valid exclusion and pnpm rejects the
+    // whole workspace file over it. The cost sentence still applies.
+    const service = manager()
+    service.installBundle.mockResolvedValueOnce({ application: 'failed', error: { code: 'already-installed' } })
+    const runtime = createOfficialDesktopRuntime(() => service, 'desktop', profile())
+    try {
+      const result = await runtime.runPlugin('desktop', ['add', 'dshmarket@beta'])
+      expect(result.stderr).toMatch(/\*\*所有插件\*\*|\*\*every\*\*/)
+      expect(result.stderr).not.toMatch(/\|\| beta/)
+      expect(result.stderr).not.toMatch(/引号里面|inside the quotes/)
     } finally {
       await runtime.dispose()
     }
