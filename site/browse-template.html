@@ -40,6 +40,8 @@ header a:hover{color:var(--accent);text-decoration:none}
 .jump a{font-size:.82rem;border:1px solid var(--line);background:var(--card);border-radius:999px;padding:.24rem .7rem;color:var(--ink2)}
 .jump a:hover{border-color:var(--accent);color:var(--accent);text-decoration:none}
 .jump a small{color:var(--ink3);margin-left:.3rem}
+.filter{width:100%;max-width:24rem;font:inherit;font-size:.9rem;padding:.5rem .8rem;margin-top:1.1rem;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink)}
+.filter:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
 section.cat{padding:2rem 0 .5rem;border-top:1px solid var(--line);margin-top:1.6rem}
 section.cat h2{font-size:1.15rem;font-weight:700;scroll-margin-top:1rem}
 section.cat h2 small{color:var(--ink3);font-weight:500;font-size:.8rem;margin-left:.45rem}
@@ -67,6 +69,7 @@ footer a{color:var(--ink2)}
   <h1>__T_BROWSE_H1__</h1>
   <p>__T_BROWSE_LEAD__</p>
   <nav class="jump">__JUMP__</nav>
+  <input id="filter" class="filter" type="search" placeholder="__T_FILTER_PH__" aria-label="__T_FILTER_PH__" autocomplete="off">
 </div>
 
 <main>
@@ -78,5 +81,26 @@ __SECTIONS__
   <span>MIT · <a href="https://github.com/dsh-market/dsh-market" rel="noopener">dsh-market/dsh-market</a> · <a href="__PRIVACY__">__T_PRIVACY__</a></span>
   <span><a href="__HOME__">__T_BACK__</a></span>
 </footer>
+<script>
+// 5,000 names on one page need a way to narrow them without a round trip. The
+// rows are already in the DOM, so this is a substring filter over them — no
+// catalog fetch, no re-render, and the page still works with scripting off.
+(() => {
+  const input = document.getElementById('filter')
+  const sections = [...document.querySelectorAll('section.cat')].map((s) => ({ s, items: [...s.querySelectorAll('ul.list li')] }))
+  input.addEventListener('input', () => {
+    const q = input.value.trim().toLowerCase()
+    for (const { s, items } of sections) {
+      let shown = 0
+      for (const li of items) {
+        const hit = !q || li.textContent.toLowerCase().includes(q)
+        li.hidden = !hit
+        if (hit) shown++
+      }
+      s.hidden = q !== '' && shown === 0
+    }
+  })
+})()
+</script>
 </body>
 </html>

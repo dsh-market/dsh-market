@@ -31,7 +31,7 @@ export default [
     install: 'site/install.en.html',
     installPath: '/install/',
     BROWSE_TITLE: 'Browse all {N} dsh plugins — dsh-market',
-    BROWSE_DESC: 'Every plugin in the dsh-market catalog, grouped by category: {N} plugins for DeepSeek Harness with one-line install commands.',
+    BROWSE_DESC: 'All {N} dsh plugins in the catalog, grouped by category. Each name opens its page on awesome-dsh-plugin.com — description, screenshots and install command live there.',
     // Plugin page. Same reasoning as the catalog site: "dsh" is the phrase
     // people actually search, and the owner stays because it says who wrote
     // the thing you are about to run on your own machine.
@@ -42,6 +42,9 @@ export default [
       NAV_NPM: 'npm',
       NAV_BROWSE: 'Browse plugins',
       NAV_INSTALL: 'Install a plugin',
+      REDIRECT_TITLE: 'dsh plugin',
+      REDIRECT_LEAD: "Opening this plugin's page. If nothing happens, use the link below.",
+      FILTER_PH: 'Filter by name',
       BROWSE_H1: 'All plugins',
       BROWSE_LEAD: 'Everything in the catalog, grouped by category. Install any of them from inside DeepSeek Harness with <code>dsh plugin --profile web add dshmarket</code>.',
       HOME_CATS: 'Browse by category',
@@ -101,7 +104,7 @@ export default [
     install: 'site/install.zh.html',
     installPath: '/zh/install/',
     BROWSE_TITLE: '全部 {N} 个 dsh 插件 — dsh-market',
-    BROWSE_DESC: 'dsh-market 收录的全部插件，按分类归组：{N} 个 DeepSeek Harness 插件，附一行安装命令。',
+    BROWSE_DESC: '目录里的全部 {N} 个 dsh 插件，按分类归组。点名字打开 awesome-dsh-plugin.com 上的插件页，描述、截图和安装命令都在那里。',
     P_TITLE: '{NAME} — dsh 插件安装 · dsh-market',
     strings: {
       SKIPTO: '跳到正文',
@@ -109,6 +112,9 @@ export default [
       NAV_NPM: 'npm',
       NAV_BROWSE: '浏览插件',
       NAV_INSTALL: '安装插件',
+      REDIRECT_TITLE: 'dsh 插件',
+      REDIRECT_LEAD: '正在打开这个插件的页面。没自动跳转，就点下面的链接。',
+      FILTER_PH: '按名字筛选',
       BROWSE_H1: '全部插件',
       BROWSE_LEAD: '目录里的全部插件，按分类归组。在 DeepSeek Harness 里用 <code>dsh plugin --profile web add dshmarket</code> 即可安装其中任意一个。',
       HOME_CATS: '按分类浏览',
