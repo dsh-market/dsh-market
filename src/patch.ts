@@ -325,37 +325,65 @@ function foreignDisableIds(rows: unknown[]): string[] {
 }
 
 /**
- * The ids of OTHER plugins a package's bundle patch DISABLES — top-level
- * `- id: X` + `disabled: true` rows targeting plugins it does not own. This is
- * the precise marker of a bundle whose toggle-off can brick the boot (#224):
- * dsh-postgres-backends disables session-persistence-jsonl, so once the market
- * also disables the postgres backends nothing provides sessionPersistence.
+ * Top-level patch rows that add an `inject:` requirement to another plugin.
+ *
+ * Same shape rule as foreignDisableIds: anything at the top level with an id
+ * is a statement about a plugin this package does not own. An `inject` there
+ * makes that foreign row depend on a service — usually one this bundle
+ * provides — so switching this package off while leaving its patch in the
+ * stack strands the row: #938's billion-context adds
+ * `inject: [biliBasicCompactionPolicy]` to the four official agent presets,
+ * and a row-level disable left them unable to activate.
+ */
+function foreignInjectIds(rows: unknown[]): string[] {
+  const ids: string[] = []
+  for (const row of rows) {
+    if (row === null || typeof row !== 'object' || Array.isArray(row)) continue
+    const record = row as Record<string, unknown>
+    const id = record.id
+    if (typeof id === 'string' && record.inject !== undefined && !ids.includes(id)) ids.push(id)
+  }
+  return ids
+}
+
+/**
+ * The ids of OTHER plugins a package's bundle patch rewires — top-level rows
+ * that either `disabled: true` a plugin it does not own, or add an `inject:`
+ * requirement to one.
+ *
+ * Both are the marker of a bundle whose toggle-off can brick the boot while
+ * its patch keeps applying (#224, #938):
+ *  - dsh-postgres-backends disables session-persistence-jsonl, so once the
+ *    market also disables the postgres backends nothing provides
+ *    sessionPersistence;
+ *  - billion-context adds `inject: [biliBasicCompactionPolicy]` to the four
+ *    official agent presets, so disabling only its own row leaves the presets
+ *    waiting for a service that no longer exists — every preset disappears.
  *
  * A bundle that merely RECONFIGURES a neighbour is deliberately NOT counted:
  * the e2e fixture-cross tweaks dshm-fixture-b's config, and #147 requires
  * disabling it to leave that neighbour live — dropping such a bundle from the
  * stack broke its re-enable. Config-only side effects stay on the normal #147
- * path; only a foreign `disabled: true` triggers the bundle removal. Removing
- * the bundle still neutralizes any config side effects it carries, since its
- * whole patch stops applying.
+ * path. Removing the bundle still neutralizes any config side effects it
+ * carries, since its whole patch stops applying.
  *
  * Reads both patch sources like rowIdsForPackage — the declared
  * dsh.bundle.patch (one file or a LIST of them, #792) and the conventional
  * root cordis.patch.yml — so either form is detected, and every declared file
- * is attributed (a foreign disable declared in the second file is still what
- * bricks the boot, #224).
+ * is attributed.
  */
-export function carrierDisableIds(profileDirectory: string, packageName: string): string[] {
+export function carrierRowIds(profileDirectory: string, packageName: string): string[] {
   const packageDir = join(profileDirectory, 'node_modules', packageName)
-  const disabled = new Set<string>()
+  const rows = new Set<string>()
   const collectFromFile = (patchPath: string): void => {
-    const rows = parsePatchFile(patchPath)
-    if (rows === null) return
-    for (const id of foreignDisableIds(rows)) disabled.add(id)
+    const parsed = parsePatchFile(patchPath)
+    if (parsed === null) return
+    for (const id of foreignDisableIds(parsed)) rows.add(id)
+    for (const id of foreignInjectIds(parsed)) rows.add(id)
   }
   for (const file of declaredBundlePatchFiles(packageDir)) collectFromFile(file)
   collectFromFile(join(packageDir, 'cordis.patch.yml'))
-  return [...disabled]
+  return [...rows]
 }
 
 /**
@@ -373,7 +401,7 @@ export function carrierDisableIds(profileDirectory: string, packageName: string)
  * fixture-cross e2e exist to protect, where the neighbour must keep running
  * and the bundle must keep re-enabling.
  *
- * Reads both patch sources like carrierDisableIds: the declared
+ * Reads both patch sources like carrierRowIds: the declared
  * `dsh.bundle.patch` (one file or a LIST, #792) and the conventional root
  * cordis.patch.yml. Ownership is judged per file, because a package may ship
  * both and only the file's own `insert:` block says which ids it brings in.

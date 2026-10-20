@@ -17,7 +17,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  carrierDisableIds,
+  carrierRowIds,
   foreignRowIds, disableRow, enableRow, findUserPatchPath, isProtectedModule, packagePatchFlags,
   readUserPatchState, removeRowBlocks, rowIdsForPackage, userPatchPackageReferences, type PatchHost,
 } from '../src/patch.ts'
@@ -847,7 +847,7 @@ describe('the patch file always stays a top-level array', () => {
   })
 })
 
-describe('carrierDisableIds', () => {
+describe('carrierRowIds', () => {
   function installedBundle(dir: string, name: string, patch: string): void {
     mkdirSync(join(dir, 'node_modules', name), { recursive: true })
     writeFileSync(join(dir, 'node_modules', name, 'cordis.patch.yml'), patch)
@@ -882,7 +882,7 @@ describe('carrierDisableIds', () => {
         join(dir, 'node_modules', 'dsh-postgres-backends', 'package.json'),
         JSON.stringify({ name: 'dsh-postgres-backends', dsh: { bundle: { patch: './cordis.patch.yml' } } }),
       )
-      expect(carrierDisableIds(dir, 'dsh-postgres-backends')).toEqual(['session-persistence-jsonl'])
+      expect(carrierRowIds(dir, 'dsh-postgres-backends')).toEqual(['session-persistence-jsonl'])
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -892,7 +892,7 @@ describe('carrierDisableIds', () => {
     const dir = patchDir()
     try {
       // Shape of the e2e fixture-cross: inserts its own row and tweaks a
-      // DIFFERENT plugin's config — no `disabled: true`. Treating this as a
+      // DIFFERENT plugin's config — no `disabled: true` and no `inject`. Treating this as a
       // disable-carrier dropped it from the bundle stack and broke re-enabling
       // it in the web e2e; #147 requires disabling it to leave the neighbour
       // live, which the plain ownership path already guarantees.
@@ -905,7 +905,32 @@ describe('carrierDisableIds', () => {
         '    tweakedByCross: true',
         '',
       ].join('\n'))
-      expect(carrierDisableIds(dir, 'dshm-e2e-fixture-cross')).toEqual([])
+      expect(carrierRowIds(dir, 'dshm-e2e-fixture-cross')).toEqual([])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('counts a foreign row given a new inject requirement (#938)', () => {
+    const dir = patchDir()
+    try {
+      // billion-context 0.1.202: its own row provides biliBasicCompactionPolicy,
+      // and its patch makes the four official agent presets `inject` it. A
+      // row-level disable leaves those rows waiting for a service that is
+      // gone — every preset disappears. The bundle has to leave the stack.
+      installedBundle(dir, 'billion-context', [
+        '- insert:',
+        '    - id: bili-native',
+        "      name: 'billion-context'",
+        '- id: preset-standard',
+        '  inject:',
+        '    - biliBasicCompactionPolicy',
+        '- id: preset-ptc',
+        '  inject:',
+        '    - biliBasicCompactionPolicy',
+        '',
+      ].join('\n'))
+      expect(carrierRowIds(dir, 'billion-context')).toEqual(['preset-standard', 'preset-ptc'])
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -915,7 +940,7 @@ describe('carrierDisableIds', () => {
     const dir = patchDir()
     try {
       installedBundle(dir, 'dsh-loop', '- insert:\n    - id: loop-main\n      name: dsh-loop\n')
-      expect(carrierDisableIds(dir, 'dsh-loop')).toEqual([])
+      expect(carrierRowIds(dir, 'dsh-loop')).toEqual([])
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -924,7 +949,7 @@ describe('carrierDisableIds', () => {
   it('is empty for a package that is not installed', () => {
     const dir = patchDir()
     try {
-      expect(carrierDisableIds(dir, 'not-installed')).toEqual([])
+      expect(carrierRowIds(dir, 'not-installed')).toEqual([])
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -945,7 +970,7 @@ describe('carrierDisableIds', () => {
       }))
       writeFileSync(join(pkg, 'base.patch.yml'), '- insert:\n    - id: carrier-main\n      name: dsh-array-carrier\n')
       writeFileSync(join(pkg, 'carve.patch.yml'), '- id: session-persistence-jsonl\n  disabled: true\n')
-      expect(carrierDisableIds(dir, 'dsh-array-carrier')).toEqual(['session-persistence-jsonl'])
+      expect(carrierRowIds(dir, 'dsh-array-carrier')).toEqual(['session-persistence-jsonl'])
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -1003,7 +1028,7 @@ describe('foreignRowIds', () => {
     const dir = patchDir()
     try {
       // dsh-postgres-backends shape: one foreign disable and one foreign config.
-      // carrierDisableIds reports the first alone (it is what bricks a boot);
+      // carrierRowIds reports the first alone (it is what bricks a boot);
       // this reports both, because leaving the stack takes both away.
       installedBundle(dir, 'dsh-postgres-backends', [
         '- id: session-persistence-jsonl',

@@ -59,7 +59,7 @@ import { detectedDebugger, detectedSupervisor, restartAllowed, scheduleRestart, 
 import type { RecoveryPlugin } from './recovery.ts'
 import { activationAfterReplace, brokenClientBundles, bundlePatchIsEmpty, checkClientBundle, defaultHostRuntimeFacts, findUnservedConfigNamespaces, hasHostHalf, hostPeerGate, newlyBrokenBundles, peerGateRemedy, verifyActivation } from './verify.ts'
 import {
-  carrierDisableIds, disableRow, enableRow, findUserPatchPath, foreignRowIds, isProtectedModule, packagePatchFlags,
+  carrierRowIds, disableRow, enableRow, findUserPatchPath, foreignRowIds, isProtectedModule, packagePatchFlags,
   readUserPatchState, removeRowBlocks, rowIdsForPackage, userPatchPackageReferences,
 } from './patch.ts'
 import {
@@ -946,7 +946,8 @@ export function mountMarketRoutes(
     /** The subset a user decision can be read from (#876). */
     userRows: string[]
     patchWrite: { ok: boolean; reason: string | null } | null
-    disablesOthers: string[]
+    /** Foreign rows this bundle rewires: disabled or given a new inject (#224, #938). */
+    carrierRows: string[]
     isCarrier: boolean
     bundleSwitch: { ok: boolean; reason: string | null }
   }> {
@@ -979,9 +980,9 @@ export function mountMarketRoutes(
     // A bundle that merely reconfigures a neighbour (config without
     // disabled) is NOT dropped: #147 requires disabling it to leave the
     // neighbour live, and the e2e fixture-cross re-enable breaks otherwise.
-    const disablesOthers = carrierDisableIds(activeProfileDir, name)
+    const carrierRows = carrierRowIds(activeProfileDir, name)
     const foreignRows = foreignRowIds(activeProfileDir, name)
-    const isCarrier = disablesOthers.length > 0
+    const isCarrier = carrierRows.length > 0
     // Both layers, or neither (#696 B). `dsh.profile.bundles` is the
     // package-level declaration the official plugins page's switch reads
     // and the loader composes; the patch rows above are the runtime
@@ -1011,7 +1012,7 @@ export function mountMarketRoutes(
           ? addProfileBundle(activeProfileDir, name)
           : removeProfileBundle(activeProfileDir, name)
         logEvent('info', 'toggle', isCarrier
-          ? `${name}: disable-carrier ${enabled ? 're-added to' : 'removed from'} dsh.profile.bundles (disables: ${disablesOthers.join(', ')})`
+          ? `${name}: disable-carrier ${enabled ? 're-added to' : 'removed from'} dsh.profile.bundles (carrier rows: ${carrierRows.join(', ')})`
           : reBundle
             ? `${name}: re-added to dsh.profile.bundles, which nothing was composing (#696)`
             : `${name}: dsh.profile.bundles ${enabled ? 're-added' : 'removed'} so the official page's package switch agrees (#696)`)
@@ -1106,7 +1107,7 @@ export function mountMarketRoutes(
       }
     }
     logEvent(ok ? 'info' : 'error', 'toggle', `${name}: ${enabled ? 'on' : 'off'} ok=${String(ok)}`)
-    return { ok, reason, patchRows, userRows, patchWrite, disablesOthers, isCarrier, bundleSwitch }
+    return { ok, reason, patchRows, userRows, patchWrite, carrierRows, isCarrier, bundleSwitch }
   }
 
   /**
@@ -1133,7 +1134,7 @@ export function mountMarketRoutes(
     const plugins: RecoveryPlugin[] = []
     for (const name of names) {
       const rows = rowIdsForPackage(host, activeProfileDir, name)
-      const carrier = carrierDisableIds(activeProfileDir, name).length > 0
+      const carrier = carrierRowIds(activeProfileDir, name).length > 0
       if (rows.length === 0 && !carrier) continue
       const isProtected = isProtectedModule(name)
       plugins.push({
@@ -3277,7 +3278,7 @@ export function mountMarketRoutes(
           const layers = await switchPluginLayers(name, enabled, ok, reason)
           ok = layers.ok
           reason = layers.reason
-          const { patchRows, userRows, patchWrite, disablesOthers, isCarrier, bundleSwitch } = layers
+          const { patchRows, userRows, patchWrite, carrierRows, isCarrier, bundleSwitch } = layers
           // Activation reads the post-write truth: the switch state OR the
           // patch layer, so a disabled plugin never reports "restart to
           // apply".
@@ -3324,7 +3325,7 @@ export function mountMarketRoutes(
               reason,
               patchRows,
               patchWrite: patchWrite ?? { ok: true, reason: null },
-              carrier: disablesOthers,
+              carrier: carrierRows,
               bundleSwitch,
               restart,
               refresh,
