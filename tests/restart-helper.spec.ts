@@ -303,6 +303,16 @@ describe('restartHelperSource (#177)', () => {
 })
 
 describe('servingPort', () => {
+  it('prefers the listening port over a proxied Host (#859)', () => {
+    // The shape #859 measured: Host is the public name with the proxy's port,
+    // the server listens on 3080. Handing 8443 to the restart helper made it
+    // probe a port something else was already answering on.
+    expect(servingPort({ headers: { host: 'dsh.example.com:8443' }, socket: { localPort: 3080 } })).toBe(3080)
+    // A socket without a usable local port keeps the old Host reading.
+    expect(servingPort({ headers: { host: 'dsh.example.com:8443' }, socket: {} })).toBe(8443)
+    expect(servingPort({ headers: { host: '127.0.0.1:3080' }, socket: { localPort: 0 } })).toBe(3080)
+  })
+
   it('reads the port the browser actually reached us on', () => {
     expect(servingPort({ headers: { host: '127.0.0.1:3080' } })).toBe(3080)
     expect(servingPort({ headers: { host: 'localhost:8080' } })).toBe(8080)

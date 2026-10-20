@@ -188,7 +188,14 @@ export function restartAllowed(
  * below before any of this runs.
  * @returns the port, or null when the header carries none (a default port).
  */
-export function servingPort(request: Pick<IncomingMessage, 'headers'>): number | null {
+export function servingPort(request: Pick<IncomingMessage, 'headers'> & { socket?: { localPort?: unknown } }): number | null {
+  // The port this process is actually listening on (#859): behind a tunnel
+  // the Host carries the proxy's port (dsh.example.com:8443), and handing
+  // that to the restart helper makes it probe and bind the proxy instead of
+  // the server it is replacing. The socket's local port is the listener's
+  // own; Host stays as the fallback for a request object without one.
+  const localPort = request.socket?.localPort
+  if (typeof localPort === 'number' && Number.isInteger(localPort) && localPort > 0 && localPort < 65536) return localPort
   const host = request.headers.host
   if (host === undefined) return null
   const match = /:(\d{1,5})$/u.exec(host)
