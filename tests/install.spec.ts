@@ -11,7 +11,7 @@ import { dirname, join } from 'node:path'
 import type { InstallResult } from '../src/dsh-cli.ts'
 import {
   diagnosticsTail, failureDetail, FETCH_TIMEOUT_OVERRIDE, groupConflictsByOwner, hostNodeModulesRoot, isStaleUpdate, normalizedLinkTarget,
-  parseIgnoredBuildEntries, parseIgnoredBuilds, parsePrepareNotAllowed, pnpmNeverStarted, pnpmRefusedYoungRelease, removeDanglingHostBridge, retargetCollections,
+  parseIgnoredBuildEntries, parseIgnoredBuilds, parsePrepareNotAllowed, pnpmNeverStarted, pnpmRefusedYoungRelease, refusedReleaseAgePackage, removeDanglingHostBridge, retargetCollections,
   RELEASE_AGE_OVERRIDE, validateAddedPlugins, withHoistRecovery,
 } from '../src/install.ts'
 import { dropUnparseableBuildKeys, profileDir } from '../src/profile.ts'
@@ -1397,5 +1397,31 @@ describe('host bridge cleanup after removal (#662)', () => {
     mkdirSync(join(hostDeploy, 'node_modules'), { recursive: true })
     expect(removeDanglingHostBridge('pkg-any', dir, null)).toBe(false)
     expect(removeDanglingHostBridge('pkg-any', dir, hostDeploy)).toBe(false)
+  })
+})
+
+describe('naming the package pnpm actually refused (#944)', () => {
+  it('reads the offender out of the violation line, scoped and plain', () => {
+    expect(refusedReleaseAgePackage('  dshmarket@1.66.44 was published at 2026-10-19T18:21:57.000Z, within the cutoff'))
+      .toEqual({ name: 'dshmarket', version: '1.66.44' })
+    expect(refusedReleaseAgePackage('  @liustack/modsearch@5.10.9 was published at 2026-10-18T00:24:18.000Z'))
+      .toEqual({ name: '@liustack/modsearch', version: '5.10.9' })
+    // A prerelease keeps its whole version string.
+    expect(refusedReleaseAgePackage('  dsh-cost-meter@1.9.6-rc.1 was published at 2026-10-19T18:21:57.000Z'))
+      .toEqual({ name: 'dsh-cost-meter', version: '1.9.6-rc.1' })
+    // The capture stops at the space: the timestamp and the cutoff on the same
+    // line must never end up inside the version.
+    expect(refusedReleaseAgePackage('  dsh-loop@1.2.0 was published at 2026-10-19T18:21:57.000Z')?.version)
+      .toBe('1.2.0')
+  })
+
+  it('returns null rather than guessing when the output names no package', () => {
+    // The whole point of the attribution is that a wrong name is worse than no
+    // name — the caller keeps its existing wording when this is null.
+    expect(refusedReleaseAgePackage('within the minimumReleaseAge cutoff (2026-10-19T06:02:25.725Z)')).toBeNull()
+    expect(refusedReleaseAgePackage('  dshmarket was published at 2026-10-19T18:21:57.000Z')).toBeNull()
+    expect(refusedReleaseAgePackage('')).toBeNull()
+    // An unrelated package name that pnpm never attributed to a publish time.
+    expect(refusedReleaseAgePackage('dsh-loop@1.2.0 could not be resolved')).toBeNull()
   })
 })

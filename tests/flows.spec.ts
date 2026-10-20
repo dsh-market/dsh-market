@@ -2791,6 +2791,82 @@ describe('update flow — no npm publishing required', () => {
     expect(adds).toHaveLength(1)
   })
 
+  it('names the package pnpm actually refused when it is not the one being installed (#944)', async () => {
+    // #944: the user updates dsh-cost-meter, pnpm refuses — and names
+    // `dshmarket@1.66.44`, a DIFFERENT package, left inside the wait by the
+    // self-update the market itself recommended. The note said "this plugin's
+    // new version is too young" and sent the user to wait out the WRONG
+    // version's publish time. The wait fragment is derived from the timestamp
+    // in that same line, so it is the other package's remaining time too.
+    advanceNpmLatest('1.2.0')
+    const adds: string[][] = []
+    const published = new Date(Date.now() - 10 * 60 * 60 * 1000).toISOString()
+    bed.dispose()
+    bed = createTestbed({}, {
+      runPlugin: async (_profile, args) => {
+        if (args[0] === 'add') adds.push(args)
+        return {
+          exitCode: 1,
+          timedOut: false,
+          stdout: '',
+          stderr: `✗ Lockfile failed supply-chain policy check (216 entries in 3.3s)\n[ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION] 1 lockfile entries failed verification:\n  dshmarket@1.66.44 was published at ${published}, within the minimumReleaseAge cutoff`,
+          cancelled: false,
+          wroteNothing: false,
+        }
+      },
+      acceptsMarketPnpmFlags: false,
+      probePnpm: () => Promise.resolve(true),
+      provisionPnpm: () => Promise.resolve({ ok: true }),
+      cancelActive: () => false,
+    })
+
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+
+    expect(r.status).toBe(502)
+    const error = String(r.json.error)
+    // The offender is named as itself, so "wait" is attached to the right
+    // version — and the user can see the remedy applies to that package.
+    expect(error).toContain('dshmarket@1.66.44')
+    expect(error).toMatch(/拦住|blocking you|is holding/i)
+    // The remedy is offered here too: #944's reporter fixed it in one line
+    // rather than waiting out the window.
+    expect(error).toContain('minimumReleaseAgeExclude')
+    // It must NOT still blame the package the user asked to install.
+    expect(error).not.toMatch(/这个插件的新版本比本机的新版本等待期还新/)
+    expect(error).not.toMatch(/The plugin's new version is younger/)
+    expect(adds).toHaveLength(1)
+  })
+
+  it('keeps the plain wait note when pnpm refuses the package being installed (#919)', async () => {
+    // The attribution must not fire when the offender IS the target: the note
+    // #919 added is correct there, and its wording is asserted above.
+    advanceNpmLatest('1.2.0')
+    const published = new Date(Date.now() - 10 * 60 * 60 * 1000).toISOString()
+    bed.dispose()
+    bed = createTestbed({}, {
+      runPlugin: async () => ({
+        exitCode: 1,
+        timedOut: false,
+        stdout: '',
+        stderr: `[ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION] 1 lockfile entries failed verification:\n  dsh-loop@1.2.0 was published at ${published}, within the minimumReleaseAge cutoff`,
+        cancelled: false,
+        wroteNothing: false,
+      }),
+      acceptsMarketPnpmFlags: false,
+      probePnpm: () => Promise.resolve(true),
+      provisionPnpm: () => Promise.resolve({ ok: true }),
+      cancelActive: () => false,
+    })
+
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+
+    const error = String(r.json.error)
+    expect(error).toMatch(/这个插件的新版本比本机的新版本等待期还新/)
+    expect(error).toMatch(/等这个版本过了等待期再更新一次即可/)
+    // No remedy block for the ordinary shape: nothing about it is surprising.
+    expect(error).not.toContain('minimumReleaseAgeExclude')
+  })
+
   it('reports the host refusal code as failureCode, not just as text (#909)', async () => {
     // The desktop manager refuses a self-update before pnpm runs and the
     // bridge now carries its code (market-self-update). The route has to put

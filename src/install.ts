@@ -12,6 +12,7 @@ import { findDshInstallDir } from './dsh-install.ts'
 import { classifyPnpmFailure, HOST_NAMESPACE_RE, isTransientPnpmFailure } from './pnpm-compat.ts'
 import { conflictingEntryIds, dropFromManifest, hasDshManifest, hasLoadableEntry, mergeDuplicateReleaseAgeExcludes, pluginSubdirs, profileDir, readInstalled, readManifestDeps, readProfileBundles, dropUnparseableBuildKeys } from './profile.ts'
 import { logEvent } from './log.ts'
+import { registryNameOf } from './official-desktop.ts'
 import { cleanOrphanedStore } from './store.ts'
 
 /**
@@ -364,11 +365,27 @@ export async function withHoistRecovery(
         }
       }
       const windowMs = readMinimumReleaseAgeMs(profile, profileDirectory)
+      const captured = `${result.stderr}\n${result.stdout}`
       const remaining = windowMs === null
         ? null
-        : remainingReleaseAgeWait(`${result.stderr}\n${result.stdout}`, Date.now(), windowMs)
+        : remainingReleaseAgeWait(captured, Date.now(), windowMs)
       const wait = remaining === null ? { zh: '', en: '' } : formatRemainingReleaseAgeWait(remaining)
-      note = `这个插件的新版本比本机的新版本等待期还新，所以现在装不了（改别的插件也会被拦住）。官方桌面端不接受临时放行，所以这里没有自动重试。**等这个版本过了等待期再更新一次即可**${wait.zh}。过了等待期后再在市场点一次更新。 / The plugin's new version is younger than this machine's fresh-release wait, so the install was refused (a change to another plugin too). The official desktop app takes no one-shot bypass, so no automatic retry happens here. **Update again once the version is past the wait**${wait.en}. Try the market update again after the wait.`
+      // #944: pnpm verifies the WHOLE lockfile, so the entry it refuses need
+      // not be the one this command asked for. When it names a different
+      // package, saying "this plugin's new version is too young" is wrong
+      // twice over — it blames an innocent package, and it attaches the
+      // remaining wait to that package's version rather than the offender's.
+      // Name the offender instead, and offer the one-line remedy the reporter
+      // used in place of waiting. Nothing is claimed when the output names no
+      // package, or names the one being installed: that path keeps #919's note.
+      const target = pluginArgs.find(argument => !argument.startsWith('-') && argument !== verb) ?? ''
+      const targetName = registryNameOf(target) ?? target
+      const refused = refusedReleaseAgePackage(captured)
+      if (refused !== null && targetName !== '' && refused.name !== targetName) {
+        note = `拦住你的是 ${refused.name}@${refused.version}，不是你要装的这个插件：pnpm 在改动前校验整个 lockfile，而这个版本还在本机的新版本等待期内（#944）。官方桌面端不接受临时放行，所以这里没有自动重试。**等 ${refused.name}@${refused.version} 过了等待期再更新一次即可**${wait.zh}；想现在就装，在 profile 的 pnpm-workspace.yaml 里 minimumReleaseAgeExclude 中 **${refused.name} 同名那一行**行尾追加 \` || ${refused.version}\`（追加到同名行，不要新增一行——新增的那行会被 pnpm 遮蔽，#883）。 / What is holding you is ${refused.name}@${refused.version}, not the plugin you asked to install: pnpm verifies the whole lockfile before any change, and that version is still inside this machine's fresh-release wait (#944). The official desktop app takes no one-shot bypass, so no automatic retry happens here. **Update again once ${refused.name}@${refused.version} is past the wait**${wait.en}; to install right now, append \` || ${refused.version}\` to the END of the existing \`${refused.name}\` row under minimumReleaseAgeExclude in the profile's pnpm-workspace.yaml (the same row, not a new one — pnpm shadows a second row for the same name, #883).`
+      } else {
+        note = `这个插件的新版本比本机的新版本等待期还新，所以现在装不了（改别的插件也会被拦住）。官方桌面端不接受临时放行，所以这里没有自动重试。**等这个版本过了等待期再更新一次即可**${wait.zh}。过了等待期后再在市场点一次更新。 / The plugin's new version is younger than this machine's fresh-release wait, so the install was refused (a change to another plugin too). The official desktop app takes no one-shot bypass, so no automatic retry happens here. **Update again once the version is past the wait**${wait.en}. Try the market update again after the wait.`
+      }
     } else {
       note = `这台宿主（官方桌面端）自己执行安装，不接受市场附加的 pnpm 参数（${unavailableOption}），所以这一步没有自动重试。 / This host (the official desktop app) runs the install itself and takes no pnpm options from the market (${unavailableOption}), so that automatic retry could not be attempted.`
     }
@@ -511,6 +528,30 @@ function readReleaseAgeMinutesFromNpmrc(dir: string): number | 'invalid' | null 
   if (match === null) return 'invalid'
   const minutes = Number(match[1])
   return Number.isFinite(minutes) ? minutes : 'invalid'
+}
+
+/**
+ * The `name@version` pnpm actually refused, when its refusal named one (#944).
+ *
+ * {@link remainingReleaseAgeWait} reads only the timestamp on the same line,
+ * which is fine while the offender IS the package being installed. It is not
+ * always: a plugin install can be refused by a DIFFERENT, younger package that
+ * is already in the lockfile, because pnpm verifies the whole lockfile before
+ * any mutation (#39). #944 hit exactly that — updating `dsh-cost-meter` failed
+ * with `dshmarket@1.66.44` named in the error, and the note then told the user
+ * to wait out *the plugin's* version, which was not the version holding them.
+ *
+ * Only the entry pnpm prints in its violation line is read (`  <name>@<version>
+ * was published at …`), so this cannot invent an offender from unrelated text.
+ * Null when no such line is present — callers must then keep their existing
+ * wording rather than guess.
+ */
+export function refusedReleaseAgePackage(output: string): { name: string, version: string } | null {
+  const match = /^\s*((?:@[^/\s@]+\/)?[^@\s/]+)@(\d[^\s]*?)\s+was published at /im.exec(output)
+  if (match === null) return null
+  const name = match[1] ?? ''
+  const version = match[2] ?? ''
+  return name === '' || version === '' ? null : { name, version }
 }
 
 /**
