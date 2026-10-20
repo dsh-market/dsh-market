@@ -293,6 +293,24 @@ for (const loc of LOCALES) {
   }
 }
 
+// ── install page ────────────────────────────────────────────────────────────
+// Instructions, not a second catalog: the plugin pages carry each plugin, and
+// this page answers the one question they cannot — what to do with the command
+// they show, and what the four common failures mean. The body is per-locale
+// HTML, the way index and privacy are.
+for (const loc of LOCALES) {
+  if (!fs.existsSync(loc.install)) { console.error(`${loc.install} is missing`); process.exit(1) }
+  const url = ORIGIN + loc.installPath
+  let page = fs.readFileSync(loc.install, 'utf8')
+    .replaceAll('__URL__', () => url)
+    .replaceAll('__HREFLANGS__', () => hreflangs((l) => l.installPath))
+    .replaceAll('__BROWSE__', () => loc.browsePath)
+    .replaceAll('__HOME__', () => loc.urlPath)
+    .replaceAll('__PRIVACY__', () => loc.privacyPath)
+    .replaceAll('__LOCALE_LINKS__', () => localeLinks(loc, (l) => l.installPath))
+  write(loc.installPath, applyStrings(page, loc))
+}
+
 // ── browse index ────────────────────────────────────────────────────────────
 for (const loc of LOCALES) {
   const byCat = CATS.map((id) => ({
@@ -317,6 +335,7 @@ ${c.items.map((p) => `    <li><a href="${pluginPath(loc, p.slug)}"><span class="
     .replaceAll('__HREFLANGS__', () => hreflangs((l) => l.browsePath))
     .replaceAll('__OG_IMAGE__', () => `${ORIGIN}/assets/demo-${loc.code}.png`)
     .replaceAll('__HOME__', () => loc.urlPath)
+    .replaceAll('__INSTALL__', () => loc.installPath)
     .replaceAll('__PRIVACY__', () => loc.privacyPath)
     .replaceAll('__LOCALE_LINKS__', () => localeLinks(loc, (l) => l.browsePath))
     .replaceAll('__JUMP__', () => jump)
@@ -459,6 +478,7 @@ ${readmeHtml}
       .replaceAll('__JSONLD__', () => ldSafe(jsonld))
       .replaceAll('__HOME__', () => loc.urlPath)
       .replaceAll('__BROWSE__', () => loc.browsePath)
+      .replaceAll('__INSTALL__', () => loc.installPath)
       .replaceAll('__PRIVACY__', () => loc.privacyPath)
       .replaceAll('__LOCALE_LINKS__', () => localeLinks(loc, (l) => pluginPath(l, p.slug)))
       .replaceAll('__P_SHORT__', () => esc(p.name))
@@ -499,6 +519,7 @@ fs.writeFileSync(`${OUT}/sitemap.xml`, `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">
 ${urlEntry((l) => l.urlPath, updated, 'weekly')}
 ${urlEntry((l) => l.browsePath, updated, 'daily')}
+${urlEntry((l) => l.installPath, updated, 'monthly')}
 ${urlEntry((l) => l.privacyPath, updated, 'yearly')}
 </urlset>
 `)

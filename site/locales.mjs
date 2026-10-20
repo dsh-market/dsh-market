@@ -25,6 +25,11 @@ export default [
     privacy: 'site/privacy.en.html',
     privacyPath: '/privacy/',
     browsePath: '/browse/',
+    // The install page is the one piece of the site that is instructions
+    // rather than a list. Its body is per-locale HTML for the same reason
+    // index/privacy are: it is prose, not UI strings shared with other pages.
+    install: 'site/install.en.html',
+    installPath: '/install/',
     BROWSE_TITLE: 'Browse all {N} dsh plugins — dsh-market',
     BROWSE_DESC: 'Every plugin in the dsh-market catalog, grouped by category: {N} plugins for DeepSeek Harness with one-line install commands.',
     // Plugin page. Same reasoning as the catalog site: "dsh" is the phrase
@@ -36,6 +41,7 @@ export default [
       NAV_GITHUB: 'GitHub',
       NAV_NPM: 'npm',
       NAV_BROWSE: 'Browse plugins',
+      NAV_INSTALL: 'Install a plugin',
       BROWSE_H1: 'All plugins',
       BROWSE_LEAD: 'Everything in the catalog, grouped by category. Install any of them from inside DeepSeek Harness with <code>dsh plugin --profile web add dshmarket</code>.',
       HOME_CATS: 'Browse by category',
@@ -92,6 +98,8 @@ export default [
     privacy: 'site/privacy.zh.html',
     privacyPath: '/zh/privacy/',
     browsePath: '/zh/browse/',
+    install: 'site/install.zh.html',
+    installPath: '/zh/install/',
     BROWSE_TITLE: '全部 {N} 个 dsh 插件 — dsh-market',
     BROWSE_DESC: 'dsh-market 收录的全部插件，按分类归组：{N} 个 DeepSeek Harness 插件，附一行安装命令。',
     P_TITLE: '{NAME} — dsh 插件安装 · dsh-market',
@@ -100,6 +108,7 @@ export default [
       NAV_GITHUB: 'GitHub',
       NAV_NPM: 'npm',
       NAV_BROWSE: '浏览插件',
+      NAV_INSTALL: '安装插件',
       BROWSE_H1: '全部插件',
       BROWSE_LEAD: '目录里的全部插件，按分类归组。在 DeepSeek Harness 里用 <code>dsh plugin --profile web add dshmarket</code> 即可安装其中任意一个。',
       HOME_CATS: '按分类浏览',

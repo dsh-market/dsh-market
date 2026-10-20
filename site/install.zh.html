@@ -1,0 +1,220 @@
+<!doctype html>
+<!-- The install page exists because the catalog shows a command but never
+     explains what to do with it, and because the four failures below are the
+     ones real users hit (#39, #732, #852, #919, #914). It is not a second
+     catalog: plugin pages stay the place a single plugin lives, and this page
+     is the one screen that answers "how do I install any of them, and what do
+     I do when it refuses". -->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>安装 DSH 插件：命令生成器和常见问题 — dsh-market</title>
+<meta name="description" content="网页版用 dsh plugin --profile web add 一行命令安装；桌面版在设置 → 插件里点安装。输入插件名生成命令，附更新、卸载，以及装不上时的原因和解决办法。">
+<link rel="canonical" href="__URL__">
+__HREFLANGS__
+<link rel="sitemap" type="application/xml" href="https://dshmarket.com/sitemap.xml">
+<link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
+<meta property="og:type" content="website">
+<meta property="og:title" content="安装 DSH 插件 — dsh-market">
+<meta property="og:description" content="一行命令装插件，装不上时知道下一步怎么做。">
+<meta property="og:url" content="__URL__">
+<meta property="og:image" content="https://dshmarket.com/assets/demo-zh.png">
+<meta name="twitter:card" content="summary_large_image">
+<style>
+:root{--accent:#c0392b;--accent-soft:#f7e5e2;--ink:#101722;--ink2:#5b6472;--ink3:#9aa3b2;--line:#e7eaf0;--bg:#fafbfd;--card:#fff}
+*{margin:0;box-sizing:border-box}
+body{font-family:-apple-system,"SF Pro Text","Segoe UI","PingFang SC",sans-serif;background:var(--bg);color:var(--ink);line-height:1.65}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+.wrap{max-width:64rem;margin:0 auto;padding:0 1.5rem}
+header{display:flex;align-items:center;gap:.8rem;padding:1.4rem 0;border-bottom:1px solid var(--line)}
+header img{height:30px}
+header .grow{flex:1}
+header a{color:var(--ink2);font-size:.9rem;margin-left:1.2rem}
+header a:hover{color:var(--accent);text-decoration:none}
+.head{padding:2.2rem 0 1.2rem}
+.head h1{font-size:clamp(1.7rem,4vw,2.5rem);font-weight:800;letter-spacing:-.02em}
+.head p{color:var(--ink2);margin-top:.7rem;max-width:42rem}
+.head code,main code{font-family:ui-monospace,Menlo,monospace;background:var(--accent-soft);border-radius:5px;padding:.08em .35em;font-size:.88em}
+main section{padding:1.6rem 0;border-top:1px solid var(--line)}
+main section:first-child{border-top:0;padding-top:.4rem}
+main h2{font-size:1.12rem;font-weight:700;margin-bottom:.5rem}
+main p{color:var(--ink2);max-width:46rem;margin-bottom:.6rem}
+main p b{color:var(--ink)}
+ol{margin:.2rem 0 .8rem 1.2rem;color:var(--ink2)}
+ol li{margin:.15rem 0}
+.tabs{display:flex;gap:.4rem;margin-bottom:1rem}
+.tab{font:inherit;font-size:.88rem;border:1px solid var(--line);background:var(--card);color:var(--ink2);border-radius:999px;padding:.3rem .9rem;cursor:pointer}
+.tab.on{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
+label{display:block;font-size:.85rem;color:var(--ink3);margin-bottom:.3rem}
+#pkg{width:100%;max-width:32rem;font:inherit;font-family:ui-monospace,Menlo,monospace;font-size:.95rem;padding:.55rem .7rem;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink)}
+#pkg:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
+.hint{font-size:.83rem;color:var(--ink3);margin-top:.5rem}
+.cmd{display:flex;align-items:stretch;gap:.5rem;margin:.8rem 0 .4rem;max-width:46rem}
+.cmd pre{flex:1;overflow-x:auto;background:#101722;color:#e8ecf3;border-radius:8px;padding:.75rem .9rem;font-family:ui-monospace,Menlo,monospace;font-size:.86rem;line-height:1.5}
+.cmd button{font:inherit;font-size:.85rem;border:1px solid var(--line);background:var(--card);color:var(--ink2);border-radius:8px;padding:0 .9rem;cursor:pointer;white-space:nowrap}
+.cmd button:hover{border-color:var(--accent);color:var(--accent)}
+details{border:1px solid var(--line);background:var(--card);border-radius:8px;padding:.6rem .85rem;margin-bottom:.5rem;max-width:46rem}
+details+details{margin-top:.5rem}
+summary{font-weight:600;font-size:.92rem;cursor:pointer}
+details p{font-size:.88rem;margin:.55rem 0 0}
+.note{font-size:.88rem}
+footer{border-top:1px solid var(--line);margin-top:2rem;padding:2rem 0 3rem;font-size:.85rem;color:var(--ink3);display:flex;flex-wrap:wrap;gap:1rem;justify-content:space-between}
+footer a{color:var(--ink2)}
+/* Narrow screens: the shared header squeezes its links until CJK text renders
+   one character per line. Let it wrap instead of shrinking; measured at 375px,
+   where the header was 140px tall with "浏览插件" stacked vertically. */
+@media(max-width:640px){
+  header{flex-wrap:wrap;row-gap:.35rem}
+  header img{height:26px}
+  header a{margin-left:.9rem;white-space:nowrap;flex:none}
+  header .grow{display:none}
+  main p,details{max-width:none}
+}
+</style>
+<!-- Cloudflare Web Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "6fdc1fdb390e417599a363e3109357b2"}'></script><!-- End Cloudflare Web Analytics -->
+</head>
+<body>
+<div class="wrap">
+<header>
+  <a href="__HOME__"><img src="/assets/wordmark.svg" alt="dsh-market"></a>
+  <span class="grow"></span>
+  <a href="__BROWSE__">__T_NAV_BROWSE__</a>
+  <a href="https://github.com/dsh-market/dsh-market" rel="noopener">__T_NAV_GITHUB__</a>
+  <a href="https://www.npmjs.com/package/dshmarket" rel="noopener">__T_NAV_NPM__</a>
+  __LOCALE_LINKS__
+</header>
+
+<div class="head">
+  <h1>安装 DSH 插件</h1>
+  <p>先选你在用哪个 dsh，再把插件名粘进来——命令会出现在下面，复制后粘到终端回车。</p>
+</div>
+
+<main>
+<section>
+  <div class="tabs" role="tablist" aria-label="选择你用的版本">
+    <button type="button" class="tab on" role="tab" aria-selected="true" data-mode="web">网页版 dsh web</button>
+    <button type="button" class="tab" role="tab" aria-selected="false" data-mode="desktop">桌面版</button>
+  </div>
+
+  <div data-pane="web">
+    <label for="pkg">插件名</label>
+    <input id="pkg" type="text" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="billion-context">
+    <p class="hint">插件页「安装」一栏里的那串名字。直接粘 GitHub 地址也行，会改成 <code>github:owner/repo</code>。</p>
+    <div class="cmd"><pre id="cmd">dsh plugin --profile web add billion-context</pre><button id="copy" type="button">复制</button></div>
+    <p class="hint">在运行 dsh 的那台机器上执行。profile 不叫 <code>web</code>（自己起过名字）的话，把 <code>web</code> 换成你的。</p>
+  </div>
+
+  <div data-pane="desktop" hidden>
+    <p>桌面版在应用里装，不从命令行装：</p>
+    <ol>
+      <li>打开 <b>设置 → 插件</b></li>
+      <li>点 <b>安装</b>，把插件名粘进去</li>
+    </ol>
+    <p class="hint">桌面版和网页版的插件各存一份，网页版装了的不会出现在桌面版里。</p>
+  </div>
+</section>
+
+<section>
+  <h2>装完怎么确认</h2>
+  <p>刷新 dsh web 页面，打开 <b>设置 → 插件</b>，列表里有它就是装上了。多数插件刷新页面就生效，少数要重启一次 <code>dsh web</code>。</p>
+</section>
+
+<section>
+  <h2>更新和卸载</h2>
+  <p><b>更新：</b>把 <code>add</code> 换成 <code>update</code>，再执行一次，就会装到最新版本。想停在某个版本，在名字后面加 <code>@版本号</code>。</p>
+  <div class="cmd"><pre>dsh plugin --profile web update billion-context</pre></div>
+  <p><b>卸载：</b>把 <code>add</code> 换成 <code>remove</code>。</p>
+  <div class="cmd"><pre>dsh plugin --profile web remove billion-context</pre></div>
+  <p>桌面版都在 <b>设置 → 插件</b> 里点更新和卸载。</p>
+</section>
+
+<section>
+  <h2>装不上？</h2>
+  <p>下面几种是真实会遇到的情况，对着提示找。</p>
+  <details>
+    <summary>提示版本太新，或「没有匹配的版本」</summary>
+    <p>npm 有安全检查：发布不满约 24 小时的版本默认不允许安装，防止供应链投毒。等过了这段时间再装就好。国内镜像还会比官方源晚一些，所以「没有匹配的版本」通常也是在等同步，不是插件没了。</p>
+    <p>确实要马上装，可以在命令里加 <code>--config.minimum-release-age=0</code>：<code>dsh plugin --profile web add --config.minimum-release-age=0 插件名</code>。这会跳过这道检查，只对你自己确认过来源的插件用。</p>
+  </details>
+  <details>
+    <summary>提示在等写入锁，或者安装卡住不动</summary>
+    <p>另一个 dsh 或 pnpm 正在改同一个 profile。先关掉所有 dsh（包括桌面版）再试一次。确定没有在跑的话，删掉 profile 目录里的 <code>package.json.lock</code> 再试。</p>
+  </details>
+  <details>
+    <summary>下载卡住、报超时</summary>
+    <p>网络问题。先确认代理本身能用；用代理的话，让终端也走代理再重试。国内网络可以从官方源换到镜像。</p>
+  </details>
+  <details>
+    <summary>装完在设置里找不到</summary>
+    <p>多半是装到了别的地方：桌面版和网页版各存一份；在服务器上跑 dsh web 的话，要在那台机器上装。</p>
+  </details>
+</section>
+
+<section>
+  <h2>装之前请知道</h2>
+  <p class="note">插件是第三方代码，装进来就用你自己的权限运行：能读文件、用你的密钥、连网。来源不确定的插件先看仓库再装；能钉到某个提交更稳（<code>github:owner/repo#sha</code>）。</p>
+</section>
+</main>
+</div>
+
+<footer class="wrap">
+  <span>MIT · <a href="https://github.com/dsh-market/dsh-market" rel="noopener">dsh-market/dsh-market</a> · <a href="__PRIVACY__">__T_PRIVACY__</a></span>
+  <span><a href="__HOME__">__T_BACK__</a></span>
+</footer>
+
+<script>
+(() => {
+  const input = document.getElementById('pkg')
+  const out = document.getElementById('cmd')
+  const copy = document.getElementById('copy')
+  const tabs = [...document.querySelectorAll('.tab')]
+  const panes = [...document.querySelectorAll('[data-pane]')]
+  const base = 'dsh plugin --profile web add '
+  // Restore the label the button shipped with, not a locale token: the two
+  // locales capitalise COPY differently and the reset used to change case.
+  const idle = copy.textContent
+
+  // Pasted GitHub links are the second most common way a plugin is named, and
+  // `add https://github.com/...` is not what dsh expects. Rewriting it here is
+  // the difference between a working command and a confusing error.
+  const spec = () => {
+    let v = input.value.trim()
+    if (!v) return 'billion-context'
+    v = v.replace(/^https?:\/\/github\.com\//i, 'github:').replace(/\/+$/, '')
+    return v
+  }
+  const render = () => { out.textContent = base + spec() }
+
+  input.addEventListener('input', render)
+  copy.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(out.textContent)
+      copy.textContent = '__T_COPIED__'
+      setTimeout(() => { copy.textContent = idle }, 1500)
+    } catch {
+      // Clipboard access can be denied (insecure context, permission). Select
+      // the command so the next ctrl/cmd-C still does the right thing.
+      const range = document.createRange()
+      range.selectNodeContents(out)
+      const sel = getSelection()
+      sel.removeAllRanges()
+      sel.addRange(range)
+    }
+  })
+
+  for (const tab of tabs) {
+    tab.addEventListener('click', () => {
+      for (const t of tabs) {
+        const on = t === tab
+        t.classList.toggle('on', on)
+        t.setAttribute('aria-selected', String(on))
+      }
+      for (const pane of panes) pane.hidden = pane.dataset.pane !== tab.dataset.mode
+    })
+  }
+})()
+</script>
+</body>
+</html>
