@@ -3,16 +3,22 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>dsh-market — 装在 DeepSeek Harness 里的插件市场</title>
-<meta name="description" content="__COUNT__ 个社区插件，逛一逛，点一下，装好。多数插件免重启即刻生效。更新、卸载、实时进度，零遥测。">
+<title>DeepSeek Harness 插件市场 — __COUNT__ 个 dsh 插件 · dsh-market</title>
+<meta name="description" content="DeepSeek Harness（dsh）的插件市场：__COUNT__ 个社区插件，按分类浏览，一行命令装好，多数免重启。附安装步骤和装不上时的解决办法。">
 <link rel="sitemap" type="application/xml" href="https://dshmarket.com/sitemap.xml">
     <link rel="canonical" href="https://dshmarket.com/zh/">
 <link rel="alternate" hreflang="en" href="https://dshmarket.com/">
 <link rel="alternate" hreflang="zh" href="https://dshmarket.com/zh/">
 <link rel="alternate" hreflang="x-default" href="https://dshmarket.com/">
 <link rel="icon" href="../assets/logo.svg" type="image/svg+xml">
-<meta property="og:title" content="dsh-market — 装在 DeepSeek Harness 里的插件市场">
-<meta property="og:description" content="逛一逛，点一下，装好。多数插件免重启即刻生效。">
+<!-- Names the site by the phrase people search. "dsh" alone is ambiguous
+     (a German exam, among others); the full product name is what the Chinese
+     queries actually use, and alternateName carries the short forms. -->
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebSite","name":"dsh-market","alternateName":["DeepSeek Harness 插件市场","dsh 插件市场","DSH 插件市场"],"url":"https://dshmarket.com/zh/","inLanguage":"zh-CN","description":"DeepSeek Harness（dsh）的插件市场：社区插件、分类浏览、一行命令安装。"}
+</script>
+<meta property="og:title" content="DeepSeek Harness 插件市场 — dsh-market">
+<meta property="og:description" content="逛一逛，点一下，装好。多数插件免重启即刻生效；装不上时这里也写了怎么办。">
 <meta property="og:image" content="https://dshmarket.com/assets/demo-zh.png">
 <meta property="og:url" content="https://dshmarket.com/zh/">
 <style>
@@ -48,10 +54,26 @@ header a:hover{color:var(--accent)}
 .card .ic{font-size:1.4rem}
 .card h3{font-size:1rem;margin:.6rem 0 .3rem}
 .card p{font-size:.88rem;color:var(--ink2)}
+.faq{margin-top:3rem;border-top:1px solid var(--line);padding-top:2.5rem}
+.faq h2{font-size:1.15rem;text-align:center;margin-bottom:1.2rem}
+.faq details{max-width:46rem;margin:0 auto;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:.7rem .95rem}
+.faq details+details{margin-top:.55rem}
+.faq summary{font-weight:600;font-size:.92rem;cursor:pointer}
+.faq details p{font-size:.9rem;color:var(--ink2);margin-top:.5rem}
+.faq a{color:var(--accent)}
 footer{border-top:1px solid var(--line);margin-top:2rem;padding:2rem 0 3rem;font-size:.85rem;color:var(--ink3);display:flex;flex-wrap:wrap;gap:1rem;justify-content:space-between}
 footer a{color:var(--ink2);text-decoration:none}
 footer a:hover{color:var(--accent)}
-@media(max-width:640px){.install{flex-direction:column;font-size:.8rem}}
+@media(max-width:640px){
+  /* The header is a single nowrap row; with five links it measured 512px of
+     content in a 327px box at 375px wide. Let it wrap rather than overflow. */
+  header{flex-wrap:wrap;row-gap:.35rem}
+  header a{margin-left:0;white-space:nowrap;flex:none}
+  header a+a{margin-left:1rem}
+  header .grow{display:none}
+  .install{flex-direction:column;font-size:.8rem}
+  .install code{overflow-wrap:anywhere}
+}
 </style>
 __HOME_CSS__
 <!-- Cloudflare Web Analytics --><script type='module' src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "6fdc1fdb390e417599a363e3109357b2"}'></script><!-- End Cloudflare Web Analytics -->
@@ -69,10 +91,10 @@ __HOME_CSS__
 </header>
 
 <section class="hero">
-  <h1>装在 DeepSeek Harness <em>里面</em>的插件市场</h1>
-  <p><b><span id="count">__COUNT__</span> 个社区插件</b>，逛一逛，点一下，装好——多数插件连重启都不用。更新、卸载、实时安装进度，零遥测。</p>
+  <h1>DeepSeek Harness <em>插件市场</em></h1>
+  <p>dsh-market 就是装在 DeepSeek Harness（简称 dsh）里的插件市场：<b><span id="count">__COUNT__</span> 个社区插件</b>，逛一逛，点一下，装好——多数插件连重启都不用。更新、卸载、实时安装进度，零遥测。</p>
   <div class="install"><code>dsh plugin --profile web add dshmarket</code><button onclick="navigator.clipboard.writeText('dsh plugin --profile web add dshmarket');this.textContent='已复制!';setTimeout(()=>this.textContent='复制',1500)">复制</button></div>
-  <div class="sub">然后重启 <code>dsh web</code> → 设置 → <b>插件市场</b>，就这么多。</div>
+  <div class="sub">然后重启 <code>dsh web</code> → 设置 → <b>插件市场</b>，就这么多。装别的插件？<a href="/zh/install/">安装步骤、更新卸载和装不上时怎么办</a>。</div>
   <p style="margin-top:1.1rem;color:var(--ink2);font-size:.95rem">
     这份目录同时是一份<strong>插件市场索引</strong>。dsh 0.2.1 起，打开 <strong>插件 → 发现（Discover）→ 索引源（Index sources）</strong>，添加
     <code>https://cdn.jsdelivr.net/npm/dsh-plugin-catalog/index.json</code>——它就是这份列表的 format 1 索引，放在 npm 上分发，所以在哪里都快
@@ -94,6 +116,14 @@ __HOME_CATALOG__
   <div class="card"><div class="ic">🔒</div><h3>有护栏</h3><p>只允许安装精选列表内的来源,构建脚本默认禁止执行,终端类插件装错位置前会被提醒。</p></div>
   <div class="card"><div class="ic">🕊️</div><h3>默认隐私</h3><p>市场不向任何地方上报数据;连反馈用的日志导出都已脱敏,且只存在你机器上。</p></div>
   </div>
+</section>
+
+<section class="faq">
+  <h2>常见问题</h2>
+  <details><summary>插件是做什么的？</summary><p>给 dsh 加功能的扩展：换个界面、接一个模型、多一个工具、让手机也能用。装错了随时卸掉。</p></details>
+  <details><summary>怎么装插件？</summary><p>先装上这个市场（上面那行命令），之后在市场里点「安装」。想从命令行装、或者装不上，看<a href="/zh/install/">安装说明</a>。</p></details>
+  <details><summary>插件要花钱吗？</summary><p>市场和列表本身免费、开源（MIT）。插件由各自作者发布，收不收费看插件自己的说明。</p></details>
+  <details><summary>装完要重启 dsh 吗？</summary><p>多数插件刷新页面就生效，少数需要重启一次 <code>dsh web</code>。装完在「设置 → 插件」里能看到，就说明装上了。</p></details>
 </section>
 
 <footer>

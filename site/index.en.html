@@ -52,10 +52,26 @@ header a:hover{color:var(--accent)}
 .card .ic{font-size:1.4rem}
 .card h3{font-size:1rem;margin:.6rem 0 .3rem}
 .card p{font-size:.88rem;color:var(--ink2)}
+.faq{margin-top:3rem;border-top:1px solid var(--line);padding-top:2.5rem}
+.faq h2{font-size:1.15rem;text-align:center;margin-bottom:1.2rem}
+.faq details{max-width:46rem;margin:0 auto;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:.7rem .95rem}
+.faq details+details{margin-top:.55rem}
+.faq summary{font-weight:600;font-size:.92rem;cursor:pointer}
+.faq details p{font-size:.9rem;color:var(--ink2);margin-top:.5rem}
+.faq a{color:var(--accent)}
 footer{border-top:1px solid var(--line);margin-top:2rem;padding:2rem 0 3rem;font-size:.85rem;color:var(--ink3);display:flex;flex-wrap:wrap;gap:1rem;justify-content:space-between}
 footer a{color:var(--ink2);text-decoration:none}
 footer a:hover{color:var(--accent)}
-@media(max-width:640px){.install{flex-direction:column;font-size:.8rem}}
+@media(max-width:640px){
+  /* The header is a single nowrap row; with five links it measured 512px of
+     content in a 327px box at 375px wide. Let it wrap rather than overflow. */
+  header{flex-wrap:wrap;row-gap:.35rem}
+  header a{margin-left:0;white-space:nowrap;flex:none}
+  header a+a{margin-left:1rem}
+  header .grow{display:none}
+  .install{flex-direction:column;font-size:.8rem}
+  .install code{overflow-wrap:anywhere}
+}
 </style>
 __HOME_CSS__
 <!-- Cloudflare Web Analytics --><script type='module' src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "6fdc1fdb390e417599a363e3109357b2"}'></script><!-- End Cloudflare Web Analytics -->
@@ -98,6 +114,14 @@ __HOME_CATALOG__
   <div class="card"><div class="ic">🔒</div><h3>Guard rails</h3><p>Installs are restricted to the curated registry, build scripts stay blocked by default, and terminal-surface plugins are flagged before you install them.</p></div>
   <div class="card"><div class="ic">🕊️</div><h3>Private by default</h3><p>The market never phones home. Even the bug-report log export is sanitized and stays on your machine until you share it.</p></div>
   </div>
+</section>
+
+<section class="faq">
+  <h2>Common questions</h2>
+  <details><summary>What is a plugin?</summary><p>An extension that adds something to dsh: a different interface, another model, a new tool, access from your phone. Uninstall it any time.</p></details>
+  <details><summary>How do I install one?</summary><p>Install this market first (the command above), then press Install in the market. To install from a terminal, or when an install fails, see <a href="/install/">the install guide</a>.</p></details>
+  <details><summary>Does it cost anything?</summary><p>The market and the list are free and open source (MIT). Plugins are published by their authors; check each plugin's own page for whether it charges.</p></details>
+  <details><summary>Do I need to restart dsh?</summary><p>Most plugins are live after a page reload; a few need one restart of <code>dsh web</code>. If the plugin shows up under Settings &rarr; Plugins, it installed.</p></details>
 </section>
 
 <footer>
