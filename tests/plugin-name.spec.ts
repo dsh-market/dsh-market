@@ -10,6 +10,22 @@ import { describe, expect, it } from 'vitest'
 import { pluginName } from '../src/client/market-data.ts'
 
 describe('pluginName', () => {
+  it('uses the mapped npm package for a compound identity with a generic directory', () => {
+    expect(pluginName('dsh-plugin-compat-check#plugin', 'dsh-plugin-compat-check')).toBe('dsh-plugin-compat-check')
+    expect(pluginName('toolkit#packages/plugin', '@author/compat-check')).toBe('@author/compat-check')
+  })
+
+  it('keeps the existing fallback when no usable npm mapping is available', () => {
+    expect(pluginName('dsh-web#packages/dsh-web-all', null)).toBe('dsh-web-all')
+    expect(pluginName('dsh-web#packages/dsh-web-all', '  ')).toBe('dsh-web-all')
+    expect(pluginName('repo#', undefined)).toBe('repo')
+  })
+
+  it('uses a trimmed mapping without changing ordinary catalog titles', () => {
+    expect(pluginName('repo#plugin', '  real-package  ')).toBe('real-package')
+    expect(pluginName('dsh-loop', '@author/dsh-loop')).toBe('dsh-loop')
+  })
+
   it('leaves an ordinary plugin alone', () => {
     // 93% of the catalog. A repository holding one plugin is named after
     // it, so the identity already IS the name.

@@ -794,6 +794,32 @@ describe('MarketSection (jsdom)', () => {
    * with no underline meant nothing said so until the cursor was already on
    * it. The link now carries a GitHub mark and names its destination, so it
    * is findable without hovering every card to look for one. */
+  it('shows the mapped product name on a subdirectory card and install dialog without changing its target', async () => {
+    const plugin = {
+      name: 'dsh-plugin-compat-check#plugin', owner: 'lcy0121',
+      npm: 'dsh-plugin-compat-check', category: 'tools',
+      url: 'https://github.com/lcy0121/dsh-plugin-compat-check/tree/main/plugin',
+      description: { en: 'Installed-plugin compatibility checks' }, install: '', added: '2026-10-17',
+    }
+    stubFetch({
+      '/dsh-market/registry': { source: 'live', registry: { ...REGISTRY, plugins: [plugin] } },
+      '/dsh-market/install': { cancelled: true },
+    })
+    render(<MarketSection {...props()} />)
+    const links = await screen.findAllByRole('link', { name: `${plugin.name} — ${en.repoLink}` })
+    for (const link of links) {
+      expect(link.textContent?.trim()).toBe('dsh-plugin-compat-check')
+      expect(link.getAttribute('title')).toBe('dsh-plugin-compat-check#plugin')
+      expect(link.getAttribute('href')).toBe('https://github.com/lcy0121/dsh-plugin-compat-check/tree/main/plugin')
+    }
+    fireEvent.click(screen.getAllByRole('button', { name: en.install, exact: true })[0]!)
+    expect(await screen.findByRole('dialog', { name: `${en.confirmTitle} dsh-plugin-compat-check?` })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: en.confirmInstall }))
+    await waitFor(() => expect(fetchCalls.find(call => call.path === '/dsh-market/install')?.body).toEqual({
+      url: 'https://github.com/lcy0121/dsh-plugin-compat-check/tree/main/plugin',
+    }))
+  })
+
   it('gives every card title a visible, named link to its repository', async () => {
     render(<MarketSection {...props()} />)
     await screen.findByText('dsh-loop')

@@ -1610,14 +1610,17 @@ export function localizeBilingualList(parts: string[], lang: 'zh' | 'en'): strin
  *
  * The repository name IS the plugin name in the ordinary case, because a
  * repository holding one plugin is named after it. Only the compound form
- * needs unpicking, and its last segment is the plugin's own directory.
+ * needs unpicking. Prefer its mapped npm package when available: a generic
+ * directory such as `plugin` is not the product name. Without that mapping,
+ * keep the directory-leaf fallback for source-only entries.
  *
  * Not a substitute for the identity: every key, lookup and install still
  * uses `name` unchanged.
  */
-export function pluginName(name: string): string {
+export function pluginName(name: string, npm?: string | null): string {
   const hash = name.indexOf('#')
   if (hash === -1) return name
+  if (typeof npm === 'string' && npm.trim() !== '') return npm.trim()
   const sub = name.slice(hash + 1)
   const leaf = sub.slice(sub.lastIndexOf('/') + 1)
   // A sub-path that is empty or trailing-slashed tells us nothing; the

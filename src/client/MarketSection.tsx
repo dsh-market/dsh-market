@@ -774,7 +774,7 @@ function ThemeCover({ plugin, onOpen, t }: {
   }, [curatedKey, near, plugin.url])
   const shots = curated.length > 0 ? curated : fallback.shots
   const visible = shots.filter(src => !broken.includes(src))
-  const name = pluginName(plugin.name)
+  const name = pluginName(plugin.name, plugin.npm)
 
   if (visible.length === 0) {
     return (
@@ -2107,7 +2107,7 @@ export function MarketSection(props: MarketSectionProps) {
     const entry = data?.plugins.find(plugin => plugin.npm === name || plugin.name === name)
     if (entry === undefined) return { title: name }
     return {
-      title: pluginName(entry.name),
+      title: pluginName(entry.name, entry.npm),
       author: entry.owner === '' ? undefined : entry.owner,
       avatar: <OwnerAvatar name={entry.name} owner={entry.owner || ''} />,
     }
@@ -5421,7 +5421,7 @@ export function MarketSection(props: MarketSectionProps) {
               the same name without either card needing a qualifier. */}
           <div style={{ minWidth: 0 }}>
             <a className={`${css.nm} ${css.nmLink}`} href={p.url} target="_blank" rel="noreferrer" title={p.name} aria-label={`${p.name} — ${t('repoLink')}`}>
-              {pluginName(p.name)}
+              {pluginName(p.name, p.npm)}
               <GithubRepoMark className={css.repoMark} />
               {p.deprecated === true && <span className={css.depBadge}>{t('deprecatedBadge')}</span>}
             </a>
@@ -5569,7 +5569,7 @@ export function MarketSection(props: MarketSectionProps) {
           <div className={css.themeCardHead}>
             <div className={css.themeIdentity}>
               <a className={`${css.nm} ${css.nmLink}`} href={p.url} target="_blank" rel="noreferrer" title={p.name} aria-label={`${p.name} — ${t('repoLink')}`}>
-                {pluginName(p.name)}
+                {pluginName(p.name, p.npm)}
                 <GithubRepoMark className={css.repoMark} />
               </a>
               <div className={css.byline}>
@@ -7556,7 +7556,7 @@ export function MarketSection(props: MarketSectionProps) {
           className={css.confirmModal}
           contentClassName={css.confirmContent}
           onClose={() => setConfirming(null)}
-          title={t('confirmTitle') + ' ' + confirming.name + '?'}
+          title={t('confirmTitle') + ' ' + pluginName(confirming.name, confirming.npm) + '?'}
           footer={(
             <>
               <Button variant="ghost" onClick={() => setConfirming(null)}>{t('cancel')}</Button>
@@ -7682,7 +7682,7 @@ export function MarketSection(props: MarketSectionProps) {
       {commentsFor !== null && (
         <CommentsModal
           key={commentsFor.url}
-          name={pluginName(commentsFor.name)}
+          name={pluginName(commentsFor.name, commentsFor.npm)}
           url={commentsFor.url}
           lang={lang}
           onClose={() => setCommentsFor(null)}

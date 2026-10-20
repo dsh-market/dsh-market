@@ -2892,14 +2892,17 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		*
 		* The repository name IS the plugin name in the ordinary case, because a
 		* repository holding one plugin is named after it. Only the compound form
-		* needs unpicking, and its last segment is the plugin's own directory.
+		* needs unpicking. Prefer its mapped npm package when available: a generic
+		* directory such as `plugin` is not the product name. Without that mapping,
+		* keep the directory-leaf fallback for source-only entries.
 		*
 		* Not a substitute for the identity: every key, lookup and install still
 		* uses `name` unchanged.
 		*/
-		function pluginName(name) {
+		function pluginName(name, npm) {
 			const hash = name.indexOf("#");
 			if (hash === -1) return name;
+			if (typeof npm === "string" && npm.trim() !== "") return npm.trim();
 			const sub = name.slice(hash + 1);
 			const leaf = sub.slice(sub.lastIndexOf("/") + 1);
 			return leaf === "" ? name.slice(0, hash) : leaf;
@@ -7392,7 +7395,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				plugin.url
 			]);
 			const visible = (curated.length > 0 ? curated : fallback.shots).filter((src) => !broken.includes(src));
-			const name = pluginName(plugin.name);
+			const name = pluginName(plugin.name, plugin.npm);
 			if (visible.length === 0) return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("button", {
 				ref: setCoverRef,
 				type: "button",
@@ -8699,7 +8702,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				const entry = data?.plugins.find((plugin) => plugin.npm === name || plugin.name === name);
 				if (entry === void 0) return { title: name };
 				return {
-					title: pluginName(entry.name),
+					title: pluginName(entry.name, entry.npm),
 					author: entry.owner === "" ? void 0 : entry.owner,
 					avatar: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(OwnerAvatar, {
 						name: entry.name,
@@ -11813,7 +11816,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 										title: p.name,
 										"aria-label": `${p.name} — ${t("repoLink")}`,
 										children: [
-											pluginName(p.name),
+											pluginName(p.name, p.npm),
 											/* @__PURE__ */ (0, react_jsx_runtime.jsx)(GithubRepoMark, { className: Market_module_css_default.repoMark }),
 											p.deprecated === true && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 												className: Market_module_css_default.depBadge,
@@ -12002,7 +12005,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 											rel: "noreferrer",
 											title: p.name,
 											"aria-label": `${p.name} — ${t("repoLink")}`,
-											children: [pluginName(p.name), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(GithubRepoMark, { className: Market_module_css_default.repoMark })]
+											children: [pluginName(p.name, p.npm), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(GithubRepoMark, { className: Market_module_css_default.repoMark })]
 										}), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 											className: Market_module_css_default.byline,
 											children: [
@@ -14382,7 +14385,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						className: Market_module_css_default.confirmModal,
 						contentClassName: Market_module_css_default.confirmContent,
 						onClose: () => setConfirming(null),
-						title: t("confirmTitle") + " " + confirming.name + "?",
+						title: t("confirmTitle") + " " + pluginName(confirming.name, confirming.npm) + "?",
 						footer: /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 							variant: "ghost",
 							onClick: () => setConfirming(null),
@@ -14538,7 +14541,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						t
 					}),
 					commentsFor !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(CommentsModal, {
-						name: pluginName(commentsFor.name),
+						name: pluginName(commentsFor.name, commentsFor.npm),
 						url: commentsFor.url,
 						lang,
 						onClose: () => setCommentsFor(null),
