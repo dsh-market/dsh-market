@@ -3,14 +3,17 @@
  * pending (non-hot) plugin changes take effect without the user leaving the
  * UI. Contributed in #14 by @ysyyhhh; ported onto the layered architecture.
  *
- * Safety model: the endpoint accepts only direct same-origin loopback
- * requests (no forwarding headers), refuses while a plugin operation runs,
- * and deployments under a supervisor (systemd/launchd/pm2) can disable the
- * whole feature with `allowRestart: false` — the supervisor owns restarts.
+ * Safety model: the endpoint accepts only same-origin requests whose Host
+ * names an authority this deployment serves — a loopback authority reached
+ * directly (no forwarding headers), or a name the host DECLARED
+ * (`dsh web --trusted-host <name>`), which is how a deployment behind a
+ * tunnel or a reverse proxy is reached. It refuses while a plugin operation
+ * runs, and deployments under a supervisor (systemd/launchd/pm2) can disable
+ * the whole feature with `allowRestart: false` — the supervisor owns restarts.
  */
 
 import { spawn } from 'node:child_process'
-import { loopbackAuthority } from './http.ts'
+import { declaredTrustedHosts, loopbackAuthority, trustedAuthority } from './http.ts'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import inspector from 'node:inspector'
 import { tmpdir } from 'node:os'
@@ -219,6 +222,69 @@ function directLoopbackRequest(request: Pick<IncomingMessage, 'headers' | 'socke
 }
 
 /**
+ * Whether the request's Host names an authority the HOST declared —
+ * `dsh web --trusted-host <name>` — as the ordinary route fence reads it.
+ *
+ * A declared authority is the operator's own statement about the name this
+ * deployment serves. It is the same statement the host's own fence already
+ * accepts for every other request on the host, and the same one `sameOrigin`
+ * accepts for the market's ordinary routes (#729): a deployment reached by a
+ * name is not a stranger to itself.
+ *
+ * A LOOPBACK authority is deliberately not this path. The lane deployments
+ * declare `127.0.0.1` alongside their public name, and a loopback Host is the
+ * direct path's business — where the peer's address is checked as well. This
+ * path is only for a name the deployment answers to on the network.
+ */
+function declaredAuthority(request: Pick<IncomingMessage, 'headers' | 'socket'>): boolean {
+  const host = request.headers.host
+  if (host === undefined) return false
+  if (loopbackAuthority(host)) return false
+  return trustedAuthority(host, declaredTrustedHosts())
+}
+
+/**
+ * Whether the request names an authority this deployment serves, and is not
+ * a cross-site request.
+ *
+ * Two shapes, and a deployment has to be one of them:
+ *
+ * - DIRECT: a loopback peer, no forwarding trace, and a loopback Host. The
+ *   peer proves the request did not come through a proxy, and the Host proves
+ *   it did not come through a name the attacker controls (#678).
+ * - THROUGH THE PERIMETER: a Host the host DECLARED. The peer is then the
+ *   proxy (a tunnel, an Ingress) and a forwarding trace is expected rather
+ *   than suspicious, so the peer is not what decides — the declared Host is.
+ *
+ * What still holds in both: the Host is the header an attacker's page cannot
+ * forge, an undeclared name is refused, and a browser that labels the request
+ * cross-site is refused outright — exactly as the host's own fence and
+ * `sameOrigin` do.
+ */
+function servedAuthority(request: Pick<IncomingMessage, 'headers' | 'socket'>): boolean {
+  if (request.headers['sec-fetch-site'] === 'cross-site') return false
+  if (declaredAuthority(request)) return true
+  return directLoopbackRequest(request)
+}
+
+/**
+ * Whether an `Origin` header names the same authority as the `Host` header.
+ *
+ * The `null` origin (a sandboxed iframe, a `data:` document) is a
+ * present-but-unparseable origin and is refused; an absent Origin is the
+ * caller's decision, not this function's.
+ */
+function sameAuthorityOrigin(origin: string | undefined, host: string): boolean {
+  if (origin === undefined) return false
+  try {
+    const parsed = new URL(origin)
+    return (parsed.protocol === 'http:' || parsed.protocol === 'https:') && parsed.host === host
+  } catch {
+    return false
+  }
+}
+
+/**
  * Whether a restart request made from the same page as THIS request could pass
  * the fence (#782): the answer the status poll reports so the banner can say
  * why there is no button, instead of rendering one that always answers 403.
@@ -228,9 +294,13 @@ function directLoopbackRequest(request: Pick<IncomingMessage, 'headers' | 'socke
  * the same path, so it fails for the same reasons this request shows — a proxy
  * peer, forwarding headers, a non-loopback Host. It is a prediction, never a
  * grant: the route still runs the full fence, including `Origin`, on the POST.
+ *
+ * A deployment that DECLARES its public name answers it truthfully now: the
+ * status poll sees the declared Host and reports the restart as reachable,
+ * exactly as the route will judge it.
  */
 export function restartReachableFrom(request: Pick<IncomingMessage, 'headers' | 'socket'>): boolean {
-  return directLoopbackRequest(request)
+  return servedAuthority(request)
 }
 
 /**
@@ -270,23 +340,26 @@ export function trustedSelfUninstallRequest(request: Pick<IncomingMessage, 'head
   return trustedRestartRequest(request) || desktopForwardedRequest(request)
 }
 
-/** Whether the request that asked for status could uninstall the market (#903). */
+/**
+ * Whether the request that asked for status could uninstall the market (#903).
+ *
+ * The prediction, like the restart one, leaves `Origin` out: the status poll
+ * is a same-origin GET and carries none, so a prediction that required one
+ * would hide the button on every deployment that has a declared authority —
+ * the same shape the route accepts.
+ */
 export function selfUninstallReachableFrom(request: Pick<IncomingMessage, 'headers' | 'socket'>): boolean {
-  return trustedSelfUninstallRequest(request)
+  return servedAuthority(request) || desktopForwardedRequest(request)
 }
 
 /** Whether a process-control request came from this Web host on loopback. */
 export function trustedRestartRequest(request: Pick<IncomingMessage, 'headers' | 'socket'>): boolean {
-  if (!directLoopbackRequest(request)) return false
-  const origin = request.headers.origin
+  if (!servedAuthority(request)) return false
   const host = request.headers.host
-  if (origin === undefined || host === undefined) return false
-  try {
-    const parsed = new URL(origin)
-    return (parsed.protocol === 'http:' || parsed.protocol === 'https:') && parsed.host === host
-  } catch {
-    return false
-  }
+  if (host === undefined) return false
+  // Process control always carries an Origin: the button is a page's own
+  // request, and a request without one is not a page's request.
+  return sameAuthorityOrigin(request.headers.origin, host)
 }
 
 /**
@@ -294,27 +367,18 @@ export function trustedRestartRequest(request: Pick<IncomingMessage, 'headers' |
  * Browsers do NOT send an Origin header on same-origin GET navigations
  * (`<a href="/..." download>`), so unlike process-control requests a missing
  * Origin is the NORMAL shape of a user-initiated download and must pass.
- * Keep the rest of the posture: loopback peer only, no proxy forwarding
- * headers, and — when an Origin IS present (fetch/CORS attempts) — it must
- * still match Host so a cross-origin page cannot read the export.
+ * Keep the rest of the posture: the Host must name an authority this
+ * deployment serves (loopback, or one the host declared), and — when an
+ * Origin IS present (fetch/CORS attempts) — it must still match Host so a
+ * cross-origin page cannot read the export.
  */
 export function trustedDownloadRequest(request: Pick<IncomingMessage, 'headers' | 'socket'>): boolean {
-  const address = request.socket.remoteAddress
-  if (address !== '127.0.0.1' && address !== '::1' && address !== '::ffff:127.0.0.1') return false
-  if (request.headers.forwarded !== undefined
-    || request.headers['x-forwarded-for'] !== undefined
-    || request.headers['x-real-ip'] !== undefined) return false
-  const origin = request.headers.origin
+  if (!servedAuthority(request)) return false
   const host = request.headers.host
-  // Same rebinding rule as the restart fence above (#678).
-  if (!loopbackAuthority(host)) return false
+  if (host === undefined) return false
+  const origin = request.headers.origin
   if (origin === undefined) return true // plain browser download navigation
-  try {
-    const parsed = new URL(origin)
-    return (parsed.protocol === 'http:' || parsed.protocol === 'https:') && parsed.host === host
-  } catch {
-    return false
-  }
+  return sameAuthorityOrigin(origin, host)
 }
 
 /** The exact boot invocation the detached restart helper replays. */

@@ -96,6 +96,23 @@ export function setTrustedHostsSource(source: () => readonly string[]): () => re
 }
 
 /**
+ * The authorities this deployment declared, as the fence reads them right now.
+ *
+ * `sameOrigin` consults them through the private source above. The privileged
+ * routes (the backup export, the self-uninstall, the one-click restart) need
+ * the same list, and a second private copy of it would be a second thing to
+ * keep in step — the fence that guards the market's ordinary routes and the
+ * fence that guards its privileged ones have to agree about what this
+ * deployment serves.
+ *
+ * Read per request, exactly as the source itself is: a deployment that
+ * declares an authority later is honoured from that request on.
+ */
+export function declaredTrustedHosts(): readonly string[] {
+  return trustedHostsSource()
+}
+
+/**
  * Parse a bare `host[:port]` authority, or null when the value is not one.
  *
  * "Not one" is narrower than "`new URL` accepted it": an entry must survive

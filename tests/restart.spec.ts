@@ -8,8 +8,9 @@
  * spawn (process groups, no console concept).
  */
 
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { detectedDebugger, detectedSupervisor, respawnInvocation, restartAllowed, restartReachableFrom, selfUninstallReachableFrom, trustedDownloadRequest, trustedRestartRequest, trustedSelfUninstallRequest } from '../src/restart.ts'
+import { setTrustedHostsSource } from '../src/http.ts'
 
 const LAUNCH = { file: 'C:\\Program Files\\nodejs\\node.exe', args: ['--import', 'tsx/esm', 'bin.ts', '--profile', 'web'], viaShell: false }
 
@@ -303,3 +304,128 @@ describe('debugger detection gates self-restart (#447)', () => {
     expect(detectedDebugger('ws://127.0.0.1:9229/uuid', [], '')).toBe('inspector')
   })
 })
+
+/**
+ * A deployment that DECLARES the name it serves — `dsh web --trusted-host
+ * dsh.example.com` — reaches its own market through a tunnel or a reverse
+ * proxy: the peer is the proxy, not the user, and the Host is the declared
+ * name.
+ *
+ * The fence used to refuse that shape as "not a same-origin loopback
+ * request" while every ORDINARY route answered 200, because `sameOrigin`
+ * already honoured the declaration (#729) and the privileged routes did not.
+ * The visible effect was a deployment whose export, self-uninstall and
+ * restart buttons were all dead, with an error naming a rule the user could
+ * not satisfy — the user has no way to make the tunnel's peer loopback.
+ */
+describe('a declared authority is this deployment\'s own authority', () => {
+  const previousSources: Array<() => readonly string[]> = []
+  const declare = (...entries: string[]): void => {
+    previousSources.push(setTrustedHostsSource(() => entries))
+  }
+  afterEach(() => {
+    while (previousSources.length > 0) setTrustedHostsSource(previousSources.pop()!)
+  })
+
+  const req = (headers: Record<string, string>, remoteAddress = '127.0.0.1') =>
+    ({ headers, socket: { remoteAddress } }) as unknown as Parameters<typeof trustedDownloadRequest>[0]
+  // The shape a tunnel delivers: the peer is the proxy's own address, the
+  // forwarding trace is present, and the Host is the public name.
+  const tunnel = { host: 'dsh.example.com', 'x-forwarded-for': '203.0.113.9', 'x-real-ip': '203.0.113.9' }
+  const peer = '10.88.0.1'
+
+  it('lets the backup export through the declared name', () => {
+    declare('dsh.example.com')
+    // A download navigation carries no Origin — the normal shape of the
+    // button that asks for it.
+    expect(trustedDownloadRequest(req(tunnel, peer))).toBe(true)
+    // A fetch-style request carries one, and it has to name this authority.
+    expect(trustedDownloadRequest(req({ ...tunnel, origin: 'https://dsh.example.com' }, peer))).toBe(true)
+  })
+
+  it('still refuses a foreign name, however it arrives', () => {
+    declare('dsh.example.com')
+    expect(trustedDownloadRequest(req({ ...tunnel, host: 'evil.example.com' }, peer))).toBe(false)
+    expect(trustedDownloadRequest(req({ host: 'evil.example.com' }))).toBe(false)
+    // A declared neighbour is not a wildcard: the trust is the exact name.
+    expect(trustedDownloadRequest(req({ ...tunnel, host: 'other.example.com' }, peer))).toBe(false)
+  })
+
+  it('still refuses a cross-origin reader of the export', () => {
+    declare('dsh.example.com')
+    expect(trustedDownloadRequest(req({ ...tunnel, origin: 'https://evil.example.com' }, peer))).toBe(false)
+    expect(trustedDownloadRequest(req({ ...tunnel, origin: 'not a url' }, peer))).toBe(false)
+    // `Origin: null` is a present-but-unparseable origin, not an absent one.
+    expect(trustedDownloadRequest(req({ ...tunnel, origin: 'null' }, peer))).toBe(false)
+  })
+
+  it('still refuses a browser that labels the request cross-site', () => {
+    declare('dsh.example.com')
+    expect(trustedDownloadRequest(req({ ...tunnel, 'sec-fetch-site': 'cross-site' }, peer))).toBe(false)
+  })
+
+  it('keeps the loopback Host on the direct path — a remote peer cannot borrow it', () => {
+    // The lane deployments declare `127.0.0.1` next to their public name; a
+    // loopback Host still has to arrive from a loopback peer.
+    declare('dsh.example.com', '127.0.0.1')
+    expect(trustedDownloadRequest(req({ host: '127.0.0.1:3080' }, peer))).toBe(false)
+    expect(trustedDownloadRequest(req({ host: '127.0.0.1:3080' }))).toBe(true)
+  })
+
+  it('lets a same-origin restart through the declared name', () => {
+    declare('dsh.example.com')
+    expect(trustedRestartRequest(req({ ...tunnel, origin: 'https://dsh.example.com' }, peer))).toBe(true)
+    expect(trustedSelfUninstallRequest(req({ ...tunnel, origin: 'https://dsh.example.com' }, peer))).toBe(true)
+    expect(restartReachableFrom(req(tunnel, peer))).toBe(true)
+    expect(selfUninstallReachableFrom(req(tunnel, peer))).toBe(true)
+  })
+
+  it('refuses a restart whose Origin names another authority', () => {
+    declare('dsh.example.com')
+    expect(trustedRestartRequest(req({ ...tunnel, origin: 'https://evil.example.com' }, peer))).toBe(false)
+    // Process control always carries an Origin.
+    expect(trustedRestartRequest(req(tunnel, peer))).toBe(false)
+  })
+
+  it('refuses a restart on a foreign name', () => {
+    declare('dsh.example.com')
+    expect(trustedRestartRequest(req({ ...tunnel, host: 'evil.example.com', origin: 'https://evil.example.com' }, peer))).toBe(false)
+    expect(restartReachableFrom(req({ ...tunnel, host: 'evil.example.com' }, peer))).toBe(false)
+  })
+
+  it('refuses everything when the host declares nothing', () => {
+    declare()
+    expect(trustedDownloadRequest(req(tunnel, peer))).toBe(false)
+    expect(trustedRestartRequest(req({ ...tunnel, origin: 'https://dsh.example.com' }, peer))).toBe(false)
+    expect(restartReachableFrom(req(tunnel, peer))).toBe(false)
+  })
+
+  it('never says yes where the route would say no — one-directional by construction', () => {
+    declare('dsh.example.com')
+    const peers = ['127.0.0.1', '::1', '10.88.0.1']
+    const hosts: Array<string | undefined> = ['127.0.0.1:3080', 'localhost:3080', 'dsh.example.com', 'evil.example.com', undefined]
+    const origins: Array<string | undefined> = [undefined, 'https://dsh.example.com', 'https://evil.example.com', 'not a url']
+    const forwards: Array<Record<string, string>> = [{}, { 'x-forwarded-for': '1.2.3.4' }, { forwarded: 'for=1.2.3.4' }, { 'x-real-ip': '1.2.3.4' }]
+    let checked = 0
+    for (const peerAddress of peers) for (const host of hosts) for (const origin of origins) for (const forward of forwards) {
+      const headers: Record<string, string> = { ...forward }
+      if (host !== undefined) headers.host = host
+      if (origin !== undefined) headers.origin = origin
+      const request = req(headers, peerAddress)
+      if (trustedRestartRequest(request)) expect(restartReachableFrom(request), JSON.stringify({ peerAddress, headers })).toBe(true)
+      // Whatever the download fence accepts, the request came in under an
+      // authority this deployment serves: a loopback one, or a declared one.
+      if (trustedDownloadRequest(request)) {
+        expect(servedAuthorityOf(headers.host), JSON.stringify({ peerAddress, headers })).toBe(true)
+      }
+      checked += 1
+    }
+    expect(checked).toBe(peers.length * hosts.length * origins.length * forwards.length)
+  })
+})
+
+/** The authorities the deployment serves: loopback, or the declared name. */
+function servedAuthorityOf(host: string | undefined): boolean {
+  if (host === undefined) return false
+  return host === '127.0.0.1:3080' || host === 'localhost:3080' || host === 'dsh.example.com'
+}
