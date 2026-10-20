@@ -95,6 +95,63 @@ describe('isUpgrade', () => {
  * it is not never surfaces its fix, and one that always claims an update
  * makes the button lie on every poll.
  */
+describe('checkUpdates — fresh-release wait (#945)', () => {
+  /** An npm-installed plugin in its own profile directory. */
+  function npmProfile(windowMinutes?: number): string {
+    const dir = join(mkdtempSync(join(tmpdir(), 'dshm-upd-')), 'profiles', 'web')
+    mkdirSync(join(dir, 'node_modules', 'widget'), { recursive: true })
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ dependencies: { widget: '^1.0.0' } }))
+    writeFileSync(join(dir, 'node_modules', 'widget', 'package.json'), JSON.stringify({ name: 'widget', version: '1.0.0', dsh: {} }))
+    writeFileSync(join(dir, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n')
+    if (windowMinutes !== undefined) writeFileSync(join(dir, 'pnpm-workspace.yaml'), `minimumReleaseAge: ${String(windowMinutes)}\n`)
+    return dir
+  }
+
+  /** Registry answers: latest 1.1.0, published at `published`. */
+  function registry(published: string): void {
+    vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
+      const href = String(url)
+      const body = href.endsWith('/widget/latest')
+        ? { version: '1.1.0' }
+        : { time: { '1.0.0': '2026-01-01T00:00:00.000Z', '1.1.0': published } }
+      return new Response(JSON.stringify(body), { status: 200 })
+    }))
+  }
+
+  const hoursAgo = (hours: number): string => new Date(Date.now() - hours * 3_600_000).toISOString()
+
+  it('holds an update the profile would refuse, and names when it opens (#945)', async () => {
+    const dir = npmProfile(1440)
+    registry(hoursAgo(1))
+    const result = await checkUpdates('web', true, dir, new Map(), new Map(), new Map(), { holdYoungReleases: true })
+    expect(result.widget?.updateAvailable).toBe(false)
+    expect(result.widget?.latest).toBe('1.1.0')
+    expect(result.widget?.heldUpdate?.latest).toBe('1.1.0')
+    // 1 hour into a 24-hour window: about 23 hours left.
+    const left = Date.parse(result.widget!.heldUpdate!.until) - Date.now()
+    expect(left).toBeGreaterThan(22.5 * 3_600_000)
+    expect(left).toBeLessThan(23.5 * 3_600_000)
+  })
+
+  it('still offers it where the install path can bypass the wait (CLI)', async () => {
+    // The CLI retries with --config.minimum-release-age=0; hiding the update
+    // there would suppress one that actually works.
+    const dir = npmProfile(1440)
+    registry(hoursAgo(1))
+    const result = await checkUpdates('web', true, dir)
+    expect(result.widget?.updateAvailable).toBe(true)
+    expect(result.widget?.heldUpdate).toBeUndefined()
+  })
+
+  it('offers a release that is already past the window', async () => {
+    const dir = npmProfile(1440)
+    registry(hoursAgo(48))
+    const result = await checkUpdates('web', true, dir, new Map(), new Map(), new Map(), { holdYoungReleases: true })
+    expect(result.widget?.updateAvailable).toBe(true)
+    expect(result.widget?.heldUpdate).toBeUndefined()
+  })
+})
+
 describe('checkUpdates — github pins', () => {
   const HEAD = 'a'.repeat(40)
   const OLD = 'b'.repeat(40)

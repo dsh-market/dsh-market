@@ -10,6 +10,7 @@ import { DIST_TAG, type Channel } from './channels.ts'
 import { resolveHeadCommit } from './accelerate.ts'
 import { marketFetch } from './net.ts'
 import { activeRegion, githubRoutesFor, rememberGithubRoute, throughProxy, type Region } from './regions.ts'
+import { readMinimumReleaseAgeMs } from './install.ts'
 import { hasDshManifest, profileDir, readGitResolutionCommit, readInstalled, readInstalledVersion, readLockCommits, readProfileBundles } from './profile.ts'
 import { userPatchPackageReferences } from './patch.ts'
 import { catalogRepoKey, gitCommitOfTarget, gitRefOfTarget, gitUploadPackUrl, hasSemverSelector, hostedRepoKey, githubCommitOfTarget, githubRefOfTarget, isGenerationLink, isGitHostedSpec, lookupRepoFromUrl, parseGitHubRemote, repoOfTarget } from './sources.ts'
@@ -69,6 +70,15 @@ export interface UpdateStatus {
   restoreRequired?: boolean
   /** Independent, explicit source switch offered for verified legacy Git installs. */
   sourceMigration?: { kind: 'git-to-npm'; repo: string; target: string }
+  /**
+   * A newer release exists but this profile's `minimumReleaseAge` will not let
+   * pnpm install it yet (#945). The official Desktop takes no one-shot bypass,
+   * so offering the update there means offering a button that is guaranteed
+   * to fail; the market names the wait instead. `updateAvailable` is false —
+   * an update the user cannot apply is not available — and `until` is when
+   * pnpm will accept it.
+   */
+  heldUpdate?: { latest: string; until: string }
   /**
    * The version this package's channel points at, when it differs from what
    * is installed and is NOT newer.
@@ -304,6 +314,23 @@ export async function latestPublishedRecently(name: string, windowMs = 26 * 60 *
   }
 }
 
+/**
+ * When a specific version was published, from the packument's own time map
+ * (#945). Null when the registry cannot answer — callers must not claim a
+ * wait on null.
+ */
+async function npmPublishedAt(name: string, version: string): Promise<number | null> {
+  try {
+    const doc = (await fetchJson(npmUrl(encodeURIComponent(name)))) as { time?: Record<string, string> }
+    const published = doc.time?.[version]
+    if (published === undefined) return null
+    const at = Date.parse(published)
+    return Number.isFinite(at) ? at : null
+  } catch {
+    return null
+  }
+}
+
 /** The registry's current `latest` version for a package, or null when it can't be read. */
 /**
  * The version a channel subscriber should be offered: the newest build in
@@ -518,6 +545,41 @@ async function gitVersionUpdate(
   return compared === null ? null : compared > 0
 }
 
+/**
+ * A held update whose window has passed is available again. The cache lives
+ * 30 minutes; without this a user would watch "in about 1 hour" sit there
+ * after the hour ended, and could not update until the TTL happened to turn
+ * over. Pure: returns the same map when nothing expired.
+ */
+/**
+ * When the profile's fresh-release wait ends for `latest`, or null when the
+ * release is old enough to install now (or the registry cannot say).
+ */
+async function releaseAgeHold(name: string, latest: string | null, profile: string, activeProfileDir: string): Promise<string | null> {
+  if (latest === null) return null
+  const windowMs = readMinimumReleaseAgeMs(profile, activeProfileDir)
+  if (windowMs === null) return null
+  const published = await npmPublishedAt(name, latest)
+  if (published === null) return null
+  const until = published + windowMs
+  return until > Date.now() ? new Date(until).toISOString() : null
+}
+
+function refreshExpiredHolds(data: Record<string, UpdateStatus>): Record<string, UpdateStatus> {
+  let changed = false
+  const out: Record<string, UpdateStatus> = {}
+  for (const [name, status] of Object.entries(data)) {
+    if (status.heldUpdate === undefined || Date.parse(status.heldUpdate.until) > Date.now()) {
+      out[name] = status
+      continue
+    }
+    const { heldUpdate: _held, ...rest } = status
+    out[name] = { ...rest, updateAvailable: true }
+    changed = true
+  }
+  return changed ? out : data
+}
+
 /** Per-plugin update checks; a failed check reports no update rather than failing the listing. */
 export async function checkUpdates(
   profile: string,
@@ -544,15 +606,23 @@ export async function checkUpdates(
    * compare the install with whatever package merely shares its name.
    */
   catalogNpmByRepo: ReadonlyMap<string, string> = new Map(),
+  /**
+   * Hold back releases that this profile's `minimumReleaseAge` will refuse
+   * (#945). Only true where the install path has no bypass: the official
+   * Desktop's manager takes no pnpm options, while the CLI path retries once
+   * with `--config.minimum-release-age=0` and CAN install a young release.
+   * Hiding those on the CLI would suppress updates that work.
+   */
+  options: { holdYoungReleases?: boolean } = {},
 ): Promise<Record<string, UpdateStatus>> {
   const activeProfileDir = profileDir(profile, explicitDir)
   // The channel is part of the key: switching to betas has to change the
   // answer immediately, and a cache keyed on the profile alone would serve
   // the stable verdict for the rest of the TTL — reading as "the setting did
   // nothing".
-  const cacheKey = `${activeProfileDir}\u0000${[...channelFor].map(([n, c]) => `${n}:${c}`).sort().join(',')}\u0000${[...onlineSourceFor].map(([n, s]) => `${n}:${s}`).sort().join(',')}\u0000${[...catalogNpmByRepo].map(([n, s]) => `${n}:${s}`).sort().join(',')}`
+  const cacheKey = `${activeProfileDir}\u0000${options.holdYoungReleases === true ? 'hold' : 'any'}\u0000${[...channelFor].map(([n, c]) => `${n}:${c}`).sort().join(',')}\u0000${[...onlineSourceFor].map(([n, s]) => `${n}:${s}`).sort().join(',')}\u0000${[...catalogNpmByRepo].map(([n, s]) => `${n}:${s}`).sort().join(',')}`
   if (!force && updatesCache?.key === cacheKey && Date.now() - updatesCache.at < UPDATES_TTL_MS) {
-    return updatesCache.data
+    return refreshExpiredHolds(updatesCache.data)
   }
   const installed = readInstalled(profile, activeProfileDir)
   const lockCommits = readLockCommits(profile, activeProfileDir)
@@ -564,10 +634,15 @@ export async function checkUpdates(
       const onlineSource = onlineSourceFor.get(name)
       if (onlineSource !== undefined) {
         const latest = await fetchNpmLatest(onlineSource)
-        const updateAvailable = isUpgrade(version, latest)
+        const upgrade = isUpgrade(version, latest)
+        const heldUntil = upgrade && options.holdYoungReleases === true
+          ? await releaseAgeHold(onlineSource, latest, profile, activeProfileDir)
+          : null
         result[name] = {
-          kind: 'linked', version, current: version, latest, updateAvailable,
-          ...(updateAvailable ? { restoreRequired: true } : {}),
+          kind: 'linked', version, current: version, latest,
+          updateAvailable: upgrade && heldUntil === null,
+          ...(heldUntil === null ? {} : { heldUpdate: { latest: latest!, until: heldUntil } }),
+          ...(upgrade ? { restoreRequired: true } : {}),
         }
         return
       }
@@ -693,9 +768,13 @@ export async function checkUpdates(
         const mayFollowATag = !upgrade
           && (version?.includes('-') === true || (stable !== null && version !== null && isUpgrade(stable, version) === false && stable !== version))
         const newerPrerelease = mayFollowATag ? await newerPrereleaseFor(name, version) : null
+        const heldUntil = upgrade && options.holdYoungReleases === true
+          ? await releaseAgeHold(name, latest, profile, activeProfileDir)
+          : null
         result[name] = {
           kind: 'npm', version, current: version, latest,
-          updateAvailable: upgrade,
+          updateAvailable: upgrade && heldUntil === null,
+          ...(heldUntil === null ? {} : { heldUpdate: { latest: latest!, until: heldUntil } }),
           ...(newerPrerelease === null ? {} : { newerPrerelease }),
           ...(sideways ? { channelSwitch: latest } : {}),
         }

@@ -7358,6 +7358,17 @@ export function MarketSection(props: MarketSectionProps) {
                                               }}
                                             >{status.restoreRequired === true ? t('restoreOnline') : t('update')}</Button>
                                           )
+                                        : status?.heldUpdate !== undefined
+                                          // A newer release exists but pnpm will refuse
+                                          // it until the profile's fresh-release wait
+                                          // passes (#945). The official Desktop has no
+                                          // bypass, so the honest state is "waiting",
+                                          // not a button that fails by construction.
+                                          ? (
+                                              <span className={css.metaTag} title={t('updateHeldHint').replace('{1}', String(Math.max(1, Math.ceil((Date.parse(status.heldUpdate.until) - Date.now()) / 3_600_000))))}>
+                                                {t('updateHeldTag').replace('{0}', displayLatest(status.heldUpdate.latest))}
+                                              </span>
+                                            )
                                         : localDev
                                           ? null
                                           : status?.unreleasedCommit != null

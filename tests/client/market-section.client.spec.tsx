@@ -1830,6 +1830,30 @@ describe('MarketSection (jsdom)', () => {
     })
   })
 
+  it('shows a fresh release as waiting instead of offering a failing update (#945)', async () => {
+    // The official Desktop cannot bypass minimumReleaseAge, so an update
+    // offered inside the window is a button that fails by construction. The
+    // row says when it opens instead.
+    const until = new Date(Date.now() + 5 * 3_600_000).toISOString()
+    stubFetch({
+      '/dsh-market/installed': { profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: [] },
+      '/dsh-market/updates': {
+        updates: {
+          'dsh-loop': {
+            kind: 'npm', version: '1.0.0', current: '1.0.0', latest: '1.2.0',
+            updateAvailable: false, heldUpdate: { latest: '1.2.0', until },
+          },
+        },
+      },
+    })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+
+    expect(await screen.findByText(en.updateHeldTag)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: en.update })).toBeNull()
+  })
+
   it('names a newer prerelease instead of "up to date", and installs that exact version (#867)', async () => {
     // The pinned install is AHEAD of npm's `latest` (0.2.1-alpha.2 vs
     // 0.1.5-alpha.2), which means the reader follows a line `latest` does not

@@ -393,6 +393,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			updateNow: "立即更新",
 			updateFail: "更新失败",
 			upToDate: "已是最新",
+			updateHeldTag: "新版等待中",
+			updateHeldHint: "这个 profile 要求新版本发布满一段时间才允许安装，大约还要 {1} 小时。",
 			newerPrereleaseAvailable: "预发布版 {0} 已发布",
 			newerPrereleaseHint: "npm 上的 latest 没有更新；你在跟的这条预发布线发布了更新的版本。",
 			unreleasedCommits: "有新提交（未发版）{0}",
@@ -1132,6 +1134,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			updateNow: "Update now",
 			updateFail: "Update failed",
 			upToDate: "Up to date",
+			updateHeldTag: "new version waiting",
+			updateHeldHint: "This profile waits a while before it installs a fresh release; about {1} hour(s) left.",
 			newerPrereleaseAvailable: "prerelease {0} published",
 			newerPrereleaseHint: "The package's latest tag has no update; the prerelease line you are on published a newer build.",
 			unreleasedCommits: "New commits (unreleased) {0}",
@@ -14154,6 +14158,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 																else doUpdate(name);
 															},
 															children: status.restoreRequired === true ? t("restoreOnline") : t("update")
+														}) : status?.heldRelease !== void 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+															className: Market_module_css_default.metaTag,
+															title: t("updateHeldHint").replace("{1}", String(Math.max(1, Math.ceil((Date.parse(status.heldRelease.until) - Date.now()) / 36e5)))),
+															children: t("updateHeldTag").replace("{0}", displayLatest(status.heldRelease.latest))
 														}) : localDev ? null : status?.unreleasedCommit != null ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 															className: Market_module_css_default.metaTag,
 															title: t("unreleasedCommitsHint"),
