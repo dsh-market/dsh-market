@@ -130,7 +130,7 @@ export function trialValidate(
   // id into one entry (1.0.4+) this is an override, not a refusal. Making it
   // fatal here is what rolled back every update for a profile that already
   // had a package row and a user-patch row on one id.
-  const duplicateFatal = duplicateEntryIdsAreFatal(profileDir)
+  const duplicateFatal = duplicateEntryIdsAreFatal(profileDir, dshInstall)
   for (const dup of composed.duplicates) {
     const message = `duplicate loader entry id ${JSON.stringify(dup.id)} (${dup.count} rows) / 重复的 loader 条目 id ${JSON.stringify(dup.id)}`
     if (duplicateFatal) errors.push({ layer: dup.layers.join(' / '), message })

@@ -1093,6 +1093,47 @@ describe('one loader id on two rows depends on the loader (#853)', () => {
 
     expect(report.summary.errors.some(e => e.includes('duplicate loader entry id'))).toBe(true)
   })
+
+  /** A host installation whose shared node_modules carries the loader. */
+  function hostWithLoader(version: string): string {
+    const host = mkdtempSync(join(tmpdir(), 'dshm-host-'))
+    const packageDir = join(host, 'node_modules', '@deepseek-ai', 'cordis-plugin-loader')
+    mkdirSync(packageDir, { recursive: true })
+    writeFileSync(join(packageDir, 'package.json'), JSON.stringify({ name: '@deepseek-ai/cordis-plugin-loader', version }))
+    return host
+  }
+
+  it('reads the loader from a host that PROVIDES it when the profile lockfile cannot (#943)', () => {
+    // The official Desktop embeds the loader in app.asar and hands it to every
+    // profile, so a profile lockfile can never name it. Reading that as an old
+    // loader made this gate fatal for every update on 0.2.1-rc.2.
+    const dir = pdir()
+    twoRowsOnOneId(dir)
+
+    const report = analyzeProfile(dir, { dshInstallDir: hostWithLoader('1.0.6') })
+
+    expect(report.summary.errors.some(e => e.includes('duplicate loader entry id'))).toBe(false)
+    expect(report.summary.warnings.some(w => w.includes('dsh-market'))).toBe(true)
+  })
+
+  it('still refuses when the host-provided loader is one that throws on the pair', () => {
+    const dir = pdir()
+    twoRowsOnOneId(dir)
+
+    const report = analyzeProfile(dir, { dshInstallDir: hostWithLoader('1.0.3') })
+
+    expect(report.summary.errors.some(e => e.includes('duplicate loader entry id'))).toBe(true)
+  })
+
+  it('the trial gate reads the same host-provided loader', () => {
+    // trial.ts calls the same function on the candidate composition; without
+    // the host fallback it kept rolling updates back after the check report
+    // had already relaxed (#943: "update succeeds, then reverts").
+    const dir = pdir()
+    twoRowsOnOneId(dir)
+    const result = trialValidate(dir, [], { dshInstallDir: hostWithLoader('1.0.6') })
+    expect(result.ok).toBe(true)
+  })
 })
 
 describe('duplicate loader entry names (#98 opt: runtime shadowing)', () => {

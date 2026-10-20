@@ -979,14 +979,26 @@ export function composeLayers(layers: LayerInput[]): Composed {
  * patch row plus a user-patch row on the same id: fatal forever meant every
  * update of every plugin rolled back.
  *
- * Unknown version stays fatal: the conservative direction, and the case where
- * the evidence to be less strict is missing.
+ * An empty answer from the PROFILE lockfile is not "unknown" on the official
+ * Desktop: that host embeds the loader in `app.asar` and provides it to every
+ * profile, so no profile can ever name it (#943). Reading that as an old
+ * loader made the gate fatal for every update on 0.2.1-rc.2 — the exact report
+ * #853's fix was supposed to close. The host installation is asked before the
+ * evidence is treated as missing; only when both are silent does the
+ * conservative answer stand.
  */
-export function duplicateEntryIdsAreFatal(profileDirectory: string): boolean {
+export function duplicateEntryIdsAreFatal(profileDirectory: string, dshInstallDir?: string | null): boolean {
   const versions = lockfileCoreVersions(profileDirectory).get('@deepseek-ai/cordis-plugin-loader') ?? []
-  if (versions.length === 0) return true
-  const newest = versions.reduce((a, b) => (compareSemver(a, b) >= 0 ? a : b))
-  return compareSemver(newest, '1.0.4') < 0
+  if (versions.length > 0) {
+    const newest = versions.reduce((a, b) => (compareSemver(a, b) >= 0 ? a : b))
+    return compareSemver(newest, '1.0.4') < 0
+  }
+  const install = dshInstallDir === undefined ? findDshInstallDir() : dshInstallDir
+  const host = install === null
+    ? null
+    : readNodeModulesVersion(dirname(hostNodeModulesRoot(install)), '@deepseek-ai/cordis-plugin-loader')
+  if (host === null) return true
+  return compareSemver(host, '1.0.4') < 0
 }
 
 /** Distinct versions of `@deepseek-ai/{dsh,cordis}*` packages in the lockfile. */
@@ -1564,7 +1576,7 @@ export function analyzeProfile(profileDirectory: string, options: CheckOptions =
   // Rows on one id: a boot failure on an old loader, a silent override on a
   // new one (see duplicateEntryIdsAreFatal). Refusing an operation over the
   // second shape rolled back every update for the reporter's profile.
-  const duplicateFatal = duplicateEntryIdsAreFatal(profileDirectory)
+  const duplicateFatal = duplicateEntryIdsAreFatal(profileDirectory, dshInstall)
   for (const dup of composed.duplicates) {
     if (duplicateFatal) {
       errors.push(`duplicate loader entry id ${JSON.stringify(dup.id)} (${dup.count} rows: ${dup.layers.join(', ')})`)
