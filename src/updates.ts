@@ -78,7 +78,7 @@ export interface UpdateStatus {
    * an update the user cannot apply is not available — and `until` is when
    * pnpm will accept it.
    */
-  heldUpdate?: { latest: string; until: string }
+  heldUpdate?: { latest: string; until: string; estimated?: true }
   /**
    * The version this package's channel points at, when it differs from what
    * is installed and is NOT newer.
@@ -319,16 +319,43 @@ export async function latestPublishedRecently(name: string, windowMs = 26 * 60 *
  * (#945). Null when the registry cannot answer — callers must not claim a
  * wait on null.
  */
-async function npmPublishedAt(name: string, version: string): Promise<number | null> {
-  try {
-    const doc = (await fetchJson(npmUrl(encodeURIComponent(name)))) as { time?: Record<string, string> }
-    const published = doc.time?.[version]
-    if (published === undefined) return null
-    const at = Date.parse(published)
-    return Number.isFinite(at) ? at : null
-  } catch {
-    return null
+/**
+ * How long a hold stands when the registry cannot say when a version was
+ * published. Bounded rather than the full window: the usual cause is a mirror
+ * that has served the new `/latest` but not yet the packument entry (#961,
+ * #927 measured 14 minutes, #961 observed 27), and by the next poll the real
+ * timestamp is there and the hold is recomputed from it. A registry that never
+ * ships a time map keeps holding — the safe direction, and the one the market
+ * chose after #945.
+ */
+const UNKNOWN_PUBLISH_HOLD_MS = 30 * 60 * 1000
+
+type PublishAge = { kind: 'at'; at: number } | { kind: 'unknown' }
+
+/**
+ * When a version was published, retried once when the packument does not say.
+ *
+ * A missing `time[version]` is NOT evidence that the release is old — on a
+ * mirror mid-sync it is the opposite: `/latest` already answers the new
+ * version while the full document still lags (#961). The second attempt asks
+ * with a cache-buster because the first answer is exactly what a warm edge
+ * cache serves.
+ */
+async function npmPublishAge(name: string, version: string): Promise<PublishAge> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const query = attempt === 0 ? '' : `?t=${String(Date.now())}`
+      const doc = (await fetchJson(npmUrl(`${encodeURIComponent(name)}${query}`))) as {
+        time?: Record<string, string>
+      }
+      const published = doc.time?.[version]
+      if (published !== undefined) {
+        const at = Date.parse(published)
+        return Number.isFinite(at) ? { kind: 'at', at } : { kind: 'unknown' }
+      }
+    } catch { /* retry once below */ }
   }
+  return { kind: 'unknown' }
 }
 
 /** The registry's current `latest` version for a package, or null when it can't be read. */
@@ -555,14 +582,22 @@ async function gitVersionUpdate(
  * When the profile's fresh-release wait ends for `latest`, or null when the
  * release is old enough to install now (or the registry cannot say).
  */
-async function releaseAgeHold(name: string, latest: string | null, profile: string, activeProfileDir: string): Promise<string | null> {
+type ReleaseAgeHold = { until: string; estimated: boolean } | 'past' | null
+
+async function releaseAgeHold(name: string, latest: string | null, profile: string, activeProfileDir: string): Promise<ReleaseAgeHold> {
   if (latest === null) return null
   const windowMs = readMinimumReleaseAgeMs(profile, activeProfileDir)
   if (windowMs === null) return null
-  const published = await npmPublishedAt(name, latest)
-  if (published === null) return null
-  const until = published + windowMs
-  return until > Date.now() ? new Date(until).toISOString() : null
+  const age = await npmPublishAge(name, latest)
+  if (age.kind === 'unknown') {
+    // Fail CLOSED (#961). Returning null here meant "no wait needed", so a
+    // mirror that had not synced its packument yet let a 13-minute-old release
+    // through the gate #945 built — and on the official Desktop there is no
+    // bypass to fall back on, so the click could only fail.
+    return { until: new Date(Date.now() + UNKNOWN_PUBLISH_HOLD_MS).toISOString(), estimated: true }
+  }
+  const until = age.at + windowMs
+  return until > Date.now() ? { until: new Date(until).toISOString(), estimated: false } : 'past'
 }
 
 function refreshExpiredHolds(data: Record<string, UpdateStatus>): Record<string, UpdateStatus> {
@@ -635,13 +670,14 @@ export async function checkUpdates(
       if (onlineSource !== undefined) {
         const latest = await fetchNpmLatest(onlineSource)
         const upgrade = isUpgrade(version, latest)
-        const heldUntil = upgrade && options.holdYoungReleases === true
+        const hold = upgrade && options.holdYoungReleases === true
           ? await releaseAgeHold(onlineSource, latest, profile, activeProfileDir)
           : null
+        const held = hold !== null && hold !== 'past'
         result[name] = {
           kind: 'linked', version, current: version, latest,
-          updateAvailable: upgrade && heldUntil === null,
-          ...(heldUntil === null ? {} : { heldUpdate: { latest: latest!, until: heldUntil } }),
+          updateAvailable: upgrade && !held,
+          ...(held ? { heldUpdate: { latest: latest!, until: hold.until, ...(hold.estimated ? { estimated: true as const } : {}) } } : {}),
           ...(upgrade ? { restoreRequired: true } : {}),
         }
         return
@@ -768,13 +804,14 @@ export async function checkUpdates(
         const mayFollowATag = !upgrade
           && (version?.includes('-') === true || (stable !== null && version !== null && isUpgrade(stable, version) === false && stable !== version))
         const newerPrerelease = mayFollowATag ? await newerPrereleaseFor(name, version) : null
-        const heldUntil = upgrade && options.holdYoungReleases === true
+        const hold = upgrade && options.holdYoungReleases === true
           ? await releaseAgeHold(name, latest, profile, activeProfileDir)
           : null
+        const held = hold !== null && hold !== 'past'
         result[name] = {
           kind: 'npm', version, current: version, latest,
-          updateAvailable: upgrade && heldUntil === null,
-          ...(heldUntil === null ? {} : { heldUpdate: { latest: latest!, until: heldUntil } }),
+          updateAvailable: upgrade && !held,
+          ...(held ? { heldUpdate: { latest: latest!, until: hold.until, ...(hold.estimated ? { estimated: true as const } : {}) } } : {}),
           ...(newerPrerelease === null ? {} : { newerPrerelease }),
           ...(sideways ? { channelSwitch: latest } : {}),
         }

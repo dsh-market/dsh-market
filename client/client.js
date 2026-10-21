@@ -395,6 +395,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			upToDate: "已是最新",
 			updateHeldTag: "新版等待中",
 			updateHeldHint: "这个 profile 要求新版本发布满一段时间才允许安装，大约还要 {1} 小时。",
+			updateHeldEstimatedHint: "新版本已经出现在 /latest，但镜像的完整信息还没同步，所以先不提供更新；大约 {1} 分钟后会重新检查。",
 			newerPrereleaseAvailable: "预发布版 {0} 已发布",
 			newerPrereleaseHint: "npm 上的 latest 没有更新；你在跟的这条预发布线发布了更新的版本。",
 			unreleasedCommits: "有新提交（未发版）{0}",
@@ -1136,6 +1137,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			upToDate: "Up to date",
 			updateHeldTag: "new version waiting",
 			updateHeldHint: "This profile waits a while before it installs a fresh release; about {1} hour(s) left.",
+			updateHeldEstimatedHint: "The new version is listed, but the registry mirror has not caught up with its metadata, so the update is held; the market checks again in about {1} minute(s).",
 			newerPrereleaseAvailable: "prerelease {0} published",
 			newerPrereleaseHint: "The package's latest tag has no update; the prerelease line you are on published a newer build.",
 			unreleasedCommits: "New commits (unreleased) {0}",
@@ -14158,11 +14160,17 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 																else doUpdate(name);
 															},
 															children: status.restoreRequired === true ? t("restoreOnline") : t("update")
-														}) : status?.heldUpdate !== void 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-															className: Market_module_css_default.metaTag,
-															title: t("updateHeldHint").replace("{1}", String(Math.max(1, Math.ceil((Date.parse(status.heldUpdate.until) - Date.now()) / 36e5)))),
-															children: t("updateHeldTag").replace("{0}", displayLatest(status.heldUpdate.latest))
-														}) : localDev ? null : status?.unreleasedCommit != null ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+														}) : status?.heldUpdate !== void 0 ? (() => {
+															const left = Date.parse(status.heldUpdate.until) - Date.now();
+															const estimated = status.heldUpdate.estimated === true;
+															const amount = String(Math.max(1, Math.ceil(left / (estimated ? 6e4 : 36e5))));
+															const hint = t(estimated ? "updateHeldEstimatedHint" : "updateHeldHint").replace("{1}", amount);
+															return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+																className: Market_module_css_default.metaTag,
+																title: hint,
+																children: t("updateHeldTag").replace("{0}", displayLatest(status.heldUpdate.latest))
+															});
+														})() : localDev ? null : status?.unreleasedCommit != null ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 															className: Market_module_css_default.metaTag,
 															title: t("unreleasedCommitsHint"),
 															children: t("unreleasedCommits").replace("{0}", displayLatest(status.unreleasedCommit))

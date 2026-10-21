@@ -133,6 +133,48 @@ describe('checkUpdates — fresh-release wait (#945)', () => {
     expect(left).toBeLessThan(23.5 * 3_600_000)
   })
 
+  it('holds a version the mirror has not timestamped yet, and marks the hold estimated (#961)', async () => {
+    // Mid-sync: /latest already answers 1.1.0, the packument still has no
+    // time['1.1.0']. Reading that as "old enough" let a 13-minute-old release
+    // through the gate #945 built, and on the official Desktop the click could
+    // only fail.
+    const dir = npmProfile(1440)
+    vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
+      const href = String(url)
+      const body = href.endsWith('/widget/latest')
+        ? { version: '1.1.0' }
+        : { 'dist-tags': { latest: '1.0.0' }, time: { '1.0.0': '2026-01-01T00:00:00.000Z' } }
+      return new Response(JSON.stringify(body), { status: 200 })
+    }))
+    const result = await checkUpdates('web', true, dir, new Map(), new Map(), new Map(), { holdYoungReleases: true })
+    expect(result.widget?.updateAvailable).toBe(false)
+    expect(result.widget?.heldUpdate?.estimated).toBe(true)
+    const left = Date.parse(result.widget!.heldUpdate!.until) - Date.now()
+    // Bounded, not the full 24 hours: the next poll recomputes from the real
+    // timestamp once the mirror catches up.
+    expect(left).toBeGreaterThan(25 * 60_000)
+    expect(left).toBeLessThan(31 * 60_000)
+  })
+
+  it('retries the packument before calling the age unknown (#961)', async () => {
+    const dir = npmProfile(1440)
+    let packuments = 0
+    vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
+      const href = String(url)
+      if (href.endsWith('/widget/latest')) return new Response(JSON.stringify({ version: '1.1.0' }), { status: 200 })
+      packuments++
+      const body = packuments === 1
+        ? { time: { '1.0.0': '2026-01-01T00:00:00.000Z' } }
+        : { time: { '1.1.0': hoursAgo(1) } }
+      return new Response(JSON.stringify(body), { status: 200 })
+    }))
+    const result = await checkUpdates('web', true, dir, new Map(), new Map(), new Map(), { holdYoungReleases: true })
+    expect(packuments).toBe(2)
+    // The second answer is the real one: a normal held window, not an estimate.
+    expect(result.widget?.heldUpdate?.estimated).toBeUndefined()
+    expect(result.widget?.updateAvailable).toBe(false)
+  })
+
   it('still offers it where the install path can bypass the wait (CLI)', async () => {
     // The CLI retries with --config.minimum-release-age=0; hiding the update
     // there would suppress one that actually works.

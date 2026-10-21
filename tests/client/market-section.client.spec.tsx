@@ -1854,6 +1854,32 @@ describe('MarketSection (jsdom)', () => {
     expect(screen.queryByRole('button', { name: en.update })).toBeNull()
   })
 
+  it('marks a hold the registry could not timestamp as estimated (#961)', async () => {
+    // Mid-sync the mirror answers /latest but not the packument entry; the
+    // market holds anyway and says it is a guess, rather than claiming a
+    // window it cannot know.
+    const until = new Date(Date.now() + 25 * 60_000).toISOString()
+    stubFetch({
+      '/dsh-market/installed': { profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: [] },
+      '/dsh-market/updates': {
+        updates: {
+          'dsh-loop': {
+            kind: 'npm', version: '1.0.0', current: '1.0.0', latest: '1.2.0',
+            updateAvailable: false, heldUpdate: { latest: '1.2.0', until, estimated: true },
+          },
+        },
+      },
+    })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+
+    const tag = await screen.findByText(en.updateHeldTag)
+    expect(tag.getAttribute('title')).toMatch(/mirror|镜像/)
+    expect(tag.getAttribute('title')).toMatch(/minute|分钟/)
+    expect(screen.queryByRole('button', { name: en.update })).toBeNull()
+  })
+
   it('names a newer prerelease instead of "up to date", and installs that exact version (#867)', async () => {
     // The pinned install is AHEAD of npm's `latest` (0.2.1-alpha.2 vs
     // 0.1.5-alpha.2), which means the reader follows a line `latest` does not

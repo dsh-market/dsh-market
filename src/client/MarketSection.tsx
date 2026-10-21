@@ -7364,11 +7364,21 @@ export function MarketSection(props: MarketSectionProps) {
                                           // passes (#945). The official Desktop has no
                                           // bypass, so the honest state is "waiting",
                                           // not a button that fails by construction.
-                                          ? (
-                                              <span className={css.metaTag} title={t('updateHeldHint').replace('{1}', String(Math.max(1, Math.ceil((Date.parse(status.heldUpdate.until) - Date.now()) / 3_600_000))))}>
-                                                {t('updateHeldTag').replace('{0}', displayLatest(status.heldUpdate.latest))}
-                                              </span>
-                                            )
+                                          ? (() => {
+                                              const left = Date.parse(status.heldUpdate.until) - Date.now()
+                                              // An estimated hold is the registry failing to say when
+                                              // the version shipped (#961), not a known window: say
+                                              // minutes and say why, rather than claiming a wait the
+                                              // market cannot know.
+                                              const estimated = status.heldUpdate.estimated === true
+                                              const amount = String(Math.max(1, Math.ceil(left / (estimated ? 60_000 : 3_600_000))))
+                                              const hint = t(estimated ? 'updateHeldEstimatedHint' : 'updateHeldHint').replace('{1}', amount)
+                                              return (
+                                                <span className={css.metaTag} title={hint}>
+                                                  {t('updateHeldTag').replace('{0}', displayLatest(status.heldUpdate.latest))}
+                                                </span>
+                                              )
+                                            })()
                                         : localDev
                                           ? null
                                           : status?.unreleasedCommit != null
