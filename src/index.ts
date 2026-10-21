@@ -362,12 +362,19 @@ export function apply(ctx: Context, config?: Config): void {
       const desktopHost = desktopCtx as unknown as MarketEffectHost
       installDesktopMarketSettings(desktopCtx)
       desktopHost.effect(() => {
+        // Same authority source as the other two branches (#960): this is the
+        // branch Desktop actually takes, and without it the fence only ever
+        // accepted loopback — every mutating route answered 403 untrusted
+        // origin on a LAN, Tailscale or hostname deployment the host itself
+        // had declared.
+        const restoreTrustedHosts = useTrustedHosts(ctx)
         // The host that publishes `desktopProfiles` is the one that may own
         // activation (#551): hand it the bridge it published, if any, so the
         // market can ask for a replay instead of mounting a second entry.
         const disposeRoutes = mountMarketRoutes(host, resolved, runtime, agentsLookupOf(ctx), desktopProfiles.pluginActivation)
         return async () => {
           disposeRoutes()
+          restoreTrustedHosts()
           await runtime.dispose()
         }
       }, 'dsh-market: Desktop http routes and package operations')

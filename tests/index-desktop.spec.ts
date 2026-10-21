@@ -304,6 +304,31 @@ describe('host adaptation', () => {
     })
   })
 
+  it('feeds the declared authorities to the branch Desktop actually mounts (#960)', async () => {
+    // The desktopPnpm branch is the one the official Desktop shell takes. It
+    // skipped useTrustedHosts, so the fence only ever accepted loopback: on a
+    // LAN / Tailscale / hostname deployment the host itself declared and
+    // accepted, every mutating market route answered 403 "untrusted origin".
+    const { declaredTrustedHosts } = await import('../src/http.ts')
+    const desktopPnpm = { runPlugin: vi.fn() }
+    const ctx = new FakeContext({
+      webServer: {},
+      loader: {},
+      desktopProfiles: { current: { name: 'shell', dir: '/shell/dir' } },
+      desktopPnpm,
+      connection: { trustedHosts: ['192.168.31.120', '100.107.115.15'] },
+    })
+    apply(ctx as never)
+
+    expect(declaredTrustedHosts()).toEqual(['192.168.31.120', '100.107.115.15'])
+    const effect = ctx.effects.find(entry => entry.label.includes('Desktop http routes'))
+    expect(effect).toBeDefined()
+    await effect?.dispose()
+    // Disposal puts the previous source back rather than leaving this
+    // deployment's names accepted after the branch is gone.
+    expect(declaredTrustedHosts()).toEqual([])
+  })
+
   it('uses the immutable Desktop profile and waits for desktopPnpm in a nested injection', async () => {
     const desktopPnpm = { runPlugin: vi.fn() }
     const ctx = new FakeContext({
