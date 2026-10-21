@@ -446,6 +446,39 @@ describe('a partial write must not erase the rest of the state (#435)', () => {
   })
 })
 
+describe('group state normalization (#964)', () => {
+  it('drops order entries with no group and appends groups with no order entry', () => {
+    const dir = stateDir()
+    try {
+      // The reported file: four names in the order, one key in the map. The
+      // UI lists all four, and every operation on the three ghosts answers
+      // group-not-found — including delete.
+      writeFileSync(join(dir, '.dsh-market', 'state.json'), JSON.stringify({
+        groups: { '本地化插件': ['dsh-loop'] },
+        groupOrder: ['插件', '工作', '学习', '本地化插件'],
+      }))
+      const state = readMarketState(dir)
+      expect(state.groupOrder).toEqual(['本地化插件'])
+      expect(Object.keys(state.groups)).toEqual(['本地化插件'])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps a group whose order entry is missing', () => {
+    const dir = stateDir()
+    try {
+      writeFileSync(join(dir, '.dsh-market', 'state.json'), JSON.stringify({
+        groups: { work: [], play: [] },
+        groupOrder: ['play'],
+      }))
+      expect(readMarketState(dir).groupOrder).toEqual(['play', 'work'])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('group CRUD (groups.ts)', () => {
   it('create/rename/delete keep groups and order consistent', () => {
     const state = { groups: {}, groupOrder: [] }
@@ -462,6 +495,15 @@ describe('group CRUD (groups.ts)', () => {
     expect(renameGroup(state, 'work', 'work').ok).toBe(true)
 
     expect(deleteGroup(state, 'work').ok).toBe(true)
+    expect(state).toEqual({ groups: {}, groupOrder: [] })
+    expect(deleteGroup(state, 'ghost').ok).toBe(false)
+  })
+
+  it('deletes a name the order still lists but the map lost (#964)', () => {
+    // The impossible row the reporter was stuck with: listed, but every
+    // operation — including delete — answered group-not-found.
+    const state = { groups: {}, groupOrder: ['ghost'] }
+    expect(deleteGroup(state, 'ghost').ok).toBe(true)
     expect(state).toEqual({ groups: {}, groupOrder: [] })
     expect(deleteGroup(state, 'ghost').ok).toBe(false)
   })

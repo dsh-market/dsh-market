@@ -55,8 +55,18 @@ export function renameGroup(state: GroupState, name: unknown, newName: unknown):
 }
 
 export function deleteGroup(state: GroupState, name: unknown): GroupMutationResult {
-  if (typeof name !== 'string' || state.groups[name] === undefined) {
+  if (typeof name !== 'string') {
     return { ok: false, error: 'group not found / 分组不存在' }
+  }
+  // A name the order still lists but the map no longer holds (#964): deleting
+  // it must be possible, or the row is stuck on screen with no way out. The
+  // normal read prunes these, but a state file can reach a running process
+  // that way, and refusing here is what made the row undeletable.
+  if (state.groups[name] === undefined) {
+    const orphan = state.groupOrder.indexOf(name)
+    if (orphan === -1) return { ok: false, error: 'group not found / 分组不存在' }
+    state.groupOrder.splice(orphan, 1)
+    return { ok: true }
   }
   delete state.groups[name]
   // Mutate in place: routes.ts hands over the LIVE groupOrder array, and the

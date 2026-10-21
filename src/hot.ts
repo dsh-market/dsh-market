@@ -516,11 +516,21 @@ export function readMarketState(profileDir: string): MarketState {
     }
     const githubProxy = normalizeGithubProxy(state.githubProxy)
     const brokenPlugins = brokenPluginsFromUnknown(state.brokenPlugins)
+    // The order and the map are two halves of one fact, and a state file can
+    // carry them out of step (#964): the UI then lists a group the routes
+    // cannot find, so "assign to" and even "delete" answer group-not-found
+    // forever. Normalize on read — a name with no group disappears from the
+    // order, and a group with no order entry gets one appended — so the two
+    // cannot disagree however the file got that way.
+    const groupOrder = uniqueStrings(state.groupOrder).filter(name => groups[name] !== undefined)
+    for (const name of Object.keys(groups)) {
+      if (!groupOrder.includes(name)) groupOrder.push(name)
+    }
     return {
       disabled: new Set(disabled),
       groups,
       notes,
-      groupOrder: uniqueStrings(state.groupOrder),
+      groupOrder,
       channel: asChannel(state.channel) ?? undefined,
       region: asRegion(state.region) ?? undefined,
       // Only meaningful beside a region, and only when true: a stray flag
