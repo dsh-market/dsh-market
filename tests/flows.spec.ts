@@ -2408,6 +2408,55 @@ describe('update flow — no npm publishing required', () => {
     expect(r.status).toBe(200)
   })
 
+  it('removes the installed build before updating through the official Desktop manager', async () => {
+    // The official manager refuses `add` for a package already in the profile
+    // (`already-installed`) before pnpm runs, because its HMR path cannot
+    // install over a running build. An update on that host has to be the same
+    // remove-then-install sequence the app's own Plugins page performs.
+    bed.dispose()
+    const calls: string[][] = []
+    let installed = true
+    const runtime = {
+      acceptsMarketPnpmFlags: false,
+      supportsExactRollbackTarget: () => true,
+      probePnpm: () => Promise.resolve(true),
+      provisionPnpm: () => Promise.resolve({ ok: true }),
+      cancelActive: () => false,
+      runPlugin: async (profile: string, args: string[]) => {
+        calls.push(args)
+        if (args[0] === 'remove') {
+          installed = false
+          return await runDshPlugin(profile, args)
+        }
+        if (args[0] === 'add') {
+          if (installed) {
+            return {
+              exitCode: 1,
+              timedOut: false,
+              stdout: '',
+              stderr: '{"code":"already-installed"}',
+              cancelled: false,
+            }
+          }
+          installed = true
+        }
+        return await runDshPlugin(profile, args)
+      },
+    }
+    bed = createTestbed({ desktopHost: true }, runtime as never)
+    advanceNpmLatest('1.2.0')
+
+    const result = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+
+    expect(result.status).toBe(200)
+    expect(result.json.ok).toBe(true)
+    // The probe `add` is refused before pnpm runs; only then does the route
+    // remove and retry, so nothing is touched by the refused attempt.
+    expect(calls.filter(call => call[0] === 'remove' || call[0] === 'add').map(call => call[0]))
+      .toEqual(['add', 'remove', 'add'])
+    expect(installedSpec('dsh-loop')).toMatch(/^\^?1\.2\.0$/)
+  })
+
   it('leaves a build the host holds open alone instead of a rollback that hits the same lock (#608)', async () => {
     advanceNpmLatest('1.2.0')
     const lockBefore = readFileSync(join(fake.profileDir, 'pnpm-lock.yaml'), 'utf8')

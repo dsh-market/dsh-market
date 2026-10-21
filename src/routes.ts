@@ -4701,8 +4701,35 @@ sendJson(response, 200, { updates })
             // runs. Write the intent first, so the log can answer "where did
             // my plugin go" after the fact.
             logEvent('info', 'update-start', `${name} -> ${target} (profile ${config.profile})`)
-            const result = await runPlugin(config.profile, addArgs)
-            const cancelled = result.cancelled
+            let result = await runPlugin(config.profile, addArgs)
+            let cancelled = result.cancelled
+            // The official Desktop plugin manager refuses to add a package that
+            // is already declared (`already-installed`): its HMR path treats an
+            // install-over as an unsupported operation. An update on that host is
+            // therefore a removal followed by an install — the same two steps the
+            // app's own Plugins page takes. Retry only on that exact refusal, so
+            // every other pre-pnpm failure (busy host, release-age hold, a refused
+            // build) still reports itself without touching the profile. Only the
+            // npm shape is handled here; its exact rollback target is known, so a
+            // failed retry can put the previous version back.
+            let removedForUpdate = false
+            if (!marketFlags && usesNpmUpdateTarget && rollbackPlan.available && !SELF_NAMES.has(name)
+              && !cancelled && result.exitCode !== 0 && result.timedOut !== true
+              && String(result.stderr ?? '').includes('already-installed')) {
+              const removal = await runPlugin(config.profile, ['remove', name])
+              if (removal.exitCode !== 0 || removal.timedOut || removal.cancelled) {
+                const detail = failureDetail(removal)
+                logEvent('error', 'update-remove', `${name}: could not remove the installed build before updating — ${detail}`)
+                sendJson(response, 502, {
+                  error: `${name} 更新失败：无法先卸载当前版本（${detail}），插件保持原样。 / ${name} update failed: the installed build could not be removed before updating (${detail}). The plugin was left as it was.`,
+                })
+                return
+              }
+              removedForUpdate = true
+              result = await runPlugin(config.profile, addArgs)
+              cancelled = result.cancelled
+              logEvent('info', 'update-remove', `${name}: removed the installed build before reinstalling it, as the official desktop manager requires`)
+            }
             // The pin above is the market's own write, so it is undone whenever
             // pnpm did not replace it. Measured on pnpm 11.7.0 and 12.4.1, a
             // bare `add` of a floating git URL rewrites the manifest back to
@@ -4831,20 +4858,21 @@ sendJson(response, 200, { updates })
                 `${name}: ${reason}; removed from the profile's dependencies and dsh.profile.bundles so the next start can compose — reinstall it from the market after quitting DSH`
                 + (dropped ? '' : ' (nothing to drop: the profile did not declare it under either key)'))
             }
-            if ((result.exitCode !== 0 || result.timedOut) && !cancelled && result.busy !== true
-              && !pnpmNeverStarted(result)
-              // The host refused before running pnpm (#897): nothing was
-              // written, so there is nothing to restore — and the "could not
-              // verify restoration, inspect this profile" warning this block
-              // raises on a failed rollback would be alarm about an untouched
-              // profile.
-              && result.wroteNothing !== true
-              // pnpm ran, then refused a too-young release without writing
-              // (#919). Same untouched profile; skipping the rollback keeps
-              // the release-age reason visible instead of covering it with a
-              // false "restoration could not be verified" alarm.
-              && !pnpmRefusedYoungRelease(result)) {
-              if (pnpmBlockedByOpenFiles(result)) {
+            const updateFailed = result.exitCode !== 0 || result.timedOut || cancelled
+            if (updateFailed && result.busy !== true
+              && (removedForUpdate || (!cancelled && !pnpmNeverStarted(result)
+                // The host refused before running pnpm (#897): nothing was
+                // written, so there is nothing to restore — and the "could not
+                // verify restoration, inspect this profile" warning this block
+                // raises on a failed rollback would be alarm about an untouched
+                // profile.
+                && result.wroteNothing !== true
+                // pnpm ran, then refused a too-young release without writing
+                // (#919). Same untouched profile; skipping the rollback keeps
+                // the release-age reason visible instead of covering it with a
+                // false "restoration could not be verified" alarm.
+                && !pnpmRefusedYoungRelease(result)))) {
+              if (!removedForUpdate && pnpmBlockedByOpenFiles(result)) {
                 const kept = keepLockedBuild()
                 rollbackOk = kept.ok
                 rollbackDetail = kept.detail
@@ -4889,7 +4917,7 @@ sendJson(response, 200, { updates })
             // ran. The question it asks does not depend on how the run ended —
             // can this package still load? — so ask it here too. A cancel that
             // left the previous build intact (the common case) is untouched.
-            if (cancelled && !hasLoadableEntry(activeProfileDir, name)) {
+            if (!removedForUpdate && cancelled && !hasLoadableEntry(activeProfileDir, name)) {
               const kept = keepLockedBuild()
               if (kept.missingEntry) {
                 dropBrokenDeclaration('the update was cancelled while pnpm was replacing the directory, and the previous build is incomplete', 'incomplete-build-cancelled')
