@@ -2568,6 +2568,105 @@ describe('MarketSection (jsdom)', () => {
     expect(JSON.parse(localStorage.getItem('dshm-queue-v1') ?? '[]')).toHaveLength(1)
   })
 
+  describe('finished operations across a reload', () => {
+    /** The Install button on one card, found by walking up from its name. */
+    const installButtonOf = (name: string) => {
+      let card: HTMLElement | null = screen.getByText(name)
+      while (card !== null && within(card).queryAllByRole('button', { name: en.install }).length === 0) {
+        card = card.parentElement
+      }
+      return within(card!).getAllByRole('button', { name: en.install })[0]!
+    }
+
+    /**
+     * A failed install is the row a reload used to eat: the card is back to
+     * "Install", the plugin is not in Installed (the host rolled it back), and
+     * the approval that was the only way forward disappeared with the row.
+     */
+    const failedInstall = {
+      id: 'op-4',
+      kind: 'install',
+      name: 'dsh-loop',
+      url: 'https://github.com/alice/dsh-loop',
+      state: 'failed',
+      reason: 'pnpm refused to run node-pty build scripts',
+      blockedBuilds: ['node-pty'],
+    }
+
+    it('restores a failed install row with its way out after a reload', async () => {
+      localStorage.setItem('dshm-settled-v1', JSON.stringify([failedInstall]))
+      stubFetch({
+        '/dsh-market/install': { ok: true, hot: false },
+        '/dsh-market/approve-builds': { ok: true, approved: ['node-pty'] },
+      })
+      render(<MarketSection {...props()} />)
+      await screen.findByText('dsh-loop')
+      // The card keeps the marker it had before the reload...
+      expect(await screen.findByRole('button', { name: en.opBlockedCard })).toBeTruthy()
+      // ...but the panel is not opened for the user; the row waits behind it.
+      expect(document.querySelector('[class*="opPanel"]')).toBeNull()
+      fireEvent.click(screen.getByRole('button', { name: en.opTitle }))
+      const panel = document.querySelector('[class*="opPanel"]')
+      expect(panel!.textContent).toContain('dsh-loop')
+      expect(panel!.textContent).toContain(failedInstall.reason)
+      // The way out travels with the record: one click approves and retries.
+      fireEvent.click(within(panel as HTMLElement).getByRole('button', { name: en.approveBuilds }))
+      await waitFor(() => {
+        expect(fetchCalls.some(call => call.path === '/dsh-market/approve-builds')).toBe(true)
+        expect(fetchCalls.some(call => call.path === '/dsh-market/install' && call.method === 'POST')).toBe(true)
+      })
+    })
+
+    it('ignores an unusable stored history without crashing or inventing a row', async () => {
+      localStorage.setItem('dshm-settled-v1', '{not json')
+      render(<MarketSection {...props()} />)
+      await screen.findByText('dsh-loop')
+      // The entry stays quiet, and opening it shows the ordinary empty state.
+      fireEvent.click(screen.getByRole('button', { name: en.opTitle }))
+      const panel = document.querySelector('[class*="opPanel"]')
+      expect(panel!.textContent).toContain(en.opEmpty)
+      // The bad value is dropped instead of being re-parsed on every mount.
+      expect(localStorage.getItem('dshm-settled-v1')).toBeNull()
+    })
+
+    it('restores a finished row without re-asking for a refresh already taken', async () => {
+      localStorage.setItem('dshm-settled-v1', JSON.stringify([{
+        id: 'op-2', kind: 'update', name: 'dsh-loop', state: 'done', needsRefresh: true,
+      }]))
+      render(<MarketSection {...props()} />)
+      await screen.findByText('dsh-loop')
+      fireEvent.click(screen.getByRole('button', { name: en.opTitle }))
+      const panel = document.querySelector('[class*="opPanel"]')
+      expect(panel!.textContent).toContain('dsh-loop')
+      expect(panel!.textContent).toContain(en.opDone)
+      // The reload already applied the change; offering Refresh would loop.
+      expect(within(panel as HTMLElement).queryByRole('button', { name: en.refresh })).toBeNull()
+    })
+
+    it('persists a row that finishes now, and clearing it empties the stored copy', async () => {
+      stubFetch({
+        '/dsh-market/install': {
+          ok: false, ignoredBuilds: ['node-pty'], error: 'blocked by pnpm', __status: 502,
+        },
+      })
+      render(<MarketSection {...props()} />)
+      await screen.findByText('dsh-loop')
+      fireEvent.click(installButtonOf('dsh-loop'))
+      fireEvent.click(await screen.findByRole('button', { name: en.confirmInstall }))
+      // The failure is written the moment the row becomes terminal...
+      await waitFor(() => {
+        const stored = JSON.parse(localStorage.getItem('dshm-settled-v1') ?? '[]') as Array<Record<string, unknown>>
+        expect(stored).toHaveLength(1)
+        expect(stored[0]).toMatchObject({ state: 'failed', name: 'dsh-loop', blockedBuilds: ['node-pty'] })
+      })
+      // ...and "clear finished" empties it through the same records state.
+      const panel = document.querySelector('[class*="opPanel"]')
+      expect(panel, 'the failed row did not open the panel').toBeTruthy()
+      fireEvent.click(within(panel as HTMLElement).getByRole('button', { name: en.opClear }))
+      await waitFor(() => expect(localStorage.getItem('dshm-settled-v1')).toBeNull())
+    })
+  })
+
   it('shows a compatibility-risk banner after an update and rolls back on demand (#195)', async () => {
     const fetchMock = stubFetch({
       '/dsh-market/installed': { profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: [] },
@@ -6353,8 +6452,9 @@ describe('lost install response (#100)', () => {
     // The same lost-response path as above, one layer up: the poll is the only
     // witness that the install landed. It released the card's busy state, but
     // the record `doInstall` put in the Tasks panel was still `running`, so the
-    // entry kept saying "Installing 1/1" for the rest of the mount — and only
-    // switching settings tabs (a remount that drops `records`) cleared it.
+    // entry kept saying "Installing 1/1" for the rest of the mount. A remount
+    // used to mask it: `records` is React state, and only FINISHED rows are
+    // restored from storage, so a `running` row still vanished with the mount.
     vi.useFakeTimers()
     try {
       let installedNow: Record<string, string> = {}

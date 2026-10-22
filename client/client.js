@@ -4053,6 +4053,127 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			}
 			return null;
 		}
+		/**
+		* Where finished rows survive a page load. Only rows that ended: `queued`
+		* belongs to the queue key and `running` to the dshm-pending markers, and an
+		* `input` row is a question this session asked, not one a later one can
+		* answer.
+		*/
+		const SETTLED_STORAGE_KEY = "dshm-settled-v1";
+		/**
+		* The finished rows worth putting back after a reload, oldest first and newest
+		* last, capped to the most recent SETTLED_LIMIT.
+		*
+		* It keeps only what a restored row needs to be re-rendered and acted on: the
+		* id actions address, the kind/name/url the row is about, the terminal state,
+		* and the decision or sentence attached to it — the reason it failed, the build
+		* scripts awaiting approval, a held release. `detail` is kept for the same
+		* reason: it is the row's own report.
+		*
+		* Everything else is deliberately dropped. `updateOptions`, `blockedBy` and
+		* `conflicts` only matter while a row is queued or waiting on the user, and
+		* neither of those states is persisted here. `needsRefresh` is written so the
+		* stored shape stays the record's own, but the restore drops it: only the page
+		* that wrote it can still be waiting for that reload.
+		*/
+		function serializeSettled(list) {
+			return list.filter(isSettled).slice(-20).map((record) => ({
+				id: record.id,
+				kind: record.kind,
+				name: record.name,
+				...record.url === void 0 ? {} : { url: record.url },
+				state: record.state,
+				...record.reason === void 0 ? {} : { reason: record.reason },
+				...record.detail === void 0 ? {} : { detail: record.detail },
+				...record.blockedBuilds === void 0 ? {} : { blockedBuilds: [...record.blockedBuilds] },
+				...record.needsRefresh === true ? { needsRefresh: true } : {},
+				...record.heldRelease === void 0 ? {} : { heldRelease: { ...record.heldRelease } }
+			}));
+		}
+		/** A non-empty string, or undefined — storage entries are not trusted. */
+		function asText(value) {
+			return typeof value === "string" && value !== "" ? value : void 0;
+		}
+		/** The string entries of a stored array, or undefined when there are none. */
+		function asStringList(value) {
+			if (!Array.isArray(value)) return void 0;
+			const list = value.filter((entry) => typeof entry === "string" && entry !== "");
+			return list.length === 0 ? void 0 : list;
+		}
+		/**
+		* The release a `warned` row was held back from. Validated as a whole: the row
+		* offers it as an action, and half of it would offer the wrong version.
+		*/
+		function asHeldRelease(value) {
+			if (value === null || typeof value !== "object" || Array.isArray(value)) return void 0;
+			const entry = value;
+			const latest = asText(entry.latest);
+			const because = asText(entry.because);
+			const installed = entry.installed === null ? null : asText(entry.installed);
+			if (latest === void 0 || because === void 0 || installed === void 0) return void 0;
+			return {
+				latest,
+				installed,
+				because
+			};
+		}
+		/**
+		* One stored row, or null when it is not a finished operation this code can
+		* still show. Malformed optional fields are dropped rather than taken as a
+		* reason to lose the row: the failure itself is still the only place the user
+		* can read what happened.
+		*/
+		function restoreSettledRecord(value) {
+			if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+			const row = value;
+			const id = asText(row.id);
+			const name = asText(row.name);
+			const kind = row.kind === "install" || row.kind === "update" || row.kind === "uninstall" ? row.kind : void 0;
+			const state = row.state === "done" || row.state === "warned" || row.state === "failed" ? row.state : void 0;
+			if (id === void 0 || name === void 0 || kind === void 0 || state === void 0) return null;
+			const url = asText(row.url);
+			const reason = asText(row.reason);
+			const detail = asText(row.detail);
+			const blockedBuilds = asStringList(row.blockedBuilds);
+			const heldRelease = asHeldRelease(row.heldRelease);
+			return {
+				id,
+				kind,
+				name,
+				...url === void 0 ? {} : { url },
+				state,
+				...reason === void 0 ? {} : { reason },
+				...detail === void 0 ? {} : { detail },
+				...blockedBuilds === void 0 ? {} : { blockedBuilds },
+				...heldRelease === void 0 ? {} : { heldRelease }
+			};
+		}
+		/**
+		* Rows read back from storage, or an empty list for anything that cannot be
+		* trusted. localStorage is user-writable and outlives versions of this code, so
+		* every entry is re-checked instead of cast: an unknown kind, a state that is
+		* not terminal, a missing id, or a field of the wrong type must never reach the
+		* panel. A malformed value yields no rows rather than throwing — a bad key is a
+		* lost history, not a broken market.
+		*/
+		function restoreSettled(raw) {
+			let parsed = raw;
+			if (typeof raw === "string") try {
+				parsed = JSON.parse(raw);
+			} catch {
+				return [];
+			}
+			if (!Array.isArray(parsed)) return [];
+			const restored = [];
+			const seen = /* @__PURE__ */ new Set();
+			for (const value of parsed) {
+				const record = restoreSettledRecord(value);
+				if (record === null || seen.has(record.id)) continue;
+				seen.add(record.id);
+				restored.push(record);
+			}
+			return restored.slice(-20);
+		}
 		//#endregion
 		//#region src/client/OperationsPanel.tsx
 		/**
@@ -8535,7 +8656,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			/**
 			* Every mutating operation the user started. Records outlive the card that
 			* started them, so paginating or searching cannot take a pending decision
-			* off screen.
+			* off screen — and finished records outlive the page load too (see the
+			* settled restore below); one still moving or waiting on a decision does not.
 			*/
 			const [records, setRecords] = (0, react.useState)([]);
 			const recordSeq = (0, react.useRef)(0);
@@ -8683,6 +8805,57 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					}));
 					if (queued.length === 0) localStorage.removeItem("dshm-queue-v1");
 					else localStorage.setItem("dshm-queue-v1", JSON.stringify(queued));
+				} catch {}
+			}, [records]);
+			/**
+			* Finished rows survive a page load — and only finished rows.
+			*
+			* A failed operation is the one thing the panel cannot recover by itself:
+			* after a reload the card is back to "Install", the plugin is not in
+			* Installed (the host rolled the change back), and the sentence naming what
+			* went wrong — plus the build-script approval that is the way out of it
+			* (#314) — lived only in React state.
+			*
+			* The queue key owns `queued`, the dshm-pending markers own `running`, and
+			* this key owns the rows that already ended. Unlike a queued row, a finished
+			* one has nothing left to judge, so the restore waits for nothing — not even
+			* the catalog.
+			*/
+			const settledRestoredRef = (0, react.useRef)(false);
+			/** The restore's merge has not reached a render yet; see the write below. */
+			const settledMergePendingRef = (0, react.useRef)(false);
+			(0, react.useEffect)(() => {
+				if (settledRestoredRef.current) return;
+				settledRestoredRef.current = true;
+				let saved = null;
+				try {
+					saved = localStorage.getItem(SETTLED_STORAGE_KEY);
+				} catch {
+					saved = null;
+				}
+				const restored = restoreSettled(saved);
+				if (restored.length === 0) return;
+				for (const record of restored) {
+					const match = /^op-(\d+)$/.exec(record.id);
+					if (match !== null) recordSeq.current = Math.max(recordSeq.current, Number(match[1]));
+				}
+				settledMergePendingRef.current = true;
+				setRecords((prev) => {
+					const known = new Set(prev.map((record) => record.id));
+					const missing = restored.filter((record) => !known.has(record.id));
+					return missing.length === 0 ? prev : [...prev, ...missing];
+				});
+			}, []);
+			(0, react.useEffect)(() => {
+				if (!settledRestoredRef.current) return;
+				if (settledMergePendingRef.current) {
+					settledMergePendingRef.current = false;
+					return;
+				}
+				try {
+					const settled = serializeSettled(records);
+					if (settled.length === 0) localStorage.removeItem(SETTLED_STORAGE_KEY);
+					else localStorage.setItem(SETTLED_STORAGE_KEY, JSON.stringify(settled));
 				} catch {}
 			}, [records]);
 			/** Raised by the card marker, so "查看详情" lands on the record itself. */

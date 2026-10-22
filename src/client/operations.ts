@@ -233,3 +233,139 @@ export function recordForUrl(list: readonly OperationRecord[], url: string): Ope
   }
   return null
 }
+
+/**
+ * Where finished rows survive a page load. Only rows that ended: `queued`
+ * belongs to the queue key and `running` to the dshm-pending markers, and an
+ * `input` row is a question this session asked, not one a later one can
+ * answer.
+ */
+export const SETTLED_STORAGE_KEY = 'dshm-settled-v1'
+
+/**
+ * How many finished rows are kept. Enough to cover a night of failed installs
+ * and the way out of each; not enough to grow without bound in a key the user
+ * never clears.
+ */
+export const SETTLED_LIMIT = 20
+
+/**
+ * The finished rows worth putting back after a reload, oldest first and newest
+ * last, capped to the most recent SETTLED_LIMIT.
+ *
+ * It keeps only what a restored row needs to be re-rendered and acted on: the
+ * id actions address, the kind/name/url the row is about, the terminal state,
+ * and the decision or sentence attached to it — the reason it failed, the build
+ * scripts awaiting approval, a held release. `detail` is kept for the same
+ * reason: it is the row's own report.
+ *
+ * Everything else is deliberately dropped. `updateOptions`, `blockedBy` and
+ * `conflicts` only matter while a row is queued or waiting on the user, and
+ * neither of those states is persisted here. `needsRefresh` is written so the
+ * stored shape stays the record's own, but the restore drops it: only the page
+ * that wrote it can still be waiting for that reload.
+ */
+export function serializeSettled(list: readonly OperationRecord[]): OperationRecord[] {
+  return list
+    .filter(isSettled)
+    .slice(-SETTLED_LIMIT)
+    .map(record => ({
+      id: record.id,
+      kind: record.kind,
+      name: record.name,
+      ...(record.url === undefined ? {} : { url: record.url }),
+      state: record.state,
+      ...(record.reason === undefined ? {} : { reason: record.reason }),
+      ...(record.detail === undefined ? {} : { detail: record.detail }),
+      ...(record.blockedBuilds === undefined ? {} : { blockedBuilds: [...record.blockedBuilds] }),
+      ...(record.needsRefresh === true ? { needsRefresh: true } : {}),
+      ...(record.heldRelease === undefined ? {} : { heldRelease: { ...record.heldRelease } }),
+    }))
+}
+
+/** A non-empty string, or undefined — storage entries are not trusted. */
+function asText(value: unknown): string | undefined {
+  return typeof value === 'string' && value !== '' ? value : undefined
+}
+
+/** The string entries of a stored array, or undefined when there are none. */
+function asStringList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const list = value.filter((entry): entry is string => typeof entry === 'string' && entry !== '')
+  return list.length === 0 ? undefined : list
+}
+
+/**
+ * The release a `warned` row was held back from. Validated as a whole: the row
+ * offers it as an action, and half of it would offer the wrong version.
+ */
+function asHeldRelease(value: unknown): OperationRecord['heldRelease'] | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const entry = value as Record<string, unknown>
+  const latest = asText(entry.latest)
+  const because = asText(entry.because)
+  const installed = entry.installed === null ? null : asText(entry.installed)
+  if (latest === undefined || because === undefined || installed === undefined) return undefined
+  return { latest, installed, because }
+}
+
+/**
+ * One stored row, or null when it is not a finished operation this code can
+ * still show. Malformed optional fields are dropped rather than taken as a
+ * reason to lose the row: the failure itself is still the only place the user
+ * can read what happened.
+ */
+function restoreSettledRecord(value: unknown): OperationRecord | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null
+  const row = value as Record<string, unknown>
+  const id = asText(row.id)
+  const name = asText(row.name)
+  const kind = row.kind === 'install' || row.kind === 'update' || row.kind === 'uninstall' ? row.kind : undefined
+  const state = row.state === 'done' || row.state === 'warned' || row.state === 'failed' ? row.state : undefined
+  if (id === undefined || name === undefined || kind === undefined || state === undefined) return null
+  const url = asText(row.url)
+  const reason = asText(row.reason)
+  const detail = asText(row.detail)
+  const blockedBuilds = asStringList(row.blockedBuilds)
+  const heldRelease = asHeldRelease(row.heldRelease)
+  return {
+    id,
+    kind,
+    name,
+    ...(url === undefined ? {} : { url }),
+    state,
+    ...(reason === undefined ? {} : { reason }),
+    ...(detail === undefined ? {} : { detail }),
+    ...(blockedBuilds === undefined ? {} : { blockedBuilds }),
+    // `needsRefresh` is deliberately not restored: it told the reader of the
+    // previous page to reload, and this row is only being read because that
+    // reload already happened. Restoring it would ask for a refresh taken.
+    ...(heldRelease === undefined ? {} : { heldRelease }),
+  }
+}
+
+/**
+ * Rows read back from storage, or an empty list for anything that cannot be
+ * trusted. localStorage is user-writable and outlives versions of this code, so
+ * every entry is re-checked instead of cast: an unknown kind, a state that is
+ * not terminal, a missing id, or a field of the wrong type must never reach the
+ * panel. A malformed value yields no rows rather than throwing — a bad key is a
+ * lost history, not a broken market.
+ */
+export function restoreSettled(raw: unknown): OperationRecord[] {
+  let parsed: unknown = raw
+  if (typeof raw === 'string') {
+    try { parsed = JSON.parse(raw) } catch { return [] }
+  }
+  if (!Array.isArray(parsed)) return []
+  const restored: OperationRecord[] = []
+  const seen = new Set<string>()
+  for (const value of parsed) {
+    const record = restoreSettledRecord(value)
+    // First occurrence wins, so a corrupted duplicate cannot paint one row twice.
+    if (record === null || seen.has(record.id)) continue
+    seen.add(record.id)
+    restored.push(record)
+  }
+  return restored.slice(-SETTLED_LIMIT)
+}

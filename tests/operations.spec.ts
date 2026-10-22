@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   bucketOf, clearSettled, drop, enqueue, isSettled, needsUser, patch,
-  queuePosition, recordForUrl, sortForPanel, summarize,
+  queuePosition, recordForUrl, restoreSettled, serializeSettled, SETTLED_LIMIT, sortForPanel, summarize,
 } from '../src/client/operations.ts'
 import type { OperationRecord, OperationState } from '../src/client/operations.ts'
 
@@ -137,5 +137,133 @@ describe('patch and card lookup', () => {
     expect(recordForUrl(list, 'u')?.id).toBe('new')
     expect(recordForUrl(list, 'v')?.id).toBe('other')
     expect(recordForUrl(list, 'missing')).toBeNull()
+  })
+})
+
+describe('finished rows across a page load', () => {
+  const finished = [
+    rec('ok', 'done', { url: 'https://github.com/alice/dsh-loop' }),
+    rec('bad', 'failed', {
+      url: 'https://github.com/bob/dsh-cowork',
+      reason: 'pnpm refused to run node-pty build scripts',
+      blockedBuilds: ['node-pty'],
+    }),
+    rec('warn', 'warned', {
+      reason: 'held back by minimumReleaseAge',
+      heldRelease: { latest: '2.0.0', installed: '1.0.0', because: 'minimumReleaseAge' },
+    }),
+  ]
+
+  it('keeps terminal rows and drops everything the panel cannot finish', () => {
+    // A restored queued row would claim the host is working on something it
+    // never started, and an unanswered decision belongs to the session that
+    // asked, not the one that reloads.
+    const stored = serializeSettled([
+      rec('queued', 'queued'), rec('running', 'running'), rec('ask', 'input'),
+      ...finished,
+    ])
+    expect(stored.map(row => row.id)).toEqual(['ok', 'bad', 'warn'])
+  })
+
+  it('keeps only the fields a restored row re-renders and acts on', () => {
+    const noisy = rec('bad', 'failed', {
+      url: 'u',
+      reason: 'r',
+      detail: 'the route said more',
+      blockedBuilds: ['a'],
+      needsRefresh: true,
+      heldRelease: finished[2]!.heldRelease,
+      // None of these survive: they only matter while the row is unfinished.
+      updateOptions: { force: true },
+      blockedBy: ['session-a'],
+      conflicts: [{ owner: 'alice', ids: ['dsh-loop'] }],
+      percent: 40,
+    })
+    expect(serializeSettled([noisy])).toEqual([{
+      id: 'bad',
+      kind: 'install',
+      name: 'bad',
+      url: 'u',
+      state: 'failed',
+      reason: 'r',
+      detail: 'the route said more',
+      blockedBuilds: ['a'],
+      needsRefresh: true,
+      heldRelease: { latest: '2.0.0', installed: '1.0.0', because: 'minimumReleaseAge' },
+    }])
+  })
+
+  it('round-trips through storage, newest last', () => {
+    const stored = serializeSettled(finished)
+    expect(restoreSettled(JSON.stringify(stored))).toEqual(stored)
+    // An already-parsed array is accepted too: the caller's storage may have
+    // been parsed by an older helper, and a string is only one shape.
+    expect(restoreSettled(stored)).toEqual(stored)
+    expect(restoreSettled(JSON.stringify(stored)).map(record => record.id)).toEqual(['ok', 'bad', 'warn'])
+  })
+
+  it('does not ask for a refresh the reload already did', () => {
+    // A stored done row may carry the old page's "refresh to apply". The page
+    // that reads it has just been refreshed, so restoring the flag would send
+    // the user to reload again and again for a change that is already here.
+    const [restored] = restoreSettled(JSON.stringify([{
+      id: 'op-1', kind: 'install', name: 'dsh-loop', url: 'u', state: 'done', needsRefresh: true,
+    }]))
+    expect(restored).toEqual({ id: 'op-1', kind: 'install', name: 'dsh-loop', url: 'u', state: 'done' })
+    // Live rows are untouched: serialize still keeps it for the row in flight.
+    expect(serializeSettled([rec('op-2', 'done', { needsRefresh: true })])[0]?.needsRefresh).toBe(true)
+  })
+
+  it('caps the history at the newest rows', () => {
+    const list = Array.from({ length: SETTLED_LIMIT + 5 }, (_, index) => rec(`op-${String(index)}`, 'done'))
+    const stored = serializeSettled(list)
+    expect(stored).toHaveLength(SETTLED_LIMIT)
+    expect(stored[0]?.id).toBe('op-5')
+    expect(stored.at(-1)?.id).toBe(`op-${String(SETTLED_LIMIT + 4)}`)
+    expect(restoreSettled(JSON.stringify(stored))).toHaveLength(SETTLED_LIMIT)
+  })
+
+  it('ignores a value that is not this history, and never throws', () => {
+    // localStorage is user-writable and outlives versions of this code: a bad
+    // key is a lost history, not a broken panel.
+    for (const raw of [null, undefined, '', 'not json', '{"state":"failed"}', 42, [{ id: 1 }]]) {
+      expect(() => restoreSettled(raw)).not.toThrow()
+      expect(restoreSettled(raw)).toEqual([])
+    }
+  })
+
+  it('drops every stored row that cannot be rendered or acted on', () => {
+    const restored = restoreSettled([
+      null, 'done', 42,
+      { id: '', kind: 'install', name: 'x', state: 'done' },
+      { id: 'a', kind: 'other', name: 'x', state: 'done' },
+      { id: 'b', kind: 'install', name: 'x', state: 'running' },
+      { id: 'c', kind: 'install', name: 42, state: 'failed' },
+      { id: 'd', kind: 'install', name: 'x', state: 'queued' },
+      { id: 'e', kind: 'uninstall', name: 'x', state: 'done' },
+    ])
+    expect(restored).toEqual([{ id: 'e', kind: 'uninstall', name: 'x', state: 'done' }])
+  })
+
+  it('keeps a row with malformed optional fields, minus the bad fields', () => {
+    // A corrupt extra must not hide the failure itself: the row is still the
+    // only place the user can read what happened and act on it.
+    const restored = restoreSettled(JSON.stringify([{
+      id: 'bad', kind: 'install', name: 'dsh-x', url: 7, state: 'failed',
+      reason: 42, detail: null, blockedBuilds: ['node-pty', 9, ''], needsRefresh: 'yes',
+      heldRelease: { latest: '2.0.0' },
+    }]))
+    expect(restored).toEqual([{
+      id: 'bad', kind: 'install', name: 'dsh-x', state: 'failed', blockedBuilds: ['node-pty'],
+    }])
+  })
+
+  it('does not paint one stored id twice', () => {
+    const restored = restoreSettled(JSON.stringify([
+      { id: 'same', kind: 'install', name: 'first', state: 'done' },
+      { id: 'same', kind: 'install', name: 'second', state: 'failed' },
+    ]))
+    expect(restored).toHaveLength(1)
+    expect(restored[0]?.name).toBe('first')
   })
 })

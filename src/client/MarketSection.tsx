@@ -46,7 +46,7 @@ import { downloadStatsText } from './download-stats.ts'
 import { OperationsPanel } from './OperationsPanel.tsx'
 import { applyRecovery, fetchRecovery, initialKeep, RecoveryPanel, watchRestart, type RecoveryView } from './RecoveryPanel.tsx'
 import { HostRecoveryBanner } from './HostRecoveryBanner.tsx'
-import { clearSettled, drop, enqueue, patch as patchRecord, recordForUrl } from './operations.ts'
+import { clearSettled, drop, enqueue, patch as patchRecord, recordForUrl, restoreSettled, serializeSettled, SETTLED_STORAGE_KEY } from './operations.ts'
 import type { OperationRecord } from './operations.ts'
 import { Diagnostics } from './Diagnostics.tsx'
 import { exportMarketLog } from './self-check.ts'
@@ -1956,7 +1956,8 @@ export function MarketSection(props: MarketSectionProps) {
   /**
    * Every mutating operation the user started. Records outlive the card that
    * started them, so paginating or searching cannot take a pending decision
-   * off screen.
+   * off screen — and finished records outlive the page load too (see the
+   * settled restore below); one still moving or waiting on a decision does not.
    */
   const [records, setRecords] = useState<OperationRecord[]>([])
   const recordSeq = useRef(0)
@@ -2092,6 +2093,59 @@ export function MarketSection(props: MarketSectionProps) {
       if (queued.length === 0) localStorage.removeItem('dshm-queue-v1')
       else localStorage.setItem('dshm-queue-v1', JSON.stringify(queued))
     } catch { /* storage unavailable */ }
+  }, [records])
+  /**
+   * Finished rows survive a page load — and only finished rows.
+   *
+   * A failed operation is the one thing the panel cannot recover by itself:
+   * after a reload the card is back to "Install", the plugin is not in
+   * Installed (the host rolled the change back), and the sentence naming what
+   * went wrong — plus the build-script approval that is the way out of it
+   * (#314) — lived only in React state.
+   *
+   * The queue key owns `queued`, the dshm-pending markers own `running`, and
+   * this key owns the rows that already ended. Unlike a queued row, a finished
+   * one has nothing left to judge, so the restore waits for nothing — not even
+   * the catalog.
+   */
+  const settledRestoredRef = useRef(false)
+  /** The restore's merge has not reached a render yet; see the write below. */
+  const settledMergePendingRef = useRef(false)
+  useEffect(() => {
+    if (settledRestoredRef.current) return
+    settledRestoredRef.current = true
+    let saved: string | null = null
+    try { saved = localStorage.getItem(SETTLED_STORAGE_KEY) } catch { saved = null }
+    const restored = restoreSettled(saved)
+    if (restored.length === 0) return
+    // Ids came from a previous mount's counter. Continue past them, or the next
+    // operation reuses an id and drop/patch would address two rows at once.
+    for (const record of restored) {
+      const match = /^op-(\d+)$/.exec(record.id)
+      if (match !== null) recordSeq.current = Math.max(recordSeq.current, Number(match[1]))
+    }
+    settledMergePendingRef.current = true
+    setRecords(prev => {
+      const known = new Set(prev.map(record => record.id))
+      const missing = restored.filter(record => !known.has(record.id))
+      return missing.length === 0 ? prev : [...prev, ...missing]
+    })
+  }, [])
+  useEffect(() => {
+    // Never write before the restore has read, and never write the pre-restore
+    // list: on the first render `records` is empty, so a write here would
+    // replace the stored rows with nothing just as the restore put them back.
+    // (The queue's restore has the same hazard, for the same reason.)
+    if (!settledRestoredRef.current) return
+    if (settledMergePendingRef.current) {
+      settledMergePendingRef.current = false
+      return
+    }
+    try {
+      const settled = serializeSettled(records)
+      if (settled.length === 0) localStorage.removeItem(SETTLED_STORAGE_KEY)
+      else localStorage.setItem(SETTLED_STORAGE_KEY, JSON.stringify(settled))
+    } catch { /* storage unavailable — the rows just won't survive a reload */ }
   }, [records])
   /** Raised by the card marker, so "查看详情" lands on the record itself. */
   const [operationsOpen, setOperationsOpen] = useState(false)
@@ -2965,9 +3019,10 @@ export function MarketSection(props: MarketSectionProps) {
                 // lost (#100): the record `doInstall` created is still
                 // `running`, and releasing only the card's busy state leaves
                 // the Tasks entry claiming "Installing 1/1" for the rest of
-                // the mount — until settings travel remounts the section and
-                // drops `records` with it. The install landed, so the record
-                // has to land with it (#904).
+                // the mount. A remount used to hide it — `records` is React
+                // state, and a `running` row is still not one of the finished
+                // rows restored from storage — so the record has to land here.
+                // The install landed, so it does (#904).
                 setRecords(list => list.map(record =>
                   record.kind === 'install' && record.url === url && record.state === 'running'
                     ? { ...record, state: 'done' as const, needsRefresh: true }
