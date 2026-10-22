@@ -266,6 +266,10 @@ export function apply(ctx: Context, config?: Config): void {
           () => hostCtx.get('pluginManager') as OfficialPluginManagerLike | undefined,
           profileName,
           profileDirectory,
+          // Hand the invocation to the runtime only. Do not register it
+          // globally: other official-desktop installs still go through the
+          // manager (#702). The market itself is the one exception (#982).
+          hostPackageManagerOf(profileContext),
         )
         const resolved: MarketConfig = {
           profile: profileName,

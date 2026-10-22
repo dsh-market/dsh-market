@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createOfficialDesktopRuntime, type OfficialPluginManagerLike } from '../src/official-desktop.ts'
+import type { HostPackageManager } from '../src/dsh-cli.ts'
 import { PendingUpdateJournal, pendingUpdatesFile } from '../src/pending-updates.ts'
 import { withHoistRecovery } from '../src/install.ts'
 import { routesFor, setActiveRegion } from '../src/regions.ts'
@@ -33,6 +34,23 @@ function installed(dir: string, name: string, version: string): void {
   const packageDir = join(dir, 'node_modules', name)
   mkdirSync(packageDir, { recursive: true })
   writeFileSync(join(packageDir, 'package.json'), JSON.stringify({ name, version }))
+}
+
+/** A host pnpm stand-in: `node -e <script> add <spec>` writes the named version. */
+function hostPnpmThatAdds(dir: string, script?: string): HostPackageManager {
+  const body = script ?? `
+const { mkdirSync, writeFileSync } = require('node:fs')
+const { join } = require('node:path')
+if (process.argv.includes('--config.minimum-release-age=0')) process.exit(2)
+const spec = process.argv[process.argv.indexOf('add') + 1]
+const at = spec.indexOf('@', 1)
+const name = at === -1 ? spec : spec.slice(0, at)
+const version = at === -1 ? '0.0.0' : spec.slice(at + 1)
+const pkg = join(${JSON.stringify(dir)}, 'node_modules', name)
+mkdirSync(pkg, { recursive: true })
+writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name, version }))
+`
+  return { command: process.execPath, args: ['-e', body], env: {} }
 }
 
 function manager(): OfficialPluginManagerLike & {
@@ -214,6 +232,125 @@ describe('official Electron profile runtime', () => {
       expect(service.removeBundle).toHaveBeenCalledWith('example')
       expect(service.installBundle).toHaveBeenCalledTimes(2)
       expect(service.installBundle).toHaveBeenLastCalledWith('example@2.0.0', { requestId: expect.any(String) })
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('overlays the market with the host pnpm and never removes it (#982, #900)', async () => {
+    const dir = profile()
+    installed(dir, 'dshmarket', '1.66.36')
+    const service = manager()
+    service.installBundle.mockResolvedValueOnce({ application: 'failed', error: { code: 'already-installed' } })
+    const runtime = createOfficialDesktopRuntime(() => service, 'desktop', dir, hostPnpmThatAdds(dir))
+    try {
+      const result = await runtime.runPlugin('desktop', ['add', 'dshmarket@1.66.48'])
+      expect(result.exitCode).toBe(0)
+      expect(service.removeBundle).not.toHaveBeenCalled()
+      expect(service.installBundle).toHaveBeenCalledTimes(1)
+      expect(JSON.parse(readFileSync(join(dir, 'node_modules', 'dshmarket', 'package.json'), 'utf8')).version).toBe('1.66.48')
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('does not pass the one-shot release-age override on that overlay (#944, #982)', async () => {
+    const dir = profile()
+    const service = manager()
+    service.installBundle.mockResolvedValueOnce({ application: 'failed', error: { code: 'already-installed' } })
+    const runtime = createOfficialDesktopRuntime(() => service, 'desktop', dir, hostPnpmThatAdds(dir))
+    try {
+      const result = await runtime.runPlugin('desktop', ['add', 'dshmarket@1.66.48'])
+      expect(result.exitCode).toBe(0)
+      expect(result.stderr).not.toContain('minimum-release-age=0')
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('does not treat exit 0 as success when the disk version did not change (#982)', async () => {
+    const dir = profile()
+    installed(dir, 'dshmarket', '1.66.36')
+    const service = manager()
+    service.installBundle.mockResolvedValueOnce({ application: 'failed', error: { code: 'already-installed' } })
+    const runtime = createOfficialDesktopRuntime(
+      () => service, 'desktop', dir,
+      hostPnpmThatAdds(dir, 'process.exit(0)'),
+    )
+    try {
+      const result = await runtime.runPlugin('desktop', ['add', 'dshmarket@1.66.48'])
+      expect(result.exitCode).not.toBe(0)
+      expect(result.stderr).toMatch(/没有换成|did not become/)
+      expect(JSON.parse(readFileSync(join(dir, 'node_modules', 'dshmarket', 'package.json'), 'utf8')).version).toBe('1.66.36')
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('does not treat a host add that exits 1 as success (#982)', async () => {
+    const dir = profile()
+    installed(dir, 'dshmarket', '1.66.36')
+    const service = manager()
+    service.installBundle.mockResolvedValueOnce({ application: 'failed', error: { code: 'already-installed' } })
+    const runtime = createOfficialDesktopRuntime(
+      () => service, 'desktop', dir,
+      hostPnpmThatAdds(dir, 'process.stderr.write("ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION"); process.exit(1)'),
+    )
+    try {
+      const result = await runtime.runPlugin('desktop', ['add', 'dshmarket@1.66.48'])
+      expect(result.exitCode).not.toBe(0)
+      expect(result.stderr).toMatch(/等待期|fresh-release wait/)
+      expect(JSON.parse(readFileSync(join(dir, 'node_modules', 'dshmarket', 'package.json'), 'utf8')).version).toBe('1.66.36')
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('tells a locked overlay to quit and run pnpm, not to click update again (#982)', async () => {
+    // Starting the market loads its files again, so "quit, reopen, click
+    // Update" cannot replace them. Settings → Plugins has no update entry
+    // (#909). The overlay already ran without the age bypass; this is not
+    // an age failure, so that flag must not appear (#944).
+    const dir = profile()
+    installed(dir, 'dshmarket', '1.66.36')
+    const service = manager()
+    service.installBundle.mockResolvedValueOnce({ application: 'failed', error: { code: 'already-installed' } })
+    const runtime = createOfficialDesktopRuntime(
+      () => service, 'desktop', dir,
+      hostPnpmThatAdds(dir, 'process.stderr.write("ERR_PNPM_EPERM operation not permitted, rename"); process.exit(1)'),
+    )
+    try {
+      const result = await runtime.runPlugin('desktop', ['add', 'dshmarket@1.66.48'])
+      expect(result.exitCode).not.toBe(0)
+      expect(result.refusalCode).toBeUndefined()
+      expect(result.stderr).toMatch(/完全退出|quit DSH Desktop/)
+      expect(result.stderr).toContain('pnpm add dshmarket@1.66.48')
+      expect(result.stderr).not.toMatch(/再点一次|update once more/)
+      expect(result.stderr).not.toContain('设置 → 插件')
+      expect(result.stderr).not.toContain('minimum-release-age=0')
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('does not call a failed overlay "the market cannot update itself" (#982)', async () => {
+    // pnpm ran. A leftover market-self-update code tells a client the button
+    // cannot work, and the old hint reintroduces the #944 age bypass.
+    const dir = profile()
+    installed(dir, 'dshmarket', '1.66.36')
+    const service = manager()
+    service.installBundle.mockResolvedValueOnce({ application: 'failed', error: { code: 'already-installed' } })
+    const runtime = createOfficialDesktopRuntime(
+      () => service, 'desktop', dir,
+      hostPnpmThatAdds(dir, 'process.stderr.write("opaque pnpm failure"); process.exit(1)'),
+    )
+    try {
+      const result = await runtime.runPlugin('desktop', ['add', 'dshmarket@1.66.48'])
+      expect(result.exitCode).not.toBe(0)
+      expect(result.refusalCode).not.toBe('market-self-update')
+      expect(result.stderr).not.toContain('minimum-release-age=0')
+      expect(result.stderr).not.toMatch(/不能在自己的请求里更新自己|cannot update itself/)
+      expect(result.stderr).toMatch(/没有换上|did not apply/)
     } finally {
       await runtime.dispose()
     }

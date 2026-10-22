@@ -354,7 +354,7 @@ export function setBuildEnvSource(source: () => Readonly<Record<string, string>>
   return previous
 }
 
-function spawnEnv(): NodeJS.ProcessEnv {
+function spawnEnv(invocation: HostPackageManager | null = hostPackageManager): NodeJS.ProcessEnv {
   // pnpm v10+ blocks forever on a silent interactive prompt without a TTY;
   // CI mode forces it to act or fail instead of asking.
   const separator = process.platform === 'win32' ? ';' : ':'
@@ -363,7 +363,7 @@ function spawnEnv(): NodeJS.ProcessEnv {
   // goes FIRST so its bundled Node wins on a machine where nothing else is
   // on the process PATH — and it reaches every child, including the
   // `dsh plugin` forwarder, which is the only way an install can run there.
-  const hostEnv = hostPackageManager?.env ?? {}
+  const hostEnv = invocation?.env ?? {}
   const parts = `${hostEnv.PATH ?? ''}${separator}${process.env.PATH ?? ''}`
     .split(separator).filter(part => part !== '')
   for (const bin of toolSearchDirs()) {
@@ -1257,6 +1257,81 @@ function makeProgressFeeder(tracker: ReturnType<typeof createProgressTracker>): 
       if (!trimmed.startsWith('{')) progress.lastLine = trimmed.slice(0, 200)
     }
   }
+}
+
+/**
+ * Run the host-supplied package manager in a profile directory.
+ *
+ * Official Desktop publishes this invocation on `profileContext` and uses it
+ * for every managed install. The market's official branch must not send
+ * `dsh plugin --profile desktop`, and must not go through the manager for the
+ * market's own package (#900). This is that remaining door: `pnpm add` (or
+ * whatever argv the caller names) against the bundled Node, with the
+ * invocation's own env. Callers must not add `--config.minimum-release-age=0`
+ * here — that is the #944 lockfile write.
+ */
+export function runHostPnpm(
+  invocation: HostPackageManager,
+  cwd: string,
+  args: readonly string[],
+): Promise<InstallResult> {
+  if (invocation.command.trim() === '') {
+    return Promise.resolve({
+      exitCode: 127, timedOut: false, stdout: '', stderr: 'host package manager has no command', cancelled: false,
+    })
+  }
+  const tracker = beginProgress(args[args.length - 1] ?? '')
+  const feed = makeProgressFeeder(tracker)
+  return new Promise((resolvePromise) => {
+    const child = spawnShim(invocation.command, [...invocation.args, ...args], {
+      cwd,
+      env: { ...spawnEnv(invocation), ...pnpmConfigEnvForArgs(args) },
+      stdio: ['ignore', 'pipe', 'pipe'],
+      viaShell: winCmdShim && /\.cmd$/i.test(invocation.command),
+      detached: process.platform !== 'win32',
+    })
+    activeChild = child
+    cancelRequested = false
+    let stdout = ''
+    let stderr = ''
+    let timedOut = false
+    const timer = setTimeout(() => {
+      timedOut = true
+      killTree(child)
+    }, INSTALL_TIMEOUT_MS)
+    child.stdout?.on('data', (chunk: Buffer) => {
+      const text = chunk.toString()
+      stdout = (stdout + text).slice(-256 * 1024)
+      feed(text)
+      syncProgress(tracker)
+    })
+    child.stderr?.on('data', (chunk: Buffer) => {
+      const text = chunk.toString()
+      stderr = (stderr + text).slice(-64 * 1024)
+      feed(text)
+      syncProgress(tracker)
+    })
+    child.on('error', (error) => {
+      clearTimeout(timer)
+      progress.active = false
+      progress.cancelling = false
+      if (activeChild === child) activeChild = null
+      resolvePromise({ exitCode: 127, timedOut: false, stdout, stderr: `${stderr}\n${error.message}`.trim(), cancelled: false })
+    })
+    child.on('close', (code) => {
+      clearTimeout(timer)
+      progress.active = false
+      progress.cancelling = false
+      if (activeChild === child) activeChild = null
+      resolvePromise({
+        exitCode: code,
+        timedOut,
+        stdout,
+        stderr,
+        cancelled: cancelRequested,
+      })
+    })
+  })
 }
 
 /** Run one `dsh plugin --profile <p> …` command with timeout and progress tracking. */

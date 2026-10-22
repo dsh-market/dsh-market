@@ -336,9 +336,17 @@ export async function withHoistRecovery(
     // desktop`, which is forbidden there — so the advice sent the reporter to a
     // door the market itself keeps shut (#798). Say what to do instead: the
     // app's own Plugins page runs the same managed pipeline.
-    result = {
-      ...result,
-      stderr: `${result.stderr}\n\n这是官方桌面端：上面「在命令行执行」这一条在这里用不了，请改在应用自己的「设置 → 插件」里操作（退出重启后，或先停用加载该包的插件再重启）。 / This is the official desktop app: the "run it from the command line" option above is not available here — use the app's own Settings → Plugins instead (after restarting, or after disabling the plugin that loads this package and restarting).`,
+    //
+    // Not for the market itself: Settings → Plugins has no update entry for a
+    // package already in the profile (#909). That note would send a self-update
+    // to a shut door (#982).
+    const lockedTarget = pluginArgs.find(argument => !argument.startsWith('-') && argument !== verb) ?? ''
+    const lockedName = registryNameOf(lockedTarget) ?? lockedTarget
+    if (lockedName !== 'dshmarket' && lockedName !== 'dsh-market') {
+      result = {
+        ...result,
+        stderr: `${result.stderr}\n\n这是官方桌面端：上面「在命令行执行」这一条在这里用不了，请改在应用自己的「设置 → 插件」里操作（退出重启后，或先停用加载该包的插件再重启）。 / This is the official desktop app: the "run it from the command line" option above is not available here — use the app's own Settings → Plugins instead (after restarting, or after disabling the plugin that loads this package and restarting).`,
+      }
     }
   }
   if (unavailableOption !== null && !ok(result) && !result.cancelled) {
