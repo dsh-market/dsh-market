@@ -36,10 +36,13 @@ export interface MarketElementProps {
   /** The opt-in sidebar row. Absent, the panel offers no shortcut tip. */
   sidebar?: SidebarEntry
   /**
-   * Where this panel is mounted. The settings page can offer the sidebar
-   * shortcut; the sidebar page itself must not.
+   * Where this panel is mounted. Only the settings page offers the sidebar
+   * shortcut; the sidebar page must not offer itself, and the Plugins page's
+   * tab is already one click from 已安装 — no shortcut needed there either.
+   * The Plugins tab also has no height of its own (the host page scrolls),
+   * which `MarketSection` measures for.
    */
-  surface?: 'settings' | 'sidebar'
+  surface?: 'settings' | 'sidebar' | 'plugins'
 }
 
 /**

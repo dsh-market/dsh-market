@@ -178,7 +178,7 @@ function mountMarket(ctx: MarketClientContext): void {
    * per call: the props are live (locale, theme, the host's preferred
    * subsection), and a cached element would freeze the first caller's.
    */
-  const buildMarketElement = (ownerProps: { preferredSubsectionId?: string; surface?: 'settings' | 'sidebar' } = {}): unknown => marketElement({
+  const buildMarketElement = (ownerProps: { preferredSubsectionId?: string; surface?: 'settings' | 'sidebar' | 'plugins' } = {}): unknown => marketElement({
     t,
     locale: ctx.locale,
     theme: ctx.theme,
@@ -377,6 +377,39 @@ function mountMarket(ctx: MarketClientContext): void {
     locale: NS,
     inject: () => ({ t }),
   }, () => h(SettingsCard, { t, sidebar, onRemoved: retire })))
+
+  // The Plugins page's own tab row (dsh 0.2.1-alpha.4+). The page that
+  // shows 已安装 next to 发现 declares `plugins.tab` for exactly this: another
+  // plugin adds a tab after 已安装 and draws whatever it likes there. The
+  // official Discover tab is itself such a registration, which is why the
+  // market belongs here rather than only behind Settings — same page, one
+  // click from 已安装, and no dependency on where each host puts Settings.
+  //
+  // Order −1 places the market between 已安装 and the host's own 发现 tab:
+  // the same adjacency the sidebar row uses, and the market is the fuller
+  // catalog of the two.
+  //
+  // Detection is the slot, as everywhere else in this file: hosts before
+  // 0.2.1-alpha.4 never declare it (their tab row is `settings.plugins.tab`,
+  // which the market already occupies), so nothing is added there. The owner
+  // props this slot hands over (`install`, `openPackage`) drive the host's own
+  // install dialog and Installed list; the market brings both of its own, so
+  // they are deliberately not used — routing installs through the host would
+  // take the progress, the task list and the cancel with them.
+  const pluginsPageTabCtx = ctx as unknown as {
+    slots: {
+      inject(name: string, register: () => unknown): void
+      register(options: Record<string, unknown>, render: () => unknown): unknown
+    }
+  }
+  pluginsPageTabCtx.slots.inject('plugins.tab', () => pluginsPageTabCtx.slots.register({
+    name: 'plugins.tab',
+    id: NS,
+    order: -1,
+    label: () => t('nav'),
+    locale: NS,
+    inject: () => ({ t }),
+  }, () => buildMarketElement({ surface: 'plugins' })))
 
   const Toast = () => h(InstallToast, { t })
   ctx.slots.inject('shell.overlay', () => ctx.slots.register({

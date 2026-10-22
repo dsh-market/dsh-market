@@ -9,7 +9,7 @@
 [![npm](https://img.shields.io/npm/v/dshmarket)](https://www.npmjs.com/package/dshmarket)
 [![stars](https://img.shields.io/github/stars/dsh-market/dsh-market?style=flat)](https://github.com/dsh-market/dsh-market)
 
-装在 DeepSeek Harness 里的插件市场。打开设置 → **插件市场** → 逛一逛，点一下，装好。设置入口在 dsh 0.2.0 及以前位于侧边栏，0.2.1 起移到了账号菜单里。
+装在 DeepSeek Harness 里的插件市场。dsh 0.2.1 起它就在 **插件** 页上，是紧挨着 **已安装** 的一个页签；更早的宿主从设置 → **插件市场** 进入。逛一逛，点一下，装好。
 
 > 📡 **同一份目录也是一份插件市场索引。** dsh 0.2.1 起，打开 **插件 → 发现（Discover）→ 索引源（Index sources）**，添加 `https://cdn.jsdelivr.net/npm/dsh-plugin-catalog/index.json`。它就是这份列表的 format 1 索引，放在 npm 上分发，所以在哪里都快——dsh 给索引源的时间只有 15 秒，而 GitHub Pages 上的那两份（`https://awesome-dsh-plugin.com/index.json` 与 `https://dshmarket.com/index.json`）在部分网络下会超过。宿主自己的发现页和 `plugin_market` 智能体工具就能搜索它。
 
@@ -23,9 +23,11 @@
 dsh plugin --profile web add dshmarket
 ```
 
-重启 `dsh web`，打开 **设置 → 插件市场**。从 dsh 0.2.1 起设置窗口挪进了账号
-菜单（侧边栏里不再有设置按钮），市场仍然是里面的一个分区。想一键进入的话，市场
-也可以在侧边栏放一行 **插件市场**，在 **插件** 页市场的卡片上打开即可。
+重启 `dsh web`，打开 **插件** 页，点 **已安装** 旁边的 **插件市场** 页签
+（dsh 0.2.1 及以上；普通的 `dsh web` 就有，不需要桌面端）。市场仍然也是
+**设置 → 插件市场** 里的一个分区：dsh 0.2.0 及以前只有这个入口，0.2.1 起设置
+窗口挪进了账号菜单。想在任何地方一键进入的话，市场也可以在侧边栏放一行
+**插件市场**，在 **插件** 页市场的卡片上打开即可。
 
 如果宿主用的不是 `web` 这个 profile，把它的名字写进命令即可：`dsh plugin
 --profile <profile> add dshmarket`。官方 DSH Desktop 桌面端请在应用自己的
@@ -33,7 +35,7 @@ dsh plugin --profile web add dshmarket
 应用运行期间命令行改不了它。
 
 **需要 dsh web 0.1.0-rc.6 或更新版本。** 宿主太旧时市场会自我禁用，并在浏览器
-控制台说明原因，而不是拿缺失的原语去渲染——如果设置里根本没出现「插件市场」这
+控制台说明原因，而不是拿缺失的原语去渲染——如果哪里都没出现「插件市场」这
 一项，通常就是这个原因。桌面端要留意：它可能内置了比 `npm` 装到的更旧的 dsh（#139）。
 
 ## 你会得到

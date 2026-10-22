@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 [![npm](https://img.shields.io/npm/v/dshmarket)](https://www.npmjs.com/package/dshmarket)
 [![stars](https://img.shields.io/github/stars/dsh-market/dsh-market?style=flat)](https://github.com/dsh-market/dsh-market)
 
-The plugin market inside DeepSeek Harness. Open Settings → **Plugin Market** → browse, search, one-click install. Settings sits in the sidebar up to dsh 0.2.0 and in the account menu from 0.2.1.
+The plugin market inside DeepSeek Harness. On dsh 0.2.1+ it is a tab on the **Plugins** page, right next to **Installed**; on older hosts open Settings → **Plugin Market**. Browse, search, one-click install.
 
 > 📡 **The same catalog is also a plugin market index.** On dsh 0.2.1+, open **Plugins → Discover → Index sources** and add `https://cdn.jsdelivr.net/npm/dsh-plugin-catalog/index.json`. That is this list as a format-1 index, served from npm so it loads quickly everywhere — dsh gives a source 15 seconds, and the GitHub Pages copies (`https://awesome-dsh-plugin.com/index.json` and `https://dshmarket.com/index.json`) can exceed that from some networks. The host's Discover tab and the `plugin_market` agent tool then search it.
 
@@ -23,11 +23,13 @@ One-click themes: install, switch live, no restart.
 dsh plugin --profile web add dshmarket
 ```
 
-Restart `dsh web`, then open **Settings → Plugin Market**. From dsh 0.2.1 the
-Settings dialog moved into the account menu (the sidebar has no Settings
-button), and the market is still a section there. If you would rather reach it
-in one click, the market can also put its own **Plugin Market** row in the
-sidebar; turn it on from the market's card under **Plugins**.
+Restart `dsh web`, open the **Plugins** page, and pick the **Plugin Market**
+tab next to **Installed** (dsh 0.2.1 and newer — plain `dsh web` included, no
+desktop app needed). The market is also still a section of **Settings → Plugin
+Market**: on dsh 0.2.0 and older that is the only way in, and from 0.2.1 the
+Settings dialog lives in the account menu. If you would rather reach it in one
+click from anywhere, the market can also put its own **Plugin Market** row in
+the sidebar; turn it on from the market's card under **Plugins**.
 
 A host that runs under another profile name takes the same command with that
 name instead — `dsh plugin --profile <profile> add dshmarket`. On the official

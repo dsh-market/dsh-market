@@ -1797,10 +1797,11 @@ export interface MarketSectionProps {
   /** The opt-in sidebar row. Absent, the page offers no shortcut tip. */
   sidebar?: SidebarEntry
   /**
-   * Which mount this is. The settings page may offer the sidebar shortcut;
-   * the sidebar page must not ask to open itself.
+   * Which mount this is. Only the settings page may offer the sidebar
+   * shortcut; the sidebar page must not ask to open itself, and the Plugins
+   * page's tab is already one click from 已安装.
    */
-  surface?: 'settings' | 'sidebar'
+  surface?: 'settings' | 'sidebar' | 'plugins'
 }
 
 interface SourceMigrationConfirm {
@@ -1875,6 +1876,7 @@ export function MarketSection(props: MarketSectionProps) {
     () => props.locale.getSnapshot(),
   )
   const lang = String(localeSnap.active).toLowerCase().startsWith('zh') ? 'zh' : 'en'
+  const surface = props.surface ?? 'settings'
   const sidebar = props.sidebar
   const [sidebarSnap, setSidebarSnap] = useState(() => ({
     supported: sidebar?.supported() === true,
@@ -1897,7 +1899,7 @@ export function MarketSection(props: MarketSectionProps) {
     return sidebar.subscribe(sync)
   }, [sidebar])
   // Wait for load(): until then enabled is the default off, not a known choice.
-  const showSidebarTip = (props.surface ?? 'settings') === 'settings'
+  const showSidebarTip = surface === 'settings'
     && sidebarSnap.ready
     && sidebarSnap.supported
     && !sidebarSnap.enabled
@@ -2513,6 +2515,52 @@ export function MarketSection(props: MarketSectionProps) {
   const [installedBundles, setInstalledBundlesState] = useState<string[]>(() => cachedInstalledBundles)
   const setInstalledBundles = useCallback(cacheState(value => { cachedInstalledBundles = value }, setInstalledBundlesState), [])
   const bodyRef = useRef<HTMLDivElement | null>(null)
+  const rootRef = useRef<HTMLDivElement | null>(null)
+  /**
+   * The Plugins page's tab has no height of its own.
+   *
+   * The host's page owns the scroll there and its tab panel is content-sized,
+   * so a `height: 100%` child resolves to auto: the market's own scroller
+   * would disappear and take the sticky category row, the back-to-top button
+   * and the collapse-on-scroll header with it. Measure the room left under
+   * the host's header and tabs and hand it back to the panel, so every other
+   * mount's layout rules keep working unchanged.
+   */
+  const [pluginsTabHeight, setPluginsTabHeight] = useState<number | null>(null)
+  useLayoutEffect(() => {
+    const root = rootRef.current
+    if (surface !== 'plugins' || root === null) {
+      setPluginsTabHeight(null)
+      return undefined
+    }
+    // Which ancestor scrolls is the host's business; find it rather than name it.
+    let page: HTMLElement | null = null
+    for (let node = root.parentElement; node !== null; node = node.parentElement) {
+      if (/^(auto|scroll)$/.test(getComputedStyle(node).overflowY)) { page = node; break }
+    }
+    if (page === null) return undefined
+    const host = page
+    const measure = (): void => {
+      // Hidden behind another tab the host keeps mounted: every rect is zero
+      // and the answer would be the whole page height. The observer fires
+      // again when this panel is shown.
+      if (root.getClientRects().length === 0) return
+      const bottom = Number.parseFloat(getComputedStyle(host).paddingBottom)
+      const room = host.clientHeight
+        - (root.getBoundingClientRect().top - host.getBoundingClientRect().top)
+        - (Number.isFinite(bottom) ? bottom : 0)
+      // A host that has not laid the page out yet answers with a negative
+      // room; the floor keeps the panel usable until the next measurement.
+      const next = Math.max(320, Math.round(room))
+      setPluginsTabHeight(prev => (prev === next ? prev : next))
+    }
+    measure()
+    if (typeof ResizeObserver === 'undefined') return undefined
+    const observer = new ResizeObserver(measure)
+    observer.observe(host)
+    observer.observe(root)
+    return () => { observer.disconnect() }
+  }, [surface])
   /** Hidden file input behind the Import button (a Button can't host an <input>). */
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [sortField, setSortField] = useState<SortField>('downloads')
@@ -5972,8 +6020,11 @@ export function MarketSection(props: MarketSectionProps) {
 
   return (
     <div
+      ref={rootRef}
       className={`${css.root} notranslate`}
+      style={surface === 'plugins' && pluginsTabHeight !== null ? { height: `${String(pluginsTabHeight)}px` } : undefined}
       data-dsh-market-root
+      data-dsh-market-plugins-tab={surface === 'plugins' ? 'true' : undefined}
       /* Browser page translation is the one reported cause of the blank
          market (#293 by @apdc111, and the same shape in #286 / #241, none of
          which ever reproduced in an untranslated browser). Chrome and Edge

@@ -368,6 +368,10 @@
 /* Explicit immersive mode: the normal Settings width remains the default,
    while the user can opt into a Wallpaper-style multi-column gallery. */
 [role="dialog"]:has([data-dsh-market-fullscreen="true"]){position:fixed;inset:0;width:100vw;height:100vh;max-width:none;max-height:none;border-radius:0}
+/* Fullscreen from the Plugins page has no dialog to expand, so the
+   market covers the window itself. The inline height is the tab room measured
+   from the host's page, hence !important. */
+[data-dsh-market-plugins-tab="true"][data-dsh-market-fullscreen="true"]{position:fixed;inset:0;z-index:60;height:100vh!important;background:var(--dsw-alias-bg-layer-1,#fff)}
 @media (prefers-reduced-motion:reduce){
   .themeCard,.themeCover img{transition:none}
   .themeCard:hover{transform:none}

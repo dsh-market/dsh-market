@@ -48,6 +48,27 @@ describe('apply() icon gaps (#671)', () => {
   })
 })
 
+/** Like `hostWith`, but keeps each registration's options for inspection. */
+function hostWithEntries(declared: readonly string[]) {
+  const registrations: Record<string, unknown>[] = []
+  const slots = new Set(declared)
+  apply({
+    effect: (run: () => unknown) => { run() },
+    on: () => () => {},
+    locale: {
+      register: () => () => {}, bind: () => (key: string) => key,
+      subscribe: () => () => {}, getSnapshot: () => ({ active: 'en' }),
+    },
+    theme: { getTheme: () => null, setTheme: () => {} },
+    slots: {
+      inject: (slot: string, register: () => unknown) => { if (slots.has(slot)) register() },
+      register: (options: Record<string, unknown>) => { registrations.push(options); return () => {} },
+    },
+    inject: () => {},
+  } as Parameters<typeof apply>[0])
+  return { registrations }
+}
+
 /** A host that declares only the slots it has, and records what the market did. */
 function hostWith(declared: readonly string[]) {
   const registrations: Record<string, unknown>[] = []
@@ -95,6 +116,26 @@ it('adds nothing to a sidebar that has panels until the user opts in (#846)', ()
   // with sidebar panels gets exactly the registrations it got before.
   const { registrations } = hostWith(['settings.section', 'shell.overlay', 'sidebar.panellist', 'main'])
   expect(registrations).toEqual(['settings.section', 'shell.overlay'])
+})
+
+it('adds the market as a tab on the Plugins page when the host declares one', () => {
+  // dsh 0.2.1-alpha.4 added `plugins.tab` to the Plugins page (已安装 | 发现):
+  // the host's own Discover tab is a registration into it. The market follows
+  // the slot, and everything it registered before stays as it was.
+  const host = hostWithEntries(['settings.section', 'shell.overlay', 'plugins.tab'])
+  expect(host.registrations.map(entry => entry.name)).toEqual(['settings.section', 'plugins.tab', 'shell.overlay'])
+  const tab = host.registrations.find(entry => entry.name === 'plugins.tab')!
+  // Placed before the host's Discover (which registers with no order, i.e. 0),
+  // so the market sits next to 已安装.
+  expect(tab.id).toBe('dsh-market')
+  expect(tab.order).toBeLessThan(0)
+})
+
+it('adds no Plugins-page tab on hosts that never declare it', () => {
+  // Every host before 0.2.1-alpha.4: the slot never arrives, so neither does
+  // the registration.
+  const host = hostWithEntries(['settings.section', 'shell.overlay'])
+  expect(host.registrations.map(entry => entry.name)).not.toContain('plugins.tab')
 })
 
 it('places the settings card on the bundle page a 0.1.7 host declares (#677)', () => {
