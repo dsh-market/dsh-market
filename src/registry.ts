@@ -36,6 +36,13 @@ export interface RegistryPlugin {
    * omits the byline segment rather than showing a placeholder.
    */
   version?: string | null
+  /**
+   * Catalog-declared storefront tile (icon). Same trust boundary as screenshots:
+   * the catalog is untrusted input, so the client re-validates the URL before
+   * creating an <img>. Absent = fall back to the owner's GitHub avatar.
+   */
+  icon?: string | null
+
   install: string
   added: string
   /**

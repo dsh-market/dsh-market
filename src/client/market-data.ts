@@ -76,6 +76,8 @@ export interface RegistryPlugin {
   capabilities?: string[]
   capabilityRedLines?: string[]
   capabilityCheckedAt?: string | null
+  /** Catalog-declared storefront tile; same image gate as screenshots; optional. */
+  icon?: string | null
   /** Author-curated screenshot URLs from the registry (#61); optional. */
   screenshots?: string[]
 }
@@ -1153,6 +1155,15 @@ function gateScreenshot(value: unknown): ScreenshotGate {
 function safeScreenshot(value: unknown): string | null {
   const gate = gateScreenshot(value)
   return gate.ok ? gate.src : null
+}
+
+/**
+ * A catalog-declared storefront tile. Same https/GitHub-only gate as
+ * screenshots (an icon URL is still a request carrying the user's IP) and
+ * raster-only, because an SVG tile is a document, not an image.
+ */
+export function safeIcon(value: unknown): string | null {
+  return safeScreenshot(value)
 }
 
 /**

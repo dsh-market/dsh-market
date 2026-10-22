@@ -2516,6 +2516,14 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			return gate.ok ? gate.src : null;
 		}
 		/**
+		* A catalog-declared storefront tile. Same https/GitHub-only gate as
+		* screenshots (an icon URL is still a request carrying the user's IP) and
+		* raster-only, because an SVG tile is a document, not an image.
+		*/
+		function safeIcon(value) {
+			return safeScreenshot(value);
+		}
+		/**
 		* Prepare a GitHub release body for the update-notes dialog's tiny markdown
 		* renderer. HTML — especially pasted `<img>` tags — must not surface as
 		* literal text; markdown syntax is left intact for the dialog to render.
@@ -7134,9 +7142,20 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			flushFence();
 			return out;
 		}
-		function OwnerAvatar({ name, owner }) {
+		function OwnerAvatar({ name, owner, icon }) {
 			const [failed, setFailed] = (0, react.useState)(false);
 			const [routeIndex, setRouteIndex] = (0, react.useState)(0);
+			const [iconFailed, setIconFailed] = (0, react.useState)(false);
+			const tile = iconFailed ? null : safeIcon(icon);
+			if (tile !== null) return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("img", {
+				className: Market_module_css_default.av,
+				src: tile,
+				alt: "",
+				loading: "lazy",
+				decoding: "async",
+				referrerPolicy: "no-referrer",
+				onError: () => setIconFailed(true)
+			});
 			if (failed || owner === "") return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 				className: Market_module_css_default.av,
 				style: { background: avatarColor(name) },
@@ -8764,7 +8783,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					author: entry.owner === "" ? void 0 : entry.owner,
 					avatar: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(OwnerAvatar, {
 						name: entry.name,
-						owner: entry.owner || ""
+						owner: entry.owner || "",
+						icon: entry.icon ?? void 0
 					})
 				};
 			}, [data]);
@@ -11992,7 +12012,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 										children: [
 											/* @__PURE__ */ (0, react_jsx_runtime.jsx)(OwnerAvatar, {
 												name: p.name,
-												owner: p.owner || ""
+												owner: p.owner || "",
+												icon: p.icon ?? void 0
 											}),
 											/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 												className: Market_module_css_default.owner,
@@ -12175,7 +12196,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 											children: [
 												/* @__PURE__ */ (0, react_jsx_runtime.jsx)(OwnerAvatar, {
 													name: p.name,
-													owner: p.owner || ""
+													owner: p.owner || "",
+													icon: p.icon ?? void 0
 												}),
 												/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 													className: Market_module_css_default.owner,
@@ -14609,7 +14631,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									children: [
 										/* @__PURE__ */ (0, react_jsx_runtime.jsx)(OwnerAvatar, {
 											name: confirming.name,
-											owner: confirming.owner || ""
+											owner: confirming.owner || "",
+											icon: confirming.icon ?? void 0
 										}),
 										/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 											className: Market_module_css_default.owner,
