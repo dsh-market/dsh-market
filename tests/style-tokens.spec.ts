@@ -54,3 +54,27 @@ describe('the stylesheet does not paint with ink', () => {
     expect(offenders).toEqual([])
   })
 })
+
+/**
+ * No blurred backdrop anywhere in this stylesheet.
+ *
+ * A `backdrop-filter` costs a blurred backdrop surface per paint. On the
+ * Linux desktop shell (WebKitGTK rendering through shared memory, Skia on the
+ * CPU — no GPU path) the theme grid paid it once per card: 24 covers, each
+ * with a badge over a screenshot. The web process then allocated ~115 MB/s
+ * while the page was stuck — 600 MB → 3 GB in 21 s — and because the shell
+ * hosts the whole UI in one web view inside one cgroup, the window, the
+ * compositor and the tray went with it; the machine had to be rebooted.
+ *
+ * Measured on dshmarket 1.66.47: removing this one declaration from
+ * `.themePreviewAction,.themePreviewCount` is the difference between that and
+ * a flat ~740 MB. The badge keeps its 78%-opaque scrim, so the label stays
+ * legible without the blur.
+ */
+describe('the stylesheet does not ask for a blurred backdrop', () => {
+  it('never declares a backdrop filter', () => {
+    const offenders = RULES.flatMap(({ selector, body }) =>
+      body.includes('backdrop-filter') ? [selector] : [])
+    expect(offenders).toEqual([])
+  })
+})
