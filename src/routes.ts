@@ -1,3 +1,4 @@
+import { installMigrationHelp } from './install-migration.ts'
 /**
  * HTTP routes bridging the browser market UI to the host. This layer only
  * parses requests, calls the service modules, and serializes responses —
@@ -6315,6 +6316,11 @@ sendJson(response, 200, { updates })
             // SAME package/source (not a repo-only alias of a different entry)
             // and is not yet active (bundle layer or live mount) may be retried.
             const installedNow = readInstalled(config.profile, activeProfileDir)
+            const migration = installMigrationHelp(entry.url, installedNow)
+            if (migration !== null) {
+              sendJson(response, 409, migration)
+              return
+            }
             const aliasOf = findInstalledAlias(entry, installedNow)
             // When the duplicate guard allows a retry of a leftover dep, that
             // name must be treated as "newly added" by the post-install
