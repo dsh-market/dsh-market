@@ -663,6 +663,14 @@ describe('withHoistRecovery', () => {
       const result = await withHoistRecovery(other, 'desktop', ['add', 'thing'], undefined, { marketFlags: false })
       expect(result.stderr).not.toContain('设置 → 插件')
     })
+
+    it.each(['dshmarket@1.66.48', 'dsh-market@1.66.48'])('does not send a market overlay to Settings → Plugins (%s, #909, #982)', async spec => {
+      // That page has no update entry for a package already in the profile.
+      // The #798 note is for other plugins; for the market it is a shut door.
+      const result = await withHoistRecovery(failing, 'desktop', ['add', spec], undefined, { marketFlags: false })
+      expect(result.stderr).not.toContain('设置 → 插件')
+      expect(result.stderr).not.toContain("the \"run it from the command line\" option above is not available here")
+    })
   })
 
   it('tells a desktop user on the fresh-release wait what to do, without a door that is shut (#852, #919)', async () => {

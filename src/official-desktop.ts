@@ -1,7 +1,16 @@
 /** The official Electron profile is owned by DSH's in-process plugin manager. */
 
 import { randomUUID } from 'node:crypto'
-import { progress, TARGET_RE, type DesktopPluginRuntime, type InstallResult } from './dsh-cli.ts'
+import {
+  cancelActive as cancelHostChild,
+  progress,
+  runHostPnpm,
+  TARGET_RE,
+  type DesktopPluginRuntime,
+  type HostPackageManager,
+  type InstallResult,
+} from './dsh-cli.ts'
+import { classifyPnpmFailure } from './pnpm-compat.ts'
 import {
   DeadlineExceeded,
   PendingUpdateJournal,
@@ -232,6 +241,90 @@ interface UpdateContext {
   profile: string
   profileDirectory: string
   journal: PendingUpdateJournal
+  /** Bundled pnpm from the official desktop launcher; only used for the market itself. */
+  packageManager?: HostPackageManager | null
+}
+
+/**
+ * Overlay the market's own version without unloading it (#982, #900).
+ *
+ * The manager refuses a re-add (`already-installed`) and the only managed
+ * update is remove-then-install, which kills this process. Official Desktop
+ * already publishes a bundled pnpm on `profileContext`; `pnpm add` on an
+ * existing dependency is an overlay, so the running market stays in memory.
+ * No `--config.minimum-release-age=0` — that write is #944.
+ */
+async function updateMarketInPlace(
+  spec: string,
+  name: string,
+  options: { requestId?: string; registry?: string },
+  context?: UpdateContext,
+): Promise<ManagedResult> {
+  const invocation = context?.packageManager
+  const directory = context?.profileDirectory
+  if (context === undefined || invocation === undefined || invocation === null || directory === undefined) {
+    return { application: 'failed', error: { code: 'market-self-update', message: selfUpdateMessage(spec) } }
+  }
+  progress.lastLine = 'Updating the market without unloading it'
+  const args = ['add', spec]
+  if (typeof options.registry === 'string' && options.registry !== '') args.push(`--registry=${options.registry}`)
+  const run = await runHostPnpm(invocation, directory, args)
+  const output = `${run.stdout}\n${run.stderr}`.trim()
+  if (run.cancelled) {
+    return { application: 'cancelled', packageResult: { exitCode: run.exitCode, output } }
+  }
+  if (run.exitCode === 0 && run.timedOut !== true) {
+    const landed = readInstalledVersion(context.profile, name, directory) ?? ''
+    const wanted = targetVersionOf(spec)
+    if (wanted === '' ? landed !== '' : landed === wanted) {
+      return { application: 'restart-required', packageResult: { exitCode: 0, output: run.stdout } }
+    }
+    return {
+      application: 'failed',
+      error: {
+        message: `市场文件没有换成 ${wanted || spec}（现在是 ${landed || '未知'}）。没有把这次当成成功。 / the market files did not become ${wanted || spec} (now ${landed || 'unknown'}). This was not treated as success.`,
+      },
+      packageResult: { exitCode: run.exitCode || 1, output },
+    }
+  }
+  const classified = classifyPnpmFailure(output, run.exitCode)
+  if (classified?.code === 'release-age-violation') {
+    return {
+      application: 'failed',
+      error: {
+        message: '这个版本还在新版本等待期内，现在装不了。等过了等待期再点一次更新。 / this version is still inside the fresh-release wait, so it cannot be installed yet. Try the update again after the wait.',
+      },
+      packageResult: { exitCode: run.exitCode || 1, output },
+    }
+  }
+  if (classified?.code === 'windows-file-locked') {
+    // Starting the market loads these files again, so "quit, reopen, click
+    // Update" cannot replace them. Settings → Plugins has no update entry
+    // (#909). This is not an age failure — no `--config.minimum-release-age=0`.
+    return {
+      application: 'failed',
+      error: {
+        message: `文件正被打开着，这一步没有换上。市场启动就会再占用这些文件，再点更新也换不上。请完全退出 DSH Desktop，在 profile 目录执行 \`pnpm add ${spec}\`（没有 pnpm 时用 \`npx pnpm add …\`），然后重新启动。Windows 的 profile 一般在 %USERPROFILE%\\.dsh\\profiles\\desktop。 / files are held open, so this step did not apply. Starting the market loads those files again, so clicking Update after a restart cannot replace them. Quit DSH Desktop completely, run \`pnpm add ${spec}\` in the profile directory (use \`npx pnpm add …\` if pnpm is not installed), then start DSH again. On Windows the profile is usually %USERPROFILE%\\.dsh\\profiles\\desktop.`,
+      },
+      packageResult: { exitCode: run.exitCode || 1, output },
+    }
+  }
+  if (classified !== null) {
+    return {
+      application: 'failed',
+      error: { message: classified.message },
+      packageResult: { exitCode: run.exitCode || 1, output },
+    }
+  }
+  // pnpm already ran. `market-self-update` means the button cannot work on
+  // this host (#909); recycling it here, with the age-bypass hint, is #944.
+  return {
+    application: 'failed',
+    error: {
+      message: '这一次没有换上。pnpm 没有给出能对上的原因。可以再点一次更新；还是不行就完全退出 DSH Desktop 后再试。 / this update did not apply. pnpm did not name a cause we can match. Try the update again; if it still fails, quit DSH Desktop completely and try once more.',
+    },
+    packageResult: { exitCode: run.exitCode || 1, output },
+  }
 }
 
 /**
@@ -269,9 +362,9 @@ async function installOrReinstall(
   // A refusal we cannot turn into a name is the manager's answer to give.
   if (name === undefined) return first
   // Removing the market would unload this very code before the reinstall runs
-  // (#900). Say how to update it instead.
+  // (#900). Overlay the version with the host's own pnpm instead — no remove.
   if (SELF_NAMES.has(name)) {
-    return { application: 'failed', error: { code: 'market-self-update', message: selfUpdateMessage(spec) } }
+    return updateMarketInPlace(spec, name, options, context)
   }
   const record = context === undefined
     ? undefined
@@ -349,6 +442,9 @@ export function createOfficialDesktopRuntime(
   // because an explicitly configured `profile: desktop` may be the only thing
   // that names this profile, with no launcher directory to go with it (#744).
   _profileDirectory?: string,
+  // Official Desktop publishes its bundled pnpm here. Used only to overlay
+  // the market itself (#982). Other packages still go through the manager.
+  packageManager?: HostPackageManager | null,
 ): OfficialDesktopRuntime {
   let disposed = false
   let repairing = false
@@ -357,7 +453,7 @@ export function createOfficialDesktopRuntime(
   const journal = directory === undefined ? undefined : PendingUpdateJournal.forProfile(directory)
   const updateContext: UpdateContext | undefined = directory === undefined || journal === undefined
     ? undefined
-    : { profile: profileName, profileDirectory: directory, journal }
+    : { profile: profileName, profileDirectory: directory, journal, packageManager }
 
   const runPlugin: DesktopPluginRuntime['runPlugin'] = (profile, argv) => {
     if (disposed) return Promise.resolve(failure('official desktop plugin runtime is disposed', 127))
@@ -501,11 +597,13 @@ export function createOfficialDesktopRuntime(
     probePnpm: async () => managerLookup() !== undefined,
     provisionPnpm: async () => ({ ok: managerLookup() !== undefined, hint: 'Use the official desktop plugin manager' }),
     cancelActive: () => {
-      if (active?.requestId === undefined) return false
+      if (active === undefined) return false
       active.cancelled = true
       progress.cancelling = true
       const manager = managerLookup()
-      if (manager !== undefined) void manager.cancelInstall(active.requestId).catch(() => {})
+      if (active.requestId !== undefined && manager !== undefined) void manager.cancelInstall(active.requestId).catch(() => {})
+      // A self-update overlay is a host pnpm child, not a manager install.
+      cancelHostChild()
       return true
     },
     supportsExactRollbackTarget: target => TARGET_RE.test(target),
@@ -519,6 +617,7 @@ export function createOfficialDesktopRuntime(
         const manager = managerLookup()
         if (manager !== undefined) void manager.cancelInstall(active.requestId).catch(() => {})
       }
+      cancelHostChild()
       await active?.done
     },
   }

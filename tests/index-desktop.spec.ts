@@ -168,6 +168,23 @@ describe('profile the launcher booted (#639)', () => {
     expect(state.officialFactoryArgs).toHaveLength(0)
   })
 
+  it('hands the launcher pnpm to the official runtime without registering it globally (#982)', () => {
+    const packageManager = {
+      command: '/Applications/DSH.app/Contents/Resources/runtime/node',
+      args: ['--expose-internals', '/Applications/DSH.app/Contents/Resources/runtime/pnpm.mjs'],
+      env: { ELECTRON_RUN_AS_NODE: '1' },
+    }
+    const ctx = new FakeContext({
+      webServer: {}, loader: {},
+      profileContext: { ...launcher, packageManager },
+    })
+
+    apply(ctx as never)
+
+    expect(state.packageManagers).toEqual([])
+    expect(state.officialFactoryArgs[0]?.slice(1)).toEqual(['desktop', launcher.dir, packageManager])
+  })
+
   it('uses the official manager rather than the forbidden CLI for Electron desktop', () => {
     // The official desktop host starts a profile through the launcher's node
     // entry: no `--profile` on argv, no `desktopProfiles` service. The market
@@ -186,7 +203,7 @@ describe('profile the launcher booted (#639)', () => {
     })
     expect(state.mounts[0].runtime).toBe(state.runtime)
     expect(state.officialFactoryArgs).toHaveLength(1)
-    expect(state.officialFactoryArgs[0]?.slice(1)).toEqual(['desktop', launcher.dir])
+    expect(state.officialFactoryArgs[0]?.slice(1)).toEqual(['desktop', launcher.dir, null])
     expect(state.mounts[0].config).toMatchObject({ desktopHost: true, allowRestart: false })
   })
 
@@ -218,7 +235,7 @@ describe('profile the launcher booted (#639)', () => {
     apply(ctx as never, { profile: 'desktop' })
 
     expect(state.officialFactoryArgs).toHaveLength(1)
-    expect(state.officialFactoryArgs[0]?.slice(1)).toEqual(['desktop', undefined])
+    expect(state.officialFactoryArgs[0]?.slice(1)).toEqual(['desktop', undefined, null])
     expect(state.mounts[0].config).toMatchObject({ profile: 'desktop', desktopHost: true, allowRestart: false })
     // No launcher answered, so no directory: the routes derive it, exactly as
     // they do for the flag-and-default path.
@@ -230,7 +247,7 @@ describe('profile the launcher booted (#639)', () => {
 
     apply(ctx as never, { profile: 'Desktop' })
 
-    expect(state.officialFactoryArgs[0]?.slice(1)).toEqual(['Desktop', launcher.dir])
+    expect(state.officialFactoryArgs[0]?.slice(1)).toEqual(['Desktop', launcher.dir, null])
     expect(state.mounts[0].config).toMatchObject({ profile: 'Desktop', profileDirectory: launcher.dir })
   })
 
