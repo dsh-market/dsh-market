@@ -1541,6 +1541,10 @@ export function setAllowBuilds(profile: string, packages: string[], explicitDir?
   const SEG = '[A-Za-z0-9_-][A-Za-z0-9_.-]*'
   const NAME = '[A-Za-z0-9@/_.-]+'
   const SHA = '[0-9a-f]{40}'
+  // pnpm's exact monorepo key includes the selected directory; dropping it
+  // makes approve-and-retry write only a bare name that git builds ignore.
+  const DIR = '(?!\\.{1,2}(?:/|$))[A-Za-z0-9_.-]+'
+  const SUBPATH = `path:/${DIR}(?:/${DIR})*`
   // The stable clone-URL key: github's (#68) and, since #637, every other
   // host's — pnpm keys a git dependency by the remote it would clone, whoever
   // serves it. Optionally pinned to a commit, which is the form pnpm 11.8.0
@@ -1553,7 +1557,7 @@ export function setAllowBuilds(profile: string, packages: string[], explicitDir?
   // requiring the suffix dropped a correctly derived key on its way out, and
   // appending it would have written one pnpm never reads.
   const GIT_KEY_RE = new RegExp(
-    `^${NAME}@git\\+https://[A-Za-z0-9_.-]+(?::\\d{1,5})?/${SEG}(?:/${SEG})*(?:\\.git)?(?:#${SHA})?$`,
+    `^${NAME}@git\\+https://[A-Za-z0-9_.-]+(?::\\d{1,5})?/${SEG}(?:/${SEG})*(?:\\.git)?(?:#${SHA}(?:&${SUBPATH})?|#${SUBPATH})?$`,
   )
   // The commit-pinned download a host serves, which is what pnpm below 11.21
   // matches instead (#285): codeload for github, the project archive for
@@ -1564,7 +1568,7 @@ export function setAllowBuilds(profile: string, packages: string[], explicitDir?
     + `codeload\\.github\\.com/${SEG}/${SEG}/tar\\.gz/${SHA}`
     + `|bitbucket\\.org/${SEG}/${SEG}/get/${SHA}\\.tar\\.gz`
     + `|gitlab\\.com/${SEG}(?:/${SEG})+/-/archive/${SHA}/${SEG}-${SHA}\\.tar\\.gz`
-    + ')$',
+    + `)(?:#${SUBPATH})?$`,
   )
   for (const pkg of packages) {
     if (/^[A-Za-z0-9@/_.-]+$/.test(pkg) || GIT_KEY_RE.test(pkg) || ARCHIVE_KEY_RE.test(pkg)) map[pkg] = 'true'

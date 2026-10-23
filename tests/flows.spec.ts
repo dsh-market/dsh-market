@@ -6820,6 +6820,29 @@ describe('build-script approval flow (#6)', () => {
     expect(yaml).toContain(`${printed}: true`)
   })
 
+  it('approves a monorepo package with the exact subpath key pnpm printed', async () => {
+    const name = '@cyrus/dsh-sessions-insight'
+    const target = 'github:m/mono#path:/packages/plug-a'
+    const printed = `${name}@https://codeload.github.com/Mt-Youya/dsh-plugins/tar.gz/${'a'.repeat(40)}#path:/plugins/sessions-insight`
+    // A failed install can leave the package files behind after the host
+    // restores package.json, so the installed-package branch has no spec.
+    const pkgDir = join(fake.profileDir, 'node_modules', name)
+    mkdirSync(pkgDir, { recursive: true })
+    writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name, version: '0.0.4' }))
+    fake.repos[target] = { name, manifest: { name, version: '0.0.4', dsh: {}, main: 'index.js' }, artifacts: ['index.js'] }
+    fake.failNextAddStderrOnce = `[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: ${printed}\n`
+
+    const first = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/m/mono/tree/main/packages/plug-a' })
+    expect(first.status).toBe(502)
+    expect(first.json.ignoredBuilds).toEqual([name])
+    const approve = await bed.dispatch('POST', '/dsh-market/approve-builds', { packages: [name] })
+    expect(approve.status).toBe(200)
+    // The fake failure is one-shot; this exact persisted key is the assertion
+    // that proves approval worked rather than merely retrying a transient error.
+    const yaml = readFileSync(join(fake.profileDir, 'pnpm-workspace.yaml'), 'utf8')
+    expect(yaml).toContain(`'${printed}': true`)
+  })
+
   it('approves an update whose build pnpm IGNORED with the dep path it named, not the installed pin', async () => {
     // The other half of the same loop. A git plugin update can fail at either
     // of pnpm's two build gates: the FETCHER (ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED,

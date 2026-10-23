@@ -10,12 +10,13 @@
  */
 
 import { afterEach, describe, expect, it } from 'vitest'
-import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { execFileSync, spawnSync } from 'node:child_process'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { RELEASE_AGE_OVERRIDE } from '../src/install.ts'
-import { readLockCommits } from '../src/profile.ts'
+import { readLockCommits, setAllowBuilds } from '../src/profile.ts'
 import { classifyPnpmFailure, pluginArgsFor } from '../src/pnpm-compat.ts'
 
 /** Last release of each major the market supports; behavior is per-major. */
@@ -60,6 +61,46 @@ function installedVersion(dir: string, name: string): string | null {
   if (!existsSync(manifest)) return null
   return (JSON.parse(readFileSync(manifest, 'utf8')) as { version?: string }).version ?? null
 }
+
+describe('monorepo build approval', () => {
+  it('lets real pnpm run the pending subpackage build after approval', () => {
+    const dir = profileFixture({ workspace: true })
+    const repo = join(dir, 'fixture-repo')
+    const subpath = 'plugins/plug'
+    const name = '@test/monorepo-build'
+    const pkgDir = join(repo, subpath)
+    mkdirSync(pkgDir, { recursive: true })
+    writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({
+      name, version: '1.0.0', main: 'index.js', scripts: { postinstall: 'node build.cjs' },
+    }))
+    writeFileSync(join(pkgDir, 'index.js'), 'module.exports = true')
+    writeFileSync(join(pkgDir, 'build.cjs'), "require('node:fs').writeFileSync('built.txt', 'built')")
+    execFileSync('git', ['init', '-q', repo])
+    execFileSync('git', ['-C', repo, 'add', '.'])
+    execFileSync('git', ['-C', repo, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'fixture'])
+    const sha = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
+    const remote = 'https://git.example.test/me/mono.git'
+    const target = `git+${remote}#${sha}&path:/${subpath}`
+    // Exercise the https dep-path shape without relying on a hosted fixture.
+    const env = {
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: `url.${pathToFileURL(repo).href}.insteadOf`,
+      GIT_CONFIG_VALUE_0: remote,
+    }
+    const args = ['add', target, '--store-dir', join(dir, 'store')]
+    const first = pnpm('11.28.5', args, dir, env)
+    expect(first.code, first.out).not.toBe(0)
+    expect(first.out).toContain('ERR_PNPM_IGNORED_BUILDS')
+    const marker = join(dir, 'node_modules', name, 'built.txt')
+    expect(existsSync(marker)).toBe(false)
+
+    const key = `${name}@${target}`
+    expect(setAllowBuilds('web', [key], dir)).toContain(key)
+    const retry = pnpm('11.28.5', args, dir, env)
+    expect(retry.code, retry.out).toBe(0)
+    expect(readFileSync(marker, 'utf8')).toBe('built')
+  })
+})
 
 describe('#20 bug 1 — workspace-root add without -w', () => {
   it('pnpm 9 refuses with ERR_PNPM_ADDING_TO_ROOT (why the market injects -w at all)', () => {

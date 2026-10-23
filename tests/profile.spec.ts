@@ -938,6 +938,48 @@ describe('manifest rollback (#65)', () => {
 })
 
 describe('setAllowBuilds (#6)', () => {
+  it('writes exact monorepo build keys and repairs their undecided placeholders', async () => {
+    const { setAllowBuilds } = await import('../src/profile.ts')
+    const dir = writeProfile({})
+    const sha = '6322be7665112d5caecaf2522b5496e4c21a5d5a'
+    const archive = `@cyrus/dsh-sessions-insight@https://codeload.github.com/Mt-Youya/dsh-plugins/tar.gz/${sha}`
+    const clone = '@cyrus/dsh-sessions-insight@git+https://github.com/Mt-Youya/dsh-plugins.git'
+    const keys = [
+      `${archive}#path:/plugins/sessions-insight`,
+      `${clone}#${sha}&path:/plugins/sessions-insight`,
+      `${clone}#path:/plugins/sessions-insight`,
+      `${archive}#path:/.plugins/sessions-insight`,
+      `p@https://gitlab.com/group/mono/-/archive/${sha}/mono-${sha}.tar.gz#path:/packages/p`,
+      `p@https://bitbucket.org/o/mono/get/${sha}.tar.gz#path:/packages/p`,
+    ]
+    writeFileSync(join(dir, 'pnpm-workspace.yaml'),
+      `packages:\n  - .\nallowBuilds:\n  '${keys[0]}': set this to true or false\n  other: false\n`)
+
+    const approved = setAllowBuilds('web', keys)
+    expect(approved).toEqual(['other', ...keys])
+    const workspace = load(readFileSync(join(dir, 'pnpm-workspace.yaml'), 'utf8')) as { allowBuilds: Record<string, boolean> }
+    expect(workspace.allowBuilds).toEqual({ other: false, ...Object.fromEntries(keys.map(key => [key, true])) })
+    // Approval remains stable across a second click.
+    expect(setAllowBuilds('web', keys)).toEqual(approved)
+  })
+
+  it('still rejects unsafe or malformed monorepo build keys', async () => {
+    const { setAllowBuilds } = await import('../src/profile.ts')
+    writeProfile({})
+    const archive = `p@https://codeload.github.com/o/r/tar.gz/${'a'.repeat(40)}`
+    expect(setAllowBuilds('web', [
+      `${archive}#path:/../outside`,
+      `${archive}#path:/packages/./p`,
+      `${archive}#path:/packages/../../outside`,
+      `${archive}#path:/packages/p\n  evil: true`,
+      `${archive}#path:/packages/p&evil:true`,
+      `${archive}#path:/packages\\p`,
+      `${archive}#path:/packages/%2e%2e/outside`,
+      `${archive}#path:`,
+      'p@git+https://github.com/o/r.git#HEAD&path:/packages/p',
+    ])).toEqual([])
+  })
+
   it('accepts the clone-URL and archive keys off GitHub, and only in those exact shapes (#637)', async () => {
     // Same bargain as the codeload widening below: the allowlist is what
     // stops a caller writing arbitrary text into a file pnpm parses, so each
