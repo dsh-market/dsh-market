@@ -4166,6 +4166,25 @@ describe('#60 catalog deprecation', () => {
 })
 
 describe('#60 groups view', () => {
+  it('labels an ungrouped declared library as a library (#995)', async () => {
+    stubFetch({
+      '/dsh-market/installed': {
+        profile: 'web', installed: { 'dsh-shared': '^0.1.7' }, live: [], disabled: [],
+        groups: {}, groupOrder: [],
+        activation: {
+          'dsh-shared': { state: 'inert', library: true, reasons: ['for other plugins to use'], bundle: false, hot: false },
+        },
+      },
+    })
+    render(<MarketSection {...props()} />)
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    fireEvent.click(screen.getByRole('button', { name: en.tabGroups }))
+
+    const row = (await screen.findByText('dsh-shared')).closest('[class*="ungroupedRow"]') as HTMLElement
+    expect(within(row).getByText(en.stateLibrary)).toBeTruthy()
+    expect(within(row).queryByText(en.groupStateInert)).toBeNull()
+  })
+
   it('does not offer library switches in a group (#995)', async () => {
     stubFetch({
       '/dsh-market/installed': {

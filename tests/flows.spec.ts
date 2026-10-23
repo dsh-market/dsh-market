@@ -7143,6 +7143,33 @@ describe('generic enable/disable toggle (#60)', () => {
     return bed.dispatch('POST', '/dsh-market/install', { url: `https://github.com/o/${name}` }).then(() => undefined)
   }
 
+  it('rejects direct enable and disable requests for a declared library without changing state (#995)', async () => {
+    const manifestPath = join(fake.profileDir, 'package.json')
+    const manifest = readManifestAt(fake.profileDir)
+    manifest.dependencies ??= {}
+    manifest.dependencies['dsh-shared'] = '^0.1.7'
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+    const libraryDir = join(fake.profileDir, 'node_modules', 'dsh-shared')
+    mkdirSync(libraryDir, { recursive: true })
+    writeFileSync(join(libraryDir, 'package.json'), JSON.stringify({ name: 'dsh-shared', version: '0.1.7', dsh: { kind: 'library' }, main: 'lib/index.js' }))
+    expect((await bed.dispatch('GET', '/dsh-market/installed')).json.installed['dsh-shared']).toBe('^0.1.7')
+    const statePath = join(fake.profileDir, '.dsh-market', 'state.json')
+    const stateBefore = existsSync(statePath) ? readFileSync(statePath, 'utf8') : null
+    const manifestBefore = readFileSync(manifestPath, 'utf8')
+
+    for (const enabled of [false, true]) {
+      const response = await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-shared', enabled })
+      expect(response.status).toBe(400)
+      expect(response.json.error).toContain('library')
+      expect(existsSync(statePath) ? readFileSync(statePath, 'utf8') : null).toBe(stateBefore)
+      expect(readFileSync(manifestPath, 'utf8')).toBe(manifestBefore)
+      expect(hot.disabled.has('dsh-shared')).toBe(false)
+    }
+    const listed = await bed.dispatch('GET', '/dsh-market/installed')
+    expect(listed.json.disabled).not.toContain('dsh-shared')
+    expect(listed.json.activation['dsh-shared']).toMatchObject({ state: 'inert', library: true })
+  })
+
   it('toggles a hot-mounted plugin off and back on, persisting the disable list', async () => {
     await installNpm('dsh-loop')
     expect(hot.mounts).toEqual(['dsh-loop'])

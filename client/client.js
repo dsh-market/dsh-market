@@ -14121,7 +14121,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 											const note = notes[name];
 											const authored = entry?.description && (entry.description[lang] || entry.description.en) || "";
 											const shown = note ?? authored;
-											const stateLabel = off ? t("disabledState") : act?.state === "inert" && act.dependencyOf === void 0 && act.loadedByProfile !== true ? t("groupStateInert") : act?.state === "restart" ? t("groupStateRestart") : act?.state === "broken" ? t("groupStateBroken") : meta?.label;
+											const stateLabel = act?.library === true ? meta?.label : off ? t("disabledState") : act?.state === "inert" && act.dependencyOf === void 0 && act.loadedByProfile !== true ? t("groupStateInert") : act?.state === "restart" ? t("groupStateRestart") : act?.state === "broken" ? t("groupStateBroken") : meta?.label;
 											const stateDot = off ? "warning" : meta?.dot === "error" ? "error" : meta?.dot === "warning" ? "warning" : "done";
 											const stateClass = stateDot === "error" ? Market_module_css_default.actBroken : stateDot === "warning" ? Market_module_css_default.actWarn : Market_module_css_default.actLive;
 											return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {

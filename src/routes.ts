@@ -58,7 +58,7 @@ import { readJsonBody, refuseUnadmitted, sameOrigin, sendJson } from './http.ts'
 import { resolveDshHome } from './home-paths.ts'
 import { detectedDebugger, detectedSupervisor, restartAllowed, scheduleRestart, servingPort, trustedRestartRequest, trustedDownloadRequest, trustedSelfUninstallRequest, selfUninstallReachableFrom, type RecoveryHandoffConfig, restartReachableFrom } from './restart.ts'
 import type { RecoveryPlugin } from './recovery.ts'
-import { activationAfterReplace, brokenClientBundles, bundlePatchIsEmpty, checkClientBundle, defaultHostRuntimeFacts, findUnservedConfigNamespaces, hasHostHalf, hostPeerGate, newlyBrokenBundles, peerGateRemedy, verifyActivation } from './verify.ts'
+import { activationAfterReplace, brokenClientBundles, bundlePatchIsEmpty, checkClientBundle, defaultHostRuntimeFacts, findUnservedConfigNamespaces, hasHostHalf, hostPeerGate, isDeclaredLibraryDsh, newlyBrokenBundles, peerGateRemedy, verifyActivation } from './verify.ts'
 import {
   carrierRowIds, disableRow, enableRow, findUserPatchPath, foreignRowIds, isProtectedModule, packagePatchFlags,
   readUserPatchState, removeRowBlocks, rowIdsForPackage, userPatchPackageReferences,
@@ -3254,6 +3254,11 @@ export function mountMarketRoutes(
               sendJson(response, 400, { error: 'plugin is not installed' })
               return
             }
+            const manifest = readInstalledManifest(config.profile, name, activeProfileDir) as { dsh?: { kind?: unknown; bundle?: unknown; client?: unknown } } | null
+            if (isDeclaredLibraryDsh(manifest?.dsh)) {
+              sendJson(response, 400, { error: '这是供插件使用的依赖库，无需启用或停用 / this library is for plugins to use; it has no on/off switch' })
+              return
+            }
           // Host infrastructure (port of dsh-plugin-hub): switching off the
           // timer/hmr/webserver/storage chain would break the very HMR the
           // patch layer relies on, so those rows refuse to toggle.
@@ -3669,7 +3674,7 @@ export function mountMarketRoutes(
             for (const member of groups[name]) {
               if (!installed.has(member)) continue
               const manifest = readInstalledManifest(config.profile, member, activeProfileDir) as { dsh?: { kind?: unknown; bundle?: unknown; client?: unknown } } | null
-              if (manifest?.dsh?.kind === 'library' && manifest.dsh.bundle === undefined && manifest.dsh.client === undefined) continue
+              if (isDeclaredLibraryDsh(manifest?.dsh)) continue
               let result: { ok: boolean; reason?: string }
               if (enabled && themeNames.has(member)) {
                 result = { ok: await themes.activateTheme(member), reason: undefined }

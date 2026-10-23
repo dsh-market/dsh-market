@@ -7213,9 +7213,11 @@ export function MarketSection(props: MarketSectionProps) {
                                       const note = notes[name]
                                       const authored = (entry?.description && (entry.description[lang] || entry.description.en)) || ''
                                       const shown = note ?? authored
-                                      const stateLabel = off
-                                        ? t('disabledState')
-                                        : act?.state === 'inert' && act.dependencyOf === undefined && act.loadedByProfile !== true
+                                      const stateLabel = act?.library === true
+                                        ? meta?.label
+                                        : off
+                                          ? t('disabledState')
+                                          : act?.state === 'inert' && act.dependencyOf === undefined && act.loadedByProfile !== true
                                           ? t('groupStateInert')
                                           : act?.state === 'restart'
                                             ? t('groupStateRestart')

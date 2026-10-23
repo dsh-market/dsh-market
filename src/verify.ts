@@ -118,6 +118,11 @@ interface PkgDsh {
   kind?: unknown
 }
 
+/** Only a package declaring library without a plugin surface has no on/off state. */
+export function isDeclaredLibraryDsh(dsh: PkgDsh | null | undefined): boolean {
+  return dsh?.kind === 'library' && dsh.bundle === undefined && dsh.client === undefined
+}
+
 /**
  * True when `live` contains the package itself or a subpath entry of it.
  *
@@ -460,7 +465,7 @@ export function verifyActivation(
   if (dsh === null) {
     return { state: 'missing', reasons: ['未安装 / not installed'], bundle: inBundles, hot: false }
   }
-  const declaredLibrary = dsh.kind === 'library' && dsh.bundle === undefined && dsh.client === undefined
+  const declaredLibrary = isDeclaredLibraryDsh(dsh)
 
   // A user-disabled plugin reads as disabled, never as "restart to apply":
   // the switch state (market disable list or the user patch layer) is the
