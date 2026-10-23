@@ -333,6 +333,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			confirmRemove: "确认卸载？",
 			uninstalling: "卸载中…",
 			uninstallConfirmDesc: "将从当前 profile 中移除该插件。",
+			uninstallLibraryConfirmDesc: "删除这个依赖库后，使用它的插件可能无法启动。",
 			restartHint: "重启方式：关闭当前 dsh 进程后重新运行（例如 dsh web）",
 			restartHintSupervised: "本进程是 {0} 服务的主进程，重启交给它负责——市场自己重启会连带杀掉 cgroup 里的接管进程，服务将起不来。请执行 systemctl restart <你的 unit>。确认你的配置能承受市场自行重启（如 KillMode=process），可在本插件配置里手动打开「允许重启」。",
 			restartHintDebugged: "当前 dsh 进程正被调试器连接。请从 IDE 或终端停止该进程后重新启动，市场不能从界面里结束正在调试的 dsh。",
@@ -678,6 +679,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			stateRestart: "已安装，重启后生效",
 			stateIncompatible: "已安装，与当前 dsh 不兼容",
 			stateInert: "已安装，未生效",
+			stateLibrary: "依赖库",
+			libraryUseHint: "供其他插件使用，无需启用。",
 			stateDependencyLibrary: "{0} 的依赖库",
 			stateLoadedByProfile: "由你的配置加载",
 			stateBroken: "已安装，校验未通过",
@@ -689,6 +692,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			cancelling: "正在取消…",
 			packagesDone: "已处理 {0} 个包",
 			updatedLive: "✓ 已更新，已生效",
+			updatedLibrary: "✓ 已更新",
 			partialNote: "已取消，部分更改已应用",
 			reconciledNote: "已卸载，但 pnpm 在收尾阶段报错（通常是文件被占用）；配置已同步，无需重试",
 			actWhy: "为什么未生效？",
@@ -1081,6 +1085,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			confirmRemove: "Uninstall?",
 			uninstalling: "Uninstalling…",
 			uninstallConfirmDesc: "This removes the plugin from the current profile.",
+			uninstallLibraryConfirmDesc: "Removing this library may stop plugins that use it from starting.",
 			restartHint: "To restart: stop the current dsh process and run it again (e.g. dsh web)",
 			restartHintSupervised: "This process is {0}'s own service process, so restarts belong to it — restarting from here would kill the takeover process along with the cgroup and the service would not come back. Use systemctl restart &lt;your unit&gt;. If your unit can survive a self-restart (KillMode=process), turn Allow restart on in this plugin's configuration.",
 			restartHintDebugged: "This dsh process is under a debugger. Stop it from your IDE or terminal and start it again — the market cannot stop the debugged process from the UI.",
@@ -1426,6 +1431,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			stateRestart: "Installed — restart to apply",
 			stateIncompatible: "Installed — incompatible with this dsh",
 			stateInert: "Installed, not active",
+			stateLibrary: "Library",
+			libraryUseHint: "Shared code for other plugins. No need to enable it.",
 			stateDependencyLibrary: "Library for {0}",
 			stateLoadedByProfile: "Loaded by your setup",
 			stateBroken: "Installed, verification failed",
@@ -1437,6 +1444,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			cancelling: "Cancelling…",
 			packagesDone: "{0} packages processed",
 			updatedLive: "✓ Updated — live",
+			updatedLibrary: "✓ Updated",
 			partialNote: "Cancelled — some changes were applied",
 			reconciledNote: "Removed, but pnpm reported an error while finishing up (usually a locked file). Your settings are already in sync — no retry needed.",
 			actWhy: "Why is it not active?",
@@ -6881,7 +6889,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			});
 		}
 		/** The state label + dot for one activation result (P0-2). */
-		function activationMeta(state, t, dependencyOf, loadedByProfile) {
+		function activationMeta(state, t, dependencyOf, loadedByProfile, library) {
+			if (library === true) return {
+				label: t("stateLibrary"),
+				dot: "done"
+			};
 			if (state === "inert" && loadedByProfile === true) return {
 				label: t("stateLoadedByProfile"),
 				dot: "done"
@@ -10193,7 +10205,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 								...prev,
 								...body.activation
 							}));
-							const warns = Object.entries(body.activation).filter(([, info]) => info.state !== "live" && info.state !== "missing" && info.loadedByProfile !== true).map(([name, info]) => ({
+							const warns = Object.entries(body.activation).filter(([, info]) => info.state !== "live" && info.state !== "missing" && info.loadedByProfile !== true && info.library !== true).map(([name, info]) => ({
 								name,
 								info
 							}));
@@ -10203,7 +10215,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 							setDoneUrls((urls) => urls.filter((url) => url !== plugin.url));
 							setHotUrls((urls) => urls.includes(plugin.url) ? urls : urls.concat(plugin.url));
 							setHotNames((names) => names.includes(plugin.name) ? names : names.concat(plugin.name));
-						} else if (body.activation?.[plugin.name]?.state !== "incompatible") setDoneUrls((urls) => urls.includes(plugin.url) ? urls : urls.concat(plugin.url));
+						} else if (body.activation?.[plugin.name]?.state !== "incompatible" && body.activation?.[plugin.name]?.library !== true) setDoneUrls((urls) => urls.includes(plugin.url) ? urls : urls.concat(plugin.url));
 						if (body.compatibility?.code === "soft-incompatible") setCompatibilityNotice(body.compatibility);
 						setRecords((list) => patch(list, recordId, body.heldRelease !== void 0 ? {
 							state: "warned",
@@ -13078,7 +13090,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									children: activationWarnings.map(({ name, info }) => /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", { children: [
 										/* @__PURE__ */ (0, react_jsx_runtime.jsx)("b", { children: name }),
 										" — ",
-										activationMeta(info.state, t, info.dependencyOf, info.loadedByProfile).label,
+										activationMeta(info.state, t, info.dependencyOf, info.loadedByProfile, info.library).label,
 										info.reasons.length > 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
 											className: Market_module_css_default.spec,
 											children: [
@@ -13932,8 +13944,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									const visibleMembers = (groupQuery === "" || nameHit ? members : members.filter(matchesInstalledQuery)).slice().sort((a, b) => Number(installedThemeNames.has(b)) - Number(installedThemeNames.has(a)));
 									const themeSlot = visibleMembers.some((name) => installedThemeNames.has(name)) && visibleMembers.some((name) => !installedThemeNames.has(name));
 									if (groupQuery !== "" && !nameHit && visibleMembers.length === 0) return null;
-									const sw = groupSwitchState(members, effectiveDisabledSet);
-									const enabledCount = members.filter((member) => !effectiveDisabledSet.has(member)).length;
+									const switchableMembers = members.filter((member) => activations[member]?.library !== true);
+									const sw = groupSwitchState(switchableMembers, effectiveDisabledSet);
+									const enabledCount = switchableMembers.filter((member) => !effectiveDisabledSet.has(member)).length;
 									const collapsed = groupQuery === "" && collapsedGroups.has(gid);
 									const meta = t("groupMembersMeta").replace("{0}", String(members.length)).replace("{1}", String(enabledCount));
 									return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
@@ -14056,11 +14069,15 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 															children: ["· ", t("groupThemeBadge")]
 														})]
 													}),
-													effectiveDisabledSet.has(member) && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+													activations[member]?.library === true && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+														className: Market_module_css_default.spec,
+														children: t("stateLibrary")
+													}),
+													activations[member]?.library !== true && effectiveDisabledSet.has(member) && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 														className: Market_module_css_default.spec,
 														children: t("disabledState")
 													}),
-													onOffSwitch({
+													activations[member]?.library !== true && onOffSwitch({
 														label: (effectiveDisabledSet.has(member) ? t("enable") : t("disable")) + " " + member,
 														on: !effectiveDisabledSet.has(member),
 														disabled: togglingName !== null,
@@ -14088,7 +14105,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 												children: t("ungrouped")
 											}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 												className: Market_module_css_default.groupMeta,
-												children: t("groupMembersMeta").replace("{0}", String((groupQuery === "" ? ungroupedNames : visibleUngrouped).length)).replace("{1}", String((groupQuery === "" ? ungroupedNames : visibleUngrouped).filter((name) => !effectiveDisabledSet.has(name)).length))
+												children: t("groupMembersMeta").replace("{0}", String((groupQuery === "" ? ungroupedNames : visibleUngrouped).length)).replace("{1}", String((groupQuery === "" ? ungroupedNames : visibleUngrouped).filter((name) => activations[name]?.library !== true && !effectiveDisabledSet.has(name)).length))
 											})]
 										})
 									}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
@@ -14098,9 +14115,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 											children: t("installedEmpty")
 										}) : visibleUngrouped.map((name) => {
 											const entry = data === null ? void 0 : catalogEntryForInstalled(data.plugins, name, String(installed[name]), repoIdentities[name], repoHints[name]);
-											const off = effectiveDisabledSet.has(name);
 											const act = activations[name];
-											const meta = !off && act !== void 0 ? activationMeta(act.state, t, act.dependencyOf, act.loadedByProfile) : null;
+											const off = act?.library !== true && effectiveDisabledSet.has(name);
+											const meta = !off && act !== void 0 ? activationMeta(act.state, t, act.dependencyOf, act.loadedByProfile, act.library) : null;
 											const note = notes[name];
 											const authored = entry?.description && (entry.description[lang] || entry.description.en) || "";
 											const shown = note ?? authored;
@@ -14124,7 +14141,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 													}),
 													stateLabel !== void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 														className: Market_module_css_default.ungroupedState,
-														children: /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
+														children: act?.library === true ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+															className: Market_module_css_default.spec,
+															children: stateLabel
+														}) : /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
 															className: stateClass,
 															title: stateLabel,
 															children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.StateDot, {
@@ -14208,15 +14228,15 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									const generation = status?.kind === "generation" || isGenerationSpec(String(spec));
 									const localDev = isLocalDev(String(spec), status);
 									const act = activations[name];
-									const meta = act !== void 0 ? activationMeta(act.state, t, act.dependencyOf, act.loadedByProfile) : null;
+									const meta = act !== void 0 ? activationMeta(act.state, t, act.dependencyOf, act.loadedByProfile, act.library) : null;
 									const version = status && status.version ? "v" + status.version : "";
 									const specText = String(spec);
 									const specRedundant = version !== "" && /^[\^~]?\d/.test(specText);
 									const localPath = localPathOf(specText);
 									const ghSpec = /^github:([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:#|$)/.exec(specText);
 									const repoUrl = entry !== void 0 ? entry.url : ghSpec !== null ? "https://github.com/" + ghSpec[1] : null;
-									const off = effectiveDisabledSet.has(name);
-									const toggleable = off || act !== void 0 && (act.state === "live" || act.state === "restart");
+									const off = act?.library !== true && effectiveDisabledSet.has(name);
+									const toggleable = act?.library !== true && (off || act !== void 0 && (act.state === "live" || act.state === "restart"));
 									return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 										className: missing ? `${Market_module_css_default.irow} ${Market_module_css_default.irowMissing}` : Market_module_css_default.irow,
 										children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
@@ -14421,25 +14441,35 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 												})(),
 												!off && act !== void 0 && meta !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 													className: Market_module_css_default.act,
-													children: [meta.dot !== "done" && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
-														className: meta.dot === "error" ? Market_module_css_default.actBroken : Market_module_css_default.actWarn,
-														children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.StateDot, {
-															state: meta.dot,
-															size: 7
-														}), meta.label]
-													}), act.state !== "live" && act.reasons.length > 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.DisclosureRow, {
-														icon: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(IconQuestionOutline14, { size: 14 }),
-														title: t("actWhy"),
-														open: whyOpen === name,
-														expandable: true,
-														expandOnRowClick: true,
-														onToggle: () => setWhyOpen(whyOpen === name ? null : name),
-														className: Market_module_css_default.actWhy,
-														children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+													children: [
+														act.library === true ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+															className: Market_module_css_default.metaTag,
+															children: meta.label
+														}) : meta.dot !== "done" && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
+															className: meta.dot === "error" ? Market_module_css_default.actBroken : Market_module_css_default.actWarn,
+															children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.StateDot, {
+																state: meta.dot,
+																size: 7
+															}), meta.label]
+														}),
+														act.library === true && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 															className: Market_module_css_default.spec,
-															children: localizeBilingualList(act.reasons, lang)
+															children: t("libraryUseHint")
+														}),
+														act.library !== true && act.state !== "live" && act.reasons.length > 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.DisclosureRow, {
+															icon: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(IconQuestionOutline14, { size: 14 }),
+															title: t("actWhy"),
+															open: whyOpen === name,
+															expandable: true,
+															expandOnRowClick: true,
+															onToggle: () => setWhyOpen(whyOpen === name ? null : name),
+															className: Market_module_css_default.actWhy,
+															children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+																className: Market_module_css_default.spec,
+																children: localizeBilingualList(act.reasons, lang)
+															})
 														})
-													})]
+													]
 												}),
 												entry !== void 0 && entry.deprecated === true && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 													className: Market_module_css_default.deprecate,
@@ -14487,7 +14517,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 										}), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 											className: Market_module_css_default.irowActions,
 											children: [
-												!missing && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
+												!missing && act?.library !== true && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
 													className: Market_module_css_default.stateTag,
 													"data-on": off ? "false" : "true",
 													children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
@@ -14536,7 +14566,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 															children: t("notInstalled")
 														}) : updatedNames.includes(name) ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 															className: `${Market_module_css_default.metaTag} ${Market_module_css_default.metaTagOk}`,
-															children: act?.state === "live" ? t("updatedLive") : t("updated")
+															children: act?.library === true ? t("updatedLibrary") : act?.state === "live" ? t("updatedLive") : t("updated")
 														}) : updatingName === name ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 															variant: "primary",
 															size: "sm",
@@ -15036,7 +15066,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						open: true,
 						onClose: () => setRemoveConfirm(null),
 						title: t("uninstall") + " " + removeConfirm + "?",
-						description: t("uninstallConfirmDesc"),
+						description: t(activations[removeConfirm]?.library === true ? "uninstallLibraryConfirmDesc" : "uninstallConfirmDesc"),
 						footer: /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 							variant: "ghost",
 							onClick: () => setRemoveConfirm(null),

@@ -519,6 +519,26 @@ describe('verifyActivation (P0-2)', () => {
     expect(verifyActivation('web', 'plain-dep', new Set())).toMatchObject({ state: 'inert', bundle: false })
   })
 
+  it('recognizes a declared library without treating a missing plugin entry as broken (#995)', () => {
+    profile([])
+    pkg('dsh-shared', { name: 'dsh-shared', dsh: { kind: 'library' }, main: 'lib/index.js' })
+
+    const result = verifyActivation('web', 'dsh-shared', new Set())
+    expect(result).toMatchObject({ state: 'inert', library: true, bundle: false, hot: false })
+    expect(result.reasons.join(' ')).toContain('供其他插件使用')
+    expect(result.reasons.join(' ')).not.toContain('普通依赖')
+    expect(verifyActivation('web', 'dsh-shared', new Set(), undefined, true)).toMatchObject({ state: 'inert', library: true })
+  })
+
+  it('keeps a package with a real plugin surface or a live loader entry under its existing verdict (#995)', () => {
+    profile(['with-bundle'])
+    pkg('with-bundle', { name: 'with-bundle', dsh: { kind: 'library', bundle: { patch: './cordis.patch.yml' } }, main: 'index.js' }, { 'index.js': '', 'cordis.patch.yml': SIMPLE_PATCH })
+    pkg('loaded-library', { name: 'loaded-library', dsh: { kind: 'library' }, main: 'index.js' }, { 'index.js': '' })
+
+    expect(verifyActivation('web', 'with-bundle', new Set())).toMatchObject({ state: 'restart', bundle: true })
+    expect(verifyActivation('web', 'loaded-library', new Set(['loaded-library']))).toMatchObject({ state: 'live', hot: true })
+  })
+
   it('names the installable plugins a collection repository carries (#892)', () => {
     // The root of a monorepo says nothing about itself: no dsh field, no
     // entry. Installed whole it lands on the list as "installed, not in

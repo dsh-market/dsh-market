@@ -142,7 +142,9 @@ function activationMeta(
   t: Translate,
   dependencyOf?: string,
   loadedByProfile?: true,
+  library?: true,
 ): { label: string; dot: 'done' | 'warning' | 'error' } {
+  if (library === true) return { label: t('stateLibrary'), dot: 'done' }
   // Loaded by the user's own setup, out of the market's sight (#813): a fact
   // about where it comes from, not a warning.
   if (state === 'inert' && loadedByProfile === true) return { label: t('stateLoadedByProfile'), dot: 'done' }
@@ -3548,7 +3550,7 @@ export function MarketSection(props: MarketSectionProps) {
           if (body.activation && typeof body.activation === 'object') {
             setActivations(prev => ({ ...prev, ...body.activation }))
             const warns = Object.entries(body.activation as Record<string, ActivationInfo>)
-              .filter(([, info]) => info.state !== 'live' && info.state !== 'missing' && info.loadedByProfile !== true)
+              .filter(([, info]) => info.state !== 'live' && info.state !== 'missing' && info.loadedByProfile !== true && info.library !== true)
               .map(([name, info]) => ({ name, info }))
             setActivationWarnings(warns)
           }
@@ -3559,7 +3561,7 @@ export function MarketSection(props: MarketSectionProps) {
             setDoneUrls(urls => urls.filter(url => url !== plugin.url))
             setHotUrls(urls => urls.includes(plugin.url) ? urls : urls.concat(plugin.url))
             setHotNames(names => names.includes(plugin.name) ? names : names.concat(plugin.name))
-          } else if (body.activation?.[plugin.name]?.state !== 'incompatible') {
+          } else if (body.activation?.[plugin.name]?.state !== 'incompatible' && body.activation?.[plugin.name]?.library !== true) {
             // An incompatible plugin stays incompatible across restarts, so
             // "restart to apply" would promise a fix no restart can deliver;
             // the activation warning on the installed card already says what
@@ -6371,7 +6373,7 @@ export function MarketSection(props: MarketSectionProps) {
             <span className={css.grow}>
               {activationWarnings.map(({ name, info }) => (
                 <div key={name}>
-                  <b>{name}</b> — {activationMeta(info.state, t, info.dependencyOf, info.loadedByProfile).label}
+                  <b>{name}</b> — {activationMeta(info.state, t, info.dependencyOf, info.loadedByProfile, info.library).label}
                   {info.reasons.length > 0 && <span className={css.spec}>（{localizeBilingualList(info.reasons, lang)}）</span>}
                 </div>
               ))}
@@ -7067,8 +7069,9 @@ export function MarketSection(props: MarketSectionProps) {
                                   ).slice().sort((a, b) => Number(installedThemeNames.has(b)) - Number(installedThemeNames.has(a)))
                                   const themeSlot = visibleMembers.some(name => installedThemeNames.has(name)) && visibleMembers.some(name => !installedThemeNames.has(name))
                                   if (groupQuery !== '' && !nameHit && visibleMembers.length === 0) return null
-                                  const sw = groupSwitchState(members, effectiveDisabledSet)
-                                  const enabledCount = members.filter(member => !effectiveDisabledSet.has(member)).length
+                                  const switchableMembers = members.filter(member => activations[member]?.library !== true)
+                                  const sw = groupSwitchState(switchableMembers, effectiveDisabledSet)
+                                  const enabledCount = switchableMembers.filter(member => !effectiveDisabledSet.has(member)).length
                                   const collapsed = groupQuery === '' && collapsedGroups.has(gid)
                                   const meta = t('groupMembersMeta')
                                     .replace('{0}', String(members.length))
@@ -7171,8 +7174,9 @@ export function MarketSection(props: MarketSectionProps) {
                                                 <span className={css.nm}>{member}</span>
                                                 {installedThemeNames.has(member) && <span className={css.memberKind}>· {t('groupThemeBadge')}</span>}
                                               </span>
-                                              {effectiveDisabledSet.has(member) && <span className={css.spec}>{t('disabledState')}</span>}
-                                              {onOffSwitch({
+                                              {activations[member]?.library === true && <span className={css.spec}>{t('stateLibrary')}</span>}
+                                              {activations[member]?.library !== true && effectiveDisabledSet.has(member) && <span className={css.spec}>{t('disabledState')}</span>}
+                                              {activations[member]?.library !== true && onOffSwitch({
                                                 label: (effectiveDisabledSet.has(member) ? t('enable') : t('disable')) + ' ' + member,
                                                 on: !effectiveDisabledSet.has(member),
                                                 disabled: togglingName !== null,
@@ -7194,7 +7198,7 @@ export function MarketSection(props: MarketSectionProps) {
                                   <span className={css.groupMeta}>
                                     {t('groupMembersMeta')
                                       .replace('{0}', String((groupQuery === '' ? ungroupedNames : visibleUngrouped).length))
-                                      .replace('{1}', String((groupQuery === '' ? ungroupedNames : visibleUngrouped).filter(name => !effectiveDisabledSet.has(name)).length))}
+                                      .replace('{1}', String((groupQuery === '' ? ungroupedNames : visibleUngrouped).filter(name => activations[name]?.library !== true && !effectiveDisabledSet.has(name)).length))}
                                   </span>
                                 </div>
                               </div>
@@ -7203,9 +7207,9 @@ export function MarketSection(props: MarketSectionProps) {
                                   ? <div className={css.empty}>{t('installedEmpty')}</div>
                                   : visibleUngrouped.map(name => {
                                       const entry = data === null ? undefined : catalogEntryForInstalled(data.plugins, name, String(installed[name]), repoIdentities[name], repoHints[name])
-                                      const off = effectiveDisabledSet.has(name)
                                       const act = activations[name]
-                                      const meta = !off && act !== undefined ? activationMeta(act.state, t, act.dependencyOf, act.loadedByProfile) : null
+                                      const off = act?.library !== true && effectiveDisabledSet.has(name)
+                                      const meta = !off && act !== undefined ? activationMeta(act.state, t, act.dependencyOf, act.loadedByProfile, act.library) : null
                                       const note = notes[name]
                                       const authored = (entry?.description && (entry.description[lang] || entry.description.en)) || ''
                                       const shown = note ?? authored
@@ -7229,7 +7233,9 @@ export function MarketSection(props: MarketSectionProps) {
                                           {installedThemeNames.has(name) && <span className={css.memberKind}>· {t('groupThemeBadge')}</span>}
                                           {stateLabel !== undefined && (
                                             <span className={css.ungroupedState}>
-                                              <span className={stateClass} title={stateLabel}><StateDot state={stateDot} size={7} />{stateLabel}</span>
+                                              {act?.library === true
+                                                ? <span className={css.spec}>{stateLabel}</span>
+                                                : <span className={stateClass} title={stateLabel}><StateDot state={stateDot} size={7} />{stateLabel}</span>}
                                             </span>
                                           )}
                                           {shown !== '' && (
@@ -7312,7 +7318,7 @@ export function MarketSection(props: MarketSectionProps) {
                             const generation = status?.kind === 'generation' || isGenerationSpec(String(spec))
                             const localDev = isLocalDev(String(spec), status)
                             const act = activations[name]
-                            const meta = act !== undefined ? activationMeta(act.state, t, act.dependencyOf, act.loadedByProfile) : null
+                            const meta = act !== undefined ? activationMeta(act.state, t, act.dependencyOf, act.loadedByProfile, act.library) : null
                             const version = status && status.version ? 'v' + status.version : ''
                             const specText = String(spec)
                             // A plain range beside the resolved version says the
@@ -7323,12 +7329,12 @@ export function MarketSection(props: MarketSectionProps) {
                             const localPath = localPathOf(specText)
                             const ghSpec = /^github:([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:#|$)/.exec(specText)
                             const repoUrl = entry !== undefined ? entry.url : ghSpec !== null ? 'https://github.com/' + ghSpec[1] : null
-                            const off = effectiveDisabledSet.has(name)
+                            const off = act?.library !== true && effectiveDisabledSet.has(name)
                             // Switches only where they make sense: everything in
                             // the disable list (to re-enable), plus live/restart
                             // states. inert/broken rows keep their diagnosis
                             // without a misleading toggle (#60).
-                            const toggleable = off || (act !== undefined && (act.state === 'live' || act.state === 'restart'))
+                            const toggleable = act?.library !== true && (off || (act !== undefined && (act.state === 'live' || act.state === 'restart')))
                             return (
                               <div key={name} className={missing ? `${css.irow} ${css.irowMissing}` : css.irow}>
                                 <div style={{ minWidth: 0 }}>
@@ -7519,13 +7525,16 @@ export function MarketSection(props: MarketSectionProps) {
                                           {/* Only a state the switch does NOT already show earns a
                                               line here: "installed but not active" is news, "live"
                                               is what the switch is for. */}
-                                          {meta.dot !== 'done' && (
-                                            <span className={meta.dot === 'error' ? css.actBroken : css.actWarn}>
-                                              <StateDot state={meta.dot} size={7} />
-                                              {meta.label}
-                                            </span>
-                                          )}
-                                          {act.state !== 'live' && act.reasons.length > 0 && (
+                                          {act.library === true
+                                            ? <span className={css.metaTag}>{meta.label}</span>
+                                            : meta.dot !== 'done' && (
+                                                <span className={meta.dot === 'error' ? css.actBroken : css.actWarn}>
+                                                  <StateDot state={meta.dot} size={7} />
+                                                  {meta.label}
+                                                </span>
+                                              )}
+                                          {act.library === true && <div className={css.spec}>{t('libraryUseHint')}</div>}
+                                          {act.library !== true && act.state !== 'live' && act.reasons.length > 0 && (
                                             <DisclosureRow
                                               icon={<IconQuestionOutline14 size={14} />}
                                               title={t('actWhy')}
@@ -7577,7 +7586,7 @@ export function MarketSection(props: MarketSectionProps) {
                                 <div className={css.irowActions}>
                                 {/* Dot + tag, the pairing the host's own plugin
                                     inventory uses for exactly this state. */}
-                                {!missing && (
+                                {!missing && act?.library !== true && (
                                   <span className={css.stateTag} data-on={off ? 'false' : 'true'}>
                                     <span className={css.stateDot} data-on={off ? 'false' : 'true'} />
                                     {off ? t('disabledState') : t('switchOnLabel')}
@@ -7621,7 +7630,7 @@ export function MarketSection(props: MarketSectionProps) {
                                 {missing
                                   ? <span className={css.metaTag}>{t('notInstalled')}</span>
                                   : updatedNames.includes(name)
-                                    ? <span className={`${css.metaTag} ${css.metaTagOk}`}>{act?.state === 'live' ? t('updatedLive') : t('updated')}</span>
+                                    ? <span className={`${css.metaTag} ${css.metaTagOk}`}>{act?.library === true ? t('updatedLibrary') : act?.state === 'live' ? t('updatedLive') : t('updated')}</span>
                                     : updatingName === name
                                       ? <Button variant="primary" size="sm" className={css.warnBtn} disabled>{t('updating')}</Button>
                                       : status !== undefined && generation && status.latest != null
@@ -8068,7 +8077,7 @@ export function MarketSection(props: MarketSectionProps) {
           open
           onClose={() => setRemoveConfirm(null)}
           title={t('uninstall') + ' ' + removeConfirm + '?'}
-          description={t('uninstallConfirmDesc')}
+          description={t(activations[removeConfirm]?.library === true ? 'uninstallLibraryConfirmDesc' : 'uninstallConfirmDesc')}
           footer={(
             <>
               <Button variant="ghost" onClick={() => setRemoveConfirm(null)}>{t('cancel')}</Button>

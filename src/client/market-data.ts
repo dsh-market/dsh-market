@@ -327,6 +327,8 @@ export interface ActivationInfo {
   dependencyOf?: string
   /** Loaded by the user's own setup, which the market cannot see (#813). */
   loadedByProfile?: true
+  /** Explicit dsh.kind library, without a plugin surface. */
+  library?: true
 }
 
 /**

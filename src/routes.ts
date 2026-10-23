@@ -3668,6 +3668,8 @@ export function mountMarketRoutes(
             const failures: string[] = []
             for (const member of groups[name]) {
               if (!installed.has(member)) continue
+              const manifest = readInstalledManifest(config.profile, member, activeProfileDir) as { dsh?: { kind?: unknown; bundle?: unknown; client?: unknown } } | null
+              if (manifest?.dsh?.kind === 'library' && manifest.dsh.bundle === undefined && manifest.dsh.client === undefined) continue
               let result: { ok: boolean; reason?: string }
               if (enabled && themeNames.has(member)) {
                 result = { ok: await themes.activateTheme(member), reason: undefined }

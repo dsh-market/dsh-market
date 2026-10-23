@@ -7907,6 +7907,26 @@ describe('custom groups (#60)', () => {
     expect(hot.mounts.sort()).toEqual(['dsh-loop', 'dsh-share'])
   })
 
+  it('does not toggle a declared library grouped with a plugin (#995)', async () => {
+    await seedMembers()
+    const manifest = readManifestAt(fake.profileDir)
+    manifest.dependencies['dsh-shared'] = '^0.1.7'
+    writeFileSync(join(fake.profileDir, 'package.json'), JSON.stringify(manifest))
+    const libraryDir = join(fake.profileDir, 'node_modules', 'dsh-shared')
+    mkdirSync(libraryDir, { recursive: true })
+    writeFileSync(join(libraryDir, 'package.json'), JSON.stringify({ name: 'dsh-shared', version: '0.1.7', dsh: { kind: 'library' }, main: 'lib/index.js' }))
+
+    await bed.dispatch('POST', '/dsh-market/groups', { action: 'create', name: 'work' })
+    await bed.dispatch('POST', '/dsh-market/groups', { action: 'set-members', name: 'work', members: ['dsh-loop', 'dsh-shared'] })
+    const off = await bed.dispatch('POST', '/dsh-market/groups', { action: 'toggle', name: 'work', enabled: false })
+
+    expect(off.status).toBe(200)
+    expect(off.json.disabled).toEqual(['dsh-loop'])
+    const listed = await bed.dispatch('GET', '/dsh-market/installed')
+    expect(listed.json.activation['dsh-shared']).toMatchObject({ state: 'inert', library: true })
+    expect(listed.json.activation['dsh-shared'].dependencyOf).toBeUndefined()
+  })
+
   it('group switch matches individually toggled plugins (mixed then all-off)', async () => {
     await seedMembers()
     await bed.dispatch('POST', '/dsh-market/groups', { action: 'create', name: 'work' })

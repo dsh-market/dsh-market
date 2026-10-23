@@ -3245,6 +3245,35 @@ describe('#60 enable/disable switches in the Installed tab', () => {
     expect(screen.queryByRole('switch')).toBeNull()
   })
 
+  it('shows a declared library as shared code, keeps updates, and explains uninstall consequences (#995)', async () => {
+    stubFetch({
+      '/dsh-market/installed': {
+        profile: 'web', installed: { 'dsh-shared': '^0.1.7' }, live: [], disabled: ['dsh-shared'],
+        groups: {}, groupOrder: [],
+        activation: {
+          'dsh-shared': { state: 'inert', library: true, reasons: ['供其他插件使用，无需启用 / for other plugins to use; no need to enable it'], bundle: false, hot: false },
+        },
+      },
+      '/dsh-market/updates': { updates: { 'dsh-shared': { kind: 'npm', version: '0.1.7', current: '0.1.7', latest: '0.1.8', updateAvailable: true } } },
+      '/dsh-market/update': { ok: true, activation: { 'dsh-shared': { state: 'inert', library: true, reasons: ['for other plugins to use'], bundle: false, hot: false } } },
+    })
+    render(<MarketSection {...props()} />)
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    await screen.findByText('dsh-shared')
+
+    expect(screen.getByText('Library')).toBeTruthy()
+    expect(screen.getByText('Shared code for other plugins. No need to enable it.')).toBeTruthy()
+    expect(screen.queryByText(en.stateInert)).toBeNull()
+    expect(screen.queryByText(en.switchOnLabel)).toBeNull()
+    expect(screen.queryByRole('switch')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: en.update }))
+    expect(await screen.findByText('✓ Updated')).toBeTruthy()
+    expect(screen.queryByText(en.updated)).toBeNull()
+
+    await openCardUninstall()
+    expect(screen.getByText('Removing this library may stop plugins that use it from starting.')).toBeTruthy()
+  })
+
   it('never lists the market itself in the Installed tab — it manages itself from its own settings card', async () => {
     stubFetch({
       '/dsh-market/installed': {
@@ -4137,6 +4166,27 @@ describe('#60 catalog deprecation', () => {
 })
 
 describe('#60 groups view', () => {
+  it('does not offer library switches in a group (#995)', async () => {
+    stubFetch({
+      '/dsh-market/installed': {
+        profile: 'web', installed: { 'dsh-loop': '^1.0.0', 'dsh-shared': '^0.1.7' },
+        live: ['dsh-loop'], disabled: [], groups: { work: ['dsh-loop', 'dsh-shared'] }, groupOrder: ['work'],
+        activation: {
+          'dsh-loop': { state: 'live', reasons: [], bundle: true, hot: true },
+          'dsh-shared': { state: 'inert', library: true, reasons: ['used by other plugins'], bundle: false, hot: false },
+        },
+      },
+    })
+    render(<MarketSection {...props()} />)
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    fireEvent.click(screen.getByRole('button', { name: en.tabGroups }))
+
+    expect(await screen.findByText('dsh-shared')).toBeTruthy()
+    expect(screen.getByRole('switch', { name: en.disable + ' work' })).toBeTruthy()
+    expect(screen.getByRole('switch', { name: en.disable + ' dsh-loop' })).toBeTruthy()
+    expect(screen.queryByRole('switch', { name: en.disable + ' dsh-shared' })).toBeNull()
+  })
+
   /** Stateful fake: mirrors the server-side group/toggle semantics in memory. */
   function makeFake(installed: Record<string, string>, activationOverride?: Record<string, unknown>) {
     const state = { disabled: [] as string[], groups: {} as Record<string, string[]>, groupOrder: [] as string[] }
