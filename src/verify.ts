@@ -118,7 +118,7 @@ interface PkgDsh {
   kind?: unknown
 }
 
-/** Only a package declaring library without a plugin surface has no on/off state. */
+/** Manifest-only library declaration; observed loader activity can override its status. */
 export function isDeclaredLibraryDsh(dsh: PkgDsh | null | undefined): boolean {
   return dsh?.kind === 'library' && dsh.bundle === undefined && dsh.client === undefined
 }
@@ -456,6 +456,7 @@ export function verifyActivation(
   explicitDir?: string,
   isDisabled = false,
   hostFacts?: HostRuntimeFacts,
+  loaderObserved = false,
 ): ActivationResult {
   const activeProfileDir = profileDir(profile, explicitDir)
   const bundles = readBundles(profile, activeProfileDir)
@@ -466,11 +467,14 @@ export function verifyActivation(
     return { state: 'missing', reasons: ['未安装 / not installed'], bundle: inBundles, hot: false }
   }
   const declaredLibrary = isDeclaredLibraryDsh(dsh)
+  // A loader entry can remain after its fiber is switched off. Retain that
+  // evidence so an observed library can be re-enabled after disabling it.
+  const loaderLive = liveIncludes(live, name) || carriedRowLive(live, activeProfileDir, name)
 
   // A user-disabled plugin reads as disabled, never as "restart to apply":
   // the switch state (market disable list or the user patch layer) is the
   // dominant fact, and the loader keeps it off on every boot.
-  if (isDisabled && !declaredLibrary) {
+  if (isDisabled && (!declaredLibrary || loaderLive || loaderObserved)) {
     return {
       state: 'disabled',
       reasons: ['已停用(市场开关或补丁层),重启后保持关闭 / disabled (market toggle or the patch layer) — stays off across restarts'],
@@ -486,7 +490,6 @@ export function verifyActivation(
   // loaded by name from a bundle patch — @deepseek-ai/dsh-tools is loaded by
   // the official dsh-base patch and has no `dsh` field at all — so this check
   // has to come before any manifest-based verdict.
-  const loaderLive = liveIncludes(live, name) || carriedRowLive(live, activeProfileDir, name)
   if (!hasDshManifest(dir)) {
     if (loaderLive) {
       return {
@@ -538,7 +541,7 @@ export function verifyActivation(
   // A declared library is shared code, not a plugin waiting to start. This
   // manifest fact does not overrule an observed loader entry or a real plugin
   // surface, and a library need not have a loadable plugin entry artifact.
-  if (!loaderLive && declaredLibrary) {
+  if (!loaderLive && !loaderObserved && declaredLibrary) {
     return {
       state: 'inert',
       library: true,

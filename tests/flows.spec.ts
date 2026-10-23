@@ -7170,6 +7170,44 @@ describe('generic enable/disable toggle (#60)', () => {
     expect(listed.json.activation['dsh-shared']).toMatchObject({ state: 'inert', library: true })
   })
 
+  it('disables and re-enables a declared library observed in the loader (#995)', async () => {
+    const manifest = readManifestAt(fake.profileDir)
+    manifest.dependencies['loaded-library'] = '^0.1.7'
+    writeFileSync(join(fake.profileDir, 'package.json'), JSON.stringify(manifest))
+    const libraryDir = join(fake.profileDir, 'node_modules', 'loaded-library')
+    mkdirSync(libraryDir, { recursive: true })
+    writeFileSync(join(libraryDir, 'package.json'), JSON.stringify({ name: 'loaded-library', version: '0.1.7', dsh: { kind: 'library' }, main: 'index.js' }))
+    writeFileSync(join(libraryDir, 'index.js'), '')
+    const entry: Testbed['loaderEntries'][number] = {
+      options: { id: 'loaded-library', name: 'loaded-library', disabled: null } as never,
+      fiber: {},
+      update: vi.fn(async ({ disabled }) => {
+        entry.options.disabled = disabled
+        entry.fiber = disabled === true ? undefined : {}
+      }),
+    }
+    bed.loaderEntries.push(entry)
+
+    const before = await bed.dispatch('GET', '/dsh-market/installed')
+    expect(before.json.activation['loaded-library']).toMatchObject({ state: 'live', hot: true })
+    expect(before.json.activation['loaded-library'].library).not.toBe(true)
+
+    const off = await bed.dispatch('POST', '/dsh-market/toggle', { name: 'loaded-library', enabled: false })
+    expect(off.status).toBe(200)
+    expect(entry.fiber).toBeUndefined()
+    expect(off.json.disabled).toContain('loaded-library')
+    const disabled = await bed.dispatch('GET', '/dsh-market/installed')
+    expect(disabled.json.activation['loaded-library']).toMatchObject({ state: 'disabled', hot: false })
+    expect(disabled.json.activation['loaded-library'].library).not.toBe(true)
+
+    const on = await bed.dispatch('POST', '/dsh-market/toggle', { name: 'loaded-library', enabled: true })
+    expect(on.status).toBe(200)
+    expect(entry.fiber).toBeDefined()
+    expect(on.json.disabled).not.toContain('loaded-library')
+    expect((await bed.dispatch('GET', '/dsh-market/installed')).json.activation['loaded-library'])
+      .toMatchObject({ state: 'live', hot: true })
+  })
+
   it('toggles a hot-mounted plugin off and back on, persisting the disable list', async () => {
     await installNpm('dsh-loop')
     expect(hot.mounts).toEqual(['dsh-loop'])
@@ -7952,6 +7990,45 @@ describe('custom groups (#60)', () => {
     const listed = await bed.dispatch('GET', '/dsh-market/installed')
     expect(listed.json.activation['dsh-shared']).toMatchObject({ state: 'inert', library: true })
     expect(listed.json.activation['dsh-shared'].dependencyOf).toBeUndefined()
+  })
+
+  it('toggles a loader-observed declared library while skipping a pure library in its group (#995)', async () => {
+    const manifest = readManifestAt(fake.profileDir)
+    manifest.dependencies['loaded-library'] = '^0.1.7'
+    manifest.dependencies['dsh-shared'] = '^0.1.7'
+    writeFileSync(join(fake.profileDir, 'package.json'), JSON.stringify(manifest))
+    for (const name of ['loaded-library', 'dsh-shared']) {
+      const dir = join(fake.profileDir, 'node_modules', name)
+      mkdirSync(dir, { recursive: true })
+      writeFileSync(join(dir, 'package.json'), JSON.stringify({ name, version: '0.1.7', dsh: { kind: 'library' }, main: 'index.js' }))
+      writeFileSync(join(dir, 'index.js'), '')
+    }
+    const entry: Testbed['loaderEntries'][number] = {
+      options: { id: 'loaded-library', name: 'loaded-library', disabled: null } as never,
+      fiber: {},
+      update: vi.fn(async ({ disabled }) => {
+        entry.options.disabled = disabled
+        entry.fiber = disabled === true ? undefined : {}
+      }),
+    }
+    bed.loaderEntries.push(entry)
+    await bed.dispatch('POST', '/dsh-market/groups', { action: 'create', name: 'libraries' })
+    await bed.dispatch('POST', '/dsh-market/groups', { action: 'set-members', name: 'libraries', members: ['loaded-library', 'dsh-shared'] })
+
+    const off = await bed.dispatch('POST', '/dsh-market/groups', { action: 'toggle', name: 'libraries', enabled: false })
+    expect(off.status).toBe(200)
+    expect(off.json.disabled).toEqual(['loaded-library'])
+    expect(entry.fiber).toBeUndefined()
+    const disabled = await bed.dispatch('GET', '/dsh-market/installed')
+    expect(disabled.json.activation['loaded-library']).toMatchObject({ state: 'disabled', hot: false })
+    expect(disabled.json.activation['dsh-shared']).toMatchObject({ state: 'inert', library: true })
+
+    const on = await bed.dispatch('POST', '/dsh-market/groups', { action: 'toggle', name: 'libraries', enabled: true })
+    expect(on.status).toBe(200)
+    expect(on.json.disabled).toEqual([])
+    expect(entry.fiber).toBeDefined()
+    expect((await bed.dispatch('GET', '/dsh-market/installed')).json.activation['loaded-library'])
+      .toMatchObject({ state: 'live', hot: true })
   })
 
   it('group switch matches individually toggled plugins (mixed then all-off)', async () => {

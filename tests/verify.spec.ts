@@ -537,6 +537,8 @@ describe('verifyActivation (P0-2)', () => {
 
     expect(verifyActivation('web', 'with-bundle', new Set())).toMatchObject({ state: 'restart', bundle: true })
     expect(verifyActivation('web', 'loaded-library', new Set(['loaded-library']))).toMatchObject({ state: 'live', hot: true })
+    expect(verifyActivation('web', 'loaded-library', new Set(['loaded-library']), undefined, true)).toMatchObject({ state: 'disabled', hot: false })
+    expect(verifyActivation('web', 'loaded-library', new Set(), undefined, true, undefined, true)).toMatchObject({ state: 'disabled', hot: false })
   })
 
   it('names the installable plugins a collection repository carries (#892)', () => {
