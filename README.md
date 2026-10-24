@@ -19,11 +19,25 @@ One-click themes: install, switch live, no restart.
 
 ## Install
 
-```sh
-dsh plugin --profile web add dshmarket
-```
+- **Official DSH Desktop:** Open **Settings → Plugins** in the app, search for
+  `dshmarket`, and install it through the app's plugin manager. No command line
+  is needed.
+- **Regular `dsh web`:** Run this command, then restart `dsh web`:
 
-Restart `dsh web`, open the **Plugins** page, and pick the **Plugin Market**
+  ```sh
+  dsh plugin --profile web add dshmarket
+  ```
+
+- **Custom profile:** Replace `web` in that command with your host's actual
+  profile name: `dsh plugin --profile <profile> add dshmarket`. Follow your
+  host's restart instructions.
+
+On a machine with DSH Desktop, running `dsh plugin --profile web add dshmarket`
+may report success but installs the market into `profiles/web`, **not** the
+profile used by the Desktop app. It will not appear in Desktop. Install through
+the app's **Settings → Plugins** instead; Desktop's profile is managed by the app.
+
+In `dsh web`, open the **Plugins** page and pick the **Plugin Market**
 tab next to **Installed** (dsh 0.2.1 and newer — plain `dsh web` included, no
 desktop app needed). The market is also still a section of **Settings → Plugin
 Market**: on dsh 0.2.0 and older that is the only way in, and from 0.2.1 the
@@ -33,12 +47,6 @@ the sidebar; turn it on from the market's card under **Plugins**. Going the
 other way, an installed plugin's **···** menu offers **View in Plugins** on
 dsh 0.2.1+: it opens the host's own page for that plugin, which is the only
 place its individual rows can be switched one by one.
-
-A host that runs under another profile name takes the same command with that
-name instead — `dsh plugin --profile <profile> add dshmarket`. On the official
-DSH Desktop app, install from the app's own **Settings → Plugins** rather than
-the command line: that profile belongs to the app's plugin manager, and the CLI
-will not change it while the app is running.
 
 **Requires dsh web 0.1.0-rc.6 or newer.** On an older host the market
 disables itself and says so in the browser console rather than rendering
