@@ -126,7 +126,7 @@ export type InstalledMap = Record<string, string>
  * dsh installation is not owned by the profile package manager.
  */
 /** Why a queued operation may no longer be run. */
-export type QueuedRowStaleReason = 'gone' | 'no-update'
+export type QueuedRowStaleReason = 'gone' | 'no-update' | 'target-changed'
 
 /**
  * Whether a queued operation still applies — `null` when it does.
@@ -145,7 +145,7 @@ export type QueuedRowStaleReason = 'gone' | 'no-update'
  * have landed already).
  */
 export function queuedRowApplies(
-  row: { kind: 'install' | 'update' | 'uninstall'; name: string; url?: string; restore?: boolean },
+  row: { kind: 'install' | 'update' | 'uninstall'; name: string; url?: string; restore?: boolean; eligibleVersion?: string },
   world: { installed: InstalledMap; updates: Record<string, UpdateStatus>; plugins: readonly RegistryPlugin[] },
 ): QueuedRowStaleReason | null {
   if (row.kind === 'install') {
@@ -159,6 +159,8 @@ export function queuedRowApplies(
         findCatalogEntryForLocal(world.plugins, row.name) !== null) return null
     return 'no-update'
   }
+  if (row.kind === 'update' && row.eligibleVersion !== undefined &&
+      row.eligibleVersion !== world.updates[row.name]?.eligibleVersion) return 'target-changed'
   return null
 }
 
@@ -194,6 +196,8 @@ export function isGenerationSpec(spec: string): boolean {
 /** Per-package update status from /dsh-market/updates. */
 export interface UpdateStatus {
   updateAvailable?: boolean
+  /** Server-verified precise Desktop stable npm update target. */
+  eligibleVersion?: string
   version?: string
   /** `github` | `npm` | `linked` | `generation` — the last is a host-managed
       install (#497): `latest` names a newer release, never an offer. */
@@ -214,9 +218,9 @@ export interface UpdateStatus {
   unreleasedCommit?: string
   /** Updating this local package switches it to its matched online release. */
   restoreRequired?: boolean
-  /** A newer release exists but the profile's fresh-release wait has not
-      passed yet (#945). `updateAvailable` is false and this names the wait;
-      on the official Desktop there is no bypass to offer. */
+  /** A newer release is still waiting (#945). An older mature release may
+      remain available as `eligibleVersion` (#991); this names the held latest.
+      `estimated` means the publication time is unknown, not a release-age ETA. */
   heldUpdate?: { latest: string; until: string; estimated?: true }
   /** Explicit source migration; never part of update-all. */
   sourceMigration?:

@@ -40,8 +40,8 @@ export interface OperationRecord {
   name: string
   /** Catalog url, present for installs — what a card is keyed by. */
   url?: string
-  /** Original update options survive queueing; agent consent is never persisted. */
-  updateOptions?: { force?: boolean; restore?: boolean; compatVersion?: string | undefined }
+  /** Original update options survive queueing and build approval; agent consent is never persisted. */
+  updateOptions?: { force?: boolean; restore?: boolean; compatVersion?: string | undefined; eligibleVersion?: string }
   state: OperationState
   /** 0-100 while running; null when the host reports no total to divide by. */
   percent?: number | null
@@ -259,9 +259,9 @@ export const SETTLED_LIMIT = 20
  * scripts awaiting approval, a held release. `detail` is kept for the same
  * reason: it is the row's own report.
  *
- * Everything else is deliberately dropped. `updateOptions`, `blockedBy` and
- * `conflicts` only matter while a row is queued or waiting on the user, and
- * neither of those states is persisted here. `needsRefresh` is written so the
+ * Failed updates awaiting build approval also keep their original update
+ * options so approving after a reload cannot select a different target.
+ * `blockedBy` and `conflicts` are deliberately dropped. `needsRefresh` is written so the
  * stored shape stays the record's own, but the restore drops it: only the page
  * that wrote it can still be waiting for that reload.
  */
@@ -278,6 +278,8 @@ export function serializeSettled(list: readonly OperationRecord[]): OperationRec
       ...(record.reason === undefined ? {} : { reason: record.reason }),
       ...(record.detail === undefined ? {} : { detail: record.detail }),
       ...(record.blockedBuilds === undefined ? {} : { blockedBuilds: [...record.blockedBuilds] }),
+      ...(record.kind === 'update' && record.state === 'failed' && (record.blockedBuilds?.length ?? 0) > 0 && record.updateOptions !== undefined
+        ? { updateOptions: { ...record.updateOptions } } : {}),
       ...(record.needsRefresh === true ? { needsRefresh: true } : {}),
       ...(record.heldRelease === undefined ? {} : { heldRelease: { ...record.heldRelease } }),
     }))
@@ -328,6 +330,14 @@ function restoreSettledRecord(value: unknown): OperationRecord | null {
   const detail = asText(row.detail)
   const blockedBuilds = asStringList(row.blockedBuilds)
   const heldRelease = asHeldRelease(row.heldRelease)
+  const options = row.updateOptions !== null && typeof row.updateOptions === 'object' && !Array.isArray(row.updateOptions)
+    ? row.updateOptions as Record<string, unknown> : undefined
+  const updateOptions = kind === 'update' && state === 'failed' && blockedBuilds !== undefined && options !== undefined ? {
+    ...(typeof options.force === 'boolean' ? { force: options.force } : {}),
+    ...(typeof options.restore === 'boolean' ? { restore: options.restore } : {}),
+    ...(asText(options.compatVersion) === undefined ? {} : { compatVersion: asText(options.compatVersion) }),
+    ...(asText(options.eligibleVersion) === undefined ? {} : { eligibleVersion: asText(options.eligibleVersion) }),
+  } : undefined
   return {
     id,
     kind,
@@ -337,6 +347,7 @@ function restoreSettledRecord(value: unknown): OperationRecord | null {
     ...(reason === undefined ? {} : { reason }),
     ...(detail === undefined ? {} : { detail }),
     ...(blockedBuilds === undefined ? {} : { blockedBuilds }),
+    ...(updateOptions === undefined ? {} : { updateOptions }),
     // `needsRefresh` is deliberately not restored: it told the reader of the
     // previous page to reload, and this row is only being read because that
     // reload already happened. Restoring it would ask for a refresh taken.

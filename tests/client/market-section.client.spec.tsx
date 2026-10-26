@@ -21,6 +21,144 @@ import {
 } from '../../src/client/market-data.ts'
 import { en, zh } from '../../src/client/locales.ts'
 
+describe('Issue #991 approval target and queue feedback', () => {
+  describe.each(['en', 'zh'])('visible update explanation in %s', (lang) => {
+    const dict = lang === 'zh' ? zh : en
+    const snapshot = { active: lang }
+    afterEach(() => { vi.restoreAllMocks() })
+    const localizedProps = () => ({ ...props(),
+      t: (key: string) => (dict as Record<string, string>)[key] ?? key,
+      locale: { subscribe: () => () => {}, getSnapshot: () => snapshot },
+    })
+
+    it.each(['known', 'estimated', 'invalid', 'missing', 'mature'])('links the %s latest wait to the exact install target', async (timing) => {
+      vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-10-26T00:00:00Z'))
+      const mature = timing === 'mature'
+      const until = timing === 'invalid' ? 'unknown' : timing === 'missing' ? undefined : '2026-10-26T04:30:00Z'
+      stubFetch({
+        '/dsh-market/installed': { profile: 'desktop', installed: { 'dsh-loop': '^1.0.0' }, live: [] },
+        '/dsh-market/updates': { updates: { 'dsh-loop': {
+          kind: 'npm', current: '1.0.0', latest: mature ? '1.1.0' : '1.2.0', eligibleVersion: '1.1.0', updateAvailable: true,
+          ...(!mature ? { heldUpdate: { latest: '1.2.0', until, ...(timing === 'estimated' ? { estimated: true } : {}) } } : {}),
+        } } },
+        '/dsh-market/update': { ok: true },
+      })
+      render(<MarketSection {...localizedProps()} />)
+      fireEvent.click(await screen.findByRole('button', { name: new RegExp(dict.tabInstalled) }))
+      const button = await screen.findByRole('button', { name: `${dict.update} v1.1.0` })
+      if (mature) {
+        expect(screen.queryByText(/先更新到|Update to .* for now/)).toBeNull()
+        expect(screen.queryByText(dict.updateHeldTag)).toBeNull()
+      } else {
+        const expected = timing === 'known'
+          ? lang === 'zh' ? '最新版 v1.2.0 刚发布，还要约 5 小时。先更新到 v1.1.0。' : 'Latest v1.2.0 was just released; about 5 hours to wait. Update to v1.1.0 for now.'
+          : lang === 'zh' ? '最新版 v1.2.0 的发布时间暂不确定，还需等待。先更新到 v1.1.0。' : 'The release time of latest v1.2.0 is unknown, so it still needs to wait. Update to v1.1.0 for now.'
+        const explanation = screen.getByText(expected)
+        expect(explanation.getAttribute('title')).toBeNull()
+        expect(explanation.textContent).not.toMatch(/pnpm|NaN|profile|\/latest/)
+        expect(screen.getByText(dict.updateHeldTag)).toBeTruthy()
+        if (timing !== 'known') expect(explanation.textContent).not.toMatch(/\d+\s*(?:hours?|小时)/)
+      }
+      fireEvent.click(button)
+      await waitFor(() => expect(fetchCalls.filter(call => call.path === '/dsh-market/update').map(call => call.body))
+        .toEqual([{ name: 'dsh-loop', eligibleVersion: '1.1.0' }]))
+    })
+
+    it.each(['batch', 'restored queue'])('submits exact eligibleVersion through %s', async (entry) => {
+      if (entry === 'restored queue') localStorage.setItem('dshm-queue-v1', JSON.stringify([
+        { kind: 'update', name: 'dsh-loop', updateOptions: { eligibleVersion: '1.1.0' } },
+      ]))
+      stubFetch({
+        '/dsh-market/installed': { profile: 'desktop', installed: { 'dsh-loop': '^1.0.0' }, live: [] },
+        '/dsh-market/updates': { updates: { 'dsh-loop': {
+          kind: 'npm', current: '1.0.0', latest: '1.2.0', eligibleVersion: '1.1.0', updateAvailable: true,
+          heldUpdate: { latest: '1.2.0', until: '2026-10-27T00:00:00Z' },
+        } } },
+        '/dsh-market/update': { ok: true },
+      })
+      render(<MarketSection {...localizedProps()} />)
+      if (entry === 'batch') fireEvent.click(await screen.findByRole('button', { name: new RegExp(dict.updateAll) }))
+      await waitFor(() => expect(fetchCalls.filter(call => call.path === '/dsh-market/update').map(call => call.body))
+        .toEqual([{ name: 'dsh-loop', eligibleVersion: '1.1.0' }]), { timeout: 8000 })
+    })
+  })
+
+  it.each(['banner', 'panel', 'reloaded panel'])('keeps the original approval target through the %s and receives staleTarget 409', async (entry) => {
+    let eligibleVersion = '1.1.0'
+    let attempts = 0
+    let staleReplies = 0
+    stubFetch({
+      '/dsh-market/installed': { profile: 'desktop', installed: { 'dsh-loop': '^1.0.0' }, live: [] },
+      '/dsh-market/updates': () => ({ updates: { 'dsh-loop': {
+        kind: 'npm', current: '1.0.0', latest: '1.3.0', eligibleVersion, updateAvailable: true,
+      } } }),
+      '/dsh-market/update': (body: unknown) => {
+        if (++attempts === 1) return { ok: false, ignoredBuilds: ['node-pty'], error: 'blocked by pnpm', __status: 502 }
+        if ((body as { eligibleVersion?: string }).eligibleVersion !== eligibleVersion) {
+          staleReplies++
+          return { ok: false, staleTarget: true, error: 'The eligible update target changed. Refresh and choose again.', __status: 409 }
+        }
+        return { ok: true }
+      },
+      '/dsh-market/approve-builds': { ok: true },
+    })
+    const view = render(<MarketSection {...props()} />)
+    fireEvent.click(await screen.findByRole('button', { name: /Installed/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Update v1.1.0' }))
+    await screen.findByText(re(en.buildsSkipped))
+    const original = { force: false, restore: false, eligibleVersion: '1.1.0' }
+    await waitFor(() => {
+      const saved = JSON.parse(localStorage.getItem('dshm-settled-v1') ?? '[]')
+      expect(saved[0]?.updateOptions).toEqual(original)
+      expect(saved[0]?.blockedBuilds).toEqual(['node-pty'])
+    })
+    eligibleVersion = '1.2.0'
+    if (entry === 'reloaded panel') {
+      view.unmount()
+      render(<MarketSection {...props()} />)
+    }
+    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    await screen.findByRole('button', { name: 'Update v1.2.0' })
+    const refreshes = fetchCalls.filter(call => call.path === '/dsh-market/updates').length
+    if (entry === 'banner') {
+      const banner = screen.getByText(re(en.buildsSkipped)).parentElement!
+      fireEvent.click(within(banner).getByRole('button', { name: en.approveBuilds }))
+    } else {
+      if (!document.querySelector('[class*="opPanel"]')) fireEvent.click(screen.getByRole('button', { name: en.opTitle }))
+      const panel = document.querySelector('[class*="opPanel"]') as HTMLElement
+      fireEvent.click(within(panel).getByRole('button', { name: en.approveBuilds }))
+    }
+    await waitFor(() => {
+      const requests = fetchCalls.filter(call => call.path === '/dsh-market/update')
+      expect(requests).toHaveLength(2)
+      expect(requests[1].body).toEqual({ name: 'dsh-loop', eligibleVersion: '1.1.0' })
+      expect(staleReplies).toBe(1)
+      expect(fetchCalls.filter(call => call.path === '/dsh-market/updates').length).toBeGreaterThan(refreshes)
+      expect(JSON.parse(localStorage.getItem('dshm-settled-v1') ?? '[]').at(-1)).toMatchObject({ state: 'failed' })
+    })
+    expect(screen.getAllByText('The eligible update target changed. Refresh and choose again.').length).toBeGreaterThan(0)
+    expect(localStorage.getItem('dshm-queue-v1')).toBeNull()
+  })
+
+  it.each(['en', 'zh'])('explains a restored queue target change in %s while an update remains available', async (lang) => {
+    localStorage.setItem('dshm-queue-v1', JSON.stringify([{
+      kind: 'update', name: 'dsh-loop', updateOptions: { eligibleVersion: '1.1.0' },
+    }]))
+    stubFetch({
+      '/dsh-market/installed': { profile: 'desktop', installed: { 'dsh-loop': '^1.0.0' }, live: [] },
+      '/dsh-market/updates': { updates: { 'dsh-loop': { kind: 'npm', eligibleVersion: '1.2.0', updateAvailable: true } } },
+    })
+    const dict = lang === 'zh' ? zh : en
+    const localeSnapshot = { active: lang }
+    render(<MarketSection {...props()} t={key => (dict as Record<string, string>)[key] ?? key}
+      locale={{ subscribe: () => () => {}, getSnapshot: () => localeSnapshot }} />)
+    const message = lang === 'zh' ? '更新目标已变化，已跳过。请重新选择更新。' : 'The update target changed, so this task was skipped. Choose the update again.'
+    expect(await screen.findByText(message)).toBeTruthy()
+    expect(screen.queryByText(dict.agentQueueStaleNoUpdate)).toBeNull()
+    expect(fetchCalls.some(call => call.path === '/dsh-market/update')).toBe(false)
+  })
+})
+
 const REGISTRY = {
   updated: '', count: 4,
   categories: { tools: { en: 'Tools', zh: '工具' }, skill: { en: 'Skills', zh: '技能包' }, theme: { en: 'Themes', zh: '主题' } },

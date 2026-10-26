@@ -53,7 +53,8 @@ import {
 import { resolveRegion } from './region-probe.ts'
 import { acceleratedTarget, resolveHeadCommit } from './accelerate.ts'
 import { updateNotesFor } from './changelog.ts'
-import { checkUpdates, isUpdatablePlugin, compareVersions, fetchNpmLatest, invalidateUpdates, resolveGitRemoteHead, isUpgrade, latestPublishedRecently, setUpdateRegistry, versionOnChannel } from './updates.ts'
+import { checkUpdates, isUpdatablePlugin, compareVersions, fetchNpmLatest, invalidateUpdates, resolveDesktopMatureUpdate, resolveGitRemoteHead, isUpgrade, latestPublishedRecently, setUpdateRegistry, versionOnChannel } from './updates.ts'
+import { isStableReleaseVersion } from './release-candidates.ts'
 import { createThemeManager, type LoaderEntry } from './themes.ts'
 import { readJsonBody, refuseUnadmitted, sameOrigin, sendJson } from './http.ts'
 import { resolveDshHome } from './home-paths.ts'
@@ -1259,11 +1260,14 @@ export function mountMarketRoutes(
   }
 
   /** Every plugin command goes through the pnpm-drift recovery wrapper (#20). */
-  const runPlugin = (profile: string, args: string[]) =>
-    withHoistRecovery(commands.runPlugin, profile, args, activeProfileDir, { marketFlags })
+  const runPlugin = (profile: string, args: string[], preserveProfilePolicy = false) =>
+    withHoistRecovery(commands.runPlugin, profile, args, activeProfileDir, { marketFlags, preserveProfilePolicy, ...(preserveProfilePolicy ? { releaseAgeBypass: false } : {}) })
   /** The same, minus the release-age bypass: for a fresh install pinned to a young release (#594). */
   const runPluginKeepingReleaseAge = (profile: string, args: string[]) =>
     withHoistRecovery(commands.runPlugin, profile, args, activeProfileDir, { releaseAgeBypass: false, marketFlags })
+  /** Mature npm updates must preserve both release-age enforcement and profile policy files. */
+  const runMaturePluginUpdate = (profile: string, args: string[]) =>
+    withHoistRecovery(commands.runPlugin, profile, args, activeProfileDir, { releaseAgeBypass: false, marketFlags, preserveProfilePolicy: true })
 
   /**
    * The argv that rematerializes a restored manifest's build on this host.
@@ -1279,7 +1283,8 @@ export function mountMarketRoutes(
    * @returns null when nothing expressible is left, in which case the caller
    *   reports that rather than sending a command the host will refuse.
    */
-  function rematerializeArgs(name: string, pinned: string | undefined): string[] | null {
+  function rematerializeArgs(name: string, pinned: string | undefined, preserveProfilePolicy = false): string[] | null {
+    if (marketFlags && preserveProfilePolicy) return ['--no-frozen-lockfile', 'install']
     if (marketFlags) return ['--no-frozen-lockfile', RELEASE_AGE_OVERRIDE, 'install']
     if (pinned !== undefined && /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(pinned)) return ['add', `${name}@${pinned}`]
     return null
@@ -1339,6 +1344,7 @@ export function mountMarketRoutes(
     name: string,
     manifestBefore: ProfileManifestSnapshot,
     rematerializeWhenManifestUnchanged = false,
+    preserveProfilePolicy = false,
   ): Promise<{ ok: boolean; detail: string | null }> {
     const rolledBack = restoreProfileManifest(config.profile, manifestBefore, activeProfileDir)
     if (rolledBack.length === 0 && !rematerializeWhenManifestUnchanged) return { ok: true, detail: null }
@@ -1355,9 +1361,9 @@ export function mountMarketRoutes(
     // accepted at all (#732), so there the build is rematerialized through the
     // exact target — see `rematerializeArgs`.
     const pinned = manifestBefore.dependencies[name]
-    const args = rematerializeArgs(name, pinned)
+    const args = rematerializeArgs(name, pinned, preserveProfilePolicy)
     if (args === null) return { ok: false, detail: cannotRematerializeDetail(name, pinned) }
-    const reinstall = await runPlugin(config.profile, args)
+    const reinstall = await runPlugin(config.profile, args, preserveProfilePolicy)
     const ok = reinstall.exitCode === 0 && !reinstall.timedOut && !reinstall.cancelled
     if (ok) logEvent('info', 'update', `${name}: previous build rematerialized (${rolledBack.join(', ')})`)
     return { ok, detail: ok ? null : failureDetail(reinstall) }
@@ -1510,6 +1516,7 @@ export function mountMarketRoutes(
     lockfileBefore: ProfileLockfileSnapshot,
     target: string,
     keepRepairedLock = false,
+    preserveProfilePolicy = false,
   ): Promise<{ ok: boolean; detail: string | null }> {
     restoreProfileManifest(config.profile, manifestBefore, activeProfileDir)
     const preparedLock = restoreProfileLockfile(lockfileBefore)
@@ -1520,15 +1527,16 @@ export function mountMarketRoutes(
     // then an "already up to date" no-op; --force is what rematerializes the
     // captured version/commit/archive instead of blessing corrupted bytes.
     //
-    // `--force` and the age override are market options, and the official
+    // #991 recovery keeps release-age enforcement, just like the forward add.
+    // `--force` and the legacy age override are market options, and the official
     // Desktop bridge refuses them outright (#732). There the rollback is the
     // bare exact target: the host's own manager pipeline is what installs it,
     // and sending the options anyway failed the rollback with 127 — which
     // read as "the previous build could not be verified" while node_modules
     // still held the bad build.
     const add = await runPlugin(config.profile, marketFlags
-      ? ['add', '--force', RELEASE_AGE_OVERRIDE, target]
-      : ['add', target])
+      ? ['add', '--force', ...(preserveProfilePolicy ? [] : [RELEASE_AGE_OVERRIDE]), target]
+      : ['add', target], preserveProfilePolicy)
     // Exact recovery targets deliberately pin versions/commits. Keep the
     // user's durable range, tag, floating github shortcut, or release URL.
     restoreProfileManifest(config.profile, manifestBefore, activeProfileDir)
@@ -1556,8 +1564,9 @@ export function mountMarketRoutes(
     manifestBefore: ProfileManifestSnapshot,
     beforeVersion: string,
     lockfileBefore: ProfileLockfileSnapshot,
+    preserveProfilePolicy = false,
   ): Promise<{ ok: boolean; detail: string | null }> {
-    const rollback = await rollbackExactTarget(name, manifestBefore, lockfileBefore, `${name}@${beforeVersion}`)
+    const rollback = await rollbackExactTarget(name, manifestBefore, lockfileBefore, `${name}@${beforeVersion}`, false, preserveProfilePolicy)
     if (!rollback.ok) return rollback
     const restoredVersion = readInstalledVersion(config.profile, name, activeProfileDir)
     if (restoredVersion !== beforeVersion) {
@@ -1628,6 +1637,7 @@ export function mountMarketRoutes(
     beforeCommit: string,
     lockfileBefore: ProfileLockfileSnapshot,
     keepRepairedLock: boolean,
+    preserveProfilePolicy = false,
   ): Promise<{ ok: boolean; detail: string | null }> {
     // Preserve an already immutable durable spelling (including a pinned
     // codeload URL). Rewriting that source to github: while keeping the
@@ -1637,7 +1647,7 @@ export function mountMarketRoutes(
     if (rollbackTarget === null) {
       return { ok: false, detail: 'the previous git target is invalid; nothing to roll back to' }
     }
-    const rollback = await rollbackExactTarget(name, manifestBefore, lockfileBefore, rollbackTarget, keepRepairedLock)
+    const rollback = await rollbackExactTarget(name, manifestBefore, lockfileBefore, rollbackTarget, keepRepairedLock, preserveProfilePolicy)
     if (!rollback.ok) return rollback
     // What pnpm actually resolved, read back the way the identity was
     // captured: the codeload tarball for GitHub, the git resolution otherwise.
@@ -1653,14 +1663,15 @@ export function mountMarketRoutes(
     name: string,
     manifestBefore: ProfileManifestSnapshot,
     source: UpdateRollbackSource,
+    preserveProfilePolicy = false,
   ): Promise<{ ok: boolean; detail: string | null }> {
     if (source.kind === 'npm') {
-      return rollbackNpmBuild(name, manifestBefore, source.beforeVersion, source.lockfileBefore)
+      return rollbackNpmBuild(name, manifestBefore, source.beforeVersion, source.lockfileBefore, preserveProfilePolicy)
     }
     if (source.kind === 'git') {
-      return rollbackGitBuild(name, manifestBefore, source.target, source.beforeCommit, source.lockfileBefore, source.keepRepairedLock)
+      return rollbackGitBuild(name, manifestBefore, source.target, source.beforeCommit, source.lockfileBefore, source.keepRepairedLock, preserveProfilePolicy)
     }
-    return rollbackUpdateBuild(name, manifestBefore, true)
+    return rollbackUpdateBuild(name, manifestBefore, true, preserveProfilePolicy)
   }
 
   interface PendingRollback {
@@ -1670,6 +1681,7 @@ export function mountMarketRoutes(
     expectedState: ProfileStateFingerprint
     manifestBefore?: ProfileManifestSnapshot
     updateSource?: UpdateRollbackSource
+    preserveProfilePolicy?: boolean
   }
 
   interface ProfileStateFingerprint {
@@ -4353,7 +4365,7 @@ sendJson(response, 200, { updates })
         }
         try {
           await withMutationLock(response, 'install', async () => {
-            const body = (await readJsonBody(request)) as { name?: unknown; force?: unknown; restore?: unknown; compatVersion?: unknown; confirmAgentsRunning?: unknown }
+            const body = (await readJsonBody(request)) as { name?: unknown; force?: unknown; restore?: unknown; compatVersion?: unknown; eligibleVersion?: unknown; confirmAgentsRunning?: unknown }
             const name = typeof body.name === 'string' ? body.name : ''
             const force = body.force === true
             // A release the refusal dialog's own search confirmed compatible
@@ -4363,6 +4375,14 @@ sendJson(response, 200, { updates })
               ? body.compatVersion
               : null
             const restore = body.restore === true
+            if (body.eligibleVersion !== undefined && !isStableReleaseVersion(body.eligibleVersion)) {
+              sendJson(response, 400, { error: 'Invalid eligibleVersion' })
+              return
+            }
+            if (body.eligibleVersion !== undefined && compatVersion !== null) {
+              sendJson(response, 400, { error: 'eligibleVersion and compatVersion cannot be combined' })
+              return
+            }
             const manifestCapture = captureUpdateManifest()
             if (!manifestCapture.ok) {
               sendJson(response, 500, {
@@ -4510,6 +4530,7 @@ sendJson(response, 200, { updates })
             const selfChannel = SELF_NAMES.has(name) ? activeChannel() : null
             const tag = selfChannel === null ? 'latest' : DIST_TAG[selfChannel]
             let expectedNpmVersion: string | null = null
+            let enforceMatureReleaseAge = false
             // Resolve the registry pin BEFORE building the add target (#496).
             // Desktop's install boundary otherwise fetches `latest` again to
             // rewrite `@latest` into `name@x.y.z`; when the two views drift,
@@ -4543,6 +4564,78 @@ sendJson(response, 200, { updates })
             // failure with a name.
             if (usesNpmUpdateTarget) {
               const installedVersion = readInstalledVersion(config.profile, name, activeProfileDir)
+              // #991: Revalidate under the mutation lock against the CURRENT registry
+              // and profile policy. The client's target is an optimistic concurrency
+              // token, never an authorization to bypass pnpm's release-age window.
+              const desktopStable = config.desktopHost === true && !SELF_NAMES.has(name)
+                && isNpmRollbackSource && isStableReleaseVersion(installedVersion)
+              if (desktopStable && compatVersion !== null && !isStableReleaseVersion(compatVersion)) {
+                sendJson(response, 409, {
+                  staleTarget: true,
+                  error: '官方桌面端稳定版 npm 更新不自动选择预发布兼容版本；未修改插件。 / The Desktop stable npm update cannot automatically select a prerelease compatibility target. Nothing was changed.',
+                })
+                return
+              }
+              // Keep the compatibility dialog's original no-op/downgrade
+              // decisions before consulting the mature-version ceiling.
+              if (desktopStable && compatVersion !== null) {
+                const direction = compareVersions(compatVersion, installedVersion)
+                if (direction === 0) {
+                  invalidateUpdates()
+                  sendJson(response, 200, { ok: true, skipped: 'current', name, version: installedVersion })
+                  return
+                }
+                if (direction !== null && direction < 0) {
+                  sendJson(response, 400, {
+                    error: `无法用这个版本更新：它为当前 DSH 兼容，但 ${compatVersion} 比已装的 ${installedVersion} 更旧，更新会降级，已停止。 / That version cannot update this plugin: ${compatVersion} is compatible with this host but older than the installed ${installedVersion}, so it would be a downgrade. Nothing was changed.`,
+                  })
+                  return
+                }
+              }
+              if (desktopStable) {
+                const endpointLatest = await fetchNpmLatest(name)
+                // Repeated legacy requests are already complete. An explicit
+                // client target must still pass the stale-target checks below.
+                if (body.eligibleVersion === undefined && compatVersion === null && endpointLatest === installedVersion) {
+                  invalidateUpdates()
+                  sendJson(response, 200, { ok: true, skipped: 'current', name, version: installedVersion })
+                  return
+                }
+                const eligible = await resolveDesktopMatureUpdate(name, installedVersion, config.profile, activeProfileDir, endpointLatest, compatVersion ?? undefined)
+                if (body.eligibleVersion !== undefined && body.eligibleVersion !== eligible.candidate) {
+                  invalidateUpdates()
+                  sendJson(response, 409, {
+                    staleTarget: true,
+                    error: `更新目标已经变化（原目标 ${body.eligibleVersion}；当前合规目标 ${eligible.candidate ?? '无'}）。请刷新后重新选择。 / The eligible update target changed. Refresh and choose again.`,
+                  })
+                  return
+                }
+                if (eligible.candidate === null) {
+                  invalidateUpdates()
+                  sendJson(response, 409, {
+                    staleTarget: true,
+                    error: `无法确认 ${name} 存在符合当前等待策略的升级版本（${eligible.reason}），没有修改插件。 / No eligible update can be verified against the current release-age policy. Nothing was changed.`,
+                  })
+                  return
+                }
+                // Older clients have no target token. They may still install
+                // a mature latest, but cannot silently get a different build
+                // from the version their UI presented.
+                if (compatVersion === null && body.eligibleVersion === undefined && eligible.candidate !== endpointLatest) {
+                  invalidateUpdates()
+                  sendJson(response, 409, { staleTarget: true, error: '当前最新版仍在等待期；请刷新市场以确认可安装的成熟版本。 / The latest release is held. Refresh the market to confirm the exact mature target.' })
+                  return
+                }
+                // compatVersion is an existing host-compatibility escape hatch,
+                // never an exemption from the profile's release-age policy.
+                if (compatVersion !== null && eligible.candidate !== compatVersion) {
+                  invalidateUpdates()
+                  sendJson(response, 409, { staleTarget: true, error: 'The requested compatible version is not verified mature under the current profile policy.' })
+                  return
+                }
+                expectedNpmVersion = eligible.candidate
+                enforceMatureReleaseAge = true
+              }
               // The requested release replaces the resolved one, and with it
               // every check below that exists to judge `latest`: re-running
               // them would refuse the version the dialog just found, in a loop
@@ -4566,10 +4659,10 @@ sendJson(response, 200, { updates })
                 }
                 expectedNpmVersion = compatVersion
               }
-              const registryLatest = compatVersion ?? (selfChannel === null
+              const registryLatest = expectedNpmVersion ?? compatVersion ?? (selfChannel === null
                 ? await fetchNpmLatest(name)
                 : await versionOnChannel(name, selfChannel, await fetchNpmLatest(name)))
-              if (compatVersion === null) expectedNpmVersion = registryLatest
+              if (expectedNpmVersion === null) expectedNpmVersion = registryLatest
               // Never let `@latest` walk a profile BACKWARDS (#64 by @ZeroOrigin64):
               // a package whose latest dist-tag was left on an older release turns
               // this update into a downgrade that also rewrites an exact pin to
@@ -4741,7 +4834,7 @@ sendJson(response, 200, { updates })
             // the update check.
             const addArgs = inPlaceUpdate
               ? (force ? ['update', RELEASE_AGE_OVERRIDE, name] : ['update', name])
-              : (force && marketFlags ? ['add', RELEASE_AGE_OVERRIDE, target] : ['add', target])
+              : (force && marketFlags && config.desktopHost !== true ? ['add', RELEASE_AGE_OVERRIDE, target] : ['add', target])
             // Exact manifest snapshot for failure rollback (#65, #339) — the
             // host can write dependencies AND dsh.profile.bundles before a
             // hard-failed add, leaving residue that breaks the next boot.
@@ -4892,7 +4985,10 @@ sendJson(response, 200, { updates })
             // runs. Write the intent first, so the log can answer "where did
             // my plugin go" after the fact.
             logEvent('info', 'update-start', `${name} -> ${target} (profile ${config.profile})`)
-            const result = await runPlugin(config.profile, addArgs)
+            // Even when a candidate was mature during validation, pnpm may
+            // reject the operation because another lockfile entry is young or
+            // the registry changes. Never retry this update with an age bypass.
+            const result = await (enforceMatureReleaseAge ? runMaturePluginUpdate : runPlugin)(config.profile, addArgs)
             const cancelled = result.cancelled
             // The pin above is the market's own write, so it is undone whenever
             // pnpm did not replace it. Measured on pnpm 11.7.0 and 12.4.1, a
@@ -4909,7 +5005,7 @@ sendJson(response, 200, { updates })
             }
             const rollbackAttemptBuild = async (): Promise<{ ok: boolean; detail: string | null }> => {
               if (rollbackPlan.available) {
-                return executeUpdateRollback(name, manifestBefore, rollbackPlan.source)
+                return executeUpdateRollback(name, manifestBefore, rollbackPlan.source, enforceMatureReleaseAge)
               }
               restoreProfileManifest(config.profile, manifestBefore, activeProfileDir)
               const lockRestore = rollbackPlan.lockfileBefore === undefined
@@ -5333,6 +5429,7 @@ sendJson(response, 200, { updates })
                       names: [name],
                       manifestBefore,
                       updateSource: rollbackPlan.source,
+                      preserveProfilePolicy: enforceMatureReleaseAge,
                     })
                   : null
                 compatibility = {
@@ -6404,7 +6501,7 @@ sendJson(response, 200, { updates })
               const name = pending.names[0]!
               const result = pending.updateSource === undefined
                 ? { ok: false, detail: 'the saved update rollback source is unavailable' }
-                : await executeUpdateRollback(name, pending.manifestBefore!, pending.updateSource)
+                : await executeUpdateRollback(name, pending.manifestBefore!, pending.updateSource, pending.preserveProfilePolicy)
               ok = result.ok
               detail = result.detail
             } else {

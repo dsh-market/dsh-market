@@ -398,6 +398,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			updateFail: "更新失败",
 			upToDate: "已是最新",
 			updateHeldTag: "新版等待中",
+			updateHeldTarget: "最新版 {0} 刚发布，还要约 {1} 小时。先更新到 {2}。",
+			updateHeldTargetUnknown: "最新版 {0} 的发布时间暂不确定，还需等待。先更新到 {2}。",
 			updateHeldHint: "这个 profile 要求新版本发布满一段时间才允许安装，大约还要 {1} 小时。",
 			updateHeldEstimatedHint: "新版本已经出现在 /latest，但镜像的完整信息还没同步，所以先不提供更新；大约 {1} 分钟后会重新检查。",
 			newerPrereleaseAvailable: "预发布版 {0} 已发布",
@@ -1158,6 +1160,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			updateFail: "Update failed",
 			upToDate: "Up to date",
 			updateHeldTag: "new version waiting",
+			updateHeldTarget: "Latest {0} was just released; about {1} hours to wait. Update to {2} for now.",
+			updateHeldTargetUnknown: "The release time of latest {0} is unknown, so it still needs to wait. Update to {2} for now.",
 			updateHeldHint: "This profile waits a while before it installs a fresh release; about {1} hour(s) left.",
 			updateHeldEstimatedHint: "The new version is listed, but the registry mirror has not caught up with its metadata, so the update is held; the market checks again in about {1} minute(s).",
 			newerPrereleaseAvailable: "prerelease {0} published",
@@ -1946,6 +1950,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				if (row.restore === true && world.updates[row.name]?.kind === "linked" && findCatalogEntryForLocal(world.plugins, row.name) !== null) return null;
 				return "no-update";
 			}
+			if (row.kind === "update" && row.eligibleVersion !== void 0 && row.eligibleVersion !== world.updates[row.name]?.eligibleVersion) return "target-changed";
 			return null;
 		}
 		function installedForCatalog(installed, bundles) {
@@ -4161,9 +4166,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		* scripts awaiting approval, a held release. `detail` is kept for the same
 		* reason: it is the row's own report.
 		*
-		* Everything else is deliberately dropped. `updateOptions`, `blockedBy` and
-		* `conflicts` only matter while a row is queued or waiting on the user, and
-		* neither of those states is persisted here. `needsRefresh` is written so the
+		* Failed updates awaiting build approval also keep their original update
+		* options so approving after a reload cannot select a different target.
+		* `blockedBy` and `conflicts` are deliberately dropped. `needsRefresh` is written so the
 		* stored shape stays the record's own, but the restore drops it: only the page
 		* that wrote it can still be waiting for that reload.
 		*/
@@ -4177,6 +4182,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				...record.reason === void 0 ? {} : { reason: record.reason },
 				...record.detail === void 0 ? {} : { detail: record.detail },
 				...record.blockedBuilds === void 0 ? {} : { blockedBuilds: [...record.blockedBuilds] },
+				...record.kind === "update" && record.state === "failed" && (record.blockedBuilds?.length ?? 0) > 0 && record.updateOptions !== void 0 ? { updateOptions: { ...record.updateOptions } } : {},
 				...record.needsRefresh === true ? { needsRefresh: true } : {},
 				...record.heldRelease === void 0 ? {} : { heldRelease: { ...record.heldRelease } }
 			}));
@@ -4227,6 +4233,13 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const detail = asText(row.detail);
 			const blockedBuilds = asStringList(row.blockedBuilds);
 			const heldRelease = asHeldRelease(row.heldRelease);
+			const options = row.updateOptions !== null && typeof row.updateOptions === "object" && !Array.isArray(row.updateOptions) ? row.updateOptions : void 0;
+			const updateOptions = kind === "update" && state === "failed" && blockedBuilds !== void 0 && options !== void 0 ? {
+				...typeof options.force === "boolean" ? { force: options.force } : {},
+				...typeof options.restore === "boolean" ? { restore: options.restore } : {},
+				...asText(options.compatVersion) === void 0 ? {} : { compatVersion: asText(options.compatVersion) },
+				...asText(options.eligibleVersion) === void 0 ? {} : { eligibleVersion: asText(options.eligibleVersion) }
+			} : void 0;
 			return {
 				id,
 				kind,
@@ -4236,6 +4249,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				...reason === void 0 ? {} : { reason },
 				...detail === void 0 ? {} : { detail },
 				...blockedBuilds === void 0 ? {} : { blockedBuilds },
+				...updateOptions === void 0 ? {} : { updateOptions },
 				...heldRelease === void 0 ? {} : { heldRelease }
 			};
 		}
@@ -9102,18 +9116,20 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						kind,
 						name,
 						restore: options.restore === true,
+						...typeof options.eligibleVersion === "string" ? { eligibleVersion: options.eligibleVersion } : {},
 						...url === void 0 ? {} : { url }
 					}, {
 						installed,
 						updates,
 						plugins: data.plugins
 					});
-					if (verdict !== null) return stale(verdict === "gone" ? t("agentQueueStaleGone") : t("agentQueueStaleNoUpdate"));
+					if (verdict !== null) return stale(verdict === "target-changed" ? localizeBilingual("更新目标已变化，已跳过。请重新选择更新。 / The update target changed, so this task was skipped. Choose the update again.", lang) : verdict === "gone" ? t("agentQueueStaleGone") : t("agentQueueStaleNoUpdate"));
 					if (kind === "install" && url === void 0) return [];
 					const updateOptions = kind === "update" ? {
 						force: options.force === true,
 						restore: options.restore === true,
-						...typeof options.compatVersion === "string" ? { compatVersion: options.compatVersion } : {}
+						...typeof options.compatVersion === "string" ? { compatVersion: options.compatVersion } : {},
+						...typeof options.eligibleVersion === "string" ? { eligibleVersion: options.eligibleVersion } : {}
 					} : void 0;
 					return [{
 						ok: true,
@@ -9160,6 +9176,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			}, [
 				data,
 				t,
+				lang,
 				queueSnapshotReady,
 				installed,
 				updates
@@ -10797,7 +10814,14 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					body: "{}"
 				}).catch(() => {});
 			}, []);
-			const doUpdate = (0, react.useCallback)((name, force = false, restore = false, compatVersion, confirmAgentsRunning = false) => {
+			const doUpdate = (0, react.useCallback)((name, force = false, restore = false, compatVersion, confirmAgentsRunning = false, eligibleVersion) => {
+				const expectedVersion = compatVersion === void 0 && !restore ? eligibleVersion ?? updates[name]?.eligibleVersion : void 0;
+				const updateOptions = {
+					force,
+					restore,
+					compatVersion,
+					eligibleVersion: expectedVersion
+				};
 				setInstallError(null);
 				setActivationWarnings([]);
 				setStaleName((prev) => prev === name ? null : prev);
@@ -10812,11 +10836,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					kind: "update",
 					name,
 					state: "running",
-					updateOptions: {
-						force,
-						restore,
-						compatVersion
-					}
+					updateOptions
 				}));
 				return fetch(api("/dsh-market/update"), {
 					method: "POST",
@@ -10826,6 +10846,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						...force ? { force: true } : {},
 						...restore ? { restore: true } : {},
 						...compatVersion !== void 0 ? { compatVersion } : {},
+						...expectedVersion !== void 0 ? { eligibleVersion: expectedVersion } : {},
 						...confirmAgentsRunning ? { confirmAgentsRunning: true } : {}
 					})
 				}).then((res) => res.json().then((body) => ({
@@ -10838,6 +10859,15 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						setRecords((list) => drop(list, updateRecordId));
 						refreshInstalled();
 						if (body.partial === true) setInstallError(t("partialNote"));
+						return;
+					}
+					if (status === 409 && body.staleTarget === true) {
+						setRecords((list) => patch(list, updateRecordId, {
+							state: "failed",
+							reason: String(body.error ?? "Update target changed")
+						}));
+						setInstallError(localizeBilingual(String(body.error ?? "Update target changed"), lang));
+						refreshInstalled(true);
 						return;
 					}
 					if (status === 200 && body.ok && body.skipped === "current") {
@@ -10890,7 +10920,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						if (Array.isArray(body.ignoredBuilds) && body.ignoredBuilds.length > 0) setBuildsSkipped({
 							updateName: name,
 							names: body.ignoredBuilds.map(String),
-							restore
+							updateOptions
 						});
 						const orphans = Array.isArray(body.orphanBundles) ? body.orphanBundles.map(String) : [];
 						const failure = failureText(body);
@@ -10902,7 +10932,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						].filter(Boolean).join("\n").trim().slice(0, 1200);
 						setRecords((list) => patch(list, updateRecordId, {
 							state: "failed",
-							reason: clipped
+							reason: clipped,
+							...Array.isArray(body.ignoredBuilds) && body.ignoredBuilds.length > 0 ? { blockedBuilds: body.ignoredBuilds.map(String) } : {}
 						}));
 						setInstallError((restore ? t("restoreFail") : t("updateFail")) + ": " + name + " — " + localizeBilingual(clipped, lang));
 					}
@@ -10911,7 +10942,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				refreshInstalled,
 				installed,
 				t,
-				lang
+				lang,
+				updates
 			]);
 			const doSourceMigration = (0, react.useCallback)((name, confirmAgentsRunning = false, renameTo) => {
 				setInstallError(null);
@@ -11511,7 +11543,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 							if (task.kind === "install") {
 								const plugin = dataRef.current?.plugins.find((candidate) => candidate.url === task.url);
 								if (plugin !== void 0) doInstallRef.current?.(plugin);
-							} else if (task.kind === "update") doUpdateRef.current?.(task.name, task.updateOptions?.force, task.updateOptions?.restore, task.updateOptions?.compatVersion);
+							} else if (task.kind === "update") doUpdateRef.current?.(task.name, task.updateOptions?.force, task.updateOptions?.restore, task.updateOptions?.compatVersion, false, task.updateOptions?.eligibleVersion);
 							else doUninstallRef.current?.(task.name);
 						} finally {
 							drainingRef.current = false;
@@ -11551,7 +11583,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					doInstall(plugin);
 				} else if (record.kind === "update") {
 					setRecords((prev) => drop(prev, record.id));
-					doUpdate(record.name, record.updateOptions?.force, record.updateOptions?.restore, record.updateOptions?.compatVersion, confirmAgentsRunning);
+					doUpdate(record.name, record.updateOptions?.force, record.updateOptions?.restore, record.updateOptions?.compatVersion, confirmAgentsRunning, record.updateOptions?.eligibleVersion);
 				} else {
 					setRecords((prev) => drop(prev, record.id));
 					doUninstall(record.name, confirmAgentsRunning);
@@ -11818,22 +11850,26 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				});
 			}, [bootId]);
 			const doUpdateAll = (0, react.useCallback)(() => {
-				const names = reminderBatchUpdatableNames.slice();
+				const names = reminderBatchUpdatableNames.map((name) => ({
+					name,
+					eligibleVersion: updates[name]?.eligibleVersion
+				}));
 				setUpdatingAll(true);
 				const next = () => {
-					const name = names.shift();
-					if (name === void 0) {
+					const item = names.shift();
+					if (item === void 0) {
 						setUpdatingAll(false);
 						refreshInstalled(true);
 						return;
 					}
-					doUpdate(name).then(next, next);
+					doUpdate(item.name, false, false, void 0, false, item.eligibleVersion).then(next, next);
 				};
 				next();
 			}, [
 				reminderBatchUpdatableNames,
 				doUpdate,
-				refreshInstalled
+				refreshInstalled,
+				updates
 			]);
 			const finishRestore = (0, react.useCallback)((body) => {
 				const errors = Array.isArray(body.errors) ? body.errors : [];
@@ -13244,7 +13280,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 											const plugin = record.url === void 0 ? void 0 : data?.plugins.find((p) => p.url === record.url);
 											approveAndRetry(names, () => {
 												if (plugin !== void 0) doInstall(plugin);
-												else doUpdate(record.name, false, false);
+												else doUpdate(record.name, record.updateOptions?.force, record.updateOptions?.restore, record.updateOptions?.compatVersion, false, record.updateOptions?.eligibleVersion);
 											});
 										}
 									})
@@ -13495,11 +13531,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 								size: "sm",
 								disabled: busyUrl !== null,
 								onClick: () => {
-									const { plugin, updateName, names, restore } = buildsSkipped;
+									const { plugin, updateName, names, updateOptions } = buildsSkipped;
 									setBuildsSkipped(null);
 									approveAndRetry(names, () => {
 										if (plugin !== void 0) doInstall(plugin);
-										else if (updateName !== void 0) doUpdate(updateName, false, restore === true);
+										else if (updateName !== void 0) doUpdate(updateName, updateOptions?.force, updateOptions?.restore, updateOptions?.compatVersion, false, updateOptions?.eligibleVersion);
 									});
 								},
 								children: t("approveBuilds")
@@ -14715,56 +14751,70 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 														"aria-hidden": "true",
 														children: "·"
 													});
-													return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [updatable && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-														className: Market_module_css_default.irowStatus,
-														children: [!generation && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
-															className: Market_module_css_default.irowStatusPart,
-															children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-																className: Market_module_css_default.irowStatusFact,
-																children: status?.latest != null ? t("hostUpdateReady").replace("{0}", displayLatest(status.latest)) : t("updateAvailableShort")
-															}), sep]
-														}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
-															type: "button",
-															className: Market_module_css_default.notesLink,
-															onClick: () => openNotes(name, status?.current ?? null, status?.latest ?? null, repoUrl),
-															children: `${t("notesLink")} ›`
-														})]
-													}), (exempt || ignored) && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-														className: Market_module_css_default.irowStatus,
-														children: [
-															/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-																className: Market_module_css_default.irowStatusIcon,
-																children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(IconBellOff, { size: 16 })
-															}),
-															exempt ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-																className: Market_module_css_default.metaInline,
-																title: t("updateExemptHint"),
-																role: "status",
-																children: t("updateExemptMark")
-															}) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-																className: Market_module_css_default.metaInline,
-																role: "status",
-																children: t("updateNoticeIgnored")
-															}),
-															/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-																className: Market_module_css_default.irowStatusAction,
-																children: exempt ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
-																	type: "button",
-																	className: Market_module_css_default.noteToggle,
-																	title: t("updateExemptHint"),
-																	"aria-label": `${t("updateExemptRestore")} ${name}`,
-																	onClick: () => toggleUpdateExempt(name),
-																	children: t("updateExemptRestore")
-																}) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
-																	type: "button",
-																	className: Market_module_css_default.noteToggle,
-																	"aria-label": `${t("updateExemptRestore")} ${name}`,
-																	onClick: () => unignoreUpdateNotice(name),
-																	children: t("updateExemptRestore")
+													return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
+														updatable && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+															className: Market_module_css_default.irowStatus,
+															children: [!generation && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
+																className: Market_module_css_default.irowStatusPart,
+																children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+																	className: Market_module_css_default.irowStatusFact,
+																	children: status?.eligibleVersion != null ? t("hostUpdateReady").replace("{0}", displayLatest(status.eligibleVersion)) : status?.latest != null ? t("hostUpdateReady").replace("{0}", displayLatest(status.latest)) : t("updateAvailableShort")
+																}), sep]
+															}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+																type: "button",
+																className: Market_module_css_default.notesLink,
+																onClick: () => openNotes(name, status?.current ?? null, status?.latest ?? null, repoUrl),
+																children: `${t("notesLink")} ›`
+															})]
+														}),
+														updatable && status?.eligibleVersion !== void 0 && status.restoreRequired !== true && status.heldUpdate !== void 0 && status.heldUpdate.latest !== status.eligibleVersion && (() => {
+															const left = Date.parse(status.heldUpdate.until) - Date.now();
+															const known = status.heldUpdate.estimated !== true && Number.isFinite(left) && left > 0;
+															return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+																className: Market_module_css_default.irowStatus,
+																children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+																	className: Market_module_css_default.metaInline,
+																	children: t(known ? "updateHeldTarget" : "updateHeldTargetUnknown").replace("{0}", displayLatest(status.heldUpdate.latest)).replace("{1}", String(Math.max(1, Math.ceil(left / 36e5)))).replace("{2}", displayLatest(status.eligibleVersion))
 																})
-															})
-														]
-													})] });
+															});
+														})(),
+														(exempt || ignored) && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+															className: Market_module_css_default.irowStatus,
+															children: [
+																/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+																	className: Market_module_css_default.irowStatusIcon,
+																	children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(IconBellOff, { size: 16 })
+																}),
+																exempt ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+																	className: Market_module_css_default.metaInline,
+																	title: t("updateExemptHint"),
+																	role: "status",
+																	children: t("updateExemptMark")
+																}) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+																	className: Market_module_css_default.metaInline,
+																	role: "status",
+																	children: t("updateNoticeIgnored")
+																}),
+																/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+																	className: Market_module_css_default.irowStatusAction,
+																	children: exempt ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+																		type: "button",
+																		className: Market_module_css_default.noteToggle,
+																		title: t("updateExemptHint"),
+																		"aria-label": `${t("updateExemptRestore")} ${name}`,
+																		onClick: () => toggleUpdateExempt(name),
+																		children: t("updateExemptRestore")
+																	}) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+																		type: "button",
+																		className: Market_module_css_default.noteToggle,
+																		"aria-label": `${t("updateExemptRestore")} ${name}`,
+																		onClick: () => unignoreUpdateNotice(name),
+																		children: t("updateExemptRestore")
+																	})
+																})
+															]
+														})
+													] });
 												})(),
 												!off && act !== void 0 && meta !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 													className: Market_module_css_default.act,
@@ -14904,7 +14954,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 															className: Market_module_css_default.metaTag,
 															title: t("hostUpdateHint"),
 															children: t("hostUpdateReady").replace("{0}", status.latest)
-														}) : status && status.updateAvailable ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+														}) : status && status.updateAvailable ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 															variant: "outline",
 															size: "sm",
 															className: Market_module_css_default.warnBtn,
@@ -14913,8 +14963,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 																if (status.restoreRequired === true) askRestore(name);
 																else doUpdate(name);
 															},
-															children: status.restoreRequired === true ? t("restoreOnline") : t("update")
-														}) : status?.heldUpdate !== void 0 ? (() => {
+															children: status.restoreRequired === true ? t("restoreOnline") : status.eligibleVersion !== void 0 ? `${t("update")} ${displayLatest(status.eligibleVersion)}` : t("update")
+														}), status.heldUpdate !== void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+															className: Market_module_css_default.metaTag,
+															children: t("updateHeldTag").replace("{0}", displayLatest(status.heldUpdate.latest))
+														})] }) : status?.heldUpdate !== void 0 ? (() => {
 															const left = Date.parse(status.heldUpdate.until) - Date.now();
 															const estimated = status.heldUpdate.estimated === true;
 															const amount = String(Math.max(1, Math.ceil(left / (estimated ? 6e4 : 36e5))));

@@ -63,4 +63,10 @@ describe('queuedRowApplies', () => {
     // about a package that is not there any more.
     expect(queuedRowApplies({ kind: 'update', name: 'dsh-loop' }, world({ updates: { 'dsh-loop': { updateAvailable: true } } }))).toBe('gone')
   })
+  it('rejects a persisted update whose eligible target changed during queueing', () => {
+    const installed = { 'dsh-loop': '^1.0.0' }
+    const updates = { 'dsh-loop': { kind: 'npm' as const, latest: '1.3.0', eligibleVersion: '1.2.0', updateAvailable: true } }
+    expect(queuedRowApplies({ kind: 'update', name: 'dsh-loop', eligibleVersion: '1.1.0' }, world({ installed, updates }))).toBe('target-changed')
+    expect(queuedRowApplies({ kind: 'update', name: 'dsh-loop', eligibleVersion: '1.2.0' }, world({ installed, updates }))).toBeNull()
+  })
 })

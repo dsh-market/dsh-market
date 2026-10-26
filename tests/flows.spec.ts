@@ -2281,6 +2281,7 @@ describe('official Desktop download region (#862)', () => {
       const version = fake.npm['dsh-loop'].latest
       return new Response(JSON.stringify(String(url).endsWith('/latest') ? { version } : {
         'dist-tags': { latest: version },
+        versions: Object.fromEntries(Object.keys(fake.npm['dsh-loop'].versions).map(v => [v, {}])),
         time: { [version]: new Date(Date.now() - 48 * 3_600_000).toISOString() },
       }), { status: 200 })
     }))
@@ -2289,6 +2290,11 @@ describe('official Desktop download region (#862)', () => {
     expect(installed.status).toBe(200)
     expect(service.installBundle).toHaveBeenLastCalledWith('dsh-loop@1.0.0', { requestId: expect.any(String) })
     expect(installedSpec('dsh-loop')).toBe('^1.0.0')
+
+    // This existing region integration also exercises explicit strict policy.
+    // #991 accepts native defaults too; its top-level timestamp check is
+    // independent of pnpm's transitive dependency handling.
+    writeFileSync(join(fake.profileDir, 'pnpm-workspace.yaml'), 'minimumReleaseAge: 1440\nminimumReleaseAgeStrict: true\nminimumReleaseAgeIgnoreMissingTime: false\n')
 
     expect((await bed.dispatch('POST', '/dsh-market/region', { region: 'china' })).status).toBe(200)
     fake.npm['dsh-loop'].latest = '1.2.0'
@@ -9281,6 +9287,260 @@ describe('a pinned install is judged on its own release, not on latest (#581)', 
     // with nothing to search for.
     expect(refused.json.hostIncompatible).toMatchObject({ version: '1.0.0', requirement: '>=99.0.0', npmName: 'dsh-loop' })
     expect(fake.calls.filter(call => call[0] === 'add')).toEqual([])
+  })
+})
+
+describe('Issue #991 Desktop stable npm update route', () => {
+  const manifest = { name: 'dsh-loop', dsh: {}, main: 'lib/index.js' }
+  const oldTime = () => new Date(Date.now() - 72 * 3_600_000).toISOString()
+  const youngTime = () => new Date(Date.now() - 3_600_000).toISOString()
+  let latest = '1.2.0'
+  let published: Record<string, string>
+
+  beforeEach(async () => {
+    fake.npm['dsh-loop'] = {
+      latest: '1.0.0',
+      versions: {
+        '1.0.0': { manifest, artifacts: ['lib/index.js'] },
+        '1.1.0': { manifest, artifacts: ['lib/index.js'] },
+        '1.2.0': { manifest, artifacts: ['lib/index.js'] },
+        '1.3.0': { manifest, artifacts: ['lib/index.js'] },
+      },
+    }
+    expect((await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })).status).toBe(200)
+    bed.dispose()
+    bed = createTestbed({ desktopHost: true })
+    writeFileSync(join(fake.profileDir, 'pnpm-workspace.yaml'), 'minimumReleaseAge: 1440\nminimumReleaseAgeIgnoreMissingTime: false\n')
+    fake.calls = []
+    latest = '1.2.0'
+    published = { '1.0.0': oldTime(), '1.1.0': oldTime(), '1.2.0': youngTime(), '1.3.0': youngTime() }
+    vi.stubGlobal('fetch', vi.fn(async (input: unknown) => {
+      const url = String(input)
+      if (url.endsWith('/dsh-loop/latest')) return new Response(JSON.stringify({ version: latest }))
+      if (/\/dsh-loop(?:\?t=\d+)?$/.test(url)) return new Response(JSON.stringify({
+        versions: Object.fromEntries(Object.keys(fake.npm['dsh-loop'].versions).map(version => [version, {}])),
+        time: published, 'dist-tags': { latest },
+      }))
+      if (/\/dsh-loop\/\d+\.\d+\.\d+$/.test(url)) return new Response(JSON.stringify({ version: url.split('/').at(-1), dsh: {} }))
+      return new Response('{"error":"fixture endpoint missing"}', { status: 404 })
+    }))
+  })
+
+  it('lists a mature predecessor, pins it exactly, and keeps the young latest held', async () => {
+    const checked = await bed.dispatch('GET', '/dsh-market/updates?force=1')
+    expect(checked.status).toBe(200)
+    expect(checked.json.updates['dsh-loop']).toMatchObject({
+      latest: '1.2.0', eligibleVersion: '1.1.0', updateAvailable: true,
+      heldUpdate: { latest: '1.2.0' },
+    })
+    const updated = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop', eligibleVersion: '1.1.0', force: true })
+    expect(updated.status, JSON.stringify(updated.json)).toBe(200)
+    expect(fake.calls.filter(call => call[0] === 'add')).toEqual([['add', 'dsh-loop@1.1.0']])
+    expect(installedSpec('dsh-loop')).toBe('^1.1.0')
+  })
+
+  it('rejects a stale UI token after the registry adds a higher mature candidate', async () => {
+    expect((await bed.dispatch('GET', '/dsh-market/updates?force=1')).json.updates['dsh-loop'].eligibleVersion).toBe('1.1.0')
+    latest = '1.3.0'
+    published['1.2.0'] = oldTime()
+    const changed = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop', eligibleVersion: '1.1.0' })
+    expect(changed.status).toBe(409)
+    expect(changed.json.staleTarget).toBe(true)
+    expect(fake.calls).toEqual([])
+    expect(installedSpec('dsh-loop')).toBe('^1.0.0')
+  })
+
+  it('revalidates and accepts the queued mature target if only strict mode changes (#991 approved)', async () => {
+    const listed = await bed.dispatch('GET', '/dsh-market/updates?force=1')
+    expect(listed.json.updates['dsh-loop'].eligibleVersion).toBe('1.1.0')
+    writeFileSync(join(fake.profileDir, 'pnpm-workspace.yaml'), 'minimumReleaseAge: 1440\nminimumReleaseAgeIgnoreMissingTime: false\nminimumReleaseAgeStrict: false\n')
+    const changed = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop', eligibleVersion: '1.1.0' })
+    expect(changed.status).toBe(200)
+    expect(fake.calls.filter(call => call[0] === 'add')).toEqual([['add', 'dsh-loop@1.1.0']])
+    expect(installedSpec('dsh-loop')).toBe('^1.1.0')
+  })
+
+  it('rejects the queued target when the native wait changes to seven days (#991 approved)', async () => {
+    expect((await bed.dispatch('GET', '/dsh-market/updates?force=1')).json.updates['dsh-loop'].eligibleVersion).toBe('1.1.0')
+    writeFileSync(join(fake.profileDir, 'pnpm-workspace.yaml'), 'minimumReleaseAge: 10080\nminimumReleaseAgeStrict: false\nminimumReleaseAgeIgnoreMissingTime: true\n')
+    const changed = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop', eligibleVersion: '1.1.0' })
+    expect(changed.status).toBe(409)
+    expect(changed.json.staleTarget).toBe(true)
+    expect(fake.calls).toEqual([])
+    expect(installedSpec('dsh-loop')).toBe('^1.0.0')
+  })
+
+  it('revalidates a previously eligible target when pnpm exceptions change', async () => {
+    const listed = await bed.dispatch('GET', '/dsh-market/updates?force=1')
+    expect(listed.json.updates['dsh-loop'].eligibleVersion).toBe('1.1.0')
+    writeFileSync(join(fake.profileDir, 'pnpm-workspace.yaml'), 'minimumReleaseAge: 1440\nminimumReleaseAgeIgnoreMissingTime: false\nminimumReleaseAgeExclude:\n  - dsh-loop@1.2.0\n')
+    const changed = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop', eligibleVersion: '1.1.0' })
+    expect(changed.status).toBe(409)
+    expect(changed.json.staleTarget).toBe(true)
+    expect(fake.calls).toEqual([])
+    expect(installedSpec('dsh-loop')).toBe('^1.0.0')
+  })
+
+  it('requires an exact token on old clients when latest is too young', async () => {
+    const attempt = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+    expect(attempt.status).toBe(409)
+    expect(attempt.json.staleTarget).toBe(true)
+    expect(fake.calls).toEqual([])
+  })
+
+  it('refuses a new release with no mature upgrades before any package mutation', async () => {
+    published['1.1.0'] = youngTime()
+    const changed = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop', eligibleVersion: '1.1.0' })
+    expect(changed.status).toBe(409)
+    expect(fake.calls).toEqual([])
+  })
+
+  it('keeps compatVersion for a mature older target and blocks a young compatible one', async () => {
+    const young = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop', compatVersion: '1.2.0' })
+    expect(young.status).toBe(409)
+    expect(fake.calls).toEqual([])
+    const mature = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop', compatVersion: '1.1.0' })
+    expect(mature.status, JSON.stringify(mature.json)).toBe(200)
+    expect(fake.calls.filter(call => call[0] === 'add')).toEqual([['add', 'dsh-loop@1.1.0']])
+  })
+
+  it('does not let compatVersion bypass stable Desktop safety through a prerelease target', async () => {
+    const attempt = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop', compatVersion: '1.2.0-beta.1' })
+    expect(attempt.status).toBe(409)
+    expect(attempt.json.staleTarget).toBe(true)
+    expect(fake.calls).toEqual([])
+  })
+
+  it('preserves the compatibility dialog current-version no-op', async () => {
+    const attempt = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop', compatVersion: '1.0.0' })
+    expect(attempt.status).toBe(200)
+    expect(attempt.json.skipped).toBe('current')
+    expect(fake.calls).toEqual([])
+  })
+
+  it.each(['', 'minimumReleaseAgeStrict: false\n', 'minimumReleaseAgeIgnoreMissingTime: true\n'])(
+    'updates the exact mature version with native policy %s (#991 approved)', async policy => {
+      const workspace = join(fake.profileDir, 'pnpm-workspace.yaml')
+      writeFileSync(workspace, policy)
+      const listed = await bed.dispatch('GET', '/dsh-market/updates?force=1')
+      expect(listed.json.updates['dsh-loop'].eligibleVersion).toBe('1.1.0')
+      const updated = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop', eligibleVersion: '1.1.0', force: true })
+      expect(updated.status, JSON.stringify(updated.json)).toBe(200)
+      expect(fake.calls.filter(call => call[0] === 'add')).toEqual([['add', 'dsh-loop@1.1.0']])
+      expect(readFileSync(workspace, 'utf8')).toBe(policy)
+    },
+  )
+
+  it.each(['', 'minimumReleaseAgeStrict: false\n', 'minimumReleaseAgeIgnoreMissingTime: true\n'])(
+    'rejects missing top-level time under native policy %s (#991 approved)', async policy => {
+      writeFileSync(join(fake.profileDir, 'pnpm-workspace.yaml'), policy)
+      delete published['1.1.0']
+      const listed = await bed.dispatch('GET', '/dsh-market/updates?force=1')
+      expect(listed.json.updates['dsh-loop'].updateAvailable).toBe(false)
+      const refused = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop', eligibleVersion: '1.1.0', force: true })
+      expect(refused.status).toBe(409)
+      expect(fake.calls).toEqual([])
+    },
+  )
+
+  it('returns the original current no-op without a client token (#991 review)', async () => {
+    latest = '1.0.0'
+    const before = readFileSync(join(fake.profileDir, 'package.json'), 'utf8')
+    const current = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+    expect(current.status).toBe(200)
+    expect(current.json).toMatchObject({ ok: true, skipped: 'current', version: '1.0.0' })
+    expect(fake.calls).toEqual([])
+    expect(readFileSync(join(fake.profileDir, 'package.json'), 'utf8')).toBe(before)
+  })
+
+  it('still refuses a stale explicit token when the installed version is current (#991 review)', async () => {
+    latest = '1.0.0'
+    const current = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop', eligibleVersion: '1.1.0' })
+    expect(current.status).toBe(409)
+    expect(current.json.staleTarget).toBe(true)
+    expect(fake.calls).toEqual([])
+  })
+
+  const preservedPolicy = 'minimumReleaseAge: 1440\nminimumReleaseAgeIgnoreMissingTime: false\nminimumReleaseAgeExclude:\n  - keep@1.0.0\n  - keep@2.0.0\n'
+
+  it.each(['lifecycle', 'version mismatch', 'renamed package', 'missing entry', 'invalid composition'] as const)(
+    'preserves policy and exact old files during %s rollback (#991 review)', async failure => {
+      const workspace = join(fake.profileDir, 'pnpm-workspace.yaml')
+      writeFileSync(workspace, preservedPolicy)
+      if (failure === 'lifecycle') fake.failAfterWriteStderrOnce = 'ELIFECYCLE: failed after replacing the package directory'
+      if (failure === 'version mismatch') {
+        fake.npm['dsh-loop'].versions['1.0.1'] = { manifest, artifacts: ['lib/index.js'] }
+        fake.resolvedNpmVersionOnce = '1.0.1'
+      }
+      if (failure === 'renamed package') fake.npm['dsh-loop'].versions['1.1.0'].manifest = { ...manifest, name: 'renamed-plugin' }
+      if (failure === 'missing entry') fake.npm['dsh-loop'].versions['1.1.0'].artifacts = []
+      if (failure === 'invalid composition') {
+        const profilePath = join(fake.profileDir, 'package.json')
+        const profile = JSON.parse(readFileSync(profilePath, 'utf8'))
+        profile.dsh = { ...profile.dsh, profile: { ...profile.dsh?.profile, bundles: ['dsh-loop'] } }
+        writeFileSync(profilePath, JSON.stringify(profile))
+        fake.npm['dsh-loop'].versions['1.1.0'] = {
+          manifest: { ...manifest, dsh: { bundle: { patch: './cordis.patch.yml' } } },
+          artifacts: ['lib/index.js', 'cordis.patch.yml'],
+          artifactContents: { 'cordis.patch.yml': '[invalid yaml' },
+        }
+      }
+      const beforeManifest = readFileSync(join(fake.profileDir, 'package.json'), 'utf8')
+      const beforeLock = readFileSync(join(fake.profileDir, 'pnpm-lock.yaml'), 'utf8')
+      const failed = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop', eligibleVersion: '1.1.0' })
+      expect(failed.status, JSON.stringify(failed.json)).toBe(502)
+      expect(readFileSync(workspace, 'utf8')).toBe(preservedPolicy)
+      expect(readFileSync(join(fake.profileDir, 'package.json'), 'utf8')).toBe(beforeManifest)
+      expect(readFileSync(join(fake.profileDir, 'pnpm-lock.yaml'), 'utf8')).toBe(beforeLock)
+      expect(JSON.parse(readFileSync(join(fake.profileDir, 'node_modules', 'dsh-loop', 'package.json'), 'utf8')).version).toBe('1.0.0')
+      expect(existsSync(join(fake.profileDir, 'node_modules', 'dsh-loop', 'lib/index.js'))).toBe(true)
+      expect(fake.calls.filter(call => call[0] === 'add')).toEqual([
+        ['add', 'dsh-loop@1.1.0'], ['add', '--force', 'dsh-loop@1.0.0'],
+      ])
+    },
+  )
+
+  it('preserves policy on deferred compatibility rollback as well (#991 review)', async () => {
+    const workspace = join(fake.profileDir, 'pnpm-workspace.yaml')
+    writeFileSync(workspace, preservedPolicy)
+    const hostPeerDir = join(fake.profileDir, 'node_modules', '@deepseek-ai', 'dsh-settings')
+    mkdirSync(hostPeerDir, { recursive: true })
+    writeFileSync(join(hostPeerDir, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh-settings', version: '0.1.0-rc.6' }))
+    fake.npm['dsh-loop'].versions['1.1.0'].manifest = {
+      ...manifest, peerDependencies: { '@deepseek-ai/dsh-settings': '^0.1.0-rc.7' },
+    }
+    const updated = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop', eligibleVersion: '1.1.0' })
+    expect(updated.status, JSON.stringify(updated.json)).toBe(200)
+    expect(updated.json.compatibility?.rollbackId).toMatch(/^rollback-/)
+    expect(readFileSync(workspace, 'utf8')).toBe(preservedPolicy)
+    const rollback = await bed.dispatch('POST', '/dsh-market/rollback', { rollbackId: updated.json.compatibility.rollbackId })
+    expect(rollback.status, JSON.stringify(rollback.json)).toBe(200)
+    expect(fake.calls.some(call => call.includes(RELEASE_AGE_OVERRIDE))).toBe(false)
+    expect(fake.calls.some(call => call.includes(RELEASE_AGE_OVERRIDE))).toBe(false)
+    expect(installedSpec('dsh-loop')).toBe('^1.0.0')
+    expect(JSON.parse(readFileSync(join(fake.profileDir, 'node_modules', 'dsh-loop', 'package.json'), 'utf8')).version).toBe('1.0.0')
+    expect(readFileSync(workspace, 'utf8')).toBe(preservedPolicy)
+  })
+
+  it('rolls an unsuccessful mature update back to the previous exact version', async () => {
+    fake.failAfterWriteStderrOnce = 'ELIFECYCLE: failed after replacing the package directory'
+    const failed = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop', eligibleVersion: '1.1.0' })
+    expect(failed.status).toBe(502)
+    expect(fake.calls.filter(call => call[0] === 'add')).toEqual([
+      ['add', 'dsh-loop@1.1.0'], ['add', '--force', 'dsh-loop@1.0.0'],
+    ])
+    expect(installedSpec('dsh-loop')).toBe('^1.0.0')
+  })
+
+  it('does not bypass release age when pnpm rejects a prevalidated mature update', async () => {
+    // pnpm checks the entire lockfile; another young dependency may make a
+    // properly selected exact target fail at execution time.
+    fake.youngLockfile = true
+    const failed = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop', eligibleVersion: '1.1.0', force: true })
+    expect(failed.status).toBe(502)
+    expect(fake.calls.some(call => call[0] === 'add' && call.includes('dsh-loop@1.1.0'))).toBe(true)
+    expect(fake.calls.some(call => call.includes(RELEASE_AGE_OVERRIDE))).toBe(false)
+    expect(installedSpec('dsh-loop')).toBe('^1.0.0')
   })
 })
 

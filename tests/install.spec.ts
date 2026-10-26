@@ -881,6 +881,68 @@ describe('successful release-age cleanup (#883, #878)', () => {
   const appended = `${initial}  - keep@2.0.0\n`
   const merged = initial.replace('keep@1.0.0', 'keep@1.0.0 || 2.0.0')
 
+  it('preserves the policy byte-for-byte on #991 mature updates, including ambiguous duplicates', async () => {
+    const dir = writeProfile({})
+    const workspace = join(dir, 'pnpm-workspace.yaml')
+    writeFileSync(workspace, appended)
+    const calls: string[][] = []
+    const run = async (_profile: string, args: string[]): Promise<InstallResult> => {
+      calls.push(args)
+      return ok
+    }
+    expect(await withHoistRecovery(run, 'desktop', ['add', 'thing@1.1.0'], dir,
+      { marketFlags: false, releaseAgeBypass: false, preserveProfilePolicy: true })).toBe(ok)
+    expect(readFileSync(workspace, 'utf8')).toBe(appended)
+    expect(calls).toEqual([['add', 'thing@1.1.0']])
+  })
+
+  it.each([true, false])('preserving #991 policy prevents age recovery even with marketFlags=%s', async marketFlags => {
+    const dir = writeProfile({})
+    const workspace = join(dir, 'pnpm-workspace.yaml')
+    writeFileSync(workspace, appended)
+    const calls: string[][] = []
+    const run = async (_profile: string, args: string[]): Promise<InstallResult> => {
+      calls.push(args)
+      return { ...ok, exitCode: 1, stderr: 'ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION' }
+    }
+    const result = await withHoistRecovery(run, 'desktop', ['add', '--force', 'thing@1.0.0'], dir,
+      { marketFlags, preserveProfilePolicy: true })
+    expect(result.exitCode).toBe(1)
+    expect(calls.filter(args => args[0] === 'add')).toEqual([['add', '--force', 'thing@1.0.0']])
+    expect(calls.some(args => args.includes(RELEASE_AGE_OVERRIDE))).toBe(false)
+    expect(readFileSync(workspace, 'utf8')).toBe(appended)
+  })
+
+  it('leaves pnpm native persisted exclusions intact on #991 updates', async () => {
+    const dir = writeProfile({})
+    const workspace = join(dir, 'pnpm-workspace.yaml')
+    writeFileSync(workspace, initial)
+    const run = async (): Promise<InstallResult> => {
+      writeFileSync(workspace, appended)
+      return ok
+    }
+    expect(await withHoistRecovery(run, 'desktop', ['add', 'thing@1.1.0'], dir,
+      { preserveProfilePolicy: true })).toBe(ok)
+    expect(readFileSync(workspace, 'utf8')).toBe(appended)
+  })
+
+  it('does not repair exclusions or bypass the wait after a pnpm failure on #991 updates', async () => {
+    const dir = writeProfile({})
+    const workspace = join(dir, 'pnpm-workspace.yaml')
+    writeFileSync(workspace, appended)
+    const calls: string[][] = []
+    const run = async (_profile: string, args: string[]): Promise<InstallResult> => {
+      calls.push(args)
+      return { ...ok, exitCode: 1, stderr: 'ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION' }
+    }
+    const result = await withHoistRecovery(run, 'desktop', ['add', 'thing@1.1.0'], dir,
+      { marketFlags: false, releaseAgeBypass: false, preserveProfilePolicy: true })
+    expect(result.exitCode).toBe(1)
+    expect(readFileSync(workspace, 'utf8')).toBe(appended)
+    // Failure cleanup can query the pnpm store, but must never retry an add.
+    expect(calls.filter(args => args[0] === 'add')).toEqual([['add', 'thing@1.1.0']])
+  })
+
   it.each([
     ['add', 'thing'],
     ['remove', 'thing'],

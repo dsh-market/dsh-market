@@ -2316,13 +2316,18 @@ export function MarketSection(props: MarketSectionProps) {
       const stale = (reason: string) => [{ ok: false as const, kind, name, url, reason }]
       const options = row.updateOptions !== null && typeof row.updateOptions === 'object'
         ? row.updateOptions as Record<string, unknown> : {}
-      const verdict = queuedRowApplies({ kind, name, restore: options.restore === true, ...(url === undefined ? {} : { url }) }, { installed, updates, plugins: data.plugins })
-      if (verdict !== null) return stale(verdict === 'gone' ? t('agentQueueStaleGone') : t('agentQueueStaleNoUpdate'))
+      const verdict = queuedRowApplies({ kind, name, restore: options.restore === true,
+        ...(typeof options.eligibleVersion === 'string' ? { eligibleVersion: options.eligibleVersion } : {}),
+        ...(url === undefined ? {} : { url }) }, { installed, updates, plugins: data.plugins })
+      if (verdict !== null) return stale(verdict === 'target-changed'
+        ? localizeBilingual('更新目标已变化，已跳过。请重新选择更新。 / The update target changed, so this task was skipped. Choose the update again.', lang)
+        : verdict === 'gone' ? t('agentQueueStaleGone') : t('agentQueueStaleNoUpdate'))
       if (kind === 'install' && url === undefined) return []
       const updateOptions = kind === 'update' ? {
         force: options.force === true,
         restore: options.restore === true,
         ...(typeof options.compatVersion === 'string' ? { compatVersion: options.compatVersion } : {}),
+        ...(typeof options.eligibleVersion === 'string' ? { eligibleVersion: options.eligibleVersion } : {}),
       } : undefined
       return [{ ok: true as const, row: { kind, name, ...(url === undefined ? {} : { url }), updateOptions } }]
     })
@@ -2367,7 +2372,7 @@ export function MarketSection(props: MarketSectionProps) {
       return kept
     })
     setOperationsOpen(true)
-  }, [data, t, queueSnapshotReady, installed, updates])
+  }, [data, t, lang, queueSnapshotReady, installed, updates])
   useEffect(() => {
     // Never write before the restore has read. On the first render `records`
     // is empty, and this effect would then delete the stored queue that the
@@ -2628,7 +2633,7 @@ export function MarketSection(props: MarketSectionProps) {
    * approve-and-retry (#6; updates in #69). Exactly one of `plugin`
    * (retry installs it) / `updateName` (retry re-runs the update) is set.
    */
-  const [buildsSkipped, setBuildsSkipped] = useState<{ plugin?: RegistryPlugin; updateName?: string; names: string[]; restore?: boolean } | null>(null)
+  const [buildsSkipped, setBuildsSkipped] = useState<{ plugin?: RegistryPlugin; updateName?: string; names: string[]; updateOptions?: OperationRecord['updateOptions'] } | null>(null)
   const [updatingAll, setUpdatingAll] = useState(false)
   const [updatedNames, setUpdatedNames] = useState<string[]>([])
   // #558: session-tracked updates the host actually parked behind a restart.
@@ -4151,7 +4156,10 @@ export function MarketSection(props: MarketSectionProps) {
       .catch(() => {})
   }, [])
 
-  const doUpdate = useCallback((name: string, force = false, restore = false, compatVersion?: string, confirmAgentsRunning = false) => {
+  const doUpdate = useCallback((name: string, force = false, restore = false, compatVersion?: string, confirmAgentsRunning = false, eligibleVersion?: string) => {
+    const expectedVersion = compatVersion === undefined && !restore
+      ? (eligibleVersion ?? updates[name]?.eligibleVersion) : undefined
+    const updateOptions = { force, restore, compatVersion, eligibleVersion: expectedVersion }
     setInstallError(null)
     setActivationWarnings([])
     // Only THIS row's stale marker is cleared. "Update all" walks the list
@@ -4174,11 +4182,11 @@ export function MarketSection(props: MarketSectionProps) {
     // "update all" left the panel empty while several plugins were mid-flight
     // (#295 by @sanyecao88). One record per attempt, like the install flow.
     const updateRecordId = nextRecordId()
-    setRecords(list => enqueue(list, { id: updateRecordId, kind: 'update', name, state: 'running', updateOptions: { force, restore, compatVersion } }))
+    setRecords(list => enqueue(list, { id: updateRecordId, kind: 'update', name, state: 'running', updateOptions }))
     return fetch(api('/dsh-market/update'), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name, ...(force ? { force: true } : {}), ...(restore ? { restore: true } : {}), ...(compatVersion !== undefined ? { compatVersion } : {}), ...(confirmAgentsRunning ? { confirmAgentsRunning: true } : {}) }),
+      body: JSON.stringify({ name, ...(force ? { force: true } : {}), ...(restore ? { restore: true } : {}), ...(compatVersion !== undefined ? { compatVersion } : {}), ...(expectedVersion !== undefined ? { eligibleVersion: expectedVersion } : {}), ...(confirmAgentsRunning ? { confirmAgentsRunning: true } : {}) }),
     })
       .then(res => res.json().then(body => ({ status: res.status, body })))
       .then(({ status, body }) => {
@@ -4191,6 +4199,12 @@ export function MarketSection(props: MarketSectionProps) {
           setRecords(list => drop(list, updateRecordId))
           refreshInstalled()
           if (body.partial === true) setInstallError(t('partialNote'))
+          return
+        }
+        if (status === 409 && body.staleTarget === true) {
+          setRecords(list => patchRecord(list, updateRecordId, { state: 'failed', reason: String(body.error ?? 'Update target changed') }))
+          setInstallError(localizeBilingual(String(body.error ?? 'Update target changed'), lang))
+          refreshInstalled(true)
           return
         }
         // The plugin is already on the version this update would install
@@ -4269,7 +4283,7 @@ export function MarketSection(props: MarketSectionProps) {
           // Blocked build scripts during an update (#69): same
           // approve-and-retry banner as the install flow, retrying the update.
           if (Array.isArray(body.ignoredBuilds) && body.ignoredBuilds.length > 0) {
-            setBuildsSkipped({ updateName: name, names: body.ignoredBuilds.map(String), restore })
+            setBuildsSkipped({ updateName: name, names: body.ignoredBuilds.map(String), updateOptions })
           }
           const orphans = Array.isArray(body.orphanBundles) ? body.orphanBundles.map(String) : []
           const failure = failureText(body)
@@ -4290,7 +4304,9 @@ export function MarketSection(props: MarketSectionProps) {
           // what is left here is our own bilingual sentence, and keeping its
           // last 600 characters kept the English and dropped the Chinese.
           const clipped = detail.trim().slice(0, 1200)
-          setRecords(list => patchRecord(list, updateRecordId, { state: 'failed', reason: clipped }))
+          setRecords(list => patchRecord(list, updateRecordId, { state: 'failed', reason: clipped,
+            ...(Array.isArray(body.ignoredBuilds) && body.ignoredBuilds.length > 0 ? { blockedBuilds: body.ignoredBuilds.map(String) } : {}),
+          }))
           // Localize the server half before prepending t() chrome.
           setInstallError((restore ? t('restoreFail') : t('updateFail')) + ': ' + name + ' — ' + localizeBilingual(clipped, lang))
         }
@@ -4301,7 +4317,7 @@ export function MarketSection(props: MarketSectionProps) {
         // running row, and let the status poll converge the outcome instead
         // of declaring a false failure — mirroring the install flow's catch.
       })
-  }, [refreshInstalled, installed, t, lang])
+  }, [refreshInstalled, installed, t, lang, updates])
 
 
   const doSourceMigration = useCallback((name: string, confirmAgentsRunning = false, renameTo?: string) => {
@@ -4831,7 +4847,7 @@ export function MarketSection(props: MarketSectionProps) {
   dataRef.current = data
   const doInstallRef = useRef<((plugin: RegistryPlugin) => void) | null>(null)
   doInstallRef.current = doInstall
-  const doUpdateRef = useRef<((name: string, force?: boolean, restore?: boolean, compatVersion?: string) => Promise<void>) | null>(null)
+  const doUpdateRef = useRef<((name: string, force?: boolean, restore?: boolean, compatVersion?: string, confirmAgentsRunning?: boolean, eligibleVersion?: string) => Promise<void>) | null>(null)
   doUpdateRef.current = doUpdate
   const doUninstallRef = useRef<((name: string) => Promise<void>) | null>(null)
   doUninstallRef.current = doUninstall
@@ -4895,7 +4911,7 @@ export function MarketSection(props: MarketSectionProps) {
               const plugin = dataRef.current?.plugins.find(candidate => candidate.url === task.url)
               if (plugin !== undefined) doInstallRef.current?.(plugin)
             } else if (task.kind === 'update') {
-              void doUpdateRef.current?.(task.name, task.updateOptions?.force, task.updateOptions?.restore, task.updateOptions?.compatVersion)
+              void doUpdateRef.current?.(task.name, task.updateOptions?.force, task.updateOptions?.restore, task.updateOptions?.compatVersion, false, task.updateOptions?.eligibleVersion)
             } else {
               void doUninstallRef.current?.(task.name)
             }
@@ -4945,7 +4961,7 @@ export function MarketSection(props: MarketSectionProps) {
       doInstall(plugin)
     } else if (record.kind === 'update') {
       setRecords(prev => drop(prev, record.id))
-      void doUpdate(record.name, record.updateOptions?.force, record.updateOptions?.restore, record.updateOptions?.compatVersion, confirmAgentsRunning)
+      void doUpdate(record.name, record.updateOptions?.force, record.updateOptions?.restore, record.updateOptions?.compatVersion, confirmAgentsRunning, record.updateOptions?.eligibleVersion)
     } else {
       setRecords(prev => drop(prev, record.id))
       void doUninstall(record.name, confirmAgentsRunning)
@@ -5229,11 +5245,11 @@ export function MarketSection(props: MarketSectionProps) {
   }, [bootId])
 
   const doUpdateAll = useCallback(() => {
-    const names = reminderBatchUpdatableNames.slice()
+    const names = reminderBatchUpdatableNames.map(name => ({ name, eligibleVersion: updates[name]?.eligibleVersion }))
     setUpdatingAll(true)
     const next = () => {
-      const name = names.shift()
-      if (name === undefined) {
+      const item = names.shift()
+      if (item === undefined) {
         setUpdatingAll(false)
         // The queue was a snapshot taken before any of it ran, and a batch is
         // where it drifts furthest from the profile (#495): re-read the list
@@ -5242,10 +5258,10 @@ export function MarketSection(props: MarketSectionProps) {
         refreshInstalled(true)
         return
       }
-      doUpdate(name).then(next, next)
+      doUpdate(item.name, false, false, undefined, false, item.eligibleVersion).then(next, next)
     }
     next()
-  }, [reminderBatchUpdatableNames, doUpdate, refreshInstalled])
+  }, [reminderBatchUpdatableNames, doUpdate, refreshInstalled, updates])
 
   const finishRestore = useCallback((body: { errors?: unknown; unportable?: unknown; bootErrors?: unknown }) => {
     const errors = Array.isArray(body.errors) ? body.errors as { name?: unknown; error?: unknown }[] : []
@@ -6535,7 +6551,7 @@ export function MarketSection(props: MarketSectionProps) {
               const plugin = record.url === undefined ? undefined : data?.plugins.find(p => p.url === record.url)
               approveAndRetry(names, () => {
                 if (plugin !== undefined) doInstall(plugin)
-                else doUpdate(record.name, false, false)
+                else doUpdate(record.name, record.updateOptions?.force, record.updateOptions?.restore, record.updateOptions?.compatVersion, false, record.updateOptions?.eligibleVersion)
               })
             }}
           />
@@ -6711,11 +6727,11 @@ export function MarketSection(props: MarketSectionProps) {
             size="sm"
             disabled={busyUrl !== null}
             onClick={() => {
-              const { plugin, updateName, names, restore } = buildsSkipped
+              const { plugin, updateName, names, updateOptions } = buildsSkipped
               setBuildsSkipped(null)
               approveAndRetry(names, () => {
                 if (plugin !== undefined) doInstall(plugin)
-                else if (updateName !== undefined) doUpdate(updateName, false, restore === true)
+                else if (updateName !== undefined) doUpdate(updateName, updateOptions?.force, updateOptions?.restore, updateOptions?.compatVersion, false, updateOptions?.eligibleVersion)
               })
             }}
           >{t('approveBuilds')}</Button>
@@ -7753,7 +7769,9 @@ export function MarketSection(props: MarketSectionProps) {
                                             {!generation && (
                                               <span className={css.irowStatusPart}>
                                                 <span className={css.irowStatusFact}>
-                                                  {status?.latest != null ? t('hostUpdateReady').replace('{0}', displayLatest(status.latest)) : t('updateAvailableShort')}
+                                                  {status?.eligibleVersion != null
+                                                    ? t('hostUpdateReady').replace('{0}', displayLatest(status.eligibleVersion))
+                                                    : status?.latest != null ? t('hostUpdateReady').replace('{0}', displayLatest(status.latest)) : t('updateAvailableShort')}
                                                 </span>
                                                 {sep}
                                               </span>
@@ -7765,6 +7783,17 @@ export function MarketSection(props: MarketSectionProps) {
                                             >{`${t('notesLink')} ›`}</button>
                                           </div>
                                         )}
+                                        {updatable && status?.eligibleVersion !== undefined && status.restoreRequired !== true &&
+                                          status.heldUpdate !== undefined && status.heldUpdate.latest !== status.eligibleVersion && (() => {
+                                            const left = Date.parse(status.heldUpdate.until) - Date.now()
+                                            const known = status.heldUpdate.estimated !== true && Number.isFinite(left) && left > 0
+                                            return <div className={css.irowStatus}><span className={css.metaInline}>{
+                                              t(known ? 'updateHeldTarget' : 'updateHeldTargetUnknown')
+                                                .replace('{0}', displayLatest(status.heldUpdate.latest))
+                                                .replace('{1}', String(Math.max(1, Math.ceil(left / 3_600_000))))
+                                                .replace('{2}', displayLatest(status.eligibleVersion))
+                                            }</span></div>
+                                          })()}
                                         {(exempt || ignored) && (
                                           <div className={css.irowStatus}>
                                             <span className={css.irowStatusIcon}><IconBellOff size={16} /></span>
@@ -7913,16 +7942,24 @@ export function MarketSection(props: MarketSectionProps) {
                                         ? <span className={css.metaTag} title={t('hostUpdateHint')}>{t('hostUpdateReady').replace('{0}', status.latest)}</span>
                                       : status && status.updateAvailable
                                         ? (
-                                            <Button
-                                              variant="outline"
-                                              size="sm"
-                                              className={css.warnBtn}
-                                              disabled={updatingName !== null}
-                                              onClick={() => {
-                                                if (status.restoreRequired === true) askRestore(name)
-                                                else doUpdate(name)
-                                              }}
-                                            >{status.restoreRequired === true ? t('restoreOnline') : t('update')}</Button>
+                                            <>
+                                              <Button
+                                                variant="outline"
+                                                size="sm"
+                                                className={css.warnBtn}
+                                                disabled={updatingName !== null}
+                                                onClick={() => {
+                                                  if (status.restoreRequired === true) askRestore(name)
+                                                  else doUpdate(name)
+                                                }}
+                                              >{status.restoreRequired === true ? t('restoreOnline')
+                                                : status.eligibleVersion !== undefined ? `${t('update')} ${displayLatest(status.eligibleVersion)}` : t('update')}</Button>
+                                              {status.heldUpdate !== undefined && (
+                                                <span className={css.metaTag}>
+                                                  {t('updateHeldTag').replace('{0}', displayLatest(status.heldUpdate.latest))}
+                                                </span>
+                                              )}
+                                            </>
                                           )
                                         : status?.heldUpdate !== undefined
                                           // A newer release exists but pnpm will refuse
