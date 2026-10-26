@@ -921,111 +921,6 @@ function useMediaWide(): boolean {
  * actually overflows the clamp: a two-line description has nothing to
  * "expand", so no button beats a button that does nothing.
  */
-/**
- * Description + screenshots, and the introduction's reading view.
- *
- * The card itself is a `.map()` body with no hooks of its own, so the peek that
- * needs to know when a pointer is resting on a card lives here.
- *
- * It is open to any card that has an introduction — not only to the ones whose
- * five-line clamp cuts text off. That gate was the first design, and measured
- * on this catalog it left the feature invisible: at 1280px, two cards out of
- * twenty-eight are clipped, because most descriptions are two or three lines.
- * For the other twenty-six it looked broken, which is a worse outcome than a
- * peek that mostly confirms what the card already says.
- *
- * The reveal is a fixed-position panel rather than something inside the card:
- * the space a card can give back is whatever its screenshots happen to occupy,
- * and a card without screenshots has none — measured on this catalog, the
- * first attempt showed exactly the same five lines, just cut at the box edge.
- * It is pointer-events:none, so it can never take the pointer from the card
- * underneath it, and it starts below the title row so the name and the install
- * button stay visible and clickable while it is open.
- */
-function CardBody({ text, name, owner, children }: {
-  text: string
-  name: string
-  owner?: string
-  children: ReactNode
-}) {
-  const ref = useRef<HTMLDivElement>(null)
-  const [hasText, setHasText] = useState(false)
-  const [anchor, setAnchor] = useState<{ left: number; top: number; width: number; maxHeight: number } | null>(null)
-  const timer = useRef<number | null>(null)
-  useLayoutEffect(() => {
-    const host = ref.current
-    if (host === null) return
-    const desc = host.querySelector<HTMLElement>(`.${css.descClamp}`) ?? host.querySelector<HTMLElement>(`.${css.desc}`)
-    if (desc === null) { setHasText(false); return }
-    const measure = () => setHasText((desc.textContent ?? '').trim().length > 0)
-    measure()
-    if (typeof ResizeObserver === 'undefined') return
-    const observer = new ResizeObserver(measure)
-    observer.observe(desc)
-    return () => observer.disconnect()
-  }, [text])
-  const close = useCallback(() => {
-    if (timer.current !== null) { window.clearTimeout(timer.current); timer.current = null }
-    setAnchor(null)
-  }, [])
-  const open = useCallback(() => {
-    const host = ref.current
-    if (host === null || !hasText) return
-    if (timer.current !== null) window.clearTimeout(timer.current)
-    // Long enough that sweeping across the grid does not flash a panel per card.
-    timer.current = window.setTimeout(() => {
-      timer.current = null
-      const card = host.parentElement?.getBoundingClientRect() ?? host.getBoundingClientRect()
-      // Starts where the card's own body starts — under the title row — so the
-      // name and the install button stay visible and clickable while it is open.
-      // Same column and same width, so it reads as this card continuing rather
-      // than as a box that appeared nearby; it grows down to the window's edge.
-      const top = host.getBoundingClientRect().top - 8
-      const room = window.innerHeight - top - 16
-      setAnchor({
-        left: card.left,
-        top,
-        width: card.width,
-        maxHeight: Math.max(120, Math.min(window.innerHeight * 0.6, room)),
-      })
-    }, 420)
-  }, [hasText])
-  useEffect(() => {
-    const card = ref.current?.parentElement
-    if (card === null || card === undefined) return undefined
-    card.addEventListener('pointerenter', open)
-    card.addEventListener('pointerleave', close)
-    card.addEventListener('pointerdown', close)
-    return () => {
-      card.removeEventListener('pointerenter', open)
-      card.removeEventListener('pointerleave', close)
-      card.removeEventListener('pointerdown', close)
-    }
-  }, [open, close])
-  // A fixed panel would hang over the grid while the page scrolls under it.
-  useEffect(() => {
-    if (anchor === null) return undefined
-    const onScroll = () => close()
-    window.addEventListener('scroll', onScroll, { capture: true, passive: true })
-    return () => window.removeEventListener('scroll', onScroll, true)
-  }, [anchor, close])
-  return (
-    <div ref={ref} className={css.introScope}>
-      {children}
-      {anchor !== null && createPortal(
-        <div className={css.introPanel} style={{ left: anchor.left, top: anchor.top, width: anchor.width, maxHeight: anchor.maxHeight }} aria-hidden="true">
-          <div className={css.introHead}>
-            <span className={css.introName}>{name}</span>
-            {owner !== undefined && owner !== '' && <span className={css.introOwner}>{owner}</span>}
-          </div>
-          <p className={css.introBody}>{text}</p>
-        </div>,
-        document.body,
-      )}
-    </div>
-  )
-}
-
 function CardDesc({ text, t, lines = 5, className, textClassName }: {
   text: string
   t: Translate
@@ -5965,7 +5860,6 @@ export function MarketSection(props: MarketSectionProps) {
                       )}
           </div>
         </div>
-        <CardBody text={desc} name={pluginName(p.name, p.npm)} owner={p.owner}>
         <CardDesc text={desc} t={t} />
         <CardShot plugin={p} onOpen={openLightbox} />
         {p.deprecated === true && (
@@ -5980,7 +5874,6 @@ export function MarketSection(props: MarketSectionProps) {
             </div>
           </div>
         )}
-        </CardBody>
         <div className={css.foot}>
           <div className={css.footTags}>
             <span

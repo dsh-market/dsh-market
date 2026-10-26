@@ -401,37 +401,6 @@
    the card body is not clickable, so this has to stay a hover cue, not a state. */
 .card:hover{background-image:linear-gradient(var(--dsw-alias-interactive-bg-hover,#2631480f),var(--dsw-alias-interactive-bg-hover,#2631480f))}
 .card:hover .installBtn:not(:disabled),.themeCard:hover .installBtn:not(:disabled){border-color:transparent;background:var(--dsw-alias-button-primary-fill,#0f1115);color:var(--dsw-alias-label-primary-foreground,#fff)}
-/* Description + screenshots as one box, so the reveal can be anchored to what
-   the reader is pointing at rather than to the whole card. */
-.introScope{position:relative;display:flex;flex-direction:column;gap:10px;min-width:0}
-/* The introduction, whole, floating above the grid in the card's own column so
-   the text keeps the same measure it had. Pointer-events stay off: the panel is
-   a reading copy, not a surface, and must not steal the pointer from the card. */
-.introPanel{
-  position:fixed;z-index:60;
-  box-sizing:border-box;padding:10px 16px 14px;overflow:hidden;
-  border:.5px solid var(--dsw-alias-settings-card-stroke,var(--dsw-alias-border-l4,#00000029));
-  border-top:none;
-  border-radius:0 0 var(--dsw-radius-xl,20px) var(--dsw-radius-xl,20px);
-  /* Same wash the card carries while hovered, so the sheet reads as that card
-     continuing rather than as a second surface stacked on top of it. */
-  background:var(--dsw-alias-bg-layer-1,#fff);
-  background-image:linear-gradient(var(--dsw-alias-interactive-bg-hover,#2631480f),var(--dsw-alias-interactive-bg-hover,#2631480f));
-  box-shadow:var(--dsw-shadow-lv1,0 4px 12px rgba(31,35,40,.08));
-  color:var(--dsw-alias-label-secondary,#5c6570);
-  font-size:13px;line-height:20px;
-  pointer-events:none;
-  animation:dshmIntroIn 140ms cubic-bezier(.16,1,.3,1);
-}
-
-
-.introHead{display:flex;align-items:baseline;gap:8px;min-width:0;margin-bottom:6px}
-.introName{color:var(--dsw-alias-label-primary,#1f2328);font-size:14px;line-height:20px;font-weight:600;
-           overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.introOwner{flex-shrink:0;color:var(--dsw-alias-label-tertiary,#8b93a1);font-size:12px;line-height:18px}
-.introBody{margin:0;overflow:hidden}
-@keyframes dshmIntroIn{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
-@media (prefers-reduced-motion:reduce){.introPanel{animation:none}}
 .row1{display:flex;align-items:flex-start;gap:10px;min-width:0}
 .cardAction{flex-shrink:0;display:inline-flex;align-items:center}
 .installBtn.installBtn{min-width:64px}
