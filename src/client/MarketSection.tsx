@@ -1341,7 +1341,7 @@ function DownloadCount({ plugin, t }: { plugin: RegistryPlugin; t: Translate }) 
   return (
     <Tooltip label={tip} side="top">
       <span className={css.star} tabIndex={0} aria-label={tip}>
-        {'· ↓ ' + formatCount(plugin.downloads!) + ' / ' + t('downloadsPeriod')}
+        {'· ↓ ' + formatCount(plugin.downloads!)}
       </span>
     </Tooltip>
   )

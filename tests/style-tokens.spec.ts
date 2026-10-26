@@ -108,6 +108,31 @@ describe('page-level cards wear the host card chrome', () => {
 })
 
 /**
+ * Two-up discover cards cannot take the host plugin-row type scale (#996).
+ * That row is one column; these cards are ~260px. 13px copy and 16px
+ * padding wrap the author / downloads / description into extra lines.
+ * Hairline tokens stay; the measure goes back to what fit the grid.
+ */
+describe('discover cards keep the two-up measure', () => {
+  const desc = RULES.find(rule => rule.selector === 'desc')
+  const owner = RULES.find(rule => rule.selector === 'owner' && rule.body.includes('font-size'))
+  const star = RULES.find(rule => rule.selector === 'star')
+  const grid = RULES.find(rule => rule.selector === 'grid')
+  const discoverCard = RULES.find(rule => rule.selector === 'card')
+
+  it('keeps description and byline at the pre-996 size', () => {
+    expect(desc?.body).toMatch(/font-size:\s*12px/)
+    expect(owner?.body).toMatch(/font-size:\s*11px/)
+    expect(star?.body).toMatch(/font-size:\s*11px/)
+  })
+
+  it('does not grow the card padding or the grid gap', () => {
+    expect(discoverCard!.body).toMatch(/padding:\s*12px 14px/)
+    expect(grid?.body).toMatch(/gap:\s*10px/)
+  })
+})
+
+/**
  * The animated mark is one gesture, not two animations (#964 follow-up).
  *
  * It has two parts — the grid's breath and the block that plugs into the empty

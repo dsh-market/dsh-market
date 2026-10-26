@@ -87,7 +87,7 @@
 .stickyHead::before{content:'';position:absolute;left:0;right:0;bottom:100%;height:14px;background:inherit;pointer-events:none}
 .cats{padding:0 4px 4px;margin:0 -4px 2px}
 .catsRow{display:flex;gap:6px;align-items:flex-start;position:relative}
-.star{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#8b93a1);flex:0 0 auto;white-space:nowrap}
+.star{font-size:11px;line-height:18px;color:var(--dsw-alias-label-tertiary,#8b93a1);flex:0 0 auto;white-space:nowrap}
 /* Opaque disc behind the outline Button. The host outline fill (incl.
    :hover) is transparent by design — without a surface under it the
    chevron sits on card text. Keep the fill on this wrapper so the
@@ -222,7 +222,7 @@
 .installCautionLink{margin-left:auto;flex:none;white-space:nowrap;font-weight:600;font-size:13px;line-height:20px;color:var(--dsw-alias-link,#3b82f6);text-decoration:none}
 .installCautionLink:hover{text-decoration:underline}
 .confirmFineprint{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#6b7280)}
-.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:start;gap:12px}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:start;gap:10px}
 /* One row; its observer counts 280px cards plus the 10px gap at the actual panel width. */
 .recentRow{display:grid;align-items:start;gap:10px;margin-bottom:16px}
 .recentRow > *{min-width:0}
@@ -396,7 +396,7 @@
    footer, reading as a layout bug rather than "this one's row-mate had a
    longer description". Un-stretched, any leftover row height sits outside
    the card as ordinary grid gutter instead. */
-.card{background:var(--dsw-alias-settings-card-fill,var(--dsw-alias-bg-layer-1,#fff));border:.5px solid var(--dsw-alias-settings-card-stroke,var(--dsw-alias-border-l4,#00000029));border-radius:var(--dsw-radius-xl,20px);padding:14px 16px;display:flex;flex-direction:column;gap:10px;align-self:start;min-width:0;transition:background-image 160ms cubic-bezier(.16,1,.3,1)}
+.card{background:var(--dsw-alias-settings-card-fill,var(--dsw-alias-bg-layer-1,#fff));border:.5px solid var(--dsw-alias-settings-card-stroke,var(--dsw-alias-border-l4,#00000029));border-radius:var(--dsw-radius-xl,20px);padding:12px 14px;display:flex;flex-direction:column;gap:10px;align-self:start;min-width:0;transition:background-image 160ms cubic-bezier(.16,1,.3,1)}
 /* A wash painted as a background-image so the card keeps its own fill under it;
    the card body is not clickable, so this has to stay a hover cue, not a state. */
 .card:hover{background-image:linear-gradient(var(--dsw-alias-interactive-bg-hover,#2631480f),var(--dsw-alias-interactive-bg-hover,#2631480f))}
@@ -443,9 +443,9 @@
 .metaInline{font-size:11px;color:var(--dsw-alias-label-secondary,#9ca3af)}
 /* The author name is the only variable-length part, so it is the only part
    that shrinks; the counts stay whole because a truncated one is not a fact. */
-.owner{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#5c6570);flex:0 1 auto;min-width:44px;
+.owner{font-size:11px;line-height:18px;color:var(--dsw-alias-label-secondary,#5c6570);flex:0 1 auto;min-width:44px;
        overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.desc{font-size:13px;line-height:18px;color:var(--dsw-alias-label-tertiary,#8b93a1);margin:0}
+.desc{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#8b93a1);margin:0}
 /* A FIXED 5-line slot (not just a cap): a one-line description reserves the
    same 90px as a five-line one, so every card in a row starts its thumbnail
    strip/footer at the same y — a clamp with no floor still let a short card
