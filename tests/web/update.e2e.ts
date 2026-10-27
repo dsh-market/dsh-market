@@ -16,10 +16,11 @@
  * actually serving.
  */
 
+import { spawnSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { dshAvailable, launchMarketScaffold } from './scaffold.ts'
+import { dshAvailable, dshCommand, launchMarketScaffold } from './scaffold.ts'
 import type { WebScaffold } from './scaffold.ts'
 
 const HAS_DSH = dshAvailable()
@@ -57,6 +58,40 @@ describe.skipIf(!HAS_DSH).sequential('web e2e: the real update chain', () => {
     return existsSync(marker) ? readFileSync(marker, 'utf8').trim() : null
   }
 
+  /**
+   * 0.1.7+ hosts compose a newly installed bundle themselves (`#827`), so
+   * dropping the market hot mount (#1022) leaves the old module running.
+   * Older hosts only had that mount — the marker goes.
+   */
+  const hostComposesInstalledBundles = async (): Promise<boolean> => {
+    const status = await get('/dsh-market/status')
+    // How /status names the 0.1.7+ settings model. `registered` is the
+    // pre-0.1.7 host that still has `settings.register`.
+    if (status.settingsNamespace === 'unsupported-by-host') return true
+    if (status.settingsNamespace === 'registered') return false
+    // `pending` is too early to trust; read the CLI the lane actually pinned.
+    const cmd = dshCommand()
+    if (cmd === null) return true
+    const probe = spawnSync(cmd, ['--version'], {
+      shell: true,
+      encoding: 'utf8',
+      timeout: 30_000,
+      cwd: process.env.DSHM_E2E_DSH_CWD,
+    })
+    return /(?:^|[\s/])0\.(?:1\.[7-9]|[2-9]\.)/.test(`${probe.stdout ?? ''}${probe.stderr ?? ''}`)
+  }
+
+  /** Disk is 2.0.0; the process must not be serving that build yet (#491). */
+  const expectStillOldBuild = async (): Promise<void> => {
+    const live = liveVersion()
+    expect(live, 'a live 2.0.0 would mean the host reloaded without restart').not.toBe('2.0.0')
+    if (await hostComposesInstalledBundles()) {
+      expect(live).toBe('1.0.0')
+    } else {
+      expect(['1.0.0', null]).toContain(live)
+    }
+  }
+
   it('installs the fixture at 1.0.0 and runs it', async () => {
     const installed = await post('/dsh-market/install', { url: `https://github.com/dshm-e2e/${A}` })
     expect(installed.status).toBe(200)
@@ -80,12 +115,7 @@ describe.skipIf(!HAS_DSH).sequential('web e2e: the real update chain', () => {
     ) as { version: string }
     expect(installedPkg.version).toBe('2.0.0')
 
-    // …and the process is still serving 1.0.0, because replacing a package
-    // on disk does not unload the module Node already imported. This is the
-    // fact the market's "restart to apply" verdict rests on; measuring it
-    // here is what makes that verdict a claim about the host rather than
-    // about our model of it.
-    expect(liveVersion()).toBe('1.0.0')
+    await expectStillOldBuild()
   }, 300_000)
 
   it('says so, rather than reporting the update as live', async () => {
@@ -106,7 +136,7 @@ describe.skipIf(!HAS_DSH).sequential('web e2e: the real update chain', () => {
     // build looking finished and current.
     const again = await get('/dsh-market/installed')
     expect(again.activation[A]?.state).toBe('restart')
-    expect(liveVersion()).toBe('1.0.0')
+    await expectStillOldBuild()
   }, 120_000)
 
   it('does not call an off-and-on "live" while the process still serves the old module (#685)', async () => {
