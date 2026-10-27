@@ -29,6 +29,21 @@ describe('sameOrigin', () => {
     expect(sameOrigin(request({ host: 'localhost:3080' }))).toBe(true)
   })
 
+  it('accepts a port-less loopback Origin the way Chrome 151+ sends it', () => {
+    // #1031: the newest browsers serialize a loopback Origin without its
+    // explicit port, so a same-origin install POST reads
+    // `Origin: http://127.0.0.1` against `Host: 127.0.0.1:3080`.
+    expect(sameOrigin(request({ host: '127.0.0.1:3080', origin: 'http://127.0.0.1' }))).toBe(true)
+    expect(sameOrigin(request({ host: 'localhost:3080', origin: 'http://localhost' }))).toBe(true)
+    expect(sameOrigin(request({ host: '[::1]:3080', origin: 'http://[::1]' }))).toBe(true)
+    // The relaxation is loopback-only and hostname-exact.
+    expect(sameOrigin(request({ host: '127.0.0.1:3080', origin: 'http://127.0.0.2' }))).toBe(false)
+    expect(sameOrigin(request({ host: '127.0.0.1:3080', origin: 'http://127.0.0.1:3081' }))).toBe(false)
+    expect(sameOrigin(request({ host: '127.0.0.1:3080', origin: 'http://127.0.0.1', 'sec-fetch-site': 'cross-site' }))).toBe(false)
+    declare('dsh.example.org:8443')
+    expect(sameOrigin(request({ host: 'dsh.example.org:8443', origin: 'https://dsh.example.org' }))).toBe(false)
+  })
+
   it('refuses a name nobody declared — the rebinding defence', () => {
     // The reported repro: a page on the deployment's own name is exactly what
     // an attacker's page looks like, so this stays refused until the operator

@@ -171,7 +171,10 @@ export function trustedAuthority(host: string, trustedHosts: readonly string[]):
  * - a cross-site page is refused — its Origin is present and different;
  * - `Origin: null` (a sandboxed iframe, a `data:` document) is refused, because
  *   `null` is a present-but-unparseable origin, not an absent one;
- * - a same-host-but-different-port request is refused;
+ * - a same-host-but-different-port request is refused, except that a loopback
+ *   Host accepts a port-less same-hostname Origin (#1031: Chrome 151+ omits
+ *   the port on loopback Origins, and the dsh core fence follows the same
+ *   rule);
  * - an EMPTY Origin is refused too: the header being present and unparseable
  *   is not the same statement as its being absent, and only absence is what
  *   a stripping proxy produces.
@@ -224,6 +227,16 @@ export function sameOrigin(request: IncomingMessage): boolean {
   // own fence refuses that outright. Cheap, and it covers what the Origin
   // equality cannot: a cross-site request whose Origin happens to match.
   if (request.headers['sec-fetch-site'] === 'cross-site') return false
+  // Chrome 151+ serializes a loopback Origin WITHOUT its explicit port
+  // (#1031): the page at `http://127.0.0.1:3080` now states `Origin:
+  // http://127.0.0.1` on its same-origin POSTs, so the strict `host` equality
+  // below refuses installs and updates from the newest browsers. Mirror the
+  // dsh core rule (`isSameAuthorityOrigin`): the hostname must match, and the
+  // omitted port is honoured only on the loopback fence — `loopbackAuthority`
+  // above has already decided the Host names loopback, a cross-site page still
+  // fails the hostname test, and a rebinding page still cannot get its own
+  // name through both. Declared LAN names and proxies keep needing the exact
+  // port, as before.
   const origin = request.headers.origin
   // A missing Origin is not a cross-site request: browsers send it on every
   // POST, same-origin included, so its absence means the caller is not a
@@ -232,7 +245,13 @@ export function sameOrigin(request: IncomingMessage): boolean {
   // which strips it (#648).
   if (origin === undefined) return true
   try {
-    return new URL(origin).host === host
+    const originUrl = new URL(origin)
+    if (originUrl.host === host) return true
+    if (originUrl.port === '' && host !== undefined && loopbackAuthority(host)) {
+      const hostUrl = parseAuthority(host)
+      return hostUrl !== null && originUrl.hostname === hostUrl.hostname
+    }
+    return false
   } catch {
     return false
   }
