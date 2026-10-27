@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest'
  * live catalog would stay unexercised until the first rename lands — exactly
  * when a mistake is most expensive.
  */
-function runCatalog(plugins: unknown[]): { status: number; output: string } {
+function runCatalog(plugins: unknown[], extraEnv: Record<string, string> = {}): { status: number; output: string } {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-validate-'))
   const file = join(dir, 'catalog.json')
   writeFileSync(file, JSON.stringify({
@@ -20,15 +20,15 @@ function runCatalog(plugins: unknown[]): { status: number; output: string } {
     plugins,
   }))
   const env = { ...process.env, DSHM_REGISTRY_FILE: file }
-  try {
-    const output = execFileSync(process.execPath, ['scripts/validate-registry.mjs'], {
-      encoding: 'utf8',
-      env,
-    })
-    return { status: 0, output }
-  } catch (error) {
-    const failed = error as { status?: number; stdout?: string; stderr?: string }
-    return { status: failed.status ?? 1, output: `${failed.stdout ?? ''}${failed.stderr ?? ''}` }
+  delete env.DSHM_REGISTRY_ADVISORY
+  Object.assign(env, extraEnv)
+  const result = spawnSync(process.execPath, ['scripts/validate-registry.mjs'], {
+    encoding: 'utf8',
+    env,
+  })
+  return {
+    status: result.status ?? 1,
+    output: `${result.stdout ?? ''}${result.stderr ?? ''}`,
   }
 }
 
@@ -92,6 +92,64 @@ describe('validate-registry previousNpm (#1012 P1)', () => {
     const run = runCatalog([{ ...entry('renamed', 'renamed-new'), PreviousNpm: ['renamed-old'] }])
     expect(run.status).toBe(1)
     expect(run.output).toContain('[E13] renamed: key "PreviousNpm" is not the rename field')
+  })
+})
+
+const gitOnly = (
+  name: string,
+  owner: string,
+  repo: string,
+  tarballRepo: string,
+  extra: Record<string, unknown> = {},
+) => ({
+  name,
+  owner,
+  url: `https://github.com/${owner}/${repo}`,
+  category: 'tool',
+  npm: null,
+  page: `https://awesome-dsh-plugin.com/p/${owner}/${repo}/`,
+  description: { en: name, zh: name },
+  stars: 0,
+  install: `dsh plugin --profile web add "https://github.com/${tarballRepo}/releases/download/v1.0.0/x.tgz"`,
+  added: '2026-01-01',
+  ...extra,
+})
+
+/** The two live rows that have been failing every unrelated PR since 1.71.0. */
+const knownDrifts = [
+  gitOnly('dsh-quick-restart', 'GraptK', 'dsh-quick-restart', 'iQingke/dsh-quick-restart'),
+  gitOnly('dsh-gitui', 'yaanlaan', 'dsh-gitui', 'yaanlaan/ds-gitui'),
+]
+
+describe('validate-registry known live-catalog drift', () => {
+  it('still fails a local draft on an E10 owner mismatch', () => {
+    const run = runCatalog([gitOnly('plug', 'Alice', 'plug', 'Bob/plug')])
+    expect(run.status).toBe(1)
+    expect(run.output).toContain('[E10] plug: release archive')
+    expect(run.output).toContain('belongs to bob/plug, not Alice/plug')
+  })
+
+  it('still fails an unknown E10 even when advisory', () => {
+    const run = runCatalog([gitOnly('plug', 'Alice', 'plug', 'Bob/plug')], { DSHM_REGISTRY_ADVISORY: '1' })
+    expect(run.status, run.output).toBe(1)
+    expect(run.output).toContain('[E10] plug: release archive')
+  })
+
+  it('excuses only the listed live rows when advisory', () => {
+    const run = runCatalog(knownDrifts, { DSHM_REGISTRY_ADVISORY: '1' })
+    expect(run.status, run.output).toBe(0)
+    expect(run.output).toContain('[E10] dsh-quick-restart: release archive')
+    expect(run.output).toContain('[E10] dsh-gitui: release archive')
+    expect(run.output).toContain('known live-catalog drift')
+  })
+
+  it('still fails when a listed row is joined by a new error', () => {
+    const extra = gitOnly('plug', 'Alice', 'plug', 'Alice/plug', {
+      screenshots: ['https://evil.example/pixel.gif'],
+    })
+    const run = runCatalog([...knownDrifts, extra], { DSHM_REGISTRY_ADVISORY: '1' })
+    expect(run.status, run.output).toBe(1)
+    expect(run.output).toContain('[E12] plug:')
   })
 })
 

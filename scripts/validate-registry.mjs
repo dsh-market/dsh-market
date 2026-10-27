@@ -26,9 +26,10 @@
  * are intentionally out of scope: they need network, are slow, and are flaky in
  * CI. They belong in a separate `--probe` maintainer tool, not the merge gate.
  *
- * Exit code: 0 when there are no hard errors, 1 otherwise. Warnings never fail
- * the run — they surface informational signal (display-name collisions across
- * distinct authors/monorepos are permitted by design).
+ * Exit code: 0 when there are no hard errors, 1 otherwise. Warnings never
+ * fail the run. DSHM_REGISTRY_ADVISORY=1 is CI-only and only excuses the
+ * listed (entry, code) pairs below — a new E10 or any other code still
+ * fails the merge. A local draft (no env) always fails on every error.
  */
 
 import fs from 'node:fs'
@@ -108,6 +109,16 @@ function releaseTargetRepo(target) {
 function fail(errors, entry, code, msg) {
   errors.push({ entry: entry && entry.name ? entry.name : '<unknown>', code, msg })
 }
+
+/**
+ * Live catalog rows this repository cannot edit that have been failing
+ * every unrelated PR since 1.71.0. Empty the set and drop the CI env when
+ * the catalog itself is clean again.
+ */
+const KNOWN_LIVE_DRIFT = new Set([
+  'dsh-quick-restart:E10',
+  'dsh-gitui:E10',
+])
 
 async function main() {
   const errors = []
@@ -368,6 +379,11 @@ async function main() {
       console.error(`   [${e.code}] ${e.entry}: ${e.msg}`)
     }
     console.log(`\n  warnings: ${warnings.length} (display-name collisions: ${nameCollisionGroups}, stars=0: ${stars0})`)
+    const unexpected = errors.filter((e) => !KNOWN_LIVE_DRIFT.has(`${e.entry}:${e.code}`))
+    if (process.env.DSHM_REGISTRY_ADVISORY === '1' && unexpected.length === 0) {
+      console.log('\n  advisory: known live-catalog drift only; not failing this repo\'s merge')
+      return
+    }
     process.exit(1)
   }
 
