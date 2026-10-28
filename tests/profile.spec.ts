@@ -10,7 +10,7 @@ import { homedir, tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { resolveDshHome } from '../src/home-paths.ts'
 import {
-  addProfileBundle, bundleOptOutRowIds, bundlePatchInsertedIds, bundlesDroppedFromProfile, readProfileManifestSnapshot, bundlePatchTargets, conflictingEntryIds, declaredBundlePatchFiles, dropFromManifest, entryArtifactExists, generationManagedNames, hasDshManifest, hasLoadableEntry, holdsNativeAddon, isDshProfileName, mergeDuplicateReleaseAgeExcludes, parsePatchRows, pluginSubdirs, profileDir, shippedInsertedRowIds,
+  addProfileBundle, bundleExpressionRowIds, bundleOptOutRowIds, bundlePatchInsertedIds, bundlesDroppedFromProfile, readProfileManifestSnapshot, bundlePatchTargets, conflictingEntryIds, declaredBundlePatchFiles, dropFromManifest, entryArtifactExists, generationManagedNames, hasDshManifest, hasLoadableEntry, holdsNativeAddon, isDshProfileName, mergeDuplicateReleaseAgeExcludes, parsePatchRows, pluginSubdirs, profileDir, shippedInsertedRowIds,
   readDependencyOwners, readGitResolutionCommit, readInstalled, readInstalledManifest, readInstalledRepoEvidence, readInstalledRepoIdentities, readInstalledVersion, readLockCommits,
   removeProfileBundle,
 } from '../src/profile.ts'
@@ -2171,6 +2171,110 @@ describe('bundleOptOutRowIds (#876)', () => {
     try {
       writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'plain' }))
       expect(bundleOptOutRowIds(dir)).toEqual([])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('parsePatchRows — the rows a patch decides with an expression (#1043)', () => {
+  it('reads a !!js condition as expression-decided, never as opt-in or plain', () => {
+    // The report's shape (#1043): ds-harness-remote ships BOTH of its rows
+    // with `disabled: !!js …` conditions, deciding per environment at
+    // compose time. Neither row is literal, so neither is an opt-in row.
+    const rows = [
+      '- insert:',
+      '    - id: remote',
+      '      name: dsh-remote',
+      '      disabled: !!js >-',
+      "        [...ctx.loader.entries()].some(entry => entry.options.id === 'dsh-tui')",
+      '    - id: remote-tui',
+      '      name: dsh-remote-tui',
+      '      disabled: !!js >-',
+      "        ![...ctx.loader.entries()].some(entry => entry.options.id === 'dsh-tui')",
+      '',
+    ].join('\n')
+    const parsed = parsePatchRows(rows)
+    expect(parsed.disabledIds).toEqual([])
+    expect(parsed.expressionIds).toEqual(['remote', 'remote-tui'])
+  })
+
+  it('keeps literal true and false rows out of expressionIds; a valueless disabled is not readable either', () => {
+    const rows = [
+      '- insert:',
+      '    - id: lit-on',
+      '      disabled: false',
+      '    - id: lit-off',
+      '      disabled: true',
+      '    - id: null-flag',
+      '      disabled:',
+      '',
+    ].join('\n')
+    const parsed = parsePatchRows(rows)
+    expect(parsed.disabledIds).toEqual(['lit-off'])
+    expect(parsed.expressionIds).toEqual(['null-flag'])
+  })
+
+  it('never counts a payload id as an expression row (#841)', () => {
+    const rows = [
+      '- insert:',
+      '    - id: real-row',
+      '      config:',
+      '        plugins:',
+      '          - id: payload-entry',
+      '            disabled: !!js ctx.isTui',
+      '',
+    ].join('\n')
+    expect(parsePatchRows(rows).expressionIds).toEqual([])
+  })
+})
+
+describe('bundleExpressionRowIds (#1043)', () => {
+  it('reads both patch sources a package may ship', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dshm-exprrows-'))
+    try {
+      writeFileSync(join(dir, 'package.json'), JSON.stringify({
+        name: 'ds-harness-remote',
+        dsh: { bundle: { patch: './cordis.patch.yml' } },
+      }))
+      writeFileSync(join(dir, 'cordis.patch.yml'), [
+        '- insert:',
+        '    - id: remote',
+        '      name: dsh-remote',
+        '    - id: remote-tui',
+        '      name: dsh-remote-tui',
+        '      disabled: !!js >-',
+        "        ![...ctx.loader.entries()].some(entry => entry.options.id === 'dsh-tui')",
+        '',
+      ].join('\n'))
+      // #792: a declared LIST contributes every file it names.
+      writeFileSync(join(dir, 'extra.patch.yml'), '- id: extra-expression\n  disabled: !!js 1 === 1\n')
+      const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'))
+      manifest.dsh.bundle.patch = ['./cordis.patch.yml', './extra.patch.yml']
+      writeFileSync(join(dir, 'package.json'), JSON.stringify(manifest))
+      expect([...bundleExpressionRowIds(dir)].sort()).toEqual(['extra-expression', 'remote-tui'])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('answers with nothing for a package whose rows are all literal', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dshm-exprrows-'))
+    try {
+      writeFileSync(join(dir, 'package.json'), JSON.stringify({
+        name: 'dsh-mnemon',
+        dsh: { bundle: { patch: './cordis.patch.yml' } },
+      }))
+      writeFileSync(join(dir, 'cordis.patch.yml'), [
+        '- insert:',
+        '    - id: mnemon',
+        '      name: dsh-mnemon',
+        '    - id: mnemon-strategy-general',
+        '      name: dsh-mnemon-strategy-general',
+        '      disabled: true',
+        '',
+      ].join('\n'))
+      expect(bundleExpressionRowIds(dir)).toEqual([])
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
