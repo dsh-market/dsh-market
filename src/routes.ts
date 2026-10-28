@@ -33,7 +33,7 @@ import {
 } from './dsh-cli.ts'
 import { packageOfEntryName } from './entry-identity.ts'
 import { PendingRowJournal, repairOrphanedRows } from './pending-rows.ts'
-import { addProfileBundle, bundleOptOutRowIds, bundlePatchInsertedIds, bundlesDroppedFromProfile, declareProfileDependency, dropFromManifest, generationManagedNames, hasLoadableEntry, holdsNativeAddon, INBOX_BUNDLES, isDshProfileName, profileDir, readDependencyOwners, readGitResolutionCommit, readInstalled, readInstalledManifest, readInstalledPackageName, readInstalledRepoEvidence, readInstalledVersion, readLockCommits, readProfileBundles, readProfileManifestSnapshot, removeProfileBundle, parsePatchRows, restoreProfileManifest, setAllowBuilds, shippedInsertedRowIds, type ProfileManifestSnapshot } from './profile.ts'
+import { addProfileBundle, bundleExpressionRowIds, bundleOptOutRowIds, bundlePatchInsertedIds, bundlesDroppedFromProfile, declareProfileDependency, dropFromManifest, generationManagedNames, hasLoadableEntry, holdsNativeAddon, INBOX_BUNDLES, isDshProfileName, profileDir, readDependencyOwners, readGitResolutionCommit, readInstalled, readInstalledManifest, readInstalledPackageName, readInstalledRepoEvidence, readInstalledVersion, readLockCommits, readProfileBundles, readProfileManifestSnapshot, removeProfileBundle, parsePatchRows, restoreProfileManifest, setAllowBuilds, shippedInsertedRowIds, type ProfileManifestSnapshot } from './profile.ts'
 import { assessProfile, classifyPeer, introducedDuplicateNames, introducedRisks, type CompatibilityRisk } from './compatibility.ts'
 import { runningAgentIds, type AgentsLookup } from './agents.ts'
 import { analyzeProfile, corePackageNames, type DuplicateName } from './check.ts'
@@ -999,6 +999,11 @@ export function mountMarketRoutes(
     // flip: a package whose rows are ALL opt-in rows still has to be
     // switchable.
     const optOutRows = new Set(bundleOptOutRowIds(join(activeProfileDir, 'node_modules', name)))
+    // Rows the bundle decides itself, by expression (`disabled: !!js …`),
+    // are a third shape next to opt-in rows: the market can neither read
+    // nor overrule the condition, so enabling the package must leave them
+    // exactly as the bundle ships them (#1043).
+    const expressionRows = new Set(bundleExpressionRowIds(join(activeProfileDir, 'node_modules', name)))
     const decided = patchRows.filter(rowId => !optOutRows.has(rowId))
     /** Rows that can carry a USER decision about this package — see above. */
     const userRows = decided.length > 0 ? decided : patchRows
@@ -1084,9 +1089,14 @@ export function mountMarketRoutes(
       // block by appending `disabled: false`, which would switch them on as a
       // side effect of turning the package itself back on (#876) — except to
       // remove a block an earlier disable left on one, which is a cleanup and
-      // never a force-enable.
+      // never a force-enable. Expression-decided rows stay out for the same
+      // reason (#1043): their condition is evaluated by the host at compose
+      // time, and a literal `disabled: false` written above it force-opened
+      // a row the environment keeps off, which then held the package pending
+      // at activation — except, again, to clean a block an earlier disable
+      // left, which restores the expression's authority, never a forced on.
       const targets = enabled
-        ? patchRows.filter(rowId => !optOutRows.has(rowId) || prePatch.disables.includes(rowId))
+        ? patchRows.filter(rowId => (!optOutRows.has(rowId) && !expressionRows.has(rowId)) || prePatch.disables.includes(rowId))
         : patchRows
       const flipped: string[] = []
       for (const rowId of targets) {
