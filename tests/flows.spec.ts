@@ -7447,6 +7447,48 @@ describe('generic enable/disable toggle (#60)', () => {
     expect(written.match(/disabled: false/gu)).toHaveLength(1)
   })
 
+  it('never writes a literal override over a row the bundle decides with an expression (#1043)', async () => {
+    // The report's shape: a package ships rows with `disabled: !!js …`
+    // conditions — the bundle itself decides, per host, at compose time. The
+    // toggle read only literal `disabled: true` as a row it must not
+    // force-open, so enabling the package appended `disabled: false` over
+    // the condition, switched the row on in an environment that keeps it
+    // off, and the next install's activation check failed and rolled the
+    // manifest back. Enabling must leave such rows to their expressions.
+    await installNpm('dsh-loop')
+    mkdirSync(join(fake.profileDir, 'node_modules', 'dsh-loop'), { recursive: true })
+    writeFileSync(join(fake.profileDir, 'node_modules', 'dsh-loop', 'cordis.patch.yml'), [
+      '- insert:',
+      '    - id: loop-core',
+      '      name: dsh-loop',
+      '    - id: loop-tui',
+      '      name: dsh-loop-tui',
+      '      disabled: !!js >-',
+      "        [...ctx.loader.entries()].some(entry => entry.options.id === 'dsh-tui' && !entry.disabled)",
+      '',
+    ].join('\n'))
+    const patchPath = join(fake.profileDir, 'cordis.patch.yml')
+    writeFileSync(patchPath, '[]\n')
+
+    const on = await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-loop', enabled: true })
+    expect(on.status).toBe(200)
+    const written = readFileSync(patchPath, 'utf8')
+    // The plain row keeps its standing `disabled: false`...
+    expect(written.match(/disabled: false/gu)).toHaveLength(1)
+    // ...and the expression-decided row was left to its condition: no
+    // literal override, so no phantom enable in an environment without
+    // the TUI services.
+    expect(written).not.toContain('loop-tui')
+
+    // A stale literal disable the user layer held on the expression row is
+    // still cleaned up — removing it restores the expression's authority,
+    // which is never a force-enable.
+    writeFileSync(patchPath, '- id: loop-tui\n  disabled: true\n')
+    const again = await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-loop', enabled: true })
+    expect(again.status).toBe(200)
+    expect(readFileSync(patchPath, 'utf8')).not.toContain('loop-tui')
+  })
+
   it('still switches a package off through its own rows, opt-in or not', async () => {
     // The other half: a disable has to reach every row, or the package comes
     // back half-on.
