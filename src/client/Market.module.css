@@ -223,18 +223,40 @@
 .installCautionLink:hover{text-decoration:underline}
 .confirmFineprint{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#6b7280)}
 .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:start;gap:10px}
-/* One row; its observer counts 280px cards plus the 10px gap at the actual panel width. */
-.recentRow{display:grid;align-items:start;gap:10px;margin-bottom:16px}
-.recentRow > *{min-width:0}
-/* #940: 最近收录 is a fixed ~quarter of the first screen and could only be
-   dodged by changing the search or the filters. Collapse clips it in place
-   (max-height + visibility, NOT display:none and NOT unmounting): the grid is
-   what the column-counting ResizeObserver measures, and a zero-width box would
-   collapse it to one column. visibility keeps the clipped cards out of the tab
-   order and the accessibility tree while the box keeps its width. */
-.recentCollapsed{max-height:0;overflow:hidden;visibility:hidden;margin-bottom:0}
-.recentHead{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:14px 0 8px;padding:0 4px}
-.recentHead .favoritesSectionHead{margin:0;padding:0}
+/* One equal-height strip. Full cards used to eat a quarter of the first
+   screen and left ragged holes beside any tile with a screenshot. The
+   masonry below is the catalog; this is only a teaser. Extra tiles live
+   in a quiet horizontal scroll — the next card peeks, so it's obvious
+   there's more, without a second row of height. */
+.recentBlock{margin:2px 0 4px;padding:0 0 8px}
+.recentRow{display:flex;align-items:stretch;gap:8px;margin-bottom:0;overflow-x:auto;padding-bottom:4px;-webkit-overflow-scrolling:touch;scrollbar-width:thin;scrollbar-color:var(--dsw-alias-border-l3,#d9dde3) transparent}
+.recentRow::-webkit-scrollbar{height:6px}
+.recentRow::-webkit-scrollbar-thumb{background:var(--dsw-alias-border-l3,#d9dde3);border-radius:99px}
+.recentRow::-webkit-scrollbar-track{background:transparent}
+/* ~3.25 tiles at the panel width, so ~800px still peeks the next card.
+   24px is three 8px gaps (between 1–2, 2–3, and 3–the-peek). */
+.recentRow > *{box-sizing:border-box;flex:0 0 auto;width:min(320px,calc((100% - 24px) / 3.25));min-width:220px}
+/* #940: collapse clips in place (max-height + visibility, NOT display:none
+   and NOT unmounting). visibility keeps the clipped tiles out of the tab
+   order and the accessibility tree. Compound selector so overflow:hidden
+   beats .recentRow's overflow-x:auto by specificity, not source order. */
+.recentRow.recentCollapsed{max-height:0;overflow:hidden;visibility:hidden;margin-bottom:0;padding-bottom:0}
+.recentTile{display:flex;flex-direction:column;justify-content:space-between;gap:4px;height:80px;box-sizing:border-box;overflow:hidden;padding:8px 12px;background:var(--dsw-alias-settings-card-fill,var(--dsw-alias-bg-layer-1,#fff));border:.5px solid var(--dsw-alias-settings-card-stroke,var(--dsw-alias-border-l4,#00000029));border-radius:var(--dsw-radius-lg,16px);transition:background-image 160ms cubic-bezier(.16,1,.3,1)}
+.recentTile:hover{background-image:linear-gradient(var(--dsw-alias-interactive-bg-hover,#2631480f),var(--dsw-alias-interactive-bg-hover,#2631480f))}
+.recentTile:hover .installBtn:not(:disabled){border-color:transparent;background:var(--dsw-alias-button-primary-fill,#0f1115);color:var(--dsw-alias-label-primary-foreground,#fff)}
+.recentTile .installBtn.installBtn{height:24px;min-height:24px;padding:0 8px}
+.recentAv.recentAv{width:24px;height:24px;font-size:11px;flex-shrink:0}
+.recentTitle{display:flex;align-items:center;gap:8px;min-width:0}
+.recentTitle > :last-child{flex-shrink:0}
+.recentName{min-width:0;flex:1}
+.recentTitle .nm{font-size:14px;line-height:20px}
+.recentBottom{display:flex;align-items:flex-end;gap:8px;min-width:0}
+.recentBottom > :last-child{flex-shrink:0;margin-left:auto}
+.recentBottom > :not(:last-child){min-width:0;flex:1}
+.recentDesc{margin:0;font-size:12px;line-height:16px;color:var(--dsw-alias-label-tertiary,#8b93a1);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.recentBottom .cardMore{padding:0}
+.recentHead{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:10px 0 8px;padding:0 4px}
+.recentHead .favoritesSectionHead{margin:0;padding:0;font-weight:600}
 .recentToggle{display:inline-flex;align-items:center;gap:4px;margin:0;padding:0;border:0;background:none;font:inherit;color:inherit;cursor:pointer}
 .recentToggle:hover{color:var(--dsw-alias-label-secondary,#6b7280)}
 .recentHide.recentHide{height:26px;min-height:26px;padding:0 6px;color:var(--dsw-alias-label-secondary,#6b7280)}

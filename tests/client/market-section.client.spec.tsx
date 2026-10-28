@@ -8804,51 +8804,146 @@ describe('recently added Discover row (#780)', () => {
   })
   const recent = () => screen.getByRole('region', { name: en.recentlyAdded })
   const names = (element: HTMLElement) => [...element.querySelectorAll<HTMLAnchorElement>(`.${css.nmLink}`)]
-    .map(link => link.title)
+    .map(link => link.getAttribute('aria-label')?.replace(/ — .*$/, '') ?? '')
   const expectHidden = () => expect(screen.queryByRole('region', { name: en.recentlyAdded })).toBeNull()
 
-  let resizeRecent: (width: number) => void
-  let observedRecent: Element | undefined
   beforeEach(() => {
     vi.spyOn(Date, 'now').mockReturnValue(now)
-    resizeRecent = () => { throw new Error('recent row is not observed') }
-    observedRecent = undefined
-    vi.stubGlobal('ResizeObserver', class {
-      constructor(private callback: ResizeObserverCallback) {}
-      observe(target: Element) {
-        // jsdom has no layout; deliver row widths without resizing CardDesc.
-        if (!target.classList.contains(css.recentRow)) return
-        observedRecent = target
-        resizeRecent = width => this.callback([
-          { target, contentRect: { width } } as ResizeObserverEntry,
-        ], this as unknown as ResizeObserver)
-        resizeRecent(1600)
-      }
-      unobserve() {}
-      disconnect() {}
-    })
   })
   afterEach(() => { vi.restoreAllMocks() })
 
-  it('keeps two cards per row, two rows deep, as the container resizes', async () => {
-    stubFetch({ '/dsh-market/registry': registry() })
+  it('shows recent plugins as one compact strip, not full cards', async () => {
+    const plugins = rows().map(plugin => plugin.name === 'recent-high'
+      ? { ...plugin, screenshots: ['https://example.com/recent-high.png'] }
+      : plugin)
+    stubFetch({ '/dsh-market/registry': registry(plugins) })
     const { container } = render(<MarketSection {...props()} />)
     await screen.findByRole('region', { name: en.recentlyAdded })
     expect(recent().getAttribute('aria-labelledby')).toBe('dshm-recently-added')
     expect(within(recent()).getByRole('heading', { name: en.recentlyAdded }).id).toBe('dshm-recently-added')
-    const main = rankedNames(container)
-    // Two columns at every width that fits two cards (the same 290px card
-    // the grid below uses), and at most two rows of them: three across read
-    // as a different list from the one underneath.
-    for (const [width, count] of [[280, 2], [569, 2], [570, 4], [859, 4], [860, 4], [1150, 4], [1440, 4], [280, 2]] as const) {
-      act(() => resizeRecent(width))
-      expect(names(recent())).toEqual(recentNames.slice(0, count))
-      expect(within(recent()).getAllByRole('button', { name: en.install })).toHaveLength(count)
-      expect(rankedNames(container)).toEqual(main)
-    }
+    // The strip is a teaser, not a second copy of the masonry: equal-height
+    // tiles, no screenshots. Extra entries live in a quiet horizontal scroll
+    // so the block stays one row tall.
+    expect(names(recent())).toEqual(recentNames)
+    expect(within(recent()).getAllByRole('button', { name: en.install })).toHaveLength(recentNames.length)
+    expect(recent().querySelectorAll(`.${css.recentTile}`)).toHaveLength(recentNames.length)
+    expect(recent().querySelector(`.${css.card}`)).toBeNull()
+    expect(recent().querySelector(`.${css.cardShot}`)).toBeNull()
+    expect(within(recent()).queryByRole('button', { name: en.comments })).toBeNull()
+    expect(within(recent()).getByText('recent-high description')).toBeTruthy()
+    expect(rankedNames(container)[0]).toBe('old-high')
+    // A heading plus the strip, not a second catalog row. The scrollbar
+    // is the break; a hairline under it was a second divider.
+    expect(recent().className).toContain(css.recentBlock)
+    expect(within(recent()).queryByText(en.timeWeek)).toBeNull()
   })
 
-  it('observes the replacement row after retrying a failed cached catalog refresh', async () => {
+  it('puts the avatar on the same row as the name, not beside the whole tile', async () => {
+    stubFetch({ '/dsh-market/registry': registry() })
+    render(<MarketSection {...props()} />)
+    await screen.findByRole('region', { name: en.recentlyAdded })
+    const tile = recent().querySelector(`.${css.recentTile}`)!
+    const title = tile.querySelector(`.${css.recentTitle}`)!
+    const bottom = tile.querySelector(`.${css.recentBottom}`)!
+    const avatar = tile.querySelector(`.${css.recentAv}`)
+    const name = within(tile).getByRole('link')
+    const install = within(tile).getByRole('button', { name: en.install })
+    const more = within(tile).getByRole('button', { name: en.groupMore })
+    const desc = within(tile).getByText('recent-high description')
+    // Avatar, name and install share the top row so the description can
+    // start at the left edge instead of indenting under the name.
+    expect(title.contains(avatar)).toBe(true)
+    expect(title.contains(name)).toBe(true)
+    expect(title.contains(install)).toBe(true)
+    expect(title.contains(desc)).toBe(false)
+    expect(bottom.contains(desc)).toBe(true)
+    expect(bottom.contains(more)).toBe(true)
+    expect(title.querySelector(`.${css.recentName}`)?.contains(name)).toBe(true)
+  })
+
+  it('keeps install on the title row and the menu on the bottom row when there is no description', async () => {
+    stubFetch({ '/dsh-market/registry': registry([{ ...entry('recent-high', 900, 1), description: { en: '' } }]) })
+    render(<MarketSection {...props()} />)
+    await screen.findByRole('region', { name: en.recentlyAdded })
+    const tile = recent().querySelector(`.${css.recentTile}`)!
+    const title = tile.querySelector(`.${css.recentTitle}`)!
+    const bottom = tile.querySelector(`.${css.recentBottom}`)!
+    expect(title.contains(within(tile).getByRole('link'))).toBe(true)
+    expect(title.contains(within(tile).getByRole('button', { name: en.install }))).toBe(true)
+    expect(bottom.contains(within(tile).getByRole('button', { name: en.groupMore }))).toBe(true)
+    expect(tile.querySelector(`.${css.recentDesc}`)).toBeNull()
+  })
+
+  it('keeps the full name and description available on hover', async () => {
+    stubFetch({ '/dsh-market/registry': registry() })
+    render(<MarketSection {...props()} />)
+    await screen.findByRole('region', { name: en.recentlyAdded })
+    const first = recent().querySelector(`.${css.recentTile}`)!
+    const name = within(first).getByRole('link')
+    const desc = within(first).getByText('recent-high description')
+    // Native title is the beige system bubble; the host Tooltip is the one
+    // that matches the rest of the page.
+    expect(name.getAttribute('title')).toBeNull()
+    expect(desc.getAttribute('title')).toBeNull()
+    fireEvent.mouseEnter(name)
+    expect(screen.queryByRole('tooltip')).toBeNull()
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 400)) })
+    expect(screen.queryByRole('tooltip')).toBeNull()
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 300)) })
+    expect(screen.getByRole('tooltip').textContent).toBe('recent-high')
+    fireEvent.mouseLeave(name)
+    fireEvent.mouseEnter(desc)
+    expect(screen.queryByRole('tooltip')).toBeNull()
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 400)) })
+    expect(screen.queryByRole('tooltip')).toBeNull()
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 300)) })
+    expect(screen.getByRole('tooltip').textContent).toBe('recent-high description')
+    fireEvent.mouseLeave(desc)
+    expect(screen.queryByRole('tooltip')).toBeNull()
+  })
+
+  it('keeps extra recent tiles on a quiet horizontal scroll, capped at eight', async () => {
+    const extra = Array.from({ length: 10 }, (_, index) => entry(`recent-extra-${index}`, 800 - index, 1))
+    stubFetch({ '/dsh-market/registry': registry([...rows(), ...extra]) })
+    render(<MarketSection {...props()} />)
+    await screen.findByRole('region', { name: en.recentlyAdded })
+    const row = recent().querySelector('#dshm-recent-grid')!
+    // The teaser is one row: overflow, not a second catalog page and not a
+    // width-clipped subset mouse users would never reach. waitFor: a prior
+    // test may have left the module catalog cache at five entries.
+    expect(row.className).toContain(css.recentRow)
+    await waitFor(() => {
+      expect(recent().querySelectorAll(`.${css.recentTile}`)).toHaveLength(8)
+    })
+    expect(names(recent())).toEqual(['recent-high', ...extra.slice(0, 7).map(plugin => plugin.name)])
+  })
+
+  it('keeps extra tiles reachable by a quiet horizontal scroll that still peeks', () => {
+    // jsdom does no layout, so peek and overflow cannot be observed on the
+    // node. The contract lives in the stylesheet: overflow-x auto (not
+    // hidden, not a hidden scrollbar), tiles that do not shrink, and a
+    // 3.25-wide formula so ~800px still shows a sliver of the next card.
+    const sheet = readFileSync(resolve('src/client/Market.module.css'), 'utf8')
+    const rule = (sel: string) => {
+      const escaped = sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      const match = new RegExp(`^\\.${escaped}\\{([^}]*)\\}`, 'mu').exec(sheet)
+      expect(match, `.${sel} rule not found in Market.module.css`).not.toBeNull()
+      return match![1]!
+    }
+    const row = rule('recentRow')
+    expect(row).toContain('overflow-x:auto')
+    expect(row).not.toContain('overflow:hidden')
+    expect(row).toContain('scrollbar-width:thin')
+    expect(row).not.toContain('scrollbar-width:none')
+    const tiles = rule('recentRow > *')
+    expect(tiles).toContain('flex:0 0 auto')
+    expect(tiles).toContain('/ 3.25)')
+    expect(tiles).toContain('min-width:220px')
+    const collapsed = rule('recentRow.recentCollapsed')
+    expect(collapsed).toContain('overflow:hidden')
+  })
+
+  it('shows the recent strip again after retrying a failed catalog refresh', async () => {
     stubFetch({ '/dsh-market/registry': registry() })
     render(<MarketSection {...props()} />)
     await screen.findByRole('region', { name: en.recentlyAdded })
@@ -8857,14 +8952,10 @@ describe('recently added Discover row (#780)', () => {
     render(<MarketSection {...props()} />)
     await screen.findByText('catalog unavailable')
     expectHidden()
-    const detachedRow = observedRecent
     stubFetch({ '/dsh-market/registry': registry() })
     fireEvent.click(screen.getByRole('button', { name: en.loadRetry }))
     await screen.findByRole('region', { name: en.recentlyAdded })
-    expect(observedRecent).not.toBe(detachedRow)
-    expect(observedRecent?.isConnected).toBe(true)
-    act(() => resizeRecent(280))
-    expect(names(recent())).toEqual(recentNames.slice(0, 2))
+    expect(names(recent())).toEqual(recentNames)
   })
 
   it('opens only one menu for either copy of a recent plugin', async () => {
@@ -8888,7 +8979,7 @@ describe('recently added Discover row (#780)', () => {
     stubFetch({ '/dsh-market/registry': registry() })
     const { container } = render(<MarketSection {...props()} />)
     await screen.findByRole('region', { name: en.recentlyAdded })
-    expect(names(recent())).toEqual(recentNames.slice(0, 4))
+    expect(names(recent())).toEqual(recentNames)
     // Old, future and dateless entries still belong to the all-time main list.
     expect(rankedNames(container)).toEqual([
       'old-high', 'old', 'future', 'undated', 'recent-high', 'cutoff', 'zero', 'github-high', 'github-low',
@@ -8985,7 +9076,6 @@ describe('recently added Discover row (#780)', () => {
     await waitFor(() => {
       expect(fetchCalls.some(call => call.path === '/dsh-market/discovery-compatibility'
         && (call.body as { packages?: string[] } | undefined)?.packages?.includes('off-page-recent'))).toBe(true)
-      expect(within(recent()).getByText(en.hostRequirement.replace('{0}', '^0.1.2-alpha.2'))).toBeTruthy()
     })
     fireEvent.click(within(recent()).getByRole('button', { name: en.install }))
     const dialog = within(await screen.findByRole('dialog'))
@@ -9144,7 +9234,7 @@ describe('sidebar shortcut tip (#846)', () => {
   })
 })
 
-describe('最近收录 collapses and hides without losing its column measurement (#940)', () => {
+describe('最近收录 collapses and hides (#940)', () => {
   // The block only renders for entries added in the last 7 days, so the dates
   // are relative to the run, not fixed literals.
   const today = new Date().toISOString().slice(0, 10)
@@ -9170,8 +9260,8 @@ describe('最近收录 collapses and hides without losing its column measurement
     expect(gridOf(container)).toBeTruthy()
     fireEvent.click(toggle)
     expect(toggle.getAttribute('aria-expanded')).toBe('false')
-    // The point of the change: clipped, not unmounted. Unmounting takes the
-    // measured element away from the column-counting ResizeObserver.
+    // Clipped, not unmounted: the strip stays in the tree so expanding it
+    // does not rebuild the tiles.
     expect(gridOf(container)).toBeTruthy()
     expect(gridOf(container)!.className).toContain(css.recentCollapsed)
     expect(localStorage.getItem('dshm-recent-collapsed')).toBe('1')
@@ -9187,46 +9277,53 @@ describe('最近收录 collapses and hides without losing its column measurement
     expect(localStorage.getItem('dshm-recent-hidden')).toBe('0')
   })
 
-  it('remembers both choices across a remount', async () => {
+  it('points the restore row the same way as a collapsed heading', async () => {
+    mount()
+    const toggle = await screen.findByRole('button', { name: new RegExp(en.recentlyAdded) })
+    const openIcon = toggle.querySelector('svg')!.innerHTML
+    fireEvent.click(toggle)
+    const closedIcon = toggle.querySelector('svg')!.innerHTML
+    expect(closedIcon).not.toBe(openIcon)
+    fireEvent.click(toggle)
+    fireEvent.click(screen.getByRole('button', { name: en.recentHide }))
+    // Down is "already open". This row is closed; it must match the
+    // collapsed heading (right), not the expanded one.
+    expect(screen.getByRole('button', { name: en.recentShow }).querySelector('svg')!.innerHTML).toBe(closedIcon)
+  })
+
+  it('opens the tiles when bringing the hidden block back', async () => {
+    const { container } = mount()
+    const toggle = await screen.findByRole('button', { name: new RegExp(en.recentlyAdded) })
+    fireEvent.click(toggle)
+    expect(gridOf(container)!.className).toContain(css.recentCollapsed)
+    fireEvent.click(screen.getByRole('button', { name: en.recentHide }))
+    fireEvent.click(screen.getByRole('button', { name: en.recentShow }))
+    // "Show recently added" means see the tiles, not land on another
+    // collapsed heading that has to be clicked again.
+    expect(gridOf(container)!.className).not.toContain(css.recentCollapsed)
+    expect(screen.getByRole('button', { name: new RegExp(en.recentlyAdded) }).getAttribute('aria-expanded')).toBe('true')
+    expect(localStorage.getItem('dshm-recent-collapsed')).toBe('0')
+  })
+
+  it('remembers a hidden block across a remount, then opens it', async () => {
     localStorage.setItem('dshm-recent-collapsed', '1')
     localStorage.setItem('dshm-recent-hidden', '1')
     const { container } = mount()
     const restore = await screen.findByRole('button', { name: en.recentShow })
     expect(gridOf(container)).toBeNull()
     fireEvent.click(restore)
-    expect(gridOf(container)!.className).toContain(css.recentCollapsed)
+    expect(gridOf(container)!.className).not.toContain(css.recentCollapsed)
+    expect(localStorage.getItem('dshm-recent-hidden')).toBe('0')
+    expect(localStorage.getItem('dshm-recent-collapsed')).toBe('0')
   })
 
-  it('re-attaches the column observer after the block is hidden and shown again', async () => {
-    // An inert observer that hands the test its callback, so width changes are
-    // delivered on demand — jsdom has no layout.
-    const observers: Array<{ emit: (width: number) => void }> = []
-    class StubObserver {
-      constructor(callback: (entries: Array<{ contentRect: { width: number } }>) => void) {
-        observers.push({ emit: (width: number) => callback([{ contentRect: { width } }]) })
-      }
-      observe() {}
-      disconnect() {}
-    }
-    vi.stubGlobal('ResizeObserver', StubObserver)
-    const emitWidth = async (width: number, list: typeof observers) => {
-      await act(async () => { list.forEach(observer => observer.emit(width)) })
-    }
+  it('keeps a collapsed-only choice across a remount', async () => {
+    localStorage.setItem('dshm-recent-collapsed', '1')
     const { container } = mount()
-    await screen.findByRole('button', { name: new RegExp(en.recentlyAdded) })
-    const before = observers.length
-    expect(before).toBeGreaterThan(0)
-    await emitWidth(600, observers)
-    expect(gridOf(container)!.getAttribute('style')).toContain('repeat(2')
-    fireEvent.click(screen.getByRole('button', { name: en.recentHide }))
-    fireEvent.click(screen.getByRole('button', { name: en.recentShow }))
-    // Restoring unmounts and remounts the measured element, so the effect has
-    // to run again. Without recentHidden in its deps no new observer appears
-    // and the block stops following a resize from here on.
-    const fresh = observers.slice(before)
-    expect(fresh.length).toBeGreaterThan(0)
-    await emitWidth(300, fresh)
-    expect(gridOf(container)!.getAttribute('style')).toContain('repeat(1')
+    const toggle = await screen.findByRole('button', { name: new RegExp(en.recentlyAdded) })
+    expect(screen.queryByRole('button', { name: en.recentShow })).toBeNull()
+    expect(gridOf(container)!.className).toContain(css.recentCollapsed)
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
   })
 })
 

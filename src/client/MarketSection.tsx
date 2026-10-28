@@ -499,15 +499,16 @@ function renderMarkdown(md: string): Array<JSX.Element | string> {
   return out
 }
 
-export function OwnerAvatar({ name, owner, icon }: { name: string; owner: string; icon?: string | null }) {
+export function OwnerAvatar({ name, owner, icon, className }: { name: string; owner: string; icon?: string | null; className?: string }) {
   const [failed, setFailed] = useState(false)
   const [routeIndex, setRouteIndex] = useState(0)
   const [iconFailed, setIconFailed] = useState(false)
+  const av = className === undefined ? css.av : `${css.av} ${className}`
   const tile = iconFailed ? null : safeIcon(icon)
   if (tile !== null) {
     return (
       <img
-        className={css.av}
+        className={av}
         src={tile}
         alt=""
         loading="lazy"
@@ -519,7 +520,7 @@ export function OwnerAvatar({ name, owner, icon }: { name: string; owner: string
   }
   if (failed || owner === '') {
     return (
-      <div className={css.av} style={{ background: avatarColor(name) }}>
+      <div className={av} style={{ background: avatarColor(name) }}>
         {name.replace(/^dsh[-_]/i, '').charAt(0).toUpperCase() || 'P'}
       </div>
     )
@@ -531,7 +532,7 @@ export function OwnerAvatar({ name, owner, icon }: { name: string; owner: string
   const candidate = candidates[Math.min(routeIndex, candidates.length - 1)]!
   return (
     <img
-      className={css.av}
+      className={av}
       src={candidate.url}
       alt=""
       loading="lazy"
@@ -1990,7 +1991,7 @@ function readHostFilterPreference(): boolean {
  *
  * The block only appears on the discover tab with an empty search and both
  * filters on "all", so it cannot be avoided without changing what the user is
- * looking at — and it costs about a quarter of the first screen. Both states
+ * looking at. It is a one-row teaser, not a second catalog. Both states
  * are display preferences, not profile settings: since 0.1.7 the settings
  * surface is deliberately just `allowRestart`.
  *
@@ -1999,6 +2000,11 @@ function readHostFilterPreference(): boolean {
  */
 const RECENT_COLLAPSED_KEY = 'dshm-recent-collapsed'
 const RECENT_HIDDEN_KEY = 'dshm-recent-hidden'
+/** Cap for the Discover teaser. Extra tiles live in a quiet horizontal
+ * scroll so the block stays one row tall. */
+const RECENT_STRIP_LIMIT = 8
+/** Sweeping the strip must not flash tips; dwell before the host bubble. */
+const RECENT_TIP_DELAY_MS = 700
 function readRecentFlag(key: string): boolean {
   try { return localStorage.getItem(key) === '1' } catch { return false }
 }
@@ -3445,12 +3451,6 @@ export function MarketSection(props: MarketSectionProps) {
         }).filter(plugin => !pluginBlocked(plugin)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [data, tab, q, cat, timeRange, sortField, sortDir, lang, hostCompatibility, compatibleWithHost, blockedNameSet, installed, repoIdentities, repoHints])
-  const recentRowRef = useRef<HTMLDivElement>(null)
-  // Two per row, like the grid below it: three across read as a different
-  // list rather than the same one (and left an odd one out at any width).
-  // Two rows of two keeps the block square and the cards the size of the
-  // cards underneath.
-  const [recentColumns, setRecentColumns] = useState(1)
   const hasRecent = recentlyAdded.length > 0
   const [recentCollapsed, setRecentCollapsed] = useState(() => readRecentFlag(RECENT_COLLAPSED_KEY))
   const [recentHidden, setRecentHidden] = useState(() => readRecentFlag(RECENT_HIDDEN_KEY))
@@ -3466,24 +3466,13 @@ export function MarketSection(props: MarketSectionProps) {
   const showRecent = useCallback(() => {
     setRecentHidden(false)
     writeRecentFlag(RECENT_HIDDEN_KEY, false)
+    // The one-line control is "show recently added", not "restore the
+    // previous fold". Landing on a collapsed heading would be a second
+    // click to see the tiles.
+    setRecentCollapsed(false)
+    writeRecentFlag(RECENT_COLLAPSED_KEY, false)
   }, [])
-  useLayoutEffect(() => {
-    const row = recentRowRef.current
-    if (row === null || typeof ResizeObserver === 'undefined') return
-    const observer = new ResizeObserver(([entry]) => {
-      if (entry !== undefined) setRecentColumns(Math.min(2, Math.max(1, Math.floor((entry.contentRect.width + 10) / 290))))
-    })
-    observer.observe(row)
-    return () => observer.disconnect()
-    // recentHidden belongs in the deps: hiding unmounts the row, so `ref` is
-    // null when this effect runs and it bails out. Restoring has to re-run it,
-    // or the observer is never attached and the block stops tracking width
-    // (it reopens at whatever column count it last saw, and never follows a
-    // resize again) — the trap #940's plan 1 walks into.
-    // recentCollapsed deliberately stays out: collapsing clips in place, the
-    // element keeps its width, and the existing observer stays correct.
-  }, [hasRecent, loadError, recentHidden])
-  const recentPlugins = recentlyAdded.slice(0, recentColumns * 2)
+  const recentPlugins = recentlyAdded.slice(0, RECENT_STRIP_LIMIT)
   const { currentPage, totalPages, pageSize, goToPage, changePageSize } =
     usePagination(plugins.length, [q, cat, sortField, sortDir, timeRange, compatibleWithHost], scrollToTop)
   const pagePlugins = plugins.slice((currentPage - 1) * pageSize, currentPage * pageSize)
@@ -5803,10 +5792,75 @@ export function MarketSection(props: MarketSectionProps) {
         </label>
       ))
 
-  const pluginCard = (p: RegistryPlugin, menuKey = p.url) => {
-    const desc = (p.description && (p.description[lang] || p.description.en)) || ''
+  const installAction = (p: RegistryPlugin) => {
     const done = doneUrls.includes(p.url) || hotUrls.includes(p.url)
     const already = isInstalled(p, catalogInstalled, repoIdentities, data?.plugins, repoHints)
+    const busy = busyUrl === p.url
+    const record = recordForUrl(records, p.url)
+    const blocked = record !== null && (record.state === 'input' || record.state === 'failed')
+    const queued = record !== null && record.state === 'queued'
+    return done
+      ? <span className={css.okState}>{t('installedBadge')}</span>
+      : already
+        ? <span className={css.okState}>{t('alreadyInstalled')}</span>
+        : busy
+          ? <Button variant="outline" size="sm" className={css.installBtn} disabled>{t('installing')}</Button>
+          : queued
+            ? (
+                <button type="button" className={css.cardBlockedMark} onClick={openOperations}>
+                  <IconWarningOutline16 size={13} />
+                  {t('queuedBadge')}
+                </button>
+              )
+            : blocked
+              ? (
+                  <button type="button" className={css.cardBlockedMark} onClick={openOperations}>
+                    <IconWarningOutline16 size={13} />
+                    {t('opBlockedCard')}
+                  </button>
+                )
+              : (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className={css.installBtn}
+                    disabled={busyUrl !== null || !envReady}
+                    onClick={() => setConfirming(p)}
+                  >{t('install')}</Button>
+                )
+  }
+
+  const recentTile = (p: RegistryPlugin) => {
+    const desc = (p.description && (p.description[lang] || p.description.en)) || ''
+    const record = recordForUrl(records, p.url)
+    const blocked = record !== null && (record.state === 'input' || record.state === 'failed')
+    return (
+      <div key={p.url} className={blocked ? `${css.recentTile} ${css.cardBlocked}` : css.recentTile}>
+        <div className={css.recentTitle}>
+          <OwnerAvatar name={p.name} owner={p.owner || ''} icon={p.icon ?? undefined} className={css.recentAv} />
+          <div className={css.recentName}>
+            <Tooltip label={p.name} side="bottom" maxWidth={320} delayMs={RECENT_TIP_DELAY_MS}>
+              <a className={`${css.nm} ${css.nmLink}`} href={p.url} target="_blank" rel="noreferrer" aria-label={`${p.name} — ${t('repoLink')}`}>
+                {pluginName(p.name, p.npm)}
+              </a>
+            </Tooltip>
+          </div>
+          {installAction(p)}
+        </div>
+        <div className={css.recentBottom}>
+          {desc !== '' && (
+            <Tooltip label={desc} side="bottom" maxWidth={320} delayMs={RECENT_TIP_DELAY_MS}>
+              <p className={css.recentDesc} tabIndex={0}>{desc}</p>
+            </Tooltip>
+          )}
+          {renderPluginMenu(p, `recent:${p.url}`)}
+        </div>
+      </div>
+    )
+  }
+
+  const pluginCard = (p: RegistryPlugin, menuKey = p.url) => {
+    const desc = (p.description && (p.description[lang] || p.description.en)) || ''
     const busy = busyUrl === p.url
     const replacement = replacementOf(p)
     // The card reflects its own latest operation. Without this a rejected
@@ -5814,7 +5868,6 @@ export function MarketSection(props: MarketSectionProps) {
     // is the obvious next move — which is how the same clash gets hit twice.
     const record = recordForUrl(records, p.url)
     const blocked = record !== null && (record.state === 'input' || record.state === 'failed')
-    const queued = record !== null && record.state === 'queued'
     const compatibilityKey = hostCompatibilityKey(p)
     const compatibility = compatibilityKey === null ? undefined : hostCompatibility[compatibilityKey]
     const hostRequirementLabel = compatibility?.requirement !== null && compatibility?.requirement !== undefined
@@ -5861,35 +5914,7 @@ export function MarketSection(props: MarketSectionProps) {
               height whether or not it had anything else to say. */}
           <span className={css.grow} />
           <div className={css.cardAction}>
-            {done
-              ? <span className={css.okState}>{t('installedBadge')}</span>
-              : already
-                ? <span className={css.okState}>{t('alreadyInstalled')}</span>
-                : busy
-                  ? <Button variant="outline" size="sm" className={css.installBtn} disabled>{t('installing')}</Button>
-                  : queued
-                    ? (
-                        <button type="button" className={css.cardBlockedMark} onClick={openOperations}>
-                          <IconWarningOutline16 size={13} />
-                          {t('queuedBadge')}
-                        </button>
-                      )
-                    : blocked
-                    ? (
-                        <button type="button" className={css.cardBlockedMark} onClick={openOperations}>
-                          <IconWarningOutline16 size={13} />
-                          {t('opBlockedCard')}
-                        </button>
-                      )
-                    : (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className={css.installBtn}
-                          disabled={busyUrl !== null || !envReady}
-                          onClick={() => setConfirming(p)}
-                        >{t('install')}</Button>
-                      )}
+            {installAction(p)}
           </div>
         </div>
         <CardDesc text={desc} t={t} />
@@ -6979,9 +7004,9 @@ export function MarketSection(props: MarketSectionProps) {
                     </div>
                     {hasRecent && (recentHidden
                       ? <button type="button" className={css.recentShow} onClick={showRecent}>
-                          <IconChevronDownOutline14 size={14} />{t('recentShow')}
+                          <IconChevronRightOutline14 size={14} />{t('recentShow')}
                         </button>
-                      : <section aria-labelledby="dshm-recently-added">
+                      : <section className={css.recentBlock} aria-labelledby="dshm-recently-added">
                           <div className={css.recentHead}>
                             <h3 id="dshm-recently-added" className={css.favoritesSectionHead}>
                               <button
@@ -6997,15 +7022,12 @@ export function MarketSection(props: MarketSectionProps) {
                             </h3>
                             <Button variant="ghost" size="sm" className={css.recentHide} onClick={hideRecent}>{t('recentHide')}</Button>
                           </div>
-                          {/* #940: clipped in place, never unmounted — the grid is what
-                              the column-counting ResizeObserver measures. */}
+                          {/* #940: clipped in place, never unmounted. */}
                           <div
                             id="dshm-recent-grid"
-                            ref={recentRowRef}
                             className={recentCollapsed ? `${css.recentRow} ${css.recentCollapsed}` : css.recentRow}
-                            style={{ gridTemplateColumns: `repeat(${recentColumns}, minmax(0, 1fr))` }}
                           >
-                            {recentPlugins.map(plugin => pluginCard(plugin, `recent:${plugin.url}`))}
+                            {recentPlugins.map(plugin => recentTile(plugin))}
                           </div>
                         </section>
                     )}
