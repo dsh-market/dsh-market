@@ -985,6 +985,22 @@ export function bundleOptOutRowIds(dir: string): string[] {
 }
 
 /**
+ * Row ids a package's own patch sources decide with an EXPRESSION rather
+ * than a literal — `disabled: !!js …` (#1043). The bundle's default for
+ * these rows is whatever the condition evaluates to on the host that
+ * composes the profile, so no literal the market writes above the bundle
+ * layer can stand in for the user: force-writing `disabled: false` switches
+ * on a row the environment keeps off (a TUI row on a Desktop without the TUI
+ * services), which then holds the package pending at activation and fails
+ * the next install's check.
+ *
+ * Reads the same two patch sources as `bundleOptOutRowIds` above.
+ */
+export function bundleExpressionRowIds(dir: string): string[] {
+  return declaredPatchRowIds(dir, 'expressionIds')
+}
+
+/**
  * Row ids a package's own patch sources declare for one role — the loop the
  * two readers above and below share.
  *
@@ -1001,7 +1017,7 @@ export function bundleOptOutRowIds(dir: string): string[] {
  * one (`readBundlePatchRows`) refuses the whole declaration, because the host
  * loads none of a patch it cannot read completely.
  */
-function declaredPatchRowIds(dir: string, role: 'insertedIds' | 'disabledIds'): string[] {
+function declaredPatchRowIds(dir: string, role: 'insertedIds' | 'disabledIds' | 'expressionIds'): string[] {
   const ids = new Set<string>()
   const read = (file: string): void => {
     try {
@@ -1051,13 +1067,17 @@ export function shippedInsertedRowIds(dir: string): string[] {
  * rows, but for "what does this bundle bring in" any row counts. `insertedIds`
  * is the subset under an `insert:` key (#147) — and "under `insert:`" is not
  * the same as "deeper than it", because a row's `config:` carries its payload
- * (#841).
+ * (#841). `expressionIds` (#1043) is the subset whose `disabled` is decided
+ * by an expression rather than a literal — a row the market must never
+ * answer with a literal of its own, because the host re-evaluates the
+ * condition on every compose and no user-layer value can stand in for it.
  */
-export function parsePatchRows(text: string): { names: string[]; ids: string[]; insertedIds: string[]; disabledIds: string[] } {
+export function parsePatchRows(text: string): { names: string[]; ids: string[]; insertedIds: string[]; disabledIds: string[]; expressionIds: string[] } {
   const names: string[] = []
   const ids: string[] = []
   const insertedIds: string[] = []
   const disabledIds: string[] = []
+  const expressionIds: string[] = []
   {
     // CRLF too, for consistency with the hot-mount parser, which a
     // Windows-authored patch genuinely broke. Here it changes no outcome
@@ -1154,6 +1174,35 @@ export function parsePatchRows(text: string): { names: string[]; ids: string[]; 
     }
 
     /**
+     * Whether the row holding the `id:` at `from` declares `disabled` with
+     * a value that is not the literal `true` or `false` — an expression such
+     * as `disabled: !!js …`, or anything else the market cannot read (#1043).
+     * The bundle's own default for such a row is decided by the host at
+     * compose time, so a literal written above it never speaks for the user:
+     * force-enabling it switches on a row the environment keeps off. A row
+     * with NO `disabled` key is not decided at all and stays out — its
+     * default is plain "on".
+     *
+     * Same row span as `rowDeclaresDisabled`, and for the same reason: the
+     * marker line and the row's own keys at the key column, never a nested
+     * block.
+     */
+    const rowDeclaresExpressionDisabled = (from: number): boolean => {
+      const start = rowStart(from)
+      if (start === -1) return false
+      const markerIndent = rows[start].indent
+      const col = keyCol(start)
+      for (let j = start; j < rows.length; j++) {
+        const row = rows[j]
+        if (j > start && row.indent <= markerIndent) break
+        if (j > start && (row.indent !== col || isDash(j))) continue
+        const value = /^\s*-?\s*disabled:\s*(.*)$/u.exec(row.line)
+        if (value !== null && !/^(?:true|false)\s*$/u.test(value[1])) return true
+      }
+      return false
+    }
+
+    /**
      * Whether the key at `keyIndent` holds a block sequence. YAML lets that
      * sequence sit at the key's own column (`config:` then `- id:` without
      * further indent), so a `- ` there is the value, not a sibling.
@@ -1203,6 +1252,9 @@ export function parsePatchRows(text: string): { names: string[]; ids: string[]; 
         // decided (#876) — see bundleOptOutRowIds. Payload ids (#841) are not
         // rows and never land here.
         if (payloadIndent === null && rowDeclaresDisabled(i) && !disabledIds.includes(id[1])) disabledIds.push(id[1])
+        // An expression-decided row is the third shape: neither opt-in nor
+        // plain, and the market must not write over it (#1043).
+        if (payloadIndent === null && rowDeclaresExpressionDisabled(i) && !expressionIds.includes(id[1])) expressionIds.push(id[1])
         // A top-level `- id:` row closes any open insert block: it is a
         // sibling of `- insert:`, not a member of it.
         if (insertIndent !== null && indent > insertIndent) {
@@ -1213,7 +1265,7 @@ export function parsePatchRows(text: string): { names: string[]; ids: string[]; 
       }
     }
   }
-  return { names, ids, insertedIds, disabledIds }
+  return { names, ids, insertedIds, disabledIds, expressionIds }
 }
 
 /**
