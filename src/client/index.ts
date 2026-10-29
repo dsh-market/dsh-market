@@ -15,6 +15,7 @@ import { MarketErrorBoundary } from './ErrorBoundary.tsx'
 import { MarketSection } from './MarketSection.tsx'
 import { marketElement } from './market-element.ts'
 import { createSectionGate } from './section-gate.ts'
+import { createEntryVisibility } from './entry-visibility.ts'
 import { exportMarketLog } from './self-check.ts'
 import { SettingsCard } from './SettingsCard.tsx'
 import { installSettingsNavIcon } from './settings-nav-icon.ts'
@@ -221,16 +222,59 @@ function mountMarket(ctx: MarketClientContext): void {
     return typeof off === 'function' ? off as () => void : () => {}
   })
 
+  // The Plugins page's own tab row (dsh 0.2.1-alpha.4+). The page that
+  // shows 已安装 next to 发现 declares `plugins.tab` for exactly this: another
+  // plugin adds a tab after 已安装 and draws whatever it likes there. The
+  // official Discover tab is itself such a registration, which is why the
+  // market belongs here rather than only behind Settings — same page, one
+  // click from 已安装, and no dependency on where each host puts Settings.
+  //
+  // Order −1 places the market between 已安装 and the host's own 发现 tab:
+  // the same adjacency the sidebar row uses, and the market is the fuller
+  // catalog of the two.
+  //
+  // Detection is the slot, as everywhere else in this file: hosts before
+  // 0.2.1-alpha.4 never declare it (their tab row is `settings.plugins.tab`,
+  // which the market already occupies), so nothing is added there. The owner
+  // props this slot hands over (`install`, `openPackage`) drive the host's own
+  // install dialog and Installed list; the market brings both of its own, so
+  // they are deliberately not used — routing installs through the host would
+  // take the progress, the task list and the cancel with them.
+  //
+  // The gate (#1015): this entry is now the user's to keep or hide, but only
+  // where the slot exists — on older hosts there is nothing to gate.
+  const pluginsTabGate = createSectionGate(() => {
+    const off = ctx.slots.register({
+      name: 'plugins.tab',
+      id: NS,
+      order: -1,
+      label: () => t('nav'),
+      locale: NS,
+      inject: () => ({ t }),
+    }, () => buildMarketElement({ surface: 'plugins' }))
+    return typeof off === 'function' ? off as () => void : () => {}
+  })
+
+  // One controller owns both page entries and their saved answers (#1015).
+  // The sidebar's two facts are read live rather than copied: its switch
+  // lives in the same card, and a copy would go stale the moment it flips.
+  const entries = createEntryVisibility({
+    settingsGate: sectionGate,
+    pluginsTabGate,
+    fetch: (...args) => fetch(...args),
+    sidebarSupported: () => sidebar?.supported() === true,
+    sidebarShown: () => sidebar?.shown() === true,
+  })
+  void entries.load()
+
   // Whether the host offers a settings page at all. dsh 0.2.1 moved the
   // Settings dialog into the account menu, but the section slot still
   // arrives and the market still renders there. Detection is the slot, as
   // everywhere else here, and `refresh()` re-answers when it arrives: a host
   // that declares sidebar panels without serving a settings section would
   // otherwise leave the market with no door but the row (#846).
-  let settingsSeat = false
   ctx.slots.inject('settings.section', () => {
-    settingsSeat = true
-    sectionGate.available()
+    entries.markSettingsSection()
     sidebar?.refresh()
   })
 
@@ -262,7 +306,9 @@ function mountMarket(ctx: MarketClientContext): void {
   sidebar = createSidebarEntry({
     gate: sidebarGate,
     fetch: (...args) => fetch(...args),
-    hasOtherSeat: () => settingsSeat,
+    // Settings and the Plugins page tab are both doors now (#1015), and
+    // either one makes this row optional rather than the only way in.
+    hasOtherSeat: () => entries.settingsSupported() || entries.pluginsTabSupported(),
   })
   void sidebar.load()
   ctx.slots.inject('sidebar.panellist', () => { sidebar?.markSupported() })
@@ -285,7 +331,7 @@ function mountMarket(ctx: MarketClientContext): void {
     hostNavigation.attach({ openBundle: (name) => { scoped.pluginNavigation.openBundle(name) } })
   })
   const retire = (): void => {
-    sectionGate.retire()
+    entries.retire()
     sidebarGate.retire()
   }
 
@@ -297,8 +343,11 @@ function mountMarket(ctx: MarketClientContext): void {
   // can still ask for them.
   const marketControl = {
     version: 1 as const,
-    setSettingsVisible: (visible: boolean): void => { sectionGate.setVisible(visible) },
-    settingsVisible: (): boolean => sectionGate.visible(),
+    // The host's own preference (#602), ANDed with the user's saved answer
+    // by the entry controller (#1015): a host that renders the market itself
+    // must not get the duplicate entry back because a user flipped a switch.
+    setSettingsVisible: (visible: boolean): void => { entries.setHostSettingsVisible(visible) },
+    settingsVisible: (): boolean => entries.settingsVisible(),
     /**
      * The market's panel as an element, for a host that renders it inside
      * its own container. Same page, same React instance — this package's
@@ -331,7 +380,7 @@ function mountMarket(ctx: MarketClientContext): void {
       key: NS,
       locale: NS,
       inject: () => ({ t }),
-    }, () => h(SettingsCard, { t, sidebar, onRemoved: retire })))
+    }, () => h(SettingsCard, { t, sidebar, entries, onRemoved: retire })))
   })
 
   // The card's seat on 0.1.7+ (#677). The host moved a plugin's own
@@ -361,7 +410,7 @@ function mountMarket(ctx: MarketClientContext): void {
     // `summary` is this entry's one-liner in the list, which the market's own
     // description already carries; the card is the page.
     ? null
-    : h(SettingsCard, { t, sidebar, onRemoved: retire })))
+    : h(SettingsCard, { t, sidebar, entries, onRemoved: retire })))
 
   // The seat on the 0.1.7 line (#722). That release renamed the client's
   // `settingsScope` service to `settings`, so the nested inject above stopped
@@ -396,40 +445,16 @@ function mountMarket(ctx: MarketClientContext): void {
     label: () => t('nav'),
     locale: NS,
     inject: () => ({ t }),
-  }, () => h(SettingsCard, { t, sidebar, onRemoved: retire })))
+  }, () => h(SettingsCard, { t, sidebar, entries, onRemoved: retire })))
 
-  // The Plugins page's own tab row (dsh 0.2.1-alpha.4+). The page that
-  // shows 已安装 next to 发现 declares `plugins.tab` for exactly this: another
-  // plugin adds a tab after 已安装 and draws whatever it likes there. The
-  // official Discover tab is itself such a registration, which is why the
-  // market belongs here rather than only behind Settings — same page, one
-  // click from 已安装, and no dependency on where each host puts Settings.
-  //
-  // Order −1 places the market between 已安装 and the host's own 发现 tab:
-  // the same adjacency the sidebar row uses, and the market is the fuller
-  // catalog of the two.
-  //
-  // Detection is the slot, as everywhere else in this file: hosts before
-  // 0.2.1-alpha.4 never declare it (their tab row is `settings.plugins.tab`,
-  // which the market already occupies), so nothing is added there. The owner
-  // props this slot hands over (`install`, `openPackage`) drive the host's own
-  // install dialog and Installed list; the market brings both of its own, so
-  // they are deliberately not used — routing installs through the host would
-  // take the progress, the task list and the cancel with them.
-  const pluginsPageTabCtx = ctx as unknown as {
-    slots: {
-      inject(name: string, register: () => unknown): void
-      register(options: Record<string, unknown>, render: () => unknown): unknown
-    }
-  }
-  pluginsPageTabCtx.slots.inject('plugins.tab', () => pluginsPageTabCtx.slots.register({
-    name: 'plugins.tab',
-    id: NS,
-    order: -1,
-    label: () => t('nav'),
-    locale: NS,
-    inject: () => ({ t }),
-  }, () => buildMarketElement({ surface: 'plugins' })))
+  // The Plugins page tab itself (#1015). Its registration now lives behind
+  // `pluginsTabGate` above; this only tells the controller the slot exists,
+  // which is also what makes the sidebar row no longer a candidate for the
+  // market's only door.
+  ctx.slots.inject('plugins.tab', () => {
+    entries.markPluginsTab()
+    sidebar?.refresh()
+  })
 
   const Toast = () => h(InstallToast, { t })
   ctx.slots.inject('shell.overlay', () => ctx.slots.register({

@@ -19,7 +19,7 @@ import { settingsNamespaceState } from './settings.ts'
 import {
   buildEnvFromUnknown, cleanHotDir, hotMount, hotUnmount, listHotMounts, MAX_BLOCKED, MAX_BLOCKED_NAME, MAX_FAVORITES, MAX_NOTE, MAX_UPDATE_EXEMPT,
   mountClientOnlyDeps, purgeMarketState, readMarketState, writeMarketState,
-  type BrokenReason,
+  type BrokenReason, type MarketState,
 } from './hot.ts'
 import { createGroup, deleteGroup, removeFromGroups, renameGroup, setGroupMembers } from './groups.ts'
 import { dshHostInfo, findDshInstallDir } from './dsh-install.ts'
@@ -596,6 +596,23 @@ export function mountMarketRoutes(
   setCustomGithubProxy(marketState.githubProxy ?? null)
   const disabled = marketState.disabled
   /**
+   * The saved answer to "which doors into the market are open" (#1015).
+   *
+   * The HOST decides which doors exist; this only combines the user's
+   * preferences, because a request handler cannot see the browser's slots.
+   * `sidebarEntry` defaults off while the two page tabs default on, so
+   * "every door closed" is expressible — and has to be refused before it
+   * reaches disk. A market with no entry can only be recovered by editing
+   * state.json or removing the package, which the card must never cause.
+   */
+  const entryDoors = (state: MarketState = marketState): { settingsSection: boolean; pluginsTab: boolean; sidebarEntry: boolean } => ({
+    settingsSection: state.settingsSection !== false,
+    pluginsTab: state.pluginsTab !== false,
+    sidebarEntry: state.sidebarEntry === true,
+  })
+  const closesEveryDoor = (doors: { settingsSection: boolean; pluginsTab: boolean; sidebarEntry: boolean }): boolean =>
+    !doors.settingsSection && !doors.pluginsTab && !doors.sidebarEntry
+  /**
    * Packages whose files were replaced while their host half was already
    * running, this process only.
    *
@@ -702,6 +719,10 @@ export function mountMarketRoutes(
     // writer that saves `marketState` whole (#435, #728).
     marketState.updateExempt = fresh.updateExempt
     marketState.githubProxy = fresh.githubProxy
+    // A restore or an external writer can change these two too; a stale copy
+    // here would put the old answer back on the next whole-state save (#435).
+    marketState.settingsSection = fresh.settingsSection
+    marketState.pluginsTab = fresh.pluginsTab
     // Refreshed like the rest: a declaration this route dropped (#663) must
     // survive another writer's read-back, which is the whole point of this
     // list (#435).
@@ -5946,10 +5967,95 @@ sendJson(response, 200, { updates })
             sendJson(response, 400, { error: 'enabled must be true or false' })
             return
           }
+          // The row is one of three doors (#1015). Turning it off while both
+          // page entries are already hidden would leave the market with no
+          // way in at all, so the pair of preferences is answered together.
+          if (!body.enabled && closesEveryDoor({ ...entryDoors(), sidebarEntry: false })) {
+            sendJson(response, 409, { error: 'at least one market entry must stay visible / 至少保留一个市场入口' })
+            return
+          }
           marketState.sidebarEntry = body.enabled
           writeMarketState(activeProfileDir, marketState)
           logEvent('info', 'sidebar', `sidebar entry ${body.enabled ? 'on' : 'off'}`)
           sendJson(response, 200, { ok: true, enabled: body.enabled })
+        } catch (error) {
+          sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    }),
+
+    /**
+     * Whether the market's own page stays in Settings and whether it keeps
+     * its tab on the host's Plugins page (#1015).
+     *
+     * One route for both because the rule that binds them spans all three
+     * doors: refusing the last one needs the sidebar's saved answer, which
+     * each handler here can see. Two separate routes would each know half
+     * the state and each have to re-derive it.
+     *
+     * GET as well as POST: the browser half registers both entries during
+     * page load, before /status — which probes pnpm on every call.
+     *
+     * The HOST still decides which of these doors exist (older hosts have no
+     * Plugins tab, and the desktop shell may hide the settings section).
+     * That half is answered in the browser; this route only stores and
+     * combines the user's answers.
+     */
+    registerRoute({
+      kind: 'exact',
+      path: '/dsh-market/entry-visibility',
+      handler: async (request, response) => {
+        if (request.method === 'GET') {
+          const doors = entryDoors()
+          sendJson(response, 200, { settingsSection: doors.settingsSection, pluginsTab: doors.pluginsTab })
+          return
+        }
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'GET, POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) {
+          sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        try {
+          const body = (await readJsonBody(request)) as { settingsSection?: unknown; pluginsTab?: unknown } | null
+          const hasSection = body !== null && body.settingsSection !== undefined
+          const hasTab = body !== null && body.pluginsTab !== undefined
+          if (!hasSection && !hasTab) {
+            sendJson(response, 400, { error: 'settingsSection or pluginsTab is required' })
+            return
+          }
+          if ((hasSection && typeof body?.settingsSection !== 'boolean') || (hasTab && typeof body?.pluginsTab !== 'boolean')) {
+            sendJson(response, 400, { error: 'settingsSection and pluginsTab must be true or false' })
+            return
+          }
+          const next = {
+            ...entryDoors(),
+            ...(hasSection ? { settingsSection: body?.settingsSection as boolean } : {}),
+            ...(hasTab ? { pluginsTab: body?.pluginsTab as boolean } : {}),
+          }
+          if (closesEveryDoor(next)) {
+            sendJson(response, 409, { error: 'at least one market entry must stay visible / 至少保留一个市场入口' })
+            return
+          }
+          // Written through the long-lived object like the sidebar choice, so
+          // a later whole-state save cannot put the old answer back (#435).
+          // `true` is the default: the writer omits it, clearing any stored
+          // OFF rather than pinning today's default. The write happens BEFORE
+          // the in-memory copy changes, so a failed write cannot leave a GET
+          // reporting an answer that never reached disk.
+          const nextState = {
+            ...marketState,
+            ...(hasSection ? { settingsSection: body?.settingsSection as boolean } : {}),
+            ...(hasTab ? { pluginsTab: body?.pluginsTab as boolean } : {}),
+          }
+          writeMarketState(activeProfileDir, nextState)
+          marketState.settingsSection = nextState.settingsSection
+          marketState.pluginsTab = nextState.pluginsTab
+          logEvent('info', 'entries', `settings section ${next.settingsSection ? 'on' : 'off'}, plugins tab ${next.pluginsTab ? 'on' : 'off'}`)
+          sendJson(response, 200, { ok: true, settingsSection: next.settingsSection, pluginsTab: next.pluginsTab })
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
         }

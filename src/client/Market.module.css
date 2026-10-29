@@ -1084,6 +1084,13 @@
 .setLabelBox{display:flex;flex-direction:column;gap:3px;flex:1;min-width:0}
 .setLabel{font-size:13px;line-height:20px}
 .setHint{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#8b93a1)}
+/* The entry switches (#1015) are advanced discoverability: collapsed by
+   default, and separated from the settings below because the group is one
+   decision, not another row of it. */
+.setAdvanced{border-bottom:1px solid var(--dsw-alias-border-l2,#e5e7eb)}
+.setAdvancedHead{appearance:none;width:100%;font:inherit;color:inherit;text-align:left;cursor:pointer;background:0 0;border:0;display:flex;align-items:center;gap:12px;padding:12px 0}
+.setAdvancedHead:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#4f6ef7);outline-offset:-2px}
+.setAdvancedBody{padding-bottom:4px}
 /* The confirm block is deliberately NOT a modal: the consequence copy has to
    stay readable while the checkbox is being decided. */
 .setConfirm{border-top:1px solid var(--dsw-alias-border-l2,#e5e7eb);display:flex;flex-direction:column;gap:8px;padding:12px 0 4px}

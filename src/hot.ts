@@ -312,15 +312,34 @@ export interface MarketState {
    *
    * Off unless the user turned it on: the sidebar's global rows are the
    * host's own pages, and installing plugins is occasional, so a row nobody
-   * asked for would be a permanent fixture for an occasional task. The
-   * settings entry stays either way — it is the way in on hosts with no
-   * sidebar panels, and turning this off must never leave the market
+   * asked for would be a permanent fixture for an occasional task. The page
+   * entries are the defaults, and the last-door rule (#1015) — enforced by
+   * the route — is what keeps turning this off from leaving the market
    * unreachable.
    *
    * Omission preserves, an explicit value wins — the githubProxy contract,
    * because turning it off has to be expressible.
    */
   sidebarEntry?: boolean
+  /**
+   * Whether the market still lists its own page in Settings (#1015).
+   *
+   * Absent means shown. Only an explicit `false` is stored, unlike
+   * `sidebarEntry`: this entry has always been on, and every host before
+   * 0.2.1 offers it as the only door, so an absent field is the ordinary
+   * case rather than an unanswered question. Turning it back on clears the
+   * field so a later default change still reaches users who never touched it.
+   */
+  settingsSection?: boolean
+  /**
+   * Whether the market still adds its tab to the host's Plugins page
+   * (#1015). Absent means shown, on the same contract as
+   * {@link settingsSection}.
+   *
+   * A host that never declares the slot has no tab to hide; the saved
+   * answer is kept for the hosts that do.
+   */
+  pluginsTab?: boolean
   /**
    * Packages the market removed from the profile's own declarations because
    * the build on disk can no longer compose (#663).
@@ -503,6 +522,8 @@ export function readMarketState(profileDir: string): MarketState {
       updateExempt?: unknown
       brokenPlugins?: unknown
       sidebarEntry?: unknown
+      settingsSection?: unknown
+      pluginsTab?: unknown
     }
     const disabled = uniqueStrings(state.disabled !== undefined ? state.disabled : state.disabledSkins)
     const groups: Record<string, string[]> = {}
@@ -550,6 +571,10 @@ export function readMarketState(profileDir: string): MarketState {
       // this switch is the market's only entry, so "the user turned it off"
       // must be distinguishable from "nobody has chosen yet" (#846).
       ...(typeof state.sidebarEntry === 'boolean' ? { sidebarEntry: state.sidebarEntry } : {}),
+      // Only `false` is a stored answer here: shown is the default, and a
+      // state file that says anything else reads as "never touched".
+      ...(state.settingsSection === false ? { settingsSection: false } : {}),
+      ...(state.pluginsTab === false ? { pluginsTab: false } : {}),
       buildEnv: buildEnvFromUnknown(state.buildEnv),
     }
   } catch (error) {
@@ -648,6 +673,14 @@ export function writeMarketState(profileDir: string, state: MarketState): void {
   const sidebarEntry = Object.prototype.hasOwnProperty.call(state, 'sidebarEntry')
     ? state.sidebarEntry
     : onDisk.sidebarEntry
+  // Shown is the default, so only `false` needs writing. An omitted field
+  // still falls back to disk: partial callers must not erase the choice.
+  const settingsSection = Object.prototype.hasOwnProperty.call(state, 'settingsSection')
+    ? state.settingsSection
+    : onDisk.settingsSection
+  const pluginsTab = Object.prototype.hasOwnProperty.call(state, 'pluginsTab')
+    ? state.pluginsTab
+    : onDisk.pluginsTab
   publishFile(stateFile(profileDir), JSON.stringify({
     disabled: [...state.disabled],
     groups: state.groups,
@@ -673,6 +706,10 @@ export function writeMarketState(profileDir: string, state: MarketState): void {
     // is the market's only entry, so a deliberate OFF has to survive a reload
     // instead of being read back as "never chosen" (#846).
     ...(typeof sidebarEntry === 'boolean' ? { sidebarEntry } : {}),
+    // Only the OFF is written; `true` means "the default", so re-enabling
+    // clears the field rather than pinning today's default forever (#1015).
+    ...(settingsSection === false ? { settingsSection: false } : {}),
+    ...(pluginsTab === false ? { pluginsTab: false } : {}),
     ...(state.region === undefined ? {} : { region: state.region }),
     ...(state.regionAuto === true ? { regionAuto: true } : {}),
     // Omitted while not saved, so a card that was never touched keeps

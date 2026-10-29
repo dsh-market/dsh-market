@@ -3,7 +3,9 @@
  *
  * Off by default: the sidebar's global rows are the host's own pages, and
  * installing plugins is occasional, so the row is something a user turns on
- * in the market's settings card. The settings entry stays either way.
+ * in the market's settings card. The page entries (Settings, and the host's
+ * Plugins tab where it exists) are the defaults; the card refuses to let
+ * the last open door close, this row included (#1015).
  *
  * Two facts decide whether the row exists, and they arrive independently:
  * whether the host declares `sidebar.panellist` at all (hosts before the
@@ -36,6 +38,12 @@ export interface SidebarEntry {
   /** The user's choice as last confirmed by the server. */
   enabled(): boolean
   /**
+   * The row is registered right now. Not the same as {@link enabled}: on a
+   * host where this row is the only door it is shown before the user has
+   * answered, and a deliberate OFF hides it even there (#846).
+   */
+  shown(): boolean
+  /**
    * The initial `load()` finished (ok, refused, or failed). Until then
    * `enabled()` is still the default off, and must not be treated as a
    * confirmed choice — the settings tip would otherwise flash for users
@@ -43,13 +51,14 @@ export interface SidebarEntry {
    */
   ready(): boolean
   /**
-   * True when the host offers no settings section at all, so this row is the
-   * market's ONLY entry. The row is then shown by default — a default that
-   * leaves the market unreachable is not a default, it is a missing feature —
-   * and the card says so instead of promising a Settings entry that does not
-   * exist. On the hosts that ship today the section is always there (dsh
-   * 0.2.1 kept it and moved Settings into the account menu), so this stays a
-   * guard rather than a branch users see (#846).
+   * True when the host offers NO other entry — no settings section and no
+   * Plugins page tab (#1015), so this row is the market's ONLY door. The row
+   * is then shown by default — a default that leaves the market unreachable
+   * is not a default, it is a missing feature — and the card says so instead
+   * of promising a Settings entry that does not exist. On the hosts that
+   * ship today the section is always there (dsh 0.2.1 kept it and moved
+   * Settings into the account menu), so this stays a guard rather than a
+   * branch users see (#846).
    */
   onlyDoor(): boolean
   /**
@@ -72,7 +81,8 @@ interface Deps {
   fetch: typeof globalThis.fetch
   /**
    * Whether the host offers the market somewhere ELSE — the settings page
-   * this package registers as `settings.section`. Read live rather than
+   * this package registers as `settings.section`, or the Plugins page tab
+   * that arrived with dsh 0.2.1-alpha.4 (#1015). Read live rather than
    * captured, because it is answered by the same slot injection that makes
    * the rest of the client work, and a host may declare it late.
    */
@@ -113,6 +123,7 @@ export function createSidebarEntry({ gate, fetch, hasOtherSeat }: Deps): Sidebar
   return {
     supported: () => supported,
     enabled: () => enabled,
+    shown: () => gate.visible(),
     ready: () => ready,
     onlyDoor: () => !otherSeat(),
     subscribe: (listener) => {

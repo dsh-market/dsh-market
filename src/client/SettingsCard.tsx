@@ -33,7 +33,7 @@
  * from another product.
  */
 
-import { createElement as h, Fragment, useCallback, useEffect, useRef, useState } from 'react'
+import { createElement as h, Fragment, useCallback, useEffect, useId, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import { IconChevronDownOutline14, IconLoadingOutline16 } from './icons.ts'
@@ -42,6 +42,7 @@ import { api, applyGithubRouting } from './market-data.ts'
 import type { MarketStatus } from './market-data.ts'
 import type { Translate } from './market-data.ts'
 import type { SidebarEntry } from './sidebar-entry.ts'
+import type { EntryKey, EntryVisibility } from './entry-visibility.ts'
 
 /** Keys the market leaves in the browser; cleared when the user purges. */
 const BROWSER_KEYS = ['dshm-webdav', 'dshm-gist-id'] as const
@@ -59,6 +60,12 @@ export interface SettingsCardProps {
   onRemoved?: () => void
   /** The opt-in sidebar row (#846); absent, the card offers no switch. */
   sidebar?: SidebarEntry
+  /**
+   * The two page entries (#1015); absent only when the card is rendered
+   * outside index.ts (tests, or a future caller). The card then cannot see
+   * the other doors and keeps the legacy unrestricted sidebar switch.
+   */
+  entries?: EntryVisibility
 }
 
 type Channel = 'stable' | 'beta' | 'dev'
@@ -229,20 +236,41 @@ export function clearBrowserState(storage: Pick<Storage, 'removeItem'>): void {
   }
 }
 
-export function SettingsCard({ t, onRemoved, sidebar }: SettingsCardProps): ReactElement | null {
+export function SettingsCard({ t, onRemoved, sidebar, entries }: SettingsCardProps): ReactElement | null {
   const [open, setOpen] = useState(false)
+  const [advancedOpen, setAdvancedOpen] = useState(false)
+  // Several cards can be mounted at once (settings list, bundle page, the
+  // settings tab), so the disclosure's id has to be per instance.
+  const advancedId = useId()
+  const [, bumpEntries] = useState(0)
+  const [entrySaving, setEntrySaving] = useState(0)
   const [sidebarState, setSidebarState] = useState(() => ({
     supported: sidebar?.supported() === true,
     enabled: sidebar?.enabled() === true,
+    shown: sidebar?.shown() === true,
     onlyDoor: sidebar?.onlyDoor() === true,
   }))
   const [sidebarSaving, setSidebarSaving] = useState(false)
   useEffect(() => {
     if (sidebar === undefined) return undefined
-    const sync = (): void => { setSidebarState({ supported: sidebar.supported(), enabled: sidebar.enabled(), onlyDoor: sidebar.onlyDoor() }) }
+    const sync = (): void => {
+      setSidebarState({
+        supported: sidebar.supported(),
+        enabled: sidebar.enabled(),
+        shown: sidebar.shown(),
+        onlyDoor: sidebar.onlyDoor(),
+      })
+    }
     sync()
     return sidebar.subscribe(sync)
   }, [sidebar])
+  // The two page entries load their saved answers after mount, and their
+  // slots may arrive even later. Re-render on either so a switch does not
+  // stay disabled (or absent) after the fact.
+  useEffect(() => {
+    if (entries === undefined) return undefined
+    return entries.subscribe(() => { bumpEntries(v => v + 1) })
+  }, [entries])
   const [status, setStatus] = useState<SelfStatus | null>(null)
   const [update, setUpdate] = useState<SelfUpdate | null>(null)
   const [phase, setPhase] = useState<Phase>('idle')
@@ -474,6 +502,16 @@ export function SettingsCard({ t, onRemoved, sidebar }: SettingsCardProps): Reac
     setSidebarSaving(true)
     void (async () => {
       try {
+        if (!next && entries !== undefined) {
+          // The other doors are answered by the controller; re-read them
+          // before closing this one, so a change made in another tab is not
+          // judged against this card's stale snapshot.
+          await entries.load()
+          if (!entries.otherDoorOpen('sidebar')) {
+            setError(t('setEntryLastDoorHint'))
+            return
+          }
+        }
         await sidebar.set(next)
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : String(cause))
@@ -481,7 +519,22 @@ export function SettingsCard({ t, onRemoved, sidebar }: SettingsCardProps): Reac
         setSidebarSaving(false)
       }
     })()
-  }, [sidebar])
+  }, [entries, sidebar, t])
+
+  const onEntry = useCallback((key: EntryKey, next: boolean) => {
+    if (entries === undefined) return
+    setError(null)
+    setEntrySaving(count => count + 1)
+    void (async () => {
+      try {
+        await entries.set(key, next)
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause))
+      } finally {
+        setEntrySaving(count => count - 1)
+      }
+    })()
+  }, [entries])
 
   /** One label + hint block with an optional action, the host's row shape. */
   const row = (label: string, hint: string, action: ReactElement | null): ReactElement =>
@@ -493,27 +546,105 @@ export function SettingsCard({ t, onRemoved, sidebar }: SettingsCardProps): Reac
       action,
     )
 
+  /**
+   * A Show/Hide pair. `canHide` disables only the OFF half: the entry that
+   * is currently on stays clickable, and the rule "at least one door stays
+   * open" is what the OFF button reflects.
+   */
+  const toggle = (
+    on: boolean,
+    saving: boolean,
+    canHide: boolean,
+    labels: { show: string; hide: string },
+    pick: (next: boolean) => void,
+  ): ReactElement => h('div', { className: css.setSeg },
+    ([false, true] as const).map(value => h('button', {
+      key: String(value),
+      type: 'button',
+      className: on === value ? `${css.setSegBtn} ${css.setSegOn}` : css.setSegBtn,
+      disabled: busy || saving || (value === false && !canHide),
+      'aria-pressed': on === value,
+      onClick: () => { if (on !== value) pick(value) },
+    }, value ? labels.show : labels.hide)),
+  )
+
+  /** One of the two page entries (#1015), with the last-door rule applied. */
+  const entryRow = (key: EntryKey, label: string, hint: string, on: boolean): ReactElement => {
+    const canHide = entries?.otherDoorOpen(key) === true
+    return row(
+      label,
+      canHide ? hint : `${hint} ${t('setEntryLastDoorHint')}`,
+      toggle(on, entriesBusy, canHide, { show: t('setEntryShow'), hide: t('setEntryHide') }, next => onEntry(key, next)),
+    )
+  }
+
+  // One save at a time across all three switches: two OFF saves in flight
+  // would each judge the last-door rule from the state before the other.
+  const entriesBusy = entrySaving > 0 || sidebarSaving
+
+  // The page entries and the sidebar row are "advanced discoverability": the
+  // default configuration is what almost everyone wants, so all three live
+  // behind one collapsed group rather than in the first screen of the card
+  // (#1015's review). A switch is offered only where the host declares the
+  // seat, and its OFF half is disabled when it is the last open door.
+  const entryRows: ReactElement[] = []
+  if (entries !== undefined) {
+    if (entries.settingsAvailable()) {
+      entryRows.push(entryRow('settingsSection', t('setEntrySection'), t('setEntrySectionHint'), entries.settingsSection()))
+    }
+    if (entries.pluginsTabSupported()) {
+      entryRows.push(entryRow('pluginsTab', t('setEntryPluginsTab'), t('setEntryPluginsTabHint'), entries.pluginsTab()))
+    }
+  }
+  if (sidebarState.supported) {
+    // Without the entry controller (a host that never mounted it) the card
+    // cannot see the other doors, so it keeps the old, unrestricted switch
+    // rather than pretending this row is the only one.
+    const canHide = entries === undefined || entries.otherDoorOpen('sidebar')
+    entryRows.push(row(
+      t('setSidebar'),
+      sidebarState.onlyDoor
+        ? t('setSidebarOnlyDoorHint')
+        : canHide ? t('setSidebarHint') : `${t('setSidebarHint')} ${t('setEntryLastDoorHint')}`,
+      toggle(
+        sidebarState.shown,
+        entriesBusy,
+        canHide,
+        { show: t('setSidebarOn'), hide: t('setSidebarOff') },
+        onSidebar,
+      ),
+    ))
+  }
+  const advanced = entryRows.length > 0
+    ? h('div', { className: css.setAdvanced },
+        h('button', {
+          type: 'button',
+          className: css.setAdvancedHead,
+          'aria-expanded': advancedOpen,
+          'aria-controls': advancedId,
+          'aria-label': t('setAdvanced'),
+          onClick: () => { setAdvancedOpen(value => !value) },
+        },
+          h('div', { className: css.setLabelBox },
+            h('div', { className: css.setLabel }, t('setAdvanced')),
+            h('div', { className: css.setHint }, t('setAdvancedHint')),
+          ),
+          h('span', { className: advancedOpen ? `${css.setChevron} ${css.setChevronOpen}` : css.setChevron },
+            h(IconChevronDownOutline14, { size: 14 })),
+        ),
+        advancedOpen
+          ? h('div', { id: advancedId, className: css.setAdvancedBody }, entryRows.map((node, index) => h(Fragment, { key: index }, node)))
+          : null,
+      )
+    : null
+
   // The end state REPLACES the controls rather than sitting beside them: the
   // package is gone from disk, so an update button next to "removed" would
   // offer something that cannot happen.
   const body = phase === 'removed'
     ? row(t('setSelfRemoved'), t('setSelfRemovedHint'), null)
     : h(Fragment, null,
-        // First, not under region and proxy: this is how the shortcut stays
-        // findable after the market-page tip is dismissed. Only on a host
-        // with sidebar panels — elsewhere the switch would promise a row
-        // that has nowhere to appear.
-        sidebarState.supported ? row(t('setSidebar'), t(sidebarState.onlyDoor ? 'setSidebarOnlyDoorHint' : 'setSidebarHint'),
-          h('div', { className: css.setSeg },
-            ([false, true] as const).map(on => h('button', {
-              key: String(on),
-              type: 'button',
-              className: sidebarState.enabled === on ? `${css.setSegBtn} ${css.setSegOn}` : css.setSegBtn,
-              disabled: busy || sidebarSaving,
-              'aria-pressed': sidebarState.enabled === on,
-              onClick: () => { if (sidebarState.enabled !== on) onSidebar(on) },
-            }, t(on ? 'setSidebarOn' : 'setSidebarOff'))),
-          )) : null,
+        advanced,
         // Where the same catalog is reachable on a host that reads market
         // indexes (dsh 0.2.1+): a statement, not an action — the address is
         // the whole thing the user needs, and it stays selectable here.

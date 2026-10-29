@@ -618,6 +618,8 @@ const hot = vi.hoisted(() => ({
   regionAuto: undefined as true | undefined,
   githubProxy: undefined as string | undefined,
   sidebarEntry: undefined as boolean | undefined,
+  settingsSection: undefined as boolean | undefined,
+  pluginsTab: undefined as boolean | undefined,
   notes: {} as Record<string, string>,
   favorites: [] as string[],
   blocked: [] as string[],
@@ -652,6 +654,8 @@ vi.mock('../src/hot.ts', async (importOriginal) => ({
     // answers since the row became the only way in on a host with no
     // settings page (#846).
     ...(typeof hot.sidebarEntry === 'boolean' ? { sidebarEntry: hot.sidebarEntry } : {}),
+    ...(hot.settingsSection === false ? { settingsSection: false } : {}),
+    ...(hot.pluginsTab === false ? { pluginsTab: false } : {}),
     notes: hot.notes, favorites: hot.favorites, blocked: hot.blocked,
     updateExempt: hot.updateExempt,
     buildEnv: hot.buildEnv,
@@ -665,11 +669,21 @@ vi.mock('../src/hot.ts', async (importOriginal) => ({
     channel?: 'stable' | 'beta' | 'dev'; region?: 'global' | 'china'; regionAuto?: true
     githubProxy?: string
     sidebarEntry?: boolean
+    settingsSection?: boolean
+    pluginsTab?: boolean
     notes?: Record<string, string>; favorites?: string[]; blocked?: string[]
     updateExempt?: string[]
     buildEnv?: Record<string, string>
   }) => {
     if (Object.prototype.hasOwnProperty.call(state, 'sidebarEntry')) hot.sidebarEntry = state.sidebarEntry
+    // `true` is the default and is not persisted, exactly like the real
+    // writer: it clears the stored OFF instead of pinning today's default.
+    if (Object.prototype.hasOwnProperty.call(state, 'settingsSection')) {
+      hot.settingsSection = state.settingsSection === false ? false : undefined
+    }
+    if (Object.prototype.hasOwnProperty.call(state, 'pluginsTab')) {
+      hot.pluginsTab = state.pluginsTab === false ? false : undefined
+    }
     hot.disabled = new Set(state.disabled)
     hot.groups = state.groups
     hot.groupOrder = state.groupOrder
@@ -961,6 +975,8 @@ beforeEach(() => {
   hot.regionAuto = undefined
   hot.githubProxy = undefined
   hot.sidebarEntry = undefined
+  hot.settingsSection = undefined
+  hot.pluginsTab = undefined
   hot.notes = {}
   hot.favorites = []
   hot.blocked = []
@@ -8537,6 +8553,91 @@ describe('sidebar entry (#846)', () => {
     expect((await bed.dispatch('POST', '/dsh-market/sidebar-entry', {})).status).toBe(400)
     expect((await bed.dispatch('POST', '/dsh-market/sidebar-entry', { enabled: true }, { crossOrigin: true })).status).toBe(403)
     expect(hot.sidebarEntry).toBeUndefined()
+  })
+})
+
+describe('entry visibility (#1015)', () => {
+  it('shows both page entries until the user says otherwise', async () => {
+    expect((await bed.dispatch('GET', '/dsh-market/entry-visibility')).json)
+      .toEqual({ settingsSection: true, pluginsTab: true })
+  })
+
+  it('round-trips each choice through state.json, and stores only the OFF', async () => {
+    const off = await bed.dispatch('POST', '/dsh-market/entry-visibility', { settingsSection: false })
+    expect(off.status).toBe(200)
+    expect(off.json).toEqual({ ok: true, settingsSection: false, pluginsTab: true })
+    expect(hot.settingsSection).toBe(false)
+    expect(hot.pluginsTab).toBeUndefined()
+    expect((await bed.dispatch('GET', '/dsh-market/entry-visibility')).json)
+      .toEqual({ settingsSection: false, pluginsTab: true })
+
+    // Turning it back on clears the stored OFF instead of pinning the
+    // default, so a later default change still reaches this user.
+    const on = await bed.dispatch('POST', '/dsh-market/entry-visibility', { settingsSection: true })
+    expect(on.json).toEqual({ ok: true, settingsSection: true, pluginsTab: true })
+    expect(hot.settingsSection).toBeUndefined()
+
+    // The Plugins tab is its own answer, not a side effect of the section.
+    expect((await bed.dispatch('POST', '/dsh-market/entry-visibility', { pluginsTab: false })).status).toBe(200)
+    expect(hot.pluginsTab).toBe(false)
+  })
+
+  it('accepts both answers in one request when the row keeps the market reachable', async () => {
+    await bed.dispatch('POST', '/dsh-market/sidebar-entry', { enabled: true })
+    const both = await bed.dispatch('POST', '/dsh-market/entry-visibility', { settingsSection: false, pluginsTab: false })
+    expect(both.status).toBe(200)
+    expect(both.json).toEqual({ ok: true, settingsSection: false, pluginsTab: false })
+  })
+
+  it('refuses to close the last door, and says why', async () => {
+    await bed.dispatch('POST', '/dsh-market/entry-visibility', { settingsSection: false })
+    const refused = await bed.dispatch('POST', '/dsh-market/entry-visibility', { pluginsTab: false })
+    expect(refused.status).toBe(409)
+    expect(String(refused.json.error)).toContain('at least one')
+    expect(hot.pluginsTab).toBeUndefined()
+
+    // With the sidebar row on, both page entries may go: the row is a door.
+    await bed.dispatch('POST', '/dsh-market/sidebar-entry', { enabled: true })
+    expect((await bed.dispatch('POST', '/dsh-market/entry-visibility', { pluginsTab: false })).status).toBe(200)
+  })
+
+  it('refuses to turn the sidebar row off when both page entries are hidden', async () => {
+    await bed.dispatch('POST', '/dsh-market/sidebar-entry', { enabled: true })
+    await bed.dispatch('POST', '/dsh-market/entry-visibility', { settingsSection: false, pluginsTab: false })
+    const refused = await bed.dispatch('POST', '/dsh-market/sidebar-entry', { enabled: false })
+    expect(refused.status).toBe(409)
+    expect(String(refused.json.error)).toContain('at least one')
+    expect(hot.sidebarEntry).toBe(true)
+  })
+
+  it('keeps both choices across an unrelated whole-state write (#435)', async () => {
+    await bed.dispatch('POST', '/dsh-market/sidebar-entry', { enabled: true })
+    await bed.dispatch('POST', '/dsh-market/entry-visibility', { settingsSection: false, pluginsTab: false })
+    expect((await bed.dispatch('POST', '/dsh-market/region', { region: 'china' })).status).toBe(200)
+    expect(hot.settingsSection).toBe(false)
+    expect(hot.pluginsTab).toBe(false)
+  })
+
+  it('rejects a body that names neither field, non-booleans, other origins, and other methods', async () => {
+    expect((await bed.dispatch('POST', '/dsh-market/entry-visibility', {})).status).toBe(400)
+    expect((await bed.dispatch('POST', '/dsh-market/entry-visibility', { settingsSection: 'no' })).status).toBe(400)
+    expect((await bed.dispatch('POST', '/dsh-market/entry-visibility', { pluginsTab: null })).status).toBe(400)
+    expect((await bed.dispatch('POST', '/dsh-market/entry-visibility', { settingsSection: false }, { crossOrigin: true })).status).toBe(403)
+    expect((await bed.dispatch('DELETE', '/dsh-market/entry-visibility')).status).toBe(405)
+    expect(hot.settingsSection).toBeUndefined()
+  })
+
+  it('takes an external change rather than restoring the boot-time copy (#435)', async () => {
+    await bed.dispatch('POST', '/dsh-market/entry-visibility', { settingsSection: false })
+    expect(hot.settingsSection).toBe(false)
+    // A restore or another writer puts the field back to its default.
+    hot.settingsSection = undefined
+    // The note route reads the state fresh and refreshes the long-lived copy.
+    expect((await bed.dispatch('POST', '/dsh-market/note', { name: 'dsh-loop', text: 'after restore' })).status).toBe(200)
+    // A later whole-state write must not resurrect the pre-restore OFF.
+    expect((await bed.dispatch('POST', '/dsh-market/region', { region: 'china' })).status).toBe(200)
+    expect(hot.settingsSection).toBeUndefined()
+    expect((await bed.dispatch('GET', '/dsh-market/entry-visibility')).json.settingsSection).toBe(true)
   })
 })
 

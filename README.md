@@ -43,7 +43,9 @@ desktop app needed). The market is also still a section of **Settings → Plugin
 Market**: on dsh 0.2.0 and older that is the only way in, and from 0.2.1 the
 Settings dialog lives in the account menu. If you would rather reach it in one
 click from anywhere, the market can also put its own **Plugin Market** row in
-the sidebar; turn it on from the market's card under **Plugins**. Going the
+the sidebar; turn it on from the market's card under **Plugins**. All three
+entries can be switched individually under **Advanced** in that card, and the
+market refuses to close the last one. Going the
 other way, an installed plugin's **···** menu offers **View in Plugins** on
 dsh 0.2.1+: it opens the host's own page for that plugin, which is the only
 place its individual rows can be switched one by one.

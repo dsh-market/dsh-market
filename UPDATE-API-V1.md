@@ -184,6 +184,11 @@ anywhere in that tree.
 | `setSettingsVisible(visible)` | register or retract the market's own `settings.section` entry |
 | `settingsVisible()` | whether that entry is registered right now |
 
+The user's own entry switches (#1015) are ANDed with this control: a host's
+`setSettingsVisible(true)` cannot override an entry the user turned off, and
+the user cannot turn on an entry the host hides. `settingsVisible()` reports
+the resulting registration, not the host's last request.
+
 `ctx.provide(name, value)` and `ctx.reflect.provide(name, value)` are the
 same call — cordis's `Service.provide` delegates to the reflect layer — so
 either idiom reaches this service.

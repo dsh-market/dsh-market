@@ -38,9 +38,10 @@ export interface SectionGate {
  *   only when the entry should be visible; may be called again after a
  *   retraction, which is why the disposer is required rather than optional.
  * @param initiallyVisible - the answer before anyone has given one. The
- *   settings entry defaults to shown: hiding it is an opt-in a host makes,
- *   so no opinion means "as it always was". The sidebar entry (#846)
- *   defaults to hidden: showing it is an opt-in the user makes.
+ *   settings entry defaults to shown: hiding it is an opt-in (the host, or
+ *   the user's card switch, #1015), so no opinion means "as it always was".
+ *   The sidebar entry (#846) defaults to hidden: showing it is an opt-in the
+ *   user makes.
  * @returns the gate.
  */
 export function createSectionGate(register: () => () => void, initiallyVisible = true): SectionGate {

@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SettingsCard, clearBrowserState } from '../../src/client/SettingsCard.tsx'
 import { en } from '../../src/client/locales.ts'
 import type { SidebarEntry } from '../../src/client/sidebar-entry.ts'
+import type { EntryKey, EntryVisibility } from '../../src/client/entry-visibility.ts'
 
 const t = (key: string): string => (en as Record<string, string>)[key] ?? key
 
@@ -379,7 +380,7 @@ describe('SettingsCard — channels', () => {
 
 describe('SettingsCard — sidebar shortcut (#846)', () => {
   /** A stand-in controller: the card's contract is with this, not with fetch. */
-  function fakeSidebar(options: { supported: boolean; enabled?: boolean; refuse?: string; onlyDoor?: boolean }): SidebarEntry & { sets: boolean[]; support(): void } {
+  function fakeSidebar(options: { supported: boolean; enabled?: boolean; shown?: boolean; refuse?: string; onlyDoor?: boolean }): SidebarEntry & { sets: boolean[]; support(): void } {
     let supported = options.supported
     let enabled = options.enabled === true
     const listeners = new Set<() => void>()
@@ -388,6 +389,7 @@ describe('SettingsCard — sidebar shortcut (#846)', () => {
       sets,
       supported: () => supported,
       enabled: () => enabled,
+      shown: () => options.shown ?? enabled,
       ready: () => true,
       onlyDoor: () => options.onlyDoor === true,
       refresh: () => {},
@@ -411,15 +413,22 @@ describe('SettingsCard — sidebar shortcut (#846)', () => {
     await waitFor(() => { expect(screen.getByText(t('setSelfRemove'), { selector: 'div' })).toBeTruthy() })
   }
 
+  /** The three entry switches live behind one collapsed group (#1015). */
+  function openAdvanced(): void {
+    fireEvent.click(screen.getByRole('button', { name: t('setAdvanced') }))
+  }
+
   it('offers no switch on a host without sidebar panels', async () => {
     await openWith(fakeSidebar({ supported: false }))
     expect(screen.queryByText(t('setSidebar'))).toBeNull()
+    expect(screen.queryByRole('button', { name: t('setAdvanced') })).toBeNull()
   })
 
   it('appears once the host declares sidebar panels, off by default', async () => {
     const sidebar = fakeSidebar({ supported: false })
     await openWith(sidebar)
     act(() => { sidebar.support() })
+    openAdvanced()
     await waitFor(() => { expect(screen.getByText(t('setSidebar'))).toBeTruthy() })
     expect(screen.getByRole('button', { name: t('setSidebarOff') }).getAttribute('aria-pressed')).toBe('true')
     const sidebarLabel = screen.getByText(t('setSidebar'))
@@ -427,9 +436,10 @@ describe('SettingsCard — sidebar shortcut (#846)', () => {
     expect(sidebarLabel.compareDocumentPosition(regionLabel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
-  it('turns the row on, and says the settings entry stays', async () => {
+  it('turns the row on', async () => {
     const sidebar = fakeSidebar({ supported: true })
     await openWith(sidebar)
+    openAdvanced()
     expect(screen.getByText(t('setSidebarHint'))).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: t('setSidebarOn') }))
     await waitFor(() => { expect(sidebar.sets).toEqual([true]) })
@@ -441,6 +451,7 @@ describe('SettingsCard — sidebar shortcut (#846)', () => {
   it('does not re-send the choice already in force', async () => {
     const sidebar = fakeSidebar({ supported: true, enabled: true })
     await openWith(sidebar)
+    openAdvanced()
     fireEvent.click(screen.getByRole('button', { name: t('setSidebarOn') }))
     expect(sidebar.sets).toEqual([])
   })
@@ -448,9 +459,167 @@ describe('SettingsCard — sidebar shortcut (#846)', () => {
   it('keeps the old choice selected and shows why when saving fails', async () => {
     const sidebar = fakeSidebar({ supported: true, refuse: 'untrusted origin' })
     await openWith(sidebar)
+    openAdvanced()
     fireEvent.click(screen.getByRole('button', { name: t('setSidebarOn') }))
     await waitFor(() => { expect(screen.getByText('untrusted origin')).toBeTruthy() })
     expect(screen.getByRole('button', { name: t('setSidebarOff') }).getAttribute('aria-pressed')).toBe('true')
+  })
+})
+
+describe('SettingsCard — entry visibility (#1015)', () => {
+  /** The controller as the card sees it; the two page entries are its half. */
+  function fakeEntries(options: {
+    settingsSupported?: boolean
+    hostAllows?: boolean
+    pluginsTabSupported?: boolean
+    settingsSection?: boolean
+    pluginsTab?: boolean
+    sidebarSupported?: boolean
+    sidebarEnabled?: boolean
+    refuse?: string
+  } = {}): EntryVisibility & { sets: Array<{ key: EntryKey; visible: boolean }> } {
+    const settingsSupported = options.settingsSupported !== false
+    const pluginsTabSupported = options.pluginsTabSupported === true
+    const sidebarSupported = options.sidebarSupported === true
+    let hostAllows = options.hostAllows !== false
+    let settingsSection = options.settingsSection !== false
+    let pluginsTab = options.pluginsTab !== false
+    const sidebarEnabled = options.sidebarEnabled === true
+    const listeners = new Set<() => void>()
+    const sets: Array<{ key: EntryKey; visible: boolean }> = []
+    const notify = (): void => { for (const listener of listeners) listener() }
+    const settingsOpen = (): boolean => settingsSupported && hostAllows && settingsSection
+    const tabOpen = (): boolean => pluginsTabSupported && pluginsTab
+    const rowOpen = (): boolean => sidebarSupported && sidebarEnabled
+    return {
+      sets,
+      settingsSection: () => settingsSection,
+      pluginsTab: () => pluginsTab,
+      settingsSupported: () => settingsSupported,
+      settingsAvailable: () => settingsSupported && hostAllows,
+      pluginsTabSupported: () => pluginsTabSupported,
+      settingsVisible: settingsOpen,
+      setHostSettingsVisible: (visible) => { hostAllows = visible; notify() },
+      markSettingsSection: () => {},
+      markPluginsTab: () => {},
+      otherDoorOpen: (key) =>
+        (key !== 'settingsSection' && settingsOpen())
+        || (key !== 'pluginsTab' && tabOpen())
+        || (key !== 'sidebar' && rowOpen()),
+      load: async () => {},
+      set: async (key, visible) => {
+        sets.push({ key, visible })
+        if (options.refuse !== undefined) throw new Error(options.refuse)
+        if (key === 'settingsSection') settingsSection = visible
+        else pluginsTab = visible
+        notify()
+        return visible
+      },
+      subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener) } },
+      retire: () => {},
+    }
+  }
+
+  function fakeSidebar(options: { supported: boolean; enabled?: boolean; shown?: boolean }): SidebarEntry {
+    const enabled = options.enabled === true
+    return {
+      sets: [],
+      supported: () => options.supported,
+      enabled: () => enabled,
+      shown: () => options.shown ?? enabled,
+      ready: () => true,
+      onlyDoor: () => false,
+      refresh: () => {},
+      subscribe: () => () => {},
+      markSupported: () => {},
+      load: async () => {},
+      set: async (next) => next,
+    } as SidebarEntry & { sets: boolean[] }
+  }
+
+  async function openWith(entries: EntryVisibility, sidebar?: SidebarEntry): Promise<void> {
+    render(<SettingsCard t={t} entries={entries} {...(sidebar === undefined ? {} : { sidebar })} />)
+    fireEvent.click(screen.getByRole('button', { expanded: false }))
+    await waitFor(() => { expect(screen.getByText(t('setSelfRemove'), { selector: 'div' })).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: t('setAdvanced') }))
+  }
+
+  const rowOf = (label: string): HTMLElement => {
+    const labelNode = screen.getByText(label)
+    return labelNode.parentElement!.parentElement!
+  }
+
+  it('keeps all three switches behind the collapsed Advanced group', async () => {
+    const entries = fakeEntries({ settingsSupported: true, pluginsTabSupported: true })
+    render(<SettingsCard t={t} entries={entries} sidebar={fakeSidebar({ supported: true })} />)
+    fireEvent.click(screen.getByRole('button', { expanded: false }))
+    await waitFor(() => { expect(screen.getByText(t('setSelfRemove'), { selector: 'div' })).toBeTruthy() })
+    expect(screen.queryByText(t('setEntrySection'))).toBeNull()
+    expect(screen.queryByText(t('setEntryPluginsTab'))).toBeNull()
+    expect(screen.queryByText(t('setSidebar'))).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: t('setAdvanced') }))
+    expect(screen.getByText(t('setEntrySection'))).toBeTruthy()
+    expect(screen.getByText(t('setEntryPluginsTab'))).toBeTruthy()
+    expect(screen.getByText(t('setSidebar'))).toBeTruthy()
+  })
+
+  it('hides the settings switch when the host keeps that entry itself (#602)', async () => {
+    const entries = fakeEntries({ settingsSupported: true, hostAllows: false, pluginsTabSupported: true })
+    await openWith(entries)
+    expect(screen.queryByText(t('setEntrySection'))).toBeNull()
+    expect(screen.getByText(t('setEntryPluginsTab'))).toBeTruthy()
+  })
+
+  it('hides the Plugins tab switch on a host that never declares the slot', async () => {
+    const entries = fakeEntries({ settingsSupported: true, pluginsTabSupported: false })
+    await openWith(entries)
+    expect(screen.getByText(t('setEntrySection'))).toBeTruthy()
+    expect(screen.queryByText(t('setEntryPluginsTab'))).toBeNull()
+  })
+
+  it('saves each page entry through the controller', async () => {
+    const entries = fakeEntries({
+      settingsSupported: true, pluginsTabSupported: true, sidebarSupported: true, sidebarEnabled: true,
+    })
+    await openWith(entries, fakeSidebar({ supported: true, enabled: true }))
+    fireEvent.click(within(rowOf(t('setEntrySection'))).getByRole('button', { name: t('setEntryHide') }))
+    await waitFor(() => { expect(entries.sets).toEqual([{ key: 'settingsSection', visible: false }]) })
+    await waitFor(() => {
+      expect(within(rowOf(t('setEntrySection'))).getByRole('button', { name: t('setEntryHide') }).getAttribute('aria-pressed')).toBe('true')
+    })
+  })
+
+  it('disables the last open door and says why', async () => {
+    const entries = fakeEntries({
+      settingsSupported: true, pluginsTabSupported: true, pluginsTab: false,
+    })
+    await openWith(entries)
+    const hide = within(rowOf(t('setEntrySection'))).getByRole('button', { name: t('setEntryHide') })
+    expect(hide.hasAttribute('disabled')).toBe(true)
+    expect(screen.getByText(new RegExp(t('setEntryLastDoorHint')))).toBeTruthy()
+  })
+
+  it('shows a sidebar row that is the only door as on, and refuses to hide it', async () => {
+    // The row can be shown before it was ever "enabled": a host with no
+    // other door shows it by default (#846). The switch must reflect what
+    // is on screen, not the absent saved choice.
+    const entries = fakeEntries({
+      settingsSupported: true, pluginsTabSupported: true, settingsSection: false, pluginsTab: false,
+    })
+    await openWith(entries, fakeSidebar({ supported: true, shown: true }))
+    const row = rowOf(t('setSidebar'))
+    expect(within(row).getByRole('button', { name: t('setSidebarOn') }).getAttribute('aria-pressed')).toBe('true')
+    expect(within(row).getByRole('button', { name: t('setSidebarOff') }).hasAttribute('disabled')).toBe(true)
+  })
+
+  it('keeps the switch where it was and shows the refusal', async () => {
+    const entries = fakeEntries({
+      settingsSupported: true, pluginsTabSupported: true, sidebarSupported: true, sidebarEnabled: true, refuse: 'untrusted origin',
+    })
+    await openWith(entries, fakeSidebar({ supported: true, enabled: true }))
+    fireEvent.click(within(rowOf(t('setEntrySection'))).getByRole('button', { name: t('setEntryHide') }))
+    await waitFor(() => { expect(screen.getByText('untrusted origin')).toBeTruthy() })
+    expect(within(rowOf(t('setEntrySection'))).getByRole('button', { name: t('setEntryShow') }).getAttribute('aria-pressed')).toBe('true')
   })
 })
 
