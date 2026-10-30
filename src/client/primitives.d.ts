@@ -104,7 +104,11 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
     label: string | (() => string)
     side?: 'right' | 'bottom' | 'top'
     delayMs?: number
+    /** Keyboard-focus delay; omitted means show immediately on focus. */
+    focusDelayMs?: number
     disabled?: boolean
+    /** Render the bubble under document.body so card overflow cannot clip it. */
+    portal?: boolean
     maxWidth?: number
     children: ReactElement
   }): ReactElement

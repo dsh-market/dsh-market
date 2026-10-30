@@ -242,8 +242,6 @@
    beats .recentRow's overflow-x:auto by specificity, not source order. */
 .recentRow.recentCollapsed{max-height:0;overflow:hidden;visibility:hidden;margin-bottom:0;padding-bottom:0}
 .recentTile{display:flex;flex-direction:column;justify-content:space-between;gap:4px;height:80px;box-sizing:border-box;overflow:hidden;padding:8px 12px;background:var(--dsw-alias-settings-card-fill,var(--dsw-alias-bg-layer-1,#fff));border:.5px solid var(--dsw-alias-settings-card-stroke,var(--dsw-alias-border-l4,#00000029));border-radius:var(--dsw-radius-lg,16px);transition:background-image 160ms cubic-bezier(.16,1,.3,1)}
-.recentTile:hover{background-image:linear-gradient(var(--dsw-alias-interactive-bg-hover,#2631480f),var(--dsw-alias-interactive-bg-hover,#2631480f))}
-.recentTile:hover .installBtn:not(:disabled){border-color:transparent;background:var(--dsw-alias-button-primary-fill,#0f1115);color:var(--dsw-alias-label-primary-foreground,#fff)}
 .recentTile .installBtn.installBtn{height:24px;min-height:24px;padding:0 8px}
 .recentAv.recentAv{width:24px;height:24px;font-size:11px;flex-shrink:0}
 .recentTitle{display:flex;align-items:center;gap:8px;min-width:0}
@@ -419,10 +417,13 @@
    longer description". Un-stretched, any leftover row height sits outside
    the card as ordinary grid gutter instead. */
 .card{background:var(--dsw-alias-settings-card-fill,var(--dsw-alias-bg-layer-1,#fff));border:.5px solid var(--dsw-alias-settings-card-stroke,var(--dsw-alias-border-l4,#00000029));border-radius:var(--dsw-radius-xl,20px);padding:12px 14px;display:flex;flex-direction:column;gap:10px;align-self:start;min-width:0;transition:background-image 160ms cubic-bezier(.16,1,.3,1)}
-/* A wash painted as a background-image so the card keeps its own fill under it;
-   the card body is not clickable, so this has to stay a hover cue, not a state. */
-.card:hover{background-image:linear-gradient(var(--dsw-alias-interactive-bg-hover,#2631480f),var(--dsw-alias-interactive-bg-hover,#2631480f))}
-.card:hover .installBtn:not(:disabled),.themeCard:hover .installBtn:not(:disabled){border-color:transparent;background:var(--dsw-alias-button-primary-fill,#0f1115);color:var(--dsw-alias-label-primary-foreground,#fff)}
+/* Card / recent-tile hover: wash only. Install stays outline until the
+   pointer is on the button — black fill means "this is what you press".
+   Fenced to `@media (hover: hover)` so a tap cannot latch the wash. */
+@media (hover: hover){
+  .card:hover,.recentTile:hover{background-image:linear-gradient(var(--dsw-alias-interactive-bg-hover,#2631480f),var(--dsw-alias-interactive-bg-hover,#2631480f))}
+  .installBtn:hover:not(:disabled){border-color:transparent;background:var(--dsw-alias-button-primary-fill,#0f1115);color:var(--dsw-alias-label-primary-foreground,#fff)}
+}
 .row1{display:flex;align-items:flex-start;gap:10px;min-width:0}
 .cardAction{flex-shrink:0;display:inline-flex;align-items:center}
 .installBtn.installBtn{min-width:64px}

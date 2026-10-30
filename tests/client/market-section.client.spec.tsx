@@ -3925,6 +3925,36 @@ describe('discover card download count stays compact', () => {
   })
 })
 
+describe('catalog card tips match official Discover', () => {
+  it('waits 700ms and opens below the anchor', async () => {
+    render(<MarketSection {...props()} />)
+    const name = await screen.findByText('dsh-loop')
+    const card = name.closest('[class*="card"]') as HTMLElement
+    const fav = within(card).getByRole('button', { name: en.favoriteAdd })
+
+    vi.useFakeTimers()
+    try {
+      fireEvent.mouseEnter(fav)
+      expect(screen.queryByRole('tooltip')).toBeNull()
+      await act(async () => { await vi.advanceTimersByTimeAsync(699) })
+      expect(screen.queryByRole('tooltip')).toBeNull()
+      await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+      const tip = screen.getByRole('tooltip')
+      expect(tip.textContent).toBe(en.favoriteAdd)
+      expect(tip.getAttribute('data-side')).toBe('bottom')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('asks the host Tooltip to portal out of the card, at the recent-strip delay', () => {
+    const source = readFileSync(resolve('src/client/MarketSection.tsx'), 'utf8')
+    expect(source).toMatch(/function CardTip/)
+    expect(source).toMatch(/const HOVER_TIP_DELAY_MS = 700/)
+    expect(source).toMatch(/delayMs=\{HOVER_TIP_DELAY_MS\} portal/)
+  })
+})
+
 describe('favorites (#414)', () => {
   function favoritesStub(initial: string[] = [], installed: Record<string, string> = {}) {
     const state = { favorites: [...initial] }
@@ -8079,24 +8109,24 @@ describe('card thumbnail + lightbox (curated screenshots only)', () => {
     })
     stubFetch({ '/dsh-market/registry': { source: 'live', registry } })
     render(<MarketSection {...props()} />)
-    await screen.findByText('dsh-loop')
-    const count = screen.getByLabelText(/npm rolling 30-day downloads: 4200/)
+    const tip = downloadStatsText(registry.plugins[0]!, props().t)!
+    // Wait on the labelled mark itself: the name can paint before the
+    // registry fields that feed the tip have been applied to the card.
+    const count = await screen.findByLabelText(tip)
     expect(count.textContent).toBe('· ↓ 4.2k')
     expect(count.getAttribute('tabindex')).toBe('0')
-    expect(count.getAttribute('aria-label')).toContain('2026-08-25 to 2026-09-23')
-    expect(count.getAttribute('aria-label')).toContain('2026-09-24')
-    let card: HTMLElement | null = screen.getByText('dsh-loop')
+    expect(count.getAttribute('aria-label')).not.toContain('2026-09-24')
+    let card: HTMLElement | null = count
     while (card !== null && within(card).queryAllByRole('button', { name: en.install }).length === 0) card = card.parentElement
     fireEvent.click(within(card!).getAllByRole('button', { name: en.install })[0]!)
     await screen.findByRole('button', { name: en.confirmInstall })
-    // The dialog carries the methodology on its own download mark, not as a
+    // The dialog names the count on its own download mark, not as a
     // second paragraph in the body (#739).
     const dialog = within(screen.getByRole('dialog'))
-    const dialogCount = dialog.getByLabelText(/npm rolling 30-day downloads: 4200/)
+    const dialogCount = dialog.getByLabelText(tip)
     expect(dialogCount.getAttribute('tabindex')).toBe('0')
-    expect(dialogCount.getAttribute('aria-label')?.toLowerCase()).toContain('not lifetime downloads or unique users')
-    expect(dialogCount.getAttribute('aria-label')).toContain('2026-09-24')
-    expect(dialog.queryByText(/Source checked at: 2026-09-24/)).toBeNull()
+    expect(dialogCount.getAttribute('aria-label')).toBe(tip)
+    expect(dialog.queryByText(tip)).toBeNull()
   })
 
   it('shows a scrollable thumbnail strip only on the card with curated screenshots', async () => {

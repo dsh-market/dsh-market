@@ -133,6 +133,41 @@ describe('discover cards keep the two-up measure', () => {
 })
 
 /**
+ * Card hover washes; Install fills black only on the button itself.
+ * Fenced to `@media (hover: hover)`. Cards do not lift; theme cards keep theirs.
+ */
+describe('discover cards hover wash; Install fills on the button', () => {
+  it('paints the wash and fills Install only on button hover', () => {
+    const start = CSS.indexOf('@media (hover: hover)')
+    expect(start, 'the official hover fence is missing').toBeGreaterThan(-1)
+    let depth = 0
+    let end = start
+    for (let i = CSS.indexOf('{', start); i < CSS.length; i++) {
+      if (CSS[i] === '{') depth += 1
+      else if (CSS[i] === '}') { depth -= 1; if (depth === 0) { end = i; break } }
+    }
+    const hover = CSS.slice(start, end)
+    expect(hover).toMatch(/\.card:hover[^{]*\{[^}]*interactive-bg-hover/)
+    expect(hover).toMatch(/\.recentTile:hover/)
+    expect(hover).toMatch(/\.installBtn:hover:not\(:disabled\)\{[^}]*button-primary-fill/)
+    expect(hover).not.toMatch(/\.card:hover \.installBtn/)
+    expect(hover).not.toMatch(/\.themeCard:hover \.installBtn/)
+    expect(hover).not.toMatch(/\.recentTile:hover \.installBtn/)
+    // Outside the fence a tap could latch the wash — keep the unfenced rule gone.
+    expect(CSS.replace(hover, '')).not.toMatch(/\.recentTile:hover\{[^}]*interactive-bg-hover/)
+  })
+
+  it('does not lift the card', () => {
+    expect(CSS).not.toMatch(/\.card:hover\{[^}]*transform:translateY/)
+  })
+
+  it('keeps the installed-row wash and the theme-card lift', () => {
+    expect(CSS).toMatch(/\.irow:hover\{[^}]*interactive-bg-hover/)
+    expect(CSS).toMatch(/\.themeCard:hover\{[^}]*transform:translateY\(-1px\)/)
+  })
+})
+
+/**
  * The animated mark is one gesture, not two animations (#964 follow-up).
  *
  * It has two parts — the grid's breath and the block that plugs into the empty
