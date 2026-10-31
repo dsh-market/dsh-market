@@ -42,7 +42,7 @@ import css from './Market.module.css'
 import { MARK_BLOCK_RADIUS, MARK_BLOCK_SIZE, MARK_GRID_BLOCKS, MARK_PLUG_BLOCK, MARK_VIEW_BOX } from './market-mark.ts'
 import { CommentsModal } from './CommentsModal.tsx'
 import { SearchInput } from './SearchInput.tsx'
-import { downloadStatsText } from './download-stats.ts'
+import { downloadStatistic, downloadStatsText, starStatsText } from './download-stats.ts'
 import { OperationsPanel } from './OperationsPanel.tsx'
 import { applyRecovery, fetchRecovery, initialKeep, RecoveryPanel, watchRestart, type RecoveryView } from './RecoveryPanel.tsx'
 import { HostRecoveryBanner } from './HostRecoveryBanner.tsx'
@@ -1390,17 +1390,26 @@ function BookmarkMark({ size = 14, filled = false, className, markRef }: {
   )
 }
 
-/** Compact abbreviated count; hover names the exact figure and the 30-day window. */
+/** Compact count; hover names the exact figure, source and reporting scope. */
 function DownloadCount({ plugin, t }: { plugin: RegistryPlugin; t: Translate }) {
   const tip = downloadStatsText(plugin, t)
-  if (tip === null) return null
+  const statistic = downloadStatistic(plugin)
+  if (tip === null || statistic === null) return null
   return (
     <CardTip label={tip}>
       <span className={css.star} tabIndex={0} aria-label={tip}>
-        {'· ↓ ' + formatCount(plugin.downloads!)}
+        {'· ' + (statistic.source === 'github' ? 'GitHub ' : '') + '↓ ' + formatCount(statistic.count)}
       </span>
     </CardTip>
   )
+}
+
+function StarCount({ plugin, t }: { plugin: RegistryPlugin; t: Translate }) {
+  const tip = starStatsText(plugin, t)
+  if (tip === null) return null
+  return <CardTip label={tip}><span className={css.star} tabIndex={0} aria-label={tip}>
+    {'· ★ ' + formatCount(plugin.stars!)}
+  </span></CardTip>
 }
 
 /** Monochrome mark for one fact in front of the capability fold. Ink, not a warning colour. */
@@ -6417,11 +6426,7 @@ export function MarketSection(props: MarketSectionProps) {
               <span className={css.owner} title={p.owner}>{p.owner}</span>
               <CatalogVersionMark version={p.version} tip={catalogVersionTip} />
               <DownloadCount plugin={p} t={t} />
-              {typeof p.stars === 'number' && (
-                <CardTip label={String(p.stars)}>
-                  <span className={css.star}>{'· ★ ' + formatCount(p.stars)}</span>
-                </CardTip>
-              )}
+              <StarCount plugin={p} t={t} />
             </div>
           </div>
           {/* Top right, at its natural size: in the footer it needed a row of
@@ -6536,11 +6541,7 @@ export function MarketSection(props: MarketSectionProps) {
                 <span className={css.owner} title={p.owner}>{p.owner}</span>
                 <CatalogVersionMark version={p.version} tip={catalogVersionTip} />
                 <DownloadCount plugin={p} t={t} />
-                {typeof p.stars === 'number' && (
-                  <CardTip label={String(p.stars)}>
-                    <span className={css.star}>{'· ★ ' + formatCount(p.stars)}</span>
-                  </CardTip>
-                )}
+                <StarCount plugin={p} t={t} />
               </div>
             </div>
             {p.deprecated === true && <span className={css.depBadge}>{t('deprecatedBadge')}</span>}
@@ -8658,9 +8659,7 @@ export function MarketSection(props: MarketSectionProps) {
             <span className={css.owner} title={confirming.owner}>{confirming.owner}</span>
             <CatalogVersionMark version={confirming.version} tip={catalogVersionTip} />
             <DownloadCount plugin={confirming} t={t} />
-            {typeof confirming.stars === 'number' && (
-              <span className={css.star}>{'· ★ ' + formatCount(confirming.stars)}</span>
-            )}
+            <StarCount plugin={confirming} t={t} />
             {confirming.added && (
               <span className={css.star} title={t('published')}>{`· ${confirming.added}`}</span>
             )}

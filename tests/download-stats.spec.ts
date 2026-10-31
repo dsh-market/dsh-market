@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { downloadStatsText } from '../src/client/download-stats.ts'
+import { downloadStatistic, downloadStatsText, starStatsText } from '../src/client/download-stats.ts'
 import { en, zh } from '../src/client/locales.ts'
 import type { Translate } from '../src/client/market-data.ts'
 
@@ -7,6 +7,27 @@ const english: Translate = key => en[key]
 const chinese: Translate = key => zh[key]
 
 describe('download statistic disclosure', () => {
+  it('keeps npm and lifetime totals distinct, preserves real zero and rejects invalid totals', () => {
+    expect(downloadStatistic({ downloads: 0, githubReleaseDownloads: 7000 })).toEqual({ source: 'npm', count: 0 })
+    expect(downloadStatistic({ downloads: null, githubReleaseDownloads: 0 })).toEqual({ source: 'github', count: 0 })
+    for (const count of [-1, NaN, Infinity, 0.5, Number.MAX_SAFE_INTEGER + 1])
+      expect(downloadStatistic({ downloads: null, githubReleaseDownloads: count })).toBeNull()
+    expect(starStatsText({ stars: 45, starsCheckedAt: '2026-10-31T08:35:00.000Z' }, english)).toContain('2026-10-31 08:35 UTC')
+    expect(starStatsText({ stars: 45, starsCheckedAt: '2026-02-30' }, english)).not.toContain('2026')
+    expect(starStatsText({ stars: 0 }, english)).toContain('0')
+  })
+
+  it('shows GitHub release downloads without calling them an npm 30-day window', () => {
+    const stats = { downloads: null, githubReleaseDownloads: 4754, githubReleaseDownloadsCheckedAt: '2026-10-31T08:35:00.000Z' }
+    for (const t of [english, chinese]) {
+      const text = downloadStatsText(stats, t)
+      expect(text).toContain('4754')
+      expect(text).toContain('GitHub')
+      expect(text).not.toContain('npm')
+      expect(text).toContain('2026-10-31')
+    }
+  })
+
   it('names the exact count and the window in both languages', () => {
     const stats = { downloads: 12345, downloadsStart: '2026-08-25', downloadsEnd: '2026-09-23', downloadsCheckedAt: '2026-09-24' }
     for (const t of [english, chinese]) {

@@ -67,6 +67,17 @@ const MAX_RANGE_LENGTH = 256
 export interface GitHubManifestSource {
   url: string
   tarball?: string | null
+  releaseManifest?: unknown
+}
+
+/** Reuse catalog facts only for this repository's exact pinned install asset. */
+export function catalogReleaseManifest(source: GitHubManifestSource): NpmManifestFacts | null {
+  const facts = record(source.releaseManifest)
+  const repository = parseSourceUrl(source.url)?.repo
+  const release = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/releases\/download\/[^/]+\/[^/?#]+\.(?:tgz|tar\.gz)$/.exec(source.tarball ?? '')
+  if (facts === null || !repository || !release || release[1]!.toLowerCase() !== repository.toLowerCase()
+    || facts.tarball !== source.tarball || !validFacts(facts)) return null
+  return { version: facts.version, enginesDsh: facts.enginesDsh, peerDependencies: facts.peerDependencies }
 }
 
 /** Read the linked package at its selected release, never the repository root by accident. */

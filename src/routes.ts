@@ -23,7 +23,7 @@ import {
 } from './hot.ts'
 import { createGroup, deleteGroup, removeFromGroups, renameGroup, setGroupMembers } from './groups.ts'
 import { dshHostInfo, findDshInstallDir } from './dsh-install.ts'
-import { deriveHostCompatibility, DiscoveryManifestIndex, findCompatibleVersion } from './discovery-compatibility.ts'
+import { catalogReleaseManifest, deriveHostCompatibility, DiscoveryManifestIndex, findCompatibleVersion } from './discovery-compatibility.ts'
 import { configurePersistentLog, exportLogs, logEvent, readPersistentLog } from './log.ts'
 import { marketFetch } from './net.ts'
 import { diagnosePackageManifests } from './diagnostics.ts'
@@ -3227,11 +3227,15 @@ export function mountMarketRoutes(
           const host = dshHostInfo()
           const hostVersion = host?.version ?? null
           const hostPackages = corePackageNames(host?.directory ?? null)
+          const catalogFacts = Object.fromEntries(entries.flatMap(entry => {
+            const facts = catalogReleaseManifest(entry)
+            return facts === null ? [] : [[entry.url, facts]]
+          }))
           const [npmFacts, githubFacts] = await Promise.all([
             discoveryManifests.lookup(packages, routesFor(region).npmRegistry),
-            githubDiscoveryManifests.lookupGitHub(entries),
+            githubDiscoveryManifests.lookupGitHub(entries.filter(entry => catalogFacts[entry.url] === undefined)),
           ])
-          const facts = { ...npmFacts, ...githubFacts }
+          const facts = { ...npmFacts, ...githubFacts, ...catalogFacts }
           const plugins = Object.fromEntries([...packages, ...urls].map(name => [
             name,
             deriveHostCompatibility(facts[name] ?? null, hostVersion, hostPackages),
