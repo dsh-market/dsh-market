@@ -30,6 +30,13 @@
 - **自定义 profile：** 把命令里的 `web` 换成宿主实际使用的 profile 名称：
   `dsh plugin --profile <profile> add dshmarket`。之后按宿主的说明重启。
 
+- **从 GitHub 源码安装（免构建）：** `add github:dsh-market/dsh-market` 会让
+  pnpm 先征求构建脚本授权。改用同一版本 Release 附带的预构建包，就不需要这一步：
+
+  ```sh
+  dsh plugin --profile <profile> add https://github.com/dsh-market/dsh-market/releases/download/v<version>/dshmarket-<version>.tgz
+  ```
+
 在装有 DSH Desktop 的电脑上执行 `dsh plugin --profile web add dshmarket`，
 命令可能提示成功，但市场装进的是 `profiles/web`，**不是**桌面应用使用的
 profile，因此不会出现在桌面端。请通过应用内的 **设置 → 插件** 安装；桌面端

@@ -32,6 +32,14 @@ One-click themes: install, switch live, no restart.
   profile name: `dsh plugin --profile <profile> add dshmarket`. Follow your
   host's restart instructions.
 
+- **From the GitHub source (no build):** `add github:dsh-market/dsh-market`
+  makes pnpm ask before running the package's build scripts. The prebuilt
+  tarball attached to the same release installs without that step:
+
+  ```sh
+  dsh plugin --profile <profile> add https://github.com/dsh-market/dsh-market/releases/download/v<version>/dshmarket-<version>.tgz
+  ```
+
 On a machine with DSH Desktop, running `dsh plugin --profile web add dshmarket`
 may report success but installs the market into `profiles/web`, **not** the
 profile used by the Desktop app. It will not appear in Desktop. Install through

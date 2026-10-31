@@ -106,12 +106,25 @@ jobs:
 
       - run: npm publish --tag ${{ steps.channel.outputs.dist }}
 
+      # The tarball npm just published is also the no-build install path: a
+      # git-hosted copy of this package has to run prepare under pnpm's
+      # allowBuilds policy, so releases carry an already-built copy that pnpm
+      # installs without running a single script. --ignore-scripts keeps
+      # prepack from building a second time in the same job.
+      - name: attach the built tarball to the release
+        if: env.DEV != 'true'
+        run: |
+          mkdir -p dist
+          npm pack --ignore-scripts --pack-destination dist
+          ls -l dist
+
       - name: create GitHub release
         if: env.DEV != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" \
+            dist/*.tgz \
             --title "dshmarket ${GITHUB_REF_NAME#v}" \
             --generate-notes \
             ${{ steps.channel.outputs.pre == 'true' && '--prerelease' || '' }} \
