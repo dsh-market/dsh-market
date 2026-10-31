@@ -290,6 +290,18 @@ export function SettingsCard({ t, onRemoved, sidebar, entries }: SettingsCardPro
    * discover list's retry button covers every plugin except this one (#255).
    */
   const [stale, setStale] = useState(false)
+  /**
+   * The last self-update was refused because sessions were running.
+   *
+   * The route replaces plugin files under a live agent, so it answers 409
+   * `agentsBusy` until the caller confirms on that request. Every other card
+   * asks first and resends with `confirmAgentsRunning`; this one did not, so
+   * the market's own button failed with a generic error whenever anything was
+   * running — including the page's own session.
+   */
+  const [agentsBusy, setAgentsBusy] = useState(false)
+  /** The update attempt the confirmation above would repeat, flags intact. */
+  const [agentRetry, setAgentRetry] = useState<{ force: boolean } | null>(null)
 
   // Only once the row is opened: the plugin configuration page renders every
   // card at once, and an update check costs a registry round trip.
@@ -329,17 +341,19 @@ export function SettingsCard({ t, onRemoved, sidebar, entries }: SettingsCardPro
     return () => { live = false }
   }, [open])
 
-  const post = useCallback(async (path: string, payload: unknown): Promise<{ ok?: boolean; error?: string }> => {
+  const post = useCallback(async (path: string, payload: unknown): Promise<{ ok?: boolean; error?: string; agentsBusy?: boolean }> => {
     const response = await fetch(path, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload),
     })
-    return (await response.json()) as { ok?: boolean; error?: string }
+    return (await response.json()) as { ok?: boolean; error?: string; agentsBusy?: boolean }
   }, [])
 
-  const onUpdate = useCallback((force = false) => {
+  const onUpdate = useCallback((force = false, confirmAgentsRunning = false) => {
     setRestoreConfirming(false)
+    setAgentsBusy(false)
+    setAgentRetry(null)
     setPhase('working')
     setError(null)
     setStale(false)
@@ -349,8 +363,18 @@ export function SettingsCard({ t, onRemoved, sidebar, entries }: SettingsCardPro
           name: 'dshmarket',
           ...(update?.restoreRequired === true ? { restore: true } : {}),
           ...(force ? { force: true } : {}),
+          ...(confirmAgentsRunning ? { confirmAgentsRunning: true } : {}),
         }) as {
-          ok?: boolean; error?: string; stale?: boolean
+          ok?: boolean; error?: string; stale?: boolean; agentsBusy?: boolean
+        }
+        // A refusal while sessions run is a question, not a failure: the
+        // route is protecting the files those sessions are executing. Ask,
+        // and resend with the confirmation the route requires.
+        if (body.agentsBusy === true) {
+          setAgentsBusy(true)
+          setAgentRetry({ force })
+          setPhase('idle')
+          return
         }
         if (body.ok === true) setPhase('updated')
         else {
@@ -695,6 +719,21 @@ export function SettingsCard({ t, onRemoved, sidebar, entries }: SettingsCardPro
                 h(Button, {
                   variant: 'primary', size: 'sm', onClick: () => onUpdate(),
                 }, t('restoreContinue')),
+              ),
+            )
+          : null,
+        status?.selfManaged === true && agentsBusy
+          ? h('div', { className: css.setConfirm },
+              h('div', { className: css.setHint }, t('agentsRunningRisk')),
+              h('div', { className: css.setActions },
+                h(Button, {
+                  variant: 'ghost', size: 'sm', onClick: () => { setAgentsBusy(false); setAgentRetry(null) },
+                }, t('setSelfCancel')),
+                h(Button, {
+                  variant: 'primary',
+                  size: 'sm',
+                  onClick: () => { onUpdate(agentRetry?.force === true, true) },
+                }, t('agentsRunningConfirm')),
               ),
             )
           : null,

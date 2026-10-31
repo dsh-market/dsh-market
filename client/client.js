@@ -17473,6 +17473,18 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			* discover list's retry button covers every plugin except this one (#255).
 			*/
 			const [stale, setStale] = (0, react.useState)(false);
+			/**
+			* The last self-update was refused because sessions were running.
+			*
+			* The route replaces plugin files under a live agent, so it answers 409
+			* `agentsBusy` until the caller confirms on that request. Every other card
+			* asks first and resends with `confirmAgentsRunning`; this one did not, so
+			* the market's own button failed with a generic error whenever anything was
+			* running — including the page's own session.
+			*/
+			const [agentsBusy, setAgentsBusy] = (0, react.useState)(false);
+			/** The update attempt the confirmation above would repeat, flags intact. */
+			const [agentRetry, setAgentRetry] = (0, react.useState)(null);
 			const probed = (0, react.useRef)(false);
 			(0, react.useEffect)(() => {
 				if (!open || probed.current) return;
@@ -17516,8 +17528,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					body: JSON.stringify(payload)
 				})).json();
 			}, []);
-			const onUpdate = (0, react.useCallback)((force = false) => {
+			const onUpdate = (0, react.useCallback)((force = false, confirmAgentsRunning = false) => {
 				setRestoreConfirming(false);
+				setAgentsBusy(false);
+				setAgentRetry(null);
 				setPhase("working");
 				setError(null);
 				setStale(false);
@@ -17526,8 +17540,15 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						const body = await post(api("/dsh-market/update"), {
 							name: "dshmarket",
 							...update?.restoreRequired === true ? { restore: true } : {},
-							...force ? { force: true } : {}
+							...force ? { force: true } : {},
+							...confirmAgentsRunning ? { confirmAgentsRunning: true } : {}
 						});
+						if (body.agentsBusy === true) {
+							setAgentsBusy(true);
+							setAgentRetry({ force });
+							setPhase("idle");
+							return;
+						}
 						if (body.ok === true) setPhase("updated");
 						else {
 							setStale(body.stale === true);
@@ -17805,7 +17826,20 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				variant: "primary",
 				size: "sm",
 				onClick: () => onUpdate()
-			}, t("restoreContinue")))) : null, status?.selfManaged === true ? row(t("setChannel"), t(CHANNEL_HINT[status.channel]), (0, react.createElement)("div", { className: Market_module_css_default.setSeg }, (status?.channels ?? ["stable", "beta"]).map((id) => (0, react.createElement)("button", {
+			}, t("restoreContinue")))) : null, status?.selfManaged === true && agentsBusy ? (0, react.createElement)("div", { className: Market_module_css_default.setConfirm }, (0, react.createElement)("div", { className: Market_module_css_default.setHint }, t("agentsRunningRisk")), (0, react.createElement)("div", { className: Market_module_css_default.setActions }, (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+				variant: "ghost",
+				size: "sm",
+				onClick: () => {
+					setAgentsBusy(false);
+					setAgentRetry(null);
+				}
+			}, t("setSelfCancel")), (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+				variant: "primary",
+				size: "sm",
+				onClick: () => {
+					onUpdate(agentRetry?.force === true, true);
+				}
+			}, t("agentsRunningConfirm")))) : null, status?.selfManaged === true ? row(t("setChannel"), t(CHANNEL_HINT[status.channel]), (0, react.createElement)("div", { className: Market_module_css_default.setSeg }, (status?.channels ?? ["stable", "beta"]).map((id) => (0, react.createElement)("button", {
 				key: id,
 				type: "button",
 				className: status?.channel === id ? `${Market_module_css_default.setSegBtn} ${Market_module_css_default.setSegOn}` : Market_module_css_default.setSegBtn,

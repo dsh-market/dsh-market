@@ -30,8 +30,11 @@ function stubFetch(options: {
   region?: string; regionAuto?: boolean; regionError?: string; githubProxy?: string | null
   githubProxyCustom?: string | null; githubProxyManaged?: boolean; githubProxyError?: string
   buildEnv?: Record<string, string>; buildEnvError?: string
+  /** Answer the FIRST update request with the running-agent refusal. */
+  updateBusyOnce?: boolean
 } = {}): void {
   calls = []
+  let updateAttempts = 0
   let githubProxyCustom = options.githubProxyCustom ?? null
   vi.stubGlobal('fetch', vi.fn((input: unknown, init?: RequestInit) => {
     const path = String(input)
@@ -92,6 +95,18 @@ function stubFetch(options: {
       const raw = (JSON.parse(String(init?.body)) as { proxy: string | null }).proxy
       githubProxyCustom = raw === null ? null : raw.replace(/\/+$/, '')
       return json({ ok: true, githubProxyCustom })
+    }
+    if (path.endsWith('/dsh-market/update')) {
+      updateAttempts += 1
+      const body = JSON.parse(String(init?.body)) as { confirmAgentsRunning?: boolean }
+      if (options.updateBusyOnce === true && body.confirmAgentsRunning !== true && updateAttempts === 1) {
+        return Promise.resolve(new Response(JSON.stringify({
+          error: 'Agents are running (session-1). Updating replaces plugin files in place.',
+          agentsBusy: true,
+          runningAgents: ['session-1'],
+        }), { status: 409, headers: { 'content-type': 'application/json' } }))
+      }
+      return json({ ok: true, activation: 'restart' })
     }
     if (path.endsWith('/dsh-market/self-uninstall')) {
       return options.removeOk === false
@@ -788,5 +803,42 @@ describe('SettingsCard — build environment (#336)', () => {
     fireEvent.change(editor(), { target: { value: 'CC=/usr/bin/gcc-11' } })
     fireEvent.click(screen.getByRole('button', { name: t('setBuildEnvSave') }))
     await waitFor(() => { expect(screen.getByText(/PATH is managed by the market/)).toBeTruthy() })
+  })
+})
+
+describe('SettingsCard — a self-update refused while sessions run', () => {
+  it('asks before resending with confirmAgentsRunning instead of failing', async () => {
+    // Reported from a real host: every other card asks "sessions are
+    // running, continue?" and resends, while the market's own card turned the
+    // same 409 into "the operation failed" — with no way forward, because
+    // only this card can update the market.
+    stubFetch({ version: '1.12.2', latest: '1.13.0', updateBusyOnce: true })
+    await open()
+    const button = await screen.findByRole('button', { name: t('setSelfUpdate') })
+    fireEvent.click(button)
+    expect(await screen.findByText(t('agentsRunningRisk'))).toBeTruthy()
+    // The refusal is a question, so it must not be reported as a failure.
+    expect(screen.queryByText(t('setSelfFailed'))).toBeNull()
+
+    const sent = calls.filter(call => call.path.endsWith('/dsh-market/update'))
+    expect(sent).toHaveLength(1)
+    expect((sent[0]?.body as { confirmAgentsRunning?: boolean }).confirmAgentsRunning).toBeUndefined()
+
+    fireEvent.click(screen.getByRole('button', { name: t('agentsRunningConfirm') }))
+    await waitFor(() => { expect(screen.getByText(t('setSelfUpdatedHint'))).toBeTruthy() })
+    const after = calls.filter(call => call.path.endsWith('/dsh-market/update'))
+    expect(after).toHaveLength(2)
+    expect(after[1]?.body).toEqual({ name: 'dshmarket', confirmAgentsRunning: true })
+  })
+
+  it('leaves the card alone when the confirmation is cancelled', async () => {
+    stubFetch({ version: '1.12.2', latest: '1.13.0', updateBusyOnce: true })
+    await open()
+    fireEvent.click(await screen.findByRole('button', { name: t('setSelfUpdate') }))
+    await screen.findByText(t('agentsRunningRisk'))
+    fireEvent.click(screen.getByRole('button', { name: t('setSelfCancel') }))
+    await waitFor(() => { expect(screen.queryByText(t('agentsRunningRisk'))).toBeNull() })
+    expect(calls.filter(call => call.path.endsWith('/dsh-market/update'))).toHaveLength(1)
+    expect(screen.queryByText(t('setSelfFailed'))).toBeNull()
   })
 })
