@@ -135,6 +135,8 @@ Installs prefer repo-verified npm packages, then author-supplied prebuilt GitHub
 
 ## Data source
 
+Catalog statistics preserve their source: npm counts cover the stated 30-day window; GitHub-only releases can show lifetime downloads of all public repository Release assets, including packages, checksums and companion files. The counts are never added together or called installations/users. Tooltips include the available collection time; npm-download sorting keeps its existing window. Catalog host declarations are accepted only for the exact pinned install URL, with the existing on-demand manifest lookup retained for older catalogs.
+
 Fetched live on every open from [awesome-dsh-plugin.com/plugins.json](https://awesome-dsh-plugin.com/plugins.json) — curated entries, npm mapping, and star counts refreshed daily by CI, with no stale cache behind it. A failure reports the actual reason and elapsed time, with a Retry button.
 
 There is deliberately no bundled snapshot to fall back on: for a catalog that grows daily, a stale answer is not a degraded one but a wrong one — a plugin published this morning would read as "does not exist".

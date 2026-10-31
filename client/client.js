@@ -577,11 +577,14 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			sortDownloads: "npm 下载量（近 30 天）",
 			downloadsPeriod: "近30天",
 			downloadsMeaning: "近 30 天 npm 下载：{0}",
+			githubReleaseDownloadsMeaning: "GitHub 发行附件累计下载：{0}（包括安装包、校验和配套文件）",
+			starsMeaning: "GitHub Star：{0}",
+			statisticCheckedAt: "；采集于 {0}",
 			downloadsWindow: "（{0} 至 {1}）",
 			/** Discover/theme card byline tooltip for catalog `version`. */
 			catalogNpmLatest: "npm 当前 latest",
-			catalogVersionDated: "目录（{0} 刷新）记录的 npm 版本；之后发布的版本要等下次刷新才会出现",
-			catalogVersionUndated: "目录记录的 npm 版本；目录每日刷新，可能滞后于 npm 上的实际 latest",
+			catalogVersionDated: "目录（{0} 更新）记录的安装版本；新发行需等待目录更新",
+			catalogVersionUndated: "目录记录的安装版本；可能滞后于项目的新发行",
 			sortStars: "Star 数",
 			sortAdded: "收录时间",
 			recentlyAdded: "最近收录",
@@ -1359,11 +1362,14 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			sortDownloads: "npm downloads (30d)",
 			downloadsPeriod: "30d",
 			downloadsMeaning: "Last 30 days on npm: {0}",
+			githubReleaseDownloadsMeaning: "GitHub Release asset downloads, all time: {0} (packages, checksums and companion files)",
+			starsMeaning: "GitHub stars: {0}",
+			statisticCheckedAt: "; checked {0}",
 			downloadsWindow: " ({0} – {1})",
 			/** Discover/theme card byline tooltip for catalog `version`. */
 			catalogNpmLatest: "npm latest",
-			catalogVersionDated: "the npm version as of the catalog's last refresh ({0}); a release published since then appears after the next refresh",
-			catalogVersionUndated: "the npm version as of the catalog's last refresh — the catalog updates daily, so this can lag npm's actual latest",
+			catalogVersionDated: "the installable version as of the catalog's last refresh ({0}); a release published since then appears after the next refresh",
+			catalogVersionUndated: "the installable version as of the catalog's last refresh — the catalog updates daily, so newer project releases may not appear yet",
 			sortStars: "Stars",
 			sortAdded: "Date added",
 			recentlyAdded: "Recently added",
@@ -2141,10 +2147,13 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			sortDownloads: "npm ダウンロード数（直近 30 日）",
 			downloadsPeriod: "30日",
 			downloadsMeaning: "直近 30 日の npm ダウンロード：{0}",
+			githubReleaseDownloadsMeaning: "GitHub Release 添付ファイルの累計ダウンロード：{0}（パッケージ、チェックサム、関連ファイルを含む）",
+			starsMeaning: "GitHub Star：{0}",
+			statisticCheckedAt: "；取得日時 {0}",
 			downloadsWindow: "（{0} ～ {1}）",
 			catalogNpmLatest: "npm の現在の latest",
-			catalogVersionDated: "カタログの前回更新（{0}）時点の npm バージョンです。それ以降に公開されたバージョンは、次回の更新後に現れます",
-			catalogVersionUndated: "カタログに記録された npm バージョンです。カタログは毎日更新されるため、npm の実際の latest より遅れていることがあります",
+			catalogVersionDated: "カタログ（{0} 更新）に記録されたインストール用バージョンです。新しいリリースはカタログ更新後に表示されます",
+			catalogVersionUndated: "カタログに記録されたインストール用バージョンです。新しいリリースがまだ反映されていない場合があります",
 			sortStars: "スター数",
 			sortAdded: "収録日時",
 			recentlyAdded: "最近の収録",
@@ -4873,6 +4882,29 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		}
 		//#endregion
 		//#region src/client/download-stats.ts
+		const validCount = (value) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+		/** Keep the established npm window first; the two sources are never added together. */
+		function downloadStatistic(plugin) {
+			if (validCount(plugin.downloads)) return {
+				count: plugin.downloads,
+				source: "npm"
+			};
+			if (validCount(plugin.githubReleaseDownloads)) return {
+				count: plugin.githubReleaseDownloads,
+				source: "github"
+			};
+			return null;
+		}
+		function checkedAt(value, t) {
+			if (dateOnly(value)) return t("statisticCheckedAt").replace("{0}", value);
+			if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) return "";
+			const date = new Date(value);
+			if (!Number.isFinite(date.getTime()) || date.toISOString() !== value) return "";
+			return t("statisticCheckedAt").replace("{0}", value.slice(0, 16).replace("T", " ") + " UTC");
+		}
+		function starStatsText(plugin, t) {
+			return validCount(plugin.stars) ? t("starsMeaning").replace("{0}", String(plugin.stars)) + checkedAt(plugin.starsCheckedAt, t) : null;
+		}
 		/** Date-only values stay date-only; never derive a window from today's date. */
 		function dateOnly(value) {
 			if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -4881,8 +4913,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		}
 		/** Exact count and, when the catalog sent one, the 30-day window. */
 		function downloadStatsText(plugin, t) {
-			const count = plugin.downloads;
-			if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0) return null;
+			const statistic = downloadStatistic(plugin);
+			if (statistic === null) return null;
+			const { count, source } = statistic;
+			if (source === "github") return t("githubReleaseDownloadsMeaning").replace("{0}", String(count)) + checkedAt(plugin.githubReleaseDownloadsCheckedAt, t);
 			const meaning = t("downloadsMeaning").replace("{0}", String(count));
 			if (!(dateOnly(plugin.downloadsStart) && dateOnly(plugin.downloadsEnd) && plugin.downloadsStart <= plugin.downloadsEnd)) return meaning;
 			return meaning + t("downloadsWindow").replace("{0}", plugin.downloadsStart).replace("{1}", plugin.downloadsEnd);
@@ -9020,9 +9054,23 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				})
 			});
 		}
-		/** Compact abbreviated count; hover names the exact figure and the 30-day window. */
+		/** Compact count; hover names the exact figure, source and reporting scope. */
 		function DownloadCount({ plugin, t }) {
 			const tip = downloadStatsText(plugin, t);
+			const statistic = downloadStatistic(plugin);
+			if (tip === null || statistic === null) return null;
+			return /* @__PURE__ */ (0, react_jsx_runtime.jsx)(CardTip, {
+				label: tip,
+				children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+					className: Market_module_css_default.star,
+					tabIndex: 0,
+					"aria-label": tip,
+					children: "· " + (statistic.source === "github" ? "GitHub " : "") + "↓ " + formatCount(statistic.count)
+				})
+			});
+		}
+		function StarCount({ plugin, t }) {
+			const tip = starStatsText(plugin, t);
 			if (tip === null) return null;
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsx)(CardTip, {
 				label: tip,
@@ -9030,7 +9078,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					className: Market_module_css_default.star,
 					tabIndex: 0,
 					"aria-label": tip,
-					children: "· ↓ " + formatCount(plugin.downloads)
+					children: "· ★ " + formatCount(plugin.stars)
 				})
 			});
 		}
@@ -13836,12 +13884,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 												plugin: p,
 												t
 											}),
-											typeof p.stars === "number" && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(CardTip, {
-												label: String(p.stars),
-												children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-													className: Market_module_css_default.star,
-													children: "· ★ " + formatCount(p.stars)
-												})
+											/* @__PURE__ */ (0, react_jsx_runtime.jsx)(StarCount, {
+												plugin: p,
+												t
 											})
 										]
 									})]
@@ -13990,12 +14035,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 													plugin: p,
 													t
 												}),
-												typeof p.stars === "number" && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(CardTip, {
-													label: String(p.stars),
-													children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-														className: Market_module_css_default.star,
-														children: "· ★ " + formatCount(p.stars)
-													})
+												/* @__PURE__ */ (0, react_jsx_runtime.jsx)(StarCount, {
+													plugin: p,
+													t
 												})
 											]
 										})]
@@ -16493,9 +16535,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 											plugin: confirming,
 											t
 										}),
-										typeof confirming.stars === "number" && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-											className: Market_module_css_default.star,
-											children: "· ★ " + formatCount(confirming.stars)
+										/* @__PURE__ */ (0, react_jsx_runtime.jsx)(StarCount, {
+											plugin: confirming,
+											t
 										}),
 										confirming.added && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 											className: Market_module_css_default.star,

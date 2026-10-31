@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { deriveHostCompatibility, DiscoveryManifestIndex } from '../src/discovery-compatibility.ts'
+import { catalogReleaseManifest, deriveHostCompatibility, DiscoveryManifestIndex } from '../src/discovery-compatibility.ts'
 
 const directories: string[] = []
 afterEach(() => { for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true }) })
@@ -15,6 +15,17 @@ function cacheFile(): string {
 }
 
 describe('GitHub discovery host requirements', () => {
+  it('uses catalog host declarations only for the exact pinned install artifact', () => {
+    const source = { url: 'https://github.com/owner/whale', tarball: 'https://github.com/owner/whale/releases/download/v1.3.0/full.tgz' }
+    const facts = { tarball: source.tarball, version: '1.3.0', enginesDsh: '0.2.1-rc.5', peerDependencies: {} }
+    expect(catalogReleaseManifest({ ...source, releaseManifest: facts })).toMatchObject({ version: '1.3.0', enginesDsh: '0.2.1-rc.5' })
+    const result = deriveHostCompatibility(catalogReleaseManifest({ ...source, releaseManifest: facts }), '0.2.1-rc.5', new Set())
+    expect(result).toMatchObject({ status: 'compatible', requirement: '0.2.1-rc.5', basis: 'manifest' })
+    for (const tarball of [source.tarball.replace('1.3.0', '1.4.0'), source.tarball.replace('/owner/', '/other/'), source.tarball.replace('/download/v1.3.0/', '/latest/download/')])
+      expect(catalogReleaseManifest({ ...source, tarball, releaseManifest: facts })).toBeNull()
+    expect(catalogReleaseManifest({ ...source, releaseManifest: { ...facts, enginesDsh: 5 } })).toBeNull()
+  })
+
   it('reads the linked monorepo manifest, caches facts and evaluates each host separately', async () => {
     const calls: string[] = []
     const cache = cacheFile()

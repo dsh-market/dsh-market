@@ -3916,6 +3916,20 @@ describe('card hover does not cover footer actions (#1021)', () => {
 })
 
 describe('discover card download count stays compact', () => {
+  it('shows a GitHub-only release count with its source, collection time and pinned version', async () => {
+    const plugin = { ...REGISTRY.plugins[0]!, npm: null, downloads: null, version: '1.3.0',
+      githubReleaseDownloads: 7000, githubReleaseDownloadsCheckedAt: '2026-10-31T08:35:00.000Z',
+      stars: 45, starsCheckedAt: '2026-10-31T08:35:00.000Z' }
+    stubFetch({ '/dsh-market/registry': { hostVersion: '0.2.1-rc.5', registry: { ...REGISTRY, count: 1, plugins: [plugin] } } })
+    render(<MarketSection {...props()} />)
+    const card = (await screen.findByText('dsh-loop')).closest('[class*="card"]') as HTMLElement
+    expect(within(card).getByText('· GitHub ↓ 7k')).toBeTruthy()
+    expect(within(card).getByText('· v1.3.0')).toBeTruthy()
+    expect(within(card).getByLabelText(/GitHub Release asset downloads, all time: 7000.*2026-10-31 08:35 UTC/)).toBeTruthy()
+    expect(within(card).getByLabelText(/GitHub stars: 45.*2026-10-31 08:35 UTC/)).toBeTruthy()
+    expect(within(card).queryByLabelText(/Last 30 days on npm/)).toBeNull()
+  })
+
   it('shows the count on the card; the period stays in the tooltip', async () => {
     // #996 put " / 30d" on every byline. That string is already in the
     // tooltip, and on a two-up card it wraps the author row onto three lines.

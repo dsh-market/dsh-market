@@ -21,6 +21,18 @@ export interface RegistryPlugin {
   npm?: string | null
   tarball?: string | null
   stars?: number | null
+  starsCheckedAt?: string | null
+  /** All public Release assets in this repository, lifetime count; never npm's window. */
+  githubReleaseDownloads?: number | null
+  githubReleaseDownloadsCheckedAt?: string | null
+  /** Public package declarations at this exact pinned install tag. */
+  releaseManifest?: {
+    tarball: string
+    checkedAt: string
+    version: string | null
+    enginesDsh: string | null
+    peerDependencies: Record<string, string>
+  }
   /**
    * npm downloads in the last 30 days, when the entry has a published
    * package. `null`/absent means "no npm package" — a coverage gap, not a
