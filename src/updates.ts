@@ -964,7 +964,18 @@ export async function checkUpdates(
         const mayFollowATag = !upgrade
           && (version?.includes('-') === true || (stable !== null && version !== null && isUpgrade(stable, version) === false && stable !== version))
         const newerPrerelease = mayFollowATag ? await newerPrereleaseFor(name, version) : null
-        const desktopStable = options.holdYoungReleases === true && channel === undefined
+        // `channel === undefined` used to stand for "this row follows `latest`",
+        // and the market itself always has a channel (it is the one package
+        // the setting is for), so the mature-release fallback (#1019) skipped
+        // exactly the package that needs it most. The market releases about
+        // daily: every release restarted the age window on `/latest`, so the
+        // row showed "up to date" while releases from the previous two days
+        // were long past the window (#1087). What the guard actually means is
+        // "the target this row follows IS `latest`" — true on the stable
+        // channel, and false only when beta/dev resolve something newer, where
+        // a mature stable candidate is not the version the user asked for.
+        const followsLatest = channel === undefined || (stable !== null && latest === stable)
+        const desktopStable = options.holdYoungReleases === true && followsLatest
           && isStableReleaseVersion(version)
           && !/^https?:/i.test(spec) && !spec.includes(':') && !spec.includes('/')
         const mature = desktopStable && upgrade

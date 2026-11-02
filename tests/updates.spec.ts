@@ -223,6 +223,37 @@ describe('checkUpdates — fresh-release wait (#945)', () => {
     } finally { clock.mockRestore() }
   })
 
+  it('offers the market its own mature release even though it follows a channel (#1087)', async () => {
+    // The market is the one package the channel setting is FOR, so it is
+    // always in channelFor — and `desktopStable` used to require
+    // `channel === undefined`, which disabled the mature-release fallback
+    // (#1019) for exactly this row. The market releases about daily, so each
+    // release restarted the age window on `/latest` and the row never offered
+    // a version that was already mature. On the stable channel the resolved
+    // target IS `latest`, so the fallback applies here like anywhere else.
+    const dir = npmProfile(1440, 'dshmarket')
+    const now = Date.now()
+    vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
+      if (String(url).endsWith('/dshmarket/latest')) return new Response(JSON.stringify({ version: '1.2.0' }))
+      return new Response(JSON.stringify({
+        'dist-tags': { latest: '1.2.0' }, versions: { '1.0.0': {}, '1.1.0': {}, '1.2.0': {} },
+        time: {
+          '1.0.0': '2026-01-01T00:00:00.000Z',
+          // Mature: 48 hours old, past the 24-hour window.
+          '1.1.0': new Date(now - 48 * 3_600_000).toISOString(),
+          // The newest release: one hour old, inside the window.
+          '1.2.0': new Date(now - 3_600_000).toISOString(),
+        },
+      }))
+    }))
+    const channelFor = new Map([['dshmarket', 'stable' as const]])
+    const result = await checkUpdates('web', true, dir, channelFor, new Map(), new Map(), { holdYoungReleases: true })
+    // Before the fix: `updateAvailable: false`, no candidate, held on 1.2.0.
+    expect(result.dshmarket).toMatchObject({
+      latest: '1.2.0', eligibleVersion: '1.1.0', updateAvailable: true, heldUpdate: { latest: '1.2.0' },
+    })
+  })
+
   it('accepts only a verified exact-version exemption and fails closed on unknown exclusion syntax', async () => {
     const dir = npmProfile(1440)
     registry(hoursAgo(1))
