@@ -428,6 +428,31 @@ function mdInline(text: string): Array<string | JSX.Element> {
  * interpreted as markup); remaining text arrives as React children or
  * controlled nodes only.
  */
+
+/**
+ * An <img> whose src lives on raw.githubusercontent.com, walked through the
+ * raw GitHub route candidates on failure (#1070 follow-up): the update-notes
+ * dialog was the last place still loading those images directly, so on
+ * networks where raw is unreachable the notes rendered with holes. When every
+ * candidate fails the last one is the direct URL, exactly the old behavior.
+ */
+export function GithubRoutedImg({ src, alt, className, key }: { src: string; alt: string; className?: string; key?: string }) {
+  const [routeIndex, setRouteIndex] = useState(0)
+  const candidates = githubRouteCandidates('raw', src)
+  const candidate = candidates[Math.min(routeIndex, candidates.length - 1)]!
+  return (
+    <img
+      key={key}
+      className={className}
+      src={candidate.url}
+      alt={alt}
+      loading="lazy"
+      onLoad={() => rememberGithubRoute('raw', candidate.proxy)}
+      onError={() => { if (routeIndex + 1 < candidates.length) setRouteIndex(routeIndex + 1) }}
+    />
+  )
+}
+
 function renderMarkdown(md: string): Array<JSX.Element | string> {
   const out: Array<JSX.Element | string> = []
   let bullets: string[] | null = null
@@ -464,12 +489,11 @@ function renderMarkdown(md: string): Array<JSX.Element | string> {
     if (image !== null) {
       flushList()
       out.push(
-        <img
+        <GithubRoutedImg
           key={`i${out.length}`}
           className={css.notesImg}
           src={image.src}
           alt={image.alt}
-          loading="lazy"
         />,
       )
       continue
