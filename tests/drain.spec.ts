@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -534,6 +534,28 @@ describe('DrainJournal', () => {
       { at: 1, id: 'boot-drain-1', kind: 'update', name: 'dsh-loop', state: 'succeeded', agentsAtStart: 2, agentsAtEnd: 0 },
       { at: 2, id: 'boot-drain-2', kind: 'uninstall', name: 'dsh-old', state: 'failed', agentsAtStart: 1, agentsAtEnd: 1 },
     ])
+  })
+
+  it('keeps a record appended after an unterminated tail, and loses only the damaged line (#1084)', () => {
+    // Reported with the production modules: a journal whose last write was
+    // interrupted has no trailing newline, so the next append landed on the
+    // same line — and on reopen BOTH records vanished, including the one that
+    // had just completed. Losing the damaged line is correct; losing the
+    // record written after it is not.
+    const dir = mkdtempSync(join(tmpdir(), 'drain-journal-'))
+    dirs.push(dir)
+    const file = join(dir, '.dsh-market', 'drain.ndjson')
+    mkdirSync(join(dir, '.dsh-market'), { recursive: true })
+    const row = (id: string): DrainJournalRecord => ({
+      at: 1, id, kind: 'update', name: 'dsh-example', state: 'succeeded', agentsAtStart: 0, agentsAtEnd: 0,
+    })
+    writeFileSync(file, `${JSON.stringify(row('old'))}\n{"at":2,"id":"partial"`)
+
+    const journal = new DrainJournal(file)
+    journal.append(row('new-completed'))
+    expect(journal.recent().map(record => record.id)).toEqual(['old', 'new-completed'])
+
+    expect(new DrainJournal(file).recent().map(record => record.id)).toEqual(['old', 'new-completed'])
   })
 
   it('redacts home paths in the package name', () => {
