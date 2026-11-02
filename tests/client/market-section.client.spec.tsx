@@ -11,7 +11,7 @@ import { resolve } from 'node:path'
 import { StrictMode } from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { MarketSection, OwnerAvatar, resetHostCompatibilityCache, resetMarketPortalHost, resetThemePreviewCache } from '../../src/client/MarketSection.tsx'
+import { GithubRoutedImg, MarketSection, OwnerAvatar, resetHostCompatibilityCache, resetMarketPortalHost, resetThemePreviewCache } from '../../src/client/MarketSection.tsx'
 import css from '../../src/client/Market.module.css'
 import { downloadStatsText } from '../../src/client/download-stats.ts'
 import { createHostNavigation } from '../../src/client/host-navigation.ts'
@@ -1949,6 +1949,42 @@ describe('MarketSection (jsdom)', () => {
     const second = render(<OwnerAvatar name="dsh-notify" owner="bob" />)
     avatar = second.container.querySelector('img')!
     expect(avatar.src).toContain('https://good.example/https://avatars.githubusercontent.com/bob')
+  })
+
+  it('routes update-notes images through raw candidates instead of connecting directly (#1070)', () => {
+    setGithubRoutes({ raw: ['https://bad.example', 'https://good.example', null], avatar: [null] })
+    const src = 'https://raw.githubusercontent.com/awesome-dsh-plugin/awesome-dsh-plugin/main/shot.png'
+    const first = render(<GithubRoutedImg src={src} alt="shot" />)
+    let img = first.container.querySelector('img')!
+    expect(img.src).toContain(`https://bad.example/${src}`)
+    fireEvent.error(img)
+    img = first.container.querySelector('img')!
+    expect(img.src).toContain(`https://good.example/${src}`)
+    fireEvent.load(img)
+    first.unmount()
+
+    // The raw winner is remembered, so the next notes image starts there.
+    const second = render(<GithubRoutedImg src={src} alt="shot" />)
+    img = second.container.querySelector('img')!
+    expect(img.src).toContain(`https://good.example/${src}`)
+  })
+
+  it('routes the declared icon through raw candidates instead of connecting directly (#1078)', () => {
+    setGithubRoutes({ raw: ['https://bad.example', 'https://good.example', null], avatar: [null] })
+    const icon = 'https://raw.githubusercontent.com/alice/dsh-loop/main/icon.png'
+    const first = render(<OwnerAvatar name="dsh-loop" owner="alice" icon={icon} />)
+    let tile = first.container.querySelector('img')!
+    expect(tile.src).toContain('https://bad.example/https://raw.githubusercontent.com/alice/dsh-loop/main/icon.png')
+    fireEvent.error(tile)
+    tile = first.container.querySelector('img')!
+    expect(tile.src).toContain('https://good.example/https://raw.githubusercontent.com/alice/dsh-loop/main/icon.png')
+    fireEvent.load(tile)
+    first.unmount()
+
+    // The raw winner is remembered, so the next declared icon starts there.
+    const second = render(<OwnerAvatar name="dsh-notify" owner="bob" icon={icon} />)
+    tile = second.container.querySelector('img')!
+    expect(tile.src).toContain('https://good.example/https://raw.githubusercontent.com/alice/dsh-loop/main/icon.png')
   })
 
   it('imports a backup as a grey installed-list preview without restoring it', async () => {

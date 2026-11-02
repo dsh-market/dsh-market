@@ -428,6 +428,31 @@ function mdInline(text: string): Array<string | JSX.Element> {
  * interpreted as markup); remaining text arrives as React children or
  * controlled nodes only.
  */
+
+/**
+ * An <img> whose src lives on raw.githubusercontent.com, walked through the
+ * raw GitHub route candidates on failure (#1070 follow-up): the update-notes
+ * dialog was the last place still loading those images directly, so on
+ * networks where raw is unreachable the notes rendered with holes. When every
+ * candidate fails the last one is the direct URL, exactly the old behavior.
+ */
+export function GithubRoutedImg({ src, alt, className, key }: { src: string; alt: string; className?: string; key?: string }) {
+  const [routeIndex, setRouteIndex] = useState(0)
+  const candidates = githubRouteCandidates('raw', src)
+  const candidate = candidates[Math.min(routeIndex, candidates.length - 1)]!
+  return (
+    <img
+      key={key}
+      className={className}
+      src={candidate.url}
+      alt={alt}
+      loading="lazy"
+      onLoad={() => rememberGithubRoute('raw', candidate.proxy)}
+      onError={() => { if (routeIndex + 1 < candidates.length) setRouteIndex(routeIndex + 1) }}
+    />
+  )
+}
+
 function renderMarkdown(md: string): Array<JSX.Element | string> {
   const out: Array<JSX.Element | string> = []
   let bullets: string[] | null = null
@@ -464,12 +489,11 @@ function renderMarkdown(md: string): Array<JSX.Element | string> {
     if (image !== null) {
       flushList()
       out.push(
-        <img
+        <GithubRoutedImg
           key={`i${out.length}`}
           className={css.notesImg}
           src={image.src}
           alt={image.alt}
-          loading="lazy"
         />,
       )
       continue
@@ -503,18 +527,30 @@ export function OwnerAvatar({ name, owner, icon, className }: { name: string; ow
   const [failed, setFailed] = useState(false)
   const [routeIndex, setRouteIndex] = useState(0)
   const [iconFailed, setIconFailed] = useState(false)
+  const [iconRouteIndex, setIconRouteIndex] = useState(0)
   const av = className === undefined ? css.av : `${css.av} ${className}`
   const tile = iconFailed ? null : safeIcon(icon)
   if (tile !== null) {
+    // A declared icon is almost always a raw.githubusercontent.com URL, so it
+    // goes through the raw route candidates the lightbox uses (#1070) instead
+    // of a direct connection: on networks where raw is unreachable the icon
+    // would fail on first request and silently degrade to the owner's avatar
+    // (#1078). Candidates are walked on error, like the avatar branch below.
+    const candidates = githubRouteCandidates('raw', tile)
+    const candidate = candidates[Math.min(iconRouteIndex, candidates.length - 1)]!
     return (
       <img
         className={av}
-        src={tile}
+        src={candidate.url}
         alt=""
         loading="lazy"
         decoding="async"
         referrerPolicy="no-referrer"
-        onError={() => setIconFailed(true)}
+        onLoad={() => rememberGithubRoute('raw', candidate.proxy)}
+        onError={() => {
+          if (iconRouteIndex + 1 < candidates.length) setIconRouteIndex(iconRouteIndex + 1)
+          else setIconFailed(true)
+        }}
       />
     )
   }

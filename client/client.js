@@ -8169,6 +8169,28 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		* interpreted as markup); remaining text arrives as React children or
 		* controlled nodes only.
 		*/
+		/**
+		* An <img> whose src lives on raw.githubusercontent.com, walked through the
+		* raw GitHub route candidates on failure (#1070 follow-up): the update-notes
+		* dialog was the last place still loading those images directly, so on
+		* networks where raw is unreachable the notes rendered with holes. When every
+		* candidate fails the last one is the direct URL, exactly the old behavior.
+		*/
+		function GithubRoutedImg({ src, alt, className, key }) {
+			const [routeIndex, setRouteIndex] = (0, react.useState)(0);
+			const candidates = githubRouteCandidates("raw", src);
+			const candidate = candidates[Math.min(routeIndex, candidates.length - 1)];
+			return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("img", {
+				className,
+				src: candidate.url,
+				alt,
+				loading: "lazy",
+				onLoad: () => rememberGithubRoute("raw", candidate.proxy),
+				onError: () => {
+					if (routeIndex + 1 < candidates.length) setRouteIndex(routeIndex + 1);
+				}
+			}, key);
+		}
 		function renderMarkdown(md) {
 			const out = [];
 			let bullets = null;
@@ -8210,11 +8232,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				const image = releaseNotesHttpsImage(trimmed);
 				if (image !== null) {
 					flushList();
-					out.push(/* @__PURE__ */ (0, react_jsx_runtime.jsx)("img", {
+					out.push(/* @__PURE__ */ (0, react_jsx_runtime.jsx)(GithubRoutedImg, {
 						className: Market_module_css_default.notesImg,
 						src: image.src,
-						alt: image.alt,
-						loading: "lazy"
+						alt: image.alt
 					}, `i${out.length}`));
 					continue;
 				}
@@ -8255,17 +8276,26 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const [failed, setFailed] = (0, react.useState)(false);
 			const [routeIndex, setRouteIndex] = (0, react.useState)(0);
 			const [iconFailed, setIconFailed] = (0, react.useState)(false);
+			const [iconRouteIndex, setIconRouteIndex] = (0, react.useState)(0);
 			const av = className === void 0 ? Market_module_css_default.av : `${Market_module_css_default.av} ${className}`;
 			const tile = iconFailed ? null : safeIcon(icon);
-			if (tile !== null) return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("img", {
-				className: av,
-				src: tile,
-				alt: "",
-				loading: "lazy",
-				decoding: "async",
-				referrerPolicy: "no-referrer",
-				onError: () => setIconFailed(true)
-			});
+			if (tile !== null) {
+				const candidates = githubRouteCandidates("raw", tile);
+				const candidate = candidates[Math.min(iconRouteIndex, candidates.length - 1)];
+				return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("img", {
+					className: av,
+					src: candidate.url,
+					alt: "",
+					loading: "lazy",
+					decoding: "async",
+					referrerPolicy: "no-referrer",
+					onLoad: () => rememberGithubRoute("raw", candidate.proxy),
+					onError: () => {
+						if (iconRouteIndex + 1 < candidates.length) setIconRouteIndex(iconRouteIndex + 1);
+						else setIconFailed(true);
+					}
+				});
+			}
 			if (failed || owner === "") return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 				className: av,
 				style: { background: avatarColor(name) },
