@@ -212,6 +212,30 @@ function usePagination(count: number, resetDeps: readonly unknown[], scrollToTop
 }
 
 /**
+ * A growing window for the Plugins page tab.
+ *
+ * The catalog is already in memory; the page number existed to cap the DOM.
+ * On a page that scrolls with the host, turning the page jumps back to the
+ * top. Appending a chunk leaves the reader where they are. A filter change
+ * starts over, the same moment `usePagination` returns to page 1.
+ */
+function useShownCount(count: number, resetDeps: readonly unknown[], chunk: number): {
+  shown: number
+  more: number
+  loadMore: () => void
+} {
+  const [limit, setLimit] = useState(chunk)
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- resetDeps IS the intended dependency list, supplied by the caller.
+  useEffect(() => { setLimit(chunk) }, resetDeps)
+  const shown = Math.min(count, limit)
+  return {
+    shown,
+    more: Math.max(0, count - shown),
+    loadMore: () => { setLimit(current => current + chunk) },
+  }
+}
+
+/**
  * The sort/time-range dropdown (primitives Menu): three independent option
  * groups, ids namespaced so one onSelect routes by prefix. Owns its own
  * open state — a caller wires only the sort VALUES, not the dropdown's UI
@@ -324,6 +348,16 @@ function EmptyResults({ blocked, onClear, t }: { blocked: boolean; onClear?: () 
  * always present, so skipping to either end stays one click away) and
  * `.pager`/`.pagerPages` are nowrap with tight paddings — a wrapping pager
  * reads as broken here. */
+/** Plugins tab: one more chunk, in place. Settings and the sidebar keep Pager. */
+function LoadMore({ more, onLoad, t }: { more: number; onLoad: () => void; t: Translate }) {
+  if (more <= 0) return null
+  return (
+    <div className={css.loadMore}>
+      <Button variant="outline" size="sm" onClick={onLoad}>{t('loadMore')}</Button>
+    </div>
+  )
+}
+
 function Pager({ currentPage, totalPages, pageSize, onGoToPage, onChangePageSize, t }: {
   currentPage: number
   totalPages: number
@@ -2137,6 +2171,76 @@ function writeSidebarTipDismissed(): void {
   try { localStorage.setItem(SIDEBAR_TIP_KEY, '1') } catch { /* private mode: the tip can return */ }
 }
 
+/**
+ * The element that actually scrolls the list.
+ *
+ * Settings and the sidebar own `.body`. The Plugins page tab is content-sized
+ * inside the host's page, so the scroller is the first ancestor with overflow
+ * auto or scroll — the same walk the old height measurement used. Themes
+ * fullscreen puts the market back in an overlay with `.body` as the scroller
+ * again (the CSS already drops the flatten rules), so that path returns body.
+ * No host ancestor (jsdom, a host that has not laid out) falls back to the
+ * document's scrolling element when there is one.
+ */
+function listScroller(
+  surface: 'settings' | 'sidebar' | 'plugins',
+  root: HTMLElement | null,
+  body: HTMLElement | null,
+  fullscreen = false,
+): HTMLElement | null {
+  if (surface !== 'plugins' || fullscreen) return body
+  for (let node = root?.parentElement ?? null; node !== null; node = node.parentElement) {
+    if (/^(auto|scroll|overlay)$/.test(getComputedStyle(node).overflowY)) return node
+  }
+  const scrolling = root?.ownerDocument.scrollingElement
+  return scrolling instanceof HTMLElement ? scrolling : null
+}
+
+/**
+ * How far the host's own stuck chrome already occupies the top of the
+ * Plugins page scroller. The market's tab row sticks just below that, so it
+ * does not cover 已安装 / 插件市场 / 发现 after the page header compactifies.
+ *
+ * Only preceding siblings on the path from this panel up to the scroller —
+ * the host chrome sits above us. Walking the whole scroller would crawl the
+ * catalog on every frame.
+ */
+function hostStickyOffset(scroller: HTMLElement, market: HTMLElement): number {
+  const scrollerTop = scroller.getBoundingClientRect().top
+  let bottom = scrollerTop
+  const consider = (node: Element): void => {
+    const position = getComputedStyle(node).position
+    if (position !== 'sticky' && position !== 'fixed') return
+    const rect = node.getBoundingClientRect()
+    if (rect.height > 0 && rect.top <= scrollerTop + 4 && rect.bottom > scrollerTop) {
+      bottom = Math.max(bottom, rect.bottom)
+    }
+  }
+  const walkPreceding = (node: Element): void => {
+    consider(node)
+    for (const child of node.children) walkPreceding(child)
+  }
+  let node: HTMLElement | null = market
+  while (node !== null && node !== scroller) {
+    const parent: HTMLElement | null = node.parentElement
+    if (parent === null) break
+    for (const sibling of parent.children) {
+      if (sibling === node) break
+      walkPreceding(sibling)
+    }
+    node = parent
+  }
+  return Math.max(0, Math.round(bottom - scrollerTop))
+}
+
+/** True when `el` is sitting on its sticky line, not still in flow and not scrolled away. */
+function isPinned(scroller: HTMLElement, el: HTMLElement, inset: number): boolean {
+  if (scroller.scrollTop <= 0 || el.getBoundingClientRect().height <= 0) return false
+  const line = scroller.getBoundingClientRect().top + inset
+  const top = el.getBoundingClientRect().top
+  return top <= line + 2 && top >= line - 4
+}
+
 export function MarketSection(props: MarketSectionProps) {
   const t = props.t
   const initialWebdav = useMemo(savedWebdav, [])
@@ -2865,51 +2969,15 @@ export function MarketSection(props: MarketSectionProps) {
   const setInstalledBundles = useCallback(cacheState(value => { cachedInstalledBundles = value }, setInstalledBundlesState), [])
   const bodyRef = useRef<HTMLDivElement | null>(null)
   const rootRef = useRef<HTMLDivElement | null>(null)
-  /**
-   * The Plugins page's tab has no height of its own.
-   *
-   * The host's page owns the scroll there and its tab panel is content-sized,
-   * so a `height: 100%` child resolves to auto: the market's own scroller
-   * would disappear and take the sticky category row, the back-to-top button
-   * and the collapse-on-scroll header with it. Measure the room left under
-   * the host's header and tabs and hand it back to the panel, so every other
-   * mount's layout rules keep working unchanged.
-   */
-  const [pluginsTabHeight, setPluginsTabHeight] = useState<number | null>(null)
-  useLayoutEffect(() => {
-    const root = rootRef.current
-    if (surface !== 'plugins' || root === null) {
-      setPluginsTabHeight(null)
-      return undefined
-    }
-    // Which ancestor scrolls is the host's business; find it rather than name it.
-    let page: HTMLElement | null = null
-    for (let node = root.parentElement; node !== null; node = node.parentElement) {
-      if (/^(auto|scroll)$/.test(getComputedStyle(node).overflowY)) { page = node; break }
-    }
-    if (page === null) return undefined
-    const host = page
-    const measure = (): void => {
-      // Hidden behind another tab the host keeps mounted: every rect is zero
-      // and the answer would be the whole page height. The observer fires
-      // again when this panel is shown.
-      if (root.getClientRects().length === 0) return
-      const bottom = Number.parseFloat(getComputedStyle(host).paddingBottom)
-      const room = host.clientHeight
-        - (root.getBoundingClientRect().top - host.getBoundingClientRect().top)
-        - (Number.isFinite(bottom) ? bottom : 0)
-      // A host that has not laid the page out yet answers with a negative
-      // room; the floor keeps the panel usable until the next measurement.
-      const next = Math.max(320, Math.round(room))
-      setPluginsTabHeight(prev => (prev === next ? prev : next))
-    }
-    measure()
-    if (typeof ResizeObserver === 'undefined') return undefined
-    const observer = new ResizeObserver(measure)
-    observer.observe(host)
-    observer.observe(root)
-    return () => { observer.disconnect() }
-  }, [surface])
+  const headRef = useRef<HTMLDivElement | null>(null)
+  // Captured while the host page is scrolling — NOT read from scrollTop after
+  // a tab/category swap. The new list is often shorter, the browser clamps
+  // to 0 before this layout effect, and recomputing the pin from that 0
+  // sent the page back to the host title.
+  const pluginsYRef = useRef(0)
+  const headFloorRef = useRef<number | null>(null)
+  const catsFloorRef = useRef<number | null>(null)
+  const restoringStickRef = useRef(false)
   /** Hidden file input behind the Import button (a Button can't host an <input>). */
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [sortField, setSortField] = useState<SortField>('downloads')
@@ -3748,7 +3816,7 @@ export function MarketSection(props: MarketSectionProps) {
   }, [applyDrainStatus, busyUrl, updatingName, data, installed, repoIdentities, repoHints, refreshInstalled, lang, restoreDrainMarkers, t])
 
   const scrollToTop = () => {
-    const el = bodyRef.current
+    const el = listScroller(surface, rootRef.current, bodyRef.current, themesFullscreen)
     if (el) {
       // jsdom (tests) lacks Element.scrollTo — fall back to the assignment.
       if (typeof el.scrollTo === 'function') el.scrollTo({ top: 0, behavior: 'smooth' })
@@ -3756,16 +3824,132 @@ export function MarketSection(props: MarketSectionProps) {
     }
   }
 
-  // The .body scroller is shared across top tabs AND in-tab list replacements
-  // (Discover/Themes category, search, sort; Installed search and list/groups).
-  // Leaving scrollTop in place opens the next list mid-page — or, when it is
-  // shorter, at its clamped bottom. Instant (not the smooth scrollToTop used
-  // for pagination) so the jump happens before paint.
+  // Settings and the sidebar share `.body` across top tabs AND in-tab list
+  // replacements — a new list should start at the top of that scroller.
+  // The Plugins page tab shares the host's page scroller (except Themes
+  // fullscreen, which is an overlay on `.body` again). Jumping the host to
+  // 0 unpins both sticky rows and opens the host title again. Instant (not
+  // the smooth scrollToTop used for pagination) so the jump happens before
+  // paint. Restore the floor remembered while scrolling, not a pin measured
+  // after the browser has already clamped.
   useLayoutEffect(() => {
-    const el = bodyRef.current
-    if (el !== null) el.scrollTop = 0
+    const el = listScroller(surface, rootRef.current, bodyRef.current, themesFullscreen)
+    const root = rootRef.current
+    if (el !== null) {
+      if (surface !== 'plugins' || root === null || themesFullscreen) {
+        el.scrollTop = 0
+      } else {
+        const cats = root.querySelector(`.${css.cats}`)
+        const max = Math.max(0, el.scrollHeight - el.clientHeight)
+        const preferred = cats !== null && catsFloorRef.current !== null
+          ? catsFloorRef.current
+          : headFloorRef.current !== null
+            ? headFloorRef.current
+            : pluginsYRef.current
+        // Short lists cannot reach a deep floor — fall back to the tab row
+        // before giving up, so a filter that empties the grid does not yank
+        // the host title open when the tabs can still pin.
+        const target = preferred <= max
+          ? preferred
+          : headFloorRef.current !== null && headFloorRef.current <= max
+            ? headFloorRef.current
+            : max
+        if (cats === null) catsFloorRef.current = null
+        restoringStickRef.current = true
+        if (target > 0) el.scrollTop = target
+        pluginsYRef.current = el.scrollTop
+        restoringStickRef.current = false
+      }
+    }
     setShowTop(false)
-  }, [tab, q, cat, sortField, sortDir, timeRange, compatibleWithHost, qThemes, themeSortField, themeSortDir, themeTimeRange, qFavorites, favSortField, favSortDir, favTimeRange, qInstalled, installedView])
+  }, [surface, themesFullscreen, tab, q, cat, sortField, sortDir, timeRange, compatibleWithHost, qThemes, themeSortField, themeSortDir, themeTimeRange, qFavorites, favSortField, favSortDir, favTimeRange, qInstalled, installedView])
+  // Menus are portaled and would stay put while the host page scrolls. `.body`
+  // does not scroll on this surface (unless Themes fullscreen), so the close
+  // has to listen to the host.
+  useEffect(() => {
+    if (surface !== 'plugins' || themesFullscreen) return undefined
+    const host = listScroller(surface, rootRef.current, null, false)
+    if (host === null) return undefined
+    const closeMenus = (): void => {
+      setPluginMenuUrl(null)
+      setInstalledMenuName(null)
+      setGroupMenuFor(null)
+      setAssignFor(null)
+    }
+    host.addEventListener('scroll', closeMenus, { passive: true })
+    return () => host.removeEventListener('scroll', closeMenus)
+  }, [surface, themesFullscreen])
+  // Park the market's own tab row just under whatever the host is already
+  // pinning. The compact header changes height as the page title leaves, so
+  // this re-reads on scroll and resize rather than baking in a pixel value.
+  // Fullscreen drops the flatten rules and scrolls inside `.body` instead.
+  useLayoutEffect(() => {
+    const root = rootRef.current
+    if (surface !== 'plugins' || root === null || themesFullscreen) {
+      root?.style.removeProperty('--dshm-host-sticky-top')
+      root?.style.removeProperty('--dshm-plugins-head-height')
+      return undefined
+    }
+    const host = listScroller(surface, root, null, false)
+    if (host === null) return undefined
+    let frame = 0
+    const apply = (): void => {
+      frame = 0
+      const hostTop = hostStickyOffset(host, root)
+      const head = headRef.current
+      const headHeight = head === null ? 0 : Math.round(head.getBoundingClientRect().height)
+      root.style.setProperty('--dshm-host-sticky-top', `${String(hostTop)}px`)
+      root.style.setProperty('--dshm-plugins-head-height', `${String(headHeight)}px`)
+      if (restoringStickRef.current) return
+      const y = host.scrollTop
+      // A clamp-to-0 from a shorter list can fire scroll before the restore
+      // layout effect. Do not trust y===0 to erase the pin floors, and do
+      // not drop them on a one-frame !isPinned — only when the reader has
+      // scrolled back above the remembered line.
+      if (y > 0) pluginsYRef.current = y
+      if (head !== null && isPinned(host, head, hostTop)) {
+        headFloorRef.current = headFloorRef.current === null ? y : Math.min(headFloorRef.current, y)
+      } else if (headFloorRef.current !== null && y > 0 && y + 4 < headFloorRef.current) {
+        // y===0 is often a short-list clamp, not a real scroll to the top —
+        // keep the floor so the restore layout effect can still use it.
+        headFloorRef.current = null
+      }
+      const cats = root.querySelector(`.${css.cats}`)
+      if (cats instanceof HTMLElement && isPinned(host, cats, hostTop + headHeight)) {
+        catsFloorRef.current = catsFloorRef.current === null ? y : Math.min(catsFloorRef.current, y)
+      } else if (cats === null) {
+        catsFloorRef.current = null
+      } else if (catsFloorRef.current !== null && y > 0 && y + 4 < catsFloorRef.current) {
+        catsFloorRef.current = null
+      }
+    }
+    const schedule = (): void => {
+      if (frame !== 0) return
+      frame = requestAnimationFrame(apply)
+    }
+    apply()
+    host.addEventListener('scroll', schedule, { passive: true })
+    window.addEventListener('resize', schedule)
+    if (typeof ResizeObserver === 'undefined') {
+      return () => {
+        host.removeEventListener('scroll', schedule)
+        window.removeEventListener('resize', schedule)
+      }
+    }
+    const observer = new ResizeObserver(schedule)
+    observer.observe(host)
+    observer.observe(root)
+    const head = headRef.current
+    if (head !== null) observer.observe(head)
+    return () => {
+      host.removeEventListener('scroll', schedule)
+      window.removeEventListener('resize', schedule)
+      observer.disconnect()
+      if (frame !== 0) cancelAnimationFrame(frame)
+      root.style.removeProperty('--dshm-host-sticky-top')
+      root.style.removeProperty('--dshm-plugins-head-height')
+    }
+  }, [surface, themesFullscreen])
 
   // The list, plus how many entries the host filter took out of it (#872).
   // Both come from one pass over the same query, so the count is exactly
@@ -3846,7 +4030,10 @@ export function MarketSection(props: MarketSectionProps) {
   const recentPlugins = recentlyAdded.slice(0, RECENT_STRIP_LIMIT)
   const { currentPage, totalPages, pageSize, goToPage, changePageSize } =
     usePagination(plugins.length, [q, cat, sortField, sortDir, timeRange, compatibleWithHost], scrollToTop)
-  const pagePlugins = plugins.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+  const discoverMore = useShownCount(plugins.length, [q, cat, sortField, sortDir, timeRange, compatibleWithHost], DEFAULT_PAGE_SIZE)
+  const pagePlugins = surface === 'plugins'
+    ? plugins.slice(0, discoverMore.shown)
+    : plugins.slice((currentPage - 1) * pageSize, currentPage * pageSize)
   const pageHostPackages = [...new Set([...pagePlugins, ...recentPlugins].flatMap(plugin =>
     hostCompatibilityKey(plugin) === null ? [] : [hostCompatibilityKey(plugin)!]))]
   const allHostPackages = useMemo(
@@ -3894,8 +4081,12 @@ export function MarketSection(props: MarketSectionProps) {
     [blockedNames, blockedPlugins, installed, repoIdentities, data, repoHints])
   const themePagination = usePagination(
     themePlugins.length, [qThemes, themeSortField, themeSortDir, themeTimeRange], scrollToTop)
-  const themePagePlugins = themePlugins.slice(
-    (themePagination.currentPage - 1) * themePagination.pageSize, themePagination.currentPage * themePagination.pageSize)
+  const themeMore = useShownCount(
+    themePlugins.length, [qThemes, themeSortField, themeSortDir, themeTimeRange], DEFAULT_PAGE_SIZE)
+  const themePagePlugins = surface === 'plugins'
+    ? themePlugins.slice(0, themeMore.shown)
+    : themePlugins.slice(
+      (themePagination.currentPage - 1) * themePagination.pageSize, themePagination.currentPage * themePagination.pageSize)
 
   const favoriteListed = useMemo(
     () => (data === null ? [] : pluginsForFavorites(data.plugins, favoriteUrlSet, {
@@ -3915,12 +4106,18 @@ export function MarketSection(props: MarketSectionProps) {
     favoritePlugins.length, favResetDeps, scrollToTop)
   const favoriteThemePagination = usePagination(
     favoriteThemes.length, favResetDeps, scrollToTop)
-  const favoritePagePlugins = favoritePlugins.slice(
-    (favoritePluginPagination.currentPage - 1) * favoritePluginPagination.pageSize,
-    favoritePluginPagination.currentPage * favoritePluginPagination.pageSize)
-  const favoritePageThemes = favoriteThemes.slice(
-    (favoriteThemePagination.currentPage - 1) * favoriteThemePagination.pageSize,
-    favoriteThemePagination.currentPage * favoriteThemePagination.pageSize)
+  const favoritePluginMore = useShownCount(favoritePlugins.length, favResetDeps, DEFAULT_PAGE_SIZE)
+  const favoriteThemeMore = useShownCount(favoriteThemes.length, favResetDeps, DEFAULT_PAGE_SIZE)
+  const favoritePagePlugins = surface === 'plugins'
+    ? favoritePlugins.slice(0, favoritePluginMore.shown)
+    : favoritePlugins.slice(
+      (favoritePluginPagination.currentPage - 1) * favoritePluginPagination.pageSize,
+      favoritePluginPagination.currentPage * favoritePluginPagination.pageSize)
+  const favoritePageThemes = surface === 'plugins'
+    ? favoriteThemes.slice(0, favoriteThemeMore.shown)
+    : favoriteThemes.slice(
+      (favoriteThemePagination.currentPage - 1) * favoriteThemePagination.pageSize,
+      favoriteThemePagination.currentPage * favoriteThemePagination.pageSize)
   // Favorites reuse pluginCard (and its host-requirement badge). Discover
   // already loads compatibility for the current page; without the same
   // fetch here the badge stays on "Reading host requirement…" forever.
@@ -6006,9 +6203,10 @@ export function MarketSection(props: MarketSectionProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `updatesLoaded` stands in for `updates`/`updatedNames`: reorder when the check lands, then hold (#631). `effectiveDisabledSet` only re-runs this when a disable state actually changed; the toggled row is the only one that moves.
   }, [isInstalledListActive, displayedInstalled, selfName, updatesLoaded, effectiveDisabledSet, dependencyOnlyNames])
   const missingRestoreCount = Object.keys(pendingDependencies).filter(name => !installedFiles.includes(name)).length
-  // Self-update lives in the header button and the settings card, not this
-  // tab's row list (the market itself is filtered out below) — so a pending
-  // self-update alone must not light up a dot pointing at an empty-looking tab.
+  // Self-update lives in the page header (or the Plugins tab's own tab row)
+  // and the settings card, not this tab's row list (the market itself is
+  // filtered out below) — so a pending self-update alone must not light up a
+  // dot pointing at an empty-looking tab.
   const hasUpdates = reminderUpdatableNames.length > 0
 
   /** Live status line: structured phase, or the human-line fallback. */
@@ -6746,7 +6944,10 @@ export function MarketSection(props: MarketSectionProps) {
   }, [visibleCats, data])
 
   useEffect(() => {
-    if (catsSentinel === null || typeof IntersectionObserver === 'undefined') return
+    // The Plugins tab scrolls with the host page. Collapse-on-scroll against
+    // `.body` (which no longer scrolls) is what #266 / #395 flapped on, so
+    // this surface never auto-collapses. The row itself can still pin.
+    if (surface === 'plugins' || catsSentinel === null || typeof IntersectionObserver === 'undefined') return
     const observer = new IntersectionObserver(
       ([entry]) => {
         const leftView = entry !== undefined && !entry.isIntersecting
@@ -6778,7 +6979,7 @@ export function MarketSection(props: MarketSectionProps) {
     )
     observer.observe(catsSentinel)
     return () => observer.disconnect()
-  }, [catsSentinel])
+  }, [catsSentinel, surface])
   // Drop any in-pin expand once the header unpins, so the next pin starts
   // collapsed without a rising-edge setState in the observer.
   useEffect(() => {
@@ -6883,11 +7084,51 @@ export function MarketSection(props: MarketSectionProps) {
     })
   }, [doGroupAction, groups, installedThemeNames])
 
+  // Update-the-market, update-all, and "don't remind". On the Plugins tab the
+  // host already has a page title, so these sit on the market's own tab row.
+  // Settings and the sidebar keep them in the heading.
+  const batchActions = (
+    <>
+      {(() => {
+        const self = installed['dshmarket'] !== undefined ? 'dshmarket' : 'dsh-market'
+        const status = updates[self]
+        return status && status.updateAvailable && !updatedNames.includes(self)
+          && !quietUpdateSet.has(self)
+          && (
+            <Button
+              variant="primary"
+              size="sm"
+              disabled={updatingName !== null || busyUrl !== null}
+              onClick={() => {
+                setTab('installed')
+                if (status.restoreRequired === true) askRestore(self)
+                else doUpdate(self)
+              }}
+            >{updatingName === self ? t('updating') : status.restoreRequired === true ? t('restoreOnline') : t('marketUpdate')}</Button>
+          )
+      })()}
+      {reminderBatchUpdatableNames.length >= 1 && (
+        <Button
+          variant="primary"
+          size="sm"
+          disabled={updatingAll || updatingName !== null || busyUrl !== null || removingName !== null}
+          onClick={() => { setTab('installed'); doUpdateAll() }}
+        >{updatingAll ? t('updating') : t('updateAll') + ' (' + reminderBatchUpdatableNames.length + ')'}</Button>
+      )}
+      {bootId !== null && reminderUpdateNames.length > 0 && (
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => ignoreUpdateNotices(reminderUpdateNames)}
+        >{t('ignoreAllUpdateNotices')}</Button>
+      )}
+    </>
+  )
+
   return (
     <div
       ref={rootRef}
       className={`${css.root} notranslate`}
-      style={surface === 'plugins' && pluginsTabHeight !== null ? { height: `${String(pluginsTabHeight)}px` } : undefined}
       data-dsh-market-root
       data-dsh-market-plugins-tab={surface === 'plugins' ? 'true' : undefined}
       /* Browser page translation is the one reported cause of the blank
@@ -6909,7 +7150,8 @@ export function MarketSection(props: MarketSectionProps) {
       data-dsh-market-tab={tab}
       data-dsh-market-fullscreen={tab === 'themes' && themesFullscreen ? 'true' : undefined}
     >
-      <div className={css.head}>
+      <div ref={headRef} className={css.head}>
+        {surface !== 'plugins' && (
         <div className={css.headTop}>
         <div className={css.titleRow}>
           <MarketLogo size={18} ambient style={{ flexShrink: 0 }} />
@@ -6931,41 +7173,10 @@ export function MarketSection(props: MarketSectionProps) {
             disabled={exportState === 'busy'}
             onClick={doExportLog}
           >{exportState === 'busy' ? t('exportingLog') : t('exportLog')}</Button>
-          {(() => {
-            const self = installed['dshmarket'] !== undefined ? 'dshmarket' : 'dsh-market'
-            const status = updates[self]
-            return status && status.updateAvailable && !updatedNames.includes(self)
-              && !quietUpdateSet.has(self)
-              && (
-                <Button
-                  variant="primary"
-                  size="sm"
-                  disabled={updatingName !== null || busyUrl !== null}
-                  onClick={() => {
-                    setTab('installed')
-                    if (status.restoreRequired === true) askRestore(self)
-                    else doUpdate(self)
-                  }}
-                >{updatingName === self ? t('updating') : status.restoreRequired === true ? t('restoreOnline') : t('marketUpdate')}</Button>
-              )
-          })()}
-          {reminderBatchUpdatableNames.length >= 1 && (
-            <Button
-              variant="primary"
-              size="sm"
-              disabled={updatingAll || updatingName !== null || busyUrl !== null || removingName !== null}
-              onClick={() => { setTab('installed'); doUpdateAll() }}
-            >{updatingAll ? t('updating') : t('updateAll') + ' (' + reminderBatchUpdatableNames.length + ')'}</Button>
-          )}
-          {bootId !== null && reminderUpdateNames.length > 0 && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => ignoreUpdateNotices(reminderUpdateNames)}
-            >{t('ignoreAllUpdateNotices')}</Button>
-          )}
+          {batchActions}
           </div>
         </div>
+        )}
         {showSidebarTip && (
           <div className={css.sidebarTip}>
             <span>{t('sidebarTip')}</span>
@@ -7006,6 +7217,10 @@ export function MarketSection(props: MarketSectionProps) {
             onClick={() => { if (tab !== 'backup' && tab !== 'diagnostics') setTab('backup') }}
           >{t('tabAdvanced')}</button>
           <span className={css.grow} />
+          {/* The host page already names this tab, so these sit here instead
+              of a second title row. Settings and the sidebar keep them in
+              the heading. */}
+          {surface === 'plugins' && batchActions}
           {/* In the tab row, not above the grid: paginating, searching and
               switching tab all leave it — and any pending decision — in place. */}
           <OperationsPanel
@@ -7315,7 +7530,7 @@ export function MarketSection(props: MarketSectionProps) {
       <div
         className={css.body}
         ref={bodyRef}
-        onScroll={e => {
+        onScroll={surface === 'plugins' && !themesFullscreen ? undefined : e => {
           const show = e.currentTarget.scrollTop > 400
           setShowTop(prev => (prev === show ? prev : show))
           // Card menus are portaled to document.body and re-pinned to their
@@ -7609,14 +7824,18 @@ export function MarketSection(props: MarketSectionProps) {
                       : (
                           <>
                             <Masonry items={pagePlugins} render={plugin => pluginCard(plugin)} />
-                            <Pager
-                              currentPage={currentPage}
-                              totalPages={totalPages}
-                              pageSize={pageSize}
-                              onGoToPage={goToPage}
-                              onChangePageSize={changePageSize}
-                              t={t}
-                            />
+                            {surface === 'plugins'
+                              ? <LoadMore more={discoverMore.more} onLoad={discoverMore.loadMore} t={t} />
+                              : (
+                                  <Pager
+                                    currentPage={currentPage}
+                                    totalPages={totalPages}
+                                    pageSize={pageSize}
+                                    onGoToPage={goToPage}
+                                    onChangePageSize={changePageSize}
+                                    t={t}
+                                  />
+                                )}
                           </>
                         )}
                   </>
@@ -7685,14 +7904,18 @@ export function MarketSection(props: MarketSectionProps) {
                                     {t('favoritesPluginsSection').replace('{0}', String(favoritePlugins.length))}
                                   </h3>
                                   <Masonry items={favoritePagePlugins} render={plugin => pluginCard(plugin)} />
-                                  <Pager
-                                    currentPage={favoritePluginPagination.currentPage}
-                                    totalPages={favoritePluginPagination.totalPages}
-                                    pageSize={favoritePluginPagination.pageSize}
-                                    onGoToPage={favoritePluginPagination.goToPage}
-                                    onChangePageSize={favoritePluginPagination.changePageSize}
-                                    t={t}
-                                  />
+                                  {surface === 'plugins'
+                                    ? <LoadMore more={favoritePluginMore.more} onLoad={favoritePluginMore.loadMore} t={t} />
+                                    : (
+                                        <Pager
+                                          currentPage={favoritePluginPagination.currentPage}
+                                          totalPages={favoritePluginPagination.totalPages}
+                                          pageSize={favoritePluginPagination.pageSize}
+                                          onGoToPage={favoritePluginPagination.goToPage}
+                                          onChangePageSize={favoritePluginPagination.changePageSize}
+                                          t={t}
+                                        />
+                                      )}
                                 </>
                               )}
                               {favoriteThemes.length > 0 && (
@@ -7703,14 +7926,18 @@ export function MarketSection(props: MarketSectionProps) {
                                   <div className={css.themeGallery}>
                                     {favoritePageThemes.map(themePluginCard)}
                                   </div>
-                                  <Pager
-                                    currentPage={favoriteThemePagination.currentPage}
-                                    totalPages={favoriteThemePagination.totalPages}
-                                    pageSize={favoriteThemePagination.pageSize}
-                                    onGoToPage={favoriteThemePagination.goToPage}
-                                    onChangePageSize={favoriteThemePagination.changePageSize}
-                                    t={t}
-                                  />
+                                  {surface === 'plugins'
+                                    ? <LoadMore more={favoriteThemeMore.more} onLoad={favoriteThemeMore.loadMore} t={t} />
+                                    : (
+                                        <Pager
+                                          currentPage={favoriteThemePagination.currentPage}
+                                          totalPages={favoriteThemePagination.totalPages}
+                                          pageSize={favoriteThemePagination.pageSize}
+                                          onGoToPage={favoriteThemePagination.goToPage}
+                                          onChangePageSize={favoriteThemePagination.changePageSize}
+                                          t={t}
+                                        />
+                                      )}
                                 </>
                               )}
                             </>
@@ -7776,14 +8003,18 @@ export function MarketSection(props: MarketSectionProps) {
                               <div className={css.themeGallery}>
                                 {themePagePlugins.map(themePluginCard)}
                               </div>
-                              <Pager
-                                currentPage={themePagination.currentPage}
-                                totalPages={themePagination.totalPages}
-                                pageSize={themePagination.pageSize}
-                                onGoToPage={themePagination.goToPage}
-                                onChangePageSize={themePagination.changePageSize}
-                                t={t}
-                              />
+                              {surface === 'plugins'
+                                ? <LoadMore more={themeMore.more} onLoad={themeMore.loadMore} t={t} />
+                                : (
+                                    <Pager
+                                      currentPage={themePagination.currentPage}
+                                      totalPages={themePagination.totalPages}
+                                      pageSize={themePagination.pageSize}
+                                      onGoToPage={themePagination.goToPage}
+                                      onChangePageSize={themePagination.changePageSize}
+                                      t={t}
+                                    />
+                                  )}
                             </>
                           )}
                 </>
@@ -8522,7 +8753,7 @@ export function MarketSection(props: MarketSectionProps) {
                 </>
               )}
       </div>
-      {showTop && (
+      {(surface !== 'plugins' || themesFullscreen) && showTop && (
         <Tooltip label={t('backTop')} side="top">
           <span className={css.top}>
             <Button

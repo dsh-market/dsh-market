@@ -9385,6 +9385,214 @@ describe('empty filter recovery', () => {
   })
 })
 
+describe('Plugins page tab lays out as page content', () => {
+  it('keeps the page heading on the settings and sidebar mounts', async () => {
+    const { container } = render(<MarketSection {...props()} />)
+    expect(await screen.findByRole('heading', { name: en.nav })).toBeTruthy()
+    expect(screen.getByText(en.subtitle)).toBeTruthy()
+    expect(screen.getByRole('link', { name: en.submitPlugin })).toBeTruthy()
+    expect(screen.getByRole('button', { name: en.exportLog })).toBeTruthy()
+    expect(container.querySelector('[data-dsh-market-plugins-tab]')).toBeNull()
+  })
+
+  it('drops the page heading and the inner scroller height on the Plugins tab', async () => {
+    const { container } = render(<MarketSection {...props()} surface="plugins" />)
+    await screen.findByText('dsh-loop')
+    expect(screen.queryByRole('heading', { name: en.nav })).toBeNull()
+    expect(screen.queryByText(en.subtitle)).toBeNull()
+    expect(screen.queryByRole('link', { name: en.submitPlugin })).toBeNull()
+    expect(screen.queryByRole('button', { name: en.exportLog })).toBeNull()
+    const root = container.querySelector('[data-dsh-market-root]')
+    expect(root?.getAttribute('data-dsh-market-plugins-tab')).toBe('true')
+    expect(root?.getAttribute('style') ?? '').not.toMatch(/height\s*:/)
+  })
+
+  it('keeps Update all on the tab row when the heading is gone', async () => {
+    stubFetch({
+      '/dsh-market/installed': { profile: 'desktop', installed: { 'dsh-loop': '^1.0.0' }, live: [] },
+      '/dsh-market/updates': { updates: { 'dsh-loop': {
+        kind: 'npm', current: '1.0.0', latest: '1.2.0', eligibleVersion: '1.1.0', updateAvailable: true,
+      } } },
+    })
+    render(<MarketSection {...props()} surface="plugins" />)
+    expect(await screen.findByRole('button', { name: new RegExp(en.updateAll) })).toBeTruthy()
+    expect(screen.queryByRole('heading', { name: en.nav })).toBeNull()
+  })
+
+  it('appends the next chunk on the Plugins tab and keeps pages everywhere else', async () => {
+    const plugins = Array.from({ length: 30 }, (_, i) => ({
+      name: `plug-${i}`, owner: 'alice', url: `https://github.com/alice/plug-${i}`,
+      category: ['tools'], npm: `plug-${i}`, stars: 1000 - i, added: '2026-08-01',
+      description: { en: `Plugin ${i}`, zh: `插件 ${i}` }, install: '',
+    }))
+    stubFetch({
+      '/dsh-market/registry': { source: 'live', registry: { ...REGISTRY, count: plugins.length, plugins }, hostVersion: '0.1.2-alpha.2' },
+    })
+    const { rerender } = render(<MarketSection {...props()} surface="plugins" />)
+    await screen.findByText('plug-0')
+    expect(screen.queryByText('plug-24')).toBeNull()
+    expect(screen.queryByRole('button', { name: en.nextPage })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: en.loadMore }))
+    expect(await screen.findByText('plug-24')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: en.loadMore })).toBeNull()
+
+    rerender(<MarketSection {...props()} />)
+    expect(await screen.findByRole('button', { name: en.nextPage })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: en.loadMore })).toBeNull()
+    expect(screen.queryByText('plug-24')).toBeNull()
+  })
+
+  it('parks the inner tab row below the host sticky chrome', async () => {
+    const box = (top: number, bottom: number): DOMRect => ({
+      top, bottom, height: bottom - top, width: 800, left: 0, right: 800, x: 0, y: top, toJSON() { return {} },
+    })
+    const scroller = document.createElement('div')
+    const header = document.createElement('div')
+    const mount = document.createElement('div')
+    scroller.append(header, mount)
+    document.body.append(scroller)
+    const realStyle = window.getComputedStyle.bind(window)
+    const styleSpy = vi.spyOn(window, 'getComputedStyle').mockImplementation((elt) => {
+      const style = realStyle(elt as Element)
+      if (elt === scroller) return new Proxy(style, { get: (target, key) => key === 'overflowY' ? 'auto' : Reflect.get(target, key) })
+      if (elt === header) return new Proxy(style, { get: (target, key) => key === 'position' ? 'sticky' : Reflect.get(target, key) })
+      return style
+    })
+    scroller.getBoundingClientRect = () => box(10, 810)
+    header.getBoundingClientRect = () => box(10, 66)
+    try {
+      const { container, rerender } = render(<MarketSection {...props()} surface="plugins" />, { container: mount })
+      await screen.findByText('dsh-loop')
+      const root = container.querySelector('[data-dsh-market-root]') as HTMLElement
+      const head = container.querySelector(`.${css.head}`) as HTMLElement
+      head.getBoundingClientRect = () => box(66, 110)
+      await act(async () => {
+        window.dispatchEvent(new Event('resize'))
+        await new Promise<void>(resolve => { requestAnimationFrame(() => resolve()) })
+      })
+      expect(root.style.getPropertyValue('--dshm-host-sticky-top')).toBe('56px')
+      expect(root.style.getPropertyValue('--dshm-plugins-head-height')).toBe('44px')
+      expect(container.querySelector(`.${css.cats}`)).toBeTruthy()
+
+      rerender(<MarketSection {...props()} />)
+      await screen.findByRole('heading', { name: en.nav })
+      expect(root.style.getPropertyValue('--dshm-host-sticky-top')).toBe('')
+      expect(root.style.getPropertyValue('--dshm-plugins-head-height')).toBe('')
+    } finally {
+      styleSpy.mockRestore()
+      scroller.remove()
+    }
+  })
+
+  it('keeps the sticky level when switching tabs or categories', async () => {
+    const box = (top: number, bottom: number): DOMRect => ({
+      top, bottom, height: bottom - top, width: 800, left: 0, right: 800, x: 0, y: top, toJSON() { return {} },
+    })
+    const scroller = document.createElement('div')
+    const header = document.createElement('div')
+    const mount = document.createElement('div')
+    scroller.append(header, mount)
+    document.body.append(scroller)
+    Object.defineProperty(scroller, 'scrollHeight', { configurable: true, get: () => 2000 })
+    Object.defineProperty(scroller, 'clientHeight', { configurable: true, get: () => 800 })
+    const realStyle = window.getComputedStyle.bind(window)
+    const styleSpy = vi.spyOn(window, 'getComputedStyle').mockImplementation((elt) => {
+      const style = realStyle(elt as Element)
+      if (elt === scroller) return new Proxy(style, { get: (target, key) => key === 'overflowY' ? 'auto' : Reflect.get(target, key) })
+      if (elt === header) return new Proxy(style, { get: (target, key) => key === 'position' ? 'sticky' : Reflect.get(target, key) })
+      return style
+    })
+    scroller.getBoundingClientRect = () => box(10, 810)
+    header.getBoundingClientRect = () => box(10, 66)
+    const settlePin = async (): Promise<void> => {
+      fireEvent.scroll(scroller)
+      await act(async () => { await new Promise<void>(resolve => { requestAnimationFrame(() => resolve()) }) })
+    }
+    try {
+      const { container } = render(<MarketSection {...props()} surface="plugins" />, { container: mount })
+      await screen.findByText('dsh-loop')
+      const head = container.querySelector(`.${css.head}`) as HTMLElement
+      const cats = container.querySelector(`.${css.cats}`) as HTMLElement
+      head.getBoundingClientRect = () => box(66, 110)
+      cats.getBoundingClientRect = () => box(110, 142)
+
+      scroller.scrollTop = 400
+      await settlePin()
+      // Clamp fires scroll and would wipe pluginsYRef to 0. Restore must
+      // still come from the remembered floor, not the instantaneous y.
+      scroller.scrollTop = 0
+      await settlePin()
+      fireEvent.click(screen.getByRole('button', { name: 'Tools' }))
+      expect(scroller.scrollTop).toBe(400)
+
+      scroller.scrollTop = 400
+      await settlePin()
+      scroller.scrollTop = 0
+      await settlePin()
+      fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+      // Installed has no category row — fall back to the tab-row floor.
+      expect(scroller.scrollTop).toBe(400)
+    } finally {
+      styleSpy.mockRestore()
+      scroller.remove()
+    }
+  })
+
+  it('scrolls .body again when Themes goes fullscreen on the Plugins tab', async () => {
+    const box = (top: number, bottom: number): DOMRect => ({
+      top, bottom, height: bottom - top, width: 800, left: 0, right: 800, x: 0, y: top, toJSON() { return {} },
+    })
+    const scroller = document.createElement('div')
+    const mount = document.createElement('div')
+    scroller.append(mount)
+    document.body.append(scroller)
+    Object.defineProperty(scroller, 'scrollHeight', { configurable: true, get: () => 2000 })
+    Object.defineProperty(scroller, 'clientHeight', { configurable: true, get: () => 800 })
+    const realStyle = window.getComputedStyle.bind(window)
+    const styleSpy = vi.spyOn(window, 'getComputedStyle').mockImplementation((elt) => {
+      const style = realStyle(elt as Element)
+      if (elt === scroller) return new Proxy(style, { get: (target, key) => key === 'overflowY' ? 'auto' : Reflect.get(target, key) })
+      return style
+    })
+    scroller.getBoundingClientRect = () => box(0, 800)
+    const themeSnap = { preference: 'light', themes: [] as Array<{ id: string }> }
+    try {
+      const { container } = render(
+        <MarketSection
+          {...props()}
+          surface="plugins"
+          themeStore={{ subscribe: () => () => {}, getSnapshot: () => themeSnap }}
+        />,
+        { container: mount },
+      )
+      await screen.findByText('dsh-loop')
+      const body = container.querySelector('[data-dsh-market-root] > [class*="body"]') as HTMLElement
+      Object.defineProperty(body, 'scrollHeight', { configurable: true, get: () => 2000 })
+      Object.defineProperty(body, 'clientHeight', { configurable: true, get: () => 800 })
+
+      scroller.scrollTop = 320
+      fireEvent.click(screen.getAllByRole('button', { name: en.tabThemes })[0]!)
+      await screen.findByText('whale-skin')
+      // Flattened Plugins tab restores the host scroller, not .body.
+      expect(scroller.scrollTop).toBeGreaterThan(0)
+      expect(body.scrollTop).toBe(0)
+
+      fireEvent.click(screen.getByRole('button', { name: en.themeFullscreen }))
+      expect(container.querySelector('[data-dsh-market-root]')?.getAttribute('data-dsh-market-fullscreen')).toBe('true')
+      body.scrollTop = 260
+      scroller.scrollTop = 320
+      fireEvent.change(screen.getByPlaceholderText(en.searchPh), { target: { value: 'no-such-theme' } })
+      await screen.findByText(en.empty)
+      // Fullscreen must reset the overlay scroller, and leave the host alone.
+      expect(body.scrollTop).toBe(0)
+      expect(scroller.scrollTop).toBe(320)
+    } finally {
+      styleSpy.mockRestore()
+      scroller.remove()
+    }
+  })
+})
+
 describe('sidebar shortcut tip (#846)', () => {
   function fakeSidebar(options: { supported?: boolean; enabled?: boolean; ready?: boolean } = {}): {
     supported(): boolean
