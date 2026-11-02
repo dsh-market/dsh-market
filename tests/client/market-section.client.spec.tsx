@@ -1969,6 +1969,24 @@ describe('MarketSection (jsdom)', () => {
     expect(img.src).toContain(`https://good.example/${src}`)
   })
 
+  it('routes the declared icon through raw candidates instead of connecting directly (#1078)', () => {
+    setGithubRoutes({ raw: ['https://bad.example', 'https://good.example', null], avatar: [null] })
+    const icon = 'https://raw.githubusercontent.com/alice/dsh-loop/main/icon.png'
+    const first = render(<OwnerAvatar name="dsh-loop" owner="alice" icon={icon} />)
+    let tile = first.container.querySelector('img')!
+    expect(tile.src).toContain('https://bad.example/https://raw.githubusercontent.com/alice/dsh-loop/main/icon.png')
+    fireEvent.error(tile)
+    tile = first.container.querySelector('img')!
+    expect(tile.src).toContain('https://good.example/https://raw.githubusercontent.com/alice/dsh-loop/main/icon.png')
+    fireEvent.load(tile)
+    first.unmount()
+
+    // The raw winner is remembered, so the next declared icon starts there.
+    const second = render(<OwnerAvatar name="dsh-notify" owner="bob" icon={icon} />)
+    tile = second.container.querySelector('img')!
+    expect(tile.src).toContain('https://good.example/https://raw.githubusercontent.com/alice/dsh-loop/main/icon.png')
+  })
+
   it('imports a backup as a grey installed-list preview without restoring it', async () => {
     const fetchMock = stubFetch({
       '/dsh-market/installed': {

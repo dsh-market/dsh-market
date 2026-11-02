@@ -527,18 +527,30 @@ export function OwnerAvatar({ name, owner, icon, className }: { name: string; ow
   const [failed, setFailed] = useState(false)
   const [routeIndex, setRouteIndex] = useState(0)
   const [iconFailed, setIconFailed] = useState(false)
+  const [iconRouteIndex, setIconRouteIndex] = useState(0)
   const av = className === undefined ? css.av : `${css.av} ${className}`
   const tile = iconFailed ? null : safeIcon(icon)
   if (tile !== null) {
+    // A declared icon is almost always a raw.githubusercontent.com URL, so it
+    // goes through the raw route candidates the lightbox uses (#1070) instead
+    // of a direct connection: on networks where raw is unreachable the icon
+    // would fail on first request and silently degrade to the owner's avatar
+    // (#1078). Candidates are walked on error, like the avatar branch below.
+    const candidates = githubRouteCandidates('raw', tile)
+    const candidate = candidates[Math.min(iconRouteIndex, candidates.length - 1)]!
     return (
       <img
         className={av}
-        src={tile}
+        src={candidate.url}
         alt=""
         loading="lazy"
         decoding="async"
         referrerPolicy="no-referrer"
-        onError={() => setIconFailed(true)}
+        onLoad={() => rememberGithubRoute('raw', candidate.proxy)}
+        onError={() => {
+          if (iconRouteIndex + 1 < candidates.length) setIconRouteIndex(iconRouteIndex + 1)
+          else setIconFailed(true)
+        }}
       />
     )
   }
