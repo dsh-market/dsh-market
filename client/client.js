@@ -8169,6 +8169,28 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		* interpreted as markup); remaining text arrives as React children or
 		* controlled nodes only.
 		*/
+		/**
+		* An <img> whose src lives on raw.githubusercontent.com, walked through the
+		* raw GitHub route candidates on failure (#1070 follow-up): the update-notes
+		* dialog was the last place still loading those images directly, so on
+		* networks where raw is unreachable the notes rendered with holes. When every
+		* candidate fails the last one is the direct URL, exactly the old behavior.
+		*/
+		function GithubRoutedImg({ src, alt, className, key }) {
+			const [routeIndex, setRouteIndex] = (0, react.useState)(0);
+			const candidates = githubRouteCandidates("raw", src);
+			const candidate = candidates[Math.min(routeIndex, candidates.length - 1)];
+			return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("img", {
+				className,
+				src: candidate.url,
+				alt,
+				loading: "lazy",
+				onLoad: () => rememberGithubRoute("raw", candidate.proxy),
+				onError: () => {
+					if (routeIndex + 1 < candidates.length) setRouteIndex(routeIndex + 1);
+				}
+			}, key);
+		}
 		function renderMarkdown(md) {
 			const out = [];
 			let bullets = null;
@@ -8210,11 +8232,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				const image = releaseNotesHttpsImage(trimmed);
 				if (image !== null) {
 					flushList();
-					out.push(/* @__PURE__ */ (0, react_jsx_runtime.jsx)("img", {
+					out.push(/* @__PURE__ */ (0, react_jsx_runtime.jsx)(GithubRoutedImg, {
 						className: Market_module_css_default.notesImg,
 						src: image.src,
-						alt: image.alt,
-						loading: "lazy"
+						alt: image.alt
 					}, `i${out.length}`));
 					continue;
 				}
