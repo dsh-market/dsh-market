@@ -684,6 +684,46 @@ describe('hasLoadableEntry — carrier bundles (#203)', () => {
     expect(hasLoadableEntry(profile, 'dsh-ouroboros')).toBe(true)
   })
 
+  it('accepts a carrier whose patch mounts its own subpaths (#1091)', () => {
+    // Reported shape: a pure patch carrier (no main/exports/root index.js)
+    // whose three insert targets are its own files. Every target was read as
+    // a package directory, so nine probes came up empty and the market
+    // uninstalled a package pnpm had just installed correctly.
+    const profile = writeProfile({})
+    const carrier = join(profile, 'node_modules', '@wufeng0105', 'dsh-enhance')
+    mkdirSync(join(carrier, 'enhance-scope'), { recursive: true })
+    mkdirSync(join(carrier, 'auto-approve'), { recursive: true })
+    mkdirSync(join(carrier, 'ui'), { recursive: true })
+    writeFileSync(join(carrier, 'package.json'), '{"name":"@wufeng0105/dsh-enhance","dsh":{"bundle":{"patch":"cordis.patch.yml"}}}')
+    writeFileSync(join(carrier, 'cordis.patch.yml'), [
+      '- insert:',
+      "    - id: enhance-scope",
+      "      name: '@wufeng0105/dsh-enhance/enhance-scope/index.js'",
+      "    - id: auto-approve",
+      "      name: '@wufeng0105/dsh-enhance/auto-approve/index.js'",
+      "    - id: enhance-ui",
+      "      name: './ui/index.js'",
+      '',
+    ].join('\n'))
+    writeFileSync(join(carrier, 'enhance-scope', 'index.js'), '')
+    writeFileSync(join(carrier, 'auto-approve', 'index.js'), '')
+    writeFileSync(join(carrier, 'ui', 'index.js'), '')
+
+    expect(hasLoadableEntry(profile, '@wufeng0105/dsh-enhance')).toBe(true)
+  })
+
+  it('does not read a relative target that climbs out of the package as its own (#1091)', () => {
+    const profile = writeProfile({})
+    const carrier = join(profile, 'node_modules', 'carrier')
+    mkdirSync(carrier, { recursive: true })
+    writeFileSync(join(carrier, 'package.json'), '{"dsh":{"bundle":{"patch":"cordis.patch.yml"}}}')
+    writeFileSync(join(carrier, 'cordis.patch.yml'), "- name: '../escape/index.js'\n  config: {}\n")
+    mkdirSync(join(profile, 'node_modules', 'escape'), { recursive: true })
+    writeFileSync(join(profile, 'node_modules', 'escape', 'index.js'), '')
+
+    expect(hasLoadableEntry(profile, 'carrier')).toBe(false)
+  })
+
   it('still finds a target the profile itself installed, unaffected by the fix', () => {
     const profile = writeProfile({})
     const carrier = join(profile, 'node_modules', 'carrier')
