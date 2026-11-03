@@ -410,7 +410,27 @@
   --dshm-plugins-head-height:0px
 }
 [data-dsh-market-plugins-tab="true"]:not([data-dsh-market-fullscreen="true"]){height:auto}
-[data-dsh-market-plugins-tab="true"]:not([data-dsh-market-fullscreen="true"]) .body{flex:none;overflow:visible}
+/* Fill the viewport under the stuck chrome. An empty tab (Blocked with
+   nothing hidden) would otherwise shrink the market to a few dozen pixels,
+   the host clamps scrollTop, and both sticky rows drop. Flex so a lone
+   .empty can sit mid-viewport; max-height is the visible slice from the
+   empty node (or .body) to the host scroller bottom — not the full
+   min-height, and not including search/cats above Discover's empty. */
+[data-dsh-market-plugins-tab="true"]:not([data-dsh-market-fullscreen="true"]){
+  --dshm-empty-view-height:100vh
+}
+[data-dsh-market-plugins-tab="true"]:not([data-dsh-market-fullscreen="true"]) .body{
+  flex:none;overflow:visible;display:flex;flex-direction:column;
+  min-height:calc(100vh - var(--dshm-host-sticky-top,0px) - var(--dshm-plugins-head-height,0px))
+}
+[data-dsh-market-plugins-tab="true"]:not([data-dsh-market-fullscreen="true"]) .body > .empty{
+  flex:1 1 auto;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  box-sizing:border-box;width:100%;max-width:none;margin:0;padding:32px;
+  max-height:var(--dshm-empty-view-height,100vh)
+}
+/* .root is as tall as the catalog on this surface, so absolute would park
+   the disc at the end of the page. Fixed keeps it in the viewport corner. */
+[data-dsh-market-plugins-tab="true"]:not([data-dsh-market-fullscreen="true"]) .top{position:fixed}
 /* contents so .cats is a child of the tall .body. Sticky cannot leave
    .stickyHead, and that box is only search + chips — the row would
    unstick the moment search scrolled away. */

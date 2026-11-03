@@ -9401,10 +9401,23 @@ describe('Plugins page tab lays out as page content', () => {
     expect(screen.queryByRole('heading', { name: en.nav })).toBeNull()
     expect(screen.queryByText(en.subtitle)).toBeNull()
     expect(screen.queryByRole('link', { name: en.submitPlugin })).toBeNull()
-    expect(screen.queryByRole('button', { name: en.exportLog })).toBeNull()
+    // Export stays on the tab row — install failures ask for a log here.
+    const exportButton = screen.getByRole('button', { name: en.exportLog })
+    expect(exportButton.closest(`.${css.tabs}`)).toBeTruthy()
     const root = container.querySelector('[data-dsh-market-root]')
     expect(root?.getAttribute('data-dsh-market-plugins-tab')).toBe('true')
     expect(root?.getAttribute('style') ?? '').not.toMatch(/height\s*:/)
+    // Empty tabs still fill the viewport under the stuck chrome, so a
+    // switch from Discover does not clamp the host scrollTop to 0.
+    // .empty flex-centers in the visible body slice (--dshm-empty-view-height),
+    // not the full min-height (host title still in flow would push it low).
+    const sheet = readFileSync(resolve(__dirname, '../../src/client/Market.module.css'), 'utf8')
+    expect(sheet).toMatch(
+      /\[data-dsh-market-plugins-tab="true"\]:not\(\[data-dsh-market-fullscreen="true"\]\) \.body\{[^}]*min-height:calc\(100vh - var\(--dshm-host-sticky-top/,
+    )
+    expect(sheet).toMatch(
+      /\[data-dsh-market-plugins-tab="true"\]:not\(\[data-dsh-market-fullscreen="true"\]\) \.body > \.empty\{[^}]*max-height:var\(--dshm-empty-view-height/,
+    )
   })
 
   it('keeps Update all on the tab row when the heading is gone', async () => {
@@ -9417,6 +9430,62 @@ describe('Plugins page tab lays out as page content', () => {
     render(<MarketSection {...props()} surface="plugins" />)
     expect(await screen.findByRole('button', { name: new RegExp(en.updateAll) })).toBeTruthy()
     expect(screen.queryByRole('heading', { name: en.nav })).toBeNull()
+  })
+
+  it('offers back-to-top on the host scroller of the Plugins tab', async () => {
+    const box = (top: number, bottom: number): DOMRect => ({
+      top, bottom, height: bottom - top, width: 800, left: 0, right: 800, x: 0, y: top, toJSON() { return {} },
+    })
+    const scroller = document.createElement('div')
+    const header = document.createElement('div')
+    const mount = document.createElement('div')
+    scroller.append(header, mount)
+    document.body.append(scroller)
+    Object.defineProperty(scroller, 'scrollHeight', { configurable: true, get: () => 2000 })
+    Object.defineProperty(scroller, 'clientHeight', { configurable: true, get: () => 800 })
+    const realStyle = window.getComputedStyle.bind(window)
+    const styleSpy = vi.spyOn(window, 'getComputedStyle').mockImplementation((elt) => {
+      const style = realStyle(elt as Element)
+      if (elt === scroller) return new Proxy(style, { get: (target, key) => key === 'overflowY' ? 'auto' : Reflect.get(target, key) })
+      if (elt === header) return new Proxy(style, { get: (target, key) => key === 'position' ? 'sticky' : Reflect.get(target, key) })
+      return style
+    })
+    scroller.getBoundingClientRect = () => box(10, 810)
+    header.getBoundingClientRect = () => box(10, 66)
+    const settlePin = async (): Promise<void> => {
+      fireEvent.scroll(scroller)
+      await act(async () => { await new Promise<void>(resolve => { requestAnimationFrame(() => resolve()) }) })
+    }
+    try {
+      const { container } = render(<MarketSection {...props()} surface="plugins" />, { container: mount })
+      await screen.findByText('dsh-loop')
+      const head = container.querySelector(`.${css.head}`) as HTMLElement
+      const cats = container.querySelector(`.${css.cats}`) as HTMLElement
+      // In-flow content Y of the tab row. Pin scrollTop = 120 - hostTop(56) = 64.
+      const headFlowY = 120
+      head.getBoundingClientRect = () => {
+        if (head.style.position === 'static') {
+          const top = 10 + headFlowY - scroller.scrollTop
+          return box(top, top + 44)
+        }
+        return box(66, 110)
+      }
+      cats.getBoundingClientRect = () => box(110, 142)
+
+      scroller.scrollTop = 500
+      await settlePin()
+      expect(screen.getByRole('button', { name: en.backTop })).toBeTruthy()
+      fireEvent.click(screen.getByRole('button', { name: en.backTop }))
+      // Parks where the tab row sticks — not the host title at 0.
+      expect(scroller.scrollTop).toBe(64)
+      expect(screen.queryByRole('button', { name: en.backTop })).toBeNull()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Tools' }))
+      expect(scroller.scrollTop).toBe(64)
+    } finally {
+      styleSpy.mockRestore()
+      scroller.remove()
+    }
   })
 
   it('appends the next chunk on the Plugins tab and keeps pages everywhere else', async () => {
@@ -9478,6 +9547,73 @@ describe('Plugins page tab lays out as page content', () => {
       await screen.findByRole('heading', { name: en.nav })
       expect(root.style.getPropertyValue('--dshm-host-sticky-top')).toBe('')
       expect(root.style.getPropertyValue('--dshm-plugins-head-height')).toBe('')
+      expect(root.style.getPropertyValue('--dshm-empty-view-height')).toBe('')
+    } finally {
+      styleSpy.mockRestore()
+      scroller.remove()
+    }
+  })
+
+  it('sizes empty-state centering to the visible slice on the Plugins tab', async () => {
+    const box = (top: number, bottom: number): DOMRect => ({
+      top, bottom, height: bottom - top, width: 800, left: 0, right: 800, x: 0, y: top, toJSON() { return {} },
+    })
+    const scroller = document.createElement('div')
+    const header = document.createElement('div')
+    const mount = document.createElement('div')
+    scroller.append(header, mount)
+    document.body.append(scroller)
+    const realStyle = window.getComputedStyle.bind(window)
+    const styleSpy = vi.spyOn(window, 'getComputedStyle').mockImplementation((elt) => {
+      const style = realStyle(elt as Element)
+      if (elt === scroller) return new Proxy(style, { get: (target, key) => key === 'overflowY' ? 'auto' : Reflect.get(target, key) })
+      if (elt === header) return new Proxy(style, { get: (target, key) => key === 'position' ? 'sticky' : Reflect.get(target, key) })
+      return style
+    })
+    scroller.getBoundingClientRect = () => box(10, 810)
+    header.getBoundingClientRect = () => box(10, 66)
+    const settle = async (): Promise<void> => {
+      await act(async () => {
+        window.dispatchEvent(new Event('resize'))
+        await new Promise<void>(resolve => { requestAnimationFrame(() => resolve()) })
+      })
+    }
+    try {
+      const { container } = render(<MarketSection {...props()} surface="plugins" />, { container: mount })
+      await screen.findByText('dsh-loop')
+      const root = container.querySelector('[data-dsh-market-root]') as HTMLElement
+      const body = container.querySelector(`.${css.body}`) as HTMLElement
+
+      // Favorites empty: sole .body > .empty. Title still in flow — body starts
+      // below the host chrome; slice is host.bottom - body.top.
+      fireEvent.click(screen.getByRole('button', { name: re(en.tabFavorites) }))
+      expect(await screen.findByText(en.favoritesEmpty)).toBeTruthy()
+      const favEmpty = body.querySelector(`:scope > .${css.empty}`) as HTMLElement
+      body.getBoundingClientRect = () => box(180, 980)
+      favEmpty.getBoundingClientRect = () => box(180, 980)
+      await settle()
+      expect(root.style.getPropertyValue('--dshm-empty-view-height')).toBe('630px')
+
+      // Scrolled so the empty top is above the scroller — clamp to host.top,
+      // do not inflate past the host viewport (800px).
+      favEmpty.getBoundingClientRect = () => box(-40, 760)
+      body.getBoundingClientRect = () => box(-40, 760)
+      await settle()
+      expect(root.style.getPropertyValue('--dshm-empty-view-height')).toBe('800px')
+
+      // Discover empty keeps search/cats above .empty; measure from empty.top
+      // so max-height does not include that chrome.
+      fireEvent.click(screen.getByRole('button', { name: en.tabDiscover }))
+      await screen.findByText('dsh-loop')
+      const search = screen.getByPlaceholderText(en.searchPh)
+      fireEvent.change(search, { target: { value: 'zzz-no-match' } })
+      fireEvent.keyDown(search, { key: 'Enter' })
+      expect(await screen.findByText(en.empty)).toBeTruthy()
+      const discoverEmpty = body.querySelector(`:scope > .${css.empty}`) as HTMLElement
+      body.getBoundingClientRect = () => box(180, 980)
+      discoverEmpty.getBoundingClientRect = () => box(280, 980)
+      await settle()
+      expect(root.style.getPropertyValue('--dshm-empty-view-height')).toBe('530px')
     } finally {
       styleSpy.mockRestore()
       scroller.remove()

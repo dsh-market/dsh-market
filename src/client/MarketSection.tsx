@@ -2241,6 +2241,21 @@ function isPinned(scroller: HTMLElement, el: HTMLElement, inset: number): boolea
   return top <= line + 2 && top >= line - 4
 }
 
+/**
+ * ScrollTop where the market's tab row first sticks under the host chrome.
+ * Unsticks for one measurement so a currently-pinned head still reports its
+ * in-flow offset. That is the "top" Plugins back-to-top aims for — tabs stay
+ * stuck, the host title does not reopen.
+ */
+function headPinScrollTop(scroller: HTMLElement, market: HTMLElement, head: HTMLElement): number {
+  const hostTop = hostStickyOffset(scroller, market)
+  const prev = head.style.position
+  head.style.position = 'static'
+  const y = head.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop
+  head.style.position = prev
+  return Math.max(0, Math.round(y - hostTop))
+}
+
 export function MarketSection(props: MarketSectionProps) {
   const t = props.t
   const initialWebdav = useMemo(savedWebdav, [])
@@ -3817,11 +3832,28 @@ export function MarketSection(props: MarketSectionProps) {
 
   const scrollToTop = () => {
     const el = listScroller(surface, rootRef.current, bodyRef.current, themesFullscreen)
-    if (el) {
-      // jsdom (tests) lacks Element.scrollTo — fall back to the assignment.
-      if (typeof el.scrollTo === 'function') el.scrollTo({ top: 0, behavior: 'smooth' })
-      else el.scrollTop = 0
+    const root = rootRef.current
+    const head = headRef.current
+    if (el === null) {
+      setShowTop(false)
+      return
     }
+    // Plugins (not fullscreen): park where the inner tab row sticks. Absolute
+    // 0 would unpin it and open the host title again. Settings / sidebar /
+    // fullscreen still mean the real top of their own scroller.
+    if (surface === 'plugins' && !themesFullscreen && root !== null && head !== null) {
+      const target = headPinScrollTop(el, root, head)
+      if (typeof el.scrollTo === 'function') el.scrollTo({ top: target, behavior: 'smooth' })
+      else el.scrollTop = target
+      headFloorRef.current = target > 0 ? target : null
+      catsFloorRef.current = null
+      pluginsYRef.current = target
+    } else if (typeof el.scrollTo === 'function') {
+      el.scrollTo({ top: 0, behavior: 'smooth' })
+    } else {
+      el.scrollTop = 0
+    }
+    setShowTop(false)
   }
 
   // Settings and the sidebar share `.body` across top tabs AND in-tab list
@@ -3865,19 +3897,22 @@ export function MarketSection(props: MarketSectionProps) {
   }, [surface, themesFullscreen, tab, q, cat, sortField, sortDir, timeRange, compatibleWithHost, qThemes, themeSortField, themeSortDir, themeTimeRange, qFavorites, favSortField, favSortDir, favTimeRange, qInstalled, installedView])
   // Menus are portaled and would stay put while the host page scrolls. `.body`
   // does not scroll on this surface (unless Themes fullscreen), so the close
-  // has to listen to the host.
+  // and the back-to-top affordance listen to the host.
   useEffect(() => {
     if (surface !== 'plugins' || themesFullscreen) return undefined
     const host = listScroller(surface, rootRef.current, null, false)
     if (host === null) return undefined
-    const closeMenus = (): void => {
+    const onScroll = (): void => {
       setPluginMenuUrl(null)
       setInstalledMenuName(null)
       setGroupMenuFor(null)
       setAssignFor(null)
+      const show = host.scrollTop > 400
+      setShowTop(prev => (prev === show ? prev : show))
     }
-    host.addEventListener('scroll', closeMenus, { passive: true })
-    return () => host.removeEventListener('scroll', closeMenus)
+    onScroll()
+    host.addEventListener('scroll', onScroll, { passive: true })
+    return () => host.removeEventListener('scroll', onScroll)
   }, [surface, themesFullscreen])
   // Park the market's own tab row just under whatever the host is already
   // pinning. The compact header changes height as the page title leaves, so
@@ -3888,10 +3923,16 @@ export function MarketSection(props: MarketSectionProps) {
     if (surface !== 'plugins' || root === null || themesFullscreen) {
       root?.style.removeProperty('--dshm-host-sticky-top')
       root?.style.removeProperty('--dshm-plugins-head-height')
+      root?.style.removeProperty('--dshm-empty-view-height')
       return undefined
     }
     const host = listScroller(surface, root, null, false)
-    if (host === null) return undefined
+    if (host === null) {
+      root.style.removeProperty('--dshm-host-sticky-top')
+      root.style.removeProperty('--dshm-plugins-head-height')
+      root.style.removeProperty('--dshm-empty-view-height')
+      return undefined
+    }
     let frame = 0
     const apply = (): void => {
       frame = 0
@@ -3900,6 +3941,21 @@ export function MarketSection(props: MarketSectionProps) {
       const headHeight = head === null ? 0 : Math.round(head.getBoundingClientRect().height)
       root.style.setProperty('--dshm-host-sticky-top', `${String(hostTop)}px`)
       root.style.setProperty('--dshm-plugins-head-height', `${String(headHeight)}px`)
+      // Visible height available to .body > .empty inside the host scroller.
+      // Prefer the empty node's top: on Discover, search/cats are flex siblings
+      // above it (stickyHead is display:contents), so measuring from .body
+      // would make max-height include that chrome and park the tip low.
+      // Clamp the top to the scroller so a scrolled-away body does not inflate
+      // the slice past the host viewport.
+      const body = bodyRef.current
+      if (body !== null) {
+        const hostRect = host.getBoundingClientRect()
+        const empty = body.querySelector(`:scope > .${css.empty}`)
+        const topSrc = empty instanceof HTMLElement ? empty : body
+        const top = Math.max(hostRect.top, topSrc.getBoundingClientRect().top)
+        const view = Math.max(0, Math.round(hostRect.bottom - top))
+        root.style.setProperty('--dshm-empty-view-height', `${String(view)}px`)
+      }
       if (restoringStickRef.current) return
       const y = host.scrollTop
       // A clamp-to-0 from a shorter list can fire scroll before the restore
@@ -3927,14 +3983,20 @@ export function MarketSection(props: MarketSectionProps) {
       if (frame !== 0) return
       frame = requestAnimationFrame(apply)
     }
+    const clearPinVars = (): void => {
+      host.removeEventListener('scroll', schedule)
+      window.removeEventListener('resize', schedule)
+      if (frame !== 0) cancelAnimationFrame(frame)
+      frame = 0
+      root.style.removeProperty('--dshm-host-sticky-top')
+      root.style.removeProperty('--dshm-plugins-head-height')
+      root.style.removeProperty('--dshm-empty-view-height')
+    }
     apply()
     host.addEventListener('scroll', schedule, { passive: true })
     window.addEventListener('resize', schedule)
     if (typeof ResizeObserver === 'undefined') {
-      return () => {
-        host.removeEventListener('scroll', schedule)
-        window.removeEventListener('resize', schedule)
-      }
+      return clearPinVars
     }
     const observer = new ResizeObserver(schedule)
     observer.observe(host)
@@ -3942,12 +4004,8 @@ export function MarketSection(props: MarketSectionProps) {
     const head = headRef.current
     if (head !== null) observer.observe(head)
     return () => {
-      host.removeEventListener('scroll', schedule)
-      window.removeEventListener('resize', schedule)
       observer.disconnect()
-      if (frame !== 0) cancelAnimationFrame(frame)
-      root.style.removeProperty('--dshm-host-sticky-top')
-      root.style.removeProperty('--dshm-plugins-head-height')
+      clearPinVars()
     }
   }, [surface, themesFullscreen])
 
@@ -7124,6 +7182,16 @@ export function MarketSection(props: MarketSectionProps) {
       )}
     </>
   )
+  const exportLogButton = (
+    <Button
+      variant="ghost"
+      size="sm"
+      className={css.exportLogBtn}
+      icon={<IconDownloadOutline16 size={14} />}
+      disabled={exportState === 'busy'}
+      onClick={doExportLog}
+    >{exportState === 'busy' ? t('exportingLog') : t('exportLog')}</Button>
+  )
 
   return (
     <div
@@ -7165,14 +7233,7 @@ export function MarketSection(props: MarketSectionProps) {
           <a className={css.repoLink} href="https://github.com/dsh-market/dsh-market" target="_blank" rel="noreferrer" title="dsh-market · GitHub">dsh-market</a>
           {version !== null && <span className={css.version} title={t('versionHint')}>v{version}</span>}
           <a className={css.submitLink} href="https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/blob/main/contributing.md" target="_blank" rel="noreferrer">{t('submitPlugin')}</a>
-          <Button
-            variant="ghost"
-            size="sm"
-            className={css.exportLogBtn}
-            icon={<IconDownloadOutline16 size={14} />}
-            disabled={exportState === 'busy'}
-            onClick={doExportLog}
-          >{exportState === 'busy' ? t('exportingLog') : t('exportLog')}</Button>
+          {exportLogButton}
           {batchActions}
           </div>
         </div>
@@ -7219,8 +7280,10 @@ export function MarketSection(props: MarketSectionProps) {
           <span className={css.grow} />
           {/* The host page already names this tab, so these sit here instead
               of a second title row. Settings and the sidebar keep them in
-              the heading. */}
+              the heading. Export stays reachable on this surface — install
+              failures ask for a log, and this is where that failure happens. */}
           {surface === 'plugins' && batchActions}
+          {surface === 'plugins' && exportLogButton}
           {/* In the tab row, not above the grid: paginating, searching and
               switching tab all leave it — and any pending decision — in place. */}
           <OperationsPanel
@@ -8753,14 +8816,14 @@ export function MarketSection(props: MarketSectionProps) {
                 </>
               )}
       </div>
-      {(surface !== 'plugins' || themesFullscreen) && showTop && (
+      {showTop && (
         <Tooltip label={t('backTop')} side="top">
           <span className={css.top}>
             <Button
               variant="outline"
               className={css.topBtn}
               aria-label={t('backTop')}
-              onClick={() => { const el = bodyRef.current; if (el) el.scrollTo({ top: 0, behavior: 'smooth' }) }}
+              onClick={scrollToTop}
             ><IconChevronUpOutline14 size={16} /></Button>
           </span>
         </Tooltip>
