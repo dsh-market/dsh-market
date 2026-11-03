@@ -1103,6 +1103,27 @@ describe('one loader id on two rows depends on the loader (#853)', () => {
     return host
   }
 
+  it('reads the loader nested under a non-hoisted CLI install (#1092)', () => {
+    // Reported layout: npm-installed global CLI, dependencies NOT hoisted —
+    // the shared root above the package holds only `dsh` itself, and its
+    // loader lives at `<install>/node_modules/@deepseek-ai/…`. The probe
+    // answered null there, so this gate stayed fatal and EVERY update was
+    // rolled back over a duplicate id the running loader only warns about.
+    const dir = pdir()
+    twoRowsOnOneId(dir)
+    const host = mkdtempSync(join(tmpdir(), 'dshm-host-'))
+    const install = join(host, 'node_modules', '@deepseek-ai', 'dsh')
+    const nested = join(install, 'node_modules', '@deepseek-ai', 'cordis-plugin-loader')
+    mkdirSync(nested, { recursive: true })
+    writeFileSync(join(install, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh', version: '0.2.1-rc.5' }))
+    writeFileSync(join(nested, 'package.json'), JSON.stringify({ name: '@deepseek-ai/cordis-plugin-loader', version: '1.0.6' }))
+
+    const report = analyzeProfile(dir, { dshInstallDir: install })
+
+    expect(report.summary.errors.some(e => e.includes('duplicate loader entry id'))).toBe(false)
+    expect(report.summary.warnings.some(w => w.includes('dsh-market'))).toBe(true)
+  })
+
   it('reads the loader from a host that PROVIDES it when the profile lockfile cannot (#943)', () => {
     // The official Desktop embeds the loader in app.asar and hands it to every
     // profile, so a profile lockfile can never name it. Reading that as an old
