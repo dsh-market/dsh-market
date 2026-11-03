@@ -1217,3 +1217,11 @@
 .migrationWarning{display:flex;align-items:flex-start;gap:6px;margin:12px 0 0;font-size:12px;line-height:18px;color:var(--dsw-alias-state-warn-primary,#b45309)}
 /* Reassurance, not a warning: a rename cannot touch what the plugin saved itself. */
 .migrationNote{margin:12px 0 0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#6b7280)}
+
+/* The market's row on the HOST's detail page (plugins.detail.section): no
+   margin of its own, because the host spaces sections, and `flex-end` so it
+   ends where the host's fact values above it end — a slot entry is a direct
+   child of that column. */
+.sourceRepo{display:inline-flex;align-self:flex-end;align-items:center;gap:2px;font-size:13px;line-height:20px;color:var(--dsw-alias-label-secondary,#5c6570);text-decoration:none}
+.sourceRepo:hover{color:var(--dsw-alias-brand-primary,#4f6ef7);text-decoration:underline}
+.sourceRepo:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#4f6ef7);outline-offset:2px;border-radius:4px}

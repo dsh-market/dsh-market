@@ -18,6 +18,7 @@ import { createSectionGate } from './section-gate.ts'
 import { createEntryVisibility } from './entry-visibility.ts'
 import { exportMarketLog } from './self-check.ts'
 import { SettingsCard } from './SettingsCard.tsx'
+import { SourceRepoLink } from './SourceRepoLink.tsx'
 import { installSettingsNavIcon } from './settings-nav-icon.ts'
 import { createHostNavigation } from './host-navigation.ts'
 import { createSidebarEntry, SIDEBAR_PANEL_ID, SIDEBAR_PANEL_ORDER } from './sidebar-entry.ts'
@@ -67,6 +68,15 @@ interface SettingsScopeHost {
  * same string as the locale namespace (`dsh-market`) this file uses for copy.
  */
 const MARKET_PACKAGE_NAME = 'dshmarket'
+
+/**
+ * The detail-page subject as this file reads it: `pkg` is present on bundle
+ * and row pages and absent on an official plugin's (`kind: 'item'`).
+ */
+interface DetailSubject {
+  kind?: string
+  pkg?: { name?: string }
+}
 
 /** The subset of the theme service this plugin touches. */
 interface ThemeService {
@@ -455,6 +465,27 @@ function mountMarket(ctx: MarketClientContext): void {
     entries.markPluginsTab()
     sidebar?.refresh()
   })
+
+  // "View source" on every bundle's detail page: the page states a package's
+  // origin as an install spec, a version range nobody can open. No key, so it
+  // lands on every bundle; official pages carry no `pkg`. The slot is the
+  // detection, as everywhere here.
+  const detailSectionCtx = ctx as unknown as {
+    slots: {
+      inject(name: string, register: () => unknown): void
+      register(options: Record<string, unknown>, render: (ownerProps: { subject?: DetailSubject }) => unknown): unknown
+    }
+  }
+  detailSectionCtx.slots.inject('plugins.detail.section', () => detailSectionCtx.slots.register({
+    name: 'plugins.detail.section',
+    id: 'dsh-market-source',
+    order: 90,
+    locale: NS,
+    inject: () => ({ t }),
+  }, (ownerProps: { subject?: DetailSubject } = {}) => {
+    const name = ownerProps.subject?.pkg?.name
+    return name === undefined ? null : h(SourceRepoLink, { name, t })
+  }))
 
   const Toast = () => h(InstallToast, { t })
   ctx.slots.inject('shell.overlay', () => ctx.slots.register({
