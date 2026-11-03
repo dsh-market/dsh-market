@@ -26,9 +26,9 @@
  * what actually mounts at boot.
  */
 
-import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { createRequire, isBuiltin } from 'node:module'
-import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import { JSON_SCHEMA, Type, load } from 'js-yaml'
 import { desktopApplicationRoots, findDshInstallDir } from './dsh-install.ts'
 import { resolveDshHome } from './home-paths.ts'
@@ -995,11 +995,44 @@ export function duplicateEntryIdsAreFatal(profileDirectory: string, dshInstallDi
     return compareSemver(newest, '1.0.4') < 0
   }
   const install = dshInstallDir === undefined ? findDshInstallDir() : dshInstallDir
-  const host = install === null
-    ? null
-    : readNodeModulesVersion(dirname(hostNodeModulesRoot(install)), '@deepseek-ai/cordis-plugin-loader')
+  const host = install === null ? null : hostLoaderVersion(install)
   if (host === null) return true
   return compareSemver(host, '1.0.4') < 0
+}
+
+/**
+ * The loader version the host actually runs, given its install directory.
+ *
+ * `hostNodeModulesRoot()` answers "where a HOISTED install puts node_modules":
+ * right for the desktop's app.asar tree and an npm flat install, wrong for a
+ * global CLI whose dependencies stay nested inside the package (#1092). There
+ * the shared root holds only `dsh` itself, the probe answers null, this
+ * function returned `true`, and EVERY update in that layout was rolled back
+ * over a duplicate id the running loader only warns about. Node's own
+ * resolution from the install anchor covers all three layouts.
+ */
+function hostLoaderVersion(install: string): string | null {
+  const hoisted = readNodeModulesVersion(dirname(hostNodeModulesRoot(install)), '@deepseek-ai/cordis-plugin-loader')
+  if (hoisted !== null) return hoisted
+  try {
+    const resolved = createRequire(join(install, 'package.json'))
+      .resolve('@deepseek-ai/cordis-plugin-loader/package.json')
+    // Only a copy INSIDE the install tree is the host's own. Node's resolution
+    // walks upwards, and an unrelated ancestor's node_modules (a profile
+    // checked out inside some project, say) is not evidence about the host.
+    // A hoisted install resolves above the tree and is already answered by the
+    // probe above.
+    // realpath both sides: on macOS the temp directory resolves through a
+    // symlink (`/var` -> `/private/var`), and a plain prefix compare would
+    // read the host's OWN file as outside the tree.
+    if (!realpathSync(resolved).startsWith(`${realpathSync(install)}${sep}`)) return null
+    const manifest = JSON.parse(readFileSync(resolved, 'utf8')) as { version?: unknown }
+    return typeof manifest.version === 'string' ? manifest.version : null
+  } catch {
+    // Inside app.asar Node's resolver is blind — the hoisted probe above is
+    // the answer there, and a genuine miss still fails closed.
+    return null
+  }
 }
 
 /** Distinct versions of `@deepseek-ai/{dsh,cordis}*` packages in the lockfile. */

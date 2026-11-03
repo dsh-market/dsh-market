@@ -252,6 +252,32 @@ describe('setEntryDisabled', () => {
     expect(updates).toEqual([])
   })
 
+  it('does not claim a duplicated id that another installed package names (#1089)', async () => {
+    // The reported chain: `dsh-tauri-pet`'s patch also inserted an entry for
+    // `dsh-taiwind`, and `dsh-taiwind` is a bundle of its own. Switching the
+    // pet off therefore switched tailwind's entry off too — every boot, about
+    // ten seconds in, with the stylesheet route going 404 for good.
+    installed({ 'dsh-tauri-pet': '^1.0.0', 'dsh-taiwind': '^1.0.0' })
+    bundlePatch('dsh-tauri-pet', [
+      '- insert:',
+      '    - id: dsh-tauri-pet',
+      '      name: dsh-tauri-pet',
+      '    - id: dsh-taiwind',
+      '      name: dsh-taiwind',
+      '',
+    ].join('\n'))
+    const pet = makeEntry({ id: 'dsh-tauri-pet', name: 'dsh-tauri-pet' })
+    const tailwind = makeEntry({ id: 'dsh-taiwind', name: 'dsh-taiwind' })
+    const manager = createThemeManager(hostWith([pet.entry, tailwind.entry]), 'web', new Set())
+
+    expect(await manager.setEntryDisabled('dsh-tauri-pet', true)).toBe(true)
+    expect(pet.updates).toEqual([true])
+    // The entry names an installed package of its own; the shared id says
+    // nothing about ownership.
+    expect(tailwind.updates).toEqual([])
+    expect(tailwind.entry.fiber).toBeDefined()
+  })
+
   it('reports false when nothing matches', async () => {
     const manager = createThemeManager(hostWith([]), 'web', new Set())
     expect(await manager.setEntryDisabled('ghost', true)).toBe(false)

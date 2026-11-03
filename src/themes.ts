@@ -81,6 +81,24 @@ function hasSkinManifest(profileDirectory: string, name: string): boolean {
  *    relation at all, so this falls back to the entry id the package's own
  *    patch inserts — the rule `carriedRowLive()` uses (#156).
  */
+/**
+ * The bare package a loader entry's own name points at.
+ *
+ * `dsh-taiwind` and `aegis/extensions/dsh/index.js` both name a package;
+ * relative paths, absolute paths, URLs and cordis builtins name none. Unlike
+ * `packageOfEntryName()` this keeps a lone bare name, which is exactly the
+ * shape #1089 is about.
+ */
+function namedPackage(entryName: unknown): string | null {
+  if (typeof entryName !== 'string' || entryName === '') return null
+  if (entryName.startsWith('.') || entryName.startsWith('/') || entryName.startsWith('cordis:')) return null
+  if (entryName.includes('://')) return null
+  const parts = entryName.split('/')
+  // A scoped name needs `@scope/pkg` to be a package at all.
+  if (parts[0]!.startsWith('@')) return parts.length >= 2 ? `${parts[0]}/${parts[1]}` : null
+  return parts[0]!
+}
+
 function ownsLoaderEntry(
   entry: LoaderEntry,
   packageName: string,
@@ -165,7 +183,20 @@ export function createThemeManager(
   /** Every loader entry that belongs to this package (its own rows and names). */
   function matchingEntries(name: string): LoaderEntry[] {
     const ownedIds = new Set(bundlePatchInsertedIds(join(activeProfileDir, 'node_modules', name)))
-    return [...host.loader.entries()].filter(entry => ownsLoaderEntry(entry, name, ownedIds))
+    let installed: ReadonlySet<string> | null = null
+    return [...host.loader.entries()].filter(entry => {
+      if (!ownsLoaderEntry(entry, name, ownedIds)) return false
+      // An entry whose name IS another installed package belongs to that
+      // package, even when this package's patch also declares its id
+      // (#1089: `dsh-tauri-pet` re-declared `dsh-taiwind`, so switching the
+      // pet off took tailwind's stylesheet down on every boot). The id
+      // fallback stays for CARRIER bundles (#619), whose carried packages are
+      // dependencies — the profile's own rows do not list them.
+      const owner = namedPackage(entry.options.name)
+      if (owner === null || owner === name) return true
+      installed ??= new Set(Object.keys(readInstalled(profile, activeProfileDir)))
+      return !installed.has(owner)
+    })
   }
 
   /**

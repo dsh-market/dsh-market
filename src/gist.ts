@@ -141,12 +141,41 @@ async function ghAuthToken(): Promise<string | null> {
 }
 
 /**
- * Run `gh auth token` in a DETACHED child and give up after 8 s no matter
- * what. The parent never waits on the child (unref), so even if gh.exe
+ * Run `gh auth token` in a child the parent does not wait on, and give up
+ * after 8 s no matter what. The parent never waits on the child (unref), so even if gh.exe
  * wedges under WSL interop the host event loop stays free and the request
  * returns a definite answer. 8 s because a Windows gh.exe cold start through
  * WSL interop is routinely slower than a native binary.
  */
+/**
+ * Spawn options for `gh auth token`, kept in one place because the Windows
+ * answer is not the obvious one (#1094).
+ *
+ * `detached: true` becomes DETACHED_PROCESS on Windows, which strips the
+ * parent's console and gives the child a NEW visible one — `windowsHide`'s
+ * CREATE_NO_WINDOW loses to it. With a console-less host (DSH Desktop, a
+ * wscript/task-scheduler launch) every 验证 / 导出 / 导入 on the backup page
+ * flashed a terminal window titled `gh.exe`. Measured on Windows 11, two
+ * variants, three runs each: detached visible 3/3, non-detached 0/3.
+ *
+ * What detached was here for — the parent never waiting on the child — is
+ * already the `unref()` and the 8 s watchdog below, so POSIX keeps it and
+ * Windows drops it.
+ */
+export function ghAuthSpawnOptions(platform: NodeJS.Platform = process.platform): {
+  stdio: ['ignore', 'pipe', 'ignore']
+  detached: boolean
+  windowsHide: boolean
+} {
+  return {
+    stdio: ['ignore', 'pipe', 'ignore'],
+    detached: platform !== 'win32',
+    // Still set: it costs nothing and covers the paths where a console
+    // exists for gh to inherit into.
+    windowsHide: true,
+  }
+}
+
 function fetchGhToken(): Promise<string | null> {
   return new Promise<string | null>((resolve) => {
     const candidates = ['gh', join(homedir(), '.local', 'bin', 'gh')]
@@ -164,11 +193,7 @@ function fetchGhToken(): Promise<string | null> {
       const command = candidates[index]!
       let child: ReturnType<typeof spawn> | null = null
       try {
-        child = spawn(command, ['auth', 'token'], {
-          stdio: ['ignore', 'pipe', 'ignore'],
-          detached: true,
-          windowsHide: true,
-        })
+        child = spawn(command, ['auth', 'token'], ghAuthSpawnOptions())
       } catch {
         tryNext(index + 1)
         return

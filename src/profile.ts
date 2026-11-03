@@ -1463,6 +1463,14 @@ export function hasLoadableEntry(profileDirectory: string, name: string, hostDir
   // just, correctly, installed.
   const workspaceRoot = dirname(profileDirectory)
   const targets = bundlePatchTargets(dir).filter(target => target !== name)
+  // #1091: a pure patch carrier may mount its OWN subpaths rather than other
+  // packages — `@wufeng0105/dsh-enhance/auto-approve/index.js`, `./ui/index.js`.
+  // Every probe below treats a target as a package directory, so those became
+  // `<dir>/auto-approve/index.js/package.json` and could never resolve: pnpm
+  // installed a carrier that shipped complete, and validateAddedPlugins
+  // reported it broken and removed it right afterwards. A target that lives
+  // inside this package names a file, and that is all this check needs to see.
+  if (targets.some(target => selfTargetExists(dir, name, target))) return true
   if (targets.some(target => entryArtifactExists(join(profileDirectory, 'node_modules', target))
     || entryArtifactExists(join(dir, 'node_modules', target))
     || entryArtifactExists(join(workspaceRoot, 'node_modules', target)))) return true
@@ -1483,6 +1491,29 @@ export function hasLoadableEntry(profileDirectory: string, name: string, hostDir
   const packaged = /[/\\]app\.asar[/\\]/iu.test(host)
   return targets.some(target => packaged && target.startsWith('@deepseek-ai/')
     || packageResolvableFrom(join(host, 'package.json'), target))
+}
+
+/**
+ * Whether a patch target names a file INSIDE the carrier itself (#1091).
+ *
+ * Two spellings are in use: the package's own name as a prefix
+ * (`@scope/enhance/auto-approve/index.js`) and a relative path
+ * (`./ui/index.js`). A relative path that climbs out of the package is
+ * refused rather than followed — the point is a file this package ships.
+ */
+function selfTargetExists(dir: string, name: string, target: string): boolean {
+  const relative = target.startsWith(`${name}/`)
+    ? target.slice(name.length + 1)
+    : target.startsWith('./') ? target.slice(2) : null
+  if (relative === null || relative === '') return false
+  if (relative.split('/').includes('..')) return false
+  try {
+    return statSync(join(dir, relative)).isFile()
+  } catch {
+    // Missing or unreadable: this target says nothing, and the package-dir
+    // probes below still get their chance.
+    return false
+  }
 }
 
 /** Whether `target` resolves from the host's own dependency tree. */

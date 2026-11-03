@@ -38,7 +38,7 @@ function mockGhSpawn(stdout: string, fail = false): void {
 }
 
 import {
-  createGist, fitsGistLimit, GistError, gistErrorCode, GIST_FILENAME, parseGistId, readGist, resetGhTokenCache, resolveGistToken, resolveGistTokenSource, updateGist, verifyGistToken,
+  createGist, fitsGistLimit, GistError, ghAuthSpawnOptions, gistErrorCode, GIST_FILENAME, parseGistId, readGist, resetGhTokenCache, resolveGistToken, resolveGistTokenSource, updateGist, verifyGistToken,
 } from '../src/gist.ts'
 import { createProfileBackup, extractPluginSelection, mergeRestoreManifest, type ProfileBackup } from '../src/backup.ts'
 import { profileDir } from '../src/profile.ts'
@@ -112,6 +112,16 @@ describe('resolveGistToken', () => {
     await expect(resolveGistToken(undefined)).resolves.toBe('gh-token')
     // Second call served from cache — no second spawn.
     expect(childProcess.spawn).toHaveBeenCalledTimes(1)
+  })
+
+  it('never detaches gh on Windows, where that gave it a visible console (#1094)', () => {
+    // `detached: true` becomes DETACHED_PROCESS, which wins over
+    // windowsHide's CREATE_NO_WINDOW and hands the child a new VISIBLE
+    // console: a terminal window titled gh.exe on every backup-page action.
+    expect(ghAuthSpawnOptions('win32')).toMatchObject({ detached: false, windowsHide: true })
+    // Everywhere else detached is kept: the parent must never wait on gh.
+    expect(ghAuthSpawnOptions('linux')).toMatchObject({ detached: true, windowsHide: true })
+    expect(ghAuthSpawnOptions('darwin')).toMatchObject({ detached: true, windowsHide: true })
   })
 
   it('throws when no token source is available', async () => {
