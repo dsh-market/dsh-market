@@ -398,12 +398,66 @@
    .sub / exportLogBtn rules still fire at the same visual width. */
 .panelHost .head{container-type:inline-size;padding-left:max(clamp(16px,4vw,48px),calc((100% - 960px) / 2));padding-right:max(clamp(16px,4vw,48px),calc((100% - 960px) / 2))}
 .panelHost .body{container-type:inline-size;padding-left:max(clamp(16px,4vw,48px),calc((100% - 960px) / 2));padding-right:max(clamp(16px,4vw,48px),calc((100% - 960px) / 2))}
+/* Plugins page tab: the host page already scrolls. A fixed height and an
+   inner scroller would leave a short window under the host's own header.
+   Collapse-on-scroll stays on the settings and sidebar mounts (#266).
+   Fullscreen is excluded so the theme gallery can still scroll inside the
+   overlay below. */
+/* Defaults for the sticky offsets MarketSection writes on scroll. Named
+   here so host-theme-vars sees a market definition, not a naked var(). */
+[data-dsh-market-plugins-tab="true"]{
+  --dshm-host-sticky-top:0px;
+  --dshm-plugins-head-height:0px
+}
+[data-dsh-market-plugins-tab="true"]:not([data-dsh-market-fullscreen="true"]){height:auto}
+/* Fill the viewport under the stuck chrome. An empty tab (Blocked with
+   nothing hidden) would otherwise shrink the market to a few dozen pixels,
+   the host clamps scrollTop, and both sticky rows drop. Flex so a lone
+   .empty can sit mid-viewport; max-height is the visible slice from the
+   empty node (or .body) to the host scroller bottom — not the full
+   min-height, and not including search/cats above Discover's empty. */
+[data-dsh-market-plugins-tab="true"]:not([data-dsh-market-fullscreen="true"]){
+  --dshm-empty-view-height:100vh
+}
+[data-dsh-market-plugins-tab="true"]:not([data-dsh-market-fullscreen="true"]) .body{
+  flex:none;overflow:visible;display:flex;flex-direction:column;
+  min-height:calc(100vh - var(--dshm-host-sticky-top,0px) - var(--dshm-plugins-head-height,0px))
+}
+[data-dsh-market-plugins-tab="true"]:not([data-dsh-market-fullscreen="true"]) .body > .empty{
+  flex:1 1 auto;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  box-sizing:border-box;width:100%;max-width:none;margin:0;padding:32px;
+  max-height:var(--dshm-empty-view-height,100vh)
+}
+/* .root is as tall as the catalog on this surface, so absolute would park
+   the disc at the end of the page. Fixed keeps it in the viewport corner. */
+[data-dsh-market-plugins-tab="true"]:not([data-dsh-market-fullscreen="true"]) .top{position:fixed}
+/* contents so .cats is a child of the tall .body. Sticky cannot leave
+   .stickyHead, and that box is only search + chips — the row would
+   unstick the moment search scrolled away. */
+[data-dsh-market-plugins-tab="true"]:not([data-dsh-market-fullscreen="true"]) .stickyHead{display:contents}
+/* Stick the market's own chrome (inner tabs + batch actions). The target
+   is .head, not the tab row: sticky cannot leave its parent, and on this
+   surface .head is only as tall as the tabs. .root is the tall ancestor,
+   so .head parks until the catalog ends. top is the host's already-stuck
+   chrome, written by MarketSection. */
+[data-dsh-market-plugins-tab="true"]:not([data-dsh-market-fullscreen="true"]) .head{
+  position:sticky;z-index:6;top:var(--dshm-host-sticky-top,0px);
+  margin:0 -4px;padding:4px 4px 6px;background:var(--dsw-alias-bg-base,#fff)
+}
+/* Second pin: the category row sits under the tab row. Search stays in
+   the flow so the stuck chrome stays two market rows, not three.
+   Collapse-on-scroll stays off on this surface (#266 / #395); the chevron
+   is still the way to open the full list. */
+[data-dsh-market-plugins-tab="true"]:not([data-dsh-market-fullscreen="true"]) .cats{
+  position:sticky;z-index:5;
+  top:calc(var(--dshm-host-sticky-top,0px) + var(--dshm-plugins-head-height,0px));
+  background:var(--dsw-alias-bg-base,#fff)
+}
 /* Explicit immersive mode: the normal Settings width remains the default,
    while the user can opt into a Wallpaper-style multi-column gallery. */
 [role="dialog"]:has([data-dsh-market-fullscreen="true"]){position:fixed;inset:0;width:100vw;height:100vh;max-width:none;max-height:none;border-radius:0}
 /* Fullscreen from the Plugins page has no dialog to expand, so the
-   market covers the window itself. The inline height is the tab room measured
-   from the host's page, hence !important. */
+   market covers the window itself. */
 [data-dsh-market-plugins-tab="true"][data-dsh-market-fullscreen="true"]{position:fixed;inset:0;z-index:60;height:100vh!important;background:var(--dsw-alias-bg-layer-1,#fff)}
 @media (prefers-reduced-motion:reduce){
   .themeCard,.themeCover img{transition:none}
@@ -885,6 +939,7 @@
    Below 544px the pager falls back to two centered lines instead of
    squeezing buttons. */
 .pager{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:16px 0 4px;flex-wrap:nowrap}
+.loadMore{display:flex;justify-content:center;margin:16px 0 4px}
 .pagerPages{display:flex;align-items:center;justify-content:center;gap:4px;flex-wrap:nowrap;flex:1;min-width:0}
 .pagerMeta{display:flex;align-items:center;gap:6px;flex-wrap:nowrap;flex-shrink:0}
 .pagerPages button,.pagerMeta button{padding:0 8px;min-width:0}
