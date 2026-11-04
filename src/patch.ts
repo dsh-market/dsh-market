@@ -153,6 +153,32 @@ function nextPatchContentLine(lines: readonly string[], from: number): number {
  * rejects, but a plain `- id: X` + `disabled: true|false` pair is enough
  * to know what the user patch layer says.
  */
+/**
+ * The value of a top-level key in a patch entry that starts after `start`.
+ *
+ * An entry runs until the next `- ` at column 0, and its keys sit at exactly
+ * two spaces; anything deeper belongs to `config:` and says nothing about the
+ * row itself. Reading only the line AFTER `- id:` missed `disabled: true`
+ * whenever `name`, `inject` or a config block came first — the row then read
+ * as enabled, so a plugin the user had switched off was reported "restart to
+ * apply" forever, every boot (#1099).
+ *
+ * @returns the scalar as written (comments stripped), or null when the entry
+ *   does not carry the key at all.
+ */
+function entryKeyValue(lines: readonly string[], start: number, key: string): string | null {
+  const pattern = new RegExp(`^ {2}${key}:[ \\t]*(.*?)[ \\t]*$`, 'u')
+  for (let index = start; index < lines.length; index += 1) {
+    const line = lines[index] ?? ''
+    if (/^- /u.test(line)) return null
+    const match = pattern.exec(line)
+    // A `#` starts a comment only after whitespace; `#` inside a bare scalar
+    // is data, and YAML would keep it.
+    if (match !== null) return (match[1] ?? '').replace(/[ \t]+#.*$/u, '').trim()
+  }
+  return null
+}
+
 export function readUserPatchState(patchPath: string): PatchState {
   const disables: string[] = []
   const forced: string[] = []
@@ -178,9 +204,9 @@ export function readUserPatchState(patchPath: string): PatchState {
     const disableRow = /^- id: (?:([A-Za-z0-9_.-]+)|'([A-Za-z0-9_.-]+)'|"([A-Za-z0-9_.-]+)")[ \t]*$/u.exec(line)
     if (disableRow === null) continue
     const id = (disableRow[1] ?? disableRow[2] ?? disableRow[3])!
-    const next = lines[nextPatchContentLine(lines, index + 1)] ?? ''
-    if (/^ {2}disabled: true\s*$/u.test(next)) disables.push(id)
-    else if (/^ {2}disabled: false\s*$/u.test(next)) forced.push(id)
+    const value = entryKeyValue(lines, index + 1, 'disabled')
+    if (value === 'true') disables.push(id)
+    else if (value === 'false') forced.push(id)
   }
   return { disables, forced, inserts }
 }

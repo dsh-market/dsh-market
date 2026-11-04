@@ -56,6 +56,51 @@ describe('readUserPatchState', () => {
     }
   })
 
+  it('reads a disable flag that is not on the line after the id (#1099)', () => {
+    // Reported shape: the entry written in YAML's natural order —
+    // id, name, inject, disabled. Reading only the NEXT line saw `name:` and
+    // concluded the row was enabled, so a plugin the user had switched off
+    // was reported "restart to apply" on every boot, forever.
+    const dir = patchDir()
+    try {
+      writeFileSync(join(dir, 'cordis.patch.yml'), [
+        '- id: p-dsh-market-amap-map-assistant',
+        "  name: '@p-dsh-market/amap-map-assistant'",
+        '  inject: [ sessions, skills, tools, webServer ]',
+        '  disabled: true',
+        '- id: still-on',
+        '  name: dsh-loop',
+        '  disabled: false',
+        '',
+      ].join('\n'))
+      expect(readUserPatchState(join(dir, 'cordis.patch.yml'))).toEqual({
+        disables: ['p-dsh-market-amap-map-assistant'], forced: ['still-on'], inserts: [],
+      })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('does not read a nested config key as the row flag (#1099)', () => {
+    // `config: { disabled: true }` is a plugin's own setting, not the loader
+    // row's switch; a deeper indent must never count.
+    const dir = patchDir()
+    try {
+      writeFileSync(join(dir, 'cordis.patch.yml'), [
+        '- id: nested',
+        '  config:',
+        '    disabled: true',
+        '- id: also-nested',
+        '  config:',
+        '    disabled: false',
+        '',
+      ].join('\n'))
+      expect(readUserPatchState(join(dir, 'cordis.patch.yml'))).toEqual({ disables: [], forced: [], inserts: [] })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('returns empty state for a missing file', () => {
     const dir = patchDir()
     try {
