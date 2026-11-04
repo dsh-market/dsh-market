@@ -128,6 +128,39 @@ describe('DrainCoordinator', () => {
     bed.coordinator.dispose()
   })
 
+  it('leaves an idle Agent usable while it waits for a running one (#1095)', async () => {
+    // Reported: a long turn in one session froze every OTHER session for 45
+    // minutes. The barrier claimed all idle Agents up front and then waited on
+    // the busy one, so their queued messages sat behind a hold that was itself
+    // waiting. Nothing needs the idle Agents held until the moment the
+    // package command can actually run.
+    const bed = harness()
+    const busy = new FakeAgent('long-turn', 'running')
+    const idle = new FakeAgent('idle')
+    bed.host.create(busy)
+    bed.host.create(idle)
+
+    const result = await bed.begin(async () => OK)
+    expect(result.mode).toBe('deferred')
+    if (result.mode !== 'deferred') return
+    await Promise.resolve()
+
+    expect(idle.held).toBe(false)
+    expect(idle.maintenanceCalls).toBe(0)
+    // A queued message may still start its turn — that is the point.
+    expect(() => idle.startTurn()).not.toThrow()
+    idle.finishTurn()
+
+    busy.finishTurn()
+    const settled = await bed.coordinator.whenSettled(result.operation.operationId)
+    expect(settled?.state).toBe('succeeded')
+    // Both are held by the time the command runs, so nothing starts a turn
+    // against the files being replaced.
+    expect(busy.maintenanceCalls).toBe(1)
+    expect(idle.maintenanceCalls).toBe(1)
+    bed.coordinator.dispose()
+  })
+
   it('holds an Agent created during the drain before its first turn', async () => {
     const bed = harness()
     const first = new FakeAgent('first', 'running')
@@ -199,9 +232,6 @@ describe('DrainCoordinator', () => {
       abortMutation: () => true,
     })
     const agent = new FakeAgent('main')
-    // A running Agent forces the deferred path; the idle one is held by the
-    // same synchronous claim, which is what a cancel during the probe must
-    // release.
     const runner = new FakeAgent('runner', 'running')
     host.create(agent)
     host.create(runner)
@@ -212,11 +242,12 @@ describe('DrainCoordinator', () => {
       captureIntent: () => new Promise(resolve => { resolveIntent = resolve }),
       execute: async () => OK,
     })
-    // `begin` claimed the idle Agent synchronously and is waiting on the probe.
-    // The operation is deliberately not exposed yet: a probe that is refused
-    // must not leave a Host row the client cannot clean up.
+    // The operation is deliberately not exposed while the probe runs: a probe
+    // that is refused must not leave a Host row the client cannot clean up.
+    // The idle Agent is NOT held yet either — #1095: nothing is claimed while
+    // someone is mid-turn, so this session stays usable during the probe.
     await Promise.resolve()
-    expect(agent.held).toBe(true)
+    expect(agent.held).toBe(false)
     expect(coordinator.list()).toEqual([])
     const operationId = 'boot-test-drain-1'
 

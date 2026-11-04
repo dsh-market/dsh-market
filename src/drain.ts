@@ -409,7 +409,13 @@ export class DrainCoordinator {
         this.abandon(operation)
         return { mode: 'unsupported', reason: 'agents-service-unavailable', incompatibleIds: [] }
       }
-      for (const agent of live) this.claim(agent)
+      // #1095: claim only when the whole inventory is at a safe boundary. A
+      // hold FREEZES an Agent, so claiming the idle ones while another is
+      // mid-turn made every other session wait for that turn behind a barrier
+      // that was itself waiting — 45 minutes in the report. With anyone still
+      // running, `drainAgents` waits first and claims them all together.
+      const busyNow = live.some(agent => agent.status === 'running')
+      if (!busyNow) for (const agent of live) this.claim(agent)
       const afterClaims = this.liveAgents()
       if (afterClaims === null) {
         this.abandon(operation)
@@ -749,21 +755,30 @@ export class DrainCoordinator {
       const unheld = live.filter(agent => !this.holds.has(agent.id))
       this.setWait(operation, unheld)
       if (unheld.length === 0) return true
+      // #1095: a hold FREEZES the Agent — its queued messages wait for the
+      // barrier, and the barrier waits for whoever is still in a turn. The
+      // reported case held every idle session for 45 minutes behind one long
+      // turn, while the UI still called them idle. Claim only once nothing is
+      // running, so waiting for one session costs the others nothing.
+      const busy = unheld.some(agent => agent.status === 'running')
       let claimed = 0
-      for (const agent of unheld) {
-        if (operation.cancelRequested || this.disposeRequested) break
-        if (this.claim(agent)) claimed += 1
+      let waiting = unheld
+      if (!busy) {
+        for (const agent of unheld) {
+          if (operation.cancelRequested || this.disposeRequested) break
+          if (this.claim(agent)) claimed += 1
+        }
+        const current = this.liveAgents()
+        if (current === null) return false
+        waiting = current.filter(agent => !this.holds.has(agent.id))
+        this.setWait(operation, waiting)
+        if (waiting.length === 0) return true
       }
-      const current = this.liveAgents()
-      if (current === null) return false
-      const remaining = current.filter(agent => !this.holds.has(agent.id))
-      this.setWait(operation, remaining)
-      if (remaining.length === 0) return true
-      const waitingForTurn = remaining.some(agent => agent.status === 'running')
+      const waitingForTurn = busy
       const activity = this.waitForActivity()
       try {
         await Promise.race([
-          Promise.all(remaining.map(agent => agent.whenIdle().catch(() => undefined))),
+          Promise.all(waiting.map(agent => agent.whenIdle().catch(() => undefined))),
           activity.promise,
         ])
       } finally {
