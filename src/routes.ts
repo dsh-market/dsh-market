@@ -33,7 +33,7 @@ import {
 } from './dsh-cli.ts'
 import { packageOfEntryName } from './entry-identity.ts'
 import { PendingRowJournal, repairOrphanedRows } from './pending-rows.ts'
-import { addProfileBundle, bundleExpressionRowIds, bundleOptOutRowIds, bundlePatchInsertedIds, bundlesDroppedFromProfile, declareProfileDependency, dropFromManifest, generationManagedNames, hasLoadableEntry, holdsNativeAddon, INBOX_BUNDLES, isDshProfileName, profileDir, readDependencyOwners, readGitResolutionCommit, readInstalled, readInstalledManifest, readInstalledPackageName, readInstalledRepoEvidence, readInstalledVersion, readLockCommits, readProfileBundles, readProfileManifestSnapshot, removeProfileBundle, parsePatchRows, restoreProfileManifest, setAllowBuilds, shippedInsertedRowIds, type ProfileManifestSnapshot } from './profile.ts'
+import { addProfileBundle, bundleExpressionRowIds, bundleOptOutRowIds, bundlePatchInsertedIds, bundlesDroppedFromProfile, declareProfileDependency, dropFromManifest, dropReleaseAgeExcludes, generationManagedNames, hasLoadableEntry, holdsNativeAddon, INBOX_BUNDLES, isDshProfileName, profileDir, readDependencyOwners, readGitResolutionCommit, readInstalled, readInstalledManifest, readInstalledPackageName, readInstalledRepoEvidence, readInstalledVersion, readLockCommits, readProfileBundles, readProfileManifestSnapshot, removeProfileBundle, parsePatchRows, restoreProfileManifest, setAllowBuilds, shippedInsertedRowIds, type ProfileManifestSnapshot } from './profile.ts'
 import { assessProfile, classifyPeer, introducedDuplicateNames, introducedRisks, type CompatibilityRisk } from './compatibility.ts'
 import { runningAgentIds, type AgentsLookup } from './agents.ts'
 import { DrainCoordinator, DrainNoop, DrainRefusal, type DrainExecutionResult, type DrainIntent, type DrainMutationGate } from './drain.ts'
@@ -7326,6 +7326,21 @@ sendJson(response, 200, { updates })
               disabled.delete(name)
               removeFromGroups({ groups, groupOrder }, name)
               writeMarketState(activeProfileDir, { disabled, groups, groupOrder })
+              // #1093: pnpm writes a `minimumReleaseAgeExclude` row when it
+              // installs a version still inside the wait window, and removing
+              // the dependency never touches that file. Left behind, the row
+              // pins a version of a package the profile no longer has, and it
+              // reads as live policy to anyone debugging a release-age refusal.
+              try {
+                const droppedExcludes = dropReleaseAgeExcludes(config.profile, name, activeProfileDir)
+                if (droppedExcludes.length > 0) {
+                  logEvent('info', 'uninstall', `${name}: dropped ${String(droppedExcludes.length)} minimumReleaseAgeExclude row(s) its install had added`)
+                }
+              } catch (error) {
+                // The uninstall already happened; a policy file this could not
+                // read is a reported warning, not a failure of the removal.
+                logEvent('warn', 'uninstall', `${name}: could not clear its minimumReleaseAgeExclude rows — ${error instanceof Error ? error.message : String(error)}`)
+              }
             }
             logEvent(ok || cancelled ? 'info' : 'error', 'uninstall',
               `${name} exit=${String(result.exitCode)}${cancelled ? ' CANCELLED' : ''}${ok ? ` live-removed=${String(hot)}` : cancelled ? '' : ` err=${failureDetail(result)}`}`)

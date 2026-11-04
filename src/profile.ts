@@ -1797,6 +1797,95 @@ function isPackageName(name: string): boolean {
 }
 
 /**
+ * The parsed `minimumReleaseAgeExclude` block of a profile workspace file.
+ *
+ * Both the #732 merge and the uninstall cleanup (#1093) rewrite this block, and
+ * both must leave every shape they cannot read exactly alone: an unreadable
+ * entry is skipped, never rewritten from a guess.
+ */
+interface ReleaseAgeBlock {
+  file: string
+  yaml: string
+  blockRe: RegExp
+  eol: string
+  indent: string
+  items: ReleaseAgeItem[]
+}
+
+/** One parsed block line. */
+type ReleaseAgeItem =
+  | { kind: 'comment'; line: string }
+  | { kind: 'entry'; rule: ReleaseAgeExcludeRule; quoted: boolean; original: string; comment: string | null }
+
+function readReleaseAgeBlock(file: string): ReleaseAgeBlock | null {
+  let yaml: string
+  try { yaml = readFileSync(file, 'utf8') } catch { return null }
+  // Block form only: `minimumReleaseAgeExclude:` then INDENTED lines — `- <entry>`
+  // entries, comment lines among them, and the continuations of a folded entry.
+  // Two shapes used to end the block early, each truncating the entry cut by it:
+  // a comment line inside the block (#816), and a folded entry — pnpm wrapping a
+  // long `||` union across two lines — whose continuation is indented but does
+  // not start with `-` (#820). The truncated first line is still a legal
+  // single-line match, so nothing downstream noticed: its unterminated quote
+  // read as a package name, and the repair rewrote the line it had misread, once
+  // per run. The boundary now spans every indented line, so those shapes are
+  // seen whole. Blank lines must not truncate a block either: otherwise an
+  // unreadable continuation below one could escape validation before a write.
+  const blockRe = /^minimumReleaseAgeExclude:[ \t]*\r?\n((?:(?:[ \t]+[^\r\n]*|[ \t]*#[^\r\n]*)\r?\n?|\r?\n)*)/m
+  const block = blockRe.exec(yaml)
+  if (block === null) return null
+  const eol = /\r\n/.test(yaml) ? '\r\n' : '\n'
+  const indentMatch = /^([ \t]+)-/m.exec(block[1])
+  const indent = indentMatch === null ? '  ' : indentMatch[1]
+
+  /**
+   * The block in its original order. Comment lines are kept verbatim; an
+   * entry keeps its trailing ` # …` comment, which YAML only recognises after
+   * whitespace. A `#` anywhere else in an entry is not something this can
+   * read exactly, so the file is left alone.
+   */
+  const items: ReleaseAgeItem[] = []
+  const physical = block[1].split(/\r?\n/)
+  if (physical[physical.length - 1] === '') physical.pop()
+  for (let i = 0; i < physical.length; i++) {
+    const line = physical[i]
+    if (line.trim() === '' || /^[ \t]*#/.test(line)) {
+      items.push({ kind: 'comment', line })
+      continue
+    }
+    const m = /^([ ]+)-[ ]+(\S.*)$/.exec(line)
+    if (m === null || m[1] !== indent || !/^[A-Za-z0-9._~@'"-]/.test(m[2])) return null
+    const raw = [line]
+    // Only uninterrupted, more-indented continuation lines are supported.
+    // The YAML parser, rather than a string join, determines folding/escapes.
+    while (i + 1 < physical.length) {
+      const next = physical[i + 1]
+      if (next.trim() === '' || /^[ \t]*#/.test(next)) break
+      const spaces = /^ +/.exec(next)?.[0].length ?? 0
+      if (spaces <= indent.length) break
+      raw.push(next)
+      i++
+    }
+    let value: unknown
+    try {
+      // Keep the pre-existing repair of single-line, unquoted scoped names
+      // (#732). YAML itself forbids a plain scalar starting with `@`.
+      value = m[2].startsWith('@') && raw.length === 1
+        ? m[2].replace(/[ \t]+#.*$/, '').trimEnd()
+        : load(raw.join('\n'), { schema: JSON_SCHEMA })
+      if (Array.isArray(value) && value.length === 1) value = value[0]
+    } catch { return null }
+    if (typeof value !== 'string') return null
+    const rule = splitReleaseAgeExclude(value)
+    if (rule === null) return null
+    const comment = /[ \t]+(#[^\r\n]*)$/.exec(raw[raw.length - 1])?.[1] ?? null
+    items.push({ kind: 'entry', rule, quoted: /^['"]/.test(m[2]), original: raw.join(eol), comment })
+  }
+
+  return { file, yaml, blockRe, eol, indent, items }
+}
+
+/**
  * Make a profile's `minimumReleaseAgeExclude` readable again (#732).
  *
  * pnpm appends a second rule for a package that already has one, while its
@@ -1835,73 +1924,50 @@ function isPackageName(name: string): boolean {
  *   needed no repair or could not be repaired, in which case it is left
  *   byte-for-byte as it was.
  */
-export function mergeDuplicateReleaseAgeExcludes(profile: string, explicitDir?: string): string[] {
-  const file = join(profileDir(profile, explicitDir), 'pnpm-workspace.yaml')
-  let yaml: string
-  try { yaml = readFileSync(file, 'utf8') } catch { return [] }
-  // Block form only: `minimumReleaseAgeExclude:` then INDENTED lines — `- <entry>`
-  // entries, comment lines among them, and the continuations of a folded entry.
-  // Two shapes used to end the block early, each truncating the entry cut by it:
-  // a comment line inside the block (#816), and a folded entry — pnpm wrapping a
-  // long `||` union across two lines — whose continuation is indented but does
-  // not start with `-` (#820). The truncated first line is still a legal
-  // single-line match, so nothing downstream noticed: its unterminated quote
-  // read as a package name, and the repair rewrote the line it had misread, once
-  // per run. The boundary now spans every indented line, so those shapes are
-  // seen whole. Blank lines must not truncate a block either: otherwise an
-  // unreadable continuation below one could escape validation before a write.
-  const blockRe = /^minimumReleaseAgeExclude:[ \t]*\r?\n((?:(?:[ \t]+[^\r\n]*|[ \t]*#[^\r\n]*)\r?\n?|\r?\n)*)/m
-  const block = blockRe.exec(yaml)
+/**
+ * Remove one package's `minimumReleaseAgeExclude` rows (#1093).
+ *
+ * pnpm writes this key itself when it installs a version still inside the
+ * fresh-release wait, and it writes one row for the package plus one per
+ * platform subpackage. Uninstalling took the dependency out of the manifest
+ * and the lockfile but left those rows behind, pinned to versions of a package
+ * the profile no longer has. They are not only noise: they read as live policy
+ * to anyone diagnosing a release-age refusal months later.
+ *
+ * Only rows naming this package are dropped. A platform subpackage
+ * (`@typescript/typescript-darwin-arm64`) is a DIFFERENT package name, and
+ * nothing in the file says which main package it belongs to — guessing would
+ * delete policy that may still be in effect for something installed.
+ *
+ * @returns the entries removed, for the caller to log; empty when there is no
+ *   such block, no such row, or the file cannot be read exactly (in which case
+ *   it is left byte-for-byte as it was).
+ */
+export function dropReleaseAgeExcludes(profile: string, name: string, explicitDir?: string): string[] {
+  const block = readReleaseAgeBlock(join(profileDir(profile, explicitDir), 'pnpm-workspace.yaml'))
   if (block === null) return []
-  const eol = /\r\n/.test(yaml) ? '\r\n' : '\n'
-  const indentMatch = /^([ \t]+)-/m.exec(block[1])
-  const indent = indentMatch === null ? '  ' : indentMatch[1]
-  /**
-   * The block in its original order. Comment lines are kept verbatim; an
-   * entry keeps its trailing ` # …` comment, which YAML only recognises after
-   * whitespace. A `#` anywhere else in an entry is not something this can
-   * read exactly, so the file is left alone.
-   */
-  type Item =
-    | { kind: 'comment'; line: string }
-    | { kind: 'entry'; rule: ReleaseAgeExcludeRule; quoted: boolean; original: string; comment: string | null }
-  const items: Item[] = []
-  const physical = block[1].split(/\r?\n/)
-  if (physical[physical.length - 1] === '') physical.pop()
-  for (let i = 0; i < physical.length; i++) {
-    const line = physical[i]
-    if (line.trim() === '' || /^[ \t]*#/.test(line)) {
-      items.push({ kind: 'comment', line })
-      continue
-    }
-    const m = /^([ ]+)-[ ]+(\S.*)$/.exec(line)
-    if (m === null || m[1] !== indent || !/^[A-Za-z0-9._~@'"-]/.test(m[2])) return []
-    const raw = [line]
-    // Only uninterrupted, more-indented continuation lines are supported.
-    // The YAML parser, rather than a string join, determines folding/escapes.
-    while (i + 1 < physical.length) {
-      const next = physical[i + 1]
-      if (next.trim() === '' || /^[ \t]*#/.test(next)) break
-      const spaces = /^ +/.exec(next)?.[0].length ?? 0
-      if (spaces <= indent.length) break
-      raw.push(next)
-      i++
-    }
-    let value: unknown
-    try {
-      // Keep the pre-existing repair of single-line, unquoted scoped names
-      // (#732). YAML itself forbids a plain scalar starting with `@`.
-      value = m[2].startsWith('@') && raw.length === 1
-        ? m[2].replace(/[ \t]+#.*$/, '').trimEnd()
-        : load(raw.join('\n'), { schema: JSON_SCHEMA })
-      if (Array.isArray(value) && value.length === 1) value = value[0]
-    } catch { return [] }
-    if (typeof value !== 'string') return []
-    const rule = splitReleaseAgeExclude(value)
-    if (rule === null) return []
-    const comment = /[ \t]+(#[^\r\n]*)$/.exec(raw[raw.length - 1])?.[1] ?? null
-    items.push({ kind: 'entry', rule, quoted: /^['"]/.test(m[2]), original: raw.join(eol), comment })
-  }
+  const { file, yaml, blockRe, eol, items } = block
+  const dropped: string[] = []
+  const lines = items.flatMap(item => {
+    if (item.kind === 'comment') return [item.line]
+    if (item.rule.name !== name) return [item.original]
+    dropped.push(item.rule.selector === null ? item.rule.name : `${item.rule.name}@${item.rule.selector}`)
+    return []
+  })
+  if (dropped.length === 0) return []
+  // Nothing left but comments: the key itself goes. `minimumReleaseAgeExclude:`
+  // with no rows is a null value, and pnpm rejects the file rather than
+  // reading it as an empty list.
+  const empty = lines.every(line => line.trim() === '' || /^\s*#/.test(line))
+  const replacement = empty ? '' : `minimumReleaseAgeExclude:${eol}${lines.join(eol)}${eol}`
+  writeFileSync(file, yaml.replace(blockRe, () => replacement))
+  return dropped
+}
+
+export function mergeDuplicateReleaseAgeExcludes(profile: string, explicitDir?: string): string[] {
+  const block = readReleaseAgeBlock(join(profileDir(profile, explicitDir), 'pnpm-workspace.yaml'))
+  if (block === null) return []
+  const { file, yaml, blockRe, eol, indent, items } = block
   const entries = items.flatMap(item => item.kind === 'entry' ? [item] : [])
   const byName = new Map<string, {
     selectors: Set<string>

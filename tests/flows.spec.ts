@@ -2388,6 +2388,36 @@ describe('install flow', () => {
     expect(listed.json.diagnostics.schema).toBe('dsh-market/diagnostics/v1')
     expect(listed.json.diagnostics.findings).toEqual([])
   })
+
+  it('drops the release-age exclude row its install added when the plugin is uninstalled (#1093)', async () => {
+    // pnpm writes a `minimumReleaseAgeExclude` row while installing a version
+    // still inside the wait window, and removing the dependency never touched
+    // that file: the profile kept pinning a version of a package it no longer
+    // had. Only THIS package's row goes — another package's row and the rest
+    // of the file must survive.
+    fake.npm['dsh-loop'] = {
+      latest: '1.0.0',
+      versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } },
+    }
+    const workspacePath = join(fake.profileDir, 'pnpm-workspace.yaml')
+    writeFileSync(workspacePath, [
+      'minimumReleaseAge: 1440',
+      'minimumReleaseAgeExclude:',
+      '  - dsh-loop@1.0.0',
+      '  - other@2.0.0',
+      '',
+    ].join('\n'))
+    const installed = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
+    expect(installed.status).toBe(200)
+
+    const removed = await bed.dispatch('POST', '/dsh-market/uninstall', { name: 'dsh-loop' })
+
+    expect(removed.status).toBe(200)
+    const workspace = readFileSync(workspacePath, 'utf8')
+    expect(workspace).not.toContain('dsh-loop@')
+    expect(workspace).toContain('other@2.0.0')
+    expect(workspace).toContain('minimumReleaseAge: 1440')
+  })
 })
 
 describe('official Desktop download region (#862)', () => {

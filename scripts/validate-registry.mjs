@@ -118,6 +118,7 @@ function fail(errors, entry, code, msg) {
 const KNOWN_LIVE_DRIFT = new Set([
   'dsh-quick-restart:E10',
   'dsh-gitui:E10',
+  'dsh-friends#plugin:E10',
 ])
 
 async function main() {
