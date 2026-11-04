@@ -1158,6 +1158,61 @@ describe('host-provided profile and package-operation seams', () => {
     expect(cancel).toHaveBeenCalledOnce()
   })
 
+  it('answers a bundle’s own declared repository as its code source', async () => {
+    // The detail page shows an install spec, not an address. This route answers
+    // per PACKAGE, and null rather than guess when nothing declares a repository.
+    const dir = fake.profileDir
+    // A linked local checkout whose only source evidence is its Git origin.
+    const checkoutRoot = join(dir, 'checkout')
+    const linked = join(checkoutRoot, 'linked-copy')
+    mkdirSync(join(checkoutRoot, '.git'), { recursive: true })
+    mkdirSync(linked, { recursive: true })
+    writeFileSync(join(linked, 'package.json'), JSON.stringify({ name: 'linked-plugin' }))
+    writeFileSync(join(checkoutRoot, '.git', 'config'), '[remote "origin"]\n\turl = https://github.com/SomeoneElse/Other.git\n')
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({
+      dependencies: {
+        '@acme/widget': '1.0.0',
+        'no-source': '2.0.0',
+        'git-widget': 'git+https://github.com/Acme/GitWidget.git#3f2a1b4c5d6e7f8091a2b3c4d5e6f708192a3b4c',
+        'gitlab-widget': 'git+https://gitlab.com/Studio/Widget.git',
+        'linked-plugin': `link:${linked}`,
+      },
+    }))
+    const packages: Array<[string, unknown]> = [
+      ['@acme/widget', {
+        name: '@acme/widget',
+        version: '1.0.0',
+        repository: { type: 'git', url: 'git+https://github.com/Acme/Widget.git' },
+      }],
+      ['no-source', { name: 'no-source', version: '2.0.0' }],
+    ]
+    for (const [name, manifest] of packages) {
+      const pkgDir = join(dir, 'node_modules', name)
+      mkdirSync(pkgDir, { recursive: true })
+      writeFileSync(join(pkgDir, 'package.json'), JSON.stringify(manifest))
+    }
+
+    const widget = await bed.dispatch('GET', `/dsh-market/source-repo?name=${encodeURIComponent('@acme/widget')}`)
+    expect(widget.status).toBe(200)
+    expect(widget.json).toEqual({ url: 'https://github.com/acme/widget' })
+    // The spelling pnpm writes back for a GitHub install (#803) is one matching
+    // cannot read, so the spec has to answer — no package directory exists here.
+    expect((await bed.dispatch('GET', '/dsh-market/source-repo?name=git-widget')).json)
+      .toEqual({ url: 'https://github.com/Acme/GitWidget' })
+    // Reading the spec is not GitHub-only; the link follows the spec's host.
+    expect((await bed.dispatch('GET', '/dsh-market/source-repo?name=gitlab-widget')).json)
+      .toEqual({ url: 'https://gitlab.com/Studio/Widget' })
+    // A linked checkout draws nothing: its Git origin is a matching hint (#141),
+    // not the package's source.
+    expect((await bed.dispatch('GET', '/dsh-market/source-repo?name=linked-plugin')).json)
+      .toEqual({ url: null })
+    // A package declaring no repository draws no row — a guessed repository
+    // would send the reader to somebody else's code.
+    expect((await bed.dispatch('GET', '/dsh-market/source-repo?name=no-source')).json).toEqual({ url: null })
+    // And a name that is not installed at all answers the same way.
+    expect((await bed.dispatch('GET', '/dsh-market/source-repo')).json).toEqual({ url: null })
+  })
+
   it('maps a generation-wide Desktop package-operation gate to conflict', async () => {
     bed.dispose()
     bed = createTestbed({}, {

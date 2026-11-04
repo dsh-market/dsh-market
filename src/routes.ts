@@ -55,7 +55,7 @@ import {
 } from './regions.ts'
 import { resolveRegion } from './region-probe.ts'
 import { acceleratedTarget, resolveHeadCommit } from './accelerate.ts'
-import { updateNotesFor } from './changelog.ts'
+import { sourceWebUrl, updateNotesFor } from './changelog.ts'
 import { checkUpdates, isUpdatablePlugin, compareVersions, fetchNpmLatest, invalidateUpdates, resolveDesktopMatureUpdate, resolveGitRemoteHead, isUpgrade, latestPublishedRecently, setUpdateRegistry, versionOnChannel } from './updates.ts'
 import { isStableReleaseVersion } from './release-candidates.ts'
 import { createThemeManager, type LoaderEntry } from './themes.ts'
@@ -3179,6 +3179,39 @@ export function mountMarketRoutes(
             logEvent('warn', 'registry', `catalog fetch failed: ${message}`)
             sendJson(response, 502, { error: message })
           }
+        } catch (error) {
+          sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    }),
+
+    registerRoute({
+      kind: 'exact',
+      /**
+       * The repository behind an installed bundle, for the detail page's
+       * "view source" row. Answered per package because the catalog is too
+       * large to ship to one page; null when nothing declares a repository.
+       */
+      path: '/dsh-market/source-repo',
+      handler: async (request, response) => {
+        if (request.method !== 'GET') {
+          response.writeHead(405, { allow: 'GET' })
+          response.end()
+          return
+        }
+        try {
+          const name = new URL(request.url ?? '/', 'http://localhost').searchParams.get('name') ?? ''
+          const spec = readInstalled(config.profile, activeProfileDir)[name] ?? ''
+          const evidence = readInstalledRepoEvidence(config.profile, name, spec, activeProfileDir)
+          // Identities only: a `hint` is the checkout's Git origin, which
+          // matching uses to disambiguate (#141) and need not be this package's
+          // source. `split('#')` drops a monorepo subpath — the link is the repo.
+          const repo = evidence.identities[0] ?? null
+          // Evidence cannot read every git spelling (`git+https://…`, what pnpm
+          // writes back — #803), so the spec answers next; the manifest never
+          // answers, since a fork keeps declaring upstream (#580).
+          const url = repo === null ? sourceWebUrl(spec) : `https://github.com/${repo.split('#')[0]}`
+          sendJson(response, 200, { url })
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
         }
