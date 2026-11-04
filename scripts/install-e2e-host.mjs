@@ -50,6 +50,13 @@ if (!version) {
 }
 
 const OVERRIDES = {
+  // 2026-11-04: cordis 4.1.0 (+ loader 1.1.0) published and the two oldest
+  // CLI lines stopped booting on it — `mountRootInclude` → `PluginGroup.create`
+  // → "Cannot read properties of null (reading 'entry')", on 0.1.0-rc.8 and
+  // 0.1.2-alpha.2 only, while the newer lines stayed green. Same shape as
+  // #684: the old CLIs' caret ranges float onto a plugin set their
+  // dsh-app-boot cannot boot. Pin the last 4.0.x for those lines only.
+  '@deepseek-ai/cordis': '4.0.5',
   '@deepseek-ai/cordis-plugin-loader': '1.0.2',
   '@deepseek-ai/cordis-plugin-hmr': '1.0.16',
 }
