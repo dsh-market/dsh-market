@@ -69,6 +69,22 @@ describe('SourceRepoLink', () => {
     expect(container.textContent).toBe('')
   })
 
+  it('draws nothing when the route answers an address that is not https', async () => {
+    // The href is a server answer, so a scheme the route would never build
+    // today still must not become a clickable anchor.
+    stubSourceRepo({ 'plain-http': 'http://github.com/acme/widget', 'script-url': 'javascript:alert(1)' })
+
+    const first = render(<SourceRepoLink name="plain-http" t={t} />)
+    await waitFor(() => expect(fetch).toHaveBeenCalled())
+    expect(screen.queryByRole('link')).toBeNull()
+    first.unmount()
+
+    const { container } = render(<SourceRepoLink name="script-url" t={t} />)
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2))
+    expect(screen.queryByRole('link')).toBeNull()
+    expect(container.textContent).toBe('')
+  })
+
   it('draws nothing when the route cannot be read', async () => {
     vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('offline'))))
     const { container } = render(<SourceRepoLink name="unreachable" t={t} />)

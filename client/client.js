@@ -18280,7 +18280,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				}
 				let live = true;
 				fetch(`${api("/dsh-market/source-repo")}?name=${encodeURIComponent(name)}`).then(async (res) => res.ok ? await res.json() : null).then((body) => {
-					const next = typeof body?.url === "string" && body.url !== "" ? body.url : null;
+					const next = typeof body?.url === "string" && body.url.startsWith("https://") ? body.url : null;
 					resolved.set(name, next);
 					if (live) setUrl(next);
 				}).catch(() => {});

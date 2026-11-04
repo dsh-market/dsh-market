@@ -26,7 +26,10 @@ export function SourceRepoLink(props: { name: string; t: Translate }) {
     fetch(`${api('/dsh-market/source-repo')}?name=${encodeURIComponent(name)}`)
       .then(async (res) => (res.ok ? (await res.json()) as { url?: unknown } : null))
       .then((body) => {
-        const next = typeof body?.url === 'string' && body.url !== '' ? body.url : null
+        // An href is only safe when it is https: the route builds one from
+        // sourceWebUrl today, but it is still another server's answer, and a
+        // `javascript:` value here would be a script rather than a link.
+        const next = typeof body?.url === 'string' && body.url.startsWith('https://') ? body.url : null
         resolved.set(name, next)
         if (live) setUrl(next)
       })
