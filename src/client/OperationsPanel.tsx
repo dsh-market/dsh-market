@@ -388,10 +388,15 @@ export function OperationsPanel(props: OperationsPanelProps) {
                     {statusLine(t, props.lang, record, ahead)}
                   </div>
                   {record.hostOperationId !== undefined && record.state === 'queued' && (record.blockedBy?.length ?? 0) > 0 && (
-                    <details>
-                      <summary>{t('agentDrainShowAgents')}</summary>
-                      <ul>
-                        {record.blockedBy!.map(id => <li key={id}>{id}</li>)}
+                    // #1098: marketplace styles, not the browser defaults. The
+                    // row list is a detail of the queued operation, not a
+                    // second panel: same 10.5px line as the status text above,
+                    // monospace and truncated IDs (the full value stays in the
+                    // tooltip) so a long session id cannot reflow the row.
+                    <details className={css.opAgents}>
+                      <summary className={css.opAgentsSummary}>{t('agentDrainShowAgents')}</summary>
+                      <ul className={css.opAgentsList}>
+                        {record.blockedBy!.map(id => <li key={id} className={css.opAgentsId} title={id}>{id}</li>)}
                       </ul>
                     </details>
                   )}
