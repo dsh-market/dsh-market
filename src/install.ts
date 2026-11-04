@@ -173,7 +173,8 @@ export async function withHoistRecovery(
     }
   }
   if (!ok(result) && !result.cancelled && !repairedDuringRun) {
-    const failure = classifyPnpmFailure(`${result.stderr}\n${result.stdout}`, result.exitCode)
+    // The profile is the only place the recorded pnpm major lives (#1100).
+    const failure = classifyPnpmFailure(`${result.stderr}\n${result.stdout}`, result.exitCode, { profileDirectory })
     if (failure?.code === 'unparseable-build-key' && repairProfilePolicy) {
       // The profile's own allowBuilds block is what fails, so no retry of the
       // same command can pass until it is repaired (#698). Drop only the

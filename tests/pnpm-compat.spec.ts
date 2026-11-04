@@ -6,7 +6,7 @@
  */
 
 import { afterEach, describe, expect, it } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { classifyPnpmFailure, pluginArgsFor } from '../src/pnpm-compat.ts'
@@ -824,6 +824,45 @@ describe('provisionHint (#142 / #108 / #32)', () => {
     const absent = provisionHint('', 'some unknown failure', true, { kind: 'missing', output: 'spawn pnpm ENOENT' })
     expect(absent).toMatch(/which pnpm|where pnpm/)
     expect(absent).toContain('PNPM_HOME')
+  })
+})
+
+describe('ERR_PNPM_UNEXPECTED_STORE across a pnpm major (#1100)', () => {
+  const OUTPUT = ` ERR_PNPM_UNEXPECTED_STORE  Unexpected store location
+The dependencies at "/root/.dsh/profiles/web/node_modules" are currently linked from the store at "/root/.dsh/.pnpm-store/v10".
+pnpm now wants to use the store at "/tmp/store-v10/v11" to link dependencies.
+      (This error may happen if the node_modules was installed with a different major version of pnpm)`
+
+  function profileRecording(packageManager: string): string {
+    const dir = mkdtempSync(join(tmpdir(), 'dshm-store-'))
+    mkdirSync(join(dir, 'node_modules'), { recursive: true })
+    writeFileSync(join(dir, 'node_modules', '.modules.yaml'), [
+      'layoutVersion: 5',
+      'nodeLinker: hoisted',
+      `packageManager: pnpm@${packageManager}`,
+      'storeDir: /root/.dsh/.pnpm-store/v10',
+      '',
+    ].join('\n'))
+    return dir
+  }
+
+  it('names the pnpm that built node_modules and stops recommending storeDir', () => {
+    // pnpm appends its own version segment under whatever storeDir says, so
+    // pointing pnpm 12 at a copy of the recorded v10 store lands on
+    // `<that>/v11` and fails identically. The reported advice could not work.
+    const dir = profileRecording('10.34.9')
+    const failure = classifyPnpmFailure(OUTPUT, 1, { profileDirectory: dir })
+
+    expect(failure?.code).toBe('unexpected-store')
+    expect(failure?.message).toContain('10.34.9')
+    expect(failure?.message).toMatch(/写 storeDir 修不好|cannot fix this/)
+    expect(failure?.message).not.toMatch(/storeDir: <上面第一个路径>|storeDir: <the first path above>/)
+  })
+
+  it('still points at the recorded version when the profile cannot be read', () => {
+    const failure = classifyPnpmFailure(OUTPUT, 1)
+    expect(failure?.message).toMatch(/modules\.yaml/)
+    expect(failure?.message).toMatch(/写 storeDir 修不好|cannot fix this/)
   })
 })
 
