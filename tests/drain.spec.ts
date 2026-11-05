@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DrainCoordinator, type DrainExecutionResult, type DrainIntent, type DrainJournalRecord } from '../src/drain.ts'
 import { DrainJournal } from '../src/drain-journal.ts'
 import { exportLogs, logEvent } from '../src/log.ts'
@@ -182,8 +182,9 @@ describe('DrainCoordinator', () => {
     // Someone starting a turn keeps the barrier open, so the wait now names them.
     idle[0]!.startTurn()
     busy.finishTurn()
-    await new Promise(resolve => setTimeout(resolve, 10))
-    expect(bed.coordinator.get(operationId)?.wait).toMatchObject({ activeCount: 1, activeAgentIds: ['idle-a'] })
+    await vi.waitFor(() => {
+      expect(bed.coordinator.get(operationId)?.wait).toMatchObject({ activeCount: 1, activeAgentIds: ['idle-a'] })
+    })
 
     idle[0]!.finishTurn()
     const settled = await bed.coordinator.whenSettled(operationId)
