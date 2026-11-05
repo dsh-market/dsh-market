@@ -11,7 +11,7 @@
  *   placeholder is commented out instead of being appended after.
  */
 
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { load } from 'js-yaml'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -466,6 +466,45 @@ describe('disableRow / enableRow', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+})
+
+describe('hand-written spellings the line scanner cannot see (#1112)', () => {
+  const dirs: string[] = []
+  afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
+  function patchDir(): string {
+    const dir = mkdtempSync(join(tmpdir(), 'dshm-patch-'))
+    dirs.push(dir)
+    return dir
+  }
+  /** The row as the host composes it: the last entry naming it decides. */
+  const composedFlag = (text: string): unknown =>
+    (load(text) as Array<{ id?: string; disabled?: unknown }>)
+      .filter(row => row.id === 'pet')
+      .at(-1)?.disabled
+
+  it.each([
+    ['flow style', '- { id: pet, disabled: true }\n'],
+    ['disabled above id', '- disabled: true\n  id: pet\n'],
+    ['a capitalised True', '- id: pet\n  disabled: True\n'],
+    ['a comment on the id line', '- id: pet # keep\n  disabled: true\n'],
+  ])('follows on, off, on for the row written as %s', async (_label, text) => {
+    // The second "on" is the one that broke: the first enable appends a block
+    // the scanner CAN see, the disable flips that block, and the second enable
+    // removes it — leaving only the spelling the scanner cannot see, so the
+    // row stayed off while the route answered 200.
+    const dir = patchDir()
+    const patch = join(dir, 'cordis.patch.yml')
+    writeFileSync(patch, text)
+
+    expect((await enableRow(patch, 'pet')).ok).toBe(true)
+    expect(composedFlag(readFileSync(patch, 'utf8'))).toBe(false)
+
+    expect((await disableRow(patch, 'pet')).ok).toBe(true)
+    expect(composedFlag(readFileSync(patch, 'utf8'))).toBe(true)
+
+    expect((await enableRow(patch, 'pet')).ok).toBe(true)
+    expect(composedFlag(readFileSync(patch, 'utf8'))).toBe(false)
   })
 })
 

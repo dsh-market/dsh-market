@@ -558,6 +558,40 @@ function rewriteRowBlocks(text: string, rowId: string, disabled: 'true' | 'false
  * `- id: X` entry that carries one, rows with more keys included. Later
  * entries override earlier ones.
  */
+/**
+ * The row's own flag as the HOST will compose it, from a real YAML parse.
+ *
+ * The line scanner is deliberately conservative, so it is blind to spellings
+ * it was not written for — flow style `- { id: x, disabled: true }`, `disabled`
+ * above `id`, `True`, a comment on the id line (#1112). The host parses the
+ * file and applies entries in order, the last one winning, so this is both the
+ * reading the user means and the one that decides.
+ *
+ * @returns 'true'/'false' from the last entry naming the row, or null when the
+ *   text cannot be read as DSH's patch dialect — the caller then keeps the line
+ *   scanner's answer rather than guessing.
+ */
+function composedRowFlag(text: string, rowId: string): 'true' | 'false' | null {
+  let rows: unknown[] | null
+  try {
+    rows = parsePatchText(text)
+  } catch {
+    return null
+  }
+  if (rows === null) return null
+  let flag: 'true' | 'false' | null = null
+  for (const row of rows) {
+    if (row === null || typeof row !== 'object' || Array.isArray(row)) continue
+    const entry = row as { id?: unknown; disabled?: unknown }
+    if (entry.id !== rowId) continue
+    // An `!!js` expression arrives as a function (or a tag object): it decides
+    // by itself, and flattening it here would freeze one host's answer.
+    if (entry.disabled === true) flag = 'true'
+    else if (entry.disabled === false) flag = 'false'
+  }
+  return flag
+}
+
 function lastRowFlag(text: string, rowId: string): 'true' | 'false' | null {
   const id = escapeRegExp(rowId)
   const idLine = new RegExp(`^- id: (?:${id}|'${id}'|"${id}")\\s*$`, 'u')
@@ -721,8 +755,12 @@ export function enableRow(
     if (next !== text) {
       const written = writePatchFile(patchPath, withPlaceholderRestored(next))
       if (!written.ok) return written
-      // A longer entry for the row may still have the last word.
-      if (!cleanOnly && lastRowFlag(next, rowId) === 'true') {
+      // A longer entry for the row may still have the last word — and so may a
+      // spelling the line scanner cannot see (#1112). Ask the parser the host
+      // uses; when the file is not readable as its dialect, fall back to the
+      // scanner.
+      const stillOff = composedRowFlag(next, rowId) ?? lastRowFlag(next, rowId)
+      if (!cleanOnly && stillOff === 'true') {
         const result = appendPatchEntry(patchPath, rowBlock(rowId, false))
         if (!result.ok) return result
       }
