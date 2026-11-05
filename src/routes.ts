@@ -1250,7 +1250,15 @@ export function mountMarketRoutes(
         : patchRows
       const flipped: string[] = []
       for (const rowId of targets) {
-        const result = enabled ? await enableRow(userPatchPath, rowId) : await disableRow(userPatchPath, rowId)
+        // #1110: an opt-in or expression row that the user's layer still holds
+        // closed can only be CLEANED here. `enableRow`'s force-enable appends
+        // `disabled: false` after the user's longer entry, and the host
+        // composes later entries last — so the append is what switched a row
+        // on that #876/#1043 say must never be forced on.
+        const cleanOnly = optOutRows.has(rowId) || expressionRows.has(rowId)
+        const result = enabled
+          ? await enableRow(userPatchPath, rowId, { cleanOnly })
+          : await disableRow(userPatchPath, rowId)
         if (result.ok) {
           flipped.push(rowId)
           continue

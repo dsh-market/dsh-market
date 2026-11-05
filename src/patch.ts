@@ -696,8 +696,19 @@ export function disableRow(patchPath: string, rowId: string): Promise<{ ok: bool
 /** Enable one row: remove its `disabled: true` blocks; force-enable with
  * `disabled: false` when a lower layer (bundle/home patch) holds it down, or
  * when a longer entry of the row still says `disabled: true` (#1099): that
- * entry is never cut up (#821), so it can only be overridden from below. */
-export function enableRow(patchPath: string, rowId: string): Promise<{ ok: boolean; reason: string | null }> {
+ * entry is never cut up (#821), so it can only be overridden from below.
+ *
+ * `cleanOnly` is that cleanup and nothing else: remove a block the market
+ * itself left on a row, never write a new one (#1110). An opt-in row of a
+ * bundle and a row whose `disabled` is an expression are off by design, and
+ * appending `disabled: false` above them force-opens a row that should stay
+ * closed — the host composes later entries last, so the append wins. */
+export function enableRow(
+  patchPath: string,
+  rowId: string,
+  options: { cleanOnly?: boolean } = {},
+): Promise<{ ok: boolean; reason: string | null }> {
+  const cleanOnly = options.cleanOnly === true
   return queuedWrite(async () => {
     if (!ROW_ID_RE.test(rowId)) {
       return { ok: false, reason: `行 id 含特殊字符,不支持写入补丁层 / row id ${rowId} cannot be written to the patch layer` }
@@ -711,13 +722,15 @@ export function enableRow(patchPath: string, rowId: string): Promise<{ ok: boole
       const written = writePatchFile(patchPath, withPlaceholderRestored(next))
       if (!written.ok) return written
       // A longer entry for the row may still have the last word.
-      if (lastRowFlag(next, rowId) === 'true') {
+      if (!cleanOnly && lastRowFlag(next, rowId) === 'true') {
         const result = appendPatchEntry(patchPath, rowBlock(rowId, false))
         if (!result.ok) return result
       }
-      logEvent('info', 'patch', `enabled row ${rowId} in ${patchPath}`)
+      logEvent('info', 'patch', `${cleanOnly ? 'cleared the block on' : 'enabled'} row ${rowId} in ${patchPath}`)
       return { ok: true, reason: null }
     }
+    // Nothing of the market's own to clean: the row's default stands.
+    if (cleanOnly) return { ok: true, reason: null }
     if (state.forced.includes(rowId)) return { ok: true, reason: null }
     const result = appendPatchEntry(patchPath, rowBlock(rowId, false))
     if (result.ok) logEvent('info', 'patch', `force-enabled row ${rowId} in ${patchPath}`)

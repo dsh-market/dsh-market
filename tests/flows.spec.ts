@@ -7671,6 +7671,38 @@ describe('generic enable/disable toggle (#60)', () => {
     expect(written.match(/disabled: false/gu)).toHaveLength(1)
   })
 
+  it('does not force-open an opt-in row the user layer holds closed with a longer entry (#1110)', async () => {
+    // Same rule as #876, but the user's block is a LONG entry — it carries a
+    // `name`, so `rewriteRowBlocks` will not cut it up (#821) and the block
+    // cannot be removed. `enableRow`'s force-enable then appended
+    // `disabled: false` AFTER that entry, and the host composes later entries
+    // last: the opt-in row was switched on by turning the package on.
+    await installNpm('dsh-loop')
+    mkdirSync(join(fake.profileDir, 'node_modules', 'dsh-loop'), { recursive: true })
+    writeFileSync(join(fake.profileDir, 'node_modules', 'dsh-loop', 'cordis.patch.yml'), [
+      '- insert:',
+      '    - id: loop-core',
+      '      name: dsh-loop',
+      '    - id: loop-opt-in',
+      '      name: dsh-loop-opt-in',
+      '      disabled: true',
+      '',
+    ].join('\n'))
+    const patchPath = join(fake.profileDir, 'cordis.patch.yml')
+    const own = '- id: loop-opt-in\n  name: dsh-loop-opt-in\n  disabled: true\n'
+    writeFileSync(patchPath, own)
+
+    const on = await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-loop', enabled: true })
+
+    expect(on.status).toBe(200)
+    const written = readFileSync(patchPath, 'utf8')
+    // The user's entry is exactly as it was, and nothing was appended over it.
+    expect(written.startsWith(own)).toBe(true)
+    expect(written).not.toContain('- id: loop-opt-in\n  disabled: false')
+    // The package's own row still gets its standing `disabled: false`.
+    expect(written.match(/disabled: false/gu)).toHaveLength(1)
+  })
+
   it('never writes a literal override over a row the bundle decides with an expression (#1043)', async () => {
     // The report's shape: a package ships rows with `disabled: !!js …`
     // conditions — the bundle itself decides, per host, at compose time. The
