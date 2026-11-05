@@ -608,6 +608,10 @@ export function mountMarketRoutes(
         const agent = agentFromEvent(payload)
         if (agent !== undefined) listener(agent)
       }) ?? null,
+      onStatus: listener => host.on?.('agent/status', payload => {
+        const agent = agentFromEvent(payload)
+        if (agent !== undefined) listener(agent, (payload as { status?: unknown }).status)
+      }) ?? null,
     },
     journal: drainJournal,
     bootId: BOOT_ID,

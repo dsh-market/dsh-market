@@ -140,6 +140,8 @@ export interface DrainHost {
   list(): unknown[] | null
   onCreated(listener: (agent: unknown) => void): (() => void) | null
   onDisposed(listener: (agent: unknown) => void): (() => void) | null
+  /** Status transitions; how a turn starting behind a new Agent's factory is seen. */
+  onStatus?(listener: (agent: unknown, status: unknown) => void): (() => void) | null
 }
 
 export interface DrainBeginRequest {
@@ -286,6 +288,8 @@ export class DrainCoordinator {
   private readonly abortMutation: (() => boolean) | undefined
   private readonly operations = new Map<string, Operation>()
   private readonly holds = new Map<string, Hold>()
+  /** New Agents still inside their factory's maintenance, claimed when it ends. */
+  private readonly inFactory = new Map<string, DrainableAgent>()
   private readonly subscriptions: Array<() => void> = []
   private readonly activityWaiters = new Set<() => void>()
   private readonly subscribed: boolean
@@ -309,6 +313,8 @@ export class DrainCoordinator {
     if (created !== null) this.subscriptions.push(created)
     if (disposed !== null) this.subscriptions.push(disposed)
     this.subscribed = created !== null && disposed !== null
+    const status = this.host.onStatus?.((agent, next) => this.onAgentStatus(agent, next)) ?? null
+    if (status !== null) this.subscriptions.push(status)
   }
 
   /** Whether one deferred or running operation owns the lane. */
@@ -339,7 +345,11 @@ export class DrainCoordinator {
     if (live === null) return { ok: false, reason: 'agents-service-unavailable', ids: [] }
     const unheld: string[] = []
     for (const agent of live) {
-      if (!this.holds.has(agent.id) && !this.claim(agent)) unheld.push(agent.id)
+      if (this.holds.has(agent.id) || this.claim(agent)) continue
+      // Still in its factory's maintenance: no turn can start there, and
+      // `claimAfterFactory` either holds it or stops the command when that ends.
+      if (this.inFactory.has(agent.id) && agent.status !== 'running') continue
+      unheld.push(agent.id)
     }
     if (unheld.length > 0) return { ok: false, reason: 'agent-active', ids: unheld }
     return { ok: true }
@@ -662,10 +672,11 @@ export class DrainCoordinator {
           }
           return
         }
-        // Final synchronous re-enumeration. The creation subscription claims a
-        // new Agent before its first turn; if one still slipped in, go back to
-        // waiting instead of mutating under it. An unreadable inventory is a
-        // failure, not an empty list.
+        // Final synchronous re-enumeration. The creation subscription can claim
+        // a new Agent only if the host announces it outside its factory's
+        // maintenance; if one is still unheld, go back to waiting instead of
+        // mutating under it. An unreadable inventory is a failure, not an empty
+        // list.
         const live = this.liveAgents()
         if (live === null) {
           this.finish(operation, 'failed', {
@@ -864,6 +875,7 @@ export class DrainCoordinator {
   private releaseAll(): void {
     for (const hold of this.holds.values()) hold.release()
     this.holds.clear()
+    this.inFactory.clear()
   }
 
   private onAgentCreated(agent: unknown): void {
@@ -884,16 +896,62 @@ export class DrainCoordinator {
     if (active !== null && !active.settled) {
       const claimed = this.claim(drainable)
       if (!claimed && (active.state === 'running' || active.state === 'verifying')) {
-        this.barrierBroken = true
-        this.abortMutation?.()
+        if (drainable.status === 'running') {
+          this.barrierBroken = true
+          this.abortMutation?.()
+        } else {
+          this.claimAfterFactory(drainable)
+        }
       }
     }
     this.notifyActivity()
   }
 
+  /**
+   * The host announces `agent/created` from inside the factory's own
+   * maintenance, so a claim made by the listener is refused with no turn in
+   * sight. Nothing can start a turn until that maintenance ends, so take the
+   * hold at that point; only a refusal then is a broken barrier.
+   *
+   * The package command does not wait for this, and neither may the listener:
+   * the host's serial dispatch awaits its listeners, and the factory awaits the
+   * dispatch. `releaseAll` empties the map when the operation settles, so a
+   * factory that outlives the operation leaves nothing behind but a no-op.
+   */
+  private claimAfterFactory(agent: DrainableAgent): void {
+    this.inFactory.set(agent.id, agent)
+    // Directly on `whenIdle`: this has to run before `create()` returns to its
+    // caller, whose first message would otherwise start a turn ahead of the hold.
+    const retry = (): void => {
+      if (this.inFactory.get(agent.id) !== agent) return
+      this.inFactory.delete(agent.id)
+      if (!this.claim(agent)) this.loseNewAgent('a new Agent could not be held once it was created')
+    }
+    void agent.whenIdle().then(retry, retry)
+  }
+
+  /**
+   * A message latched during the factory starts its turn the moment the factory
+   * ends, and `whenIdle` then resolves only after that turn. The retry would
+   * succeed and hide it, so the transition itself has to stop the command.
+   */
+  private onAgentStatus(agent: unknown, status: unknown): void {
+    if (status !== 'running') return
+    const id = agentId(agent)
+    if (id === null || !this.inFactory.delete(id)) return
+    this.loseNewAgent('a new Agent started a turn before it could be held')
+  }
+
+  private loseNewAgent(why: string): void {
+    this.barrierBroken = true
+    this.abortMutation?.()
+    this.log('error', 'drain', `${why}; aborting the package operation`)
+  }
+
   private onAgentDisposed(agent: unknown): void {
     const id = agentId(agent)
     if (id !== null) {
+      this.inFactory.delete(id)
       const hold = this.holds.get(id)
       if (hold !== undefined) {
         this.holds.delete(id)
