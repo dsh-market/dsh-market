@@ -313,7 +313,7 @@ async function updateMarketInPlace(
       packageResult: { exitCode: run.exitCode || 1, output },
     }
   }
-  const classified = classifyPnpmFailure(output, run.exitCode)
+  const classified = classifyPnpmFailure(output, run.exitCode, { profileDirectory: directory })
   if (classified?.code === 'release-age-violation') {
     return {
       application: 'failed',

@@ -295,7 +295,7 @@ export async function withHoistRecovery(
     // gone (the name carries it), so a live download is never touched.
     await cleanOrphanedStore(run, profile)
     const diagnostics = diagnosticsTail(result)
-    const failure = classifyPnpmFailure(`${result.stderr}\n${result.stdout}`, result.exitCode)
+    const failure = classifyPnpmFailure(`${result.stderr}\n${result.stdout}`, result.exitCode, { profileDirectory })
     if (failure !== null) {
       result = {
         ...result,

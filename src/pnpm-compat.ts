@@ -230,7 +230,7 @@ function integrityViolators(diagnostic: string): string[] {
  * What the caller knows about the profile a command ran against.
  *
  * Only the diagnose-the-store branch uses it today: the recorded pnpm version
- * lives in that profile's own `node_modules/.modules.yaml` (#1100).
+ * and store live in that profile's own `node_modules/.modules.yaml` (#1100).
  */
 export interface PnpmFailureContext {
   profileDirectory?: string
@@ -238,17 +238,74 @@ export interface PnpmFailureContext {
 
 /**
  * The pnpm that BUILT a profile's node_modules, from the record pnpm leaves
- * there (#1100). Only the scalar this needs is read by hand: the file is a
- * pnpm-internal shape, and a parse failure must answer null, not throw.
+ * there (#1100). The file is a pnpm-internal shape, so it is tried as JSON
+ * first and only then is this one scalar read as YAML with a regex. A parse
+ * failure answers null, it does not throw.
+ *
+ * Despite its name the file holds JSON on newer pnpm (measured: 10.34.9,
+ * 11.8.0, 12.16.1) and YAML on older pnpm (9.15.9, 10.20.0, 10.28.2).
  */
 function recordedPnpmVersion(profileDirectory: string): string | null {
   try {
     const text = readFileSync(join(profileDirectory, 'node_modules', '.modules.yaml'), 'utf8')
-    const match = /^packageManager:[ \t]*['"]?pnpm@([0-9][^\s'"]*)['"]?[ \t]*$/mu.exec(text)
-    return match?.[1] ?? null
+    let packageManager: unknown
+    try {
+      packageManager = (JSON.parse(text) as { packageManager?: unknown } | null)?.packageManager
+    } catch {
+      const match = /^packageManager:[ \t]*['"]?pnpm@([0-9][^\s'"]*)['"]?[ \t]*$/mu.exec(text)
+      return match?.[1] ?? null
+    }
+    if (typeof packageManager !== 'string') return null
+    return /^pnpm@([0-9][^\s'"]*)$/u.exec(packageManager)?.[1] ?? null
   } catch {
     return null
   }
+}
+
+/**
+ * The store a profile's node_modules is linked to, from the same record as
+ * recordedPnpmVersion (#1100). pnpm 12's ndjson stream does not name it.
+ */
+function recordedStoreDir(profileDirectory: string): string | undefined {
+  try {
+    const text = readFileSync(join(profileDirectory, 'node_modules', '.modules.yaml'), 'utf8')
+    try {
+      const storeDir = (JSON.parse(text) as { storeDir?: unknown } | null)?.storeDir
+      return typeof storeDir === 'string' ? storeDir : undefined
+    } catch {
+      return /^storeDir:[ \t]*['"]?([^'"\r\n]+?)['"]?[ \t]*$/mu.exec(text)?.[1]
+    }
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Both store paths from pnpm's ndjson stream (#1100). The market always runs
+ * mutations with --reporter=ndjson, which carries none of the rendered text:
+ * pnpm 11 puts them on the error event, pnpm 12 only says which store it wants
+ * on its pnpm:context event.
+ */
+function storesFromNdjson(output: string): { linked?: string; wanted?: string } {
+  const found: { linked?: string; wanted?: string } = {}
+  for (const line of output.split(/\r?\n/)) {
+    const trimmed = line.trim()
+    if (!trimmed.startsWith('{')) continue
+    try {
+      const event = JSON.parse(trimmed) as Record<string, unknown>
+      if (event.name === 'pnpm:context' && typeof event.storeDir === 'string') found.wanted ??= event.storeDir
+      if (typeof event.expectedStorePath === 'string') found.linked = event.expectedStorePath
+      if (typeof event.actualStorePath === 'string') found.wanted = event.actualStorePath
+    } catch {
+      // Human reporter output and truncated NDJSON.
+    }
+  }
+  return found
+}
+
+/** The version segment pnpm appends under any storeDir: `…/store/v11` → `v11`. */
+function storeVersionSegment(path: string | undefined): string | undefined {
+  return path === undefined ? undefined : /[/\\](v\d+)[/\\]*$/.exec(path)?.[1]
 }
 
 export function classifyPnpmFailure(output: string, exitCode?: number | null, context?: PnpmFailureContext): PnpmFailure | null {
@@ -312,8 +369,13 @@ export function classifyPnpmFailure(output: string, exitCode?: number | null, co
   // clear error it replaced. The paths are in the message; the choice is
   // the user's.
   if (output.includes('ERR_PNPM_UNEXPECTED_STORE')) {
-    const linked = /currently linked from the store at "([^"]+)"/.exec(output)?.[1]
-    const wanted = /wants to use the store at "([^"]+)"/.exec(output)?.[1]
+    const ndjson = storesFromNdjson(output)
+    // pnpm 12's default reporter wraps long lines, inside the quotes too.
+    const rendered = (pattern: RegExp) => pattern.exec(output)?.[1]?.replace(/\s*\n\s*/g, '')
+    const linked = rendered(/currently linked from the store at "([^"]+)"/)
+      ?? ndjson.linked
+      ?? (context?.profileDirectory === undefined ? undefined : recordedStoreDir(context.profileDirectory))
+    const wanted = rendered(/wants to use the store at "([^"]+)"/) ?? ndjson.wanted
     const modulesDir = /The dependencies at "([^"]+)"/.exec(output)?.[1]
     const detail = linked !== undefined && wanted !== undefined
       ? `\n  node_modules → ${linked}\n  pnpm 现在想用 / pnpm now wants → ${wanted}`
@@ -340,9 +402,19 @@ export function classifyPnpmFailure(output: string, exitCode?: number | null, co
     // `/tmp/store-v10/v11`), so the advice below — write the recorded store
     // into the profile — cannot work however the path is written. The report
     // measured exactly that, plus a rollback that failed for the same reason.
-    // pnpm's own text says when this is the case; when it does, name the
-    // recorded version and send the user to the right pnpm instead.
-    if (/different major version of pnpm/i.test(output)) {
+    // When the two stores end in different segments, name the recorded version
+    // and send the user to the right pnpm instead.
+    //
+    // pnpm's "different major version" sentence cannot decide this: it is
+    // printed on a same-major mismatch too (measured on 11.8.0), and the ndjson
+    // stream the market reads does not carry it at all. It only decides when a
+    // segment cannot be read.
+    const linkedSegment = storeVersionSegment(linked)
+    const wantedSegment = storeVersionSegment(wanted)
+    const acrossMajors = linkedSegment !== undefined && wantedSegment !== undefined
+      ? linkedSegment !== wantedSegment
+      : /different major version of pnpm/i.test(output)
+    if (acrossMajors) {
       const recorded = context?.profileDirectory === undefined
         ? null
         : recordedPnpmVersion(context.profileDirectory)

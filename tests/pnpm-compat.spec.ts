@@ -833,17 +833,21 @@ The dependencies at "/root/.dsh/profiles/web/node_modules" are currently linked 
 pnpm now wants to use the store at "/tmp/store-v10/v11" to link dependencies.
       (This error may happen if the node_modules was installed with a different major version of pnpm)`
 
-  function profileRecording(packageManager: string): string {
+  function profileWithRecord(record: string): string {
     const dir = mkdtempSync(join(tmpdir(), 'dshm-store-'))
     mkdirSync(join(dir, 'node_modules'), { recursive: true })
-    writeFileSync(join(dir, 'node_modules', '.modules.yaml'), [
+    writeFileSync(join(dir, 'node_modules', '.modules.yaml'), record)
+    return dir
+  }
+
+  function profileRecording(packageManager: string): string {
+    return profileWithRecord([
       'layoutVersion: 5',
       'nodeLinker: hoisted',
       `packageManager: pnpm@${packageManager}`,
       'storeDir: /root/.dsh/.pnpm-store/v10',
       '',
     ].join('\n'))
-    return dir
   }
 
   it('names the pnpm that built node_modules and stops recommending storeDir', () => {
@@ -863,6 +867,135 @@ pnpm now wants to use the store at "/tmp/store-v10/v11" to link dependencies.
     const failure = classifyPnpmFailure(OUTPUT, 1)
     expect(failure?.message).toMatch(/modules\.yaml/)
     expect(failure?.message).toMatch(/写 storeDir 修不好|cannot fix this/)
+  })
+
+  // Despite its name the file holds JSON on newer pnpm (measured: 10.34.9,
+  // 11.8.0, 12.16.1) and YAML on older pnpm (9.15.9, 10.20.0, 10.28.2).
+  const RECORD = {
+    layoutVersion: 5,
+    nodeLinker: 'hoisted',
+    packageManager: 'pnpm@10.34.9',
+    storeDir: '/root/.dsh/.pnpm-store/v10',
+  }
+
+  it.each([
+    ['one-line JSON, the shape the report pasted', JSON.stringify(RECORD)],
+    ['indented JSON, the shape pnpm writes', `${JSON.stringify(RECORD, null, 2)}\n`],
+    ['YAML, the shape older pnpm writes', 'layoutVersion: 5\npackageManager: pnpm@10.34.9\nstoreDir: /s/v10\n'],
+  ])('names the recorded version from %s', (_shape, record) => {
+    const failure = classifyPnpmFailure(OUTPUT, 1, { profileDirectory: profileWithRecord(record) })
+
+    expect(failure?.code).toBe('unexpected-store')
+    expect(failure?.message).toContain('pnpm 10.34.9')
+    // This line only appears when the version could not be read.
+    expect(failure?.message).not.toMatch(/modules\.yaml/)
+  })
+
+  it.each([
+    ['another package manager', JSON.stringify({ packageManager: 'npm@10.34.9' })],
+    ['a value that is not a version', JSON.stringify({ packageManager: 'pnpm@latest' })],
+    ['a value that is not a string', JSON.stringify({ packageManager: 10 })],
+    ['the field only inside another object', JSON.stringify({ hoistedDependencies: { packageManager: 'pnpm@10.34.9' } })],
+    ['JSON that is not an object', 'null'],
+    ['a file cut off mid-write', '{\n  "packageManager": "pnpm@10.34.9",\n'],
+    ['an empty file', ''],
+  ])('answers with the generic wording, not a throw, for %s', (_shape, record) => {
+    const failure = classifyPnpmFailure(OUTPUT, 1, { profileDirectory: profileWithRecord(record) })
+
+    expect(failure?.code).toBe('unexpected-store')
+    expect(failure?.message).toMatch(/modules\.yaml/)
+    expect(failure?.message).toMatch(/写 storeDir 修不好|cannot fix this/)
+  })
+
+  // The market runs every mutation with --reporter=ndjson, and that stream has
+  // no rendered text and no "different major" sentence. Shapes measured on real
+  // pnpm 11.8.0 and 12.16.1, paths made up.
+  const pnpmContext = (storeDir: string) => JSON.stringify({ name: 'pnpm:context', level: 'debug', currentLockfileExists: true, storeDir })
+  const error11 = (expectedStorePath: string, actualStorePath: string) => JSON.stringify({
+    level: 'error',
+    name: 'pnpm',
+    code: 'ERR_PNPM_UNEXPECTED_STORE',
+    expectedStorePath,
+    actualStorePath,
+    modulesDir: '/root/.dsh/profiles/web/node_modules',
+    err: { name: 'pnpm', message: 'Unexpected store location', code: 'ERR_PNPM_UNEXPECTED_STORE' },
+  })
+  const ndjson11 = (expected: string, actual: string) => [pnpmContext(actual), error11(expected, actual)].join('\n')
+  const ERROR_12 = JSON.stringify({ name: 'pnpm', level: 'error', code: 'ERR_PNPM_UNEXPECTED_STORE', message: 'adding a new package: Unexpected store location', prefix: '/root/.dsh/profiles/web' })
+  const ndjson12 = (storeDir: string) => [pnpmContext(storeDir), ERROR_12].join('\n')
+  // pnpm 12's default reporter, which wraps inside the quotes.
+  const wrapped12 = `Error: ERR_PNPM_UNEXPECTED_STORE
+
+  × adding a new package
+  ╰─▶ Unexpected store location
+  help: The dependencies at "/root/.dsh/profiles/web/node_modules" are currently linked from the store
+        at "/root/.dsh/.pnpm-store/v10".
+
+        pnpm now wants to use the store at "/root/.dsh/.pnpm-
+        store/v11" to link dependencies.
+
+        (This error may happen if the node_modules was installed with a
+        different major version of pnpm)`
+  const LINKED = '/root/.dsh/.pnpm-store/v10'
+  const WANTED = '/root/.dsh/.pnpm-store/v11'
+
+  it.each([
+    ['pnpm 11 ndjson, whose error event names both stores', ndjson11(LINKED, WANTED)],
+    ['pnpm 12 ndjson, which only says the store it wants', ndjson12(WANTED)],
+    ['pnpm 12 wrapped text', wrapped12],
+  ])('recognizes the mismatch from %s', (_shape, output) => {
+    const failure = classifyPnpmFailure(output, 1, { profileDirectory: profileRecording('10.34.9') })
+
+    expect(failure?.code).toBe('unexpected-store')
+    expect(failure?.message).toContain('pnpm 10.34.9')
+    expect(failure?.message).toMatch(/写 storeDir 修不好/)
+    expect(failure?.message).not.toContain('storeDir: <上面第一个路径>')
+    // The wording points at "the second path above", so both have to be there.
+    expect(failure?.message).toContain(`node_modules → ${LINKED}\n`)
+    expect(failure?.message).toContain(`pnpm now wants → ${WANTED}\n`)
+  })
+
+  it('reads both stores off the pnpm 11 error event, with nothing else to go on', () => {
+    const failure = classifyPnpmFailure(error11(LINKED, WANTED), 1)
+
+    expect(failure?.message).toMatch(/写 storeDir 修不好/)
+    expect(failure?.message).toContain(`node_modules → ${LINKED}\n`)
+    expect(failure?.message).toContain(`pnpm now wants → ${WANTED}\n`)
+  })
+
+  // Same major, so the storeDir advice is the one that works. The rendered text
+  // carries the sentence anyway: pnpm 11.8.0 prints it with only the store moved.
+  const MOVED = '/mnt/old/.pnpm-store/v11'
+  const recordingMoved = JSON.stringify({ ...RECORD, packageManager: 'pnpm@11.8.0', storeDir: MOVED })
+
+  it.each([
+    ['rendered text with the sentence', OUTPUT.replace(LINKED, MOVED)],
+    ['pnpm 11 ndjson', ndjson11(MOVED, WANTED)],
+    ['pnpm 12 ndjson', ndjson12(WANTED)],
+    ['pnpm 12 wrapped text', wrapped12],
+  ])('keeps the storeDir advice when both stores end in the same segment: %s', (_shape, output) => {
+    const failure = classifyPnpmFailure(output, 1, { profileDirectory: profileWithRecord(recordingMoved) })
+
+    expect(failure?.code).toBe('unexpected-store')
+    expect(failure?.message).toContain('storeDir: <上面第一个路径>')
+    expect(failure?.message).not.toMatch(/写 storeDir 修不好/)
+    expect(failure?.message).toContain(`node_modules → ${MOVED}\n`)
+  })
+
+  it('falls back on the sentence when a store cannot be read', () => {
+    const output = 'ERR_PNPM_UNEXPECTED_STORE reworded upstream\n(This error may happen if the node_modules was installed with a different major version of pnpm)'
+    const failure = classifyPnpmFailure(output, 1, { profileDirectory: profileRecording('10.34.9') })
+
+    expect(failure?.message).toContain('pnpm 10.34.9')
+    expect(failure?.message).toMatch(/写 storeDir 修不好/)
+  })
+
+  it('does not trip over a stream cut off mid-line', () => {
+    const output = [pnpmContext(WANTED).slice(0, 40), ERROR_12].join('\n')
+    const failure = classifyPnpmFailure(output, 1, { profileDirectory: profileRecording('10.34.9') })
+
+    expect(failure?.code).toBe('unexpected-store')
+    expect(failure?.message).toContain('storeDir: <上面第一个路径>')
   })
 })
 

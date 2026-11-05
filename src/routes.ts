@@ -453,8 +453,8 @@ function failedOnBlockedBuilds(result: { exitCode: number | null; stdout: string
  * which names the action, and a second sentence beside that button says the
  * same thing in different words (#754).
  */
-function pnpmFailureMessage(result: { exitCode: number | null; stdout: string; stderr: string }): string | undefined {
-  const failure = classifyPnpmFailure(`${result.stderr}\n${result.stdout}`, result.exitCode)
+function pnpmFailureMessage(result: { exitCode: number | null; stdout: string; stderr: string }, profileDirectory: string): string | undefined {
+  const failure = classifyPnpmFailure(`${result.stderr}\n${result.stdout}`, result.exitCode, { profileDirectory })
   if (failure === null) return undefined
   if (failure.code === 'ignored-builds' || failure.code === 'git-prepare-not-allowed') return undefined
   // Desktop release-age note is already the actionable sentence (#919). Do
@@ -6342,7 +6342,7 @@ sendJson(response, 200, { updates })
                 ?? hardFailureRollbackError ?? staleError
                 ?? (result.wroteNothing === true && result.stderr.trim() !== '' ? result.stderr.trim() : undefined)
                 ?? (pnpmRefusedYoungRelease(result) && result.stderr.trim() !== '' ? result.stderr.trim() : undefined)
-                ?? pnpmFailureMessage(result) ?? undefined,
+                ?? pnpmFailureMessage(result, activeProfileDir) ?? undefined,
               exitCode: result.exitCode,
               timedOut: result.timedOut,
               stdout: result.stdout,
@@ -7365,7 +7365,7 @@ sendJson(response, 200, { updates })
               // This route had no failure sentence at all, so a recognized pnpm
               // failure during a remove reached the client as the tail of
               // pnpm's stack, like the update route before #848.
-              error: ok || cancelled ? undefined : pnpmFailureMessage(result),
+              error: ok || cancelled ? undefined : pnpmFailureMessage(result, activeProfileDir),
               // The state of the package that was just removed (captured pre-op).
               activation,
               exitCode: result.exitCode,
@@ -8093,7 +8093,7 @@ sendJson(response, 200, { updates })
                   // Same last resort as the update route (#848), and on THIS
                   // route too: a recognized failure like an expired
                   // `patchedDependencies` key had no branch here either.
-                  : pnpmFailureMessage(result),
+                  : pnpmFailureMessage(result, activeProfileDir),
               exitCode: result.exitCode,
               timedOut: result.timedOut,
               stdout: result.stdout,
