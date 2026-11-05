@@ -38,9 +38,13 @@ export type DrainTerminalState = 'succeeded' | 'failed' | 'cancelled'
 /** Why the operation is queued. Only `agents` exists in v1. */
 export interface DrainWait {
   reason: 'agents'
-  /** Agents that are live and not yet maintenance-held. */
+  /**
+   * Agents the operation is waiting on: those in a turn or, when none is, every
+   * live Agent not yet maintenance-held. Refreshed when the drain loop wakes,
+   * so it can lag behind a turn that just ended or started.
+   */
   activeCount: number
-  /** Their local session ids, the same ids the 409 response names. */
+  /** Their local session ids. With a turn running, the same ids as a 409's `runningAgents`. */
   activeAgentIds: string[]
   since: number
 }
@@ -1028,7 +1032,13 @@ export class DrainCoordinator {
   }
 
   private setWait(operation: Operation, unheld: DrainableAgent[]): void {
-    const ids = unheld.map(agent => agent.id).sort()
+    // #1095: nothing is claimed while anyone is mid-turn, so the idle Agents are
+    // unheld too, yet they already sit at a safe boundary. Name only the turns
+    // being waited for. With none running, list whoever is unheld: `drainAgents`
+    // claims them in the same tick, so what stays visible is those that refused
+    // (another maintenance task owns them).
+    const running = unheld.filter(agent => agent.status === 'running')
+    const ids = (running.length > 0 ? running : unheld).map(agent => agent.id).sort()
     const previous = operation.wait
     if (
       previous !== null

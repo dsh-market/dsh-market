@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DrainCoordinator, type DrainExecutionResult, type DrainIntent, type DrainJournalRecord } from '../src/drain.ts'
 import { DrainJournal } from '../src/drain-journal.ts'
 import { exportLogs, logEvent } from '../src/log.ts'
@@ -158,6 +158,60 @@ describe('DrainCoordinator', () => {
     // against the files being replaced.
     expect(busy.maintenanceCalls).toBe(1)
     expect(idle.maintenanceCalls).toBe(1)
+    bed.coordinator.dispose()
+  })
+
+  it('names only the Agents in a turn while it waits, not the idle ones (#1095)', async () => {
+    // Since nothing is claimed while anyone is mid-turn, every idle Agent stays
+    // unheld. Counting them told the user it was waiting for 4 Agents, under
+    // "show running sessions", when one turn was all that stood in the way.
+    const bed = harness()
+    const busy = new FakeAgent('long-turn', 'running')
+    const idle = ['idle-a', 'idle-b', 'idle-c'].map(id => new FakeAgent(id))
+    bed.host.create(busy)
+    for (const agent of idle) bed.host.create(agent)
+
+    const result = await bed.begin(async () => OK)
+    expect(result.mode).toBe('deferred')
+    if (result.mode !== 'deferred') return
+    const operationId = result.operation.operationId
+    expect(result.operation.wait).toMatchObject({ activeCount: 1, activeAgentIds: ['long-turn'] })
+    await Promise.resolve()
+    expect(bed.coordinator.get(operationId)?.wait).toMatchObject({ activeCount: 1, activeAgentIds: ['long-turn'] })
+
+    // Someone starting a turn keeps the barrier open, so the wait now names them.
+    idle[0]!.startTurn()
+    busy.finishTurn()
+    await vi.waitFor(() => {
+      expect(bed.coordinator.get(operationId)?.wait).toMatchObject({ activeCount: 1, activeAgentIds: ['idle-a'] })
+    })
+
+    idle[0]!.finishTurn()
+    const settled = await bed.coordinator.whenSettled(operationId)
+    expect(settled?.state).toBe('succeeded')
+    bed.coordinator.dispose()
+  })
+
+  it('names every unheld Agent when none is in a turn but claims are refused', async () => {
+    // Another maintenance task can own an idle Agent. Nobody is running then,
+    // and an empty list would claim the operation is waiting for no one.
+    const bed = harness()
+    const first = new FakeAgent('owned-a')
+    const second = new FakeAgent('owned-b')
+    first.failClaims = Number.MAX_SAFE_INTEGER
+    second.failClaims = Number.MAX_SAFE_INTEGER
+    bed.host.create(first)
+    bed.host.create(second)
+
+    const result = await bed.begin(async () => OK)
+    expect(result.mode).toBe('deferred')
+    if (result.mode !== 'deferred') return
+    expect(result.operation.wait).toMatchObject({ activeCount: 2, activeAgentIds: ['owned-a', 'owned-b'] })
+
+    first.failClaims = 0
+    second.failClaims = 0
+    const settled = await bed.coordinator.whenSettled(result.operation.operationId)
+    expect(settled?.state).toBe('succeeded')
     bed.coordinator.dispose()
   })
 
