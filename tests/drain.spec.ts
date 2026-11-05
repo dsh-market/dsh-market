@@ -12,6 +12,7 @@ class FakeHost {
   agents: FakeAgent[] = []
   private created: Array<(agent: unknown) => void> = []
   private disposed: Array<(agent: unknown) => void> = []
+  private status: Array<(agent: unknown, status: unknown) => void> = []
 
   list(): unknown[] {
     return [...this.agents]
@@ -27,9 +28,24 @@ class FakeHost {
     return () => { this.disposed = this.disposed.filter(entry => entry !== listener) }
   }
 
+  onStatus(listener: (agent: unknown, status: unknown) => void): () => void {
+    this.status.push(listener)
+    return () => { this.status = this.status.filter(entry => entry !== listener) }
+  }
+
+  /** Announces the Agent already idle. The real host does not: see `createInFactory`. */
   create(agent: FakeAgent): void {
     this.agents.push(agent)
     for (const listener of this.created) listener(agent)
+  }
+
+  /** The real host's order, see `FakeAgent.runFactory`. */
+  createInFactory(agent: FakeAgent): { finish: () => Promise<void> } {
+    agent.onStatus = status => { for (const listener of this.status) listener(agent, status) }
+    return agent.runFactory(async () => {
+      this.agents.push(agent)
+      for (const listener of this.created) await listener(agent)
+    })
   }
 
   remove(agent: FakeAgent): void {
@@ -219,6 +235,285 @@ describe('DrainCoordinator', () => {
     expect(settled?.state).toBe('failed')
     expect(settled?.failure?.code).toBe('AGENT_BARRIER_LOST')
     bed.coordinator.dispose()
+  })
+
+  describe('an Agent announced inside its own factory maintenance', () => {
+    /** Run an inline operation and leave its package command open. */
+    function midCommand(bed: Harness): {
+      release: (result?: DrainExecutionResult) => void
+      pending: ReturnType<DrainCoordinator['begin']>
+    } {
+      let finish!: (result: DrainExecutionResult) => void
+      const pending = bed.begin(async () => await new Promise(resolve => { finish = resolve }))
+      return { release: (result = OK) => finish(result), pending }
+    }
+
+    it('takes the hold when the factory ends instead of aborting the command', async () => {
+      const bed = harness()
+      const command = midCommand(bed)
+      const late = new FakeAgent('late')
+
+      const factory = bed.host.createInFactory(late)
+      expect(bed.aborted.count).toBe(0)
+      // The gate before the next package command must not misread it either.
+      expect(bed.coordinator.assertCanMutate()).toEqual({ ok: true })
+
+      await factory.finish()
+      // Held by the time `create()` returns, so the first message stays queued.
+      expect(late.held).toBe(true)
+      late.followup()
+      expect(late.status).toBe('idle')
+
+      command.release()
+      const result = await command.pending
+      expect(result.mode === 'inline' && result.operation.state).toBe('succeeded')
+      expect(bed.aborted.count).toBe(0)
+      expect(late.cancelCalls).toBe(0)
+      // The hold is gone and the queued message gets its turn.
+      await new Promise(resolve => setTimeout(resolve, 0))
+      expect(late.held).toBe(false)
+      expect(late.status).toBe('running')
+      bed.coordinator.dispose()
+    })
+
+    it('holds it for a deferred operation too', async () => {
+      const bed = harness()
+      const first = new FakeAgent('first', 'running')
+      bed.host.create(first)
+      let release!: (result: DrainExecutionResult) => void
+      const result = await bed.begin(async () => await new Promise(resolve => { release = resolve }))
+      if (result.mode !== 'deferred') throw new Error(result.mode)
+      first.finishTurn()
+      await new Promise(resolve => setTimeout(resolve, 10))
+      expect(first.held).toBe(true)
+
+      const late = new FakeAgent('late')
+      const factory = bed.host.createInFactory(late)
+      await factory.finish()
+      expect(late.held).toBe(true)
+      expect(bed.aborted.count).toBe(0)
+
+      release(OK)
+      const settled = await bed.coordinator.whenSettled(result.operation.operationId)
+      expect(settled?.state).toBe('succeeded')
+      bed.coordinator.dispose()
+    })
+
+    it('keeps waiting for it while still draining, and breaks nothing', async () => {
+      const bed = harness()
+      const first = new FakeAgent('first', 'running')
+      bed.host.create(first)
+      const result = await bed.begin()
+      if (result.mode !== 'deferred') throw new Error(result.mode)
+
+      const late = new FakeAgent('late')
+      const factory = bed.host.createInFactory(late)
+      first.finishTurn()
+      await new Promise(resolve => setTimeout(resolve, 40))
+      expect(bed.executed).toEqual([])
+      expect(bed.coordinator.get(result.operation.operationId)?.state).toBe('draining')
+
+      await factory.finish()
+      const settled = await bed.coordinator.whenSettled(result.operation.operationId)
+      expect(settled?.state).toBe('succeeded')
+      expect(bed.aborted.count).toBe(0)
+      bed.coordinator.dispose()
+    })
+
+    it('aborts the command when a wake latched in the factory starts a turn', async () => {
+      const bed = harness()
+      const command = midCommand(bed)
+      const late = new FakeAgent('late')
+
+      const factory = bed.host.createInFactory(late)
+      late.followup()
+      expect(bed.aborted.count).toBe(0)
+
+      await factory.finish()
+      expect(late.status).toBe('running')
+      expect(bed.aborted.count).toBe(1)
+      expect(bed.coordinator.assertCanMutate()).toMatchObject({ ok: false, reason: 'barrier-broken' })
+
+      command.release()
+      const result = await command.pending
+      expect(result.mode === 'inline' && result.operation.failure?.code).toBe('AGENT_BARRIER_LOST')
+      // That turn ending must not read as a clean claim afterwards.
+      late.finishTurn()
+      await new Promise(resolve => setTimeout(resolve, 0))
+      expect(late.held).toBe(false)
+      bed.coordinator.dispose()
+    })
+
+    it('refuses at the gate when a turn starts on a host that reports no status events', async () => {
+      const bed = harness()
+      const command = midCommand(bed)
+      const late = new FakeAgent('late')
+
+      const factory = bed.host.createInFactory(late)
+      late.onStatus = null
+      late.followup()
+      await factory.finish()
+      expect(late.status).toBe('running')
+      expect(bed.coordinator.assertCanMutate()).toMatchObject({ ok: false, reason: 'agent-active', ids: ['late'] })
+
+      late.finishTurn()
+      command.release()
+      await command.pending
+      bed.coordinator.dispose()
+    })
+
+    it('calls the barrier broken only when the retried claim is refused too', async () => {
+      const bed = harness()
+      const command = midCommand(bed)
+      const late = new FakeAgent('late')
+
+      const factory = bed.host.createInFactory(late)
+      expect(bed.aborted.count).toBe(0)
+      late.failClaims = 1
+      await factory.finish()
+      await new Promise(resolve => setTimeout(resolve, 0))
+      expect(late.held).toBe(false)
+      expect(bed.aborted.count).toBe(1)
+
+      command.release()
+      const result = await command.pending
+      expect(result.mode === 'inline' && result.operation.failure?.code).toBe('AGENT_BARRIER_LOST')
+      bed.coordinator.dispose()
+    })
+
+    it('still aborts at once for an Agent announced mid-turn', async () => {
+      const bed = harness()
+      const command = midCommand(bed)
+      bed.host.create(new FakeAgent('late', 'running'))
+      expect(bed.aborted.count).toBe(1)
+
+      command.release()
+      const result = await command.pending
+      expect(result.mode === 'inline' && result.operation.failure?.code).toBe('AGENT_BARRIER_LOST')
+      bed.coordinator.dispose()
+    })
+
+    it('settles without waiting for a factory that outlasts the command and leaves no hold', async () => {
+      const bed = harness()
+      const command = midCommand(bed)
+      const late = new FakeAgent('late')
+      const factory = bed.host.createInFactory(late)
+
+      command.release()
+      const result = await command.pending
+      expect(result.mode === 'inline' && result.operation.state).toBe('succeeded')
+      expect(bed.aborted.count).toBe(0)
+
+      await factory.finish()
+      await new Promise(resolve => setTimeout(resolve, 0))
+      expect(late.held).toBe(false)
+      expect(() => late.startTurn()).not.toThrow()
+      bed.coordinator.dispose()
+    })
+
+    it('does not outlive a cancel', async () => {
+      const bed = harness()
+      const first = new FakeAgent('first', 'running')
+      bed.host.create(first)
+      let release!: (result: DrainExecutionResult) => void
+      const result = await bed.begin(async () => await new Promise(resolve => { release = resolve }))
+      if (result.mode !== 'deferred') throw new Error(result.mode)
+      first.finishTurn()
+      await new Promise(resolve => setTimeout(resolve, 10))
+
+      const late = new FakeAgent('late')
+      const factory = bed.host.createInFactory(late)
+      expect(bed.coordinator.cancel(result.operation.operationId)).toBe(true)
+      expect(bed.aborted.count).toBe(1)
+      release({ status: 200, payload: { ok: false, cancelled: true } })
+      // Settles with the factory still open.
+      const settled = await bed.coordinator.whenSettled(result.operation.operationId)
+      expect(settled?.state).toBe('cancelled')
+      await new Promise(resolve => setTimeout(resolve, 0))
+      expect(first.held).toBe(false)
+
+      await factory.finish()
+      await new Promise(resolve => setTimeout(resolve, 0))
+      expect(late.held).toBe(false)
+      expect(bed.aborted.count).toBe(1)
+      bed.coordinator.dispose()
+    })
+
+    it('does not outlive an unload during the command', async () => {
+      const bed = harness()
+      const command = midCommand(bed)
+      const late = new FakeAgent('late')
+      const factory = bed.host.createInFactory(late)
+
+      bed.coordinator.dispose()
+      expect(bed.aborted.count).toBe(1)
+      command.release()
+      const result = await command.pending
+      expect(result.mode === 'inline' && result.operation.failure?.code).toBe('MARKET_UNLOADED')
+
+      await factory.finish()
+      await new Promise(resolve => setTimeout(resolve, 0))
+      expect(late.held).toBe(false)
+    })
+
+    it('holds an Agent whose factory failed until the command ends, then lets its teardown finish', async () => {
+      // The host's order: the factory ends first, its teardown then waits on
+      // `whenIdle`, and only after that does `agent/disposed` fire.
+      const bed = harness()
+      const command = midCommand(bed)
+      const late = new FakeAgent('late')
+      const factory = bed.host.createInFactory(late)
+      await factory.finish()
+      expect(late.held).toBe(true)
+
+      let tornDown = false
+      const teardown = late.whenIdle().then(() => { tornDown = true; bed.host.remove(late) })
+      await new Promise(resolve => setTimeout(resolve, 0))
+      expect(tornDown).toBe(false)
+
+      command.release()
+      const result = await command.pending
+      await teardown
+      expect(result.mode === 'inline' && result.operation.state).toBe('succeeded')
+      expect(bed.aborted.count).toBe(0)
+      bed.coordinator.dispose()
+    })
+
+    it('treats a rejected whenIdle as the end of the wait', async () => {
+      const bed = harness()
+      const command = midCommand(bed)
+      const late = new FakeAgent('late')
+      late.whenIdle = () => Promise.reject(new Error('the driver failed'))
+      bed.host.createInFactory(late)
+      await new Promise(resolve => setTimeout(resolve, 0))
+      // Still in the factory, so the retried claim is refused: that is the broken barrier.
+      expect(bed.aborted.count).toBe(1)
+
+      command.release()
+      const result = await command.pending
+      expect(result.mode === 'inline' && result.operation.failure?.code).toBe('AGENT_BARRIER_LOST')
+      bed.coordinator.dispose()
+    })
+
+    // A host that reports disposal inside the factory. The real host does not:
+    // its teardown waits for the factory first, see the test above.
+    it('does not claim or break anything for an Agent disposed inside its factory', async () => {
+      const bed = harness()
+      const command = midCommand(bed)
+      const late = new FakeAgent('late')
+      const factory = bed.host.createInFactory(late)
+
+      bed.host.remove(late)
+      await factory.finish()
+      await new Promise(resolve => setTimeout(resolve, 0))
+      expect(late.held).toBe(false)
+      expect(bed.aborted.count).toBe(0)
+
+      command.release()
+      const result = await command.pending
+      expect(result.mode === 'inline' && result.operation.state).toBe('succeeded')
+      bed.coordinator.dispose()
+    })
   })
 
   it('releases holds and records a cancel while the intent probe is still running', async () => {

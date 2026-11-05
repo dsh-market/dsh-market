@@ -10280,6 +10280,99 @@ describe('Agent-safe drain mode (#411)', () => {
     } finally { drainBed.dispose() }
   })
 
+  it('finishes the update when a session opens while it runs, in the host creation order', async () => {
+    await seedInstalledLoop()
+    advanceLatest('1.2.0')
+    const main = new FakeAgent('main', 'running')
+    const agents = [main]
+    const drainBed = createTestbed({}, undefined, agentsService(agents))
+    try {
+      const accepted = await drainBed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop', busyPolicy: 'drain' })
+      expect(accepted.status).toBe(202)
+      const gate = gateExecutionFetch()
+      main.finishTurn()
+      await gate.entered
+
+      const late = new FakeAgent('late')
+      const factory = late.runFactory(async () => {
+        agents.push(late)
+        drainBed.emit('agent/created', { agent: late })
+      })
+      await factory.finish()
+      expect(late.held).toBe(true)
+
+      gate.release()
+      const completed = await settled(drainBed, String(accepted.json.operationId))
+      expect(completed.state).toBe('succeeded')
+      expect(installedSpec('dsh-loop')).toBe('^1.2.0')
+      await new Promise(resolve => setTimeout(resolve, 10))
+      expect(late.held).toBe(false)
+    } finally { drainBed.dispose() }
+  })
+
+  it('runs pnpm past a session still inside its factory and leaves no hold on it', async () => {
+    await seedInstalledLoop()
+    advanceLatest('1.2.0')
+    const main = new FakeAgent('main', 'running')
+    const agents = [main]
+    const drainBed = createTestbed({}, undefined, agentsService(agents))
+    try {
+      const accepted = await drainBed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop', busyPolicy: 'drain' })
+      expect(accepted.status).toBe(202)
+      const gate = gateExecutionFetch()
+      main.finishTurn()
+      await gate.entered
+
+      const late = new FakeAgent('late')
+      const factory = late.runFactory(async () => {
+        agents.push(late)
+        drainBed.emit('agent/created', { agent: late })
+      })
+      gate.release()
+      const completed = await settled(drainBed, String(accepted.json.operationId))
+      expect(completed.state).toBe('succeeded')
+      expect(installedSpec('dsh-loop')).toBe('^1.2.0')
+
+      await factory.finish()
+      await new Promise(resolve => setTimeout(resolve, 10))
+      expect(late.held).toBe(false)
+    } finally { drainBed.dispose() }
+  })
+
+  it('stops the update when a message latched in the factory starts a turn', async () => {
+    await seedInstalledLoop()
+    advanceLatest('1.2.0')
+    const main = new FakeAgent('main', 'running')
+    const agents = [main]
+    const drainBed = createTestbed({}, undefined, agentsService(agents))
+    try {
+      const accepted = await drainBed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop', busyPolicy: 'drain' })
+      expect(accepted.status).toBe(202)
+      const gate = gateExecutionFetch()
+      main.finishTurn()
+      await gate.entered
+
+      const late = new FakeAgent('late')
+      late.onStatus = status => drainBed.emit('agent/status', { agent: late, status })
+      const factory = late.runFactory(async () => {
+        agents.push(late)
+        drainBed.emit('agent/created', { agent: late })
+      })
+      late.followup()
+      await factory.finish()
+      expect(late.status).toBe('running')
+
+      const callsBefore = fake.calls.length
+      gate.release()
+      const completed = await settled(drainBed, String(accepted.json.operationId))
+      expect(completed.state).toBe('failed')
+      // This text comes from the status event; the later gate words it differently.
+      expect(completed.failure).toMatchObject({ code: 'AGENT_BARRIER_LOST', message: expect.stringContaining('started work') })
+      expect(fake.calls.length).toBe(callsBefore)
+      expect(installedSpec('dsh-loop')).toBe('^1.0.0')
+    } finally { drainBed.dispose() }
+  })
+
   it('defers a fresh install while an Agent runs and installs after idle', async () => {
     fake.npm['dsh-loop'] = {
       latest: '1.0.0',
