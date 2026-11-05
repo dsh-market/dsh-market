@@ -7782,6 +7782,39 @@ describe('generic enable/disable toggle (#60)', () => {
     expect(listed.json.disabled).not.toContain('dsh-patchy')
   })
 
+  it('follows the switch through on, off, on when the row has more keys than the flag (#1099)', async () => {
+    // DSH's own plugin page writes the flag after the keys a row already has.
+    // The market kept answering "on" here while the listing still said off,
+    // and the second "on" left the plugin really off.
+    const { userPatch, entry } = await installPatchy()
+    const own = "- id: dsh-patchy\n  name: 'dsh-patchy'\n  inject: [ tools ]\n  disabled: true\n"
+    writeFileSync(userPatch, own)
+    entry.options.disabled = true
+    entry.fiber = undefined
+    const expectOn = async (on: { status: number; json: any }) => {
+      expect(on.status).toBe(200)
+      expect(on.json.activation['dsh-patchy'].state).toBe('live')
+      expect(readFileSync(userPatch, 'utf8').endsWith('- id: dsh-patchy\n  disabled: false\n')).toBe(true)
+      const listed = await bed.dispatch('GET', '/dsh-market/installed')
+      expect(listed.json.patchDisabled).not.toContain('dsh-patchy')
+      expect(listed.json.patchForced).toContain('dsh-patchy')
+      expect(listed.json.activation['dsh-patchy'].state).toBe('live')
+    }
+
+    await expectOn(await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-patchy', enabled: true }))
+
+    const off = await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-patchy', enabled: false })
+    expect(off.status).toBe(200)
+    expect(off.json.activation['dsh-patchy'].state).toBe('disabled')
+    expect(readFileSync(userPatch, 'utf8').endsWith('- id: dsh-patchy\n  disabled: true\n')).toBe(true)
+    const listedOff = await bed.dispatch('GET', '/dsh-market/installed')
+    expect(listedOff.json.patchDisabled).toContain('dsh-patchy')
+    expect(listedOff.json.patchForced).not.toContain('dsh-patchy')
+
+    await expectOn(await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-patchy', enabled: true }))
+    expect(readFileSync(userPatch, 'utf8').startsWith(own)).toBe(true)
+  })
+
   it('still keeps a plugin off when nothing outside the market re-enabled it', async () => {
     // The guard exists because DSH's own overlay can re-update an entry
     // during activation and wipe the runtime flag; that must still be undone.
