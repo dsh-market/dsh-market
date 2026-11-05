@@ -433,6 +433,27 @@ describe('official Electron profile runtime', () => {
     }
   })
 
+  it('names the pnpm that built node_modules when the overlay hits a store mismatch (#1100)', async () => {
+    const dir = profile()
+    installed(dir, 'dshmarket', '1.66.36')
+    writeFileSync(join(dir, 'node_modules', '.modules.yaml'), JSON.stringify({ packageManager: 'pnpm@10.34.9', storeDir: '/s/v10' }))
+    const service = manager()
+    service.installBundle.mockResolvedValueOnce({ application: 'failed', error: { code: 'already-installed' } })
+    const output = 'ERR_PNPM_UNEXPECTED_STORE\npnpm now wants to use the store at "/s/v11" to link dependencies.'
+    const runtime = createOfficialDesktopRuntime(
+      () => service, 'desktop', dir,
+      hostPnpmThatAdds(dir, `process.stderr.write(${JSON.stringify(output)}); process.exit(1)`),
+    )
+    try {
+      const result = await runtime.runPlugin('desktop', ['add', 'dshmarket@1.66.48'])
+      expect(result.exitCode).not.toBe(0)
+      expect(result.stderr).toContain('pnpm 10.34.9')
+      expect(result.stderr).toContain('写 storeDir 修不好')
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
   it.each(['dshmarket@1.66.36', 'dsh-market@1.66.36'])('never removes the market itself to update it (%s, #900)', async spec => {
     // The manager's removal unloads the bundle from the running composition
     // BEFORE pnpm runs. For the market that is the code performing the update,

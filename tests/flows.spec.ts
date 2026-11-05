@@ -6784,6 +6784,72 @@ describe('a recognized pnpm failure is shown as its own sentence (#848)', () => 
   })
 })
 
+describe('a store mismatch across pnpm majors reaches the user as one (#1100)', () => {
+  // What pnpm 12 writes under --reporter=ndjson, which the market always
+  // passes: no rendered text, and the recorded store only in the profile's own
+  // file. Shape measured on real pnpm 12.16.1, paths made up.
+  const NDJSON = [
+    JSON.stringify({ name: 'pnpm:context', level: 'debug', currentLockfileExists: true, storeDir: '/root/.dsh/.pnpm-store/v11' }),
+    JSON.stringify({ name: 'pnpm', level: 'error', code: 'ERR_PNPM_UNEXPECTED_STORE', message: 'adding a new package: Unexpected store location', prefix: '/root/.dsh/profiles/web' }),
+  ].join('\n')
+  const RECORDS = [
+    ['JSON', `${JSON.stringify({ layoutVersion: 5, packageManager: 'pnpm@10.34.9', storeDir: '/root/.dsh/.pnpm-store/v10' }, null, 2)}\n`],
+    ['YAML', 'layoutVersion: 5\npackageManager: pnpm@10.34.9\nstoreDir: /root/.dsh/.pnpm-store/v10\n'],
+  ]
+
+  beforeEach(() => {
+    fake.npm['dsh-loop'] = { latest: '1.0.0', versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } } }
+  })
+
+  function leaveRecord(record: string): void {
+    mkdirSync(join(fake.profileDir, 'node_modules'), { recursive: true })
+    writeFileSync(join(fake.profileDir, 'node_modules', '.modules.yaml'), record)
+  }
+
+  function expectNamed(failed: { status: number; json: Record<string, unknown> }): void {
+    expect(failed.status).toBe(502)
+    const error = String(failed.json.error)
+    expect(error).toContain('pnpm 10.34.9')
+    expect(error).toContain('写 storeDir 修不好')
+    expect(error).not.toContain('storeDir: <上面第一个路径>')
+    expect(error).toContain('node_modules → /root/.dsh/.pnpm-store/v10\n')
+    expect(error).toContain('pnpm now wants → /root/.dsh/.pnpm-store/v11\n')
+    // The same sentence in the stderr the log and the export carry.
+    expect(String(failed.json.stderr)).toContain('pnpm 10.34.9')
+  }
+
+  it.each(RECORDS)('on install, from a %s record', async (_shape, record) => {
+    leaveRecord(record)
+    fake.failNextAddStderrOnce = NDJSON
+
+    expectNamed(await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' }))
+  })
+
+  it.each(RECORDS)('on update, from a %s record', async (_shape, record) => {
+    await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
+    fake.npm['dsh-loop'].latest = '1.2.0'
+    fake.npm['dsh-loop'].versions['1.2.0'] = { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] }
+    const publishedAt = new Date(Date.now() - 3_600_000).toISOString()
+    vi.stubGlobal('fetch', (url: string) => {
+      const u = String(url)
+      if (u.endsWith('/latest')) return Promise.resolve(new Response(JSON.stringify({ version: '1.2.0' }), { status: 200 }))
+      return Promise.resolve(new Response(JSON.stringify({ 'dist-tags': { latest: '1.2.0' }, time: { '1.2.0': publishedAt } }), { status: 200 }))
+    })
+    leaveRecord(record)
+    fake.failNextAddStderrOnce = NDJSON
+
+    expectNamed(await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' }))
+  })
+
+  it.each(RECORDS)('on uninstall, from a %s record', async (_shape, record) => {
+    await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
+    leaveRecord(record)
+    fake.failNextRemoveOnce = NDJSON
+
+    expectNamed(await bed.dispatch('POST', '/dsh-market/uninstall', { name: 'dsh-loop' }))
+  })
+})
+
 describe('build-script approval flow (#6)', () => {
   it('surfaces ignored builds, approve-builds allows only installed packages, and the retry succeeds', async () => {
     fake.npm['dsh-loop'] = {
