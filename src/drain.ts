@@ -834,7 +834,14 @@ export class DrainCoordinator {
       const running = agent.runMaintenance<void>(signal => {
         const onAbort = () => {
           hold.release()
-          this.onHoldLost(hold)
+          // #1111: the host tears a closing session down by cancelling its
+          // maintenance FIRST and announcing `agent/disposed` after it has
+          // gone idle. Abort therefore arrives before the disposal event, and
+          // treating every abort as a lost hold aborted the package command
+          // because an unrelated session was closed. `reason.kind` is the
+          // host's own word for it; a disposed Agent is one fewer session, not
+          // a session that started working.
+          this.onHoldLost(hold, signal.reason)
         }
         if (signal.aborted) onAbort()
         else signal.addEventListener('abort', onAbort, { once: true })
@@ -855,8 +862,15 @@ export class DrainCoordinator {
     return true
   }
 
-  private onHoldLost(hold: Hold): void {
+  private onHoldLost(hold: Hold, reason?: unknown): void {
     if (this.holds.get(hold.id) === hold) this.holds.delete(hold.id)
+    // A session being closed is not a session starting work (#1111). Its hold
+    // ends here; the disposal event that follows finds nothing left to release.
+    if (reason !== null && typeof reason === 'object'
+      && (reason as { kind?: unknown }).kind === 'disposed') {
+      this.notifyActivity()
+      return
+    }
     const active = this.active
     if (active === null || active.settled) {
       this.notifyActivity()

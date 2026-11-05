@@ -103,8 +103,9 @@ export class FakeAgent {
     this.resolveIdle()
   }
 
-  abortMaintenance(): void {
-    this.maintenance?.controller.abort()
+  /** The host's teardown cancels maintenance with a reason before disposing. */
+  abortMaintenance(reason?: unknown): void {
+    this.maintenance?.controller.abort(reason)
   }
 
   private resolveIdle(): void {

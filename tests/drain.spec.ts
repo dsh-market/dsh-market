@@ -250,6 +250,42 @@ describe('DrainCoordinator', () => {
     bed.coordinator.dispose()
   })
 
+  it('does not abort the command when a held session is closed (#1111)', async () => {
+    // The host closes a session by cancelling its maintenance first and
+    // announcing `agent/disposed` once it is idle. The abort therefore lands
+    // BEFORE the disposal event, and reading every abort as a lost hold
+    // aborted the package command because an unrelated session was closed.
+    // `forceDeferred` so the command runs under the barrier (the inline path
+    // has no holds to lose).
+    const bed = harness({ forceDeferred: true })
+    const kept = new FakeAgent('kept')
+    const closing = new FakeAgent('closing')
+    bed.host.create(kept)
+    bed.host.create(closing)
+    let finishExecution!: () => void
+    let started = false
+    const result = await bed.begin(async () => {
+      started = true
+      // Hold the command open, the way pnpm running against real files does.
+      await new Promise<void>(resolve => { finishExecution = resolve })
+      return OK
+    })
+    expect(result.mode).toBe('deferred')
+    if (result.mode !== 'deferred') return
+    await vi.waitFor(() => { expect(started).toBe(true) })
+
+    closing.abortMaintenance({ kind: 'disposed' })
+    await vi.waitFor(() => { expect(bed.aborted.count).toBe(0) })
+
+    // The command still runs to completion: one fewer session, not a broken
+    // barrier.
+    finishExecution()
+    const settled = await bed.coordinator.whenSettled(result.operation.operationId)
+    expect(settled?.state).toBe('succeeded')
+    expect(bed.aborted.count).toBe(0)
+    bed.coordinator.dispose()
+  })
+
   it('retries a lost maintenance claim after the Agent goes idle and never cancels it', async () => {
     const bed = harness()
     const agent = new FakeAgent('main')
