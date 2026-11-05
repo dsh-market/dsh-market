@@ -180,8 +180,10 @@ function entryKeyValue(lines: readonly string[], start: number, key: string): st
 }
 
 export function readUserPatchState(patchPath: string): PatchState {
-  const disables: string[] = []
-  const forced: string[] = []
+  // The host composes the file in order, later entries override earlier ones,
+  // so a row has one final flag: listing it as both disabled and forced showed
+  // a plugin as off while the file had it on (#1099).
+  const flags = new Map<string, 'true' | 'false'>()
   const inserts: string[] = []
   let text = ''
   try {
@@ -205,10 +207,10 @@ export function readUserPatchState(patchPath: string): PatchState {
     if (disableRow === null) continue
     const id = (disableRow[1] ?? disableRow[2] ?? disableRow[3])!
     const value = entryKeyValue(lines, index + 1, 'disabled')
-    if (value === 'true') disables.push(id)
-    else if (value === 'false') forced.push(id)
+    if (value === 'true' || value === 'false') flags.set(id, value)
   }
-  return { disables, forced, inserts }
+  const withFlag = (flag: 'true' | 'false'): string[] => [...flags.keys()].filter(id => flags.get(id) === flag)
+  return { disables: withFlag('true'), forced: withFlag('false'), inserts }
 }
 
 /**
@@ -563,8 +565,8 @@ function lastRowFlag(text: string, rowId: string): 'true' | 'false' | null {
   let flag: 'true' | 'false' | null = null
   for (let index = 0; index < lines.length; index += 1) {
     if (!idLine.test(lines[index] ?? '')) continue
-    const value = /^ {2}disabled: (true|false)\s*$/u.exec(lines[nextPatchContentLine(lines, index + 1)] ?? '')
-    if (value !== null) flag = value[1] as 'true' | 'false'
+    const value = entryKeyValue(lines, index + 1, 'disabled')
+    if (value === 'true' || value === 'false') flag = value
   }
   return flag
 }
@@ -692,7 +694,9 @@ export function disableRow(patchPath: string, rowId: string): Promise<{ ok: bool
 }
 
 /** Enable one row: remove its `disabled: true` blocks; force-enable with
- * `disabled: false` when a lower layer (bundle/home patch) holds it down. */
+ * `disabled: false` when a lower layer (bundle/home patch) holds it down, or
+ * when a longer entry of the row still says `disabled: true` (#1099): that
+ * entry is never cut up (#821), so it can only be overridden from below. */
 export function enableRow(patchPath: string, rowId: string): Promise<{ ok: boolean; reason: string | null }> {
   return queuedWrite(async () => {
     if (!ROW_ID_RE.test(rowId)) {
@@ -706,6 +710,11 @@ export function enableRow(patchPath: string, rowId: string): Promise<{ ok: boole
     if (next !== text) {
       const written = writePatchFile(patchPath, withPlaceholderRestored(next))
       if (!written.ok) return written
+      // A longer entry for the row may still have the last word.
+      if (lastRowFlag(next, rowId) === 'true') {
+        const result = appendPatchEntry(patchPath, rowBlock(rowId, false))
+        if (!result.ok) return result
+      }
       logEvent('info', 'patch', `enabled row ${rowId} in ${patchPath}`)
       return { ok: true, reason: null }
     }
