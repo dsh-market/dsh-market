@@ -9590,6 +9590,98 @@ describe('Plugins page tab lays out as page content', () => {
     }
   })
 
+  it('sticks under the painted host bar when its layout box stays at the resting height', async () => {
+    // dsh 0.2.2: the plugin-page header stays sticky at its resting height and
+    // paints only the compact slice (an absolute ::before). The border box
+    // still reports the resting height, which parked the market's second pin
+    // in the clipped gap and let cards scroll through it.
+    const box = (top: number, bottom: number): DOMRect => ({
+      top, bottom, height: bottom - top, width: 800, left: 0, right: 800, x: 0, y: top, toJSON() { return {} },
+    })
+    const scroller = document.createElement('div')
+    const header = document.createElement('div')
+    const mount = document.createElement('div')
+    scroller.append(header, mount)
+    document.body.append(scroller)
+    const realStyle = window.getComputedStyle.bind(window)
+    const styleSpy = vi.spyOn(window, 'getComputedStyle').mockImplementation((elt, pseudo) => {
+      const style = realStyle(elt as Element)
+      if (elt === scroller) return new Proxy(style, { get: (target, key) => key === 'overflowY' ? 'auto' : Reflect.get(target, key) })
+      if (elt === header && pseudo === '::before') {
+        return new Proxy(style, { get: (target, key) => {
+          if (key === 'content') return '""'
+          if (key === 'position') return 'absolute'
+          if (key === 'height') return '48px'
+          if (key === 'top' || key === 'left' || key === 'right') return '0px'
+          if (key === 'backgroundColor') return 'rgb(255, 255, 255)'
+          return Reflect.get(target, key)
+        } })
+      }
+      if (elt === header) return new Proxy(style, { get: (target, key) => key === 'position' ? 'sticky' : Reflect.get(target, key) })
+      return style
+    })
+    scroller.getBoundingClientRect = () => box(10, 810)
+    // Resting box is 120px tall; the painted bar is the 48px ::before.
+    header.getBoundingClientRect = () => box(10, 130)
+    try {
+      const { container } = render(<MarketSection {...props()} surface="plugins" />, { container: mount })
+      await screen.findByText('dsh-loop')
+      const root = container.querySelector('[data-dsh-market-root]') as HTMLElement
+      await act(async () => {
+        window.dispatchEvent(new Event('resize'))
+        await new Promise<void>(resolve => { requestAnimationFrame(() => resolve()) })
+      })
+      expect(root.style.getPropertyValue('--dshm-host-sticky-top')).toBe('48px')
+    } finally {
+      styleSpy.mockRestore()
+      scroller.remove()
+    }
+  })
+
+  it('keeps the border box when the ::before is not the host cover', async () => {
+    const box = (top: number, bottom: number): DOMRect => ({
+      top, bottom, height: bottom - top, width: 800, left: 0, right: 800, x: 0, y: top, toJSON() { return {} },
+    })
+    const scroller = document.createElement('div')
+    const header = document.createElement('div')
+    const mount = document.createElement('div')
+    scroller.append(header, mount)
+    document.body.append(scroller)
+    const realStyle = window.getComputedStyle.bind(window)
+    const styleSpy = vi.spyOn(window, 'getComputedStyle').mockImplementation((elt, pseudo) => {
+      const style = realStyle(elt as Element)
+      if (elt === scroller) return new Proxy(style, { get: (target, key) => key === 'overflowY' ? 'auto' : Reflect.get(target, key) })
+      if (elt === header && pseudo === '::before') {
+        return new Proxy(style, { get: (target, key) => {
+          if (key === 'content') return '""'
+          if (key === 'position') return 'absolute'
+          if (key === 'height') return '8px'
+          if (key === 'top') return 'auto'
+          if (key === 'left' || key === 'right') return '0px'
+          if (key === 'backgroundColor') return 'rgb(255, 255, 255)'
+          return Reflect.get(target, key)
+        } })
+      }
+      if (elt === header) return new Proxy(style, { get: (target, key) => key === 'position' ? 'sticky' : Reflect.get(target, key) })
+      return style
+    })
+    scroller.getBoundingClientRect = () => box(10, 810)
+    header.getBoundingClientRect = () => box(10, 130)
+    try {
+      const { container } = render(<MarketSection {...props()} surface="plugins" />, { container: mount })
+      await screen.findByText('dsh-loop')
+      const root = container.querySelector('[data-dsh-market-root]') as HTMLElement
+      await act(async () => {
+        window.dispatchEvent(new Event('resize'))
+        await new Promise<void>(resolve => { requestAnimationFrame(() => resolve()) })
+      })
+      expect(root.style.getPropertyValue('--dshm-host-sticky-top')).toBe('120px')
+    } finally {
+      styleSpy.mockRestore()
+      scroller.remove()
+    }
+  })
+
   it('sizes empty-state centering to the visible slice on the Plugins tab', async () => {
     const box = (top: number, bottom: number): DOMRect => ({
       top, bottom, height: bottom - top, width: 800, left: 0, right: 800, x: 0, y: top, toJSON() { return {} },

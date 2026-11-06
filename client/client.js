@@ -9929,7 +9929,42 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		* Only preceding siblings on the path from this panel up to the scroller —
 		* the host chrome sits above us. Walking the whole scroller would crawl the
 		* catalog on every frame.
+		*
+		* dsh 0.2.2 keeps the plugin-page header's layout box at its resting height
+		* and paints only the compact slice: an absolutely positioned ::before of
+		* `--plugin-header-paint-height`, with the title clipped away. The border box
+		* still reports the resting height, so sticking under `rect.bottom` parks
+		* the market's own rows in that clipped gap and the catalog scrolls through
+		* them. The cover is that ::before only when it is the opaque bar: shorter
+		* than the box, flush to the top and both sides, and filled. A marker or a
+		* strip hung from the bottom keeps the border box. Hosts without one keep
+		* the border box.
 		*/
+		/**
+		* Bottom of a stuck bar's opaque ::before, in the same coordinate space as
+		* `rect`, or null when that pseudo-element is not the cover.
+		*
+		* The 0.2.2 page bar's cover is `inset: 0 0 auto` with the page background,
+		* so it starts at the padding edge (no border, no padding-top on that bar)
+		* and is shorter than the resting box. A marker, a hairline, or a strip
+		* anchored with `bottom` does not qualify — those keep the border box.
+		*/
+		function paintedCoverBottom(node, rect) {
+			const before = getComputedStyle(node, "::before");
+			if (before.content === "none" || before.content === "normal") return null;
+			if (before.position !== "absolute" && before.position !== "fixed") return null;
+			const height = Number.parseFloat(before.height);
+			if (!Number.isFinite(height) || height <= 0 || height >= rect.height - 1) return null;
+			const top = Number.parseFloat(before.top);
+			const left = Number.parseFloat(before.left);
+			const right = Number.parseFloat(before.right);
+			if (!Number.isFinite(top) || Math.abs(top) > 1) return null;
+			if (!Number.isFinite(left) || !Number.isFinite(right) || Math.abs(left) > 1 || Math.abs(right) > 1) return null;
+			if (before.backgroundColor === "transparent" || before.backgroundColor === "rgba(0, 0, 0, 0)") return null;
+			const borderTop = Number.parseFloat(getComputedStyle(node).borderTopWidth);
+			const border = Number.isFinite(borderTop) ? borderTop : 0;
+			return rect.top + border + top + height;
+		}
 		function hostStickyOffset(scroller, market) {
 			const scrollerTop = scroller.getBoundingClientRect().top;
 			let bottom = scrollerTop;
@@ -9937,7 +9972,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				const position = getComputedStyle(node).position;
 				if (position !== "sticky" && position !== "fixed") return;
 				const rect = node.getBoundingClientRect();
-				if (rect.height > 0 && rect.top <= scrollerTop + 4 && rect.bottom > scrollerTop) bottom = Math.max(bottom, rect.bottom);
+				if (rect.height <= 0 || rect.top > scrollerTop + 4 || rect.bottom <= scrollerTop) return;
+				bottom = Math.max(bottom, paintedCoverBottom(node, rect) ?? rect.bottom);
 			};
 			const walkPreceding = (node) => {
 				consider(node);
