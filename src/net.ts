@@ -134,7 +134,7 @@ let directAgent: Agent | null = null
  */
 export async function marketFetch(
   url: string,
-  init?: { signal?: AbortSignal; headers?: Record<string, string> },
+  init?: { signal?: AbortSignal; headers?: Record<string, string>; method?: 'GET' | 'HEAD'; redirect?: 'follow' | 'manual' },
 ): Promise<Response> {
   const { http, https } = proxyFromEnv()
   if (http === null && https === null) {

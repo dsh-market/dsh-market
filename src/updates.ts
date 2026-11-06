@@ -12,6 +12,7 @@ import { DIST_TAG, type Channel } from './channels.ts'
 import { resolveHeadCommit } from './accelerate.ts'
 import { inProbe } from './probe-context.ts'
 import { marketFetch } from './net.ts'
+import { publishedReleaseUpdate, type CatalogReleaseSource } from './release-updates.ts'
 import { activeRegion, githubRoutesFor, rememberGithubRoute, throughProxy, type Region } from './regions.ts'
 import type { GitToNpmMigration, NpmRenameMigration } from './source-migration.ts'
 import { isNumericReleaseAgeWindow, readMinimumReleaseAgeMs } from './install.ts'
@@ -807,14 +808,14 @@ export async function checkUpdates(
    * with `--config.minimum-release-age=0` and CAN install a young release.
    * Hiding those on the CLI would suppress updates that work.
    */
-  options: { holdYoungReleases?: boolean } = {},
+  options: { holdYoungReleases?: boolean; releaseSources?: ReadonlyMap<string, CatalogReleaseSource> } = {},
 ): Promise<Record<string, UpdateStatus>> {
   const activeProfileDir = profileDir(profile, explicitDir)
   // The channel is part of the key: switching to betas has to change the
   // answer immediately, and a cache keyed on the profile alone would serve
   // the stable verdict for the rest of the TTL — reading as "the setting did
   // nothing".
-  const cacheKey = `${activeProfileDir}\u0000${options.holdYoungReleases === true ? 'hold' : 'any'}\u0000${[...channelFor].map(([n, c]) => `${n}:${c}`).sort().join(',')}\u0000${[...onlineSourceFor].map(([n, s]) => `${n}:${s}`).sort().join(',')}\u0000${[...catalogNpmByRepo].map(([n, s]) => `${n}:${s}`).sort().join(',')}\u0000${options.holdYoungReleases === true ? profilePolicyFingerprint(activeProfileDir) : ''}`
+  const cacheKey = `${activeProfileDir}\u0000${options.holdYoungReleases === true ? 'hold' : 'any'}\u0000${[...channelFor].map(([n, c]) => `${n}:${c}`).sort().join(',')}\u0000${[...onlineSourceFor].map(([n, s]) => `${n}:${s}`).sort().join(',')}\u0000${[...catalogNpmByRepo].map(([n, s]) => `${n}:${s}`).sort().join(',')}\u0000${options.holdYoungReleases === true ? profilePolicyFingerprint(activeProfileDir) : ''}` + JSON.stringify([...(options.releaseSources ?? [])])
   if (!force && updatesCache?.key === cacheKey && Date.now() < updatesCache.recheckAt) {
     return updatesCache.data
   }
@@ -941,6 +942,12 @@ export async function checkUpdates(
         // when a catalog entry owns both the repo the archive came from and
         // this name; otherwise report no update rather than a false one.
         if (/^https?:/i.test(spec)) {
+          const source = options.releaseSources?.get(name)
+          if (source !== undefined) {
+            const release = await publishedReleaseUpdate(source, name)
+            result[name] = { kind: 'npm', version, current: version, latest: release?.version ?? null, updateAvailable: isUpgrade(version, release?.version ?? null) }
+            return
+          }
           const repo = lookupRepoFromUrl(spec)
           const repoKey = repo === null ? null : catalogRepoKey(repo)
           if (repoKey === null || catalogNpmByRepo.get(repoKey) !== name) {

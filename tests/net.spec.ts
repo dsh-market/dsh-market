@@ -72,3 +72,25 @@ describe('the market leaves the host its own dispatcher (#861)', () => {
     expect(seen.legacySet).toBe(true)
   })
 })
+
+it.skipIf(!stripsTypes)('passes HEAD and manual redirects through the real private HTTP client', () => {
+  const moduleUrl = pathToFileURL(join(import.meta.dirname, '..', 'src', 'net.ts')).href
+  const script = `
+    import { createServer } from 'node:http';
+    import { once } from 'node:events';
+    const { marketFetch } = await import(${JSON.stringify(moduleUrl)});
+    const requests = [];
+    const server = createServer((request, response) => {
+      requests.push([request.method, request.url]);
+      response.writeHead(302, { location: '/asset' }); response.end();
+    }).listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const response = await marketFetch('http://127.0.0.1:' + server.address().port + '/latest', { method: 'HEAD', redirect: 'manual' });
+    const result = { status: response.status, location: response.headers.get('location'), requests };
+    server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
+    process.stdout.write(JSON.stringify(result));
+  `
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 10_000 })
+  expect(result.status, result.stderr).toBe(0)
+  expect(JSON.parse(result.stdout)).toEqual({ status: 302, location: '/asset', requests: [['HEAD', '/latest']] })
+})
