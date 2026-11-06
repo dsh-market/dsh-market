@@ -21,7 +21,7 @@
  * it has none on hand rather than that the plugin publishes none (#819).
  */
 
-import { fileFromTarball } from './catalog-npm.ts'
+import { absoluteTarballUrl, fileFromTarball } from './catalog-npm.ts'
 import { marketFetch } from './net.ts'
 import { activeRegion, routesFor } from './regions.ts'
 import { profileDir, readGitResolutionCommit, readInstalled, readInstalledRepoEvidence, readInstalledVersion, readLockCommits } from './profile.ts'
@@ -87,7 +87,9 @@ export async function loadUpdateNotes(force = false): Promise<UpdatesPayload> {
     const meta = await metaRes.json() as { dist?: { tarball?: unknown } }
     const tarball = typeof meta.dist?.tarball === 'string' ? meta.dist.tarball : null
     if (tarball === null) throw new Error(`${UPDATES_PACKAGE} names no tarball`)
-    const tarRes = await marketFetch(tarball, { signal: AbortSignal.timeout(TIMEOUT_MS) })
+    // A registry under a path prefix may answer with a relative tarball, the
+    // same case the catalog route resolves (#1117).
+    const tarRes = await marketFetch(absoluteTarballUrl(tarball, routes.npmRegistry), { signal: AbortSignal.timeout(TIMEOUT_MS) })
     if (!tarRes.ok) throw new Error(`HTTP ${String(tarRes.status)} reading ${UPDATES_PACKAGE} tarball`)
     const bytes = fileFromTarball(Buffer.from(await tarRes.arrayBuffer()), UPDATES_FILE)
     if (bytes === null) throw new Error(`${UPDATES_PACKAGE} carries no ${UPDATES_FILE}`)
