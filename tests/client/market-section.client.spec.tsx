@@ -9468,6 +9468,57 @@ describe('Plugins page tab lays out as page content', () => {
     expect(screen.queryByRole('heading', { name: en.nav })).toBeNull()
   })
 
+  /**
+   * The report (#1125): on the Plugins tab the market's tab row pinned ~100px
+   * too low, with a bare strip above it where cards kept scrolling. dsh
+   * 0.2.2's page bar keeps its resting height in the layout box and clips it
+   * with `clip-path`, publishing the drawn height as an inline
+   * `--plugin-header-paint-height`. Sticking under `rect.bottom` used the
+   * number the bar no longer occupies.
+   */
+  const paintedHeaderCase = async (paintHeight: string | null): Promise<string> => {
+    const box = (top: number, bottom: number): DOMRect => ({
+      top, bottom, height: bottom - top, width: 800, left: 0, right: 800, x: 0, y: top, toJSON() { return {} },
+    })
+    const scroller = document.createElement('div')
+    const header = document.createElement('div')
+    const mount = document.createElement('div')
+    if (paintHeight !== null) header.style.setProperty('--plugin-header-paint-height', paintHeight)
+    scroller.append(header, mount)
+    document.body.append(scroller)
+    Object.defineProperty(scroller, 'scrollHeight', { configurable: true, get: () => 2000 })
+    Object.defineProperty(scroller, 'clientHeight', { configurable: true, get: () => 800 })
+    const realStyle = window.getComputedStyle.bind(window)
+    vi.spyOn(window, 'getComputedStyle').mockImplementation((elt) => {
+      const style = realStyle(elt as Element)
+      if (elt === scroller) return new Proxy(style, { get: (target, key) => key === 'overflowY' ? 'auto' : Reflect.get(target, key) })
+      if (elt === header) return new Proxy(style, { get: (target, key) => key === 'position' ? 'sticky' : Reflect.get(target, key) })
+      return style
+    })
+    scroller.getBoundingClientRect = () => box(10, 810)
+    // Resting box: 150px tall, of which only `paintHeight` is drawn.
+    header.getBoundingClientRect = () => box(10, 160)
+    try {
+      const { container } = render(<MarketSection {...props()} surface="plugins" />, { container: mount })
+      await screen.findByText('dsh-loop')
+      fireEvent.scroll(scroller)
+      await act(async () => { await new Promise<void>(resolve => { requestAnimationFrame(() => resolve()) }) })
+      const root = container.querySelector('[data-dsh-market-plugins-tab="true"]') as HTMLElement
+      return root.style.getPropertyValue('--dshm-host-sticky-top')
+    } finally {
+      scroller.remove()
+      vi.restoreAllMocks()
+    }
+  }
+
+  it('sticks the tab row to the height the host bar actually paints (#1125)', async () => {
+    expect(await paintedHeaderCase('56px')).toBe('56px')
+  })
+
+  it('keeps the border box when the host publishes no painted height (#1125)', async () => {
+    expect(await paintedHeaderCase(null)).toBe('150px')
+  })
+
   it('offers back-to-top on the host scroller of the Plugins tab', async () => {
     const box = (top: number, bottom: number): DOMRect => ({
       top, bottom, height: bottom - top, width: 800, left: 0, right: 800, x: 0, y: top, toJSON() { return {} },

@@ -9968,6 +9968,23 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const border = Number.isFinite(borderTop) ? borderTop : 0;
 			return rect.top + border + top + height;
 		}
+		/**
+		* Painted height of a stuck bar that keeps its layout box and clips the rest.
+		*
+		* dsh 0.2.2's plugin page writes the drawn height onto the bar every frame as
+		* an inline `--plugin-header-paint-height` and clips the box with it, so the
+		* border box keeps reporting the resting height the bar no longer occupies.
+		* Sticking under that number left a bare strip above the market's tab row
+		* with cards scrolling through it (#1125). Read the drawn number when the
+		* host publishes one; null means the border box is the honest one.
+		*/
+		function paintedBarHeight(node, rect) {
+			const inline = node.style?.getPropertyValue("--plugin-header-paint-height");
+			if (inline === void 0 || inline.trim() === "") return null;
+			const value = Number.parseFloat(inline);
+			if (!Number.isFinite(value)) return null;
+			return Math.max(0, Math.min(rect.height, value));
+		}
 		function hostStickyOffset(scroller, market) {
 			const scrollerTop = scroller.getBoundingClientRect().top;
 			let bottom = scrollerTop;
@@ -9976,6 +9993,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				if (position !== "sticky" && position !== "fixed") return;
 				const rect = node.getBoundingClientRect();
 				if (rect.height <= 0 || rect.top > scrollerTop + 4 || rect.bottom <= scrollerTop) return;
+				const painted = paintedBarHeight(node, rect);
+				if (painted !== null) {
+					bottom = Math.max(bottom, rect.top + painted);
+					return;
+				}
 				bottom = Math.max(bottom, paintedCoverBottom(node, rect) ?? rect.bottom);
 			};
 			const walkPreceding = (node) => {
