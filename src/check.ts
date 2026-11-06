@@ -521,28 +521,60 @@ function parseSemver(value: string): Semver | null {
 }
 
 /**
- * Parse a comparator's target the way node-semver does: a PARTIAL version in
- * a range is zero-filled, so `<0.3` is `<0.3.0` and `>=2` is `>=2.0.0`.
+ * Rewrite a comparator whose target is a PARTIAL version into the full
+ * comparators node-semver desugars it to. Anything else comes back as is.
  *
- * Without this, every prerelease floor written as a partial — the
- * `@deepseek-ai/dsh-*` peers of a whole family of connector plugins say
- * `>=0.1.5 <0.3`, `>=0.1.7-rc <2`, `>=0.2.0-rc.0 <0.3` — parsed as unknown,
- * `satisfiesRange` answered null, and the gate stood aside: measured against
- * the host's own evaluator over 699 live catalog manifests, those were the
- * last 7 of 2796 (package, runtime) pairs where the host refuses a plugin
- * and the market still promised a restart would apply it.
+ * The `@deepseek-ai/dsh-*` peers of a whole family of connector plugins are
+ * written this way (`>=0.1.5 <0.3`, `>=0.1.7-rc <2`, `>=0.2.0-rc.0 <0.3`).
+ * Read as unknown, they left the activation gate standing aside: measured
+ * against the host's own evaluator over 699 live catalog manifests, those
+ * were the last 7 of 2796 (package, runtime) pairs where the host refuses a
+ * plugin and the market still promised a restart would apply it.
  *
- * A BARE partial (`1.2`) is a different thing in semver — an x-range that
- * means `>=1.2.0 <1.3.0` — so it deliberately stays unknown here rather than
- * being mistaken for the exact version `1.2.0`.
+ * Zero-filling the target is right for `>=` and wrong for the rest. A partial
+ * names a whole release line, so node-semver (`replaceXRange`, `replaceTilde`,
+ * `replaceCaret`) moves the bound to the edge of that line:
+ *
+ *   `<0.3`  → `<0.3.0-0`            `<=0.3` → `<0.4.0-0`
+ *   `>0.3`  → `>=0.4.0`             `>1`    → `>=2.0.0`
+ *   `~1`    → `>=1.0.0 <2.0.0-0`    `^0`    → `>=0.0.0 <1.0.0-0`
+ *   `^0.0`  → `>=0.0.0 <0.1.0-0`
+ *
+ * Comparing against the raw partial string instead ordered `9.1.0` above
+ * `10` and `0.10.0` below `0.3`, character by character.
+ *
+ * A BARE partial (`1.2`) has no operator and is an x-range in semver
+ * (`>=1.2.0 <1.3.0`), so it stays as is and parses as unknown below rather
+ * than being mistaken for the exact version `1.2.0`.
  */
-function parseComparatorTarget(target: string, op: string): Semver | null {
-  const direct = parseSemver(target)
-  if (direct !== null) return direct
-  if (op === '') return null
-  const parts = target.trim().split('.')
-  if (parts.length > 3 || parts.some(part => !/^\d+$/u.test(part))) return null
-  return parseSemver([...parts, ...Array<string>(3 - parts.length).fill('0')].join('.'))
+function expandPartialComparator(part: string, includePrerelease: boolean): string[] {
+  const m = /^(\^|~|>=|<=|>|<)(\d+)(?:\.(\d+))?$/u.exec(part.trim())
+  if (m === null) return [part]
+  const op = m[1]
+  const major = Number(m[2])
+  const minor = m[3] === undefined ? null : Number(m[3])
+  // node-semver lowers a desugared floor to `-0` under includePrerelease, so
+  // `>=0.3` admits `0.3.0-rc.1` there. Ceilings always carry `-0`.
+  const z = includePrerelease ? '-0' : ''
+  const floor = `${String(major)}.${String(minor ?? 0)}.0`
+  const nextLine = minor === null ? `${String(major + 1)}.0.0` : `${String(major)}.${String(minor + 1)}.0`
+  switch (op) {
+    case '>=':
+      return [`>=${floor}${z}`]
+    case '>':
+      return [`>=${nextLine}${z}`]
+    case '<':
+      return [`<${exclusiveUpperBound(floor)}`]
+    case '<=':
+      return [`<${exclusiveUpperBound(nextLine)}`]
+    case '~':
+      return [`>=${floor}${z}`, `<${exclusiveUpperBound(nextLine)}`]
+    default: {
+      // `^`: the next major, except inside 0.x where the minor is breaking.
+      const ceiling = major > 0 || minor === null ? `${String(major + 1)}.0.0` : `0.${String(minor + 1)}.0`
+      return [`>=${floor}${z}`, `<${exclusiveUpperBound(ceiling)}`]
+    }
+  }
 }
 
 function comparePre(a: string[], b: string[]): number {
@@ -668,7 +700,7 @@ export function satisfiesRange(
     const m = /^(\^|~|>=|<=|>|<|=)?(.*)$/.exec(p)
     const op = m?.[1] === '=' ? '' : (m?.[1] ?? '')
     const target = (m?.[2] ?? '').trim()
-    const tv = parseComparatorTarget(target, op)
+    const tv = parseSemver(target)
     if (tv === null) return null
     const major = tv.major
     const minor = tv.minor
@@ -714,13 +746,14 @@ export function satisfiesRange(
     // prerelease admission gate. Otherwise an unknown protocol such as
     // `workspace:^` or `catalog:default` is misreported as a definite false
     // whenever the resolved version happens to carry a prerelease tag.
-    if (parseComparatorTarget(target, op) === null) return null
+    if (parseSemver(target) === null) return null
     return { op, target }
   }
 
   /** Evaluate ONE comparator set (a `||` alternative) as a conjunction. */
   const evaluateSet = (set: string): boolean | null => {
     const parts = set.trim().split(/\s+/).filter(part => part !== '')
+      .flatMap(part => expandPartialComparator(part, options.includePrerelease === true))
     if (parts.length === 0) return true
     const parsed = parts.map(part => comparator(part))
     if (parsed.some(part => part === null)) return null

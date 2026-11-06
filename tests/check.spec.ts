@@ -2248,6 +2248,45 @@ describe('satisfiesRange', () => {
     expect(satisfiesRange('1.9.9', '>=2', { includePrerelease: true })).toBe(false)
   })
 
+  it('moves a partial bound to the edge of its release line, as node-semver does', () => {
+    // Every row is node-semver 7's own answer. Comparing against the raw
+    // partial string ordered versions character by character: `9.1.0` sat
+    // above `10` and `0.10.0` below `0.3`.
+    const cases: Array<[string, string, boolean]> = [
+      ['9.1.0', '<10', true],
+      ['10.0.0', '<2', false],
+      ['0.10.0', '<0.3', false],
+      ['0.12.0', '>=0.1.5 <0.3', false],
+      ['0.3.0-rc.1', '<0.3', false],
+      // `>0.3` is `>=0.4.0`, `>1` is `>=2.0.0`: the whole named line is excluded.
+      ['0.2.5', '>0.2', false],
+      ['0.3.0', '>0.3', false],
+      ['0.4.0', '>0.3', true],
+      ['1.5.0', '>1', false],
+      // `<=0.3` is `<0.4.0-0`: the whole named line is included.
+      ['0.3.5', '<=0.3', true],
+      ['0.4.0-0', '<=0.3', false],
+      // `~1` is `>=1.0.0 <2.0.0-0`, `^0` is `<1.0.0-0`, `^0.0` is `<0.1.0-0`.
+      ['1.5.0', '~1', true],
+      ['2.0.0', '~1', false],
+      ['0.5.0', '^0', true],
+      ['0.0.5', '^0.0', true],
+      ['0.1.0', '^0.0', false],
+    ]
+    for (const [version, range, expected] of cases) {
+      expect(satisfiesRange(version, range), `${version} ${range}`).toBe(expected)
+    }
+  })
+
+  it('lowers a partial floor to its first prerelease under includePrerelease', () => {
+    // node-semver desugars `>=2` to `>=2.0.0-0` when prereleases are included.
+    expect(satisfiesRange('2.0.0-rc.1', '>=2', { includePrerelease: true })).toBe(true)
+    expect(satisfiesRange('0.4.0-rc.1', '>0.3', { includePrerelease: true })).toBe(true)
+    expect(satisfiesRange('0.3.0-rc.1', '~0.3', { includePrerelease: true })).toBe(true)
+    expect(satisfiesRange('0.3.0-rc.1', '^0.3', { includePrerelease: true })).toBe(true)
+    expect(satisfiesRange('2.0.0-rc.1', '>=2')).toBe(false)
+  })
+
   it('keeps a BARE partial version unknown: `1.2` is an x-range, not `1.2.0`', () => {
     // node-semver reads `1.2` as `>=1.2.0 <1.3.0`. Treating it as the exact
     // version would be a different — and wrong — answer, so it stays unknown.
