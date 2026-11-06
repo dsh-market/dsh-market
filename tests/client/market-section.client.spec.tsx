@@ -1781,6 +1781,13 @@ describe('MarketSection (jsdom)', () => {
       expect(gif).toBeDefined()
       expect(gif).toContain('&n=-1')
       expect(gif).toContain('&output=webp')
+      // The resizer caps how much it will decode (`n=-1` decodes every
+      // frame): past 71 000 000 pixels or 400 frames it answers 404, which
+      // is 15 of the catalog's 71 GIF covers. The card must fall back to the
+      // plain resize — a still, which is what it showed before this change —
+      // rather than to a broken image.
+      const fallback = new URL(gif).searchParams.get('errorredirect')
+      expect(fallback).toBe(gif.split('&n=-1')[0] + '&output=webp')
       const still = srcsOf().find(src => src.includes(encoded(PNG)))
       expect(still).toBeDefined()
       expect(still).not.toContain('n=-1')
@@ -6836,7 +6843,7 @@ describe('per-tab search boxes', () => {
     const cover = await screen.findByRole('button', { name: `${en.themePreview} whale-skin` })
     const src = cover.querySelector('img')?.getAttribute('src') ?? ''
     const encoded = encodeURIComponent(shotA.replace(/^https?:\/\//, ''))
-    expect(src).toBe(`https://images.weserv.nl/?url=${encoded}&h=320&fit=inside&we=1&n=-1&output=webp`)
+    expect(src).toBe(`https://images.weserv.nl/?url=${encoded}&h=320&fit=inside&we=1&n=-1&output=webp&errorredirect=${encodeURIComponent(`https://images.weserv.nl/?url=${encoded}&h=320&fit=inside&we=1&output=webp`)}`)
     expect(src).not.toContain('h=520')
   })
 

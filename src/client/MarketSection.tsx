@@ -714,7 +714,17 @@ function thumbUrl(src: string, height: number, options: { webp?: boolean } = {})
   // `output=webp` re-encodes the animation far smaller than the original
   // (a 7s 600×420 demo: 283KB → 31KB at h=200), so it keeps moving without
   // costing more than a still would.
-  else if (/\.gif(?:$|[?#])/iu.test(src)) url += '&n=-1&output=webp'
+  //
+  // `n=-1` decodes every frame, which is what the resizer's input limits
+  // measure: past 71 000 000 decoded pixels or 400 frames it answers 404 and
+  // the card would show a broken image where it used to show a frozen one.
+  // That is 15 of the catalog's 71 GIF covers. `errorredirect` sends the
+  // browser to the same resize WITHOUT `n=-1` in exactly that case, so the
+  // fallback is today's behaviour — a still, the right size, and visible.
+  else if (/\.gif(?:$|[?#])/iu.test(src)) {
+    const still = `${url}&output=webp`
+    url = `${url}&n=-1&output=webp&errorredirect=${encodeURIComponent(still)}`
+  }
   return url
 }
 
