@@ -706,9 +706,25 @@ function thumbUrl(src: string, height: number, options: { webp?: boolean } = {})
   let url = `https://images.weserv.nl/?url=${encoded}&h=${String(height)}&fit=inside&we=1`
   // Theme covers ask for webp on still photos: a 520px PNG of a UI
   // screenshot still weighed 0.4–0.6 MB (#1060). Only png/jpeg/webp URLs
-  // opt in — GIFs and extension-less GitHub attachments stay resized-only
-  // so an animated cover is not flattened to its first frame.
+  // opt in; extension-less GitHub attachments stay resized-only.
   if (options.webp === true && /\.(?:png|jpe?g|webp)(?:$|[?#])/iu.test(src)) url += '&output=webp'
+  // An animated GIF would otherwise come back as a single still frame: the
+  // resize drops every frame past the first, so a curated animated cover sat
+  // frozen on the card and in the strip. `n=-1` asks for every frame and
+  // `output=webp` re-encodes the animation far smaller than the original
+  // (a 7s 600×420 demo: 283KB → 31KB at h=200), so it keeps moving without
+  // costing more than a still would.
+  //
+  // `n=-1` decodes every frame, which is what the resizer's input limits
+  // measure: past 71 000 000 decoded pixels or 400 frames it answers 404 and
+  // the card would show a broken image where it used to show a frozen one.
+  // That is 15 of the catalog's 71 GIF covers. `errorredirect` sends the
+  // browser to the same resize WITHOUT `n=-1` in exactly that case, so the
+  // fallback is today's behaviour — a still, the right size, and visible.
+  else if (/\.gif(?:$|[?#])/iu.test(src)) {
+    const still = `${url}&output=webp`
+    url = `${url}&n=-1&output=webp&errorredirect=${encodeURIComponent(still)}`
+  }
   return url
 }
 
