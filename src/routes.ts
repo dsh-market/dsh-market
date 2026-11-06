@@ -26,6 +26,7 @@ import { dshHostInfo, findDshInstallDir } from './dsh-install.ts'
 import { catalogReleaseManifest, deriveHostCompatibility, DiscoveryManifestIndex, findCompatibleVersion } from './discovery-compatibility.ts'
 import { configurePersistentLog, exportLogs, logEvent, readPersistentLog } from './log.ts'
 import { marketFetch } from './net.ts'
+import { catalogReleaseSourceOf, publishedReleaseUpdate, type CatalogReleaseSource } from './release-updates.ts'
 import { diagnosePackageManifests } from './diagnostics.ts'
 import {
   BOOT_ID, cancelActive, probePnpm, progress, provisionPnpm, runDshPlugin, setBuildEnvSource, TARGET_RE,
@@ -95,7 +96,7 @@ function isGitHubReleaseTarballSpec(spec: string): boolean {
     const segments = url.pathname.split('/').filter(segment => segment !== '')
     return segments.length >= 6
       && segments[2] === 'releases'
-      && segments[3] === 'download'
+      && (segments[3] === 'download' || (segments[3] === 'latest' && segments[4] === 'download'))
       && (url.pathname.endsWith('.tgz') || url.pathname.endsWith('.tar.gz'))
   } catch {
     return false
@@ -2444,6 +2445,7 @@ export function mountMarketRoutes(
     channelFor: Map<string, Channel>
     onlineSourceFor: Map<string, string>
     catalogNpmByRepo: Map<string, string>
+    releaseSources: Map<string, CatalogReleaseSource>
   }> {
     // Only the market itself follows the channel setting (see
     // MarketSettings.channel): a user opting into betas is volunteering to
@@ -2462,11 +2464,16 @@ export function mountMarketRoutes(
     // failure semantics as below: a failed registry load leaves the map
     // empty, and an empty map authorizes nothing.
     const catalogNpmByRepo = new Map<string, string>()
+    const releaseSources = new Map<string, CatalogReleaseSource>()
     try {
       const registry = await loadRegistry()
       for (const [name, spec] of Object.entries(installed)) {
         const source = onlineSourceOf(registry.plugins, name, spec)
         if (source !== null) onlineSourceFor.set(name, source)
+        const releases = registry.plugins.map(plugin => catalogReleaseSourceOf(spec, plugin)).filter((value): value is CatalogReleaseSource => value !== null)
+        // A shared asset must not select one of several monorepo manifests.
+        const unique = new Map(releases.map(value => [JSON.stringify(value), value]))
+        if (unique.size === 1) releaseSources.set(name, [...unique.values()][0]!)
       }
       for (const plugin of registry.plugins) {
         if (plugin.npm === null || plugin.npm === undefined) continue
@@ -2476,7 +2483,7 @@ export function mountMarketRoutes(
     } catch (error) {
       logEvent('warn', 'updates', `package source lookup failed — ${error instanceof Error ? error.message : String(error)}`)
     }
-    return { channelFor, onlineSourceFor, catalogNpmByRepo }
+    return { channelFor, onlineSourceFor, catalogNpmByRepo, releaseSources }
   }
 
   /**
@@ -2643,8 +2650,8 @@ export function mountMarketRoutes(
           return
         }
         try {
-          const { channelFor, onlineSourceFor, catalogNpmByRepo } = await updateCheckInputs()
-          const updates = await checkUpdates(config.profile, forceCheckFrom(request), activeProfileDir, channelFor, onlineSourceFor, catalogNpmByRepo, { holdYoungReleases: config.desktopHost === true })
+          const { channelFor, onlineSourceFor, catalogNpmByRepo, releaseSources } = await updateCheckInputs()
+          const updates = await checkUpdates(config.profile, forceCheckFrom(request), activeProfileDir, channelFor, onlineSourceFor, catalogNpmByRepo, { holdYoungReleases: config.desktopHost === true, releaseSources })
           // `packages` carries the same objects the single-package endpoint
           // returns, so one parser serves both. Only updatable ones: a badge
           // wants the count, a panel wants the rows, and neither wants to
@@ -2690,8 +2697,8 @@ export function mountMarketRoutes(
             // The same inputs the market page builds, so a generation (#497)
             // or a catalog-matched local package answers here with the
             // release it can be compared against rather than with nothing.
-            const { channelFor, onlineSourceFor, catalogNpmByRepo } = await updateCheckInputs()
-            const update = (await checkUpdates(config.profile, force, activeProfileDir, channelFor, onlineSourceFor, catalogNpmByRepo, { holdYoungReleases: config.desktopHost === true }))[name]
+            const { channelFor, onlineSourceFor, catalogNpmByRepo, releaseSources } = await updateCheckInputs()
+            const update = (await checkUpdates(config.profile, force, activeProfileDir, channelFor, onlineSourceFor, catalogNpmByRepo, { holdYoungReleases: config.desktopHost === true, releaseSources }))[name]
             if (update === undefined) {
               sendJson(response, 404, { schema: UPDATE_API_V1_SCHEMA, error: 'plugin is not installed' })
               return
@@ -4591,7 +4598,7 @@ export function mountMarketRoutes(
         }
         try {
           const force = (request.url ?? '').includes('force=1')
-          const { channelFor, onlineSourceFor, catalogNpmByRepo } = await updateCheckInputs()
+          const { channelFor, onlineSourceFor, catalogNpmByRepo, releaseSources } = await updateCheckInputs()
           // Migration hints are this listing's own business: the market page
           // is where "this could come from npm now" is offered, and no other
           // caller acts on it.
@@ -4618,7 +4625,7 @@ export function mountMarketRoutes(
           } catch (error) {
             logEvent('warn', 'updates', `package source lookup failed — ${error instanceof Error ? error.message : String(error)}`)
           }
-          const updates = await checkUpdates(config.profile, force, activeProfileDir, channelFor, onlineSourceFor, catalogNpmByRepo, { holdYoungReleases: config.desktopHost === true })
+          const updates = await checkUpdates(config.profile, force, activeProfileDir, channelFor, onlineSourceFor, catalogNpmByRepo, { holdYoungReleases: config.desktopHost === true, releaseSources })
           for (const [name, migration] of sourceMigrationFor) {
             const status = updates[name]
             if (status !== undefined) updates[name] = { ...status, sourceMigration: migration }
@@ -5175,17 +5182,33 @@ sendJson(response, 200, { updates })
             const genericGitTarget = gitSpec === null ? gitUpdateTarget(spec) : null
             const isGit = gitSpec !== null || genericGitTarget !== null
             const isReleaseTarball = !restore && isGitHubReleaseTarballSpec(spec)
+            let releaseUpdate: Awaited<ReturnType<typeof publishedReleaseUpdate>> = null
+            if (isReleaseTarball) {
+              const source = (await updateCheckInputs()).releaseSources.get(name)
+              if (source !== undefined) {
+                const installedVersion = readInstalledVersion(config.profile, name, activeProfileDir)
+                releaseUpdate = await publishedReleaseUpdate(source, name)
+                if (releaseUpdate === null || (compatVersion !== null && releaseUpdate.version !== compatVersion)) {
+                  sendJson(response, 409, { error: '无法确认新版完整包，插件没有改动。请刷新市场后重试。 / The published complete package could not be verified. Nothing was changed; refresh the market and try again.' })
+                  return
+                }
+                if (installedVersion !== null && !isUpgrade(installedVersion, releaseUpdate.version)) {
+                  invalidateUpdates()
+                  if (installedVersion === releaseUpdate.version) sendJson(response, 200, { ok: true, skipped: 'current', name, version: installedVersion })
+                  else sendJson(response, 400, { error: '新版完整包比已安装版本更旧，已停止更新。 / The published package is older than the installed version; nothing was changed.' })
+                  return
+                }
+              }
+            }
             const isNpmRollbackSource = !restore && !isGit && !isReleaseTarball
               // Market-managed npm installs persist only a range, version, or
               // dist-tag. Any protocol/path/manual shorthand needs its own
               // proven source-preserving rollback rather than being guessed
               // into name@<installed-version>.
               && !/[:/\\]/.test(spec)
-            // Every ordinary non-Git update still installs name@<tag>, even
-            // when its PREVIOUS source was a release URL. Source
-            // classification chooses rollback mechanics; it must not weaken
-            // the existing registry target/downgrade validation.
-            const usesNpmUpdateTarget = !restore && !isGit
+            // Curated floating archives remain archives. Other non-Git
+            // sources retain the existing repo-bound npm migration checks.
+            const usesNpmUpdateTarget = !restore && !isGit && releaseUpdate === null
             // #768: an archive URL carries no registry identity, so
             // name@<tag> would not update this install — it would replace it
             // with whatever package shares its name. Only proceed when a
@@ -5209,7 +5232,7 @@ sendJson(response, 200, { updates })
             // The market follows its channel; everything else is `latest`.
             const selfChannel = SELF_NAMES.has(name) ? activeChannel() : null
             const tag = selfChannel === null ? 'latest' : DIST_TAG[selfChannel]
-            let expectedNpmVersion: string | null = null
+            let expectedNpmVersion: string | null = releaseUpdate?.version ?? null
             /** The target could not be pinned because registry lookups failed (#1047). */
             let versionUnverified = false
             let enforceMatureReleaseAge = false
@@ -5447,6 +5470,7 @@ sendJson(response, 200, { updates })
             // nothing where one does not.
             let target = restore
               ? (NPM_NAME_RE.test(spec) ? `${spec}@${tag}` : await acceleratedTarget(spec, region))
+              : releaseUpdate !== null ? releaseUpdate.target
               : usesNpmUpdateTarget
                 ? (expectedNpmVersion !== null ? `${name}@${expectedNpmVersion}` : `${name}@${tag}`)
                 : genericGitTarget !== null
@@ -6008,7 +6032,7 @@ sendJson(response, 200, { updates })
             // when a floating tag is what was sent). A version above the pin
             // is only possible on a floating target whose resolver moved
             // forward mid-download; that stays accepted.
-            if (ok && usesNpmUpdateTarget) {
+            if (ok && (usesNpmUpdateTarget || releaseUpdate !== null)) {
               const floatingDistTag = expectedNpmVersion === null
               if (
                 floatingDistTag
@@ -6031,7 +6055,7 @@ sendJson(response, 200, { updates })
               const targetOrder = target !== null && afterVersion !== null
                 ? compareVersions(afterVersion, target)
                 : null
-              const targetMismatch = target !== null && (
+              const targetMismatch = releaseUpdate !== null ? afterVersion !== target : target !== null && (
                 afterVersion === null
                 || (targetOrder !== null
                   // Comparable: getting LESS than we asked for is the symptom.
