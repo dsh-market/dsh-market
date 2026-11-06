@@ -10854,3 +10854,66 @@ describe('Agent-safe drain mode (#411)', () => {
   })
 })
 
+describe('catalog-owned floating release archives', () => {
+  const original = 'https://github.com/o/whale/releases/latest/download/full.tgz'
+  const target = 'https://github.com/o/whale/releases/download/v2.0.0/full.tgz'
+  const bundle = { dsh: { bundle: { patch: './cordis.patch.yml' } }, main: 'index.js' }
+  const patch = "- insert:\n    - id: dsh-whale\n      name: 'dsh-whale'\n"
+  beforeEach(() => {
+    registryModule.loadRegistry.mockImplementation(() => Promise.resolve({ ...REGISTRY, plugins: [...REGISTRY.plugins, {
+      ...REGISTRY.plugins.find(plugin => plugin.name === 'dsh-prebuilt')!,
+      name: 'WhaleMaid', url: 'https://github.com/o/whale/tree/main/packages/host', tarball: original,
+    }] }))
+    writeFileSync(join(fake.profileDir, 'package.json'), JSON.stringify({ dependencies: { 'dsh-whale': original }, dsh: { profile: { bundles: ['dsh-whale'] } } }))
+    const path = join(fake.profileDir, 'node_modules/dsh-whale')
+    mkdirSync(path, { recursive: true })
+    writeFileSync(join(path, 'package.json'), JSON.stringify({ name: 'dsh-whale', version: '1.0.0', ...bundle }))
+    writeFileSync(join(path, 'index.js'), 'old-whale')
+    writeFileSync(join(path, 'cordis.patch.yml'), patch)
+    fake.tarballs[original] = { name: 'dsh-whale', manifest: { name: 'dsh-whale', version: '1.0.0', ...bundle }, artifacts: ['index.js', 'cordis.patch.yml'], artifactContents: { 'index.js': 'old-whale', 'cordis.patch.yml': patch } }
+    fake.tarballs[target] = { name: 'dsh-whale', manifest: { name: 'dsh-whale', version: '2.0.0', ...bundle }, artifacts: ['index.js', 'cordis.patch.yml'], artifactContents: { 'index.js': 'new-whale', 'cordis.patch.yml': patch } }
+    vi.stubGlobal('fetch', async (input: unknown) => {
+      const url = String(input)
+      if (url === 'https://github.com/o/whale/releases/latest') return new Response(null, { status: 302, headers: { location: 'https://github.com/o/whale/releases/tag/v2.0.0' } })
+      if (url === 'https://raw.githubusercontent.com/o/whale/v2.0.0/packages/host/package.json') return new Response(JSON.stringify({ name: 'dsh-whale', version: '2.0.0' }))
+      if (url === target) return new Response(null, { status: 302, headers: { location: 'https://release-assets.githubusercontent.com/asset' } })
+      return new Response('{}', { status: 404 })
+    })
+  })
+  afterEach(() => { registryModule.loadRegistry.mockImplementation(() => Promise.resolve(REGISTRY)) })
+
+  it('lists and applies a published complete package without switching to npm or source', async () => {
+    const page = await bed.dispatch('GET', '/dsh-market/updates?force=1')
+    expect(page.json.updates['dsh-whale']).toMatchObject({ latest: '2.0.0', updateAvailable: true })
+    const single = await bed.dispatch('GET', '/dsh-market/api/v1/updates?name=dsh-whale&force=1')
+    expect(single.json.package).toMatchObject({ name: 'dsh-whale', latestVersion: '2.0.0', updateAvailable: true })
+    const summary = await bed.dispatch('GET', '/dsh-market/api/v1/updates/summary')
+    expect(summary.json.packages).toEqual(expect.arrayContaining([expect.objectContaining({ name: 'dsh-whale', latestVersion: '2.0.0' })]))
+    const update = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-whale' })
+    expect(update.status, JSON.stringify(update.json)).toBe(200)
+    expect(update.json.ok).toBe(true)
+    expect(installedSpec('dsh-whale')).toBe(target)
+    expect(fake.calls.some(call => call.includes(target))).toBe(true)
+    expect(fake.calls.some(call => /dsh-whale@|github:o\/whale/.test(call))).toBe(false)
+  })
+  it('refuses a downgrade before invoking the installer', async () => {
+    const path = join(fake.profileDir, 'node_modules/dsh-whale/package.json')
+    writeFileSync(path, JSON.stringify({ name: 'dsh-whale', version: '3.0.0', dsh: {}, main: 'index.js' }))
+    const calls = fake.calls.length
+    const update = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-whale' })
+    expect(update.status).toBe(400)
+    expect(fake.calls).toHaveLength(calls)
+    expect(installedSpec('dsh-whale')).toBe(original)
+  })
+  it('rejects archive bytes whose installed version differs from the published target', async () => {
+    fake.tarballs[target]!.manifest = { name: 'dsh-whale', version: '1.5.0', ...bundle }
+    const update = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-whale' })
+    expect(update.json.ok).toBe(false)
+    expect(JSON.stringify(update.json)).toContain('2.0.0')
+    expect(installedSpec('dsh-whale')).toBe(original)
+    // Preserve the existing policy: a mutable archive URL cannot prove an
+    // exact old build. Restore declarations but report that limitation.
+    expect(String(update.json.error)).toContain('could not be verified')
+  })
+})
+
