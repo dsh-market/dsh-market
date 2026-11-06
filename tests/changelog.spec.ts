@@ -51,14 +51,18 @@ describe('loadUpdateNotes', () => {
     tarEntries?: Array<[string, string]>
     originStatus?: number
     originBody?: unknown
+    /** `dist.tarball` exactly as the registry answers it; absolute by default. */
+    tarball?: string
   } = {}): void {
     vi.stubGlobal('fetch', vi.fn(async (input: string | URL) => {
       const url = String(input)
+      // Real fetch refuses a relative URL before any request is made.
+      if (!URL.canParse(url)) throw new TypeError(`Failed to parse URL from ${url}`)
       if (url.endsWith('/dsh-plugin-updates/latest')) {
         if (options.metaStatus !== undefined) return new Response('no', { status: options.metaStatus })
         return new Response(JSON.stringify({
           version: '2026.8.26.1',
-          dist: { tarball: `${url.replace(/\/latest$/, '')}/-/dsh-plugin-updates-2026.8.26.1.tgz` },
+          dist: { tarball: options.tarball ?? `${url.replace(/\/latest$/, '')}/-/dsh-plugin-updates-2026.8.26.1.tgz` },
         }), { status: 200 })
       }
       if (url.includes('.tgz')) {
@@ -93,6 +97,18 @@ describe('loadUpdateNotes', () => {
   it('reads the package on the region registry', async () => {
     stub()
     await expect(loadUpdateNotes(true)).resolves.toEqual(PAYLOAD)
+  })
+
+  it('resolves a relative dist.tarball against the registry (#1117)', async () => {
+    // Registries mounted under a path prefix (Nexus, Verdaccio, reverse
+    // proxies) answer with a relative tarball. Fetched as is, it threw, and
+    // the notes came from the origin copy with nothing logged.
+    stub({ tarball: '/dsh-plugin-updates/-/dsh-plugin-updates-2026.8.26.1.tgz' })
+    await expect(loadUpdateNotes(true)).resolves.toEqual(PAYLOAD)
+    const urls = vi.mocked(globalThis.fetch).mock.calls.map(c => String(c[0]))
+    expect(urls.filter(u => u.includes('.tgz'))).toHaveLength(1)
+    expect(urls.find(u => u.includes('.tgz'))).toMatch(/^https?:\/\/[^/]+\/dsh-plugin-updates\/-\//u)
+    expect(urls.filter(u => u.endsWith('updates.json'))).toHaveLength(0)
   })
 
   it('falls back to the origin copy when the package cannot be read', async () => {
