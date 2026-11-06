@@ -20,7 +20,7 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
-  applyRecovery, matchFailureToPlugins, parseBootFailure, recoveryPayload,
+  applyRecovery, matchFailureToPlugins, parseBootFailure, portListening, recoveryPayload,
   respawnAndWatch, runRecovery, startRecoveryServer, type RecoveryConfig, type RecoveryPlugin,
 } from '../src/recovery.ts'
 import { restartHelperSource } from '../src/restart.ts'
@@ -56,6 +56,20 @@ async function hold(): Promise<{ port: number; release: () => Promise<void> }> {
     if (closed) return
     closed = true
     await new Promise<void>(resolve => server.close(() => resolve()))
+    // `close()` returning is NOT the same statement as "nothing answers here".
+    // Measured on WSL2 (Linux 6.6.114.1, 25/25 runs): a just-closed listener
+    // kept ACCEPTING connections for 9.3-11.1ms. `runRecovery`'s first probe
+    // (src/recovery.ts's "already answering" guard) reads one of those
+    // connections as "the host came back" and exits 'booted', so the surface
+    // these three specs wait for never starts. Wait for the same predicate
+    // that guard waits for, so the fixture hands over a port that is really
+    // free; the wait is bounded because a port some other process grabbed in
+    // the meantime would never become free.
+    const deadline = Date.now() + 2_000
+    while (await portListening(port)) {
+      if (Date.now() > deadline) break
+      await new Promise(resolve => setTimeout(resolve, 10))
+    }
   }
   cleanups.push(release)
   return { port, release }
