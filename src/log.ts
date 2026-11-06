@@ -73,7 +73,9 @@ export function logEvent(level: LogLevel, event: string, detail: string): void {
   try {
     const line = `${JSON.stringify(entry)}\n`
     appendFileSync(persistentFile, line)
-    persistentBytes += line.length
+    // Bytes, not UTF-16 units: CJK detail is 3 bytes a character on disk,
+    // and the counter has to agree with `statSync().size` it started from.
+    persistentBytes += Buffer.byteLength(line)
     // Trimming only on mount left the cap unenforced for the life of a
     // process: 20k events grew the file to 3.2 MB in a measurement, and a
     // retry loop is exactly the situation that both logs hardest and never
@@ -97,7 +99,7 @@ function trimPersistentLog(file: string): void {
   let bytes = 0
   for (let index = lines.length - 1; index >= 0 && bytes <= PERSISTENT_MAX_BYTES / 2; index -= 1) {
     kept.unshift(`${lines[index]!}\n`)
-    bytes += lines[index]!.length + 1
+    bytes += Buffer.byteLength(lines[index]!) + 1
   }
   writeFileSync(file, kept.join(''))
   persistentBytes = bytes
