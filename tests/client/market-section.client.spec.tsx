@@ -9553,6 +9553,9 @@ describe('Plugins page tab lays out as page content', () => {
     })
     const scroller = document.createElement('div')
     const header = document.createElement('div')
+    const hostTabs = document.createElement('div')
+    hostTabs.setAttribute('role', 'tablist')
+    header.append(hostTabs)
     const mount = document.createElement('div')
     scroller.append(header, mount)
     document.body.append(scroller)
@@ -9564,7 +9567,11 @@ describe('Plugins page tab lays out as page content', () => {
       return style
     })
     scroller.getBoundingClientRect = () => box(10, 810)
-    header.getBoundingClientRect = () => box(10, 66)
+    // The current desktop host keeps a tall, transparent sticky wrapper after
+    // its title compacts. Only the nested page tabs still paint at the top;
+    // using the wrapper's bottom leaves a card-height gap above our tabs.
+    header.getBoundingClientRect = () => box(10, 170)
+    hostTabs.getBoundingClientRect = () => box(10, 66)
     try {
       const { container, rerender } = render(<MarketSection {...props()} surface="plugins" />, { container: mount })
       await screen.findByText('dsh-loop')

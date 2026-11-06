@@ -2244,12 +2244,29 @@ function listScroller(
 function hostStickyOffset(scroller: HTMLElement, market: HTMLElement): number {
   const scrollerTop = scroller.getBoundingClientRect().top
   let bottom = scrollerTop
+  const visibleTabBottom = (node: Element): number | null => {
+    const tabLists = node.matches('[role="tablist"]')
+      ? [node]
+      : Array.from(node.querySelectorAll('[role="tablist"]'))
+    let tabsBottom = scrollerTop
+    for (const tabList of tabLists) {
+      const style = getComputedStyle(tabList)
+      if (style.display === 'none' || style.visibility === 'hidden') continue
+      const rect = tabList.getBoundingClientRect()
+      if (rect.height > 0 && rect.bottom > scrollerTop) tabsBottom = Math.max(tabsBottom, rect.bottom)
+    }
+    return tabsBottom > scrollerTop ? tabsBottom : null
+  }
   const consider = (node: Element): void => {
     const position = getComputedStyle(node).position
     if (position !== 'sticky' && position !== 'fixed') return
     const rect = node.getBoundingClientRect()
     if (rect.height > 0 && rect.top <= scrollerTop + 4 && rect.bottom > scrollerTop) {
-      bottom = Math.max(bottom, rect.bottom)
+      // The current desktop host keeps the expanded page-head wrapper sticky
+      // after compacting it visually. Its transparent tail is not chrome and
+      // must not reserve a card-height gap above the market. Prefer the last
+      // visible page-tab edge when the wrapper exposes that semantic anchor.
+      bottom = Math.max(bottom, visibleTabBottom(node) ?? rect.bottom)
     }
   }
   const walkPreceding = (node: Element): void => {

@@ -9933,11 +9933,22 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		function hostStickyOffset(scroller, market) {
 			const scrollerTop = scroller.getBoundingClientRect().top;
 			let bottom = scrollerTop;
+			const visibleTabBottom = (node) => {
+				const tabLists = node.matches("[role=\"tablist\"]") ? [node] : Array.from(node.querySelectorAll("[role=\"tablist\"]"));
+				let tabsBottom = scrollerTop;
+				for (const tabList of tabLists) {
+					const style = getComputedStyle(tabList);
+					if (style.display === "none" || style.visibility === "hidden") continue;
+					const rect = tabList.getBoundingClientRect();
+					if (rect.height > 0 && rect.bottom > scrollerTop) tabsBottom = Math.max(tabsBottom, rect.bottom);
+				}
+				return tabsBottom > scrollerTop ? tabsBottom : null;
+			};
 			const consider = (node) => {
 				const position = getComputedStyle(node).position;
 				if (position !== "sticky" && position !== "fixed") return;
 				const rect = node.getBoundingClientRect();
-				if (rect.height > 0 && rect.top <= scrollerTop + 4 && rect.bottom > scrollerTop) bottom = Math.max(bottom, rect.bottom);
+				if (rect.height > 0 && rect.top <= scrollerTop + 4 && rect.bottom > scrollerTop) bottom = Math.max(bottom, visibleTabBottom(node) ?? rect.bottom);
 			};
 			const walkPreceding = (node) => {
 				consider(node);
