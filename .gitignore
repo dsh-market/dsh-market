@@ -1,4 +1,8 @@
 node_modules/
+# A symlinked checkout of node_modules is a file, not a directory, so the rule
+# above does not match it; without this line it gets committed and turns every
+# Windows clone's `npm install` into a EEXIST on node_modules.
+/node_modules
 lib/
 research/
 *.tgz
