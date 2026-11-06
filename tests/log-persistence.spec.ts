@@ -170,6 +170,18 @@ describe('persistent log sink', () => {
     expect(JSON.parse(lines[lines.length - 1]!).detail).toContain('2099')
   })
 
+  it('counts the cap in bytes, so CJK detail cannot overshoot it', () => {
+    // JSON.stringify keeps CJK unescaped: each character is 3 bytes on disk
+    // and 1 in `string.length`. A line here is about 680 bytes and 280
+    // characters, so 450 events write about 300 KB while a character count
+    // stays near 125K and never reaches the trim.
+    configurePersistentLog(logFile)
+    for (let i = 0; i < 450; i++) logEvent('error', 'install', `${'安装失败：'.repeat(40)} ${i}`)
+    expect(statSync(logFile).size).toBeLessThanOrEqual(256 * 1024)
+    const lines = readPersistentLog(logFile)
+    expect(JSON.parse(lines[lines.length - 1]!).detail).toContain('449')
+  })
+
   it('keeps exportLogs readable with and without prior sessions', () => {
     configurePersistentLog(logFile)
     logEvent('error', 'install', 'remove failed (exit 1) but the package is gone')
