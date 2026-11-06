@@ -27,6 +27,34 @@ import { marketFetch } from './net.ts'
 const TIMEOUT_MS = 20_000
 
 /**
+ * `dist.tarball` as an absolute URL.
+ *
+ * A registry behind a path prefix — Nexus, Verdaccio, a reverse proxy — may
+ * answer that field as a relative path (`/dsh-plugin-catalog/-/…`). pnpm
+ * resolves it against the registry; passing it straight to `fetch` threw
+ * "Failed to parse URL" instead, the npm source dropped out of the list, and
+ * the market read the catalog from somewhere else without saying so (#1117).
+ *
+ * Relative resolution follows the URL rules: a value starting with `/` is
+ * root-relative and a bare path is relative to the registry's own directory,
+ * which is where the registry serves it from. Nothing is rewritten when the
+ * field is already absolute.
+ */
+export function absoluteTarballUrl(tarball: string, registry: string): string {
+  try {
+    return new URL(tarball).href
+  } catch {
+    // Not absolute — resolve below, and keep the raw value if even that fails
+    // so the error still names what the registry answered.
+  }
+  try {
+    return new URL(tarball, `${registry.replace(/\/+$/u, '')}/`).href
+  } catch {
+    return tarball
+  }
+}
+
+/**
  * A tar entry header, as far as this needs to read one.
  *
  * Written out rather than pulled from a dependency: the format is 512-byte
@@ -121,7 +149,7 @@ export async function catalogFromPackage(
   // to a source that took longer still. TIMEOUT_MS still bounds the wait for
   // the response to start, the one thing a fixed timer is good at.
   const bytes = fileFromTarball(Buffer.from(
-    await fetchBodyWhileProgressing(marketFetch, tarball, `${pkg} tarball`),
+    await fetchBodyWhileProgressing(marketFetch, absoluteTarballUrl(tarball, registry), `${pkg} tarball`),
   ), file)
   if (bytes === null) throw new Error(`${pkg}@${version} carries no ${file}`)
   return { version, data: JSON.parse(bytes.toString('utf8')) as unknown }
@@ -151,7 +179,7 @@ export async function packageFileFromRegistry(registry: string, pkg: string, fil
     const meta = (await metaRes.json()) as Packument
     const tarball = typeof meta.dist?.tarball === 'string' ? meta.dist.tarball : null
     if (tarball === null) return null
-    const tarRes = await marketFetch(tarball, { signal: AbortSignal.timeout(TIMEOUT_MS) })
+    const tarRes = await marketFetch(absoluteTarballUrl(tarball, registry), { signal: AbortSignal.timeout(TIMEOUT_MS) })
     if (!tarRes.ok) return null
     return fileFromTarball(Buffer.from(await tarRes.arrayBuffer()), file)
   } catch {

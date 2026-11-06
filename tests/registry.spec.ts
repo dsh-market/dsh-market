@@ -283,6 +283,48 @@ describe('loadRegistry download regions', () => {
     expect(asked[2]).toContain('dsh-plugin-catalog')
   })
 
+  it('says in the log that a configured mirror failed, even when a later source answers (#1117)', async () => {
+    // The list is a fallback chain: the first two mirrors are dead, the
+    // official host answers, and the market looks perfectly normal. Nothing
+    // on screen can show that the mirror this person configured never
+    // worked — so the log has to.
+    byUrl([
+      [/mirrors\.cloud\.tencent\.com/, new Error('getaddrinfo ENOTFOUND mirrors.cloud.tencent.com')],
+      [/registry\.npmmirror\.com/, new Error('fetch failed')],
+      [/awesome-dsh-plugin\.com/, ok(CATALOG)],
+    ])
+    const log = await import('../src/log.ts')
+    const spy = vi.spyOn(log, 'logEvent').mockImplementation(() => undefined)
+    try {
+      expect((await loadRegistry('china')).plugins).toHaveLength(1)
+      const lines = spy.mock.calls.map(([level, event, detail]) => `${String(level)} ${String(event)} ${String(detail)}`)
+      expect(lines.some(line => line.startsWith('warn registry')
+        && line.includes('mirrors.cloud.tencent.com')
+        && line.includes('reading from a later source'))).toBe(true)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('stays quiet when the retry is what saved the source (#1117)', async () => {
+    // One failure followed by a success on the same source is the retry
+    // doing its job. Logging that would put a warning in every imported log.
+    let calls = 0
+    vi.stubGlobal('fetch', vi.fn(() => {
+      calls += 1
+      return calls === 1 ? Promise.reject(new Error('fetch failed')) : Promise.resolve(ok(CATALOG).clone())
+    }))
+    const log = await import('../src/log.ts')
+    const spy = vi.spyOn(log, 'logEvent').mockImplementation(() => undefined)
+    try {
+      expect((await loadRegistry('global')).plugins).toHaveLength(1)
+      const lines = spy.mock.calls.map(([level, event, detail]) => `${String(level)} ${String(event)} ${String(detail)}`)
+      expect(lines.some(line => line.includes('reading from a later source'))).toBe(false)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
   it('keeps the primary source\'s own reason instead of the fallback\'s (#750)', async () => {
     // The report: the primary was failing for a reason worth acting on (DNS,
     // refusal, 404) while the fallback timed out, and the message named only

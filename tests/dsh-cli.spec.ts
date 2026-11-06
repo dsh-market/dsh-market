@@ -626,3 +626,26 @@ describe('clearOwnedProfileLock (#914)', () => {
     expect(existsSync(lockPath)).toBe(true)
   })
 })
+
+describe('child output is decoded once its bytes are known (#1122)', () => {
+  /**
+   * The report: on a Chinese Windows machine an install failed and the reason
+   * read `'dsh' �����ڲ����ⲿ���Ҳ���ǿ����еĳ���` — cmd.exe's GBK bytes decoded
+   * as UTF-8. The decoding lives in proc-text.ts and is unit-tested there;
+   * this is the wiring: the runner must hand it BYTES, not pre-decoded text.
+   * A character split across two writes is the part a per-chunk
+   * `chunk.toString()` cannot get right on any platform.
+   */
+  it('joins a character split across two writes', async () => {
+    const script = "const b = Buffer.from('插件市场', 'utf8'); process.stdout.write(b.subarray(0, 2));"
+      + 'setTimeout(() => { process.stdout.write(b.subarray(2)); }, 50)'
+    const { runHostPnpm } = await import('../src/dsh-cli.ts')
+    const result = await runHostPnpm(
+      { command: process.execPath, args: ['-e', script], env: { ...process.env } },
+      process.cwd(),
+      [],
+    )
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toBe('插件市场')
+  })
+})

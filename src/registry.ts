@@ -367,6 +367,15 @@ export async function loadRegistry(region: Region = activeRegion()): Promise<Reg
         })
       }
     }
+    // Every source here is a fallback for the one before it, so this failure
+    // may never reach the screen: the market reads the catalog from the next
+    // source and looks fine, while a mirror this person configured and cannot
+    // see failing stays broken (#1117). One line per source per load — the
+    // full list is still in the thrown message when everything fails.
+    const ownFailure = failures.findLast(failure => failure.source === key)
+    if (ownFailure !== undefined && sourceIndex + 1 < catalogSources.length) {
+      logEvent('warn', 'registry', `catalog: ${key} failed, reading from a later source — ${ownFailure.reason.slice(0, 200)}`)
+    }
   }
   throw new Error(describeFetchFailure(last, Date.now() - started, attempts, failures))
 }

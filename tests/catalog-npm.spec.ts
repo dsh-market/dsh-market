@@ -224,4 +224,43 @@ describe('catalogFromPackage', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ version: '1.0.0' }), { status: 200 })))
     await expect(catalogFromPackage(REGISTRY, 'awesome-dsh-plugin')).rejects.toThrow(/no version or tarball/)
   })
+
+  /**
+   * A registry behind a path prefix — Nexus, Verdaccio, a reverse proxy —
+   * may answer `dist.tarball` with a path instead of a URL. Passing that to
+   * `fetch` threw "Failed to parse URL", the npm source left the list, and
+   * the catalog was read from the public URL without a word (#1117).
+   */
+  async function relativeTarball(tarball: string): Promise<string> {
+    requested = []
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL) => {
+      const url = String(input)
+      requested.push(url)
+      if (url.endsWith('/latest')) {
+        return new Response(JSON.stringify({ version: '2026.8.22', dist: { tarball } }), { status: 200 })
+      }
+      return new Response(tarballFixture(), { status: 200 })
+    }))
+    await expect(catalogFromPackage('http://npm.example.internal/npm', 'awesome-dsh-plugin'))
+      .resolves.toEqual({ version: '2026.8.22', data: CATALOG })
+    return requested[1]!
+  }
+
+  function tarballFixture(): Buffer {
+    return tarball([['package/plugins.json', JSON.stringify(CATALOG)]])
+  }
+
+  it('resolves a root-relative dist.tarball against the registry host (#1117)', async () => {
+    expect(await relativeTarball('/awesome-dsh-plugin/-/awesome-dsh-plugin-2026.8.22.tgz'))
+      .toBe('http://npm.example.internal/awesome-dsh-plugin/-/awesome-dsh-plugin-2026.8.22.tgz')
+  })
+
+  it('resolves a path with no leading slash under the registry prefix (#1117)', async () => {
+    expect(await relativeTarball('awesome-dsh-plugin/-/awesome-dsh-plugin-2026.8.22.tgz'))
+      .toBe('http://npm.example.internal/npm/awesome-dsh-plugin/-/awesome-dsh-plugin-2026.8.22.tgz')
+  })
+
+  it('leaves an absolute dist.tarball exactly as the registry wrote it (#1117)', async () => {
+    expect(await relativeTarball('https://cdn.example.test/a.tgz')).toBe('https://cdn.example.test/a.tgz')
+  })
 })
