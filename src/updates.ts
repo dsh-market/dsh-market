@@ -16,7 +16,7 @@ import { publishedReleaseUpdate, type CatalogReleaseSource } from './release-upd
 import { activeRegion, githubRoutesFor, rememberGithubRoute, throughProxy, type Region } from './regions.ts'
 import type { GitToNpmMigration, NpmRenameMigration } from './source-migration.ts'
 import { isNumericReleaseAgeWindow, readMinimumReleaseAgeMs } from './install.ts'
-import { isStableReleaseVersion, selectMatureUpdate, type MatureUpdateSelection, type NpmPackument } from './release-candidates.ts'
+import { isStableReleaseVersion, selectMatureUpdate, versionMaturity, type MatureUpdateSelection, type NpmPackument } from './release-candidates.ts'
 import { hasDshManifest, profileDir, readGitResolutionCommit, readInstalled, readInstalledVersion, readLockCommits, readProfileBundles } from './profile.ts'
 import { userPatchPackageReferences } from './patch.ts'
 import { catalogRepoKey, gitCommitOfTarget, gitRefOfTarget, gitUploadPackUrl, hasSemverSelector, hostedRepoKey, githubCommitOfTarget, githubRefOfTarget, isGenerationLink, isGitHostedSpec, lookupRepoFromUrl, parseGitHubRemote, repoOfTarget } from './sources.ts'
@@ -429,6 +429,58 @@ export async function resolveDesktopMatureUpdate(name: string, installed: string
       until: new Date(until !== null && until > now ? until : now + UNKNOWN_PUBLISH_HOLD_MS).toISOString(),
       ...(until === null || until <= now ? { estimated: true as const } : {}),
     } }),
+  }
+}
+
+/**
+ * The maturity of ONE precisely named version, for the compatibility dialog.
+ * "You can update to 1.7.11" is only advice; this answers whether that exact
+ * version may be installed right now, and if not, when. Never throws: an
+ * unreadable policy or an unreachable registry is reported as unknown so the
+ * UI can stay quiet instead of promising something the install would refuse.
+ */
+export interface RequestedVersionMaturity {
+  version: string
+  /** true = installable now, false = held, null = not verifiable here. */
+  installable: boolean | null
+  held: boolean
+  exempt: boolean
+  publishedAt: string | null
+  nextMaturityAt: string | null
+  releaseAgeMs: number | null
+  reason: 'eligible' | 'held' | 'unknown-age' | 'policy-unknown' | 'registry-unavailable' | 'unknown-version'
+}
+
+export async function readVersionMaturity(name: string, version: string, profile: string, activeProfileDir: string, now = Date.now()): Promise<RequestedVersionMaturity> {
+  const unknown = (reason: RequestedVersionMaturity['reason']): RequestedVersionMaturity => ({
+    version, installable: null, held: false, exempt: false, publishedAt: null, nextMaturityAt: null, releaseAgeMs: null, reason,
+  })
+  const windowMs = readMinimumReleaseAgeMs(profile, activeProfileDir)
+  const policy = readReleaseAgeExclusions(activeProfileDir, name)
+  if (windowMs === null || policy.kind === 'unknown') return unknown('policy-unknown')
+  // Same two-attempt, cache-busting read as resolveDesktopMatureUpdate: a stale
+  // mirror must not be able to make a held version look installable.
+  let packument: NpmPackument | null = null
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const suffix = attempt === 0 ? '' : `?t=${String(Date.now())}`
+      packument = (await fetchJson(npmUrl(`${encodeURIComponent(name)}${suffix}`))) as NpmPackument
+      break
+    } catch { /* Retry once against a potentially stale mirror. */ }
+  }
+  if (packument === null) return unknown('registry-unavailable')
+  const versions = packument.versions
+  if (typeof versions !== 'object' || versions === null || !Object.hasOwn(versions, version)) return unknown('unknown-version')
+  const maturity = versionMaturity(packument, version, now, { minimumReleaseAgeMs: windowMs, ...policy.exclusions })
+  return {
+    version,
+    installable: maturity.mature,
+    held: !maturity.mature,
+    exempt: maturity.exempt,
+    publishedAt: maturity.publishedAt === null ? null : new Date(maturity.publishedAt).toISOString(),
+    nextMaturityAt: maturity.matureAt === null ? null : new Date(maturity.matureAt).toISOString(),
+    releaseAgeMs: windowMs,
+    reason: maturity.mature ? 'eligible' : maturity.publishedAt === null ? 'unknown-age' : 'held',
   }
 }
 

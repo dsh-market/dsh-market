@@ -113,3 +113,32 @@ export function selectMatureUpdate(packument: NpmPackument, installed: string | 
     latestMaturityAt: latestPublished === null || latestExempt ? null : latestPublished + ageMs,
   }
 }
+
+/**
+ * Judge ONE requested version against the same wait policy selectMatureUpdate
+ * enforces, without selecting anything. The compatibility dialog names a
+ * precise version ("update to 1.7.11: it declares support for this DSH") that
+ * the age gate may still hold; the caller needs that fact in prose, not a 409.
+ * Fail-closed like its sibling: an exempt package does not make a fabricated
+ * or missing timestamp installable, and an unknown policy is not a pass.
+ */
+export interface VersionMaturity {
+  publishedAt: number | null
+  matureAt: number | null
+  exempt: boolean
+  mature: boolean
+  policyKnown: boolean
+}
+
+export function versionMaturity(packument: NpmPackument, version: string, now: number, policy: MatureUpdatePolicy): VersionMaturity {
+  const ageMs = policy.minimumReleaseAgeMs
+  const policyKnown = Number.isSafeInteger(ageMs) && ageMs >= 0 && Number.isFinite(now)
+  const times = typeof packument?.time === 'object' && packument.time !== null ? packument.time : {}
+  const published = strictPublishTime((times as Record<string, unknown>)[version])
+  const exempt = policy.exemptPackage === true || policy.exemptVersions?.has(version) === true
+  if (published === null) return { publishedAt: null, matureAt: null, exempt, mature: false, policyKnown }
+  if (!policyKnown) return { publishedAt: published, matureAt: null, exempt, mature: false, policyKnown }
+  const matureAt = exempt ? published : published + ageMs
+  const mature = published <= now && (exempt || published <= now - ageMs)
+  return { publishedAt: published, matureAt: Number.isFinite(matureAt) ? matureAt : null, exempt, mature, policyKnown }
+}

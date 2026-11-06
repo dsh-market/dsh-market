@@ -1,6 +1,6 @@
 /** Production selector regression matrix based on research/issue-991/select-mature.test.mjs. */
 import { describe, expect, it } from 'vitest'
-import { isStableReleaseVersion, selectMatureUpdate, type NpmPackument, type MatureUpdatePolicy } from '../src/release-candidates.ts'
+import { isStableReleaseVersion, selectMatureUpdate, versionMaturity, type NpmPackument, type MatureUpdatePolicy } from '../src/release-candidates.ts'
 
 const now = Date.parse('2026-10-25T12:00:00.000Z')
 const old = '2026-10-22T00:00:00.000Z'
@@ -79,5 +79,60 @@ describe('Issue #991 production mature npm stable selector', () => {
     })
     expect(select(doc, '1.0.0', { latestFromEndpoint: '1.3.0' }).candidate).toBe('1.1.0')
     expect(select(doc, '1.0.0', { latestFromEndpoint: '1.3.0', minimumReleaseAgeMs: 0 }).candidate).toBe('1.3.0')
+  })
+})
+
+/**
+ * versionMaturity answers for ONE named version, which is what a dialog needs:
+ * the update flow can ask for a specific release (compatVersion) that is not
+ * the selector's candidate, and it still has to obey the profile's window.
+ */
+describe('versionMaturity — one named version (#945)', () => {
+  const pick = (doc = fixture(), version = '1.2.0', extra: Partial<MatureUpdatePolicy> = {}) =>
+    versionMaturity(doc, version, now, { ...policy, ...extra })
+
+  it('names the exact instant a held release becomes installable', () => {
+    const maturity = pick()
+    expect(maturity).toMatchObject({ mature: false, policyKnown: true, exempt: false })
+    expect(maturity.publishedAt).toBe(Date.parse(fresh))
+    expect(maturity.matureAt).toBe(Date.parse(fresh) + policy.minimumReleaseAgeMs)
+  })
+
+  it('calls an old release installable and keeps the instant it became so', () => {
+    const maturity = pick(fixture(), '1.1.0')
+    expect(maturity).toMatchObject({ mature: true, exempt: false })
+    expect(maturity.matureAt).toBe(Date.parse(old) + policy.minimumReleaseAgeMs)
+  })
+
+  it('treats an exemption as "no window", not as "unknown age"', () => {
+    const maturity = pick(fixture(), '1.2.0', { exemptVersions: new Set(['1.2.0']) })
+    expect(maturity).toMatchObject({ mature: true, exempt: true })
+    expect(maturity.matureAt).toBe(Date.parse(fresh))
+    expect(pick(fixture(), '1.2.0', { exemptPackage: true }).mature).toBe(true)
+  })
+
+  it('never lets an exemption stand in for a missing publish time', () => {
+    const doc = fixture({ time: { '1.0.0': old, '1.1.0': old } })
+    expect(pick(doc, '1.2.0', { exemptVersions: new Set(['1.2.0']) }))
+      .toMatchObject({ publishedAt: null, matureAt: null, mature: false, exempt: true })
+  })
+
+  it('refuses malformed or future publish times', () => {
+    expect(pick(fixture({ time: { '1.2.0': 'yesterday' } })).mature).toBe(false)
+    expect(pick(fixture({ time: { '1.2.0': '2026-02-30T00:00:00Z' } }))).toMatchObject({ publishedAt: null, mature: false })
+    const future = new Date(now + 3_600_000).toISOString()
+    expect(pick(fixture({ time: { '1.2.0': future } }))).toMatchObject({ mature: false })
+  })
+
+  it('reports the policy as unknown instead of guessing a window', () => {
+    for (const age of [Number.NaN, -1, 1.5, Number.POSITIVE_INFINITY]) {
+      const maturity = pick(fixture(), '1.2.0', { minimumReleaseAgeMs: age })
+      expect(maturity).toMatchObject({ policyKnown: false, mature: false, matureAt: null })
+      expect(maturity.publishedAt).toBe(Date.parse(fresh))
+    }
+  })
+
+  it('always reports immaturity for a version the packument does not carry', () => {
+    expect(pick(fixture(), '9.9.9')).toMatchObject({ publishedAt: null, matureAt: null, mature: false })
   })
 })

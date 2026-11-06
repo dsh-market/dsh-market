@@ -10591,3 +10591,53 @@ describe('Agent-safe drain mode (#411)', () => {
     expect(screen.queryByRole('button', { name: en.opRetry })).toBeNull()
   })
 })
+
+/**
+ * #945: a release can declare this host and still be too fresh for the
+ * profile's release-age policy. The dialog used to offer it as the safe way
+ * out, and the click could only fail. Say it is waiting, and do not offer it.
+ */
+describe('a compatible release still inside the release-age wait (#945)', () => {
+  afterEach(() => { vi.restoreAllMocks(); cleanup() })
+
+  it('names the wait and disables the version it cannot install yet', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-11-06T20:00:00Z'))
+    stubFetch({
+      '/dsh-market/install': { __status: 400, hostIncompatible: { name: 'dsh-loop', npmName: 'dsh-loop', version: '2.0.0', requirement: '>=0.1.7', hostVersion: '0.1.5-rc.3' } },
+      '/dsh-market/find-compatible': {
+        compatibleVersion: '1.2.0', upgradeOnly: false,
+        maturity: {
+          version: '1.2.0', installable: false, held: true, exempt: false,
+          publishedAt: '2026-11-06T18:00:00.000Z', nextMaturityAt: '2026-11-07T18:00:00.000Z',
+          releaseAgeMs: 86_400_000, reason: 'held',
+        },
+      },
+    })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getAllByRole('button', { name: en.install })[0])
+    fireEvent.click(await screen.findByRole('button', { name: en.confirmInstall }))
+
+    // Two hours into a twenty-four hour window: about twenty-two to go.
+    const description = await screen.findByText(new RegExp('still inside the release-age wait'))
+    expect(description.textContent).toContain(en.hostIncompatibleHeldTarget
+      .replace('{version}', '1.2.0').replace('{window}', '24').replace('{hours}', '22'))
+    const offered = screen.getByRole('button', { name: en.hostIncompatibleHeldButton.replace('{hours}', '22') })
+    expect((offered as HTMLButtonElement).disabled).toBe(true)
+    // The refusal stays a refusal: no install request follows the dialog.
+    expect(fetchCalls.filter(call => call.path === '/dsh-market/install').length).toBe(1)
+  })
+
+  it('still offers the version when the host cannot read its age', async () => {
+    stubFetch({
+      '/dsh-market/install': { __status: 400, hostIncompatible: { name: 'dsh-loop', npmName: 'dsh-loop', version: '2.0.0', requirement: '>=0.1.7', hostVersion: '0.1.5-rc.3' } },
+      '/dsh-market/find-compatible': { compatibleVersion: '1.2.0', upgradeOnly: false, maturity: null },
+    })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getAllByRole('button', { name: en.install })[0])
+    fireEvent.click(await screen.findByRole('button', { name: en.confirmInstall }))
+    const offered = await screen.findByRole('button', { name: en.hostIncompatibleInstallCompat.replace('{version}', '1.2.0') })
+    expect((offered as HTMLButtonElement).disabled).toBe(false)
+  })
+})

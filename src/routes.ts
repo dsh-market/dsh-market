@@ -57,7 +57,7 @@ import {
 import { resolveRegion } from './region-probe.ts'
 import { acceleratedTarget, resolveHeadCommit } from './accelerate.ts'
 import { sourceWebUrl, updateNotesFor } from './changelog.ts'
-import { checkUpdates, isUpdatablePlugin, compareVersions, fetchNpmLatest, invalidateUpdates, resolveDesktopMatureUpdate, resolveGitRemoteHead, isUpgrade, latestPublishedRecently, setUpdateRegistry, versionOnChannel } from './updates.ts'
+import { checkUpdates, isUpdatablePlugin, compareVersions, fetchNpmLatest, invalidateUpdates, readVersionMaturity, resolveDesktopMatureUpdate, resolveGitRemoteHead, isUpgrade, latestPublishedRecently, setUpdateRegistry, versionOnChannel } from './updates.ts'
 import { isStableReleaseVersion } from './release-candidates.ts'
 import { createThemeManager, type LoaderEntry } from './themes.ts'
 import { readJsonBody, refuseUnadmitted, sameOrigin, sendJson } from './http.ts'
@@ -3389,9 +3389,17 @@ export function mountMarketRoutes(
             undefined,
             currentVersion,
           )
+          // A compatible version is only advice until the release-age gate
+          // agrees: the dialog says "update to X", and clicking that used to
+          // dead-end on a 409 the log never mentioned. Answer both questions
+          // here, where the caller can say "in about N hours" up front.
+          const maturity = compatibleVersion === null
+            ? null
+            : await readVersionMaturity(npmName, compatibleVersion, config.profile, activeProfileDir)
           logEvent('info', 'find-compatible',
-            `${npmName}: host=${host.version}, after=${currentVersion ?? 'none'} → ${compatibleVersion ?? 'none'}`)
-          sendJson(response, 200, { compatibleVersion, currentVersion, upgradeOnly })
+            `${npmName}: host=${host.version}, after=${currentVersion ?? 'none'} → ${compatibleVersion ?? 'none'}`
+            + ` (held=${maturity === null ? 'n/a' : String(maturity.held)}, maturity=${maturity?.reason ?? 'n/a'})`)
+          sendJson(response, 200, { compatibleVersion, currentVersion, upgradeOnly, maturity })
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
         }
@@ -5368,9 +5376,36 @@ sendJson(response, 200, { updates })
                 }
                 // compatVersion is an existing host-compatibility escape hatch,
                 // never an exemption from the profile's release-age policy.
+                // The dialog that produced compatVersion promised this exact
+                // version, so a bare "not verified mature" dead-ends the user
+                // in a refusal with no cause and no next step. Answer in the
+                // three parts AGENTS.md asks for: what happened (held), why
+                // (wait window, still short by N hours), what now (keep the
+                // current version, try again after).
                 if (compatVersion !== null && eligible.candidate !== compatVersion) {
                   invalidateUpdates()
-                  sendJson(response, 409, { staleTarget: true, error: 'The requested compatible version is not verified mature under the current profile policy.' })
+                  const maturity = await readVersionMaturity(name, compatVersion, config.profile, activeProfileDir)
+                  const heldHours = maturity.nextMaturityAt === null
+                    ? null
+                    : Math.max(1, Math.ceil((Date.parse(maturity.nextMaturityAt) - Date.now()) / 3_600_000))
+                  const windowHours = maturity.releaseAgeMs === null ? 24 : Math.round(maturity.releaseAgeMs / 3_600_000)
+                  const gapZh = heldHours === null ? '一天左右' : `约 ${heldHours} 小时`
+                  const waitZh = `${gapZh}后`
+                  const waitEn = heldHours === null ? 'in about a day' : `in about ${heldHours} ${heldHours === 1 ? 'hour' : 'hours'}`
+                  const keptZh = installedVersion === null ? '插件没有改动' : `插件仍是 ${installedVersion}`
+                  logEvent('warn', 'update-held',
+                    `${name}@${compatVersion}: compatible with this host but inside the release-age wait `
+                    + `(window=${windowHours}h, candidate=${eligible.candidate ?? 'none'}, maturity=${maturity.reason}, retry=${waitEn})`)
+                  sendJson(response, 409, {
+                    staleTarget: true,
+                    failureCode: maturity.reason === 'held' ? 'RELEASE_AGE_HELD' : 'RELEASE_AGE_UNVERIFIED',
+                    requestedVersion: compatVersion,
+                    candidate: eligible.candidate,
+                    nextMaturityAt: maturity.nextMaturityAt,
+                    releaseAgeMs: maturity.releaseAgeMs,
+                    error: `没法更新到 ${compatVersion}：它能兼容当前 DSH，但还在发布等待期——新版本发布后要等 ${windowHours} 小时才算稳定，它还差${gapZh}。${keptZh}，可以${waitZh}再更新一次。 / `
+                      + `Cannot update to ${compatVersion} yet: it does support this DSH, but it is still inside the release-age wait (a new release has to settle for ${windowHours} hours; ${gapZh === '一天左右' ? 'about a day' : `about ${heldHours} hours`} to go). Nothing was changed${installedVersion === null ? '' : ` — the plugin is still on ${installedVersion}`}; update again ${waitEn}.`,
+                  })
                   return
                 }
                 expectedNpmVersion = eligible.candidate

@@ -270,6 +270,12 @@ export const zh = {
   hostIncompatibleSearching: '正在查找还兼容当前 DSH 的版本…',
   hostIncompatibleFoundInstall: '可以装 {version}：它声明兼容当前 DSH。',
   hostIncompatibleFoundUpdate: '可以更新到 {version}：它声明兼容当前 DSH。',
+  // A compatible release can still be inside the release-age wait. The dialog
+  // must not offer it as "the way out" and then let the click fail.
+  hostIncompatibleHeldTarget: '可以选 {version}：它声明兼容当前 DSH，但还在发布等待期——新版本发布后要等 {window} 小时才算稳定，还差约 {hours} 小时。',
+  hostIncompatibleHeldTargetUnknown: '可以选 {version}：它声明兼容当前 DSH，但还在发布等待期，暂时算不出还要等多久。',
+  hostIncompatibleHeldButton: '还在等待期（约 {hours} 小时）',
+  hostIncompatibleHeldButtonUnknown: '还在等待期',
   hostIncompatibleNoCompat: '没有找到声明兼容当前 DSH 的版本。',
   hostIncompatibleSearchFailed: '暂时查不到兼容版本。',
   hostIncompatibleInstallCompat: '安装 {version}',
@@ -1083,6 +1089,12 @@ export const en: Record<MarketKey, string> = {
   hostIncompatibleSearching: 'Looking for a version that still supports this DSH…',
   hostIncompatibleFoundInstall: 'You can install {version} — it declares support for this DSH.',
   hostIncompatibleFoundUpdate: 'You can update to {version} — it declares support for this DSH.',
+  // Compatible, but still inside the release-age wait: say it here instead of
+  // letting the button fail a moment later.
+  hostIncompatibleHeldTarget: '{version} does declare support for this DSH, but it is still inside the release-age wait — a new release has to settle for {window} hours, so about {hours} more to go.',
+  hostIncompatibleHeldTargetUnknown: '{version} does declare support for this DSH, but it is still inside the release-age wait, and this host cannot work out how long is left.',
+  hostIncompatibleHeldButton: 'Still waiting ({hours}h)',
+  hostIncompatibleHeldButtonUnknown: 'Still waiting',
   hostIncompatibleNoCompat: 'No version declares support for this DSH.',
   hostIncompatibleSearchFailed: 'Could not look up compatible versions.',
   hostIncompatibleInstallCompat: 'Install {version}',
@@ -1879,6 +1891,10 @@ export const ja: Record<MarketKey, string> = {
   hostIncompatibleSearching: '現在の DSH と互換性のあるバージョンを探しています…',
   hostIncompatibleFoundInstall: '{version} をインストールできます。現在の DSH への対応を宣言しています。',
   hostIncompatibleFoundUpdate: '{version} に更新できます。現在の DSH への対応を宣言しています。',
+  hostIncompatibleHeldTarget: '{version} は現在の DSH への対応を宣言していますが、まだ公開直後の待機期間中です — 新しい版は {window} 時間の経過が必要で、あと約 {hours} 時間です。',
+  hostIncompatibleHeldTargetUnknown: '{version} は現在の DSH への対応を宣言していますが、まだ公開直後の待機期間中です。残り時間はこの環境では判定できません。',
+  hostIncompatibleHeldButton: '待機中（約 {hours} 時間）',
+  hostIncompatibleHeldButtonUnknown: '待機中',
   hostIncompatibleNoCompat: '現在の DSH への対応を宣言しているバージョンは見つかりませんでした。',
   hostIncompatibleSearchFailed: '互換性のあるバージョンを今は確認できません。',
   hostIncompatibleInstallCompat: '{version} をインストール',
