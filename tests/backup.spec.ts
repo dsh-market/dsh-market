@@ -14,7 +14,7 @@ vi.mock('node:dns/promises', () => ({ lookup: network.lookup }))
 vi.mock('node:https', () => ({ request: network.request }))
 
 import {
-  createProfileBackup, downloadWebdav, isPublicTarget, resolvePublicAddress, restoreProfileBackup, unportableDeps, uploadWebdav, WebdavUrlError,
+  createProfileBackup, downloadWebdav, isPublicTarget, pinRunningDeps, resolvePublicAddress, restoreProfileBackup, unportableDeps, uploadWebdav, WebdavUrlError,
 } from '../src/backup.ts'
 import { profileDir } from '../src/profile.ts'
 import { canCreateSymlink } from './symlink-support.ts'
@@ -485,5 +485,46 @@ describe('unportableDeps (#205)', () => {
   it('carries the offending spec, so the message can name what to repoint', () => {
     expect(unportableDeps({ 'dev-plugin': 'link:/Users/rudy/dev/dev-plugin' }))
       .toEqual([{ name: 'dev-plugin', spec: 'link:/Users/rudy/dev/dev-plugin' }])
+  })
+})
+
+describe('pinRunningDeps', () => {
+  it('keeps the running spec for the package that is running the restore', () => {
+    // A backup written by another market version would have `pnpm install`
+    // replace this package's files under the live module — the same mixed
+    // state the update route refuses (#608), except here the code answering
+    // the request is the code being swapped out.
+    expect(pinRunningDeps(
+      { dependencies: { dshmarket: '1.73.12', 'dsh-loop': '^2.0.0' } },
+      { dependencies: { dshmarket: '1.73.11', 'dsh-loop': '^1.0.0' } },
+      new Set(['dshmarket']),
+    )).toEqual({
+      dependencies: { dshmarket: '1.73.11', 'dsh-loop': '^2.0.0' },
+      pinned: [{ name: 'dshmarket', from: '1.73.12', to: '1.73.11' }],
+    })
+  })
+
+  it('changes nothing when the install would leave the running package alone', () => {
+    expect(pinRunningDeps(
+      { dependencies: { dshmarket: '1.73.11' } },
+      { dependencies: { dshmarket: '1.73.11' } },
+      new Set(['dshmarket']),
+    )).toEqual({ dependencies: { dshmarket: '1.73.11' }, pinned: [] })
+  })
+
+  it('does not invent a pin for a package the target does not have', () => {
+    // Not installed here means nothing is running: the backup's spec is the
+    // only one there is, and the ordinary install path applies it.
+    expect(pinRunningDeps(
+      { dependencies: { dshmarket: '1.73.12' } },
+      { dependencies: {} },
+      new Set(['dshmarket', 'dsh-market']),
+    )).toEqual({ dependencies: { dshmarket: '1.73.12' }, pinned: [] })
+  })
+
+  it('is defensive about manifests a hand-edited profile can produce', () => {
+    expect(pinRunningDeps({}, {}, new Set(['dshmarket']))).toEqual({ dependencies: {}, pinned: [] })
+    expect(pinRunningDeps({ dependencies: 42 } as never, { dependencies: [] } as never, new Set(['dshmarket'])))
+      .toEqual({ dependencies: {}, pinned: [] })
   })
 })

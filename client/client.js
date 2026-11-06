@@ -683,6 +683,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			restoreDone: "恢复完成，请重启 DeepSeek Harness",
 			restorePartial: "恢复已完成，但下列插件安装失败：",
 			restoreUnportable: "安装来源是另一台电脑上的本地路径，本机找不到。请重新安装该插件，或改为本机路径",
+			restoreSelfPinned: "市场自身的版本不会随恢复改变（否则会在恢复途中替换掉正在运行的自己）。需要时请用「更新」单独升级",
 			restoreBootError: "恢复后仍无法启动：",
 			orphanBundle: "⚠️ 下次启动会失败：profile 声明了这些插件，但它们没有安装。请重新安装，或从 profile 的 package.json 的 dsh.profile.bundles 中删除：",
 			restoreConfirm: "恢复将覆盖当前 profile 配置并重新安装插件，确定继续吗？",
@@ -1470,6 +1471,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			restoreDone: "Restore complete — restart DeepSeek Harness",
 			restorePartial: "Restore completed, but these plugins failed to install:",
 			restoreUnportable: "installs from a path on another computer that does not exist here — reinstall or point it to a local path",
+			restoreSelfPinned: "the market keeps its own version during a restore — swapping it mid-restore would replace the running market. Update it separately when you want the newer one",
 			restoreBootError: "Still cannot boot after the restore:",
 			orphanBundle: "⚠️ The next start will fail: the profile declares these plugins but they are not installed. Reinstall them, or remove them from dsh.profile.bundles in the profile package.json:",
 			restoreConfirm: "Restore will overwrite this profile configuration and reinstall plugins. Continue?",
@@ -2256,6 +2258,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			restoreDone: "復元が完了しました。DeepSeek Harness を再起動してください",
 			restorePartial: "復元は完了しましたが、次のプラグインのインストールに失敗しました：",
 			restoreUnportable: "インストール元が別のコンピュータ上のローカルパスで、ここには存在しません。そのプラグインを再インストールするか、このマシンのパスを指すようにしてください",
+			restoreSelfPinned: "市場自身のバージョンは復元では変わりません（復元中に実行中の市場を置き換えてしまうため）。必要なときは「更新」で個別にアップグレードしてください",
 			restoreBootError: "復元してもまだ起動できません：",
 			orphanBundle: "⚠️ 次回の起動に失敗します。profile はこれらのプラグインを宣言していますが、インストールされていません。再インストールするか、profile の package.json の dsh.profile.bundles から削除してください：",
 			restoreConfirm: "復元すると現在の profile の設定が上書きされ、プラグインが再インストールされます。続けますか？",
@@ -13431,10 +13434,12 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const finishRestore = (0, react.useCallback)((body) => {
 				const errors = Array.isArray(body.errors) ? body.errors : [];
 				const unportable = Array.isArray(body.unportable) ? body.unportable : [];
+				const pinned = Array.isArray(body.pinned) ? body.pinned : [];
 				const bootErrors = Array.isArray(body.bootErrors) ? body.bootErrors.map(String) : [];
 				setRestoreErrors([
 					...errors.map((item) => `${String(item.name)}: ${String(item.error)}`),
 					...unportable.map((item) => `${String(item.name)}: ${t("restoreUnportable")} (${String(item.spec)})`),
+					...pinned.map((item) => `${String(item.name)}: ${t("restoreSelfPinned")} (${String(item.from)} → ${String(item.to)})`),
 					...bootErrors.map((line) => `${t("restoreBootError")} ${line}`)
 				]);
 				setBackupRestored(true);
