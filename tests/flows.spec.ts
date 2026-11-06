@@ -7984,6 +7984,30 @@ describe('generic enable/disable toggle (#60)', () => {
     expect(readFileSync(userPatch, 'utf8').startsWith(own)).toBe(true)
   })
 
+  it('does not read a row that names another module as a decision (#1113)', async () => {
+    // The shape a package rename leaves behind: the row's `name` is no longer
+    // what the id composes to, and the host skips it — `applyPatches`:
+    // `if (name && name !== target.name)`. Counting the flag alone showed the
+    // plugin as 「已停用」 while it was running, and answering "off" wrote
+    // nothing because that row looked like the user's decision.
+    const { userPatch, entry } = await installPatchy()
+    const stale = '- id: dsh-patchy\n  name: old-package-name\n  disabled: false\n'
+    writeFileSync(userPatch, stale)
+    entry.options.disabled = null
+    entry.fiber = {}
+
+    const listed = await bed.dispatch('GET', '/dsh-market/installed')
+    expect(listed.json.patchDisabled).not.toContain('dsh-patchy')
+    expect(listed.json.patchForced).not.toContain('dsh-patchy')
+
+    const off = await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-patchy', enabled: false })
+    expect(off.status).toBe(200)
+    // Its own row, written below the stale one; the stale row is untouched.
+    expect(readFileSync(userPatch, 'utf8')).toBe(`${stale}- id: dsh-patchy\n  disabled: true\n`)
+    const listedOff = await bed.dispatch('GET', '/dsh-market/installed')
+    expect(listedOff.json.patchDisabled).toContain('dsh-patchy')
+  })
+
   it('still keeps a plugin off when nothing outside the market re-enabled it', async () => {
     // The guard exists because DSH's own overlay can re-update an entry
     // during activation and wipe the runtime flag; that must still be undone.

@@ -66,7 +66,7 @@ import { detectedDebugger, detectedSupervisor, restartAllowed, scheduleRestart, 
 import type { RecoveryPlugin } from './recovery.ts'
 import { activationAfterReplace, brokenClientBundles, bundlePatchIsEmpty, checkClientBundle, defaultHostRuntimeFacts, findUnservedConfigNamespaces, hasHostHalf, hostPeerGate, isDeclaredLibraryDsh, newlyBrokenBundles, peerGateRemedy, verifyActivation } from './verify.ts'
 import {
-  carrierRowIds, disableRow, enableRow, findUserPatchPath, foreignRowIds, isProtectedModule, loaderEntryId, packagePatchFlags,
+  carrierRowIds, composedRowName, disableRow, enableRow, findUserPatchPath, foreignRowIds, isProtectedModule, loaderEntryId, packagePatchFlags, rowFlagApplies,
   readUserPatchState, removeRowBlocks, rowIdsForPackage, userPatchPackageReferences,
 } from './patch.ts'
 import {
@@ -1233,6 +1233,12 @@ export function mountMarketRoutes(
     // What the row layer said before this call, so a rollback can put
     // each row back the way it was rather than the other way round.
     const prePatch = patchGate ? readUserPatchState(userPatchPath) : null
+    // The name the loader composed for a row, for the rows whose user-layer
+    // entry carries one of its own: the host skips an entry whose `name` is
+    // not this one, so its flag is not a decision about the row (#1113).
+    const expectedNameFor = (rowId: string): string | null => composedRowName(host, rowId)
+    /** A user-layer flag counts only when the row it names is this entry. */
+    const rowIsOurs = (rowId: string): boolean => prePatch !== null && rowFlagApplies(prePatch, rowId, expectedNameFor(rowId))
     if (patchRows.length > 0 && patchGate && prePatch !== null) {
       // Disable touches every row: one left behind leaves the package
       // half-on. Enable leaves the bundle's own opt-in rows alone — they are
@@ -1247,7 +1253,7 @@ export function mountMarketRoutes(
       // at activation — except, again, to clean a block an earlier disable
       // left, which restores the expression's authority, never a forced on.
       const targets = enabled
-        ? patchRows.filter(rowId => (!optOutRows.has(rowId) && !expressionRows.has(rowId)) || prePatch.disables.includes(rowId))
+        ? patchRows.filter(rowId => (!optOutRows.has(rowId) && !expressionRows.has(rowId)) || (rowIsOurs(rowId) && prePatch.disables.includes(rowId)))
         : patchRows
       const flipped: string[] = []
       for (const rowId of targets) {
@@ -1257,9 +1263,10 @@ export function mountMarketRoutes(
         // composes later entries last — so the append is what switched a row
         // on that #876/#1043 say must never be forced on.
         const cleanOnly = optOutRows.has(rowId) || expressionRows.has(rowId)
+        const expectedName = expectedNameFor(rowId)
         const result = enabled
-          ? await enableRow(userPatchPath, rowId, { cleanOnly })
-          : await disableRow(userPatchPath, rowId)
+          ? await enableRow(userPatchPath, rowId, { cleanOnly, expectedName })
+          : await disableRow(userPatchPath, rowId, { expectedName })
         if (result.ok) {
           flipped.push(rowId)
           continue
@@ -1283,10 +1290,10 @@ export function mountMarketRoutes(
             // `disabled: false` behind would force-enable it in the
             // user's own patch layer — the same disagreement this route
             // exists to end, one row smaller.
-            if (prePatch !== null && prePatch.disables.includes(rowId)) {
-              const back = await disableRow(userPatchPath, rowId)
+            if (prePatch !== null && rowIsOurs(rowId) && prePatch.disables.includes(rowId)) {
+              const back = await disableRow(userPatchPath, rowId, { expectedName: expectedNameFor(rowId) })
               if (!back.ok) logEvent('warn', 'toggle', `${name}: patch row ${rowId} could not be put back — ${back.reason}`)
-            } else if (prePatch === null || !prePatch.forced.includes(rowId)) {
+            } else if (prePatch === null || !rowIsOurs(rowId) || !prePatch.forced.includes(rowId)) {
               // A row already forced on before this call got nothing from
               // the enable; that block is the user's to keep.
               const cleanedRow = removeRowBlocks(userPatchPath, [rowId])
@@ -5009,10 +5016,11 @@ sendJson(response, 200, { updates })
             const patchForced = !patchDisabled && patchFlags.forced.includes(name)
             const patchWarnings: string[] = []
             for (const rowId of rowIdsForPackage(host, activeProfileDir, targetName)) {
+              const expectedName = composedRowName(host, rowId)
               const changed = patchDisabled
-                ? await disableRow(userPatchPath, rowId)
+                ? await disableRow(userPatchPath, rowId, { expectedName })
                 : patchForced
-                  ? await enableRow(userPatchPath, rowId)
+                  ? await enableRow(userPatchPath, rowId, { expectedName })
                   : { ok: true, reason: null }
               if (!changed.ok && changed.reason !== null) patchWarnings.push(changed.reason)
             }

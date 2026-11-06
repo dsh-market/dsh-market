@@ -132,6 +132,10 @@ export interface PatchState {
   forced: string[]
   /** Row ids the user patch inserts. */
   inserts: string[]
+  /** The `name` a flag row carries, when it carries one. A row whose name
+   * does not match the composed entry is skipped by the host, so its flag is
+   * not a decision about anything (#1113). */
+  names?: Record<string, string>
 }
 
 /** Row ids the market is allowed to write: plain unquoted YAML scalars. */
@@ -179,11 +183,71 @@ function entryKeyValue(lines: readonly string[], start: number, key: string): st
   return null
 }
 
+/**
+ * Whether a patch entry speaks for the row it names.
+ *
+ * The host skips an entry whose `name` is not the name that row's id composes
+ * to — `applyPatches` in dsh-app-boot, `if (name && name !== target.name)`,
+ * the same line in every published version. A row left behind by a package
+ * rename therefore never takes effect, while anything that counts the flag
+ * alone reports the plugin as off (#1113). Only a row that CARRIES a name is
+ * compared, and only when the composed name is known: an id that is not in
+ * the loader has nothing to compare against, and its flag stands.
+ *
+ * @param name - the `name` the entry carries, if any.
+ * @param expected - the composed entry's own name, or null when unknown.
+ */
+function rowApplies(name: unknown, expected: string | null): boolean {
+  if (typeof name !== 'string' || name === '') return true
+  return expected === null || name === expected
+}
+
+/**
+ * The name the loader composed for a row, or null when the id is not there.
+ *
+ * This is the comparison the host makes, against the composed entry's own
+ * `name` — NOT `nameMatchesPackage()`, which judges package ownership and
+ * treats a subpath name and a foreign package name the same way (#1113).
+ */
+export function composedRowName(host: PatchHost, rowId: string): string | null {
+  for (const entry of host.loader.entries()) {
+    if (loaderEntryId(entry) !== rowId) continue
+    const name = entry.options?.name
+    return typeof name === 'string' && name !== '' ? name : null
+  }
+  return null
+}
+
+/**
+ * Whether the user layer's flag for this row is a decision the host applies.
+ *
+ * @param state - the user patch state.
+ * @param rowId - the row being asked about.
+ * @param expected - the composed entry's name, or null when the id is not in
+ *   the loader.
+ */
+export function rowFlagApplies(state: PatchState, rowId: string, expected: string | null): boolean {
+  const carried = state.names?.[rowId]
+  return carried === undefined || rowApplies(carried, expected)
+}
+
+/** The state with one row's flags dropped when its `name` does not apply. */
+function withoutMismatchedRow(state: PatchState, rowId: string, expected: string | null): PatchState {
+  if (rowFlagApplies(state, rowId, expected)) return state
+  return {
+    disables: state.disables.filter(id => id !== rowId),
+    forced: state.forced.filter(id => id !== rowId),
+    inserts: state.inserts,
+    ...(state.names !== undefined ? { names: state.names } : {}),
+  }
+}
+
 export function readUserPatchState(patchPath: string): PatchState {
   // The host composes the file in order, later entries override earlier ones,
   // so a row has one final flag: listing it as both disabled and forced showed
   // a plugin as off while the file had it on (#1099).
   const flags = new Map<string, 'true' | 'false'>()
+  const names = new Map<string, string>()
   const inserts: string[] = []
   let text = ''
   try {
@@ -207,10 +271,23 @@ export function readUserPatchState(patchPath: string): PatchState {
     if (disableRow === null) continue
     const id = (disableRow[1] ?? disableRow[2] ?? disableRow[3])!
     const value = entryKeyValue(lines, index + 1, 'disabled')
-    if (value === 'true' || value === 'false') flags.set(id, value)
+    if (value !== 'true' && value !== 'false') continue
+    flags.set(id, value)
+    // A row that names a module is only applied by the host when that name is
+    // the one the row's id composes to; the flag stays here so the caller can
+    // make that comparison (#1113).
+    const named = entryKeyValue(lines, index + 1, 'name')
+    const unwrapped = named === null ? null : named.replace(/^(['"])(.*)\1$/u, '$2')
+    if (unwrapped !== null && unwrapped !== '') names.set(id, unwrapped)
+    else names.delete(id)
   }
   const withFlag = (flag: 'true' | 'false'): string[] => [...flags.keys()].filter(id => flags.get(id) === flag)
-  return { disables: withFlag('true'), forced: withFlag('false'), inserts }
+  return {
+    disables: withFlag('true'),
+    forced: withFlag('false'),
+    inserts,
+    ...(names.size > 0 ? { names: Object.fromEntries(names) } : {}),
+  }
 }
 
 /**
@@ -503,8 +580,12 @@ export function packagePatchFlags(
     // user's decisions ABOVE the bundle's own default count.
     const optOut = new Set(bundleOptOutRowIds(join(profileDirectory, 'node_modules', name)))
     const decidedByUser = (id: string): boolean => !optOut.has(id)
-    if (rows.some(id => decidedByUser(id) && state.disables.includes(id))) disabled.push(name)
-    if (rows.some(id => decidedByUser(id) && state.forced.includes(id))) forced.push(name)
+    // A row that names a module other than this id's does nothing in the
+    // host, so it is not a decision about this package (#1113): the shape a
+    // package rename leaves behind.
+    const applies = (id: string): boolean => rowFlagApplies(state, id, composedRowName(host, id))
+    if (rows.some(id => decidedByUser(id) && applies(id) && state.disables.includes(id))) disabled.push(name)
+    if (rows.some(id => decidedByUser(id) && applies(id) && state.forced.includes(id))) forced.push(name)
   }
   return { disabled, forced }
 }
@@ -531,7 +612,13 @@ function rowBlock(rowId: string, disabled: boolean): string {
  * after the flag too: an indented config/name/key makes this a longer entry,
  * whose first lines must never be removed (#821). Trailing comments stay put.
  */
-function rewriteRowBlocks(text: string, rowId: string, disabled: 'true' | 'false' | 'any', replace: (block: string) => string): string {
+function rewriteRowBlocks(
+  text: string,
+  rowId: string,
+  disabled: 'true' | 'false' | 'any',
+  replace: (block: string) => string,
+  expected: string | null = null,
+): string {
   const id = escapeRegExp(rowId)
   const idLine = new RegExp(`^- id: (?:${id}|'${id}'|"${id}")[ \t]*$`, 'u')
   const lines = text.match(/[^\n]*(?:\n|$)/gu)?.filter(Boolean) ?? []
@@ -540,6 +627,10 @@ function rewriteRowBlocks(text: string, rowId: string, disabled: 'true' | 'false
   let result = '', copied = 0
   for (let index = 0; index < lines.length; index += 1) {
     if (!idLine.test(lines[index]!.replace(/\r?\n$/u, ''))) continue
+    // A row that names another module is skipped by the host, so rewriting it
+    // would report a change that never happens (#1113).
+    const named = entryKeyValue(lines, index + 1, 'name')
+    if (!rowApplies(named === null ? null : named.replace(/^(['"])(.*)\1$/u, '$2'), expected)) continue
     const flagIndex = nextPatchContentLine(lines, index + 1)
     const flag = /^ {2}disabled: (true|false)[ \t]*(?:\r?\n)?$/u.exec(lines[flagIndex] ?? '')
     if (flag === null || (disabled !== 'any' && flag[1] !== disabled)) continue
@@ -571,7 +662,7 @@ function rewriteRowBlocks(text: string, rowId: string, disabled: 'true' | 'false
  *   text cannot be read as DSH's patch dialect — the caller then keeps the line
  *   scanner's answer rather than guessing.
  */
-function composedRowFlag(text: string, rowId: string): 'true' | 'false' | null {
+function composedRowFlag(text: string, rowId: string, expected: string | null = null): 'true' | 'false' | null {
   let rows: unknown[] | null
   try {
     rows = parsePatchText(text)
@@ -582,8 +673,10 @@ function composedRowFlag(text: string, rowId: string): 'true' | 'false' | null {
   let flag: 'true' | 'false' | null = null
   for (const row of rows) {
     if (row === null || typeof row !== 'object' || Array.isArray(row)) continue
-    const entry = row as { id?: unknown; disabled?: unknown }
+    const entry = row as { id?: unknown; disabled?: unknown; name?: unknown }
     if (entry.id !== rowId) continue
+    // A row naming another module never reaches this id's entry (#1113).
+    if (!rowApplies(entry.name, expected)) continue
     // An `!!js` expression arrives as a function (or a tag object): it decides
     // by itself, and flattening it here would freeze one host's answer.
     if (entry.disabled === true) flag = 'true'
@@ -592,13 +685,16 @@ function composedRowFlag(text: string, rowId: string): 'true' | 'false' | null {
   return flag
 }
 
-function lastRowFlag(text: string, rowId: string): 'true' | 'false' | null {
+function lastRowFlag(text: string, rowId: string, expected: string | null = null): 'true' | 'false' | null {
   const id = escapeRegExp(rowId)
   const idLine = new RegExp(`^- id: (?:${id}|'${id}'|"${id}")\\s*$`, 'u')
   const lines = text.split(/\r?\n/u)
   let flag: 'true' | 'false' | null = null
   for (let index = 0; index < lines.length; index += 1) {
     if (!idLine.test(lines[index] ?? '')) continue
+    const named = entryKeyValue(lines, index + 1, 'name')
+    const name = named === null ? null : named.replace(/^(['"])(.*)\1$/u, '$2')
+    if (!rowApplies(name, expected)) continue
     const value = entryKeyValue(lines, index + 1, 'disabled')
     if (value === 'true' || value === 'false') flag = value
   }
@@ -694,7 +790,11 @@ function appendPatchEntry(patchPath: string, block: string): { ok: boolean; reas
  * a later reinstall off. Duplicates an older version left are folded into
  * the one block at the same time.
  */
-export function disableRow(patchPath: string, rowId: string): Promise<{ ok: boolean; reason: string | null }> {
+export function disableRow(
+  patchPath: string,
+  rowId: string,
+  options: { expectedName?: string | null } = {},
+): Promise<{ ok: boolean; reason: string | null }> {
   return queuedWrite(async () => {
     if (!ROW_ID_RE.test(rowId)) {
       return { ok: false, reason: `行 id 含特殊字符,不支持写入补丁层 / row id ${rowId} cannot be written to the patch layer` }
@@ -707,19 +807,22 @@ export function disableRow(patchPath: string, rowId: string): Promise<{ ok: bool
       if (kept) return ''
       kept = true
       return block.replace(/^ {2}disabled: false(?=[ \t]*(?:\r?\n|$))/mu, '  disabled: true')
-    })
+    }, options.expectedName ?? null)
     if (next !== text) {
       const flipped = writePatchFile(patchPath, next)
       if (!flipped.ok) return flipped
       // A longer entry for the row further down still has the last word.
-      if (lastRowFlag(next, rowId) !== 'true') {
+      if (lastRowFlag(next, rowId, options.expectedName ?? null) !== 'true') {
         const result = appendPatchEntry(patchPath, rowBlock(rowId, true))
         if (!result.ok) return result
       }
       logEvent('info', 'patch', `disabled row ${rowId} in ${patchPath}`)
       return { ok: true, reason: null }
     }
-    const state = readUserPatchState(patchPath)
+    // A row whose `name` is not this entry's owns nothing here: counting it
+    // as already-disabled would answer "off" and change nothing, leaving the
+    // plugin running (#1113).
+    const state = withoutMismatchedRow(readUserPatchState(patchPath), rowId, options.expectedName ?? null)
     if (state.disables.includes(rowId)) return { ok: true, reason: null }
     const result = appendPatchEntry(patchPath, rowBlock(rowId, true))
     if (result.ok) logEvent('info', 'patch', `disabled row ${rowId} in ${patchPath}`)
@@ -740,18 +843,19 @@ export function disableRow(patchPath: string, rowId: string): Promise<{ ok: bool
 export function enableRow(
   patchPath: string,
   rowId: string,
-  options: { cleanOnly?: boolean } = {},
+  options: { cleanOnly?: boolean; expectedName?: string | null } = {},
 ): Promise<{ ok: boolean; reason: string | null }> {
   const cleanOnly = options.cleanOnly === true
+  const expected = options.expectedName ?? null
   return queuedWrite(async () => {
     if (!ROW_ID_RE.test(rowId)) {
       return { ok: false, reason: `行 id 含特殊字符,不支持写入补丁层 / row id ${rowId} cannot be written to the patch layer` }
     }
-    const state = readUserPatchState(patchPath)
+    const state = withoutMismatchedRow(readUserPatchState(patchPath), rowId, expected)
     const text = (() => {
       try { return readFileSync(patchPath, 'utf8') } catch { return '' }
     })()
-    const next = rewriteRowBlocks(text, rowId, 'true', () => '')
+    const next = rewriteRowBlocks(text, rowId, 'true', () => '', expected)
     if (next !== text) {
       const written = writePatchFile(patchPath, withPlaceholderRestored(next))
       if (!written.ok) return written
@@ -759,7 +863,7 @@ export function enableRow(
       // spelling the line scanner cannot see (#1112). Ask the parser the host
       // uses; when the file is not readable as its dialect, fall back to the
       // scanner.
-      const stillOff = composedRowFlag(next, rowId) ?? lastRowFlag(next, rowId)
+      const stillOff = composedRowFlag(next, rowId, expected) ?? lastRowFlag(next, rowId, expected)
       if (!cleanOnly && stillOff === 'true') {
         const result = appendPatchEntry(patchPath, rowBlock(rowId, false))
         if (!result.ok) return result
