@@ -169,12 +169,26 @@ function mountMarket(ctx: MarketClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en, ja }), 'dsh-market: dictionaries')
   const t = ctx.locale.bind(NS)
 
-  // The section's nav glyph. The shell picks nav icons from its own built-in
-  // ids and falls back to the settings gear, and a settings.section
-  // registration has no icon to pass — so the market claims its own row and
-  // swaps the gear for the block mark. Same label thunk as the registration
-  // below, so the row is re-claimed when the locale changes.
-  installSettingsNavIcon(ctx, () => t('nav'))
+  // The section's nav glyph. Before dsh 0.2.2 the shell picked icons from its
+  // own ids and a registration had nothing to pass, so the market claimed its
+  // row and swapped the gear for the block mark. 0.2.2 wraps that gear and
+  // offers `settings.section.icon` (same id as the section); registering the
+  // mark there is the one glyph, and leaving the stand-in up paints a second
+  // one beside it (#1115, #1116). The slot is the detection, and it can
+  // arrive with the settings shell after the stand-in is already in place.
+  let stopNavStandIn: (() => void) | undefined
+  let hostPaintsNavIcon = false
+  ctx.slots.inject('settings.section.icon', () => {
+    hostPaintsNavIcon = true
+    stopNavStandIn?.()
+    stopNavStandIn = undefined
+    const off = ctx.slots.register({
+      name: 'settings.section.icon',
+      id: 'market',
+    }, (owner: { size?: number } = {}) => h(MarketLogo, { size: owner.size ?? 16 }))
+    return typeof off === 'function' ? off as () => void : () => {}
+  })
+  if (!hostPaintsNavIcon) stopNavStandIn = installSettingsNavIcon(ctx, () => t('nav'))
 
   // One gate owns both questions about this entry — whether the HOST wants
   // it (#602: a shell that renders the market itself does not want a
