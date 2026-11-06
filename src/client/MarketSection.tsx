@@ -706,9 +706,15 @@ function thumbUrl(src: string, height: number, options: { webp?: boolean } = {})
   let url = `https://images.weserv.nl/?url=${encoded}&h=${String(height)}&fit=inside&we=1`
   // Theme covers ask for webp on still photos: a 520px PNG of a UI
   // screenshot still weighed 0.4–0.6 MB (#1060). Only png/jpeg/webp URLs
-  // opt in — GIFs and extension-less GitHub attachments stay resized-only
-  // so an animated cover is not flattened to its first frame.
+  // opt in; extension-less GitHub attachments stay resized-only.
   if (options.webp === true && /\.(?:png|jpe?g|webp)(?:$|[?#])/iu.test(src)) url += '&output=webp'
+  // An animated GIF would otherwise come back as a single still frame: the
+  // resize drops every frame past the first, so a curated animated cover sat
+  // frozen on the card and in the strip. `n=-1` asks for every frame and
+  // `output=webp` re-encodes the animation far smaller than the original
+  // (a 7s 600×420 demo: 283KB → 31KB at h=200), so it keeps moving without
+  // costing more than a still would.
+  else if (/\.gif(?:$|[?#])/iu.test(src)) url += '&n=-1&output=webp'
   return url
 }
 

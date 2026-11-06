@@ -8460,6 +8460,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		function thumbUrl(src, height, options = {}) {
 			let url = `https://images.weserv.nl/?url=${encodeURIComponent(src.replace(/^https?:\/\//, ""))}&h=${String(height)}&fit=inside&we=1`;
 			if (options.webp === true && /\.(?:png|jpe?g|webp)(?:$|[?#])/iu.test(src)) url += "&output=webp";
+			else if (/\.gif(?:$|[?#])/iu.test(src)) url += "&n=-1&output=webp";
 			return url;
 		}
 		/**

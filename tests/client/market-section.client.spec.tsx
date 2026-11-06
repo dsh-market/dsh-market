@@ -1752,6 +1752,55 @@ describe('MarketSection (jsdom)', () => {
     })
   })
 
+  it('keeps a curated animated GIF moving on the card and in the strip', async () => {
+    // The resizer answers with the first frame only unless told otherwise, so
+    // a curated animated cover used to sit frozen on the card and in the
+    // dialog strip. Both must ask for every frame, re-encoded as animated
+    // webp (a still costs nothing extra: no n=-1, and webp only on request).
+    const GIF = 'https://raw.githubusercontent.com/alice/dsh-loop/main/assets/demo.gif'
+    const PNG = 'https://raw.githubusercontent.com/alice/dsh-loop/main/assets/one.png'
+    const registry = JSON.parse(JSON.stringify(REGISTRY))
+    registry.plugins[0].screenshots = [GIF, PNG]
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      const path = String(url).split('?')[0]
+      if (path === '/dsh-market/registry') return Promise.resolve(new Response(JSON.stringify({ source: 'live', registry }), { status: 200 }))
+      if (path === '/dsh-market/installed') return Promise.resolve(new Response(JSON.stringify({ profile: 'web', installed: {}, live: [] }), { status: 200 }))
+      if (path === '/dsh-market/status') return Promise.resolve(new Response(JSON.stringify({ active: false, pnpm: true, boot: 'boot-1', installed: {} }), { status: 200 }))
+      if (path === '/dsh-market/updates') return Promise.resolve(new Response(JSON.stringify({ updates: {} }), { status: 200 }))
+      return Promise.reject(new Error(`unstubbed fetch: ${String(url)}`))
+    }))
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+
+    const encoded = (src: string) => encodeURIComponent(src.replace(/^https?:\/\//, ''))
+    const srcsOf = () => [...document.querySelectorAll('img')].map(img => img.getAttribute('src') ?? '')
+
+    // Card thumbnail: the animation is kept, and it is re-encoded small.
+    await waitFor(() => {
+      const gif = srcsOf().find(src => src.includes(encoded(GIF)))
+      expect(gif).toBeDefined()
+      expect(gif).toContain('&n=-1')
+      expect(gif).toContain('&output=webp')
+      const still = srcsOf().find(src => src.includes(encoded(PNG)))
+      expect(still).toBeDefined()
+      expect(still).not.toContain('n=-1')
+    })
+
+    // Dialog strip: same rule at its own height.
+    let card: HTMLElement | null = screen.getByText('dsh-loop')
+    while (card !== null && within(card).queryAllByRole('button', { name: en.install }).length === 0) {
+      card = card.parentElement
+    }
+    fireEvent.click(within(card!).getAllByRole('button', { name: en.install })[0]!)
+    await screen.findByRole('button', { name: en.confirmInstall })
+    await waitFor(() => {
+      const strip = srcsOf().filter(src => src.includes(encoded(GIF)) && src.includes('h=300'))
+      expect(strip.length).toBeGreaterThan(0)
+      expect(strip[0]).toContain('&n=-1')
+      expect(strip[0]).toContain('&output=webp')
+    })
+  })
+
   it('preserves README media for the same catalog generation and refreshes a newer one (#439)', async () => {
     const pluginUrl = 'https://github.com/bob/dsh-notify'
     const readmeUrl = 'https://raw.githubusercontent.com/bob/dsh-notify/HEAD/README.md'
@@ -6767,7 +6816,11 @@ describe('per-tab search boxes', () => {
     expect(src).not.toBe(shotA)
   })
 
-  it('keeps a GIF theme cover on the original format so the animation is not flattened (#1060)', async () => {
+  it('keeps a GIF theme cover animated through the resizer (#1060)', async () => {
+    // Resizing alone drops every frame past the first, so "leave the original
+    // format alone" did not keep the cover moving — it froze it. Ask for all
+    // frames and re-encode as animated webp, which is what actually stays
+    // animated (and weighs less than the untouched GIF).
     const shotA = 'https://raw.githubusercontent.com/carol/whale-skin/main/assets/cover.gif'
     const registry = JSON.parse(JSON.stringify(REGISTRY))
     registry.plugins[2].screenshots = [shotA]
@@ -6782,8 +6835,9 @@ describe('per-tab search boxes', () => {
     fireEvent.click(screen.getAllByRole('button', { name: en.tabThemes })[0])
     const cover = await screen.findByRole('button', { name: `${en.themePreview} whale-skin` })
     const src = cover.querySelector('img')?.getAttribute('src') ?? ''
-    expect(src).toContain('h=320')
-    expect(src).not.toContain('output=webp')
+    const encoded = encodeURIComponent(shotA.replace(/^https?:\/\//, ''))
+    expect(src).toBe(`https://images.weserv.nl/?url=${encoded}&h=320&fit=inside&we=1&n=-1&output=webp`)
+    expect(src).not.toContain('h=520')
   })
 
   it('does not transcode a GitHub attachment theme cover to webp (#1060)', async () => {
