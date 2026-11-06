@@ -69,7 +69,7 @@ import {
   readUserPatchState, removeRowBlocks, rowIdsForPackage, userPatchPackageReferences,
 } from './patch.ts'
 import {
-  createProfileBackup, downloadWebdav, MAX_BACKUP_BYTES, mergeRestoreManifest, restoreProfileBackup, secretFileCount, unportableDeps, uploadWebdav, WebdavUrlError,
+  createProfileBackup, downloadWebdav, MAX_BACKUP_BYTES, mergeRestoreManifest, pinRunningDeps, restoreProfileBackup, secretFileCount, unportableDeps, uploadWebdav, WebdavUrlError,
   type ProfileBackup,
 } from './backup.ts'
 import {
@@ -2099,7 +2099,7 @@ export function mountMarketRoutes(
     return `目录条目指向的子目录在仓库里已不存在（${repo!} 的 ${subpath!}），多半是作者改名或移动了它——这不是你的环境的问题。请到 awesome-dsh-plugin 反馈这条收录已失效。 / This catalog entry points at a subdirectory that no longer exists in the repository (${subpath!} in ${repo!}); the author most likely renamed or moved it. Nothing is wrong with your setup — please report the stale entry to awesome-dsh-plugin.`
   }
 
-  async function restoreBackup(value: unknown): Promise<{ files: number; errors: { name: string; error: string }[]; unportable?: Array<{ name: string; spec: string }>; bootErrors?: string[] }> {
+  async function restoreBackup(value: unknown): Promise<{ files: number; errors: { name: string; error: string }[]; unportable?: Array<{ name: string; spec: string }>; pinned?: Array<{ name: string; from: string; to: string }>; bootErrors?: string[] }> {
     if (!await probePnpm()) throw new Error('pnpm is required to restore plugins')
     // Snapshot the target's manifest BEFORE the backup files overwrite it, so
     // the restore can merge rather than replace: plugins the target already
@@ -2115,6 +2115,18 @@ export function mountMarketRoutes(
         JSON.parse(readFileSync(join(activeProfileDir, 'package.json'), 'utf8')) as Record<string, unknown>,
         manifestBefore,
       )
+      // This profile belongs to the process running the restore, and the
+      // market is part of it: a backup written by another market version
+      // would have the install below swap this package's files under the
+      // live module — the mixed state the update route refuses (#608), and
+      // here it also removes the code that is going to answer this request.
+      // The running spec wins; the backup's is reported so the update flow
+      // can apply it as its own restart-aware operation.
+      const selfPins = pinRunningDeps(mergedManifest, manifestBefore, SELF_NAMES)
+      mergedManifest.dependencies = selfPins.dependencies
+      if (selfPins.pinned.length > 0) {
+        logEvent('warn', 'restore', `kept the running market version — ${selfPins.pinned.map(dep => `${dep.name}: ${dep.from} -> ${dep.to}`).join('; ')}`)
+      }
       writeFileSync(join(activeProfileDir, 'package.json'), `${JSON.stringify(mergedManifest, null, 2)}\n`)
       // Named BEFORE the install runs, because that is the install this
       // will make fail: a `link:/Users/…` spec from another machine points
@@ -2131,7 +2143,7 @@ export function mountMarketRoutes(
         if (bootErrors.length > 0) {
           logEvent('warn', 'restore', `restored profile will not boot as-is — ${bootErrors.join('; ')}`)
         }
-        return { files: restored.files, errors: [], unportable, ...(bootErrors.length > 0 ? { bootErrors } : {}) }
+        return { files: restored.files, errors: [], unportable, pinned: selfPins.pinned, ...(bootErrors.length > 0 ? { bootErrors } : {}) }
       }
 
       // A bad dependency makes pnpm abort the whole install. Retry from an
@@ -2146,15 +2158,23 @@ export function mountMarketRoutes(
       }
       const dependencies = Object.entries(manifest.dependencies ?? {})
       const desiredBundles = [...(manifest.dsh?.profile?.bundles ?? [])]
-      const dependencyNames = new Set(dependencies.map(([name]) => name))
-      manifest.dependencies = {}
+      // Keep the running market out of the retry wipe. Clearing it from the
+      // manifest this process is serving from drops it out of its own bundle
+      // list mid-restore, and `pnpm add` of it writes this package's files
+      // under the live module — the two ways a restore breaks the very plugin
+      // that is running it. It is the one dependency a restore never has to
+      // re-add: it is installed, and `selfPins` already kept its spec.
+      const selfDependencies = dependencies.filter(([name]) => SELF_NAMES.has(name))
+      const retryDependencies = dependencies.filter(([name]) => !SELF_NAMES.has(name))
+      const retryNames = new Set(retryDependencies.map(([name]) => name))
+      manifest.dependencies = Object.fromEntries(selfDependencies)
       if (Array.isArray(manifest.dsh?.profile?.bundles)) {
-        manifest.dsh.profile.bundles = desiredBundles.filter(bundle => !dependencyNames.has(bundle))
+        manifest.dsh.profile.bundles = desiredBundles.filter(bundle => !retryNames.has(bundle))
       }
       writeFileSync(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`)
       const errors: { name: string; error: string }[] = []
       let installed = 0
-      for (const [name, spec] of dependencies) {
+      for (const [name, spec] of retryDependencies) {
         const target = /^(?:file|link|github|git\+|https?):/.test(spec) ? spec : `${name}@${spec}`
         try {
           const item = await runPlugin(config.profile, ['add', target])
@@ -2179,7 +2199,7 @@ export function mountMarketRoutes(
         if (current.dependencies !== undefined) delete current.dependencies[name]
         writeFileSync(manifestFile, `${JSON.stringify(current, null, 2)}\n`)
       }
-      if (installed === 0 && dependencies.length > 0) {
+      if (installed === 0 && retryDependencies.length > 0) {
         restored.rollback()
       }
       invalidateUpdates()
@@ -2187,10 +2207,17 @@ export function mountMarketRoutes(
       if (bootErrors.length > 0) {
         logEvent('warn', 'restore', `restored profile will not boot as-is — ${bootErrors.join('; ')}`)
       }
+      // The retry deletes every dependency that failed, so re-reading the
+      // manifest would report an empty unportable list — the in-memory
+      // manifest names `{}` for the same reason (#205). Report the machine-
+      // specific paths among the failures instead: those are the ones the
+      // operator has to act on, and the generic pnpm error never says so.
+      const failed = new Set(errors.map(error => error.name))
       return {
         files: restored.files,
         errors,
-        unportable: unportableDeps(manifest.dependencies),
+        unportable: unportable.filter(dep => failed.has(dep.name)),
+        pinned: selfPins.pinned,
         ...(bootErrors.length > 0 ? { bootErrors } : {}),
       }
     } catch (error) {

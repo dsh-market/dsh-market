@@ -1467,6 +1467,77 @@ describe('backup and restore (#55)', () => {
     // probe again), then dsh-loop adds cleanly.
     expect(fake.calls.slice(-5).map(call => call[0])).toEqual(['install', 'store', 'add', 'store', 'add'])
   })
+
+  /** The market is the package RUNNING the restore. Reinstalling it from the
+   * backup replaces its files under the live module, and the removal path
+   * takes it out of its own manifest before the retry — both end the request
+   * that is doing the restoring (a restore that "crashes" and leaves the
+   * profile half-written). These two tests pin the protections. */
+  it('keeps the running market version instead of installing the backup\'s', async () => {
+    const manifestPath = join(profileDir('web'), 'package.json')
+    writeFileSync(manifestPath, JSON.stringify({
+      dependencies: { dshmarket: '1.73.11' },
+      dsh: { profile: { bundles: ['dshmarket'] } },
+    }))
+    const exported = await bed.dispatch('GET', '/dsh-market/backup')
+    const backupManifest = exported.json.files.find((file: { path: string }) => file.path === 'package.json')
+    backupManifest.json.dependencies.dshmarket = '1.73.12'
+
+    const restored = await bed.dispatch('POST', '/dsh-market/restore', { backup: exported.json })
+
+    expect(restored.status).toBe(200)
+    // Reported, because the operator's question is "why is it still the old
+    // version?" — and the update flow is where that gets answered.
+    expect(restored.json.pinned).toEqual([{ name: 'dshmarket', from: '1.73.12', to: '1.73.11' }])
+    expect(installedSpec('dshmarket')).toBe('1.73.11')
+  })
+
+  it('keeps the running market in the manifest while the per-plugin retry runs', async () => {
+    const manifestPath = join(profileDir('web'), 'package.json')
+    writeFileSync(manifestPath, JSON.stringify({
+      dependencies: { dshmarket: '1.73.11' },
+      dsh: { profile: { bundles: ['dshmarket'] } },
+    }))
+    const exported = await bed.dispatch('GET', '/dsh-market/backup')
+    const backupManifest = exported.json.files.find((file: { path: string }) => file.path === 'package.json')
+    backupManifest.json.dependencies = { missing: '^1.0.0', 'dsh-loop': '^1.0.0' }
+    backupManifest.json.dsh = { profile: { bundles: ['dshmarket', 'missing', 'dsh-loop'] } }
+    fake.npm['dsh-loop'] = { latest: '1.0.0', versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } } }
+    fake.failInstallOnce = true
+    fake.captureBundlesOnNextAdd = true
+
+    const restored = await bed.dispatch('POST', '/dsh-market/restore', { backup: exported.json })
+
+    expect(restored.status).toBe(200)
+    expect(restored.json.errors).toEqual([expect.objectContaining({ name: 'missing' })])
+    // Dropping it here is what unmounts the plugin answering this request.
+    expect(fake.bundlesBeforeFallbackAdd).toEqual(['dshmarket'])
+    const finalManifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    expect(finalManifest.dependencies.dshmarket).toBe('1.73.11')
+    expect(finalManifest.dependencies['dsh-loop']).toBe('^1.0.0')
+    expect(finalManifest.dependencies.missing).toBeUndefined()
+    expect(finalManifest.dsh.profile.bundles).toEqual(['dshmarket', 'dsh-loop'])
+  })
+
+  /** The retry deletes what failed, so the manifest it leaves behind cannot
+   * answer "was any of this another machine's path?" (#205). The failure list
+   * can: the generic pnpm error is the only thing an operator would otherwise
+   * see for a `link:/Users/…` spec that was never satisfiable here. */
+  it('names the machine-specific path among the retry failures', async () => {
+    const exported = await bed.dispatch('GET', '/dsh-market/backup')
+    const backupManifest = exported.json.files.find((file: { path: string }) => file.path === 'package.json')
+    backupManifest.json.dependencies = { 'dev-plugin': 'link:/Users/rudy/dev/dev-plugin', 'dsh-loop': '^1.0.0' }
+    backupManifest.json.dsh = { profile: { bundles: [] } }
+    fake.npm['dsh-loop'] = { latest: '1.0.0', versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } } }
+    fake.failInstallOnce = true
+
+    const restored = await bed.dispatch('POST', '/dsh-market/restore', { backup: exported.json })
+
+    expect(restored.status).toBe(200)
+    expect(restored.json.errors).toEqual([expect.objectContaining({ name: 'dev-plugin' })])
+    expect(restored.json.unportable).toEqual([{ name: 'dev-plugin', spec: 'link:/Users/rudy/dev/dev-plugin' }])
+    expect(installedSpec('dsh-loop')).toBe('^1.0.0')
+  })
 })
 
 describe('install flow', () => {

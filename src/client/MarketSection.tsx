@@ -6042,7 +6042,7 @@ export function MarketSection(props: MarketSectionProps) {
     next()
   }, [reminderBatchUpdatableNames, doUpdate, refreshInstalled, updates])
 
-  const finishRestore = useCallback((body: { errors?: unknown; unportable?: unknown; bootErrors?: unknown }) => {
+  const finishRestore = useCallback((body: { errors?: unknown; unportable?: unknown; pinned?: unknown; bootErrors?: unknown }) => {
     const errors = Array.isArray(body.errors) ? body.errors as { name?: unknown; error?: unknown }[] : []
     // Machine-specific dependency paths (#205): a `link:/Users/…` spec from
     // the machine that wrote the backup names a directory that does not
@@ -6050,6 +6050,12 @@ export function MarketSection(props: MarketSectionProps) {
     // problems rather than in a banner of its own — from the operator's
     // side it is one question ("what went wrong with my restore?").
     const unportable = Array.isArray(body.unportable) ? body.unportable as { name?: unknown; spec?: unknown }[] : []
+    // The market is the package running the restore, so it keeps its own
+    // version instead of having its files swapped out mid-operation. Said
+    // here rather than in a banner of its own: from the operator's side it is
+    // the same question ("what did not come back?"), and the answer has a
+    // next step (update the market separately).
+    const pinned = Array.isArray(body.pinned) ? body.pinned as { name?: unknown; from?: unknown; to?: unknown }[] : []
     // Partial failures surface inline in the Backup tab (previously a
     // window.alert); the restore itself still completes.
     // What the profile analysis says about the composition that just landed
@@ -6060,6 +6066,7 @@ export function MarketSection(props: MarketSectionProps) {
     setRestoreErrors([
       ...errors.map(item => `${String(item.name)}: ${String(item.error)}`),
       ...unportable.map(item => `${String(item.name)}: ${t('restoreUnportable')} (${String(item.spec)})`),
+      ...pinned.map(item => `${String(item.name)}: ${t('restoreSelfPinned')} (${String(item.from)} → ${String(item.to)})`),
       ...bootErrors.map(line => `${t('restoreBootError')} ${line}`),
     ])
     setBackupRestored(true)

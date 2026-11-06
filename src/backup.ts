@@ -676,3 +676,41 @@ export function mergeRestoreManifest(
   merged.dsh = dshMerged
   return merged
 }
+
+/**
+ * Dependencies a restore must leave at the spec the target already has — the
+ * market itself, while it is the package running the restore.
+ *
+ * A restore applies the backup's manifest through `pnpm install`, which
+ * rewrites whatever that manifest pins. When the backup was written by a
+ * different market version, that install replaces THIS package's files under
+ * the live module: the mixed state the update route refuses (#608), made
+ * worse here because the code answering the restore request is the code being
+ * swapped out. The running spec therefore wins, and the backup's spec is
+ * returned so the caller can report it — the update flow can apply it later,
+ * with its restart and rollback machinery.
+ *
+ * Only string specs take part: anything else is not a pin this can compare.
+ */
+export function pinRunningDeps(
+  merged: Record<string, unknown>,
+  current: Record<string, unknown>,
+  names: ReadonlySet<string>,
+): { dependencies: Record<string, unknown>; pinned: Array<{ name: string; from: string; to: string }> } {
+  const mergedDeps = merged.dependencies === null || typeof merged.dependencies !== 'object' || Array.isArray(merged.dependencies)
+    ? {}
+    : merged.dependencies as Record<string, unknown>
+  const currentDeps = current.dependencies === null || typeof current.dependencies !== 'object' || Array.isArray(current.dependencies)
+    ? {}
+    : current.dependencies as Record<string, unknown>
+  const dependencies: Record<string, unknown> = { ...mergedDeps }
+  const pinned: Array<{ name: string; from: string; to: string }> = []
+  for (const name of names) {
+    const wanted = mergedDeps[name]
+    const running = currentDeps[name]
+    if (typeof wanted !== 'string' || typeof running !== 'string' || wanted === running) continue
+    dependencies[name] = running
+    pinned.push({ name, from: wanted, to: running })
+  }
+  return { dependencies, pinned }
+}
