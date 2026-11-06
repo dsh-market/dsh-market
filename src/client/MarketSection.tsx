@@ -2843,8 +2843,20 @@ export function MarketSection(props: MarketSectionProps) {
    * gives (install anyway) is a decision about breaking the host, and most
    * users reaching this dialog have no way to weigh it.
    */
+  // The found version carries its maturity too: a release can declare this
+  // host and still be inside the release-age wait, and promising an update
+  // that the server will refuse turns the dialog's one way out into a dead
+  // end.
   const [findingCompat, setFindingCompat] = useState<
-    { status: 'idle' | 'loading' | 'not-found' | 'error' } | { status: 'found'; version: string }
+    | { status: 'idle' | 'loading' | 'not-found' | 'error' }
+    | {
+        status: 'found'
+        version: string
+        /** true = installable now, false = held, null = the host could not say. */
+        installable: boolean | null
+        releaseAgeMs: number | null
+        nextMaturityAt: string | null
+      }
   >({ status: 'idle' })
   const [compatRetry, setCompatRetry] = useState(0)
   // Ask the moment the dialog opens: "which version still works" is the one
@@ -2865,17 +2877,48 @@ export function MarketSection(props: MarketSectionProps) {
     })
       .then(async response => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`)
-        return await response.json() as { compatibleVersion?: string | null }
+        return await response.json() as {
+          compatibleVersion?: string | null
+          maturity?: { installable?: unknown; releaseAgeMs?: unknown; nextMaturityAt?: unknown } | null
+        }
       })
       .then(data => {
         if (controller.signal.aborted) return
-        setFindingCompat(typeof data.compatibleVersion === 'string' && data.compatibleVersion !== ''
-          ? { status: 'found', version: data.compatibleVersion }
-          : { status: 'not-found' })
+        if (!(typeof data.compatibleVersion === 'string' && data.compatibleVersion !== '')) {
+          setFindingCompat({ status: 'not-found' })
+          return
+        }
+        const maturity = data.maturity !== null && typeof data.maturity === 'object' ? data.maturity : null
+        setFindingCompat({
+          status: 'found',
+          version: data.compatibleVersion,
+          installable: typeof maturity?.installable === 'boolean' ? maturity.installable : null,
+          releaseAgeMs: typeof maturity?.releaseAgeMs === 'number' ? maturity.releaseAgeMs : null,
+          nextMaturityAt: typeof maturity?.nextMaturityAt === 'string' ? maturity.nextMaturityAt : null,
+        })
       })
       .catch(() => { if (!controller.signal.aborted) setFindingCompat({ status: 'error' }) })
     return () => controller.abort()
   }, [hostIncompatible, compatRetry])
+  // Older hosts answer find-compatible without a maturity object; the update
+  // list already knows the same fact as heldUpdate, so fall back to it rather
+  // than promising a version this host would refuse.
+  const hostCompatHeldUpdate = hostIncompatible === null ? undefined : updates[hostIncompatible.npmName ?? '']
+  const hostCompatHeld = findingCompat.status === 'found' && (
+    findingCompat.installable === false ||
+    (findingCompat.installable === null && hostCompatHeldUpdate?.heldUpdate !== undefined &&
+      hostCompatHeldUpdate.heldUpdate.latest === findingCompat.version &&
+      Date.parse(hostCompatHeldUpdate.heldUpdate.until) > Date.now())
+  )
+  const hostCompatNextMaturityAt = findingCompat.status === 'found' && findingCompat.installable === null
+    ? hostCompatHeldUpdate?.heldUpdate?.until ?? null
+    : findingCompat.status === 'found' ? findingCompat.nextMaturityAt : null
+  const hostCompatHeldHours = hostCompatHeld && hostCompatNextMaturityAt !== null
+    ? Math.max(1, Math.ceil((Date.parse(hostCompatNextMaturityAt) - Date.now()) / 3_600_000))
+    : null
+  const hostCompatWindowHours = findingCompat.status === 'found' && findingCompat.releaseAgeMs !== null
+    ? Math.max(1, Math.round(findingCompat.releaseAgeMs / 3_600_000))
+    : 24
 
   const [restoreBlocked, setRestoreBlocked] = useState<{ name: string; reason: 'no-catalog' | 'repo-mismatch' } | null>(null)
   // Snapshot the source switch the user agreed to review; later renders must not change it under the dialog.
@@ -9351,8 +9394,18 @@ export function MarketSection(props: MarketSectionProps) {
               : findingCompat.status === 'loading'
                 ? t('hostIncompatibleSearching')
                 : findingCompat.status === 'found'
-                  ? t(hostIncompatible.kind === 'install' ? 'hostIncompatibleFoundInstall' : 'hostIncompatibleFoundUpdate')
-                      .replace('{version}', findingCompat.version)
+                  // A compatible release that is still inside the release-age
+                  // wait is not an available answer. Say so here, with the
+                  // wait attached, instead of letting the button fail later.
+                  ? hostCompatHeld
+                    ? (hostCompatHeldHours === null
+                        ? t('hostIncompatibleHeldTargetUnknown').replace('{version}', findingCompat.version)
+                        : t('hostIncompatibleHeldTarget')
+                            .replace('{version}', findingCompat.version)
+                            .replace('{window}', String(hostCompatWindowHours))
+                            .replace('{hours}', String(hostCompatHeldHours)))
+                    : t(hostIncompatible.kind === 'install' ? 'hostIncompatibleFoundInstall' : 'hostIncompatibleFoundUpdate')
+                        .replace('{version}', findingCompat.version)
                   : findingCompat.status === 'not-found'
                     ? t('hostIncompatibleNoCompat')
                     : findingCompat.status === 'error'
@@ -9371,13 +9424,13 @@ export function MarketSection(props: MarketSectionProps) {
                   that asks the user to accept a broken host, and it must not
                   look like the recommended one. */}
               <Button
-                variant={findingCompat.status === 'found' ? 'outline' : 'primary'}
+                variant={findingCompat.status === 'found' && !hostCompatHeld ? 'outline' : 'primary'}
                 onClick={() => setHostIncompatible(null)}
               >{t(hostIncompatible.kind === 'install' ? 'hostIncompatibleCancel' : 'hostIncompatibleKeep')}</Button>
               {findingCompat.status === 'found' && (
                 <Button
                   variant="primary"
-                  disabled={hostIncompatible.kind === 'install' ? busyUrl !== null : updatingName !== null}
+                  disabled={hostCompatHeld || (hostIncompatible.kind === 'install' ? busyUrl !== null : updatingName !== null)}
                   onClick={() => {
                     const kind = hostIncompatible.kind
                     const target = hostIncompatible.name
@@ -9390,8 +9443,12 @@ export function MarketSection(props: MarketSectionProps) {
                       doUpdate(target, false, false, version)
                     }
                   }}
-                >{t(hostIncompatible.kind === 'install' ? 'hostIncompatibleInstallCompat' : 'hostIncompatibleUpdateCompat')
-                  .replace('{version}', findingCompat.version)}</Button>
+                >{hostCompatHeld
+                  ? (hostCompatHeldHours === null
+                      ? t('hostIncompatibleHeldButtonUnknown')
+                      : t('hostIncompatibleHeldButton').replace('{hours}', String(hostCompatHeldHours)))
+                  : t(hostIncompatible.kind === 'install' ? 'hostIncompatibleInstallCompat' : 'hostIncompatibleUpdateCompat')
+                      .replace('{version}', findingCompat.version)}</Button>
               )}
               {findingCompat.status === 'error' && hostIncompatible.npmName !== null && (
                 <Button variant="outline" onClick={() => setCompatRetry(n => n + 1)}>{t('hostIncompatibleRetry')}</Button>

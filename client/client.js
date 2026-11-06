@@ -462,6 +462,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			hostIncompatibleSearching: "正在查找还兼容当前 DSH 的版本…",
 			hostIncompatibleFoundInstall: "可以装 {version}：它声明兼容当前 DSH。",
 			hostIncompatibleFoundUpdate: "可以更新到 {version}：它声明兼容当前 DSH。",
+			hostIncompatibleHeldTarget: "可以选 {version}：它声明兼容当前 DSH，但还在发布等待期——新版本发布后要等 {window} 小时才算稳定，还差约 {hours} 小时。",
+			hostIncompatibleHeldTargetUnknown: "可以选 {version}：它声明兼容当前 DSH，但还在发布等待期，暂时算不出还要等多久。",
+			hostIncompatibleHeldButton: "还在等待期（约 {hours} 小时）",
+			hostIncompatibleHeldButtonUnknown: "还在等待期",
 			hostIncompatibleNoCompat: "没有找到声明兼容当前 DSH 的版本。",
 			hostIncompatibleSearchFailed: "暂时查不到兼容版本。",
 			hostIncompatibleInstallCompat: "安装 {version}",
@@ -1250,6 +1254,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			hostIncompatibleSearching: "Looking for a version that still supports this DSH…",
 			hostIncompatibleFoundInstall: "You can install {version} — it declares support for this DSH.",
 			hostIncompatibleFoundUpdate: "You can update to {version} — it declares support for this DSH.",
+			hostIncompatibleHeldTarget: "{version} does declare support for this DSH, but it is still inside the release-age wait — a new release has to settle for {window} hours, so about {hours} more to go.",
+			hostIncompatibleHeldTargetUnknown: "{version} does declare support for this DSH, but it is still inside the release-age wait, and this host cannot work out how long is left.",
+			hostIncompatibleHeldButton: "Still waiting ({hours}h)",
+			hostIncompatibleHeldButtonUnknown: "Still waiting",
 			hostIncompatibleNoCompat: "No version declares support for this DSH.",
 			hostIncompatibleSearchFailed: "Could not look up compatible versions.",
 			hostIncompatibleInstallCompat: "Install {version}",
@@ -2038,6 +2046,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			hostIncompatibleSearching: "現在の DSH と互換性のあるバージョンを探しています…",
 			hostIncompatibleFoundInstall: "{version} をインストールできます。現在の DSH への対応を宣言しています。",
 			hostIncompatibleFoundUpdate: "{version} に更新できます。現在の DSH への対応を宣言しています。",
+			hostIncompatibleHeldTarget: "{version} は現在の DSH への対応を宣言していますが、まだ公開直後の待機期間中です — 新しい版は {window} 時間の経過が必要で、あと約 {hours} 時間です。",
+			hostIncompatibleHeldTargetUnknown: "{version} は現在の DSH への対応を宣言していますが、まだ公開直後の待機期間中です。残り時間はこの環境では判定できません。",
+			hostIncompatibleHeldButton: "待機中（約 {hours} 時間）",
+			hostIncompatibleHeldButtonUnknown: "待機中",
 			hostIncompatibleNoCompat: "現在の DSH への対応を宣言しているバージョンは見つかりませんでした。",
 			hostIncompatibleSearchFailed: "互換性のあるバージョンを今は確認できません。",
 			hostIncompatibleInstallCompat: "{version} をインストール",
@@ -10490,15 +10502,28 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					return await response.json();
 				}).then((data) => {
 					if (controller.signal.aborted) return;
-					setFindingCompat(typeof data.compatibleVersion === "string" && data.compatibleVersion !== "" ? {
+					if (!(typeof data.compatibleVersion === "string" && data.compatibleVersion !== "")) {
+						setFindingCompat({ status: "not-found" });
+						return;
+					}
+					const maturity = data.maturity !== null && typeof data.maturity === "object" ? data.maturity : null;
+					setFindingCompat({
 						status: "found",
-						version: data.compatibleVersion
-					} : { status: "not-found" });
+						version: data.compatibleVersion,
+						installable: typeof maturity?.installable === "boolean" ? maturity.installable : null,
+						releaseAgeMs: typeof maturity?.releaseAgeMs === "number" ? maturity.releaseAgeMs : null,
+						nextMaturityAt: typeof maturity?.nextMaturityAt === "string" ? maturity.nextMaturityAt : null
+					});
 				}).catch(() => {
 					if (!controller.signal.aborted) setFindingCompat({ status: "error" });
 				});
 				return () => controller.abort();
 			}, [hostIncompatible, compatRetry]);
+			const hostCompatHeldUpdate = hostIncompatible === null ? void 0 : updates[hostIncompatible.npmName ?? ""];
+			const hostCompatHeld = findingCompat.status === "found" && (findingCompat.installable === false || findingCompat.installable === null && hostCompatHeldUpdate?.heldUpdate !== void 0 && hostCompatHeldUpdate.heldUpdate.latest === findingCompat.version && Date.parse(hostCompatHeldUpdate.heldUpdate.until) > Date.now());
+			const hostCompatNextMaturityAt = findingCompat.status === "found" && findingCompat.installable === null ? hostCompatHeldUpdate?.heldUpdate?.until ?? null : findingCompat.status === "found" ? findingCompat.nextMaturityAt : null;
+			const hostCompatHeldHours = hostCompatHeld && hostCompatNextMaturityAt !== null ? Math.max(1, Math.ceil((Date.parse(hostCompatNextMaturityAt) - Date.now()) / 36e5)) : null;
+			const hostCompatWindowHours = findingCompat.status === "found" && findingCompat.releaseAgeMs !== null ? Math.max(1, Math.round(findingCompat.releaseAgeMs / 36e5)) : 24;
 			const [restoreBlocked, setRestoreBlocked] = (0, react.useState)(null);
 			const [migrationConfirm, setMigrationConfirm] = (0, react.useState)(null);
 			/** Determinate percent parsed from pnpm's Progress line, when available. */
@@ -17150,16 +17175,16 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						open: true,
 						onClose: () => setHostIncompatible(null),
 						title: t("hostIncompatibleTitle"),
-						description: [t(hostIncompatible.kind === "install" ? "hostIncompatibleBodyInstall" : "hostIncompatibleBody").replace("{plugin}", `${hostIncompatible.name} ${hostIncompatible.version}`.trim()).replace("{requirement}", hostIncompatible.requirement ?? t("hostIncompatibleUnknown")).replace("{host}", hostIncompatible.hostVersion ?? t("hostIncompatibleUnknown")), hostIncompatible.npmName === null ? null : findingCompat.status === "loading" ? t("hostIncompatibleSearching") : findingCompat.status === "found" ? t(hostIncompatible.kind === "install" ? "hostIncompatibleFoundInstall" : "hostIncompatibleFoundUpdate").replace("{version}", findingCompat.version) : findingCompat.status === "not-found" ? t("hostIncompatibleNoCompat") : findingCompat.status === "error" ? t("hostIncompatibleSearchFailed") : null].filter((line) => line !== null).join("\n"),
+						description: [t(hostIncompatible.kind === "install" ? "hostIncompatibleBodyInstall" : "hostIncompatibleBody").replace("{plugin}", `${hostIncompatible.name} ${hostIncompatible.version}`.trim()).replace("{requirement}", hostIncompatible.requirement ?? t("hostIncompatibleUnknown")).replace("{host}", hostIncompatible.hostVersion ?? t("hostIncompatibleUnknown")), hostIncompatible.npmName === null ? null : findingCompat.status === "loading" ? t("hostIncompatibleSearching") : findingCompat.status === "found" ? hostCompatHeld ? hostCompatHeldHours === null ? t("hostIncompatibleHeldTargetUnknown").replace("{version}", findingCompat.version) : t("hostIncompatibleHeldTarget").replace("{version}", findingCompat.version).replace("{window}", String(hostCompatWindowHours)).replace("{hours}", String(hostCompatHeldHours)) : t(hostIncompatible.kind === "install" ? "hostIncompatibleFoundInstall" : "hostIncompatibleFoundUpdate").replace("{version}", findingCompat.version) : findingCompat.status === "not-found" ? t("hostIncompatibleNoCompat") : findingCompat.status === "error" ? t("hostIncompatibleSearchFailed") : null].filter((line) => line !== null).join("\n"),
 						footer: /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
 							/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-								variant: findingCompat.status === "found" ? "outline" : "primary",
+								variant: findingCompat.status === "found" && !hostCompatHeld ? "outline" : "primary",
 								onClick: () => setHostIncompatible(null),
 								children: t(hostIncompatible.kind === "install" ? "hostIncompatibleCancel" : "hostIncompatibleKeep")
 							}),
 							findingCompat.status === "found" && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 								variant: "primary",
-								disabled: hostIncompatible.kind === "install" ? busyUrl !== null : updatingName !== null,
+								disabled: hostCompatHeld || (hostIncompatible.kind === "install" ? busyUrl !== null : updatingName !== null),
 								onClick: () => {
 									const kind = hostIncompatible.kind;
 									const target = hostIncompatible.name;
@@ -17170,7 +17195,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 										if (plugin !== null) doInstall(plugin, false, version);
 									} else doUpdate(target, false, false, version);
 								},
-								children: t(hostIncompatible.kind === "install" ? "hostIncompatibleInstallCompat" : "hostIncompatibleUpdateCompat").replace("{version}", findingCompat.version)
+								children: hostCompatHeld ? hostCompatHeldHours === null ? t("hostIncompatibleHeldButtonUnknown") : t("hostIncompatibleHeldButton").replace("{hours}", String(hostCompatHeldHours)) : t(hostIncompatible.kind === "install" ? "hostIncompatibleInstallCompat" : "hostIncompatibleUpdateCompat").replace("{version}", findingCompat.version)
 							}),
 							findingCompat.status === "error" && hostIncompatible.npmName !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 								variant: "outline",
