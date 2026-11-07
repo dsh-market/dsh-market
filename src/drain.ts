@@ -764,6 +764,7 @@ export class DrainCoordinator {
    */
   private async drainAgents(operation: Operation): Promise<boolean> {
     operation.state = 'draining'
+    let stall = 0
     while (!operation.cancelRequested && !this.disposeRequested && !this.barrierBroken) {
       const live = this.liveAgents()
       if (live === null) return false
@@ -776,12 +777,11 @@ export class DrainCoordinator {
       // turn, while the UI still called them idle. Claim only once nothing is
       // running, so waiting for one session costs the others nothing.
       const busy = unheld.some(agent => agent.status === 'running')
-      let claimed = 0
       let waiting = unheld
       if (!busy) {
         for (const agent of unheld) {
           if (operation.cancelRequested || this.disposeRequested) break
-          if (this.claim(agent)) claimed += 1
+          this.claim(agent)
         }
         const current = this.liveAgents()
         if (current === null) return false
@@ -789,7 +789,8 @@ export class DrainCoordinator {
         this.setWait(operation, waiting)
         if (waiting.length === 0) return true
       }
-      const waitingForTurn = busy
+      const heldBefore = this.holds.size
+      const signature = waiting.map(agent => `${agent.id}:${String(agent.status)}`).join('\u0000')
       const activity = this.waitForActivity()
       try {
         await Promise.race([
@@ -799,11 +800,37 @@ export class DrainCoordinator {
       } finally {
         activity.dispose()
       }
-      // A claim can fail without the Agent being busy (another maintenance
-      // task owns it). `whenIdle` then stays pending, so this yield only
-      // matters for a host that reports idle while refusing the claim. A
-      // turn that just ended retries immediately.
-      if (claimed === 0 && !waitingForTurn) await new Promise(resolve => setTimeout(resolve, 25))
+      // A pass can come back with nothing changed — no hold gained and every
+      // waited-for Agent in the same state — and then re-entering the loop
+      // immediately is a busy loop. Two host shapes do that: a claim refused
+      // while the Agent reports idle (another maintenance task owns it, so
+      // `whenIdle()` resolves at once), and an Agent whose status still says
+      // `running` after its turn is over (sessions left behind by an earlier
+      // run), where `whenIdle()` also resolves at once. A profile with 81 such
+      // sessions pinned one core at 100% and grew RSS until DSH was restarted
+      // (#1134). Pause only when nothing moved: a turn that just ended changes
+      // the signature and is retried at once, which is what makes the wait end
+      // the moment the Agent is free.
+      const moved = this.holds.size !== heldBefore
+        || waiting.map(agent => `${agent.id}:${String(agent.status)}`).join('\u0000') !== signature
+      stall = moved ? 0 : stall + 1
+      // One pass without progress is ordinary: `whenIdle()` resolving is what
+      // the next pass claims on, and it costs nothing to retry at once. A
+      // SECOND consecutive pass with nothing changed means the wake-up came
+      // from something that will keep answering instantly — an Agent whose
+      // status still says `running` after its turn ended (sessions left behind
+      // by an earlier run), or a claim another maintenance task keeps
+      // refusing. Looping on that pinned one core at 100% and grew RSS until
+      // DSH was restarted (#1134). Pause instead; a status change or any host
+      // activity cuts the pause short, so a real turn end is claimed at once.
+      if (stall >= 2) {
+        const wake = this.waitForActivity()
+        try {
+          await Promise.race([new Promise<void>(resolve => setTimeout(resolve, 25)), wake.promise])
+        } finally {
+          wake.dispose()
+        }
+      }
     }
     return false
   }
@@ -950,6 +977,10 @@ export class DrainCoordinator {
    * succeed and hide it, so the transition itself has to stop the command.
    */
   private onAgentStatus(agent: unknown, status: unknown): void {
+    // Any status transition is news to whoever is waiting: a turn ending is
+    // exactly the event the drain loop is waiting for, and it also cuts short
+    // the no-progress pause (#1134).
+    this.notifyActivity()
     if (status !== 'running') return
     const id = agentId(agent)
     if (id === null || !this.inFactory.delete(id)) return

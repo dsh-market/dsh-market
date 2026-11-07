@@ -117,6 +117,73 @@ describe('DrainCoordinator', () => {
     bed.coordinator.dispose()
   })
 
+  /**
+   * The report (#1134): a profile with ~81 idle sessions pinned one core at
+   * 100% and grew RSS until DSH was restarted. The shape is a claim that keeps
+   * being refused while the Agent reports idle — another maintenance task owns
+   * it — so `whenIdle()` resolves at once and the drain loop re-entered with
+   * nothing changed. Two Agents are the same shape as eighty-one.
+   */
+  it('does not spin while an idle Agent keeps refusing the claim (#1134)', async () => {
+    const bed = harness()
+    const stuck = new FakeAgent('stuck')
+    stuck.failClaims = Number.MAX_SAFE_INTEGER
+    const other = new FakeAgent('other')
+    bed.host.create(stuck)
+    bed.host.create(other)
+    let lists = 0
+    const realList = bed.host.list.bind(bed.host)
+    bed.host.list = () => { lists += 1; return realList() }
+    // A refused claim means the barrier cannot be reached inline, so the
+    // operation is deferred and waits in the background.
+    const result = await bed.begin()
+    expect(result.mode).toBe('deferred')
+    if (result.mode !== 'deferred') return
+    // Each pass enumerates the Agents twice. Without the pause this ran
+    // thousands of passes in 120ms; with it, a handful.
+    await new Promise(resolve => setTimeout(resolve, 120))
+    expect(lists).toBeLessThan(100)
+    // The Agent becomes claimable: the wait ends promptly, it is not stuck
+    // behind a long backoff.
+    stuck.failClaims = 0
+    const settled = await bed.coordinator.whenSettled(result.operation.operationId)
+    expect(settled?.state).toBe('succeeded')
+    expect(bed.executed).toHaveLength(1)
+    bed.coordinator.dispose()
+  })
+
+  /**
+   * The reported shape (#1134): 81 sessions left over from weeks earlier,
+   * some of them still reporting `running` while `whenIdle()` answers at once
+   * — the host's status is stale, the turn is long over. Nothing was claimed
+   * (the drain refuses to claim during a turn), the race returned
+   * immediately, and the loop re-entered with nothing changed: one core at
+   * 100% and RSS climbing until DSH was restarted.
+   */
+  it('does not spin while a session still reports running after its turn is over (#1134)', async () => {
+    const bed = harness()
+    const stale = new FakeAgent('stale', 'running')
+    // `whenIdle` resolving while status still says `running` is the host
+    // inconsistency; FakeAgent keeps them consistent, so state it here.
+    stale.whenIdle = () => Promise.resolve()
+    bed.host.create(stale)
+    let lists = 0
+    const realList = bed.host.list.bind(bed.host)
+    bed.host.list = () => { lists += 1; return realList() }
+    const result = await bed.begin()
+    expect(result.mode).toBe('deferred')
+    if (result.mode !== 'deferred') return
+    // Each pass enumerates the Agents twice. Without the pause this ran
+    // thousands of passes in 120ms; with it, a handful.
+    await new Promise(resolve => setTimeout(resolve, 120))
+    expect(lists).toBeLessThan(100)
+    // The status catches up: the wait ends promptly, not behind a backoff.
+    stale.status = 'idle'
+    const settled = await bed.coordinator.whenSettled(result.operation.operationId)
+    expect(settled?.state).toBe('succeeded')
+    bed.coordinator.dispose()
+  })
+
   it('waits for a running Agent, then executes once it is maintenance-held', async () => {
     const bed = harness()
     const agent = new FakeAgent('main', 'running')
