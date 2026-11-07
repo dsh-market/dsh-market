@@ -5,7 +5,7 @@
  * the restore that puts the user's file back without becoming a second way to
  * lose it.
  */
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -174,6 +174,20 @@ describe('restoreHostRecoveryBackup', () => {
     expect(result.ok).toBe(true)
     expect(readFileSync(patchPathOf(dir), 'utf8')).toBe(USER_PATCH)
     expect(readdirSync(dir).filter(name => name.startsWith('cordis.patch.yml.bak-'))).toHaveLength(1)
+  })
+
+  it('leaves the live patch in place when the new one cannot be written', () => {
+    // A directory where the temp file goes makes the write fail the way a
+    // full disk or a file held by antivirus does. The live patch used to be
+    // moved aside first, so the profile was left with none.
+    const dir = profile()
+    const patchPath = patchPathOf(dir)
+    const backupName = `cordis.patch.yml.bak-${STAMP}`
+    mkdirSync(`${patchPath}.restore-${process.pid}`)
+    const result = restoreHostRecoveryBackup(patchPath, dir, backupName)
+    expect(result.ok).toBe(false)
+    expect(readFileSync(patchPath, 'utf8')).toBe(STUB)
+    expect(readdirSync(dir).filter(name => name.startsWith('cordis.patch.yml.bak-'))).toEqual([backupName])
   })
 
   it('refuses when the backup disappeared between the read and the write', () => {
