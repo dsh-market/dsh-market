@@ -111,6 +111,31 @@ describe('deriveHostCompatibility', () => {
     expect(malformed.requirement).toContain('catalog:current')
   })
 
+  it('judges a partial bound the way the gate does instead of calling it unknown', () => {
+    // `<0.3` is the connector-family shape satisfiesRange learned to read in
+    // #1130; discovery parsed only full X.Y.Z bounds and fell back to unknown.
+    const partial = facts({ peerDependencies: { '@deepseek-ai/dsh-tools': '>=0.1.5 <0.3' } })
+    const full = facts({ peerDependencies: { '@deepseek-ai/dsh-tools': '>=0.1.5 <0.3.0' } })
+    for (const host of ['0.1.2', '0.3.1']) {
+      expect(deriveHostCompatibility(partial, host, HOST_PACKAGES).status).toBe('incompatible')
+      expect(deriveHostCompatibility(full, host, HOST_PACKAGES).status).toBe('incompatible')
+    }
+    expect(deriveHostCompatibility(partial, '0.2.4', HOST_PACKAGES).status).toBe('compatible')
+    // `<0.3` ends before 0.3.0's prereleases, as node-semver's `<0.3.0-0` does.
+    expect(deriveHostCompatibility(partial, '0.3.0-rc.1', HOST_PACKAGES).status).toBe('incompatible')
+    expect(deriveHostCompatibility(facts({
+      peerDependencies: { '@deepseek-ai/dsh-tools': '>=0.2.0-rc.0 <0.3' },
+    }), '0.1.7-rc.2', HOST_PACKAGES).status).toBe('incompatible')
+  })
+
+  it('keeps a partial caret ceiling as lenient as a full one', () => {
+    // `^0.1` names the 0.1 line like `^0.1.0`: past that line is the #756
+    // break, still on it is not a confirmed mismatch.
+    const caret = facts({ peerDependencies: { '@deepseek-ai/dsh-tools': '^0.1' } })
+    expect(deriveHostCompatibility(caret, '0.2.0-rc.2', HOST_PACKAGES).status).toBe('incompatible')
+    expect(deriveHostCompatibility(caret, '0.1.9', HOST_PACKAGES).status).toBe('compatible')
+  })
+
   it('keeps missing data, missing declarations, and an unknown host distinct', () => {
     expect(deriveHostCompatibility(null, '0.1.2-alpha.2', HOST_PACKAGES))
       .toMatchObject({ status: 'unknown', basis: 'unavailable', requirement: null })
