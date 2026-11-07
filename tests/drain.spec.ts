@@ -184,6 +184,36 @@ describe('DrainCoordinator', () => {
     bed.coordinator.dispose()
   })
 
+  it('stays bounded with a profile full of stale idle sessions (#1134)', async () => {
+    // The reported profile carries ~81 sessions from weeks earlier, a few of
+    // them still reported `running` after their turns ended. The shape that
+    // spun is the same; this pins the size: the wait must end promptly once
+    // the statuses catch up, and the work per pass must not grow with the
+    // session count in a way that keeps a core busy.
+    const bed = harness()
+    const stale: FakeAgent[] = []
+    for (let index = 0; index < 80; index += 1) {
+      const agent = new FakeAgent(`s-${String(index)}`, 'running')
+      agent.whenIdle = () => Promise.resolve()
+      stale.push(agent)
+      bed.host.create(agent)
+    }
+    const result = await bed.begin()
+    expect(result.mode).toBe('deferred')
+    if (result.mode !== 'deferred') return
+    let lists = 0
+    const realList = bed.host.list.bind(bed.host)
+    bed.host.list = () => { lists += 1; return realList() }
+    await new Promise(resolve => setTimeout(resolve, 150))
+    // A pause per stalled pass keeps this in the tens, not the thousands.
+    expect(lists).toBeLessThan(150)
+    for (const agent of stale) agent.status = 'idle'
+    const settled = await bed.coordinator.whenSettled(result.operation.operationId)
+    expect(settled?.state).toBe('succeeded')
+    expect(bed.executed).toHaveLength(1)
+    bed.coordinator.dispose()
+  })
+
   it('waits for a running Agent, then executes once it is maintenance-held', async () => {
     const bed = harness()
     const agent = new FakeAgent('main', 'running')
