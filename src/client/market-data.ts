@@ -209,7 +209,9 @@ export interface UpdateStatus {
   updateAvailable?: boolean
   /** Server-verified precise Desktop stable npm update target. */
   eligibleVersion?: string
-  version?: string
+  version?: string | null
+  /** The latest check failed; any retained update facts came from an earlier successful check. */
+  checkError?: 'unavailable'
   /** `github` | `npm` | `linked` | `generation` — the last is a host-managed
       install (#497): `latest` names a newer release, never an offer. */
   kind?: string

@@ -1,0 +1,198 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { Readable } from 'node:stream'
+import type { IncomingMessage, ServerResponse } from 'node:http'
+import { mountMarketRoutes, type MarketHost } from '../src/routes.ts'
+import { readMarketState, writeMarketState } from '../src/hot.ts'
+import { setRequestGateSource } from '../src/http.ts'
+import * as registry from '../src/registry.ts'
+import * as updates from '../src/updates.ts'
+import type { UpdateNotificationSnapshot } from '../src/update-notifications.ts'
+
+const PATH = '/dsh-market/update-notifications'
+type Handler = (request: IncomingMessage, response: ServerResponse) => void | Promise<void>
+let dir: string
+let dispose: () => void
+let handlers: Map<string, Handler>
+
+function profile(dependencies: Record<string, string> = { widget: '^1.0.0' }, bundles = Object.keys(dependencies)): void {
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({ dependencies, dsh: { profile: { bundles } } }))
+}
+
+async function hit(method: string, path = PATH, body?: unknown, origin = 'http://localhost:3080') {
+  const request = Readable.from(body === undefined ? [] : [Buffer.from(JSON.stringify(body))]) as IncomingMessage
+  request.method = method
+  request.url = path
+  request.headers = { host: 'localhost:3080', origin }
+  let status = 0
+  let data = ''
+  const response = {
+    writeHead: (code: number) => { status = code },
+    end: (chunk?: string) => { data = chunk ?? '' },
+  } as unknown as ServerResponse
+  await handlers.get(path.split('?')[0]!)!(request, response)
+  return { status, json: data === '' ? null : JSON.parse(data) as UpdateNotificationSnapshot & { updates: Record<string, updates.UpdateStatus>; error?: string } }
+}
+
+beforeEach(() => {
+  vi.useFakeTimers()
+  dir = mkdtempSync(join(tmpdir(), 'dshm-notification-routes-'))
+  profile()
+  mkdirSync(join(dir, 'node_modules/widget'), { recursive: true })
+  writeFileSync(join(dir, 'node_modules/widget/package.json'), JSON.stringify({ name: 'widget', version: '1.0.0', dsh: { bundle: { patch: './cordis.patch.yml' } } }))
+  writeFileSync(join(dir, 'node_modules/widget/cordis.patch.yml'), '- insert:\n    - id: widget\n      name: widget\n')
+  vi.spyOn(registry, 'loadRegistry').mockResolvedValue({ updated: '', count: 0, categories: {}, plugins: [] })
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ version: '2.0.0' }))))
+  updates.invalidateUpdates()
+  handlers = new Map()
+  const host: MarketHost = {
+    webServer: { register: route => { handlers.set(route.path, route.handler); return () => { handlers.delete(route.path) } } },
+    loader: { entries: () => [] },
+    plugin: () => ({ await: async () => {}, dispose: async () => {} }),
+  }
+  dispose = mountMarketRoutes(host, { profile: 'web', profileDirectory: dir, region: 'global' })
+})
+
+afterEach(() => {
+  dispose()
+  vi.restoreAllMocks()
+  vi.unstubAllGlobals()
+  vi.useRealTimers()
+  rmSync(dir, { recursive: true, force: true })
+})
+
+describe('update notification HTTP routes', () => {
+  it('serves a pure read before any check and starts checking independently after startup', async () => {
+    const first = await hit('GET')
+    expect(first.status).toBe(200)
+    expect(first.json).toMatchObject({ enabled: true, checking: false, checkedAt: null, updates: {} })
+    expect(registry.loadRegistry).not.toHaveBeenCalled()
+    expect(fetch).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(30_000)
+    const checked = await hit('GET')
+    expect(checked.json).toMatchObject({ stale: false, updates: { widget: { latest: '2.0.0', updateAvailable: true } } })
+    const calls = vi.mocked(fetch).mock.calls.length
+    await hit('GET')
+    await hit('GET')
+    expect(fetch).toHaveBeenCalledTimes(calls)
+  })
+
+  it('shares a forced check between the legacy page and the global notification request', async () => {
+    const realCheck = updates.checkUpdates
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const check = vi.spyOn(updates, 'checkUpdates').mockImplementation(async (...args) => { await gate; return realCheck(...args) })
+    const requests = Promise.all([
+      hit('GET', '/dsh-market/updates?force=1'), hit('POST', PATH, { check: true }),
+    ])
+    await vi.advanceTimersByTimeAsync(1)
+    release()
+    const [page, notification] = await requests
+    expect(check).toHaveBeenCalledTimes(1)
+    expect(page.status).toBe(200)
+    expect(page.json.updates.widget).toMatchObject({ latest: '2.0.0', updateAvailable: true })
+    expect(notification.json.updates).toEqual(page.json.updates)
+  })
+
+  it('keeps last-good results during source failures and removes externally changed installations', async () => {
+    await hit('POST', PATH, { check: true })
+    vi.mocked(fetch).mockRejectedValue(new Error('offline'))
+    const failed = await hit('POST', PATH, { check: true })
+    expect(failed.json).toMatchObject({ stale: true, updates: { widget: { latest: '2.0.0', updateAvailable: true, checkError: 'unavailable' } } })
+    profile({ widget: 'github:different/source' })
+    expect((await hit('GET')).json.updates).toEqual({})
+    profile({})
+    expect((await hit('GET')).json.updates).toEqual({})
+  })
+
+  it('returns current exemptions, hidden rows, and host-disabled bundles without a network check', async () => {
+    await hit('POST', PATH, { check: true })
+    writeMarketState(dir, { disabled: new Set(), groups: {}, groupOrder: [], updateExempt: ['widget'], blocked: ['hidden'] })
+    profile({ widget: '^1.0.0' }, [])
+    const result = await hit('GET')
+    expect(result.json).toMatchObject({ updateExempt: ['widget'], blocked: ['hidden'], disabled: ['widget'] })
+    profile()
+    writeFileSync(join(dir, 'cordis.patch.yml'), '- id: widget\n  disabled: true\n')
+    expect((await hit('GET')).json.disabled).toContain('widget')
+  })
+
+  it('resolves blocked catalog aliases from the current installed source without fetching', async () => {
+    profile({ widget: 'file:./widget' })
+    const installedManifest = join(dir, 'node_modules/widget/package.json')
+    const writeManifest = (repo: string) => writeFileSync(installedManifest, JSON.stringify({
+      name: 'widget', version: '1.0.0', repository: `https://github.com/${repo}`,
+      dsh: { bundle: { patch: './cordis.patch.yml' } },
+    }))
+    writeManifest('owner/widget')
+    vi.mocked(registry.loadRegistry).mockResolvedValue({ updated: '', count: 1, categories: {}, plugins: [{
+      name: 'catalog-widget', npm: 'published-widget', owner: 'owner', url: 'https://github.com/owner/widget',
+      category: 'other', description: { en: 'widget' }, install: '', added: '',
+    }] })
+    await hit('POST', PATH, { check: true })
+    writeMarketState(dir, { disabled: new Set(), groups: {}, groupOrder: [], blocked: ['published-widget', 'absent'] })
+    const catalogCalls = vi.mocked(registry.loadRegistry).mock.calls.length
+    const fetchCalls = vi.mocked(fetch).mock.calls.length
+    expect((await hit('GET')).json.blocked).toEqual(['published-widget', 'absent', 'widget'])
+    // The spec and directory are unchanged, but this is now another fork.
+    writeManifest('different/widget')
+    expect((await hit('GET')).json.blocked).toEqual(['published-widget', 'absent'])
+    profile({ widget: 'github:owner/widget' })
+    expect((await hit('GET')).json.blocked).toContain('widget')
+    profile({ widget: 'github:different/widget' })
+    expect((await hit('GET')).json.blocked).not.toContain('widget')
+    profile({})
+    expect((await hit('GET')).json.blocked).toEqual(['published-widget', 'absent'])
+    expect(registry.loadRegistry).toHaveBeenCalledTimes(catalogCalls)
+    expect(fetch).toHaveBeenCalledTimes(fetchCalls)
+  })
+
+  it('persists the switch and validates requests before changing it', async () => {
+    expect((await hit('POST', PATH, { enabled: false })).json).toMatchObject({ enabled: false, nextCheckAt: null })
+    expect(readMarketState(dir).backgroundUpdateChecks).toBe(false)
+    expect((await hit('POST', PATH, { enabled: 'true' })).status).toBe(400)
+    expect((await hit('POST', PATH, {})).status).toBe(400)
+    expect((await hit('DELETE')).status).toBe(405)
+    expect((await hit('POST', PATH, { enabled: true }, 'https://foreign.example')).status).toBe(403)
+    expect(readMarketState(dir).backgroundUpdateChecks).toBe(false)
+    expect((await hit('POST', PATH, { check: true })).json).toMatchObject({ enabled: false, nextCheckAt: null, updates: { widget: { updateAvailable: true } } })
+  })
+
+  it('uses the host authentication gate for both snapshot reads and check requests', async () => {
+    const previous = setRequestGateSource(() => () => 401)
+    try {
+      expect((await hit('GET')).status).toBe(401)
+      expect((await hit('POST', PATH, { check: true })).status).toBe(401)
+      expect(registry.loadRegistry).not.toHaveBeenCalled()
+      expect(fetch).not.toHaveBeenCalled()
+    } finally { setRequestGateSource(previous) }
+  })
+
+  it('marks unavailable catalog inputs stale instead of claiming every source was checked', async () => {
+    vi.mocked(registry.loadRegistry).mockRejectedValue(new Error('catalog offline'))
+    const result = await hit('POST', PATH, { check: true })
+    expect(result.status).toBe(200)
+    expect(result.json).toMatchObject({ stale: true, lastSuccessAt: null, updates: { widget: { updateAvailable: true } } })
+    expect(result.json.error).not.toBeNull()
+  })
+
+  it.each([
+    { spec: '^1.0.0', migration: { kind: 'npm-rename', from: 'widget', target: 'new-widget' } },
+    { spec: 'github:owner/widget', migration: { kind: 'git-to-npm', repo: 'owner/widget', target: 'new-widget' } },
+  ])('keeps $migration.kind hints in the shared snapshot after a background refresh', async ({ spec, migration }) => {
+    profile({ widget: spec })
+    vi.mocked(registry.loadRegistry).mockResolvedValue({ updated: '', count: 1, categories: {}, plugins: [{
+      name: 'new-widget', npm: 'new-widget', owner: 'owner', url: 'https://github.com/owner/widget',
+      category: 'other', description: { en: 'widget' }, install: '', added: '', previousNpm: ['widget'],
+    }] })
+    const page = await hit('GET', '/dsh-market/updates?force=1')
+    expect(page.json.updates.widget?.sourceMigration).toEqual(migration)
+    await vi.advanceTimersByTimeAsync(30 * 60_000)
+    expect((await hit('GET')).json.updates.widget?.sourceMigration).toEqual(migration)
+    vi.mocked(registry.loadRegistry).mockRejectedValue(new Error('offline'))
+    const stale = await hit('POST', PATH, { check: true })
+    expect(stale.json.stale).toBe(true)
+    expect(stale.json.updates.widget?.sourceMigration).toEqual(migration)
+  })
+})

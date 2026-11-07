@@ -59,6 +59,7 @@ import { acceleratedTarget, resolveHeadCommit } from './accelerate.ts'
 import { sourceWebUrl, updateNotesFor } from './changelog.ts'
 import { checkUpdates, isUpdatablePlugin, compareVersions, fetchNpmLatest, invalidateUpdates, readVersionMaturity, resolveDesktopMatureUpdate, resolveGitRemoteHead, isUpgrade, latestPublishedRecently, setUpdateRegistry, versionOnChannel } from './updates.ts'
 import { isStableReleaseVersion } from './release-candidates.ts'
+import { createUpdateNotificationMonitor } from './update-notifications.ts'
 import { createThemeManager, type LoaderEntry } from './themes.ts'
 import { readJsonBody, refuseUnadmitted, sameOrigin, sendJson } from './http.ts'
 import { resolveDshHome } from './home-paths.ts'
@@ -776,6 +777,7 @@ export function mountMarketRoutes(
     // Same list as blocked: a name written here must survive the next
     // writer that saves `marketState` whole (#435, #728).
     marketState.updateExempt = fresh.updateExempt
+    marketState.backgroundUpdateChecks = fresh.backgroundUpdateChecks
     marketState.githubProxy = fresh.githubProxy
     // A restore or an external writer can change these two too; a stale copy
     // here would put the old answer back on the next whole-state save (#435).
@@ -2464,6 +2466,10 @@ export function mountMarketRoutes(
     return target !== null && NPM_NAME_RE.test(target) ? target : null
   }
 
+  // Snapshot reads can resolve blocked catalog aliases using the last
+  // successful catalog lookup, without starting network work of their own.
+  let notificationCatalog: Awaited<ReturnType<typeof loadRegistry>>['plugins'] = []
+
   /**
    * The two inputs `checkUpdates` needs beyond the profile itself: which
    * packages follow a release channel, and which local/generation installs
@@ -2480,6 +2486,8 @@ export function mountMarketRoutes(
     onlineSourceFor: Map<string, string>
     catalogNpmByRepo: Map<string, string>
     releaseSources: Map<string, CatalogReleaseSource>
+    sourceMigrationFor: Map<string, GitToNpmMigration | NpmRenameMigration>
+    lookupFailed: boolean
   }> {
     // Only the market itself follows the channel setting (see
     // MarketSettings.channel): a user opting into betas is volunteering to
@@ -2499,8 +2507,11 @@ export function mountMarketRoutes(
     // empty, and an empty map authorizes nothing.
     const catalogNpmByRepo = new Map<string, string>()
     const releaseSources = new Map<string, CatalogReleaseSource>()
+    const sourceMigrationFor = new Map<string, GitToNpmMigration | NpmRenameMigration>()
+    let lookupFailed = false
     try {
       const registry = await loadRegistry()
+      notificationCatalog = registry.plugins
       for (const [name, spec] of Object.entries(installed)) {
         const source = onlineSourceOf(registry.plugins, name, spec)
         if (source !== null) onlineSourceFor.set(name, source)
@@ -2508,6 +2519,16 @@ export function mountMarketRoutes(
         // A shared asset must not select one of several monorepo manifests.
         const unique = new Map(releases.map(value => [JSON.stringify(value), value]))
         if (unique.size === 1) releaseSources.set(name, [...unique.values()][0]!)
+        // Keep migration hints in the shared result: a background refresh
+        // must not erase the action the Installed page already displayed.
+        const migration = findGitToNpmMigration(registry.plugins, spec)
+        if (migration !== null) sourceMigrationFor.set(name, migration)
+        else if (isRegistryRangeSpec(spec)) {
+          const rename = findCatalogRename(registry.plugins, name)
+          if (rename !== null && installed[rename.target] === undefined) {
+            sourceMigrationFor.set(name, { kind: 'npm-rename', from: name, target: rename.target })
+          }
+        }
       }
       for (const plugin of registry.plugins) {
         if (plugin.npm === null || plugin.npm === undefined) continue
@@ -2515,10 +2536,75 @@ export function mountMarketRoutes(
         if (repoKey !== null) catalogNpmByRepo.set(repoKey, plugin.npm)
       }
     } catch (error) {
+      lookupFailed = true
       logEvent('warn', 'updates', `package source lookup failed — ${error instanceof Error ? error.message : String(error)}`)
     }
-    return { channelFor, onlineSourceFor, catalogNpmByRepo, releaseSources }
+    return { channelFor, onlineSourceFor, catalogNpmByRepo, releaseSources, sourceMigrationFor, lookupFailed }
   }
+
+  /** The host disables a bundle by removing it from the boot composition. */
+  const unbundledPackages = (names: readonly string[], manifests: ReadonlyMap<string, unknown>, live: ReadonlySet<string>): string[] => {
+    const composed = new Set(readProfileBundles(activeProfileDir))
+    return names.filter(name => {
+      if (INBOX_BUNDLES.has(name) || composed.has(name) || live.has(name)) return false
+      const manifest = manifests.get(name) as { dsh?: { bundle?: unknown } } | null | undefined
+      return typeof manifest === 'object' && manifest !== null && manifest.dsh?.bundle !== undefined
+        && !bundlePatchIsEmpty(join(activeProfileDir, 'node_modules', name))
+    })
+  }
+
+  const updateNotifications = createUpdateNotificationMonitor({
+    boot: BOOT_ID,
+    enabled: marketState.backgroundUpdateChecks !== false,
+    inventory: () => {
+      const installed = readInstalled(config.profile, activeProfileDir)
+      const commits = readLockCommits(config.profile, activeProfileDir)
+      return {
+        context: JSON.stringify([activeProfileDir, activeChannel(), config.region, marketState.githubProxy]),
+        packages: Object.fromEntries(Object.entries(installed).map(([name, spec]) => [name, JSON.stringify([
+          spec, readInstalledVersion(config.profile, name, activeProfileDir),
+          readGitResolutionCommit(config.profile, spec, activeProfileDir),
+          commits.get(hostedRepoKey(spec) ?? '') ?? null,
+        ])])),
+      }
+    },
+    preferences: () => {
+      const state = readMarketState(activeProfileDir)
+      const installed = readInstalled(config.profile, activeProfileDir)
+      const names = Object.keys(installed)
+      const patchFlags = packagePatchFlags(host, activeProfileDir, names, readUserPatchState(userPatchPath))
+      const manifests = new Map(names.map(name => [name, readInstalledManifest(config.profile, name, activeProfileDir)]))
+      const inactive = new Set([...state.disabled, ...patchFlags.disabled, ...unbundledPackages(names, manifests, liveNames())])
+      const savedBlocked = new Set(state.blocked ?? [])
+      const blocked = new Set(savedBlocked)
+      if (savedBlocked.size > 0) {
+        for (const [name, spec] of Object.entries(installed)) {
+          if (blocked.has(name)) continue
+          // Resolve against the current source, not a stored name-to-name
+          // map: a local package can change its repository at the same path.
+          const evidence = readInstalledRepoEvidence(config.profile, name, spec, activeProfileDir)
+          const entry = findCatalogEntryForLocal(notificationCatalog, name, evidence.identities, evidence.hints)
+          if (entry !== null && savedBlocked.has(entry.npm || entry.name)) blocked.add(name)
+        }
+      }
+      return { updateExempt: state.updateExempt ?? [], disabled: [...inactive], blocked: [...blocked] }
+    },
+    check: async force => {
+      const installed = readInstalled(config.profile, activeProfileDir)
+      if (Object.keys(installed).length === 0) return { updates: {} }
+      const { channelFor, onlineSourceFor, catalogNpmByRepo, releaseSources, sourceMigrationFor, lookupFailed } = await updateCheckInputs()
+      const checked = await checkUpdates(config.profile, force, activeProfileDir, channelFor, onlineSourceFor, catalogNpmByRepo, { holdYoungReleases: config.desktopHost === true, releaseSources })
+      const updates: Record<string, import('./updates.ts').UpdateStatus> = {}
+      for (const [name, status] of Object.entries(checked)) {
+        const sourceMigration = sourceMigrationFor.get(name)
+        updates[name] = { ...status,
+          ...(sourceMigration === undefined ? {} : { sourceMigration }),
+          ...(lookupFailed ? { checkError: 'unavailable' as const } : {}),
+        }
+      }
+      return { updates, ...(lookupFailed ? { error: 'Plugin sources could not be checked. Try again later.' } : {}) }
+    },
+  })
 
   /**
    * Pre-install host compatibility refusal, shared by the update route and
@@ -2620,6 +2706,48 @@ export function mountMarketRoutes(
   const disposers = [
     registerRoute({
       kind: 'exact',
+      path: '/dsh-market/update-notifications',
+      handler: async (request, response) => {
+        if (request.method === 'GET') {
+          sendJson(response, 200, updateNotifications.snapshot())
+          return
+        }
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'GET, POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) {
+          sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        try {
+          const body = await readJsonBody(request)
+          if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+            sendJson(response, 400, { error: 'expected an update-check setting or check request' })
+            return
+          }
+          const { enabled, check } = body as { enabled?: unknown; check?: unknown }
+          if ((enabled !== undefined && typeof enabled !== 'boolean') || (check !== undefined && check !== true)
+            || (enabled === undefined && check === undefined)) {
+            sendJson(response, 400, { error: 'enabled must be a boolean; check must be true' })
+            return
+          }
+          if (typeof enabled === 'boolean') {
+            const state = readMarketState(activeProfileDir)
+            writeMarketState(activeProfileDir, { ...state, backgroundUpdateChecks: enabled })
+            marketState.backgroundUpdateChecks = enabled
+            updateNotifications.setEnabled(enabled)
+          }
+          if (check === true) await updateNotifications.check(true)
+          sendJson(response, 200, updateNotifications.snapshot())
+        } catch {
+          sendJson(response, 400, { error: 'Could not change update checks. Try again.' })
+        }
+      },
+    }),
+    registerRoute({
+      kind: 'exact',
       path: '/dsh-market/api/v1/capabilities',
       handler: (request, response) => {
         if (request.method !== 'GET') {
@@ -2684,8 +2812,7 @@ export function mountMarketRoutes(
           return
         }
         try {
-          const { channelFor, onlineSourceFor, catalogNpmByRepo, releaseSources } = await updateCheckInputs()
-          const updates = await checkUpdates(config.profile, forceCheckFrom(request), activeProfileDir, channelFor, onlineSourceFor, catalogNpmByRepo, { holdYoungReleases: config.desktopHost === true, releaseSources })
+          const updates = await updateNotifications.check(forceCheckFrom(request))
           // `packages` carries the same objects the single-package endpoint
           // returns, so one parser serves both. Only updatable ones: a badge
           // wants the count, a panel wants the rows, and neither wants to
@@ -2731,8 +2858,7 @@ export function mountMarketRoutes(
             // The same inputs the market page builds, so a generation (#497)
             // or a catalog-matched local package answers here with the
             // release it can be compared against rather than with nothing.
-            const { channelFor, onlineSourceFor, catalogNpmByRepo, releaseSources } = await updateCheckInputs()
-            const update = (await checkUpdates(config.profile, force, activeProfileDir, channelFor, onlineSourceFor, catalogNpmByRepo, { holdYoungReleases: config.desktopHost === true, releaseSources }))[name]
+            const update = (await updateNotifications.check(force))[name]
             if (update === undefined) {
               sendJson(response, 404, { schema: UPDATE_API_V1_SCHEMA, error: 'plugin is not installed' })
               return
@@ -3451,15 +3577,7 @@ export function mountMarketRoutes(
         // by removing it from that list, and nothing the market recorded
         // says so (#696). Reported as off, unless it is live right now — a
         // hot mount from this session still runs until the next restart.
-        const composedBundles = new Set(readProfileBundles(activeProfileDir))
-        const unbundled = Object.keys(installed).filter(name => {
-          if (INBOX_BUNDLES.has(name) || composedBundles.has(name) || live.has(name)) return false
-          const manifest = installedManifests.get(name) as { dsh?: { bundle?: unknown } } | null | undefined
-          // A bundle whose own patch is empty loads nothing either way, so
-          // its absence from the list says nothing about a switch (#813).
-          return typeof manifest === 'object' && manifest !== null && manifest.dsh?.bundle !== undefined
-            && !bundlePatchIsEmpty(join(activeProfileDir, 'node_modules', name))
-        })
+        const unbundled = unbundledPackages(Object.keys(installed), installedManifests, live)
         for (const name of Object.keys(installed)) {
           const manifest = installedManifests.get(name) as { dsh?: { kind?: unknown; bundle?: unknown; client?: unknown } } | null | undefined
           const result = activationAfterReplace(
@@ -4640,39 +4758,8 @@ export function mountMarketRoutes(
         }
         try {
           const force = (request.url ?? '').includes('force=1')
-          const { channelFor, onlineSourceFor, catalogNpmByRepo, releaseSources } = await updateCheckInputs()
-          // Migration hints are this listing's own business: the market page
-          // is where "this could come from npm now" is offered, and no other
-          // caller acts on it.
-          const sourceMigrationFor = new Map<string, GitToNpmMigration | NpmRenameMigration>()
-          try {
-            const registry = await loadRegistry()
-            const installed = readInstalled(config.profile, activeProfileDir)
-            for (const [name, spec] of Object.entries(installed)) {
-              const migration = findGitToNpmMigration(registry.plugins, spec)
-              if (migration !== null) sourceMigrationFor.set(name, migration)
-            }
-            // A rename declared by the catalog (#1012, P1). This is the only
-            // path that reaches a user whose old range no longer resolves:
-            // their update fails before installing anything, so no offer was
-            // ever recorded. The catalog states the rename up front, and the
-            // row still has to be a plain registry range the transaction can
-            // replace — and the successor must not already be installed.
-            for (const [name, spec] of Object.entries(installed)) {
-              if (sourceMigrationFor.has(name) || !isRegistryRangeSpec(spec)) continue
-              const rename = findCatalogRename(registry.plugins, name)
-              if (rename === null || installed[rename.target] !== undefined) continue
-              sourceMigrationFor.set(name, { kind: 'npm-rename', from: name, target: rename.target })
-            }
-          } catch (error) {
-            logEvent('warn', 'updates', `package source lookup failed — ${error instanceof Error ? error.message : String(error)}`)
-          }
-          const updates = await checkUpdates(config.profile, force, activeProfileDir, channelFor, onlineSourceFor, catalogNpmByRepo, { holdYoungReleases: config.desktopHost === true, releaseSources })
-          for (const [name, migration] of sourceMigrationFor) {
-            const status = updates[name]
-            if (status !== undefined) updates[name] = { ...status, sourceMigration: migration }
-          }
-sendJson(response, 200, { updates })
+          const updates = await updateNotifications.check(force)
+          sendJson(response, 200, { updates })
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
         }
@@ -8219,6 +8306,7 @@ sendJson(response, 200, { updates })
 
   return () => {
     disposed = true
+    updateNotifications.dispose()
     // Release Agent maintenance holds before the routes disappear. This is the
     // disposer half of the single-finally + disposer guarantee (#411): an
     // unloaded market must never leave an Agent parked behind a hold.

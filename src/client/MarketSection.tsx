@@ -46,6 +46,8 @@ import { downloadStatistic, downloadStatsText, starStatsText } from './download-
 import { OperationsPanel } from './OperationsPanel.tsx'
 import { applyRecovery, fetchRecovery, initialKeep, RecoveryPanel, watchRestart, type RecoveryView } from './RecoveryPanel.tsx'
 import { HostRecoveryBanner } from './HostRecoveryBanner.tsx'
+import { UpdateNotificationsPanel } from './UpdateNotificationsPanel.tsx'
+import { useUpdateNotifications, refreshUpdateNotifications, refreshUpdateNotificationsAfterChange, checkUpdateNotifications, setUpdateNotificationsEnabled, ignoredUpdatesForBoot, notifyUpdatePreferencesChanged } from './update-notifications.ts'
 import { clearSettled, drop, enqueue, patch as patchRecord, recordForUrl, restoreSettled, serializeSettled, SETTLED_STORAGE_KEY } from './operations.ts'
 import type { OperationRecord } from './operations.ts'
 import { Diagnostics } from './Diagnostics.tsx'
@@ -84,27 +86,6 @@ const UNAVAILABLE_HOST_COMPATIBILITY: HostCompatibility = {
   basis: 'unavailable',
   requirement: null,
   declarations: [],
-}
-
-/**
- * Read the update reminders dismissed for this host process. The boot id is
- * part of the value rather than the key so sessionStorage never accumulates
- * one orphaned entry per process. Invalid and stale records fail open: an
- * update reminder is safer than silently hiding one we cannot account for.
- */
-function ignoredUpdatesForBoot(boot: string): string[] {
-  const saved = readSession(IGNORED_UPDATES_SESSION_KEY)
-  const valid = saved !== null
-    && typeof saved === 'object'
-    && !Array.isArray(saved)
-    && saved.boot === boot
-    && Array.isArray(saved.names)
-    && saved.names.every((name: unknown) => typeof name === 'string' && name !== '')
-  if (!valid) {
-    try { sessionStorage.removeItem(IGNORED_UPDATES_SESSION_KEY) } catch { /* storage unavailable */ }
-    return []
-  }
-  return [...new Set(saved.names as string[])]
 }
 
 function HostDependencyDiagnostics({
@@ -2382,6 +2363,7 @@ export function MarketSection(props: MarketSectionProps) {
   // The host's own page for a bundle (dsh 0.2.1+). Subscribed rather than read
   // once: the service arrives with the host's plugin manager, which may load
   // after this panel is already on screen.
+  const notificationSnapshot = useUpdateNotifications()
   const hostNavigation = props.hostNavigation
   const openInHost = useSyncExternalStore(
     cb => hostNavigation?.subscribe(cb) ?? (() => {}),
@@ -2515,6 +2497,14 @@ export function MarketSection(props: MarketSectionProps) {
    */
   const [updates, setUpdatesState] = useState<Record<string, UpdateStatus>>(() => cachedUpdates)
   const setUpdates = useCallback(cacheState(value => { cachedUpdates = value }, setUpdatesState), [])
+  // Background checks keep an already open market current without mounting a
+  // second scheduler. The server owns checking and preserves last-good results.
+  useEffect(() => {
+    if (!notificationSnapshot.loaded) return
+    setUpdates(notificationSnapshot.updates)
+    cachedUpdatesReady = notificationSnapshot.checkedAt !== null
+    setQueueSnapshotReady(ready => ({ ...ready, updates: cachedUpdatesReady }))
+  }, [notificationSnapshot.updates, notificationSnapshot.checkedAt, notificationSnapshot.loaded, setUpdates])
   const queueRestoredRef = useRef(false)
   const [queueSnapshotReady, setQueueSnapshotReady] = useState({
     installed: cachedInstalledReady,
@@ -2813,6 +2803,7 @@ export function MarketSection(props: MarketSectionProps) {
    * shows these plugins and their update actions; only proactive prompts use
    * this set. */
   const [ignoredUpdateNames, setIgnoredUpdateNames] = useState<string[]>([])
+  useEffect(() => { notifyUpdatePreferencesChanged() }, [ignoredUpdateNames])
   const [updatingName, setUpdatingName] = useState<string | null>(null)
   /** Update-notes dialog (#294): which row opened it, and what it resolved to. */
   const [notesFor, setNotesFor] = useState<{ name: string; current: string | null; latest: string | null; repoUrl: string | null } | null>(null)
@@ -2957,6 +2948,9 @@ export function MarketSection(props: MarketSectionProps) {
   const [blockedNames, setBlockedNamesState] = useState<string[]>(() => cachedBlockedNames)
   const setBlockedNames = useCallback(cacheState(value => { cachedBlockedNames = value }, setBlockedNamesState), [])
   const [updateExemptNames, setUpdateExemptNames] = useState<string[]>([])
+  useEffect(() => {
+    void refreshUpdateNotificationsAfterChange()
+  }, [updateExemptNames, disabledNames, blockedNames])
   /** Rows the user asked to show the AUTHOR's description on, despite a note. */
   const [showTheirs, setShowTheirs] = useState<string[]>([])
   /** The row whose note is being edited, and the text in the box. */
@@ -3297,6 +3291,7 @@ export function MarketSection(props: MarketSectionProps) {
       .then(res => res.json())
       .then(body => {
         setUpdates(body.updates || {})
+        void refreshUpdateNotifications()
         cachedUpdatesReady = true
         setQueueSnapshotReady(ready => ({ ...ready, updates: true }))
       })
@@ -3729,6 +3724,7 @@ export function MarketSection(props: MarketSectionProps) {
       })
       .catch(() => {})
     refreshInstalled()
+    void refreshUpdateNotifications()
   }, [applyDrainStatus, refreshInstalled, loadCatalog, readMarketStatus, restoreDrainMarkers])
 
   // Pending-restart flags survive tab switches and page reloads, scoped to
@@ -3755,6 +3751,7 @@ export function MarketSection(props: MarketSectionProps) {
       // Nothing pending: drop any stale entry (e.g. a hot mount cleared the
       // only doneUrl) so a same-boot remount cannot resurrect the banner (#73).
       sessionStorage.removeItem('dshm-restart')
+      notifyUpdatePreferencesChanged()
       return
     }
     sessionStorage.setItem('dshm-restart', JSON.stringify({
@@ -3765,6 +3762,7 @@ export function MarketSection(props: MarketSectionProps) {
       removed: removedCount,
       toggled: toggleRestart,
     }))
+    notifyUpdatePreferencesChanged()
   }, [bootId, doneUrls, updatedNames, restartNames, removedCount, toggleRestart])
 
   const fixEnv = useCallback(() => {
@@ -7617,6 +7615,17 @@ export function MarketSection(props: MarketSectionProps) {
             </span>
           </div>
         )}
+        {tab === 'installed' && <UpdateNotificationsPanel
+          snapshot={notificationSnapshot} t={t}
+          busy={updatingName !== null || busyUrl !== null || removingName !== null}
+          onCheck={checkUpdateNotifications}
+          onEnabled={setUpdateNotificationsEnabled}
+          onUpdate={name => {
+            if (updates[name]?.restoreRequired === true) askRestore(name)
+            else doUpdate(name)
+          }}
+          onOpenHost={openInHost === undefined ? undefined : name => openInHost.openBundle(name)}
+        />}
         {tab === 'installed' && <HostDependencyDiagnostics findings={hostDependencyFindings} t={t} />}
         {tab === 'installed' && brokenPluginNames.length > 0 && (
           <div className={css.brokenPluginNotice}>
