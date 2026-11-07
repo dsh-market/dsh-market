@@ -28,7 +28,7 @@
  * here trains the user to ignore the one that matters.
  */
 
-import { existsSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { readUserPatchState } from './patch.ts'
 import { createProfileSnapshot, DEFAULT_MAX_SNAPSHOTS, type SnapshotCaptureResult } from './snapshot.ts'
@@ -143,12 +143,13 @@ export type HostRecoveryRestoreResult =
  *
  * 1. a profile snapshot, so the restore is undoable the same way every other
  *    write on this page is (issue #98);
- * 2. the live patch is RENAMED, never deleted — it is what the app is running
+ * 2. the backup's bytes are written to a temp file first, so a write that
+ *    fails leaves the live patch where it was, and an interrupted one cannot
+ *    leave a half patch behind, which is the one outcome that would not boot;
+ * 3. the live patch is RENAMED, never deleted — it is what the app is running
  *    with right now, and a user who restores the wrong backup must still find
- *    it there;
- * 3. the backup's bytes are written to a temp file and renamed into place, so
- *    an interrupted write cannot leave a half patch behind, which is the one
- *    outcome that would not boot at all.
+ *    it there — and the temp file is renamed into its place. If that last
+ *    rename fails, the live patch is moved back.
  *
  * The backup file itself is left where it is: it is the other copy of the
  * user's configuration, and this function has no business being the last
@@ -182,19 +183,41 @@ export function restoreHostRecoveryBackup(
     return { ok: false, error: `恢复前没能存下快照，所以这次没有改动配置：${String(captured.error)} / refused to write without a snapshot: ${String(captured.error)}` }
   }
 
+  // The temp file is written BEFORE the live patch moves: a write that fails
+  // on a full disk or a file held by antivirus must leave the profile with
+  // the patch it is running, not with none.
+  const temp = `${patchPath}.restore-${process.pid}`
+  const dropTemp = (): void => {
+    try { rmSync(temp, { force: true }) } catch { /* not ours to remove (a directory) */ }
+  }
+  try {
+    writeFileSync(temp, contents)
+  } catch (error) {
+    dropTemp()
+    return { ok: false, error: `写入失败，所以这次没有改动：${messageOf(error)} / could not write the patch, nothing was changed: ${messageOf(error)}` }
+  }
+  let movedAside: string | null = null
   if (existsSync(patchPath)) {
+    movedAside = `${patchPath}.bak-${Date.now()}`
     try {
-      renameSync(patchPath, `${patchPath}.bak-${Date.now()}`)
+      renameSync(patchPath, movedAside)
     } catch (error) {
+      dropTemp()
       return { ok: false, error: `当前配置没能先改名保留，所以这次没有改动：${messageOf(error)} / could not move the current patch aside: ${messageOf(error)}` }
     }
   }
-  const temp = `${patchPath}.restore-${process.pid}`
   try {
-    writeFileSync(temp, contents)
     renameSync(temp, patchPath)
   } catch (error) {
-    return { ok: false, error: `写入失败：${messageOf(error)} / could not write the patch: ${messageOf(error)}` }
+    dropTemp()
+    if (movedAside !== null) {
+      try {
+        renameSync(movedAside, patchPath)
+      } catch {
+        return { ok: false, error: `写入失败，原配置留在 ${basename(movedAside)}：${messageOf(error)} / could not write the patch; the previous one is at ${basename(movedAside)}: ${messageOf(error)}` }
+      }
+    }
+    return { ok: false, error: `写入失败，所以这次没有改动：${messageOf(error)} / could not write the patch, nothing was changed: ${messageOf(error)}` }
   }
   return {
     ok: true,
