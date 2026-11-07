@@ -251,7 +251,7 @@ export function readUserPatchState(patchPath: string): PatchState {
   const inserts: string[] = []
   let text = ''
   try {
-    text = readFileSync(patchPath, 'utf8')
+    text = readPatchText(patchPath)
   } catch { /* no patch file — empty state */ }
   const lines = text.split(/\r?\n/u)
   let inInsert = false
@@ -713,6 +713,21 @@ function lastRowFlag(text: string, rowId: string, expected: string | null = null
  * `EACCES: permission denied, open '…'` reaching the UI tells a user nothing
  * they can act on, while the plugin's actual state has already changed.
  */
+/**
+ * The user patch as text, without a leading UTF-8 BOM.
+ *
+ * Windows Notepad saves UTF-8 with one, and `readFileSync` keeps it. js-yaml
+ * and the host strip it, so the host saw the first row while every
+ * `^`-anchored scan here missed it: a first `- id:` read as absent, and a
+ * first `[]` was not recognised as the placeholder, so a toggle appended
+ * after it and wrote a second top-level node. The market's own writes drop
+ * the BOM from then on. Throws like `readFileSync` when the file is missing.
+ */
+function readPatchText(patchPath: string): string {
+  const text = readFileSync(patchPath, 'utf8')
+  return text.startsWith('﻿') ? text.slice(1) : text
+}
+
 function writePatchFile(patchPath: string, contents: string): { ok: boolean; reason: string | null } {
   try {
     writeFileSync(patchPath, contents)
@@ -734,7 +749,7 @@ function writePatchFile(patchPath: string, contents: string): { ok: boolean; rea
 function appendPatchEntry(patchPath: string, block: string): { ok: boolean; reason: string | null } {
   let text = ''
   try {
-    text = readFileSync(patchPath, 'utf8')
+    text = readPatchText(patchPath)
   } catch { /* created below */ }
   const core = text.trim()
   if (core === '') {
@@ -800,7 +815,7 @@ export function disableRow(
       return { ok: false, reason: `行 id 含特殊字符,不支持写入补丁层 / row id ${rowId} cannot be written to the patch layer` }
     }
     const text = (() => {
-      try { return readFileSync(patchPath, 'utf8') } catch { return '' }
+      try { return readPatchText(patchPath) } catch { return '' }
     })()
     let kept = false
     const next = rewriteRowBlocks(text, rowId, 'any', block => {
@@ -853,7 +868,7 @@ export function enableRow(
     }
     const state = withoutMismatchedRow(readUserPatchState(patchPath), rowId, expected)
     const text = (() => {
-      try { return readFileSync(patchPath, 'utf8') } catch { return '' }
+      try { return readPatchText(patchPath) } catch { return '' }
     })()
     const next = rewriteRowBlocks(text, rowId, 'true', () => '', expected)
     if (next !== text) {
@@ -902,7 +917,7 @@ function withPlaceholderRestored(text: string): string {
 export function removeRowBlocks(patchPath: string, rowIds: readonly string[]): { ok: boolean; reason: string | null } {
   let text = ''
   try {
-    text = readFileSync(patchPath, 'utf8')
+    text = readPatchText(patchPath)
   } catch { return { ok: true, reason: null } } // no file, nothing to remove
   let next = text
   for (const rowId of rowIds) next = rewriteRowBlocks(next, rowId, 'any', () => '')

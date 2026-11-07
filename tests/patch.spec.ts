@@ -750,6 +750,44 @@ describe('removeRowBlocks', () => {
   })
 })
 
+describe('a patch file that starts with a UTF-8 BOM', () => {
+  // Windows Notepad saves UTF-8 with a BOM. readFileSync keeps it, so every
+  // `^`-anchored scan missed the first line, while js-yaml and the host strip
+  // it and still see that row.
+  const BOM = '﻿'
+  function withPatch(contents: string, run: (patch: string, dir: string) => Promise<void> | void): Promise<void> {
+    const dir = patchDir()
+    const patch = join(dir, 'cordis.patch.yml')
+    writeFileSync(patch, contents)
+    return Promise.resolve(run(patch, dir)).finally(() => { rmSync(dir, { recursive: true, force: true }) })
+  }
+
+  it('reads the first row', () => withPatch(`${BOM}- id: foo\n  disabled: true\n- id: bar\n  disabled: true\n`, (patch) => {
+    expect(readUserPatchState(patch).disables).toEqual(['foo', 'bar'])
+  }))
+
+  it('comments out the template placeholder instead of appending after it', () => withPatch(`${BOM}[]\n`, async (patch, dir) => {
+    expect((await disableRow(patch, 'foo')).ok).toBe(true)
+    // Two top-level nodes would be a file the host refuses to boot with.
+    expect(load(readPatch(dir))).toEqual([{ id: 'foo', disabled: true }])
+  }))
+
+  it('removes the first row on enable instead of appending a contradicting one', () => withPatch(`${BOM}- id: foo\n  disabled: true\n- id: bar\n  disabled: true\n`, async (patch, dir) => {
+    expect((await enableRow(patch, 'foo')).ok).toBe(true)
+    expect(load(readPatch(dir))).toEqual([{ id: 'bar', disabled: true }])
+  }))
+
+  it('does not duplicate a first row that is already disabled', () => withPatch(`${BOM}- id: foo\n  disabled: true\n`, async (patch, dir) => {
+    expect((await disableRow(patch, 'foo')).ok).toBe(true)
+    expect(load(readPatch(dir))).toEqual([{ id: 'foo', disabled: true }])
+  }))
+
+  it('lets uninstall clean the first row', () => withPatch(`${BOM}- id: foo\n  disabled: true\n`, (patch, dir) => {
+    expect(removeRowBlocks(patch, ['foo']).ok).toBe(true)
+    expect(load(readPatch(dir))).toEqual([])
+  }))
+})
+
 describe('isProtectedModule', () => {
   it('flags host infrastructure and lets community plugins pass', () => {
     expect(isProtectedModule('cordis:timer')).toBe(true)
