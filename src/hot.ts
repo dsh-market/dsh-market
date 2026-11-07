@@ -23,7 +23,7 @@ import { pathToFileURL } from 'node:url'
 import { asChannel, type Channel } from './channels.ts'
 import { asRegion, normalizeGithubProxy, type Region } from './regions.ts'
 import { logEvent } from './log.ts'
-import { declaredBundlePatchFiles, entryArtifactExists } from './profile.ts'
+import { bundlePatchTargets, declaredBundlePatchFiles, entryArtifactExists } from './profile.ts'
 
 interface HotRow {
   id: string
@@ -971,18 +971,21 @@ export async function hotMount(ctx: HotContext, profileDir: string, packageName:
  */
 export async function mountClientOnlyDeps(ctx: HotContext, profileDir: string): Promise<string[]> {
   let deps: string[]
+  let bundles: string[]
   try {
     const manifest = JSON.parse(readFileSync(join(profileDir, 'package.json'), 'utf8')) as {
       dependencies?: Record<string, string>
       dsh?: { profile?: { bundles?: string[] } }
     }
-    const bundles = new Set(manifest.dsh?.profile?.bundles ?? [])
-    deps = Object.keys(manifest.dependencies ?? {}).filter(name => !bundles.has(name))
+    bundles = manifest.dsh?.profile?.bundles ?? []
+    const bundleSet = new Set(bundles)
+    deps = Object.keys(manifest.dependencies ?? {}).filter(name => !bundleSet.has(name))
   } catch {
     return []
   }
   const disabled = readDisabled(profileDir)
   const userManaged = readUserPatchControls(profileDir)
+  const hostProvided = bundleLayerTargets(profileDir, bundles)
   const mounted: string[] = []
   for (const name of deps) {
     if (hotHandles.has(name) || disabled.has(name)) continue
@@ -991,11 +994,45 @@ export async function mountClientOnlyDeps(ctx: HotContext, profileDir: string): 
     // to control — a shim here would override a user's "disabled" choice on
     // every restart (#58 by @vikna919).
     if (patchLayerManages(userManaged, name)) continue
+    // A package the profile's bundle layer ALREADY mounts needs no shim: the
+    // entry is live, under a row id only the bundle decides. Sheathing a
+    // second fiber over it registers its services again, cordis refuses the
+    // duplicate, and the market recorded the shim as live while the host
+    // reported the entry as not activated (#1137).
+    if (hostProvided.has(name)) {
+      logEvent('info', 'boot',
+        `${name}: already mounted by the profile's bundle layer, no client-only shim (#1137)`)
+      continue
+    }
     const dsh = readPkgDsh(profileDir, name)
     if (dsh === null || dsh.client === undefined || dsh.bundle !== undefined) continue
     if ((await hotMount(ctx, profileDir, name)).ok) mounted.push(name)
   }
   return mounted
+}
+
+/**
+ * Package names the profile's OWN bundle layer already mounts.
+ *
+ * The shim predicate reads the profile manifest, so it can only see a package
+ * as a dependency; it cannot see that an in-box bundle mounts the same package
+ * under a row id of its own — `@deepseek-ai/dsh-web-app` ships
+ * `- id: connection` / `name: '@deepseek-ai/dsh-client-connection'` (#1137).
+ * Those packages also declare `dsh.client` and no `dsh.bundle`, so every
+ * existing predicate says "shim it". Only the row NAMES link the two, and a
+ * clean profile's bundles are the only place they are written down.
+ *
+ * A bundle whose declaration cannot be read contributes nothing, which keeps
+ * today's behaviour (shim, possibly duplicated) rather than silently dropping
+ * a client bundle that the bundle layer never mounts.
+ */
+export function bundleLayerTargets(profileDir: string, bundles: Iterable<string>): Set<string> {
+  const targets = new Set<string>()
+  for (const bundle of bundles) {
+    const dir = join(profileDir, 'node_modules', ...bundle.split('/'))
+    for (const name of bundlePatchTargets(dir)) targets.add(name)
+  }
+  return targets
 }
 
 /**
