@@ -1,6 +1,19 @@
 /** zh/en/ja dictionaries for the Market settings section and install toast. */
 
 export const zh = {
+  updateChecksTitle: "更新检查",
+  updateChecksAutomatic: "自动检查更新",
+  updateChecksNow: "立即检查",
+  updateChecksHint: "运行期间每 30 分钟检查。只提醒，不自动安装。",
+  updateChecksPending: "尚未检查",
+  updateChecksChecking: "正在检查…",
+  updateChecksFound: "发现 {0} 个可用更新",
+  updateChecksNone: "暂无更新提醒",
+  updateChecksFailed: "检查暂未完成",
+  updateChecksFailedHint: "部分信息暂时无法获取，保留上次结果。请稍后重试。",
+  updateChecksLastSuccess: "最近完整检查：{0}",
+  updateChecksOpenHost: "到插件页查看",
+  updateNotificationsAnnouncement: "有 {count} 个插件可更新。打开插件市场查看。",
   nav: '插件市场',
   setCardDesc: '查看插件市场版本与设置。',
   setSelfUpToDate: '已是最新版本',
@@ -824,6 +837,19 @@ export const zh = {
 export type MarketKey = keyof typeof zh
 
 export const en: Record<MarketKey, string> = {
+  updateChecksTitle: "Update checks",
+  updateChecksAutomatic: "Check for updates automatically",
+  updateChecksNow: "Check now",
+  updateChecksHint: "Checks every 30 minutes while running. Updates are never installed automatically.",
+  updateChecksPending: "Not checked yet",
+  updateChecksChecking: "Checking…",
+  updateChecksFound: "{0} updates available",
+  updateChecksNone: "No pending update reminders",
+  updateChecksFailed: "Check incomplete",
+  updateChecksFailedHint: "Some information is unavailable. Previous results are kept; try again later.",
+  updateChecksLastSuccess: "Last complete check: {0}",
+  updateChecksOpenHost: "View in Plugins",
+  updateNotificationsAnnouncement: "{count} plugin updates available. Open Plugin Market to review.",
   nav: 'Plugin Market',
   setCardDesc: 'View the plugin market version and settings.',
   setSelfUpToDate: 'Up to date',
@@ -1628,6 +1654,19 @@ export const en: Record<MarketKey, string> = {
 }
 
 export const ja: Record<MarketKey, string> = {
+  updateChecksTitle: "更新の確認",
+  updateChecksAutomatic: "更新を自動で確認",
+  updateChecksNow: "今すぐ確認",
+  updateChecksHint: "実行中は30分ごとに確認します。自動でインストールはしません。",
+  updateChecksPending: "未確認",
+  updateChecksChecking: "確認中…",
+  updateChecksFound: "{0} 件の更新があります",
+  updateChecksNone: "通知する更新はありません",
+  updateChecksFailed: "確認が完了していません",
+  updateChecksFailedHint: "一部の情報を取得できないため、前回の結果を保持しています。後でもう一度お試しください。",
+  updateChecksLastSuccess: "前回の確認完了：{0}",
+  updateChecksOpenHost: "プラグイン画面で確認",
+  updateNotificationsAnnouncement: "{count} 件のプラグイン更新があります。プラグインマーケットで確認してください。",
   nav: 'プラグインマーケット',
   setCardDesc: 'プラグインマーケットのバージョンと設定を確認します。',
   setSelfUpToDate: '最新バージョンです',

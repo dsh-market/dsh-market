@@ -1,0 +1,212 @@
+/**
+ * #1138: a real host discovers an update while the market is never opened.
+ * The startup timer keeps its production 30-second delay. Later explicit
+ * POST checks are manual-refresh coverage, not evidence of periodic checks.
+ * Everything, including uninstall, runs in the scaffold's disposable home.
+ */
+import { mkdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { chromium } from 'playwright'
+import type { Browser, Page } from 'playwright'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import type { UpdateNotificationSnapshot } from '../../src/update-notifications.ts'
+import { dismissStartGate, dshAvailable, launchMarketScaffold, openMarketPage, openMarketUi } from './scaffold.ts'
+import type { WebScaffold } from './scaffold.ts'
+
+const HAS_DSH = dshAvailable()
+const FIXTURE = 'dshm-e2e-fixture-a'
+const ENDPOINT = '/dsh-market/update-notifications'
+const INDICATOR = '[data-dsh-market-plugins-indicator]'
+const DOT = '[data-dsh-market-update-dot]'
+const SCREENSHOTS = process.env.DSHM_E2E_SCREENSHOTS_DIR
+
+describe.skipIf(!HAS_DSH).sequential('web e2e: background update notifications', () => {
+  let scaffold: WebScaffold
+  let browser: Browser
+  let page: Page
+  let hasPluginsEntry = false
+  let initialPluginsText = ''
+  const browserChecks: string[] = []
+
+  const post = async (path: string, body: unknown): Promise<Response> => scaffold.api(path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', origin: scaffold.baseUrl },
+    body: JSON.stringify(body),
+  })
+  const snapshot = async (): Promise<UpdateNotificationSnapshot> => {
+    const response = await scaffold.api(ENDPOINT)
+    expect(response.status).toBe(200)
+    return await response.json() as UpdateNotificationSnapshot
+  }
+  const plugins = () => page.getByRole('button', { name: /^(Plugins|插件)$/ }).first()
+  const installedVersion = (): string => (JSON.parse(readFileSync(
+    join(scaffold.home, 'profiles', 'web', 'node_modules', FIXTURE, 'package.json'), 'utf8',
+  )) as { version: string }).version
+
+  beforeAll(async () => {
+    scaffold = await launchMarketScaffold({
+      fixtures: [{ dir: 'fixture-a', version: '2.0.0' }, { dir: 'fixture-a', version: '1.0.0' }],
+    })
+    const installed = await post('/dsh-market/install', { url: `https://github.com/dshm-e2e/${FIXTURE}` })
+    expect(installed.status).toBe(200)
+    expect(installedVersion()).toBe('1.0.0')
+    scaffold.publish(FIXTURE, '2.0.0')
+    // Clear any initial installation/check state, just as a user's next
+    // launch would. The next discovery must be this process's own timer.
+    await scaffold.restart()
+    const before = await snapshot()
+    expect(before.enabled).toBe(true)
+    expect(before.checkedAt).toBeNull()
+    expect(before.nextCheckAt).not.toBeNull()
+
+    browser = await chromium.launch({
+      // Optional test-only override for an already-installed local browser.
+      // CI continues to use the browser installed by Playwright itself.
+      executablePath: process.env.DSHM_E2E_BROWSER_EXECUTABLE || undefined,
+    })
+    page = await browser.newPage({ viewport: { width: 1500, height: 950 } })
+    page.on('request', request => {
+      const path = new URL(request.url()).pathname
+      if (path === '/dsh-market/updates' || (path === ENDPOINT && request.method() !== 'GET')) {
+        browserChecks.push(`${request.method()} ${path}`)
+      }
+    })
+    // Despite its historical name, this only authenticates and loads the
+    // clean app root. Do not call openMarketUi or click Plugins yet.
+    await openMarketPage(page, scaffold)
+    await dismissStartGate(page)
+    // A broken or still-loading old shell must not be mistaken for a host
+    // that simply has no Plugins sidebar surface.
+    await plugins().or(page.getByRole('button', { name: /^(Settings|设置)$/ }).first())
+      .or(page.getByRole('button', { name: /^(Account menu|账号菜单)$/ }).first())
+      .first().waitFor({ state: 'visible', timeout: 30_000 })
+    hasPluginsEntry = await plugins().isVisible()
+    if (hasPluginsEntry) initialPluginsText = (await plugins().innerText()).trim()
+  }, 600_000)
+
+  afterAll(async () => {
+    await browser?.close()
+    await scaffold?.close()
+  })
+
+  it('checks after startup without a market visit or a manual request, and does not install', async () => {
+    await expect.poll(async () => (await snapshot()).updates[FIXTURE], {
+      interval: 500, timeout: 120_000,
+    }).toMatchObject({ current: '1.0.0', latest: '2.0.0', updateAvailable: true })
+    expect(browserChecks).toEqual([])
+    const checked = await snapshot()
+    expect(checked.checkedAt).not.toBeNull()
+    expect(installedVersion()).toBe('1.0.0')
+    expect(readFileSync(join(scaffold.home, `e2e-${FIXTURE}.alive`), 'utf8').trim()).toBe('1.0.0')
+  })
+
+  it('reactively decorates the existing Plugins entry before it is opened', async (context) => {
+    // Old CI hosts have only a Settings dialog. The backend test above still
+    // runs there; do not misreport a missing sidebar surface as a UI pass.
+    if (!hasPluginsEntry) context.skip('This host predates the native Plugins sidebar entry')
+    await page.locator(DOT).waitFor({ state: 'visible', timeout: 65_000 })
+    expect(await page.locator(INDICATOR).count()).toBe(1)
+    expect(await plugins().innerText()).toBe(initialPluginsText)
+    expect(Number(await page.locator(DOT).getAttribute('data-update-count'))).toBeGreaterThan(0)
+    expect(browserChecks).toEqual([])
+    if (SCREENSHOTS) {
+      mkdirSync(SCREENSHOTS, { recursive: true })
+      // The upper shell shows the native entry and an empty new session;
+      // exclude the lower workspace/account area and any browser URL bar.
+      await page.screenshot({ path: join(SCREENSHOTS, 'plugins-background-update-dot.png'),
+        clip: { x: 0, y: 65, width: 280, height: 170 } })
+    }
+    await plugins().click()
+    await page.locator('[data-plugin-body]').first().waitFor({ state: 'visible', timeout: 30_000 })
+    if (SCREENSHOTS) {
+      const nativeMarket = page.getByRole('tab', { name: /^(Plugin Market|插件市场)$/ })
+        .or(page.getByRole('button', { name: /^(Plugin Market|插件市场)$/ })).first()
+      if (await nativeMarket.isVisible()) await nativeMarket.click()
+      else await openMarketUi(page)
+      const market = page.locator('[data-dsh-market-root]').first()
+      await market.waitFor({ state: 'visible', timeout: 30_000 })
+      await market.getByRole('button', { name: /^(Installed|已安装)/ }).first().click()
+      const details = market.locator('[data-dsh-market-update-checks]')
+      await details.locator('summary').click()
+      await details.getByText(FIXTURE, { exact: true }).waitFor({ state: 'visible' })
+      await details.getByText(/^(Check for updates automatically|自动检查更新)$/)
+        .waitFor({ state: 'visible' })
+      // The shared check can arrive before the installed-card listing. Wait
+      // for the fixture's card as well, rather than capture its loading gap.
+      await market.getByText(FIXTURE, { exact: true }).nth(1)
+        .waitFor({ state: 'visible', timeout: 30_000 })
+      // Capture the market surface only; a fresh fixture contains no user
+      // sessions, and the account/workspace sidebar is outside this image.
+      await market.screenshot({ path: join(SCREENSHOTS, 'market-installed-update-checks.png') })
+    }
+  })
+
+  it('turns automatic checks off without erasing the existing reminder', async (context) => {
+    const response = await post(ENDPOINT, { enabled: false })
+    expect(response.status).toBe(200)
+    const disabled = await response.json() as UpdateNotificationSnapshot
+    expect(disabled.enabled).toBe(false)
+    expect(disabled.nextCheckAt).toBeNull()
+    expect(disabled.updates[FIXTURE]?.updateAvailable).toBe(true)
+    if (!hasPluginsEntry) context.skip('Server preference verified; this host has no Plugins sidebar')
+    await page.locator(DOT).waitFor({ state: 'visible', timeout: 35_000 })
+  })
+
+  it('persists the disabled preference over a real host restart', async () => {
+    await scaffold.restart()
+    await openMarketPage(page, scaffold)
+    await dismissStartGate(page)
+    const disabled = await snapshot()
+    expect(disabled.enabled).toBe(false)
+    expect(disabled.nextCheckAt).toBeNull()
+    expect(disabled.checking).toBe(false)
+    expect(disabled.checkedAt).toBeNull()
+    // Cross the real startup delay, polling the read-only endpoint. A
+    // forgotten persistence flag would trigger the 30-second check here.
+    const deadline = Date.now() + 32_000
+    while (Date.now() < deadline) {
+      const stillDisabled = await snapshot()
+      expect(stillDisabled.enabled).toBe(false)
+      expect(stillDisabled.nextCheckAt).toBeNull()
+      expect(stillDisabled.checkedAt).toBeNull()
+      await new Promise(resolve => setTimeout(resolve, 1000))
+    }
+  })
+
+  it('allows an explicit manual check while automatic checks remain off', async () => {
+    const response = await post(ENDPOINT, { check: true })
+    expect(response.status).toBe(200)
+    const manual = await response.json() as UpdateNotificationSnapshot
+    expect(manual.enabled).toBe(false)
+    expect(manual.nextCheckAt).toBeNull()
+    expect(manual.updates[FIXTURE]).toMatchObject({ current: '1.0.0', latest: '2.0.0', updateAvailable: true })
+    expect(installedVersion()).toBe('1.0.0')
+    if (hasPluginsEntry) await page.locator(DOT).waitFor({ state: 'visible', timeout: 65_000 })
+  })
+
+  it('reactively removes an exempted reminder without another registry check', async (context) => {
+    if (!hasPluginsEntry) context.skip('This host predates the native Plugins sidebar entry')
+    const count = Number(await page.locator(DOT).getAttribute('data-update-count'))
+    const checkedAt = (await snapshot()).checkedAt
+    const response = await post('/dsh-market/update-exempt', { name: FIXTURE, exempt: true })
+    expect(response.status).toBe(200)
+    await expect.poll(async () => {
+      const dots = page.locator(DOT)
+      return await dots.count() === 0 ? 0 : Number(await dots.getAttribute('data-update-count'))
+    }, { interval: 500, timeout: 65_000 }).toBe(count - 1)
+    const quiet = await snapshot()
+    expect(quiet.checkedAt).toBe(checkedAt)
+    expect(quiet.updateExempt).toContain(FIXTURE)
+    expect(quiet.updates[FIXTURE]?.updateAvailable).toBe(true)
+  })
+
+  it('releases the sidebar decoration when this temporary market is uninstalled', async (context) => {
+    if (!hasPluginsEntry) context.skip('This host predates the native Plugins sidebar entry')
+    const response = await post('/dsh-market/self-uninstall', { confirm: true, purge: false })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ ok: true })
+    await page.locator(INDICATOR).waitFor({ state: 'detached', timeout: 30_000 })
+    expect(await plugins().isVisible()).toBe(true)
+    expect((await plugins().innerText()).trim()).toBe(initialPluginsText)
+  }, 300_000)
+})

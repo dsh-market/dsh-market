@@ -305,6 +305,8 @@ export interface MarketState {
    * An empty array is how the last name is removed.
    */
   updateExempt?: string[]
+  /** Background update checks are enabled unless explicitly switched off. */
+  backgroundUpdateChecks?: boolean
   /** User-supplied HTTPS prefix used when the built-in GitHub routes fail. */
   githubProxy?: string
   /**
@@ -520,6 +522,7 @@ export function readMarketState(profileDir: string): MarketState {
       favorites?: unknown
       blocked?: unknown
       updateExempt?: unknown
+      backgroundUpdateChecks?: unknown
       brokenPlugins?: unknown
       sidebarEntry?: unknown
       settingsSection?: unknown
@@ -565,6 +568,7 @@ export function readMarketState(profileDir: string): MarketState {
       favorites: favoriteUrls(state.favorites),
       blocked: blockedNames(state.blocked),
       updateExempt: updateExemptNames(state.updateExempt),
+      ...(typeof state.backgroundUpdateChecks === 'boolean' ? { backgroundUpdateChecks: state.backgroundUpdateChecks } : {}),
       ...(githubProxy === null ? {} : { githubProxy }),
       ...(brokenPlugins === undefined ? {} : { brokenPlugins }),
       // true AND false are both preserved: on a host with no settings page
@@ -662,6 +666,7 @@ export function writeMarketState(profileDir: string, state: MarketState): void {
   const favorites = state.favorites ?? onDisk.favorites ?? []
   const blocked = state.blocked ?? onDisk.blocked ?? []
   const updateExempt = state.updateExempt ?? onDisk.updateExempt ?? []
+  const backgroundUpdateChecks = state.backgroundUpdateChecks ?? onDisk.backgroundUpdateChecks
   // This field does have a clear action ("restore automatic"). As with
   // regionAuto, omission preserves while an explicit undefined removes it.
   const githubProxy = Object.prototype.hasOwnProperty.call(state, 'githubProxy')
@@ -688,6 +693,7 @@ export function writeMarketState(profileDir: string, state: MarketState): void {
     ...(favorites.length > 0 ? { favorites } : {}),
     ...(blocked.length > 0 ? { blocked } : {}),
     ...(updateExempt.length > 0 ? { updateExempt } : {}),
+    ...(typeof backgroundUpdateChecks === 'boolean' ? { backgroundUpdateChecks } : {}),
     ...(Object.keys(notes).length > 0 ? { notes } : {}),
     // Omitted while unchosen, so "never picked" survives a round trip and
     // keeps deriving from the running build — but only when disk has not

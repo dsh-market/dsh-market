@@ -38,6 +38,8 @@ export interface UpdateStatus {
    * as "there is an upgrade" and labels a button accordingly.
    */
   updateAvailable: boolean
+  /** Source lookup failed; notification surfaces may retain a previous confirmed result. */
+  checkError?: 'unavailable'
   /** Exact mature npm stable target for Desktop; `latest` remains the registry tag. */
   eligibleVersion?: string
   /**
@@ -863,16 +865,18 @@ export async function checkUpdates(
   options: { holdYoungReleases?: boolean; releaseSources?: ReadonlyMap<string, CatalogReleaseSource> } = {},
 ): Promise<Record<string, UpdateStatus>> {
   const activeProfileDir = profileDir(profile, explicitDir)
+  const installed = readInstalled(profile, activeProfileDir)
+  const lockCommits = readLockCommits(profile, activeProfileDir)
+  const installedIdentity = JSON.stringify(Object.entries(installed).sort(([a], [b]) => a.localeCompare(b))
+    .map(([name, spec]) => [name, spec, readInstalledVersion(profile, name, activeProfileDir), readGitResolutionCommit(profile, spec, activeProfileDir)]))
   // The channel is part of the key: switching to betas has to change the
   // answer immediately, and a cache keyed on the profile alone would serve
   // the stable verdict for the rest of the TTL — reading as "the setting did
   // nothing".
-  const cacheKey = `${activeProfileDir}\u0000${options.holdYoungReleases === true ? 'hold' : 'any'}\u0000${[...channelFor].map(([n, c]) => `${n}:${c}`).sort().join(',')}\u0000${[...onlineSourceFor].map(([n, s]) => `${n}:${s}`).sort().join(',')}\u0000${[...catalogNpmByRepo].map(([n, s]) => `${n}:${s}`).sort().join(',')}\u0000${options.holdYoungReleases === true ? profilePolicyFingerprint(activeProfileDir) : ''}` + JSON.stringify([...(options.releaseSources ?? [])])
+  const cacheKey = `${activeProfileDir}\u0000${options.holdYoungReleases === true ? 'hold' : 'any'}\u0000${[...channelFor].map(([n, c]) => `${n}:${c}`).sort().join(',')}\u0000${[...onlineSourceFor].map(([n, s]) => `${n}:${s}`).sort().join(',')}\u0000${[...catalogNpmByRepo].map(([n, s]) => `${n}:${s}`).sort().join(',')}\u0000${options.holdYoungReleases === true ? profilePolicyFingerprint(activeProfileDir) : ''}` + JSON.stringify([...(options.releaseSources ?? [])]) + installedIdentity + JSON.stringify([...lockCommits].sort())
   if (!force && updatesCache?.key === cacheKey && Date.now() < updatesCache.recheckAt) {
     return updatesCache.data
   }
-  const installed = readInstalled(profile, activeProfileDir)
-  const lockCommits = readLockCommits(profile, activeProfileDir)
   const result: Record<string, UpdateStatus> = {}
   let nextCandidateMaturityAt = Infinity
   await Promise.all(Object.entries(installed).map(async ([name, spec]) => {
@@ -890,6 +894,7 @@ export async function checkUpdates(
         result[name] = {
           kind: 'linked', version, current: version, latest,
           updateAvailable: upgrade && !held,
+          ...(latest === null ? { checkError: 'unavailable' as const } : {}),
           ...(held ? { heldUpdate: { latest: latest!, until: hold.until, ...(hold.estimated ? { estimated: true as const } : {}) } } : {}),
           ...(upgrade ? { restoreRequired: true } : {}),
         }
@@ -918,6 +923,7 @@ export async function checkUpdates(
           kind: 'generation', version, current: version,
           latest: isUpgrade(version, newest) ? newest : null,
           updateAvailable: false,
+          ...(onlineSource !== undefined && newest === null ? { checkError: 'unavailable' as const } : {}),
         }
         return
       }
@@ -958,6 +964,7 @@ export async function checkUpdates(
         result[name] = {
           kind: 'github', version, current, latest,
           updateAvailable: byVersion ?? (current !== null && latest !== null && current !== latest),
+          ...(latest === null && byVersion === null ? { checkError: 'unavailable' as const } : {}),
           ...(byVersion === false && current !== null && latest !== null && current !== latest
             ? { unreleasedCommit: latest } : {}),
         }
@@ -984,6 +991,7 @@ export async function checkUpdates(
         result[name] = {
           kind: 'github', version, current, latest,
           updateAvailable: byVersion ?? (current !== null && latest !== null && current !== latest),
+          ...(latest === null && byVersion === null ? { checkError: 'unavailable' as const } : {}),
           ...(byVersion === false && current !== null && latest !== null && current !== latest
             ? { unreleasedCommit: latest } : {}),
         }
@@ -997,7 +1005,7 @@ export async function checkUpdates(
           const source = options.releaseSources?.get(name)
           if (source !== undefined) {
             const release = await publishedReleaseUpdate(source, name)
-            result[name] = { kind: 'npm', version, current: version, latest: release?.version ?? null, updateAvailable: isUpgrade(version, release?.version ?? null) }
+            result[name] = { kind: 'npm', version, current: version, latest: release?.version ?? null, updateAvailable: isUpgrade(version, release?.version ?? null), ...(release === null ? { checkError: 'unavailable' as const } : {}) }
             return
           }
           const repo = lookupRepoFromUrl(spec)
@@ -1049,6 +1057,7 @@ export async function checkUpdates(
         result[name] = {
           kind: 'npm', version, current: version, latest,
           updateAvailable: mature === null ? upgrade && !held : mature.candidate !== null,
+          ...(latest === null ? { checkError: 'unavailable' as const } : {}),
           ...(mature?.candidate !== null && mature?.candidate !== undefined ? { eligibleVersion: mature.candidate } : {}),
           ...(mature?.heldUpdate !== undefined ? { heldUpdate: mature.heldUpdate }
             : hold !== null && hold !== 'past' ? { heldUpdate: { latest: latest!, until: hold.until, ...(hold.estimated ? { estimated: true as const } : {}) } } : {}),
@@ -1057,7 +1066,7 @@ export async function checkUpdates(
         }
       }
     } catch {
-      result[name] = { kind: (spec.startsWith('github:') || isGitHostedSpec(spec)) ? 'github' : 'npm', version, current: null, latest: null, updateAvailable: false }
+      result[name] = { kind: (spec.startsWith('github:') || isGitHostedSpec(spec)) ? 'github' : 'npm', version, current: null, latest: null, updateAvailable: false, checkError: 'unavailable' }
     }
   }))
   // A plain dependency can have a newer release; it is just not an update the
