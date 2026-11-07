@@ -2661,6 +2661,29 @@ describe('MarketSection (jsdom)', () => {
     }
   })
 
+  it('stays quiet when the host answers a 409 that says it is busy (#1140)', async () => {
+    // The official Desktop manager holds its own operation for minutes and
+    // refuses every market command with `busy: true`. The row belongs in the
+    // queue, but the banner belongs to a user action that was refused for a
+    // reason — repeating it every 2s made the panel unusable (#1140).
+    stubFetch({
+      '/dsh-market/installed': { profile: 'desktop', installed: { 'dsh-loop': '^1.0.0' }, live: [] },
+      '/dsh-market/updates': { updates: { 'dsh-loop': {
+        kind: 'npm', current: '1.0.0', latest: '1.2.0', eligibleVersion: '1.1.0', updateAvailable: true,
+      } } },
+      '/dsh-market/update': { ok: false, busy: true, error: 'another plugin operation is running', __status: 409 },
+      '/dsh-market/status': { active: false, busy: false, pnpm: true, boot: 'boot-1', installed: {} },
+    })
+    render(<MarketSection {...props()} />)
+    fireEvent.click(await screen.findByRole('button', { name: /Installed/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Update v1.1.0' }))
+    await waitFor(() => expect(fetchCalls.some(call => call.path === '/dsh-market/update')).toBe(true))
+    expect(screen.queryByText(en.queuedRunBusy)).toBeNull()
+    // The row is queued rather than failed: the durable queue keeps it.
+    await waitFor(() => expect(JSON.parse(localStorage.getItem('dshm-queue-v1') ?? '[]'))
+      .toEqual([expect.objectContaining({ kind: 'update', name: 'dsh-loop' })]))
+  })
+
   it('keeps the other rows queued when a batch of "run now" is clicked at once (#775)', async () => {
     // Reported: four installs sat queued behind a running agent. The sessions
     // were cancelled, all four rows were told to "run now", and only the first

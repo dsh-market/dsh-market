@@ -116,6 +116,24 @@ describe('official Electron profile runtime', () => {
     }
   })
 
+  it('reports its own running operation so /status can wait on it (#1140)', async () => {
+    // The manager holds `active`/`repairing` for the whole of its own install.
+    // `/dsh-market/status` used to say `busy: false` the entire time, so the
+    // client's queue retried every 2s into a refusal and re-showed the
+    // "another operation is running" banner on each one.
+    const service = manager()
+    let settle: (value: { application: string; packageResult: { exitCode: number; output: string } }) => void = () => {}
+    service.installBundle.mockImplementationOnce(() => new Promise(resolve => { settle = resolve as typeof settle }))
+    const runtime = createOfficialDesktopRuntime(() => service, 'desktop', profile())
+    expect(runtime.busy()).toBe(false)
+    const running = runtime.runPlugin('desktop', ['add', 'example@2.0.0'])
+    expect(runtime.busy()).toBe(true)
+    settle({ application: 'restart-required', packageResult: { exitCode: 0, output: 'installed' } })
+    await running
+    expect(runtime.busy()).toBe(false)
+    await runtime.dispose()
+  })
+
   it('uses the current market mirror for installs, update targets and exact rollback targets (#862)', async () => {
     setActiveRegion('china')
     const service = manager()

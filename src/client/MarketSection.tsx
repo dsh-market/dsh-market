@@ -5054,6 +5054,12 @@ export function MarketSection(props: MarketSectionProps) {
             // durable queue keeps, so this is what lets the row outlive the
             // restart that ends the operation holding the lock.
             setRecords(list => patchRecord(list, updateRecordId, { state: 'queued' }))
+            // `busy: true` means another operation is running — the official
+            // Desktop manager's own install or repair can hold that state for
+            // minutes. The queue's job then is to wait quietly: repeating the
+            // banner on every 2s retry made the panel unusable and the log
+            // grow while the market was doing exactly the right thing (#1140).
+            if (body.busy === true) return
             setInstallError(t('queuedRunBusy'))
             setOperationsOpen(true)
             return

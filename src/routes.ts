@@ -974,6 +974,10 @@ export function mountMarketRoutes(
         // The long-standing lock response stays byte-identical for ordinary
         // contention; the drain reservation is the one callers can tell apart.
         ...(drainReserved ? { failureCode: 'OPERATION_BUSY' } : {}),
+        // Another operation of OURS is running, not a failure: the queue waits
+        // for it instead of re-showing "another operation is running" on every
+        // retry (#1140). Additive — the fields above are unchanged.
+        busy: true,
         error: kind === 'install' ? 'another install is already running' : 'another plugin operation is running',
       })
       return null
@@ -4492,7 +4496,13 @@ export function mountMarketRoutes(
           // exits, install post-processing (retarget, validation, hot-mount)
           // still holds the operation lock for a moment — the exact window
           // where clicking the restart banner used to bounce off a 409 (#91).
-          busy: installing || preflightActive > 0,
+          busy: installing || preflightActive > 0
+            // The official Desktop manager runs its own operations (an
+            // install, or the repair of one an earlier start interrupted).
+            // While it does, every market command is refused with
+            // `busy: true` — so the status has to say the same, or the
+            // client's queue retries into that refusal every 2s (#1140).
+            || commandRuntime?.busy?.() === true,
           // Queue drain signal for the client's install queue: the agent-file
           // guard values are already computed for every status poll, so the
           // client can decide when a queued operation may run without an

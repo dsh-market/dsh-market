@@ -439,6 +439,13 @@ export interface OfficialDesktopRuntime extends DesktopPluginRuntime {
    * Returns after every record settled or was found unrepairable; never throws.
    */
   repairPendingUpdates(): Promise<RepairReport>
+  /**
+   * Whether the manager is already running an operation of its own — the
+   * state that makes `runPlugin` answer `busy: true` (see
+   * `PluginCommandRuntime.busy`). `/dsh-market/status` reports it so the
+   * client's queue waits instead of retrying into a refusal every 2s (#1140).
+   */
+  busy(): boolean
 }
 
 /** Resolve the profile directory without making an invalid name a construction failure. */
@@ -480,6 +487,8 @@ export function createOfficialDesktopRuntime(
   const updateContext: UpdateContext | undefined = directory === undefined || journal === undefined
     ? undefined
     : { profile: profileName, profileDirectory: directory, journal, packageManager }
+
+  const busy = (): boolean => active !== undefined || repairing
 
   const runPlugin: DesktopPluginRuntime['runPlugin'] = (profile, argv) => {
     if (disposed) return Promise.resolve(failure('official desktop plugin runtime is disposed', 127))
@@ -640,6 +649,7 @@ export function createOfficialDesktopRuntime(
   return {
     runPlugin,
     repairPendingUpdates,
+    busy,
     probePnpm: async () => managerLookup() !== undefined,
     provisionPnpm: async () => ({ ok: managerLookup() !== undefined, hint: 'Use the official desktop plugin manager' }),
     cancelActive: () => {

@@ -1158,6 +1158,26 @@ describe('host-provided profile and package-operation seams', () => {
     expect(cancel).toHaveBeenCalledOnce()
   })
 
+  it('reports the desktop manager\'s own operation as busy (#1140)', async () => {
+    // While the official Desktop manager runs its own install or repair, every
+    // market command is refused with `busy: true`; the status has to say the
+    // same or the client's queue retries into that refusal every 2s and
+    // re-shows the banner each time.
+    const runtime = {
+      runPlugin: vi.fn(),
+      probePnpm: async () => true,
+      provisionPnpm: async () => ({ ok: true }),
+      cancelActive: () => false,
+      busy: () => true,
+    }
+    bed = createTestbed({ profile: 'web' }, runtime as never)
+    expect((await bed.dispatch('GET', '/dsh-market/status')).json.busy).toBe(true)
+    bed.dispose()
+    const idle = { ...runtime, busy: () => false }
+    bed = createTestbed({ profile: 'web' }, idle as never)
+    expect((await bed.dispatch('GET', '/dsh-market/status')).json.busy).toBe(false)
+  })
+
   it('answers a bundle’s own declared repository as its code source', async () => {
     // The detail page shows an install spec, not an address. This route answers
     // per PACKAGE, and null rather than guess when nothing declares a repository.

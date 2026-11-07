@@ -597,6 +597,18 @@ export interface PluginCommandRuntime {
    * a broken profile instead of the option. Absent means "accepts".
    */
   acceptsMarketPnpmFlags?: boolean
+  /**
+   * Whether this runtime is already running an operation of its own, so the
+   * market's next one would be refused with `busy: true` (#1140).
+   *
+   * The official Desktop manager is the case: it holds `active`/`repairing`
+   * while its own install runs for minutes, and `/dsh-market/status` reported
+   * `busy: false` the whole time because it only knew about the market's own
+   * route flag. The client's queue then retried every 2s and re-showed the
+   * "another operation is running" banner on each refusal. Absent means
+   * "nothing else is running".
+   */
+  busy?(): boolean
 }
 
 /** One running package operation, however it was started. */
