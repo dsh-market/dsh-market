@@ -265,6 +265,78 @@ describe('mountClientOnlyDeps vs the user patch layer (#58)', () => {
   })
 })
 
+/**
+ * #1137: a client-only package can ALSO be mounted by the profile's own
+ * bundle layer, under a row id that only that bundle decides. It carries
+ * `dsh.client` and no `dsh.bundle` all the same, so every shim predicate says
+ * "shim it" — and the second fiber registers the same services again, which
+ * cordis refuses. The host logged `1 entry did not activate` while the market
+ * logged `live (client-only shim)`: the two halves disagreed about the same
+ * mount, and the market's record is the one the UI shows.
+ */
+describe('mountClientOnlyDeps vs packages the bundle layer already mounts (#1137)', () => {
+  /** A bundle package that mounts `target` under a row id of its own. */
+  function bundlePkg(dir: string, bundle: string, rows: string): void {
+    const root = join(dir, 'node_modules', ...bundle.split('/'))
+    mkdirSync(root, { recursive: true })
+    writeFileSync(join(root, 'package.json'), JSON.stringify({
+      name: bundle,
+      dsh: { bundle: { patch: './cordis.patch.yml' } },
+    }))
+    writeFileSync(join(root, 'cordis.patch.yml'), rows)
+  }
+
+  it('skips a package an in-box bundle already mounts; still shims the ones it does not', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dshm-hot-'))
+    try {
+      writeFileSync(join(dir, 'package.json'), JSON.stringify({
+        dependencies: {
+          // The shape from the report: a peer dependency of an uninstalled
+          // plugin, linked into the profile so it resolves.
+          '@deepseek-ai/dsh-client-connection': 'link:./host/node_modules/@deepseek-ai/dsh-client-connection',
+          'dsh-free-plugin': '^1.0.0',
+        },
+        dsh: { profile: { bundles: ['@deepseek-ai/dsh-web-app'] } },
+      }))
+      clientOnlyPkg(dir, '@deepseek-ai/dsh-client-connection')
+      clientOnlyPkg(dir, 'dsh-free-plugin')
+      // The row id is `connection`, not the package name — looking entries up
+      // by name is exactly what used to miss this.
+      bundlePkg(dir, '@deepseek-ai/dsh-web-app',
+        "- id: connection\n  name: '@deepseek-ai/dsh-client-connection'\n  inject: [webStartup]\n")
+
+      const mounted = await mountClientOnlyDeps(ctx, dir)
+      expect(mounted).not.toContain('@deepseek-ai/dsh-client-connection')
+      expect(mounted).toContain('dsh-free-plugin')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('reads the declared patch file, and does not count a commented-out row', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dshm-hot-'))
+    try {
+      writeFileSync(join(dir, 'package.json'), JSON.stringify({
+        dependencies: { 'dsh-real-plugin': '^1.0.0', 'dsh-commented-plugin': '^1.0.0' },
+        dsh: { profile: { bundles: ['@deepseek-ai/dsh-web-app'] } },
+      }))
+      clientOnlyPkg(dir, 'dsh-real-plugin')
+      clientOnlyPkg(dir, 'dsh-commented-plugin')
+      bundlePkg(dir, '@deepseek-ai/dsh-web-app',
+        "- insert:\n    - id: real\n      name: dsh-real-plugin\n"
+        + "# - id: commented\n#   name: dsh-commented-plugin\n")
+
+      const mounted = await mountClientOnlyDeps(ctx, dir)
+      expect(mounted).not.toContain('dsh-real-plugin')
+      // A row that is only a comment mounts nothing, so the shim is still the
+      // only thing that makes this package's client bundle reachable.
+      expect(mounted).toContain('dsh-commented-plugin')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('hotMount activation timeout guard', () => {
   it('falls back to restart and disposes the subtree when activation never settles', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'dshm-hot-'))
