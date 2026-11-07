@@ -547,7 +547,7 @@ function parseSemver(value: string): Semver | null {
  * (`>=1.2.0 <1.3.0`), so it stays as is and parses as unknown below rather
  * than being mistaken for the exact version `1.2.0`.
  */
-function expandPartialComparator(part: string, includePrerelease: boolean): string[] {
+export function expandPartialComparator(part: string, includePrerelease: boolean): string[] {
   const m = /^(\^|~|>=|<=|>|<)(\d+)(?:\.(\d+))?$/u.exec(part.trim())
   if (m === null) return [part]
   const op = m[1]

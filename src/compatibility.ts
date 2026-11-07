@@ -17,7 +17,7 @@
  * unparseable ranges, and optional peers never produce a risk here.
  */
 
-import { analyzeProfile, compareSemver, type CheckOptions, type DuplicateName, type PeerMismatch, type PeerRisk, type PeerWarning, type PeerVerdict } from './check.ts'
+import { analyzeProfile, compareSemver, expandPartialComparator, type CheckOptions, type DuplicateName, type PeerMismatch, type PeerRisk, type PeerWarning, type PeerVerdict } from './check.ts'
 import { profileDir, readInstalledManifest } from './profile.ts'
 
 export type CompatibilityRisk = PeerRisk
@@ -66,6 +66,26 @@ function parseComparator(part: string): ParsedComparator | null {
   return { op: raw === '' || raw === '=' ? 'exact' : raw as ParsedComparator['op'], target }
 }
 
+/**
+ * One written comparator as full-version comparators. A partial target
+ * (`<0.3`, `^0.1`, `~1`) goes through the same node-semver expansion the gate
+ * uses in `satisfiesRange`, so both sides agree on where the line ends.
+ * A bare partial (`1.2`) stays unparseable, as it does there.
+ */
+function parseWritten(part: string): ParsedComparator[] | null {
+  const full = parseComparator(part)
+  if (full !== null) return [full]
+  const expanded = expandPartialComparator(part, false)
+  if (expanded.length === 1 && expanded[0] === part) return null
+  const parsed = expanded.map(parseComparator)
+  return parsed.every(p => p !== null) ? parsed as ParsedComparator[] : null
+}
+
+/** A `^` / `~` comparator, whose ceiling the author implied rather than wrote. */
+function isImplicitCeiling(part: string): boolean {
+  return /^[\^~]/.test(part.trim())
+}
+
 /** Next breaking bump for `^` / `~`, using `-0` so prereleases compare consistently. */
 function nextBound(target: string, kind: '^' | '~'): string | null {
   const m = /^(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?$/.exec(target)
@@ -85,14 +105,13 @@ function boundsFor(range: string): AlternativeBounds[] | null {
   const alternatives: AlternativeBounds[] = []
   for (const rawAlternative of range.split('||')) {
     const parts = rawAlternative.trim().split(/\s+/).filter(Boolean)
-    const parsed = parts.map(parseComparator)
-    if (parsed.some(part => part === null)) return null
+    const written = parts.map(part => ({ implicit: isImplicitCeiling(part), parsed: parseWritten(part) }))
+    if (written.some(part => part.parsed === null)) return null
     let lower: ParsedComparator | null = null
     let upper: ParsedComparator | null = null
     let explicitUpper = false
     let exact: string | null = null
-    for (const part of parsed) {
-      const p = part as ParsedComparator
+    for (const { implicit, parsed } of written) for (const p of parsed as ParsedComparator[]) {
       if (p.op === 'exact') {
         exact = p.target
         continue
@@ -108,7 +127,8 @@ function boundsFor(range: string): AlternativeBounds[] | null {
         if (lower === null || compareSemver(p.target, lower.target) > 0) lower = p
       } else {
         if (upper === null || compareSemver(p.target, upper.target) < 0) upper = p
-        explicitUpper = true
+        // A partial `^0.1` arrives here as `<0.2.0-0`; its ceiling is still implied.
+        if (!implicit) explicitUpper = true
       }
     }
     alternatives.push({ lower, upper, explicitUpper, exact })
@@ -143,10 +163,10 @@ function declaredLines(range: string): string[] | null {
   const lines: string[] = []
   for (const rawAlternative of range.split('||')) {
     for (const raw of rawAlternative.trim().split(/\s+/).filter(Boolean)) {
-      const parsed = parseComparator(raw)
-      if (parsed === null) return null
-      if (parsed.op !== '^' && parsed.op !== '~') continue
-      const m = /^(\d+)\.(\d+)\./.exec(parsed.target)
+      if (parseWritten(raw) === null) return null
+      if (!isImplicitCeiling(raw)) continue
+      // `^0.1` names the 0.1 line like `^0.1.0`; `^1` names no minor line.
+      const m = /^[\^~](\d+)\.(\d+)(?:\.|$)/.exec(raw.trim())
       if (m !== null) lines.push(`${m[1]}.${m[2]}`)
     }
   }

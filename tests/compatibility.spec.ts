@@ -85,6 +85,14 @@ describe('crossesImplicitCeiling', () => {
     expect(crossesImplicitCeiling('0.1.9', '^0.1.1-rc.2')).toBe(false)
   })
 
+  it('reads a partial caret or tilde as the line it names', () => {
+    expect(crossesImplicitCeiling('0.2.0-rc.2', '^0.1')).toBe(true)
+    expect(crossesImplicitCeiling('0.2.0-rc.2', '~0.1')).toBe(true)
+    expect(crossesImplicitCeiling('0.1.9', '^0.1')).toBe(false)
+    // `^1` and `~1` name a major, not a minor line.
+    expect(crossesImplicitCeiling('2.0.0', '^1')).toBe(false)
+  })
+
   it('excludes sloppy ceilings, explicit bounds and exact pins', () => {
     // ^0.0.x names no minor line to fall behind, and has always been noise.
     expect(crossesImplicitCeiling('0.1.2-alpha.2', '^0.0.1')).toBe(false)
