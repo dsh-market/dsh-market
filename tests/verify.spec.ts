@@ -1091,3 +1091,72 @@ describe('config namespaces a client asks for (#810)', () => {
     expect(findUnservedConfigNamespaces('web', new Set(), () => [], profileDir('web'))).toEqual([])
   })
 })
+
+/**
+ * #1102: the `restart` reason told every non-plain patch that it "contains
+ * config/expression rows". `parseSimplePatch` returns null for four more
+ * shapes — a `disabled` row, an `inject` key, a row with no `name`, and a
+ * truncated patch — and none of them is a config block. The reason also read
+ * the package root's `cordis.patch.yml` unconditionally, so a patch declared
+ * in a subdirectory (#646) or as a list (#792) was judged from a file the
+ * host never reads, or from none at all.
+ */
+describe('restart reason names the actual patch shape (#1102)', () => {
+  const name = '@acme/theme'
+  const facts: HostRuntimeFacts = { runtimeVersion: '0.2.1-alpha.3', exemptions: {} }
+
+  function install(files: Record<string, string>, declared?: unknown): void {
+    profile([name])
+    pkg(name, {
+      name,
+      version: '1.0.0',
+      main: 'index.js',
+      dsh: { bundle: { patch: declared ?? Object.keys(files) } },
+    }, { 'index.js': '', ...files })
+  }
+
+  const verify = () => verifyActivation('web', name, new Set(), undefined, false, facts)
+  const reason = () => verify().reasons.join(' ')
+
+  it('names a switched-off row instead of inventing a config block', () => {
+    install({ 'cordis.patch.yml': "- insert:\n  - id: 'a'\n    name: 'b'\n- id: 'off'\n  disabled: true\n" })
+    expect(verify().state).toBe('restart')
+    expect(reason()).toContain('disabled')
+    expect(reason()).not.toContain('config')
+  })
+
+  it('names an extra key such as inject instead of inventing a config block', () => {
+    install({ 'cordis.patch.yml': "- insert:\n  - id: 'a'\n    name: 'b'\n    inject: [ tools ]\n" })
+    expect(verify().state).toBe('restart')
+    expect(reason()).toContain('inject')
+    expect(reason()).not.toContain('config')
+  })
+
+  it('still names a real config block', () => {
+    install({ 'cordis.patch.yml': "- insert:\n  - id: 'a'\n    name: 'b'\n- config:\n    foo: bar\n" })
+    expect(verify().state).toBe('restart')
+    expect(reason()).toContain('config')
+  })
+
+  it('names an unreadable row shape instead of guessing a cause', () => {
+    install({ 'cordis.patch.yml': "- insert:\n  - id: 'a'\n    name: 'b'\n  - id: 'c'\n" })
+    expect(verify().state).toBe('restart')
+    expect(reason()).toContain('name')
+    expect(reason()).not.toContain('config')
+  })
+
+  it('reads the patch the package declares in a subdirectory', () => {
+    install({ 'extensions/dsh/cordis.patch.yml': "- insert:\n  - id: 'a'\n    name: 'b'\n- config:\n    foo: bar\n" })
+    expect(verify().state).toBe('restart')
+    expect(reason()).toContain('config')
+  })
+
+  it('ignores a leftover root patch the host never reads', () => {
+    install({
+      'declared/plain.patch.yml': "- insert:\n  - id: 'a'\n    name: 'b'\n",
+      'cordis.patch.yml': "- insert:\n  - id: 'a'\n    name: 'b'\n- config:\n    foo: bar\n",
+    }, ['declared/plain.patch.yml'])
+    expect(verify().state).toBe('restart')
+    expect(reason()).not.toContain('config')
+  })
+})

@@ -225,6 +225,21 @@ describe('hotMount: restart-only versus failed', () => {
     }
   })
 
+  // #1102: the refusal used to name a config block for every shape it could
+  // not replay, including this one — where nothing is configured and the
+  // plugin (like dsh-mnemon) only switches an existing row off.
+  it('names the switched-off row instead of inventing a config block', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dshm-hot-'))
+    try {
+      bundle(dir, 'swapper', '- id: ui-chat\n  disabled: true\n- insert:\n    - id: swap-chat\n      name: swapper\n')
+      const result = await hotMount(ctx, dir, 'swapper')
+      expect(String(result.reason)).toContain('disabled')
+      expect(String(result.reason)).not.toContain('config')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('does not mark an unreadable declaration as deferred — no restart can load it', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'dshm-hot-'))
     try {

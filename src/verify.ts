@@ -31,7 +31,7 @@ import { readFileSync, realpathSync, statSync } from 'node:fs'
 import { createRequire, isBuiltin } from 'node:module'
 import { Script } from 'node:vm'
 import { join } from 'node:path'
-import { listHotMounts, parseSimplePatch } from './hot.ts'
+import { listHotMounts, patchBlockerReason, scanPatch } from './hot.ts'
 import { userPatchPackageReferences } from './patch.ts'
 import { nameMatchesPackage } from './entry-identity.ts'
 import { bundlePatchInsertedIds, declaredBundlePatchFiles, hasDshManifest, hasLoadableEntry, pluginSubdirs, profileDir, readInstalled } from './profile.ts'
@@ -172,12 +172,33 @@ function readPkgDsh(profile: string, name: string, explicitDir?: string): PkgDsh
   }
 }
 
+/**
+ * The patch text the HOST reads for this package, or null when it reads none.
+ *
+ * #1102: this used to read the package root's `cordis.patch.yml`
+ * unconditionally, while hot mount (#646, #792) and `bundlePatchIsEmpty`
+ * resolve `dsh.bundle.patch` through `declaredBundlePatchFiles`. Two
+ * consumers of one fact disagreed: a patch declared in a subdirectory, or as
+ * a list, was judged from a file the host never reads (or from no file at
+ * all), and a leftover root file could decide the verdict by itself.
+ *
+ * Same rule as hot mount, deliberately: the declared files, the root file as
+ * the fallback for packages that declare nothing, and all-or-nothing — the
+ * host throws on one unreadable overlay file and skips the whole bundle.
+ */
 function patchTextOf(profile: string, name: string, explicitDir?: string): string | null {
-  try {
-    return readFileSync(join(profileDir(profile, explicitDir), 'node_modules', name, 'cordis.patch.yml'), 'utf8')
-  } catch {
-    return null
+  const dir = join(profileDir(profile, explicitDir), 'node_modules', name)
+  const declared = declaredBundlePatchFiles(dir)
+  const sources = declared.length > 0 ? declared : [join(dir, 'cordis.patch.yml')]
+  const texts: string[] = []
+  for (const file of sources) {
+    try {
+      texts.push(readFileSync(file, 'utf8'))
+    } catch {
+      return null
+    }
   }
+  return texts.join('\n')
 }
 
 /**
@@ -654,12 +675,17 @@ export function verifyActivation(
       }
     }
     const patch = patchTextOf(profile, name, activeProfileDir)
-    const complex = patch !== null && parseSimplePatch(patch) === null
+    const scan = patch === null ? null : scanPatch(patch)
+    // #1102: a patch the market cannot replay has five shapes, and saying
+    // "config/expression" for all of them told users something about their
+    // package that was not true — a switched-off row is not a config block.
+    // Name the shape when it is known; keep the honest "not hot-mounted this
+    // session" when the declaration could not be read at all.
     return {
       state: 'restart',
       reasons: [
-        complex
-          ? 'bundle patch 含配置/表达式,热挂载仅支持纯 insert;重启后由 bundle 层生效 / the bundle patch contains config/expression rows; hot-mount only supports plain inserts — it activates on restart'
+        scan !== null && scan.blocker !== null
+          ? patchBlockerReason(scan.blocker, scan.key)
           : '已进入 profile bundle 层但本次未能热挂载;重启后生效 / in the bundle layer but not hot-mounted this session — it activates on restart',
       ],
       bundle: true,

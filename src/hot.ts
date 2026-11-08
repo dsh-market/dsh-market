@@ -165,8 +165,42 @@ function readPkgDsh(profileDir: string, packageName: string): { client?: unknown
  * expressions) — those compositions fall back to restart activation.
  */
 export function parseSimplePatch(patchText: string): HotRow[] | null {
+  const scan = scanPatch(patchText)
+  return scan.blocker === null ? scan.rows : null
+}
+
+/**
+ * Which shape stopped `parseSimplePatch` — the CAUSE, not just "not plain".
+ *
+ * `parseSimplePatch` collapses five different inputs into one `null`: a
+ * `config` block, a `disabled`/`enabled` switch row, any other key (`inject`,
+ * a nested mapping), a row whose `name` never arrives, and a patch with no
+ * insert rows at all. Every caller that had to explain the refusal threw all
+ * five into one sentence written for the first, and told users their patch
+ * "contains config/expression rows" when it merely switched a row off
+ * (#1102). Naming the shape is the difference between a sentence the reader
+ * can act on and one they cannot (#813, AGENTS.md: 说不出来就别用一句话把
+ * 空缺填上).
+ */
+export type PatchBlocker = 'config' | 'disabled' | 'incomplete' | 'empty' | 'other'
+
+export interface PatchScan {
+  /** Insert rows read before the scan stopped; empty when it did not. */
+  rows: HotRow[]
+  /** null when the patch IS a plain insert list (`rows` is then non-empty). */
+  blocker: PatchBlocker | null
+  /** The key that stopped the scan, when there is one to name. */
+  key?: string
+}
+
+export function scanPatch(patchText: string): PatchScan {
   const rows: HotRow[] = []
   let pending: string | null = null
+  // A patch row at column 0 targets an EXISTING entry (the long-standing way
+  // to disable one); only rows indented inside `- insert:` bring a plugin in.
+  // Tracked so the walk can say which of the two it met instead of calling
+  // every top-level row "a config block" (#1102, dsh-mnemon's shipped patch).
+  let topLevelRow = false
   // Split on CRLF too. `#.*$` cannot strip a comment that ends in \r —
   // JS treats \r as a line terminator, so `.` will not cross it and `$`
   // only anchors at the very end — leaving the comment text in place,
@@ -177,9 +211,14 @@ export function parseSimplePatch(patchText: string): HotRow[] | null {
     const line = raw.replace(/#.*$/, '').trimEnd()
     if (line.trim() === '') continue
     if (/^-\s+insert:\s*$/.test(line)) continue
+    if (/^-\s+id:\s*\S+\s*$/.test(line)) {
+      topLevelRow = true
+      continue
+    }
     const id = /^\s+-\s+id:\s*(\S+)\s*$/.exec(line)
     if (id !== null) {
-      if (pending !== null) return null
+      // A second id before the first got its name: the row was cut short.
+      if (pending !== null) return { rows, blocker: 'incomplete' }
       pending = id[1]
       continue
     }
@@ -189,10 +228,39 @@ export function parseSimplePatch(patchText: string): HotRow[] | null {
       pending = null
       continue
     }
-    return null
+    const leaf = /^\s*(?:-\s+)?([A-Za-z_][\w-]*)\s*:/.exec(line)
+    const key = leaf?.[1]
+    if (key === 'config') return { rows, blocker: 'config', key }
+    if (key === 'disabled' || key === 'enabled') return { rows, blocker: 'disabled', key }
+    return { rows, blocker: 'other', key }
   }
-  if (pending !== null || rows.length === 0) return null
-  return rows
+  if (pending !== null) return { rows, blocker: 'incomplete' }
+  // A top-level row whose body never arrived: still not an insert list, and
+  // saying so keeps `parseSimplePatch` from mounting the inserts around it
+  // while silently dropping the entry it patched.
+  if (topLevelRow) return { rows, blocker: 'other', key: 'id' }
+  if (rows.length === 0) return { rows, blocker: 'empty' }
+  return { rows, blocker: null }
+}
+
+/**
+ * One sentence for a refusal that is only about the patch's shape, naming the
+ * cause and what happens next. Shared by the hot mount and the activation
+ * verdict so the two cannot drift apart on the same fact again.
+ */
+export function patchBlockerReason(blocker: PatchBlocker, key?: string): string {
+  switch (blocker) {
+    case 'config':
+      return 'bundle patch 里有 config 块,热挂载只重放纯 insert 行;重启后由 bundle 层按原样加载 / the bundle patch has a config block; hot-mount replays plain insert rows only — a restart loads the bundle as written'
+    case 'disabled':
+      return '这个包有一行被关掉了(disabled),热挂载不重放开关行;重启后按原样加载,那一行仍然是关的 / one of its rows is switched off (disabled); hot-mount does not replay switch rows — a restart loads the bundle as written and that row stays off'
+    case 'incomplete':
+      return 'bundle patch 里有一行 id 没有配 name,市场读不懂这一行;重启后由 bundle 层按原样加载,仍不生效就修这个包的 patch / a row has an id but no name, so the market cannot read it — a restart loads the bundle as written; fix the package patch if it still does not work'
+    case 'empty':
+      return 'bundle patch 里没有 insert 行,热挂载没有可重放的内容;重启后由 bundle 层生效 / the bundle patch has no insert rows, so there is nothing to replay — it activates on restart'
+    default:
+      return `bundle patch 里有 insert 之外的行(${key ?? '未识别的键'}),热挂载只重放纯 insert;重启后由 bundle 层按原样加载 / the bundle patch has a row beyond plain inserts (${key ?? 'an unrecognised key'}); hot-mount replays plain inserts only — a restart loads the bundle as written`
+  }
 }
 
 /**
@@ -885,14 +953,15 @@ export async function hotMount(ctx: HotContext, profileDir: string, packageName:
     }
     let rows: HotRow[] | null
     if (texts !== null && texts.length > 0) {
-      rows = parseSimplePatch(texts.join('\n'))
-      if (rows === null) {
+      const scan = scanPatch(texts.join('\n'))
+      if (scan.blocker !== null) {
         return {
           ok: false,
           deferred: true,
-          reason: 'bundle patch 含配置行/表达式,热挂载仅支持纯 insert,重启后生效 / the bundle patch contains config/expression rows; hot-mount only supports plain inserts — it activates on restart',
+          reason: patchBlockerReason(scan.blocker, scan.key),
         }
       }
+      rows = scan.rows
     } else if (declared.length > 0) {
       // The declaration is VOID — one of its files cannot be read. The host
       // throws on a missing overlay file and skips the ENTIRE bundle, so no
