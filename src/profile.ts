@@ -11,7 +11,7 @@ import { isDeepStrictEqual } from 'node:util'
 import { JSON_SCHEMA, load } from 'js-yaml'
 import { findDshInstallDir } from './dsh-install.ts'
 import { resolveDshHome } from './home-paths.ts'
-import { githubRemoteIdentities, githubRepoIdentities, hostedRepoKey, isGenerationLink, isGitHostedSpec, repoOfTarget } from './sources.ts'
+import { catalogRepoKey, githubRemoteIdentities, githubRepoIdentities, hostedRepoKey, isGenerationLink, isGitHostedSpec, lookupRepoFromUrl, repoOfTarget } from './sources.ts'
 
 /**
  * Whether a profile name follows DSH's own directory-name contract.
@@ -718,9 +718,19 @@ export function readInstalledRepoEvidence(
   // The URL still must not be resolved through the package's OWN manifest:
   // a fork installed as `github:myfork/plugin` carries upstream's repository
   // field, and trusting it made upstream's card read as installed (#580).
+  //
+  // A Release asset URL names its source just as plainly, but it is not an
+  // install TARGET this build will fetch from later, so it stays out of
+  // repoOfTarget (that one answers "where will this come from"). Reading it
+  // here keeps the display-only promise lookupRepoFromUrl makes: the identity
+  // links an installed package to its catalog entry, and nothing in install,
+  // rollback, duplicate detection, or build-script approval reads it.
   if (!local && (isGitHostedSpec(spec) || /^https?:/i.test(spec.trim()))) {
     const repo = repoOfTarget(spec)
-    return repo === null ? { identities: [], hints: [] } : { identities: [repo], hints: [] }
+    if (repo !== null) return { identities: [repo], hints: [] }
+    const release = lookupRepoFromUrl(spec.trim())
+    const key = release === null ? null : catalogRepoKey(release)
+    return key === null ? { identities: [], hints: [] } : { identities: [key], hints: [] }
   }
   const root = profileDir(profile, explicitDir)
   const sourceDir = local ? localSpecDirectory(root, spec) : null

@@ -344,6 +344,30 @@ describe('matchInstalledName / isInstalled', () => {
     expect(matchInstalledName(root, installed, repoIdentities, [root]))
       .toBe('@linxin666/dsh-client-ui-task-board')
   })
+
+  it('picks the same-named catalog row a Release archive install came from (#1147)', () => {
+    // A plugin distributed only as a GitHub Release tarball installs as a bare
+    // https spec: it names no `github:` repo, so depRepoIds() reads nothing
+    // from the spec itself. With two catalog rows sharing the package name,
+    // the identity the server derived from that URL is the only thing that can
+    // choose between them — and while it was missing both rows fell back to
+    // the ambiguous-name rule and claimed nothing (#1147).
+    const spec = 'https://github.com/StarWind97/dsh-fatfish-notes/releases/download/v0.6.0/dsh-fatfish-notes-0.6.0.tgz'
+    const mine = plugin({ name: 'dsh-fatfish-notes', owner: 'StarWind97', url: 'https://github.com/StarWind97/dsh-fatfish-notes' })
+    const other = plugin({ name: 'dsh-fatfish-notes', owner: 'someone-else', url: 'https://github.com/someone-else/dsh-fatfish-notes' })
+    const plugins = [other, mine]
+    const installed = { 'dsh-fatfish-notes': spec }
+    const repoIdentities = { 'dsh-fatfish-notes': ['starwind97/dsh-fatfish-notes'] }
+
+    expect(entryForDep(plugins, 'dsh-fatfish-notes', spec, repoIdentities['dsh-fatfish-notes'])?.owner)
+      .toBe('StarWind97')
+    expect(isInstalled(mine, installed, repoIdentities, plugins)).toBe(true)
+    expect(isInstalled(other, installed, repoIdentities, plugins)).toBe(false)
+    // The evidence is what decides: without it the name is ambiguous and
+    // neither row may claim the install.
+    expect(entryForDep(plugins, 'dsh-fatfish-notes', spec)).toBeUndefined()
+    expect(isInstalled(mine, installed, {}, plugins)).toBe(false)
+  })
 })
 
 describe('entryForDep', () => {
