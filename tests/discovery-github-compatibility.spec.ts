@@ -73,6 +73,9 @@ describe('GitHub discovery host requirements', () => {
     expect(calls).toEqual([])
     const facts = (await index.lookupGitHub([entry]))[entry.url] ?? null
     expect(deriveHostCompatibility(facts, '0.2.1-rc.3', new Set())).toMatchObject({ status: 'unknown', basis: 'unavailable' })
-    expect(calls).toHaveLength(1)
+    // One route, two attempts: a transient reset must not read as "no host
+    // requirement" (#1148). The answer for a 404 is still `unavailable`, not
+    // `undeclared`.
+    expect(calls).toHaveLength(2)
   })
 })
