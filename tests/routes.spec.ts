@@ -54,7 +54,12 @@ function mount(commandRuntime?: PluginCommandRuntime): { host: MarketHost; route
     loader: { entries: () => [] },
     plugin: () => ({ await: async () => undefined, dispose: async () => undefined }),
   }
-  mountMarketRoutes(host, { profile: 'web' }, commandRuntime)
+  // A pinned region: with `region` undefined the market starts a background
+  // probe that writes `.dsh-market/state.json` a few milliseconds later, on
+  // whatever machine runs the suite. Two tests here put a DIRECTORY at that
+  // path on purpose (an unreadable state file), and the probe's write landed
+  // in the middle of them — an EEXIST nobody could reproduce locally (#1144).
+  mountMarketRoutes(host, { profile: 'web', region: 'global' }, commandRuntime)
   return { host, routes }
 }
 
