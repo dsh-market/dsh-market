@@ -11697,36 +11697,20 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					clearPinVars();
 				};
 			}, [surface, themesFullscreen]);
-			const { plugins: pluginsAll, hostHiddenCount } = (0, react.useMemo)(() => {
-				if (data === null) return {
-					plugins: [],
-					hostHiddenCount: 0
-				};
+			const pluginsAll = (0, react.useMemo)(() => {
+				if (data === null) return [];
 				const query = {
 					category: cat,
 					query: q,
 					lang,
 					categories: data.categories,
 					sort: `${sortField}-${sortDir}`,
-					sinceDays: timeRange === "all" ? void 0 : TIME_RANGE_DAYS[timeRange],
-					hostCompatibility
+					sinceDays: timeRange === "all" ? void 0 : TIME_RANGE_DAYS[timeRange]
 				};
-				const unfiltered = visiblePlugins(data.plugins, {
+				return visiblePlugins(data.plugins, {
 					...query,
 					compatibleWithHost: false
 				});
-				if (!compatibleWithHost) return {
-					plugins: unfiltered,
-					hostHiddenCount: 0
-				};
-				const filtered = visiblePlugins(data.plugins, {
-					...query,
-					compatibleWithHost: true
-				});
-				return {
-					plugins: filtered,
-					hostHiddenCount: unfiltered.length - filtered.length
-				};
 			}, [
 				data,
 				q,
@@ -11734,27 +11718,62 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				lang,
 				sortField,
 				sortDir,
-				timeRange,
-				hostCompatibility,
-				compatibleWithHost
+				timeRange
 			]);
 			const pluginBlocked = (plugin) => blockAliases(plugin, matchInstalledName(plugin, installed, repoIdentities, data?.plugins, repoHints)).some((name) => blockedNameSet.has(name));
-			const installedBlocked = (name) => {
-				if (blockedNameSet.has(name)) return true;
-				if (data === null) return false;
-				const spec = installed[name];
-				if (spec === void 0) return false;
-				const entry = catalogEntryForInstalled(data.plugins, name, String(spec), repoIdentities[name], repoHints[name]);
-				return entry !== void 0 && blockAliases(entry, name).some((alias) => blockedNameSet.has(alias));
-			};
+			const installedBlocked = (0, react.useMemo)(() => {
+				const compute = (name) => {
+					if (blockedNameSet.has(name)) return true;
+					if (data === null) return false;
+					const spec = installed[name];
+					if (spec === void 0) return false;
+					const entry = catalogEntryForInstalled(data.plugins, name, String(spec), repoIdentities[name], repoHints[name]);
+					return entry !== void 0 && blockAliases(entry, name).some((alias) => blockedNameSet.has(alias));
+				};
+				const cache = /* @__PURE__ */ new Map();
+				return (name) => {
+					const hit = cache.get(name);
+					if (hit !== void 0) return hit;
+					const value = compute(name);
+					cache.set(name, value);
+					return value;
+				};
+			}, [
+				data,
+				blockedNameSet,
+				installed,
+				repoIdentities,
+				repoHints
+			]);
 			const blockToggleName = (aliases) => aliases.find((name) => blockedNameSet.has(name)) ?? aliases[0];
-			const plugins = (0, react.useMemo)(() => pluginsAll.filter((plugin) => !pluginBlocked(plugin)), [
+			const pluginsUnblocked = (0, react.useMemo)(() => pluginsAll.filter((plugin) => !pluginBlocked(plugin)), [
 				pluginsAll,
 				blockedNameSet,
 				installed,
 				repoIdentities,
 				data,
 				repoHints
+			]);
+			const { plugins, hostHiddenCount } = (0, react.useMemo)(() => {
+				if (!compatibleWithHost) return {
+					plugins: pluginsUnblocked,
+					hostHiddenCount: 0
+				};
+				const compatible = (plugin) => {
+					const key = hostCompatibilityKey(plugin);
+					return key === null || hostCompatibility[key]?.status !== "incompatible";
+				};
+				let hidden = 0;
+				for (const plugin of pluginsAll) if (!compatible(plugin)) hidden += 1;
+				return {
+					plugins: pluginsUnblocked.filter(compatible),
+					hostHiddenCount: hidden
+				};
+			}, [
+				pluginsAll,
+				pluginsUnblocked,
+				compatibleWithHost,
+				hostCompatibility
 			]);
 			const recentlyAdded = (0, react.useMemo)(() => data === null || tab !== "discover" || q.trim() !== "" || cat !== "all" || timeRange !== "all" || sortField !== "downloads" || sortDir !== "desc" ? [] : visiblePlugins(data.plugins, {
 				category: "all",
@@ -15753,7 +15772,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 								})]
 							})),
 							plugins.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(EmptyResults, {
-								blocked: pluginsAll.length > 0,
+								blocked: pluginsAll.length > hostHiddenCount,
 								t,
 								onClear: data.plugins.length > 0 && (q !== "" || cat !== "all" || timeRange !== "all" || compatibleWithHost) ? () => {
 									setQ("");
