@@ -11118,3 +11118,111 @@ describe('catalog-owned floating release archives', () => {
   })
 })
 
+describe('boot replay carrier safety', () => {
+  const carrierName = 'dsh-carrier-gate'
+  const profileManifestPath = (): string => join(profileDir('web'), 'package.json')
+
+  /** A loader entry the running host would hold for the package. */
+  function makeEntry(name: string, id: string): Testbed['loaderEntries'][number] {
+    const entry: Testbed['loaderEntries'][number] = {
+      options: { id, name, disabled: null as boolean | null } as never,
+      fiber: {},
+      update: vi.fn(async (options: { disabled: boolean | null }) => {
+        entry.options.disabled = options.disabled
+        entry.fiber = options.disabled === true ? undefined : {}
+      }),
+    }
+    return entry
+  }
+
+  /** Build a real carrier package: own gate insert plus a foreign inject row. */
+  function seedCarrier(): void {
+    const dir = profileDir('web')
+    const pkgDir = join(dir, 'node_modules', carrierName)
+    mkdirSync(pkgDir, { recursive: true })
+    writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({
+      name: carrierName,
+      version: '1.0.0',
+      type: 'module',
+      dsh: { bundle: { patch: './cordis.patch.yml' } },
+    }, null, 2))
+    writeFileSync(join(pkgDir, 'cordis.patch.yml'), [
+      '- insert:',
+      '    - id: carrier-gate',
+      `      name: '${carrierName}/gate'`,
+      '- id: preset-standard',
+      '  inject: [carrierGateService]',
+      '',
+    ].join('\n'))
+    writeFileSync(profileManifestPath(), JSON.stringify({
+      dependencies: { [carrierName]: '1.0.0' },
+      dsh: { profile: { bundles: [carrierName] } },
+    }, null, 2))
+  }
+
+  it('removes a disabled carrier from the bundle stack instead of disabling its gate (#938)', async () => {
+    bed.dispose()
+    seedCarrier()
+    hot.disabled = new Set([carrierName])
+    bed = createTestbed()
+    const gate = makeEntry(`${carrierName}/gate`, 'carrier-gate')
+    bed.loaderEntries.push(gate)
+    // Let the boot replay microtask run.
+    await new Promise(resolve => setTimeout(resolve, 20))
+
+    const manifest = JSON.parse(readFileSync(profileManifestPath(), 'utf8')) as {
+      dsh: { profile: { bundles: string[] } }
+    }
+    expect(manifest.dsh.profile.bundles).not.toContain(carrierName)
+    // The gate entry was never live-disabled, so foreign rows are not stranded.
+    expect(gate.update).not.toHaveBeenCalled()
+    expect(gate.fiber).toBeDefined()
+  })
+
+  it('still live-disables an ordinary (non-carrier) disabled plugin', async () => {
+    bed.dispose()
+    const ordinary = 'dsh-ordinary'
+    const dir = profileDir('web')
+    const pkgDir = join(dir, 'node_modules', ordinary)
+    mkdirSync(pkgDir, { recursive: true })
+    writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({
+      name: ordinary,
+      version: '1.0.0',
+      type: 'module',
+      dsh: { bundle: { patch: './cordis.patch.yml' } },
+    }, null, 2))
+    // Own insert only, no foreign rows -> not a carrier.
+    writeFileSync(join(pkgDir, 'cordis.patch.yml'), [
+      '- insert:',
+      `    - id: ${ordinary}`,
+      `      name: '${ordinary}'`,
+      '',
+    ].join('\n'))
+    writeFileSync(profileManifestPath(), JSON.stringify({
+      dependencies: { [ordinary]: '1.0.0' },
+      dsh: { profile: { bundles: [ordinary] } },
+    }, null, 2))
+    hot.disabled = new Set([ordinary])
+    bed = createTestbed()
+    const entry = makeEntry(ordinary, ordinary)
+    bed.loaderEntries.push(entry)
+    await new Promise(resolve => setTimeout(resolve, 20))
+
+    expect(entry.options.disabled).toBe(true)
+    expect(entry.fiber).toBeUndefined()
+  })
+
+  it('does not let the self-heal guard push a disabled carrier gate back down', async () => {
+    bed.dispose()
+    seedCarrier()
+    hot.disabled = new Set([carrierName])
+    bed = createTestbed()
+    const gate = makeEntry(carrierName, 'carrier-gate')
+    bed.loaderEntries.push(gate)
+    bed.emit('internal/plugin', { entry: { options: { name: carrierName } } })
+    await new Promise(resolve => setTimeout(resolve, 20))
+
+    expect(gate.update).not.toHaveBeenCalled()
+  })
+})
+
