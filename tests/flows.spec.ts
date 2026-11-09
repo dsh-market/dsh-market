@@ -10053,6 +10053,47 @@ describe('a pinned install is judged on its own release, not on latest (#581)', 
     expect(refused.json.hostIncompatible).toMatchObject({ version: '1.0.0', requirement: '>=99.0.0', npmName: 'dsh-loop' })
     expect(fake.calls.filter(call => call[0] === 'add')).toEqual([])
   })
+
+  it('offers a young compatible update on a CLI host, where the update can install it', async () => {
+    // The CLI update retries once with --config.minimum-release-age=0 (#39),
+    // so a release inside the wait still installs. Calling it "held" there
+    // disabled the dialog's Update button for an update that works.
+    const pkg = { dsh: {}, main: 'lib/index.js' }
+    fake.npm['dsh-loop'] = { latest: '1.0.0', versions: { '1.0.0': { manifest: pkg, artifacts: ['lib/index.js'] }, '1.2.0': { manifest: pkg, artifacts: ['lib/index.js'] } } }
+    expect((await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop', version: '1.0.0' })).status).toBe(200)
+    writeFileSync(join(fake.profileDir, 'pnpm-workspace.yaml'), 'minimumReleaseAge: 1440\nminimumReleaseAgeIgnoreMissingTime: false\n')
+    fake.npm['dsh-loop'].latest = '1.2.0'
+    fake.releaseHold = { mature: '1.0.0', strict: true }
+    fake.calls = []
+    const young = new Date(Date.now() - 3_600_000).toISOString()
+    const old = new Date(Date.now() - 72 * 3_600_000).toISOString()
+    const release = (version: string) => manifest(version, version === '2.0.0' ? '>=99.0.0' : `>=${HOST_VERSION}`)
+    vi.stubGlobal('fetch', vi.fn(async (input: unknown) => {
+      const url = String(input)
+      if (url.endsWith('/dsh-loop/latest')) return new Response(JSON.stringify(release('2.0.0')))
+      if (/\/dsh-loop(?:\?t=\d+)?$/.test(url)) return new Response(JSON.stringify({
+        'dist-tags': { latest: '2.0.0' },
+        versions: { '1.0.0': release('1.0.0'), '1.2.0': release('1.2.0'), '2.0.0': release('2.0.0') },
+        time: { '1.0.0': old, '1.2.0': young, '2.0.0': young },
+      }))
+      const exact = /\/dsh-loop\/(\d+\.\d+\.\d+)$/.exec(url)
+      if (exact) return new Response(JSON.stringify(release(exact[1]!)))
+      return new Response('{}', { status: 404 })
+    }))
+
+    const found = await bed.dispatch('POST', '/dsh-market/find-compatible', { npmName: 'dsh-loop', upgradeOnly: true })
+    expect(found.json).toMatchObject({ compatibleVersion: '1.2.0', maturity: null })
+    const updated = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop', compatVersion: '1.2.0' })
+    expect(updated.status, JSON.stringify(updated.json)).toBe(200)
+    expect(installedSpec('dsh-loop')).toBe('^1.2.0')
+
+    // The Desktop manager has no bypass, so there the dialog keeps the wait.
+    bed.dispose()
+    bed = createTestbed({ desktopHost: true })
+    writeFileSync(join(fake.profileDir, 'pnpm-workspace.yaml'), 'minimumReleaseAge: 1440\nminimumReleaseAgeIgnoreMissingTime: false\n')
+    const onDesktop = await bed.dispatch('POST', '/dsh-market/find-compatible', { npmName: 'dsh-loop' })
+    expect(onDesktop.json.maturity).toMatchObject({ version: '1.2.0', held: true, installable: false })
+  })
 })
 
 describe('Issue #991 Desktop stable npm update route', () => {
