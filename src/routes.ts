@@ -911,7 +911,7 @@ export function mountMarketRoutes(
     // composition, not by disabling its entries. Pushing a matching entry
     // back down here would stop the gate foreign rows inject and re-strand
     // them in the running process; let the restart finish the switch.
-    if (carrierRowIds(activeProfileDir, name).length > 0) return
+    if (carrierRowIds(activeProfileDir, name).length > 0 && declaresBundle(activeProfileDir, name)) return
     void themes.setEntryDisabled(name, true)
   })
   let installing = false

@@ -161,6 +161,9 @@ function agentsLookupOf(ctx: Context): () => AgentsServiceLike | undefined {
   return () => ctx.get('agents') as AgentsServiceLike | undefined
 }
 
+/** What an all-interfaces listener reports as its bind host; it names no machine. */
+const WILDCARD_BIND_HOSTS = new Set(['0.0.0.0', '::', '[::]'])
+
 /**
  * The deployment's declared authorities, read from the host (#729).
  *
@@ -209,7 +212,10 @@ export function useTrustedHosts(ctx: Context): () => void {
     // already rejects anything that is not a concrete, non-wildcard IP literal
     // at load, so the value is safe to trust.
     const bindHost = (ctx.get('webServer') as { host?: unknown } | undefined)?.host
-    if (typeof bindHost === 'string' && bindHost !== '') {
+    // Older hosts bind the all-interfaces literal itself, which no browser
+    // sends as a Host and which names no machine in particular: not an
+    // authority to trust. Newer ones refuse to load with it.
+    if (typeof bindHost === 'string' && bindHost !== '' && !WILDCARD_BIND_HOSTS.has(bindHost)) {
       const zoneAt = bindHost.indexOf('%')
       const address = zoneAt === -1 ? bindHost : bindHost.slice(0, zoneAt)
       const entry = address.includes(':') && !address.startsWith('[') ? `[${address}]` : address

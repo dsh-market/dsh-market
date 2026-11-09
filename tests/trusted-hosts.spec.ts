@@ -82,6 +82,14 @@ describe('the listener bind host is trusted, as the host fence does', () => {
     expect(sameOrigin(request('10.1.2.3:3080'))).toBe(false)
   })
 
+  it('does not trust an all-interfaces bind literal an older host reports', () => {
+    for (const host of ['0.0.0.0', '::']) {
+      installed.push(useTrustedHosts(contextWith({ webServer: { host } })))
+      expect(sameOrigin(request('0.0.0.0:3080'))).toBe(false)
+      expect(sameOrigin(request('[::]:3080'))).toBe(false)
+    }
+  })
+
   it('normalizes the bind host like the host fence does', () => {
     const services: Record<string, unknown> = { webServer: { host: 'fe80::1%en0' } }
     installed.push(useTrustedHosts(contextWith(services)))
