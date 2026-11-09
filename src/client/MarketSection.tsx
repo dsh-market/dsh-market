@@ -4221,44 +4221,74 @@ export function MarketSection(props: MarketSectionProps) {
     }
   }, [surface, themesFullscreen])
 
-  // The list, plus how many entries the host filter took out of it (#872).
-  // Both come from one pass over the same query, so the count is exactly
-  // "what this filter is hiding from what you were looking at" and the chip
-  // can say it without a second trip through the catalog.
-  const { plugins: pluginsAll, hostHiddenCount } = useMemo(() => {
-    if (data === null) return { plugins: [] as RegistryPlugin[], hostHiddenCount: 0 }
+  // Rows for the current query, before the plugins the user banned are taken
+  // out, and before the host filter (#872).
+  //
+  // The host filter is deliberately NOT part of this pass. `hostCompatibility`
+  // arrives in batches while the page loads, and folding it into the query
+  // rebuilt this list on every arrival — which re-ran the whole-catalog block
+  // scan below. Measured against a 9.7k-entry catalog: 433 ms of main thread
+  // per arrival, 227–433 ms per scroll step (#1097). Screening by host is a
+  // map lookup per row, so it runs after that scan instead of feeding it.
+  const pluginsAll = useMemo(() => {
+    if (data === null) return [] as RegistryPlugin[]
     const query = {
       category: cat, query: q, lang, categories: data.categories,
       sort: `${sortField}-${sortDir}` as `${typeof sortField}-${typeof sortDir}`,
       sinceDays: timeRange === 'all' ? undefined : TIME_RANGE_DAYS[timeRange],
-      hostCompatibility,
     }
-    const unfiltered = visiblePlugins(data.plugins, { ...query, compatibleWithHost: false })
-    if (!compatibleWithHost) return { plugins: unfiltered, hostHiddenCount: 0 }
-    const filtered = visiblePlugins(data.plugins, { ...query, compatibleWithHost: true })
-    return { plugins: filtered, hostHiddenCount: unfiltered.length - filtered.length }
+    return visiblePlugins(data.plugins, { ...query, compatibleWithHost: false })
   },
-    [data, q, cat, lang, sortField, sortDir, timeRange, hostCompatibility, compatibleWithHost])
+    [data, q, cat, lang, sortField, sortDir, timeRange])
   // One plugin can be stored under the installed name or the catalog name.
   // Both have to hide the card and skip Update all (#657).
   const pluginBlocked = (plugin: RegistryPlugin): boolean =>
     blockAliases(plugin, matchInstalledName(plugin, installed, repoIdentities, data?.plugins, repoHints))
       .some(name => blockedNameSet.has(name))
-  const installedBlocked = (name: string): boolean => {
-    if (blockedNameSet.has(name)) return true
-    if (data === null) return false
-    const spec = installed[name]
-    if (spec === undefined) return false
-    const entry = catalogEntryForInstalled(data.plugins, name, String(spec), repoIdentities[name], repoHints[name])
-    return entry !== undefined && blockAliases(entry, name).some(alias => blockedNameSet.has(alias))
-  }
+  // Memoized because one call walks the WHOLE catalog
+  // (`catalogEntryForInstalled` → `entryForDep` → `sameSourceConflict` per
+  // entry), and the update reminders below ask about one installed package at
+  // a time, in three filtered lists, on every render. That was 227–433 ms of
+  // main thread per scroll step at 9.7k catalog entries × 28 installed
+  // packages (#1097). The answers only change with the inputs below.
+  const installedBlocked = useMemo(() => {
+    const compute = (name: string): boolean => {
+      if (blockedNameSet.has(name)) return true
+      if (data === null) return false
+      const spec = installed[name]
+      if (spec === undefined) return false
+      const entry = catalogEntryForInstalled(data.plugins, name, String(spec), repoIdentities[name], repoHints[name])
+      return entry !== undefined && blockAliases(entry, name).some(alias => blockedNameSet.has(alias))
+    }
+    const cache = new Map<string, boolean>()
+    return (name: string): boolean => {
+      const hit = cache.get(name)
+      if (hit !== undefined) return hit
+      const value = compute(name)
+      cache.set(name, value)
+      return value
+    }
+  }, [data, blockedNameSet, installed, repoIdentities, repoHints])
   const blockToggleName = (aliases: readonly string[]): string =>
     aliases.find(name => blockedNameSet.has(name)) ?? aliases[0]!
-  const plugins = useMemo(
+  const pluginsUnblocked = useMemo(
     () => pluginsAll.filter(plugin => !pluginBlocked(plugin)),
     // pluginBlocked closes over the installed map and the catalog match.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [pluginsAll, blockedNameSet, installed, repoIdentities, data, repoHints])
+  // Host filter, applied to the already-blocked list: the same rows
+  // `visiblePlugins` dropped, and the same count the chip reports, at a cost
+  // that does not grow with the catalog.
+  const { plugins, hostHiddenCount } = useMemo(() => {
+    if (!compatibleWithHost) return { plugins: pluginsUnblocked, hostHiddenCount: 0 }
+    const compatible = (plugin: RegistryPlugin): boolean => {
+      const key = hostCompatibilityKey(plugin)
+      return key === null || hostCompatibility[key]?.status !== 'incompatible'
+    }
+    let hidden = 0
+    for (const plugin of pluginsAll) if (!compatible(plugin)) hidden += 1
+    return { plugins: pluginsUnblocked.filter(compatible), hostHiddenCount: hidden }
+  }, [pluginsAll, pluginsUnblocked, compatibleWithHost, hostCompatibility])
   // A sort the user chose is a request to see the list in THAT order, and
   // this block ignores the sort by design (it is "what was added in the last
   // seven days", ordered by downloads). Left in place it sits between the
@@ -8111,7 +8141,7 @@ export function MarketSection(props: MarketSectionProps) {
                         </section>
                     )}
                     {plugins.length === 0
-                      ? <EmptyResults blocked={pluginsAll.length > 0} t={t}
+                      ? <EmptyResults blocked={pluginsAll.length > hostHiddenCount} t={t}
                           onClear={data.plugins.length > 0 && (q !== '' || cat !== 'all' || timeRange !== 'all' || compatibleWithHost) ? () => {
                             setQ(''); resetDiscoverSearch(value => value + 1)
                             setCat('all'); setTimeRange('all'); setCompatibleWithHost(false)
