@@ -14,6 +14,7 @@ import { dirname } from 'node:path'
 import { compareSemver, isSemver, satisfiesRange } from './check.ts'
 import { classifyPeer, crossesImplicitCeiling } from './compatibility.ts'
 import { marketFetch } from './net.ts'
+import { isStableReleaseVersion } from './release-candidates.ts'
 import { activeRegion, githubRoutesFor, rememberGithubRoute, throughProxy } from './regions.ts'
 import { parseSourceUrl } from './sources.ts'
 
@@ -504,6 +505,10 @@ export class DiscoveryManifestIndex {
  * installed one, which is what an update needs: suggesting a downgrade is not
  * an update.
  *
+ * `stableOnly` drops prereleases. The official Desktop refuses to move a
+ * stable install onto a prerelease by itself (#991), so offering one there is
+ * an enabled button that can only answer 409 (#1161).
+ *
  * @returns the version, or null when the packument cannot be read or nothing
  *   in the history declares itself compatible.
  */
@@ -514,6 +519,7 @@ export async function findCompatibleVersion(
   registry: string,
   fetcher: FetchLike = marketFetch,
   minimumVersionExclusive: string | null = null,
+  stableOnly = false,
 ): Promise<string | null> {
   let doc: unknown
   try {
@@ -530,6 +536,7 @@ export async function findCompatibleVersion(
   if (versions === null) return null
   const candidates = Object.keys(versions)
     .filter(version => isSemver(version)
+      && (!stableOnly || isStableReleaseVersion(version))
       && (minimumVersionExclusive === null || compareSemver(version, minimumVersionExclusive) > 0))
     .sort((left, right) => compareSemver(right, left))
   for (const version of candidates) {

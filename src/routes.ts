@@ -3385,6 +3385,11 @@ export function mountMarketRoutes(
             sendJson(response, 200, { compatibleVersion: null, reason: 'installed-version-unknown' })
             return
           }
+          // The update route's own rule (#991): the Desktop moves a stable npm
+          // install only to a stable release, so a prerelease found here would
+          // be an enabled button that answers 409 (#1161).
+          const stableOnly = upgradeOnly && config.desktopHost === true && !SELF_NAMES.has(npmName)
+            && isStableReleaseVersion(currentVersion)
           const compatibleVersion = await findCompatibleVersion(
             npmName,
             host.version,
@@ -3392,6 +3397,7 @@ export function mountMarketRoutes(
             routesFor(region).npmRegistry,
             undefined,
             currentVersion,
+            stableOnly,
           )
           // A compatible version is only advice until the release-age gate
           // agrees: the dialog says "update to X", and clicking that used to

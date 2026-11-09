@@ -10084,6 +10084,46 @@ describe('a pinned install is judged on its own release, not on latest (#581)', 
     name: 'dsh-loop', version, engines: { dsh }, 'dist-tags': { latest: version },
   })
 
+  it('does not offer a stable Desktop install a prerelease its update would refuse (#1161)', async () => {
+    // The Desktop moves a stable npm install only to a stable release (#991).
+    // The compatibility search used to rank prereleases in, so the dialog's
+    // enabled button posted 1.3.0-beta.1 and met a 409, while 1.1.0 — mature
+    // and compatible — was one entry down the same history.
+    const pkg = { dsh: {}, main: 'lib/index.js' }
+    fake.npm['dsh-loop'] = { latest: '1.0.0', versions: Object.fromEntries(
+      ['1.0.0', '1.1.0', '1.3.0-beta.1'].map(version => [version, { manifest: pkg, artifacts: ['lib/index.js'] }])) }
+    expect((await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop', version: '1.0.0' })).status).toBe(200)
+    bed.dispose()
+    bed = createTestbed({ desktopHost: true })
+    writeFileSync(join(fake.profileDir, 'pnpm-workspace.yaml'), 'minimumReleaseAge: 1440\nminimumReleaseAgeIgnoreMissingTime: false\n')
+    fake.calls = []
+    const old = new Date(Date.now() - 72 * 3_600_000).toISOString()
+    const history = ['1.0.0', '1.1.0', '1.3.0-beta.1', '2.0.0']
+    const release = (version: string) => manifest(version, version === '2.0.0' ? '>=99.0.0' : `>=${HOST_VERSION}`)
+    vi.stubGlobal('fetch', vi.fn(async (input: unknown) => {
+      const url = String(input)
+      if (url.endsWith('/dsh-loop/latest')) return new Response(JSON.stringify(release('2.0.0')))
+      if (/\/dsh-loop(?:\?t=\d+)?$/.test(url)) return new Response(JSON.stringify({
+        'dist-tags': { latest: '2.0.0' },
+        versions: Object.fromEntries(history.map(version => [version, release(version)])),
+        time: Object.fromEntries(history.map(version => [version, old])),
+      }))
+      const exact = /\/dsh-loop\/(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/.exec(url)
+      if (exact !== null && history.includes(exact[1]!)) return new Response(JSON.stringify(release(exact[1]!)))
+      return new Response('{}', { status: 404 })
+    }))
+
+    const found = await bed.dispatch('POST', '/dsh-market/find-compatible', { npmName: 'dsh-loop', upgradeOnly: true })
+    expect(found.json).toMatchObject({ compatibleVersion: '1.1.0', maturity: { installable: true } })
+    const updated = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop', compatVersion: '1.1.0' })
+    expect(updated.status, JSON.stringify(updated.json)).toBe(200)
+    expect(installedSpec('dsh-loop')).toBe('^1.1.0')
+
+    // A fresh install has no such rule: the prerelease line stays reachable.
+    const fresh = await bed.dispatch('POST', '/dsh-market/find-compatible', { npmName: 'dsh-loop' })
+    expect(fresh.json.compatibleVersion).toBe('1.3.0-beta.1')
+  })
+
   it('installs the release the dialog resolved even when latest is incompatible', async () => {
     // The reported case: the market finds 1.0.0 for this host, the user
     // accepts, and the pre-flight check reads `latest` — which wants a host
