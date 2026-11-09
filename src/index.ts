@@ -164,12 +164,13 @@ function agentsLookupOf(ctx: Context): () => AgentsServiceLike | undefined {
 /**
  * The deployment's declared authorities, read from the host (#729).
  *
- * DSH's own /api fence accepts loopback OR an authority the operator declared
- * (`dsh web --trusted-host <name>`, plus the LAN literals the CLI derives when
- * bound to 0.0.0.0). The market's routes are `exact` registrations on the bare
- * webServer, and exact matches win over that fence's prefix, so they never
- * pass through it — and a loopback-only rule of its own made every mutating
- * route 403 on any deployment reached by a name.
+ * DSH's own /api fence accepts loopback, the listener's bind IP literal, or an
+ * authority the operator declared (`dsh web --trusted-host <name>`). The
+ * market's routes are `exact` registrations on the bare webServer, and exact
+ * matches win over that fence's prefix, so they never pass through it — and a
+ * loopback-only rule of its own made every mutating route 403 on any deployment
+ * reached by a name. The source below therefore mirrors the host's fence: the
+ * declared `trustedHosts` plus the listener's own bind host from `webServer`.
  *
  * The `connection` service is optional: a host without it leaves the fence
  * exactly as it was, which is the behaviour every release so far has had.
@@ -196,9 +197,25 @@ export function useTrustedHosts(ctx: Context): () => void {
       warned = true
       console.warn('dsh-market: the host connection service is not available; the origin fence accepts loopback only')
     }
-    return Array.isArray(connection?.trustedHosts)
+    const hosts = Array.isArray(connection?.trustedHosts)
       ? connection.trustedHosts.filter((entry): entry is string => typeof entry === 'string')
       : []
+    // The host's own fence accepts the listener's bind IP independently of the
+    // declared trustedHosts list, so a deployment reached through its own bind
+    // address passed /api yet still 403s here. Mirror that acceptance as a
+    // port-less entry, with the same normalization the host applies (the zone
+    // id is an interface selector, not address text; a bare IPv6 literal needs
+    // brackets to survive the canonical-form parse). The webserver config
+    // already rejects anything that is not a concrete, non-wildcard IP literal
+    // at load, so the value is safe to trust.
+    const bindHost = (ctx.get('webServer') as { host?: unknown } | undefined)?.host
+    if (typeof bindHost === 'string' && bindHost !== '') {
+      const zoneAt = bindHost.indexOf('%')
+      const address = zoneAt === -1 ? bindHost : bindHost.slice(0, zoneAt)
+      const entry = address.includes(':') && !address.startsWith('[') ? `[${address}]` : address
+      if (!hosts.includes(entry)) hosts.push(entry)
+    }
+    return hosts
   })
   // The same service carries the host's request gate (#603): its fence plus
   // its browser login, the check its own API runs. Read per request for the
