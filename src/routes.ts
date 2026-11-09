@@ -3442,7 +3442,12 @@ export function mountMarketRoutes(
           // agrees: the dialog says "update to X", and clicking that used to
           // dead-end on a 409 the log never mentioned. Answer both questions
           // here, where the caller can say "in about N hours" up front.
-          const maturity = compatibleVersion === null
+          // An update on a CLI host has the one-shot release-age bypass (#39)
+          // and installs a young release, the same reason checkUpdates holds
+          // young releases on the Desktop only: there "held" would disable an
+          // Update button that works.
+          const ageGated = !upgradeOnly || config.desktopHost === true
+          const maturity = compatibleVersion === null || !ageGated
             ? null
             : await readVersionMaturity(npmName, compatibleVersion, config.profile, activeProfileDir)
           logEvent('info', 'find-compatible',
