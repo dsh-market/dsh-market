@@ -7290,6 +7290,52 @@ describe('build-script approval flow (#6)', () => {
     expect(yaml).toContain(`${printed}: true`)
   })
 
+  it('approves a git UPDATE refused in pnpm 12\'s wrapped, boxed format (#1156)', async () => {
+    // pnpm 12 does not print the refusal as one line: it draws a box and wraps
+    // it at ~80 columns, through the sentence and through the key. The
+    // refusal was classified but named no package, so the update came back
+    // without `ignoredBuilds` and the sentence promising a button had none.
+    // Real output, pnpm 12.3.4 (key broken at a `/`).
+    const OLD = 'a'.repeat(40)
+    const NEW = 'b'.repeat(40)
+    const remote = 'https://gitee.com/iJetLi/deepseek-harness-codearts.git'
+    fake.repos[`git+${remote}`] = {
+      name: 'dsh-codearts-auth',
+      manifest: { name: 'dsh-codearts-auth', version: '0.1.0', dsh: {}, main: 'lib/index.js' },
+      artifacts: ['lib/index.js'],
+      lockCommit: NEW,
+    }
+    const manifestPath = join(fake.profileDir, 'package.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    manifest.dependencies = { ...(manifest.dependencies ?? {}), 'dsh-codearts-auth': `git+${remote}#${OLD}` }
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+    const pkgDir = join(fake.profileDir, 'node_modules', 'dsh-codearts-auth')
+    mkdirSync(join(pkgDir, 'lib'), { recursive: true })
+    writeFileSync(join(pkgDir, 'package.json'),
+      JSON.stringify({ name: 'dsh-codearts-auth', version: '0.1.0', dsh: {}, main: 'lib/index.js' }))
+    writeFileSync(join(pkgDir, 'lib', 'index.js'), '')
+    writeFileSync(join(fake.profileDir, 'pnpm-lock.yaml'),
+      `lockfileVersion: 9\n  resolution: {commit: ${OLD}, repo: ${remote}, type: git}\n`)
+    fake.failNextAddStderrOnce = 'Error: ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED\n\n'
+      + '  × adding a new package\n'
+      + '  ╰─▶ The git-hosted package "dsh-codearts-auth@0.1.0" needs to execute build\n'
+      + '      scripts but is not in the "allowBuilds" allowlist.\n'
+      + '  help: Add the package to "allowBuilds" in your project\'s pnpm-workspace.yaml\n'
+      + '        to allow it to run scripts. For example:\n'
+      + '        allowBuilds:\n'
+      + '          dsh-codearts-auth@git+https://gitee.com/iJetLi/\n'
+      + `        deepseek-harness-codearts.git#${NEW}: true\n\n`
+
+    const update = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-codearts-auth' })
+    expect(update.status).toBe(502)
+    expect(update.json.ignoredBuilds).toEqual(['dsh-codearts-auth'])
+
+    const approve = await bed.dispatch('POST', '/dsh-market/approve-builds', { packages: ['dsh-codearts-auth'] })
+    expect(approve.status).toBe(200)
+    const yaml = readFileSync(join(fake.profileDir, 'pnpm-workspace.yaml'), 'utf8')
+    expect(yaml).toContain(`dsh-codearts-auth@git+${remote}#${NEW}: true`)
+  })
+
   it('approves a monorepo package with the exact subpath key pnpm printed', async () => {
     const name = '@cyrus/dsh-sessions-insight'
     const target = 'github:m/mono#path:/packages/plug-a'
