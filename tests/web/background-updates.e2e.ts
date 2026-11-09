@@ -116,8 +116,26 @@ describe.skipIf(!HAS_DSH).sequential('web e2e: background update notifications',
       await page.screenshot({ path: join(SCREENSHOTS, 'plugins-background-update-dot.png'),
         clip: { x: 0, y: 65, width: 280, height: 170 } })
     }
+    // The published host matrix has data-plugin-panel, not data-plugin-body
+    // (the latter was added later in the host's source checkout). Assert the
+    // actual native page and controls, not a version-specific inner wrapper.
+    const panel = page.locator('[data-plugin-panel]:visible')
+    expect(await panel.count()).toBe(0)
+    // Negative control: a swallowed click must not pass the navigation check.
+    // This handler is consumed once; the next click must use the real host.
+    await plugins().evaluate(button => button.addEventListener('click', (event: Event) => {
+      event.preventDefault()
+      event.stopImmediatePropagation()
+    }, { capture: true, once: true }))
     await plugins().click()
-    await page.locator('[data-plugin-body]').first().waitFor({ state: 'visible', timeout: 30_000 })
+    await expect(panel.waitFor({ state: 'visible', timeout: 1000 })).rejects.toThrow(/Timeout/)
+    await plugins().click()
+    await panel.waitFor({ state: 'visible', timeout: 30_000 })
+    await panel.getByRole('heading', { name: /^(Plugins|插件)$/, level: 1 })
+      .waitFor({ state: 'visible', timeout: 30_000 })
+    const refresh = panel.getByRole('button', { name: /^(Refresh|刷新)$/ })
+    await refresh.waitFor({ state: 'visible', timeout: 30_000 })
+    await expect.poll(() => refresh.isEnabled(), { timeout: 30_000 }).toBe(true)
     if (SCREENSHOTS) {
       const nativeMarket = page.getByRole('tab', { name: /^(Plugin Market|插件市场)$/ })
         .or(page.getByRole('button', { name: /^(Plugin Market|插件市场)$/ })).first()
