@@ -10177,6 +10177,69 @@ describe('when DSH has unloaded the market (#962)', () => {
     expect(screen.queryByRole('button', { name: en.loadRetry })).toBeNull()
   })
 
+  describe('and mounts it again (#1151)', () => {
+    /** Every market route, answering 404 while `gone` and normally afterwards. */
+    function stubRoutes(state: { gone: boolean }): void {
+      vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+        const path = String(url).split('?')[0]
+        if (state.gone) return Promise.resolve(new Response('', { status: 404 }))
+        if (init?.signal?.aborted === true) return Promise.reject(new DOMException('aborted', 'AbortError'))
+        const payload =
+          path === '/dsh-market/registry' ? { source: 'live', registry: REGISTRY, hostVersion: '0.1.2-alpha.2' }
+          : path === '/dsh-market/installed' ? { profile: 'web', installed: {}, live: [], disabled: [], groups: {}, groupOrder: [], favorites: [], blocked: [] }
+          : path === '/dsh-market/status' ? { active: false, pnpm: true, boot: 'boot-2', restart: true, installed: {} }
+          : path === '/dsh-market/updates' ? { updates: {} }
+          : path === '/dsh-market/discovery-compatibility' ? { hostVersion: '0.1.2-alpha.2', plugins: {} }
+          : null
+        if (payload === null) return Promise.reject(new Error(`unstubbed fetch: ${String(url)}`))
+        return Promise.resolve(new Response(JSON.stringify(payload), { status: 200 }))
+      }))
+    }
+
+    it('comes back by itself once the routes answer, without a restart', async () => {
+      // DSH reloads its plugins around an install or an update and mounts the
+      // market again within seconds. The page used to stay on "stopped" for
+      // good, so the user restarted DSH — and killed what it was still doing.
+      vi.useFakeTimers()
+      try {
+        const state = { gone: true }
+        stubRoutes(state)
+        render(<MarketSection {...props()} />)
+        await vi.waitFor(() => { screen.getByText(en.marketGoneTitle) })
+        expect(screen.getByText(en.marketGoneReconnecting)).toBeTruthy()
+
+        state.gone = false
+        await vi.advanceTimersByTimeAsync(1500)
+        await vi.waitFor(() => { expect(screen.queryByText(en.marketGoneTitle)).toBeNull() })
+        await vi.waitFor(() => { screen.getByText('dsh-loop') })
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('gives up after a while and lets the user try again', async () => {
+      vi.useFakeTimers()
+      try {
+        const state = { gone: true }
+        stubRoutes(state)
+        render(<MarketSection {...props()} />)
+        await vi.waitFor(() => { screen.getByText(en.marketGoneTitle) })
+
+        await vi.advanceTimersByTimeAsync(100_000)
+        expect(screen.queryByText(en.marketGoneReconnecting)).toBeNull()
+        const again = screen.getByRole('button', { name: en.marketGoneReconnect })
+
+        state.gone = false
+        fireEvent.click(again)
+        await vi.advanceTimersByTimeAsync(1500)
+        await vi.waitFor(() => { expect(screen.queryByText(en.marketGoneTitle)).toBeNull() })
+        await vi.waitFor(() => { screen.getByText('dsh-loop') })
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+  })
+
   it('settles an install whose answer was lost with the routes, and leaves nothing pending', async () => {
     vi.useFakeTimers()
     try {

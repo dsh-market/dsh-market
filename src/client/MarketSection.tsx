@@ -78,6 +78,9 @@ function isHostDependencyFinding(value: unknown): value is SharedHostPackageDepe
 const HOST_DEPENDENCY_PREVIEW_LIMIT = 5
 /** After this long without a structured phase, the install line adds a note that waiting is normal (#1011). */
 const SLOW_INSTALL_SECONDS = 90
+/** How long the page keeps asking for a market DSH unloaded, and how long one ask may take (#1151). */
+const RECONNECT_BUDGET_MS = 90_000
+const RECONNECT_REQUEST_MS = 4000
 const IGNORED_UPDATES_SESSION_KEY = 'dshm-updates-ignored'
 const UNAVAILABLE_HOST_COMPATIBILITY: HostCompatibility = {
   status: 'unknown',
@@ -2438,6 +2441,10 @@ export function MarketSection(props: MarketSectionProps) {
    * exactly why it owes the user this sentence instead of a spinner.
    */
   const [marketGone, setMarketGone] = useState(false)
+  // Whether the page is still trying to reach the market again, and how many
+  // times the user asked it to start over (#1151).
+  const [reconnecting, setReconnecting] = useState(true)
+  const [reconnectRound, setReconnectRound] = useState(0)
   const [installed, setInstalledState] = useState<InstalledMap>(cachedInstalled ?? {})
   const setInstalled = useCallback((value: InstalledMap) => { cachedInstalled = value; setInstalledState(value) }, [])
   const [repoIdentities, setRepoIdentitiesState] = useState<InstalledRepoIdentities>(cachedRepoIdentities ?? {})
@@ -3635,6 +3642,55 @@ export function MarketSection(props: MarketSectionProps) {
       // is the one users reached.
       .catch((error: unknown) => { setLoadError(error instanceof Error ? error.message : String(error)) })
   }, [noteMarketGone, t])
+
+  /**
+   * Come back when the routes do (#1151).
+   *
+   * A 404 is how the page learns DSH unloaded the market, but DSH usually
+   * mounts it again within seconds: it reloads plugins around an install or
+   * an update, and the market is one of them. The page used to stay on "stopped"
+   * for good, so the user restarted DSH — which also killed whatever the host
+   * was still doing. Read-only on purpose: only `status` is asked, never a
+   * request that changes anything, and nothing that was in flight is replayed.
+   */
+  useEffect(() => {
+    if (!marketGone) return
+    setReconnecting(true)
+    const startedAt = Date.now()
+    let wait = 1000
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let inFlight: AbortController | undefined
+    let stopped = false
+    const attempt = async (): Promise<void> => {
+      inFlight = new AbortController()
+      const cutoff = setTimeout(() => inFlight?.abort(), RECONNECT_REQUEST_MS)
+      try {
+        const res = await fetch(api('/dsh-market/status'), { cache: 'no-store', signal: inFlight.signal })
+        const status = res.ok ? await res.json() as Partial<MarketStatus> | null : null
+        if (!stopped && status !== null && typeof status === 'object' && typeof status.boot === 'string') {
+          setMarketGone(false)
+          void loadCatalog()
+          refreshInstalled()
+          return
+        }
+      } catch { /* still gone, or the request was cut off */ } finally {
+        clearTimeout(cutoff)
+      }
+      if (stopped) return
+      if (Date.now() - startedAt >= RECONNECT_BUDGET_MS) {
+        setReconnecting(false)
+        return
+      }
+      timer = setTimeout(() => { void attempt() }, wait)
+      wait = Math.min(wait * 2, 5000)
+    }
+    timer = setTimeout(() => { void attempt() }, wait)
+    return () => {
+      stopped = true
+      clearTimeout(timer)
+      inFlight?.abort()
+    }
+  }, [marketGone, reconnectRound, loadCatalog, refreshInstalled])
 
   const loadHostCompatibility = useCallback(async (names: readonly string[]): Promise<void> => {
     const unique = [...new Set(names)].filter(name => {
@@ -7784,6 +7840,15 @@ export function MarketSection(props: MarketSectionProps) {
               <div className={css.empty} role="alert">
                 <div><b>{t('marketGoneTitle')}</b></div>
                 <div className={css.spec}>{t('marketGoneBody')}</div>
+                {reconnecting
+                  ? <div className={css.spec}>{t('marketGoneReconnecting')}</div>
+                  : (
+                      <div>
+                        <Button variant="outline" size="sm" onClick={() => setReconnectRound(round => round + 1)}>
+                          {t('marketGoneReconnect')}
+                        </Button>
+                      </div>
+                    )}
               </div>
             )
           : tab === 'backup'
