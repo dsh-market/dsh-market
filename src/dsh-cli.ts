@@ -493,7 +493,11 @@ export function dshArgv(): { file: string; args: string[]; cwd: string | undefin
     // The official bundled CLI inherits the launcher's cwd. Its entry can
     // live inside app.asar: Electron can read it, but the OS cannot chdir there.
     // Do not probe that directory through Electron's virtual filesystem.
-    return { file: nodeExecutable(), args: [...process.execArgv, abs], cwd: desktopCli ? undefined : dirname(abs), viaShell: false }
+    // An entry inside an .asar archive carries the same hazard as the desktop
+    // CLI above: Electron's fs shim resolves the directory, the OS cannot chdir
+    // there, and CreateProcess fails with ENOENT naming an unrelated executable.
+    const entryInAsar = /[\\/][^\\/]+\.asar[\\/]/i.test(abs)
+    return { file: nodeExecutable(), args: [...process.execArgv, abs], cwd: desktopCli || entryInAsar ? undefined : dirname(abs), viaShell: false }
   }
   // Bare `dsh` is a .cmd shim on Windows that only a shell can start (#13).
   return { file: 'dsh', args: [], cwd: undefined, viaShell: winCmdShim }
