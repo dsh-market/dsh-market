@@ -8408,6 +8408,18 @@ export function MarketSection(props: MarketSectionProps) {
                   {installedView === 'groups'
                       ? (
                           <>
+                            {groupOrder.length > 0 && (
+                              <div className={css.groupBulkActions}>
+                                <Button variant="ghost" size="sm"
+                                  disabled={groupQuery !== '' || groupOrder.every(gid => collapsedGroups.has(gid))}
+                                  onClick={() => setCollapsedGroups(new Set(groupOrder))}
+                                >{t('groupCollapseAll')}</Button>
+                                <Button variant="ghost" size="sm"
+                                  disabled={groupQuery !== '' || !groupOrder.some(gid => collapsedGroups.has(gid))}
+                                  onClick={() => setCollapsedGroups(new Set())}
+                                >{t('groupExpandAll')}</Button>
+                              </div>
+                            )}
                             {groupQuery === '' && groupOrder.length === 0
                               ? <div className={css.empty}>{t('noGroups')}</div>
                               : visibleGroupIds.map(gid => {
