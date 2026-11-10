@@ -2909,6 +2909,41 @@ describe('update flow — no npm publishing required', () => {
     expect(listed.json.brokenPlugins['dsh-loop']).toMatchObject({ spec: specBefore, reason: 'incomplete-build-cancelled' })
   })
 
+  it('clears the removed-declaration notice by the package it reinstalled, not the catalog display name (#1164)', async () => {
+    // The reporter's entry has BOTH names and they differ: the catalog row is
+    // `dsh-genui` (the GitHub repo's casing) while the package is
+    // `@changfenhuang/dsh-genui`. Records are keyed by the profile dependency
+    // name, so `clearBrokenPlugin(entry.name)` after a successful reinstall
+    // hit a key that was never there — a silent no-op that left the spent
+    // notice on screen through page reloads, DSH restarts and a market
+    // upgrade, with no `update-reinstalled` in the log.
+    fake.npm['@changfenhuang/dsh-genui'] = { latest: '1.4.0', versions: { '1.4.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } } }
+    const first = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/omdsh-dev/dsh-genui' })
+    expect(first.json.ok).toBe(true)
+
+    // Reach the record the way the reporter did — a cancel mid-swap, which
+    // drops the declaration and files the notice under the PACKAGE name.
+    fake.npm['@changfenhuang/dsh-genui'].latest = '1.5.0'
+    fake.npm['@changfenhuang/dsh-genui'].versions['1.5.0'] = { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] }
+    fake.cancelNext = true
+    fake.cancelClears = { name: '@changfenhuang/dsh-genui', cleared: ['package.json', 'lib/index.js'] }
+    const cancelledRun = await bed.dispatch('POST', '/dsh-market/update', { name: '@changfenhuang/dsh-genui' })
+    expect(cancelledRun.json).toMatchObject({ ok: false, cancelled: true })
+    const broken = (await bed.dispatch('GET', '/dsh-market/installed')).json.brokenPlugins as Record<string, unknown>
+    expect(broken['@changfenhuang/dsh-genui']).toBeTruthy()
+
+    // Reinstalling from the market is the designed way out of that notice.
+    const again = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/omdsh-dev/dsh-genui' })
+    expect(again.json.ok).toBe(true)
+    const after = (await bed.dispatch('GET', '/dsh-market/installed')).json.brokenPlugins as Record<string, unknown>
+    expect(after['@changfenhuang/dsh-genui']).toBeUndefined()
+    // The clear ran with the PACKAGE key, which is what `update-reinstalled`
+    // names — the pre-fix run logged nothing at all, because
+    // clearBrokenPlugin() returned before writing anything.
+    expect((await bed.dispatch('GET', '/dsh-market/logs')).text).toContain('update-reinstalled')
+    expect((await bed.dispatch('GET', '/dsh-market/logs')).text).toContain('@changfenhuang/dsh-genui: installed again')
+  })
+
   it('leaves an ordinary cancel alone when the previous build can still load (#663)', async () => {
     // The common cancel: stopped before the swap. Nothing is dropped, nothing
     // is restored — the user's choice stands exactly as before.

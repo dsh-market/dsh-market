@@ -8181,7 +8181,23 @@ sendJson(response, 200, { updates })
                 }
               }
             }
-            if (ok) clearBrokenPlugin(entry.name)
+            // #1164: brokenPlugins is keyed by the PROFILE DEPENDENCY name —
+            // the update path drops the declaration and records `name` there,
+            // so the notice can be found by the package the user actually has.
+            // A catalog entry is not that key: `entry.name` is the DISPLAY
+            // name (the GitHub repo's casing, e.g. "DSH-better-sidebar") while
+            // the package it installs is `entry.npm`. Clearing by the display
+            // name was a silent no-op for every entry whose two differ, so the
+            // spent notice outlived reloads, restarts and market upgrades
+            // until the user dismissed it by hand. Clear by what this run
+            // actually put into the profile, plus the entry's own package name
+            // (a git-source entry has no `npm`, and `addedPackages` is empty
+            // when the recovery path re-added a name the snapshot already had).
+            if (ok) {
+              const reinstalled = new Set<string>(addedPackages)
+              if (npmName !== null) reinstalled.add(npmName)
+              for (const pkg of reinstalled) clearBrokenPlugin(pkg)
+            }
             logEvent(ok || cancelled ? 'info' : 'error', 'install',
               `${target} exit=${String(result.exitCode)}${result.timedOut ? ' TIMEOUT' : ''}${cancelled ? ' CANCELLED' : ''}${ok ? ` hot=${String(hot)}` : cancelled ? '' : ` err=${failureDetail(result)}`}`)
             // On success a skipped build is a notice (#6); after a FAILURE the
