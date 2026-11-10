@@ -1,9 +1,14 @@
 /** One local snapshot shared by the market page, settings and sidebar. */
 import { useSyncExternalStore } from 'react'
-import type { UpdateNotificationSnapshot } from '../update-notifications.ts'
+import type { UpdateNotificationSnapshot as ServerUpdateNotificationSnapshot } from '../update-notifications.ts'
+import { DEFAULT_UPDATE_CHECK_INTERVAL_HOURS, isUpdateCheckIntervalHours, type UpdateCheckIntervalHours } from '../update-notification-settings.ts'
 import { api, readSession } from './market-data.ts'
 
-export type { UpdateNotificationSnapshot }
+// Older hot-loaded servers have no configurable interval. Keep their results
+// without presenting a setting they cannot save.
+export interface UpdateNotificationSnapshot extends Omit<ServerUpdateNotificationSnapshot, 'intervalHours'> {
+  intervalHours: UpdateCheckIntervalHours | null
+}
 
 const IGNORED_UPDATES_SESSION_KEY = 'dshm-updates-ignored'
 const RESTART_SESSION_KEY = 'dshm-restart'
@@ -15,7 +20,7 @@ export interface UpdateNotificationsState extends UpdateNotificationSnapshot {
 }
 
 const initialState = (): UpdateNotificationsState => ({
-  enabled: true, checking: false, checkedAt: null, lastSuccessAt: null,
+  enabled: false, intervalHours: DEFAULT_UPDATE_CHECK_INTERVAL_HOURS, checking: false, checkedAt: null, lastSuccessAt: null,
   nextCheckAt: null, stale: false, error: null, updates: {}, boot: '',
   updateExempt: [], disabled: [], blocked: [], loaded: false,
 })
@@ -70,7 +75,7 @@ function isUpdateStatus(value: unknown): boolean {
 
 /** Reject a malformed local response instead of replacing a useful cached result. */
 function readSnapshot(value: unknown): UpdateNotificationSnapshot {
-  if (!isRecord(value) || typeof value.enabled !== 'boolean' || typeof value.checking !== 'boolean'
+  if (!isRecord(value) || typeof value.enabled !== 'boolean' || (value.intervalHours !== undefined && !isUpdateCheckIntervalHours(value.intervalHours)) || typeof value.checking !== 'boolean'
     || typeof value.stale !== 'boolean' || typeof value.boot !== 'string'
     || !(value.error === null || typeof value.error === 'string')
     || !['checkedAt', 'lastSuccessAt', 'nextCheckAt'].every(key => value[key] === null || (typeof value[key] === 'number' && Number.isFinite(value[key])))
@@ -78,7 +83,7 @@ function readSnapshot(value: unknown): UpdateNotificationSnapshot {
     || !isRecord(value.updates) || !Object.values(value.updates).every(isUpdateStatus)) {
     throw new Error('The update notification response was incomplete. Try checking again.')
   }
-  return value as unknown as UpdateNotificationSnapshot
+  return { ...value, intervalHours: value.intervalHours ?? null } as unknown as UpdateNotificationSnapshot
 }
 
 export interface UpdateNotificationsStore {
@@ -93,6 +98,7 @@ export interface UpdateNotificationsStore {
   /** An explicit user action starts or joins the host's check. */
   check(): Promise<UpdateNotificationsState>
   setEnabled(enabled: boolean): Promise<UpdateNotificationsState>
+  setIntervalHours(intervalHours: UpdateCheckIntervalHours): Promise<UpdateNotificationsState>
   preferencesChanged(): void
 }
 
@@ -114,7 +120,7 @@ export function createUpdateNotificationsStore(request: typeof fetch = (...args)
     state = next
     for (const listener of [...listeners]) listener()
   }
-  const run = async (body?: { enabled?: boolean; check?: true }): Promise<UpdateNotificationsState> => {
+  const run = async (body?: { enabled?: boolean; intervalHours?: UpdateCheckIntervalHours; check?: true }): Promise<UpdateNotificationsState> => {
     const generation = lifecycle
     const sequence = ++requestSequence
     const controller = new AbortController()
@@ -147,7 +153,7 @@ export function createUpdateNotificationsStore(request: typeof fetch = (...args)
     }
     return read
   }
-  const mutate = (body: { enabled?: boolean; check?: true }): Promise<UpdateNotificationsState> => {
+  const mutate = (body: { enabled?: boolean; intervalHours?: UpdateCheckIntervalHours; check?: true }): Promise<UpdateNotificationsState> => {
     const previous = command
     const generation = lifecycle
     const pending = (previous === undefined ? Promise.resolve() : previous.catch(() => state))
@@ -217,6 +223,9 @@ export function createUpdateNotificationsStore(request: typeof fetch = (...args)
     refreshAfterChange,
     check: () => mutate({ check: true }),
     setEnabled: enabled => mutate({ enabled }),
+    setIntervalHours: intervalHours => state.intervalHours === null
+      ? Promise.reject(new Error('This server does not support changing the check interval. Restart Harness to use this setting.'))
+      : mutate({ intervalHours }),
     preferencesChanged,
   }
 }
@@ -228,6 +237,7 @@ export const refreshUpdateNotifications = updateNotifications.refresh
 export const refreshUpdateNotificationsAfterChange = updateNotifications.refreshAfterChange
 export const checkUpdateNotifications = updateNotifications.check
 export const setUpdateNotificationsEnabled = updateNotifications.setEnabled
+export const setUpdateNotificationsIntervalHours = updateNotifications.setIntervalHours
 export const notifyUpdatePreferencesChanged = updateNotifications.preferencesChanged
 
 export function useUpdateNotifications(): UpdateNotificationsState {

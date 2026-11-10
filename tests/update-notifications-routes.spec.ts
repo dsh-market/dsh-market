@@ -9,6 +9,7 @@ import { readMarketState, writeMarketState } from '../src/hot.ts'
 import { setRequestGateSource } from '../src/http.ts'
 import * as registry from '../src/registry.ts'
 import * as updates from '../src/updates.ts'
+import { UPDATE_CHECK_INTERVAL_HOURS } from '../src/update-notification-settings.ts'
 import type { UpdateNotificationSnapshot } from '../src/update-notifications.ts'
 
 const PATH = '/dsh-market/update-notifications'
@@ -16,6 +17,7 @@ type Handler = (request: IncomingMessage, response: ServerResponse) => void | Pr
 let dir: string
 let dispose: () => void
 let handlers: Map<string, Handler>
+let host: MarketHost
 
 function profile(dependencies: Record<string, string> = { widget: '^1.0.0' }, bundles = Object.keys(dependencies)): void {
   writeFileSync(join(dir, 'package.json'), JSON.stringify({ dependencies, dsh: { profile: { bundles } } }))
@@ -47,7 +49,7 @@ beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ version: '2.0.0' }))))
   updates.invalidateUpdates()
   handlers = new Map()
-  const host: MarketHost = {
+  host = {
     webServer: { register: route => { handlers.set(route.path, route.handler); return () => { handlers.delete(route.path) } } },
     loader: { entries: () => [] },
     plugin: () => ({ await: async () => {}, dispose: async () => {} }),
@@ -64,12 +66,16 @@ afterEach(() => {
 })
 
 describe('update notification HTTP routes', () => {
-  it('serves a pure read before any check and starts checking independently after startup', async () => {
+  it('defaults to off and starts checking only after explicit opt-in', async () => {
     const first = await hit('GET')
     expect(first.status).toBe(200)
-    expect(first.json).toMatchObject({ enabled: true, checking: false, checkedAt: null, updates: {} })
+    expect(first.json).toMatchObject({ enabled: false, intervalHours: 6, checking: false, checkedAt: null, nextCheckAt: null, updates: {} })
     expect(registry.loadRegistry).not.toHaveBeenCalled()
     expect(fetch).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(7 * 24 * 60 * 60_000)
+    expect(registry.loadRegistry).not.toHaveBeenCalled()
+    expect(fetch).not.toHaveBeenCalled()
+    await hit('POST', PATH, { enabled: true })
     await vi.advanceTimersByTimeAsync(30_000)
     const checked = await hit('GET')
     expect(checked.json).toMatchObject({ stale: false, updates: { widget: { latest: '2.0.0', updateAvailable: true } } })
@@ -159,6 +165,35 @@ describe('update notification HTTP routes', () => {
     expect((await hit('POST', PATH, { check: true })).json).toMatchObject({ enabled: false, nextCheckAt: null, updates: { widget: { updateAvailable: true } } })
   })
 
+  it.each(UPDATE_CHECK_INTERVAL_HOURS)('persists a %s-hour interval independently of the switch and across restart', async intervalHours => {
+    const changed = await hit('POST', PATH, { intervalHours })
+    expect(changed.status).toBe(200)
+    expect(changed.json).toMatchObject({ enabled: false, intervalHours, nextCheckAt: null, checkedAt: null })
+    expect(readMarketState(dir).backgroundUpdateIntervalHours).toBe(intervalHours)
+    expect(fetch).not.toHaveBeenCalled()
+    dispose()
+    dispose = mountMarketRoutes(host, { profile: 'web', profileDirectory: dir, region: 'global' })
+    expect((await hit('GET')).json).toMatchObject({ enabled: false, intervalHours, nextCheckAt: null })
+    await hit('POST', PATH, { enabled: true })
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect((await hit('GET')).json.nextCheckAt).toBe(Date.now() + intervalHours * 60 * 60_000)
+  })
+
+  it.each([null, 0, -1, 1, 6.5, 24, 169, '6', [], {}, true])('rejects invalid intervals atomically: %j', async intervalHours => {
+    expect((await hit('POST', PATH, { enabled: true, intervalHours, check: true })).status).toBe(400)
+    expect((await hit('GET')).json).toMatchObject({ enabled: false, intervalHours: 6, checkedAt: null, nextCheckAt: null })
+    expect(readMarketState(dir).backgroundUpdateChecks).toBeUndefined()
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it.each([true, false])('retains an explicit legacy switch (%s) and uses 6 hours when the interval is missing', async enabled => {
+    dispose()
+    writeMarketState(dir, { disabled: new Set(), groups: {}, groupOrder: [], backgroundUpdateChecks: enabled })
+    dispose = mountMarketRoutes(host, { profile: 'web', profileDirectory: dir, region: 'global' })
+    expect((await hit('GET')).json).toMatchObject({ enabled, intervalHours: 6, checkedAt: null })
+    expect((await hit('GET')).json.nextCheckAt).toBe(enabled ? Date.now() + 30_000 : null)
+  })
+
   it('uses the host authentication gate for both snapshot reads and check requests', async () => {
     const previous = setRequestGateSource(() => () => 401)
     try {
@@ -186,9 +221,10 @@ describe('update notification HTTP routes', () => {
       name: 'new-widget', npm: 'new-widget', owner: 'owner', url: 'https://github.com/owner/widget',
       category: 'other', description: { en: 'widget' }, install: '', added: '', previousNpm: ['widget'],
     }] })
+    await hit('POST', PATH, { enabled: true })
     const page = await hit('GET', '/dsh-market/updates?force=1')
     expect(page.json.updates.widget?.sourceMigration).toEqual(migration)
-    await vi.advanceTimersByTimeAsync(30 * 60_000)
+    await vi.advanceTimersByTimeAsync(6 * 60 * 60_000)
     expect((await hit('GET')).json.updates.widget?.sourceMigration).toEqual(migration)
     vi.mocked(registry.loadRegistry).mockRejectedValue(new Error('offline'))
     const stale = await hit('POST', PATH, { check: true })

@@ -60,6 +60,7 @@ import { sourceWebUrl, updateNotesFor } from './changelog.ts'
 import { checkUpdates, isUpdatablePlugin, compareVersions, fetchNpmLatest, invalidateUpdates, readVersionMaturity, resolveDesktopMatureUpdate, resolveGitRemoteHead, isUpgrade, latestPublishedRecently, setUpdateRegistry, versionOnChannel } from './updates.ts'
 import { isStableReleaseVersion } from './release-candidates.ts'
 import { createUpdateNotificationMonitor } from './update-notifications.ts'
+import { isUpdateCheckIntervalHours } from './update-notification-settings.ts'
 import { createThemeManager, type LoaderEntry } from './themes.ts'
 import { readJsonBody, refuseUnadmitted, sameOrigin, sendJson } from './http.ts'
 import { resolveDshHome } from './home-paths.ts'
@@ -778,6 +779,7 @@ export function mountMarketRoutes(
     // writer that saves `marketState` whole (#435, #728).
     marketState.updateExempt = fresh.updateExempt
     marketState.backgroundUpdateChecks = fresh.backgroundUpdateChecks
+    marketState.backgroundUpdateIntervalHours = fresh.backgroundUpdateIntervalHours
     marketState.githubProxy = fresh.githubProxy
     // A restore or an external writer can change these two too; a stale copy
     // here would put the old answer back on the next whole-state save (#435).
@@ -2555,7 +2557,8 @@ export function mountMarketRoutes(
 
   const updateNotifications = createUpdateNotificationMonitor({
     boot: BOOT_ID,
-    enabled: marketState.backgroundUpdateChecks !== false,
+    enabled: marketState.backgroundUpdateChecks === true,
+    intervalHours: marketState.backgroundUpdateIntervalHours,
     inventory: () => {
       const installed = readInstalled(config.profile, activeProfileDir)
       const commits = readLockCommits(config.profile, activeProfileDir)
@@ -2727,17 +2730,24 @@ export function mountMarketRoutes(
             sendJson(response, 400, { error: 'expected an update-check setting or check request' })
             return
           }
-          const { enabled, check } = body as { enabled?: unknown; check?: unknown }
+          const { enabled, intervalHours, check } = body as { enabled?: unknown; intervalHours?: unknown; check?: unknown }
           if ((enabled !== undefined && typeof enabled !== 'boolean') || (check !== undefined && check !== true)
-            || (enabled === undefined && check === undefined)) {
-            sendJson(response, 400, { error: 'enabled must be a boolean; check must be true' })
+            || (intervalHours !== undefined && !isUpdateCheckIntervalHours(intervalHours))
+            || (enabled === undefined && intervalHours === undefined && check === undefined)) {
+            sendJson(response, 400, { error: 'enabled must be a boolean; intervalHours must be 6, 12, 72 or 168; check must be true' })
             return
           }
-          if (typeof enabled === 'boolean') {
+          if (typeof enabled === 'boolean' || isUpdateCheckIntervalHours(intervalHours)) {
             const state = readMarketState(activeProfileDir)
-            writeMarketState(activeProfileDir, { ...state, backgroundUpdateChecks: enabled })
-            marketState.backgroundUpdateChecks = enabled
-            updateNotifications.setEnabled(enabled)
+            if (typeof enabled === 'boolean') state.backgroundUpdateChecks = enabled
+            if (isUpdateCheckIntervalHours(intervalHours)) state.backgroundUpdateIntervalHours = intervalHours
+            // Validate the complete request, then persist both choices before
+            // changing the live timer. Partial preference writes keep the other.
+            writeMarketState(activeProfileDir, state)
+            marketState.backgroundUpdateChecks = state.backgroundUpdateChecks
+            marketState.backgroundUpdateIntervalHours = state.backgroundUpdateIntervalHours
+            if (isUpdateCheckIntervalHours(intervalHours)) updateNotifications.setIntervalHours(intervalHours)
+            if (typeof enabled === 'boolean') updateNotifications.setEnabled(enabled)
           }
           if (check === true) await updateNotifications.check(true)
           sendJson(response, 200, updateNotifications.snapshot())

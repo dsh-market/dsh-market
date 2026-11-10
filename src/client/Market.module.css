@@ -1300,3 +1300,6 @@
 .updateChecksList li { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 8px 0; }
 .updateChecksPackage { display: flex; flex-direction: column; flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .updateChecksPackage > span { opacity: .7; font-size: 12px; }
+
+.updateChecksInterval { display: inline-flex; align-items: center; gap: 8px; }
+.updateChecksInterval select { color: inherit; background: var(--dsw-alias-bg-layer-1, #fff); border: 1px solid var(--dsw-alias-border-l2, #e5e7eb); border-radius: 6px; padding: 4px 8px; font: inherit; }

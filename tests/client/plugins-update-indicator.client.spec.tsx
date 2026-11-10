@@ -54,7 +54,7 @@ afterEach(() => { cleanup(); stopStore?.(); stopStore = undefined; sessionStorag
 async function setup(withOriginal = true) {
   let count = 1
   vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
-    enabled: true, checking: false, checkedAt: 100, lastSuccessAt: 100, nextCheckAt: 200,
+    enabled: true, intervalHours: 6, checking: false, checkedAt: 100, lastSuccessAt: 100, nextCheckAt: 200,
     stale: false, error: null, updates: Object.fromEntries(Array.from({ length: count }, (_, i) => [`plugin-${i}`, { updateAvailable: true }])),
     boot: 'boot-1', updateExempt: [], disabled: [], blocked: [],
   }))))

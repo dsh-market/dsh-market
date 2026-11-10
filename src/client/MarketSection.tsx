@@ -47,7 +47,7 @@ import { OperationsPanel } from './OperationsPanel.tsx'
 import { applyRecovery, fetchRecovery, initialKeep, RecoveryPanel, watchRestart, type RecoveryView } from './RecoveryPanel.tsx'
 import { HostRecoveryBanner } from './HostRecoveryBanner.tsx'
 import { UpdateNotificationsPanel } from './UpdateNotificationsPanel.tsx'
-import { useUpdateNotifications, refreshUpdateNotifications, refreshUpdateNotificationsAfterChange, checkUpdateNotifications, setUpdateNotificationsEnabled, ignoredUpdatesForBoot, notifyUpdatePreferencesChanged } from './update-notifications.ts'
+import { useUpdateNotifications, refreshUpdateNotifications, refreshUpdateNotificationsAfterChange, checkUpdateNotifications, setUpdateNotificationsEnabled, setUpdateNotificationsIntervalHours, ignoredUpdatesForBoot, notifyUpdatePreferencesChanged } from './update-notifications.ts'
 import { clearSettled, drop, enqueue, patch as patchRecord, recordForUrl, restoreSettled, serializeSettled, SETTLED_STORAGE_KEY } from './operations.ts'
 import type { OperationRecord } from './operations.ts'
 import { Diagnostics } from './Diagnostics.tsx'
@@ -7620,6 +7620,7 @@ export function MarketSection(props: MarketSectionProps) {
           busy={updatingName !== null || busyUrl !== null || removingName !== null}
           onCheck={checkUpdateNotifications}
           onEnabled={setUpdateNotificationsEnabled}
+          onIntervalHours={setUpdateNotificationsIntervalHours}
           onUpdate={name => {
             if (updates[name]?.restoreRequired === true) askRestore(name)
             else doUpdate(name)

@@ -20,6 +20,7 @@ import { mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync,
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { isUpdateCheckIntervalHours, type UpdateCheckIntervalHours } from './update-notification-settings.ts'
 import { asChannel, type Channel } from './channels.ts'
 import { asRegion, normalizeGithubProxy, type Region } from './regions.ts'
 import { logEvent } from './log.ts'
@@ -305,8 +306,10 @@ export interface MarketState {
    * An empty array is how the last name is removed.
    */
   updateExempt?: string[]
-  /** Background update checks are enabled unless explicitly switched off. */
+  /** Background update checks run only after an explicit opt-in. */
   backgroundUpdateChecks?: boolean
+  /** Polling cadence; absent or invalid legacy values use the six-hour default. */
+  backgroundUpdateIntervalHours?: UpdateCheckIntervalHours
   /** User-supplied HTTPS prefix used when the built-in GitHub routes fail. */
   githubProxy?: string
   /**
@@ -523,6 +526,7 @@ export function readMarketState(profileDir: string): MarketState {
       blocked?: unknown
       updateExempt?: unknown
       backgroundUpdateChecks?: unknown
+      backgroundUpdateIntervalHours?: unknown
       brokenPlugins?: unknown
       sidebarEntry?: unknown
       settingsSection?: unknown
@@ -569,6 +573,7 @@ export function readMarketState(profileDir: string): MarketState {
       blocked: blockedNames(state.blocked),
       updateExempt: updateExemptNames(state.updateExempt),
       ...(typeof state.backgroundUpdateChecks === 'boolean' ? { backgroundUpdateChecks: state.backgroundUpdateChecks } : {}),
+      ...(isUpdateCheckIntervalHours(state.backgroundUpdateIntervalHours) ? { backgroundUpdateIntervalHours: state.backgroundUpdateIntervalHours } : {}),
       ...(githubProxy === null ? {} : { githubProxy }),
       ...(brokenPlugins === undefined ? {} : { brokenPlugins }),
       // true AND false are both preserved: on a host with no settings page
@@ -667,6 +672,7 @@ export function writeMarketState(profileDir: string, state: MarketState): void {
   const blocked = state.blocked ?? onDisk.blocked ?? []
   const updateExempt = state.updateExempt ?? onDisk.updateExempt ?? []
   const backgroundUpdateChecks = state.backgroundUpdateChecks ?? onDisk.backgroundUpdateChecks
+  const backgroundUpdateIntervalHours = state.backgroundUpdateIntervalHours ?? onDisk.backgroundUpdateIntervalHours
   // This field does have a clear action ("restore automatic"). As with
   // regionAuto, omission preserves while an explicit undefined removes it.
   const githubProxy = Object.prototype.hasOwnProperty.call(state, 'githubProxy')
@@ -694,6 +700,7 @@ export function writeMarketState(profileDir: string, state: MarketState): void {
     ...(blocked.length > 0 ? { blocked } : {}),
     ...(updateExempt.length > 0 ? { updateExempt } : {}),
     ...(typeof backgroundUpdateChecks === 'boolean' ? { backgroundUpdateChecks } : {}),
+    ...(isUpdateCheckIntervalHours(backgroundUpdateIntervalHours) ? { backgroundUpdateIntervalHours } : {}),
     ...(Object.keys(notes).length > 0 ? { notes } : {}),
     // Omitted while unchosen, so "never picked" survives a round trip and
     // keeps deriving from the running build — but only when disk has not

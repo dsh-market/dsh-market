@@ -6,13 +6,63 @@ import {
 import type { UpdateNotificationSnapshot } from '../../src/update-notifications.ts'
 
 const snapshot = (patch: Partial<UpdateNotificationSnapshot> = {}): UpdateNotificationSnapshot => ({
-  enabled: true, checking: false, checkedAt: 100, lastSuccessAt: 100, nextCheckAt: 200,
+  enabled: true, intervalHours: 6, checking: false, checkedAt: 100, lastSuccessAt: 100, nextCheckAt: 200,
   stale: false, error: null, boot: 'host-1', updates: {}, updateExempt: [], disabled: [], blocked: [], ...patch,
 })
 const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status })
 afterEach(() => { sessionStorage.clear(); vi.useRealTimers() })
 
 describe('shared update notification snapshot', () => {
+  it('starts with automatic checks off and a six-hour interval', () => {
+    const store = createUpdateNotificationsStore(vi.fn())
+    expect(store.getSnapshot()).toMatchObject({ enabled: false, intervalHours: 6, loaded: false })
+  })
+
+  it.each([6, 12, 72, 168] as const)('saves the %s-hour interval without enabling checks', async intervalHours => {
+    const request = vi.fn().mockResolvedValue(response(snapshot({ enabled: false, intervalHours })))
+    const store = createUpdateNotificationsStore(request)
+    await store.setIntervalHours(intervalHours)
+    expect(request.mock.calls[0][1]).toMatchObject({ method: 'POST', body: JSON.stringify({ intervalHours }) })
+    expect(store.getSnapshot()).toMatchObject({ enabled: false, intervalHours, loaded: true })
+  })
+
+  it('keeps the saved interval while saving and after a rejected save', async () => {
+    let rejectSave!: (reason: Error) => void
+    const request = vi.fn().mockResolvedValueOnce(response(snapshot({ enabled: false, intervalHours: 12 })))
+      .mockImplementationOnce(() => new Promise<Response>((_, reject) => { rejectSave = reject }))
+    const store = createUpdateNotificationsStore(request)
+    await store.refresh()
+    const save = store.setIntervalHours(168)
+    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(2))
+    expect(store.getSnapshot()).toMatchObject({ enabled: false, intervalHours: 12 })
+    rejectSave(new Error('offline'))
+    await expect(save).rejects.toThrow('offline')
+    expect(store.getSnapshot()).toMatchObject({ enabled: false, intervalHours: 12, stale: true })
+  })
+
+  it.each([0, 24, '6', null])('rejects an invalid response interval %s', async intervalHours => {
+    const request = vi.fn().mockResolvedValueOnce(response(snapshot({ intervalHours: 72 })))
+      .mockResolvedValueOnce(response({ ...snapshot(), intervalHours }))
+    const store = createUpdateNotificationsStore(request)
+    await store.refresh()
+    await store.refresh()
+    expect(store.getSnapshot()).toMatchObject({ intervalHours: 72, stale: true })
+  })
+
+  it('preserves legacy server results and toggles without allowing interval saves', async () => {
+    const { intervalHours: _interval, ...legacy } = snapshot({ enabled: true, updates: { alpha: { updateAvailable: true } } })
+    const request = vi.fn().mockResolvedValueOnce(response(legacy))
+      .mockResolvedValueOnce(response({ ...legacy, enabled: false }))
+    const store = createUpdateNotificationsStore(request)
+    await store.refresh()
+    expect(store.getSnapshot()).toMatchObject({ enabled: true, intervalHours: null, loaded: true, stale: false })
+    expect(notificationNames(store.getSnapshot())).toEqual(['alpha'])
+    await store.setEnabled(false)
+    expect(store.getSnapshot()).toMatchObject({ enabled: false, intervalHours: null, stale: false })
+    await expect(store.setIntervalHours(12)).rejects.toThrow('does not support')
+    expect(request).toHaveBeenCalledTimes(2)
+  })
+
   it('polls only the local read endpoint without a page and stops after its final owner leaves', async () => {
     vi.useFakeTimers()
     const request = vi.fn(async () => response(snapshot()))

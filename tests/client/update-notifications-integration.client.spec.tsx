@@ -40,7 +40,7 @@ beforeEach(async () => {
   resetThemePreviewCache()
   resetHostCompatibilityCache()
   current = {
-    enabled: true, checking: false, checkedAt: 100, lastSuccessAt: 100,
+    enabled: true, intervalHours: 6, checking: false, checkedAt: 100, lastSuccessAt: 100,
     nextCheckAt: 200, stale: false, error: null, boot: 'boot-1',
     updateExempt: [], disabled: [], blocked: [],
     updates: {

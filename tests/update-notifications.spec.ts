@@ -1,21 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createUpdateNotificationMonitor, UPDATE_CHECK_INTERVAL_MS, UPDATE_CHECK_START_DELAY_MS } from '../src/update-notifications.ts'
 import { readMarketState, writeMarketState } from '../src/hot.ts'
+import { UPDATE_CHECK_INTERVAL_HOURS, type UpdateCheckIntervalHours } from '../src/update-notification-settings.ts'
 import type { UpdateStatus } from '../src/updates.ts'
 
 const available = (version = '1.0.0', latest = '2.0.0'): UpdateStatus => ({ kind: 'npm', version, current: version, latest, updateAvailable: true })
 const unavailable: UpdateStatus = { kind: 'npm', version: '1.0.0', current: null, latest: null, updateAvailable: false, checkError: 'unavailable' }
 
-function setup(enabled = true) {
+function setup(enabled = true, intervalHours?: UpdateCheckIntervalHours) {
   let context = 'web:stable'
   let packages: Record<string, string> = { widget: 'npm:widget@1.0.0' }
   let preferences = { updateExempt: [] as string[], disabled: [] as string[], blocked: [] as string[] }
   const check = vi.fn(async (_force: boolean): Promise<{ updates: Record<string, UpdateStatus>; error?: string }> => ({ updates: { widget: available() } }))
   const monitor = createUpdateNotificationMonitor({
-    boot: 'boot-a', enabled, inventory: () => ({ context, packages }),
+    boot: 'boot-a', enabled, intervalHours, inventory: () => ({ context, packages }),
     preferences: () => preferences, check,
   })
   return {
@@ -42,6 +43,94 @@ describe('background update notifications', () => {
     expect(monitor.snapshot()).toMatchObject({ checkedAt: 1_030_000, lastSuccessAt: 1_030_000, stale: false, updates: { widget: available() } })
     await vi.advanceTimersByTimeAsync(UPDATE_CHECK_INTERVAL_MS)
     expect(check).toHaveBeenCalledTimes(2)
+    monitor.dispose()
+  })
+
+  it.each(UPDATE_CHECK_INTERVAL_HOURS)('waits exactly %s hours between completed automatic checks', async intervalHours => {
+    const { monitor, check } = setup(true, intervalHours)
+    await vi.advanceTimersByTimeAsync(UPDATE_CHECK_START_DELAY_MS)
+    expect(check).toHaveBeenCalledTimes(1)
+    expect(monitor.snapshot()).toMatchObject({ intervalHours, nextCheckAt: Date.now() + intervalHours * 60 * 60_000 })
+    await vi.advanceTimersByTimeAsync(intervalHours * 60 * 60_000 - 1)
+    expect(check).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(check).toHaveBeenCalledTimes(2)
+    monitor.dispose()
+  })
+
+  it('reschedules an active timer with the new interval and removes the old timer', async () => {
+    const { monitor, check } = setup(true, 6)
+    await monitor.check()
+    await vi.advanceTimersByTimeAsync(60_000)
+    monitor.setIntervalHours(168)
+    const changedAt = Date.now()
+    expect(monitor.snapshot().nextCheckAt).toBe(changedAt + 168 * 60 * 60_000)
+    expect(vi.getTimerCount()).toBe(1)
+    await vi.advanceTimersByTimeAsync(6 * 60 * 60_000)
+    expect(check).toHaveBeenCalledTimes(1)
+    monitor.setIntervalHours(12)
+    expect(monitor.snapshot().nextCheckAt).toBe(Date.now() + 12 * 60 * 60_000)
+    await vi.advanceTimersByTimeAsync(12 * 60 * 60_000)
+    expect(check).toHaveBeenCalledTimes(2)
+    monitor.dispose()
+  })
+
+  it('does not opt in when changing cadence and keeps the startup delay when enabled', async () => {
+    const { monitor, check } = setup(false)
+    monitor.setIntervalHours(72)
+    expect(monitor.snapshot()).toMatchObject({ enabled: false, intervalHours: 72, nextCheckAt: null })
+    await vi.advanceTimersByTimeAsync(168 * 60 * 60_000)
+    expect(check).not.toHaveBeenCalled()
+    monitor.setEnabled(true)
+    monitor.setIntervalHours(168)
+    expect(monitor.snapshot().nextCheckAt).toBe(Date.now() + UPDATE_CHECK_START_DELAY_MS)
+    await vi.advanceTimersByTimeAsync(UPDATE_CHECK_START_DELAY_MS)
+    expect(check).toHaveBeenCalledTimes(1)
+    expect(monitor.snapshot().nextCheckAt).toBe(Date.now() + 168 * 60 * 60_000)
+    monitor.dispose()
+  })
+
+  it('applies a changed interval after an in-flight check without overlapping it', async () => {
+    const { monitor, check } = setup()
+    let resolve!: (value: { updates: Record<string, UpdateStatus> }) => void
+    check.mockImplementationOnce(() => new Promise(done => { resolve = done }))
+    const pending = monitor.check(true)
+    await Promise.resolve()
+    monitor.setIntervalHours(72)
+    expect(monitor.snapshot()).toMatchObject({ checking: true, intervalHours: 72, nextCheckAt: null })
+    await vi.advanceTimersByTimeAsync(168 * 60 * 60_000)
+    expect(check).toHaveBeenCalledTimes(1)
+    resolve({ updates: { widget: available() } })
+    await pending
+    expect(monitor.snapshot().nextCheckAt).toBe(Date.now() + 72 * 60 * 60_000)
+    monitor.dispose()
+  })
+
+  it('does not reschedule when disabled during an in-flight check', async () => {
+    const { monitor, check } = setup()
+    let resolve!: (value: { updates: Record<string, UpdateStatus> }) => void
+    check.mockImplementationOnce(() => new Promise(done => { resolve = done }))
+    const pending = monitor.check(true)
+    await Promise.resolve()
+    monitor.setEnabled(false)
+    monitor.setIntervalHours(168)
+    resolve({ updates: { widget: available() } })
+    await pending
+    expect(monitor.snapshot()).toMatchObject({ enabled: false, intervalHours: 168, nextCheckAt: null, updates: { widget: available() } })
+    expect(vi.getTimerCount()).toBe(0)
+    monitor.dispose()
+  })
+
+  it('caps retries at 30 minutes independently of a long polling interval, then restores it on success', async () => {
+    const { monitor, check } = setup(true, 168)
+    check.mockRejectedValue(new Error('offline'))
+    for (const delay of [1, 2, 4, 8, 16, 30, 30]) {
+      await monitor.check(true)
+      expect(monitor.snapshot().nextCheckAt).toBe(Date.now() + delay * 60_000)
+    }
+    check.mockResolvedValue({ updates: { widget: available() } })
+    await monitor.check(true)
+    expect(monitor.snapshot().nextCheckAt).toBe(Date.now() + 168 * 60 * 60_000)
     monitor.dispose()
   })
 
@@ -187,11 +276,27 @@ describe('background update notifications', () => {
     const dir = mkdtempSync(join(tmpdir(), 'dshm-notifications-'))
     try {
       expect(readMarketState(dir).backgroundUpdateChecks).toBeUndefined()
-      writeMarketState(dir, { disabled: new Set(), groups: {}, groupOrder: [], backgroundUpdateChecks: false })
+      writeMarketState(dir, { disabled: new Set(), groups: {}, groupOrder: [], backgroundUpdateChecks: false, backgroundUpdateIntervalHours: 72 })
       writeMarketState(dir, { disabled: new Set(['other']), groups: {}, groupOrder: [] })
       expect(readMarketState(dir).backgroundUpdateChecks).toBe(false)
+      expect(readMarketState(dir).backgroundUpdateIntervalHours).toBe(72)
       writeMarketState(dir, { ...readMarketState(dir), backgroundUpdateChecks: true })
       expect(readMarketState(dir).backgroundUpdateChecks).toBe(true)
+      expect(readMarketState(dir).backgroundUpdateIntervalHours).toBe(72)
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
+  it.each([null, 0, -1, 24, 6.5, 169, '6', [], {}, true])('ignores invalid saved intervals (%j) and keeps a legacy opt-in', intervalHours => {
+    const dir = mkdtempSync(join(tmpdir(), 'dshm-notification-settings-'))
+    try {
+      mkdirSync(join(dir, '.dsh-market'))
+      writeFileSync(join(dir, '.dsh-market/state.json'), JSON.stringify({ backgroundUpdateChecks: true, backgroundUpdateIntervalHours: intervalHours }))
+      const state = readMarketState(dir)
+      expect(state.backgroundUpdateChecks).toBe(true)
+      expect(state.backgroundUpdateIntervalHours).toBeUndefined()
+      const { monitor } = setup(state.backgroundUpdateChecks, state.backgroundUpdateIntervalHours)
+      expect(monitor.snapshot()).toMatchObject({ enabled: true, intervalHours: 6 })
+      monitor.dispose()
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
 })

@@ -89,8 +89,8 @@ describe('the on/off control on a host that has Switch', () => {
   it('gives automatic update checks visible text when the host label is accessibility-only', () => {
     render(<UpdateNotificationsPanel
       t={key => (en as Record<string, string>)[key] ?? key} busy={false}
-      onUpdate={() => {}} onCheck={async () => {}} onEnabled={async () => {}}
-      snapshot={{ enabled: true, checking: false, checkedAt: null, lastSuccessAt: null, nextCheckAt: null,
+      onUpdate={() => {}} onCheck={async () => {}} onEnabled={async () => {}} onIntervalHours={async () => {}}
+      snapshot={{ enabled: true, intervalHours: 6, checking: false, checkedAt: null, lastSuccessAt: null, nextCheckAt: null,
         stale: false, error: null, boot: 'boot', updates: {}, updateExempt: [], disabled: [], blocked: [] }}
     />)
     expect(screen.getByText(en.updateChecksAutomatic)).toBeTruthy()

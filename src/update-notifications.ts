@@ -1,13 +1,16 @@
 /** Shared, read-only update checks for every market surface in one profile. */
 import type { UpdateStatus } from './updates.ts'
+import { DEFAULT_UPDATE_CHECK_INTERVAL_HOURS, isUpdateCheckIntervalHours, type UpdateCheckIntervalHours } from './update-notification-settings.ts'
 
 export const UPDATE_CHECK_START_DELAY_MS = 30_000
-export const UPDATE_CHECK_INTERVAL_MS = 30 * 60_000
+export const UPDATE_CHECK_INTERVAL_MS = DEFAULT_UPDATE_CHECK_INTERVAL_HOURS * 60 * 60_000
 const RETRY_BASE_MS = 60_000
+const RETRY_MAX_MS = 30 * 60_000
 
 /** Notification data; reading a snapshot never contacts an update source. */
 export interface UpdateNotificationSnapshot {
   enabled: boolean
+  intervalHours: UpdateCheckIntervalHours
   checking: boolean
   checkedAt: number | null
   lastSuccessAt: number | null
@@ -31,6 +34,7 @@ export interface UpdateNotificationInventory {
 interface MonitorDependencies {
   boot: string
   enabled: boolean
+  intervalHours?: UpdateCheckIntervalHours
   inventory(): UpdateNotificationInventory
   preferences(): Pick<UpdateNotificationSnapshot, 'updateExempt' | 'disabled' | 'blocked'>
   check(force: boolean): Promise<{ updates: Record<string, UpdateStatus>; error?: string }>
@@ -40,12 +44,14 @@ export interface UpdateNotificationMonitor {
   snapshot(): UpdateNotificationSnapshot
   check(force?: boolean): Promise<Record<string, UpdateStatus>>
   setEnabled(enabled: boolean): void
+  setIntervalHours(intervalHours: UpdateCheckIntervalHours): void
   dispose(): void
 }
 
-/** Start one profile-scoped timer; callers own persistence of the enabled choice. */
+/** Start one profile-scoped timer; callers own persistence of the preferences. */
 export function createUpdateNotificationMonitor(deps: MonitorDependencies): UpdateNotificationMonitor {
   let enabled = deps.enabled
+  let intervalHours = isUpdateCheckIntervalHours(deps.intervalHours) ? deps.intervalHours : DEFAULT_UPDATE_CHECK_INTERVAL_HOURS
   let disposed = false
   let timer: ReturnType<typeof setTimeout> | undefined
   let nextCheckAt: number | null = null
@@ -94,6 +100,10 @@ export function createUpdateNotificationMonitor(deps: MonitorDependencies): Upda
     timer = setTimeout(() => { void check(stale) }, delay)
     timer.unref?.()
   }
+
+  const nextDelay = (): number => failures > 0
+    ? Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** Math.min(failures - 1, 5))
+    : intervalHours * 60 * 60_000
 
   const check = (force = false): Promise<Record<string, UpdateStatus>> => {
     if (disposed) return Promise.resolve({ ...updates })
@@ -148,9 +158,7 @@ export function createUpdateNotificationMonitor(deps: MonitorDependencies): Upda
         failures += 1
       } finally {
         pending = null
-        if (!disposed) schedule(failures > 0
-          ? Math.min(UPDATE_CHECK_INTERVAL_MS, RETRY_BASE_MS * 2 ** Math.min(failures - 1, 5))
-          : UPDATE_CHECK_INTERVAL_MS)
+        if (!disposed) schedule(nextDelay())
       }
       return { ...updates }
     })
@@ -162,7 +170,7 @@ export function createUpdateNotificationMonitor(deps: MonitorDependencies): Upda
     snapshot: () => {
       reconcile()
       return {
-        enabled, checking: pending !== null, checkedAt, lastSuccessAt, nextCheckAt,
+        enabled, intervalHours, checking: pending !== null, checkedAt, lastSuccessAt, nextCheckAt,
         stale, error, updates: { ...updates }, boot: deps.boot, ...deps.preferences(),
       }
     },
@@ -172,6 +180,13 @@ export function createUpdateNotificationMonitor(deps: MonitorDependencies): Upda
       enabled = value
       stopTimer()
       if (enabled && pending === null) schedule(UPDATE_CHECK_START_DELAY_MS)
+    },
+    setIntervalHours: value => {
+      if (!isUpdateCheckIntervalHours(value) || intervalHours === value || disposed) return
+      intervalHours = value
+      // Keep a pending check single-flight; its completion uses the newest
+      // choice. Changing a disabled monitor never opts the user in.
+      if (pending === null) schedule(checkedAt === null ? UPDATE_CHECK_START_DELAY_MS : nextDelay())
     },
     dispose: () => {
       disposed = true

@@ -1,6 +1,7 @@
 /**
  * #1138: a real host discovers an update while the market is never opened.
- * The startup timer keeps its production 30-second delay. Later explicit
+ * Automatic checks are opt-in; the enabled startup timer keeps its
+ * production 30-second delay. Later explicit
  * POST checks are manual-refresh coverage, not evidence of periodic checks.
  * Everything, including uninstall, runs in the scaffold's disposable home.
  */
@@ -51,13 +52,14 @@ describe.skipIf(!HAS_DSH).sequential('web e2e: background update notifications',
     expect(installed.status).toBe(200)
     expect(installedVersion()).toBe('1.0.0')
     scaffold.publish(FIXTURE, '2.0.0')
-    // Clear any initial installation/check state, just as a user's next
-    // launch would. The next discovery must be this process's own timer.
+    // Clear installation state as a fresh launch would. Checks must stay
+    // off until the user explicitly enables them below.
     await scaffold.restart()
     const before = await snapshot()
-    expect(before.enabled).toBe(true)
+    expect(before.enabled).toBe(false)
+    expect(before.intervalHours).toBe(6)
     expect(before.checkedAt).toBeNull()
-    expect(before.nextCheckAt).not.toBeNull()
+    expect(before.nextCheckAt).toBeNull()
 
     browser = await chromium.launch({
       // Optional test-only override for an already-installed local browser.
@@ -89,7 +91,46 @@ describe.skipIf(!HAS_DSH).sequential('web e2e: background update notifications',
     await scaffold?.close()
   })
 
-  it('checks after startup without a market visit or a manual request, and does not install', async () => {
+  it('defaults to no automatic checks across the real startup delay', async () => {
+    const deadline = Date.now() + 32_000
+    while (Date.now() < deadline) {
+      const quiet = await snapshot()
+      expect(quiet.enabled).toBe(false)
+      expect(quiet.intervalHours).toBe(6)
+      expect(quiet.nextCheckAt).toBeNull()
+      expect(quiet.checkedAt).toBeNull()
+      expect(quiet.checking).toBe(false)
+      expect(quiet.updates).toEqual({})
+      expect(browserChecks).toEqual([])
+      await new Promise(resolve => setTimeout(resolve, 1000))
+    }
+  })
+
+  it('accepts every interval without silently enabling checks', async () => {
+    for (const intervalHours of [6, 12, 72, 168]) {
+      const response = await post(ENDPOINT, { intervalHours })
+      expect(response.status).toBe(200)
+      const saved = await response.json() as UpdateNotificationSnapshot
+      expect(saved.intervalHours).toBe(intervalHours)
+      expect(saved.enabled).toBe(false)
+      expect(saved.nextCheckAt).toBeNull()
+      expect(saved.checkedAt).toBeNull()
+    }
+  })
+
+  it('persists an explicitly enabled switch and selected interval across restart', async () => {
+    expect((await post(ENDPOINT, { enabled: true })).status).toBe(200)
+    await scaffold.restart()
+    const enabled = await snapshot()
+    expect(enabled.enabled).toBe(true)
+    expect(enabled.intervalHours).toBe(168)
+    expect(enabled.checkedAt).toBeNull()
+    expect(enabled.nextCheckAt).not.toBeNull()
+    await openMarketPage(page, scaffold)
+    await dismissStartGate(page)
+  })
+
+  it('checks after opt-in startup without a market visit or a manual request, and does not install', async () => {
     await expect.poll(async () => (await snapshot()).updates[FIXTURE], {
       interval: 500, timeout: 120_000,
     }).toMatchObject({ current: '1.0.0', latest: '2.0.0', updateAvailable: true })
@@ -159,11 +200,50 @@ describe.skipIf(!HAS_DSH).sequential('web e2e: background update notifications',
     }
   })
 
+  it('offers all four polling intervals in the market UI', async () => {
+    const nativeMarket = page.getByRole('tab', { name: /^(Plugin Market|插件市场)$/ })
+      .or(page.getByRole('button', { name: /^(Plugin Market|插件市场)$/ })).first()
+    if (await nativeMarket.isVisible()) await nativeMarket.click()
+    else await openMarketUi(page)
+    const market = page.locator('[data-dsh-market-root]').first()
+    await market.waitFor({ state: 'visible', timeout: 30_000 })
+    await market.getByRole('button', { name: /^(Installed|已安装)/ }).first().click()
+    const details = market.locator('[data-dsh-market-update-checks]')
+    if (!(await details.evaluate(node => (node as unknown as { open: boolean }).open))) {
+      await details.locator('summary').click()
+    }
+    const interval = details.getByRole('combobox', { name: /^(Check interval|检查周期)$/ })
+    await interval.waitFor({ state: 'visible' })
+    expect(await interval.inputValue()).toBe('168')
+    expect(await interval.locator('option').evaluateAll(options => options.map(option => ({
+      value: (option as unknown as { value: string }).value, text: option.textContent,
+    })))).toEqual([
+      { value: '6', text: 'Every 6 hours' },
+      { value: '12', text: 'Every 12 hours' },
+      { value: '72', text: 'Every 3 days' },
+      { value: '168', text: 'Every 7 days' },
+    ])
+    for (const intervalHours of [6, 12, 72, 168]) {
+      await interval.selectOption(String(intervalHours))
+      await expect.poll(async () => (await snapshot()).intervalHours).toBe(intervalHours)
+      expect((await snapshot()).enabled).toBe(true)
+    }
+    // Selecting a cadence while paused must not opt the user in.
+    expect((await post(ENDPOINT, { enabled: false })).status).toBe(200)
+    await interval.selectOption('12')
+    await expect.poll(async () => (await snapshot()).intervalHours).toBe(12)
+    expect((await snapshot()).enabled).toBe(false)
+    await interval.selectOption('168')
+    await expect.poll(async () => (await snapshot()).intervalHours).toBe(168)
+    expect((await snapshot()).enabled).toBe(false)
+  })
+
   it('turns automatic checks off without erasing the existing reminder', async (context) => {
     const response = await post(ENDPOINT, { enabled: false })
     expect(response.status).toBe(200)
     const disabled = await response.json() as UpdateNotificationSnapshot
     expect(disabled.enabled).toBe(false)
+    expect(disabled.intervalHours).toBe(168)
     expect(disabled.nextCheckAt).toBeNull()
     expect(disabled.updates[FIXTURE]?.updateAvailable).toBe(true)
     if (!hasPluginsEntry) context.skip('Server preference verified; this host has no Plugins sidebar')
@@ -176,6 +256,7 @@ describe.skipIf(!HAS_DSH).sequential('web e2e: background update notifications',
     await dismissStartGate(page)
     const disabled = await snapshot()
     expect(disabled.enabled).toBe(false)
+    expect(disabled.intervalHours).toBe(168)
     expect(disabled.nextCheckAt).toBeNull()
     expect(disabled.checking).toBe(false)
     expect(disabled.checkedAt).toBeNull()
@@ -185,6 +266,7 @@ describe.skipIf(!HAS_DSH).sequential('web e2e: background update notifications',
     while (Date.now() < deadline) {
       const stillDisabled = await snapshot()
       expect(stillDisabled.enabled).toBe(false)
+      expect(stillDisabled.intervalHours).toBe(168)
       expect(stillDisabled.nextCheckAt).toBeNull()
       expect(stillDisabled.checkedAt).toBeNull()
       await new Promise(resolve => setTimeout(resolve, 1000))
