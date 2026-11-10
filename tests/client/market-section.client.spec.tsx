@@ -4730,12 +4730,72 @@ describe('#60 groups view', () => {
     fireEvent.click(await screen.findByRole('button', { name: en.tabGroups }))
   }
 
+  it('collapses and expands all named groups, disabling actions that cannot change them (#1129)', async () => {
+    const state = makeFake({ 'dsh-loop': '^1.0.0', 'dsh-notify': '^1.0.0' })
+    state.groups = { work: ['dsh-loop'], empty: [] }
+    state.groupOrder = ['work', 'empty']
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    await openGroupsView()
+
+    const collapse = screen.getByRole('button', { name: 'Collapse all' })
+    const expand = screen.getByRole('button', { name: 'Expand all' })
+    expect(expand).toHaveProperty('disabled', true)
+    fireEvent.click(collapse)
+    for (const name of state.groupOrder) {
+      expect(screen.getByRole('button', { name: en.groupExpand.replace('{0}', name) }).getAttribute('aria-expanded')).toBe('false')
+    }
+    expect(collapse).toHaveProperty('disabled', true)
+    expect(expand).toHaveProperty('disabled', false)
+    expect(screen.queryByText('dsh-loop')).toBeNull()
+    expect(screen.getByText('dsh-notify')).toBeTruthy() // Ungrouped plugins remain visible.
+
+    fireEvent.click(screen.getByRole('button', { name: en.groupExpand.replace('{0}', 'work') }))
+    expect(collapse).toHaveProperty('disabled', false)
+    expect(expand).toHaveProperty('disabled', false)
+    fireEvent.click(expand)
+    for (const name of state.groupOrder) {
+      expect(screen.getByRole('button', { name: en.groupFold.replace('{0}', name) }).getAttribute('aria-expanded')).toBe('true')
+    }
+    expect(expand).toHaveProperty('disabled', true)
+    expect(screen.getByText('dsh-loop')).toBeTruthy()
+    expect(fetchCalls.filter(call => call.path === '/dsh-market/groups' || call.path === '/dsh-market/toggle')).toEqual([])
+  })
+
+  it('reveals search matches inside bulk-collapsed groups and restores folding when search clears (#1129)', async () => {
+    const state = makeFake({ 'dsh-loop': '^1.0.0', 'dsh-notify': '^1.0.0' })
+    state.groups = { work: ['dsh-loop'], alerts: ['dsh-notify'] }
+    state.groupOrder = ['work', 'alerts']
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    await openGroupsView()
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse all' }))
+    const search = screen.getByPlaceholderText(en.searchPh)
+    fireEvent.change(search, { target: { value: 'notify' } })
+    fireEvent.keyDown(search, { key: 'Enter' })
+    expect(await screen.findByText('dsh-notify')).toBeTruthy()
+    expect(screen.getByRole('button', { name: en.groupFold.replace('{0}', 'alerts') }).getAttribute('aria-expanded')).toBe('true')
+    expect(screen.queryByText('dsh-loop')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Collapse all' })).toHaveProperty('disabled', true)
+    expect(screen.getByRole('button', { name: 'Expand all' })).toHaveProperty('disabled', true)
+
+    fireEvent.change(search, { target: { value: '' } })
+    fireEvent.keyDown(search, { key: 'Enter' })
+    await waitFor(() => expect(screen.queryByText('dsh-notify')).toBeNull())
+    for (const name of state.groupOrder) {
+      expect(screen.getByRole('button', { name: en.groupExpand.replace('{0}', name) }).getAttribute('aria-expanded')).toBe('false')
+    }
+    expect(screen.getByRole('button', { name: 'Expand all' })).toHaveProperty('disabled', false)
+  })
+
   it('creates, assigns, removes, renames and deletes groups through the route', async () => {
     makeFake({ 'dsh-loop': '^1.0.0', 'dsh-notify': '^1.0.0' })
     render(<MarketSection {...props()} />)
     await screen.findByText('dsh-loop')
     await openGroupsView()
     expect(await screen.findByText(en.noGroups)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Collapse all' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Expand all' })).toBeNull()
 
     // Leaving the inline editor restores the New group button.
     fireEvent.click(screen.getByRole('button', { name: en.groupNew }))
