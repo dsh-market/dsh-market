@@ -3232,12 +3232,35 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		function repoRoots(ids) {
 			return new Set([...ids].map((id) => id.split("#path:/")[0]));
 		}
-		function sameSourceConflict(plugin, spec, repoIdentities = []) {
-			const entry = repoRoots(entryRepoIds(plugin));
+		/**
+		* An entry's repository roots, per entry object. A pure function of an object
+		* that outlives every call, like `entryIdCache` above, and asked about every
+		* entry on every pass of the installed matching (#1097).
+		*/
+		const entryRootCache = /* @__PURE__ */ new WeakMap();
+		function entryRoots(plugin) {
+			const cached = entryRootCache.get(plugin);
+			if (cached !== void 0) return cached;
+			const roots = repoRoots(entryRepoIds(plugin));
+			entryRootCache.set(plugin, roots);
+			return roots;
+		}
+		/**
+		* `sameSourceConflict` for ONE dependency against many entries: the
+		* dependency's half is built once, not once per entry (#1097).
+		*/
+		function sourceConflictWith(spec, repoIdentities = []) {
 			const dep = repoRoots(depRepoIds(spec, repoIdentities));
-			if (entry.size === 0 || dep.size === 0) return false;
-			for (const id of dep) if (entry.has(id)) return false;
-			return true;
+			if (dep.size === 0) return () => false;
+			return (plugin) => {
+				const entry = entryRoots(plugin);
+				if (entry.size === 0) return false;
+				for (const id of dep) if (entry.has(id)) return false;
+				return true;
+			};
+		}
+		function sameSourceConflict(plugin, spec, repoIdentities = []) {
+			return sourceConflictWith(spec, repoIdentities)(plugin);
 		}
 		function repoHintMatches(plugin, hints) {
 			const entry = entryRepoIds(plugin);
@@ -3298,8 +3321,13 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					continue;
 				}
 				if (depRepoIds(specStr, repos).size === 0 && plugins !== void 0 && looseMatchCount(plugins, name) > 1 && !repoHintMatches(plugin, repoHints[name] ?? [])) continue;
-				if (sameSourceConflict(plugin, specStr, repos)) continue;
-				for (const id of depIdentities(name, specStr, repos)) if (ids.has(id)) return name;
+				let meets = false;
+				for (const id of depIdentities(name, specStr, repos)) if (ids.has(id)) {
+					meets = true;
+					break;
+				}
+				if (!meets || sameSourceConflict(plugin, specStr, repos)) continue;
+				return name;
 			}
 			return null;
 		}
@@ -3309,10 +3337,14 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				if (plugins.find((plugin) => repoHintMatches(plugin, repoHints) && looseMatches(plugin, name)) === void 0) return void 0;
 			}
 			const ids = depIdentities(name, String(spec), repoIdentities);
+			const conflicts = sourceConflictWith(String(spec), repoIdentities);
 			return plugins.find((plugin) => {
-				if (sameSourceConflict(plugin, String(spec), repoIdentities)) return false;
-				for (const id of entryIdentities(plugin)) if (ids.has(id)) return true;
-				return false;
+				let meets = false;
+				for (const id of entryIdentities(plugin)) if (ids.has(id)) {
+					meets = true;
+					break;
+				}
+				return meets && !conflicts(plugin);
 			});
 		}
 		function isInstalled(plugin, installed, repoIdentities = {}, plugins, repoHints = {}) {
@@ -11720,7 +11752,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				sortDir,
 				timeRange
 			]);
-			const pluginBlocked = (plugin) => blockAliases(plugin, matchInstalledName(plugin, installed, repoIdentities, data?.plugins, repoHints)).some((name) => blockedNameSet.has(name));
+			const pluginBlocked = (plugin) => blockedNameSet.size > 0 && blockAliases(plugin, matchInstalledName(plugin, installed, repoIdentities, data?.plugins, repoHints)).some((name) => blockedNameSet.has(name));
 			const installedBlocked = (0, react.useMemo)(() => {
 				const compute = (name) => {
 					if (blockedNameSet.has(name)) return true;

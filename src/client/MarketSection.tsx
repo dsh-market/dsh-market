@@ -4242,8 +4242,13 @@ export function MarketSection(props: MarketSectionProps) {
     [data, q, cat, lang, sortField, sortDir, timeRange])
   // One plugin can be stored under the installed name or the catalog name.
   // Both have to hide the card and skip Update all (#657).
+  // With nothing blocked — the default — the answer is false for every entry,
+  // and it is decided before the matching below could change it: the matching
+  // is an ARGUMENT, so without this it ran for the whole catalog first and only
+  // then was asked of an empty set (#1097, ~730 ms at 9.9k entries).
   const pluginBlocked = (plugin: RegistryPlugin): boolean =>
-    blockAliases(plugin, matchInstalledName(plugin, installed, repoIdentities, data?.plugins, repoHints))
+    blockedNameSet.size > 0
+    && blockAliases(plugin, matchInstalledName(plugin, installed, repoIdentities, data?.plugins, repoHints))
       .some(name => blockedNameSet.has(name))
   // Memoized because one call walks the WHOLE catalog
   // (`catalogEntryForInstalled` → `entryForDep` → `sameSourceConflict` per
