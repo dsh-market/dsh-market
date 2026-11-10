@@ -11124,7 +11124,12 @@ describe('catalog-owned floating release archives', () => {
   })
   afterEach(() => { registryModule.loadRegistry.mockImplementation(() => Promise.resolve(REGISTRY)) })
 
-  it('lists and applies a published complete package without switching to npm or source', async () => {
+  it.each([
+    original,
+    'https://github.com/o/whale/releases/download/v1.0.0/full-1.0.0.tgz',
+  ])('lists and applies a published complete package from %s', async spec => {
+    writeFileSync(join(fake.profileDir, 'package.json'), JSON.stringify({ dependencies: { 'dsh-whale': spec }, dsh: { profile: { bundles: ['dsh-whale'] } } }))
+    fake.tarballs[spec] = fake.tarballs[original]!
     const page = await bed.dispatch('GET', '/dsh-market/updates?force=1')
     expect(page.json.updates['dsh-whale']).toMatchObject({ latest: '2.0.0', updateAvailable: true })
     const single = await bed.dispatch('GET', '/dsh-market/api/v1/updates?name=dsh-whale&force=1')

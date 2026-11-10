@@ -28,10 +28,21 @@ describe('catalog-owned release archive updates', () => {
     expect(catalogReleaseSourceOf(entry.tarball, entry)).toEqual(source)
     expect(catalogReleaseSourceOf('https://github.com/o/whale/releases/download/v1.2.1/full.tgz', entry)).toEqual(source)
   })
+  it.each(['tgz', 'tar.gz'])('recognizes an older archive named with its release version (%s)', extension => {
+    const asset = `full.${extension}`
+    const catalog = { ...entry, tarball: entry.tarball.replace('full.tgz', asset) }
+    expect(catalogReleaseSourceOf(`https://github.com/o/whale/releases/download/v1.2.1/full-1.2.1.${extension}`, catalog))
+      .toEqual({ ...source, asset })
+  })
   it.each([
     'https://github.com/other/whale/releases/latest/download/full.tgz',
     'https://github.com/o/whale/releases/latest/download/another.tgz',
     'https://github.com/o/whale/releases/latest/download/full.tgz?other=1',
+    'https://github.com/o/whale/releases/latest/download/full-1.2.1.tgz',
+    'https://github.com/other/whale/releases/download/v1.2.1/full-1.2.1.tgz',
+    'https://github.com/o/whale/releases/download/v1.2.1/full-1.2.2.tgz',
+    'https://github.com/o/whale/releases/download/nightly/full-1.2.1.tgz',
+    'https://github.com/o/whale/releases/download/v1.2.1/other-1.2.1.tgz',
     'https://files.example.com/full.tgz',
   ])('does not authorize a different installed source: %s', spec => {
     expect(catalogReleaseSourceOf(spec, entry)).toBeNull()
