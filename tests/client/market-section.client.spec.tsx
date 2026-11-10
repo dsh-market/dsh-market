@@ -10177,6 +10177,50 @@ describe('when DSH has unloaded the market (#962)', () => {
     expect(screen.queryByRole('button', { name: en.loadRetry })).toBeNull()
   })
 
+  it('notices the routes are gone while an uninstall is in flight (#1056)', async () => {
+    // Nothing polled the host during an uninstall, so a market unloaded in the
+    // middle of one never reached the 404 that says so: the row read
+    // "uninstalling" and the page offered no explanation until a restart.
+    vi.useFakeTimers()
+    try {
+      let uninstallStarted = false
+      vi.stubGlobal('fetch', vi.fn((url: string) => {
+        const path = String(url).split('?')[0]
+        if (path === '/dsh-market/uninstall') {
+          uninstallStarted = true
+          return new Promise<Response>(() => {})
+        }
+        if (path === '/dsh-market/status' && uninstallStarted) return Promise.resolve(new Response('', { status: 404 }))
+        const payload =
+          path === '/dsh-market/registry' ? { source: 'live', registry: REGISTRY, hostVersion: '0.1.2-alpha.2' }
+          : path === '/dsh-market/installed' ? { profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: [], disabled: [], groups: {}, groupOrder: [], favorites: [], blocked: [] }
+          : path === '/dsh-market/status' ? { active: false, pnpm: true, boot: 'boot-1', restart: true, installed: { 'dsh-loop': '^1.0.0' } }
+          : path === '/dsh-market/updates' ? { updates: {} }
+          : path === '/dsh-market/discovery-compatibility' ? { hostVersion: '0.1.2-alpha.2', plugins: {} }
+          : null
+        if (payload === null) return Promise.reject(new Error(`unstubbed fetch: ${String(url)}`))
+        return Promise.resolve(new Response(JSON.stringify(payload), { status: 200 }))
+      }))
+
+      render(<MarketSection {...props()} />)
+      await vi.waitFor(() => { screen.getByText('dsh-loop') })
+      fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+      // Not `openCardUninstall`: its findBy* polling does not advance under fake timers.
+      await vi.waitFor(() => { screen.getAllByRole('button', { name: en.groupMore }) })
+      fireEvent.click(screen.getAllByRole('button', { name: en.groupMore })[0]!)
+      await vi.waitFor(() => { screen.getByRole('menuitem', { name: en.uninstall }) })
+      fireEvent.click(screen.getByRole('menuitem', { name: en.uninstall }))
+      await vi.waitFor(() => { screen.getByText(re(en.uninstallConfirmDesc)) })
+      fireEvent.click(screen.getByRole('button', { name: en.uninstall }))
+      await vi.waitFor(() => { expect(uninstallStarted, 'the uninstall never started').toBe(true) })
+      await vi.advanceTimersByTimeAsync(2100)
+
+      await vi.waitFor(() => { screen.getAllByText(en.marketGoneTitle) })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   describe('and mounts it again (#1151)', () => {
     /** Every market route, answering 404 while `gone` and normally afterwards. */
     function stubRoutes(state: { gone: boolean }): void {

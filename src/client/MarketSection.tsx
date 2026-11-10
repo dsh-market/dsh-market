@@ -3885,7 +3885,11 @@ export function MarketSection(props: MarketSectionProps) {
   }, [data])
 
   useEffect(() => {
-    if (busyUrl === null && updatingName === null) {
+    // An uninstall in flight is polled like an install or an update: without it
+    // nothing asked the host how the operation was going, so a market the host
+    // unloaded mid-uninstall never reached the 404 that says so, and the row
+    // read "uninstalling" until a restart (#1056).
+    if (busyUrl === null && updatingName === null && removingName === null) {
       // `hostBusy` is sampled by the progress poll. A normal update response
       // can settle the local operation before the next poll observes the
       // route lock released, leaving the restart button disabled until this
@@ -4040,7 +4044,7 @@ export function MarketSection(props: MarketSectionProps) {
         .catch(() => {})
     }, 2000)
     return () => clearInterval(timer)
-  }, [applyDrainStatus, busyUrl, updatingName, data, installed, repoIdentities, repoHints, refreshInstalled, lang, restoreDrainMarkers, t])
+  }, [applyDrainStatus, busyUrl, updatingName, removingName, data, installed, repoIdentities, repoHints, refreshInstalled, lang, restoreDrainMarkers, t])
 
   const scrollToTop = () => {
     const el = listScroller(surface, rootRef.current, bodyRef.current, themesFullscreen)
