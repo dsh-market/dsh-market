@@ -202,10 +202,12 @@ describe.skipIf(!HAS_DSH).sequential('web e2e: the real install chain', () => {
 
     // Which host generation this is decided by the MARKET, not guessed from
     // a version string: it is the side that offered the namespace and knows
-    // what the service answered (#677). 0.1.7 derives settings from a
-    // plugin's Config schema and serves no third-party namespace at all —
-    // asserted in its own direction below, so this spec cannot pass by
-    // demanding something a host cannot do, nor by asserting nothing.
+    // what the service answered (#677). 0.1.7 dropped `register()` and
+    // derives the form from the plugin's own Config schema instead, so the
+    // market reports no registrable namespace — yet the host still lists the
+    // entry, because the Config is exactly what it reads. Asserted in each
+    // direction below, so this spec cannot pass by demanding something a host
+    // cannot do, nor by asserting nothing. (#1144)
     const status = await (await scaffold.api(`/dsh-market/status`)).json() as {
       settingsNamespace?: string
     }
@@ -214,11 +216,12 @@ describe.skipIf(!HAS_DSH).sequential('web e2e: the real install chain', () => {
       expect(names, `served namespaces: ${names.join(', ')}`).toContain('dsh-market')
     } else {
       expect(status.settingsNamespace).toBe('unsupported-by-host')
-      expect(names, `served namespaces: ${names.join(', ')}`).not.toContain('dsh-market')
-      // The host's new model is not "less settings": the market's own
-      // configuration still has a home — its Config, read by the routes —
-      // and that is asserted by the running market answering this at all.
-      expect(names.length, 'a host that serves no plugin namespace still serves its own').toBeGreaterThan(0)
+      // The host's new model is not "less settings": the market's settings
+      // are its Config, which the host reads and serves under the entry's own
+      // name — so the entry must be there even though the market could not
+      // register a namespace of its own (#1144).
+      expect(names, `served namespaces: ${names.join(', ')}`).toContain('dsh-market')
+      expect(names.length, 'a host that derives forms still serves its own namespaces').toBeGreaterThan(0)
     }
   }, 120_000)
 
