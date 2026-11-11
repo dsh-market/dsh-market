@@ -7708,6 +7708,106 @@ describe('bundle-layer uninstall live-disable (#37)', () => {
   })
 })
 
+describe('a `disabled: !!js` guard survives the toggle (#1175)', () => {
+  const tui = '@deepseek-harness-tui/dsh-tui'
+  const manifestPath = (): string => join(profileDir('web'), 'package.json')
+
+  /** A loader entry the running host would hold for one row. */
+  function entry(name: string, id: string, disabled: boolean | null): Testbed['loaderEntries'][number] {
+    const row: Testbed['loaderEntries'][number] = {
+      options: { id, name, disabled } as never,
+      fiber: disabled === true ? undefined : {},
+      update: vi.fn(async (next: { disabled: boolean | null }) => {
+        row.options.disabled = next.disabled
+        row.fiber = next.disabled === true ? undefined : {}
+      }),
+    }
+    return row
+  }
+
+  /** Write an installed package whose bundle patch is `patch`, and declare it. */
+  function seedPackage(name: string, patch: string[]): void {
+    const dir = profileDir('web')
+    const pkgDir = join(dir, 'node_modules', name)
+    mkdirSync(pkgDir, { recursive: true })
+    writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({
+      name, version: '1.0.0', type: 'module',
+      dsh: { bundle: { patch: './cordis.patch.yml' } },
+    }, null, 2))
+    writeFileSync(join(pkgDir, 'cordis.patch.yml'), `${patch.join('\n')}\n`)
+    writeFileSync(manifestPath(), JSON.stringify({
+      dependencies: { [name]: '1.0.0' },
+      dsh: { profile: { bundles: [name] } },
+    }, null, 2))
+  }
+
+  /**
+   * dsh-tui's real shape: insert rows whose `disabled` is an expression over
+   * the host's own loader tree, plus a foreign row it reconfigures — the
+   * second part is what makes the package a carrier.
+   */
+  const tuiPatch = (): string[] => [
+    '- insert:',
+    '    - id: dsh-tui-storage',
+    `      name: '${tui}/storage'`,
+    '    - id: dsh-tui-storage-domain',
+    `      name: '${tui}/storage-domain'`,
+    '      disabled: !!js "[...ctx.loader.entries()].some(entry => entry.options.id === \'storage-domain\')"',
+    '- id: preset-standard',
+    '  inject: [dshTuiHost]',
+  ]
+
+  it('does not drive a carrier\'s rows up: the swap needs one composition', async () => {
+    bed.dispose()
+    seedPackage(tui, tuiPatch())
+    bed = createTestbed()
+    const guarded = entry(`${tui}/storage-domain`, 'dsh-tui-storage-domain', true)
+    const plain = entry(`${tui}/storage`, 'dsh-tui-storage', true)
+    bed.loaderEntries.push(guarded, plain)
+
+    const on = await bed.dispatch('POST', '/dsh-market/toggle', { name: tui, enabled: true })
+
+    expect(on.status).toBe(200)
+    // A carrier switch always lands on the next composition, and the reply
+    // says so — which is the only reason it is safe to skip the live half.
+    expect(on.json.restart).toBe(true)
+    // The reproducer: enabling used to call `update({ disabled: null })` on
+    // the guarded row, the row mounted a second copy of the host's
+    // storage-domain, and dsh exited with `storage form 'domain' is already
+    // mounted`.
+    expect(guarded.update).not.toHaveBeenCalled()
+    expect(guarded.options.disabled).toBe(true)
+    expect(plain.update).not.toHaveBeenCalled()
+  })
+
+  it('still switches on the rows of a non-carrier that carries no guard', async () => {
+    const ordinary = 'dsh-guarded'
+    bed.dispose()
+    seedPackage(ordinary, [
+      '- insert:',
+      `    - id: ${ordinary}`,
+      `      name: '${ordinary}'`,
+      '    - id: dsh-guarded-extra',
+      `      name: '${ordinary}/extra'`,
+      '      disabled: !!js "process.platform === \'win32\'"',
+    ])
+    bed = createTestbed()
+    const plain = entry(ordinary, ordinary, true)
+    const guarded = entry(`${ordinary}/extra`, 'dsh-guarded-extra', true)
+    bed.loaderEntries.push(plain, guarded)
+
+    const on = await bed.dispatch('POST', '/dsh-market/toggle', { name: ordinary, enabled: true })
+
+    expect(on.status).toBe(200)
+    // The row the environment keeps off stays off; the rest of the package
+    // still comes up in this process.
+    expect(guarded.update).not.toHaveBeenCalled()
+    expect(guarded.options.disabled).toBe(true)
+    expect(plain.options.disabled).toBeNull()
+    expect(plain.fiber).toBeDefined()
+  })
+})
+
 describe('generic enable/disable toggle (#60)', () => {
   function installNpm(name: string, dsh: Record<string, unknown> = {}): Promise<void> {
     fake.npm[name] = {
