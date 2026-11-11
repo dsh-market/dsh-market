@@ -1088,6 +1088,18 @@ export function mountMarketRoutes(
     if (enabled) {
       if (listHotMounts().includes(name)) {
         ok = true
+      } else if (carrierRowIds(dir, name).length > 0) {
+        // A carrier replaces something: its patch disables stock rows and its
+        // own rows stand in for them, with `disabled: !!js …` guards deciding
+        // which of the two is live on THIS host. Driving those rows up in the
+        // running process clears the guards and mounts the replacement beside
+        // the stock row — a second copy of a module the host already holds
+        // (`storage form 'domain' is already mounted`), which dsh answers by
+        // exiting (#1175). Enabling is the mirror of the disable branch below
+        // (#1010): the swap needs one composition, and a carrier switch is
+        // already reported as "restart to apply" — so nothing is gained by
+        // doing it live, and the host can die trying.
+        ok = true
       } else if (await themes.setEntryDisabled(name, false)) {
         ok = true
       } else {
