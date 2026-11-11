@@ -1,0 +1,27 @@
+<div class="crumb"><a href="__GUIDES__">Guides</a></div>
+<h1>Why an update says "waiting": the release-age wait</h1>
+<p class="lede">You see a new version, press Update, and the market tells you to wait or offers an older version instead. Nothing is broken. This is a deliberate delay, and it is the profile's own setting.</p>
+
+<h2>What the wait is</h2>
+<p>DSH installs plugins with pnpm, and pnpm can refuse any version that was published less than a set time ago. The setting is <code>minimumReleaseAge</code>, counted in minutes. Recent pnpm versions default to <b>1440 minutes, one day</b>.</p>
+<p>The reason is supply-chain safety. A malicious or broken release is usually noticed and pulled within hours. A plugin runs with your permissions, so letting a one-hour-old release in is a risk that waiting a day mostly removes.</p>
+
+<h2>What you will see in the market</h2>
+<ul>
+  <li>A <b>"New version waiting"</b> tag on the plugin, with roughly how many hours are left.</li>
+  <li>If an older release is already past the wait, the market offers <b>that one</b> ("update to 1.4.2 first") rather than leaving you with nothing.</li>
+  <li>If the release time cannot be read yet (a mirror has not synced), the market says so and checks again later instead of guessing.</li>
+</ul>
+
+<h2>dsh web and the desktop app behave differently</h2>
+<p>On <b>dsh web</b>, when pnpm refuses a too-young release during an update, the market retries once with the wait switched off for that single command, so the update goes through. On the <b>desktop app</b>, the plugin manager is the app's own and takes no such override, so the market holds the update until the release is old enough and tells you how long is left.</p>
+
+<h2>Changing it</h2>
+<p>The setting lives in the profile directory, in <code>pnpm-workspace.yaml</code>:</p>
+<pre><code>minimumReleaseAge: 1440
+minimumReleaseAgeExclude:
+  - some-plugin@2.0.0</code></pre>
+<p>Raise the number to be stricter. To let one specific version through, list it under <code>minimumReleaseAgeExclude</code>; installing an exact version (<code>name@2.0.0</code>) on a profile that still uses the default adds that line for you. Setting the number to <code>0</code> for everything removes the protection for every plugin, so do it only for a one-off command you trust.</p>
+
+<h2>"No matching version" is not always this</h2>
+<p>Mirrors sync later than the official npm registry. A release that exists upstream can be missing from your mirror for a while, and pnpm reports that as "no matching version". If the wait is not the cause, trying the official registry, or trying again later, is the fix.</p>

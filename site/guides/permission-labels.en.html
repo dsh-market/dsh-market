@@ -1,0 +1,37 @@
+<div class="crumb"><a href="__GUIDES__">Guides</a></div>
+<h1>What the permission labels on a plugin mean</h1>
+<p class="lede">Plugin pages list what a plugin's code appears to do: read files, use the network, run commands. This page explains each label in plain terms, and what the scan can and cannot tell you.</p>
+
+<h2>How the labels are made</h2>
+<p>The catalog scans each plugin's published code statically, which means it reads the code and looks for the calls that reach files, the network, the shell and so on. It does not run the plugin. So a label says "this code contains a call like that", not "this plugin does that to you".</p>
+<div class="callout"><p><b>"Nothing detected" is not "safe".</b> A static scan misses code that is built at runtime, downloaded later, or hidden in a dependency it did not follow. Use the labels to know what to look at, not as a verdict.</p></div>
+
+<h2>The labels</h2>
+<div class="tablewrap"><table>
+<tr><th>Label</th><th>What it means for you</th></tr>
+<tr><td>reads files on this machine</td><td>It can open files your account can open. Normal for anything that works with projects or settings.</td></tr>
+<tr><td>writes files on this machine</td><td>It can create or change files. Normal for plugins that save notes, caches or configuration.</td></tr>
+<tr><td>reads your environment variables</td><td>It can see variables such as proxy settings or API keys set in your shell.</td></tr>
+<tr><td>uses the network</td><td>It can connect to other computers. Normal for anything that calls an AI model or checks for updates.</td></tr>
+<tr><td>uses your keys</td><td>It reads API keys or tokens. Expected for a plugin that calls a model on your behalf.</td></tr>
+<tr><td>runs commands</td><td>It can start other programs through the shell. Powerful, and normal for developer tools.</td></tr>
+<tr><td>calls an AI model</td><td>It sends text to a model, so that text leaves your machine to wherever the model runs.</td></tr>
+<tr><td>starts tasks on its own</td><td>It can launch sub-agents that work without you approving each step.</td></tr>
+<tr><td>runs code assembled at runtime</td><td>It executes code that is built while running. Harder to review, because the code you read is not all the code that runs.</td></tr>
+<tr><td>uses DSH internal packages</td><td>It reaches into DSH's own packages, which ties it to particular DSH versions.</td></tr>
+</table></div>
+
+<h2>The ones worth a closer look</h2>
+<ul>
+  <li><b>Runs a script at install time.</b> The package carries a script that runs the moment it is installed, before you open the plugin. Read it first, or install a pinned commit.</li>
+  <li><b>Connects to a fixed IP address</b>, or <b>over unencrypted http</b>. Sometimes harmless (a schema URL), sometimes not. The label names the address so you can judge.</li>
+  <li><b>Changes DSH's own components.</b> The plugin overrides or disables something DSH ships. Legitimate for deep integrations, but it changes behaviour you did not install it to change.</li>
+</ul>
+<p>The common combination "uses the network and your keys" is what any model plugin does. It is information, not an alarm.</p>
+
+<h2>Practical habits</h2>
+<ul>
+  <li>Prefer plugins whose label list matches what they claim to do. A theme that runs commands is worth a question.</li>
+  <li>Pin a version or commit for anything you rely on, and update on purpose rather than automatically.</li>
+  <li>Open the source link on the plugin page. It takes a minute and is the one thing a label cannot replace.</li>
+</ul>
