@@ -17,6 +17,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import LOCALES from '../site/locales.mjs'
 import { GUIDES, UI, guideBody, reportBody } from './site-content.mjs'
+import { TESTED_UI, loadTested, testedBody } from './site-tested.mjs'
 
 const ORIGIN = 'https://dshmarket.com'
 const CATALOG = 'https://awesome-dsh-plugin.com'
@@ -101,6 +102,8 @@ const pluginPath = (loc, slug) => `${CATALOG}${loc.urlPath}p/${slug}/`
 const guidesPath = (loc) => `${loc.urlPath}guides/`
 const guidePath = (loc, slug) => `${loc.urlPath}guides/${slug}/`
 const reportPath = (loc) => `${loc.urlPath}report/`
+const testedPath = (loc) => `${loc.urlPath}tested/`
+const TESTED = loadTested()
 
 // ── landing-page catalog ────────────────────────────────────────────────────
 // The front door used to be a 1.4 KB marketing page while /browse/ carried the
@@ -185,7 +188,8 @@ function homeCatalog(loc) {
   const ui = UI[loc.code]
   out.push(homeSection('guides', ui.navGuides, ui.guidesLede, 'cards',
     [...GUIDES.map((g) => `    <li class="pcard"><a class="pname" href="${guidePath(loc, g.slug)}">${esc(g[loc.code].title)}</a><p>${esc(g[loc.code].desc)}</p></li>`),
-      `    <li class="pcard"><a class="pname" href="${reportPath(loc)}">${esc(ui.reportTitle.replace(/ — dsh-market$/, ''))}</a><p>${esc(ui.reportDesc)}</p></li>`]))
+      `    <li class="pcard"><a class="pname" href="${reportPath(loc)}">${esc(ui.reportTitle.replace(/ — dsh-market$/, ''))}</a><p>${esc(ui.reportDesc)}</p></li>`,
+      ...(TESTED ? [`    <li class="pcard"><a class="pname" href="${testedPath(loc)}">${esc(TESTED_UI[loc.code].h1)}</a><p>${esc(TESTED_UI[loc.code].desc)}</p></li>`] : [])]))
   out.push(`<p class="allmore"><a href="${loc.browsePath}">${esc(s.HOME_ALL.replace('{N}', num(plugins.length)))}</a></p>`)
   return out.join('\n')
 }
@@ -346,6 +350,12 @@ for (const loc of LOCALES) {
     title: ui.reportTitle, desc: ui.reportDesc, urlPath: reportPath(loc), pathFor: reportPath,
     body: reportBody(loc, { plugins, registry, catName, esc, pluginPath, catalog: CATALOG }),
   })
+  if (TESTED) {
+    articlePage(loc, {
+      title: TESTED_UI[loc.code].title, desc: TESTED_UI[loc.code].desc, urlPath: testedPath(loc), pathFor: testedPath,
+      body: testedBody(loc, { data: TESTED, plugins, esc, pluginPath }),
+    })
+  }
 }
 
 // ── plugin redirects ────────────────────────────────────────────────────────
@@ -396,6 +406,7 @@ ${urlEntry((l) => l.installPath, updated, 'monthly')}
 ${urlEntry(guidesPath, updated, 'monthly')}
 ${GUIDES.map((g) => urlEntry((l) => guidePath(l, g.slug), updated, 'monthly')).join('\n')}
 ${urlEntry(reportPath, updated, 'daily')}
+${TESTED ? urlEntry(testedPath, updated, 'monthly') : ''}
 ${urlEntry((l) => l.privacyPath, updated, 'yearly')}
 </urlset>
 `)
@@ -431,5 +442,5 @@ if (fs.existsSync(INDEX_FILE)) {
 
 // Real pages only: the stubs are redirects, not content, and counting them as
 // pages is how the deploy looked four times larger than it is.
-const pages = LOCALES.length * (4 + 2 + GUIDES.length) // index, browse, install, privacy, guides index, report, guides
+const pages = LOCALES.length * (4 + 2 + GUIDES.length + (TESTED ? 1 : 0)) // index, browse, install, privacy, guides index, report, guides
 console.log(`site built: ${pages} pages, ${plugins.length} redirect stubs × ${LOCALES.length} locales`)
