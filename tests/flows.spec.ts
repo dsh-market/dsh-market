@@ -10235,6 +10235,27 @@ describe('a pinned install is judged on its own release, not on latest (#581)', 
     const onDesktop = await bed.dispatch('POST', '/dsh-market/find-compatible', { npmName: 'dsh-loop' })
     expect(onDesktop.json.maturity).toMatchObject({ version: '1.2.0', held: true, installable: false })
   })
+
+  it('does not report a landed install as failed when the host reloaded the market while it was checking', async () => {
+    // A plugin with its own host half can make the host reload the market
+    // before this request finishes. The old instance throws "inactive
+    // context" from then on; the package is already installed, and the new
+    // instance reports its real state, so the answer must not be a 500.
+    const pkg = { dsh: {}, main: 'lib/index.js' }
+    fake.npm['dsh-loop'] = { latest: '1.0.0', versions: { '1.0.0': { manifest: pkg, artifacts: ['lib/index.js'] } } }
+    bed.loaderEntries.push({
+      options: { id: 'other' },
+      get fiber() {
+        bed.dispose()
+        throw new Error('cannot get required service "loader" in inactive context')
+      },
+    } as never)
+
+    const answer = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop', version: '1.0.0' })
+    expect(answer.status, JSON.stringify(answer.json)).toBe(200)
+    expect(answer.json).toMatchObject({ ok: true, marketReloaded: true })
+    expect(installedSpec('dsh-loop')).toBe('^1.0.0')
+  })
 })
 
 describe('Issue #991 Desktop stable npm update route', () => {

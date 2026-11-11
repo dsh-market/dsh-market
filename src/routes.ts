@@ -7641,6 +7641,8 @@ sendJson(response, 200, { updates })
           sendJson(response, 403, { error: 'untrusted origin' })
           return
         }
+        // Set once the package is on disk, so a failure after that point is not reported as a failed install.
+        let installLanded = false
         try {
           const body = (await readJsonBody(request)) as {
             url?: unknown
@@ -8047,6 +8049,7 @@ sendJson(response, 200, { updates })
             } | undefined
             let addedPackages: string[] = []
             if (ok) {
+              installLanded = true
               const added = Object.keys(installed).filter(name => !before.has(name))
               addedPackages = added
               if (added.length > 0) {
@@ -8287,6 +8290,15 @@ sendJson(response, 200, { updates })
           const message = error instanceof Error ? error.message : String(error)
           if (!inProbe()) host.logger?.warn(`[dsh-market] install failed: ${message}`)
           logEvent('error', 'install', `route error: ${message}`)
+          // A plugin that brings its own host half can make the host reload the
+          // market while this request is still checking the result. The old
+          // instance is gone, so what it throws now says nothing about the
+          // install: the package landed, and the new instance reports the
+          // real state of the plugin on the next refresh.
+          if (installLanded && disposed) {
+            sendJson(response, 200, { ok: true, hot: true, marketReloaded: true })
+            return
+          }
           sendJson(response, 500, { error: message })
         }
       },
