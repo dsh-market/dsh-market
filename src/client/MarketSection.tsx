@@ -44,6 +44,7 @@ import { CommentsModal } from './CommentsModal.tsx'
 import { SearchInput } from './SearchInput.tsx'
 import { downloadStatistic, downloadStatsText, starStatsText } from './download-stats.ts'
 import { OperationsPanel } from './OperationsPanel.tsx'
+import { readOperationWait, type OperationWait } from './operation-wait.ts'
 import { applyRecovery, fetchRecovery, initialKeep, RecoveryPanel, watchRestart, type RecoveryView } from './RecoveryPanel.tsx'
 import { HostRecoveryBanner } from './HostRecoveryBanner.tsx'
 import { clearSettled, drop, enqueue, patch as patchRecord, recordForUrl, restoreSettled, serializeSettled, SETTLED_STORAGE_KEY } from './operations.ts'
@@ -4514,7 +4515,7 @@ export function MarketSection(props: MarketSectionProps) {
     return `${first.name} — ${first.layers.join(' / ')}${rest}`
   }
 
-  const doInstall = useCallback((plugin: RegistryPlugin, force = false, version?: string, preferReject = false) => {
+  const doInstall = useCallback((plugin: RegistryPlugin, force = false, version?: string, preferReject = false, wait: OperationWait = readOperationWait()) => {
     setBuildsSkipped(null)
     setConfirming(null)
     setInstallError(null)
@@ -4537,7 +4538,7 @@ export function MarketSection(props: MarketSectionProps) {
         url: plugin.url,
         ...(force ? { force: true } : {}),
         ...(version !== undefined ? { version } : {}),
-        ...(statusRef.current.agentDrain && !preferReject ? { busyPolicy: 'drain' } : {}),
+        ...(wait === 'wait' && statusRef.current.agentDrain && !preferReject ? { busyPolicy: 'drain' } : {}),
       }),
     })
       .then(res => res.json().then(body => ({ status: res.status, body })))
@@ -4625,7 +4626,7 @@ export function MarketSection(props: MarketSectionProps) {
           // keeps the current 409/queue guidance on that Host (FR-9).
           if (body.unsupported === true) {
             setRecords(list => drop(list, recordId))
-            doInstall(plugin, force, version, true)
+            doInstall(plugin, force, version, true, wait)
             return
           }
           // A rename the catalog declares and this profile still holds under
@@ -4667,6 +4668,13 @@ export function MarketSection(props: MarketSectionProps) {
               return
             }
             if (body.agentsBusy === true) {
+              if (wait === 'ask') {
+                setRecords(list => patchRecord(list, recordId, {
+                  state: 'failed', reason: String(body.error ?? t('operationBusyRetry')),
+                }))
+                setOperationsOpen(true)
+                return
+              }
               // Agents-busy is a queue, not a failure: keep the record as
               // `queued` so the drain below runs it when agents go idle.
               // The host changed nothing (it refuses before touching pnpm),
@@ -4983,7 +4991,7 @@ export function MarketSection(props: MarketSectionProps) {
       .catch(() => {})
   }, [])
 
-  const doUpdate = useCallback((name: string, force = false, restore = false, compatVersion?: string, confirmAgentsRunning = false, eligibleVersion?: string, preferReject = false) => {
+  const doUpdate = useCallback((name: string, force = false, restore = false, compatVersion?: string, confirmAgentsRunning = false, eligibleVersion?: string, preferReject = false, wait: OperationWait = readOperationWait()): Promise<void | 'needs-confirmation'> => {
     const expectedVersion = compatVersion === undefined && !restore
       ? (eligibleVersion ?? updates[name]?.eligibleVersion) : undefined
     const updateOptions = { force, restore, compatVersion, eligibleVersion: expectedVersion }
@@ -5022,7 +5030,7 @@ export function MarketSection(props: MarketSectionProps) {
         ...(confirmAgentsRunning ? { confirmAgentsRunning: true } : {}),
         // `restore` is deliberately outside drain mode: a local-development
         // restore keeps its current wait/cancel guidance.
-        ...(!restore && statusRef.current.agentDrain && !preferReject ? { busyPolicy: 'drain' } : {}),
+        ...(!restore && wait === 'wait' && !confirmAgentsRunning && statusRef.current.agentDrain && !preferReject ? { busyPolicy: 'drain' } : {}),
       }),
     })
       .then(res => res.json().then(body => ({ status: res.status, body })))
@@ -5109,7 +5117,7 @@ export function MarketSection(props: MarketSectionProps) {
             // The Host lost the drain capability after the status sample;
             // retry once on the ordinary reject path (FR-9).
             setRecords(list => drop(list, updateRecordId))
-            void doUpdate(name, force, restore, compatVersion, confirmAgentsRunning, eligibleVersion, true)
+            return doUpdate(name, force, restore, compatVersion, confirmAgentsRunning, expectedVersion, true, wait)
             return
           }
           if (status === 409) {
@@ -5131,6 +5139,14 @@ export function MarketSection(props: MarketSectionProps) {
               return
             }
             if (body.agentsBusy === true) {
+              if (wait === 'ask') {
+                setRecords(list => drop(list, updateRecordId))
+                if (confirmAgentsRunning) setInstallError(localizeBilingual(String(body.error ?? t('operationBusyRetry')), lang))
+                else setAgentsConfirm({ name, kind: 'update', run: () => {
+                  void doUpdate(name, force, restore, compatVersion, true, expectedVersion, true, wait)
+                } })
+                return 'needs-confirmation' as const
+              }
               // Same queue treatment as installs: the host refused before
               // touching pnpm, so this becomes a `queued` record the drain
               // runs when agents go idle — carrying the sessions that are
@@ -5648,7 +5664,7 @@ export function MarketSection(props: MarketSectionProps) {
     setRefreshNames(names => names.filter(entry => entry !== name))
   }, [])
 
-  const doUninstall = useCallback((name: string, confirmAgentsRunning = false, preferReject = false) => {
+  const doUninstall = useCallback((name: string, confirmAgentsRunning = false, preferReject = false, wait: OperationWait = readOperationWait()) => {
     setRemoveConfirm(null)
     setInstallError(null)
     setActivationWarnings([])
@@ -5663,7 +5679,7 @@ export function MarketSection(props: MarketSectionProps) {
       body: JSON.stringify({
         name,
         ...(confirmAgentsRunning ? { confirmAgentsRunning: true } : {}),
-        ...(statusRef.current.agentDrain && !preferReject ? { busyPolicy: 'drain' } : {}),
+        ...(wait === 'wait' && !confirmAgentsRunning && statusRef.current.agentDrain && !preferReject ? { busyPolicy: 'drain' } : {}),
       }),
     })
       .then(res => res.json().then(body => ({ status: res.status, body })))
@@ -5688,7 +5704,7 @@ export function MarketSection(props: MarketSectionProps) {
           // The Host lost the drain capability after the status sample;
           // retry once on the ordinary reject path (FR-9).
           setRecords(list => drop(list, uninstallRecordId))
-          void doUninstall(name, confirmAgentsRunning, true)
+          void doUninstall(name, confirmAgentsRunning, true, wait)
           return
         }
         if (status === 409 && body.failureCode === 'AGENT_BARRIER_LOST') {
@@ -5708,6 +5724,13 @@ export function MarketSection(props: MarketSectionProps) {
           return
         }
         if (status === 409 && body.agentsBusy === true) {
+          if (wait === 'ask') {
+            setRecords(list => drop(list, uninstallRecordId))
+            if (confirmAgentsRunning) setInstallError(String(body.error ?? t('operationBusyRetry')))
+            else setAgentsConfirm({ name, kind: 'uninstall', run: () => { void doUninstall(name, true, true, wait) } })
+            setOperationsOpen(true)
+            return
+          }
           setRecords(list => patchRecord(list, uninstallRecordId, {
             state: 'queued',
             reason: t('agentBusyUninstallQueued'),
@@ -5788,7 +5811,7 @@ export function MarketSection(props: MarketSectionProps) {
   dataRef.current = data
   const doInstallRef = useRef<((plugin: RegistryPlugin) => void) | null>(null)
   doInstallRef.current = doInstall
-  const doUpdateRef = useRef<((name: string, force?: boolean, restore?: boolean, compatVersion?: string, confirmAgentsRunning?: boolean, eligibleVersion?: string) => Promise<void>) | null>(null)
+  const doUpdateRef = useRef<((name: string, force?: boolean, restore?: boolean, compatVersion?: string, confirmAgentsRunning?: boolean, eligibleVersion?: string) => Promise<void | 'needs-confirmation'>) | null>(null)
   doUpdateRef.current = doUpdate
   const doUninstallRef = useRef<((name: string) => Promise<void>) | null>(null)
   doUninstallRef.current = doUninstall
@@ -6220,7 +6243,10 @@ export function MarketSection(props: MarketSectionProps) {
         refreshInstalled(true)
         return
       }
-      doUpdate(item.name, false, false, undefined, false, item.eligibleVersion).then(next, next)
+      doUpdate(item.name, false, false, undefined, false, item.eligibleVersion).then(result => {
+        if (result === 'needs-confirmation') setUpdatingAll(false)
+        else next()
+      }, next)
     }
     next()
   }, [reminderBatchUpdatableNames, doUpdate, refreshInstalled, updates])

@@ -113,6 +113,32 @@ async function open(): Promise<void> {
 }
 
 describe('SettingsCard', () => {
+  it('reports a storage failure without showing an unsaved choice as selected', async () => {
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => { throw new Error('QuotaExceededError') },
+    })
+    await open()
+    fireEvent.click(screen.getByRole('button', { name: en.setOperationWaitAsk }))
+    expect(screen.getByText(en.setOperationWaitSaveFailed)).toBeTruthy()
+    expect(screen.getByRole('button', { name: en.setOperationWaitIdle }).getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('remembers the operation wait choice across card mounts', async () => {
+    const saved = new Map<string, string>()
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => saved.get(key) ?? null,
+      setItem: (key: string, value: string) => { saved.set(key, value) },
+    })
+    await open()
+    expect(screen.getByRole('button', { name: 'Wait for idle' }).getAttribute('aria-pressed')).toBe('true')
+    fireEvent.click(screen.getByRole('button', { name: 'Try immediately' }))
+    expect(saved.get('dshm-operation-wait:/dsh-market')).toBe('ask')
+    cleanup()
+    await open()
+    expect(screen.getByRole('button', { name: 'Try immediately' }).getAttribute('aria-pressed')).toBe('true')
+  })
+
   it('starts collapsed and asks the host for nothing until opened', () => {
     render(<SettingsCard t={t} />)
     // The plugin configuration page renders every card at once; a card that
@@ -331,7 +357,7 @@ describe('clearBrowserState', () => {
   it('clears exactly the market\'s own keys', () => {
     const removed: string[] = []
     clearBrowserState({ removeItem: (key: string) => { removed.push(key) } })
-    expect(removed).toEqual(['dshm-webdav', 'dshm-gist-id'])
+    expect(removed).toEqual(['dshm-webdav', 'dshm-gist-id', 'dshm-operation-wait:/dsh-market'])
   })
 
   it('survives a storage that throws', () => {

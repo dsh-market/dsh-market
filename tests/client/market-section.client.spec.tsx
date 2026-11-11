@@ -10403,6 +10403,147 @@ describe('OwnerAvatar icon', () => {
   })
 })
 
+describe('Operation wait preference', () => {
+  it.each(['update', 'uninstall'] as const)('ends a refused confirmed %s without looping or saving consent', async (kind) => {
+    localStorage.setItem('dshm-operation-wait:/dsh-market', 'ask')
+    const path = `/dsh-market/${kind}`
+    stubFetch({
+      '/dsh-market/status': { active: false, pnpm: true, boot: 'boot-1', agentDrain: true, runningAgents: ['main'] },
+      '/dsh-market/installed': { installed: { 'dsh-loop': '^1.0.0' }, live: [] },
+      '/dsh-market/updates': { updates: { 'dsh-loop': { kind: 'npm', current: '1.0.0', latest: '1.1.0', eligibleVersion: '1.1.0', updateAvailable: true } } },
+      [path]: { __status: 409, agentsBusy: true, runningAgents: ['main'], error: 'Still busy. Retry after the session ends.' },
+    })
+    render(<MarketSection {...props()} />)
+    fireEvent.click(await screen.findByRole('button', { name: /Installed/ }))
+    if (kind === 'update') fireEvent.click(await screen.findByRole('button', { name: 'Update v1.1.0' }))
+    else {
+      await openCardUninstall()
+      fireEvent.click(await screen.findByRole('button', { name: en.uninstall }))
+    }
+    const dialog = await screen.findByRole('dialog', { name: `${en.agentsRunningConfirm} dsh-loop` })
+    fireEvent.click(within(dialog).getByRole('button', { name: kind === 'update' ? en.opUpdateNow : en.opUninstallNow }))
+    expect(await screen.findByText('Still busy. Retry after the session ends.')).toBeTruthy()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(localStorage.getItem('dshm-queue-v1')).toBeNull()
+    expect(fetchCalls.filter(call => call.path === path)).toHaveLength(2)
+  })
+
+  it.each(['update', 'uninstall'] as const)('cancels a busy %s without leaving an automatic retry', async (kind) => {
+    localStorage.setItem('dshm-operation-wait:/dsh-market', 'ask')
+    const path = `/dsh-market/${kind}`
+    stubFetch({
+      '/dsh-market/status': { active: false, pnpm: true, boot: 'boot-1', agentDrain: true, runningAgents: ['main'] },
+      '/dsh-market/installed': { installed: { 'dsh-loop': '^1.0.0' }, live: [] },
+      '/dsh-market/updates': { updates: { 'dsh-loop': { kind: 'npm', current: '1.0.0', latest: '1.1.0', eligibleVersion: '1.1.0', updateAvailable: true } } },
+      [path]: () => {
+        localStorage.setItem('dshm-operation-wait:/dsh-market', 'wait')
+        return { __status: 409, agentsBusy: true, runningAgents: ['main'] }
+      },
+    })
+    render(<MarketSection {...props()} />)
+    fireEvent.click(await screen.findByRole('button', { name: /Installed/ }))
+    if (kind === 'update') fireEvent.click(await screen.findByRole('button', { name: 'Update v1.1.0' }))
+    else {
+      await openCardUninstall()
+      fireEvent.click(await screen.findByRole('button', { name: en.uninstall }))
+    }
+    const dialog = await screen.findByRole('dialog', { name: `${en.agentsRunningConfirm} dsh-loop` })
+    fireEvent.click(within(dialog).getByRole('button', { name: en.cancel }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(localStorage.getItem('dshm-queue-v1')).toBeNull()
+    expect(sessionStorage.getItem('dshm-updating')).toBeNull()
+    expect(fetchCalls.filter(call => call.path === path)).toHaveLength(1)
+  })
+
+  it('reports a legacy install refusal without silently requeueing it', async () => {
+    localStorage.setItem('dshm-operation-wait:/dsh-market', 'ask')
+    stubFetch({
+      '/dsh-market/status': { active: false, pnpm: true, boot: 'boot-1', agentDrain: false, runningAgents: ['main'] },
+      '/dsh-market/install': { __status: 409, agentsBusy: true, runningAgents: ['main'], error: 'Wait for the running session, then retry this install.' },
+    })
+    render(<MarketSection {...props()} />)
+    const card = (await screen.findByText('dsh-loop')).closest('[class*="card"]') as HTMLElement
+    fireEvent.click(within(card).getByRole('button', { name: en.install }))
+    fireEvent.click(await screen.findByRole('button', { name: en.confirmInstall }))
+    expect(await screen.findByText('Wait for the running session, then retry this install.')).toBeTruthy()
+    expect(localStorage.getItem('dshm-queue-v1')).toBeNull()
+  })
+
+  it('stops update-all at the first busy confirmation instead of replacing the dialog', async () => {
+    localStorage.setItem('dshm-operation-wait:/dsh-market', 'ask')
+    stubFetch({
+      '/dsh-market/status': { active: false, pnpm: true, boot: 'boot-1', agentDrain: true, runningAgents: ['main'] },
+      '/dsh-market/installed': { installed: { 'dsh-loop': '^1.0.0', 'dsh-notify': '^1.0.0' }, live: [] },
+      '/dsh-market/updates': { updates: Object.fromEntries(['dsh-loop', 'dsh-notify'].map(name => [name, {
+        kind: 'npm', current: '1.0.0', latest: '1.1.0', eligibleVersion: '1.1.0', updateAvailable: true,
+      }])) },
+      '/dsh-market/update': { __status: 409, agentsBusy: true, runningAgents: ['main'] },
+    })
+    render(<MarketSection {...props()} />)
+    fireEvent.click(await screen.findByRole('button', { name: /Update all/ }))
+    await screen.findByRole('dialog', { name: /Continue anyway/ })
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+    expect(fetchCalls.filter(call => call.path === '/dsh-market/update')).toHaveLength(1)
+    fireEvent.click(screen.getByRole('button', { name: en.cancel }))
+    expect(localStorage.getItem('dshm-queue-v1')).toBeNull()
+    expect(screen.getByRole('button', { name: /Update all/ }).hasAttribute('disabled')).toBe(false)
+  })
+
+  it.each(['update', 'uninstall'] as const)('asks before a busy %s and preserves the confirmed target', async (kind) => {
+    localStorage.setItem('dshm-operation-wait:/dsh-market', 'ask')
+    const path = `/dsh-market/${kind}`
+    stubFetch({
+      '/dsh-market/status': { active: false, pnpm: true, boot: 'boot-1', agentDrain: true, runningAgents: ['main'] },
+      '/dsh-market/installed': { installed: { 'dsh-loop': '^1.0.0' }, live: [] },
+      '/dsh-market/updates': { updates: { 'dsh-loop': { kind: 'npm', current: '1.0.0', latest: '1.1.0', eligibleVersion: '1.1.0', updateAvailable: true } } },
+      [path]: (body: unknown) => (body as { confirmAgentsRunning?: boolean }).confirmAgentsRunning
+        ? { ok: true, hot: true }
+        : { __status: 409, agentsBusy: true, runningAgents: ['main'] },
+    })
+    render(<MarketSection {...props()} />)
+    fireEvent.click(await screen.findByRole('button', { name: /Installed/ }))
+    if (kind === 'update') fireEvent.click(await screen.findByRole('button', { name: 'Update v1.1.0' }))
+    else {
+      await openCardUninstall()
+      fireEvent.click(await screen.findByRole('button', { name: en.uninstall }))
+    }
+    const dialog = await screen.findByRole('dialog', { name: `${en.agentsRunningConfirm} dsh-loop` })
+    const posts = () => fetchCalls.filter(call => call.path === path && call.method === 'POST')
+    expect(posts()).toHaveLength(1)
+    expect(posts()[0]!.body).toEqual({ name: 'dsh-loop', ...(kind === 'update' ? { eligibleVersion: '1.1.0' } : {}) })
+    // A changed preference must not put an explicitly confirmed request back into drain.
+    localStorage.setItem('dshm-operation-wait:/dsh-market', 'wait')
+    fireEvent.click(within(dialog).getByRole('button', { name: kind === 'update' ? en.opUpdateNow : en.opUninstallNow }))
+    await waitFor(() => expect(posts()).toHaveLength(2))
+    expect(posts()[1]!.body).toEqual({ name: 'dsh-loop', confirmAgentsRunning: true, ...(kind === 'update' ? { eligibleVersion: '1.1.0' } : {}) })
+    expect(localStorage.getItem('dshm-queue-v1')).toBeNull()
+  })
+
+  it('installs immediately when the browser preference is ask', async () => {
+    localStorage.setItem('dshm-operation-wait:/dsh-market', 'ask')
+    stubFetch({
+      '/dsh-market/status': {
+        agentDrain: true,
+        runningAgents: ['main'],
+        pnpm: true,
+        boot: 'boot-1',
+        active: false,
+      },
+      '/dsh-market/install': { ok: true, hot: true },
+    })
+    render(<MarketSection {...props()} />)
+    const card = (await screen.findByText('dsh-loop')).closest('[class*="card"]') as HTMLElement
+    await waitFor(() => expect(fetchCalls.some(call => call.path === '/dsh-market/status')).toBe(true))
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+    fireEvent.click(within(card).getByRole('button', { name: en.install }))
+    fireEvent.click(await screen.findByRole('button', { name: en.confirmInstall }))
+
+    const posts = () => fetchCalls.filter(call => call.path === '/dsh-market/install' && call.method === 'POST')
+    await waitFor(() => expect(posts()).toHaveLength(1))
+    expect(posts()[0]!.body).toEqual({ url: 'https://github.com/alice/dsh-loop' })
+  })
+})
+
 describe('Agent-safe drain mode (#411)', () => {
   it('shows a Host-owned waiting task, not a failed install, and cancels it by operation id', async () => {
     const waitingSince = Date.now()

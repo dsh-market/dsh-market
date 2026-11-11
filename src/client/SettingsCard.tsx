@@ -33,7 +33,7 @@
  * from another product.
  */
 
-import { createElement as h, Fragment, useCallback, useEffect, useId, useRef, useState } from 'react'
+import { createElement as h, Fragment, useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from 'react'
 import type { ReactElement } from 'react'
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import { IconChevronDownOutline14, IconLoadingOutline16 } from './icons.ts'
@@ -43,6 +43,7 @@ import type { MarketStatus } from './market-data.ts'
 import type { Translate } from './market-data.ts'
 import type { SidebarEntry } from './sidebar-entry.ts'
 import type { EntryKey, EntryVisibility } from './entry-visibility.ts'
+import { operationWaitKey, readOperationWait, saveOperationWait, subscribeOperationWait } from './operation-wait.ts'
 
 /** Keys the market leaves in the browser; cleared when the user purges. */
 const BROWSER_KEYS = ['dshm-webdav', 'dshm-gist-id'] as const
@@ -224,14 +225,14 @@ function readUpdate(own: RawUpdate): SelfUpdate {
 /**
  * Clear the market's browser-side leftovers.
  *
- * These are the only two things the market keeps in the browser, and the
- * server cannot reach either. Neither holds a credential — the WebDAV
+ * These preferences live in the browser; the server cannot clear them.
+ * None holds a credential — the WebDAV
  * password is never persisted and a Gist token is read from the environment,
  * never from disk — so this is tidiness, not a security step, and the copy
  * must not imply otherwise.
  */
 export function clearBrowserState(storage: Pick<Storage, 'removeItem'>): void {
-  for (const key of BROWSER_KEYS) {
+  for (const key of [...BROWSER_KEYS, operationWaitKey()]) {
     try { storage.removeItem(key) } catch { /* storage unavailable */ }
   }
 }
@@ -239,6 +240,7 @@ export function clearBrowserState(storage: Pick<Storage, 'removeItem'>): void {
 export function SettingsCard({ t, onRemoved, sidebar, entries }: SettingsCardProps): ReactElement | null {
   const [open, setOpen] = useState(false)
   const [advancedOpen, setAdvancedOpen] = useState(false)
+  const operationWait = useSyncExternalStore(subscribeOperationWait, readOperationWait)
   // Several cards can be mounted at once (settings list, bundle page, the
   // settings tab), so the disclosure's id has to be per instance.
   const advancedId = useId()
@@ -645,6 +647,21 @@ export function SettingsCard({ t, onRemoved, sidebar, entries }: SettingsCardPro
     ? row(t('setSelfRemoved'), t('setSelfRemovedHint'), null)
     : h(Fragment, null,
         advanced,
+        row(t('setOperationWait'), t(operationWait === 'wait' ? 'setOperationWaitIdleHint' : 'setOperationWaitAskHint'),
+          h('div', { className: css.setSeg, role: 'group', 'aria-label': t('setOperationWait') },
+            (['wait', 'ask'] as const).map(value => h('button', {
+              key: value,
+              type: 'button',
+              className: operationWait === value ? `${css.setSegBtn} ${css.setSegOn}` : css.setSegBtn,
+              'aria-pressed': operationWait === value,
+              disabled: busy,
+              onClick: () => {
+                setError(null)
+                try { saveOperationWait(value) }
+                catch { setError(t('setOperationWaitSaveFailed')) }
+              },
+            }, t(value === 'wait' ? 'setOperationWaitIdle' : 'setOperationWaitAsk'))),
+          )),
         // Where the same catalog is reachable on a host that reads market
         // indexes (dsh 0.2.1+): a statement, not an action — the address is
         // the whole thing the user needs, and it stays selectable here.
