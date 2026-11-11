@@ -12,8 +12,8 @@ import type { InstallResult } from '../src/dsh-cli.ts'
 import {
   diagnosticsTail, failureDetail, FETCH_TIMEOUT_OVERRIDE, groupConflictsByOwner, hostNodeModulesRoot, installApplied,
   isHostPortCollision, isStaleUpdate, normalizedLinkTarget, parseIgnoredBuildEntries, parseIgnoredBuilds,
-  parsePrepareNotAllowed, pnpmNeverStarted, pnpmRefusedYoungRelease, refusedReleaseAgePackage, removeDanglingHostBridge,
-  retargetCollections, RELEASE_AGE_OVERRIDE, updateApplied, validateAddedPlugins, withHoistRecovery,
+  parsePrepareKey, parsePrepareNotAllowed, pnpmNeverStarted, pnpmRefusedYoungRelease, refusedReleaseAgePackage, removeDanglingHostBridge,
+  retargetCollections, RELEASE_AGE_OVERRIDE, unwrapPnpmErrors, updateApplied, validateAddedPlugins, withHoistRecovery,
 } from '../src/install.ts'
 import { dropUnparseableBuildKeys, profileDir } from '../src/profile.ts'
 import * as profileHelpers from '../src/profile.ts'
@@ -1269,6 +1269,53 @@ describe('parsePrepareNotAllowed (#68)', () => {
     const ndjson = String.raw`{"name":"pnpm","level":"error","err":{"message":"Failed to prepare git-hosted package fetched from \"https://codeload.github.com/s/r/tar.gz/abc\": The git-hosted package \"dsh-queue-plus@0.3.0\" needs to execute build scripts but is not in the \"allowBuilds\" allowlist."}}`
     expect(parsePrepareNotAllowed(ndjson, '')).toBe('dsh-queue-plus')
     expect(parsePrepareNotAllowed('', ndjson.replace('dsh-queue-plus@0.3.0', '@scope/pkg@1.0.0'))).toBe('@scope/pkg')
+  })
+})
+
+describe('pnpm 12 wraps its boxed errors (#1156)', () => {
+  // Captured from `pnpm@12.3.4 add -w git+file://… --reporter=ndjson`: the
+  // error is NOT ndjson, and it is wrapped at ~80 columns — mid-sentence, and
+  // mid-key at a `/`.
+  const sha = '02179056a71fe28a78f57cf07253f3399d37a16b'
+  const PREPARE = 'Error: ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED\n\n'
+    + '  × adding a new package\n'
+    + '  ╰─▶ The git-hosted package "dsh-probe-prep@1.0.0" needs to execute build\n'
+    + '      scripts but is not in the "allowBuilds" allowlist.\n'
+    + '  help: Add the package to "allowBuilds" in your project\'s pnpm-workspace.yaml\n'
+    + '        to allow it to run scripts. For example:\n'
+    + '        allowBuilds:\n'
+    + '          dsh-probe-prep@git+file:///tmp/p1156/\n'
+    + `        repo#${sha}: true\n\n`
+
+  it('reads the refused package out of a sentence broken across lines', () => {
+    expect(parsePrepareNotAllowed('', PREPARE)).toBe('dsh-probe-prep')
+  })
+
+  it('rejoins the printed key that was broken inside a path', () => {
+    expect(parsePrepareKey('', PREPARE)).toBe(`dsh-probe-prep@git+file:///tmp/p1156/repo#${sha}`)
+  })
+
+  it('rejoins an ignored-build dep path broken after a slash', () => {
+    const text = 'Error: ERR_PNPM_IGNORED_BUILDS\n\n  × adding a new package\n'
+      + '  ╰─▶ Ignored build scripts: dsh-probe-post@file:../../../../tmp/p1156/dep/\n'
+      + '      dsh-probe-post-1.0.0.tgz\n'
+      + '  help: Run "pnpm approve-builds" to pick which dependencies should be allowed\n'
+      + '        to run scripts.\n\n'
+    expect(parseIgnoredBuildEntries('', text)).toEqual([{
+      name: 'dsh-probe-post',
+      key: 'dsh-probe-post@file:../../../../tmp/p1156/dep/dsh-probe-post-1.0.0.tgz',
+    }])
+  })
+
+  it('keeps every package of a list that wraps after a comma', () => {
+    const text = '  ╰─▶ Ignored build scripts: esbuild@0.25.0, koffi@2.9.0, @scope/native@1.0.0,\n'
+      + '      sharp@0.33.0\n  help: Run "pnpm approve-builds"\n'
+    expect(parseIgnoredBuilds('', text)).toEqual(['esbuild', 'koffi', '@scope/native', 'sharp'])
+  })
+
+  it('does not join lines of output that never wrapped', () => {
+    const plain = '[ERR_PNPM_X] boom\n  at somewhere (file.js:1:1)\n'
+    expect(unwrapPnpmErrors(plain)).toBe(plain)
   })
 })
 

@@ -16,15 +16,16 @@
  * for the in-tree precedent).
  */
 
-import { mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { isUpdateCheckIntervalHours, type UpdateCheckIntervalHours } from './update-notification-settings.ts'
 import { asChannel, type Channel } from './channels.ts'
 import { asRegion, normalizeGithubProxy, type Region } from './regions.ts'
+import { findDshInstallDir } from './dsh-install.ts'
 import { logEvent } from './log.ts'
-import { declaredBundlePatchFiles, entryArtifactExists } from './profile.ts'
+import { bundlePatchTargets, declaredBundlePatchFiles, entryArtifactExists } from './profile.ts'
 
 interface HotRow {
   id: string
@@ -166,8 +167,42 @@ function readPkgDsh(profileDir: string, packageName: string): { client?: unknown
  * expressions) — those compositions fall back to restart activation.
  */
 export function parseSimplePatch(patchText: string): HotRow[] | null {
+  const scan = scanPatch(patchText)
+  return scan.blocker === null ? scan.rows : null
+}
+
+/**
+ * Which shape stopped `parseSimplePatch` — the CAUSE, not just "not plain".
+ *
+ * `parseSimplePatch` collapses five different inputs into one `null`: a
+ * `config` block, a `disabled`/`enabled` switch row, any other key (`inject`,
+ * a nested mapping), a row whose `name` never arrives, and a patch with no
+ * insert rows at all. Every caller that had to explain the refusal threw all
+ * five into one sentence written for the first, and told users their patch
+ * "contains config/expression rows" when it merely switched a row off
+ * (#1102). Naming the shape is the difference between a sentence the reader
+ * can act on and one they cannot (#813, AGENTS.md: 说不出来就别用一句话把
+ * 空缺填上).
+ */
+export type PatchBlocker = 'config' | 'disabled' | 'incomplete' | 'empty' | 'other'
+
+export interface PatchScan {
+  /** Insert rows read before the scan stopped; empty when it did not. */
+  rows: HotRow[]
+  /** null when the patch IS a plain insert list (`rows` is then non-empty). */
+  blocker: PatchBlocker | null
+  /** The key that stopped the scan, when there is one to name. */
+  key?: string
+}
+
+export function scanPatch(patchText: string): PatchScan {
   const rows: HotRow[] = []
   let pending: string | null = null
+  // A patch row at column 0 targets an EXISTING entry (the long-standing way
+  // to disable one); only rows indented inside `- insert:` bring a plugin in.
+  // Tracked so the walk can say which of the two it met instead of calling
+  // every top-level row "a config block" (#1102, dsh-mnemon's shipped patch).
+  let topLevelRow = false
   // Split on CRLF too. `#.*$` cannot strip a comment that ends in \r —
   // JS treats \r as a line terminator, so `.` will not cross it and `$`
   // only anchors at the very end — leaving the comment text in place,
@@ -178,9 +213,14 @@ export function parseSimplePatch(patchText: string): HotRow[] | null {
     const line = raw.replace(/#.*$/, '').trimEnd()
     if (line.trim() === '') continue
     if (/^-\s+insert:\s*$/.test(line)) continue
+    if (/^-\s+id:\s*\S+\s*$/.test(line)) {
+      topLevelRow = true
+      continue
+    }
     const id = /^\s+-\s+id:\s*(\S+)\s*$/.exec(line)
     if (id !== null) {
-      if (pending !== null) return null
+      // A second id before the first got its name: the row was cut short.
+      if (pending !== null) return { rows, blocker: 'incomplete' }
       pending = id[1]
       continue
     }
@@ -190,10 +230,39 @@ export function parseSimplePatch(patchText: string): HotRow[] | null {
       pending = null
       continue
     }
-    return null
+    const leaf = /^\s*(?:-\s+)?([A-Za-z_][\w-]*)\s*:/.exec(line)
+    const key = leaf?.[1]
+    if (key === 'config') return { rows, blocker: 'config', key }
+    if (key === 'disabled' || key === 'enabled') return { rows, blocker: 'disabled', key }
+    return { rows, blocker: 'other', key }
   }
-  if (pending !== null || rows.length === 0) return null
-  return rows
+  if (pending !== null) return { rows, blocker: 'incomplete' }
+  // A top-level row whose body never arrived: still not an insert list, and
+  // saying so keeps `parseSimplePatch` from mounting the inserts around it
+  // while silently dropping the entry it patched.
+  if (topLevelRow) return { rows, blocker: 'other', key: 'id' }
+  if (rows.length === 0) return { rows, blocker: 'empty' }
+  return { rows, blocker: null }
+}
+
+/**
+ * One sentence for a refusal that is only about the patch's shape, naming the
+ * cause and what happens next. Shared by the hot mount and the activation
+ * verdict so the two cannot drift apart on the same fact again.
+ */
+export function patchBlockerReason(blocker: PatchBlocker, key?: string): string {
+  switch (blocker) {
+    case 'config':
+      return 'bundle patch 里有 config 块,热挂载只重放纯 insert 行;重启后由 bundle 层按原样加载 / the bundle patch has a config block; hot-mount replays plain insert rows only — a restart loads the bundle as written'
+    case 'disabled':
+      return '这个包有一行被关掉了(disabled),热挂载不重放开关行;重启后按原样加载,那一行仍然是关的 / one of its rows is switched off (disabled); hot-mount does not replay switch rows — a restart loads the bundle as written and that row stays off'
+    case 'incomplete':
+      return 'bundle patch 里有一行 id 没有配 name,市场读不懂这一行;重启后由 bundle 层按原样加载,仍不生效就修这个包的 patch / a row has an id but no name, so the market cannot read it — a restart loads the bundle as written; fix the package patch if it still does not work'
+    case 'empty':
+      return 'bundle patch 里没有 insert 行,热挂载没有可重放的内容;重启后由 bundle 层生效 / the bundle patch has no insert rows, so there is nothing to replay — it activates on restart'
+    default:
+      return `bundle patch 里有 insert 之外的行(${key ?? '未识别的键'}),热挂载只重放纯 insert;重启后由 bundle 层按原样加载 / the bundle patch has a row beyond plain inserts (${key ?? 'an unrecognised key'}); hot-mount replays plain inserts only — a restart loads the bundle as written`
+  }
 }
 
 /**
@@ -898,14 +967,15 @@ export async function hotMount(ctx: HotContext, profileDir: string, packageName:
     }
     let rows: HotRow[] | null
     if (texts !== null && texts.length > 0) {
-      rows = parseSimplePatch(texts.join('\n'))
-      if (rows === null) {
+      const scan = scanPatch(texts.join('\n'))
+      if (scan.blocker !== null) {
         return {
           ok: false,
           deferred: true,
-          reason: 'bundle patch 含配置行/表达式,热挂载仅支持纯 insert,重启后生效 / the bundle patch contains config/expression rows; hot-mount only supports plain inserts — it activates on restart',
+          reason: patchBlockerReason(scan.blocker, scan.key),
         }
       }
+      rows = scan.rows
     } else if (declared.length > 0) {
       // The declaration is VOID — one of its files cannot be read. The host
       // throws on a missing overlay file and skips the ENTIRE bundle, so no
@@ -982,20 +1052,28 @@ export async function hotMount(ctx: HotContext, profileDir: string, packageName:
  * in every boot — this is what makes them behave like normal plugins.
  * @returns names that were mounted.
  */
-export async function mountClientOnlyDeps(ctx: HotContext, profileDir: string): Promise<string[]> {
+export async function mountClientOnlyDeps(
+  ctx: HotContext,
+  profileDir: string,
+  /** The host's install directory; `undefined` finds it, `null` means "do not look". */
+  hostDirectory?: string | null,
+): Promise<string[]> {
   let deps: string[]
+  let bundles: string[]
   try {
     const manifest = JSON.parse(readFileSync(join(profileDir, 'package.json'), 'utf8')) as {
       dependencies?: Record<string, string>
       dsh?: { profile?: { bundles?: string[] } }
     }
-    const bundles = new Set(manifest.dsh?.profile?.bundles ?? [])
-    deps = Object.keys(manifest.dependencies ?? {}).filter(name => !bundles.has(name))
+    bundles = manifest.dsh?.profile?.bundles ?? []
+    const bundleSet = new Set(bundles)
+    deps = Object.keys(manifest.dependencies ?? {}).filter(name => !bundleSet.has(name))
   } catch {
     return []
   }
   const disabled = readDisabled(profileDir)
   const userManaged = readUserPatchControls(profileDir)
+  const hostProvided = bundleLayerTargets(profileDir, bundles, hostDirectory)
   const mounted: string[] = []
   for (const name of deps) {
     if (hotHandles.has(name) || disabled.has(name)) continue
@@ -1004,11 +1082,77 @@ export async function mountClientOnlyDeps(ctx: HotContext, profileDir: string): 
     // to control — a shim here would override a user's "disabled" choice on
     // every restart (#58 by @vikna919).
     if (patchLayerManages(userManaged, name)) continue
+    // A package the profile's bundle layer ALREADY mounts needs no shim: the
+    // entry is live, under a row id only the bundle decides. Sheathing a
+    // second fiber over it registers its services again, cordis refuses the
+    // duplicate, and the market recorded the shim as live while the host
+    // reported the entry as not activated (#1137).
+    if (hostProvided.has(name)) {
+      logEvent('info', 'boot',
+        `${name}: already mounted by the profile's bundle layer, no client-only shim (#1137)`)
+      continue
+    }
     const dsh = readPkgDsh(profileDir, name)
     if (dsh === null || dsh.client === undefined || dsh.bundle !== undefined) continue
     if ((await hotMount(ctx, profileDir, name)).ok) mounted.push(name)
   }
   return mounted
+}
+
+/**
+ * Package names the profile's OWN bundle layer already mounts.
+ *
+ * The shim predicate reads the profile manifest, so it can only see a package
+ * as a dependency; it cannot see that an in-box bundle mounts the same package
+ * under a row id of its own — `@deepseek-ai/dsh-web-app` ships
+ * `- id: connection` / `name: '@deepseek-ai/dsh-client-connection'` (#1137).
+ * Those packages also declare `dsh.client` and no `dsh.bundle`, so every
+ * existing predicate says "shim it". Only the row NAMES link the two, and a
+ * clean profile's bundles are the only place they are written down.
+ *
+ * A bundle whose declaration cannot be read contributes nothing, which keeps
+ * today's behaviour (shim, possibly duplicated) rather than silently dropping
+ * a client bundle that the bundle layer never mounts.
+ */
+export function bundleLayerTargets(
+  profileDir: string,
+  bundles: Iterable<string>,
+  hostDirectory?: string | null,
+): Set<string> {
+  const targets = new Set<string>()
+  // Looked up lazily: a profile with no bundle the host provides never pays.
+  let host: string | null | undefined = hostDirectory
+  for (const bundle of bundles) {
+    if (host === undefined) host = findDshInstallDir()
+    for (const name of bundlePatchTargets(bundleDirectory(profileDir, host, bundle))) targets.add(name)
+  }
+  return targets
+}
+
+/**
+ * Where the boot reads one bundle from (#1137).
+ *
+ * The official bundles — `@deepseek-ai/dsh-web-app` and its siblings — ship
+ * inside the dsh installation, not in the profile: a plain `dsh web` profile's
+ * `node_modules/@deepseek-ai/` holds only the few packages linked into it. The
+ * boot (dsh-app-boot's resolveBundleDir) probes Node's search paths from the
+ * installation first and the profile second, and so does this; looking only
+ * in the profile made every in-box bundle read as empty, which is the one kind
+ * of bundle whose rows mount other in-box packages.
+ *
+ * A host that cannot be read from here (null, or an archive plain Node cannot
+ * open) leaves the profile path, which is what this always did.
+ */
+function bundleDirectory(profileDir: string, host: string | null, bundle: string): string {
+  if (host !== null) {
+    try {
+      for (const searchPath of createRequire(join(host, 'package.json')).resolve.paths(bundle) ?? []) {
+        const candidate = join(searchPath, bundle)
+        if (existsSync(join(candidate, 'package.json'))) return candidate
+      }
+    } catch { /* an unreadable anchor says nothing: fall back to the profile */ }
+  }
+  return join(profileDir, 'node_modules', ...bundle.split('/'))
 }
 
 /**

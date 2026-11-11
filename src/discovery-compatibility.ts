@@ -14,6 +14,8 @@ import { dirname } from 'node:path'
 import { compareSemver, isSemver, satisfiesRange } from './check.ts'
 import { classifyPeer, crossesImplicitCeiling } from './compatibility.ts'
 import { marketFetch } from './net.ts'
+import { isStableReleaseVersion } from './release-candidates.ts'
+import { activeRegion, githubRoutesFor, rememberGithubRoute, throughProxy } from './regions.ts'
 import { parseSourceUrl } from './sources.ts'
 
 export type HostCompatibilityStatus = 'compatible' | 'incompatible' | 'unknown'
@@ -109,9 +111,37 @@ async function githubManifest(source: GitHubManifestSource, fetcher: FetchLike):
     throw new Error('invalid GitHub reference')
   }
   const file = parsed.subpath === null ? 'package.json' : `${parsed.subpath}/package.json`
-  const manifest = await json(`https://raw.githubusercontent.com/${parsed.repo}/${encodeURIComponent(ref)}/${file}`)
+  const manifest = await rawJson(`https://raw.githubusercontent.com/${parsed.repo}/${encodeURIComponent(ref)}/${file}`)
   if (record(manifest) === null) throw new Error('package manifest unavailable')
   return manifest
+
+  /**
+   * Read a raw file through the region's configured routes, in order.
+   *
+   * `raw.githubusercontent.com` is blockable on its own — the report (#1148)
+   * measured an `ECONNRESET` with no proxy and a 200 through one — while the
+   * catalog and the registry answered fine, so "the market page loads" said
+   * nothing about this read. This path used to compose the host directly and
+   * give up on the first error, and the card then said the host's requirement
+   * was unknown even though the release declares one. The routes are the same
+   * list the update path walks; one retry per route covers the transient
+   * resets that made a single miss look permanent.
+   */
+  async function rawJson(url: string): Promise<unknown> {
+    let last: unknown
+    for (const route of githubRoutesFor('raw', activeRegion())) {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          const value = await json(throughProxy(route, url))
+          rememberGithubRoute('raw', route)
+          return value
+        } catch (error) {
+          last = error
+        }
+      }
+    }
+    throw last instanceof Error ? last : new Error('GitHub raw content unavailable')
+  }
 }
 
 function range(value: unknown): string | null {
@@ -475,6 +505,10 @@ export class DiscoveryManifestIndex {
  * installed one, which is what an update needs: suggesting a downgrade is not
  * an update.
  *
+ * `stableOnly` drops prereleases. The official Desktop refuses to move a
+ * stable install onto a prerelease by itself (#991), so offering one there is
+ * an enabled button that can only answer 409 (#1161).
+ *
  * @returns the version, or null when the packument cannot be read or nothing
  *   in the history declares itself compatible.
  */
@@ -485,6 +519,7 @@ export async function findCompatibleVersion(
   registry: string,
   fetcher: FetchLike = marketFetch,
   minimumVersionExclusive: string | null = null,
+  stableOnly = false,
 ): Promise<string | null> {
   let doc: unknown
   try {
@@ -501,6 +536,7 @@ export async function findCompatibleVersion(
   if (versions === null) return null
   const candidates = Object.keys(versions)
     .filter(version => isSemver(version)
+      && (!stableOnly || isStableReleaseVersion(version))
       && (minimumVersionExclusive === null || compareSemver(version, minimumVersionExclusive) > 0))
     .sort((left, right) => compareSemver(right, left))
   for (const version of candidates) {

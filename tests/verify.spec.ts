@@ -1003,6 +1003,65 @@ describe('a bundle whose own patch is empty (#813)', () => {
   })
 })
 
+/**
+ * #1144: a package installed as an ordinary dependency — no `dsh` field at
+ * all — that an Agent preset row loads per session. Preset trees never enter
+ * the host loader, so nothing on the loader side can show it, and the market
+ * read it as a dependency nothing uses.
+ */
+describe('a package an Agent preset loads (#1144)', () => {
+  const presetPatch = (plugin: string, presets = ['math-proof', 'swe-mode']): string => [
+    '- id: agent-preset',
+    '  config:',
+    '    presets:',
+    ...presets.flatMap(id => [
+      `      - id: ${id}`,
+      '        plugins:',
+      '          - id: computer-use',
+      `            name: '${plugin}'`,
+    ]),
+    '',
+  ].join('\n')
+
+  it('names the presets that load a dependency with no dsh field', () => {
+    // The reported shape: hooks-claude-code publishes no dsh metadata and is
+    // installed as a dependency of the profile, yet every session running one
+    // of these presets loads it.
+    const dir = profile([])
+    pkg('@deepseek-ai/dsh-hooks-claude-code', { name: '@deepseek-ai/dsh-hooks-claude-code', main: 'lib/index.js' }, { 'lib/index.js': '' })
+    writeFileSync(join(dir, 'cordis.patch.yml'), presetPatch('@deepseek-ai/dsh-hooks-claude-code'))
+
+    const result = verifyActivation('web', '@deepseek-ai/dsh-hooks-claude-code', new Set())
+
+    expect(result).toMatchObject({ state: 'inert', loadedByProfile: true, bundle: false, hot: false })
+    const text = result.reasons.join(' ')
+    expect(text).toContain('math-proof')
+    expect(text).toContain('swe-mode')
+    expect(text).not.toContain('plain dependency with no dsh metadata')
+  })
+
+
+  it('stays a plain dependency when no preset names it', () => {
+    const dir = profile([])
+    pkg('unused-dep', { name: 'unused-dep', main: 'lib/index.js' }, { 'lib/index.js': '' })
+    writeFileSync(join(dir, 'cordis.patch.yml'), presetPatch('some-other-plugin'))
+
+    const result = verifyActivation('web', 'unused-dep', new Set())
+    expect(result.state).toBe('inert')
+    expect(result.loadedByProfile).toBeUndefined()
+    expect(result.reasons.join(' ')).toContain('plain dependency with no dsh metadata')
+  })
+
+  it('does not read preset rows as evidence for a package the loader runs', () => {
+    // Evidence of where it comes from never overrules what is running.
+    const dir = profile([])
+    pkg('running-dep', { name: 'running-dep', main: 'lib/index.js' }, { 'lib/index.js': '' })
+    writeFileSync(join(dir, 'cordis.patch.yml'), presetPatch('running-dep'))
+
+    expect(verifyActivation('web', 'running-dep', new Set(['running-dep']))).toMatchObject({ state: 'live', hot: true })
+  })
+})
+
 describe('config namespaces a client asks for (#810)', () => {
   const clientManifest = { name: 'p', main: 'lib/index.js', exports: { './client': './lib/client.js' }, dsh: { client: { platform: 'web' } } }
   /** `readInstalled` reads the profile manifest, so the package has to be declared. */
@@ -1089,5 +1148,74 @@ describe('config namespaces a client asks for (#810)', () => {
     declaredProfile('server-only')
     pkg('server-only', { name: 'server-only', main: 'lib/index.js' }, {})
     expect(findUnservedConfigNamespaces('web', new Set(), () => [], profileDir('web'))).toEqual([])
+  })
+})
+
+/**
+ * #1102: the `restart` reason told every non-plain patch that it "contains
+ * config/expression rows". `parseSimplePatch` returns null for four more
+ * shapes — a `disabled` row, an `inject` key, a row with no `name`, and a
+ * truncated patch — and none of them is a config block. The reason also read
+ * the package root's `cordis.patch.yml` unconditionally, so a patch declared
+ * in a subdirectory (#646) or as a list (#792) was judged from a file the
+ * host never reads, or from none at all.
+ */
+describe('restart reason names the actual patch shape (#1102)', () => {
+  const name = '@acme/theme'
+  const facts: HostRuntimeFacts = { runtimeVersion: '0.2.1-alpha.3', exemptions: {} }
+
+  function install(files: Record<string, string>, declared?: unknown): void {
+    profile([name])
+    pkg(name, {
+      name,
+      version: '1.0.0',
+      main: 'index.js',
+      dsh: { bundle: { patch: declared ?? Object.keys(files) } },
+    }, { 'index.js': '', ...files })
+  }
+
+  const verify = () => verifyActivation('web', name, new Set(), undefined, false, facts)
+  const reason = () => verify().reasons.join(' ')
+
+  it('names a switched-off row instead of inventing a config block', () => {
+    install({ 'cordis.patch.yml': "- insert:\n  - id: 'a'\n    name: 'b'\n- id: 'off'\n  disabled: true\n" })
+    expect(verify().state).toBe('restart')
+    expect(reason()).toContain('disabled')
+    expect(reason()).not.toContain('config')
+  })
+
+  it('names an extra key such as inject instead of inventing a config block', () => {
+    install({ 'cordis.patch.yml': "- insert:\n  - id: 'a'\n    name: 'b'\n    inject: [ tools ]\n" })
+    expect(verify().state).toBe('restart')
+    expect(reason()).toContain('inject')
+    expect(reason()).not.toContain('config')
+  })
+
+  it('still names a real config block', () => {
+    install({ 'cordis.patch.yml': "- insert:\n  - id: 'a'\n    name: 'b'\n- config:\n    foo: bar\n" })
+    expect(verify().state).toBe('restart')
+    expect(reason()).toContain('config')
+  })
+
+  it('names an unreadable row shape instead of guessing a cause', () => {
+    install({ 'cordis.patch.yml': "- insert:\n  - id: 'a'\n    name: 'b'\n  - id: 'c'\n" })
+    expect(verify().state).toBe('restart')
+    expect(reason()).toContain('name')
+    expect(reason()).not.toContain('config')
+  })
+
+  it('reads the patch the package declares in a subdirectory', () => {
+    install({ 'extensions/dsh/cordis.patch.yml': "- insert:\n  - id: 'a'\n    name: 'b'\n- config:\n    foo: bar\n" })
+    expect(verify().state).toBe('restart')
+    expect(reason()).toContain('config')
+  })
+
+  it('ignores a leftover root patch the host never reads', () => {
+    install({
+      'declared/plain.patch.yml': "- insert:\n  - id: 'a'\n    name: 'b'\n",
+      'cordis.patch.yml': "- insert:\n  - id: 'a'\n    name: 'b'\n- config:\n    foo: bar\n",
+    }, ['declared/plain.patch.yml'])
+    expect(verify().state).toBe('restart')
+    expect(reason()).not.toContain('config')
   })
 })

@@ -64,3 +64,38 @@ describe('the host authorities are read per request', () => {
     expect(sameOrigin(request('dsh.example.org'))).toBe(false)
   })
 })
+
+describe('the listener bind host is trusted, as the host fence does', () => {
+  it('accepts the bind IP literal the webserver publishes, on any port', () => {
+    const services: Record<string, unknown> = { webServer: { host: '100.126.218.120' } }
+    installed.push(useTrustedHosts(contextWith(services)))
+
+    // No connection service at all: the host's own fence still accepts the
+    // bind address, and the market's must agree.
+    expect(sameOrigin(request('100.126.218.120:3080'))).toBe(true)
+    expect(sameOrigin(request('10.1.2.3:3080'))).toBe(false)
+
+    // A later connection declaration widens, never narrows, the bind host.
+    services.connection = { trustedHosts: ['dsh.example.org'] }
+    expect(sameOrigin(request('100.126.218.120:3080'))).toBe(true)
+    expect(sameOrigin(request('dsh.example.org'))).toBe(true)
+    expect(sameOrigin(request('10.1.2.3:3080'))).toBe(false)
+  })
+
+  it('does not trust an all-interfaces bind literal an older host reports', () => {
+    for (const host of ['0.0.0.0', '::']) {
+      installed.push(useTrustedHosts(contextWith({ webServer: { host } })))
+      expect(sameOrigin(request('0.0.0.0:3080'))).toBe(false)
+      expect(sameOrigin(request('[::]:3080'))).toBe(false)
+    }
+  })
+
+  it('normalizes the bind host like the host fence does', () => {
+    const services: Record<string, unknown> = { webServer: { host: 'fe80::1%en0' } }
+    installed.push(useTrustedHosts(contextWith(services)))
+    // A browser dials the literal bracketed, on whatever port it bound.
+    expect(sameOrigin(request('[fe80::1]:3080'))).toBe(true)
+    // Another interface of the same machine is still a different authority.
+    expect(sameOrigin(request('[fe80::2]:3080'))).toBe(false)
+  })
+})

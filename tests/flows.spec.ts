@@ -1158,6 +1158,26 @@ describe('host-provided profile and package-operation seams', () => {
     expect(cancel).toHaveBeenCalledOnce()
   })
 
+  it('reports the desktop manager\'s own operation as busy (#1140)', async () => {
+    // While the official Desktop manager runs its own install or repair, every
+    // market command is refused with `busy: true`; the status has to say the
+    // same or the client's queue retries into that refusal every 2s and
+    // re-shows the banner each time.
+    const runtime = {
+      runPlugin: vi.fn(),
+      probePnpm: async () => true,
+      provisionPnpm: async () => ({ ok: true }),
+      cancelActive: () => false,
+      busy: () => true,
+    }
+    bed = createTestbed({ profile: 'web' }, runtime as never)
+    expect((await bed.dispatch('GET', '/dsh-market/status')).json.busy).toBe(true)
+    bed.dispose()
+    const idle = { ...runtime, busy: () => false }
+    bed = createTestbed({ profile: 'web' }, idle as never)
+    expect((await bed.dispatch('GET', '/dsh-market/status')).json.busy).toBe(false)
+  })
+
   it('answers a bundle’s own declared repository as its code source', async () => {
     // The detail page shows an install spec, not an address. This route answers
     // per PACKAGE, and null rather than guess when nothing declares a repository.
@@ -2887,6 +2907,41 @@ describe('update flow — no npm publishing required', () => {
     // must not claim one.
     const listed = await bed.dispatch('GET', '/dsh-market/installed')
     expect(listed.json.brokenPlugins['dsh-loop']).toMatchObject({ spec: specBefore, reason: 'incomplete-build-cancelled' })
+  })
+
+  it('clears the removed-declaration notice by the package it reinstalled, not the catalog display name (#1164)', async () => {
+    // The reporter's entry has BOTH names and they differ: the catalog row is
+    // `dsh-genui` (the GitHub repo's casing) while the package is
+    // `@changfenhuang/dsh-genui`. Records are keyed by the profile dependency
+    // name, so `clearBrokenPlugin(entry.name)` after a successful reinstall
+    // hit a key that was never there — a silent no-op that left the spent
+    // notice on screen through page reloads, DSH restarts and a market
+    // upgrade, with no `update-reinstalled` in the log.
+    fake.npm['@changfenhuang/dsh-genui'] = { latest: '1.4.0', versions: { '1.4.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } } }
+    const first = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/omdsh-dev/dsh-genui' })
+    expect(first.json.ok).toBe(true)
+
+    // Reach the record the way the reporter did — a cancel mid-swap, which
+    // drops the declaration and files the notice under the PACKAGE name.
+    fake.npm['@changfenhuang/dsh-genui'].latest = '1.5.0'
+    fake.npm['@changfenhuang/dsh-genui'].versions['1.5.0'] = { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] }
+    fake.cancelNext = true
+    fake.cancelClears = { name: '@changfenhuang/dsh-genui', cleared: ['package.json', 'lib/index.js'] }
+    const cancelledRun = await bed.dispatch('POST', '/dsh-market/update', { name: '@changfenhuang/dsh-genui' })
+    expect(cancelledRun.json).toMatchObject({ ok: false, cancelled: true })
+    const broken = (await bed.dispatch('GET', '/dsh-market/installed')).json.brokenPlugins as Record<string, unknown>
+    expect(broken['@changfenhuang/dsh-genui']).toBeTruthy()
+
+    // Reinstalling from the market is the designed way out of that notice.
+    const again = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/omdsh-dev/dsh-genui' })
+    expect(again.json.ok).toBe(true)
+    const after = (await bed.dispatch('GET', '/dsh-market/installed')).json.brokenPlugins as Record<string, unknown>
+    expect(after['@changfenhuang/dsh-genui']).toBeUndefined()
+    // The clear ran with the PACKAGE key, which is what `update-reinstalled`
+    // names — the pre-fix run logged nothing at all, because
+    // clearBrokenPlugin() returned before writing anything.
+    expect((await bed.dispatch('GET', '/dsh-market/logs')).text).toContain('update-reinstalled')
+    expect((await bed.dispatch('GET', '/dsh-market/logs')).text).toContain('@changfenhuang/dsh-genui: installed again')
   })
 
   it('leaves an ordinary cancel alone when the previous build can still load (#663)', async () => {
@@ -7270,6 +7325,52 @@ describe('build-script approval flow (#6)', () => {
     expect(yaml).toContain(`${printed}: true`)
   })
 
+  it('approves a git UPDATE refused in pnpm 12\'s wrapped, boxed format (#1156)', async () => {
+    // pnpm 12 does not print the refusal as one line: it draws a box and wraps
+    // it at ~80 columns, through the sentence and through the key. The
+    // refusal was classified but named no package, so the update came back
+    // without `ignoredBuilds` and the sentence promising a button had none.
+    // Real output, pnpm 12.3.4 (key broken at a `/`).
+    const OLD = 'a'.repeat(40)
+    const NEW = 'b'.repeat(40)
+    const remote = 'https://gitee.com/iJetLi/deepseek-harness-codearts.git'
+    fake.repos[`git+${remote}`] = {
+      name: 'dsh-codearts-auth',
+      manifest: { name: 'dsh-codearts-auth', version: '0.1.0', dsh: {}, main: 'lib/index.js' },
+      artifacts: ['lib/index.js'],
+      lockCommit: NEW,
+    }
+    const manifestPath = join(fake.profileDir, 'package.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    manifest.dependencies = { ...(manifest.dependencies ?? {}), 'dsh-codearts-auth': `git+${remote}#${OLD}` }
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+    const pkgDir = join(fake.profileDir, 'node_modules', 'dsh-codearts-auth')
+    mkdirSync(join(pkgDir, 'lib'), { recursive: true })
+    writeFileSync(join(pkgDir, 'package.json'),
+      JSON.stringify({ name: 'dsh-codearts-auth', version: '0.1.0', dsh: {}, main: 'lib/index.js' }))
+    writeFileSync(join(pkgDir, 'lib', 'index.js'), '')
+    writeFileSync(join(fake.profileDir, 'pnpm-lock.yaml'),
+      `lockfileVersion: 9\n  resolution: {commit: ${OLD}, repo: ${remote}, type: git}\n`)
+    fake.failNextAddStderrOnce = 'Error: ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED\n\n'
+      + '  × adding a new package\n'
+      + '  ╰─▶ The git-hosted package "dsh-codearts-auth@0.1.0" needs to execute build\n'
+      + '      scripts but is not in the "allowBuilds" allowlist.\n'
+      + '  help: Add the package to "allowBuilds" in your project\'s pnpm-workspace.yaml\n'
+      + '        to allow it to run scripts. For example:\n'
+      + '        allowBuilds:\n'
+      + '          dsh-codearts-auth@git+https://gitee.com/iJetLi/\n'
+      + `        deepseek-harness-codearts.git#${NEW}: true\n\n`
+
+    const update = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-codearts-auth' })
+    expect(update.status).toBe(502)
+    expect(update.json.ignoredBuilds).toEqual(['dsh-codearts-auth'])
+
+    const approve = await bed.dispatch('POST', '/dsh-market/approve-builds', { packages: ['dsh-codearts-auth'] })
+    expect(approve.status).toBe(200)
+    const yaml = readFileSync(join(fake.profileDir, 'pnpm-workspace.yaml'), 'utf8')
+    expect(yaml).toContain(`dsh-codearts-auth@git+${remote}#${NEW}: true`)
+  })
+
   it('approves a monorepo package with the exact subpath key pnpm printed', async () => {
     const name = '@cyrus/dsh-sessions-insight'
     const target = 'github:m/mono#path:/packages/plug-a'
@@ -10018,6 +10119,46 @@ describe('a pinned install is judged on its own release, not on latest (#581)', 
     name: 'dsh-loop', version, engines: { dsh }, 'dist-tags': { latest: version },
   })
 
+  it('does not offer a stable Desktop install a prerelease its update would refuse (#1161)', async () => {
+    // The Desktop moves a stable npm install only to a stable release (#991).
+    // The compatibility search used to rank prereleases in, so the dialog's
+    // enabled button posted 1.3.0-beta.1 and met a 409, while 1.1.0 — mature
+    // and compatible — was one entry down the same history.
+    const pkg = { dsh: {}, main: 'lib/index.js' }
+    fake.npm['dsh-loop'] = { latest: '1.0.0', versions: Object.fromEntries(
+      ['1.0.0', '1.1.0', '1.3.0-beta.1'].map(version => [version, { manifest: pkg, artifacts: ['lib/index.js'] }])) }
+    expect((await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop', version: '1.0.0' })).status).toBe(200)
+    bed.dispose()
+    bed = createTestbed({ desktopHost: true })
+    writeFileSync(join(fake.profileDir, 'pnpm-workspace.yaml'), 'minimumReleaseAge: 1440\nminimumReleaseAgeIgnoreMissingTime: false\n')
+    fake.calls = []
+    const old = new Date(Date.now() - 72 * 3_600_000).toISOString()
+    const history = ['1.0.0', '1.1.0', '1.3.0-beta.1', '2.0.0']
+    const release = (version: string) => manifest(version, version === '2.0.0' ? '>=99.0.0' : `>=${HOST_VERSION}`)
+    vi.stubGlobal('fetch', vi.fn(async (input: unknown) => {
+      const url = String(input)
+      if (url.endsWith('/dsh-loop/latest')) return new Response(JSON.stringify(release('2.0.0')))
+      if (/\/dsh-loop(?:\?t=\d+)?$/.test(url)) return new Response(JSON.stringify({
+        'dist-tags': { latest: '2.0.0' },
+        versions: Object.fromEntries(history.map(version => [version, release(version)])),
+        time: Object.fromEntries(history.map(version => [version, old])),
+      }))
+      const exact = /\/dsh-loop\/(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/.exec(url)
+      if (exact !== null && history.includes(exact[1]!)) return new Response(JSON.stringify(release(exact[1]!)))
+      return new Response('{}', { status: 404 })
+    }))
+
+    const found = await bed.dispatch('POST', '/dsh-market/find-compatible', { npmName: 'dsh-loop', upgradeOnly: true })
+    expect(found.json).toMatchObject({ compatibleVersion: '1.1.0', maturity: { installable: true } })
+    const updated = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop', compatVersion: '1.1.0' })
+    expect(updated.status, JSON.stringify(updated.json)).toBe(200)
+    expect(installedSpec('dsh-loop')).toBe('^1.1.0')
+
+    // A fresh install has no such rule: the prerelease line stays reachable.
+    const fresh = await bed.dispatch('POST', '/dsh-market/find-compatible', { npmName: 'dsh-loop' })
+    expect(fresh.json.compatibleVersion).toBe('1.3.0-beta.1')
+  })
+
   it('installs the release the dialog resolved even when latest is incompatible', async () => {
     // The reported case: the market finds 1.0.0 for this host, the user
     // accepts, and the pre-flight check reads `latest` — which wants a host
@@ -10052,6 +10193,47 @@ describe('a pinned install is judged on its own release, not on latest (#581)', 
     // with nothing to search for.
     expect(refused.json.hostIncompatible).toMatchObject({ version: '1.0.0', requirement: '>=99.0.0', npmName: 'dsh-loop' })
     expect(fake.calls.filter(call => call[0] === 'add')).toEqual([])
+  })
+
+  it('offers a young compatible update on a CLI host, where the update can install it', async () => {
+    // The CLI update retries once with --config.minimum-release-age=0 (#39),
+    // so a release inside the wait still installs. Calling it "held" there
+    // disabled the dialog's Update button for an update that works.
+    const pkg = { dsh: {}, main: 'lib/index.js' }
+    fake.npm['dsh-loop'] = { latest: '1.0.0', versions: { '1.0.0': { manifest: pkg, artifacts: ['lib/index.js'] }, '1.2.0': { manifest: pkg, artifacts: ['lib/index.js'] } } }
+    expect((await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop', version: '1.0.0' })).status).toBe(200)
+    writeFileSync(join(fake.profileDir, 'pnpm-workspace.yaml'), 'minimumReleaseAge: 1440\nminimumReleaseAgeIgnoreMissingTime: false\n')
+    fake.npm['dsh-loop'].latest = '1.2.0'
+    fake.releaseHold = { mature: '1.0.0', strict: true }
+    fake.calls = []
+    const young = new Date(Date.now() - 3_600_000).toISOString()
+    const old = new Date(Date.now() - 72 * 3_600_000).toISOString()
+    const release = (version: string) => manifest(version, version === '2.0.0' ? '>=99.0.0' : `>=${HOST_VERSION}`)
+    vi.stubGlobal('fetch', vi.fn(async (input: unknown) => {
+      const url = String(input)
+      if (url.endsWith('/dsh-loop/latest')) return new Response(JSON.stringify(release('2.0.0')))
+      if (/\/dsh-loop(?:\?t=\d+)?$/.test(url)) return new Response(JSON.stringify({
+        'dist-tags': { latest: '2.0.0' },
+        versions: { '1.0.0': release('1.0.0'), '1.2.0': release('1.2.0'), '2.0.0': release('2.0.0') },
+        time: { '1.0.0': old, '1.2.0': young, '2.0.0': young },
+      }))
+      const exact = /\/dsh-loop\/(\d+\.\d+\.\d+)$/.exec(url)
+      if (exact) return new Response(JSON.stringify(release(exact[1]!)))
+      return new Response('{}', { status: 404 })
+    }))
+
+    const found = await bed.dispatch('POST', '/dsh-market/find-compatible', { npmName: 'dsh-loop', upgradeOnly: true })
+    expect(found.json).toMatchObject({ compatibleVersion: '1.2.0', maturity: null })
+    const updated = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop', compatVersion: '1.2.0' })
+    expect(updated.status, JSON.stringify(updated.json)).toBe(200)
+    expect(installedSpec('dsh-loop')).toBe('^1.2.0')
+
+    // The Desktop manager has no bypass, so there the dialog keeps the wait.
+    bed.dispose()
+    bed = createTestbed({ desktopHost: true })
+    writeFileSync(join(fake.profileDir, 'pnpm-workspace.yaml'), 'minimumReleaseAge: 1440\nminimumReleaseAgeIgnoreMissingTime: false\n')
+    const onDesktop = await bed.dispatch('POST', '/dsh-market/find-compatible', { npmName: 'dsh-loop' })
+    expect(onDesktop.json.maturity).toMatchObject({ version: '1.2.0', held: true, installable: false })
   })
 })
 
@@ -10977,7 +11159,12 @@ describe('catalog-owned floating release archives', () => {
   })
   afterEach(() => { registryModule.loadRegistry.mockImplementation(() => Promise.resolve(REGISTRY)) })
 
-  it('lists and applies a published complete package without switching to npm or source', async () => {
+  it.each([
+    original,
+    'https://github.com/o/whale/releases/download/v1.0.0/full-1.0.0.tgz',
+  ])('lists and applies a published complete package from %s', async spec => {
+    writeFileSync(join(fake.profileDir, 'package.json'), JSON.stringify({ dependencies: { 'dsh-whale': spec }, dsh: { profile: { bundles: ['dsh-whale'] } } }))
+    fake.tarballs[spec] = fake.tarballs[original]!
     const page = await bed.dispatch('GET', '/dsh-market/updates?force=1')
     expect(page.json.updates['dsh-whale']).toMatchObject({ latest: '2.0.0', updateAvailable: true })
     const single = await bed.dispatch('GET', '/dsh-market/api/v1/updates?name=dsh-whale&force=1')
@@ -11009,6 +11196,114 @@ describe('catalog-owned floating release archives', () => {
     // Preserve the existing policy: a mutable archive URL cannot prove an
     // exact old build. Restore declarations but report that limitation.
     expect(String(update.json.error)).toContain('could not be verified')
+  })
+})
+
+describe('boot replay carrier safety', () => {
+  const carrierName = 'dsh-carrier-gate'
+  const profileManifestPath = (): string => join(profileDir('web'), 'package.json')
+
+  /** A loader entry the running host would hold for the package. */
+  function makeEntry(name: string, id: string): Testbed['loaderEntries'][number] {
+    const entry: Testbed['loaderEntries'][number] = {
+      options: { id, name, disabled: null as boolean | null } as never,
+      fiber: {},
+      update: vi.fn(async (options: { disabled: boolean | null }) => {
+        entry.options.disabled = options.disabled
+        entry.fiber = options.disabled === true ? undefined : {}
+      }),
+    }
+    return entry
+  }
+
+  /** Build a real carrier package: own gate insert plus a foreign inject row. */
+  function seedCarrier(): void {
+    const dir = profileDir('web')
+    const pkgDir = join(dir, 'node_modules', carrierName)
+    mkdirSync(pkgDir, { recursive: true })
+    writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({
+      name: carrierName,
+      version: '1.0.0',
+      type: 'module',
+      dsh: { bundle: { patch: './cordis.patch.yml' } },
+    }, null, 2))
+    writeFileSync(join(pkgDir, 'cordis.patch.yml'), [
+      '- insert:',
+      '    - id: carrier-gate',
+      `      name: '${carrierName}/gate'`,
+      '- id: preset-standard',
+      '  inject: [carrierGateService]',
+      '',
+    ].join('\n'))
+    writeFileSync(profileManifestPath(), JSON.stringify({
+      dependencies: { [carrierName]: '1.0.0' },
+      dsh: { profile: { bundles: [carrierName] } },
+    }, null, 2))
+  }
+
+  it('removes a disabled carrier from the bundle stack instead of disabling its gate (#938)', async () => {
+    bed.dispose()
+    seedCarrier()
+    hot.disabled = new Set([carrierName])
+    bed = createTestbed()
+    const gate = makeEntry(`${carrierName}/gate`, 'carrier-gate')
+    bed.loaderEntries.push(gate)
+    // Let the boot replay microtask run.
+    await new Promise(resolve => setTimeout(resolve, 20))
+
+    const manifest = JSON.parse(readFileSync(profileManifestPath(), 'utf8')) as {
+      dsh: { profile: { bundles: string[] } }
+    }
+    expect(manifest.dsh.profile.bundles).not.toContain(carrierName)
+    // The gate entry was never live-disabled, so foreign rows are not stranded.
+    expect(gate.update).not.toHaveBeenCalled()
+    expect(gate.fiber).toBeDefined()
+  })
+
+  it('still live-disables an ordinary (non-carrier) disabled plugin', async () => {
+    bed.dispose()
+    const ordinary = 'dsh-ordinary'
+    const dir = profileDir('web')
+    const pkgDir = join(dir, 'node_modules', ordinary)
+    mkdirSync(pkgDir, { recursive: true })
+    writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({
+      name: ordinary,
+      version: '1.0.0',
+      type: 'module',
+      dsh: { bundle: { patch: './cordis.patch.yml' } },
+    }, null, 2))
+    // Own insert only, no foreign rows -> not a carrier.
+    writeFileSync(join(pkgDir, 'cordis.patch.yml'), [
+      '- insert:',
+      `    - id: ${ordinary}`,
+      `      name: '${ordinary}'`,
+      '',
+    ].join('\n'))
+    writeFileSync(profileManifestPath(), JSON.stringify({
+      dependencies: { [ordinary]: '1.0.0' },
+      dsh: { profile: { bundles: [ordinary] } },
+    }, null, 2))
+    hot.disabled = new Set([ordinary])
+    bed = createTestbed()
+    const entry = makeEntry(ordinary, ordinary)
+    bed.loaderEntries.push(entry)
+    await new Promise(resolve => setTimeout(resolve, 20))
+
+    expect(entry.options.disabled).toBe(true)
+    expect(entry.fiber).toBeUndefined()
+  })
+
+  it('does not let the self-heal guard push a disabled carrier gate back down', async () => {
+    bed.dispose()
+    seedCarrier()
+    hot.disabled = new Set([carrierName])
+    bed = createTestbed()
+    const gate = makeEntry(carrierName, 'carrier-gate')
+    bed.loaderEntries.push(gate)
+    bed.emit('internal/plugin', { entry: { options: { name: carrierName } } })
+    await new Promise(resolve => setTimeout(resolve, 20))
+
+    expect(gate.update).not.toHaveBeenCalled()
   })
 })
 

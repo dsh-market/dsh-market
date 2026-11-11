@@ -116,6 +116,63 @@ describe('official Electron profile runtime', () => {
     }
   })
 
+  it('lets a manager operation outlive its disposed instance, and the next instance waits for it (#1151)', async () => {
+    // The host reloads the market in the middle of the operation the market
+    // started, and its reconciliation waits for this instance's disposer.
+    // Waiting here for the operation — which waits for the reconciliation —
+    // was a cycle: routes already unmounted, the request never answered, the
+    // profile's write lock held until the host was restarted. Cancelling
+    // would also have aborted the user's update halfway.
+    const service = manager()
+    let settle: (value: { application: string; packageResult: { exitCode: number; output: string } }) => void = () => {}
+    service.installBundle.mockImplementationOnce(() => new Promise(resolve => { settle = resolve as typeof settle }))
+    const runtime = createOfficialDesktopRuntime(() => service, 'desktop', profile())
+    const running = runtime.runPlugin('desktop', ['add', 'example@2.0.0'])
+
+    const outcome = await Promise.race([
+      runtime.dispose().then(() => 'disposed'),
+      new Promise<string>(resolve => setTimeout(() => resolve('still waiting'), 300)),
+    ])
+    expect(outcome).toBe('disposed')
+    expect(service.cancelInstall).not.toHaveBeenCalled()
+
+    // The market the host mounts next must not take the manager for idle.
+    const next = createOfficialDesktopRuntime(() => service, 'desktop', profile())
+    expect(next.busy()).toBe(true)
+    await expect(next.runPlugin('desktop', ['add', 'other@1.0.0'])).resolves.toMatchObject({ busy: true })
+    expect(service.installBundle).toHaveBeenCalledTimes(1)
+    // Nor repair a journal record the running operation is still working on.
+    let repaired = false
+    const repair = next.repairPendingUpdates().then(report => { repaired = true; return report })
+    await new Promise(resolve => setTimeout(resolve, 30))
+    expect(repaired).toBe(false)
+
+    settle({ application: 'restart-required', packageResult: { exitCode: 0, output: 'installed' } })
+    await expect(running).resolves.toMatchObject({ exitCode: 0 })
+    await repair
+    expect(repaired).toBe(true)
+    expect(next.busy()).toBe(false)
+    await next.dispose()
+  })
+
+  it('reports its own running operation so /status can wait on it (#1140)', async () => {
+    // The manager holds `active`/`repairing` for the whole of its own install.
+    // `/dsh-market/status` used to say `busy: false` the entire time, so the
+    // client's queue retried every 2s into a refusal and re-showed the
+    // "another operation is running" banner on each one.
+    const service = manager()
+    let settle: (value: { application: string; packageResult: { exitCode: number; output: string } }) => void = () => {}
+    service.installBundle.mockImplementationOnce(() => new Promise(resolve => { settle = resolve as typeof settle }))
+    const runtime = createOfficialDesktopRuntime(() => service, 'desktop', profile())
+    expect(runtime.busy()).toBe(false)
+    const running = runtime.runPlugin('desktop', ['add', 'example@2.0.0'])
+    expect(runtime.busy()).toBe(true)
+    settle({ application: 'restart-required', packageResult: { exitCode: 0, output: 'installed' } })
+    await running
+    expect(runtime.busy()).toBe(false)
+    await runtime.dispose()
+  })
+
   it('uses the current market mirror for installs, update targets and exact rollback targets (#862)', async () => {
     setActiveRegion('china')
     const service = manager()

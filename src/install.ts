@@ -1061,13 +1061,49 @@ export function parsePrepareNotAllowed(stdout: string, stderr: string): string |
   //   … git-hosted package \"pkg@1.0.0\" needs to execute build scripts …
   // Unescape before matching, or the ndjson path — the ONLY path in
   // production — silently returns null and the approve banner never shows.
-  const text = `${stdout}\n${stderr}`.replace(/\\"/g, '"')
+  const text = unwrapPnpmErrors(`${stdout}\n${stderr}`.replace(/\\"/g, '"'))
   const m = /git-hosted package "([^"]+)" needs to execute build scripts/.exec(text)
   if (m === null) return null
   // Strip the trailing @version — the name itself may be scoped (@scope/pkg).
   const raw = m[1].trim()
   const at = raw.lastIndexOf('@')
   return at > 0 ? raw.slice(0, at) : raw
+}
+
+/**
+ * Undo the line wrapping of pnpm 12's boxed error text (#1156).
+ *
+ * pnpm 12 prints a failure as
+ *
+ *     Error: ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED
+ *
+ *       × adding a new package
+ *       ╰─▶ The git-hosted package "x@1.0.0" needs to execute build
+ *           scripts but is not in the "allowBuilds" allowlist.
+ *       help: …
+ *
+ * and wraps it at about 80 columns — through the middle of a sentence, and
+ * through the middle of a package key at a `/` or `-`. Every sentence this
+ * file matches then has a line break where its single space was, so the
+ * refusal was classified correctly and still yielded no package name, no
+ * key, and therefore no approve-and-retry button. Continuation lines are
+ * indented deeper than the line they continue; join them back, without a
+ * space when the break fell inside a token.
+ *
+ * Output that never wraps this way (pnpm 10/11, ndjson) has no such lines
+ * and comes back unchanged.
+ */
+export function unwrapPnpmErrors(text: string): string {
+  const out: string[] = []
+  for (const line of text.replace(/\r\n/g, '\n').split('\n')) {
+    const previous = out[out.length - 1]
+    if (previous !== undefined && /^ {2,}\S/.test(previous) && /^ {4,}\S/.test(line)) {
+      out[out.length - 1] = previous + (/[^\s][/-]$/.test(previous) ? '' : ' ') + line.trim()
+    } else {
+      out.push(line)
+    }
+  }
+  return out.join('\n')
 }
 
 /**
@@ -1090,8 +1126,8 @@ export function parsePrepareNotAllowed(stdout: string, stderr: string): string |
  */
 export function parsePrepareKey(stdout: string, stderr: string): string | null {
   // ndjson carries this inside a JSON string: quotes and newlines escaped.
-  const text = `${stdout}\n${stderr}`.replace(/\\"/g, '"').replace(/\\n/g, '\n')
-  const m = /For example:\s*\n\s*allowBuilds:\s*\n[ \t]+("?)([^\s"]+)\1:\s*true/.exec(text)
+  const text = unwrapPnpmErrors(`${stdout}\n${stderr}`.replace(/\\"/g, '"').replace(/\\n/g, '\n'))
+  const m = /For example:\s*allowBuilds:\s*("?)([^\s"]+)\1:\s*true/.exec(text)
   return m === null ? null : m[2]!
 }
 
@@ -1132,7 +1168,7 @@ export function allowBuildKeyFromIgnoredBuild(depPath: string): string {
  * path can contain, so the surrounding JSON is not swallowed.
  */
 export function parseIgnoredBuildEntries(stdout: string, stderr: string): Array<{ name: string; key: string }> {
-  const m = /Ignored build scripts:?\s*([^\n]+)/i.exec(`${stdout}\n${stderr}`)
+  const m = /Ignored build scripts:?\s*([^\n]+)/i.exec(unwrapPnpmErrors(`${stdout}\n${stderr}`))
   if (m === null) return []
   const found: Array<{ name: string; key: string }> = []
   for (const chunk of m[1].split(',')) {

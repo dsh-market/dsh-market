@@ -305,7 +305,10 @@ describe('readInstalledRepoEvidence (#141)', () => {
     expect(fork.identities).toEqual(['myfork/dsh-plug'])
     expect(fork.identities).not.toContain('upstream/dsh-plug')
     // A Release archive states its own source too — and it is the fork's.
+    // The identity comes from the URL, not from the manifest that sits right
+    // beside it and names upstream (#1147).
     const asset = readInstalledRepoEvidence('web', 'dsh-plug', 'https://github.com/myfork/dsh-plug/releases/download/v1/p.tgz')
+    expect(asset.identities).toEqual(['myfork/dsh-plug'])
     expect(asset.identities).not.toContain('upstream/dsh-plug')
     // A host this build cannot parse yields nothing rather than a guess.
     expect(readInstalledRepoEvidence('web', 'dsh-plug', 'git+https://gitea.example/me/dsh-plug.git'))

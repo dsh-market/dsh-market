@@ -269,6 +269,8 @@ interface UpdateContext {
   journal: PendingUpdateJournal
   /** Bundled pnpm from the official desktop launcher; only used for the market itself. */
   packageManager?: HostPackageManager | null
+  /** Told when the market starts or ends a pnpm child of its own (the self-update overlay). */
+  onOwnChild?: (running: boolean) => void
 }
 
 /**
@@ -294,7 +296,8 @@ async function updateMarketInPlace(
   progress.lastLine = '正在更新市场本身，不会先卸载它 / Updating the market itself without unloading it'
   const args = ['add', spec]
   if (typeof options.registry === 'string' && options.registry !== '') args.push(`--registry=${options.registry}`)
-  const run = await runHostPnpm(invocation, directory, args)
+  context.onOwnChild?.(true)
+  const run = await runHostPnpm(invocation, directory, args).finally(() => context.onOwnChild?.(false))
   const output = `${run.stdout}\n${run.stderr}`.trim()
   if (run.cancelled) {
     return { application: 'cancelled', packageResult: { exitCode: run.exitCode, output } }
@@ -432,6 +435,29 @@ async function installOrReinstall(
   }
 }
 
+/**
+ * The operation the desktop manager is running, visible to every instance of
+ * this runtime in the process (#1151).
+ *
+ * The host reloads the market while an operation the market started is still
+ * inside the manager, so the instance that began it is disposed and a new one
+ * is built around it. The new one has no `active` of its own and would call
+ * the manager idle: it would start a second operation into the first, and its
+ * start-up repair would take the removal in progress for an interrupted one.
+ * The slot lives on `globalThis` because a reload may evaluate this module
+ * again, which a module-level variable would not survive.
+ */
+const OPERATION_SLOT = Symbol.for('dshmarket.officialDesktop.operation')
+interface RunningOperation { done: Promise<unknown> }
+function runningOperation(): RunningOperation | undefined {
+  return (globalThis as { [OPERATION_SLOT]?: RunningOperation })[OPERATION_SLOT]
+}
+function setRunningOperation(operation: RunningOperation | undefined): void {
+  const slot = globalThis as { [OPERATION_SLOT]?: RunningOperation }
+  if (operation === undefined) delete slot[OPERATION_SLOT]
+  else slot[OPERATION_SLOT] = operation
+}
+
 /** The official runtime's own surface, plus the repair a later start owes the profile. */
 export interface OfficialDesktopRuntime extends DesktopPluginRuntime {
   /**
@@ -439,6 +465,13 @@ export interface OfficialDesktopRuntime extends DesktopPluginRuntime {
    * Returns after every record settled or was found unrepairable; never throws.
    */
   repairPendingUpdates(): Promise<RepairReport>
+  /**
+   * Whether the manager is already running an operation of its own — the
+   * state that makes `runPlugin` answer `busy: true` (see
+   * `PluginCommandRuntime.busy`). `/dsh-market/status` reports it so the
+   * client's queue waits instead of retrying into a refusal every 2s (#1140).
+   */
+  busy(): boolean
 }
 
 /** Resolve the profile directory without making an invalid name a construction failure. */
@@ -474,19 +507,30 @@ export function createOfficialDesktopRuntime(
 ): OfficialDesktopRuntime {
   let disposed = false
   let repairing = false
+  // True only while the self-update overlay runs its own pnpm child: the one
+  // operation this instance, and nobody else, has to stop and wait for.
+  let ownsChild = false
   let active: { requestId?: string; cancelled: boolean; done: Promise<InstallResult> } | undefined
   const directory = safeProfileDirectory(profileName, _profileDirectory)
   const journal = directory === undefined ? undefined : PendingUpdateJournal.forProfile(directory)
   const updateContext: UpdateContext | undefined = directory === undefined || journal === undefined
     ? undefined
-    : { profile: profileName, profileDirectory: directory, journal, packageManager }
+    : {
+      profile: profileName,
+      profileDirectory: directory,
+      journal,
+      packageManager,
+      onOwnChild: running => { ownsChild = running },
+    }
+
+  const busy = (): boolean => active !== undefined || repairing || runningOperation() !== undefined
 
   const runPlugin: DesktopPluginRuntime['runPlugin'] = (profile, argv) => {
     if (disposed) return Promise.resolve(failure('official desktop plugin runtime is disposed', 127))
     if (profile !== profileName) return Promise.resolve(failure('refusing to change a different profile', 127))
     // A repair uses the same manager; overlapping the two would race the
     // profile's write lock and the route's single-operation rule.
-    if (active !== undefined || repairing) return Promise.resolve({ ...failure('another plugin operation is running', 127), busy: true })
+    if (busy()) return Promise.resolve({ ...failure('another plugin operation is running', 127), busy: true })
     const manager = managerLookup()
     if (manager === undefined
       || typeof manager.installBundle !== 'function'
@@ -568,6 +612,8 @@ export function createOfficialDesktopRuntime(
     }
     const current = { requestId, cancelled: false, done: Promise.resolve(failure('not started')) }
     active = current
+    const flight: RunningOperation = { done: current.done }
+    setRunningOperation(flight)
     current.done = operation.then((result): InstallResult => {
       // `overridden` is a change the manager KEPT (`changed: true`) whose live
       // state differs because another layer — a user patch — overrides it.
@@ -617,12 +663,20 @@ export function createOfficialDesktopRuntime(
       progress.active = false
       progress.cancelling = false
       if (active === current) active = undefined
+      if (runningOperation() === flight) setRunningOperation(undefined)
     })
+    flight.done = current.done
     return current.done
   }
 
   const repairPendingUpdates = async (): Promise<RepairReport> => {
     const empty: RepairReport = { reinstalled: [], finished: [], failed: [], abandoned: [] }
+    // An operation a previous instance started is still inside the manager:
+    // its journal record is in progress, not interrupted. Let it settle first
+    // — it finishes its own record on success, and a failure leaves the
+    // record for exactly this repair. The operation is bounded by its own
+    // deadline, so this wait is too.
+    if (active === undefined) await runningOperation()?.done.catch(() => {})
     if (disposed || repairing || active !== undefined) return empty
     const manager = managerLookup()
     if (manager === undefined || directory === undefined || journal === undefined) return empty
@@ -640,6 +694,7 @@ export function createOfficialDesktopRuntime(
   return {
     runPlugin,
     repairPendingUpdates,
+    busy,
     probePnpm: async () => managerLookup() !== undefined,
     provisionPnpm: async () => ({ ok: managerLookup() !== undefined, hint: 'Use the official desktop plugin manager' }),
     cancelActive: () => {
@@ -659,12 +714,25 @@ export function createOfficialDesktopRuntime(
     acceptsMarketPnpmFlags: false,
     dispose: async () => {
       disposed = true
-      if (active?.requestId !== undefined) {
+      const running = active
+      // An operation inside the host's manager is the host's to finish (#1151).
+      // The host reloads the market in the middle of the operation the market
+      // started — and its reconciliation waits for this very disposer — so
+      // waiting here for the operation, which waits for the reconciliation,
+      // is a cycle: the market was already unmounted, the request never
+      // answered, the profile lock stayed held. Cancelling would also abort
+      // the update the user asked for halfway. Let it run; the next instance
+      // sees it through `runningOperation`.
+      if (running !== undefined && !ownsChild) {
+        void running.done.catch(() => {})
+        return
+      }
+      if (running?.requestId !== undefined) {
         const manager = managerLookup()
-        if (manager !== undefined) void manager.cancelInstall(active.requestId).catch(() => {})
+        if (manager !== undefined) void manager.cancelInstall(running.requestId).catch(() => {})
       }
       cancelHostChild()
-      await active?.done
+      await running?.done
     },
   }
 }

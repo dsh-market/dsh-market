@@ -2661,6 +2661,29 @@ describe('MarketSection (jsdom)', () => {
     }
   })
 
+  it('stays quiet when the host answers a 409 that says it is busy (#1140)', async () => {
+    // The official Desktop manager holds its own operation for minutes and
+    // refuses every market command with `busy: true`. The row belongs in the
+    // queue, but the banner belongs to a user action that was refused for a
+    // reason — repeating it every 2s made the panel unusable (#1140).
+    stubFetch({
+      '/dsh-market/installed': { profile: 'desktop', installed: { 'dsh-loop': '^1.0.0' }, live: [] },
+      '/dsh-market/updates': { updates: { 'dsh-loop': {
+        kind: 'npm', current: '1.0.0', latest: '1.2.0', eligibleVersion: '1.1.0', updateAvailable: true,
+      } } },
+      '/dsh-market/update': { ok: false, busy: true, error: 'another plugin operation is running', __status: 409 },
+      '/dsh-market/status': { active: false, busy: false, pnpm: true, boot: 'boot-1', installed: {} },
+    })
+    render(<MarketSection {...props()} />)
+    fireEvent.click(await screen.findByRole('button', { name: /Installed/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Update v1.1.0' }))
+    await waitFor(() => expect(fetchCalls.some(call => call.path === '/dsh-market/update')).toBe(true))
+    expect(screen.queryByText(en.queuedRunBusy)).toBeNull()
+    // The row is queued rather than failed: the durable queue keeps it.
+    await waitFor(() => expect(JSON.parse(localStorage.getItem('dshm-queue-v1') ?? '[]'))
+      .toEqual([expect.objectContaining({ kind: 'update', name: 'dsh-loop' })]))
+  })
+
   it('keeps the other rows queued when a batch of "run now" is clicked at once (#775)', async () => {
     // Reported: four installs sat queued behind a running agent. The sessions
     // were cancelled, all four rows were told to "run now", and only the first
@@ -4707,12 +4730,72 @@ describe('#60 groups view', () => {
     fireEvent.click(await screen.findByRole('button', { name: en.tabGroups }))
   }
 
+  it('collapses and expands all named groups, disabling actions that cannot change them (#1129)', async () => {
+    const state = makeFake({ 'dsh-loop': '^1.0.0', 'dsh-notify': '^1.0.0' })
+    state.groups = { work: ['dsh-loop'], empty: [] }
+    state.groupOrder = ['work', 'empty']
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    await openGroupsView()
+
+    const collapse = screen.getByRole('button', { name: 'Collapse all' })
+    const expand = screen.getByRole('button', { name: 'Expand all' })
+    expect(expand).toHaveProperty('disabled', true)
+    fireEvent.click(collapse)
+    for (const name of state.groupOrder) {
+      expect(screen.getByRole('button', { name: en.groupExpand.replace('{0}', name) }).getAttribute('aria-expanded')).toBe('false')
+    }
+    expect(collapse).toHaveProperty('disabled', true)
+    expect(expand).toHaveProperty('disabled', false)
+    expect(screen.queryByText('dsh-loop')).toBeNull()
+    expect(screen.getByText('dsh-notify')).toBeTruthy() // Ungrouped plugins remain visible.
+
+    fireEvent.click(screen.getByRole('button', { name: en.groupExpand.replace('{0}', 'work') }))
+    expect(collapse).toHaveProperty('disabled', false)
+    expect(expand).toHaveProperty('disabled', false)
+    fireEvent.click(expand)
+    for (const name of state.groupOrder) {
+      expect(screen.getByRole('button', { name: en.groupFold.replace('{0}', name) }).getAttribute('aria-expanded')).toBe('true')
+    }
+    expect(expand).toHaveProperty('disabled', true)
+    expect(screen.getByText('dsh-loop')).toBeTruthy()
+    expect(fetchCalls.filter(call => call.path === '/dsh-market/groups' || call.path === '/dsh-market/toggle')).toEqual([])
+  })
+
+  it('reveals search matches inside bulk-collapsed groups and restores folding when search clears (#1129)', async () => {
+    const state = makeFake({ 'dsh-loop': '^1.0.0', 'dsh-notify': '^1.0.0' })
+    state.groups = { work: ['dsh-loop'], alerts: ['dsh-notify'] }
+    state.groupOrder = ['work', 'alerts']
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    await openGroupsView()
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse all' }))
+    const search = screen.getByPlaceholderText(en.searchPh)
+    fireEvent.change(search, { target: { value: 'notify' } })
+    fireEvent.keyDown(search, { key: 'Enter' })
+    expect(await screen.findByText('dsh-notify')).toBeTruthy()
+    expect(screen.getByRole('button', { name: en.groupFold.replace('{0}', 'alerts') }).getAttribute('aria-expanded')).toBe('true')
+    expect(screen.queryByText('dsh-loop')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Collapse all' })).toHaveProperty('disabled', true)
+    expect(screen.getByRole('button', { name: 'Expand all' })).toHaveProperty('disabled', true)
+
+    fireEvent.change(search, { target: { value: '' } })
+    fireEvent.keyDown(search, { key: 'Enter' })
+    await waitFor(() => expect(screen.queryByText('dsh-notify')).toBeNull())
+    for (const name of state.groupOrder) {
+      expect(screen.getByRole('button', { name: en.groupExpand.replace('{0}', name) }).getAttribute('aria-expanded')).toBe('false')
+    }
+    expect(screen.getByRole('button', { name: 'Expand all' })).toHaveProperty('disabled', false)
+  })
+
   it('creates, assigns, removes, renames and deletes groups through the route', async () => {
     makeFake({ 'dsh-loop': '^1.0.0', 'dsh-notify': '^1.0.0' })
     render(<MarketSection {...props()} />)
     await screen.findByText('dsh-loop')
     await openGroupsView()
     expect(await screen.findByText(en.noGroups)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Collapse all' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Expand all' })).toBeNull()
 
     // Leaving the inline editor restores the New group button.
     fireEvent.click(screen.getByRole('button', { name: en.groupNew }))
@@ -10152,6 +10235,113 @@ describe('when DSH has unloaded the market (#962)', () => {
     // a Retry button that 404s every time is a loop with no way out.
     expect(screen.queryByText(en.loading)).toBeNull()
     expect(screen.queryByRole('button', { name: en.loadRetry })).toBeNull()
+  })
+
+  it('notices the routes are gone while an uninstall is in flight (#1056)', async () => {
+    // Nothing polled the host during an uninstall, so a market unloaded in the
+    // middle of one never reached the 404 that says so: the row read
+    // "uninstalling" and the page offered no explanation until a restart.
+    vi.useFakeTimers()
+    try {
+      let uninstallStarted = false
+      vi.stubGlobal('fetch', vi.fn((url: string) => {
+        const path = String(url).split('?')[0]
+        if (path === '/dsh-market/uninstall') {
+          uninstallStarted = true
+          return new Promise<Response>(() => {})
+        }
+        if (path === '/dsh-market/status' && uninstallStarted) return Promise.resolve(new Response('', { status: 404 }))
+        const payload =
+          path === '/dsh-market/registry' ? { source: 'live', registry: REGISTRY, hostVersion: '0.1.2-alpha.2' }
+          : path === '/dsh-market/installed' ? { profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: [], disabled: [], groups: {}, groupOrder: [], favorites: [], blocked: [] }
+          : path === '/dsh-market/status' ? { active: false, pnpm: true, boot: 'boot-1', restart: true, installed: { 'dsh-loop': '^1.0.0' } }
+          : path === '/dsh-market/updates' ? { updates: {} }
+          : path === '/dsh-market/discovery-compatibility' ? { hostVersion: '0.1.2-alpha.2', plugins: {} }
+          : null
+        if (payload === null) return Promise.reject(new Error(`unstubbed fetch: ${String(url)}`))
+        return Promise.resolve(new Response(JSON.stringify(payload), { status: 200 }))
+      }))
+
+      render(<MarketSection {...props()} />)
+      await vi.waitFor(() => { screen.getByText('dsh-loop') })
+      fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+      // Not `openCardUninstall`: its findBy* polling does not advance under fake timers.
+      await vi.waitFor(() => { screen.getAllByRole('button', { name: en.groupMore }) })
+      fireEvent.click(screen.getAllByRole('button', { name: en.groupMore })[0]!)
+      await vi.waitFor(() => { screen.getByRole('menuitem', { name: en.uninstall }) })
+      fireEvent.click(screen.getByRole('menuitem', { name: en.uninstall }))
+      await vi.waitFor(() => { screen.getByText(re(en.uninstallConfirmDesc)) })
+      fireEvent.click(screen.getByRole('button', { name: en.uninstall }))
+      await vi.waitFor(() => { expect(uninstallStarted, 'the uninstall never started').toBe(true) })
+      await vi.advanceTimersByTimeAsync(2100)
+
+      await vi.waitFor(() => { screen.getAllByText(en.marketGoneTitle) })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  describe('and mounts it again (#1151)', () => {
+    /** Every market route, answering 404 while `gone` and normally afterwards. */
+    function stubRoutes(state: { gone: boolean }): void {
+      vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+        const path = String(url).split('?')[0]
+        if (state.gone) return Promise.resolve(new Response('', { status: 404 }))
+        if (init?.signal?.aborted === true) return Promise.reject(new DOMException('aborted', 'AbortError'))
+        const payload =
+          path === '/dsh-market/registry' ? { source: 'live', registry: REGISTRY, hostVersion: '0.1.2-alpha.2' }
+          : path === '/dsh-market/installed' ? { profile: 'web', installed: {}, live: [], disabled: [], groups: {}, groupOrder: [], favorites: [], blocked: [] }
+          : path === '/dsh-market/status' ? { active: false, pnpm: true, boot: 'boot-2', restart: true, installed: {} }
+          : path === '/dsh-market/updates' ? { updates: {} }
+          : path === '/dsh-market/discovery-compatibility' ? { hostVersion: '0.1.2-alpha.2', plugins: {} }
+          : null
+        if (payload === null) return Promise.reject(new Error(`unstubbed fetch: ${String(url)}`))
+        return Promise.resolve(new Response(JSON.stringify(payload), { status: 200 }))
+      }))
+    }
+
+    it('comes back by itself once the routes answer, without a restart', async () => {
+      // DSH reloads its plugins around an install or an update and mounts the
+      // market again within seconds. The page used to stay on "stopped" for
+      // good, so the user restarted DSH — and killed what it was still doing.
+      vi.useFakeTimers()
+      try {
+        const state = { gone: true }
+        stubRoutes(state)
+        render(<MarketSection {...props()} />)
+        await vi.waitFor(() => { screen.getByText(en.marketGoneTitle) })
+        expect(screen.getByText(en.marketGoneReconnecting)).toBeTruthy()
+
+        state.gone = false
+        await vi.advanceTimersByTimeAsync(1500)
+        await vi.waitFor(() => { expect(screen.queryByText(en.marketGoneTitle)).toBeNull() })
+        await vi.waitFor(() => { screen.getByText('dsh-loop') })
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('gives up after a while and lets the user try again', async () => {
+      vi.useFakeTimers()
+      try {
+        const state = { gone: true }
+        stubRoutes(state)
+        render(<MarketSection {...props()} />)
+        await vi.waitFor(() => { screen.getByText(en.marketGoneTitle) })
+
+        await vi.advanceTimersByTimeAsync(100_000)
+        expect(screen.queryByText(en.marketGoneReconnecting)).toBeNull()
+        const again = screen.getByRole('button', { name: en.marketGoneReconnect })
+
+        state.gone = false
+        fireEvent.click(again)
+        await vi.advanceTimersByTimeAsync(1500)
+        await vi.waitFor(() => { expect(screen.queryByText(en.marketGoneTitle)).toBeNull() })
+        await vi.waitFor(() => { screen.getByText('dsh-loop') })
+      } finally {
+        vi.useRealTimers()
+      }
+    })
   })
 
   it('settles an install whose answer was lost with the routes, and leaves nothing pending', async () => {

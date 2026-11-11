@@ -54,7 +54,12 @@ function mount(commandRuntime?: PluginCommandRuntime): { host: MarketHost; route
     loader: { entries: () => [] },
     plugin: () => ({ await: async () => undefined, dispose: async () => undefined }),
   }
-  mountMarketRoutes(host, { profile: 'web' }, commandRuntime)
+  // A pinned region: with `region` undefined the market starts a background
+  // probe that writes `.dsh-market/state.json` a few milliseconds later, on
+  // whatever machine runs the suite. Two tests here put a DIRECTORY at that
+  // path on purpose (an unreadable state file), and the probe's write landed
+  // in the middle of them — an EEXIST nobody could reproduce locally (#1144).
+  mountMarketRoutes(host, { profile: 'web', region: 'global' }, commandRuntime)
   return { host, routes }
 }
 
@@ -560,6 +565,24 @@ describe('GET /dsh-market/installed — local repository evidence', () => {
       repoHints: {},
     })
   })
+
+  it('reports the source of a plugin installed from a Release archive URL (#1147)', async () => {
+    // A plugin published only as a GitHub Release tarball installs as a plain
+    // https spec, which repoOfTarget deliberately refuses (that answer decides
+    // where future updates come from). Reporting nothing here left the client
+    // with no identity at all, so with a same-named catalog row present it
+    // could not say which one was installed: Discover kept offering Install
+    // and the Installed tab showed the bare package name.
+    const spec = 'https://github.com/StarWind97/dsh-fatfish-notes/releases/download/v0.6.0/dsh-fatfish-notes-0.6.0.tgz'
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ dependencies: { 'dsh-fatfish-notes': spec } }))
+
+    const res = await hit(routes, '/dsh-market/installed', { method: 'GET', url: '/dsh-market/installed' })
+    expect(res.status).toBe(200)
+    expect(jsonBody(res)).toMatchObject({
+      installed: { 'dsh-fatfish-notes': spec },
+      repoIdentities: { 'dsh-fatfish-notes': ['starwind97/dsh-fatfish-notes'] },
+    })
+  })
 })
 
 describe('GET /dsh-market/backup — a failure says why (#55)', () => {
@@ -898,7 +921,7 @@ describe('POST /dsh-market/bundle-order', () => {
     // Synchronous up to the first await → the lock is already held.
     const snap = await hit(routes, '/dsh-market/snapshots', post('/dsh-market/snapshots', undefined))
     expect(snap.status).toBe(409)
-    expect(jsonBody(snap)).toEqual({ error: 'another plugin operation is running' })
+    expect(jsonBody(snap)).toEqual({ error: 'another plugin operation is running', busy: true })
 
     const order = await hit(routes, '/dsh-market/bundle-order', post('/dsh-market/bundle-order', { order: ['beta', 'alpha'] }))
     expect(order.status).toBe(409)
@@ -934,7 +957,7 @@ describe('POST /dsh-market/bundle-order', () => {
 
     const snap = await hit(routes, '/dsh-market/snapshots', post('/dsh-market/snapshots', undefined))
     expect(snap.status).toBe(409)
-    expect(jsonBody(snap)).toEqual({ error: 'another plugin operation is running' })
+    expect(jsonBody(snap)).toEqual({ error: 'another plugin operation is running', busy: true })
 
     const order = await hit(routes, '/dsh-market/bundle-order', post('/dsh-market/bundle-order', { order: ['beta', 'alpha'] }))
     expect(order.status).toBe(409)
@@ -942,7 +965,7 @@ describe('POST /dsh-market/bundle-order', () => {
     // update distinguishes the two locks in its message.
     const upd = await hit(routes, '/dsh-market/update', post('/dsh-market/update', { name: 'alpha' }))
     expect(upd.status).toBe(409)
-    expect(jsonBody(upd)).toEqual({ error: 'another install is already running' })
+    expect(jsonBody(upd)).toEqual({ error: 'another install is already running', busy: true })
   })
 
   it('restores the profile from the pre-write backup when the write throws (auto-rollback)', async () => {

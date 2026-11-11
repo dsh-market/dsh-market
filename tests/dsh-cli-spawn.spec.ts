@@ -106,6 +106,29 @@ describe('Web profiles launched by the bundled Desktop CLI', () => {
       })
     })
 
+    it('inherits the launcher cwd for a bin.js entry inside an .asar archive (#1146)', async () => {
+      platform(os)
+      // Community desktop shells keep the DSH CLI itself inside the packaged
+      // asar (deepseek-harness-pkg-<platform>.asar) instead of shipping a
+      // dsh-desktop-host carrier, so the generic bin.js branch must not hand
+      // the archive's virtual directory to the child as its cwd.
+      const entry = join(home, 'dependencies', 'dsh', 'deepseek-harness-pkg-windows.asar',
+        'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
+      process.argv = [process.execPath, entry, 'web', '--no-open']
+      process.execArgv = ['--no-warnings']
+      vi.stubEnv('ELECTRON_RUN_AS_NODE', '1')
+      const { dshArgv, nodeExecutable, runDshPlugin } = await import('../src/dsh-cli.ts')
+      expect(dshArgv()).toEqual({
+        file: nodeExecutable(), args: ['--no-warnings', resolve(entry)], cwd: undefined, viaShell: false,
+      })
+      const result = runDshPlugin('web', ['install'])
+      child.emit('close', 0)
+      await expect(result).resolves.toMatchObject({ exitCode: 0, cancelled: false, timedOut: false })
+      expectSpawn(0, nodeExecutable(), [
+        '--no-warnings', resolve(entry), 'plugin', '--profile', 'web', 'install', '--reporter=ndjson',
+      ], { cwd: undefined, detached: os !== 'win32' })
+    })
+
     it.each(['failure', 'error', 'cancel', 'timeout'])('preserves the %s outcome', async (outcome) => {
       platform(os)
       const kill = vi.spyOn(process, 'kill').mockReturnValue(true)

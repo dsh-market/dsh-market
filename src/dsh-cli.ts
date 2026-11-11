@@ -493,7 +493,11 @@ export function dshArgv(): { file: string; args: string[]; cwd: string | undefin
     // The official bundled CLI inherits the launcher's cwd. Its entry can
     // live inside app.asar: Electron can read it, but the OS cannot chdir there.
     // Do not probe that directory through Electron's virtual filesystem.
-    return { file: nodeExecutable(), args: [...process.execArgv, abs], cwd: desktopCli ? undefined : dirname(abs), viaShell: false }
+    // An entry inside an .asar archive carries the same hazard as the desktop
+    // CLI above: Electron's fs shim resolves the directory, the OS cannot chdir
+    // there, and CreateProcess fails with ENOENT naming an unrelated executable.
+    const entryInAsar = /[\\/][^\\/]+\.asar[\\/]/i.test(abs)
+    return { file: nodeExecutable(), args: [...process.execArgv, abs], cwd: desktopCli || entryInAsar ? undefined : dirname(abs), viaShell: false }
   }
   // Bare `dsh` is a .cmd shim on Windows that only a shell can start (#13).
   return { file: 'dsh', args: [], cwd: undefined, viaShell: winCmdShim }
@@ -597,6 +601,18 @@ export interface PluginCommandRuntime {
    * a broken profile instead of the option. Absent means "accepts".
    */
   acceptsMarketPnpmFlags?: boolean
+  /**
+   * Whether this runtime is already running an operation of its own, so the
+   * market's next one would be refused with `busy: true` (#1140).
+   *
+   * The official Desktop manager is the case: it holds `active`/`repairing`
+   * while its own install runs for minutes, and `/dsh-market/status` reported
+   * `busy: false` the whole time because it only knew about the market's own
+   * route flag. The client's queue then retried every 2s and re-showed the
+   * "another operation is running" banner on each refusal. Absent means
+   * "nothing else is running".
+   */
+  busy?(): boolean
 }
 
 /** One running package operation, however it was started. */

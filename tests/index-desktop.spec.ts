@@ -442,6 +442,19 @@ describe('unconfigured allowRestart stays undefined so detection can decide (#22
     expect(state.mounts[0].config.allowRestart).toBeUndefined()
   })
 
+  it('reads an editable field out of the live reference a newer host resolves (#1144)', () => {
+    // A `volatile` field resolves to a live reference on newer hosts, not to
+    // the value inside it. Handing that object on would leave the settings
+    // registration validating an object where it expects a boolean, and the
+    // market would report no namespace on hosts that do have one.
+    const ctx = new FakeContext({ webServer: {}, loader: {} })
+    apply(ctx as never, { allowRestart: { get: () => false }, maxSnapshots: { get: () => 4 } } as never)
+
+    expect(state.mounts).toHaveLength(1)
+    expect(state.mounts[0].config.allowRestart).toBe(false)
+    expect(state.mounts[0].config.maxSnapshots).toBe(4)
+  })
+
   it('still forwards an explicit setting verbatim, either way', () => {
     for (const allowRestart of [true, false]) {
       state.mounts = []
