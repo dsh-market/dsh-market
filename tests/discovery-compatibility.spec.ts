@@ -459,6 +459,16 @@ describe('host core packages declared as ordinary dependencies', () => {
     expect(result.requirement).toBe('>=0.2.0 ∩ ^0.2.2-rc.1')
   })
 
+  it('does not judge cordis or schemastery dependencies against the DSH version', () => {
+    // They are host packages but not on the 0.x lockstep line, so their range
+    // says nothing about the DSH version.
+    const result = deriveHostCompatibility(facts({
+      dependencies: { '@deepseek-ai/cordis': '^4.0.4', '@deepseek-ai/schemastery': '^3.18.1' },
+    }), '0.2.2-rc.1', new Set([...HOST_PACKAGES, '@deepseek-ai/cordis', '@deepseek-ai/schemastery']))
+    expect(result.status).toBe('unknown')
+    expect(result.declarations).toEqual([])
+  })
+
   it('holds a dependency to the installed range, not to peer leniency', () => {
     // `^0.0.1` as a PEER is forgiven: a sloppy caret ceiling that was never
     // meant as a host bound. As a DEPENDENCY it is an install instruction — pnpm

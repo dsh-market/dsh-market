@@ -298,7 +298,11 @@ export function deriveHostCompatibility(
     // That is the dsh-qqbot failure — @deepseek-ai/dsh-settings and
     // dsh-credentials as ordinary dependencies at `^0.1.0-rc.5` over a
     // 0.2.2-rc.1 runtime — which the peer-only check could not see.
-    if (!hostPackages.has(name)) continue
+    // Still only the lockstep line: the range is judged against the DSH
+    // version, and cordis (4.x) / schemastery (3.x) are not on it — a plugin
+    // that depends on `@deepseek-ai/cordis@^4` would otherwise read as
+    // incompatible with every host.
+    if (!hostPackages.has(name) || !/^@deepseek-ai\/dsh(?:-|$)/.test(name)) continue
     declarations.push({ kind: 'dependency', package: name, range: declared })
   }
   const requirement = displayRequirement(declarations)
