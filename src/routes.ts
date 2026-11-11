@@ -60,7 +60,7 @@ import { sourceWebUrl, updateNotesFor } from './changelog.ts'
 import { checkUpdates, isUpdatablePlugin, compareVersions, fetchNpmLatest, invalidateUpdates, readVersionMaturity, resolveDesktopMatureUpdate, resolveGitRemoteHead, isUpgrade, latestPublishedRecently, setUpdateRegistry, versionOnChannel } from './updates.ts'
 import { isStableReleaseVersion } from './release-candidates.ts'
 import { createUpdateNotificationMonitor } from './update-notifications.ts'
-import { isUpdateCheckIntervalHours } from './update-notification-settings.ts'
+import { DEFAULT_UPDATE_CHECK_INTERVAL_HOURS, isUpdateCheckIntervalHours } from './update-notification-settings.ts'
 import { createThemeManager, type LoaderEntry } from './themes.ts'
 import { readJsonBody, refuseUnadmitted, sameOrigin, sendJson } from './http.ts'
 import { resolveDshHome } from './home-paths.ts'
@@ -780,6 +780,10 @@ export function mountMarketRoutes(
     marketState.updateExempt = fresh.updateExempt
     marketState.backgroundUpdateChecks = fresh.backgroundUpdateChecks
     marketState.backgroundUpdateIntervalHours = fresh.backgroundUpdateIntervalHours
+    // Snapshot restore replaces the persisted choices, so its live scheduler
+    // must follow too. An older snapshot has neither choice: off, six hours.
+    updateNotifications.setEnabled(fresh.backgroundUpdateChecks === true)
+    updateNotifications.setIntervalHours(fresh.backgroundUpdateIntervalHours ?? DEFAULT_UPDATE_CHECK_INTERVAL_HOURS)
     marketState.githubProxy = fresh.githubProxy
     // A restore or an external writer can change these two too; a stale copy
     // here would put the old answer back on the next whole-state save (#435).
@@ -2611,6 +2615,11 @@ export function mountMarketRoutes(
           spec, readInstalledVersion(config.profile, name, activeProfileDir),
           readGitResolutionCommit(config.profile, spec, activeProfileDir),
           commits.get(hostedRepoKey(spec) ?? '') ?? null,
+          // A local package can switch forks at the same path and version.
+          // Reuse its manifest/checkout evidence, without scanning a directory
+          // tree or changing the authority of explicit git/npm sources.
+          /^(?:file|link):/i.test(spec)
+            ? readInstalledRepoEvidence(config.profile, name, spec, activeProfileDir) : null,
         ])])),
       }
     },

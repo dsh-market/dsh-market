@@ -6,6 +6,7 @@ import { Readable } from 'node:stream'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { mountMarketRoutes, type MarketHost } from '../src/routes.ts'
 import { readMarketState, writeMarketState } from '../src/hot.ts'
+import { createProfileSnapshot } from '../src/snapshot.ts'
 import { setRequestGateSource } from '../src/http.ts'
 import * as registry from '../src/registry.ts'
 import * as updates from '../src/updates.ts'
@@ -136,14 +137,18 @@ describe('update notification HTTP routes', () => {
       name: 'catalog-widget', npm: 'published-widget', owner: 'owner', url: 'https://github.com/owner/widget',
       category: 'other', description: { en: 'widget' }, install: '', added: '',
     }] })
-    await hit('POST', PATH, { check: true })
+    const checked = await hit('POST', PATH, { check: true })
+    expect(checked.json.updates.widget).toMatchObject({ latest: '2.0.0', updateAvailable: true, restoreRequired: true })
     writeMarketState(dir, { disabled: new Set(), groups: {}, groupOrder: [], blocked: ['published-widget', 'absent'] })
     const catalogCalls = vi.mocked(registry.loadRegistry).mock.calls.length
     const fetchCalls = vi.mocked(fetch).mock.calls.length
     expect((await hit('GET')).json.blocked).toEqual(['published-widget', 'absent', 'widget'])
     // The spec and directory are unchanged, but this is now another fork.
     writeManifest('different/widget')
-    expect((await hit('GET')).json.blocked).toEqual(['published-widget', 'absent'])
+    const replaced = await hit('GET')
+    expect(replaced.json.blocked).toEqual(['published-widget', 'absent'])
+    expect(replaced.json.updates).toEqual({})
+    expect(replaced.json.stale).toBe(true)
     profile({ widget: 'github:owner/widget' })
     expect((await hit('GET')).json.blocked).toContain('widget')
     profile({ widget: 'github:different/widget' })
@@ -152,6 +157,31 @@ describe('update notification HTTP routes', () => {
     expect((await hit('GET')).json.blocked).toEqual(['published-widget', 'absent'])
     expect(registry.loadRegistry).toHaveBeenCalledTimes(catalogCalls)
     expect(fetch).toHaveBeenCalledTimes(fetchCalls)
+  })
+
+  it.each([
+    { enabled: false, intervalHours: 72 as const },
+    { enabled: true, intervalHours: 12 as const },
+    { enabled: undefined, intervalHours: undefined },
+  ])('applies restored notification settings to the live monitor: %j', async saved => {
+    writeMarketState(dir, { disabled: new Set(), groups: {}, groupOrder: [],
+      backgroundUpdateChecks: saved.enabled, backgroundUpdateIntervalHours: saved.intervalHours })
+    const captured = createProfileSnapshot(dir)
+    expect(captured.ok).toBe(true)
+    if (!captured.ok) throw new Error(captured.error)
+    // Change both choices after capture, then restore through the real route.
+    await hit('POST', PATH, { enabled: saved.enabled !== true, intervalHours: 168 })
+    const restored = await hit('POST', '/dsh-market/restore-snapshot', { snapshot: captured.snapshot.id })
+    expect(restored.status).toBe(200)
+    expect(readMarketState(dir).backgroundUpdateChecks).toBe(saved.enabled)
+    expect(readMarketState(dir).backgroundUpdateIntervalHours).toBe(saved.intervalHours)
+    expect((await hit('GET')).json).toMatchObject({ enabled: saved.enabled === true,
+      intervalHours: saved.intervalHours ?? 6, nextCheckAt: saved.enabled === true ? Date.now() + 30_000 : null })
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(registry.loadRegistry).toHaveBeenCalledTimes(saved.enabled === true ? 1 : 0)
+    if (saved.enabled === true) {
+      expect((await hit('GET')).json.nextCheckAt).toBe(Date.now() + saved.intervalHours! * 60 * 60_000)
+    }
   })
 
   it('persists the switch and validates requests before changing it', async () => {
