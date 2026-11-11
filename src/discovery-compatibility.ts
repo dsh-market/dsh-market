@@ -22,8 +22,8 @@ export type HostCompatibilityStatus = 'compatible' | 'incompatible' | 'unknown'
 export type HostCompatibilityBasis = 'manifest' | 'undeclared' | 'unavailable'
 
 export interface HostRequirementDeclaration {
-  kind: 'engine' | 'peer'
-  /** Present only for a peer-derived declaration. */
+  kind: 'engine' | 'peer' | 'dependency'
+  /** Present only for a peer- or dependency-derived declaration. */
   package?: string
   range: string
 }
@@ -40,6 +40,12 @@ export interface NpmManifestFacts {
   version: string | null
   enginesDsh: string | null
   peerDependencies: Record<string, string>
+  /**
+   * Ordinary dependencies that name a host package. Optional only because a
+   * durable cache entry or a catalog release manifest written before this
+   * field existed carries no value; a missing field declares nothing.
+   */
+  dependencies?: Record<string, string>
 }
 
 interface CacheEntry {
@@ -79,7 +85,12 @@ export function catalogReleaseManifest(source: GitHubManifestSource): NpmManifes
   const release = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/releases\/download\/[^/]+\/[^/?#]+\.(?:tgz|tar\.gz)$/.exec(source.tarball ?? '')
   if (facts === null || !repository || !release || release[1]!.toLowerCase() !== repository.toLowerCase()
     || facts.tarball !== source.tarball || !validFacts(facts)) return null
-  return { version: facts.version, enginesDsh: facts.enginesDsh, peerDependencies: facts.peerDependencies }
+  return {
+    version: facts.version,
+    enginesDsh: facts.enginesDsh,
+    peerDependencies: facts.peerDependencies,
+    dependencies: facts.dependencies ?? {},
+  }
 }
 
 /** Read the linked package at its selected release, never the repository root by accident. */
@@ -173,22 +184,36 @@ export function manifestFacts(value: unknown): NpmManifestFacts {
     const declared = range(raw)
     if (declared !== null) peerDependencies[name] = declared
   }
+  const dependencies = record(manifest.dependencies)
+  const hostDependencies: Record<string, string> = {}
+  for (const [name, raw] of Object.entries(dependencies ?? {})) {
+    if (!name.startsWith('@deepseek-ai/')) continue
+    const declared = range(raw)
+    if (declared !== null) hostDependencies[name] = declared
+  }
   return {
     version: range(manifest.version),
     enginesDsh: range(engines?.dsh) ?? range(dshEngines?.dsh),
     peerDependencies,
+    dependencies: hostDependencies,
   }
 }
 
 function validFacts(value: unknown): value is NpmManifestFacts {
   const facts = record(value)
   const peers = record(facts?.peerDependencies)
+  // A missing `dependencies` is a pre-upgrade cache entry or catalog manifest,
+  // not a malformed one: the durable cache must survive the upgrade rather than
+  // be discarded and refetched a thousand packages at once.
+  const dependencies = record(facts?.dependencies)
   return facts !== null
     && (facts.version === null || range(facts.version) === facts.version)
     && (facts.enginesDsh === null || range(facts.enginesDsh) === facts.enginesDsh)
     && peers !== null
     && Object.entries(peers).every(([name, item]) =>
       name.startsWith('@deepseek-ai/') && range(item) === item)
+    && (dependencies === null || Object.entries(dependencies).every(([name, item]) =>
+      name.startsWith('@deepseek-ai/') && range(item) === item))
 }
 
 function displayRequirement(declarations: HostRequirementDeclaration[]): string | null {
@@ -219,7 +244,12 @@ function declarationResult(
   hostVersion: string,
 ): boolean | null {
   const satisfied = rangeResult(hostVersion, declaration.range)
-  if (declaration.kind === 'engine' || satisfied !== false) return satisfied
+  // Only a PEER may be stretched: it is a statement of intent about the host
+  // line, and the ecosystem is full of sloppy caret ceilings. An engine is a
+  // plain bound, and a DEPENDENCY is an install instruction — pnpm resolves
+  // the declared range and hoists the result, so a range that excludes the
+  // running version means a second copy shadows the host's.
+  if (declaration.kind !== 'peer' || satisfied !== false) return satisfied
   if (crossesImplicitCeiling(hostVersion, declaration.range)) return false
   const verdict = classifyPeer(
     'discovery',
@@ -259,6 +289,21 @@ export function deriveHostCompatibility(
     // curated fallback, so future lockstep DSH packages are picked up too.
     if (!hostPackages.has(name) || !/^@deepseek-ai\/dsh(?:-|$)/.test(name)) continue
     declarations.push({ kind: 'peer', package: name, range: declared })
+  }
+  for (const [name, declared] of Object.entries(facts.dependencies ?? {})) {
+    // The peer filter above restricts itself to DSH's lockstep line because a
+    // peer range on cordis or schemastery says nothing about the DSH version.
+    // A dependency is different: it names a package the host itself provides,
+    // and pnpm will install the declared copy and hoist it over the host's.
+    // That is the dsh-qqbot failure — @deepseek-ai/dsh-settings and
+    // dsh-credentials as ordinary dependencies at `^0.1.0-rc.5` over a
+    // 0.2.2-rc.1 runtime — which the peer-only check could not see.
+    // Still only the lockstep line: the range is judged against the DSH
+    // version, and cordis (4.x) / schemastery (3.x) are not on it — a plugin
+    // that depends on `@deepseek-ai/cordis@^4` would otherwise read as
+    // incompatible with every host.
+    if (!hostPackages.has(name) || !/^@deepseek-ai\/dsh(?:-|$)/.test(name)) continue
+    declarations.push({ kind: 'dependency', package: name, range: declared })
   }
   const requirement = displayRequirement(declarations)
   if (declarations.length === 0) {
@@ -316,7 +361,11 @@ export class DiscoveryManifestIndex {
       for (const [name, raw] of Object.entries(parsed.entries as Record<string, unknown>)) {
         const entry = record(raw)
         if (entry === null || typeof entry.checkedAt !== 'number' || !validFacts(entry.facts)) continue
-        this.entries.set(name, { checkedAt: entry.checkedAt, facts: entry.facts })
+        // Normalize the pre-upgrade shape so every consumer sees an object.
+        const facts = entry.facts.dependencies === undefined
+          ? { ...entry.facts, dependencies: {} }
+          : entry.facts
+        this.entries.set(name, { checkedAt: entry.checkedAt, facts })
       }
     } catch { /* first run or a truncated cache — fetch fresh */ }
   }

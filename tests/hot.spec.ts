@@ -328,6 +328,42 @@ describe('mountClientOnlyDeps vs packages the bundle layer already mounts (#1137
     }
   })
 
+  it('finds an official bundle in the host installation, where a plain dsh web keeps it (#1137)', async () => {
+    // Reported on a global npm install: the profile's node_modules holds only
+    // a few linked packages, and `@deepseek-ai/dsh-web-app` lives under the
+    // dsh package itself. Looking only in the profile read it as an empty
+    // bundle, so the warning came back exactly as before.
+    const dir = mkdtempSync(join(tmpdir(), 'dshm-hot-'))
+    const host = mkdtempSync(join(tmpdir(), 'dshm-host-'))
+    try {
+      writeFileSync(join(host, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh', version: '0.2.0' }))
+      writeFileSync(join(dir, 'package.json'), JSON.stringify({
+        dependencies: {
+          '@deepseek-ai/dsh-client-connection': 'link:../host/node_modules/@deepseek-ai/dsh-client-connection',
+          'dsh-free-plugin': '^1.0.0',
+        },
+        dsh: { profile: { bundles: ['@deepseek-ai/dsh-web-app'] } },
+      }))
+      clientOnlyPkg(dir, '@deepseek-ai/dsh-client-connection')
+      clientOnlyPkg(dir, 'dsh-free-plugin')
+      // The bundle exists ONLY under the host, never under the profile.
+      bundlePkg(host, '@deepseek-ai/dsh-web-app',
+        "- id: connection\n  name: '@deepseek-ai/dsh-client-connection'\n  inject: [webStartup]\n")
+
+      const mounted = await mountClientOnlyDeps(ctx, dir, host)
+      expect(mounted).not.toContain('@deepseek-ai/dsh-client-connection')
+      expect(mounted).toContain('dsh-free-plugin')
+      // And with no host to look in, the old behaviour stands: the bundle is
+      // unreadable, so the shim is still mounted rather than silently dropped.
+      for (const name of listHotMounts()) await hotUnmount(name)
+      const without = await mountClientOnlyDeps(ctx, dir, null)
+      expect(without).toContain('@deepseek-ai/dsh-client-connection')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+      rmSync(host, { recursive: true, force: true })
+    }
+  })
+
   it('reads the declared patch file, and does not count a commented-out row', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'dshm-hot-'))
     try {

@@ -114,7 +114,7 @@ export interface HostCompatibility {
   status: 'compatible' | 'incompatible' | 'unknown'
   basis: 'manifest' | 'undeclared' | 'unavailable'
   requirement: string | null
-  declarations: Array<{ kind: 'engine' | 'peer'; package?: string; range: string }>
+  declarations: Array<{ kind: 'engine' | 'peer' | 'dependency'; package?: string; range: string }>
 }
 
 /** npm package name or GitHub catalog URL -> discovery-time host verdict. */
@@ -936,12 +936,38 @@ function entryRepoIds(plugin: RegistryPlugin): Set<string> {
 function repoRoots(ids: ReadonlySet<string>): Set<string> {
   return new Set([...ids].map(id => id.split('#path:/')[0]!))
 }
-function sameSourceConflict(plugin: RegistryPlugin, spec: string, repoIdentities: readonly string[] = []): boolean {
-  const entry = repoRoots(entryRepoIds(plugin))
+/**
+ * An entry's repository roots, per entry object. A pure function of an object
+ * that outlives every call, like `entryIdCache` above, and asked about every
+ * entry on every pass of the installed matching (#1097).
+ */
+const entryRootCache = new WeakMap<RegistryPlugin, Set<string>>()
+
+function entryRoots(plugin: RegistryPlugin): Set<string> {
+  const cached = entryRootCache.get(plugin)
+  if (cached !== undefined) return cached
+  const roots = repoRoots(entryRepoIds(plugin))
+  entryRootCache.set(plugin, roots)
+  return roots
+}
+
+/**
+ * `sameSourceConflict` for ONE dependency against many entries: the
+ * dependency's half is built once, not once per entry (#1097).
+ */
+function sourceConflictWith(spec: string, repoIdentities: readonly string[] = []): (plugin: RegistryPlugin) => boolean {
   const dep = repoRoots(depRepoIds(spec, repoIdentities))
-  if (entry.size === 0 || dep.size === 0) return false
-  for (const id of dep) if (entry.has(id)) return false
-  return true
+  if (dep.size === 0) return () => false
+  return (plugin) => {
+    const entry = entryRoots(plugin)
+    if (entry.size === 0) return false
+    for (const id of dep) if (entry.has(id)) return false
+    return true
+  }
+}
+
+function sameSourceConflict(plugin: RegistryPlugin, spec: string, repoIdentities: readonly string[] = []): boolean {
+  return sourceConflictWith(spec, repoIdentities)(plugin)
 }
 
 function repoHintMatches(plugin: RegistryPlugin, hints: readonly string[]): boolean {
@@ -1022,10 +1048,16 @@ export function matchInstalledName(
     }
     if (depRepoIds(specStr, repos).size === 0 && plugins !== undefined && looseMatchCount(plugins, name) > 1
       && !repoHintMatches(plugin, repoHints[name] ?? [])) continue
-    if (sameSourceConflict(plugin, specStr, repos)) continue
+    // The cheap test first: identities meet for a handful of installed
+    // dependencies at most, and only those can be a source conflict (#1097).
+    // Both terms are pure and the result is their conjunction, so the order
+    // changes nothing but the cost.
+    let meets = false
     for (const id of depIdentities(name, specStr, repos)) {
-      if (ids.has(id)) return name
+      if (ids.has(id)) { meets = true; break }
     }
+    if (!meets || sameSourceConflict(plugin, specStr, repos)) continue
+    return name
   }
   return null
 }
@@ -1043,10 +1075,13 @@ export function entryForDep(
     if (hinted === undefined) return undefined
   }
   const ids = depIdentities(name, String(spec), repoIdentities)
+  const conflicts = sourceConflictWith(String(spec), repoIdentities)
   return plugins.find((plugin) => {
-    if (sameSourceConflict(plugin, String(spec), repoIdentities)) return false
-    for (const id of entryIdentities(plugin)) if (ids.has(id)) return true
-    return false
+    // Identity first: it rejects nearly every entry for a few set lookups,
+    // and only the survivors can be a source conflict (#1097).
+    let meets = false
+    for (const id of entryIdentities(plugin)) if (ids.has(id)) { meets = true; break }
+    return meets && !conflicts(plugin)
   })
 }
 

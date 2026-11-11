@@ -2909,6 +2909,41 @@ describe('update flow — no npm publishing required', () => {
     expect(listed.json.brokenPlugins['dsh-loop']).toMatchObject({ spec: specBefore, reason: 'incomplete-build-cancelled' })
   })
 
+  it('clears the removed-declaration notice by the package it reinstalled, not the catalog display name (#1164)', async () => {
+    // The reporter's entry has BOTH names and they differ: the catalog row is
+    // `dsh-genui` (the GitHub repo's casing) while the package is
+    // `@changfenhuang/dsh-genui`. Records are keyed by the profile dependency
+    // name, so `clearBrokenPlugin(entry.name)` after a successful reinstall
+    // hit a key that was never there — a silent no-op that left the spent
+    // notice on screen through page reloads, DSH restarts and a market
+    // upgrade, with no `update-reinstalled` in the log.
+    fake.npm['@changfenhuang/dsh-genui'] = { latest: '1.4.0', versions: { '1.4.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } } }
+    const first = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/omdsh-dev/dsh-genui' })
+    expect(first.json.ok).toBe(true)
+
+    // Reach the record the way the reporter did — a cancel mid-swap, which
+    // drops the declaration and files the notice under the PACKAGE name.
+    fake.npm['@changfenhuang/dsh-genui'].latest = '1.5.0'
+    fake.npm['@changfenhuang/dsh-genui'].versions['1.5.0'] = { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] }
+    fake.cancelNext = true
+    fake.cancelClears = { name: '@changfenhuang/dsh-genui', cleared: ['package.json', 'lib/index.js'] }
+    const cancelledRun = await bed.dispatch('POST', '/dsh-market/update', { name: '@changfenhuang/dsh-genui' })
+    expect(cancelledRun.json).toMatchObject({ ok: false, cancelled: true })
+    const broken = (await bed.dispatch('GET', '/dsh-market/installed')).json.brokenPlugins as Record<string, unknown>
+    expect(broken['@changfenhuang/dsh-genui']).toBeTruthy()
+
+    // Reinstalling from the market is the designed way out of that notice.
+    const again = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/omdsh-dev/dsh-genui' })
+    expect(again.json.ok).toBe(true)
+    const after = (await bed.dispatch('GET', '/dsh-market/installed')).json.brokenPlugins as Record<string, unknown>
+    expect(after['@changfenhuang/dsh-genui']).toBeUndefined()
+    // The clear ran with the PACKAGE key, which is what `update-reinstalled`
+    // names — the pre-fix run logged nothing at all, because
+    // clearBrokenPlugin() returned before writing anything.
+    expect((await bed.dispatch('GET', '/dsh-market/logs')).text).toContain('update-reinstalled')
+    expect((await bed.dispatch('GET', '/dsh-market/logs')).text).toContain('@changfenhuang/dsh-genui: installed again')
+  })
+
   it('leaves an ordinary cancel alone when the previous build can still load (#663)', async () => {
     // The common cancel: stopped before the swap. Nothing is dropped, nothing
     // is restored — the user's choice stands exactly as before.
@@ -7673,6 +7708,106 @@ describe('bundle-layer uninstall live-disable (#37)', () => {
   })
 })
 
+describe('a `disabled: !!js` guard survives the toggle (#1175)', () => {
+  const tui = '@deepseek-harness-tui/dsh-tui'
+  const manifestPath = (): string => join(profileDir('web'), 'package.json')
+
+  /** A loader entry the running host would hold for one row. */
+  function entry(name: string, id: string, disabled: boolean | null): Testbed['loaderEntries'][number] {
+    const row: Testbed['loaderEntries'][number] = {
+      options: { id, name, disabled } as never,
+      fiber: disabled === true ? undefined : {},
+      update: vi.fn(async (next: { disabled: boolean | null }) => {
+        row.options.disabled = next.disabled
+        row.fiber = next.disabled === true ? undefined : {}
+      }),
+    }
+    return row
+  }
+
+  /** Write an installed package whose bundle patch is `patch`, and declare it. */
+  function seedPackage(name: string, patch: string[]): void {
+    const dir = profileDir('web')
+    const pkgDir = join(dir, 'node_modules', name)
+    mkdirSync(pkgDir, { recursive: true })
+    writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({
+      name, version: '1.0.0', type: 'module',
+      dsh: { bundle: { patch: './cordis.patch.yml' } },
+    }, null, 2))
+    writeFileSync(join(pkgDir, 'cordis.patch.yml'), `${patch.join('\n')}\n`)
+    writeFileSync(manifestPath(), JSON.stringify({
+      dependencies: { [name]: '1.0.0' },
+      dsh: { profile: { bundles: [name] } },
+    }, null, 2))
+  }
+
+  /**
+   * dsh-tui's real shape: insert rows whose `disabled` is an expression over
+   * the host's own loader tree, plus a foreign row it reconfigures — the
+   * second part is what makes the package a carrier.
+   */
+  const tuiPatch = (): string[] => [
+    '- insert:',
+    '    - id: dsh-tui-storage',
+    `      name: '${tui}/storage'`,
+    '    - id: dsh-tui-storage-domain',
+    `      name: '${tui}/storage-domain'`,
+    '      disabled: !!js "[...ctx.loader.entries()].some(entry => entry.options.id === \'storage-domain\')"',
+    '- id: preset-standard',
+    '  inject: [dshTuiHost]',
+  ]
+
+  it('does not drive a carrier\'s rows up: the swap needs one composition', async () => {
+    bed.dispose()
+    seedPackage(tui, tuiPatch())
+    bed = createTestbed()
+    const guarded = entry(`${tui}/storage-domain`, 'dsh-tui-storage-domain', true)
+    const plain = entry(`${tui}/storage`, 'dsh-tui-storage', true)
+    bed.loaderEntries.push(guarded, plain)
+
+    const on = await bed.dispatch('POST', '/dsh-market/toggle', { name: tui, enabled: true })
+
+    expect(on.status).toBe(200)
+    // A carrier switch always lands on the next composition, and the reply
+    // says so — which is the only reason it is safe to skip the live half.
+    expect(on.json.restart).toBe(true)
+    // The reproducer: enabling used to call `update({ disabled: null })` on
+    // the guarded row, the row mounted a second copy of the host's
+    // storage-domain, and dsh exited with `storage form 'domain' is already
+    // mounted`.
+    expect(guarded.update).not.toHaveBeenCalled()
+    expect(guarded.options.disabled).toBe(true)
+    expect(plain.update).not.toHaveBeenCalled()
+  })
+
+  it('still switches on the rows of a non-carrier that carries no guard', async () => {
+    const ordinary = 'dsh-guarded'
+    bed.dispose()
+    seedPackage(ordinary, [
+      '- insert:',
+      `    - id: ${ordinary}`,
+      `      name: '${ordinary}'`,
+      '    - id: dsh-guarded-extra',
+      `      name: '${ordinary}/extra'`,
+      '      disabled: !!js "process.platform === \'win32\'"',
+    ])
+    bed = createTestbed()
+    const plain = entry(ordinary, ordinary, true)
+    const guarded = entry(`${ordinary}/extra`, 'dsh-guarded-extra', true)
+    bed.loaderEntries.push(plain, guarded)
+
+    const on = await bed.dispatch('POST', '/dsh-market/toggle', { name: ordinary, enabled: true })
+
+    expect(on.status).toBe(200)
+    // The row the environment keeps off stays off; the rest of the package
+    // still comes up in this process.
+    expect(guarded.update).not.toHaveBeenCalled()
+    expect(guarded.options.disabled).toBe(true)
+    expect(plain.options.disabled).toBeNull()
+    expect(plain.fiber).toBeDefined()
+  })
+})
+
 describe('generic enable/disable toggle (#60)', () => {
   function installNpm(name: string, dsh: Record<string, unknown> = {}): Promise<void> {
     fake.npm[name] = {
@@ -10159,6 +10294,68 @@ describe('a pinned install is judged on its own release, not on latest (#581)', 
     expect(refused.json.hostIncompatible).toMatchObject({ version: '1.0.0', requirement: '>=99.0.0', npmName: 'dsh-loop' })
     expect(fake.calls.filter(call => call[0] === 'add')).toEqual([])
   })
+
+  it('offers a young compatible update on a CLI host, where the update can install it', async () => {
+    // The CLI update retries once with --config.minimum-release-age=0 (#39),
+    // so a release inside the wait still installs. Calling it "held" there
+    // disabled the dialog's Update button for an update that works.
+    const pkg = { dsh: {}, main: 'lib/index.js' }
+    fake.npm['dsh-loop'] = { latest: '1.0.0', versions: { '1.0.0': { manifest: pkg, artifacts: ['lib/index.js'] }, '1.2.0': { manifest: pkg, artifacts: ['lib/index.js'] } } }
+    expect((await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop', version: '1.0.0' })).status).toBe(200)
+    writeFileSync(join(fake.profileDir, 'pnpm-workspace.yaml'), 'minimumReleaseAge: 1440\nminimumReleaseAgeIgnoreMissingTime: false\n')
+    fake.npm['dsh-loop'].latest = '1.2.0'
+    fake.releaseHold = { mature: '1.0.0', strict: true }
+    fake.calls = []
+    const young = new Date(Date.now() - 3_600_000).toISOString()
+    const old = new Date(Date.now() - 72 * 3_600_000).toISOString()
+    const release = (version: string) => manifest(version, version === '2.0.0' ? '>=99.0.0' : `>=${HOST_VERSION}`)
+    vi.stubGlobal('fetch', vi.fn(async (input: unknown) => {
+      const url = String(input)
+      if (url.endsWith('/dsh-loop/latest')) return new Response(JSON.stringify(release('2.0.0')))
+      if (/\/dsh-loop(?:\?t=\d+)?$/.test(url)) return new Response(JSON.stringify({
+        'dist-tags': { latest: '2.0.0' },
+        versions: { '1.0.0': release('1.0.0'), '1.2.0': release('1.2.0'), '2.0.0': release('2.0.0') },
+        time: { '1.0.0': old, '1.2.0': young, '2.0.0': young },
+      }))
+      const exact = /\/dsh-loop\/(\d+\.\d+\.\d+)$/.exec(url)
+      if (exact) return new Response(JSON.stringify(release(exact[1]!)))
+      return new Response('{}', { status: 404 })
+    }))
+
+    const found = await bed.dispatch('POST', '/dsh-market/find-compatible', { npmName: 'dsh-loop', upgradeOnly: true })
+    expect(found.json).toMatchObject({ compatibleVersion: '1.2.0', maturity: null })
+    const updated = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop', compatVersion: '1.2.0' })
+    expect(updated.status, JSON.stringify(updated.json)).toBe(200)
+    expect(installedSpec('dsh-loop')).toBe('^1.2.0')
+
+    // The Desktop manager has no bypass, so there the dialog keeps the wait.
+    bed.dispose()
+    bed = createTestbed({ desktopHost: true })
+    writeFileSync(join(fake.profileDir, 'pnpm-workspace.yaml'), 'minimumReleaseAge: 1440\nminimumReleaseAgeIgnoreMissingTime: false\n')
+    const onDesktop = await bed.dispatch('POST', '/dsh-market/find-compatible', { npmName: 'dsh-loop' })
+    expect(onDesktop.json.maturity).toMatchObject({ version: '1.2.0', held: true, installable: false })
+  })
+
+  it('does not report a landed install as failed when the host reloaded the market while it was checking', async () => {
+    // A plugin with its own host half can make the host reload the market
+    // before this request finishes. The old instance throws "inactive
+    // context" from then on; the package is already installed, and the new
+    // instance reports its real state, so the answer must not be a 500.
+    const pkg = { dsh: {}, main: 'lib/index.js' }
+    fake.npm['dsh-loop'] = { latest: '1.0.0', versions: { '1.0.0': { manifest: pkg, artifacts: ['lib/index.js'] } } }
+    bed.loaderEntries.push({
+      options: { id: 'other' },
+      get fiber() {
+        bed.dispose()
+        throw new Error('cannot get required service "loader" in inactive context')
+      },
+    } as never)
+
+    const answer = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop', version: '1.0.0' })
+    expect(answer.status, JSON.stringify(answer.json)).toBe(200)
+    expect(answer.json).toMatchObject({ ok: true, marketReloaded: true })
+    expect(installedSpec('dsh-loop')).toBe('^1.0.0')
+  })
 })
 
 describe('Issue #991 Desktop stable npm update route', () => {
@@ -11083,7 +11280,12 @@ describe('catalog-owned floating release archives', () => {
   })
   afterEach(() => { registryModule.loadRegistry.mockImplementation(() => Promise.resolve(REGISTRY)) })
 
-  it('lists and applies a published complete package without switching to npm or source', async () => {
+  it.each([
+    original,
+    'https://github.com/o/whale/releases/download/v1.0.0/full-1.0.0.tgz',
+  ])('lists and applies a published complete package from %s', async spec => {
+    writeFileSync(join(fake.profileDir, 'package.json'), JSON.stringify({ dependencies: { 'dsh-whale': spec }, dsh: { profile: { bundles: ['dsh-whale'] } } }))
+    fake.tarballs[spec] = fake.tarballs[original]!
     const page = await bed.dispatch('GET', '/dsh-market/updates?force=1')
     expect(page.json.updates['dsh-whale']).toMatchObject({ latest: '2.0.0', updateAvailable: true })
     const single = await bed.dispatch('GET', '/dsh-market/api/v1/updates?name=dsh-whale&force=1')

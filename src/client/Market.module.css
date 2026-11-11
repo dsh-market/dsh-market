@@ -896,6 +896,7 @@
 .irow button{white-space:nowrap;flex-shrink:0}
 .tabSearchRow{display:flex;align-items:center;gap:8px;padding:0 4px 10px}
 .tabSearch{flex:1;min-width:0}
+.groupBulkActions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:0 4px 10px}
 /* Capability disclosure (#401). Quiet by design: these are facts beside the
    install button, not a warning banner — the one loud element is a red line,
    and it borrows the warning colour rather than inventing a severity scale. */

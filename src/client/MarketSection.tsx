@@ -3885,7 +3885,11 @@ export function MarketSection(props: MarketSectionProps) {
   }, [data])
 
   useEffect(() => {
-    if (busyUrl === null && updatingName === null) {
+    // An uninstall in flight is polled like an install or an update: without it
+    // nothing asked the host how the operation was going, so a market the host
+    // unloaded mid-uninstall never reached the 404 that says so, and the row
+    // read "uninstalling" until a restart (#1056).
+    if (busyUrl === null && updatingName === null && removingName === null) {
       // `hostBusy` is sampled by the progress poll. A normal update response
       // can settle the local operation before the next poll observes the
       // route lock released, leaving the restart button disabled until this
@@ -4040,7 +4044,7 @@ export function MarketSection(props: MarketSectionProps) {
         .catch(() => {})
     }, 2000)
     return () => clearInterval(timer)
-  }, [applyDrainStatus, busyUrl, updatingName, data, installed, repoIdentities, repoHints, refreshInstalled, lang, restoreDrainMarkers, t])
+  }, [applyDrainStatus, busyUrl, updatingName, removingName, data, installed, repoIdentities, repoHints, refreshInstalled, lang, restoreDrainMarkers, t])
 
   const scrollToTop = () => {
     const el = listScroller(surface, rootRef.current, bodyRef.current, themesFullscreen)
@@ -4242,8 +4246,13 @@ export function MarketSection(props: MarketSectionProps) {
     [data, q, cat, lang, sortField, sortDir, timeRange])
   // One plugin can be stored under the installed name or the catalog name.
   // Both have to hide the card and skip Update all (#657).
+  // With nothing blocked — the default — the answer is false for every entry,
+  // and it is decided before the matching below could change it: the matching
+  // is an ARGUMENT, so without this it ran for the whole catalog first and only
+  // then was asked of an empty set (#1097, ~730 ms at 9.9k entries).
   const pluginBlocked = (plugin: RegistryPlugin): boolean =>
-    blockAliases(plugin, matchInstalledName(plugin, installed, repoIdentities, data?.plugins, repoHints))
+    blockedNameSet.size > 0
+    && blockAliases(plugin, matchInstalledName(plugin, installed, repoIdentities, data?.plugins, repoHints))
       .some(name => blockedNameSet.has(name))
   // Memoized because one call walks the WHOLE catalog
   // (`catalogEntryForInstalled` → `entryForDep` → `sameSourceConflict` per
@@ -8399,6 +8408,18 @@ export function MarketSection(props: MarketSectionProps) {
                   {installedView === 'groups'
                       ? (
                           <>
+                            {groupOrder.length > 0 && (
+                              <div className={css.groupBulkActions}>
+                                <Button variant="ghost" size="sm"
+                                  disabled={groupQuery !== '' || groupOrder.every(gid => collapsedGroups.has(gid))}
+                                  onClick={() => setCollapsedGroups(new Set(groupOrder))}
+                                >{t('groupCollapseAll')}</Button>
+                                <Button variant="ghost" size="sm"
+                                  disabled={groupQuery !== '' || !groupOrder.some(gid => collapsedGroups.has(gid))}
+                                  onClick={() => setCollapsedGroups(new Set())}
+                                >{t('groupExpandAll')}</Button>
+                              </div>
+                            )}
                             {groupQuery === '' && groupOrder.length === 0
                               ? <div className={css.empty}>{t('noGroups')}</div>
                               : visibleGroupIds.map(gid => {

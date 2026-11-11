@@ -1088,6 +1088,18 @@ export function mountMarketRoutes(
     if (enabled) {
       if (listHotMounts().includes(name)) {
         ok = true
+      } else if (carrierRowIds(dir, name).length > 0) {
+        // A carrier replaces something: its patch disables stock rows and its
+        // own rows stand in for them, with `disabled: !!js …` guards deciding
+        // which of the two is live on THIS host. Driving those rows up in the
+        // running process clears the guards and mounts the replacement beside
+        // the stock row — a second copy of a module the host already holds
+        // (`storage form 'domain' is already mounted`), which dsh answers by
+        // exiting (#1175). Enabling is the mirror of the disable branch below
+        // (#1010): the swap needs one composition, and a carrier switch is
+        // already reported as "restart to apply" — so nothing is gained by
+        // doing it live, and the host can die trying.
+        ok = true
       } else if (await themes.setEntryDisabled(name, false)) {
         ok = true
       } else {
@@ -3442,7 +3454,12 @@ export function mountMarketRoutes(
           // agrees: the dialog says "update to X", and clicking that used to
           // dead-end on a 409 the log never mentioned. Answer both questions
           // here, where the caller can say "in about N hours" up front.
-          const maturity = compatibleVersion === null
+          // An update on a CLI host has the one-shot release-age bypass (#39)
+          // and installs a young release, the same reason checkUpdates holds
+          // young releases on the Desktop only: there "held" would disable an
+          // Update button that works.
+          const ageGated = !upgradeOnly || config.desktopHost === true
+          const maturity = compatibleVersion === null || !ageGated
             ? null
             : await readVersionMaturity(npmName, compatibleVersion, config.profile, activeProfileDir)
           logEvent('info', 'find-compatible',
@@ -7636,6 +7653,8 @@ sendJson(response, 200, { updates })
           sendJson(response, 403, { error: 'untrusted origin' })
           return
         }
+        // Set once the package is on disk, so a failure after that point is not reported as a failed install.
+        let installLanded = false
         try {
           const body = (await readJsonBody(request)) as {
             url?: unknown
@@ -8042,6 +8061,7 @@ sendJson(response, 200, { updates })
             } | undefined
             let addedPackages: string[] = []
             if (ok) {
+              installLanded = true
               const added = Object.keys(installed).filter(name => !before.has(name))
               addedPackages = added
               if (added.length > 0) {
@@ -8176,7 +8196,23 @@ sendJson(response, 200, { updates })
                 }
               }
             }
-            if (ok) clearBrokenPlugin(entry.name)
+            // #1164: brokenPlugins is keyed by the PROFILE DEPENDENCY name —
+            // the update path drops the declaration and records `name` there,
+            // so the notice can be found by the package the user actually has.
+            // A catalog entry is not that key: `entry.name` is the DISPLAY
+            // name (the GitHub repo's casing, e.g. "DSH-better-sidebar") while
+            // the package it installs is `entry.npm`. Clearing by the display
+            // name was a silent no-op for every entry whose two differ, so the
+            // spent notice outlived reloads, restarts and market upgrades
+            // until the user dismissed it by hand. Clear by what this run
+            // actually put into the profile, plus the entry's own package name
+            // (a git-source entry has no `npm`, and `addedPackages` is empty
+            // when the recovery path re-added a name the snapshot already had).
+            if (ok) {
+              const reinstalled = new Set<string>(addedPackages)
+              if (npmName !== null) reinstalled.add(npmName)
+              for (const pkg of reinstalled) clearBrokenPlugin(pkg)
+            }
             logEvent(ok || cancelled ? 'info' : 'error', 'install',
               `${target} exit=${String(result.exitCode)}${result.timedOut ? ' TIMEOUT' : ''}${cancelled ? ' CANCELLED' : ''}${ok ? ` hot=${String(hot)}` : cancelled ? '' : ` err=${failureDetail(result)}`}`)
             // On success a skipped build is a notice (#6); after a FAILURE the
@@ -8266,6 +8302,15 @@ sendJson(response, 200, { updates })
           const message = error instanceof Error ? error.message : String(error)
           if (!inProbe()) host.logger?.warn(`[dsh-market] install failed: ${message}`)
           logEvent('error', 'install', `route error: ${message}`)
+          // A plugin that brings its own host half can make the host reload the
+          // market while this request is still checking the result. The old
+          // instance is gone, so what it throws now says nothing about the
+          // install: the package landed, and the new instance reports the
+          // real state of the plugin on the next refresh.
+          if (installLanded && disposed) {
+            sendJson(response, 200, { ok: true, hot: true, marketReloaded: true })
+            return
+          }
           sendJson(response, 500, { error: message })
         }
       },

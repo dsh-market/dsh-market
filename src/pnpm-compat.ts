@@ -308,6 +308,153 @@ function storeVersionSegment(path: string | undefined): string | undefined {
   return path === undefined ? undefined : /[/\\](v\d+)[/\\]*$/.exec(path)?.[1]
 }
 
+/**
+ * What the profile's OWN pnpm-workspace.yaml says about the store, and in
+ * which spelling.
+ *
+ * pnpm 11 reads the camelCase key and merely WARNs that it ignores the kebab
+ * one. Measured on 11.28.5: with `store-dir:` set, `pnpm store path` printed
+ * the default store plus
+ * `[WARN] The following settings in pnpm-workspace.yaml were ignored because
+ * they are not written in camelCase: "store-dir" (use "storeDir").`
+ * The warning goes to pnpm's stderr, which the market does not show here — so
+ * a user who spells it the way most pnpm settings are spelled has changed
+ * nothing, and the next run fails identically. Naming the spelling is the
+ * difference between a fix and a loop.
+ */
+interface StorePin {
+  /** The path the file names, quotes stripped. */
+  path: string
+  /** False for a spelling this pnpm ignores. */
+  honoured: boolean
+}
+
+function readStorePin(profileDirectory: string | undefined): StorePin | null {
+  if (profileDirectory === undefined) return null
+  let yaml: string
+  try {
+    yaml = readFileSync(join(profileDirectory, 'pnpm-workspace.yaml'), 'utf8')
+  } catch {
+    return null
+  }
+  const camel = /^storeDir:[ \t]*['"]?([^'"\r\n]+?)['"]?[ \t]*$/mu.exec(yaml)
+  if (camel !== null) return { path: camel[1]!.trim(), honoured: true }
+  const kebab = /^store-dir:[ \t]*['"]?([^'"\r\n]+?)['"]?[ \t]*$/mu.exec(yaml)
+  return kebab === null ? null : { path: kebab[1]!.trim(), honoured: false }
+}
+
+/**
+ * The store pnpm takes from the environment, which outranks the profile's
+ * own pnpm-workspace.yaml.
+ *
+ * Measured on pnpm 11.28.5 with a profile pinning one store: setting
+ * `PNPM_CONFIG_STORE_DIR` (or the lowercase `pnpm_config_store_dir`) to
+ * another path made `pnpm store path` print that other path. `npm_config_
+ * store_dir` did NOT — verified twice, with and without a workspace pin — so
+ * it is deliberately not read here: naming a variable that changes nothing
+ * would send the reader to the wrong place.
+ */
+function storeFromEnvironment(): { name: string; value: string } | null {
+  for (const [name, value] of Object.entries(process.env)) {
+    if (value !== undefined && value !== '' && /^pnpm_config_store_dir$/iu.test(name)) return { name, value }
+  }
+  return null
+}
+
+/** Two store paths the same, tolerating separator style and Windows case. */
+function sameStorePath(left: string, right: string): boolean {
+  const normalise = (path: string): string => path.replace(/\\/gu, '/').replace(/\/+$/u, '').toLowerCase()
+  return normalise(left) === normalise(right)
+}
+
+/**
+ * The way out of ERR_PNPM_UNEXPECTED_STORE, said in terms of the layer that
+ * actually decides the store (#244, #715; the layer order below was measured).
+ *
+ * The old text told every user the same thing: write the recorded store into
+ * the profile's pnpm-workspace.yaml. That is right for exactly one of the
+ * shapes this error has, and wrong — silently, repeatedly — for the others:
+ *
+ * - the file may already carry that line, in which case repeating the advice
+ *   is a loop (the reporter's profile had it, and the fix that worked was
+ *   elsewhere);
+ * - it may carry the kebab spelling, which pnpm ignores with a warning;
+ * - it may carry a DIFFERENT path from the record, so following "write the
+ *   recorded store" means first seeing the two disagree;
+ * - an environment variable outranks the file, so on those machines the
+ *   advice cannot work at all until the variable is changed;
+ * - the recorded store may no longer exist (the drive was moved or removed),
+ *   and pinning a dead path is worse than the error it replaces.
+ *
+ * Each of those is readable from files and the environment the market already
+ * has, so the message can name the one that applies — and give a command that
+ * proves the result, since this is the branch where "I followed the advice and
+ * nothing changed" has been the actual experience.
+ */
+function storeRelinkAdvice(
+  linked: string,
+  wanted: string | undefined,
+  profileDirectory: string | undefined,
+): { zh: string; en: string } {
+  const pin = readStorePin(profileDirectory)
+  const env = storeFromEnvironment()
+  const envWins = env !== null && !sameStorePath(env.value, linked)
+  const wantedZh = wanted ?? '（上面列出的那个）'
+  const wantedEn = wanted ?? 'the one listed above'
+  const paste = `storeDir: '${linked}'`
+  const verifyZh = '改完先在 profile 目录里执行 `pnpm store path` 验证：它必须**正好**打印上面第一个路径；打出别的就说明这一行没有生效，先别急着重试。'
+  const verifyEn = 'Verify before retrying: run `pnpm store path` in the profile directory — it must print the first path above, exactly. Anything else means that line did not take effect.'
+  const envZh = env === null ? '' : `（当前环境里 ${env.name}=${env.value}）`
+  const envEn = env === null ? '' : ` (currently ${env.name}=${env.value} in this environment)`
+  const ladderZh = 'pnpm 解析 store 的优先级（高→低）：--store-dir 命令行参数 → 环境变量 PNPM_CONFIG_STORE_DIR → profile 的 pnpm-workspace.yaml → 全局 pnpm 配置（`pnpm config get store-dir` 看到的就是它）→ 默认位置。'
+  const ladderEn = "The order pnpm resolves a store in (highest first): the --store-dir flag → the environment variable PNPM_CONFIG_STORE_DIR → the profile's pnpm-workspace.yaml → the global pnpm config (what `pnpm config get store-dir` reports) → the default location."
+
+  // The file already names the recorded store and the error is still here:
+  // repeating the advice cannot help. Say which layer outranked it. Checked
+  // before the "different path" case, because same-path-plus-still-failing is
+  // the loop this branch exists to end.
+  if (pin !== null && pin.honoured && sameStorePath(pin.path, linked)) {
+    const causeZh = envWins
+      ? `**上面那个环境变量把它覆盖了**：${env!.name}=${env!.value} 比 profile 文件优先，所以把 storeDir 改多少遍都没有用。`
+      : '覆盖它的是更高优先级的一层，而这个文件本身已经没有可改的地方了。'
+    const causeEn = envWins
+      ? `**The environment variable above overrides it**: ${env!.name}=${env!.value} outranks the profile file, so editing storeDir there changes nothing.`
+      : 'A higher-priority layer overrides it, and there is nothing left to change in this file.'
+    return {
+      zh: `profile 的 pnpm-workspace.yaml 已经写了 storeDir: '${pin.path}'（就是记录里的那个 store），pnpm 却仍然解析到 ${wantedZh}：这说明这一行被更高优先级的东西压住了，再改这个文件不会有任何效果。${causeZh}${ladderZh}把上面那一层改成这个路径，或者去掉它让文件生效${envWins ? `（在这个环境里，去掉 ${env!.name} 往往比改它更省事）` : ''}。${verifyZh}`,
+      en: `the profile's pnpm-workspace.yaml already pins storeDir: '${pin.path}' — the recorded store — yet pnpm still resolves ${wantedEn}, so a higher-priority layer overrides the file and editing it cannot help. ${causeEn} ${ladderEn} Change that layer to this path, or remove it so the file applies${envWins ? ` (in this environment, dropping ${env!.name} is usually simpler than rewriting it)` : ''}. ${verifyEn}`,
+    }
+  }
+  // A pin in the file that names something else: the file beats the global
+  // config, so the line is the right seat for the fix — but it must be
+  // corrected rather than added a second time.
+  if (pin !== null && pin.honoured && !envWins) {
+    return {
+      zh: `profile 的 pnpm-workspace.yaml 里写的是 storeDir: '${pin.path}'，但 node_modules 记录的是上面第一个路径——两处不一致，pnpm 会按文件里的走，于是继续对不上。把这一行改成记录里的那个路径：\n\n  ${paste}\n\n${verifyZh}`,
+      en: `the profile's pnpm-workspace.yaml pins storeDir: '${pin.path}' while node_modules records the first path above, so pnpm follows the file and still disagrees with the record. Change that line to the recorded path:\n\n  ${paste}\n\n${verifyEn}`,
+    }
+  }
+  // The file pins something in a spelling this pnpm does not read.
+  if (pin !== null && !pin.honoured) {
+    return {
+      zh: `profile 的 pnpm-workspace.yaml 里写的是 kebab 写法 store-dir: '${pin.path}'——pnpm **不认这个键**（它只在 stderr 留一行 WARN，然后当作没写，pnpm 11.28 实测），所以现在解析到的还是 ${wantedZh}。改成驼峰写法（单引号，Windows 路径在双引号里会被当成转义）：\n\n  ${paste}\n\n${envWins ? `另外，${env!.name}=${env!.value} 的优先级比这个文件更高，它还在的时候这一行同样不起作用。` : ''}${verifyZh}`,
+      en: `the profile's pnpm-workspace.yaml spells it the kebab way, store-dir: '${pin.path}' — a key this pnpm does **not** read (it prints one WARN to stderr and behaves as if the line were absent; measured on 11.28.5), so pnpm still resolves ${wantedEn}. Use the camelCase key with single quotes (a Windows path in double quotes is read as escape sequences):\n\n  ${paste}\n\n${envWins ? `Also, ${env!.name}=${env!.value} outranks this file, so the line still would not apply while it is set. ` : ''}${verifyEn}`,
+    }
+  }
+  // Nothing pinned yet: the ordinary case. When the environment is what pnpm
+  // obeys, that is the layer to change — the file loses to it unconditionally.
+  if (envWins) {
+    return {
+      zh: `现在生效的是**环境变量**${envZh}，它比 profile 的 pnpm-workspace.yaml 优先——文件里的 storeDir 写了也会被它压住，所以改那个文件没有任何作用。要改的是这一层：把 ${env!.name} 指向上面第一个路径，或者去掉它（让 pnpm 回到全局配置 / 默认位置），然后再验证。${ladderZh}${verifyZh}`,
+      en: `the store in effect comes from **the environment**${envEn}, which outranks the profile's pnpm-workspace.yaml — a storeDir written there is overridden, so editing that file cannot work. Change this layer instead: point ${env!.name} at the first path above, or remove it (letting pnpm fall back to the global config / default), then verify. ${ladderEn}${verifyEn}`,
+    }
+  }
+  return {
+    zh: `持久的修法：把**记录里的那个** store 写进 profile 的 pnpm-workspace.yaml，顶层、驼峰、单引号（Windows 路径在双引号里会被当成转义，整份文件会读不了）：\n\n  ${paste}\n\n加完不用重装任何东西——包本来就在那个 store 里，直接重试即可（dsh 正在运行可能占用文件，必要时先退出 dsh）。${verifyZh}如果那个路径其实已经不存在了（盘换了、目录被删），写它只会把 profile 钉在一个空 store 上，那就只能改用 pnpm 现在解析出的这个（包要重新下载）。`,
+    en: `durable fix: write the store from the RECORD into the profile's pnpm-workspace.yaml, top level, camelCase, single quotes (a Windows path in double quotes is read as escape sequences and the whole file fails to parse):\n\n  ${paste}\n\nNothing has to be reinstalled — the packages are already in that store, so just retry (stop dsh first if it holds the files open). ${verifyEn}If that path no longer exists (the drive changed, the directory was deleted), pinning it would tie the profile to an empty store — adopt the store pnpm now resolves instead (every package is downloaded again).`,
+  }
+}
+
 export function classifyPnpmFailure(output: string, exitCode?: number | null, context?: PnpmFailureContext): PnpmFailure | null {
   // #817: the host's silence watchdog (@deepseek-ai/dsh-plugin-manager,
   // `idleTimeoutMs`, 10 minutes by default) killed pnpm. Checked first: it is
@@ -368,6 +515,27 @@ export function classifyPnpmFailure(output: string, exitCode?: number | null, co
   // a repair that goes wrong here leaves a profile in worse shape than the
   // clear error it replaced. The paths are in the message; the choice is
   // the user's.
+  //
+  // Measured on pnpm 11.28.5 (2026-11), for the #1100 report, the layer order
+  // that advice depends on
+  // (a scratch workspace and `pnpm store path`, each layer set alone and then
+  // against the others, because the previous sentence had not been re-checked
+  // since #715 and #244 were filed):
+  //   --store-dir  >  PNPM_CONFIG_STORE_DIR  >  pnpm-workspace.yaml `storeDir`
+  //                >  the global npmrc `store-dir`  >  the default.
+  // Three things follow, and the message now states them instead of assuming
+  // the middle layer is always the one that decides:
+  // - the camelCase key IS honoured (#715), the kebab `store-dir` is NOT:
+  //   pnpm prints `…ignored because they are not written in camelCase` on
+  //   stderr and resolves exactly as if the line were absent;
+  // - an environment variable outranks the profile file, so a user who
+  //   relocated the store that way cannot fix it in the profile at all —
+  //   the advice has to name the variable (storeRelinkAdvice does);
+  // - a project `.npmrc` is ignored, the global one is not, so "the npmrc"
+  //   is the global file and `pnpm config get store-dir` names its value.
+  // Each shape also gets a check the user can run (`pnpm store path`), since
+  // this branch's real-world failure was "I wrote exactly what it said and
+  // the next run failed the same way".
   if (output.includes('ERR_PNPM_UNEXPECTED_STORE')) {
     const ndjson = storesFromNdjson(output)
     // pnpm 12's default reporter wraps long lines, inside the quotes too.
@@ -425,10 +593,22 @@ export function classifyPnpmFailure(output: string, exitCode?: number | null, co
         message: `这个 profile 的 node_modules 是用另一个大版本的 pnpm${named} 建的，而正在跑的这个 pnpm 大版本不同：它会在任何 storeDir 下面再拼自己的版本目录（上面第二个路径末尾那一段），所以**写 storeDir 修不好**，自动回滚也会以同样的方式失败。${detail}\n出路（任选）：\n  1) 用建这份 node_modules 的那个 pnpm 大版本重新执行——${recorded === null ? '版本号写在 profile 的 node_modules/.modules.yaml 里（packageManager）' : `即 pnpm ${recorded}`}，装好后让它排在 PATH 前面；\n  2) 或者留在这个新大版本上，清空 node_modules 重新安装（包会重新下载）。 / this profile's node_modules was built by a different pnpm${named === '' ? '' : ` (${recorded})`} major than the one now running: pnpm appends its own store-version segment under whatever storeDir says (the second path above ends with it), so **writing storeDir cannot fix this**, and the automatic rollback fails the same way.${detail}\nTwo ways out: 1) run the pnpm major that built this node_modules — ${recorded === null ? 'its version is recorded in the profile’s node_modules/.modules.yaml (packageManager)' : `pnpm ${recorded}`} — with it ahead of the current one on PATH; or 2) stay on the new major and reinstall node_modules from scratch (every package is downloaded again).`,
       }
     }
+    // The paths pnpm names are the whole diagnosis, so when its wording
+    // changes and they cannot be read, say so instead of inventing them — and
+    // still leave the reader with the key (`storeDir`) and the check
+    // (`pnpm store path`), because an unreadable path is not a missing remedy.
+    if (linked === undefined) {
+      return {
+        code: 'unexpected-store',
+        recoverable: false,
+        message: `这个 profile 的 node_modules 链接到的 pnpm store，和 pnpm 现在解析出的 store 不是同一个，pnpm 因此拒绝这个 profile 的所有安装与卸载。这次没能从 pnpm 的输出里读出两个路径（它的措辞变了），请按上面的原文核对。修法是在 profile 的 pnpm-workspace.yaml 里用驼峰 \`storeDir\` 指定记录里的那个 store（单引号），改完用 \`pnpm store path\` 验证；注意环境变量 PNPM_CONFIG_STORE_DIR 比这个文件优先，而 kebab 写法 \`store-dir\` 会被 pnpm 忽略。\`pnpm install --store-dir\` 不是修复。 / this profile's node_modules is linked to a different pnpm store than the one pnpm now resolves, so pnpm refuses every install and uninstall for it. This time the two paths could not be read from pnpm's output (its wording changed) — check the text above. The fix is to name the recorded store in the profile's pnpm-workspace.yaml under the camelCase key \`storeDir\` (single-quoted), then verify with \`pnpm store path\`; note that the environment variable PNPM_CONFIG_STORE_DIR outranks that file, and the kebab spelling \`store-dir\` is ignored. \`pnpm install --store-dir\` is not a fix.`,
+      }
+    }
+    const advice = storeRelinkAdvice(linked, wanted, context?.profileDirectory)
     return {
       code: 'unexpected-store',
       recoverable: false,
-      message: `这个 profile 的 node_modules 链接到的 pnpm store，和 pnpm 现在解析出的 store 不是同一个，pnpm 因此拒绝这个 profile 的所有安装与卸载。典型触发是把 $DSH_HOME 迁到另一个挂载点：迁盘前建的 node_modules 记着旧盘上的 store，而 pnpm 会按新的挂载点自动改选一个（#244 的另一种触发，见 #715）。${detail}\n持久的修法：把**记录里的那个** store 写进 profile 的 pnpm-workspace.yaml（顶层、驼峰）：\n\n  storeDir: <上面第一个路径>\n\n加完不用重装任何东西——包本来就在那个 store 里，直接重试即可（dsh 运行时可能占用文件，必要时先退出 dsh）。\n注意 \`pnpm install --store-dir <路径>\` **不是修复**：它只对那一次命令生效，也不会改写 node_modules/.modules.yaml 里的记录，所以下一条命令会报同样的错（pnpm 11.7 与 11.22 实测）。\n想改用 pnpm 现在解析出的那个 store 也行，但那要求清空并重装整个 node_modules（包全部重新下载），代价由你决定。 / this profile's node_modules is linked to a different pnpm store than the one pnpm now resolves, so pnpm refuses every install and uninstall for it. The usual trigger is moving $DSH_HOME to another mount point: a node_modules built before the move records the old disk's store while pnpm re-selects one for the new mount.${detail}\nDurable fix: write the store from the RECORD into the profile's pnpm-workspace.yaml (top level, camelCase):\n\n  storeDir: <the first path above>\n\nNothing has to be reinstalled — the packages are already in that store — so just retry (stop dsh first if files are locked).\nNote that \`pnpm install --store-dir <path>\` is NOT a fix: it applies to that one command and does not rewrite the record in node_modules/.modules.yaml, so the next command fails exactly the same way (measured on pnpm 11.7 and 11.22).\nSwitching to the store pnpm now resolves is also possible, but it requires purging and reinstalling the whole node_modules (every package re-downloaded) — your call, not the market's.`,
+      message: `这个 profile 的 node_modules 链接到的 pnpm store，和 pnpm 现在解析出的 store 不是同一个，pnpm 因此拒绝这个 profile 的所有安装与卸载。典型触发是把 $DSH_HOME 或 pnpm 的 store 移到另一个盘：搬迁前建的 node_modules 记着旧盘上的 store，而 pnpm 会按新位置另选一个（#244 的另一种触发，见 #715）。${detail}\n${advice.zh}\n注意 \`pnpm install --store-dir <路径>\` **不是修复**：它只对那一次命令生效，也不会改写 node_modules/.modules.yaml 里的记录，所以下一条命令会报同样的错（pnpm 11.7 与 11.22 实测）。想改用 pnpm 现在解析出的那个 store 也行，但那要求清空并重装整个 node_modules（包全部重新下载），代价由你决定。 / this profile's node_modules is linked to a different pnpm store than the one pnpm now resolves, so pnpm refuses every install and uninstall for it. The usual trigger is moving $DSH_HOME or the pnpm store to another drive: a node_modules built before the move records the old disk's store while pnpm selects one for the new location (the other trigger for #244, see #715).${detail}\n${advice.en}\nNote that \`pnpm install --store-dir <path>\` is NOT a fix: it applies to that one command and does not rewrite the record in node_modules/.modules.yaml, so the next command fails exactly the same way (measured on pnpm 11.7 and 11.22). Switching to the store pnpm now resolves is also possible, but it requires purging and reinstalling the whole node_modules (every package re-downloaded) — your call, not the market's.`,
     }
   }
   // #367: pnpm verifies every tarball resolution in the lockfile before it

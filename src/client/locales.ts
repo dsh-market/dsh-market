@@ -164,7 +164,7 @@ export const zh = {
   // The host answered 404 on the market's own routes (#962): the plugin is
   // no longer mounted, and nothing here can work until DSH restarts.
   marketGoneTitle: '插件市场已停止运行',
-  marketGoneBody: 'DSH 重新加载插件时把市场一起卸载了。重启 DSH 即可恢复；刚才的操作可能已经完成。',
+  marketGoneBody: 'DSH 重新加载插件时把市场一起卸载了。会自动重连；一直连不上，请完全退出 DSH 再打开。刚才的操作可能已经完成。',
   marketGoneRecord: '市场被 DSH 卸载了，这次操作没有等到结果。市场恢复后，到「已安装」里确认。',
   marketGoneReconnecting: '正在重新连接…',
   marketGoneReconnect: '重新连接',
@@ -594,6 +594,8 @@ export const zh = {
   groupConfirmDelete: '删除分组？',
   groupExpand: '展开 {0}',
   groupFold: '收起 {0}',
+  groupCollapseAll: '全部收起',
+  groupExpandAll: '全部展开',
   groupThemeTaken: '已有主题',
   groupSearchEmpty: '没有匹配的插件',
   groupStateInert: '未生效',
@@ -988,7 +990,7 @@ export const en: Record<MarketKey, string> = {
   // The host answered 404 on the market's own routes (#962): the plugin is
   // no longer mounted, and nothing here can work until DSH restarts.
   marketGoneTitle: 'The plugin market stopped running',
-  marketGoneBody: 'DSH unloaded the market while reloading plugins. Restart DSH to bring it back. The last operation may already have finished.',
+  marketGoneBody: 'DSH unloaded the market while reloading plugins. It reconnects on its own. If it stays gone, quit DSH completely and open it again. The last operation may already have finished.',
   marketGoneRecord: 'DSH unloaded the market, so this operation got no result. Once the market is back, check Installed.',
   marketGoneReconnecting: 'Reconnecting…',
   marketGoneReconnect: 'Reconnect',
@@ -1407,6 +1409,8 @@ export const en: Record<MarketKey, string> = {
   groupConfirmDelete: 'Delete group?',
   groupExpand: 'Expand {0}',
   groupFold: 'Collapse {0}',
+  groupCollapseAll: 'Collapse all',
+  groupExpandAll: 'Expand all',
   groupThemeTaken: 'Already has a theme',
   groupSearchEmpty: 'No matching plugins',
   groupStateInert: 'Not active',
@@ -1792,7 +1796,7 @@ export const ja: Record<MarketKey, string> = {
   clearFilters: '絞り込みをクリア',
   installedEmpty: 'コミュニティプラグインはまだインストールされていません。「見つける」ページで探せます',
   marketGoneTitle: 'プラグインマーケットが停止しました',
-  marketGoneBody: 'DSH がプラグインを再読み込みした際に、マーケットも一緒にアンロードされました。DSH を再起動すれば復旧します。直前の操作は完了している可能性があります。',
+  marketGoneBody: 'DSH がプラグインを再読み込みした際に、マーケットも一緒にアンロードされました。自動で再接続します。戻らない場合は DSH を完全に終了してから開き直してください。直前の操作は完了している可能性があります。',
   marketGoneRecord: 'マーケットが DSH からアンロードされたため、この操作の結果は届きませんでした。マーケットが戻ったら、「インストール済み」で確認してください。',
   marketGoneReconnecting: '再接続しています…',
   marketGoneReconnect: '再接続',
@@ -2205,6 +2209,8 @@ export const ja: Record<MarketKey, string> = {
   groupConfirmDelete: 'グループを削除しますか？',
   groupExpand: '{0} を展開',
   groupFold: '{0} を折りたたむ',
+  groupCollapseAll: 'すべて折りたたむ',
+  groupExpandAll: 'すべて展開',
   groupThemeTaken: 'テーマはすでにあります',
   groupSearchEmpty: '一致するプラグインはありません',
   groupStateInert: '未有効',
