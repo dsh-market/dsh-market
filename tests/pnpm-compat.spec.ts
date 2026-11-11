@@ -5,11 +5,24 @@
  * injection must depend on the profile's actual shape.
  */
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { classifyPnpmFailure, pluginArgsFor } from '../src/pnpm-compat.ts'
+
+// The store layer is read from the environment pnpm would obey, so a host that
+// relocated its store (PNPM_CONFIG_STORE_DIR, as DSH Desktop users often do)
+// must not change what the profile-file advice says. Tests that are about the
+// environment opt back in with vi.stubEnv.
+beforeEach(() => {
+  vi.stubEnv('PNPM_CONFIG_STORE_DIR', '')
+  vi.stubEnv('pnpm_config_store_dir', '')
+})
+
+afterEach(() => {
+  vi.unstubAllEnvs()
+})
 
 describe('pluginArgsFor', () => {
   let dir: string
@@ -977,7 +990,7 @@ pnpm now wants to use the store at "/tmp/store-v10/v11" to link dependencies.
     const failure = classifyPnpmFailure(output, 1, { profileDirectory: profileWithRecord(recordingMoved) })
 
     expect(failure?.code).toBe('unexpected-store')
-    expect(failure?.message).toContain('storeDir: <上面第一个路径>')
+    expect(failure?.message).toContain(`storeDir: '${MOVED}'`)
     expect(failure?.message).not.toMatch(/写 storeDir 修不好/)
     expect(failure?.message).toContain(`node_modules → ${MOVED}\n`)
   })
@@ -995,7 +1008,8 @@ pnpm now wants to use the store at "/tmp/store-v10/v11" to link dependencies.
     const failure = classifyPnpmFailure(output, 1, { profileDirectory: profileRecording('10.34.9') })
 
     expect(failure?.code).toBe('unexpected-store')
-    expect(failure?.message).toContain('storeDir: <上面第一个路径>')
+    expect(failure?.message).toContain('storeDir')
+    expect(failure?.message).toContain('pnpm store path')
   })
 })
 
@@ -1071,6 +1085,113 @@ pnpm now wants to use the store at "/Users/panda/Library/pnpm/store/v10" to link
     expect(failure?.message).toContain('storeDir')
     expect(failure?.message).not.toContain('Staging directory')
     expect(failure?.message).not.toContain('暂存目录')
+  })
+
+  // #1100: the advice this branch hands out has to name the layer that
+  // actually decides the store, because the shape the reporter was stuck in
+  // was "the profile already pins the recorded store, pnpm still resolves
+  // another one, and the message asks for the pin again". Measured on pnpm
+  // 11.28.5: `--store-dir` > `PNPM_CONFIG_STORE_DIR` > the profile's
+  // `storeDir` > the global npmrc `store-dir` > the default, and the kebab
+  // `store-dir` inside pnpm-workspace.yaml is ignored with a WARN.
+  describe('naming the layer that decides the store', () => {
+    let dir: string | undefined
+
+    const profileWithWorkspace = (workspace: string): string => {
+      dir = mkdtempSync(join(tmpdir(), 'dshm-store-'))
+      writeFileSync(join(dir, 'package.json'), '{"name":"p","private":true}')
+      writeFileSync(join(dir, 'pnpm-workspace.yaml'), workspace)
+      return dir
+    }
+
+    /** A store that exists, so the "recorded store is gone" branch stays out of the way. */
+    const liveStore = (profile: string): string => {
+      const store = join(profile, 'store', 'v11')
+      mkdirSync(store, { recursive: true })
+      return store
+    }
+
+    const outputFor = (profile: string, linked: string, wanted: string): string =>
+      ` ERR_PNPM_UNEXPECTED_STORE  Unexpected store location\nThe dependencies at "${join(profile, 'node_modules')}" are currently linked from the store at "${linked}".\npnpm now wants to use the store at "${wanted}" to link dependencies.`
+
+    afterEach(() => {
+      vi.unstubAllEnvs()
+      if (dir !== undefined) rmSync(dir, { recursive: true, force: true })
+      dir = undefined
+    })
+
+    // The host's own environment decides the store while the market runs, so
+    // a test that asserts its absence has to say so rather than hope.
+    const withNoStoreEnv = (): void => {
+      vi.stubEnv('PNPM_CONFIG_STORE_DIR', '')
+      vi.stubEnv('pnpm_config_store_dir', '')
+    }
+
+    it('hands over the paste-ready line, and the check that proves it took', () => {
+      withNoStoreEnv()
+      const profile = profileWithWorkspace('packages:\n  - .\n')
+      const linked = liveStore(profile)
+      const wanted = join(profile, 'other', 'v11')
+      const message = classifyPnpmFailure(outputFor(profile, linked, wanted), 1, { profileDirectory: profile })?.message ?? ''
+      // A line that can be pasted as-is. Single quotes: a Windows path in
+      // double quotes is read as YAML escape sequences.
+      expect(message).toContain(`storeDir: '${linked}'`)
+      // The check, not just the edit: this branch's failure mode was "I wrote
+      // what it said and the next run failed the same way".
+      expect(message).toContain('pnpm store path')
+      expect(message).toContain('驼峰')
+      // No environment variable to blame here, so none may be named.
+      expect(message).not.toContain('PNPM_CONFIG_STORE_DIR=')
+    })
+
+    it('names the environment variable when it is the reason the file cannot work', () => {
+      const profile = profileWithWorkspace('packages:\n  - .\n')
+      const linked = liveStore(profile)
+      const override = join(profile, 'env-store')
+      vi.stubEnv('PNPM_CONFIG_STORE_DIR', override)
+      const message = classifyPnpmFailure(outputFor(profile, linked, override), 1, { profileDirectory: profile })?.message ?? ''
+      expect(message).toContain('PNPM_CONFIG_STORE_DIR=')
+      expect(message).toContain(override)
+      expect(message).toContain('环境变量')
+      // The paste-ready line would be dead advice here, so it must not be the offer.
+      expect(message).not.toContain(`storeDir: '${linked}'`)
+    })
+
+    it('says the pin is already there instead of asking for it a second time', () => {
+      const profile = profileWithWorkspace('packages:\n  - .\n')
+      const linked = liveStore(profile)
+      vi.stubEnv('PNPM_CONFIG_STORE_DIR', '')
+      vi.stubEnv('pnpm_config_store_dir', '')
+      writeFileSync(join(profile, 'pnpm-workspace.yaml'), `storeDir: '${linked}'\npackages:\n  - .\n`)
+      const override = join(profile, 'env-store')
+      vi.stubEnv('PNPM_CONFIG_STORE_DIR', override)
+      const message = classifyPnpmFailure(outputFor(profile, linked, override), 1, { profileDirectory: profile })?.message ?? ''
+      expect(message).toContain('已经写了')
+      expect(message).toContain('already pins')
+      expect(message).toContain(override)
+      // Not the ordinary "write this line" offer: that line is already there.
+      expect(message).not.toContain('持久的修法')
+    })
+
+    it('treats a kebab-case pin as the no-op pnpm says it is', () => {
+      withNoStoreEnv()
+      const profile = profileWithWorkspace('packages:\n  - .\n')
+      const linked = liveStore(profile)
+      writeFileSync(join(profile, 'pnpm-workspace.yaml'), `store-dir: '${linked}'\npackages:\n  - .\n`)
+      const message = classifyPnpmFailure(outputFor(profile, linked, join(profile, 'other', 'v11')), 1, { profileDirectory: profile })?.message ?? ''
+      expect(message).toContain("store-dir:")
+      expect(message).toContain('驼峰')
+      expect(message).toContain(`storeDir: '${linked}'`)
+    })
+
+    it('still names the key and the check when the two paths cannot be read', () => {
+      withNoStoreEnv()
+      const profile = profileWithWorkspace('packages:\n  - .\n')
+      const message = classifyPnpmFailure('ERR_PNPM_UNEXPECTED_STORE\nreworded upstream', 1, { profileDirectory: profile })?.message ?? ''
+      expect(message).toContain('storeDir')
+      expect(message).toContain('pnpm store path')
+      expect(message).toContain('PNPM_CONFIG_STORE_DIR')
+    })
   })
 })
 
