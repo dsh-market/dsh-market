@@ -212,6 +212,13 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			setSidebarOnlyDoorHint: "这个宿主没有市场设置页，这一行是唯一的入口，不能关闭。",
 			setAdvanced: "高级",
 			setAdvancedHint: "控制市场在界面中的入口。至少保留一个。",
+			setOperationWait: "插件操作等待",
+			setOperationWaitIdle: "等待空闲",
+			setOperationWaitAsk: "立即尝试",
+			setOperationWaitIdleHint: "等待会话到达安全点后再操作。仅影响此浏览器。",
+			setOperationWaitAskHint: "新安装直接尝试。忙时更新和卸载仍需确认。仅影响此浏览器。",
+			setOperationWaitSaveFailed: "无法保存等待方式。请检查浏览器存储后重试。",
+			operationBusyRetry: "有会话正在运行，尚未操作。请等会话结束后重试。",
 			setEntrySection: "设置页入口",
 			setEntrySectionHint: "在设置中显示插件市场分区。",
 			setEntryPluginsTab: "插件页入口",
@@ -1009,6 +1016,13 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			setSidebarOnlyDoorHint: "This host has no market page in Settings, so this row is the only way in and stays on.",
 			setAdvanced: "Advanced",
 			setAdvancedHint: "Where the market appears. Keep at least one entry.",
+			setOperationWait: "Plugin operation waiting",
+			setOperationWaitIdle: "Wait for idle",
+			setOperationWaitAsk: "Try immediately",
+			setOperationWaitIdleHint: "Wait for sessions to reach a safe point. Applies to this browser only.",
+			setOperationWaitAskHint: "Try new installs directly. Updates and removals still ask when sessions are running. Applies to this browser only.",
+			setOperationWaitSaveFailed: "Could not save the waiting preference. Check browser storage and try again.",
+			operationBusyRetry: "A session is running; nothing was changed. Wait for it to finish, then retry.",
 			setEntrySection: "Settings entry",
 			setEntrySectionHint: "Shows the market section in Settings.",
 			setEntryPluginsTab: "Plugins page entry",
@@ -1805,6 +1819,13 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			setSidebarOnlyDoorHint: "このホストには設定内のマーケットページがないため、この行が唯一の入口です。オフにはできません。",
 			setAdvanced: "詳細",
 			setAdvancedHint: "マーケットの表示場所です。入口は最低 1 つ残してください。",
+			setOperationWait: "プラグイン操作の待機",
+			setOperationWaitIdle: "空きを待つ",
+			setOperationWaitAsk: "すぐ試す",
+			setOperationWaitIdleHint: "セッションが安全な地点に到達するまで待ちます。このブラウザーにのみ適用されます。",
+			setOperationWaitAskHint: "新規インストールはすぐ試します。セッション動作中の更新や削除は、その都度確認します。このブラウザーにのみ適用されます。",
+			setOperationWaitSaveFailed: "待機方法を保存できませんでした。ブラウザーのストレージを確認して再試行してください。",
+			operationBusyRetry: "セッションが動作中のため、何も変更していません。終了後に再試行してください。",
 			setEntrySection: "設定の入口",
 			setEntrySectionHint: "設定にマーケットのセクションを表示します。",
 			setEntryPluginsTab: "プラグインページの入口",
@@ -5650,6 +5671,33 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					]
 				})]
 			});
+		}
+		//#endregion
+		//#region src/client/operation-wait.ts
+		const CHANGED = "dshm-operation-wait-change";
+		/** Browser origins isolate hosts; the path also isolates reverse-proxy mounts. */
+		function operationWaitKey() {
+			return `dshm-operation-wait:${api("/dsh-market")}`;
+		}
+		function readOperationWait() {
+			try {
+				return localStorage.getItem(operationWaitKey()) === "ask" ? "ask" : "wait";
+			} catch {
+				return "wait";
+			}
+		}
+		/** Notify other cards in this page only after the choice reaches storage. */
+		function saveOperationWait(value) {
+			localStorage.setItem(operationWaitKey(), value);
+			window.dispatchEvent(new Event(CHANGED));
+		}
+		function subscribeOperationWait(listener) {
+			window.addEventListener(CHANGED, listener);
+			window.addEventListener("storage", listener);
+			return () => {
+				window.removeEventListener(CHANGED, listener);
+				window.removeEventListener("storage", listener);
+			};
 		}
 		//#endregion
 		//#region src/client/RecoveryPanel.tsx
@@ -12042,7 +12090,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				const rest = entries.length > 1 ? ` (+${entries.length - 1})` : "";
 				return `${first.name} — ${first.layers.join(" / ")}${rest}`;
 			};
-			const doInstall = (0, react.useCallback)((plugin, force = false, version, preferReject = false) => {
+			const doInstall = (0, react.useCallback)((plugin, force = false, version, preferReject = false, wait = readOperationWait()) => {
 				setBuildsSkipped(null);
 				setConfirming(null);
 				setInstallError(null);
@@ -12067,7 +12115,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						url: plugin.url,
 						...force ? { force: true } : {},
 						...version !== void 0 ? { version } : {},
-						...statusRef.current.agentDrain && !preferReject ? { busyPolicy: "drain" } : {}
+						...wait === "wait" && statusRef.current.agentDrain && !preferReject ? { busyPolicy: "drain" } : {}
 					})
 				}).then((res) => res.json().then((body) => ({
 					status: res.status,
@@ -12140,7 +12188,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					} else {
 						if (body.unsupported === true) {
 							setRecords((list) => drop(list, recordId));
-							doInstall(plugin, force, version, true);
+							doInstall(plugin, force, version, true, wait);
 							return;
 						}
 						if (body.agentsBusy !== true && body.migration && typeof body.migration === "object") {
@@ -12175,6 +12223,14 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 								return;
 							}
 							if (body.agentsBusy === true) {
+								if (wait === "ask") {
+									setRecords((list) => patch(list, recordId, {
+										state: "failed",
+										reason: String(body.error ?? t("operationBusyRetry"))
+									}));
+									setOperationsOpen(true);
+									return;
+								}
 								setRecords((list) => patch(list, recordId, {
 									state: "queued",
 									reason: t("agentBusyQueued"),
@@ -12456,7 +12512,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					body: JSON.stringify(body)
 				}).catch(() => {});
 			}, []);
-			const doUpdate = (0, react.useCallback)((name, force = false, restore = false, compatVersion, confirmAgentsRunning = false, eligibleVersion, preferReject = false) => {
+			const doUpdate = (0, react.useCallback)((name, force = false, restore = false, compatVersion, confirmAgentsRunning = false, eligibleVersion, preferReject = false, wait = readOperationWait()) => {
 				const expectedVersion = compatVersion === void 0 && !restore ? eligibleVersion ?? updates[name]?.eligibleVersion : void 0;
 				const updateOptions = {
 					force,
@@ -12490,7 +12546,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						...compatVersion !== void 0 ? { compatVersion } : {},
 						...expectedVersion !== void 0 ? { eligibleVersion: expectedVersion } : {},
 						...confirmAgentsRunning ? { confirmAgentsRunning: true } : {},
-						...!restore && statusRef.current.agentDrain && !preferReject ? { busyPolicy: "drain" } : {}
+						...!restore && wait === "wait" && !confirmAgentsRunning && statusRef.current.agentDrain && !preferReject ? { busyPolicy: "drain" } : {}
 					})
 				}).then((res) => res.json().then((body) => ({
 					status: res.status,
@@ -12555,8 +12611,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					} else {
 						if (body.unsupported === true) {
 							setRecords((list) => drop(list, updateRecordId));
-							doUpdate(name, force, restore, compatVersion, confirmAgentsRunning, eligibleVersion, true);
-							return;
+							return doUpdate(name, force, restore, compatVersion, confirmAgentsRunning, expectedVersion, true, wait);
 						}
 						if (status === 409) {
 							if (body.failureCode === "AGENT_BARRIER_LOST") {
@@ -12577,6 +12632,18 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 								return;
 							}
 							if (body.agentsBusy === true) {
+								if (wait === "ask") {
+									setRecords((list) => drop(list, updateRecordId));
+									if (confirmAgentsRunning) setInstallError(localizeBilingual(String(body.error ?? t("operationBusyRetry")), lang));
+									else setAgentsConfirm({
+										name,
+										kind: "update",
+										run: () => {
+											doUpdate(name, force, restore, compatVersion, true, expectedVersion, true, wait);
+										}
+									});
+									return "needs-confirmation";
+								}
 								setRecords((list) => patch(list, updateRecordId, {
 									state: "queued",
 									reason: t("agentBusyUpdateQueued"),
@@ -13091,7 +13158,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				setHotNames((names) => names.filter((entry) => entry !== name));
 				setRefreshNames((names) => names.filter((entry) => entry !== name));
 			}, []);
-			const doUninstall = (0, react.useCallback)((name, confirmAgentsRunning = false, preferReject = false) => {
+			const doUninstall = (0, react.useCallback)((name, confirmAgentsRunning = false, preferReject = false, wait = readOperationWait()) => {
 				setRemoveConfirm(null);
 				setInstallError(null);
 				setActivationWarnings([]);
@@ -13109,7 +13176,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					body: JSON.stringify({
 						name,
 						...confirmAgentsRunning ? { confirmAgentsRunning: true } : {},
-						...statusRef.current.agentDrain && !preferReject ? { busyPolicy: "drain" } : {}
+						...wait === "wait" && !confirmAgentsRunning && statusRef.current.agentDrain && !preferReject ? { busyPolicy: "drain" } : {}
 					})
 				}).then((res) => res.json().then((body) => ({
 					status: res.status,
@@ -13136,7 +13203,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					}
 					if (body.unsupported === true) {
 						setRecords((list) => drop(list, uninstallRecordId));
-						doUninstall(name, confirmAgentsRunning, true);
+						doUninstall(name, confirmAgentsRunning, true, wait);
 						return;
 					}
 					if (status === 409 && body.failureCode === "AGENT_BARRIER_LOST") {
@@ -13156,6 +13223,19 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						return;
 					}
 					if (status === 409 && body.agentsBusy === true) {
+						if (wait === "ask") {
+							setRecords((list) => drop(list, uninstallRecordId));
+							if (confirmAgentsRunning) setInstallError(String(body.error ?? t("operationBusyRetry")));
+							else setAgentsConfirm({
+								name,
+								kind: "uninstall",
+								run: () => {
+									doUninstall(name, true, true, wait);
+								}
+							});
+							setOperationsOpen(true);
+							return;
+						}
 						setRecords((list) => patch(list, uninstallRecordId, {
 							state: "queued",
 							reason: t("agentBusyUninstallQueued"),
@@ -13604,7 +13684,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						refreshInstalled(true);
 						return;
 					}
-					doUpdate(item.name, false, false, void 0, false, item.eligibleVersion).then(next, next);
+					doUpdate(item.name, false, false, void 0, false, item.eligibleVersion).then((result) => {
+						if (result === "needs-confirmation") setUpdatingAll(false);
+						else next();
+					}, next);
 				};
 				next();
 			}, [
@@ -18010,20 +18093,21 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		/**
 		* Clear the market's browser-side leftovers.
 		*
-		* These are the only two things the market keeps in the browser, and the
-		* server cannot reach either. Neither holds a credential — the WebDAV
+		* These preferences live in the browser; the server cannot clear them.
+		* None holds a credential — the WebDAV
 		* password is never persisted and a Gist token is read from the environment,
 		* never from disk — so this is tidiness, not a security step, and the copy
 		* must not imply otherwise.
 		*/
 		function clearBrowserState(storage) {
-			for (const key of BROWSER_KEYS) try {
+			for (const key of [...BROWSER_KEYS, operationWaitKey()]) try {
 				storage.removeItem(key);
 			} catch {}
 		}
 		function SettingsCard({ t, onRemoved, sidebar, entries }) {
 			const [open, setOpen] = (0, react.useState)(false);
 			const [advancedOpen, setAdvancedOpen] = (0, react.useState)(false);
+			const operationWait = (0, react.useSyncExternalStore)(subscribeOperationWait, readOperationWait);
 			const advancedId = (0, react.useId)();
 			const [, bumpEntries] = (0, react.useState)(0);
 			const [entrySaving, setEntrySaving] = (0, react.useState)(0);
@@ -18381,7 +18465,25 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				id: advancedId,
 				className: Market_module_css_default.setAdvancedBody
 			}, entryRows.map((node, index) => (0, react.createElement)(react.Fragment, { key: index }, node))) : null) : null;
-			const body = phase === "removed" ? row(t("setSelfRemoved"), t("setSelfRemovedHint"), null) : (0, react.createElement)(react.Fragment, null, advanced, row(t("setIndexSource"), t("setIndexSourceHint"), null), status?.selfManaged === true ? row((update?.updateAvailable === true || update?.hostManaged === true) && update.latest !== null ? `${t("setSelfUpdateReady")} ${update.latest}` : update?.channelSwitch != null ? `${t("setChannelSwitch")} ${update.channelSwitch}` : t("setSelfUpToDate"), phase === "updated" ? t("setSelfUpdatedHint") : update?.channelSwitch != null ? t("setChannelSwitchHint") : update?.updateAvailable === true ? t("setSelfUpdateHint") : update?.hostManaged === true && update.latest !== null ? t("setSelfHostManagedHint") : t("setSelfUpToDateHint"), phase === "updated" ? null : update?.updateAvailable === true ? (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+			const body = phase === "removed" ? row(t("setSelfRemoved"), t("setSelfRemovedHint"), null) : (0, react.createElement)(react.Fragment, null, advanced, row(t("setOperationWait"), t(operationWait === "wait" ? "setOperationWaitIdleHint" : "setOperationWaitAskHint"), (0, react.createElement)("div", {
+				className: Market_module_css_default.setSeg,
+				role: "group",
+				"aria-label": t("setOperationWait")
+			}, ["wait", "ask"].map((value) => (0, react.createElement)("button", {
+				key: value,
+				type: "button",
+				className: operationWait === value ? `${Market_module_css_default.setSegBtn} ${Market_module_css_default.setSegOn}` : Market_module_css_default.setSegBtn,
+				"aria-pressed": operationWait === value,
+				disabled: busy,
+				onClick: () => {
+					setError(null);
+					try {
+						saveOperationWait(value);
+					} catch {
+						setError(t("setOperationWaitSaveFailed"));
+					}
+				}
+			}, t(value === "wait" ? "setOperationWaitIdle" : "setOperationWaitAsk"))))), row(t("setIndexSource"), t("setIndexSourceHint"), null), status?.selfManaged === true ? row((update?.updateAvailable === true || update?.hostManaged === true) && update.latest !== null ? `${t("setSelfUpdateReady")} ${update.latest}` : update?.channelSwitch != null ? `${t("setChannelSwitch")} ${update.channelSwitch}` : t("setSelfUpToDate"), phase === "updated" ? t("setSelfUpdatedHint") : update?.channelSwitch != null ? t("setChannelSwitchHint") : update?.updateAvailable === true ? t("setSelfUpdateHint") : update?.hostManaged === true && update.latest !== null ? t("setSelfHostManagedHint") : t("setSelfUpToDateHint"), phase === "updated" ? null : update?.updateAvailable === true ? (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 				variant: "primary",
 				size: "sm",
 				disabled: busy,
