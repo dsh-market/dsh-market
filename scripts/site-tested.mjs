@@ -16,10 +16,10 @@ export function loadTested() {
 export const TESTED_UI = {
   en: {
     navLabel: 'Install tests',
-    title: 'We installed the 30 most downloaded DSH plugins — here is what happened — dsh-market',
-    desc: 'A clean DSH, the market\'s own install button, the 30 most downloaded plugins. Which ones worked straight away, which needed a restart or your approval, and which need a newer DSH.',
-    h1: 'We installed the 30 most downloaded DSH plugins',
-    lede: (n, host, date, market) => `On ${date} we installed each of the ${n} most downloaded plugins into an empty profile of DSH ${host}, using dsh-market ${market}, one after another. This page is what we saw — not what the plugin pages say.`,
+    title: 'We installed the most downloaded DSH plugins — here is what happened — dsh-market',
+    desc: 'A clean DSH, the market\'s own install button, the most downloaded plugins. Which ones worked straight away, which needed a restart or your approval, and which need a newer DSH.',
+    h1: 'We installed the most downloaded DSH plugins',
+    lede: (n, host, date, market) => `On ${date} we installed ${n} of the 100 most downloaded plugins into an empty profile of DSH ${host}, using dsh-market ${market}, one after another. A few were left out because our test run stalled on them, not because of the plugin. This page is what we saw — not what the plugin pages say.`,
     sumH: 'The short version',
     sum: (c, n) => [
       `${c.live} of ${n} worked straight away.`,
@@ -54,15 +54,15 @@ export const TESTED_UI = {
       'Plugins were installed one after another into the same profile, so one can affect the next. A plugin that failed here may still work on its own.',
     ],
     methodH: 'How we tested',
-    method: (host, market) => `Each plugin was installed through the market's own install route on a fresh dsh web profile (DSH ${host}, dsh-market ${market}), using the real pnpm and the real package registry. After each install we waited for the host to settle and read the plugin's state from the host. The same 30 plugins were also installed on the previous DSH release to see who needs the new one. The raw results are in the site repository.`,
+    method: (host, market) => `Each plugin was installed through the market's own install route on a fresh dsh web profile (DSH ${host}, dsh-market ${market}), using the real pnpm and the real package registry. After each install we waited for the host to settle and read the plugin's state from the host. The same plugins were also installed on the previous DSH release to see who needs the new one. The raw results are in the site repository.`,
     sizeUnit: 'MB', secUnit: 's', repro: 'Dated',
   },
   zh: {
     navLabel: '安装实测',
-    title: '我们装了下载量前 30 的 DSH 插件，结果如下 — dsh-market',
-    desc: '一个干净的 DSH，用市场自己的安装按钮，装下载量最高的 30 个插件。哪些直接能用，哪些要重启或要你点一下同意，哪些需要更新的 DSH。',
-    h1: '我们装了下载量前 30 的 DSH 插件',
-    lede: (n, host, date, market) => `${date}，我们在一个空的 DSH ${host} 里，用 dsh-market ${market} 依次安装了下载量最高的 ${n} 个插件。这一页是我们实际看到的，不是插件主页上写的。`,
+    title: '我们装了下载量最高的那批 DSH 插件，结果如下 — dsh-market',
+    desc: '一个干净的 DSH，用市场自己的安装按钮，装下载量最高的那批插件。哪些直接能用，哪些要重启或要你点一下同意，哪些需要更新的 DSH。',
+    h1: '我们装了下载量最高的那批 DSH 插件',
+    lede: (n, host, date, market) => `${date}，我们在一个空的 DSH ${host} 里，用 dsh-market ${market} 依次安装了下载量前 100 里的 ${n} 个插件。有几个因为测试本身卡住而没有结果，没有列出，不是插件的问题。这一页是我们实际看到的，不是插件主页上写的。`,
     sumH: '先说结论',
     sum: (c, n) => [
       `${n} 个里有 ${c.live} 个装完就能用。`,
@@ -97,7 +97,7 @@ export const TESTED_UI = {
       '插件是依次装进同一个配置里的，前一个可能影响后一个。这里没装成的，单独装也许可以。',
     ],
     methodH: '怎么测的',
-    method: (host, market) => `每个插件都通过市场自己的安装接口，装进一个全新的 dsh web 配置（DSH ${host}，dsh-market ${market}），用真实的 pnpm 和真实的包仓库。每次装完等宿主稳定，再从宿主读出插件的状态。同样的 30 个插件也在上一版 DSH 上装了一遍，看谁需要新版。原始结果放在站点仓库里。`,
+    method: (host, market) => `每个插件都通过市场自己的安装接口，装进一个全新的 dsh web 配置（DSH ${host}，dsh-market ${market}），用真实的 pnpm 和真实的包仓库。每次装完等宿主稳定，再从宿主读出插件的状态。同样的插件也在上一版 DSH 上装了一遍，看谁需要新版。原始结果放在站点仓库里。`,
     sizeUnit: 'MB', secUnit: ' 秒', repro: '日期',
   },
 }

@@ -1,6 +1,6 @@
 {
  "testedAt": "2026-11-12",
- "market": "1.73.17",
+ "market": "1.73.17–1.73.18",
  "hosts": {
   "0.2.2-rc.1": [
    {
@@ -270,6 +270,555 @@
     "kind": "restart",
     "secs": 10,
     "sizeKB": 1040,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "dsh-pet",
+    "version": "0.4.7",
+    "kind": "live",
+    "secs": 6,
+    "sizeKB": 79296,
+    "deps": 6,
+    "requires": null
+   },
+   {
+    "npm": "dsh-mnemon",
+    "version": "0.5.44",
+    "kind": "live",
+    "secs": 6,
+    "sizeKB": 2464,
+    "deps": 23,
+    "requires": null
+   },
+   {
+    "npm": "@deepseek-harness-tui/dsh-tui",
+    "version": "0.19.0",
+    "kind": "live",
+    "secs": 34,
+    "sizeKB": 40252,
+    "deps": 31,
+    "requires": null
+   },
+   {
+    "npm": "@smalltailqwq/dsh-client-ui-skin-maid-atelier",
+    "version": "0.1.10",
+    "kind": "live",
+    "secs": 5,
+    "sizeKB": 7268,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "@liustack/modsearch",
+    "version": "5.10.12",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 820,
+    "deps": 2,
+    "requires": null
+   },
+   {
+    "npm": "@openviking/dsh-memory-plugin",
+    "version": "0.5.34",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 448,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "lunheng-article-pipeline",
+    "version": "19.27.17",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 4816,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "@changfenhuang/dsh-genui",
+    "version": "0.16.0",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 14916,
+    "deps": 3,
+    "requires": null
+   },
+   {
+    "npm": "@roarpeng/graphflow",
+    "version": "3.9.2",
+    "kind": "builds",
+    "secs": 4,
+    "sizeKB": 2412,
+    "deps": 3,
+    "requires": null
+   },
+   {
+    "npm": "dsh-vision-router",
+    "version": "3.2.0",
+    "kind": "restart",
+    "secs": 13,
+    "sizeKB": 5420,
+    "deps": 6,
+    "requires": null
+   },
+   {
+    "npm": "dsh-dream-skin",
+    "version": "11.7.0",
+    "kind": "live",
+    "secs": 5,
+    "sizeKB": 736,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "@tt-a1i/archify-dsh",
+    "version": "1.1.0",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 18192,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "@furongjun1999/dsh-memory",
+    "version": "0.10.1",
+    "kind": "live",
+    "secs": 35,
+    "sizeKB": 35248,
+    "deps": 1,
+    "requires": null
+   },
+   {
+    "npm": "@wxg-prc-cpg/browser-skill-dsh-plugin",
+    "version": "0.4.2",
+    "kind": "live",
+    "secs": 5,
+    "sizeKB": 568,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "dsh-find-plugin",
+    "version": "0.4.0",
+    "kind": "host",
+    "secs": 1,
+    "sizeKB": null,
+    "deps": null,
+    "requires": "^0.1.0-rc.6 || ^0.1.1-rc.1 || ^0.1.2-alpha.2 || ^0.1.3-alpha.2 || ^0.1.5-alpha.1 || ^0.1.6-alpha.1 || ^0.1.7-alpha.1"
+   },
+   {
+    "npm": "dsh-rewind-plugin",
+    "version": "0.22.0",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 576,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "dsh-image-gen",
+    "version": "0.11.1",
+    "kind": "live",
+    "secs": 6,
+    "sizeKB": 37192,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "dsh-codex-subscription",
+    "version": "3.2.11",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 2740,
+    "deps": 3,
+    "requires": null
+   },
+   {
+    "npm": "dsh-mcp-connector",
+    "version": "0.2.101",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 5320,
+    "deps": 3,
+    "requires": null
+   },
+   {
+    "npm": "@noob-stupid/dsh-plugin-console",
+    "version": "0.5.110",
+    "kind": "live",
+    "secs": 6,
+    "sizeKB": 3272,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "dsh-builtin-browser",
+    "version": "0.5.8",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 3064,
+    "deps": 1,
+    "requires": null
+   },
+   {
+    "npm": "dsh-chat-import",
+    "version": "0.26.5",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 3660,
+    "deps": 1,
+    "requires": null
+   },
+   {
+    "npm": "@feng0531/dsh-code-review",
+    "version": "0.92.3",
+    "kind": "live",
+    "secs": 5,
+    "sizeKB": 1700,
+    "deps": 1,
+    "requires": null
+   },
+   {
+    "npm": "dsh-connect-workbuddy",
+    "version": "5.21.4",
+    "kind": "live",
+    "secs": 5,
+    "sizeKB": 5744,
+    "deps": 1,
+    "requires": null
+   },
+   {
+    "npm": "@mars-sea/dsh-commandcode-provider",
+    "version": "0.17.6",
+    "kind": "live",
+    "secs": 5,
+    "sizeKB": 3688,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "dsh-prime-memory",
+    "version": "0.26.37",
+    "kind": "live",
+    "secs": 5,
+    "sizeKB": 13412,
+    "deps": 5,
+    "requires": null
+   },
+   {
+    "npm": "dsh-thinking-levels",
+    "version": "4.4.14",
+    "kind": "live",
+    "secs": 5,
+    "sizeKB": 1724,
+    "deps": 2,
+    "requires": null
+   },
+   {
+    "npm": "dsh-codex-connect",
+    "version": "0.2.0-alpha.1",
+    "kind": "host",
+    "secs": 1,
+    "sizeKB": null,
+    "deps": null,
+    "requires": "0.1.7-rc.1 || 0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2 || 0.2.1-alpha.1 || 0.2.1-alpha.2 || 0.2.1-alpha.3 || 0.2.1-alpha.4 || 0.2.1-alpha.5 || 0.2.1-rc.1 || 0.2.1-rc.2 || 0.2.1-rc.3"
+   },
+   {
+    "npm": "@goodandready/dsh-russian-lang",
+    "version": "0.4.26",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 2920,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "dsh-task-progress",
+    "version": "0.3.0",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 532,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "dsh-mobile",
+    "version": "0.8.7",
+    "kind": "live",
+    "secs": 6,
+    "sizeKB": 73116,
+    "deps": 9,
+    "requires": null
+   },
+   {
+    "npm": "dsh-claude-style",
+    "version": "0.20.3",
+    "kind": "live",
+    "secs": 32,
+    "sizeKB": 3816,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "dsh-deepseek-web-login",
+    "version": "2.4.0",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 2476,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "@a9i5k4/dsh-auto-memory",
+    "version": "3.3.17",
+    "kind": "builds",
+    "secs": 6,
+    "sizeKB": 29504,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "dsh-tiddlywiki",
+    "version": "0.35.0",
+    "kind": "live",
+    "secs": 9,
+    "sizeKB": 5324,
+    "deps": 1,
+    "requires": null
+   },
+   {
+    "npm": "@goodandready/dsh-subscriptions",
+    "version": "0.7.83",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 4304,
+    "deps": 2,
+    "requires": null
+   },
+   {
+    "npm": "beauticode-dsh",
+    "version": "1.0.30",
+    "kind": "live",
+    "secs": 6,
+    "sizeKB": 18916,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "dsh-pocket",
+    "version": "2.12.0",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 624,
+    "deps": 2,
+    "requires": null
+   },
+   {
+    "npm": "dsh-mattpocock-skills-deck",
+    "version": "1.9.0-beta.33",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 9120,
+    "deps": 3,
+    "requires": null
+   },
+   {
+    "npm": "dsh-gitbash-shell",
+    "version": "0.54.0",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 1400,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "@goodandready/dsh-image-gen",
+    "version": "0.12.31",
+    "kind": "live",
+    "secs": 5,
+    "sizeKB": 2180,
+    "deps": 2,
+    "requires": null
+   },
+   {
+    "npm": "dsh-session-manager",
+    "version": "0.7.5",
+    "kind": "live",
+    "secs": 5,
+    "sizeKB": 732,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "dsh-status-rotator",
+    "version": "0.38.0",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 1216,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "dsh-ppt",
+    "version": "0.20.5",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 1328,
+    "deps": 5,
+    "requires": null
+   },
+   {
+    "npm": "@nonamelego/dsh-catppuccin",
+    "version": "0.7.3",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 1268,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "@goodandready/dsh-voice",
+    "version": "0.9.56",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 568,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "dsh-life-pack",
+    "version": "0.3.88",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 5152,
+    "deps": 2,
+    "requires": null
+   },
+   {
+    "npm": "dsh-plugin-marketplace",
+    "version": "0.5.8",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 108,
+    "deps": 2,
+    "requires": null
+   },
+   {
+    "npm": "@dickpy/dsh-imagegen",
+    "version": "1.17.0",
+    "kind": "live",
+    "secs": 5,
+    "sizeKB": 14032,
+    "deps": 2,
+    "requires": null
+   },
+   {
+    "npm": "dsh-context-compression-improved",
+    "version": "0.11.0",
+    "kind": "live",
+    "secs": 5,
+    "sizeKB": 18236,
+    "deps": 3,
+    "requires": null
+   },
+   {
+    "npm": "dsh-client-auto-continue",
+    "version": "0.18.0",
+    "kind": "live",
+    "secs": 5,
+    "sizeKB": 4560,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "dsh-plugin-subscriptions",
+    "version": "0.9.13",
+    "kind": "live",
+    "secs": 5,
+    "sizeKB": 2572,
+    "deps": 1,
+    "requires": null
+   },
+   {
+    "npm": "@modusensus/dsh-mneme",
+    "version": "0.13.0",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 11488,
+    "deps": 2,
+    "requires": null
+   },
+   {
+    "npm": "@goodandready/dsh-key-rotation",
+    "version": "0.8.94",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 1232,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "@zaofan/dsh-qqbot",
+    "version": "1.12.19",
+    "kind": "builds",
+    "secs": 8,
+    "sizeKB": 7368,
+    "deps": 8,
+    "requires": null
+   },
+   {
+    "npm": "dsh-meme",
+    "version": "0.1.80",
+    "kind": "live",
+    "secs": 5,
+    "sizeKB": 4556,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "dsh-office-tools",
+    "version": "1.0.8",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 208,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "@weibaohui/skills-management",
+    "version": "0.9.3",
+    "kind": "live",
+    "secs": 5,
+    "sizeKB": 424,
+    "deps": 3,
+    "requires": null
+   },
+   {
+    "npm": "@goodandready/dsh-lanmode",
+    "version": "0.8.57",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 644,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "dsh-vibe-math",
+    "version": "2.8.5",
+    "kind": "live",
+    "secs": 6,
+    "sizeKB": 16624,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "dsh-chat-manager",
+    "version": "2.0.1",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 104,
     "deps": 0,
     "requires": null
    }
@@ -544,7 +1093,567 @@
     "sizeKB": 1040,
     "deps": 0,
     "requires": null
+   },
+   {
+    "npm": "dsh-pet",
+    "version": "0.4.7",
+    "kind": "live",
+    "secs": 5,
+    "sizeKB": 79296,
+    "deps": 6,
+    "requires": null
+   },
+   {
+    "npm": "dsh-mnemon",
+    "version": "0.5.44",
+    "kind": "live",
+    "secs": 6,
+    "sizeKB": 2464,
+    "deps": 23,
+    "requires": null
+   },
+   {
+    "npm": "@deepseek-harness-tui/dsh-tui",
+    "version": "0.19.0",
+    "kind": "live",
+    "secs": 12,
+    "sizeKB": 40252,
+    "deps": 31,
+    "requires": null
+   },
+   {
+    "npm": "@smalltailqwq/dsh-client-ui-skin-maid-atelier",
+    "version": "0.1.8",
+    "kind": "host",
+    "secs": 1,
+    "sizeKB": null,
+    "deps": null,
+    "requires": ">=0.2.2-0 <0.2.3-0"
+   },
+   {
+    "npm": "@liustack/modsearch",
+    "version": "5.10.12",
+    "kind": "live",
+    "secs": 7,
+    "sizeKB": 820,
+    "deps": 2,
+    "requires": null
+   },
+   {
+    "npm": "@openviking/dsh-memory-plugin",
+    "version": "0.5.34",
+    "kind": "live",
+    "secs": 6,
+    "sizeKB": 448,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "lunheng-article-pipeline",
+    "version": "19.27.17",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 4816,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "@changfenhuang/dsh-genui",
+    "version": "0.16.0",
+    "kind": "live",
+    "secs": 5,
+    "sizeKB": 14916,
+    "deps": 3,
+    "requires": null
+   },
+   {
+    "npm": "@roarpeng/graphflow",
+    "version": "3.9.2",
+    "kind": "builds",
+    "secs": 3,
+    "sizeKB": 2412,
+    "deps": 3,
+    "requires": null
+   },
+   {
+    "npm": "dsh-vision-router",
+    "version": "3.0.4",
+    "kind": "host",
+    "secs": 1,
+    "sizeKB": null,
+    "deps": null,
+    "requires": ">=0.2.1-rc.5 <0.3.0-0"
+   },
+   {
+    "npm": "dsh-dream-skin",
+    "version": "11.7.0",
+    "kind": "live",
+    "secs": 5,
+    "sizeKB": 736,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "@tt-a1i/archify-dsh",
+    "version": "1.1.0",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 18192,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "@furongjun1999/dsh-memory",
+    "version": "0.10.1",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 35248,
+    "deps": 1,
+    "requires": null
+   },
+   {
+    "npm": "@wxg-prc-cpg/browser-skill-dsh-plugin",
+    "version": "0.4.2",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 568,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "dsh-find-plugin",
+    "version": "0.4.0",
+    "kind": "host",
+    "secs": 1,
+    "sizeKB": null,
+    "deps": null,
+    "requires": "^0.1.0-rc.6 || ^0.1.1-rc.1 || ^0.1.2-alpha.2 || ^0.1.3-alpha.2 || ^0.1.5-alpha.1 || ^0.1.6-alpha.1 || ^0.1.7-alpha.1"
+   },
+   {
+    "npm": "dsh-rewind-plugin",
+    "version": "0.15.3",
+    "kind": "host",
+    "secs": 1,
+    "sizeKB": null,
+    "deps": null,
+    "requires": ">=0.2.2-rc.1 <0.3.0-0"
+   },
+   {
+    "npm": "dsh-image-gen",
+    "version": "0.11.1",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 37192,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "dsh-codex-subscription",
+    "version": "2.7.1",
+    "kind": "host",
+    "secs": 1,
+    "sizeKB": null,
+    "deps": null,
+    "requires": "0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2 || 0.2.1-alpha.1 || 0.2.1-alpha.2 || 0.2.1-alpha.3 || 0.2.1-alpha.4 || 0.2.1-alpha.5 || 0.2.1-rc.1 || 0.2.1-rc.2 || 0.2.1-rc.3 || 0.2.1-rc.4 || 0.2.1-rc.5 || 0.2.2-alpha.2 || 0.2.2-alpha.3 || >=0.2.2-rc.1 <0.2.3-0 ∩ 0.2.2-rc.1"
+   },
+   {
+    "npm": "dsh-mcp-connector",
+    "version": "0.2.101",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 5320,
+    "deps": 3,
+    "requires": null
+   },
+   {
+    "npm": "@noob-stupid/dsh-plugin-console",
+    "version": "0.5.110",
+    "kind": "live",
+    "secs": 6,
+    "sizeKB": 3272,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "dsh-builtin-browser",
+    "version": "0.5.8",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 3064,
+    "deps": 1,
+    "requires": null
+   },
+   {
+    "npm": "dsh-chat-import",
+    "version": "0.26.5",
+    "kind": "live",
+    "secs": 5,
+    "sizeKB": 3660,
+    "deps": 1,
+    "requires": null
+   },
+   {
+    "npm": "@feng0531/dsh-code-review",
+    "version": "0.92.3",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 1700,
+    "deps": 1,
+    "requires": null
+   },
+   {
+    "npm": "dsh-connect-workbuddy",
+    "version": "5.21.4",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 5744,
+    "deps": 1,
+    "requires": null
+   },
+   {
+    "npm": "@mars-sea/dsh-commandcode-provider",
+    "version": "0.17.6",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 3688,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "dsh-prime-memory",
+    "version": "0.26.37",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 13412,
+    "deps": 5,
+    "requires": null
+   },
+   {
+    "npm": "dsh-thinking-levels",
+    "version": "4.4.14",
+    "kind": "live",
+    "secs": 5,
+    "sizeKB": 1724,
+    "deps": 2,
+    "requires": null
+   },
+   {
+    "npm": "dsh-codex-connect",
+    "version": "0.2.0-alpha.10",
+    "kind": "builds",
+    "secs": 4,
+    "sizeKB": 5824,
+    "deps": 3,
+    "requires": null
+   },
+   {
+    "npm": "@goodandready/dsh-russian-lang",
+    "version": "0.4.26",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 2920,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "dsh-task-progress",
+    "version": "0.3.0",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 532,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "dsh-mobile",
+    "version": "0.8.7",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 73116,
+    "deps": 9,
+    "requires": null
+   },
+   {
+    "npm": "dsh-claude-style",
+    "version": "0.16.0",
+    "kind": "host",
+    "secs": 1,
+    "sizeKB": null,
+    "deps": null,
+    "requires": ">=0.2.2-rc.1"
+   },
+   {
+    "npm": "dsh-deepseek-web-login",
+    "version": "2.4.0",
+    "kind": "live",
+    "secs": 32,
+    "sizeKB": 2476,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "@a9i5k4/dsh-auto-memory",
+    "version": "3.3.17",
+    "kind": "builds",
+    "secs": 2,
+    "sizeKB": 29504,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "dsh-tiddlywiki",
+    "version": "0.30.65",
+    "kind": "host",
+    "secs": 0,
+    "sizeKB": null,
+    "deps": null,
+    "requires": ">=0.2.1-rc.3 <0.3.0"
+   },
+   {
+    "npm": "@goodandready/dsh-subscriptions",
+    "version": "0.7.83",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 4304,
+    "deps": 2,
+    "requires": null
+   },
+   {
+    "npm": "beauticode-dsh",
+    "version": "1.0.30",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 18916,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "dsh-pocket",
+    "version": "2.12.0",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 624,
+    "deps": 2,
+    "requires": null
+   },
+   {
+    "npm": "dsh-mattpocock-skills-deck",
+    "version": "1.9.0-beta.33",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 9120,
+    "deps": 3,
+    "requires": null
+   },
+   {
+    "npm": "dsh-gitbash-shell",
+    "version": "0.40.1",
+    "kind": "host",
+    "secs": 1,
+    "sizeKB": null,
+    "deps": null,
+    "requires": ">=0.2.2-rc.1 ∩ >=0.0.1-rc.1"
+   },
+   {
+    "npm": "@goodandready/dsh-image-gen",
+    "version": "0.12.31",
+    "kind": "live",
+    "secs": 5,
+    "sizeKB": 2180,
+    "deps": 2,
+    "requires": null
+   },
+   {
+    "npm": "dsh-session-manager",
+    "version": "0.7.5",
+    "kind": "live",
+    "secs": 5,
+    "sizeKB": 732,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "dsh-status-rotator",
+    "version": "0.38.0",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 1216,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "dsh-ppt",
+    "version": "0.10.0",
+    "kind": "host",
+    "secs": 0,
+    "sizeKB": null,
+    "deps": null,
+    "requires": ">=0.2.1-rc.3"
+   },
+   {
+    "npm": "@nonamelego/dsh-catppuccin",
+    "version": "0.7.3",
+    "kind": "live",
+    "secs": 3,
+    "sizeKB": 1268,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "@goodandready/dsh-voice",
+    "version": "0.9.56",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 568,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "dsh-life-pack",
+    "version": "0.3.88",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 5152,
+    "deps": 2,
+    "requires": null
+   },
+   {
+    "npm": "dsh-plugin-marketplace",
+    "version": "0.5.8",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 108,
+    "deps": 2,
+    "requires": null
+   },
+   {
+    "npm": "@dickpy/dsh-imagegen",
+    "version": "1.17.0",
+    "kind": "live",
+    "secs": 5,
+    "sizeKB": 14032,
+    "deps": 2,
+    "requires": null
+   },
+   {
+    "npm": "dsh-context-compression-improved",
+    "version": "0.11.0",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 18236,
+    "deps": 3,
+    "requires": null
+   },
+   {
+    "npm": "dsh-client-auto-continue",
+    "version": "0.18.0",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 4560,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "dsh-plugin-subscriptions",
+    "version": "0.9.13",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 2572,
+    "deps": 1,
+    "requires": null
+   },
+   {
+    "npm": "@modusensus/dsh-mneme",
+    "version": "0.13.0",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 11488,
+    "deps": 2,
+    "requires": null
+   },
+   {
+    "npm": "@goodandready/dsh-key-rotation",
+    "version": "0.8.94",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 1232,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "@zaofan/dsh-qqbot",
+    "version": "1.12.19",
+    "kind": "builds",
+    "secs": 2,
+    "sizeKB": 7368,
+    "deps": 8,
+    "requires": null
+   },
+   {
+    "npm": "dsh-meme",
+    "version": "0.1.80",
+    "kind": "live",
+    "secs": 5,
+    "sizeKB": 4556,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "dsh-office-tools",
+    "version": "1.0.8",
+    "kind": "live",
+    "secs": 5,
+    "sizeKB": 208,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "@weibaohui/skills-management",
+    "version": "0.9.3",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 424,
+    "deps": 3,
+    "requires": null
+   },
+   {
+    "npm": "@goodandready/dsh-lanmode",
+    "version": "0.8.57",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 644,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "dsh-vibe-math",
+    "version": "2.8.5",
+    "kind": "live",
+    "secs": 5,
+    "sizeKB": 16624,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "dsh-chat-manager",
+    "version": "1.5.13",
+    "kind": "host",
+    "secs": 1,
+    "sizeKB": null,
+    "deps": null,
+    "requires": "0.2.2-rc.1"
    }
   ]
- }
+ },
+ "excluded": [
+  "dsh-workbuddy-connect",
+  "@kenz1117/dsh-ui-usage-billing",
+  "dsh-remote",
+  "dsh-config-manager",
+  "dsh-bottom-info-bar",
+  "@wenbin_wb/dsh-bridge",
+  "dsh-custom-mode",
+  "dsh-browser-cdp",
+  "@anionex/dsh-vision-toolkit"
+ ]
 }
