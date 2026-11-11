@@ -1,0 +1,550 @@
+{
+ "testedAt": "2026-11-12",
+ "market": "1.73.17",
+ "hosts": {
+  "0.2.2-rc.1": [
+   {
+    "npm": "billion-context",
+    "version": "0.1.213",
+    "kind": "live",
+    "secs": 5,
+    "sizeKB": 55272,
+    "deps": 2,
+    "requires": null
+   },
+   {
+    "npm": "@michengai/dsh-codex-ui",
+    "version": "2.0.22",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 3328,
+    "deps": 1,
+    "requires": null
+   },
+   {
+    "npm": "dsh-better-sidebar",
+    "version": "0.31.1",
+    "kind": "live",
+    "secs": 75,
+    "sizeKB": 21232,
+    "deps": 32,
+    "requires": null
+   },
+   {
+    "npm": "@michengai/dsh-skills-manager",
+    "version": "1.4.1",
+    "kind": "live",
+    "secs": 33,
+    "sizeKB": 1832,
+    "deps": 1,
+    "requires": null
+   },
+   {
+    "npm": "@michengai/dsh-archive-manager",
+    "version": "1.3.1",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 1472,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "dsh-whale-widget",
+    "version": "0.4.2",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 7100,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "@michengai/dsh-agency-agents",
+    "version": "1.2.27",
+    "kind": "live",
+    "secs": 5,
+    "sizeKB": 20488,
+    "deps": 1,
+    "requires": null
+   },
+   {
+    "npm": "@linxin666/dsh-client-ui-skill-explorer",
+    "version": "0.4.16",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 516,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "dsh-context",
+    "version": "0.83.1",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 7608,
+    "deps": 1,
+    "requires": null
+   },
+   {
+    "npm": "@linxin666/dsh-pet",
+    "version": "0.4.16",
+    "kind": "live-error",
+    "secs": 6,
+    "sizeKB": 17108,
+    "deps": 2,
+    "requires": null
+   },
+   {
+    "npm": "@michengai/dsh-im-connect",
+    "version": "1.0.35",
+    "kind": "builds",
+    "secs": 3,
+    "sizeKB": 8024,
+    "deps": 6,
+    "requires": null
+   },
+   {
+    "npm": "@linxin666/dsh-remote-web-ui",
+    "version": "0.4.16",
+    "kind": "builds",
+    "secs": 3,
+    "sizeKB": 12212,
+    "deps": 6,
+    "requires": null
+   },
+   {
+    "npm": "@linxin666/dsh-client-ui-task-board",
+    "version": "0.4.16",
+    "kind": "live",
+    "secs": 5,
+    "sizeKB": 5656,
+    "deps": 2,
+    "requires": null
+   },
+   {
+    "npm": "@linxin666/dsh-client-ui-git-graph",
+    "version": "0.4.14",
+    "kind": "live",
+    "secs": 10,
+    "sizeKB": 1256,
+    "deps": 1,
+    "requires": null
+   },
+   {
+    "npm": "@michengai/dsh-automation",
+    "version": "1.0.22",
+    "kind": "restart",
+    "secs": 10,
+    "sizeKB": 11992,
+    "deps": 2,
+    "requires": null
+   },
+   {
+    "npm": "@linxin666/dsh-ssh",
+    "version": "0.4.16",
+    "kind": "builds",
+    "secs": 3,
+    "sizeKB": 2848,
+    "deps": 5,
+    "requires": null
+   },
+   {
+    "npm": "@linxin666/dsh-web-all",
+    "version": "0.4.16",
+    "kind": "builds",
+    "secs": 3,
+    "sizeKB": 732,
+    "deps": 23,
+    "requires": null
+   },
+   {
+    "npm": "dsh-cost-meter",
+    "version": "1.9.64",
+    "kind": "live",
+    "secs": 5,
+    "sizeKB": 9020,
+    "deps": 2,
+    "requires": null
+   },
+   {
+    "npm": "@liustack/modlens",
+    "version": "3.27.3",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 3392,
+    "deps": 2,
+    "requires": null
+   },
+   {
+    "npm": "@michengai/dsh-btw",
+    "version": "1.3.8",
+    "kind": "live-error",
+    "secs": 4,
+    "sizeKB": 1092,
+    "deps": 1,
+    "requires": null
+   },
+   {
+    "npm": "@michengai/dsh-simplify",
+    "version": "1.0.8",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 1644,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "@michengai/dsh-codex-pet",
+    "version": "1.0.14",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 12832,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "@michengai/dsh-code-review",
+    "version": "1.0.10",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 3296,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "@michengai/dsh-pua",
+    "version": "1.0.10",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 13220,
+    "deps": 1,
+    "requires": null
+   },
+   {
+    "npm": "@xmanrui/dsh-im",
+    "version": "5.10.0",
+    "kind": "live",
+    "secs": 5,
+    "sizeKB": 31244,
+    "deps": 10,
+    "requires": null
+   },
+   {
+    "npm": "@vectorize-io/hindsight-coding-agents",
+    "version": "0.8.7",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 16884,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "dsh-univer-office",
+    "version": "0.4.0",
+    "kind": "live",
+    "secs": 10,
+    "sizeKB": 159320,
+    "deps": 5,
+    "requires": null
+   },
+   {
+    "npm": "dsh-plugin-wallpaper-engine",
+    "version": "1.4.2",
+    "kind": "live",
+    "secs": 10,
+    "sizeKB": 6564,
+    "deps": 10,
+    "requires": null
+   },
+   {
+    "npm": "@nanmicoder/dsh-agent-teams",
+    "version": "0.1.29",
+    "kind": "restart",
+    "secs": 10,
+    "sizeKB": 3740,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "dsh-free-search",
+    "version": "0.9.43",
+    "kind": "restart",
+    "secs": 10,
+    "sizeKB": 1040,
+    "deps": 0,
+    "requires": null
+   }
+  ],
+  "0.2.1-rc.2": [
+   {
+    "npm": "billion-context",
+    "version": "0.1.213",
+    "kind": "live",
+    "secs": 5,
+    "sizeKB": 55272,
+    "deps": 2,
+    "requires": null
+   },
+   {
+    "npm": "@michengai/dsh-codex-ui",
+    "version": "2.0.22",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 3328,
+    "deps": 1,
+    "requires": null
+   },
+   {
+    "npm": "dsh-better-sidebar",
+    "version": "0.26.1",
+    "kind": "host",
+    "secs": 0,
+    "sizeKB": null,
+    "deps": null,
+    "requires": "^0.2.2-rc.1"
+   },
+   {
+    "npm": "@michengai/dsh-skills-manager",
+    "version": "1.4.1",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 1832,
+    "deps": 1,
+    "requires": null
+   },
+   {
+    "npm": "@michengai/dsh-archive-manager",
+    "version": "1.3.1",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 1472,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "dsh-whale-widget",
+    "version": "0.4.2",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 7100,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "@michengai/dsh-agency-agents",
+    "version": "1.2.27",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 20488,
+    "deps": 1,
+    "requires": null
+   },
+   {
+    "npm": "@linxin666/dsh-client-ui-skill-explorer",
+    "version": "0.4.6",
+    "kind": "host",
+    "secs": 1,
+    "sizeKB": null,
+    "deps": null,
+    "requires": ">=0.2.2-rc.1"
+   },
+   {
+    "npm": "dsh-context",
+    "version": "0.83.1",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 7608,
+    "deps": 1,
+    "requires": null
+   },
+   {
+    "npm": "@linxin666/dsh-pet",
+    "version": "0.4.6",
+    "kind": "host",
+    "secs": 1,
+    "sizeKB": null,
+    "deps": null,
+    "requires": ">=0.2.2-rc.1"
+   },
+   {
+    "npm": "@michengai/dsh-im-connect",
+    "version": "1.0.35",
+    "kind": "builds",
+    "secs": 3,
+    "sizeKB": 8024,
+    "deps": 6,
+    "requires": null
+   },
+   {
+    "npm": "@linxin666/dsh-remote-web-ui",
+    "version": "0.4.6",
+    "kind": "host",
+    "secs": 0,
+    "sizeKB": null,
+    "deps": null,
+    "requires": ">=0.2.2-rc.1"
+   },
+   {
+    "npm": "@linxin666/dsh-client-ui-task-board",
+    "version": "0.4.6",
+    "kind": "host",
+    "secs": 1,
+    "sizeKB": null,
+    "deps": null,
+    "requires": ">=0.2.2-rc.1"
+   },
+   {
+    "npm": "@linxin666/dsh-client-ui-git-graph",
+    "version": "0.4.6",
+    "kind": "host",
+    "secs": 1,
+    "sizeKB": null,
+    "deps": null,
+    "requires": ">=0.2.1-rc.3"
+   },
+   {
+    "npm": "@michengai/dsh-automation",
+    "version": "1.0.22",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 11992,
+    "deps": 2,
+    "requires": null
+   },
+   {
+    "npm": "@linxin666/dsh-ssh",
+    "version": "0.4.6",
+    "kind": "host",
+    "secs": 1,
+    "sizeKB": null,
+    "deps": null,
+    "requires": ">=0.2.2-rc.1"
+   },
+   {
+    "npm": "@linxin666/dsh-web-all",
+    "version": "0.4.6",
+    "kind": "host",
+    "secs": 1,
+    "sizeKB": null,
+    "deps": null,
+    "requires": ">=0.2.2-rc.1"
+   },
+   {
+    "npm": "dsh-cost-meter",
+    "version": "1.9.64",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 17272,
+    "deps": 2,
+    "requires": null
+   },
+   {
+    "npm": "@liustack/modlens",
+    "version": "3.27.3",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 3392,
+    "deps": 2,
+    "requires": null
+   },
+   {
+    "npm": "@michengai/dsh-btw",
+    "version": "1.3.8",
+    "kind": "live-error",
+    "secs": 5,
+    "sizeKB": 1092,
+    "deps": 1,
+    "requires": null
+   },
+   {
+    "npm": "@michengai/dsh-simplify",
+    "version": "1.0.8",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 1644,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "@michengai/dsh-codex-pet",
+    "version": "1.0.14",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 12832,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "@michengai/dsh-code-review",
+    "version": "1.0.10",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 3296,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "@michengai/dsh-pua",
+    "version": "1.0.10",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 13220,
+    "deps": 1,
+    "requires": null
+   },
+   {
+    "npm": "@xmanrui/dsh-im",
+    "version": "5.10.0",
+    "kind": "live",
+    "secs": 5,
+    "sizeKB": 31244,
+    "deps": 10,
+    "requires": null
+   },
+   {
+    "npm": "@vectorize-io/hindsight-coding-agents",
+    "version": "0.8.7",
+    "kind": "live",
+    "secs": 4,
+    "sizeKB": 16884,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "dsh-univer-office",
+    "version": "0.4.0",
+    "kind": "live",
+    "secs": 11,
+    "sizeKB": 159320,
+    "deps": 5,
+    "requires": null
+   },
+   {
+    "npm": "dsh-plugin-wallpaper-engine",
+    "version": "1.4.2",
+    "kind": "live",
+    "secs": 11,
+    "sizeKB": 6564,
+    "deps": 10,
+    "requires": null
+   },
+   {
+    "npm": "@nanmicoder/dsh-agent-teams",
+    "version": "0.1.29",
+    "kind": "restart",
+    "secs": 10,
+    "sizeKB": 3740,
+    "deps": 0,
+    "requires": null
+   },
+   {
+    "npm": "dsh-free-search",
+    "version": "0.9.43",
+    "kind": "restart",
+    "secs": 10,
+    "sizeKB": 1040,
+    "deps": 0,
+    "requires": null
+   }
+  ]
+ }
+}
