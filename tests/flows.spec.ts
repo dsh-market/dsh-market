@@ -12,7 +12,8 @@
  *                  the update logic WITHOUT publishing npm versions.
  * - registry.ts  → fixed curated registry (with a theme category)
  * - hot.ts       → in-memory mount table
- * - global fetch → fake npm/github APIs
+ * - global fetch → fake npm/github APIs; a request no stub answers is
+ *                  refused, never sent
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -989,10 +990,13 @@ beforeEach(() => {
   hot.failNext = false
   bed = createTestbed()
   // The install route asks the registry for `latest` before a fresh npm add
-  // (#594). Answer from the fake registry so no test reaches the network;
-  // everything else goes to the real fetch, or to whatever a test stubs.
-  const realFetch = globalThis.fetch
-  vi.stubGlobal('fetch', vi.fn((input: unknown, init?: RequestInit) => {
+  // (#594). Answer from the fake registry. Anything else is refused the way
+  // an unreachable network refuses it, unless a test stubs it: this lane is
+  // offline (vitest.config.ts). Handing the rest to the real fetch sent
+  // `npm test` to registry.npmjs.org, github.com and raw.githubusercontent.com
+  // from update checks and acceleration probes, so what those specs saw
+  // depended on the machine's network rather than on the spec.
+  vi.stubGlobal('fetch', vi.fn((input: unknown) => {
     const m = /^https:\/\/registry\.(?:npmjs\.org|npmmirror\.com)\/(.+?)\/latest$/.exec(String(input))
     if (m !== null) {
       const pkg = fake.npm[decodeURIComponent(m[1]!)]
@@ -1000,7 +1004,7 @@ beforeEach(() => {
         ? new Response('{"error":"Not found"}', { status: 404 })
         : new Response(JSON.stringify({ version: pkg.latest }), { status: 200 }))
     }
-    return realFetch(input as string, init)
+    return Promise.reject(new TypeError(`unit lane is offline: no stub answers ${String(input)}`))
   }))
 })
 afterEach(() => {
@@ -1040,6 +1044,15 @@ function npmLockFixture(name: string, spec: string, version: string): string {
     '',
   ].join('\n')
 }
+
+describe('the unit lane stays offline', () => {
+  it('refuses a request no stub answers instead of sending it', async () => {
+    // `.invalid` never resolves, so the old pass-through failed here too, only
+    // after a DNS lookup and with the real fetch's error. The point is who
+    // answers: the beforeEach stub, without anything leaving the machine.
+    await expect(globalThis.fetch('https://example.invalid/unstubbed')).rejects.toThrow(/unit lane is offline/)
+  })
+})
 
 describe('flat Desktop host consumers (#553)', () => {
   const resourcesDescriptor = Object.getOwnPropertyDescriptor(process, 'resourcesPath')
