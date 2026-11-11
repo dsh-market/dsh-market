@@ -2510,6 +2510,16 @@ export function MarketSection(props: MarketSectionProps) {
    * settled restore below); one still moving or waiting on a decision does not.
    */
   const [records, setRecords] = useState<OperationRecord[]>([])
+  /** Discover-only multi-select: chosen catalog URLs, then a single confirm. */
+  const [batchSelecting, setBatchSelecting] = useState(false)
+  const [batchSelected, setBatchSelected] = useState<string[]>([])
+  const [batchConfirming, setBatchConfirming] = useState<RegistryPlugin[] | null>(null)
+  useEffect(() => {
+    if (tab === 'discover') return
+    setBatchSelecting(false)
+    setBatchSelected([])
+    setBatchConfirming(null)
+  }, [tab])
   const recordSeq = useRef(0)
   /** The synthetic install task rebuilt from dshm-pending after a remount. */
   const recoveredInstall = useRef<{ id: string; url: string; name?: string } | null>(null)
@@ -5807,6 +5817,14 @@ export function MarketSection(props: MarketSectionProps) {
    */
   const recordsRef = useRef<OperationRecord[]>(records)
   recordsRef.current = records
+  /**
+   * A decision dialog is a singleton. The drain must not start the next batch
+   * item while one is open, or the next item's host-incompatibility/migration
+   * notice would replace the one the user is still deciding.
+   */
+  const decisionOpenRef = useRef(false)
+  decisionOpenRef.current = hostIncompatible !== null || migrationConfirm !== null
+    || restoreConfirm !== null || removeConfirm !== null || agentsConfirm !== null || confirming !== null
   const dataRef = useRef<typeof data>(null)
   dataRef.current = data
   const doInstallRef = useRef<((plugin: RegistryPlugin) => void) | null>(null)
@@ -5880,6 +5898,7 @@ export function MarketSection(props: MarketSectionProps) {
           // start beside it: the Host's maintenance barrier is what makes the
           // package command safe.
           if (status.drainActive === true) return
+          if (decisionOpenRef.current) return
           if (operationInFlight()) return
           const task = recordsRef.current.find(record =>
             record.state === 'queued'
@@ -6901,6 +6920,42 @@ export function MarketSection(props: MarketSectionProps) {
         </label>
       ))
 
+  /**
+   * Discover can install several plugins in one go. Each selection becomes a
+   * normal queued install record, so the existing one-at-a-time drain owns
+   * execution, ordering, persistence and failure recovery. Themes are excluded
+   * because installing one reloads the page, which would abandon the batch.
+   */
+  const batchSelectable = (p: RegistryPlugin): boolean => {
+    if (!envReady) return false
+    if (doneUrls.includes(p.url) || hotUrls.includes(p.url)) return false
+    if (isInstalled(p, catalogInstalled, repoIdentities, data?.plugins, repoHints)) return false
+    if (pluginCategories(p).includes('theme')) return false
+    const record = recordForUrl(records, p.url)
+    return record === null || (record.state !== 'queued' && record.state !== 'running'
+      && record.state !== 'input' && record.state !== 'failed')
+  }
+  const batchChoices = data === null
+    ? []
+    : batchSelected
+        .map(url => data.plugins.find(p => p.url === url))
+        .filter((p): p is RegistryPlugin => p !== undefined && batchSelectable(p))
+  const toggleBatchUrl = (url: string): void => {
+    setBatchSelected(list => list.includes(url) ? list.filter(item => item !== url) : list.concat(url))
+  }
+  const queueBatchInstall = (): void => {
+    const choices = (batchConfirming ?? []).filter(batchSelectable)
+    setBatchConfirming(null)
+    setBatchSelecting(false)
+    setBatchSelected([])
+    if (choices.length === 0) return
+    setRecords(list => choices.reduce((next, plugin) => enqueue(next, {
+      id: nextRecordId(), kind: 'install', name: plugin.name, url: plugin.url,
+      state: 'queued', reason: t('batchQueuedReason'),
+    }), list))
+    setOperationsOpen(true)
+  }
+
   const installAction = (p: RegistryPlugin) => {
     const done = doneUrls.includes(p.url) || hotUrls.includes(p.url)
     const already = isInstalled(p, catalogInstalled, repoIdentities, data?.plugins, repoHints)
@@ -6927,6 +6982,18 @@ export function MarketSection(props: MarketSectionProps) {
                     <IconWarningOutline16 size={13} />
                     {t('opBlockedCard')}
                   </button>
+                )
+            : batchSelecting && batchSelectable(p)
+              ? (
+                  <label className={css.batchPick}>
+                    <input
+                      type="checkbox"
+                      checked={batchSelected.includes(p.url)}
+                      aria-label={`${t('batchSelect')} ${pluginName(p.name, p.npm)}`}
+                      onChange={() => toggleBatchUrl(p.url)}
+                    />
+                    <span>{t('batchSelect')}</span>
+                  </label>
                 )
               : (
                   <Button
@@ -7437,6 +7504,17 @@ export function MarketSection(props: MarketSectionProps) {
   // Settings and the sidebar keep them in the heading.
   const batchActions = (
     <>
+      {tab === 'discover' && data !== null && (
+        <Button
+          variant={batchSelecting ? 'outline' : 'ghost'}
+          size="sm"
+          disabled={!envReady}
+          onClick={() => {
+            setBatchSelecting(value => !value)
+            setBatchSelected([])
+          }}
+        >{batchSelecting ? t('batchCancel') : t('batchInstall')}</Button>
+      )}
       {(() => {
         const self = installed['dshmarket'] !== undefined ? 'dshmarket' : 'dsh-market'
         const status = updates[self]
@@ -8146,6 +8224,27 @@ export function MarketSection(props: MarketSectionProps) {
                       )}
                     </div>
                     </div>
+                    {batchSelecting && (
+                      <div className={css.batchBar} role="region" aria-label={t('batchInstall')}>
+                        <div className={css.batchBarText}>
+                          <strong>{t('batchSelected').replace('{0}', String(batchChoices.length))}</strong>
+                          <span>{t('batchHint')}</span>
+                        </div>
+                        <span className={css.grow} />
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={batchSelected.length === 0}
+                          onClick={() => setBatchSelected([])}
+                        >{t('batchClear')}</Button>
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          disabled={batchChoices.length === 0}
+                          onClick={() => setBatchConfirming(batchChoices)}
+                        >{t('batchInstallSelected') + ' (' + batchChoices.length + ')'}</Button>
+                      </div>
+                    )}
                     {hasRecent && (recentHidden
                       ? <button type="button" className={css.recentShow} onClick={showRecent}>
                           <IconChevronRightOutline14 size={14} />{t('recentShow')}
@@ -9277,6 +9376,29 @@ export function MarketSection(props: MarketSectionProps) {
           </Modal>
         )
       })()}
+      {batchConfirming !== null && (
+        <Modal
+          open
+          onClose={() => setBatchConfirming(null)}
+          title={t('batchConfirmTitle')}
+          description={t('batchConfirmHint').replace('{0}', String(batchConfirming.length))}
+          footer={(
+            <>
+              <Button variant="ghost" onClick={() => setBatchConfirming(null)}>{t('cancel')}</Button>
+              <Button variant="primary" onClick={queueBatchInstall}>{t('batchConfirmAction')}</Button>
+            </>
+          )}
+        >
+          <ul className={css.batchList}>
+            {batchConfirming.map(plugin => (
+              <li key={plugin.url}>
+                <span className={`${css.nm} ${css.batchListName}`}>{pluginName(plugin.name, plugin.npm)}</span>
+                <span className={css.owner}>{plugin.owner}</span>
+              </li>
+            ))}
+          </ul>
+        </Modal>
+      )}
       {confirming !== null && (
         <Modal
           open

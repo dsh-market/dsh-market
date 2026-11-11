@@ -481,6 +481,16 @@
 .row1{display:flex;align-items:flex-start;gap:10px;min-width:0}
 .cardAction{flex-shrink:0;display:inline-flex;align-items:center}
 .installBtn.installBtn{min-width:64px}
+.batchPick{display:inline-flex;align-items:center;gap:5px;font-size:12px;line-height:16px;color:var(--dsw-alias-label-secondary,#6b7280);cursor:pointer;white-space:nowrap}
+.batchPick input{width:14px;height:14px;margin:0;accent-color:var(--dsw-alias-brand-primary,#4f6ef7);cursor:pointer}
+.batchBar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 4px 10px;padding:8px 10px;border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:8px;background:var(--dsw-alias-bg-layer-2,#f7f8fa)}
+.batchBarText{display:flex;flex-direction:column;gap:2px;min-width:0;font-size:12px;line-height:16px;color:var(--dsw-alias-label-secondary,#6b7280)}
+.batchBarText strong{font-size:13px;line-height:18px;color:var(--dsw-alias-label-primary,#1f2328)}
+.batchList{list-style:none;display:flex;flex-direction:column;gap:6px;margin:0;padding:0;max-height:min(45vh,360px);overflow-y:auto}
+.batchList li{display:flex;align-items:baseline;gap:8px;min-width:0;padding:6px 0;border-bottom:1px solid var(--dsw-alias-border-l2,#e5e7eb)}
+.batchList li:last-child{border-bottom:none}
+.batchList .batchListName{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.batchList .owner{flex-shrink:0;margin-left:auto}
 /* The avatar letter sits on `bg-layer-2`, which is white in the light theme:
    a hardcoded white was invisible there. Ink on a surface is `label-primary`. */
 .av{width:16px;height:16px;border-radius:50%;display:grid;place-items:center;font-weight:700;color:var(--dsw-alias-label-primary,#1f2328);font-size:9px;flex-shrink:0;object-fit:cover;background:var(--dsw-alias-bg-layer-2,#f3f4f6)}

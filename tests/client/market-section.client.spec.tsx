@@ -10403,6 +10403,69 @@ describe('OwnerAvatar icon', () => {
   })
 })
 
+describe('Batch install', () => {
+  it('pauses the queue while a per-install decision dialog is open', async () => {
+    stubFetch({
+      '/dsh-market/install': (body: unknown) => {
+        const url = String((body as { url?: string }).url ?? '')
+        return {
+          __status: 400,
+          hostIncompatible: {
+            name: url.includes('dsh-notify') ? 'dsh-notify' : 'dsh-loop',
+            npmName: url.includes('dsh-notify') ? 'dsh-notify' : 'dsh-loop',
+            version: '1.0.0', requirement: '>=9', hostVersion: '0.2.2-rc.1',
+          },
+        }
+      },
+      '/dsh-market/find-compatible': { compatibleVersion: null, upgradeOnly: false },
+    })
+    render(<MarketSection {...props()} />)
+    fireEvent.click(await screen.findByRole('button', { name: en.batchInstall }))
+    fireEvent.click(await screen.findByRole('checkbox', { name: `${en.batchSelect} dsh-loop` }))
+    fireEvent.click(screen.getByRole('checkbox', { name: `${en.batchSelect} dsh-notify` }))
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(`${en.batchInstallSelected}.*2`) }))
+    fireEvent.click(await screen.findByRole('button', { name: en.batchConfirmAction }))
+    const posts = () => fetchCalls.filter(call => call.path === '/dsh-market/install')
+    await waitFor(() => expect(posts()).toHaveLength(1), { timeout: 5000 })
+    await screen.findByRole('button', { name: en.hostIncompatibleInstallAnyway }, { timeout: 5000 })
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 2300)) })
+    expect(posts()).toHaveLength(1)
+    expect(screen.getByRole('button', { name: en.hostIncompatibleInstallAnyway })).toBeTruthy()
+  })
+
+  it('does not offer selection while the package environment is missing', async () => {
+    stubFetch({ '/dsh-market/status': { active: false, pnpm: false, boot: 'boot-1' } })
+    render(<MarketSection {...props()} />)
+    const button = await screen.findByRole('button', { name: en.batchInstall })
+    expect(button.hasAttribute('disabled')).toBe(true)
+  })
+
+  it('queues selected plugins in order and starts them one at a time', async () => {
+    stubFetch({ '/dsh-market/install': { ok: true, hot: true } })
+    render(<MarketSection {...props()} />)
+    fireEvent.click(await screen.findByRole('button', { name: en.batchInstall }))
+    expect(screen.queryByRole('checkbox', { name: `${en.batchSelect} whale-skin` })).toBeNull()
+    fireEvent.click(await screen.findByRole('checkbox', { name: `${en.batchSelect} dsh-loop` }))
+    fireEvent.click(screen.getByRole('checkbox', { name: `${en.batchSelect} dsh-notify` }))
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(`${en.batchInstallSelected}.*2`) }))
+    fireEvent.click(await screen.findByRole('button', { name: en.batchConfirmAction }))
+
+    const queued = () => JSON.parse(localStorage.getItem('dshm-queue-v1') ?? '[]') as Array<{ kind: string; url?: string }>
+    await waitFor(() => expect(queued().map(record => record.url)).toEqual([
+      'https://github.com/alice/dsh-loop',
+      'https://github.com/bob/dsh-notify',
+    ]))
+    expect(fetchCalls.filter(call => call.path === '/dsh-market/install')).toHaveLength(0)
+
+    await waitFor(() => {
+      const posts = fetchCalls.filter(call => call.path === '/dsh-market/install')
+      expect(posts).toHaveLength(1)
+      expect(posts[0]!.body).toMatchObject({ url: 'https://github.com/alice/dsh-loop' })
+    }, { timeout: 5000 })
+    expect(queued().map(record => record.url)).toEqual(['https://github.com/bob/dsh-notify'])
+  })
+})
+
 describe('Operation wait preference', () => {
   it.each(['update', 'uninstall'] as const)('ends a refused confirmed %s without looping or saving consent', async (kind) => {
     localStorage.setItem('dshm-operation-wait:/dsh-market', 'ask')
