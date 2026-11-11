@@ -114,7 +114,7 @@ export interface HostCompatibility {
   status: 'compatible' | 'incompatible' | 'unknown'
   basis: 'manifest' | 'undeclared' | 'unavailable'
   requirement: string | null
-  declarations: Array<{ kind: 'engine' | 'peer'; package?: string; range: string }>
+  declarations: Array<{ kind: 'engine' | 'peer' | 'dependency'; package?: string; range: string }>
 }
 
 /** npm package name or GitHub catalog URL -> discovery-time host verdict. */
