@@ -16734,7 +16734,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 													children: [
 														version,
 														localDev ? t("linkedDev") : "",
-														installedOn ?? "—"
+														installedOn === null ? "" : `${t("installedAtLabel")} ${installedOn}`
 													].filter(Boolean).join(" · ")
 												}),
 												specRedundant ? null : localPath !== null ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {

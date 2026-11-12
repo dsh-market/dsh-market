@@ -6058,10 +6058,9 @@ describe('local-dev restore', () => {
     render(<MarketSection {...props()} />)
     await screen.findByText('dsh-loop')
     fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
-    // The third segment is the install date (#1142); a linked checkout was
-    // never installed through the market, so the row says `—` rather than
-    // guessing from a directory mtime pnpm rewrites.
-    expect(await screen.findByText(`v1.0.0 · ${en.linkedDev} · —`)).toBeTruthy()
+    // A linked checkout was never installed through the market (#1142): no
+    // date segment, rather than a dash on every such row.
+    expect(await screen.findByText(`v1.0.0 · ${en.linkedDev}`)).toBeTruthy()
     // `../dsh-loop` is relative to the profile; a copied copy would point nowhere.
     expect(screen.getByText('../dsh-loop')).toBeTruthy()
     expect(screen.queryByRole('button', { name: en.copyPath })).toBeNull()
@@ -6094,7 +6093,7 @@ describe('local-dev restore', () => {
       fireEvent.click(await screen.findByRole('button', { name: /Installed/ }))
       const path = await screen.findByText('…/plugins/mystery-plug')
       expect(path.getAttribute('title')).toBe('/Users/me/work/plugins/mystery-plug')
-      expect(screen.getByText(`v0.1.14 · ${en.linkedDev} · —`)).toBeTruthy()
+      expect(screen.getByText(`v0.1.14 · ${en.linkedDev}`)).toBeTruthy()
       fireEvent.click(screen.getByRole('button', { name: en.copyPath }))
       await waitFor(() => expect(writeText).toHaveBeenCalledWith('/Users/me/work/plugins/mystery-plug'))
       expect(await screen.findByText(en.pathCopied)).toBeTruthy()
@@ -10886,10 +10885,11 @@ describe('installed rows carry their install time (#1142)', () => {
     fireEvent.click(await screen.findByRole('button', { name: new RegExp(en.tabInstalled) }))
     await screen.findByText('dsh-early')
     // 12:00 UTC keeps the calendar date in every timezone the row can render.
-    expect(rowText('dsh-early')).toContain('2026-01-05')
+    expect(rowText('dsh-early')).toContain(`${en.installedAtLabel} 2026-01-05`)
     // Installed with the CLI or the host's own plugins page: no record, and
     // no mtime stand-in — the row says so instead of inventing a date.
-    expect(rowText('dsh-manual')).toContain('—')
+    expect(rowText('dsh-manual')).toContain('v2.3.4')
+    expect(rowText('dsh-manual')).not.toContain('—')
     expect(rowText('dsh-manual')).not.toMatch(/\d{4}-\d{2}-\d{2}/)
   })
 

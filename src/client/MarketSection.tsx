@@ -8841,14 +8841,15 @@ export function MarketSection(props: MarketSectionProps) {
                                       {[
                                         version,
                                         localDev ? t('linkedDev') : '',
-                                        // Third segment of the same line (#1142): the
-                                        // row already spends its first line on the name,
-                                        // and this line is where "secondary" lives, so a
-                                        // date here squeezes neither the name nor the
-                                        // version. `—` is the honest answer for a package
-                                        // the market never watched being installed (the
-                                        // CLI, the host's own plugins page).
-                                        installedOn ?? '—',
+                                        // Third segment of the same line (#1142), and only
+                                        // when the market knows it. Every package installed
+                                        // before this existed, or through the CLI, has no
+                                        // date: a dash on all of those rows is a placeholder
+                                        // that says nothing, so the row stays quiet and the
+                                        // hover text explains why there is no date. The
+                                        // label says what the date is: a bare date beside a
+                                        // version reads as a release date.
+                                        installedOn === null ? '' : `${t('installedAtLabel')} ${installedOn}`,
                                       ].filter(Boolean).join(' · ')}
                                     </div>
                                   )}
