@@ -588,8 +588,9 @@ export function packagePatchFlags(
     // multi-component plugin with some components switched off is still on
     // (#1150). One disabled row used to flip the whole package, which kept
     // it out of 「全部更新」.
-    const decidedRows = rows.filter(decidedByUser)
-    if (decidedRows.length > 0 && decidedRows.every(id => applies(id) && state.disables.includes(id))) disabled.push(name)
+    // Rows that name another module do not count either way (#1113).
+    const decidedRows = rows.filter(id => decidedByUser(id) && applies(id))
+    if (decidedRows.length > 0 && decidedRows.every(id => state.disables.includes(id))) disabled.push(name)
     if (rows.some(id => decidedByUser(id) && applies(id) && state.forced.includes(id))) forced.push(name)
   }
   return { disabled, forced }
