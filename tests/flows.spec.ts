@@ -3049,6 +3049,29 @@ describe('update flow — no npm publishing required', () => {
     expect(r.json.activation['dsh-loop']).toMatchObject({ state: 'restart', hot: false })
   })
 
+  it('drops the release-age exclude row of the version an update replaced (#1093)', async () => {
+    // The uninstall side was fixed first; an update leaves the same orphan: the
+    // row for the old version outlives it. Another package's row stays.
+    const workspacePath = join(fake.profileDir, 'pnpm-workspace.yaml')
+    writeFileSync(workspacePath, [
+      'minimumReleaseAge: 1440',
+      'minimumReleaseAgeExclude:',
+      '  - dsh-loop@1.0.0',
+      '  - other@2.0.0',
+      '',
+    ].join('\n'))
+    advanceNpmLatest('1.2.0')
+
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+
+    expect(r.status).toBe(200)
+    expect(r.json.ok).toBe(true)
+    const workspace = readFileSync(workspacePath, 'utf8')
+    expect(workspace).not.toContain('dsh-loop@1.0.0')
+    expect(workspace).toContain('other@2.0.0')
+    expect(workspace).toContain('minimumReleaseAge: 1440')
+  })
+
   it('keeps saying "restart to apply" on every later listing, not only in the reply', async () => {
     // The reply is read once; the listing is read on every page load. It
     // recomputed activation from the loader's inventory alone — which still

@@ -6413,6 +6413,24 @@ sendJson(response, 200, { updates })
             // to approve it sends the user to press a button that cannot help.
             const ignoredBuilds = ok || cancelled || !failedOnBlockedBuilds(result) ? undefined : blockedBuilds(result)
             if (ok) clearBrokenPlugin(name)
+            // #1093: the same leftover rows, on the update side. The old
+            // version's `minimumReleaseAgeExclude` row outlives the update and
+            // points at a build that is no longer on disk. Rows naming the
+            // version that IS installed stay: a fresh release may need exactly
+            // that row at the next install.
+            if (ok && !restore) {
+              try {
+                const installedNow = readInstalledVersion(config.profile, name, activeProfileDir)
+                if (installedNow !== null) {
+                  const staleExcludes = dropReleaseAgeExcludes(config.profile, name, activeProfileDir, installedNow)
+                  if (staleExcludes.length > 0) {
+                    logEvent('info', 'update', `${name}: dropped ${String(staleExcludes.length)} minimumReleaseAgeExclude row(s) for versions no longer installed`)
+                  }
+                }
+              } catch (error) {
+                logEvent('warn', 'update', `${name}: could not clear old minimumReleaseAgeExclude rows — ${error instanceof Error ? error.message : String(error)}`)
+              }
+            }
             // A package still installed but no longer in dsh.profile.bundles
             // after this run stops loading and says nothing (#720). The market
             // does not write that list from anything but the current list, so
