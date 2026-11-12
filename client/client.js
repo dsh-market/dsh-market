@@ -6038,6 +6038,71 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			});
 		}
 		//#endregion
+		//#region src/client/dismissed-host.ts
+		/**
+		* The host rows the user already cleared (#1184).
+		*
+		* Every finished row in the operations panel is a projection of the host's
+		* own `/dsh-market/status` answer, not a record this page owns: "clear
+		* settled" and "dismiss" can only stop THIS page from drawing it. Before
+		* #1184 that decision lived in a `useRef`, so the next mount — a reload, or
+		* leaving the market and coming back — started with an empty set and the host
+		* quietly put the same rows back on screen. The user had cleared them; the
+		* page had simply forgotten.
+		*
+		* So the set is written down, next to the market's other page-local
+		* bookkeeping (`dshm-drain-v1`, `dshm-settled-v1`). It is not market state:
+		* nothing survives a profile reset here, and a different browser profile
+		* clearing its own rows must not hide them in this one.
+		*
+		* The ids are the host's `operationId`s, which is also why the list can be
+		* capped without losing anything current: an id is only ever asked about
+		* while the host still reports that operation.
+		*/
+		/** Where the cleared host rows are kept. */
+		const DISMISSED_HOST_STORAGE_KEY = "dshm-dismissed-host-v1";
+		/** Oldest first, newest last: the order that makes a cap drop the oldest. */
+		function read() {
+			try {
+				const raw = localStorage.getItem(DISMISSED_HOST_STORAGE_KEY);
+				if (raw === null) return [];
+				const parsed = JSON.parse(raw);
+				if (!Array.isArray(parsed)) return [];
+				const out = [];
+				for (const item of parsed) {
+					if (typeof item !== "string" || item === "" || out.includes(item)) continue;
+					out.push(item);
+				}
+				return out.slice(-100);
+			} catch {
+				return [];
+			}
+		}
+		function write(ids) {
+			try {
+				localStorage.setItem(DISMISSED_HOST_STORAGE_KEY, JSON.stringify(ids.slice(-100)));
+			} catch {}
+		}
+		let cache = null;
+		/**
+		* The ids to keep off screen, read once per page. The component holds this
+		* set for the lifetime of the mount and asks it on every status poll, so the
+		* parse happens once instead of once per render.
+		*/
+		function dismissedHostIdSet() {
+			cache ??= new Set(read());
+			return cache;
+		}
+		/** The user cleared this host row: it must stay cleared across a reload. */
+		function rememberDismissedHostId(id) {
+			if (id === "") return;
+			const ids = [...dismissedHostIdSet()];
+			if (ids.includes(id)) return;
+			ids.push(id);
+			cache = new Set(ids.slice(-100));
+			write([...cache]);
+		}
+		//#endregion
 		//#region src/client/preset-panel.tsx
 		/**
 		* Diagnostics sub-panel — issue #98 phase 3 (plugin presets).
@@ -10941,8 +11006,14 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			*/
 			const settledHostRef = (0, react.useRef)(/* @__PURE__ */ new Set());
 			const knownHostIdsRef = (0, react.useRef)(/* @__PURE__ */ new Set());
-			/** Host operations the user cleared; a status poll must not add them back. */
-			const dismissedHostRef = (0, react.useRef)(/* @__PURE__ */ new Set());
+			/**
+			* Host operations the user cleared; a status poll must not add them back —
+			* and neither must a reload. The set is read from storage and written back
+			* per id, because these rows belong to the host: clearing one only ever
+			* hides it here, so a set that lived only in memory brought the row back on
+			* the next mount (#1184).
+			*/
+			const dismissedHostRef = (0, react.useRef)(dismissedHostIdSet());
 			const drainMarkerRestoredRef = (0, react.useRef)(false);
 			const clearDrainMarker = (0, react.useCallback)((operationId) => {
 				try {
@@ -15062,12 +15133,18 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 										replacing,
 										envReady,
 										onClearSettled: () => {
-											for (const record of recordsRef.current) if (record.hostOperationId !== void 0 && (record.state === "done" || record.state === "warned" || record.state === "failed")) dismissedHostRef.current.add(record.hostOperationId);
+											for (const record of recordsRef.current) if (record.hostOperationId !== void 0 && (record.state === "done" || record.state === "warned" || record.state === "failed")) {
+												dismissedHostRef.current.add(record.hostOperationId);
+												rememberDismissedHostId(record.hostOperationId);
+											}
 											setRecords((list) => clearSettled(list));
 										},
 										onCancel: (record) => doCancel(record),
 										onDismiss: (record) => {
-											if (record.hostOperationId !== void 0) dismissedHostRef.current.add(record.hostOperationId);
+											if (record.hostOperationId !== void 0) {
+												dismissedHostRef.current.add(record.hostOperationId);
+												rememberDismissedHostId(record.hostOperationId);
+											}
 											setRecords((list) => drop(list, record.id));
 										},
 										onRefresh: () => location.reload(),

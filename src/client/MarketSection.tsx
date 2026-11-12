@@ -47,6 +47,7 @@ import { OperationsPanel } from './OperationsPanel.tsx'
 import { applyRecovery, fetchRecovery, initialKeep, RecoveryPanel, watchRestart, type RecoveryView } from './RecoveryPanel.tsx'
 import { HostRecoveryBanner } from './HostRecoveryBanner.tsx'
 import { clearSettled, drop, enqueue, patch as patchRecord, recordForUrl, restoreSettled, serializeSettled, SETTLED_STORAGE_KEY } from './operations.ts'
+import { dismissedHostIdSet, rememberDismissedHostId } from './dismissed-host.ts'
 import type { OperationRecord } from './operations.ts'
 import { Diagnostics } from './Diagnostics.tsx'
 import { exportMarketLog } from './self-check.ts'
@@ -3321,8 +3322,14 @@ export function MarketSection(props: MarketSectionProps) {
    */
   const settledHostRef = useRef(new Set<string>())
   const knownHostIdsRef = useRef(new Set<string>())
-  /** Host operations the user cleared; a status poll must not add them back. */
-  const dismissedHostRef = useRef(new Set<string>())
+  /**
+   * Host operations the user cleared; a status poll must not add them back —
+   * and neither must a reload. The set is read from storage and written back
+   * per id, because these rows belong to the host: clearing one only ever
+   * hides it here, so a set that lived only in memory brought the row back on
+   * the next mount (#1184).
+   */
+  const dismissedHostRef = useRef(dismissedHostIdSet())
   const drainMarkerRestoredRef = useRef(false)
 
   const clearDrainMarker = useCallback((operationId: string) => {
@@ -7564,13 +7571,17 @@ export function MarketSection(props: MarketSectionProps) {
                 if (record.hostOperationId !== undefined
                   && (record.state === 'done' || record.state === 'warned' || record.state === 'failed')) {
                   dismissedHostRef.current.add(record.hostOperationId)
+                  rememberDismissedHostId(record.hostOperationId)
                 }
               }
               setRecords(list => clearSettled(list))
             }}
             onCancel={record => doCancel(record)}
             onDismiss={record => {
-              if (record.hostOperationId !== undefined) dismissedHostRef.current.add(record.hostOperationId)
+              if (record.hostOperationId !== undefined) {
+                dismissedHostRef.current.add(record.hostOperationId)
+                rememberDismissedHostId(record.hostOperationId)
+              }
               setRecords(list => drop(list, record.id))
             }}
             onRefresh={() => location.reload()}
