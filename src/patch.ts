@@ -584,7 +584,12 @@ export function packagePatchFlags(
     // host, so it is not a decision about this package (#1113): the shape a
     // package rename leaves behind.
     const applies = (id: string): boolean => rowFlagApplies(state, id, composedRowName(host, id))
-    if (rows.some(id => decidedByUser(id) && applies(id) && state.disables.includes(id))) disabled.push(name)
+    // A package counts as off only when nothing of it is left running: a
+    // multi-component plugin with some components switched off is still on
+    // (#1150). One disabled row used to flip the whole package, which kept
+    // it out of 「全部更新」.
+    const decidedRows = rows.filter(decidedByUser)
+    if (decidedRows.length > 0 && decidedRows.every(id => applies(id) && state.disables.includes(id))) disabled.push(name)
     if (rows.some(id => decidedByUser(id) && applies(id) && state.forced.includes(id))) forced.push(name)
   }
   return { disabled, forced }
