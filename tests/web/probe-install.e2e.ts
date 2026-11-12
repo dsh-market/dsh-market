@@ -7,13 +7,31 @@ import { afterAll, beforeAll, describe, it } from 'vitest'
 import { dshAvailable, launchMarketScaffold } from './scaffold.ts'
 import type { WebScaffold } from './scaffold.ts'
 
+const PROBE_SNAPSHOT = 'data/registry-snapshot.json'
 const names = (process.env.PROBE_NPM ?? '').split(',').filter(Boolean)
-const snap = JSON.parse(readFileSync('data/registry-snapshot.json', 'utf8'))
-const all = (snap.plugins ?? snap) as { npm?: string; url: string; version: string }[]
+
+/**
+ * The catalog a probe installs from. It is a DOWNLOAD, not a committed file
+ * (#545), so a fresh checkout does not have it — reading it at module scope
+ * made this file throw on import, which failed the whole web-e2e lane on every
+ * run whether or not a probe was asked for. Only a run that was asked for needs
+ * it, and such a run should hear why it cannot start rather than skip quietly.
+ */
+function probeCatalog(): { npm?: string; url: string; version: string }[] {
+  if (!existsSync(PROBE_SNAPSHOT)) {
+    throw new Error(`PROBE_NPM is set but ${PROBE_SNAPSHOT} is missing: it is downloaded, never committed (#545). Run \`npm run snapshot\` first.`)
+  }
+  const snap = JSON.parse(readFileSync(PROBE_SNAPSHOT, 'utf8'))
+  return snap.plugins ?? snap
+}
 
 describe.skipIf(!dshAvailable() || names.length === 0).sequential('probe', () => {
   let s: WebScaffold
-  beforeAll(async () => { s = await launchMarketScaffold({ localCatalog: false }) }, 600_000)
+  let all: { npm?: string; url: string; version: string }[]
+  beforeAll(async () => {
+    all = probeCatalog()
+    s = await launchMarketScaffold({ localCatalog: false })
+  }, 600_000)
   afterAll(async () => { await s?.close() })
   it('installs each', async () => {
     const out: unknown[] = []
