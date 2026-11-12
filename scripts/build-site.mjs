@@ -16,7 +16,8 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import LOCALES from '../site/locales.mjs'
-import { GUIDES, UI, guideBody, reportBody } from './site-content.mjs'
+import { GUIDES, UI, CAP_NAMES, guideBody, reportBody } from './site-content.mjs'
+import { CAT_UI, MIN_PER_CATEGORY, categoryBody } from './site-category.mjs'
 import { TESTED_UI, loadTested, testedBody } from './site-tested.mjs'
 
 const ORIGIN = 'https://dshmarket.com'
@@ -104,6 +105,8 @@ const guidePath = (loc, slug) => `${loc.urlPath}guides/${slug}/`
 const reportPath = (loc) => `${loc.urlPath}report/`
 const testedPath = (loc) => `${loc.urlPath}tested/`
 const TESTED = loadTested()
+const categoryPath = (loc, id) => `${loc.urlPath}categories/${id}/`
+const CATEGORY_IDS = Object.keys(registry.categories ?? {}).filter((id) => plugins.filter((p) => p.category === id).length >= MIN_PER_CATEGORY)
 
 // ── landing-page catalog ────────────────────────────────────────────────────
 // The front door used to be a 1.4 KB marketing page while /browse/ carried the
@@ -306,6 +309,8 @@ function articlePage(loc, { title, desc, urlPath, pathFor, body, type = 'Article
   const url = ORIGIN + urlPath
   const resolved = body
     .replaceAll('__GUIDES__', () => guidesPath(loc))
+    .replaceAll('__REPORT__', () => reportPath(loc))
+    .replaceAll('__TESTED__', () => testedPath(loc))
     .replace(/__GUIDE_([a-z-]+)__/g, (_, slug) => guidePath(loc, slug))
   const ld = ldSafe(JSON.stringify({
     '@context': 'https://schema.org', '@type': type, headline: title, description: desc,
@@ -325,6 +330,7 @@ function articlePage(loc, { title, desc, urlPath, pathFor, body, type = 'Article
     .replaceAll('__BROWSE__', () => loc.browsePath)
     .replaceAll('__GUIDES__', () => guidesPath(loc))
     .replaceAll('__REPORT__', () => reportPath(loc))
+    .replaceAll('__TESTED__', () => testedPath(loc))
     .replaceAll('__NAV_GUIDES__', () => esc(ui.navGuides))
     .replaceAll('__NAV_REPORT__', () => esc(ui.navReport))
     .replaceAll('__PRIVACY__', () => loc.privacyPath)
@@ -348,8 +354,17 @@ for (const loc of LOCALES) {
   }
   articlePage(loc, {
     title: ui.reportTitle, desc: ui.reportDesc, urlPath: reportPath(loc), pathFor: reportPath,
-    body: reportBody(loc, { plugins, registry, catName, esc, pluginPath, catalog: CATALOG }),
+    body: reportBody(loc, { plugins, registry, catName, esc, pluginPath, catalog: CATALOG, categoryPath }),
   })
+  for (const id of CATEGORY_IDS) {
+    const cu = CAT_UI[loc.code]
+    const name = catName(id, loc)
+    const n = plugins.filter((p) => p.category === id).length
+    articlePage(loc, {
+      title: cu.title(name), desc: cu.desc(name, n), urlPath: categoryPath(loc, id), pathFor: (l) => categoryPath(l, id), type: 'CollectionPage',
+      body: categoryBody(loc, { id, plugins, registry, catName, esc, pluginPath, tested: TESTED, capNames: CAP_NAMES[loc.code] }),
+    })
+  }
   if (TESTED) {
     articlePage(loc, {
       title: TESTED_UI[loc.code].title, desc: TESTED_UI[loc.code].desc, urlPath: testedPath(loc), pathFor: testedPath,
@@ -407,6 +422,7 @@ ${urlEntry(guidesPath, updated, 'monthly')}
 ${GUIDES.map((g) => urlEntry((l) => guidePath(l, g.slug), updated, 'monthly')).join('\n')}
 ${urlEntry(reportPath, updated, 'daily')}
 ${TESTED ? urlEntry(testedPath, updated, 'monthly') : ''}
+${CATEGORY_IDS.map((id) => urlEntry((l) => categoryPath(l, id), updated, 'weekly')).join('\n')}
 ${urlEntry((l) => l.privacyPath, updated, 'yearly')}
 </urlset>
 `)
@@ -442,5 +458,5 @@ if (fs.existsSync(INDEX_FILE)) {
 
 // Real pages only: the stubs are redirects, not content, and counting them as
 // pages is how the deploy looked four times larger than it is.
-const pages = LOCALES.length * (4 + 2 + GUIDES.length + (TESTED ? 1 : 0)) // index, browse, install, privacy, guides index, report, guides
+const pages = LOCALES.length * (4 + 2 + GUIDES.length + (TESTED ? 1 : 0) + CATEGORY_IDS.length) // index, browse, install, privacy, guides index, report, guides
 console.log(`site built: ${pages} pages, ${plugins.length} redirect stubs × ${LOCALES.length} locales`)

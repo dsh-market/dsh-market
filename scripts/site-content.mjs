@@ -11,6 +11,7 @@
  * it is typed in by hand, so it cannot drift from the data it describes.
  */
 import fs from 'node:fs'
+import { MIN_PER_CATEGORY } from './site-category.mjs'
 
 export const GUIDES = [
   {
@@ -128,6 +129,8 @@ const T = {
   },
 }
 
+export const CAP_NAMES = { en: T.en.capNames, zh: T.zh.capNames }
+
 const fmt = (n) => new Intl.NumberFormat('en-US').format(n)
 const pct = (a, b) => (b === 0 ? '0' : (Math.round((a / b) * 1000) / 10).toFixed(1))
 const median = (xs) => {
@@ -141,7 +144,7 @@ const median = (xs) => {
  * The ecosystem report body for one locale. Pure: the same snapshot gives the
  * same page, which is what lets the sitemap's lastmod be the data's date.
  */
-export function reportBody(loc, { plugins, registry, catName, esc, pluginPath, catalog }) {
+export function reportBody(loc, { plugins, registry, catName, esc, pluginPath, catalog, categoryPath }) {
   const t = T[loc.code]
   const date = registry.updated ?? ''
   const out = []
@@ -176,7 +179,7 @@ export function reportBody(loc, { plugins, registry, catName, esc, pluginPath, c
     return { id, items, recent, top }
   }).filter((c) => c.items.length).sort((a, b) => b.items.length - a.items.length)
   out.push(`<h2>${esc(t.catH)}</h2><p>${esc(t.catP(RECENT_DAYS))}</p>`)
-  out.push(`<div class="tablewrap"><table><tr><th>${esc(t.cat)}</th><th class="n">${esc(t.plugins)}</th><th class="n">${esc(t.share)}</th><th class="n">${esc(t.recent)}</th><th>${esc(t.top)}</th></tr>${cats.map((c) => `<tr><td>${esc(catName(c.id, loc))}</td><td class="n">${fmt(c.items.length)}</td><td class="n">${pct(c.items.length, plugins.length)}%</td><td class="n">${fmt(c.recent)}</td><td>${c.top ? `<a href="${esc(pluginPath(loc, c.top.slug))}">${esc(c.top.displayName)}</a>` : '—'}</td></tr>`).join('')}</table></div>`)
+  out.push(`<div class="tablewrap"><table><tr><th>${esc(t.cat)}</th><th class="n">${esc(t.plugins)}</th><th class="n">${esc(t.share)}</th><th class="n">${esc(t.recent)}</th><th>${esc(t.top)}</th></tr>${cats.map((c) => `<tr><td>${categoryPath && c.items.length >= MIN_PER_CATEGORY ? `<a href="${esc(categoryPath(loc, c.id))}">${esc(catName(c.id, loc))}</a>` : esc(catName(c.id, loc))}</td><td class="n">${fmt(c.items.length)}</td><td class="n">${pct(c.items.length, plugins.length)}%</td><td class="n">${fmt(c.recent)}</td><td>${c.top ? `<a href="${esc(pluginPath(loc, c.top.slug))}">${esc(c.top.displayName)}</a>` : '—'}</td></tr>`).join('')}</table></div>`)
 
   // Concentration
   const dls = plugins.map((p) => p.downloads).filter((d) => typeof d === 'number' && d > 0).sort((a, b) => b - a)
