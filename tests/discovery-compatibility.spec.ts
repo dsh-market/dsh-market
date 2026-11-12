@@ -250,6 +250,25 @@ describe('DiscoveryManifestIndex', () => {
       .toEqual(loaded)
   })
 
+  it('keeps a whole catalog-sized scan cached, not just its last 5,000 (#1170)', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'dshm-discovery-'))
+    directories.push(directory)
+    const cache = join(directory, '.dsh-market', 'discovery.json')
+    const names = Array.from({ length: 5_300 }, (_, i) => `plugin-${String(i)}`)
+    let clock = 1_000
+    const fetcher = async (): Promise<Response> => new Response(JSON.stringify({ version: '1.0.0' }), { status: 200 })
+    const first = new DiscoveryManifestIndex(cache, { fetcher, now: () => clock++, concurrency: 8 })
+    for (let i = 0; i < names.length; i += 64) await first.lookup(names.slice(i, i + 64), 'https://registry.example')
+
+    let refetched = 0
+    const second = new DiscoveryManifestIndex(cache, {
+      fetcher: async () => { refetched += 1; return new Response(JSON.stringify({ version: '1.0.0' }), { status: 200 }) },
+      now: () => clock,
+    })
+    await second.lookup(names, 'https://registry.example')
+    expect(refetched).toBe(0)
+  })
+
   it('retries a raw manifest read instead of reporting an unknown requirement (#1148)', async () => {
     // The report measured exactly this: `raw.githubusercontent.com` answered
     // ECONNRESET with no proxy and 200 through one while the catalog and the
