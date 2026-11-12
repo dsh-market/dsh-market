@@ -86,6 +86,61 @@ describe('readUserPatchState', () => {
     }
   })
 
+  it('reads the flag of a row the user wrote inside an insert block', () => {
+    // An inserted row is a real loader row at four spaces, so its own fields sit
+    // at six. The include composition applies its `disabled` exactly like a
+    // top-level row's — but the scanner returned after `inserts.push`, so the
+    // market rendered such a plugin as on while the loader had it off.
+    const dir = patchDir()
+    try {
+      writeFileSync(join(dir, 'cordis.patch.yml'), [
+        '- insert:',
+        '    - id: computer-use-cua-driver-mcp',
+        "      name: '@deepseek-ai/dsh-experimental-computer-use-cua-driver-mcp'",
+        '      disabled: true',
+        '    - id: browser-use-playwright-mcp',
+        '      name: dsh-browser-use-playwright-mcp',
+        '',
+      ].join('\n'))
+      expect(readUserPatchState(join(dir, 'cordis.patch.yml'))).toEqual({
+        disables: ['computer-use-cua-driver-mcp'],
+        forced: [],
+        inserts: ['computer-use-cua-driver-mcp', 'browser-use-playwright-mcp'],
+        names: {
+          'computer-use-cua-driver-mcp': '@deepseek-ai/dsh-experimental-computer-use-cua-driver-mcp',
+          'browser-use-playwright-mcp': 'dsh-browser-use-playwright-mcp',
+        },
+      })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('reads an inserted row flag that a comment separates from its other fields', () => {
+    // The field block ends at the next line no deeper than the row itself, so a
+    // comment at the row's indent is not structural — the same rule the
+    // top-level shape follows (#1099).
+    const dir = patchDir()
+    try {
+      writeFileSync(join(dir, 'cordis.patch.yml'), [
+        '- insert:',
+        '    - id: nightshift',
+        '      name: dsh-nightshift-client',
+        '      # This row stays off until the worker bundle ships.',
+        '      disabled: true',
+        '- insert:',
+        '    - id: forced-on',
+        '      disabled: false',
+        '',
+      ].join('\n'))
+      const state = readUserPatchState(join(dir, 'cordis.patch.yml'))
+      expect(state.disables).toEqual(['nightshift'])
+      expect(state.forced).toEqual(['forced-on'])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('does not read a nested config key as the row flag (#1099)', () => {
     // `config: { disabled: true }` is a plugin's own setting, not the loader
     // row's switch; a deeper indent must never count.
