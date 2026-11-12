@@ -1742,6 +1742,53 @@ describe('dropReleaseAgeExcludes (#1093)', () => {
   })
 })
 
+describe('dropReleaseAgeExcludes with keepVersion, the update side (#1093)', () => {
+  function workspace(contents: string): string {
+    const dir = writeProfile({ name: 'dsh-profile-web', dependencies: {} })
+    writeFileSync(join(dir, 'pnpm-workspace.yaml'), contents)
+    return dir
+  }
+
+  it('drops rows for older versions and keeps the one naming the installed version', () => {
+    const dir = workspace([
+      'minimumReleaseAgeExclude:',
+      '  - typescript@1.0.0',
+      '  - typescript@1.1.0',
+      '  - other@1.0.0',
+      '',
+    ].join('\n'))
+
+    expect(dropReleaseAgeExcludes('web', 'typescript', undefined, '1.1.0')).toEqual(['typescript@1.0.0'])
+    expect(readFileSync(join(dir, 'pnpm-workspace.yaml'), 'utf8')).toBe([
+      'minimumReleaseAgeExclude:',
+      '  - typescript@1.1.0',
+      '  - other@1.0.0',
+      '',
+    ].join('\n'))
+  })
+
+  it('keeps a union that lists the installed version whole, and a bare name too', () => {
+    const original = [
+      'minimumReleaseAgeExclude:',
+      '  - typescript@1.0.0 || 1.1.0',
+      '  - dshmarket',
+      '',
+    ].join('\n')
+    const dir = workspace(original)
+
+    expect(dropReleaseAgeExcludes('web', 'typescript', undefined, '1.1.0')).toEqual([])
+    expect(dropReleaseAgeExcludes('web', 'dshmarket', undefined, '1.1.0')).toEqual([])
+    expect(readFileSync(join(dir, 'pnpm-workspace.yaml'), 'utf8')).toBe(original)
+  })
+
+  it('drops the whole row when no version in it is the installed one', () => {
+    const dir = workspace(['packages:', '  - .', 'minimumReleaseAgeExclude:', '  - typescript@1.0.0 || 1.0.1', ''].join('\n'))
+
+    expect(dropReleaseAgeExcludes('web', 'typescript', undefined, '1.2.0')).toEqual(['typescript@1.0.0 || 1.0.1'])
+    expect(readFileSync(join(dir, 'pnpm-workspace.yaml'), 'utf8')).toBe(['packages:', '  - .', ''].join('\n'))
+  })
+})
+
 describe('mergeDuplicateReleaseAgeExcludes (#732)', () => {
   function workspace(contents: string): string {
     const dir = writeProfile({ name: 'dsh-profile-web', dependencies: {} })

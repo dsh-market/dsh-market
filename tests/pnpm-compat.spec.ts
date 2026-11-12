@@ -1140,8 +1140,9 @@ pnpm now wants to use the store at "/Users/panda/Library/pnpm/store/v10" to link
       // what it said and the next run failed the same way".
       expect(message).toContain('pnpm store path')
       expect(message).toContain('驼峰')
-      // No environment variable to blame here, so none may be named.
-      expect(message).not.toContain('PNPM_CONFIG_STORE_DIR=')
+      // No environment variable to blame here, so none may be named — in
+      // either spelling, since on Windows it can be listed as the lowercase one.
+      expect(message).not.toMatch(/pnpm_config_store_dir=/iu)
     })
 
     it('names the environment variable when it is the reason the file cannot work', () => {
@@ -1150,7 +1151,14 @@ pnpm now wants to use the store at "/Users/panda/Library/pnpm/store/v10" to link
       const override = join(profile, 'env-store')
       vi.stubEnv('PNPM_CONFIG_STORE_DIR', override)
       const message = classifyPnpmFailure(outputFor(profile, linked, override), 1, { profileDirectory: profile })?.message ?? ''
-      expect(message).toContain('PNPM_CONFIG_STORE_DIR=')
+      // The message names the variable as the environment spells it. On
+      // Windows the two spellings the beforeEach stubs are ONE variable, and
+      // it keeps the spelling that created it: an earlier test's
+      // unstubAllEnvs re-creates it as pnpm_config_store_dir (restoring the ''
+      // it read), so the value set here is listed under the lowercase name.
+      const name = Object.keys(process.env).find(key => /^pnpm_config_store_dir$/iu.test(key) && process.env[key] === override)
+      expect(name, 'the stub above must be visible in process.env').toBeDefined()
+      expect(message).toContain(`${name}=`)
       expect(message).toContain(override)
       expect(message).toContain('环境变量')
       // The paste-ready line would be dead advice here, so it must not be the offer.

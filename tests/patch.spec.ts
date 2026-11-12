@@ -1023,6 +1023,30 @@ describe('packagePatchFlags', () => {
     }
   })
 
+  it('keeps a package with some components on as on, and one with none as off (#1150)', () => {
+    const dir = patchDir()
+    try {
+      mkdirSync(join(dir, 'node_modules', 'dsh-multi'), { recursive: true })
+      writeFileSync(join(dir, 'node_modules', 'dsh-multi', 'cordis.patch.yml'), [
+        '- insert:',
+        '    - id: multi-a',
+        '      name: dsh-multi-a',
+        '    - id: multi-b',
+        '      name: dsh-multi-b',
+        '    - id: multi-c',
+        '      name: dsh-multi-c',
+        '',
+      ].join('\n'))
+      const patch = join(dir, 'cordis.patch.yml')
+      writeFileSync(patch, '- id: multi-a\n  disabled: true\n- id: multi-b\n  disabled: true\n')
+      expect(packagePatchFlags(emptyHost, dir, ['dsh-multi'], readUserPatchState(patch)).disabled).toEqual([])
+      writeFileSync(patch, '- id: multi-a\n  disabled: true\n- id: multi-b\n  disabled: true\n- id: multi-c\n  disabled: true\n')
+      expect(packagePatchFlags(emptyHost, dir, ['dsh-multi'], readUserPatchState(patch)).disabled).toEqual(['dsh-multi'])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('still reads a decision about the package\'s own core row', () => {
     // The other half of the same rule: the user really did switch the package
     // off, so the row that IS the package counts as before.

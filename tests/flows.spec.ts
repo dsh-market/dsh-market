@@ -12,7 +12,8 @@
  *                  the update logic WITHOUT publishing npm versions.
  * - registry.ts  → fixed curated registry (with a theme category)
  * - hot.ts       → in-memory mount table
- * - global fetch → fake npm/github APIs
+ * - global fetch → fake npm/github APIs; a request no stub answers is
+ *                  refused, never sent
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -989,10 +990,13 @@ beforeEach(() => {
   hot.failNext = false
   bed = createTestbed()
   // The install route asks the registry for `latest` before a fresh npm add
-  // (#594). Answer from the fake registry so no test reaches the network;
-  // everything else goes to the real fetch, or to whatever a test stubs.
-  const realFetch = globalThis.fetch
-  vi.stubGlobal('fetch', vi.fn((input: unknown, init?: RequestInit) => {
+  // (#594). Answer from the fake registry. Anything else is refused the way
+  // an unreachable network refuses it, unless a test stubs it: this lane is
+  // offline (vitest.config.ts). Handing the rest to the real fetch sent
+  // `npm test` to registry.npmjs.org, github.com and raw.githubusercontent.com
+  // from update checks and acceleration probes, so what those specs saw
+  // depended on the machine's network rather than on the spec.
+  vi.stubGlobal('fetch', vi.fn((input: unknown) => {
     const m = /^https:\/\/registry\.(?:npmjs\.org|npmmirror\.com)\/(.+?)\/latest$/.exec(String(input))
     if (m !== null) {
       const pkg = fake.npm[decodeURIComponent(m[1]!)]
@@ -1000,7 +1004,7 @@ beforeEach(() => {
         ? new Response('{"error":"Not found"}', { status: 404 })
         : new Response(JSON.stringify({ version: pkg.latest }), { status: 200 }))
     }
-    return realFetch(input as string, init)
+    return Promise.reject(new TypeError(`unit lane is offline: no stub answers ${String(input)}`))
   }))
 })
 afterEach(() => {
@@ -1040,6 +1044,15 @@ function npmLockFixture(name: string, spec: string, version: string): string {
     '',
   ].join('\n')
 }
+
+describe('the unit lane stays offline', () => {
+  it('refuses a request no stub answers instead of sending it', async () => {
+    // `.invalid` never resolves, so the old pass-through failed here too, only
+    // after a DNS lookup and with the real fetch's error. The point is who
+    // answers: the beforeEach stub, without anything leaving the machine.
+    await expect(globalThis.fetch('https://example.invalid/unstubbed')).rejects.toThrow(/unit lane is offline/)
+  })
+})
 
 describe('flat Desktop host consumers (#553)', () => {
   const resourcesDescriptor = Object.getOwnPropertyDescriptor(process, 'resourcesPath')
@@ -3034,6 +3047,29 @@ describe('update flow — no npm publishing required', () => {
     // disk, `/dsh-market/status` still reporting 1.11.3, an unchanged boot
     // id, and this route calling it hot-loaded in the same response.
     expect(r.json.activation['dsh-loop']).toMatchObject({ state: 'restart', hot: false })
+  })
+
+  it('drops the release-age exclude row of the version an update replaced (#1093)', async () => {
+    // The uninstall side was fixed first; an update leaves the same orphan: the
+    // row for the old version outlives it. Another package's row stays.
+    const workspacePath = join(fake.profileDir, 'pnpm-workspace.yaml')
+    writeFileSync(workspacePath, [
+      'minimumReleaseAge: 1440',
+      'minimumReleaseAgeExclude:',
+      '  - dsh-loop@1.0.0',
+      '  - other@2.0.0',
+      '',
+    ].join('\n'))
+    advanceNpmLatest('1.2.0')
+
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+
+    expect(r.status).toBe(200)
+    expect(r.json.ok).toBe(true)
+    const workspace = readFileSync(workspacePath, 'utf8')
+    expect(workspace).not.toContain('dsh-loop@1.0.0')
+    expect(workspace).toContain('other@2.0.0')
+    expect(workspace).toContain('minimumReleaseAge: 1440')
   })
 
   it('keeps saying "restart to apply" on every later listing, not only in the reply', async () => {
@@ -10896,7 +10932,7 @@ describe('Agent-safe drain mode (#411)', () => {
       const completed = await settled(drainBed, String(accepted.json.operationId))
       expect(completed.state).toBe('failed')
       // This text comes from the status event; the later gate words it differently.
-      expect(completed.failure).toMatchObject({ code: 'AGENT_BARRIER_LOST', message: expect.stringContaining('started work') })
+      expect(completed.failure).toMatchObject({ code: 'AGENT_BARRIER_LOST', message: expect.stringContaining('等会话空闲后再试') })
       expect(fake.calls.length).toBe(callsBefore)
       expect(installedSpec('dsh-loop')).toBe('^1.0.0')
     } finally { drainBed.dispose() }

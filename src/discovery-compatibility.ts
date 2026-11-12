@@ -69,7 +69,9 @@ const FAILURE_COOLDOWN_MS = 5 * 60 * 1000
 const OUTAGE_COOLDOWN_MS = 30 * 1000
 const FETCH_TIMEOUT_MS = 8_000
 const DEFAULT_CONCURRENCY = 8
-const MAX_CACHE_ENTRIES = 5_000
+// Larger than the catalog (10k+ and growing). A cap below the catalog size
+// made a full scan evict its own first half, so no scan ever stayed cached (#1170).
+const MAX_CACHE_ENTRIES = 20_000
 const MAX_RANGE_LENGTH = 256
 
 export interface GitHubManifestSource {
