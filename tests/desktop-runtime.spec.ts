@@ -117,6 +117,27 @@ describe('DSH Desktop package runtime', () => {
     await expect(resultPromise).resolves.toMatchObject({ cancelled: true, timedOut: false })
   })
 
+  it('does not mark a stop that landed after pnpm already succeeded (#1151)', async () => {
+    const stdout = new PassThrough()
+    const stderr = new PassThrough()
+    let resolveDone!: (value: { exitCode: number | null; signal: NodeJS.Signals | null }) => void
+    const done = new Promise<{ exitCode: number | null; signal: NodeJS.Signals | null }>(resolve => {
+      resolveDone = resolve
+    })
+    const service: DesktopPnpmLike = {
+      runPlugin() {
+        return { stdout, stderr, done, cancel: () => {} }
+      },
+    }
+    const runtime = createDesktopPluginRuntime(service, profileFixture(), '/tmp', 10_000)
+    const resultPromise = runtime.runPlugin('desktop', ['update'])
+    // The user asked to stop, but the operation had already finished: the exit
+    // code decides, not the request.
+    expect(runtime.cancelActive()).toBe(true)
+    resolveDone({ exitCode: 0, signal: null })
+    await expect(resultPromise).resolves.toMatchObject({ exitCode: 0, cancelled: false, timedOut: false })
+  })
+
   it('preserves the Desktop generation-wide busy signal', async () => {
     const service: DesktopPnpmLike = {
       runPlugin() {
