@@ -106,6 +106,19 @@ const HOT_MOUNT_TIMEOUT_MS = Number(process.env.DSH_MARKET_HOT_MOUNT_TIMEOUT_MS)
 
 let hotTreeClass: unknown | null | undefined
 
+/** The part of a loader entry the unmount needs. */
+interface HotEntry {
+  update(options: { disabled: boolean }, create: boolean, force: boolean): Promise<unknown>
+}
+interface HotEntryTree {
+  entries(): Iterable<HotEntry>
+}
+
+/** Live hot-mount trees by input file URL, so an unmount can reach the entries. */
+const hotTrees = new Map<string, HotEntryTree>()
+/** Package name -> the input file URL of its live hot mount. */
+const hotTreeOf = new Map<string, string>()
+
 /**
  * The Include subclass, built once per process; null when the loader's include
  * plugin is not importable (older harness) — callers fall back to restart.
@@ -134,6 +147,10 @@ async function loadHotTreeClass(): Promise<unknown | null> {
     const Include = mod.Include
     if (Include === undefined) throw new Error('no Include export')
     class MarketHotTree extends Include {
+      constructor(...args: never[]) {
+        super(...args)
+        hotTrees.set((args[1] as { path: string }).path, this as unknown as HotEntryTree)
+      }
       /** Runtime-only mount list; the bundle layer owns persistence. */
       override write(): void {}
       override import(name: string, getOuterStack?: () => string[]): unknown {
@@ -869,7 +886,25 @@ export async function hotUnmount(packageName: string): Promise<boolean> {
   // state instead of reusing a handle already being disposed.
   hotHandles.delete(packageName)
   shimNames.delete(packageName)
-  const disposal = Promise.resolve().then(() => handle.dispose())
+  const treeKey = hotTreeOf.get(packageName)
+  hotTreeOf.delete(packageName)
+  const tree = treeKey === undefined ? undefined : hotTrees.get(treeKey)
+  if (treeKey !== undefined) hotTrees.delete(treeKey)
+  const disposal = Promise.resolve().then(async () => {
+    // Switch the tree's entries off BEFORE disposing the tree (#1188).
+    // Disposing the tree stops the plugins but leaves each entry still holding
+    // its fiber, and the host's client-module registry keeps serving a package
+    // to the page for as long as an entry names a live fiber: the browser half
+    // of a plugin switched off here stayed on screen, across reloads, until
+    // the host restarted. Updating the entry itself is the path the host's own
+    // entries take when they are switched off, and the registry follows it.
+    if (tree !== undefined) {
+      for (const entry of [...tree.entries()]) {
+        try { await entry.update({ disabled: true }, false, true) } catch { /* the dispose below still stops it */ }
+      }
+    }
+    await handle.dispose()
+  })
   // Same ceiling as mounting, and the same reason (#582, measured class of
   // report): a plugin whose teardown waits for something that never arrives
   // used to hold the toggle route open forever, and every later operation
@@ -1011,6 +1046,7 @@ export async function hotMount(ctx: HotContext, profileDir: string, packageName:
       // produced unbounded error-log growth on a closure-hosted loader).
       try { Promise.resolve(handle.dispose()).catch(() => {}) } catch { /* best effort */ }
       try { rmSync(file, { force: true }) } catch { /* best effort */ }
+      hotTrees.delete(pathToFileURL(file).href)
       if (error instanceof ActivationTimeout) {
         // A wedged activation would otherwise hold this request open forever:
         // the route's `finally { installing = false }` never runs, so every
@@ -1021,6 +1057,7 @@ export async function hotMount(ctx: HotContext, profileDir: string, packageName:
       throw error
     }
     hotHandles.set(packageName, handle)
+    hotTreeOf.set(packageName, pathToFileURL(file).href)
     ctx.logger?.info?.(`[dsh-market] hot-mounted ${packageName}`)
     logEvent('info', 'hot-mount', `${packageName}: live${shimNames.has(packageName) ? ' (client-only shim)' : ''}`)
     return { ok: true, reason: null }
