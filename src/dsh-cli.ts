@@ -1380,7 +1380,7 @@ export function runHostPnpm(
         timedOut,
         stdout: stdoutBytes.text(),
         stderr: stderrBytes.text(),
-        cancelled: cancelRequested,
+        cancelled: cancelRequested && code !== 0,
       })
     })
   })
@@ -1458,7 +1458,7 @@ export function runDshPlugin(profile: string, pluginArgs: string[]): Promise<Ins
         timedOut,
         stdout: stdoutBytes.text(),
         stderr: stderrBytes.text(),
-        cancelled: cancelRequested,
+        cancelled: cancelRequested && code !== 0,
         ...(pnpmError !== null ? { pnpmError } : {}),
         ...(pnpmErrorCode !== null ? { pnpmErrorCode } : {}),
         ...(ignoredBuilds.length > 0 ? { ignoredBuilds } : {}),
@@ -1573,7 +1573,7 @@ export function createDesktopPluginRuntime(
           timedOut,
           stdout: stdoutBytes.text(),
           stderr: stderrBytes.text(),
-          cancelled: active.userCancelled,
+          cancelled: active.userCancelled && failed,
           ...(ignoredBuilds.length > 0 ? { ignoredBuilds } : {}),
           ...(pnpmError !== null ? { pnpmError } : {}),
           ...(pnpmErrorCode !== null ? { pnpmErrorCode } : {}),
