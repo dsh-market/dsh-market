@@ -698,3 +698,35 @@ describe('install times (#1142)', () => {
     }
   })
 })
+
+describe('install times survive a stale whole-state save (#1142)', () => {
+  it('a snapshot taken before an install does not put the old stamps back', () => {
+    // The routes keep one MarketState from boot and save it whole (#435).
+    // If it carries installTimes, that copy is older than every install since.
+    const dir = stateDir()
+    try {
+      recordInstalled(dir, ['dsh-old'], new Date('2026-11-01T08:00:00Z'))
+      const boot = readMarketState(dir)
+      recordInstalled(dir, ['dsh-new'], new Date('2026-11-12T08:00:00Z'))
+      writeMarketState(dir, boot)
+      const kept = readMarketState(dir).installTimes ?? {}
+      expect(kept['dsh-new']?.installedAt).toBe('2026-11-12T08:00:00.000Z')
+      expect(kept['dsh-old']?.installedAt).toBe('2026-11-01T08:00:00.000Z')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('a stale snapshot does not bring back a package that was removed', () => {
+    const dir = stateDir()
+    try {
+      recordInstalled(dir, ['dsh-old'], new Date('2026-11-01T08:00:00Z'))
+      const boot = readMarketState(dir)
+      forgetInstalled(dir, 'dsh-old')
+      writeMarketState(dir, boot)
+      expect(readMarketState(dir).installTimes).toBeUndefined()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})

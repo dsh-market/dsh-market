@@ -802,6 +802,17 @@ function publishFile(path: string, contents: string): void {
  * the whole document" safe for callers that only hold part of it.
  */
 export function writeMarketState(profileDir: string, state: MarketState): void {
+  writeState(profileDir, state, false)
+}
+
+/**
+ * `ownStamps` is true only for the three stamp functions below. Every other
+ * writer holds a whole-state object that may be minutes old (the routes keep
+ * one from boot and save it whole, #435), so a stamp it carries is a stale
+ * copy: letting it through put the install date of the last install back to
+ * what boot saw.
+ */
+function writeState(profileDir: string, state: MarketState, ownStamps: boolean): void {
   mkdirSync(join(profileDir, HOT_DIR), { recursive: true, mode: 0o700 })
   const onDisk = readMarketState(profileDir)
   // `?? {}` only for the type: MarketState declares notes optional, while
@@ -826,12 +837,9 @@ export function writeMarketState(profileDir: string, state: MarketState): void {
   const broken = Object.prototype.hasOwnProperty.call(state, 'brokenPlugins')
     ? state.brokenPlugins
     : onDisk.brokenPlugins
-  // Same contract: a caller that only knows about its own field leaves the
-  // stamps alone, and an explicit object (including an empty one, after the
-  // last uninstall) replaces them.
-  const installTimes = Object.prototype.hasOwnProperty.call(state, 'installTimes')
-    ? state.installTimes
-    : onDisk.installTimes
+  // Only the stamp functions replace the map (an empty one, after the last
+  // uninstall, included); every other writer leaves what is on disk alone.
+  const installTimes = ownStamps ? state.installTimes : onDisk.installTimes
   const sidebarEntry = Object.prototype.hasOwnProperty.call(state, 'sidebarEntry')
     ? state.sidebarEntry
     : onDisk.sidebarEntry
@@ -918,7 +926,7 @@ export function recordInstalled(profileDir: string, names: readonly string[], at
     map[name] = { installedAt: stamp, updatedAt: stamp }
   }
   state.installTimes = trimInstallTimes(map)
-  writeMarketState(profileDir, state)
+  writeState(profileDir, state, true)
 }
 
 /**
@@ -937,7 +945,7 @@ export function recordUpdated(profileDir: string, names: readonly string[], at =
     map[name] = { ...map[name], updatedAt: stamp }
   }
   state.installTimes = trimInstallTimes(map)
-  writeMarketState(profileDir, state)
+  writeState(profileDir, state, true)
 }
 
 /** The package is gone: its stamps must not outlive it. */
@@ -947,7 +955,7 @@ export function forgetInstalled(profileDir: string, name: string): void {
   const map = { ...state.installTimes }
   delete map[name]
   state.installTimes = trimInstallTimes(map)
-  writeMarketState(profileDir, state)
+  writeState(profileDir, state, true)
 }
 
 /** Package names currently live through a market hot mount (patch or shim). */
