@@ -10909,7 +10909,7 @@ describe('Agent-safe drain mode (#411)', () => {
       const completed = await settled(drainBed, String(accepted.json.operationId))
       expect(completed.state).toBe('failed')
       // This text comes from the status event; the later gate words it differently.
-      expect(completed.failure).toMatchObject({ code: 'AGENT_BARRIER_LOST', message: expect.stringContaining('started work') })
+      expect(completed.failure).toMatchObject({ code: 'AGENT_BARRIER_LOST', message: expect.stringContaining('等会话空闲后再试') })
       expect(fake.calls.length).toBe(callsBefore)
       expect(installedSpec('dsh-loop')).toBe('^1.0.0')
     } finally { drainBed.dispose() }

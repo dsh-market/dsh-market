@@ -627,12 +627,12 @@ export class DrainCoordinator {
         payload: {
           ok: false,
           failureCode: 'AGENT_BARRIER_LOST',
-          error: 'an Agent could not be held at the maintenance boundary; verify the installed files before retrying',
+          error: '有会话在操作进行中恢复了活动，文件可能已经改动。先在「已安装」里看看结果，等会话空闲后再试。 / A session became active while the operation ran, so files may have changed. Check Installed for the result, then retry once sessions are idle.',
         },
       }
       this.finish(operation, 'failed', {
         code: 'AGENT_BARRIER_LOST',
-        message: 'an Agent could not be held at the maintenance boundary; verify the installed files before retrying',
+        message: '有会话在操作进行中恢复了活动，文件可能已经改动。先在「已安装」里看看结果，等会话空闲后再试。 / A session became active while the operation ran, so files may have changed. Check Installed for the result, then retry once sessions are idle.',
       }, null)
     } else {
       this.finishFromResult(operation, result)
@@ -651,7 +651,7 @@ export class DrainCoordinator {
         if (this.barrierBroken) {
           this.finish(operation, 'failed', {
             code: 'AGENT_BARRIER_LOST',
-            message: 'an Agent could not be held at the maintenance boundary; the plugin operation was not started',
+            message: '有会话恢复了活动，这次没有改任何文件。等会话空闲后再试。 / A session became active; nothing was changed. Retry once sessions are idle.',
           }, null)
           return
         }
@@ -662,7 +662,7 @@ export class DrainCoordinator {
           } else if (this.barrierBroken) {
             this.finish(operation, 'failed', {
               code: 'AGENT_BARRIER_LOST',
-              message: 'an Agent could not be held at the maintenance boundary; the plugin operation was not started',
+              message: '有会话恢复了活动，这次没有改任何文件。等会话空闲后再试。 / A session became active; nothing was changed. Retry once sessions are idle.',
             }, null)
           } else {
             this.finish(operation, 'failed', {
@@ -729,7 +729,7 @@ export class DrainCoordinator {
       if (this.barrierBroken) {
         this.finish(operation, 'failed', {
           code: 'AGENT_BARRIER_LOST',
-          message: 'an Agent started work while the package operation was running; verify the installed files before retrying',
+          message: '有会话在操作进行中恢复了活动，文件可能已经改动。先在「已安装」里看看结果，等会话空闲后再试。 / A session became active while the operation ran, so files may have changed. Check Installed for the result, then retry once sessions are idle.',
         }, null)
         return
       }

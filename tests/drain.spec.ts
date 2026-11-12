@@ -421,6 +421,10 @@ describe('DrainCoordinator', () => {
     const settled = await bed.coordinator.whenSettled(result.operation.operationId)
     expect(settled?.state).toBe('failed')
     expect(settled?.failure?.code).toBe('AGENT_BARRIER_LOST')
+    // #1103: the failure is shown to users verbatim — it must say what to do,
+    // in plain words, not "verify the installed files".
+    expect(settled?.failure?.message).toMatch(/等会话空闲后再试/)
+    expect(settled?.failure?.message).not.toMatch(/maintenance boundary/)
     bed.coordinator.dispose()
   })
 
