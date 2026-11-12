@@ -17,8 +17,8 @@ import { packageFileFromRegistry } from './catalog-npm.ts'
 import { forgetCatalog, loadRegistry, pluginCategories } from './registry.ts'
 import { settingsNamespaceState } from './settings.ts'
 import {
-  buildEnvFromUnknown, cleanHotDir, hotMount, hotUnmount, listHotMounts, MAX_BLOCKED, MAX_BLOCKED_NAME, MAX_FAVORITES, MAX_NOTE, MAX_UPDATE_EXEMPT,
-  mountClientOnlyDeps, purgeMarketState, readMarketState, writeMarketState,
+  buildEnvFromUnknown, cleanHotDir, forgetInstalled, hotMount, hotUnmount, listHotMounts, MAX_BLOCKED, MAX_BLOCKED_NAME, MAX_FAVORITES, MAX_NOTE, MAX_UPDATE_EXEMPT,
+  mountClientOnlyDeps, purgeMarketState, readMarketState, recordInstalled, recordUpdated, writeMarketState,
   type BrokenReason, type MarketState,
 } from './hot.ts'
 import { createGroup, deleteGroup, removeFromGroups, renameGroup, setGroupMembers } from './groups.ts'
@@ -3600,6 +3600,11 @@ export function mountMarketRoutes(
           groups,
           groupOrder,
           notes: readMarketState(activeProfileDir).notes ?? {},
+          // When this market installed/updated each package (#1142). Read
+          // from disk like `notes`, not from the boot-time snapshot: an
+          // install in this session must show its date on the very refresh
+          // that follows it.
+          installTimes: readMarketState(activeProfileDir).installTimes ?? {},
           favorites: readMarketState(activeProfileDir).favorites ?? [],
           blocked: readMarketState(activeProfileDir).blocked ?? [],
           updateExempt: readMarketState(activeProfileDir).updateExempt ?? [],
@@ -6491,6 +6496,11 @@ sendJson(response, 200, { updates })
                 }
               }
             }
+            // The update landed: stamp it before answering (#1142). `ok` is
+            // final by now — every check that can still turn a run into a
+            // failure (version mismatch, rename, missing entry, trial boot)
+            // has run, so a rejected update never moves the date.
+            if (ok) recordUpdated(activeProfileDir, [name])
             logEvent(ok || cancelled ? 'info' : 'error', 'update',
               `${name} -> ${target} exit=${String(result.exitCode)}${result.timedOut ? ' TIMEOUT' : ''}${cancelled ? ' CANCELLED' : ''}${stale ? ` STALE(${staleReason ?? 'unknown'})` : ''}${ok || cancelled ? '' : ` err=${failureDetail(result)}`}`)
             // A user-cancelled run is a quiet outcome, not an error.
@@ -7522,6 +7532,10 @@ sendJson(response, 200, { updates })
               disabled.delete(name)
               removeFromGroups({ groups, groupOrder }, name)
               writeMarketState(activeProfileDir, { disabled, groups, groupOrder })
+              // A removed package's stamps must not outlive it (#1142): a
+              // later reinstall is a new install, and keeping the old date
+              // would make the list claim a history the profile no longer has.
+              forgetInstalled(activeProfileDir, name)
               // #1093: pnpm writes a `minimumReleaseAgeExclude` row when it
               // installs a version still inside the wait window, and removing
               // the dependency never touches that file. Left behind, the row
@@ -8083,6 +8097,10 @@ sendJson(response, 200, { updates })
               const added = Object.keys(installed).filter(name => !before.has(name))
               addedPackages = added
               if (added.length > 0) {
+                // When the market installed them (#1142): the only moment it
+                // knows a real install time, since nothing on disk carries
+                // one (`node_modules` mtime is rewritten by pnpm).
+                recordInstalled(activeProfileDir, added)
                 // Fresh installs start enabled: drop any stale disable flag
                 // (e.g. reinstall after an uninstall while this process kept
                 // running) and persist before the activation loop.
