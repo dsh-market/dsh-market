@@ -247,6 +247,17 @@ function text(value: unknown): string | null {
   return typeof value === 'string' && value.trim() !== '' ? value.trim() : null
 }
 
+/** True when the executor reported a completed change. */
+function landed(result: DrainExecutionResult): boolean {
+  const payload = record(result.payload)
+  return result.status >= 200 && result.status < 300 && payload?.ok !== false && payload?.cancelled !== true
+}
+
+/** Mark a finished result as having outlived its market instance. */
+function markReloaded(result: DrainExecutionResult): DrainExecutionResult {
+  return { ...result, payload: { ...(record(result.payload) ?? {}), marketReloaded: true } }
+}
+
 /** User-facing failure text, stripped of control characters and home paths. */
 function safeMessage(value: unknown): string | null {
   const raw = text(value)
@@ -605,7 +616,12 @@ export class DrainCoordinator {
       this.releaseAll()
       if (this.disposeRequested) this.detach()
     }
-    if (this.disposeRequested) {
+    if (this.disposeRequested && !operation.cancelRequested && !this.barrierBroken && landed(result)) {
+      // The executor returned success: the package is on disk. The market being
+      // unloaded afterwards does not make that a cancellation (#1151).
+      result = markReloaded(result)
+      this.finishFromResult(operation, result)
+    } else if (this.disposeRequested) {
       result = {
         status: 503,
         payload: {
@@ -712,9 +728,13 @@ export class DrainCoordinator {
       operation.startedAt = this.now()
       this.notify(operation)
       const result = await operation.execute(operation.intent, operation.onPhase)
-      // The executor can return success after a cancel or unload landed too
-      // late for its last gate. The Host's state wins: the user asked to stop
-      // or the market is gone, so this is not reported as a completed change.
+      // A cancel wins over a late success: the user asked to stop. An unload
+      // does not: a success result means the package command finished and the
+      // files are on disk, so it is recorded as done (#1151).
+      if (this.disposeRequested && !operation.cancelRequested && !this.barrierBroken && landed(result)) {
+        this.finishFromResult(operation, markReloaded(result))
+        return
+      }
       if (this.disposeRequested) {
         this.finish(operation, 'cancelled', {
           code: 'MARKET_UNLOADED',
