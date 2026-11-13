@@ -47,7 +47,7 @@ import { createProfileSnapshot, DEFAULT_MAX_SNAPSHOTS, deleteSnapshot, listSnaps
 import { readHostRecoveryView, restoreHostRecoveryBackup } from './host-recovery.ts'
 import { trialValidate } from './trial.ts'
 import { catalogRepoKey, findCatalogEntryForLocal, findInstalledAlias, gitCommitOfTarget, githubCommitOfTarget, githubTargetAtCommit, gitAllowBuildsKey, gitRefOfTarget, gitTargetAtCommit, gitUpdateTarget, hostedRepoKey, lookupRepoFromUrl, pinnedAllowBuildsKeys, installTargetFor, isGenerationLink, isLocalSpec, NPM_NAME_RE, parseSourceUrl, repoOfTarget, restoreBlockedByWorkspace, restoreTargetForLocal, sourceFallbackFor, workspaceProtocolDeps } from './sources.ts'
-import { failureDetail, groupConflictsByOwner, installApplied, isHostPortCollision, isStaleUpdate, parseIgnoredBuildEntries, parseIgnoredBuilds, parsePrepareKey, parsePrepareNotAllowed, pnpmBlockedByOpenFiles, pnpmNeverStarted, pnpmRefusedYoungRelease, RELEASE_AGE_OVERRIDE, removeDanglingHostBridge, retargetCollections, updateApplied, validateAddedPlugins, withHoistRecovery } from './install.ts'
+import { failureDetail, groupConflictsByOwner, installApplied, isHostPortCollision, isStaleUpdate, parseIgnoredBuildEntries, parseIgnoredBuilds, parsePrepareKey, parsePrepareNotAllowed, pnpmBlockedByOpenFiles, pnpmNeverStarted, pnpmRefusedYoungRelease, RELEASE_AGE_OVERRIDE, removeDanglingHostBridge, removeLeftoverProfileLink, retargetCollections, updateApplied, validateAddedPlugins, withHoistRecovery } from './install.ts'
 import { classifyPnpmFailure } from './pnpm-compat.ts'
 import { asChannel, CHANNELS, DIST_TAG, resolveChannel, type Channel } from './channels.ts'
 import {
@@ -2040,6 +2040,9 @@ export function mountMarketRoutes(
     // #662: the removal is confirmed — drop the host bridge link the boot
     // projection may have left pointing at the now-gone package.
     removeDanglingHostBridge(name, activeProfileDir, config.dshInstallDir ?? findDshInstallDir())
+    // #1191: a `link:` install leaves its junction behind on Windows, and the
+    // next install of the same name then fails renaming over it.
+    removeLeftoverProfileLink(config.profile, name, activeProfileDir)
     // Kept on the host path too, and deliberately: `setEntryDisabled` only
     // scans the entries THIS process can see by name and returns false when
     // none match, so it costs a lookup — and it preserves what #213 is about.
@@ -7487,6 +7490,9 @@ sendJson(response, 200, { updates })
               // from disk truth) — the host node_modules bridge the boot
               // projection left for this package must not outlive it.
               removeDanglingHostBridge(name, activeProfileDir, config.dshInstallDir ?? findDshInstallDir())
+              // #1191: a `link:` install leaves its junction behind on Windows, and the
+              // next install of the same name then fails renaming over it.
+              removeLeftoverProfileLink(config.profile, name, activeProfileDir)
               // A host that owns the composition replays it: asking first is
               // what keeps the market from looking for an entry it never
               // created, and then telling the user to restart about a plugin
