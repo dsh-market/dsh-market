@@ -1869,6 +1869,7 @@ function CatalogVersionMark({ version, tip }: { version: string | null | undefin
  */
 let cachedRegistry: Registry | null = null
 let cachedInstalled: InstalledMap | null = null
+let cachedLocalDescriptions: Record<string, string> = {}
 let cachedRepoIdentities: InstalledRepoIdentities | null = null
 let cachedRepoHints: InstalledRepoHints | null = null
 let cachedHostCompatibility: HostCompatibilityMap = {}
@@ -1910,6 +1911,7 @@ export function resetHostCompatibilityCache(): void {
   cachedUpdates = {}
   cachedUpdatesReady = false
   cachedInstalledReady = false
+  cachedLocalDescriptions = {}
   cachedSkins = []
   cachedDisabledNames = []
   cachedInstalledFiles = []
@@ -2005,6 +2007,16 @@ function installedMap(value: unknown): InstalledMap {
     if (typeof spec === 'string') installed[name] = spec
   }
   return installed
+}
+
+/** Optional /installed metadata: older hosts omit it, malformed values are not text. */
+function localDescriptionsFromUnknown(value: unknown): Record<string, string> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return {}
+  const descriptions: Record<string, string> = {}
+  for (const [name, description] of Object.entries(value)) {
+    if (typeof description === 'string' && description.trim() !== '') descriptions[name] = description.trim()
+  }
+  return descriptions
 }
 
 /** A `{name: {...}}` map, or anything else — for untyped server fields. */
@@ -2487,6 +2499,8 @@ export function MarketSection(props: MarketSectionProps) {
   const [reconnectRound, setReconnectRound] = useState(0)
   const [installed, setInstalledState] = useState<InstalledMap>(cachedInstalled ?? {})
   const setInstalled = useCallback((value: InstalledMap) => { cachedInstalled = value; setInstalledState(value) }, [])
+  const [localDescriptions, setLocalDescriptionsState] = useState<Record<string, string>>(() => cachedLocalDescriptions)
+  const setLocalDescriptions = useCallback(cacheState(value => { cachedLocalDescriptions = value }, setLocalDescriptionsState), [])
   const [repoIdentities, setRepoIdentitiesState] = useState<InstalledRepoIdentities>(cachedRepoIdentities ?? {})
   const setRepoIdentities = useCallback((value: InstalledRepoIdentities) => {
     cachedRepoIdentities = value
@@ -3314,6 +3328,7 @@ export function MarketSection(props: MarketSectionProps) {
       .then(res => res.json())
       .then(body => {
         setInstalled(body.installed || {})
+        setLocalDescriptions(localDescriptionsFromUnknown(body.descriptions))
         setRepoIdentities(installedRepoIdentities(body.repoIdentities))
         setRepoHints(installedRepoHints(body.repoHints))
         setInstalledFiles(Array.isArray(body.present) ? body.present : Object.keys(body.installed || {}))
@@ -3375,7 +3390,7 @@ export function MarketSection(props: MarketSectionProps) {
         setQueueSnapshotReady(ready => ({ ...ready, updates: true }))
       })
       .catch(() => {})
-  }, [setActivations, setBlockedNames, setDisabledNames, setFavoriteUrls, setInstalledBundles, setInstalledFiles, setSkins, setUpdates])
+  }, [setActivations, setBlockedNames, setDisabledNames, setFavoriteUrls, setInstalledBundles, setInstalledFiles, setLocalDescriptions, setSkins, setUpdates])
 
   /**
    * Host-owned deferred operations (#411).
@@ -6667,15 +6682,24 @@ export function MarketSection(props: MarketSectionProps) {
     )
   }
 
+  /** Catalog copy wins; an installed package can still explain itself when
+   * it has no usable catalog description (#1147). Shared by all installed views. */
+  const authoredDescription = (name: string, entry: RegistryPlugin | undefined): string => {
+    for (const description of [entry?.description?.[lang], entry?.description?.en, localDescriptions[name]]) {
+      if (typeof description === 'string' && description.trim() !== '') return description.trim()
+    }
+    return ''
+  }
+
   /**
    * What the group view says about an installed plugin beyond its name: the
-   * user's own note, else the catalog's description (#1006). One place, so a
-   * plugin reads the same whether it sits in a group or in "Ungrouped".
+   * user's own note, else the author's description (#1006, #1147). One place,
+   * so a plugin reads the same in a group or in "Ungrouped".
    */
   const installedBlurb = (name: string) => {
     const entry = data === null ? undefined : catalogEntryForInstalled(data.plugins, name, String(installed[name]), repoIdentities[name], repoHints[name])
     const note = notes[name]
-    const authored = (entry?.description && (entry.description[lang] || entry.description.en)) || ''
+    const authored = authoredDescription(name, entry)
     return { entry, note, shown: note ?? authored }
   }
 
@@ -8909,7 +8933,7 @@ export function MarketSection(props: MarketSectionProps) {
                                       )
                                     : (() => {
                                         const note = notes[name]
-                                        const authored = (entry?.description && (entry.description[lang] || entry.description.en)) || ''
+                                        const authored = authoredDescription(name, entry)
                                         const theirs = showTheirs.includes(name)
                                         const shown = note !== undefined && !theirs ? note : authored
                                         return (

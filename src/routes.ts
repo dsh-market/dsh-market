@@ -3507,6 +3507,15 @@ export function mountMarketRoutes(
         const installedManifests = new Map(Object.keys(installed).map(
           packageName => [packageName, readInstalledManifest(config.profile, packageName, activeProfileDir)] as const,
         ))
+        // Display-only fallback for packages absent from the catalog (#1147).
+        // Reuse these manifests; never use their metadata to infer a source.
+        const descriptions: Record<string, string> = {}
+        for (const [name, manifest] of installedManifests) {
+          const description = typeof manifest === 'object' && manifest !== null
+            ? (manifest as { description?: unknown }).description
+            : undefined
+          if (typeof description === 'string' && description.trim() !== '') descriptions[name] = description.trim()
+        }
         const declaresDshSurface = (packageName: string): boolean => {
           const manifest = installedManifests.get(packageName)
           return typeof manifest === 'object' && manifest !== null
@@ -3590,6 +3599,7 @@ export function mountMarketRoutes(
         sendJson(response, 200, {
           profile: config.profile,
           installed,
+          descriptions,
           repoIdentities,
           repoHints,
           present,
