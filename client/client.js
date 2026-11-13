@@ -9817,6 +9817,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		*/
 		let cachedRegistry = null;
 		let cachedInstalled = null;
+		let cachedLocalDescriptions = {};
 		let cachedRepoIdentities = null;
 		let cachedRepoHints = null;
 		let cachedHostCompatibility = {};
@@ -9932,6 +9933,13 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const installed = {};
 			for (const [name, spec] of Object.entries(value)) if (typeof spec === "string") installed[name] = spec;
 			return installed;
+		}
+		/** Optional /installed metadata: older hosts omit it, malformed values are not text. */
+		function localDescriptionsFromUnknown(value) {
+			if (value === null || typeof value !== "object" || Array.isArray(value)) return {};
+			const descriptions = {};
+			for (const [name, description] of Object.entries(value)) if (typeof description === "string" && description.trim() !== "") descriptions[name] = description.trim();
+			return descriptions;
 		}
 		/** A `{name: {...}}` map, or anything else — for untyped server fields. */
 		function isRecordOfRecords(value) {
@@ -10340,6 +10348,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				cachedInstalled = value;
 				setInstalledState(value);
 			}, []);
+			const [localDescriptions, setLocalDescriptionsState] = (0, react.useState)(() => cachedLocalDescriptions);
+			const setLocalDescriptions = (0, react.useCallback)(cacheState((value) => {
+				cachedLocalDescriptions = value;
+			}, setLocalDescriptionsState), []);
 			const [repoIdentities, setRepoIdentitiesState] = (0, react.useState)(cachedRepoIdentities ?? {});
 			const setRepoIdentities = (0, react.useCallback)((value) => {
 				cachedRepoIdentities = value;
@@ -11076,6 +11088,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const refreshInstalled = (0, react.useCallback)((force) => {
 				fetch(api("/dsh-market/installed"), { cache: "no-store" }).then((res) => res.json()).then((body) => {
 					setInstalled(body.installed || {});
+					setLocalDescriptions(localDescriptionsFromUnknown(body.descriptions));
 					setRepoIdentities(installedRepoIdentities(body.repoIdentities));
 					setRepoHints(installedRepoHints(body.repoHints));
 					setInstalledFiles(Array.isArray(body.present) ? body.present : Object.keys(body.installed || {}));
@@ -11136,6 +11149,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				setFavoriteUrls,
 				setInstalledBundles,
 				setInstalledFiles,
+				setLocalDescriptions,
 				setSkins,
 				setUpdates
 			]);
@@ -14165,15 +14179,25 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					}]
 				});
 			};
+			/** Catalog copy wins; an installed package can still explain itself when
+			* it has no usable catalog description (#1147). Shared by all installed views. */
+			const authoredDescription = (name, entry) => {
+				for (const description of [
+					entry?.description?.[lang],
+					entry?.description?.en,
+					localDescriptions[name]
+				]) if (typeof description === "string" && description.trim() !== "") return description.trim();
+				return "";
+			};
 			/**
 			* What the group view says about an installed plugin beyond its name: the
-			* user's own note, else the catalog's description (#1006). One place, so a
-			* plugin reads the same whether it sits in a group or in "Ungrouped".
+			* user's own note, else the author's description (#1006, #1147). One place,
+			* so a plugin reads the same in a group or in "Ungrouped".
 			*/
 			const installedBlurb = (name) => {
 				const entry = data === null ? void 0 : catalogEntryForInstalled(data.plugins, name, String(installed[name]), repoIdentities[name], repoHints[name]);
 				const note = notes[name];
-				const authored = entry?.description && (entry.description[lang] || entry.description.en) || "";
+				const authored = authoredDescription(name, entry);
 				return {
 					entry,
 					note,
@@ -16812,7 +16836,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 													})]
 												}) : (() => {
 													const note = notes[name];
-													const authored = entry?.description && (entry.description[lang] || entry.description.en) || "";
+													const authored = authoredDescription(name, entry);
 													const theirs = showTheirs.includes(name);
 													const shown = note !== void 0 && !theirs ? note : authored;
 													return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
