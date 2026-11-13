@@ -4777,7 +4777,11 @@ sendJson(response, 200, { updates })
             sendJson(response, 400, { error: 'name query parameter is required' })
             return
           }
-          sendJson(response, 200, await updateNotesFor(config.profile, activeProfileDir, name))
+          // The version the Update button installs, when the client knows it
+          // (#1193); anything that is not a plain stable version is ignored.
+          const target = new URL(request.url ?? '/', 'http://localhost').searchParams.get('target')
+          sendJson(response, 200, await updateNotesFor(config.profile, activeProfileDir, name,
+            target !== null && isStableReleaseVersion(target) ? target : undefined))
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
         }

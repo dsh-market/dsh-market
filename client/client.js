@@ -432,6 +432,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			hostUpdateHint: "本市场由桌面端安装和更新，新版本请在桌面端更新",
 			notesLink: "更新内容",
 			notesRelease: "版本说明",
+			notesBeyondTarget: "下面是 {0} 的说明，这个版本还不能装。现在更新到的是 {1}。",
 			notesCommits: "提交记录",
 			notesCommitsRecent: "最近提交（无法对应你当前安装的版本，仅供参考）",
 			notesNpm: "版本发布时间",
@@ -1237,6 +1238,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			hostUpdateHint: "Installed and updated by the desktop app; update it there.",
 			notesLink: "What changed",
 			notesRelease: "Release notes",
+			notesBeyondTarget: "These are the notes for {0}, which cannot be installed yet. Update installs {1}.",
 			notesCommits: "Commits",
 			notesCommitsRecent: "Recent commits (do not match your installed version — for reference only)",
 			notesNpm: "Version publish times",
@@ -2042,6 +2044,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			hostUpdateHint: "このマーケットはデスクトップアプリがインストールと更新を行います。新しいバージョンへの更新はデスクトップアプリで行ってください",
 			notesLink: "変更内容",
 			notesRelease: "リリースノート",
+			notesBeyondTarget: "以下は {0} の説明です。このバージョンはまだ入れられません。今回の更新で入るのは {1} です。",
 			notesCommits: "コミット履歴",
 			notesCommitsRecent: "最近のコミット（現在のインストール済みバージョンには対応しません。参考情報です）",
 			notesNpm: "バージョンの公開日時",
@@ -12970,16 +12973,17 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			exists while a user is actually looking at one plugin's notes, and
 			closing the dialog abandons the render — the server side caches the
 			payload, so reopening is cheap. */
-			const openNotes = (0, react.useCallback)((name, current, latest, repoUrl) => {
+			const openNotes = (0, react.useCallback)((name, current, latest, target, repoUrl) => {
 				setNotesFor({
 					name,
 					current,
 					latest,
+					target,
 					repoUrl
 				});
 				setUpdateNotes(null);
 				setNotesState("loading");
-				fetch(`${api("/dsh-market/changelog")}?name=${encodeURIComponent(name)}`).then((res) => res.json()).then((body) => {
+				fetch(`${api("/dsh-market/changelog")}?name=${encodeURIComponent(name)}${target !== null ? `&target=${encodeURIComponent(target)}` : ""}`).then((res) => res.json()).then((body) => {
 					setUpdateNotes(body);
 					setNotesState("ready");
 				}).catch(() => setNotesState("fail"));
@@ -16867,7 +16871,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 															}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
 																type: "button",
 																className: Market_module_css_default.notesLink,
-																onClick: () => openNotes(name, status?.current ?? null, status?.latest ?? null, repoUrl),
+																onClick: () => openNotes(name, status?.current ?? null, status?.latest ?? null, status?.eligibleVersion ?? null, repoUrl),
 																children: `${t("notesLink")} ›`
 															})]
 														}),
@@ -17665,7 +17669,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									}),
 									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 										className: Market_module_css_default.spec,
-										children: notesFor.latest !== null && notesFor.latest.length === 40 ? notesFor.latest.slice(0, 7) : notesFor.latest
+										children: (() => {
+											const end = notesFor.target ?? notesFor.latest;
+											return end !== null && end.length === 40 ? end.slice(0, 7) : end;
+										})()
 									})
 								]
 							}),
@@ -17679,17 +17686,24 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 							}),
 							notesState === "ready" && updateNotes !== null && (updateNotes.kind === "release" ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 								className: Market_module_css_default.notesBody,
-								children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-									className: Market_module_css_default.notesMeta,
-									children: [
-										/* @__PURE__ */ (0, react_jsx_runtime.jsx)("strong", { children: t("notesRelease") }),
-										updateNotes.release.tag !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: " " + updateNotes.release.tag }),
-										updateNotes.release.publishedAt !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: " · " + updateNotes.release.publishedAt.slice(0, 10) })
-									]
-								}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
-									className: Market_module_css_default.notesRendered,
-									children: renderMarkdown(updateNotes.release.body || t("notesNone"))
-								})]
+								children: [
+									/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+										className: Market_module_css_default.notesMeta,
+										children: [
+											/* @__PURE__ */ (0, react_jsx_runtime.jsx)("strong", { children: t("notesRelease") }),
+											updateNotes.release.tag !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: " " + updateNotes.release.tag }),
+											updateNotes.release.publishedAt !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: " · " + updateNotes.release.publishedAt.slice(0, 10) })
+										]
+									}),
+									updateNotes.beyondTarget !== void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+										className: Market_module_css_default.notesMeta,
+										children: t("notesBeyondTarget").replace("{0}", updateNotes.release.tag ?? "").replace("{1}", updateNotes.beyondTarget)
+									}),
+									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+										className: Market_module_css_default.notesRendered,
+										children: renderMarkdown(updateNotes.release.body || t("notesNone"))
+									})
+								]
 							}) : updateNotes.kind === "commits" ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 								className: Market_module_css_default.notesBody,
 								children: [
