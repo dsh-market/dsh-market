@@ -2829,7 +2829,7 @@ export function MarketSection(props: MarketSectionProps) {
     reason?: 'missing' | 'unavailable' | 'unreadable'
   }
   type ResolvedNotes =
-    | { kind: 'release'; release: NoteRelease }
+    | { kind: 'release'; release: NoteRelease; beyondTarget?: string }
     | { kind: 'commits'; commits: { items: NoteCommit[]; found: boolean } }
     | { kind: 'npm'; npmTimes: Array<{ version: string; date: string }> }
     | { kind: 'source'; sourceUrl?: string | null; reason?: 'missing' | 'unavailable' | 'unreadable' }
@@ -2876,7 +2876,7 @@ export function MarketSection(props: MarketSectionProps) {
   const [ignoredUpdateNames, setIgnoredUpdateNames] = useState<string[]>([])
   const [updatingName, setUpdatingName] = useState<string | null>(null)
   /** Update-notes dialog (#294): which row opened it, and what it resolved to. */
-  const [notesFor, setNotesFor] = useState<{ name: string; current: string | null; latest: string | null; repoUrl: string | null } | null>(null)
+  const [notesFor, setNotesFor] = useState<{ name: string; current: string | null; latest: string | null; target: string | null; repoUrl: string | null } | null>(null)
   const [updateNotes, setUpdateNotes] = useState<ResolvedNotes | null>(null)
   const [notesState, setNotesState] = useState<'loading' | 'ready' | 'fail'>('loading')
   // Plugin blocked by pnpm's fresh-release safety wait; arms the update-now button.
@@ -5406,11 +5406,13 @@ export function MarketSection(props: MarketSectionProps) {
       exists while a user is actually looking at one plugin's notes, and
       closing the dialog abandons the render — the server side caches the
       payload, so reopening is cheap. */
-  const openNotes = useCallback((name: string, current: string | null, latest: string | null, repoUrl: string | null) => {
-    setNotesFor({ name, current, latest, repoUrl })
+  const openNotes = useCallback((name: string, current: string | null, latest: string | null, target: string | null, repoUrl: string | null) => {
+    setNotesFor({ name, current, latest, target, repoUrl })
     setUpdateNotes(null)
     setNotesState('loading')
-    fetch(`${api('/dsh-market/changelog')}?name=${encodeURIComponent(name)}`)
+    // The Update button may install an older, mature version than the repo's
+    // latest; ask for notes relative to that one (#1193).
+    fetch(`${api('/dsh-market/changelog')}?name=${encodeURIComponent(name)}${target !== null ? `&target=${encodeURIComponent(target)}` : ''}`)
       .then(res => res.json())
       .then(body => { setUpdateNotes(body as ResolvedNotes); setNotesState('ready') })
       .catch(() => setNotesState('fail'))
@@ -8996,7 +8998,7 @@ export function MarketSection(props: MarketSectionProps) {
                                             <button
                                               type="button"
                                               className={css.notesLink}
-                                              onClick={() => openNotes(name, status?.current ?? null, status?.latest ?? null, repoUrl)}
+                                              onClick={() => openNotes(name, status?.current ?? null, status?.latest ?? null, status?.eligibleVersion ?? null, repoUrl)}
                                             >{`${t('notesLink')} ›`}</button>
                                           </div>
                                         )}
@@ -9766,9 +9768,10 @@ export function MarketSection(props: MarketSectionProps) {
                 ? notesFor.current.slice(0, 7)
                 : notesFor.current}</span>
               <span className={css.notesArrow}>→</span>
-              <span className={css.spec}>{notesFor.latest !== null && notesFor.latest.length === 40
-                ? notesFor.latest.slice(0, 7)
-                : notesFor.latest}</span>
+              <span className={css.spec}>{(() => {
+                const end = notesFor.target ?? notesFor.latest
+                return end !== null && end.length === 40 ? end.slice(0, 7) : end
+              })()}</span>
             </div>
           )}
           {notesState === 'loading' && <div className={css.spec}>{t('loading')}</div>}
@@ -9781,6 +9784,11 @@ export function MarketSection(props: MarketSectionProps) {
                   {updateNotes.release.tag !== null && <span>{' ' + updateNotes.release.tag}</span>}
                   {updateNotes.release.publishedAt !== null && <span>{' · ' + updateNotes.release.publishedAt.slice(0, 10)}</span>}
                 </div>
+                {updateNotes.beyondTarget !== undefined && (
+                  <div className={css.notesMeta}>
+                    {t('notesBeyondTarget').replace('{0}', updateNotes.release.tag ?? '').replace('{1}', updateNotes.beyondTarget)}
+                  </div>
+                )}
                 {/* Author-written markdown through the tiny converter: HTML is
                     stripped first; headings, quotes, fences, bullets, bold,
                     inline code, https links and allowlisted images only. */}

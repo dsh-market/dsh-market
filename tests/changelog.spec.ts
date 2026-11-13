@@ -245,6 +245,34 @@ describe('updateNotesFor', () => {
     expect(notes.release?.body).toBe('notes here')
   })
 
+  it('says so when the release notes are for a version beyond the update target (#1193)', async () => {
+    // The snapshot's release is the repo's LATEST; the Update button may aim
+    // at an older, installable version. Notes for v2.0.0 must not read as
+    // notes for the 1.5.0 the button installs.
+    writeProfile(dir, { 'some-plugin': 'github:o/r' }, [['o/r', SHA_A]])
+    mkdirSync(join(dir, 'node_modules', 'some-plugin'), { recursive: true })
+    writeFileSync(join(dir, 'node_modules', 'some-plugin', 'package.json'), '{"name":"some-plugin","version":"1.0.0"}')
+    stubWorld({
+      headSha: SHA_C,
+      payload: {
+        count: 1,
+        updates: {
+          'https://github.com/o/r': {
+            release: { tag: 'v2.0.0', name: 'big rewrite', publishedAt: '2026-08-26T00:00:00Z', url: 'https://github.com/o/r/releases/v2.0.0', body: 'notes here' },
+          },
+        },
+      },
+    })
+    const beyond = await updateNotesFor('web', dir, 'some-plugin', '1.5.0')
+    expect(beyond.kind).toBe('release')
+    expect(beyond.release?.body).toBe('notes here')
+    expect(beyond.beyondTarget).toBe('1.5.0')
+    const matching = await updateNotesFor('web', dir, 'some-plugin', '2.0.0')
+    expect(matching.beyondTarget).toBeUndefined()
+    const noTarget = await updateNotesFor('web', dir, 'some-plugin')
+    expect(noTarget.beyondTarget).toBeUndefined()
+  })
+
   it('calls the notes unavailable, not missing, when nothing answers at all', async () => {
     writeProfile(dir, { 'some-plugin': 'github:o/r' })
     stubWorld({ originStatus: 500, headSha: null })
