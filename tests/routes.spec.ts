@@ -585,6 +585,72 @@ describe('GET /dsh-market/installed — local repository evidence', () => {
   })
 })
 
+describe('GET /dsh-market/installed — #1147 local description', () => {
+  const installedPath = '/dsh-market/installed'
+
+  it('returns only the installed packages’ own descriptions, keyed by dependency name', async () => {
+    const spec = 'https://github.com/local/session-folders/releases/download/v0.4.1/plugin.tgz'
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ dependencies: {
+      'dsh-session-folders': spec,
+      '@local/alias': '^1.0.0',
+    } }))
+    for (const [name, manifest] of Object.entries({
+      'dsh-session-folders': { name: 'dsh-session-folders', version: '0.4.1', description: '  整理会话文件夹  ', repository: 'github:upstream/not-the-installed-source' },
+      '@local/alias': { name: '@upstream/actual-name', version: '1.0.0', description: 'An aliased local plugin', unrelatedPrivateSetting: 'must-not-be-exported' },
+      'undeclared-package': { name: 'undeclared-package', version: '1.0.0', description: 'Not a profile dependency' },
+    })) {
+      const pkgDir = join(dir, 'node_modules', name)
+      mkdirSync(pkgDir, { recursive: true })
+      writeFileSync(join(pkgDir, 'package.json'), JSON.stringify(manifest))
+    }
+
+    const res = await hit(routes, installedPath, { method: 'GET', url: installedPath })
+    expect(res.status).toBe(200)
+    expect(jsonBody(res).descriptions).toEqual({
+      'dsh-session-folders': '整理会话文件夹',
+      '@local/alias': 'An aliased local plugin',
+    })
+    expect(jsonBody(res).installed).toEqual({ 'dsh-session-folders': spec, '@local/alias': '^1.0.0' })
+    // Description is display metadata, never a reason to trust the package's
+    // repository field over the source actually installed (#580 / #1147).
+    expect(jsonBody(res).repoIdentities).toMatchObject({ 'dsh-session-folders': ['local/session-folders'] })
+    expect(res.body).not.toContain('must-not-be-exported')
+  })
+
+  it('omits missing, blank or non-string descriptions and tolerates unreadable manifests', async () => {
+    const descriptions: Record<string, unknown> = {
+      absent: undefined, blank: ' \n\t ', object: { en: 'Not a package.json string' },
+      array: ['Not a package.json string'], number: 42, nil: null,
+    }
+    writeProfile([...Object.keys(descriptions), 'unreadable', 'missing'])
+    for (const [name, description] of Object.entries(descriptions)) {
+      const pkgDir = join(dir, 'node_modules', name)
+      mkdirSync(pkgDir, { recursive: true })
+      writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name, version: '1.0.0', description }))
+    }
+    mkdirSync(join(dir, 'node_modules', 'unreadable'), { recursive: true })
+    writeFileSync(join(dir, 'node_modules', 'unreadable', 'package.json'), '{not json')
+
+    const res = await hit(routes, installedPath, { method: 'GET', url: installedPath })
+    expect(res.status).toBe(200)
+    expect(jsonBody(res).descriptions).toEqual({})
+  })
+
+  it('rereads edited descriptions and drops removed packages on refresh', async () => {
+    writeProfile(['local-plugin'])
+    const pkgDir = join(dir, 'node_modules', 'local-plugin')
+    mkdirSync(pkgDir, { recursive: true })
+    const manifestPath = join(pkgDir, 'package.json')
+    const readDescriptions = async () => jsonBody(await hit(routes, installedPath, { method: 'GET', url: installedPath })).descriptions
+    writeFileSync(manifestPath, JSON.stringify({ name: 'local-plugin', version: '1.0.0', description: 'First description' }))
+    expect(await readDescriptions()).toEqual({ 'local-plugin': 'First description' })
+    writeFileSync(manifestPath, JSON.stringify({ name: 'local-plugin', version: '1.0.1', description: 'Updated description' }))
+    expect(await readDescriptions()).toEqual({ 'local-plugin': 'Updated description' })
+    writeProfile([])
+    expect(await readDescriptions()).toEqual({})
+  })
+})
+
 describe('GET /dsh-market/backup — a failure says why (#55)', () => {
   // kettly1260 hit "Error: HTTP 500" and asked how to find out more: the route
   // did answer with the reason, the client threw it away. Both ends are

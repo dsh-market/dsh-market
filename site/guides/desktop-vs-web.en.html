@@ -1,0 +1,24 @@
+<div class="crumb"><a href="__GUIDES__">Guides</a></div>
+<h1>Desktop app or dsh web: where your plugins live</h1>
+<p class="lede">DeepSeek Harness runs two ways, and each keeps its own list of plugins. Most "I installed it but it is not there" problems come from looking in the other one.</p>
+
+<h2>Two separate lists</h2>
+<p><b>dsh web</b> runs on a machine, usually in a terminal, and you open it in a browser. Its plugins live in a <b>profile</b> on that machine, by default called <code>web</code>. <b>The desktop app</b> is an application with its own profile. A plugin installed into one does not appear in the other.</p>
+
+<h2>How to install in each</h2>
+<ul>
+  <li><b>dsh web:</b> use the market inside the page, or run <code>dsh plugin --profile web add &lt;name&gt;</code> on the machine that runs dsh.</li>
+  <li><b>Desktop app:</b> the app installs plugins itself. Use <b>Settings → Plugins</b>, or the market inside the app, which hands the work to the app's own plugin manager.</li>
+</ul>
+
+<h2>If dsh web runs on a server</h2>
+<p>The plugin has to be installed on that server, not on the computer whose browser you are using. The market page you see is served by the server, and it manages the server's profile.</p>
+
+<h2>Why the two behave a little differently</h2>
+<ul>
+  <li>The desktop app's plugin manager has its own rules. For example it will not remove a plugin that a session is using, and it cannot update the market in place, because that would unload the code doing the update.</li>
+  <li>On dsh web the market runs pnpm itself, so it can retry a refused step. See <a href="__GUIDE_release-age-wait__">the release-age wait</a>.</li>
+</ul>
+
+<h2>Checking where something went</h2>
+<p>Open the plugin list in the place you expect it. If it is missing, check the other one, and check that dsh web is the instance you think it is when you run it on more than one machine.</p>

@@ -1,0 +1,92 @@
+<!doctype html>
+<!-- Generic article page: guides and the ecosystem report. Same furniture as
+     browse-template.html (header, footer, tokens), body supplied by the build. -->
+<html lang="__LANG__">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<meta name="description" content="__DESC__">
+<link rel="canonical" href="__URL__">
+__HREFLANGS__
+<link rel="sitemap" type="application/xml" href="https://dshmarket.com/sitemap.xml">
+<link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
+<meta property="og:type" content="article">
+<meta property="og:title" content="__TITLE__">
+<meta property="og:description" content="__DESC__">
+<meta property="og:url" content="__URL__">
+<meta property="og:image" content="__OG_IMAGE__">
+<meta name="twitter:card" content="summary_large_image">
+<script type="application/ld+json">__LD__</script>
+<style>
+:root{--accent:#c0392b;--accent-soft:#f7e5e2;--ink:#101722;--ink2:#5b6472;--ink3:#9aa3b2;--line:#e7eaf0;--bg:#fafbfd;--card:#fff}
+*{margin:0;box-sizing:border-box}
+body{font-family:-apple-system,"SF Pro Text","Segoe UI","PingFang SC",sans-serif;background:var(--bg);color:var(--ink);line-height:1.7}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+.wrap{max-width:64rem;margin:0 auto;padding:0 1.5rem}
+header{display:flex;align-items:center;gap:.8rem;padding:1.4rem 0;border-bottom:1px solid var(--line)}
+header img{height:30px}
+header .grow{flex:1}
+header a{color:var(--ink2);font-size:.9rem;margin-left:1.2rem}
+header a:hover{color:var(--accent);text-decoration:none}
+article{max-width:46rem;padding:2rem 0 1rem}
+.crumb{font-size:.82rem;color:var(--ink3);margin-bottom:.8rem}
+.crumb a{color:var(--ink2)}
+article h1{font-size:clamp(1.6rem,4vw,2.3rem);font-weight:800;letter-spacing:-.02em;line-height:1.25}
+.lede{color:var(--ink2);margin-top:.8rem;font-size:1.02rem}
+.meta{color:var(--ink3);font-size:.82rem;margin-top:.8rem}
+article h2{font-size:1.2rem;margin:2rem 0 .5rem}
+article h3{font-size:1rem;margin:1.2rem 0 .3rem}
+article p,article li{color:var(--ink2)}
+article p{margin:.6rem 0}
+article ul,article ol{margin:.5rem 0 .8rem 1.3rem}
+article li{margin:.25rem 0}
+article b,article strong{color:var(--ink)}
+article code{font-family:ui-monospace,Menlo,monospace;background:var(--accent-soft);border-radius:5px;padding:.08em .35em;font-size:.88em}
+article pre{background:#101722;color:#e8ecf3;border-radius:8px;padding:.75rem .9rem;overflow-x:auto;font-size:.85rem;margin:.7rem 0}
+article pre code{background:none;padding:0;color:inherit}
+.callout{border:1px solid var(--line);background:var(--card);border-left:3px solid var(--accent);border-radius:8px;padding:.7rem 1rem;margin:1rem 0}
+.callout p{margin:.2rem 0}
+table{border-collapse:collapse;width:100%;font-size:.88rem;margin:.8rem 0;background:var(--card)}
+th,td{border:1px solid var(--line);padding:.45rem .65rem;text-align:left;vertical-align:top}
+th{background:var(--bg);color:var(--ink);font-weight:650}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+.tablewrap{overflow-x:auto}
+.cards{list-style:none;margin:1rem 0;padding:0;display:grid;gap:.8rem}
+.cards li{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:.85rem 1rem;margin:0}
+.cards a{font-weight:650}
+.cards p{margin:.25rem 0 0;font-size:.9rem}
+.bar{display:inline-block;height:.6rem;background:var(--accent);border-radius:3px;vertical-align:middle;min-width:2px}
+footer{border-top:1px solid var(--line);margin-top:2.5rem;padding:2rem 0 3rem;font-size:.85rem;color:var(--ink3);display:flex;flex-wrap:wrap;gap:1rem;justify-content:space-between}
+footer a{color:var(--ink2)}
+@media(max-width:640px){
+  header{flex-wrap:wrap;row-gap:.35rem}
+  header img{height:26px}
+  header a{margin-left:.9rem;white-space:nowrap;flex:none}
+  header .grow{display:none}
+}
+</style>
+<!-- Cloudflare Web Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "6fdc1fdb390e417599a363e3109357b2"}'></script><!-- End Cloudflare Web Analytics -->
+</head>
+<body>
+<div class="wrap">
+<header>
+  <a href="__HOME__"><img src="/assets/wordmark.svg" alt="dsh-market"></a>
+  <span class="grow"></span>
+  <a href="__BROWSE__">__T_NAV_BROWSE__</a>
+  <a href="__GUIDES__">__NAV_GUIDES__</a>
+  <a href="__REPORT__">__NAV_REPORT__</a>
+  <a href="https://github.com/dsh-market/dsh-market" rel="noopener">__T_NAV_GITHUB__</a>
+  __LOCALE_LINKS__
+</header>
+<article>
+__BODY__
+</article>
+</div>
+<footer class="wrap">
+  <span>MIT · <a href="https://github.com/dsh-market/dsh-market" rel="noopener">dsh-market/dsh-market</a> · <a href="__PRIVACY__">__T_PRIVACY__</a></span>
+  <span><a href="__HOME__">__T_BACK__</a></span>
+</footer>
+</body>
+</html>

@@ -114,7 +114,7 @@ export interface HostCompatibility {
   status: 'compatible' | 'incompatible' | 'unknown'
   basis: 'manifest' | 'undeclared' | 'unavailable'
   requirement: string | null
-  declarations: Array<{ kind: 'engine' | 'peer'; package?: string; range: string }>
+  declarations: Array<{ kind: 'engine' | 'peer' | 'dependency'; package?: string; range: string }>
 }
 
 /** npm package name or GitHub catalog URL -> discovery-time host verdict. */
@@ -1813,4 +1813,61 @@ export function catalogEntryForInstalled(
     return findCatalogEntryForLocal(plugins, name, repoIdentities, repoHints) ?? undefined
   }
   return entryForDep(plugins, name, spec, repoIdentities, repoHints)
+}
+
+/**
+ * When the market installed or updated a package (#1142/#1121), as sent by
+ * `/dsh-market/installed`. Both are ISO 8601 and both may be absent — the
+ * absent one is a fact, not a zero.
+ */
+export interface InstallStamp {
+  installedAt?: string
+  updatedAt?: string
+}
+
+/** How the installed list is ordered. Its own set — see `installedSort`. */
+export type InstalledSort = 'default' | 'name' | 'newest' | 'oldest'
+
+/** The date a row shows, in the reader's own timezone; null when unknown. */
+export function installedDateText(stamp: string | undefined): string | null {
+  if (stamp === undefined) return null
+  const at = new Date(stamp)
+  if (Number.isNaN(at.getTime())) return null
+  const pad = (value: number): string => String(value).padStart(2, '0')
+  return `${String(at.getFullYear())}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}`
+}
+
+function installedAtMs(stamp: string | undefined): number | null {
+  if (stamp === undefined) return null
+  const at = Date.parse(stamp)
+  return Number.isFinite(at) ? at : null
+}
+
+/**
+ * Order two installed rows by the chosen field.
+ *
+ * `default` answers 0 on purpose: the list already has an order that means
+ * something (a plugin that is off sinks below every one that is on, #745),
+ * and the caller applies that first. This only decides what happens INSIDE
+ * those groups.
+ *
+ * A row with no install time goes last in BOTH directions. "Sort by install
+ * time" cannot place something whose time nobody recorded, and flipping the
+ * arrow must not lift a guess above a fact — the whole point of showing `—`
+ * is that the market says when it does not know.
+ */
+export function compareInstalledRows(
+  sort: InstalledSort,
+  a: { name: string; installedAt?: string },
+  b: { name: string; installedAt?: string },
+): number {
+  if (sort === 'default') return 0
+  if (sort === 'name') return a.name.localeCompare(b.name)
+  const left = installedAtMs(a.installedAt)
+  const right = installedAtMs(b.installedAt)
+  if (left === null && right === null) return a.name.localeCompare(b.name)
+  if (left === null) return 1
+  if (right === null) return -1
+  if (left === right) return a.name.localeCompare(b.name)
+  return sort === 'newest' ? right - left : left - right
 }

@@ -1,0 +1,19 @@
+<div class="crumb"><a href="__GUIDES__">Guides</a></div>
+<h1>"The plugin market stopped running": what happened and what to do</h1>
+<p class="lede">The market page shows that it stopped, usually right after an install, update or uninstall. It is not a crash of your plugins. This page says what it is and the order to try things in.</p>
+
+<h2>What happened</h2>
+<p>The market is itself a plugin. When DSH reloads its plugins, which it does around installs and updates, it can unload the market along with the rest. The page you are looking at is still on screen, but the part behind it that answers requests is gone for a moment. The page notices when its requests start returning "not found" and tells you so.</p>
+
+<h2>What to do, in order</h2>
+<ol>
+  <li><b>Wait about a minute.</b> Recent versions ask the market for its status every few seconds and reconnect on their own as soon as it answers. The message turns back into the normal list.</li>
+  <li><b>If a Reconnect button appears,</b> the page has stopped trying after about ninety seconds. Press it.</li>
+  <li><b>If it still does not come back,</b> quit DSH completely and open it again. For the desktop app, quit from the app menu rather than only closing the window.</li>
+</ol>
+
+<h2>What about the thing you were doing</h2>
+<p>The operation may already have finished. The market could not report the result because it was unloaded when the answer was due. Once it is back, open <b>Installed</b> and look: the plugin is either there at the new version or it is not. Nothing is replayed automatically, so you will not get a second install you did not ask for.</p>
+
+<h2>If it keeps happening</h2>
+<p>Update the market to the latest version; recent releases fixed several causes of this. If it still happens, open an issue on the <a href="https://github.com/dsh-market/dsh-market/issues" rel="noopener">GitHub repository</a> and attach the exported log (the market has an Export log button at the top). The part of the log called "events this session" is the useful one.</p>

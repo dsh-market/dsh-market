@@ -1,0 +1,22 @@
+<div class="crumb"><a href="__GUIDES__">Guides</a></div>
+<h1>"Installed, not in effect": what each plugin state means</h1>
+<p class="lede">The Installed tab shows a short status next to every plugin. Most of the time it says it is working. This page explains the others, and what to do about each.</p>
+
+<h2>The states</h2>
+<h3>In effect</h3>
+<p>The plugin is loaded in the running DSH. Nothing to do.</p>
+<h3>Installed, takes effect after a restart</h3>
+<p>The files are in the profile, but the running DSH loaded its plugins before they arrived. Restart dsh web or the desktop app. Many plugins avoid this by loading on the fly, which is why some installs need no restart and others do.</p>
+<h3>Installed, not compatible with this dsh</h3>
+<p>The plugin declares a DSH version range and yours is outside it. The market checks this before it installs, and shows the range it found. Update DSH, or look for a plugin release that supports your version; the market can suggest the newest compatible release for an update.</p>
+<h3>Installed, not in effect</h3>
+<p>The package is on disk, but nothing loads it. The common reasons are that it is a <b>library</b> another plugin depends on (shown as "dependency library"), or that it is a plain dependency that declares nothing for DSH to load. A package that an Agent preset in your own configuration mounts shows "loaded by your configuration" instead, because presets load per session rather than at startup.</p>
+<p>If you expected it to do something, check that it is a plugin and not just a library, and whether it is switched off in the profile.</p>
+<h3>Installed, failed verification</h3>
+<p>The files are there, but the package is incomplete or has no loadable entry, often because an install was interrupted or a build step did not run. Reinstalling from the market usually fixes it.</p>
+<h3>Did not load at startup</h3>
+<p>DSH tried to load it and it failed. The host log names the error. A plugin that fails this way can be switched off from the market while you look into it.</p>
+<h3>Disabled</h3>
+<p>You, or another manager, switched it off. It stays installed and can be switched on again.</p>
+
+<div class="callout"><p><b>Why the market does not just say "broken".</b> Several of these states are normal. A library is supposed to have no behaviour of its own, and a preset-loaded package is working although nothing in the startup list shows it. Where the market cannot tell which case you are in, it says what it knows rather than claiming a fault.</p></div>

@@ -449,6 +449,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			hostUpdateHint: "本市场由桌面端安装和更新，新版本请在桌面端更新",
 			notesLink: "更新内容",
 			notesRelease: "版本说明",
+			notesBeyondTarget: "下面是 {0} 的说明，这个版本还不能装。现在更新到的是 {1}。",
 			notesCommits: "提交记录",
 			notesCommitsRecent: "最近提交（无法对应你当前安装的版本，仅供参考）",
 			notesNpm: "版本发布时间",
@@ -756,6 +757,15 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			actWhy: "为什么未生效？",
 			tabList: "列表",
 			tabGroups: "分组",
+			installedSort: "排序",
+			installedSortLabel: "已安装列表排序",
+			installedSortDefault: "默认（运行中优先）",
+			installedSortName: "名称",
+			installedSortNewest: "安装时间：新→旧",
+			installedSortOldest: "安装时间：旧→新",
+			installedAtLabel: "安装于",
+			updatedAtLabel: "最近更新",
+			installedAtUnknown: "市场没有记录安装时间（不是通过市场安装的）",
 			repoLink: "在 GitHub 上查看仓库",
 			viewSourceRepo: "查看仓库↗",
 			disabledState: "已停用",
@@ -1262,6 +1272,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			hostUpdateHint: "Installed and updated by the desktop app; update it there.",
 			notesLink: "What changed",
 			notesRelease: "Release notes",
+			notesBeyondTarget: "These are the notes for {0}, which cannot be installed yet. Update installs {1}.",
 			notesCommits: "Commits",
 			notesCommitsRecent: "Recent commits (do not match your installed version — for reference only)",
 			notesNpm: "Version publish times",
@@ -1569,6 +1580,15 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			actWhy: "Why is it not active?",
 			tabList: "List",
 			tabGroups: "Groups",
+			installedSort: "Sort",
+			installedSortLabel: "Installed order",
+			installedSortDefault: "Default (running first)",
+			installedSortName: "Name",
+			installedSortNewest: "Install time: newest",
+			installedSortOldest: "Install time: oldest",
+			installedAtLabel: "Installed",
+			updatedAtLabel: "Last updated",
+			installedAtUnknown: "The market did not record an install time (installed another way)",
 			repoLink: "View the repository on GitHub",
 			viewSourceRepo: "View the repository↗",
 			disabledState: "Disabled",
@@ -2075,6 +2095,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			hostUpdateHint: "このマーケットはデスクトップアプリがインストールと更新を行います。新しいバージョンへの更新はデスクトップアプリで行ってください",
 			notesLink: "変更内容",
 			notesRelease: "リリースノート",
+			notesBeyondTarget: "以下は {0} の説明です。このバージョンはまだ入れられません。今回の更新で入るのは {1} です。",
 			notesCommits: "コミット履歴",
 			notesCommitsRecent: "最近のコミット（現在のインストール済みバージョンには対応しません。参考情報です）",
 			notesNpm: "バージョンの公開日時",
@@ -2381,6 +2402,15 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			actWhy: "なぜ有効にならないのですか？",
 			tabList: "一覧",
 			tabGroups: "グループ",
+			installedSort: "並び替え",
+			installedSortLabel: "インストール済みの並び順",
+			installedSortDefault: "既定（稼働中を優先）",
+			installedSortName: "名前",
+			installedSortNewest: "インストール日時：新しい順",
+			installedSortOldest: "インストール日時：古い順",
+			installedAtLabel: "インストール",
+			updatedAtLabel: "最終更新",
+			installedAtUnknown: "この市場はインストール日時を記録していません（別の方法でインストールされました）",
 			repoLink: "GitHub でリポジトリを見る",
 			viewSourceRepo: "リポジトリを見る↗",
 			disabledState: "無効",
@@ -3981,6 +4011,43 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		function catalogEntryForInstalled(plugins, name, spec, repoIdentities = [], repoHints = []) {
 			if (/^(?:link|file):/i.test(spec)) return findCatalogEntryForLocal(plugins, name, repoIdentities, repoHints) ?? void 0;
 			return entryForDep(plugins, name, spec, repoIdentities, repoHints);
+		}
+		/** The date a row shows, in the reader's own timezone; null when unknown. */
+		function installedDateText(stamp) {
+			if (stamp === void 0) return null;
+			const at = new Date(stamp);
+			if (Number.isNaN(at.getTime())) return null;
+			const pad = (value) => String(value).padStart(2, "0");
+			return `${String(at.getFullYear())}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}`;
+		}
+		function installedAtMs(stamp) {
+			if (stamp === void 0) return null;
+			const at = Date.parse(stamp);
+			return Number.isFinite(at) ? at : null;
+		}
+		/**
+		* Order two installed rows by the chosen field.
+		*
+		* `default` answers 0 on purpose: the list already has an order that means
+		* something (a plugin that is off sinks below every one that is on, #745),
+		* and the caller applies that first. This only decides what happens INSIDE
+		* those groups.
+		*
+		* A row with no install time goes last in BOTH directions. "Sort by install
+		* time" cannot place something whose time nobody recorded, and flipping the
+		* arrow must not lift a guess above a fact — the whole point of showing `—`
+		* is that the market says when it does not know.
+		*/
+		function compareInstalledRows(sort, a, b) {
+			if (sort === "default") return 0;
+			if (sort === "name") return a.name.localeCompare(b.name);
+			const left = installedAtMs(a.installedAt);
+			const right = installedAtMs(b.installedAt);
+			if (left === null && right === null) return a.name.localeCompare(b.name);
+			if (left === null) return 1;
+			if (right === null) return -1;
+			if (left === right) return a.name.localeCompare(b.name);
+			return sort === "newest" ? right - left : left - right;
 		}
 		//#endregion
 		//#region src/client/InstallToast.tsx
@@ -6471,6 +6538,71 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			});
 		}
 		//#endregion
+		//#region src/client/dismissed-host.ts
+		/**
+		* The host rows the user already cleared (#1184).
+		*
+		* Every finished row in the operations panel is a projection of the host's
+		* own `/dsh-market/status` answer, not a record this page owns: "clear
+		* settled" and "dismiss" can only stop THIS page from drawing it. Before
+		* #1184 that decision lived in a `useRef`, so the next mount — a reload, or
+		* leaving the market and coming back — started with an empty set and the host
+		* quietly put the same rows back on screen. The user had cleared them; the
+		* page had simply forgotten.
+		*
+		* So the set is written down, next to the market's other page-local
+		* bookkeeping (`dshm-drain-v1`, `dshm-settled-v1`). It is not market state:
+		* nothing survives a profile reset here, and a different browser profile
+		* clearing its own rows must not hide them in this one.
+		*
+		* The ids are the host's `operationId`s, which is also why the list can be
+		* capped without losing anything current: an id is only ever asked about
+		* while the host still reports that operation.
+		*/
+		/** Where the cleared host rows are kept. */
+		const DISMISSED_HOST_STORAGE_KEY = "dshm-dismissed-host-v1";
+		/** Oldest first, newest last: the order that makes a cap drop the oldest. */
+		function read() {
+			try {
+				const raw = localStorage.getItem(DISMISSED_HOST_STORAGE_KEY);
+				if (raw === null) return [];
+				const parsed = JSON.parse(raw);
+				if (!Array.isArray(parsed)) return [];
+				const out = [];
+				for (const item of parsed) {
+					if (typeof item !== "string" || item === "" || out.includes(item)) continue;
+					out.push(item);
+				}
+				return out.slice(-100);
+			} catch {
+				return [];
+			}
+		}
+		function write(ids) {
+			try {
+				localStorage.setItem(DISMISSED_HOST_STORAGE_KEY, JSON.stringify(ids.slice(-100)));
+			} catch {}
+		}
+		let cache = null;
+		/**
+		* The ids to keep off screen, read once per page. The component holds this
+		* set for the lifetime of the mount and asks it on every status poll, so the
+		* parse happens once instead of once per render.
+		*/
+		function dismissedHostIdSet() {
+			cache ??= new Set(read());
+			return cache;
+		}
+		/** The user cleared this host row: it must stay cleared across a reload. */
+		function rememberDismissedHostId(id) {
+			if (id === "") return;
+			const ids = [...dismissedHostIdSet()];
+			if (ids.includes(id)) return;
+			ids.push(id);
+			cache = new Set(ids.slice(-100));
+			write([...cache]);
+		}
+		//#endregion
 		//#region src/client/preset-panel.tsx
 		/**
 		* Diagnostics sub-panel — issue #98 phase 3 (plugin presets).
@@ -8578,6 +8710,56 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				items
 			});
 		}
+		/**
+		* The installed list's own order (#1142).
+		*
+		* Deliberately NOT the market's `FilterMenu`: that one sorts by downloads,
+		* stars or the catalog's collection date, and an installed package has none
+		* of the three. Same primitive, four options, one value — the list's order
+		* is a single choice, not a field plus a direction.
+		*/
+		function InstalledSortMenu({ value, onChange, t }) {
+			const [open, setOpen] = (0, react.useState)(false);
+			const items = (0, react.useMemo)(() => [
+				{
+					type: "label",
+					id: "is-label",
+					text: t("installedSortLabel")
+				},
+				{
+					id: "installed:default",
+					label: t("installedSortDefault")
+				},
+				{
+					id: "installed:name",
+					label: t("installedSortName")
+				},
+				{
+					id: "installed:newest",
+					label: t("installedSortNewest")
+				},
+				{
+					id: "installed:oldest",
+					label: t("installedSortOldest")
+				}
+			], [t]);
+			return /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Menu, {
+				open,
+				onClose: () => setOpen(false),
+				selectedIds: ["installed:" + value],
+				onSelect: (id) => onChange(id.slice(10)),
+				align: "end",
+				portal: true,
+				anchor: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+					variant: "outline",
+					size: "sm",
+					icon: open ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(IconChevronUpOutline14, { size: 14 }) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)(IconChevronDownOutline14, { size: 14 }),
+					onClick: () => setOpen((openNow) => !openNow),
+					children: t("installedSort")
+				}),
+				items
+			});
+		}
 		/** Keep an empty search actionable without changing the user's sort or block list. */
 		function EmptyResults({ blocked, onClear, t }) {
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
@@ -10055,6 +10237,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		*/
 		let cachedRegistry = null;
 		let cachedInstalled = null;
+		let cachedLocalDescriptions = {};
 		let cachedRepoIdentities = null;
 		let cachedRepoHints = null;
 		let cachedHostCompatibility = {};
@@ -10170,6 +10353,13 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const installed = {};
 			for (const [name, spec] of Object.entries(value)) if (typeof spec === "string") installed[name] = spec;
 			return installed;
+		}
+		/** Optional /installed metadata: older hosts omit it, malformed values are not text. */
+		function localDescriptionsFromUnknown(value) {
+			if (value === null || typeof value !== "object" || Array.isArray(value)) return {};
+			const descriptions = {};
+			for (const [name, description] of Object.entries(value)) if (typeof description === "string" && description.trim() !== "") descriptions[name] = description.trim();
+			return descriptions;
 		}
 		/** A `{name: {...}}` map, or anything else — for untyped server fields. */
 		function isRecordOfRecords(value) {
@@ -10579,6 +10769,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				cachedInstalled = value;
 				setInstalledState(value);
 			}, []);
+			const [localDescriptions, setLocalDescriptionsState] = (0, react.useState)(() => cachedLocalDescriptions);
+			const setLocalDescriptions = (0, react.useCallback)(cacheState((value) => {
+				cachedLocalDescriptions = value;
+			}, setLocalDescriptionsState), []);
 			const [repoIdentities, setRepoIdentitiesState] = (0, react.useState)(cachedRepoIdentities ?? {});
 			const setRepoIdentities = (0, react.useCallback)((value) => {
 				cachedRepoIdentities = value;
@@ -11037,6 +11231,21 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			}, setDisabledNamesState), []);
 			/** The user's own note per plugin (#347): package name → text. */
 			const [notes, setNotes] = (0, react.useState)({});
+			/**
+			* When this market installed/updated each package (#1142). Only packages
+			* the market itself installed have an entry: the CLI and the host's own
+			* plugins page leave nothing on disk that says when, and the row shows
+			* `—` rather than guessing from a directory mtime pnpm rewrites.
+			*/
+			const [installTimes, setInstallTimes] = (0, react.useState)({});
+			/**
+			* How the installed list is ordered (#1142). Its own value, NOT the
+			* market's `SortField`: that one is downloads/stars/added, and none of the
+			* three exist for an installed package — `added` is the catalog's
+			* collection date, which is a different question from when the user
+			* installed it.
+			*/
+			const [installedSort, setInstalledSort] = (0, react.useState)("default");
 			/** Catalog URLs bookmarked for later install (#414). */
 			const [favoriteUrls, setFavoriteUrlsState] = (0, react.useState)(() => cachedFavoriteUrls);
 			const setFavoriteUrls = (0, react.useCallback)(cacheState((value) => {
@@ -11324,6 +11533,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const refreshInstalled = (0, react.useCallback)((force) => {
 				fetch(api("/dsh-market/installed"), { cache: "no-store" }).then((res) => res.json()).then((body) => {
 					setInstalled(body.installed || {});
+					setLocalDescriptions(localDescriptionsFromUnknown(body.descriptions));
 					setRepoIdentities(installedRepoIdentities(body.repoIdentities));
 					setRepoHints(installedRepoHints(body.repoHints));
 					setInstalledFiles(Array.isArray(body.present) ? body.present : Object.keys(body.installed || {}));
@@ -11333,6 +11543,21 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						if (loadedDisabled.current === null) loadedDisabled.current = new Set(body.disabled);
 					}
 					if (body.notes !== null && typeof body.notes === "object" && !Array.isArray(body.notes)) setNotes(body.notes);
+					if (body.installTimes !== null && typeof body.installTimes === "object" && !Array.isArray(body.installTimes)) {
+						const stamps = {};
+						for (const [name, raw] of Object.entries(body.installTimes)) {
+							if (raw === null || typeof raw !== "object" || Array.isArray(raw)) continue;
+							const record = raw;
+							const installedAt = typeof record.installedAt === "string" ? record.installedAt : void 0;
+							const updatedAt = typeof record.updatedAt === "string" ? record.updatedAt : void 0;
+							if (installedAt === void 0 && updatedAt === void 0) continue;
+							stamps[name] = {
+								...installedAt === void 0 ? {} : { installedAt },
+								...updatedAt === void 0 ? {} : { updatedAt }
+							};
+						}
+						setInstallTimes(stamps);
+					}
 					if (Array.isArray(body.patchDisabled)) setPatchDisabledNames(body.patchDisabled);
 					if (typeof body.profile === "string") setProfileName(body.profile);
 					if (Array.isArray(body.unbundled)) setUnbundledNames(body.unbundled);
@@ -11370,6 +11595,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				setFavoriteUrls,
 				setInstalledBundles,
 				setInstalledFiles,
+				setLocalDescriptions,
 				setSkins,
 				setUpdates
 			]);
@@ -11384,8 +11610,14 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			*/
 			const settledHostRef = (0, react.useRef)(/* @__PURE__ */ new Set());
 			const knownHostIdsRef = (0, react.useRef)(/* @__PURE__ */ new Set());
-			/** Host operations the user cleared; a status poll must not add them back. */
-			const dismissedHostRef = (0, react.useRef)(/* @__PURE__ */ new Set());
+			/**
+			* Host operations the user cleared; a status poll must not add them back —
+			* and neither must a reload. The set is read from storage and written back
+			* per id, because these rows belong to the host: clearing one only ever
+			* hides it here, so a set that lived only in memory brought the row back on
+			* the next mount (#1184).
+			*/
+			const dismissedHostRef = (0, react.useRef)(dismissedHostIdSet());
 			const drainMarkerRestoredRef = (0, react.useRef)(false);
 			const clearDrainMarker = (0, react.useCallback)((operationId) => {
 				try {
@@ -13201,16 +13433,17 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			exists while a user is actually looking at one plugin's notes, and
 			closing the dialog abandons the render — the server side caches the
 			payload, so reopening is cheap. */
-			const openNotes = (0, react.useCallback)((name, current, latest, repoUrl) => {
+			const openNotes = (0, react.useCallback)((name, current, latest, target, repoUrl) => {
 				setNotesFor({
 					name,
 					current,
 					latest,
+					target,
 					repoUrl
 				});
 				setUpdateNotes(null);
 				setNotesState("loading");
-				fetch(`${api("/dsh-market/changelog")}?name=${encodeURIComponent(name)}`).then((res) => res.json()).then((body) => {
+				fetch(`${api("/dsh-market/changelog")}?name=${encodeURIComponent(name)}${target !== null ? `&target=${encodeURIComponent(target)}` : ""}`).then((res) => res.json()).then((body) => {
 					setUpdateNotes(body);
 					setNotesState("ready");
 				}).catch(() => setNotesState("fail"));
@@ -14333,7 +14566,15 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					const bOn = effectiveDisabledSet.has(nameB) ? 0 : 1;
 					if (aOn !== bOn) return bOn - aOn;
 					const aUp = isPluginUpdatable(nameA, String(specA), updates[nameA], updatedNames, quietUpdateSet) ? 1 : 0;
-					return (isPluginUpdatable(nameB, String(specB), updates[nameB], updatedNames, quietUpdateSet) ? 1 : 0) - aUp;
+					const bUp = isPluginUpdatable(nameB, String(specB), updates[nameB], updatedNames, quietUpdateSet) ? 1 : 0;
+					if (aUp !== bUp) return bUp - aUp;
+					return compareInstalledRows(installedSort, {
+						name: nameA,
+						installedAt: installTimes[nameA]?.installedAt
+					}, {
+						name: nameB,
+						installedAt: installTimes[nameB]?.installedAt
+					});
 				});
 			}, [
 				isInstalledListActive,
@@ -14341,7 +14582,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				selfName,
 				updatesLoaded,
 				effectiveDisabledSet,
-				dependencyOnlyNames
+				dependencyOnlyNames,
+				installedSort,
+				installTimes
 			]);
 			const missingRestoreCount = Object.keys(pendingDependencies).filter((name) => !installedFiles.includes(name)).length;
 			const hasUpdates = reminderUpdatableNames.length > 0;
@@ -14386,15 +14629,25 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					}]
 				});
 			};
+			/** Catalog copy wins; an installed package can still explain itself when
+			* it has no usable catalog description (#1147). Shared by all installed views. */
+			const authoredDescription = (name, entry) => {
+				for (const description of [
+					entry?.description?.[lang],
+					entry?.description?.en,
+					localDescriptions[name]
+				]) if (typeof description === "string" && description.trim() !== "") return description.trim();
+				return "";
+			};
 			/**
 			* What the group view says about an installed plugin beyond its name: the
-			* user's own note, else the catalog's description (#1006). One place, so a
-			* plugin reads the same whether it sits in a group or in "Ungrouped".
+			* user's own note, else the author's description (#1006, #1147). One place,
+			* so a plugin reads the same in a group or in "Ungrouped".
 			*/
 			const installedBlurb = (name) => {
 				const entry = data === null ? void 0 : catalogEntryForInstalled(data.plugins, name, String(installed[name]), repoIdentities[name], repoHints[name]);
 				const note = notes[name];
-				const authored = entry?.description && (entry.description[lang] || entry.description.en) || "";
+				const authored = authoredDescription(name, entry);
 				return {
 					entry,
 					note,
@@ -15508,12 +15761,18 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 										replacing,
 										envReady,
 										onClearSettled: () => {
-											for (const record of recordsRef.current) if (record.hostOperationId !== void 0 && (record.state === "done" || record.state === "warned" || record.state === "failed")) dismissedHostRef.current.add(record.hostOperationId);
+											for (const record of recordsRef.current) if (record.hostOperationId !== void 0 && (record.state === "done" || record.state === "warned" || record.state === "failed")) {
+												dismissedHostRef.current.add(record.hostOperationId);
+												rememberDismissedHostId(record.hostOperationId);
+											}
 											setRecords((list) => clearSettled(list));
 										},
 										onCancel: (record) => doCancel(record),
 										onDismiss: (record) => {
-											if (record.hostOperationId !== void 0) dismissedHostRef.current.add(record.hostOperationId);
+											if (record.hostOperationId !== void 0) {
+												dismissedHostRef.current.add(record.hostOperationId);
+												rememberDismissedHostId(record.hostOperationId);
+											}
 											setRecords((list) => drop(list, record.id));
 										},
 										onRefresh: () => location.reload(),
@@ -16541,51 +16800,59 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 							}),
 							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 								className: Market_module_css_default.tabSearchRow,
-								children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(SearchInput, {
-									resetToken: installedSearchReset,
-									className: Market_module_css_default.tabSearch,
-									placeholder: t("searchPh"),
-									value: qInstalled,
-									onCommit: setQInstalled,
-									t
-								}, "installed"), installedView === "groups" && (creatingGroup ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-									className: Market_module_css_default.groupCreateInline,
-									onBlur: (event) => {
-										const next = event.relatedTarget;
-										if (next instanceof Node && event.currentTarget.contains(next)) return;
-										cancelCreateGroup();
-									},
-									children: [
-										/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
-											className: Market_module_css_default.inlineInput,
-											placeholder: t("groupNamePh"),
-											value: newGroupName,
-											onChange: (e) => setNewGroupName(e.target.value),
-											onKeyDown: (e) => {
-												if (e.key === "Enter") doCreateGroup();
-												if (e.key === "Escape") cancelCreateGroup();
-											},
-											autoFocus: true
-										}),
-										/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-											variant: "primary",
-											size: "sm",
-											onClick: doCreateGroup,
-											children: t("groupCreate")
-										}),
-										/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-											variant: "ghost",
-											size: "sm",
-											onClick: cancelCreateGroup,
-											children: t("cancel")
-										})
-									]
-								}) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-									variant: "outline",
-									size: "sm",
-									onClick: () => setCreatingGroup(true),
-									children: t("groupNew")
-								}))]
+								children: [
+									/* @__PURE__ */ (0, react_jsx_runtime.jsx)(SearchInput, {
+										resetToken: installedSearchReset,
+										className: Market_module_css_default.tabSearch,
+										placeholder: t("searchPh"),
+										value: qInstalled,
+										onCommit: setQInstalled,
+										t
+									}, "installed"),
+									installedView === "list" && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(InstalledSortMenu, {
+										value: installedSort,
+										onChange: setInstalledSort,
+										t
+									}),
+									installedView === "groups" && (creatingGroup ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+										className: Market_module_css_default.groupCreateInline,
+										onBlur: (event) => {
+											const next = event.relatedTarget;
+											if (next instanceof Node && event.currentTarget.contains(next)) return;
+											cancelCreateGroup();
+										},
+										children: [
+											/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
+												className: Market_module_css_default.inlineInput,
+												placeholder: t("groupNamePh"),
+												value: newGroupName,
+												onChange: (e) => setNewGroupName(e.target.value),
+												onKeyDown: (e) => {
+													if (e.key === "Enter") doCreateGroup();
+													if (e.key === "Escape") cancelCreateGroup();
+												},
+												autoFocus: true
+											}),
+											/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+												variant: "primary",
+												size: "sm",
+												onClick: doCreateGroup,
+												children: t("groupCreate")
+											}),
+											/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+												variant: "ghost",
+												size: "sm",
+												onClick: cancelCreateGroup,
+												children: t("cancel")
+											})
+										]
+									}) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+										variant: "outline",
+										size: "sm",
+										onClick: () => setCreatingGroup(true),
+										children: t("groupNew")
+									}))
+								]
 							}),
 							installedView === "groups" ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
 								groupOrder.length > 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
@@ -16908,6 +17175,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									const act = activations[name];
 									const meta = act !== void 0 ? activationMeta(act.state, t, act.dependencyOf, act.loadedByProfile, act.library) : null;
 									const version = status && status.version ? "v" + status.version : "";
+									const stamp = installTimes[name];
+									const installedOn = installedDateText(stamp?.installedAt);
+									const updatedOn = installedDateText(stamp?.updatedAt);
+									const installedWhenTitle = [installedOn === null ? t("installedAtUnknown") : `${t("installedAtLabel")} ${installedOn}`, updatedOn === null ? "" : `${t("updatedAtLabel")} ${updatedOn}`].filter(Boolean).join(" · ");
 									const specText = String(spec);
 									const specRedundant = version !== "" && /^[\^~]?\d/.test(specText);
 									const localPath = localPathOf(specText);
@@ -16944,9 +17215,14 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 														children: renderInstalledBlockMenu(name)
 													})]
 												}),
-												(version !== "" || localDev) && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+												(version !== "" || localDev || installedOn !== null) && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 													className: Market_module_css_default.irowMeta,
-													children: [version, localDev ? t("linkedDev") : ""].filter(Boolean).join(" · ")
+													title: installedWhenTitle,
+													children: [
+														version,
+														localDev ? t("linkedDev") : "",
+														installedOn === null ? "" : `${t("installedAtLabel")} ${installedOn}`
+													].filter(Boolean).join(" · ")
 												}),
 												specRedundant ? null : localPath !== null ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 													className: Market_module_css_default.irowPath,
@@ -17023,7 +17299,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 													})]
 												}) : (() => {
 													const note = notes[name];
-													const authored = entry?.description && (entry.description[lang] || entry.description.en) || "";
+													const authored = authoredDescription(name, entry);
 													const theirs = showTheirs.includes(name);
 													const shown = note !== void 0 && !theirs ? note : authored;
 													return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
@@ -17078,7 +17354,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 															}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
 																type: "button",
 																className: Market_module_css_default.notesLink,
-																onClick: () => openNotes(name, status?.current ?? null, status?.latest ?? null, repoUrl),
+																onClick: () => openNotes(name, status?.current ?? null, status?.latest ?? null, status?.eligibleVersion ?? null, repoUrl),
 																children: `${t("notesLink")} ›`
 															})]
 														}),
@@ -17876,7 +18152,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									}),
 									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 										className: Market_module_css_default.spec,
-										children: notesFor.latest !== null && notesFor.latest.length === 40 ? notesFor.latest.slice(0, 7) : notesFor.latest
+										children: (() => {
+											const end = notesFor.target ?? notesFor.latest;
+											return end !== null && end.length === 40 ? end.slice(0, 7) : end;
+										})()
 									})
 								]
 							}),
@@ -17890,17 +18169,24 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 							}),
 							notesState === "ready" && updateNotes !== null && (updateNotes.kind === "release" ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 								className: Market_module_css_default.notesBody,
-								children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-									className: Market_module_css_default.notesMeta,
-									children: [
-										/* @__PURE__ */ (0, react_jsx_runtime.jsx)("strong", { children: t("notesRelease") }),
-										updateNotes.release.tag !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: " " + updateNotes.release.tag }),
-										updateNotes.release.publishedAt !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: " · " + updateNotes.release.publishedAt.slice(0, 10) })
-									]
-								}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
-									className: Market_module_css_default.notesRendered,
-									children: renderMarkdown(updateNotes.release.body || t("notesNone"))
-								})]
+								children: [
+									/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+										className: Market_module_css_default.notesMeta,
+										children: [
+											/* @__PURE__ */ (0, react_jsx_runtime.jsx)("strong", { children: t("notesRelease") }),
+											updateNotes.release.tag !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: " " + updateNotes.release.tag }),
+											updateNotes.release.publishedAt !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: " · " + updateNotes.release.publishedAt.slice(0, 10) })
+										]
+									}),
+									updateNotes.beyondTarget !== void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+										className: Market_module_css_default.notesMeta,
+										children: t("notesBeyondTarget").replace("{0}", updateNotes.release.tag ?? "").replace("{1}", updateNotes.beyondTarget)
+									}),
+									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+										className: Market_module_css_default.notesRendered,
+										children: renderMarkdown(updateNotes.release.body || t("notesNone"))
+									})
+								]
 							}) : updateNotes.kind === "commits" ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 								className: Market_module_css_default.notesBody,
 								children: [

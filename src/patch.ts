@@ -171,10 +171,29 @@ function nextPatchContentLine(lines: readonly string[], from: number): number {
  *   does not carry the key at all.
  */
 function entryKeyValue(lines: readonly string[], start: number, key: string): string | null {
-  const pattern = new RegExp(`^ {2}${key}:[ \\t]*(.*?)[ \\t]*$`, 'u')
+  return fieldValue(lines, start, 0, key)
+}
+
+/**
+ * The value of one field inside a row that starts before `start`.
+ *
+ * The field sits two spaces deeper than the `- id:` marker that opens the row.
+ * A top-level row is therefore written at two spaces and an inserted row — one
+ * nested under `- insert:` — at six, because the row itself sits at four. The
+ * block ends at the next line indented no deeper than the id; a comment at
+ * that depth is not structural and does not end it.
+ *
+ * @param indent - the column of the row's own `- id:` marker.
+ * @returns the scalar as written (comments stripped), or null when absent.
+ */
+function fieldValue(lines: readonly string[], start: number, indent: number, key: string): string | null {
+  const fieldIndent = indent + 2
+  const pattern = new RegExp(`^ {${String(fieldIndent)}}${key}:[ \\t]*(.*?)[ \\t]*$`, 'u')
   for (let index = start; index < lines.length; index += 1) {
     const line = lines[index] ?? ''
-    if (/^- /u.test(line)) return null
+    const body = line.trimStart()
+    if (body === '') continue
+    if (line.length - body.length < fieldIndent && !body.startsWith('#')) return null
     const match = pattern.exec(line)
     // A `#` starts a comment only after whitespace; `#` inside a bare scalar
     // is data, and YAML would keep it.
@@ -264,7 +283,21 @@ export function readUserPatchState(patchPath: string): PatchState {
     if (/^- /u.test(line)) inInsert = false
     if (inInsert) {
       const insertRow = /^ {4}- id: ([A-Za-z0-9_.-]+)/u.exec(line)
-      if (insertRow !== null) inserts.push(insertRow[1])
+      if (insertRow !== null) {
+        const inserted = insertRow[1]!
+        inserts.push(inserted)
+        // An inserted row's own fields sit at six spaces, and the include
+        // composition applies `disabled` from either indent. Stopping at the id
+        // left every inserted row out of the flag map, so the market showed a
+        // plugin as on — with a toggle that could not be answered — while the
+        // loader had the row off.
+        const insertFlag = fieldValue(lines, index + 1, 4, 'disabled')
+        if (insertFlag === 'true' || insertFlag === 'false') flags.set(inserted, insertFlag)
+        const insertNamed = fieldValue(lines, index + 1, 4, 'name')
+        const insertName = insertNamed === null ? null : insertNamed.replace(/^(['"])(.*)\1$/u, '$2')
+        if (insertName !== null && insertName !== '') names.set(inserted, insertName)
+        else names.delete(inserted)
+      }
       continue
     }
     const disableRow = /^- id: (?:([A-Za-z0-9_.-]+)|'([A-Za-z0-9_.-]+)'|"([A-Za-z0-9_.-]+)")[ \t]*$/u.exec(line)
@@ -584,7 +617,13 @@ export function packagePatchFlags(
     // host, so it is not a decision about this package (#1113): the shape a
     // package rename leaves behind.
     const applies = (id: string): boolean => rowFlagApplies(state, id, composedRowName(host, id))
-    if (rows.some(id => decidedByUser(id) && applies(id) && state.disables.includes(id))) disabled.push(name)
+    // A package counts as off only when nothing of it is left running: a
+    // multi-component plugin with some components switched off is still on
+    // (#1150). One disabled row used to flip the whole package, which kept
+    // it out of 「全部更新」.
+    // Rows that name another module do not count either way (#1113).
+    const decidedRows = rows.filter(id => decidedByUser(id) && applies(id))
+    if (decidedRows.length > 0 && decidedRows.every(id => state.disables.includes(id))) disabled.push(name)
     if (rows.some(id => decidedByUser(id) && applies(id) && state.forced.includes(id))) forced.push(name)
   }
   return { disabled, forced }

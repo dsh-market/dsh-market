@@ -421,6 +421,10 @@ describe('DrainCoordinator', () => {
     const settled = await bed.coordinator.whenSettled(result.operation.operationId)
     expect(settled?.state).toBe('failed')
     expect(settled?.failure?.code).toBe('AGENT_BARRIER_LOST')
+    // #1103: the failure is shown to users verbatim — it must say what to do,
+    // in plain words, not "verify the installed files".
+    expect(settled?.failure?.message).toMatch(/等会话空闲后再试/)
+    expect(settled?.failure?.message).not.toMatch(/maintenance boundary/)
     bed.coordinator.dispose()
   })
 
@@ -636,7 +640,9 @@ describe('DrainCoordinator', () => {
       expect(bed.aborted.count).toBe(1)
       command.release()
       const result = await command.pending
-      expect(result.mode === 'inline' && result.operation.failure?.code).toBe('MARKET_UNLOADED')
+      // The command finished (exit 0): the record says so, not "cancelled" (#1151).
+      expect(result.mode === 'inline' && result.operation.state).toBe('succeeded')
+      expect(result.mode === 'inline' && result.result.payload).toMatchObject({ ok: true, marketReloaded: true })
 
       await factory.finish()
       await new Promise(resolve => setTimeout(resolve, 0))
@@ -970,7 +976,7 @@ describe('DrainCoordinator', () => {
     bed.coordinator.dispose()
   })
 
-  it('keeps holds through a dispose mid-execution and settles MARKET_UNLOADED', async () => {
+  it('keeps holds through a dispose mid-execution and records a finished command as succeeded (#1151)', async () => {
     const bed = harness()
     const agent = new FakeAgent('main', 'running')
     bed.host.create(agent)
@@ -990,10 +996,26 @@ describe('DrainCoordinator', () => {
 
     release({ status: 200, payload: { ok: true } })
     const settled = await bed.coordinator.whenSettled(result.operation.operationId)
-    expect(settled?.state).toBe('cancelled')
-    expect(settled?.failure?.code).toBe('MARKET_UNLOADED')
+    expect(settled?.state).toBe('succeeded')
+    expect(settled?.failure).toBeNull()
     await new Promise(resolve => setTimeout(resolve, 10))
     expect(agent.held).toBe(false)
+  })
+
+  it('still settles MARKET_UNLOADED when the command did not finish after a dispose', async () => {
+    const bed = harness()
+    const agent = new FakeAgent('main', 'running')
+    bed.host.create(agent)
+    let release!: (result: DrainExecutionResult) => void
+    const result = await bed.begin(async () => await new Promise(resolve => { release = resolve }))
+    if (result.mode !== 'deferred') throw new Error(result.mode)
+    agent.finishTurn()
+    await new Promise(resolve => setTimeout(resolve, 10))
+    bed.coordinator.dispose()
+    release({ status: 500, payload: { ok: false, error: 'aborted' } })
+    const settled = await bed.coordinator.whenSettled(result.operation.operationId)
+    expect(settled?.state).toBe('cancelled')
+    expect(settled?.failure?.code).toBe('MARKET_UNLOADED')
   })
 
   it('does not abort an unrelated package command when unloaded with no active operation', () => {

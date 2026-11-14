@@ -107,6 +107,19 @@ const HOT_MOUNT_TIMEOUT_MS = Number(process.env.DSH_MARKET_HOT_MOUNT_TIMEOUT_MS)
 
 let hotTreeClass: unknown | null | undefined
 
+/** The part of a loader entry the unmount needs. */
+interface HotEntry {
+  update(options: { disabled: boolean }, create: boolean, force: boolean): Promise<unknown>
+}
+interface HotEntryTree {
+  entries(): Iterable<HotEntry>
+}
+
+/** Live hot-mount trees by input file URL, so an unmount can reach the entries. */
+const hotTrees = new Map<string, HotEntryTree>()
+/** Package name -> the input file URL of its live hot mount. */
+const hotTreeOf = new Map<string, string>()
+
 /**
  * The Include subclass, built once per process; null when the loader's include
  * plugin is not importable (older harness) — callers fall back to restart.
@@ -135,6 +148,10 @@ async function loadHotTreeClass(): Promise<unknown | null> {
     const Include = mod.Include
     if (Include === undefined) throw new Error('no Include export')
     class MarketHotTree extends Include {
+      constructor(...args: never[]) {
+        super(...args)
+        hotTrees.set((args[1] as { path: string }).path, this as unknown as HotEntryTree)
+      }
       /** Runtime-only mount list; the bundle layer owns persistence. */
       override write(): void {}
       override import(name: string, getOuterStack?: () => string[]): unknown {
@@ -445,6 +462,32 @@ export interface MarketState {
    * src/dsh-cli.ts spawnEnv for the precedence once it reaches a child.
    */
   buildEnv?: Record<string, string>
+
+  /**
+   * When this market installed or last updated each package (#1142/#1121).
+   *
+   * A row in the installed list has no time of its own. `node_modules/<pkg>`
+   * mtime is not one (pnpm rewrites it on every install, so a batch all
+   * shares one instant) and `.plugin-manager/logs/operation-*` is a log with
+   * a retention policy, not a field. So the market writes its own stamps at
+   * the two moments it knows: an install it ran, and an update that landed.
+   *
+   * Two consequences worth stating in the shape itself:
+   * - A package installed anywhere else (the CLI, the host's plugins page) has
+   *   no entry, and displaying a guessed one would be worse than displaying
+   *   nothing: "按安装时间排" would then be an ordering of guesses.
+   * - Keys carry no profile: the file is per profile already, and a copied
+   *   profile inheriting another's timestamps would be inventing history.
+   */
+  installTimes?: Record<string, InstallTimes>
+}
+
+/** One package's market-recorded timestamps, both ISO 8601. */
+export interface InstallTimes {
+  /** When this market installed the package. Absent when it did not. */
+  installedAt?: string
+  /** When an update of it last landed. Absent when it never updated here. */
+  updatedAt?: string
 }
 
 /** Why a package is no longer declared, and what to put back. */
@@ -531,6 +574,64 @@ function updateExemptNames(value: unknown): string[] {
   return cappedPackageNames(value, MAX_UPDATE_EXEMPT)
 }
 
+/**
+ * Upper bound on the install-time map (#1142). One entry per package the
+ * market itself installed, and a profile with 500 of those is already an
+ * outlier; the cap keeps state.json from growing with every plugin the user
+ * ever tried and removed.
+ */
+export const MAX_INSTALL_TIMES = 500
+
+/** An ISO 8601 timestamp, normalized; anything else is "not recorded". */
+function installTimestamp(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value === '') return undefined
+  const at = Date.parse(value)
+  if (!Number.isFinite(at)) return undefined
+  return new Date(at).toISOString()
+}
+
+/**
+ * Sanitize the stored install-time map. A hand-edited file is not trusted:
+ * a key that is not a name, a value that is not an object, and a stamp that
+ * is not a timestamp are all dropped rather than carried into the UI, where
+ * an unparseable date would sort as `NaN` and land in the middle of the list.
+ *
+ * The cap keeps the entries with the most recent activity, not the first
+ * ones written: the map is a lookup for "when did I install this", and the
+ * oldest 50 installs are exactly the ones nobody is asking about.
+ */
+function installTimesFromUnknown(value: unknown): Record<string, InstallTimes> | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const out: Record<string, InstallTimes> = {}
+  for (const [name, raw] of Object.entries(value)) {
+    if (name === '' || name.length > MAX_BLOCKED_NAME) continue
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) continue
+    const record = raw as { installedAt?: unknown; updatedAt?: unknown }
+    const installedAt = installTimestamp(record.installedAt)
+    const updatedAt = installTimestamp(record.updatedAt)
+    // An entry with neither stamp says nothing; keeping it would list a row
+    // that looks known and sorts nowhere.
+    if (installedAt === undefined && updatedAt === undefined) continue
+    out[name] = {
+      ...(installedAt === undefined ? {} : { installedAt }),
+      ...(updatedAt === undefined ? {} : { updatedAt }),
+    }
+  }
+  const names = Object.keys(out)
+  if (names.length === 0) return undefined
+  return trimInstallTimes(out)
+}
+
+/** Keep the cap, dropping the entries nobody is asking about (oldest first). */
+function trimInstallTimes(map: Record<string, InstallTimes>): Record<string, InstallTimes> | undefined {
+  const names = Object.keys(map)
+  if (names.length === 0) return undefined
+  if (names.length <= MAX_INSTALL_TIMES) return map
+  const stamp = (entry: InstallTimes): number => Date.parse(entry.updatedAt ?? entry.installedAt ?? '')
+  const recent = names.sort((a, b) => stamp(map[b]!) - stamp(map[a]!)).slice(0, MAX_INSTALL_TIMES)
+  return Object.fromEntries(recent.map(name => [name, map[name]!]))
+}
+
 /** A POSIX-looking environment variable name: the name part of `KEY=value`. */
 const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/
 
@@ -600,6 +701,7 @@ export function readMarketState(profileDir: string): MarketState {
       sidebarEntry?: unknown
       settingsSection?: unknown
       pluginsTab?: unknown
+      installTimes?: unknown
     }
     const disabled = uniqueStrings(state.disabled !== undefined ? state.disabled : state.disabledSkins)
     const groups: Record<string, string[]> = {}
@@ -618,6 +720,7 @@ export function readMarketState(profileDir: string): MarketState {
     }
     const githubProxy = normalizeGithubProxy(state.githubProxy)
     const brokenPlugins = brokenPluginsFromUnknown(state.brokenPlugins)
+    const installTimes = installTimesFromUnknown(state.installTimes)
     // The order and the map are two halves of one fact, and a state file can
     // carry them out of step (#964): the UI then lists a group the routes
     // cannot find, so "assign to" and even "delete" answer group-not-found
@@ -645,6 +748,7 @@ export function readMarketState(profileDir: string): MarketState {
       ...(isUpdateCheckIntervalHours(state.backgroundUpdateIntervalHours) ? { backgroundUpdateIntervalHours: state.backgroundUpdateIntervalHours } : {}),
       ...(githubProxy === null ? {} : { githubProxy }),
       ...(brokenPlugins === undefined ? {} : { brokenPlugins }),
+      ...(installTimes === undefined ? {} : { installTimes }),
       // true AND false are both preserved: on a host with no settings page
       // this switch is the market's only entry, so "the user turned it off"
       // must be distinguishable from "nobody has chosen yet" (#846).
@@ -724,6 +828,17 @@ function publishFile(path: string, contents: string): void {
  * the whole document" safe for callers that only hold part of it.
  */
 export function writeMarketState(profileDir: string, state: MarketState): void {
+  writeState(profileDir, state, false)
+}
+
+/**
+ * `ownStamps` is true only for the three stamp functions below. Every other
+ * writer holds a whole-state object that may be minutes old (the routes keep
+ * one from boot and save it whole, #435), so a stamp it carries is a stale
+ * copy: letting it through put the install date of the last install back to
+ * what boot saw.
+ */
+function writeState(profileDir: string, state: MarketState, ownStamps: boolean): void {
   mkdirSync(join(profileDir, HOT_DIR), { recursive: true, mode: 0o700 })
   const onDisk = readMarketState(profileDir)
   // `?? {}` only for the type: MarketState declares notes optional, while
@@ -750,6 +865,9 @@ export function writeMarketState(profileDir: string, state: MarketState): void {
   const broken = Object.prototype.hasOwnProperty.call(state, 'brokenPlugins')
     ? state.brokenPlugins
     : onDisk.brokenPlugins
+  // Only the stamp functions replace the map (an empty one, after the last
+  // uninstall, included); every other writer leaves what is on disk alone.
+  const installTimes = ownStamps ? state.installTimes : onDisk.installTimes
   const sidebarEntry = Object.prototype.hasOwnProperty.call(state, 'sidebarEntry')
     ? state.sidebarEntry
     : onDisk.sidebarEntry
@@ -784,6 +902,9 @@ export function writeMarketState(profileDir: string, state: MarketState): void {
     // githubProxy above, and the one a repaired plugin needs: the entry
     // exists only while the declaration is still missing.
     ...(broken === undefined ? {} : { brokenPlugins: broken }),
+    // Omitted while empty, so a profile that never installed through the
+    // market keeps a state file with no such key at all.
+    ...(installTimes === undefined || Object.keys(installTimes).length === 0 ? {} : { installTimes }),
     // Written for both answers: on a host with no settings page this switch
     // is the market's only entry, so a deliberate OFF has to survive a reload
     // instead of being read back as "never chosen" (#846).
@@ -820,6 +941,51 @@ export function readDisabledThemes(profileDir: string): Set<string> {
 /** @deprecated theme-specific alias — kept for pre-#60 callers. */
 export function writeDisabledThemes(profileDir: string, disabled: Set<string>): void {
   writeDisabled(profileDir, disabled)
+}
+
+/**
+ * The market installed these packages just now (#1142): both stamps are this
+ * moment, because the first install is also the last change so far.
+ */
+export function recordInstalled(profileDir: string, names: readonly string[], at = new Date()): void {
+  const stamp = at.toISOString()
+  const state = readMarketState(profileDir)
+  const map: Record<string, InstallTimes> = { ...state.installTimes }
+  for (const name of names) {
+    if (name === '') continue
+    map[name] = { installedAt: stamp, updatedAt: stamp }
+  }
+  state.installTimes = trimInstallTimes(map)
+  writeState(profileDir, state, true)
+}
+
+/**
+ * An update of these packages landed: only the update stamp moves.
+ *
+ * A package with no entry keeps `installedAt` absent — the market never saw
+ * it installed, and "when I first noticed it" is a different fact. Writing it
+ * here would make the sort report a guessed install order as history.
+ */
+export function recordUpdated(profileDir: string, names: readonly string[], at = new Date()): void {
+  const stamp = at.toISOString()
+  const state = readMarketState(profileDir)
+  const map: Record<string, InstallTimes> = { ...state.installTimes }
+  for (const name of names) {
+    if (name === '') continue
+    map[name] = { ...map[name], updatedAt: stamp }
+  }
+  state.installTimes = trimInstallTimes(map)
+  writeState(profileDir, state, true)
+}
+
+/** The package is gone: its stamps must not outlive it. */
+export function forgetInstalled(profileDir: string, name: string): void {
+  const state = readMarketState(profileDir)
+  if (state.installTimes === undefined || state.installTimes[name] === undefined) return
+  const map = { ...state.installTimes }
+  delete map[name]
+  state.installTimes = trimInstallTimes(map)
+  writeState(profileDir, state, true)
 }
 
 /** Package names currently live through a market hot mount (patch or shim). */
@@ -882,7 +1048,25 @@ export async function hotUnmount(packageName: string): Promise<boolean> {
   // state instead of reusing a handle already being disposed.
   hotHandles.delete(packageName)
   shimNames.delete(packageName)
-  const disposal = Promise.resolve().then(() => handle.dispose())
+  const treeKey = hotTreeOf.get(packageName)
+  hotTreeOf.delete(packageName)
+  const tree = treeKey === undefined ? undefined : hotTrees.get(treeKey)
+  if (treeKey !== undefined) hotTrees.delete(treeKey)
+  const disposal = Promise.resolve().then(async () => {
+    // Switch the tree's entries off BEFORE disposing the tree (#1188).
+    // Disposing the tree stops the plugins but leaves each entry still holding
+    // its fiber, and the host's client-module registry keeps serving a package
+    // to the page for as long as an entry names a live fiber: the browser half
+    // of a plugin switched off here stayed on screen, across reloads, until
+    // the host restarted. Updating the entry itself is the path the host's own
+    // entries take when they are switched off, and the registry follows it.
+    if (tree !== undefined) {
+      for (const entry of [...tree.entries()]) {
+        try { await entry.update({ disabled: true }, false, true) } catch { /* the dispose below still stops it */ }
+      }
+    }
+    await handle.dispose()
+  })
   // Same ceiling as mounting, and the same reason (#582, measured class of
   // report): a plugin whose teardown waits for something that never arrives
   // used to hold the toggle route open forever, and every later operation
@@ -1024,6 +1208,7 @@ export async function hotMount(ctx: HotContext, profileDir: string, packageName:
       // produced unbounded error-log growth on a closure-hosted loader).
       try { Promise.resolve(handle.dispose()).catch(() => {}) } catch { /* best effort */ }
       try { rmSync(file, { force: true }) } catch { /* best effort */ }
+      hotTrees.delete(pathToFileURL(file).href)
       if (error instanceof ActivationTimeout) {
         // A wedged activation would otherwise hold this request open forever:
         // the route's `finally { installing = false }` never runs, so every
@@ -1034,6 +1219,7 @@ export async function hotMount(ctx: HotContext, profileDir: string, packageName:
       throw error
     }
     hotHandles.set(packageName, handle)
+    hotTreeOf.set(packageName, pathToFileURL(file).href)
     ctx.logger?.info?.(`[dsh-market] hot-mounted ${packageName}`)
     logEvent('info', 'hot-mount', `${packageName}: live${shimNames.has(packageName) ? ' (client-only shim)' : ''}`)
     return { ok: true, reason: null }

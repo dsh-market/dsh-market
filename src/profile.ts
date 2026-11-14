@@ -1949,11 +1949,14 @@ function readReleaseAgeBlock(file: string): ReleaseAgeBlock | null {
  * nothing in the file says which main package it belongs to — guessing would
  * delete policy that may still be in effect for something installed.
  *
+ * With `keepVersion` (the update path) the rows that name that version are
+ * kept and only the older ones go.
+ *
  * @returns the entries removed, for the caller to log; empty when there is no
  *   such block, no such row, or the file cannot be read exactly (in which case
  *   it is left byte-for-byte as it was).
  */
-export function dropReleaseAgeExcludes(profile: string, name: string, explicitDir?: string): string[] {
+export function dropReleaseAgeExcludes(profile: string, name: string, explicitDir?: string, keepVersion?: string): string[] {
   const block = readReleaseAgeBlock(join(profileDir(profile, explicitDir), 'pnpm-workspace.yaml'))
   if (block === null) return []
   const { file, yaml, blockRe, eol, items } = block
@@ -1961,6 +1964,17 @@ export function dropReleaseAgeExcludes(profile: string, name: string, explicitDi
   const lines = items.flatMap(item => {
     if (item.kind === 'comment') return [item.line]
     if (item.rule.name !== name) return [item.original]
+    // After an update (#1093) only rows that do not name the installed version
+    // are stale. A row that names it stays whole — it may be the one pnpm just
+    // wrote for this very update, which the next install's age check needs. A
+    // union that also lists older versions stays too: it is kept or dropped as
+    // written, never rewritten, so nothing here can loosen the gate. A bare
+    // name already covers every version; that is a policy someone chose, not a
+    // leftover.
+    if (keepVersion !== undefined) {
+      if (item.rule.selector === null) return [item.original]
+      if (item.rule.selector.split('||').some(version => version.trim() === keepVersion)) return [item.original]
+    }
     dropped.push(item.rule.selector === null ? item.rule.name : `${item.rule.name}@${item.rule.selector}`)
     return []
   })

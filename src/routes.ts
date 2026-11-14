@@ -17,8 +17,8 @@ import { packageFileFromRegistry } from './catalog-npm.ts'
 import { forgetCatalog, loadRegistry, pluginCategories } from './registry.ts'
 import { settingsNamespaceState } from './settings.ts'
 import {
-  buildEnvFromUnknown, cleanHotDir, hotMount, hotUnmount, listHotMounts, MAX_BLOCKED, MAX_BLOCKED_NAME, MAX_FAVORITES, MAX_NOTE, MAX_UPDATE_EXEMPT,
-  mountClientOnlyDeps, purgeMarketState, readMarketState, writeMarketState,
+  buildEnvFromUnknown, cleanHotDir, forgetInstalled, hotMount, hotUnmount, listHotMounts, MAX_BLOCKED, MAX_BLOCKED_NAME, MAX_FAVORITES, MAX_NOTE, MAX_UPDATE_EXEMPT,
+  mountClientOnlyDeps, purgeMarketState, readMarketState, recordInstalled, recordUpdated, writeMarketState,
   type BrokenReason, type MarketState,
 } from './hot.ts'
 import { createGroup, deleteGroup, removeFromGroups, renameGroup, setGroupMembers } from './groups.ts'
@@ -47,7 +47,7 @@ import { createProfileSnapshot, DEFAULT_MAX_SNAPSHOTS, deleteSnapshot, listSnaps
 import { readHostRecoveryView, restoreHostRecoveryBackup } from './host-recovery.ts'
 import { trialValidate } from './trial.ts'
 import { catalogRepoKey, findCatalogEntryForLocal, findInstalledAlias, gitCommitOfTarget, githubCommitOfTarget, githubTargetAtCommit, gitAllowBuildsKey, gitRefOfTarget, gitTargetAtCommit, gitUpdateTarget, hostedRepoKey, lookupRepoFromUrl, pinnedAllowBuildsKeys, installTargetFor, isGenerationLink, isLocalSpec, NPM_NAME_RE, parseSourceUrl, repoOfTarget, restoreBlockedByWorkspace, restoreTargetForLocal, sourceFallbackFor, workspaceProtocolDeps } from './sources.ts'
-import { failureDetail, groupConflictsByOwner, installApplied, isHostPortCollision, isStaleUpdate, parseIgnoredBuildEntries, parseIgnoredBuilds, parsePrepareKey, parsePrepareNotAllowed, pnpmBlockedByOpenFiles, pnpmNeverStarted, pnpmRefusedYoungRelease, RELEASE_AGE_OVERRIDE, removeDanglingHostBridge, retargetCollections, updateApplied, validateAddedPlugins, withHoistRecovery } from './install.ts'
+import { failureDetail, groupConflictsByOwner, installApplied, isHostPortCollision, isStaleUpdate, parseIgnoredBuildEntries, parseIgnoredBuilds, parsePrepareKey, parsePrepareNotAllowed, pnpmBlockedByOpenFiles, pnpmNeverStarted, pnpmRefusedYoungRelease, RELEASE_AGE_OVERRIDE, removeDanglingHostBridge, removeLeftoverProfileLink, retargetCollections, updateApplied, validateAddedPlugins, withHoistRecovery } from './install.ts'
 import { classifyPnpmFailure } from './pnpm-compat.ts'
 import { asChannel, CHANNELS, DIST_TAG, resolveChannel, type Channel } from './channels.ts'
 import {
@@ -1096,6 +1096,18 @@ export function mountMarketRoutes(
     if (enabled) {
       if (listHotMounts().includes(name)) {
         ok = true
+      } else if (carrierRowIds(dir, name).length > 0) {
+        // A carrier replaces something: its patch disables stock rows and its
+        // own rows stand in for them, with `disabled: !!js …` guards deciding
+        // which of the two is live on THIS host. Driving those rows up in the
+        // running process clears the guards and mounts the replacement beside
+        // the stock row — a second copy of a module the host already holds
+        // (`storage form 'domain' is already mounted`), which dsh answers by
+        // exiting (#1175). Enabling is the mirror of the disable branch below
+        // (#1010): the swap needs one composition, and a carrier switch is
+        // already reported as "restart to apply" — so nothing is gained by
+        // doing it live, and the host can die trying.
+        ok = true
       } else if (await themes.setEntryDisabled(name, false)) {
         ok = true
       } else {
@@ -2036,6 +2048,9 @@ export function mountMarketRoutes(
     // #662: the removal is confirmed — drop the host bridge link the boot
     // projection may have left pointing at the now-gone package.
     removeDanglingHostBridge(name, activeProfileDir, config.dshInstallDir ?? findDshInstallDir())
+    // #1191: a `link:` install leaves its junction behind on Windows, and the
+    // next install of the same name then fails renaming over it.
+    removeLeftoverProfileLink(config.profile, name, activeProfileDir)
     // Kept on the host path too, and deliberately: `setEntryDisabled` only
     // scans the entries THIS process can see by name and returns false when
     // none match, so it costs a lookup — and it preserves what #213 is about.
@@ -3640,6 +3655,15 @@ export function mountMarketRoutes(
         const installedManifests = new Map(Object.keys(installed).map(
           packageName => [packageName, readInstalledManifest(config.profile, packageName, activeProfileDir)] as const,
         ))
+        // Display-only fallback for packages absent from the catalog (#1147).
+        // Reuse these manifests; never use their metadata to infer a source.
+        const descriptions: Record<string, string> = {}
+        for (const [name, manifest] of installedManifests) {
+          const description = typeof manifest === 'object' && manifest !== null
+            ? (manifest as { description?: unknown }).description
+            : undefined
+          if (typeof description === 'string' && description.trim() !== '') descriptions[name] = description.trim()
+        }
         const declaresDshSurface = (packageName: string): boolean => {
           const manifest = installedManifests.get(packageName)
           return typeof manifest === 'object' && manifest !== null
@@ -3715,6 +3739,7 @@ export function mountMarketRoutes(
         sendJson(response, 200, {
           profile: config.profile,
           installed,
+          descriptions,
           repoIdentities,
           repoHints,
           present,
@@ -3725,6 +3750,11 @@ export function mountMarketRoutes(
           groups,
           groupOrder,
           notes: readMarketState(activeProfileDir).notes ?? {},
+          // When this market installed/updated each package (#1142). Read
+          // from disk like `notes`, not from the boot-time snapshot: an
+          // install in this session must show its date on the very refresh
+          // that follows it.
+          installTimes: readMarketState(activeProfileDir).installTimes ?? {},
           favorites: readMarketState(activeProfileDir).favorites ?? [],
           blocked: readMarketState(activeProfileDir).blocked ?? [],
           updateExempt: readMarketState(activeProfileDir).updateExempt ?? [],
@@ -4866,7 +4896,11 @@ export function mountMarketRoutes(
             sendJson(response, 400, { error: 'name query parameter is required' })
             return
           }
-          sendJson(response, 200, await updateNotesFor(config.profile, activeProfileDir, name))
+          // The version the Update button installs, when the client knows it
+          // (#1193); anything that is not a plain stable version is ignored.
+          const target = new URL(request.url ?? '/', 'http://localhost').searchParams.get('target')
+          sendJson(response, 200, await updateNotesFor(config.profile, activeProfileDir, name,
+            target !== null && isStableReleaseVersion(target) ? target : undefined))
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
         }
@@ -6507,6 +6541,24 @@ export function mountMarketRoutes(
             // to approve it sends the user to press a button that cannot help.
             const ignoredBuilds = ok || cancelled || !failedOnBlockedBuilds(result) ? undefined : blockedBuilds(result)
             if (ok) clearBrokenPlugin(name)
+            // #1093: the same leftover rows, on the update side. The old
+            // version's `minimumReleaseAgeExclude` row outlives the update and
+            // points at a build that is no longer on disk. Rows naming the
+            // version that IS installed stay: a fresh release may need exactly
+            // that row at the next install.
+            if (ok && !restore) {
+              try {
+                const installedNow = readInstalledVersion(config.profile, name, activeProfileDir)
+                if (installedNow !== null) {
+                  const staleExcludes = dropReleaseAgeExcludes(config.profile, name, activeProfileDir, installedNow)
+                  if (staleExcludes.length > 0) {
+                    logEvent('info', 'update', `${name}: dropped ${String(staleExcludes.length)} minimumReleaseAgeExclude row(s) for versions no longer installed`)
+                  }
+                }
+              } catch (error) {
+                logEvent('warn', 'update', `${name}: could not clear old minimumReleaseAgeExclude rows — ${error instanceof Error ? error.message : String(error)}`)
+              }
+            }
             // A package still installed but no longer in dsh.profile.bundles
             // after this run stops loading and says nothing (#720). The market
             // does not write that list from anything but the current list, so
@@ -6567,6 +6619,11 @@ export function mountMarketRoutes(
                 }
               }
             }
+            // The update landed: stamp it before answering (#1142). `ok` is
+            // final by now — every check that can still turn a run into a
+            // failure (version mismatch, rename, missing entry, trial boot)
+            // has run, so a rejected update never moves the date.
+            if (ok) recordUpdated(activeProfileDir, [name])
             logEvent(ok || cancelled ? 'info' : 'error', 'update',
               `${name} -> ${target} exit=${String(result.exitCode)}${result.timedOut ? ' TIMEOUT' : ''}${cancelled ? ' CANCELLED' : ''}${stale ? ` STALE(${staleReason ?? 'unknown'})` : ''}${ok || cancelled ? '' : ` err=${failureDetail(result)}`}`)
             // A user-cancelled run is a quiet outcome, not an error.
@@ -7549,6 +7606,9 @@ export function mountMarketRoutes(
               // from disk truth) — the host node_modules bridge the boot
               // projection left for this package must not outlive it.
               removeDanglingHostBridge(name, activeProfileDir, config.dshInstallDir ?? findDshInstallDir())
+              // #1191: a `link:` install leaves its junction behind on Windows, and the
+              // next install of the same name then fails renaming over it.
+              removeLeftoverProfileLink(config.profile, name, activeProfileDir)
               // A host that owns the composition replays it: asking first is
               // what keeps the market from looking for an entry it never
               // created, and then telling the user to restart about a plugin
@@ -7598,6 +7658,10 @@ export function mountMarketRoutes(
               disabled.delete(name)
               removeFromGroups({ groups, groupOrder }, name)
               writeMarketState(activeProfileDir, { disabled, groups, groupOrder })
+              // A removed package's stamps must not outlive it (#1142): a
+              // later reinstall is a new install, and keeping the old date
+              // would make the list claim a history the profile no longer has.
+              forgetInstalled(activeProfileDir, name)
               // #1093: pnpm writes a `minimumReleaseAgeExclude` row when it
               // installs a version still inside the wait window, and removing
               // the dependency never touches that file. Left behind, the row
@@ -7747,6 +7811,8 @@ export function mountMarketRoutes(
           sendJson(response, 403, { error: 'untrusted origin' })
           return
         }
+        // Set once the package is on disk, so a failure after that point is not reported as a failed install.
+        let installLanded = false
         try {
           const body = (await readJsonBody(request)) as {
             url?: unknown
@@ -8153,9 +8219,14 @@ export function mountMarketRoutes(
             } | undefined
             let addedPackages: string[] = []
             if (ok) {
+              installLanded = true
               const added = Object.keys(installed).filter(name => !before.has(name))
               addedPackages = added
               if (added.length > 0) {
+                // When the market installed them (#1142): the only moment it
+                // knows a real install time, since nothing on disk carries
+                // one (`node_modules` mtime is rewritten by pnpm).
+                recordInstalled(activeProfileDir, added)
                 // Fresh installs start enabled: drop any stale disable flag
                 // (e.g. reinstall after an uninstall while this process kept
                 // running) and persist before the activation loop.
@@ -8393,6 +8464,15 @@ export function mountMarketRoutes(
           const message = error instanceof Error ? error.message : String(error)
           if (!inProbe()) host.logger?.warn(`[dsh-market] install failed: ${message}`)
           logEvent('error', 'install', `route error: ${message}`)
+          // A plugin that brings its own host half can make the host reload the
+          // market while this request is still checking the result. The old
+          // instance is gone, so what it throws now says nothing about the
+          // install: the package landed, and the new instance reports the
+          // real state of the plugin on the next refresh.
+          if (installLanded && disposed) {
+            sendJson(response, 200, { ok: true, hot: true, marketReloaded: true })
+            return
+          }
           sendJson(response, 500, { error: message })
         }
       },

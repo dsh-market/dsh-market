@@ -11,6 +11,19 @@ import { catalogFromPackage } from './catalog-npm.ts'
 import { activeRegion, catalogSourcesFor, routesFor, type CatalogSource, type Region } from './regions.ts'
 import { NPM_NAME_RE } from './sources.ts'
 
+/**
+ * How long a successful catalog load may take before it leaves a line behind.
+ *
+ * A load that fails already documents itself: the thrown message carries the
+ * elapsed time and the attempt count. A load that SUCCEEDS carries nothing,
+ * so a market that took forty seconds and one that took two produce the same
+ * export — "(none — the buffer starts empty on every start)" — and a report
+ * cannot tell them apart (#1181: thirteen seconds, twenty, forty on the same
+ * machine, five minutes on the run that failed, all with an empty session).
+ * The threshold sits above any healthy load, so the ordinary case stays quiet.
+ */
+const SLOW_CATALOG_MS = 5_000
+
 export interface RegistryPlugin {
   name: string
   owner: string
@@ -293,6 +306,14 @@ export async function loadRegistry(region: Region = activeRegion()): Promise<Reg
     const servedBy = <T>(data: T): T => {
       if (sourceIndex >= ownSources) {
         logEvent('warn', 'registry', `catalog: the ${region} sources did not answer; read the catalog package from ${key} instead (#891)`)
+      }
+      // Success is silent by default, which is what makes a slow one
+      // undiagnosable: the export says the same thing whether the market
+      // appeared in two seconds or in forty (#1181). One line above the
+      // threshold, none below it.
+      const elapsed = Date.now() - started
+      if (elapsed >= SLOW_CATALOG_MS) {
+        logEvent('info', 'registry', `catalog: ${key} answered in ${(elapsed / 1000).toFixed(1)}s after ${String(attempts)} request attempt(s)`)
       }
       return data
     }

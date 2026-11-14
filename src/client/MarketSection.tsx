@@ -49,6 +49,7 @@ import { HostRecoveryBanner } from './HostRecoveryBanner.tsx'
 import { UpdateNotificationsPanel } from './UpdateNotificationsPanel.tsx'
 import { useUpdateNotifications, refreshUpdateNotifications, refreshUpdateNotificationsAfterChange, checkUpdateNotifications, setUpdateNotificationsEnabled, setUpdateNotificationsIntervalHours, ignoredUpdatesForBoot, notifyUpdatePreferencesChanged } from './update-notifications.ts'
 import { clearSettled, drop, enqueue, patch as patchRecord, recordForUrl, restoreSettled, serializeSettled, SETTLED_STORAGE_KEY } from './operations.ts'
+import { dismissedHostIdSet, rememberDismissedHostId } from './dismissed-host.ts'
 import type { OperationRecord } from './operations.ts'
 import { Diagnostics } from './Diagnostics.tsx'
 import { exportMarketLog } from './self-check.ts'
@@ -58,9 +59,10 @@ import {
   installCommandFor, hostCompatibilityKey,
   api, applyGithubRouting, avatarColor, catalogEntryForInstalled, entryForDep, failureText, githubRouteCandidates, groupSwitchState, installedForCatalog, isGenerationSpec, isInstalled, localizeBilingual, localizeBilingualList, looksTerminal, matchInstalledName, orderedCategories, pluginCategories,
   formatCount, pageItems, pluginName, blockAliases, pluginScreenshotCandidates, pluginScreenshots, pluginsForFavorites, previewDimensionScore, queuedRowApplies, rankThemeScreenshots, readSession, safeIcon, releaseNotesHttpsImage, rememberGithubRoute, resetScreenshotsCache, resolveCatalogRestore, safeScreenshots, sanitizeReleaseNotesBody, staleFavoriteUrls, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins, restartHintKey,
+  compareInstalledRows, installedDateText,
 } from './market-data.ts'
 import type {
-ActivationInfo, ActivationState, DrainHistoryWire, DrainOperationWire, GistExportResult, InstalledMap, InstalledRepoHints, InstalledRepoIdentities, MarketStatus, Registry, RegistryPlugin,
+ActivationInfo, ActivationState, DrainHistoryWire, DrainOperationWire, GistExportResult, InstalledMap, InstalledRepoHints, InstalledRepoIdentities, InstalledSort, InstallStamp, MarketStatus, Registry, RegistryPlugin,
   HostCompatibility, HostCompatibilityMap, ScreenshotCandidate, ScreenshotMeasurement, SharedHostPackageDependencyFinding, SortDir, SortField, ThemeSnapshot, TimeRange, Translate, UpdateStatus,
 } from './market-data.ts'
 
@@ -303,6 +305,44 @@ function FilterMenu({
           icon={open ? <IconChevronUpOutline14 size={14} /> : <IconChevronDownOutline14 size={14} />}
           onClick={() => setOpen(o => !o)}
         >{t('filter')}</Button>
+      )}
+      items={items}
+    />
+  )
+}
+
+/**
+ * The installed list's own order (#1142).
+ *
+ * Deliberately NOT the market's `FilterMenu`: that one sorts by downloads,
+ * stars or the catalog's collection date, and an installed package has none
+ * of the three. Same primitive, four options, one value — the list's order
+ * is a single choice, not a field plus a direction.
+ */
+function InstalledSortMenu({ value, onChange, t }: { value: InstalledSort; onChange: (sort: InstalledSort) => void; t: Translate }) {
+  const [open, setOpen] = useState(false)
+  const items = useMemo<MenuEntry[]>(() => [
+    { type: 'label', id: 'is-label', text: t('installedSortLabel') },
+    { id: 'installed:default', label: t('installedSortDefault') },
+    { id: 'installed:name', label: t('installedSortName') },
+    { id: 'installed:newest', label: t('installedSortNewest') },
+    { id: 'installed:oldest', label: t('installedSortOldest') },
+  ], [t])
+  return (
+    <Menu
+      open={open}
+      onClose={() => setOpen(false)}
+      selectedIds={['installed:' + value]}
+      onSelect={id => onChange(id.slice('installed:'.length) as InstalledSort)}
+      align="end"
+      portal
+      anchor={(
+        <Button
+          variant="outline"
+          size="sm"
+          icon={open ? <IconChevronUpOutline14 size={14} /> : <IconChevronDownOutline14 size={14} />}
+          onClick={() => setOpen(openNow => !openNow)}
+        >{t('installedSort')}</Button>
       )}
       items={items}
     />
@@ -1810,6 +1850,7 @@ function CatalogVersionMark({ version, tip }: { version: string | null | undefin
  */
 let cachedRegistry: Registry | null = null
 let cachedInstalled: InstalledMap | null = null
+let cachedLocalDescriptions: Record<string, string> = {}
 let cachedRepoIdentities: InstalledRepoIdentities | null = null
 let cachedRepoHints: InstalledRepoHints | null = null
 let cachedHostCompatibility: HostCompatibilityMap = {}
@@ -1851,6 +1892,7 @@ export function resetHostCompatibilityCache(): void {
   cachedUpdates = {}
   cachedUpdatesReady = false
   cachedInstalledReady = false
+  cachedLocalDescriptions = {}
   cachedSkins = []
   cachedDisabledNames = []
   cachedInstalledFiles = []
@@ -1946,6 +1988,16 @@ function installedMap(value: unknown): InstalledMap {
     if (typeof spec === 'string') installed[name] = spec
   }
   return installed
+}
+
+/** Optional /installed metadata: older hosts omit it, malformed values are not text. */
+function localDescriptionsFromUnknown(value: unknown): Record<string, string> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return {}
+  const descriptions: Record<string, string> = {}
+  for (const [name, description] of Object.entries(value)) {
+    if (typeof description === 'string' && description.trim() !== '') descriptions[name] = description.trim()
+  }
+  return descriptions
 }
 
 /** A `{name: {...}}` map, or anything else — for untyped server fields. */
@@ -2429,6 +2481,8 @@ export function MarketSection(props: MarketSectionProps) {
   const [reconnectRound, setReconnectRound] = useState(0)
   const [installed, setInstalledState] = useState<InstalledMap>(cachedInstalled ?? {})
   const setInstalled = useCallback((value: InstalledMap) => { cachedInstalled = value; setInstalledState(value) }, [])
+  const [localDescriptions, setLocalDescriptionsState] = useState<Record<string, string>>(() => cachedLocalDescriptions)
+  const setLocalDescriptions = useCallback(cacheState(value => { cachedLocalDescriptions = value }, setLocalDescriptionsState), [])
   const [repoIdentities, setRepoIdentitiesState] = useState<InstalledRepoIdentities>(cachedRepoIdentities ?? {})
   const setRepoIdentities = useCallback((value: InstalledRepoIdentities) => {
     cachedRepoIdentities = value
@@ -2765,7 +2819,7 @@ export function MarketSection(props: MarketSectionProps) {
     reason?: 'missing' | 'unavailable' | 'unreadable'
   }
   type ResolvedNotes =
-    | { kind: 'release'; release: NoteRelease }
+    | { kind: 'release'; release: NoteRelease; beyondTarget?: string }
     | { kind: 'commits'; commits: { items: NoteCommit[]; found: boolean } }
     | { kind: 'npm'; npmTimes: Array<{ version: string; date: string }> }
     | { kind: 'source'; sourceUrl?: string | null; reason?: 'missing' | 'unavailable' | 'unreadable' }
@@ -2813,7 +2867,7 @@ export function MarketSection(props: MarketSectionProps) {
   useEffect(() => { notifyUpdatePreferencesChanged() }, [ignoredUpdateNames])
   const [updatingName, setUpdatingName] = useState<string | null>(null)
   /** Update-notes dialog (#294): which row opened it, and what it resolved to. */
-  const [notesFor, setNotesFor] = useState<{ name: string; current: string | null; latest: string | null; repoUrl: string | null } | null>(null)
+  const [notesFor, setNotesFor] = useState<{ name: string; current: string | null; latest: string | null; target: string | null; repoUrl: string | null } | null>(null)
   const [updateNotes, setUpdateNotes] = useState<ResolvedNotes | null>(null)
   const [notesState, setNotesState] = useState<'loading' | 'ready' | 'fail'>('loading')
   // Plugin blocked by pnpm's fresh-release safety wait; arms the update-now button.
@@ -2948,6 +3002,21 @@ export function MarketSection(props: MarketSectionProps) {
   const setDisabledNames = useCallback(cacheState(value => { cachedDisabledNames = value }, setDisabledNamesState), [])
   /** The user's own note per plugin (#347): package name → text. */
   const [notes, setNotes] = useState<Record<string, string>>({})
+  /**
+   * When this market installed/updated each package (#1142). Only packages
+   * the market itself installed have an entry: the CLI and the host's own
+   * plugins page leave nothing on disk that says when, and the row shows
+   * `—` rather than guessing from a directory mtime pnpm rewrites.
+   */
+  const [installTimes, setInstallTimes] = useState<Record<string, InstallStamp>>({})
+  /**
+   * How the installed list is ordered (#1142). Its own value, NOT the
+   * market's `SortField`: that one is downloads/stars/added, and none of the
+   * three exist for an installed package — `added` is the catalog's
+   * collection date, which is a different question from when the user
+   * installed it.
+   */
+  const [installedSort, setInstalledSort] = useState<InstalledSort>('default')
   /** Catalog URLs bookmarked for later install (#414). */
   const [favoriteUrls, setFavoriteUrlsState] = useState<string[]>(() => cachedFavoriteUrls)
   const setFavoriteUrls = useCallback(cacheState(value => { cachedFavoriteUrls = value }, setFavoriteUrlsState), [])
@@ -3253,6 +3322,7 @@ export function MarketSection(props: MarketSectionProps) {
       .then(res => res.json())
       .then(body => {
         setInstalled(body.installed || {})
+        setLocalDescriptions(localDescriptionsFromUnknown(body.descriptions))
         setRepoIdentities(installedRepoIdentities(body.repoIdentities))
         setRepoHints(installedRepoHints(body.repoHints))
         setInstalledFiles(Array.isArray(body.present) ? body.present : Object.keys(body.installed || {}))
@@ -3266,6 +3336,18 @@ export function MarketSection(props: MarketSectionProps) {
         }
         if (body.notes !== null && typeof body.notes === 'object' && !Array.isArray(body.notes)) {
           setNotes(body.notes as Record<string, string>)
+        }
+        if (body.installTimes !== null && typeof body.installTimes === 'object' && !Array.isArray(body.installTimes)) {
+          const stamps: Record<string, InstallStamp> = {}
+          for (const [name, raw] of Object.entries(body.installTimes as Record<string, unknown>)) {
+            if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) continue
+            const record = raw as { installedAt?: unknown; updatedAt?: unknown }
+            const installedAt = typeof record.installedAt === 'string' ? record.installedAt : undefined
+            const updatedAt = typeof record.updatedAt === 'string' ? record.updatedAt : undefined
+            if (installedAt === undefined && updatedAt === undefined) continue
+            stamps[name] = { ...(installedAt === undefined ? {} : { installedAt }), ...(updatedAt === undefined ? {} : { updatedAt }) }
+          }
+          setInstallTimes(stamps)
         }
         if (Array.isArray(body.patchDisabled)) setPatchDisabledNames(body.patchDisabled)
         if (typeof body.profile === 'string') setProfileName(body.profile)
@@ -3303,7 +3385,7 @@ export function MarketSection(props: MarketSectionProps) {
         setQueueSnapshotReady(ready => ({ ...ready, updates: true }))
       })
       .catch(() => {})
-  }, [setActivations, setBlockedNames, setDisabledNames, setFavoriteUrls, setInstalledBundles, setInstalledFiles, setSkins, setUpdates])
+  }, [setActivations, setBlockedNames, setDisabledNames, setFavoriteUrls, setInstalledBundles, setInstalledFiles, setLocalDescriptions, setSkins, setUpdates])
 
   /**
    * Host-owned deferred operations (#411).
@@ -3316,8 +3398,14 @@ export function MarketSection(props: MarketSectionProps) {
    */
   const settledHostRef = useRef(new Set<string>())
   const knownHostIdsRef = useRef(new Set<string>())
-  /** Host operations the user cleared; a status poll must not add them back. */
-  const dismissedHostRef = useRef(new Set<string>())
+  /**
+   * Host operations the user cleared; a status poll must not add them back —
+   * and neither must a reload. The set is read from storage and written back
+   * per id, because these rows belong to the host: clearing one only ever
+   * hides it here, so a set that lived only in memory brought the row back on
+   * the next mount (#1184).
+   */
+  const dismissedHostRef = useRef(dismissedHostIdSet())
   const drainMarkerRestoredRef = useRef(false)
 
   const clearDrainMarker = useCallback((operationId: string) => {
@@ -5316,11 +5404,13 @@ export function MarketSection(props: MarketSectionProps) {
       exists while a user is actually looking at one plugin's notes, and
       closing the dialog abandons the render — the server side caches the
       payload, so reopening is cheap. */
-  const openNotes = useCallback((name: string, current: string | null, latest: string | null, repoUrl: string | null) => {
-    setNotesFor({ name, current, latest, repoUrl })
+  const openNotes = useCallback((name: string, current: string | null, latest: string | null, target: string | null, repoUrl: string | null) => {
+    setNotesFor({ name, current, latest, target, repoUrl })
     setUpdateNotes(null)
     setNotesState('loading')
-    fetch(`${api('/dsh-market/changelog')}?name=${encodeURIComponent(name)}`)
+    // The Update button may install an older, mature version than the repo's
+    // latest; ask for notes relative to that one (#1193).
+    fetch(`${api('/dsh-market/changelog')}?name=${encodeURIComponent(name)}${target !== null ? `&target=${encodeURIComponent(target)}` : ''}`)
       .then(res => res.json())
       .then(body => { setUpdateNotes(body as ResolvedNotes); setNotesState('ready') })
       .catch(() => setNotesState('fail'))
@@ -6518,10 +6608,18 @@ export function MarketSection(props: MarketSectionProps) {
         if (aOn !== bOn) return bOn - aOn
         const aUp = isPluginUpdatable(nameA, String(specA), updates[nameA], updatedNames, quietUpdateSet) ? 1 : 0
         const bUp = isPluginUpdatable(nameB, String(specB), updates[nameB], updatedNames, quietUpdateSet) ? 1 : 0
-        return bUp - aUp
+        if (aUp !== bUp) return bUp - aUp
+        // The chosen field applies INSIDE those two groups, not across them:
+        // "sorted by install time" must not float a plugin the user switched
+        // off above one that is running (#1142, and #745 above still holds).
+        return compareInstalledRows(
+          installedSort,
+          { name: nameA, installedAt: installTimes[nameA]?.installedAt },
+          { name: nameB, installedAt: installTimes[nameB]?.installedAt },
+        )
       })
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `updatesLoaded` stands in for `updates`/`updatedNames`: reorder when the check lands, then hold (#631). `effectiveDisabledSet` only re-runs this when a disable state actually changed; the toggled row is the only one that moves.
-  }, [isInstalledListActive, displayedInstalled, selfName, updatesLoaded, effectiveDisabledSet, dependencyOnlyNames])
+  }, [isInstalledListActive, displayedInstalled, selfName, updatesLoaded, effectiveDisabledSet, dependencyOnlyNames, installedSort, installTimes])
   const missingRestoreCount = Object.keys(pendingDependencies).filter(name => !installedFiles.includes(name)).length
   // Self-update lives in the page header (or the Plugins tab's own tab row)
   // and the settings card, not this tab's row list (the market itself is
@@ -6584,15 +6682,24 @@ export function MarketSection(props: MarketSectionProps) {
     )
   }
 
+  /** Catalog copy wins; an installed package can still explain itself when
+   * it has no usable catalog description (#1147). Shared by all installed views. */
+  const authoredDescription = (name: string, entry: RegistryPlugin | undefined): string => {
+    for (const description of [entry?.description?.[lang], entry?.description?.en, localDescriptions[name]]) {
+      if (typeof description === 'string' && description.trim() !== '') return description.trim()
+    }
+    return ''
+  }
+
   /**
    * What the group view says about an installed plugin beyond its name: the
-   * user's own note, else the catalog's description (#1006). One place, so a
-   * plugin reads the same whether it sits in a group or in "Ungrouped".
+   * user's own note, else the author's description (#1006, #1147). One place,
+   * so a plugin reads the same in a group or in "Ungrouped".
    */
   const installedBlurb = (name: string) => {
     const entry = data === null ? undefined : catalogEntryForInstalled(data.plugins, name, String(installed[name]), repoIdentities[name], repoHints[name])
     const note = notes[name]
-    const authored = (entry?.description && (entry.description[lang] || entry.description.en)) || ''
+    const authored = authoredDescription(name, entry)
     return { entry, note, shown: note ?? authored }
   }
 
@@ -7562,13 +7669,17 @@ export function MarketSection(props: MarketSectionProps) {
                 if (record.hostOperationId !== undefined
                   && (record.state === 'done' || record.state === 'warned' || record.state === 'failed')) {
                   dismissedHostRef.current.add(record.hostOperationId)
+                  rememberDismissedHostId(record.hostOperationId)
                 }
               }
               setRecords(list => clearSettled(list))
             }}
             onCancel={record => doCancel(record)}
             onDismiss={record => {
-              if (record.hostOperationId !== undefined) dismissedHostRef.current.add(record.hostOperationId)
+              if (record.hostOperationId !== undefined) {
+                dismissedHostRef.current.add(record.hostOperationId)
+                rememberDismissedHostId(record.hostOperationId)
+              }
               setRecords(list => drop(list, record.id))
             }}
             onRefresh={() => location.reload()}
@@ -8396,6 +8507,13 @@ export function MarketSection(props: MarketSectionProps) {
                   </div>
                   <div className={css.tabSearchRow}>
                     <SearchInput key="installed" resetToken={installedSearchReset} className={css.tabSearch} placeholder={t('searchPh')} value={qInstalled} onCommit={setQInstalled} t={t} />
+                    {/* The order control belongs to the list only: groups are
+                        ordered by the user's own group order, and offering to
+                        sort them by install time would silently rearrange
+                        something that is not sorted by anything else. */}
+                    {installedView === 'list' && (
+                      <InstalledSortMenu value={installedSort} onChange={setInstalledSort} t={t} />
+                    )}
                     {installedView === 'groups' && (
                       creatingGroup
                         ? (
@@ -8699,6 +8817,18 @@ export function MarketSection(props: MarketSectionProps) {
                             const act = activations[name]
                             const meta = act !== undefined ? activationMeta(act.state, t, act.dependencyOf, act.loadedByProfile, act.library) : null
                             const version = status && status.version ? 'v' + status.version : ''
+                            // When this market installed it (#1142), in the
+                            // reader's own timezone. `updatedOn` never
+                            // replaces the install date on the line — they are
+                            // two events, and only the install date is what
+                            // the sort orders by.
+                            const stamp = installTimes[name]
+                            const installedOn = installedDateText(stamp?.installedAt)
+                            const updatedOn = installedDateText(stamp?.updatedAt)
+                            const installedWhenTitle = [
+                              installedOn === null ? t('installedAtUnknown') : `${t('installedAtLabel')} ${installedOn}`,
+                              updatedOn === null ? '' : `${t('updatedAtLabel')} ${updatedOn}`,
+                            ].filter(Boolean).join(' · ')
                             const specText = String(spec)
                             // A plain range beside the resolved version says the
                             // same thing twice. Every other spec — github:, file:,
@@ -8742,9 +8872,21 @@ export function MarketSection(props: MarketSectionProps) {
                                     <span className={css.irowMenu}>{renderInstalledBlockMenu(name)}</span>
                                   )}
                                   </div>
-                                  {(version !== '' || localDev) && (
-                                    <div className={css.irowMeta}>
-                                      {[version, localDev ? t('linkedDev') : ''].filter(Boolean).join(' · ')}
+                                  {(version !== '' || localDev || installedOn !== null) && (
+                                    <div className={css.irowMeta} title={installedWhenTitle}>
+                                      {[
+                                        version,
+                                        localDev ? t('linkedDev') : '',
+                                        // Third segment of the same line (#1142), and only
+                                        // when the market knows it. Every package installed
+                                        // before this existed, or through the CLI, has no
+                                        // date: a dash on all of those rows is a placeholder
+                                        // that says nothing, so the row stays quiet and the
+                                        // hover text explains why there is no date. The
+                                        // label says what the date is: a bare date beside a
+                                        // version reads as a release date.
+                                        installedOn === null ? '' : `${t('installedAtLabel')} ${installedOn}`,
+                                      ].filter(Boolean).join(' · ')}
                                     </div>
                                   )}
                                   {specRedundant
@@ -8803,7 +8945,7 @@ export function MarketSection(props: MarketSectionProps) {
                                       )
                                     : (() => {
                                         const note = notes[name]
-                                        const authored = (entry?.description && (entry.description[lang] || entry.description.en)) || ''
+                                        const authored = authoredDescription(name, entry)
                                         const theirs = showTheirs.includes(name)
                                         const shown = note !== undefined && !theirs ? note : authored
                                         return (
@@ -8866,7 +9008,7 @@ export function MarketSection(props: MarketSectionProps) {
                                             <button
                                               type="button"
                                               className={css.notesLink}
-                                              onClick={() => openNotes(name, status?.current ?? null, status?.latest ?? null, repoUrl)}
+                                              onClick={() => openNotes(name, status?.current ?? null, status?.latest ?? null, status?.eligibleVersion ?? null, repoUrl)}
                                             >{`${t('notesLink')} ›`}</button>
                                           </div>
                                         )}
@@ -9636,9 +9778,10 @@ export function MarketSection(props: MarketSectionProps) {
                 ? notesFor.current.slice(0, 7)
                 : notesFor.current}</span>
               <span className={css.notesArrow}>→</span>
-              <span className={css.spec}>{notesFor.latest !== null && notesFor.latest.length === 40
-                ? notesFor.latest.slice(0, 7)
-                : notesFor.latest}</span>
+              <span className={css.spec}>{(() => {
+                const end = notesFor.target ?? notesFor.latest
+                return end !== null && end.length === 40 ? end.slice(0, 7) : end
+              })()}</span>
             </div>
           )}
           {notesState === 'loading' && <div className={css.spec}>{t('loading')}</div>}
@@ -9651,6 +9794,11 @@ export function MarketSection(props: MarketSectionProps) {
                   {updateNotes.release.tag !== null && <span>{' ' + updateNotes.release.tag}</span>}
                   {updateNotes.release.publishedAt !== null && <span>{' · ' + updateNotes.release.publishedAt.slice(0, 10)}</span>}
                 </div>
+                {updateNotes.beyondTarget !== undefined && (
+                  <div className={css.notesMeta}>
+                    {t('notesBeyondTarget').replace('{0}', updateNotes.release.tag ?? '').replace('{1}', updateNotes.beyondTarget)}
+                  </div>
+                )}
                 {/* Author-written markdown through the tiny converter: HTML is
                     stripped first; headings, quotes, fences, bullets, bold,
                     inline code, https links and allowlisted images only. */}

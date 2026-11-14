@@ -4521,6 +4521,258 @@ describe('plugin notes (#347)', () => {
   })
 })
 
+/** #1147: a Release URL package need not be in the catalog for its installed
+ * manifest to explain what it does. Exercise the three real installed views,
+ * not a description helper, so the normal list and both group paths agree. */
+describe('#1147 local description', () => {
+  const RELEASE_NAME = '@local/dsh-release-only'
+  const RELEASE_URL = 'https://github.com/local-tools/dsh-release-only/releases/download/v1.0.0/dsh-release-only-1.0.0.tgz'
+  const LOCAL_DESCRIPTION = '在本地查看项目运行情况'
+  const ZH_LOCALE = { active: 'zh' }
+
+  describe.each(['installed list', 'group members', 'ungrouped'] as const)('%s', (view) => {
+    function installedPayload(installed: Record<string, string>, fields: Record<string, unknown> = {}) {
+      return {
+        profile: 'web', installed, live: Object.keys(installed), disabled: [], notes: {},
+        groups: view === 'group members' ? { work: Object.keys(installed) } : {},
+        groupOrder: view === 'group members' ? ['work'] : [],
+        ...fields,
+      }
+    }
+
+    async function openView(lang: 'en' | 'zh' = 'en') {
+      const dict = lang === 'zh' ? zh : en
+      const snapshot = lang === 'zh' ? ZH_LOCALE : LOCALE_SNAPSHOT
+      // Start on Installed even before the host-navigation effect runs; a
+      // deliberately malformed catalog belongs to this surface's tests.
+      sessionStorage.setItem('dshm-tab', 'installed')
+      render(<MarketSection {...props()} preferredSubsectionId="installed"
+        t={key => (dict as Record<string, string>)[key] ?? key}
+        locale={{ subscribe: () => () => {}, getSnapshot: () => snapshot }} />)
+      await screen.findByRole('button', { name: dict.tabList })
+      if (view !== 'installed list') fireEvent.click(screen.getByRole('button', { name: dict.tabGroups }))
+      await act(async () => {})
+    }
+
+    async function installedRow(name: string): Promise<HTMLElement> {
+      let scope = document.body
+      if (view === 'group members') {
+        scope = (await screen.findByText('work')).closest(`.${css.groupRow}`) as HTMLElement
+        expect(scope).not.toBeNull()
+      }
+      const className = view === 'installed list' ? css.irow : view === 'group members' ? css.groupMember : css.ungroupedRow
+      const row = (await within(scope).findByText(name)).closest(`.${className}`) as HTMLElement | null
+      expect(row).not.toBeNull()
+      if (view === 'group members') expect(row!.classList.contains(css.ungroupedRow)).toBe(false)
+      return row!
+    }
+
+    function expectNoDescription(row: HTMLElement) {
+      expect(row.querySelector(`.${view === 'installed list' ? css.irowDesc : css.ungroupedDesc}`)).toBeNull()
+    }
+
+    it('shows the installed Chinese description for an unlisted Release URL package', async () => {
+      stubFetch({
+        '/dsh-market/installed': installedPayload({ [RELEASE_NAME]: RELEASE_URL }, {
+          descriptions: { [RELEASE_NAME]: LOCAL_DESCRIPTION },
+        }),
+      })
+      await openView()
+      // The lookup key is the actual installed dependency name, not a repo,
+      // tarball filename, catalog name or current UI language.
+      expect(await within(await installedRow(RELEASE_NAME)).findByText(LOCAL_DESCRIPTION)).toBeTruthy()
+    })
+
+    it('falls back when a catalog entry has no usable current-language or English description', async () => {
+      const entries = [
+        { name: 'dsh-description-missing', description: undefined },
+        { name: 'dsh-description-empty', description: { zh: '', en: '' } },
+        { name: 'dsh-description-blank', description: { zh: ' \t ', en: '\n ' } },
+        { name: 'dsh-description-other-locale', description: { fr: 'Description du catalogue' } },
+      ].map(entry => ({
+        ...REGISTRY.plugins[0], ...entry, npm: entry.name, url: `https://github.com/alice/${entry.name}`,
+      }))
+      const descriptions = Object.fromEntries(entries.map(entry => [entry.name, `本地简介：${entry.name}`]))
+      stubFetch({
+        '/dsh-market/registry': { source: 'snapshot', registry: { ...REGISTRY, count: entries.length, plugins: entries } },
+        '/dsh-market/installed': installedPayload(Object.fromEntries(entries.map(entry => [entry.name, '^1.0.0'])), { descriptions }),
+      })
+      await openView('zh')
+      for (const entry of entries) {
+        expect(await within(await installedRow(entry.name)).findByText(descriptions[entry.name]!)).toBeTruthy()
+      }
+    })
+
+    it('ignores non-string catalog descriptions without hiding local or valid English copy', async () => {
+      const entries = Object.entries({ number: 42, boolean: true, object: { text: 'not text' }, array: ['not text'] })
+        .map(([kind, value]) => {
+          const name = `dsh-catalog-description-${kind}`
+          return { ...REGISTRY.plugins[0], name, npm: name, url: `https://github.com/alice/${name}`, description: { zh: value, en: value } }
+        })
+      const englishName = 'dsh-catalog-description-english'
+      const english = { ...REGISTRY.plugins[0], name: englishName, npm: englishName,
+        url: `https://github.com/alice/${englishName}`, description: { zh: 42, en: 'Valid English after invalid Chinese' } }
+      const plugins = [...entries, english]
+      const descriptions = Object.fromEntries(plugins.map(entry => [entry.name, `本地简介：${entry.name}`]))
+      stubFetch({
+        '/dsh-market/registry': { source: 'snapshot', registry: { ...REGISTRY, count: plugins.length, plugins } },
+        '/dsh-market/installed': installedPayload(Object.fromEntries(plugins.map(entry => [entry.name, '^1.0.0'])), { descriptions }),
+      })
+      await openView('zh')
+      for (const entry of entries) expect(await within(await installedRow(entry.name)).findByText(descriptions[entry.name]!)).toBeTruthy()
+      const englishRow = within(await installedRow(englishName))
+      expect(await englishRow.findByText('Valid English after invalid Chinese')).toBeTruthy()
+      expect(englishRow.queryByText(descriptions[englishName]!)).toBeNull()
+    })
+
+    it('prefers the localized catalog description and then English over the installed description', async () => {
+      stubFetch({
+        '/dsh-market/registry': {
+          source: 'snapshot', registry: { ...REGISTRY, plugins: [
+            REGISTRY.plugins[0],
+            { ...REGISTRY.plugins[1], description: { en: 'English-only catalog description' } },
+          ] },
+        },
+        '/dsh-market/installed': installedPayload({ 'dsh-loop': '^1.0.0', 'dsh-notify': '^1.0.0' }, {
+          descriptions: { 'dsh-loop': '本地循环简介', 'dsh-notify': '本地通知简介' },
+        }),
+      })
+      await openView('zh')
+      const loop = within(await installedRow('dsh-loop'))
+      expect(await loop.findByText('循环执行')).toBeTruthy()
+      expect(loop.queryByText('Loop task runner')).toBeNull()
+      expect(loop.queryByText('本地循环简介')).toBeNull()
+      const notify = within(await installedRow('dsh-notify'))
+      expect(await notify.findByText('English-only catalog description')).toBeTruthy()
+      expect(notify.queryByText('本地通知简介')).toBeNull()
+    })
+
+    it('keeps the user note first and lets the standard list switch to the local author description', async () => {
+      const localNote = '我用它查看项目状态'
+      const catalogNote = '用于每周巡检'
+      stubFetch({
+        '/dsh-market/installed': installedPayload({ [RELEASE_NAME]: RELEASE_URL, 'dsh-loop': '^1.0.0' }, {
+          descriptions: { [RELEASE_NAME]: LOCAL_DESCRIPTION, 'dsh-loop': '本地循环简介' },
+          notes: { [RELEASE_NAME]: localNote, 'dsh-loop': catalogNote },
+        }),
+      })
+      await openView()
+      const release = within(await installedRow(RELEASE_NAME))
+      const loop = within(await installedRow('dsh-loop'))
+      expect((await release.findByText(localNote)).className).toMatch(/noteMine/)
+      expect((await loop.findByText(catalogNote)).className).toMatch(/noteMine/)
+      expect(release.queryByText(LOCAL_DESCRIPTION)).toBeNull()
+      expect(loop.queryByText('Loop task runner')).toBeNull()
+      expect(loop.queryByText('本地循环简介')).toBeNull()
+      if (view === 'installed list') {
+        fireEvent.click(release.getByRole('button', { name: en.noteSeeTheirs }))
+        const authored = await release.findByText(LOCAL_DESCRIPTION)
+        expect(authored.className).not.toMatch(/noteMine/)
+        expect(release.queryByText(localNote)).toBeNull()
+        fireEvent.click(release.getByRole('button', { name: en.noteSeeMine }))
+        expect(await release.findByText(localNote)).toBeTruthy()
+        expect(release.queryByText(LOCAL_DESCRIPTION)).toBeNull()
+        // Switching to the author still honors catalog > local when both exist.
+        fireEvent.click(loop.getByRole('button', { name: en.noteSeeTheirs }))
+        expect(await loop.findByText('Loop task runner')).toBeTruthy()
+        expect(loop.queryByText('本地循环简介')).toBeNull()
+      }
+    })
+
+    it('discards malformed description values individually without losing a valid neighbor', async () => {
+      const invalid = {
+        'dsh-description-null': null,
+        'dsh-description-number': 42,
+        'dsh-description-boolean': true,
+        'dsh-description-object': { text: 'not a description' },
+        'dsh-description-array': ['not a description'],
+        'dsh-description-whitespace': ' \n\t ',
+      }
+      stubFetch({
+        '/dsh-market/installed': installedPayload({
+          [RELEASE_NAME]: RELEASE_URL,
+          ...Object.fromEntries(Object.keys(invalid).map(name => [name, '^1.0.0'])),
+        }, { descriptions: { ...invalid, [RELEASE_NAME]: LOCAL_DESCRIPTION } }),
+      })
+      await openView()
+      expect(await within(await installedRow(RELEASE_NAME)).findByText(LOCAL_DESCRIPTION)).toBeTruthy()
+      for (const name of Object.keys(invalid)) expectNoDescription(await installedRow(name))
+    })
+
+    it('quietly supports an older server that omits descriptions', async () => {
+      stubFetch({
+        '/dsh-market/installed': installedPayload({
+          [RELEASE_NAME]: RELEASE_URL, 'dsh-loop': '^1.0.0', 'dsh-notify': '^1.0.0',
+        }, { notes: { 'dsh-notify': 'keep my saved reminder' } }),
+      })
+      await openView()
+      expect(await within(await installedRow('dsh-loop')).findByText('Loop task runner')).toBeTruthy()
+      const noted = within(await installedRow('dsh-notify'))
+      expect(await noted.findByText('keep my saved reminder')).toBeTruthy()
+      expect(noted.queryByText('Desktop notifications')).toBeNull()
+      expectNoDescription(await installedRow(RELEASE_NAME))
+    })
+
+    it('renders an HTML-looking installed description as plain text', async () => {
+      const html = '<b data-local-description="yes">本地简介</b><img src="local-description-xss" onerror="alert(1)">'
+      stubFetch({
+        '/dsh-market/installed': installedPayload({ [RELEASE_NAME]: RELEASE_URL }, {
+          descriptions: { [RELEASE_NAME]: html },
+        }),
+      })
+      await openView()
+      const row = await installedRow(RELEASE_NAME)
+      expect(await within(row).findByText(html)).toHaveProperty('childElementCount', 0)
+      expect(row.querySelector('[data-local-description], img[src="local-description-xss"]')).toBeNull()
+    })
+
+    it('replaces local descriptions on refresh and clears them when the next response omits the field', async () => {
+      const changed = '更新后的本地项目简介'
+      const refreshed = 'refresh without descriptions applied'
+      let fields: Record<string, unknown> = { descriptions: { [RELEASE_NAME]: LOCAL_DESCRIPTION } }
+      stubFetch({
+        '/dsh-market/installed': () => installedPayload({ [RELEASE_NAME]: RELEASE_URL, 'dsh-loop': '^1.0.0' }, fields),
+      })
+      await openView()
+      expect(await within(await installedRow(RELEASE_NAME)).findByText(LOCAL_DESCRIPTION)).toBeTruthy()
+      fields = { descriptions: { [RELEASE_NAME]: changed } }
+      // Re-selecting Installed is the real refresh entry point; the selected
+      // list/group view stays in place while /installed is read again.
+      fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+      expect(await screen.findByText(changed)).toBeTruthy()
+      expect(screen.queryByText(LOCAL_DESCRIPTION)).toBeNull()
+      fields = { notes: { 'dsh-loop': refreshed } }
+      fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+      // A changed note proves this response was consumed before the negative
+      // assertion; it must not pass while the refresh is still in flight.
+      expect(await screen.findByText(refreshed)).toBeTruthy()
+      expect(screen.queryByText(changed)).toBeNull()
+      expectNoDescription(await installedRow(RELEASE_NAME))
+    })
+
+    if (view === 'installed list') {
+      it.each([
+        { label: 'null', descriptions: null },
+        { label: 'number', descriptions: 42 },
+        { label: 'string', descriptions: 'not a description map' },
+        { label: 'array', descriptions: ['not a description map'] },
+      ])('quietly ignores a malformed $label descriptions field', async ({ descriptions }) => {
+        stubFetch({
+          '/dsh-market/installed': installedPayload({ [RELEASE_NAME]: RELEASE_URL, 'dsh-loop': '^1.0.0', '0': '^1.0.0' }, {
+            descriptions,
+            notes: { 'dsh-loop': 'Malformed descriptions did not interrupt this response' },
+          }),
+        })
+        await openView()
+        expect(await within(await installedRow('dsh-loop')).findByText('Malformed descriptions did not interrupt this response')).toBeTruthy()
+        expectNoDescription(await installedRow(RELEASE_NAME))
+        // Index-like dependency names must not read an array/string as a map.
+        expectNoDescription(await installedRow('0'))
+      })
+    }
+  })
+})
+
 describe('#60 catalog deprecation', () => {
   const DEPRECATED_REGISTRY = {
     updated: '', count: 3,
@@ -6058,6 +6310,8 @@ describe('local-dev restore', () => {
     render(<MarketSection {...props()} />)
     await screen.findByText('dsh-loop')
     fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+    // A linked checkout was never installed through the market (#1142): no
+    // date segment, rather than a dash on every such row.
     expect(await screen.findByText(`v1.0.0 · ${en.linkedDev}`)).toBeTruthy()
     // `../dsh-loop` is relative to the profile; a copied copy would point nowhere.
     expect(screen.getByText('../dsh-loop')).toBeTruthy()
@@ -10829,5 +11083,83 @@ describe('a compatible release still inside the release-age wait (#945)', () => 
     fireEvent.click(await screen.findByRole('button', { name: en.confirmInstall }))
     const offered = await screen.findByRole('button', { name: en.hostIncompatibleInstallCompat.replace('{version}', '1.2.0') })
     expect((offered as HTMLButtonElement).disabled).toBe(false)
+  })
+})
+
+/**
+ * The installed row states when the market installed it (#1142), and the list
+ * can be ordered by that date.
+ *
+ * The dashboard-level decisions (unknown last in both directions, tie on the
+ * name) are pinned in installed-order.client.spec.ts; this only proves the
+ * wiring: the date `/installed` sends reaches the row, `—` stands in where
+ * there is none, and the control actually reorders the list.
+ */
+describe('installed rows carry their install time (#1142)', () => {
+  const early = { installedAt: '2026-01-05T12:00:00Z', updatedAt: '2026-01-05T12:00:00Z' }
+  const late = { installedAt: '2026-06-05T12:00:00Z', updatedAt: '2026-06-05T12:00:00Z' }
+
+  const rowNames = (): string[] =>
+    [...document.querySelectorAll('[class*="irowNameText"]')].map(el => el.textContent ?? '')
+
+  /** The row container: the nearest ancestor that also holds the meta line.
+   * `closest('[class*="irow"]')` stops at `irowName`, which is a child of the
+   * row and carries the name only. */
+  const rowText = (name: string): string => {
+    let node = screen.getAllByText(name)[0]?.parentElement ?? null
+    while (node !== null && node.querySelector('[class*="irowMeta"]') === null) node = node.parentElement
+    return node?.textContent ?? ''
+  }
+
+  const installedPayload = (installed: Record<string, string>, installTimes: Record<string, unknown>) => ({
+    profile: 'web',
+    installed,
+    live: [],
+    disabled: [],
+    groups: {},
+    groupOrder: [],
+    favorites: [],
+    blocked: [],
+    installTimes,
+  })
+
+  it('shows the recorded date, and a dash where the market has none', async () => {
+    stubFetch({
+      '/dsh-market/installed': installedPayload({ 'dsh-early': '^1.0.0', 'dsh-manual': '^1.0.0' }, { 'dsh-early': early }),
+      // The row's meta line exists because a version does; the date is the
+      // third segment of that same line.
+      '/dsh-market/updates': { updates: {
+        'dsh-early': { kind: 'npm', version: '1.0.0', current: '1.0.0', latest: '1.0.0', updateAvailable: false },
+        'dsh-manual': { kind: 'npm', version: '2.3.4', current: '2.3.4', latest: '2.3.4', updateAvailable: false },
+      } },
+    })
+    render(<MarketSection {...props()} />)
+    fireEvent.click(await screen.findByRole('button', { name: new RegExp(en.tabInstalled) }))
+    await screen.findByText('dsh-early')
+    // 12:00 UTC keeps the calendar date in every timezone the row can render.
+    expect(rowText('dsh-early')).toContain(`${en.installedAtLabel} 2026-01-05`)
+    // Installed with the CLI or the host's own plugins page: no record, and
+    // no mtime stand-in — the row says so instead of inventing a date.
+    expect(rowText('dsh-manual')).toContain('v2.3.4')
+    expect(rowText('dsh-manual')).not.toContain('—')
+    expect(rowText('dsh-manual')).not.toMatch(/\d{4}-\d{2}-\d{2}/)
+  })
+
+  it('orders the list by that date, newest or oldest', async () => {
+    stubFetch({
+      '/dsh-market/installed': installedPayload({ 'dsh-early': '^1.0.0', 'dsh-late': '^1.0.0' }, { 'dsh-early': early, 'dsh-late': late }),
+      '/dsh-market/updates': { updates: {} },
+    })
+    render(<MarketSection {...props()} />)
+    fireEvent.click(await screen.findByRole('button', { name: new RegExp(en.tabInstalled) }))
+    await screen.findByText('dsh-late')
+    expect(rowNames()).toContain('dsh-early')
+
+    fireEvent.click(screen.getByRole('button', { name: en.installedSort }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: en.installedSortOldest }))
+    await waitFor(() => { expect(rowNames()[0]).toBe('dsh-early') })
+
+    fireEvent.click(screen.getByRole('menuitem', { name: en.installedSortNewest }))
+    await waitFor(() => { expect(rowNames()[0]).toBe('dsh-late') })
   })
 })

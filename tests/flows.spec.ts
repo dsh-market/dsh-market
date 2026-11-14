@@ -12,7 +12,8 @@
  *                  the update logic WITHOUT publishing npm versions.
  * - registry.ts  → fixed curated registry (with a theme category)
  * - hot.ts       → in-memory mount table
- * - global fetch → fake npm/github APIs
+ * - global fetch → fake npm/github APIs; a request no stub answers is
+ *                  refused, never sent
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -989,10 +990,13 @@ beforeEach(() => {
   hot.failNext = false
   bed = createTestbed()
   // The install route asks the registry for `latest` before a fresh npm add
-  // (#594). Answer from the fake registry so no test reaches the network;
-  // everything else goes to the real fetch, or to whatever a test stubs.
-  const realFetch = globalThis.fetch
-  vi.stubGlobal('fetch', vi.fn((input: unknown, init?: RequestInit) => {
+  // (#594). Answer from the fake registry. Anything else is refused the way
+  // an unreachable network refuses it, unless a test stubs it: this lane is
+  // offline (vitest.config.ts). Handing the rest to the real fetch sent
+  // `npm test` to registry.npmjs.org, github.com and raw.githubusercontent.com
+  // from update checks and acceleration probes, so what those specs saw
+  // depended on the machine's network rather than on the spec.
+  vi.stubGlobal('fetch', vi.fn((input: unknown) => {
     const m = /^https:\/\/registry\.(?:npmjs\.org|npmmirror\.com)\/(.+?)\/latest$/.exec(String(input))
     if (m !== null) {
       const pkg = fake.npm[decodeURIComponent(m[1]!)]
@@ -1000,7 +1004,7 @@ beforeEach(() => {
         ? new Response('{"error":"Not found"}', { status: 404 })
         : new Response(JSON.stringify({ version: pkg.latest }), { status: 200 }))
     }
-    return realFetch(input as string, init)
+    return Promise.reject(new TypeError(`unit lane is offline: no stub answers ${String(input)}`))
   }))
 })
 afterEach(() => {
@@ -1040,6 +1044,15 @@ function npmLockFixture(name: string, spec: string, version: string): string {
     '',
   ].join('\n')
 }
+
+describe('the unit lane stays offline', () => {
+  it('refuses a request no stub answers instead of sending it', async () => {
+    // `.invalid` never resolves, so the old pass-through failed here too, only
+    // after a DNS lookup and with the real fetch's error. The point is who
+    // answers: the beforeEach stub, without anything leaving the machine.
+    await expect(globalThis.fetch('https://example.invalid/unstubbed')).rejects.toThrow(/unit lane is offline/)
+  })
+})
 
 describe('flat Desktop host consumers (#553)', () => {
   const resourcesDescriptor = Object.getOwnPropertyDescriptor(process, 'resourcesPath')
@@ -3034,6 +3047,29 @@ describe('update flow — no npm publishing required', () => {
     // disk, `/dsh-market/status` still reporting 1.11.3, an unchanged boot
     // id, and this route calling it hot-loaded in the same response.
     expect(r.json.activation['dsh-loop']).toMatchObject({ state: 'restart', hot: false })
+  })
+
+  it('drops the release-age exclude row of the version an update replaced (#1093)', async () => {
+    // The uninstall side was fixed first; an update leaves the same orphan: the
+    // row for the old version outlives it. Another package's row stays.
+    const workspacePath = join(fake.profileDir, 'pnpm-workspace.yaml')
+    writeFileSync(workspacePath, [
+      'minimumReleaseAge: 1440',
+      'minimumReleaseAgeExclude:',
+      '  - dsh-loop@1.0.0',
+      '  - other@2.0.0',
+      '',
+    ].join('\n'))
+    advanceNpmLatest('1.2.0')
+
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+
+    expect(r.status).toBe(200)
+    expect(r.json.ok).toBe(true)
+    const workspace = readFileSync(workspacePath, 'utf8')
+    expect(workspace).not.toContain('dsh-loop@1.0.0')
+    expect(workspace).toContain('other@2.0.0')
+    expect(workspace).toContain('minimumReleaseAge: 1440')
   })
 
   it('keeps saying "restart to apply" on every later listing, not only in the reply', async () => {
@@ -7708,6 +7744,106 @@ describe('bundle-layer uninstall live-disable (#37)', () => {
   })
 })
 
+describe('a `disabled: !!js` guard survives the toggle (#1175)', () => {
+  const tui = '@deepseek-harness-tui/dsh-tui'
+  const manifestPath = (): string => join(profileDir('web'), 'package.json')
+
+  /** A loader entry the running host would hold for one row. */
+  function entry(name: string, id: string, disabled: boolean | null): Testbed['loaderEntries'][number] {
+    const row: Testbed['loaderEntries'][number] = {
+      options: { id, name, disabled } as never,
+      fiber: disabled === true ? undefined : {},
+      update: vi.fn(async (next: { disabled: boolean | null }) => {
+        row.options.disabled = next.disabled
+        row.fiber = next.disabled === true ? undefined : {}
+      }),
+    }
+    return row
+  }
+
+  /** Write an installed package whose bundle patch is `patch`, and declare it. */
+  function seedPackage(name: string, patch: string[]): void {
+    const dir = profileDir('web')
+    const pkgDir = join(dir, 'node_modules', name)
+    mkdirSync(pkgDir, { recursive: true })
+    writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({
+      name, version: '1.0.0', type: 'module',
+      dsh: { bundle: { patch: './cordis.patch.yml' } },
+    }, null, 2))
+    writeFileSync(join(pkgDir, 'cordis.patch.yml'), `${patch.join('\n')}\n`)
+    writeFileSync(manifestPath(), JSON.stringify({
+      dependencies: { [name]: '1.0.0' },
+      dsh: { profile: { bundles: [name] } },
+    }, null, 2))
+  }
+
+  /**
+   * dsh-tui's real shape: insert rows whose `disabled` is an expression over
+   * the host's own loader tree, plus a foreign row it reconfigures — the
+   * second part is what makes the package a carrier.
+   */
+  const tuiPatch = (): string[] => [
+    '- insert:',
+    '    - id: dsh-tui-storage',
+    `      name: '${tui}/storage'`,
+    '    - id: dsh-tui-storage-domain',
+    `      name: '${tui}/storage-domain'`,
+    '      disabled: !!js "[...ctx.loader.entries()].some(entry => entry.options.id === \'storage-domain\')"',
+    '- id: preset-standard',
+    '  inject: [dshTuiHost]',
+  ]
+
+  it('does not drive a carrier\'s rows up: the swap needs one composition', async () => {
+    bed.dispose()
+    seedPackage(tui, tuiPatch())
+    bed = createTestbed()
+    const guarded = entry(`${tui}/storage-domain`, 'dsh-tui-storage-domain', true)
+    const plain = entry(`${tui}/storage`, 'dsh-tui-storage', true)
+    bed.loaderEntries.push(guarded, plain)
+
+    const on = await bed.dispatch('POST', '/dsh-market/toggle', { name: tui, enabled: true })
+
+    expect(on.status).toBe(200)
+    // A carrier switch always lands on the next composition, and the reply
+    // says so — which is the only reason it is safe to skip the live half.
+    expect(on.json.restart).toBe(true)
+    // The reproducer: enabling used to call `update({ disabled: null })` on
+    // the guarded row, the row mounted a second copy of the host's
+    // storage-domain, and dsh exited with `storage form 'domain' is already
+    // mounted`.
+    expect(guarded.update).not.toHaveBeenCalled()
+    expect(guarded.options.disabled).toBe(true)
+    expect(plain.update).not.toHaveBeenCalled()
+  })
+
+  it('still switches on the rows of a non-carrier that carries no guard', async () => {
+    const ordinary = 'dsh-guarded'
+    bed.dispose()
+    seedPackage(ordinary, [
+      '- insert:',
+      `    - id: ${ordinary}`,
+      `      name: '${ordinary}'`,
+      '    - id: dsh-guarded-extra',
+      `      name: '${ordinary}/extra'`,
+      '      disabled: !!js "process.platform === \'win32\'"',
+    ])
+    bed = createTestbed()
+    const plain = entry(ordinary, ordinary, true)
+    const guarded = entry(`${ordinary}/extra`, 'dsh-guarded-extra', true)
+    bed.loaderEntries.push(plain, guarded)
+
+    const on = await bed.dispatch('POST', '/dsh-market/toggle', { name: ordinary, enabled: true })
+
+    expect(on.status).toBe(200)
+    // The row the environment keeps off stays off; the rest of the package
+    // still comes up in this process.
+    expect(guarded.update).not.toHaveBeenCalled()
+    expect(guarded.options.disabled).toBe(true)
+    expect(plain.options.disabled).toBeNull()
+    expect(plain.fiber).toBeDefined()
+  })
+})
+
 describe('generic enable/disable toggle (#60)', () => {
   function installNpm(name: string, dsh: Record<string, unknown> = {}): Promise<void> {
     fake.npm[name] = {
@@ -10235,6 +10371,27 @@ describe('a pinned install is judged on its own release, not on latest (#581)', 
     const onDesktop = await bed.dispatch('POST', '/dsh-market/find-compatible', { npmName: 'dsh-loop' })
     expect(onDesktop.json.maturity).toMatchObject({ version: '1.2.0', held: true, installable: false })
   })
+
+  it('does not report a landed install as failed when the host reloaded the market while it was checking', async () => {
+    // A plugin with its own host half can make the host reload the market
+    // before this request finishes. The old instance throws "inactive
+    // context" from then on; the package is already installed, and the new
+    // instance reports its real state, so the answer must not be a 500.
+    const pkg = { dsh: {}, main: 'lib/index.js' }
+    fake.npm['dsh-loop'] = { latest: '1.0.0', versions: { '1.0.0': { manifest: pkg, artifacts: ['lib/index.js'] } } }
+    bed.loaderEntries.push({
+      options: { id: 'other' },
+      get fiber() {
+        bed.dispose()
+        throw new Error('cannot get required service "loader" in inactive context')
+      },
+    } as never)
+
+    const answer = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop', version: '1.0.0' })
+    expect(answer.status, JSON.stringify(answer.json)).toBe(200)
+    expect(answer.json).toMatchObject({ ok: true, marketReloaded: true })
+    expect(installedSpec('dsh-loop')).toBe('^1.0.0')
+  })
 })
 
 describe('Issue #991 Desktop stable npm update route', () => {
@@ -10775,7 +10932,7 @@ describe('Agent-safe drain mode (#411)', () => {
       const completed = await settled(drainBed, String(accepted.json.operationId))
       expect(completed.state).toBe('failed')
       // This text comes from the status event; the later gate words it differently.
-      expect(completed.failure).toMatchObject({ code: 'AGENT_BARRIER_LOST', message: expect.stringContaining('started work') })
+      expect(completed.failure).toMatchObject({ code: 'AGENT_BARRIER_LOST', message: expect.stringContaining('等会话空闲后再试') })
       expect(fake.calls.length).toBe(callsBefore)
       expect(installedSpec('dsh-loop')).toBe('^1.0.0')
     } finally { drainBed.dispose() }

@@ -16,6 +16,9 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import LOCALES from '../site/locales.mjs'
+import { GUIDES, UI, CAP_NAMES, guideBody, reportBody } from './site-content.mjs'
+import { CAT_UI, MIN_PER_CATEGORY, categoryBody } from './site-category.mjs'
+import { TESTED_UI, loadTested, testedBody } from './site-tested.mjs'
 
 const ORIGIN = 'https://dshmarket.com'
 const CATALOG = 'https://awesome-dsh-plugin.com'
@@ -96,6 +99,15 @@ const write = (urlPath, html) => {
 // Plugin pages live on the catalog site; every link from this site goes there.
 const pluginPath = (loc, slug) => `${CATALOG}${loc.urlPath}p/${slug}/`
 
+// Original-content pages (guides, ecosystem report): see scripts/site-content.mjs.
+const guidesPath = (loc) => `${loc.urlPath}guides/`
+const guidePath = (loc, slug) => `${loc.urlPath}guides/${slug}/`
+const reportPath = (loc) => `${loc.urlPath}report/`
+const testedPath = (loc) => `${loc.urlPath}tested/`
+const TESTED = loadTested()
+const categoryPath = (loc, id) => `${loc.urlPath}categories/${id}/`
+const CATEGORY_IDS = Object.keys(registry.categories ?? {}).filter((id) => plugins.filter((p) => p.category === id).length >= MIN_PER_CATEGORY)
+
 // ── landing-page catalog ────────────────────────────────────────────────────
 // The front door used to be a 1.4 KB marketing page while /browse/ carried the
 // whole index; 83% of visits landed on the thin one. This puts a real slice of
@@ -175,6 +187,12 @@ function homeCatalog(loc) {
   // mix inside the grid above.
   if (shots.length) out.push(homeSection('shots', s.HOME_SHOTS, s.HOME_SHOTS_LEAD, 'shots', shots.map((p) => shotCard(p, loc))))
   if (fresh.length) out.push(homeSection('fresh', s.HOME_NEW, s.HOME_NEW_LEAD, 'cards', fresh.map((p) => textCard(p, loc))))
+  // The pages this site writes itself, as opposed to the catalog it indexes.
+  const ui = UI[loc.code]
+  out.push(homeSection('guides', ui.navGuides, ui.guidesLede, 'cards',
+    [...GUIDES.map((g) => `    <li class="pcard"><a class="pname" href="${guidePath(loc, g.slug)}">${esc(g[loc.code].title)}</a><p>${esc(g[loc.code].desc)}</p></li>`),
+      `    <li class="pcard"><a class="pname" href="${reportPath(loc)}">${esc(ui.reportTitle.replace(/ — dsh-market$/, ''))}</a><p>${esc(ui.reportDesc)}</p></li>`,
+      ...(TESTED ? [`    <li class="pcard"><a class="pname" href="${testedPath(loc)}">${esc(TESTED_UI[loc.code].h1)}</a><p>${esc(TESTED_UI[loc.code].desc)}</p></li>`] : [])]))
   out.push(`<p class="allmore"><a href="${loc.browsePath}">${esc(s.HOME_ALL.replace('{N}', num(plugins.length)))}</a></p>`)
   return out.join('\n')
 }
@@ -282,6 +300,79 @@ ${c.items.map((p) => `    <li><a href="${pluginPath(loc, p.slug)}"><span class="
   write(loc.browsePath, applyStrings(page, loc))
 }
 
+// ── guides and the ecosystem report ─────────────────────────────────────────
+// The original-content pages (see scripts/site-content.mjs). Guides are
+// hand-written per locale; the report is computed from the catalog snapshot.
+
+function articlePage(loc, { title, desc, urlPath, pathFor, body, type = 'Article' }) {
+  const ui = UI[loc.code]
+  const url = ORIGIN + urlPath
+  const resolved = body
+    .replaceAll('__GUIDES__', () => guidesPath(loc))
+    .replaceAll('__REPORT__', () => reportPath(loc))
+    .replaceAll('__TESTED__', () => testedPath(loc))
+    .replace(/__GUIDE_([a-z-]+)__/g, (_, slug) => guidePath(loc, slug))
+  const ld = ldSafe(JSON.stringify({
+    '@context': 'https://schema.org', '@type': type, headline: title, description: desc,
+    inLanguage: loc.htmlLang, url, mainEntityOfPage: url,
+    ...(registry.updated ? { dateModified: registry.updated } : {}),
+    publisher: { '@type': 'Organization', name: 'dsh-market', url: ORIGIN },
+  }))
+  const page = fs.readFileSync('site/page-template.html', 'utf8')
+    .replaceAll('__LANG__', () => loc.htmlLang)
+    .replaceAll('__TITLE__', () => esc(title))
+    .replaceAll('__DESC__', () => esc(desc))
+    .replaceAll('__URL__', () => url)
+    .replaceAll('__HREFLANGS__', () => hreflangs(pathFor))
+    .replaceAll('__OG_IMAGE__', () => `${ORIGIN}/assets/demo-${loc.code}.png`)
+    .replaceAll('__LD__', () => ld)
+    .replaceAll('__HOME__', () => loc.urlPath)
+    .replaceAll('__BROWSE__', () => loc.browsePath)
+    .replaceAll('__GUIDES__', () => guidesPath(loc))
+    .replaceAll('__REPORT__', () => reportPath(loc))
+    .replaceAll('__TESTED__', () => testedPath(loc))
+    .replaceAll('__NAV_GUIDES__', () => esc(ui.navGuides))
+    .replaceAll('__NAV_REPORT__', () => esc(ui.navReport))
+    .replaceAll('__PRIVACY__', () => loc.privacyPath)
+    .replaceAll('__LOCALE_LINKS__', () => localeLinks(loc, pathFor))
+    .replaceAll('__BODY__', () => resolved)
+  write(urlPath, applyStrings(page, loc))
+}
+
+for (const loc of LOCALES) {
+  const ui = UI[loc.code]
+  const cards = GUIDES.map((g) => `<li><a href="${guidePath(loc, g.slug)}">${esc(g[loc.code].title)}</a><p>${esc(g[loc.code].desc)}</p></li>`).join('\n')
+  articlePage(loc, {
+    title: ui.guidesTitle, desc: ui.guidesDesc, urlPath: guidesPath(loc), pathFor: guidesPath, type: 'CollectionPage',
+    body: `<h1>${esc(ui.guidesH1)}</h1><p class="lede">${esc(ui.guidesLede)}</p><ul class="cards">\n${cards}\n</ul>`,
+  })
+  for (const g of GUIDES) {
+    articlePage(loc, {
+      title: `${g[loc.code].title} — dsh-market`, desc: g[loc.code].desc,
+      urlPath: guidePath(loc, g.slug), pathFor: (l) => guidePath(l, g.slug), body: guideBody(g.slug, loc),
+    })
+  }
+  articlePage(loc, {
+    title: ui.reportTitle, desc: ui.reportDesc, urlPath: reportPath(loc), pathFor: reportPath,
+    body: reportBody(loc, { plugins, registry, catName, esc, pluginPath, catalog: CATALOG, categoryPath }),
+  })
+  for (const id of CATEGORY_IDS) {
+    const cu = CAT_UI[loc.code]
+    const name = catName(id, loc)
+    const n = plugins.filter((p) => p.category === id).length
+    articlePage(loc, {
+      title: cu.title(name), desc: cu.desc(name, n), urlPath: categoryPath(loc, id), pathFor: (l) => categoryPath(l, id), type: 'CollectionPage',
+      body: categoryBody(loc, { id, plugins, registry, catName, esc, pluginPath, tested: TESTED, capNames: CAP_NAMES[loc.code] }),
+    })
+  }
+  if (TESTED) {
+    articlePage(loc, {
+      title: TESTED_UI[loc.code].title, desc: TESTED_UI[loc.code].desc, urlPath: testedPath(loc), pathFor: testedPath,
+      body: testedBody(loc, { data: TESTED, plugins, esc, pluginPath }),
+    })
+  }
+}
+
 // ── plugin redirects ────────────────────────────────────────────────────────
 // This site used to render its own copy of every plugin page: the same catalog
 // content as awesome-dsh-plugin.com, canonicalised to it. The result was 2,954
@@ -327,6 +418,11 @@ fs.writeFileSync(`${OUT}/sitemap.xml`, `<?xml version="1.0" encoding="UTF-8"?>
 ${urlEntry((l) => l.urlPath, updated, 'weekly')}
 ${urlEntry((l) => l.browsePath, updated, 'daily')}
 ${urlEntry((l) => l.installPath, updated, 'monthly')}
+${urlEntry(guidesPath, updated, 'monthly')}
+${GUIDES.map((g) => urlEntry((l) => guidePath(l, g.slug), updated, 'monthly')).join('\n')}
+${urlEntry(reportPath, updated, 'daily')}
+${TESTED ? urlEntry(testedPath, updated, 'monthly') : ''}
+${CATEGORY_IDS.map((id) => urlEntry((l) => categoryPath(l, id), updated, 'weekly')).join('\n')}
 ${urlEntry((l) => l.privacyPath, updated, 'yearly')}
 </urlset>
 `)
@@ -362,5 +458,5 @@ if (fs.existsSync(INDEX_FILE)) {
 
 // Real pages only: the stubs are redirects, not content, and counting them as
 // pages is how the deploy looked four times larger than it is.
-const pages = LOCALES.length * 4 // index, browse, install, privacy
+const pages = LOCALES.length * (4 + 2 + GUIDES.length + (TESTED ? 1 : 0) + CATEGORY_IDS.length) // index, browse, install, privacy, guides index, report, guides
 console.log(`site built: ${pages} pages, ${plugins.length} redirect stubs × ${LOCALES.length} locales`)

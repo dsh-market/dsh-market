@@ -1219,13 +1219,42 @@ export const BOOT_ID = `${String(process.pid)}-${String(Date.now())}`
  * it (defense in depth on top of per-route validation — the win32 bare-dsh
  * fallback runs through a shell). Suggested in #16 by @anupamme.
  *
- * `^`, `~` and `=` are intentionally allowed: restore/install flows turn
- * manifest specs such as "dsh-better-sidebar": "^0.14.0" into targets like
+ * `^`, `~` and `=`: restore/install flows turn manifest specs such as
+ * "dsh-better-sidebar": "^0.14.0" into targets like
  * `dsh-better-sidebar@^0.14.0`, and regex-valid semver ranges must not be
  * mistaken for shell injection (whitespace and shell metacharacters remain
  * rejected — the win32 bare-dsh fallback is the reason to keep them out).
+ *
+ * `&` is deliberately absent: a bare `&` backgrounds the child and must stay
+ * rejected. The one shape that needs it — pnpm's monorepo selector,
+ * `#<ref>&path:/packages/x` — is admitted by `isSafePluginTarget` instead.
  */
 export const TARGET_RE = /^[A-Za-z0-9@:./_#+~^=-]+$/
+
+/** pnpm's monorepo selector inside a git target: `&path:/<subdirectory>`. */
+const GIT_SUBPATH_SELECTOR_RE = /^&path:\/[A-Za-z0-9._\-/]*$/
+
+/**
+ * Whether one plugin target is safe to hand to a spawned pnpm.
+ *
+ * A target is safe when `TARGET_RE` accepts it whole, or when it is that same
+ * allowlisted head followed only by `&path:` selectors. pnpm spells a
+ * monorepo subdirectory as `github:owner/repo#<ref>&path:/packages/x`, which
+ * `TARGET_RE` alone rejects — every GitHub subpath install then failed as
+ * "unsafe plugin target".
+ *
+ * @param target - the last argv element the caller built.
+ * @returns true when no segment could be read as a shell separator.
+ */
+export function isSafePluginTarget(target: string): boolean {
+  if (TARGET_RE.test(target)) return true
+  if (!target.includes('&')) return false
+  // Every `&` must OPEN a selector: a trailing `&`, `&&`, or `& ` leaves a
+  // segment that is not one, and the head itself still has to pass TARGET_RE.
+  const [head = '', ...selectors] = target.split('&')
+  if (!TARGET_RE.test(head)) return false
+  return selectors.every(selector => GIT_SUBPATH_SELECTOR_RE.test(`&${selector}`))
+}
 
 /** Mutating pnpm commands get the structured reporter appended. */
 const NDJSON_COMMANDS = new Set(['add', 'remove', 'install', 'update'])
@@ -1237,7 +1266,7 @@ function preparePluginArgs(profileDirectory: string, pluginArgs: readonly string
 } | { error: string } {
   let args = pluginArgsFor(profileDirectory, [...pluginArgs])
   const target = args[args.length - 1] ?? ''
-  if (!TARGET_RE.test(target)) {
+  if (!isSafePluginTarget(target)) {
     return { error: `unsafe plugin target rejected: ${JSON.stringify(target)}` }
   }
   if (NDJSON_COMMANDS.has(args[0])) args = [...args, '--reporter=ndjson']
@@ -1351,7 +1380,7 @@ export function runHostPnpm(
         timedOut,
         stdout: stdoutBytes.text(),
         stderr: stderrBytes.text(),
-        cancelled: cancelRequested,
+        cancelled: cancelRequested && code !== 0,
       })
     })
   })
@@ -1429,7 +1458,7 @@ export function runDshPlugin(profile: string, pluginArgs: string[]): Promise<Ins
         timedOut,
         stdout: stdoutBytes.text(),
         stderr: stderrBytes.text(),
-        cancelled: cancelRequested,
+        cancelled: cancelRequested && code !== 0,
         ...(pnpmError !== null ? { pnpmError } : {}),
         ...(pnpmErrorCode !== null ? { pnpmErrorCode } : {}),
         ...(ignoredBuilds.length > 0 ? { ignoredBuilds } : {}),
@@ -1544,7 +1573,7 @@ export function createDesktopPluginRuntime(
           timedOut,
           stdout: stdoutBytes.text(),
           stderr: stderrBytes.text(),
-          cancelled: active.userCancelled,
+          cancelled: active.userCancelled && failed,
           ...(ignoredBuilds.length > 0 ? { ignoredBuilds } : {}),
           ...(pnpmError !== null ? { pnpmError } : {}),
           ...(pnpmErrorCode !== null ? { pnpmErrorCode } : {}),
