@@ -101,6 +101,21 @@ describe('settling an uninstall a previous start interrupted', () => {
     expect(PendingRowJournal.forProfile(dir).list()).toEqual([])
   })
 
+  it('removes only the departed package’s marked override when another package reuses its row ID (#1196)', () => {
+    const dir = profile()
+    const patchPath = join(dir, 'cordis.patch.yml')
+    const kept = "- id: pet\n  disabled: false\n  name: '@acme/dsh-other' # dsh-market\n"
+    const orphan = "- id: pet\n  disabled: true\n  name: '@acme/dsh-pet' # dsh-market\n"
+    writeFileSync(patchPath, orphan + kept)
+    declare(dir, '@acme/dsh-other')
+    PendingRowJournal.forProfile(dir).begin({ profile: 'web', name: '@acme/dsh-pet', patchPath, rows: ['pet'] })
+
+    const report = repairOrphanedRows({ profile: 'web', profileDirectory: dir })
+
+    expect(report.removed).toEqual(['@acme/dsh-pet'])
+    expect(readFileSync(patchPath, 'utf8')).toBe(kept)
+  })
+
   it('keeps the record when the rows cannot be removed, so a later start retries', () => {
     const dir = profile()
     // A patch path that does not exist is treated as "nothing to remove" by

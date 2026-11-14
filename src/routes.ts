@@ -821,7 +821,7 @@ export function mountMarketRoutes(
    *   dropped from the market's disable list.
    */
   function followOutsideEnable(name: string): boolean {
-    const patch = readUserPatchState(userPatchPath)
+    const patch = readUserPatchState(userPatchPath, rowId => composedRowName(host, rowId))
     const flags = packagePatchFlags(host, activeProfileDir, [name], patch)
     if (!flags.forced.includes(name) || flags.disabled.includes(name)) return false
     disabled.delete(name)
@@ -1173,10 +1173,14 @@ export function mountMarketRoutes(
    * every time), and a group "off" wrote no patch row — the official page and
    * the market disagreed again, one control over (@snmtg1008, #696).
    *
-   * @param liveOk - whether the live switch succeeded; a failed ENABLE writes
+   * @param switchLive - perform the runtime switch; a failed ENABLE writes
    *   neither layer (#575).
    */
-  async function switchPluginLayers(name: string, enabled: boolean, liveOk: boolean, liveReason: string | undefined): Promise<{
+  async function switchPluginLayers(
+    name: string,
+    enabled: boolean,
+    switchLive = () => setPluginEnabled(name, enabled),
+  ): Promise<{
     ok: boolean
     reason: string | undefined
     patchRows: string[]
@@ -1188,6 +1192,15 @@ export function mountMarketRoutes(
     isCarrier: boolean
     bundleSwitch: { ok: boolean; reason: string | null }
   }> {
+    const packageDir = join(activeProfileDir, 'node_modules', name)
+    // Capture module identity before switching the entry off.
+    const namedRows = new Set<string>()
+    if (!enabled) {
+      for (const id of shippedInsertedRowIds(packageDir)) {
+        if (composedRowName(host, id) === name) namedRows.add(id)
+      }
+    }
+    const { ok: liveOk, reason: liveReason } = await switchLive()
     let ok = liveOk
     let reason = liveReason
     // Durable patch-layer write (port of dsh-plugin-hub): the package's
@@ -1204,12 +1217,12 @@ export function mountMarketRoutes(
     // side effect of a bug fix. Skipped only while something else is left to
     // flip: a package whose rows are ALL opt-in rows still has to be
     // switchable.
-    const optOutRows = new Set(bundleOptOutRowIds(join(activeProfileDir, 'node_modules', name)))
+    const optOutRows = new Set(bundleOptOutRowIds(packageDir))
     // Rows the bundle decides itself, by expression (`disabled: !!js …`),
     // are a third shape next to opt-in rows: the market can neither read
     // nor overrule the condition, so enabling the package must leave them
     // exactly as the bundle ships them (#1043).
-    const expressionRows = new Set(bundleExpressionRowIds(join(activeProfileDir, 'node_modules', name)))
+    const expressionRows = new Set(bundleExpressionRowIds(packageDir))
     const decided = patchRows.filter(rowId => !optOutRows.has(rowId))
     /** Rows that can carry a USER decision about this package — see above. */
     const userRows = decided.length > 0 ? decided : patchRows
@@ -1291,7 +1304,7 @@ export function mountMarketRoutes(
     // The name the loader composed for a row, for the rows whose user-layer
     // entry carries one of its own: the host skips an entry whose `name` is
     // not this one, so its flag is not a decision about the row (#1113).
-    const expectedNameFor = (rowId: string): string | null => composedRowName(host, rowId)
+    const expectedNameFor = (rowId: string): string | null => namedRows.has(rowId) ? name : composedRowName(host, rowId)
     /** A user-layer flag counts only when the row it names is this entry. */
     const rowIsOurs = (rowId: string): boolean => prePatch !== null && rowFlagApplies(prePatch, rowId, expectedNameFor(rowId))
     if (patchRows.length > 0 && patchGate && prePatch !== null) {
@@ -1310,7 +1323,7 @@ export function mountMarketRoutes(
       const targets = enabled
         ? patchRows.filter(rowId => (!optOutRows.has(rowId) && !expressionRows.has(rowId)) || (rowIsOurs(rowId) && prePatch.disables.includes(rowId)))
         : patchRows
-      const flipped: string[] = []
+      const flipped: { rowId: string; removedMarketName?: string }[] = []
       for (const rowId of targets) {
         // #1110: an opt-in or expression row that the user's layer still holds
         // closed can only be CLEANED here. `enableRow`'s force-enable appends
@@ -1319,11 +1332,15 @@ export function mountMarketRoutes(
         // on that #876/#1043 say must never be forced on.
         const cleanOnly = optOutRows.has(rowId) || expressionRows.has(rowId)
         const expectedName = expectedNameFor(rowId)
-        const result = enabled
-          ? await enableRow(userPatchPath, rowId, { cleanOnly, expectedName })
-          : await disableRow(userPatchPath, rowId, { expectedName })
+        // DSH drops a simple id/disabled override when enabling would restore
+        // the bundle default. An exact module name keeps the user's enable
+        // in the shared patch layer for followOutsideEnable (#1196).
+        const recordModuleName = stackToggle && !isCarrier && !cleanOnly && namedRows.has(rowId)
+        const result: Awaited<ReturnType<typeof enableRow>> = enabled
+          ? await enableRow(userPatchPath, rowId, { cleanOnly, expectedName, packageName: name })
+          : await disableRow(userPatchPath, rowId, { expectedName, recordModuleName, packageName: name })
         if (result.ok) {
-          flipped.push(rowId)
+          flipped.push({ rowId, removedMarketName: result.removedMarketName })
           continue
         }
         patchWrite = result
@@ -1339,19 +1356,21 @@ export function mountMarketRoutes(
         // disable direction keeps what it got, because a row the patch
         // layer refuses to flip does not make the plugin live again.
         if (enabled) {
-          for (const rowId of flipped) {
+          for (const { rowId, removedMarketName } of flipped) {
             // A row that was disabled gets its block back; a row that was
             // not loses the block this enable added. Leaving a
             // `disabled: false` behind would force-enable it in the
             // user's own patch layer — the same disagreement this route
             // exists to end, one row smaller.
-            if (prePatch !== null && rowIsOurs(rowId) && prePatch.disables.includes(rowId)) {
-              const back = await disableRow(userPatchPath, rowId, { expectedName: expectedNameFor(rowId) })
+            if (removedMarketName !== undefined || (rowIsOurs(rowId) && prePatch.disables.includes(rowId))) {
+              const expectedName = removedMarketName ?? expectedNameFor(rowId)
+              const recordModuleName = removedMarketName !== undefined
+              const back = await disableRow(userPatchPath, rowId, { expectedName, recordModuleName, packageName: name })
               if (!back.ok) logEvent('warn', 'toggle', `${name}: patch row ${rowId} could not be put back — ${back.reason}`)
             } else if (prePatch === null || !rowIsOurs(rowId) || !prePatch.forced.includes(rowId)) {
               // A row already forced on before this call got nothing from
               // the enable; that block is the user's to keep.
-              const cleanedRow = removeRowBlocks(userPatchPath, [rowId])
+              const cleanedRow = removeRowBlocks(userPatchPath, [rowId], name)
               if (!cleanedRow.ok) logEvent('warn', 'toggle', `patch row could not be cleared — ${cleanedRow.reason}`)
             }
           }
@@ -2054,7 +2073,7 @@ export function mountMarketRoutes(
     if (native) {
       logEvent('info', 'uninstall', `${name} ships or depends on a native addon; a restart is needed before it can be installed again`)
     }
-    const cleanedOwned = removeRowBlocks(userPatchPath, ownedRows)
+    const cleanedOwned = removeRowBlocks(userPatchPath, ownedRows, name)
     if (!cleanedOwned.ok) logEvent('warn', 'uninstall', `patch rows could not be cleared — ${cleanedOwned.reason}`)
     else rowJournal.finish(config.profile, name)
     disabled.delete(name)
@@ -4112,22 +4131,16 @@ export function mountMarketRoutes(
             }
           }
           pendingRollbacks.clear()
-          let ok: boolean
-          let reason: string | undefined
-          if (enabled && (await themes.installedThemeNames()).has(name)) {
+          const layers = enabled && (await themes.installedThemeNames()).has(name)
             // Theme exclusivity stays a Themes-page concern: enabling a theme
             // deactivates the previously active one, so only the last-enabled
             // theme is live (same semantics as use-skin).
-            ok = await themes.activateTheme(name)
-            if (!ok) reason = 'theme activation failed — restart required / 主题启用失败，需要重启'
-          } else {
-            const result = await setPluginEnabled(name, enabled)
-            ok = result.ok
-            reason = result.reason
-          }
-          const layers = await switchPluginLayers(name, enabled, ok, reason)
-          ok = layers.ok
-          reason = layers.reason
+            ? await switchPluginLayers(name, enabled, async () => {
+              const ok = await themes.activateTheme(name)
+              return { ok, reason: ok ? undefined : 'theme activation failed — restart required / 主题启用失败，需要重启' }
+            })
+            : await switchPluginLayers(name, enabled)
+          const { ok, reason } = layers
           const { patchRows, userRows, patchWrite, carrierRows, isCarrier, bundleSwitch } = layers
           // Activation reads the post-write truth: the switch state OR the
           // patch layer, so a disabled plugin never reports "restart to
@@ -4505,8 +4518,7 @@ export function mountMarketRoutes(
               } else {
                 // The same two durable layers the single switch writes (#696):
                 // which control flipped a plugin must not change what is on disk.
-                const live = await setPluginEnabled(member, enabled)
-                result = await switchPluginLayers(member, enabled, live.ok, live.reason)
+                result = await switchPluginLayers(member, enabled)
               }
               if (!result.ok) failures.push(member)
               // Same live-mismatch signal as the single toggle: a member
@@ -5112,7 +5124,7 @@ sendJson(response, 200, { updates })
               logEvent('warn', 'source-migration', `${name}: ${stateWarning}`)
             }
 
-            const cleanedOld = removeRowBlocks(userPatchPath, oldRows)
+            const cleanedOld = removeRowBlocks(userPatchPath, oldRows, name)
             if (!cleanedOld.ok) logEvent('warn', 'install', `patch rows could not be cleared — ${cleanedOld.reason}`)
             const patchDisabled = wasDisabled || patchFlags.disabled.includes(name)
             const patchForced = !patchDisabled && patchFlags.forced.includes(name)
@@ -5120,9 +5132,9 @@ sendJson(response, 200, { updates })
             for (const rowId of rowIdsForPackage(host, activeProfileDir, targetName)) {
               const expectedName = composedRowName(host, rowId)
               const changed = patchDisabled
-                ? await disableRow(userPatchPath, rowId, { expectedName })
+                ? await disableRow(userPatchPath, rowId, { expectedName, packageName: targetName })
                 : patchForced
-                  ? await enableRow(userPatchPath, rowId, { expectedName })
+                  ? await enableRow(userPatchPath, rowId, { expectedName, packageName: targetName })
                   : { ok: true, reason: null }
               if (!changed.ok && changed.reason !== null) patchWarnings.push(changed.reason)
             }
@@ -7011,7 +7023,7 @@ sendJson(response, 200, { updates })
               for (const name of disabled) {
                 const ids = rowIdsForPackage(host, activeProfileDir, name)
                 if (ids.length > 0) {
-                  const cleanedIds = removeRowBlocks(userPatchPath, ids)
+                  const cleanedIds = removeRowBlocks(userPatchPath, ids, name)
                   if (!cleanedIds.ok) logEvent('warn', 'patch', `patch rows could not be cleared — ${cleanedIds.reason}`)
                   restored.push(name)
                 }
@@ -7540,7 +7552,7 @@ sendJson(response, 200, { updates })
               // Patch-layer rows must not survive the remove either: a
               // `- id: X` + `disabled: true` row for a package that no longer
               // mounts is a boot-time orphan (port of dsh-plugin-hub).
-              const cleanedOwned = removeRowBlocks(userPatchPath, ownedRows)
+              const cleanedOwned = removeRowBlocks(userPatchPath, ownedRows, name)
               if (!cleanedOwned.ok) logEvent('warn', 'uninstall', `patch rows could not be cleared — ${cleanedOwned.reason}`)
               // Either way the record is settled: cleaned means nothing is
               // left to do, and an unclean file is reported above rather than
