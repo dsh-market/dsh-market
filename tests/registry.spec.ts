@@ -235,8 +235,13 @@ describe('loadRegistry', () => {
     const started = 1_760_000_000_000
     clock.mockReturnValueOnce(started)
     clock.mockReturnValue(started + 900)
+    // "Says nothing" has to mean "adds nothing", not "adds no line saying
+    // 0.9s": the buffer is shared by the whole file, so a slower neighbour's
+    // line is still in the export here, and matching on one duration would
+    // also accept any other duration the quick path might start printing.
+    const before = exportLogs({})
     await loadRegistry('global')
-    expect(exportLogs({})).not.toContain('answered in 0.9s')
+    expect(exportLogs({})).toBe(before)
   })
 })
 
