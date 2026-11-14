@@ -53,7 +53,7 @@ export function createOutputBuffer(limit: number, platform: NodeJS.Platform = pr
       if (chunk.length === 0) return
       chunks.push(chunk)
       size += chunk.length
-      while (size > limit && chunks.length > 1) {
+      while (chunks.length > 1 && size - chunks[0]!.length >= limit) {
         size -= chunks.shift()!.length
       }
       const first = chunks[0]
