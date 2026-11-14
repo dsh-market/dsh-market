@@ -6058,7 +6058,10 @@ describe('local-dev restore', () => {
     render(<MarketSection {...props()} />)
     await screen.findByText('dsh-loop')
     fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
-    expect(await screen.findByText(`v1.0.0 · ${en.linkedDev}`)).toBeTruthy()
+    // The third segment is the install date (#1142); a linked checkout was
+    // never installed through the market, so the row says `—` rather than
+    // guessing from a directory mtime pnpm rewrites.
+    expect(await screen.findByText(`v1.0.0 · ${en.linkedDev} · —`)).toBeTruthy()
     // `../dsh-loop` is relative to the profile; a copied copy would point nowhere.
     expect(screen.getByText('../dsh-loop')).toBeTruthy()
     expect(screen.queryByRole('button', { name: en.copyPath })).toBeNull()
@@ -6091,7 +6094,7 @@ describe('local-dev restore', () => {
       fireEvent.click(await screen.findByRole('button', { name: /Installed/ }))
       const path = await screen.findByText('…/plugins/mystery-plug')
       expect(path.getAttribute('title')).toBe('/Users/me/work/plugins/mystery-plug')
-      expect(screen.getByText(`v0.1.14 · ${en.linkedDev}`)).toBeTruthy()
+      expect(screen.getByText(`v0.1.14 · ${en.linkedDev} · —`)).toBeTruthy()
       fireEvent.click(screen.getByRole('button', { name: en.copyPath }))
       await waitFor(() => expect(writeText).toHaveBeenCalledWith('/Users/me/work/plugins/mystery-plug'))
       expect(await screen.findByText(en.pathCopied)).toBeTruthy()
@@ -10829,5 +10832,82 @@ describe('a compatible release still inside the release-age wait (#945)', () => 
     fireEvent.click(await screen.findByRole('button', { name: en.confirmInstall }))
     const offered = await screen.findByRole('button', { name: en.hostIncompatibleInstallCompat.replace('{version}', '1.2.0') })
     expect((offered as HTMLButtonElement).disabled).toBe(false)
+  })
+})
+
+/**
+ * The installed row states when the market installed it (#1142), and the list
+ * can be ordered by that date.
+ *
+ * The dashboard-level decisions (unknown last in both directions, tie on the
+ * name) are pinned in installed-order.client.spec.ts; this only proves the
+ * wiring: the date `/installed` sends reaches the row, `—` stands in where
+ * there is none, and the control actually reorders the list.
+ */
+describe('installed rows carry their install time (#1142)', () => {
+  const early = { installedAt: '2026-01-05T12:00:00Z', updatedAt: '2026-01-05T12:00:00Z' }
+  const late = { installedAt: '2026-06-05T12:00:00Z', updatedAt: '2026-06-05T12:00:00Z' }
+
+  const rowNames = (): string[] =>
+    [...document.querySelectorAll('[class*="irowNameText"]')].map(el => el.textContent ?? '')
+
+  /** The row container: the nearest ancestor that also holds the meta line.
+   * `closest('[class*="irow"]')` stops at `irowName`, which is a child of the
+   * row and carries the name only. */
+  const rowText = (name: string): string => {
+    let node = screen.getAllByText(name)[0]?.parentElement ?? null
+    while (node !== null && node.querySelector('[class*="irowMeta"]') === null) node = node.parentElement
+    return node?.textContent ?? ''
+  }
+
+  const installedPayload = (installed: Record<string, string>, installTimes: Record<string, unknown>) => ({
+    profile: 'web',
+    installed,
+    live: [],
+    disabled: [],
+    groups: {},
+    groupOrder: [],
+    favorites: [],
+    blocked: [],
+    installTimes,
+  })
+
+  it('shows the recorded date, and a dash where the market has none', async () => {
+    stubFetch({
+      '/dsh-market/installed': installedPayload({ 'dsh-early': '^1.0.0', 'dsh-manual': '^1.0.0' }, { 'dsh-early': early }),
+      // The row's meta line exists because a version does; the date is the
+      // third segment of that same line.
+      '/dsh-market/updates': { updates: {
+        'dsh-early': { kind: 'npm', version: '1.0.0', current: '1.0.0', latest: '1.0.0', updateAvailable: false },
+        'dsh-manual': { kind: 'npm', version: '2.3.4', current: '2.3.4', latest: '2.3.4', updateAvailable: false },
+      } },
+    })
+    render(<MarketSection {...props()} />)
+    fireEvent.click(await screen.findByRole('button', { name: new RegExp(en.tabInstalled) }))
+    await screen.findByText('dsh-early')
+    // 12:00 UTC keeps the calendar date in every timezone the row can render.
+    expect(rowText('dsh-early')).toContain('2026-01-05')
+    // Installed with the CLI or the host's own plugins page: no record, and
+    // no mtime stand-in — the row says so instead of inventing a date.
+    expect(rowText('dsh-manual')).toContain('—')
+    expect(rowText('dsh-manual')).not.toMatch(/\d{4}-\d{2}-\d{2}/)
+  })
+
+  it('orders the list by that date, newest or oldest', async () => {
+    stubFetch({
+      '/dsh-market/installed': installedPayload({ 'dsh-early': '^1.0.0', 'dsh-late': '^1.0.0' }, { 'dsh-early': early, 'dsh-late': late }),
+      '/dsh-market/updates': { updates: {} },
+    })
+    render(<MarketSection {...props()} />)
+    fireEvent.click(await screen.findByRole('button', { name: new RegExp(en.tabInstalled) }))
+    await screen.findByText('dsh-late')
+    expect(rowNames()).toContain('dsh-early')
+
+    fireEvent.click(screen.getByRole('button', { name: en.installedSort }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: en.installedSortOldest }))
+    await waitFor(() => { expect(rowNames()[0]).toBe('dsh-early') })
+
+    fireEvent.click(screen.getByRole('menuitem', { name: en.installedSortNewest }))
+    await waitFor(() => { expect(rowNames()[0]).toBe('dsh-late') })
   })
 })

@@ -56,9 +56,10 @@ import {
   installCommandFor, hostCompatibilityKey,
   api, applyGithubRouting, avatarColor, catalogEntryForInstalled, entryForDep, failureText, githubRouteCandidates, groupSwitchState, installedForCatalog, isGenerationSpec, isInstalled, localizeBilingual, localizeBilingualList, looksTerminal, matchInstalledName, orderedCategories, pluginCategories,
   formatCount, pageItems, pluginName, blockAliases, pluginScreenshotCandidates, pluginScreenshots, pluginsForFavorites, previewDimensionScore, queuedRowApplies, rankThemeScreenshots, readSession, safeIcon, releaseNotesHttpsImage, rememberGithubRoute, resetScreenshotsCache, resolveCatalogRestore, safeScreenshots, sanitizeReleaseNotesBody, staleFavoriteUrls, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins, restartHintKey,
+  compareInstalledRows, installedDateText,
 } from './market-data.ts'
 import type {
-ActivationInfo, ActivationState, DrainHistoryWire, DrainOperationWire, GistExportResult, InstalledMap, InstalledRepoHints, InstalledRepoIdentities, MarketStatus, Registry, RegistryPlugin,
+ActivationInfo, ActivationState, DrainHistoryWire, DrainOperationWire, GistExportResult, InstalledMap, InstalledRepoHints, InstalledRepoIdentities, InstalledSort, InstallStamp, MarketStatus, Registry, RegistryPlugin,
   HostCompatibility, HostCompatibilityMap, ScreenshotCandidate, ScreenshotMeasurement, SharedHostPackageDependencyFinding, SortDir, SortField, ThemeSnapshot, TimeRange, Translate, UpdateStatus,
 } from './market-data.ts'
 
@@ -322,6 +323,44 @@ function FilterMenu({
           icon={open ? <IconChevronUpOutline14 size={14} /> : <IconChevronDownOutline14 size={14} />}
           onClick={() => setOpen(o => !o)}
         >{t('filter')}</Button>
+      )}
+      items={items}
+    />
+  )
+}
+
+/**
+ * The installed list's own order (#1142).
+ *
+ * Deliberately NOT the market's `FilterMenu`: that one sorts by downloads,
+ * stars or the catalog's collection date, and an installed package has none
+ * of the three. Same primitive, four options, one value — the list's order
+ * is a single choice, not a field plus a direction.
+ */
+function InstalledSortMenu({ value, onChange, t }: { value: InstalledSort; onChange: (sort: InstalledSort) => void; t: Translate }) {
+  const [open, setOpen] = useState(false)
+  const items = useMemo<MenuEntry[]>(() => [
+    { type: 'label', id: 'is-label', text: t('installedSortLabel') },
+    { id: 'installed:default', label: t('installedSortDefault') },
+    { id: 'installed:name', label: t('installedSortName') },
+    { id: 'installed:newest', label: t('installedSortNewest') },
+    { id: 'installed:oldest', label: t('installedSortOldest') },
+  ], [t])
+  return (
+    <Menu
+      open={open}
+      onClose={() => setOpen(false)}
+      selectedIds={['installed:' + value]}
+      onSelect={id => onChange(id.slice('installed:'.length) as InstalledSort)}
+      align="end"
+      portal
+      anchor={(
+        <Button
+          variant="outline"
+          size="sm"
+          icon={open ? <IconChevronUpOutline14 size={14} /> : <IconChevronDownOutline14 size={14} />}
+          onClick={() => setOpen(openNow => !openNow)}
+        >{t('installedSort')}</Button>
       )}
       items={items}
     />
@@ -2957,6 +2996,21 @@ export function MarketSection(props: MarketSectionProps) {
   const setDisabledNames = useCallback(cacheState(value => { cachedDisabledNames = value }, setDisabledNamesState), [])
   /** The user's own note per plugin (#347): package name → text. */
   const [notes, setNotes] = useState<Record<string, string>>({})
+  /**
+   * When this market installed/updated each package (#1142). Only packages
+   * the market itself installed have an entry: the CLI and the host's own
+   * plugins page leave nothing on disk that says when, and the row shows
+   * `—` rather than guessing from a directory mtime pnpm rewrites.
+   */
+  const [installTimes, setInstallTimes] = useState<Record<string, InstallStamp>>({})
+  /**
+   * How the installed list is ordered (#1142). Its own value, NOT the
+   * market's `SortField`: that one is downloads/stars/added, and none of the
+   * three exist for an installed package — `added` is the catalog's
+   * collection date, which is a different question from when the user
+   * installed it.
+   */
+  const [installedSort, setInstalledSort] = useState<InstalledSort>('default')
   /** Catalog URLs bookmarked for later install (#414). */
   const [favoriteUrls, setFavoriteUrlsState] = useState<string[]>(() => cachedFavoriteUrls)
   const setFavoriteUrls = useCallback(cacheState(value => { cachedFavoriteUrls = value }, setFavoriteUrlsState), [])
@@ -3272,6 +3326,18 @@ export function MarketSection(props: MarketSectionProps) {
         }
         if (body.notes !== null && typeof body.notes === 'object' && !Array.isArray(body.notes)) {
           setNotes(body.notes as Record<string, string>)
+        }
+        if (body.installTimes !== null && typeof body.installTimes === 'object' && !Array.isArray(body.installTimes)) {
+          const stamps: Record<string, InstallStamp> = {}
+          for (const [name, raw] of Object.entries(body.installTimes as Record<string, unknown>)) {
+            if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) continue
+            const record = raw as { installedAt?: unknown; updatedAt?: unknown }
+            const installedAt = typeof record.installedAt === 'string' ? record.installedAt : undefined
+            const updatedAt = typeof record.updatedAt === 'string' ? record.updatedAt : undefined
+            if (installedAt === undefined && updatedAt === undefined) continue
+            stamps[name] = { ...(installedAt === undefined ? {} : { installedAt }), ...(updatedAt === undefined ? {} : { updatedAt }) }
+          }
+          setInstallTimes(stamps)
         }
         if (Array.isArray(body.patchDisabled)) setPatchDisabledNames(body.patchDisabled)
         if (typeof body.profile === 'string') setProfileName(body.profile)
@@ -6520,10 +6586,18 @@ export function MarketSection(props: MarketSectionProps) {
         if (aOn !== bOn) return bOn - aOn
         const aUp = isPluginUpdatable(nameA, String(specA), updates[nameA], updatedNames, quietUpdateSet) ? 1 : 0
         const bUp = isPluginUpdatable(nameB, String(specB), updates[nameB], updatedNames, quietUpdateSet) ? 1 : 0
-        return bUp - aUp
+        if (aUp !== bUp) return bUp - aUp
+        // The chosen field applies INSIDE those two groups, not across them:
+        // "sorted by install time" must not float a plugin the user switched
+        // off above one that is running (#1142, and #745 above still holds).
+        return compareInstalledRows(
+          installedSort,
+          { name: nameA, installedAt: installTimes[nameA]?.installedAt },
+          { name: nameB, installedAt: installTimes[nameB]?.installedAt },
+        )
       })
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `updatesLoaded` stands in for `updates`/`updatedNames`: reorder when the check lands, then hold (#631). `effectiveDisabledSet` only re-runs this when a disable state actually changed; the toggled row is the only one that moves.
-  }, [isInstalledListActive, displayedInstalled, selfName, updatesLoaded, effectiveDisabledSet, dependencyOnlyNames])
+  }, [isInstalledListActive, displayedInstalled, selfName, updatesLoaded, effectiveDisabledSet, dependencyOnlyNames, installedSort, installTimes])
   const missingRestoreCount = Object.keys(pendingDependencies).filter(name => !installedFiles.includes(name)).length
   // Self-update lives in the page header (or the Plugins tab's own tab row)
   // and the settings card, not this tab's row list (the market itself is
@@ -8386,6 +8460,13 @@ export function MarketSection(props: MarketSectionProps) {
                   </div>
                   <div className={css.tabSearchRow}>
                     <SearchInput key="installed" resetToken={installedSearchReset} className={css.tabSearch} placeholder={t('searchPh')} value={qInstalled} onCommit={setQInstalled} t={t} />
+                    {/* The order control belongs to the list only: groups are
+                        ordered by the user's own group order, and offering to
+                        sort them by install time would silently rearrange
+                        something that is not sorted by anything else. */}
+                    {installedView === 'list' && (
+                      <InstalledSortMenu value={installedSort} onChange={setInstalledSort} t={t} />
+                    )}
                     {installedView === 'groups' && (
                       creatingGroup
                         ? (
@@ -8689,6 +8770,18 @@ export function MarketSection(props: MarketSectionProps) {
                             const act = activations[name]
                             const meta = act !== undefined ? activationMeta(act.state, t, act.dependencyOf, act.loadedByProfile, act.library) : null
                             const version = status && status.version ? 'v' + status.version : ''
+                            // When this market installed it (#1142), in the
+                            // reader's own timezone. `updatedOn` never
+                            // replaces the install date on the line — they are
+                            // two events, and only the install date is what
+                            // the sort orders by.
+                            const stamp = installTimes[name]
+                            const installedOn = installedDateText(stamp?.installedAt)
+                            const updatedOn = installedDateText(stamp?.updatedAt)
+                            const installedWhenTitle = [
+                              installedOn === null ? t('installedAtUnknown') : `${t('installedAtLabel')} ${installedOn}`,
+                              updatedOn === null ? '' : `${t('updatedAtLabel')} ${updatedOn}`,
+                            ].filter(Boolean).join(' · ')
                             const specText = String(spec)
                             // A plain range beside the resolved version says the
                             // same thing twice. Every other spec — github:, file:,
@@ -8732,9 +8825,20 @@ export function MarketSection(props: MarketSectionProps) {
                                     <span className={css.irowMenu}>{renderInstalledBlockMenu(name)}</span>
                                   )}
                                   </div>
-                                  {(version !== '' || localDev) && (
-                                    <div className={css.irowMeta}>
-                                      {[version, localDev ? t('linkedDev') : ''].filter(Boolean).join(' · ')}
+                                  {(version !== '' || localDev || installedOn !== null) && (
+                                    <div className={css.irowMeta} title={installedWhenTitle}>
+                                      {[
+                                        version,
+                                        localDev ? t('linkedDev') : '',
+                                        // Third segment of the same line (#1142): the
+                                        // row already spends its first line on the name,
+                                        // and this line is where "secondary" lives, so a
+                                        // date here squeezes neither the name nor the
+                                        // version. `—` is the honest answer for a package
+                                        // the market never watched being installed (the
+                                        // CLI, the host's own plugins page).
+                                        installedOn ?? '—',
+                                      ].filter(Boolean).join(' · ')}
                                     </div>
                                   )}
                                   {specRedundant
