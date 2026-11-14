@@ -166,7 +166,7 @@ export function repairOrphanedRows(options: {
       report.kept.push(record.name)
       continue
     }
-    const cleaned = removeRowBlocks(record.patchPath, record.rows)
+    const cleaned = removeRowBlocks(record.patchPath, record.rows, record.name)
     if (!cleaned.ok) {
       report.failed.push(record.name)
       continue

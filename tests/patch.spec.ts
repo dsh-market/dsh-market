@@ -762,6 +762,99 @@ describe('append safety on malformed patch files', () => {
   })
 })
 
+describe('market-owned named switch rows (#1196)', () => {
+  const expectedName = '@example/dsh-workbench'
+  const options = { expectedName, recordModuleName: true }
+  const namedRow = (disabled: boolean) =>
+    `- id: workbench\n  disabled: ${disabled}\n  name: '${expectedName}' # dsh-market\n`
+
+  it('keeps the named override through an official enable and the next market toggle', async () => {
+    const dir = patchDir()
+    try {
+      const patch = join(dir, 'cordis.patch.yml')
+      expect((await disableRow(patch, 'workbench', options)).ok).toBe(true)
+      expect(load(readPatch(dir))).toEqual([{ id: 'workbench', name: expectedName, disabled: true }])
+      expect(readPatch(dir)).toContain('# dsh-market')
+
+      // The official YAML writer flips the flag and can emit a double-quoted name.
+      const enabled = namedRow(false).replace(`'${expectedName}'`, `"${expectedName}"`)
+      writeFileSync(patch, enabled)
+      expect(readUserPatchState(patch)).toMatchObject({
+        disables: [], forced: ['workbench'], names: { workbench: expectedName },
+      })
+      expect((await disableRow(patch, 'workbench', options)).ok).toBe(true)
+      const disabled = readPatch(dir)
+      expect(load(disabled)).toEqual([{ id: 'workbench', name: expectedName, disabled: true }])
+      expect((await disableRow(patch, 'workbench', options)).ok).toBe(true)
+      expect(readPatch(dir)).toBe(disabled)
+
+      expect((await enableRow(patch, 'workbench', { expectedName })).ok).toBe(true)
+      expect(load(readPatch(dir))).toEqual([])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('qualifies an existing simple override on an explicit market disable', async () => {
+    const dir = patchDir()
+    try {
+      const patch = join(dir, 'cordis.patch.yml')
+      writeFileSync(patch, '- id: workbench\n  disabled: false\n')
+      expect((await disableRow(patch, 'workbench', options)).ok).toBe(true)
+      expect(load(readPatch(dir))).toEqual([{ id: 'workbench', name: expectedName, disabled: true }])
+      expect(readPatch(dir)).toContain('# dsh-market')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('reads the marked enable even when a later override names another module with the same id', () => {
+    const dir = patchDir()
+    try {
+      const patch = join(dir, 'cordis.patch.yml')
+      const foreign = "- id: workbench\n  disabled: true\n  name: 'another-module'\n"
+      writeFileSync(patch, namedRow(false) + foreign)
+
+      expect(readUserPatchState(patch, id => id === 'workbench' ? expectedName : null)).toMatchObject({
+        disables: [], forced: ['workbench'], names: { workbench: expectedName },
+      })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it.each([true, false])('cleans a marked row with disabled=%s and preserves user rows', (disabled) => {
+    const dir = patchDir()
+    try {
+      const patch = join(dir, 'cordis.patch.yml')
+      const unmarked = "- id: workbench\n  disabled: false\n  name: 'another-module'\n"
+      const configured = `${namedRow(true)}  config:\n    size: 2\n`
+      const foreignMarked = namedRow(true).replace(expectedName, 'another-module')
+      const kept = `${unmarked}${configured}${foreignMarked}`.replaceAll('\n', '\r\n')
+      writeFileSync(patch, kept + namedRow(disabled).replaceAll('\n', '\r\n'))
+
+      expect(removeRowBlocks(patch, ['workbench'], expectedName).ok).toBe(true)
+      expect(readPatch(dir)).toBe(kept)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('leaves a marked row for another module alone when enabling the current module', async () => {
+    const dir = patchDir()
+    try {
+      const patch = join(dir, 'cordis.patch.yml')
+      const stale = namedRow(true).replace(expectedName, 'another-module')
+      writeFileSync(patch, stale + namedRow(true))
+
+      expect((await enableRow(patch, 'workbench', { expectedName })).ok).toBe(true)
+      expect(readPatch(dir)).toBe(stale)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('removeRowBlocks', () => {
   it('removes both disable and force blocks for the given rows', () => {
     const dir = patchDir()
