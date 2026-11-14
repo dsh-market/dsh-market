@@ -734,3 +734,67 @@ describe('a teardown that never finishes cannot hold the market open (#582)', ()
     }
   })
 })
+
+describe('hotMount records what the host logged while mounting (#1197)', () => {
+  const entryPkg = (dir: string, name: string): void => {
+    mkdirSync(join(dir, 'node_modules', name), { recursive: true })
+    writeFileSync(join(dir, 'node_modules', name, 'package.json'), JSON.stringify({ name }))
+    writeFileSync(join(dir, 'node_modules', name, 'cordis.patch.yml'),
+      `- insert:\n    - id: ${name}-host\n      name: ${name}\n`)
+  }
+
+  it('writes warn/error lines next to the live event and keeps the verdict', async () => {
+    // The reported shape: an entry waits on a service that never arrives.
+    // `Fiber#await()` resolves anyway, so the mount reports live and the only
+    // trace is what the host logged while composing the subtree. Those lines
+    // must survive into the exportable log; the verdict itself must not move.
+    const dir = mkdtempSync(join(tmpdir(), 'dshm-hot-'))
+    const logFile = join(dir, 'events.log')
+    configurePersistentLog(logFile)
+    try {
+      entryPkg(dir, 'quiet-entry')
+      let sink: { export(message: { name?: string; type?: string; args?: unknown[] }): void } | undefined
+      const disposed: string[] = []
+      const logging = {
+        plugin: () => {
+          sink?.export({ name: 'mkt-quiet-entry', type: 'warn', args: ['service "database" is required but not provided'] })
+          sink?.export({ name: 'unrelated', type: 'info', args: ['must not be copied'] })
+          return { await: () => Promise.resolve(), dispose: () => {} }
+        },
+        logger: {
+          info: () => {},
+          warn: () => {},
+          exporter: (next: { export(message: { name?: string; type?: string; args?: unknown[] }): void }) => {
+            sink = next
+            return () => { disposed.push('disposed') }
+          },
+        },
+      }
+
+      const result = await hotMount(logging, dir, 'quiet-entry')
+      expect(result.ok).toBe(true)
+      expect(result.reason).toBeNull()
+      const logged = readPersistentLog(logFile).join('\n')
+      expect(logged).toContain('quiet-entry: live')
+      expect(logged).toContain('the host logged this while mounting — mkt-quiet-entry: service')
+      expect(logged).toContain('is required but not provided')
+      expect(logged).not.toContain('must not be copied')
+      // The sink must not outlive the mount.
+      expect(disposed).toEqual(['disposed'])
+    } finally {
+      configurePersistentLog(null)
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('mounts exactly as before when the host logger cannot export', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dshm-hot-'))
+    try {
+      entryPkg(dir, 'plain-host')
+      const result = await hotMount({ plugin: () => ({ await: () => Promise.resolve(), dispose: () => {} }) }, dir, 'plain-host')
+      expect(result.ok).toBe(true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
