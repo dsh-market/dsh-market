@@ -6180,6 +6180,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		/** One local snapshot shared by the market page, settings and sidebar. */
 		const IGNORED_UPDATES_SESSION_KEY$1 = "dshm-updates-ignored";
 		const RESTART_SESSION_KEY = "dshm-restart";
+		const SEEN_UPDATES_KEY_PREFIX = "dshm-updates-seen:";
 		const POLL_MS = 3e4;
 		const initialState = () => ({
 			enabled: false,
@@ -6225,6 +6226,96 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			]);
 			return Object.entries(snapshot.updates).filter(([name, status]) => !quiet.has(name) && status.notAPlugin !== true && (status.updateAvailable === true || status.kind === "generation" && status.latest != null)).map(([name]) => name).sort();
 		}
+		const seenInMemory = /* @__PURE__ */ new Map();
+		const unpersistedSeen = /* @__PURE__ */ new Set();
+		function seenScope(snapshot) {
+			const persistent = typeof snapshot.profileKey === "string" && snapshot.profileKey !== "";
+			if (!persistent && snapshot.boot === "") return null;
+			return {
+				key: SEEN_UPDATES_KEY_PREFIX + JSON.stringify([
+					api("/dsh-market/update-notifications"),
+					persistent ? "profile" : "boot",
+					persistent ? snapshot.profileKey : snapshot.boot
+				]),
+				persistent
+			};
+		}
+		function seenStorage(scope) {
+			return scope.persistent ? localStorage : sessionStorage;
+		}
+		function readSeen(scope) {
+			if (unpersistedSeen.has(scope.key)) return seenInMemory.get(scope.key) ?? /* @__PURE__ */ new Set();
+			try {
+				const raw = seenStorage(scope).getItem(scope.key);
+				if (raw === null) {
+					seenInMemory.delete(scope.key);
+					return /* @__PURE__ */ new Set();
+				}
+				const saved = JSON.parse(raw);
+				if (!isRecord(saved) || saved.version !== 1 || !Array.isArray(saved.fingerprints) || !saved.fingerprints.every((value) => typeof value === "string" && value !== "")) {
+					seenInMemory.delete(scope.key);
+					return /* @__PURE__ */ new Set();
+				}
+				const fingerprints = new Set(saved.fingerprints);
+				seenInMemory.set(scope.key, fingerprints);
+				return fingerprints;
+			} catch (error) {
+				if (error instanceof SyntaxError) {
+					seenInMemory.delete(scope.key);
+					return /* @__PURE__ */ new Set();
+				}
+				return seenInMemory.get(scope.key) ?? /* @__PURE__ */ new Set();
+			}
+		}
+		function updateFingerprint(snapshot, name) {
+			const status = snapshot.updates[name];
+			const migration = status.sourceMigration;
+			return JSON.stringify([
+				name,
+				status.kind ?? null,
+				status.current ?? null,
+				status.version ?? null,
+				status.eligibleVersion ?? status.latest ?? null,
+				status.restoreRequired === true,
+				migration?.kind === "git-to-npm" ? [
+					migration.kind,
+					migration.repo,
+					migration.target
+				] : migration?.kind === "npm-rename" ? [
+					migration.kind,
+					migration.from,
+					migration.target
+				] : null
+			]);
+		}
+		/** Sidebar attention is unread state; the pending update list stays intact. */
+		function unseenNotificationNames(snapshot) {
+			const names = notificationNames(snapshot);
+			const scope = seenScope(snapshot);
+			if (scope === null) return names;
+			const seen = readSeen(scope);
+			return names.filter((name) => !seen.has(updateFingerprint(snapshot, name)));
+		}
+		/** Returns true only when the visit acknowledged at least one new update. */
+		function acknowledgeSnapshot(snapshot) {
+			const scope = seenScope(snapshot);
+			if (scope === null) return false;
+			const saved = readSeen(scope);
+			const seen = new Set(saved);
+			for (const name of notificationNames(snapshot)) seen.add(updateFingerprint(snapshot, name));
+			if (seen.size === saved.size) return false;
+			seenInMemory.set(scope.key, seen);
+			try {
+				seenStorage(scope).setItem(scope.key, JSON.stringify({
+					version: 1,
+					fingerprints: [...seen]
+				}));
+				unpersistedSeen.delete(scope.key);
+			} catch {
+				unpersistedSeen.add(scope.key);
+			}
+			return true;
+		}
 		function isRecord(value) {
 			return value !== null && typeof value === "object" && !Array.isArray(value);
 		}
@@ -6241,7 +6332,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		}
 		/** Reject a malformed local response instead of replacing a useful cached result. */
 		function readSnapshot(value) {
-			if (!isRecord(value) || typeof value.enabled !== "boolean" || value.intervalHours !== void 0 && !isUpdateCheckIntervalHours(value.intervalHours) || typeof value.checking !== "boolean" || typeof value.stale !== "boolean" || typeof value.boot !== "string" || !(value.error === null || typeof value.error === "string") || ![
+			if (!isRecord(value) || typeof value.enabled !== "boolean" || value.intervalHours !== void 0 && !isUpdateCheckIntervalHours(value.intervalHours) || typeof value.checking !== "boolean" || value.profileKey !== void 0 && (typeof value.profileKey !== "string" || value.profileKey === "") || typeof value.stale !== "boolean" || typeof value.boot !== "string" || !(value.error === null || typeof value.error === "string") || ![
 				"checkedAt",
 				"lastSuccessAt",
 				"nextCheckAt"
@@ -6353,7 +6444,14 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				publish({ ...state });
 			};
 			const storageChanged = (event) => {
-				if (event.key === null || event.key === IGNORED_UPDATES_SESSION_KEY$1 || event.key === RESTART_SESSION_KEY) preferencesChanged();
+				if (event.key === null) {
+					seenInMemory.clear();
+					unpersistedSeen.clear();
+				} else if (event.key.startsWith(SEEN_UPDATES_KEY_PREFIX)) {
+					seenInMemory.delete(event.key);
+					unpersistedSeen.delete(event.key);
+				}
+				if (event.key === null || event.key === IGNORED_UPDATES_SESSION_KEY$1 || event.key === RESTART_SESSION_KEY || event.key.startsWith(SEEN_UPDATES_KEY_PREFIX)) preferencesChanged();
 			};
 			return {
 				getSnapshot: () => state,
@@ -6396,6 +6494,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				check: () => mutate({ check: true }),
 				setEnabled: (enabled) => mutate({ enabled }),
 				setIntervalHours: (intervalHours) => state.intervalHours === null ? Promise.reject(/* @__PURE__ */ new Error("This server does not support changing the check interval. Restart Harness to use this setting.")) : mutate({ intervalHours }),
+				acknowledge: (snapshot = state) => {
+					if (acknowledgeSnapshot(snapshot)) preferencesChanged();
+				},
 				preferencesChanged
 			};
 		}
@@ -6408,6 +6509,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		const setUpdateNotificationsEnabled = updateNotifications.setEnabled;
 		const setUpdateNotificationsIntervalHours = updateNotifications.setIntervalHours;
 		const notifyUpdatePreferencesChanged = updateNotifications.preferencesChanged;
+		const acknowledgeUpdateNotifications = updateNotifications.acknowledge;
 		function useUpdateNotifications() {
 			return (0, react.useSyncExternalStore)(subscribeUpdateNotifications, getUpdateNotificationsSnapshot, getUpdateNotificationsSnapshot);
 		}
@@ -19621,8 +19723,44 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			whiteSpace: "nowrap",
 			border: 0
 		};
-		function PluginsUpdateIcon({ original: Original, owner }) {
-			const count = notificationNames(useUpdateNotifications()).length;
+		/** The host may mount more than one responsive sidebar; any active copy is a visit. */
+		function createIconActivity() {
+			const instances = /* @__PURE__ */ new Map();
+			const listeners = /* @__PURE__ */ new Set();
+			let current;
+			const publish = () => {
+				const values = [...instances.values()];
+				const next = values.includes(true) ? true : values.includes(false) ? false : void 0;
+				if (next === current) return;
+				current = next;
+				for (const listener of listeners) listener();
+			};
+			return {
+				getSnapshot: () => current,
+				subscribe: (listener) => {
+					listeners.add(listener);
+					return () => {
+						listeners.delete(listener);
+					};
+				},
+				track: (active) => {
+					const key = Symbol();
+					instances.set(key, active);
+					publish();
+					return () => {
+						instances.delete(key);
+						publish();
+					};
+				}
+			};
+		}
+		function PluginsUpdateIcon({ original: Original, owner, activity }) {
+			const snapshot = useUpdateNotifications();
+			(0, react.useLayoutEffect)(() => activity.track(owner.active), [activity, owner.active]);
+			(0, react.useLayoutEffect)(() => {
+				if (owner.active === true) acknowledgeUpdateNotifications(snapshot);
+			}, [owner.active, snapshot]);
+			const count = owner.active === false ? unseenNotificationNames(snapshot).length : 0;
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
 				"data-dsh-market-plugins-indicator": "",
 				style: {
@@ -19638,9 +19776,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				}) : null]
 			});
 		}
-		function UpdateAnnouncement({ t, locale }) {
+		function UpdateAnnouncement({ t, locale, activity }) {
 			(0, react.useSyncExternalStore)((listener) => locale.subscribe(listener), () => locale.getSnapshot().active, () => locale.getSnapshot().active);
-			const count = notificationNames(useUpdateNotifications()).length;
+			const active = (0, react.useSyncExternalStore)(activity.subscribe, activity.getSnapshot, activity.getSnapshot);
+			const snapshot = useUpdateNotifications();
+			const count = active === false ? unseenNotificationNames(snapshot).length : 0;
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 				role: "status",
 				"aria-live": "polite",
@@ -19675,9 +19815,34 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			let stopIcon;
 			let stopAnnouncement;
 			const controllers = [];
+			const activity = createIconActivity();
+			const quietly = (stop) => {
+				try {
+					stop?.();
+				} catch {}
+			};
+			const dispose = () => {
+				if (disposed) return;
+				disposed = true;
+				quietly(stopIcon);
+				quietly(stopAnnouncement);
+				for (const stop of controllers.splice(0).reverse()) quietly(stop);
+			};
 			const install = (slot, callback) => {
-				const off = slots.inject(slot, () => disposed ? () => {} : callback());
-				if (typeof off === "function") controllers.push(off);
+				if (disposed) return;
+				const off = slots.inject(slot, () => {
+					if (disposed) return () => {};
+					try {
+						return callback();
+					} catch {
+						dispose();
+						return () => {};
+					}
+				});
+				if (typeof off === "function") {
+					if (disposed) quietly(off);
+					else controllers.push(off);
+				}
 			};
 			try {
 				install("sidebar.panellist", () => {
@@ -19692,7 +19857,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						stopDecoration = void 0;
 						Decoration = void 0;
 						original = void 0;
-						stop?.();
+						quietly(stop);
 					};
 					const reconcile = () => {
 						if (closed || disposed) return;
@@ -19711,7 +19876,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 							const Original = next.component;
 							Decoration = (owner) => (0, react.createElement)(PluginsUpdateIcon, {
 								original: Original,
-								owner
+								owner,
+								activity
 							});
 							const off = slots.register({
 								name: "sidebar.panellist",
@@ -19723,9 +19889,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 							}, Decoration);
 							original = next;
 							stopDecoration = typeof off === "function" ? off : void 0;
-						} catch (error) {
-							remove();
-							console.warn("[dsh-market] Plugin update indicator could not attach; the host entry is unchanged.", error);
+						} catch {
+							dispose();
 						} finally {
 							reconciling = false;
 							if (changedWhileReconciling) {
@@ -19737,7 +19902,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					const unsubscribe = slots.subscribe("sidebar.panellist", reconcile);
 					stopIcon = () => {
 						closed = true;
-						unsubscribe();
+						quietly(unsubscribe);
 						remove();
 					};
 					reconcile();
@@ -19749,21 +19914,16 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						id: "dsh-market-update-announcement"
 					}, () => (0, react.createElement)(UpdateAnnouncement, {
 						t,
-						locale
+						locale,
+						activity
 					}));
 					stopAnnouncement = typeof off === "function" ? off : () => {};
 					return stopAnnouncement;
 				});
-			} catch (error) {
-				console.warn("[dsh-market] Plugin update indicator is unavailable on this host.", error);
+			} catch {
+				dispose();
 			}
-			return () => {
-				if (disposed) return;
-				disposed = true;
-				stopIcon?.();
-				stopAnnouncement?.();
-				for (const stop of controllers.reverse()) stop();
-			};
+			return dispose;
 		}
 		//#endregion
 		//#region src/client/index.ts

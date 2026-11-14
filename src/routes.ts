@@ -8,6 +8,7 @@
  * same-origin POSTs and only sources present in the curated registry.
  */
 
+import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { Readable } from 'node:stream'
@@ -2619,6 +2620,8 @@ export function mountMarketRoutes(
 
   const updateNotifications = createUpdateNotificationMonitor({
     boot: BOOT_ID,
+    // Keep read receipts scoped across restarts without sending local paths.
+    profileKey: createHash('sha256').update(activeProfileDir).digest('hex'),
     enabled: marketState.backgroundUpdateChecks === true,
     intervalHours: marketState.backgroundUpdateIntervalHours,
     inventory: () => {

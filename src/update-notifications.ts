@@ -19,6 +19,8 @@ export interface UpdateNotificationSnapshot {
   error: string | null
   updates: Record<string, UpdateStatus>
   boot: string
+  /** Stable opaque profile identity for client-side read receipts. */
+  profileKey?: string
   updateExempt: string[]
   disabled: string[]
   blocked: string[]
@@ -33,6 +35,7 @@ export interface UpdateNotificationInventory {
 
 interface MonitorDependencies {
   boot: string
+  profileKey?: string
   enabled: boolean
   intervalHours?: UpdateCheckIntervalHours
   inventory(): UpdateNotificationInventory
@@ -172,6 +175,7 @@ export function createUpdateNotificationMonitor(deps: MonitorDependencies): Upda
       return {
         enabled, intervalHours, checking: pending !== null, checkedAt, lastSuccessAt, nextCheckAt,
         stale, error, updates: { ...updates }, boot: deps.boot, ...deps.preferences(),
+        ...(deps.profileKey === undefined ? {} : { profileKey: deps.profileKey }),
       }
     },
     check,

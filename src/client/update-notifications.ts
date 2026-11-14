@@ -12,6 +12,7 @@ export interface UpdateNotificationSnapshot extends Omit<ServerUpdateNotificatio
 
 const IGNORED_UPDATES_SESSION_KEY = 'dshm-updates-ignored'
 const RESTART_SESSION_KEY = 'dshm-restart'
+const SEEN_UPDATES_KEY_PREFIX = 'dshm-updates-seen:'
 const POLL_MS = 30_000
 
 export interface UpdateNotificationsState extends UpdateNotificationSnapshot {
@@ -61,6 +62,96 @@ export function notificationNames(snapshot: UpdateNotificationSnapshot): string[
     .map(([name]) => name).sort()
 }
 
+interface SeenScope { key: string; persistent: boolean }
+// Storage can be unavailable in a restricted webview. Keep acknowledgements
+// effective for this client lifetime; readable invalid records still fail open.
+const seenInMemory = new Map<string, Set<string>>()
+const unpersistedSeen = new Set<string>()
+
+function seenScope(snapshot: UpdateNotificationSnapshot): SeenScope | null {
+  const persistent = typeof snapshot.profileKey === 'string' && snapshot.profileKey !== ''
+  if (!persistent && snapshot.boot === '') return null
+  // The endpoint separates reverse-proxy deployments on the same origin;
+  // profileKey is opaque and never stores the host's filesystem path here.
+  return {
+    key: SEEN_UPDATES_KEY_PREFIX + JSON.stringify([api('/dsh-market/update-notifications'),
+      persistent ? 'profile' : 'boot', persistent ? snapshot.profileKey : snapshot.boot]),
+    persistent,
+  }
+}
+
+function seenStorage(scope: SeenScope): Storage {
+  return scope.persistent ? localStorage : sessionStorage
+}
+
+function readSeen(scope: SeenScope): Set<string> {
+  if (unpersistedSeen.has(scope.key)) return seenInMemory.get(scope.key) ?? new Set()
+  try {
+    const raw = seenStorage(scope).getItem(scope.key)
+    if (raw === null) {
+      seenInMemory.delete(scope.key)
+      return new Set()
+    }
+    const saved: unknown = JSON.parse(raw)
+    if (!isRecord(saved) || saved.version !== 1 || !Array.isArray(saved.fingerprints)
+      || !saved.fingerprints.every(value => typeof value === 'string' && value !== '')) {
+      seenInMemory.delete(scope.key)
+      return new Set()
+    }
+    const fingerprints = new Set<string>(saved.fingerprints)
+    seenInMemory.set(scope.key, fingerprints)
+    return fingerprints
+  } catch (error) {
+    // A malformed JSON record is not evidence that an update was seen.
+    if (error instanceof SyntaxError) {
+      seenInMemory.delete(scope.key)
+      return new Set()
+    }
+    return seenInMemory.get(scope.key) ?? new Set()
+  }
+}
+
+function updateFingerprint(snapshot: UpdateNotificationSnapshot, name: string): string {
+  const status = snapshot.updates[name]!
+  const migration = status.sourceMigration
+  return JSON.stringify([
+    name, status.kind ?? null, status.current ?? null, status.version ?? null,
+    status.eligibleVersion ?? status.latest ?? null, status.restoreRequired === true,
+    migration?.kind === 'git-to-npm'
+      ? [migration.kind, migration.repo, migration.target]
+      : migration?.kind === 'npm-rename' ? [migration.kind, migration.from, migration.target] : null,
+  ])
+}
+
+/** Sidebar attention is unread state; the pending update list stays intact. */
+export function unseenNotificationNames(snapshot: UpdateNotificationSnapshot): string[] {
+  const names = notificationNames(snapshot)
+  const scope = seenScope(snapshot)
+  if (scope === null) return names
+  const seen = readSeen(scope)
+  return names.filter(name => !seen.has(updateFingerprint(snapshot, name)))
+}
+
+/** Returns true only when the visit acknowledged at least one new update. */
+function acknowledgeSnapshot(snapshot: UpdateNotificationSnapshot): boolean {
+  const scope = seenScope(snapshot)
+  if (scope === null) return false
+  const saved = readSeen(scope)
+  const seen = new Set(saved)
+  for (const name of notificationNames(snapshot)) seen.add(updateFingerprint(snapshot, name))
+  if (seen.size === saved.size) return false
+  seenInMemory.set(scope.key, seen)
+  try {
+    seenStorage(scope).setItem(scope.key, JSON.stringify({ version: 1, fingerprints: [...seen] }))
+    unpersistedSeen.delete(scope.key)
+  } catch {
+    // A full quota can block writes while reads still work. Remember that
+    // the in-memory receipt is newer than the unchanged stored record.
+    unpersistedSeen.add(scope.key)
+  }
+  return true
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
@@ -76,6 +167,7 @@ function isUpdateStatus(value: unknown): boolean {
 /** Reject a malformed local response instead of replacing a useful cached result. */
 function readSnapshot(value: unknown): UpdateNotificationSnapshot {
   if (!isRecord(value) || typeof value.enabled !== 'boolean' || (value.intervalHours !== undefined && !isUpdateCheckIntervalHours(value.intervalHours)) || typeof value.checking !== 'boolean'
+    || (value.profileKey !== undefined && (typeof value.profileKey !== 'string' || value.profileKey === ''))
     || typeof value.stale !== 'boolean' || typeof value.boot !== 'string'
     || !(value.error === null || typeof value.error === 'string')
     || !['checkedAt', 'lastSuccessAt', 'nextCheckAt'].every(key => value[key] === null || (typeof value[key] === 'number' && Number.isFinite(value[key])))
@@ -99,6 +191,8 @@ export interface UpdateNotificationsStore {
   check(): Promise<UpdateNotificationsState>
   setEnabled(enabled: boolean): Promise<UpdateNotificationsState>
   setIntervalHours(intervalHours: UpdateCheckIntervalHours): Promise<UpdateNotificationsState>
+  /** Acknowledge the updates visible when the host's Plugins page was entered. */
+  acknowledge(snapshot?: UpdateNotificationSnapshot): void
   preferencesChanged(): void
 }
 
@@ -188,7 +282,15 @@ export function createUpdateNotificationsStore(request: typeof fetch = (...args)
   }
   const preferencesChanged = (): void => { publish({ ...state }) }
   const storageChanged = (event: StorageEvent): void => {
-    if (event.key === null || event.key === IGNORED_UPDATES_SESSION_KEY || event.key === RESTART_SESSION_KEY) preferencesChanged()
+    if (event.key === null) {
+      seenInMemory.clear()
+      unpersistedSeen.clear()
+    } else if (event.key.startsWith(SEEN_UPDATES_KEY_PREFIX)) {
+      seenInMemory.delete(event.key)
+      unpersistedSeen.delete(event.key)
+    }
+    if (event.key === null || event.key === IGNORED_UPDATES_SESSION_KEY || event.key === RESTART_SESSION_KEY
+      || event.key.startsWith(SEEN_UPDATES_KEY_PREFIX)) preferencesChanged()
   }
   return {
     getSnapshot: () => state,
@@ -226,6 +328,7 @@ export function createUpdateNotificationsStore(request: typeof fetch = (...args)
     setIntervalHours: intervalHours => state.intervalHours === null
       ? Promise.reject(new Error('This server does not support changing the check interval. Restart Harness to use this setting.'))
       : mutate({ intervalHours }),
+    acknowledge: (snapshot = state) => { if (acknowledgeSnapshot(snapshot)) preferencesChanged() },
     preferencesChanged,
   }
 }
@@ -239,6 +342,7 @@ export const checkUpdateNotifications = updateNotifications.check
 export const setUpdateNotificationsEnabled = updateNotifications.setEnabled
 export const setUpdateNotificationsIntervalHours = updateNotifications.setIntervalHours
 export const notifyUpdatePreferencesChanged = updateNotifications.preferencesChanged
+export const acknowledgeUpdateNotifications = updateNotifications.acknowledge
 
 export function useUpdateNotifications(): UpdateNotificationsState {
   return useSyncExternalStore(subscribeUpdateNotifications, getUpdateNotificationsSnapshot, getUpdateNotificationsSnapshot)

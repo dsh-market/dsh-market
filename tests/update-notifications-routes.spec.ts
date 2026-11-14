@@ -67,6 +67,24 @@ afterEach(() => {
 })
 
 describe('update notification HTTP routes', () => {
+  it('scopes read receipts to a stable opaque profile identity across remounts', async () => {
+    const first = (await hit('GET')).json.profileKey
+    expect(first).toMatch(/^[a-f0-9]{64}$/)
+    expect(first).not.toContain(dir)
+    dispose()
+    dispose = mountMarketRoutes(host, { profile: 'web', profileDirectory: dir, region: 'global' })
+    expect((await hit('GET')).json.profileKey).toBe(first)
+
+    dispose()
+    const otherProfile = join(dir, 'other-profile')
+    mkdirSync(otherProfile)
+    writeFileSync(join(otherProfile, 'package.json'), JSON.stringify({ dependencies: {} }))
+    dispose = mountMarketRoutes(host, { profile: 'web', profileDirectory: otherProfile, region: 'global' })
+    expect((await hit('GET')).json.profileKey).not.toBe(first)
+    expect(registry.loadRegistry).not.toHaveBeenCalled()
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
   it('defaults to off and starts checking only after explicit opt-in', async () => {
     const first = await hit('GET')
     expect(first.status).toBe(200)
