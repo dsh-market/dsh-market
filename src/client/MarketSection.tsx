@@ -42,6 +42,7 @@ import css from './Market.module.css'
 import { MARK_BLOCK_RADIUS, MARK_BLOCK_SIZE, MARK_GRID_BLOCKS, MARK_PLUG_BLOCK, MARK_VIEW_BOX } from './market-mark.ts'
 import { CommentsModal } from './CommentsModal.tsx'
 import { SearchInput } from './SearchInput.tsx'
+import { DiscoveryScan } from './discovery-scan.ts'
 import { downloadStatistic, downloadStatsText, starStatsText } from './download-stats.ts'
 import { OperationsPanel } from './OperationsPanel.tsx'
 import { applyRecovery, fetchRecovery, initialKeep, RecoveryPanel, watchRestart, type RecoveryView } from './RecoveryPanel.tsx'
@@ -61,7 +62,7 @@ import {
 } from './market-data.ts'
 import type {
 ActivationInfo, ActivationState, DrainHistoryWire, DrainOperationWire, GistExportResult, InstalledMap, InstalledRepoHints, InstalledRepoIdentities, InstalledSort, InstallStamp, MarketStatus, Registry, RegistryPlugin,
-  HostCompatibility, HostCompatibilityMap, ScreenshotCandidate, ScreenshotMeasurement, SharedHostPackageDependencyFinding, SortDir, SortField, ThemeSnapshot, TimeRange, Translate, UpdateStatus,
+  ScreenshotCandidate, ScreenshotMeasurement, SharedHostPackageDependencyFinding, SortDir, SortField, ThemeSnapshot, TimeRange, Translate, UpdateStatus,
 } from './market-data.ts'
 
 function isHostDependencyFinding(value: unknown): value is SharedHostPackageDependencyFinding {
@@ -84,12 +85,6 @@ const SLOW_INSTALL_SECONDS = 90
 const RECONNECT_BUDGET_MS = 90_000
 const RECONNECT_REQUEST_MS = 4000
 const IGNORED_UPDATES_SESSION_KEY = 'dshm-updates-ignored'
-const UNAVAILABLE_HOST_COMPATIBILITY: HostCompatibility = {
-  status: 'unknown',
-  basis: 'unavailable',
-  requirement: null,
-  declarations: [],
-}
 
 /**
  * Read the update reminders dismissed for this host process. The boot id is
@@ -890,6 +885,11 @@ export function resetThemePreviewCache(): void {
   measuredThemePreviewTasks.clear()
   measuredThemePreviewResults.clear()
 }
+
+const discoveryScan = new DiscoveryScan(() => {
+  resetScreenshotsCache()
+  resetThemePreviewCache()
+})
 
 /** README fetch + geometry probes, shared across search/page remounts. */
 function measuredThemePreview(plugin: RegistryPlugin): Promise<string[]> {
@@ -1867,17 +1867,10 @@ function CatalogVersionMark({ version, tip }: { version: string | null | undefin
  * the Installed tab's red dot / 「更新」buttons flash off then on, and the
  * two entries disagree until both refetches finish.
  */
-let cachedRegistry: Registry | null = null
 let cachedInstalled: InstalledMap | null = null
 let cachedLocalDescriptions: Record<string, string> = {}
 let cachedRepoIdentities: InstalledRepoIdentities | null = null
 let cachedRepoHints: InstalledRepoHints | null = null
-let cachedHostCompatibility: HostCompatibilityMap = {}
-let cachedHostVersion: string | null | undefined = undefined
-/** Names with an in-flight discovery-compatibility request (module-wide). */
-const hostCompatibilityInFlight = new Set<string>()
-/** Subscribers for useSyncExternalStore — every mounted MarketSection. */
-const hostCompatibilityListeners = new Set<() => void>()
 let cachedUpdates: Record<string, UpdateStatus> = {}
 /** False until /dsh-market/updates has answered at least once this process. */
 let cachedUpdatesReady = false
@@ -1905,9 +1898,7 @@ function cacheState<T>(write: (value: T) => void, setState: (value: T | ((curren
 
 /** Test helper: drop the shared surface caches between cases. */
 export function resetHostCompatibilityCache(): void {
-  cachedHostCompatibility = {}
-  cachedHostVersion = undefined
-  hostCompatibilityInFlight.clear()
+  discoveryScan.reset()
   cachedUpdates = {}
   cachedUpdatesReady = false
   cachedInstalledReady = false
@@ -1920,32 +1911,6 @@ export function resetHostCompatibilityCache(): void {
   cachedInstalledBundles = []
   cachedActivations = {}
   cachedMarketVersion = null
-}
-
-/** Any cached answer counts — including unavailable. Re-querying every
- * remount used to re-POST thousands of names; a host-version change (below)
- * is what drops the map for a fresh scan. */
-function hostCompatibilitySettled(name: string): boolean {
-  return cachedHostCompatibility[name] !== undefined
-}
-
-function clearHostCompatibilityCache(): void {
-  cachedHostCompatibility = {}
-  hostCompatibilityInFlight.clear()
-  for (const listener of hostCompatibilityListeners) listener()
-}
-
-function subscribeHostCompatibility(onStoreChange: () => void): () => void {
-  hostCompatibilityListeners.add(onStoreChange)
-  return () => { hostCompatibilityListeners.delete(onStoreChange) }
-}
-
-/** Merge into the module cache and notify every mounted MarketSection — a
- * sidebar/settings switch used to drop in-flight setStates and leave the
- * note frozen at 「正在检查 665/2455」. */
-function commitHostCompatibility(accepted: HostCompatibilityMap): void {
-  cachedHostCompatibility = { ...cachedHostCompatibility, ...accepted }
-  for (const listener of hostCompatibilityListeners) listener()
 }
 
 /** Discover grid page-size choices — the catalog grows daily, so cap each page. */
@@ -2234,18 +2199,6 @@ function withoutHostProjection(
 }
 
 /**
- * Whether the "compatible with this host" filter starts on, and remembers the
- * answer once the user disagrees with the default (#872).
- *
- * Storage may be unavailable (private mode, a locked-down webview); the
- * default is what matters, so a failure to read it is not a failure.
- */
-const HOST_FILTER_KEY = 'dshm-host-filter'
-function readHostFilterPreference(): boolean {
-  try { return localStorage.getItem(HOST_FILTER_KEY) !== 'all' } catch { return true }
-}
-
-/**
  * 最近收录 display preferences: collapsed / hidden (#940).
  *
  * The block only appears on the discover tab with an empty search and both
@@ -2254,7 +2207,7 @@ function readHostFilterPreference(): boolean {
  * are display preferences, not profile settings: since 0.1.7 the settings
  * surface is deliberately just `allowRestart`.
  *
- * Same read discipline as HOST_FILTER_KEY above: an unavailable store falls
+ * When localStorage is unavailable, the preference falls
  * back to the default, and the default is "expanded and shown".
  */
 const RECENT_COLLAPSED_KEY = 'dshm-recent-collapsed'
@@ -2481,7 +2434,8 @@ export function MarketSection(props: MarketSectionProps) {
     props.themeStore.subscribe,
     props.themeStore.getSnapshot,
   )
-  const [data, setData] = useState<Registry | null>(cachedRegistry)
+  const compatibility = useSyncExternalStore(discoveryScan.subscribe, discoveryScan.getSnapshot)
+  const { catalog: data, enabled: compatibleWithHost, hostVersion, verdicts: hostCompatibility } = compatibility
   const [loadError, setLoadError] = useState<string | null>(null)
   /**
    * The host answered 404 on one of the market's own routes (#962).
@@ -3091,7 +3045,7 @@ export function MarketSection(props: MarketSectionProps) {
    * "npm latest" beside a number that is not npm's latest is a bug report
    * waiting to be filed. Null until the catalog answers.
    */
-  const [catalogUpdated, setCatalogUpdated] = useState<string | null>(null)
+  const catalogUpdated = data?.updated?.trim() || null
   const catalogVersionTip = useMemo(
     () => (catalogUpdated === null
       ? t('catalogVersionUndated')
@@ -3230,38 +3184,11 @@ export function MarketSection(props: MarketSectionProps) {
   const [sortField, setSortField] = useState<SortField>('downloads')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
   const [timeRange, setTimeRange] = useState<TimeRange>('all')
-  /** Undefined while the first catalog response is pending; null means the host cannot be located. */
-  const [hostVersion, setHostVersionState] = useState<string | null | undefined>(() => cachedHostVersion)
-  const setHostVersion = useCallback((value: string | null | undefined) => {
-    // Same process, different DSH — peer ranges were judged against the old
-    // host and must not keep filtering the list.
-    if (typeof cachedHostVersion === 'string' && typeof value === 'string' && value !== cachedHostVersion) {
-      clearHostCompatibilityCache()
-    }
-    cachedHostVersion = value
-    setHostVersionState(value)
-  }, [])
-  /** v1 is deliberately opt-in: undeclared/unknown entries stay visible even when enabled. */
-  // #872: ON by default. The report measured it on a live 0.2.0-rc.2 host —
-  // 175 discovered plugins, 45 of them declaring that host — so the default
-  // list was ~74% installable-in-name-only, with nothing at list level saying
-  // so. That is the wrong default per this project's own rule: the default has
-  // to be the one that is right without reading anything. Turning it off is
-  // one click in the filter menu, and the choice sticks.
-  const [compatibleWithHost, setCompatibleWithHostState] = useState(readHostFilterPreference)
-  const setCompatibleWithHost = useCallback((next: boolean) => {
-    setCompatibleWithHostState(next)
-    try { localStorage.setItem(HOST_FILTER_KEY, next ? 'compatible' : 'all') } catch { /* storage unavailable — the choice just won't survive a reload */ }
-  }, [])
+  const setCompatibleWithHost = useCallback((next: boolean) => { discoveryScan.setEnabled(next) }, [])
   /** The profile this page is running in, for the manual command's own
    * `--profile` token (#872). The catalog's is always `web`. */
   const [profileName, setProfileName] = useState<string | null>(null)
-  const hostCompatibility = useSyncExternalStore(
-    subscribeHostCompatibility,
-    () => cachedHostCompatibility,
-    () => cachedHostCompatibility,
-  )
-  const [hostCompatibilityPending, setHostCompatibilityPending] = useState(0)
+  const compatibilityDemandOwner = useRef({})
   const [catsOpen, setCatsOpen] = useState(false)
   /** Themes tab: independent from Discover's sort/time state above — a
    * search or sort choice in one tab has no business resetting the other. */
@@ -3668,6 +3595,7 @@ export function MarketSection(props: MarketSectionProps) {
    * with the user left to guess whether the plugin landed.
    */
   const noteMarketGone = useCallback(() => {
+    discoveryScan.setUnavailable()
     setMarketGone(true)
     setBusyUrl(null)
     setUpdatingName(null)
@@ -3681,6 +3609,9 @@ export function MarketSection(props: MarketSectionProps) {
       sessionStorage.removeItem('dshm-updating')
     } catch { /* storage unavailable */ }
   }, [t])
+  useEffect(() => {
+    if (compatibility.gone) noteMarketGone()
+  }, [compatibility.gone, noteMarketGone])
 
   /**
    * The status payload, or `null` when the route answered 404 (#962). Every
@@ -3697,31 +3628,12 @@ export function MarketSection(props: MarketSectionProps) {
 
   const loadCatalog = useCallback(() => {
     setLoadError(null)
-    return fetch(api('/dsh-market/registry'), { cache: 'no-store' })
-      .then(async (res) => {
-        const body = (await res.json().catch(() => ({}))) as {
-          registry?: Registry
-          hostVersion?: string | null
-          error?: string
-        }
-        if (res.status === 404) {
+    return discoveryScan.resume()
+      .then((outcome) => {
+        if (outcome === 'gone') {
           noteMarketGone()
           throw new Error(t('marketGoneTitle'))
         }
-        if (!res.ok) throw new Error(typeof body.error === 'string' ? body.error : `HTTP ${String(res.status)}`)
-        return body
-      })
-      .then((body) => {
-        if (body.registry === undefined) throw new Error('the catalog response carried no data')
-        if (body.registry.updated !== cachedRegistry?.updated) {
-          resetScreenshotsCache()
-          resetThemePreviewCache()
-        }
-        cachedRegistry = body.registry
-        setData(body.registry)
-        const catalogDate = body.registry.updated
-        setCatalogUpdated(typeof catalogDate === 'string' && catalogDate.trim() !== '' ? catalogDate : null)
-        setHostVersion(typeof body.hostVersion === 'string' ? body.hostVersion : null)
         setLoadError(null)
       })
       // Report WHY. An unreachable catalog used to be answered with a
@@ -3756,6 +3668,7 @@ export function MarketSection(props: MarketSectionProps) {
         const res = await fetch(api('/dsh-market/status'), { cache: 'no-store', signal: inFlight.signal })
         const status = res.ok ? await res.json() as Partial<MarketStatus> | null : null
         if (!stopped && status !== null && typeof status === 'object' && typeof status.boot === 'string') {
+          discoveryScan.setBoot(status.boot)
           setMarketGone(false)
           void loadCatalog()
           refreshInstalled()
@@ -3780,59 +3693,6 @@ export function MarketSection(props: MarketSectionProps) {
     }
   }, [marketGone, reconnectRound, loadCatalog, refreshInstalled])
 
-  const loadHostCompatibility = useCallback(async (names: readonly string[]): Promise<void> => {
-    const unique = [...new Set(names)].filter(name => {
-      if (name === '' || hostCompatibilitySettled(name) || hostCompatibilityInFlight.has(name)) return false
-      hostCompatibilityInFlight.add(name)
-      return true
-    })
-    if (unique.length === 0) return
-    setHostCompatibilityPending(count => count + unique.length)
-    for (let offset = 0; offset < unique.length; offset += 64) {
-      const chunk = unique.slice(offset, offset + 64)
-      try {
-        const response = await fetch(api('/dsh-market/discovery-compatibility'), {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            packages: chunk.filter(key => !key.startsWith('https://')),
-            ...(chunk.some(key => key.startsWith('https://'))
-              ? { entries: chunk.filter(key => key.startsWith('https://')) } : {}),
-          }),
-        })
-        const body = await response.json() as {
-          hostVersion?: string | null
-          plugins?: Record<string, HostCompatibility>
-        }
-        if (!response.ok || body.plugins === null || typeof body.plugins !== 'object') {
-          throw new Error(`HTTP ${String(response.status)}`)
-        }
-        if (typeof body.hostVersion === 'string' || body.hostVersion === null) {
-          setHostVersion(body.hostVersion)
-        }
-        const accepted: HostCompatibilityMap = {}
-        for (const name of chunk) {
-          const item = body.plugins[name] as HostCompatibility | null | undefined
-          if (item === null || item === undefined
-            || !['compatible', 'incompatible', 'unknown'].includes(item.status)
-            || !['manifest', 'undeclared', 'unavailable'].includes(item.basis)
-            || (item.requirement !== null && typeof item.requirement !== 'string')
-            || !Array.isArray(item.declarations)) {
-            accepted[name] = UNAVAILABLE_HOST_COMPATIBILITY
-            continue
-          }
-          accepted[name] = item
-        }
-        commitHostCompatibility(accepted)
-      } catch {
-        commitHostCompatibility(Object.fromEntries(chunk.map(name => [name, UNAVAILABLE_HOST_COMPATIBILITY])))
-      } finally {
-        for (const name of chunk) hostCompatibilityInFlight.delete(name)
-        setHostCompatibilityPending(count => Math.max(0, count - chunk.length))
-      }
-    }
-  }, [setHostVersion])
-
   useEffect(() => {
     void loadCatalog()
     fetch(api('/dsh-market/status'), { cache: 'no-store' })
@@ -3854,6 +3714,7 @@ export function MarketSection(props: MarketSectionProps) {
         // within seconds and the images correct themselves.
         applyGithubRouting(status)
         if (typeof status.boot === 'string') {
+          discoveryScan.setBoot(status.boot)
           setBootId(status.boot)
           setIgnoredUpdateNames(ignoredUpdatesForBoot(status.boot))
           // A dismissal only silences the notice for the boot it was made
@@ -4376,15 +4237,20 @@ export function MarketSection(props: MarketSectionProps) {
   // Host filter, applied to the already-blocked list: the same rows
   // `visiblePlugins` dropped, and the same count the chip reports, at a cost
   // that does not grow with the catalog.
-  const { plugins, hostHiddenCount } = useMemo(() => {
-    if (!compatibleWithHost) return { plugins: pluginsUnblocked, hostHiddenCount: 0 }
+  const { plugins, hostHiddenCount, hostUnavailableCount } = useMemo(() => {
+    if (!compatibleWithHost) return { plugins: pluginsUnblocked, hostHiddenCount: 0, hostUnavailableCount: 0 }
     const compatible = (plugin: RegistryPlugin): boolean => {
       const key = hostCompatibilityKey(plugin)
       return key === null || hostCompatibility[key]?.status !== 'incompatible'
     }
     let hidden = 0
     for (const plugin of pluginsAll) if (!compatible(plugin)) hidden += 1
-    return { plugins: pluginsUnblocked.filter(compatible), hostHiddenCount: hidden }
+    let unavailable = 0
+    for (const plugin of pluginsUnblocked) {
+      const key = hostCompatibilityKey(plugin)
+      if (key !== null && hostCompatibility[key]?.basis === 'unavailable') unavailable += 1
+    }
+    return { plugins: pluginsUnblocked.filter(compatible), hostHiddenCount: hidden, hostUnavailableCount: unavailable }
   }, [pluginsAll, pluginsUnblocked, compatibleWithHost, hostCompatibility])
   // A sort the user chose is a request to see the list in THAT order, and
   // this block ignores the sort by design (it is "what was added in the last
@@ -4431,28 +4297,6 @@ export function MarketSection(props: MarketSectionProps) {
   const pagePlugins = surface === 'plugins'
     ? plugins.slice(0, discoverMore.shown)
     : plugins.slice((currentPage - 1) * pageSize, currentPage * pageSize)
-  const pageHostPackages = [...new Set([...pagePlugins, ...recentPlugins].flatMap(plugin =>
-    hostCompatibilityKey(plugin) === null ? [] : [hostCompatibilityKey(plugin)!]))]
-  const allHostPackages = useMemo(
-    () => [...new Set((data?.plugins ?? []).flatMap(plugin =>
-      hostCompatibilityKey(plugin) === null ? [] : [hostCompatibilityKey(plugin)!]))],
-    [data],
-  )
-  const pageHostPackagesKey = pageHostPackages.join('\u0000')
-  const allHostPackagesKey = allHostPackages.join('\u0000')
-  useEffect(() => {
-    if (tab === 'discover') void loadHostCompatibility(pageHostPackages)
-    // The key is the stable identity of this page's package/source set; the
-    // array itself is recreated as compatibility results arrive.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, pageHostPackagesKey, loadHostCompatibility])
-  useEffect(() => {
-    if (compatibleWithHost) void loadHostCompatibility(allHostPackages)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [compatibleWithHost, allHostPackagesKey, loadHostCompatibility])
-  const loadedHostPackages = allHostPackages.reduce(
-    (count, name) => count + (hostCompatibility[name] === undefined ? 0 : 1), 0,
-  )
 
   const themePluginsAll = useMemo(
     () => (data === null ? [] : visiblePlugins(data.plugins, {
@@ -4518,13 +4362,17 @@ export function MarketSection(props: MarketSectionProps) {
   // Favorites reuse pluginCard (and its host-requirement badge). Discover
   // already loads compatibility for the current page; without the same
   // fetch here the badge stays on "Reading host requirement…" forever.
-  const favoritePageHostPackages = [...new Set(favoritePagePlugins.flatMap(plugin =>
-    hostCompatibilityKey(plugin) === null ? [] : [hostCompatibilityKey(plugin)!]))]
-  const favoritePageHostPackagesKey = favoritePageHostPackages.join('\u0000')
+  const compatibilityCards = marketGone ? [] : tab === 'discover'
+    ? [...pagePlugins, ...(!recentHidden && !recentCollapsed ? recentPlugins : [])]
+    : tab === 'favorites' ? favoritePagePlugins : []
+  const compatibilityKeys = compatibilityCards.map(hostCompatibilityKey).filter(key => key !== null).join('\u0000')
   useEffect(() => {
-    if (tab === 'favorites') void loadHostCompatibility(favoritePageHostPackages)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, favoritePageHostPackagesKey, loadHostCompatibility])
+    discoveryScan.setDemand(compatibilityDemandOwner.current, compatibilityKeys === '' ? [] : compatibilityKeys.split('\u0000'))
+  }, [compatibilityKeys])
+  useEffect(() => {
+    const owner = compatibilityDemandOwner.current
+    return () => { discoveryScan.removeDemand(owner) }
+  }, [])
   const favoriteStale = useMemo(
     () => (data === null ? [] : staleFavoriteUrls(favoriteUrls, data.plugins)),
     [data, favoriteUrls])
@@ -8220,13 +8068,14 @@ export function MarketSection(props: MarketSectionProps) {
                       </div>
                       {compatibleWithHost && typeof hostVersion === 'string' && (
                         <div className={css.hostFilterNote}>
-                          {hostCompatibilityPending > 0 || loadedHostPackages < allHostPackages.length
+                          {compatibility.scanning
                             ? t('hostFilterLoading')
-                              .replace('{0}', String(loadedHostPackages))
-                              .replace('{1}', String(allHostPackages.length))
-                            : t('hostFilterActive')
+                              .replace('{0}', String(compatibility.attempted))
+                              .replace('{1}', String(compatibility.total))
+                            : t(hostUnavailableCount > 0 ? 'hostFilterIncomplete' : 'hostFilterActive')
                                 .replace('{0}', hostVersion)
-                                .replace('{1}', String(hostHiddenCount))}
+                                .replace('{1}', String(hostHiddenCount))
+                                .replace('{2}', String(hostUnavailableCount))}
                         </div>
                       )}
                     </div>

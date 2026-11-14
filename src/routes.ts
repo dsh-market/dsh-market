@@ -14,7 +14,7 @@ import { Readable } from 'node:stream'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { load as loadYaml } from 'js-yaml'
 import { packageFileFromRegistry } from './catalog-npm.ts'
-import { forgetCatalog, loadRegistry, pluginCategories } from './registry.ts'
+import { forgetCatalog, loadRegistry, pluginCategories, type Registry, type RegistryPlugin } from './registry.ts'
 import { settingsNamespaceState } from './settings.ts'
 import {
   buildEnvFromUnknown, cleanHotDir, forgetInstalled, hotMount, hotUnmount, listHotMounts, MAX_BLOCKED, MAX_BLOCKED_NAME, MAX_FAVORITES, MAX_NOTE, MAX_UPDATE_EXEMPT,
@@ -23,7 +23,7 @@ import {
 } from './hot.ts'
 import { createGroup, deleteGroup, removeFromGroups, renameGroup, setGroupMembers } from './groups.ts'
 import { dshHostInfo, findDshInstallDir } from './dsh-install.ts'
-import { catalogReleaseManifest, deriveHostCompatibility, DiscoveryManifestIndex, findCompatibleVersion } from './discovery-compatibility.ts'
+import { catalogReleaseManifest, deriveHostCompatibility, DiscoveryManifestIndex, findCompatibleVersion, githubCompatibilityRevision, type HostCompatibility } from './discovery-compatibility.ts'
 import { configurePersistentLog, exportLogs, logEvent, readPersistentLog } from './log.ts'
 import { marketFetch } from './net.ts'
 import { catalogReleaseSourceOf, publishedReleaseUpdate, type CatalogReleaseSource } from './release-updates.ts'
@@ -58,7 +58,7 @@ import { resolveRegion } from './region-probe.ts'
 import { acceleratedTarget, resolveHeadCommit } from './accelerate.ts'
 import { sourceWebUrl, updateNotesFor } from './changelog.ts'
 import { checkUpdates, isUpdatablePlugin, compareVersions, fetchNpmLatest, invalidateUpdates, readVersionMaturity, resolveDesktopMatureUpdate, resolveGitRemoteHead, isUpgrade, latestPublishedRecently, setUpdateRegistry, versionOnChannel } from './updates.ts'
-import { isStableReleaseVersion } from './release-candidates.ts'
+import { isExactReleaseVersion, isStableReleaseVersion } from './release-candidates.ts'
 import { createThemeManager, type LoaderEntry } from './themes.ts'
 import { readJsonBody, refuseUnadmitted, sameOrigin, sendJson } from './http.ts'
 import { resolveDshHome } from './home-paths.ts'
@@ -81,6 +81,50 @@ import { declaredPredecessors, findCatalogRename, findGitToNpmMigration, findNpm
 
 export type { LoaderEntry } from './themes.ts'
 export type { UpdateStatus } from './updates.ts'
+
+const DISCOVERY_RETRY_MS = 30_000
+
+type DiscoveryVerdict = HostCompatibility & { retryAfterMs?: number; catalogChanged?: true }
+type DiscoveryPlugin = RegistryPlugin & { compatibilityRevision?: string }
+type DiscoveryCatalog = Omit<Registry, 'plugins'> & { plugins: DiscoveryPlugin[] }
+
+/** These revisions describe the server's catalog, independently of what its source includes. */
+const discoveryCatalogs = new WeakMap<Registry, {
+  revisions: Map<string, { entry: RegistryPlugin; revision: string }>
+  response: DiscoveryCatalog
+}>()
+
+function discoveryCatalog(registry: Registry) {
+  const previous = discoveryCatalogs.get(registry)
+  if (previous !== undefined) return previous
+  const revisions = new Map<string, { entry: RegistryPlugin; revision: string }>()
+  const plugins = registry.plugins.map((entry): DiscoveryPlugin => {
+    if ((entry.npm == null || entry.npm === '') && typeof entry.url === 'string' && parseSourceUrl(entry.url) !== null) {
+      const revision = githubCompatibilityRevision(entry)
+      revisions.set(entry.url, { entry, revision })
+      return { ...entry, compatibilityRevision: revision }
+    }
+    if (!Object.hasOwn(entry, 'compatibilityRevision')) return entry
+    const { compatibilityRevision: _sourceRevision, ...plugin } = entry as DiscoveryPlugin
+    return plugin
+  })
+  const snapshot = { revisions, response: { ...registry, plugins } }
+  discoveryCatalogs.set(registry, snapshot)
+  return snapshot
+}
+
+function discoveryHints(
+  value: unknown, requested: ReadonlySet<string>, validValue: (hint: unknown) => hint is string,
+): Map<string, string> | null {
+  if (value === undefined) return new Map()
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null
+  const hints = new Map<string, string>()
+  for (const [key, hint] of Object.entries(value)) {
+    if (!requested.has(key) || !validValue(hint)) return null
+    hints.set(key, hint)
+  }
+  return hints
+}
 
 /**
  * Recognize the documented GitHub Release-download target shape. This does
@@ -3279,7 +3323,7 @@ export function mountMarketRoutes(
           try {
             const registry = await loadRegistry()
             sendJson(response, 200, {
-              registry,
+              registry: discoveryCatalog(registry).response,
               hostVersion: dshHostInfo()?.version ?? null,
             })
           } catch (error) {
@@ -3363,32 +3407,62 @@ export function mountMarketRoutes(
           sendJson(response, 400, { error: 'entries must be GitHub catalog URLs; at most 64 packages and entries per batch' })
           return
         }
-        const packages = [...new Set(requested as string[])]
+        const packages = new Set(requested as string[])
+        const urls = new Set(requestedEntries as string[])
+        const versions = discoveryHints((body as { versions?: unknown }).versions, packages, isExactReleaseVersion)
+        const revisions = discoveryHints((body as { githubRevisions?: unknown }).githubRevisions, urls,
+          (hint): hint is string => typeof hint === 'string' && hint.length === 64 && /^[a-f0-9]+$/.test(hint))
+        if (versions === null || revisions === null) {
+          sendJson(response, 400, { error: 'versions and githubRevisions must match entries in the current batch' })
+          return
+        }
         try {
-          const urls = new Set(requestedEntries as string[])
-          const entries = urls.size === 0 ? [] : (await loadRegistry()).plugins.filter(entry =>
-            urls.has(entry.url) && (entry.npm == null || entry.npm === ''))
-          if (new Set(entries.map(entry => entry.url)).size !== urls.size) {
-            sendJson(response, 400, { error: 'entries must name GitHub-only plugins in the current catalog' })
-            return
-          }
           const host = dshHostInfo()
           const hostVersion = host?.version ?? null
           const hostPackages = corePackageNames(host?.directory ?? null)
-          const catalogFacts = Object.fromEntries(entries.flatMap(entry => {
-            const facts = catalogReleaseManifest(entry)
-            return facts === null ? [] : [[entry.url, facts]]
-          }))
-          const [npmFacts, githubFacts] = await Promise.all([
-            discoveryManifests.lookup(packages, routesFor(region).npmRegistry),
-            githubDiscoveryManifests.lookupGitHub(entries.filter(entry => catalogFacts[entry.url] === undefined)),
+          const npmRegistry = routesFor(region).npmRegistry
+          const githubVerdicts = async (): Promise<Record<string, DiscoveryVerdict>> => {
+            if (urls.size === 0) return {}
+            const unavailable = deriveHostCompatibility(null, hostVersion, hostPackages)
+            const catalog = await loadRegistry().then(discoveryCatalog).catch(() => null)
+            if (catalog === null) {
+              return Object.fromEntries([...urls].map(url => [url, { ...unavailable, retryAfterMs: DISCOVERY_RETRY_MS }]))
+            }
+            const results: Record<string, DiscoveryVerdict> = {}
+            const fetchEntries: RegistryPlugin[] = []
+            for (const url of urls) {
+              const match = catalog.revisions.get(url)
+              const expected = revisions.get(url)
+              if (match === undefined || (expected !== undefined && expected !== match.revision)) {
+                results[url] = { ...unavailable, catalogChanged: true }
+                continue
+              }
+              const facts = catalogReleaseManifest(match.entry)
+              if (facts === null) fetchEntries.push(match.entry)
+              else results[url] = deriveHostCompatibility(facts, hostVersion, hostPackages)
+            }
+            if (fetchEntries.length === 0) return results
+            const factsByUrl = await githubDiscoveryManifests.lookupGitHub(fetchEntries)
+            for (const entry of fetchEntries) {
+              const facts = factsByUrl[entry.url] ?? null
+              results[entry.url] = facts === null ? { ...unavailable,
+                retryAfterMs: githubDiscoveryManifests.githubRetryAfterMs(entry) || DISCOVERY_RETRY_MS,
+              } : deriveHostCompatibility(facts, hostVersion, hostPackages)
+            }
+            return results
+          }
+          const [npmFacts, githubPlugins] = await Promise.all([
+            discoveryManifests.lookup([...packages], npmRegistry, { versions }),
+            githubVerdicts(),
           ])
-          const facts = { ...npmFacts, ...githubFacts, ...catalogFacts }
-          const plugins = Object.fromEntries([...packages, ...urls].map(name => [
-            name,
-            deriveHostCompatibility(facts[name] ?? null, hostVersion, hostPackages),
-          ]))
-          sendJson(response, 200, { hostVersion, plugins })
+          const npmPlugins = Object.fromEntries<DiscoveryVerdict>([...packages].map(name => {
+            const facts = npmFacts[name] ?? null
+            const verdict = deriveHostCompatibility(facts, hostVersion, hostPackages)
+            return [name, facts === null ? { ...verdict,
+              retryAfterMs: discoveryManifests.npmRetryAfterMs(name, npmRegistry, versions.get(name)) || DISCOVERY_RETRY_MS,
+            } : verdict]
+          }))
+          sendJson(response, 200, { hostVersion, plugins: { ...npmPlugins, ...githubPlugins } })
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
         }

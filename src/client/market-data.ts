@@ -40,6 +40,8 @@ export interface RegistryPlugin {
   url: string
   npm?: string | null
   tarball?: string | null
+  /** Server-provided revision of this GitHub-only entry's compatibility source. */
+  compatibilityRevision?: string
   /** One legacy category id or several category ids. */
   category: string | string[]
   description?: LocalizedText
@@ -115,6 +117,8 @@ export interface HostCompatibility {
   basis: 'manifest' | 'undeclared' | 'unavailable'
   requirement: string | null
   declarations: Array<{ kind: 'engine' | 'peer' | 'dependency'; package?: string; range: string }>
+  retryAfterMs?: number
+  catalogChanged?: true
 }
 
 /** npm package name or GitHub catalog URL -> discovery-time host verdict. */
