@@ -3701,6 +3701,32 @@ describe('update flow — no npm publishing required', () => {
     expect(single.json.package).toMatchObject(summary.json.packages[0])
   })
 
+  it('reports update check failure to the market and retries the first ordinary check after recovery (#1200)', async () => {
+    advanceNpmLatest('1.2.0')
+    const path = '/dsh-market/updates'
+    const v1 = '/dsh-market/api/v1/updates?name=dsh-loop'
+    const fetchHealthy = globalThis.fetch
+    vi.stubGlobal('fetch', (url: RequestInfo | URL, init?: RequestInit) => String(url).endsWith('/dsh-loop/latest')
+      ? Promise.resolve(new Response(null, { status: 503 }))
+      : fetchHealthy(url, init))
+
+    const failed = await bed.dispatch('GET', path)
+    expect(failed.status).toBe(200)
+    expect(failed.json.updates['dsh-loop']).toMatchObject({ checkFailed: true, updateAvailable: false })
+    const versioned = await bed.dispatch('GET', v1)
+    expect(versioned.status).toBe(200)
+    expect(versioned.json.package).toEqual({
+      name: 'dsh-loop', source: 'npm', installedVersion: '1.0.0', latestVersion: null,
+      updateAvailable: false, channelSwitch: null,
+    })
+
+    vi.stubGlobal('fetch', fetchHealthy)
+    const recovered = await bed.dispatch('GET', path)
+    expect(recovered.status).toBe(200)
+    expect(recovered.json.updates['dsh-loop']).toMatchObject({ latest: '1.2.0', updateAvailable: true })
+    expect(recovered.json.updates['dsh-loop'].checkFailed).toBeUndefined()
+  })
+
   it('says nothing is updatable rather than staying silent when it is true', async () => {
     const summary = await bed.dispatch('GET', '/dsh-market/api/v1/updates/summary')
     expect(summary.status).toBe(200)

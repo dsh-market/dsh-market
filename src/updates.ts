@@ -38,6 +38,8 @@ export interface UpdateStatus {
    * as "there is an upgrade" and labels a button accordingly.
    */
   updateAvailable: boolean
+  /** The upstream check failed, so this row does not establish that the plugin is current. */
+  checkFailed?: true
   /** Exact mature npm stable target for Desktop; `latest` remains the registry tag. */
   eligibleVersion?: string
   /**
@@ -147,7 +149,8 @@ export function isUpdatablePlugin(activeProfileDir: string, name: string, bundle
 
 const UPDATES_TTL_MS = 30 * 60 * 1000
 const GIT_REMOTE_HEAD_TIMEOUT_MS = 6000
-let updatesCache: { key: string; at: number; recheckAt: number; data: Record<string, UpdateStatus> } | null = null
+let updatesCache: { key: string; recheckAt: number; data: Record<string, UpdateStatus> } | null = null
+let updateCheckGeneration = 0
 
 /**
  * HEAD for an arbitrary smart-HTTP git remote (Gitea, GitLab, …). Same
@@ -258,6 +261,7 @@ export function invalidateUpdates(): void {
   // disk yet; dropping the listing there would make the UI re-check releases
   // because a request merely entered the queue.
   if (inProbe()) return
+  updateCheckGeneration += 1
   updatesCache = null
 }
 
@@ -285,6 +289,7 @@ export function setUpdateRegistry(base: string): void {
   const next = base.replace(/\/+$/, '')
   if (next === registryBase) return
   registryBase = next
+  updateCheckGeneration += 1
   updatesCache = null
 }
 
@@ -484,7 +489,7 @@ export async function readVersionMaturity(name: string, version: string, profile
   }
 }
 
-async function fetchJson(url: string): Promise<unknown> {
+async function fetchJson(url: string, allowNotFound = false): Promise<unknown> {
   // Through the proxy when one is configured: Node's global fetch ignores
   // HTTP_PROXY, so on a machine whose route out is a local proxy every
   // update check silently took the slow path — or none at all.
@@ -492,6 +497,7 @@ async function fetchJson(url: string): Promise<unknown> {
     headers: { accept: 'application/json', 'user-agent': 'dsh-market' },
     signal: AbortSignal.timeout(10_000),
   })
+  if (allowNotFound && res.status === 404) return undefined
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json() as unknown
 }
@@ -827,7 +833,7 @@ function profilePolicyFingerprint(dir: string): string {
   return hash.digest('hex')
 }
 
-/** Per-plugin update checks; a failed check reports no update rather than failing the listing. */
+/** Check each plugin independently so a failed lookup leaves the other results usable. */
 export async function checkUpdates(
   profile: string,
   force = false,
@@ -871,6 +877,7 @@ export async function checkUpdates(
   if (!force && updatesCache?.key === cacheKey && Date.now() < updatesCache.recheckAt) {
     return updatesCache.data
   }
+  const generation = ++updateCheckGeneration
   const installed = readInstalled(profile, activeProfileDir)
   const lockCommits = readLockCommits(profile, activeProfileDir)
   const result: Record<string, UpdateStatus> = {}
@@ -1007,8 +1014,9 @@ export async function checkUpdates(
             return
           }
         }
-        const meta = (await fetchJson(npmUrl(`${encodeURIComponent(name)}/latest`))) as { version?: string }
-        const stable = typeof meta.version === 'string' ? meta.version : null
+        const meta = (await fetchJson(npmUrl(`${encodeURIComponent(name)}/latest`), true)) as { version?: unknown } | null | undefined
+        const stable = typeof meta?.version === 'string' && parseSemver(meta.version) !== null ? meta.version : null
+        if (meta !== undefined && stable === null) throw new Error('npm latest response has no valid version')
         const channel = channelFor.get(name)
         const latest = channel === undefined ? stable : await versionOnChannel(name, channel, stable)
         // Forwards is an update; a difference in the other direction is a
@@ -1049,6 +1057,7 @@ export async function checkUpdates(
         result[name] = {
           kind: 'npm', version, current: version, latest,
           updateAvailable: mature === null ? upgrade && !held : mature.candidate !== null,
+          ...(mature?.reason === 'registry-unavailable' ? { checkFailed: true as const } : {}),
           ...(mature?.candidate !== null && mature?.candidate !== undefined ? { eligibleVersion: mature.candidate } : {}),
           ...(mature?.heldUpdate !== undefined ? { heldUpdate: mature.heldUpdate }
             : hold !== null && hold !== 'past' ? { heldUpdate: { latest: latest!, until: hold.until, ...(hold.estimated ? { estimated: true as const } : {}) } } : {}),
@@ -1057,7 +1066,10 @@ export async function checkUpdates(
         }
       }
     } catch {
-      result[name] = { kind: (spec.startsWith('github:') || isGitHostedSpec(spec)) ? 'github' : 'npm', version, current: null, latest: null, updateAvailable: false }
+      result[name] = {
+        kind: (spec.startsWith('github:') || isGitHostedSpec(spec)) ? 'github' : 'npm',
+        version, current: null, latest: null, updateAvailable: false, checkFailed: true,
+      }
     }
   }))
   // A plain dependency can have a newer release; it is just not an update the
@@ -1068,7 +1080,17 @@ export async function checkUpdates(
     if (status.updateAvailable !== true || isUpdatablePlugin(activeProfileDir, name, composed)) continue
     result[name] = { ...status, updateAvailable: false, notAPlugin: true }
   }
-  const now = Date.now()
-  updatesCache = { key: cacheKey, at: now, recheckAt: Math.min(now + UPDATES_TTL_MS, nextHoldRecheck(result), nextCandidateMaturityAt), data: result }
+  // A delayed check must not replace a newer snapshot or refill a cache that
+  // was invalidated while the request was in flight.
+  if (generation === updateCheckGeneration) {
+    const now = Date.now()
+    if (Object.values(result).some(status => status.checkFailed === true)) {
+      // Keep the last confirmed data, but let the next ordinary refresh try
+      // again even when this was a forced refresh during the normal TTL.
+      if (updatesCache?.key === cacheKey) updatesCache.recheckAt = now
+    } else {
+      updatesCache = { key: cacheKey, recheckAt: Math.min(now + UPDATES_TTL_MS, nextHoldRecheck(result), nextCandidateMaturityAt), data: result }
+    }
+  }
   return result
 }
