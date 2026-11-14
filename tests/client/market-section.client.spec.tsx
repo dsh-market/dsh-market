@@ -592,6 +592,17 @@ describe('api() base resolution (#345)', () => {
       })
     }
 
+    it('lists the commits between the installed commit and the target under the release notes (#1193)', async () => {
+      await openNotes({
+        kind: 'release',
+        release: { tag: 'v1.2.0', name: null, publishedAt: null, url: null, body: 'Release notes body' },
+        commits: { items: [{ sha: 'c'.repeat(40), message: 'third change', date: '2026-08-26T03:00:00Z' }], found: true },
+      })
+      expect(await screen.findByText('Release notes body')).toBeTruthy()
+      expect(screen.getByText(en.notesCommits!)).toBeTruthy()
+      expect(screen.getByText('third change')).toBeTruthy()
+    })
+
     it('says the market has none yet and links to the repository, instead of blaming the plugin', async () => {
       await openNotes({ kind: 'source', reason: 'missing', sourceUrl: 'https://gitee.com/o/r' })
       expect(await screen.findByText(new RegExp(en.notesSource))).toBeTruthy()

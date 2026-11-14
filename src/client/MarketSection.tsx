@@ -2829,7 +2829,7 @@ export function MarketSection(props: MarketSectionProps) {
     reason?: 'missing' | 'unavailable' | 'unreadable'
   }
   type ResolvedNotes =
-    | { kind: 'release'; release: NoteRelease; beyondTarget?: string }
+    | { kind: 'release'; release: NoteRelease; beyondTarget?: string; commits?: { items: NoteCommit[]; found: boolean } }
     | { kind: 'commits'; commits: { items: NoteCommit[]; found: boolean } }
     | { kind: 'npm'; npmTimes: Array<{ version: string; date: string }> }
     | { kind: 'source'; sourceUrl?: string | null; reason?: 'missing' | 'unavailable' | 'unreadable' }
@@ -9793,6 +9793,26 @@ export function MarketSection(props: MarketSectionProps) {
                     stripped first; headings, quotes, fences, bullets, bold,
                     inline code, https links and allowlisted images only. */}
                 <div className={css.notesRendered}>{renderMarkdown(updateNotes.release.body || t('notesNone'))}</div>
+                {updateNotes.commits !== undefined && updateNotes.commits.items.length > 0 && (
+                  <>
+                    <div className={css.notesMeta}><strong>{t('notesCommits')}</strong></div>
+                    {!updateNotes.commits.found && <div className={css.notesMeta}>{t('notesCommitsRecent')}</div>}
+                    <ul className={css.notesList}>
+                      {updateNotes.commits.items.map(c => (
+                        <li key={c.sha} className={css.notesRow}>
+                          <span className={css.notesDate}>{c.date !== null ? c.date.slice(0, 10) : ''}</span>
+                          <span className={css.notesMsg}>{mdInline(c.message)}</span>
+                          {notesFor.repoUrl !== null && (
+                            <a className={css.notesSha}
+                              href={notesFor.repoUrl + '/commit/' + c.sha}
+                              target="_blank" rel="noreferrer"
+                              title={c.message}>{c.sha.slice(0, 7)}</a>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
               </div>
             )
             : updateNotes.kind === 'commits' ? (
