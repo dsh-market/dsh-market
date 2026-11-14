@@ -4757,12 +4757,13 @@ export function mountMarketRoutes(
           } catch (error) {
             logEvent('warn', 'updates', `package source lookup failed — ${error instanceof Error ? error.message : String(error)}`)
           }
-          const updates = await checkUpdates(config.profile, force, activeProfileDir, channelFor, onlineSourceFor, catalogNpmByRepo, { holdYoungReleases: config.desktopHost === true, releaseSources })
+          const checked = await checkUpdates(config.profile, force, activeProfileDir, channelFor, onlineSourceFor, catalogNpmByRepo, { holdYoungReleases: config.desktopHost === true, releaseSources })
+          const updates = sourceMigrationFor.size > 0 ? { ...checked } : checked
           for (const [name, migration] of sourceMigrationFor) {
             const status = updates[name]
             if (status !== undefined) updates[name] = { ...status, sourceMigration: migration }
           }
-sendJson(response, 200, { updates })
+          sendJson(response, 200, { updates })
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
         }

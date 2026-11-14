@@ -17,6 +17,7 @@
 .title{font-size:15px;line-height:22px;font-weight:600;margin:0;white-space:nowrap;color:var(--dsw-alias-label-primary,#1f2328)}
 .sub{flex:1 1 auto;min-width:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#8b93a1);margin:0}
 .sidebarTip{display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#5c6570)}
+.updateCheckNotice{display:flex;align-items:center;flex-wrap:wrap;gap:0 6px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#5c6570)}
 .submitLink{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#8b93a1);text-decoration:none;white-space:nowrap}
 .submitLink:hover{color:var(--dsw-alias-brand-primary,#4f6ef7);text-decoration:underline}
 /* Wrap instead of clipping controls or the Tasks popover in narrow panels.

@@ -207,6 +207,8 @@ export function isGenerationSpec(spec: string): boolean {
 /** Per-package update status from /dsh-market/updates. */
 export interface UpdateStatus {
   updateAvailable?: boolean
+  /** The source could not be checked, so false is not a no-update verdict. */
+  checkFailed?: true
   /** Server-verified precise Desktop stable npm update target. */
   eligibleVersion?: string
   version?: string

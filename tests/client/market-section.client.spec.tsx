@@ -199,7 +199,7 @@ function stubFetch(overrides: Record<string, unknown> = {}, mountPath = '') {
       : route === '/dsh-market/block' ? { ok: true, blocked: [] }
       : route === '/dsh-market/dismiss-broken' ? { ok: true, brokenPlugins: {} }
       : null
-    const merged = overrides[path] ?? overrides[route] ?? payload
+    const merged = overrides[String(input)] ?? overrides[path] ?? overrides[route] ?? payload
     if (merged === null) return Promise.reject(new Error(`unstubbed fetch: ${String(input)}`))
     const result = typeof merged === 'function' ? (merged as (requestBody?: unknown) => unknown)(body) : merged
     const status = result !== null && typeof result === 'object' && '__status' in result && typeof (result as { __status?: unknown }).__status === 'number'
@@ -784,6 +784,173 @@ describe('MarketSection (jsdom)', () => {
     // wait on /dsh-market/updates the way an empty remount used to.
     render(<MarketSection {...props()} />)
     expect(screen.getByRole('button', { name: /Update all \(1\)/ })).toBeTruthy()
+  })
+
+  it.each([false, true])('retains confirmed updates on HTTP 500 and clears them on a genuine empty retry (installed error: %s) (#1200)', async installedError => {
+    const installed = { 'dsh-loop': '^1.0.0' }
+    let fail = false
+    const fetchMock = stubFetch({
+      '/dsh-market/installed': () => fail && installedError ? { error: 'read failed', __status: 400 } : { installed },
+      '/dsh-market/updates': () => fail ? { error: 'check failed', __status: 500 } : {
+        updates: { 'dsh-loop': { kind: 'npm', version: '1.0.0', latest: '1.1.0', updateAvailable: true } },
+      },
+      '/dsh-market/updates?force=1': { updates: {} },
+    })
+    const first = render(<MarketSection {...props()} />)
+    expect(await screen.findByRole('button', { name: 'Update all (1)' })).toBeTruthy()
+    first.unmount()
+    fail = true
+    render(<MarketSection {...props()} surface="sidebar" />)
+
+    expect(await screen.findByText('Could not check for updates')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Update all (1)' })).toBeTruthy()
+    fail = false
+    fireEvent.click(screen.getByRole('button', { name: 'Retry update check' }))
+    await waitFor(() => {
+      expect(screen.queryByText('Could not check for updates')).toBeNull()
+      expect(screen.queryByRole('button', { name: 'Update all (1)' })).toBeNull()
+    })
+    expect(fetchMock.mock.calls.some(([url]) => url === '/dsh-market/updates?force=1')).toBe(true)
+  })
+
+  it('surfaces an update HTTP failure and allows retry while the installed read is pending (#1200)', async () => {
+    let settleInstalled!: (response: Response) => void
+    const firstInstalled = new Promise<Response>(resolve => { settleInstalled = resolve })
+    const body = { installed: { 'dsh-loop': '^1.0.0' } }
+    const fetchMock = stubFetch({
+      '/dsh-market/installed': body,
+      '/dsh-market/updates': { error: 'check failed', __status: 500 },
+      '/dsh-market/updates?force=1': { updates: { 'dsh-loop': { kind: 'npm', latest: '1.1.0', updateAvailable: true } } },
+    })
+    let installedCalls = 0
+    const defaultFetch = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation((url, init) => {
+      if (url === '/dsh-market/installed' && ++installedCalls === 1) return firstInstalled
+      return defaultFetch(url, init)
+    })
+
+    render(<MarketSection {...props()} />)
+    expect(await screen.findByText('Could not check for updates')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry update check' }))
+    expect(await screen.findByRole('button', { name: 'Update all (1)' })).toBeTruthy()
+    await act(async () => { settleInstalled(new Response(JSON.stringify({ installed: {} }))) })
+    expect(screen.getByRole('button', { name: 'Update all (1)' })).toBeTruthy()
+    expect(screen.queryByText('Could not check for updates')).toBeNull()
+  })
+
+  it.each(['network', 'invalid JSON', 'invalid row'])('offers a first-load retry after %s (#1200)', async failure => {
+    const fetchMock = stubFetch({ '/dsh-market/installed': { installed: { 'dsh-loop': '^1.0.0' } } })
+    const defaultFetch = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation((url, init) => {
+      if (url === '/dsh-market/updates') {
+        if (failure === 'network') return Promise.reject(new Error('offline'))
+        if (failure === 'invalid JSON') return Promise.resolve(new Response('<!DOCTYPE html>'))
+        return Promise.resolve(new Response(JSON.stringify({ updates: { 'dsh-loop': [] } })))
+      }
+      if (url === '/dsh-market/updates?force=1') return Promise.resolve(new Response(JSON.stringify({
+        updates: { 'dsh-loop': { kind: 'npm', version: '1.0.0', latest: '1.1.0', updateAvailable: true } },
+      })))
+      return defaultFetch(url, init)
+    })
+    render(<MarketSection {...props()} surface="plugins" />)
+
+    expect(await screen.findByText('Could not check for updates')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /^Update all/ })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry update check' }))
+    expect(await screen.findByRole('button', { name: 'Update all (1)' })).toBeTruthy()
+    expect(screen.queryByText('Could not check for updates')).toBeNull()
+  })
+
+  it('retains only failed updates confirmed for the same installed plugin (#1200)', async () => {
+    let fail = false
+    const same = 'dsh-loop'
+    const changedSpec = 'dsh-notify'
+    const changedVersion = 'dsh-changed-version'
+    const exempt = 'dsh-exempt'
+    const removed = 'dsh-removed'
+    const previous = { kind: 'npm', version: '1.0.0', latest: '1.1.0', updateAvailable: true }
+    const failed = { kind: 'npm', version: '1.0.0', latest: null, updateAvailable: false, checkFailed: true }
+    stubFetch({
+      '/dsh-market/installed': () => ({
+        installed: { [same]: '^1.0.0', [changedSpec]: fail ? '~1.0.0' : '^1.0.0', [changedVersion]: '^1.0.0', [exempt]: '^1.0.0', ...(!fail && { [removed]: '^1.0.0' }) },
+        updateExempt: fail ? [exempt] : [],
+      }),
+      '/dsh-market/updates': () => ({ updates: fail
+        ? { [same]: failed, [changedSpec]: failed, [changedVersion]: { ...failed, version: '1.0.1' }, [exempt]: failed }
+        : { [same]: previous, [changedSpec]: previous, [changedVersion]: previous, [exempt]: previous, [removed]: previous } }),
+    })
+    const first = render(<MarketSection {...props()} />)
+    expect(await screen.findByRole('button', { name: 'Update all (5)' })).toBeTruthy()
+    first.unmount()
+    fail = true
+    render(<MarketSection {...props()} surface="sidebar" />)
+    expect(await screen.findByText('Could not check for updates')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Update all (1)' })).toBeTruthy()
+  })
+
+  it('ignores a late failure after a newer forced check succeeded (#1200)', async () => {
+    let settleOld!: (response: Response) => void
+    const old = new Promise<Response>(resolve => { settleOld = resolve })
+    const fetchMock = stubFetch({
+      '/dsh-market/installed': { installed: { 'dsh-loop': '^1.0.0' } },
+      '/dsh-market/updates?force=1': {
+        updates: { 'dsh-loop': { kind: 'npm', version: '1.0.0', latest: '1.1.0', updateAvailable: true } },
+      },
+    })
+    const defaultFetch = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation((url, init) => url === '/dsh-market/updates' ? old : defaultFetch(url, init))
+    const first = render(<MarketSection {...props()} />)
+    fireEvent.click(screen.getByRole('button', { name: re(en.tabInstalled) }))
+    expect(await screen.findByRole('button', { name: 'Update all (1)' })).toBeTruthy()
+    await act(async () => { settleOld(new Response(JSON.stringify({ error: 'old failure' }), { status: 500 })) })
+    expect(screen.getByRole('button', { name: 'Update all (1)' })).toBeTruthy()
+    expect(screen.queryByText('Could not check for updates')).toBeNull()
+    first.unmount()
+    render(<MarketSection {...props()} surface="sidebar" />)
+    expect(screen.getByRole('button', { name: 'Update all (1)' })).toBeTruthy()
+  })
+
+  it('keeps installed data on a slower surface after another surface shares updates (#1200)', async () => {
+    let settleInstalled!: (response: Response) => void
+    const firstInstalled = new Promise<Response>(resolve => { settleInstalled = resolve })
+    const installed = { 'dsh-loop': '^1.0.0' }
+    const fetchMock = stubFetch({
+      '/dsh-market/installed': { installed },
+      '/dsh-market/updates': { updates: { 'dsh-loop': { kind: 'npm', latest: '1.1.0', updateAvailable: true } } },
+    })
+    let installedCalls = 0
+    const defaultFetch = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation((url, init) => {
+      if (url === '/dsh-market/installed' && ++installedCalls === 1) return firstInstalled
+      return defaultFetch(url, init)
+    })
+    const first = render(<MarketSection {...props()} />)
+    const other = render(<MarketSection {...props()} surface="sidebar" />)
+    expect(await within(other.container).findByRole('button', { name: 'Update all (1)' })).toBeTruthy()
+    await act(async () => { settleInstalled(new Response(JSON.stringify({ installed }))) })
+    expect(within(first.container).getByRole('button', { name: 'Update all (1)' })).toBeTruthy()
+  })
+
+  it('keeps an unknown saved update pending and restores it only once after retry (#1200)', async () => {
+    const update = { kind: 'update', name: 'dsh-loop' }
+    localStorage.setItem('dshm-queue-v1', JSON.stringify([update]))
+    stubFetch({
+      '/dsh-market/installed': { installed: { 'dsh-loop': '^1.0.0' } },
+      '/dsh-market/updates': { updates: { 'dsh-loop': { kind: 'npm', version: '1.0.0', updateAvailable: false, checkFailed: true } } },
+      '/dsh-market/updates?force=1': { updates: { 'dsh-loop': { kind: 'npm', version: '1.0.0', latest: '1.1.0', updateAvailable: true } } },
+    })
+    const first = render(<MarketSection {...props()} />)
+    render(<MarketSection {...props()} surface="sidebar" />)
+    await within(first.container).findByText('Could not check for updates')
+    expect(document.querySelector('[class*="opPanel"]')).toBeNull()
+    expect(JSON.parse(localStorage.getItem('dshm-queue-v1')!)).toEqual([update])
+    fireEvent.click(within(first.container).getByRole('button', { name: 'Retry update check' }))
+    await waitFor(() => {
+      const panels = [...document.querySelectorAll('[class*="opPanel"]')]
+        .filter(panel => panel.querySelector('[class*="opPanelTitle"]') !== null)
+      expect(panels).toHaveLength(1)
+      expect(panels[0]?.textContent).toContain('dsh-loop')
+    })
   })
 
   it('keeps the header package version across remounts (#846)', async () => {
