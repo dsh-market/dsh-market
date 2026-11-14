@@ -243,6 +243,9 @@ describe('updateNotesFor', () => {
     const notes = await updateNotesFor('web', dir, 'some-plugin')
     expect(notes.kind).toBe('release')
     expect(notes.release?.body).toBe('notes here')
+    // The release also carries the commit slice between the installed commit and
+    // the update target, so the dialog can list what changed (#1193).
+    expect(notes.commits?.items.map(commit => commit.sha)).toEqual([SHA_C])
   })
 
   it('says so when the release notes are for a version beyond the update target (#1193)', async () => {
@@ -259,6 +262,7 @@ describe('updateNotesFor', () => {
         updates: {
           'https://github.com/o/r': {
             release: { tag: 'v2.0.0', name: 'big rewrite', publishedAt: '2026-08-26T00:00:00Z', url: 'https://github.com/o/r/releases/v2.0.0', body: 'notes here' },
+            commits: COMMITS,
           },
         },
       },
@@ -267,6 +271,8 @@ describe('updateNotesFor', () => {
     expect(beyond.kind).toBe('release')
     expect(beyond.release?.body).toBe('notes here')
     expect(beyond.beyondTarget).toBe('1.5.0')
+    // The beyond-target release also carries the commit slice (#1193).
+    expect(beyond.commits?.items.map(commit => commit.sha)).toEqual([SHA_C, SHA_B])
     const matching = await updateNotesFor('web', dir, 'some-plugin', '2.0.0')
     expect(matching.beyondTarget).toBeUndefined()
     const noTarget = await updateNotesFor('web', dir, 'some-plugin')

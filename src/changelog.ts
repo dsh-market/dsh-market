@@ -492,9 +492,13 @@ export async function updateNotesFor(
       if (!(behind && (hasCommits || (specKey === null && npmName !== null)))) {
         const beyond = target !== undefined && released !== null
           && (compareVersions(released, target) ?? 0) > 0
+        // Attach the commit slice so the dialog can list what changed between
+        // the installed commit and the update target, not just the release (#1193).
+        const commits = hasCommits ? sliceCommitsAt(entry.commits!, current) : undefined
+        const withCommits = commits === undefined ? {} : { commits }
         return beyond
-          ? { kind: 'release', release: entry.release, beyondTarget: target }
-          : { kind: 'release', release: entry.release }
+          ? { kind: 'release', release: entry.release, beyondTarget: target, ...withCommits }
+          : { kind: 'release', release: entry.release, ...withCommits }
       }
     }
     if (entry?.commits !== undefined && entry.commits.length > 0) {

@@ -17726,7 +17726,41 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 										className: Market_module_css_default.notesRendered,
 										children: renderMarkdown(updateNotes.release.body || t("notesNone"))
-									})
+									}),
+									updateNotes.commits !== void 0 && updateNotes.commits.items.length > 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
+										/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+											className: Market_module_css_default.notesMeta,
+											children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("strong", { children: t("notesCommits") })
+										}),
+										!updateNotes.commits.found && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+											className: Market_module_css_default.notesMeta,
+											children: t("notesCommitsRecent")
+										}),
+										/* @__PURE__ */ (0, react_jsx_runtime.jsx)("ul", {
+											className: Market_module_css_default.notesList,
+											children: updateNotes.commits.items.map((c) => /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("li", {
+												className: Market_module_css_default.notesRow,
+												children: [
+													/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+														className: Market_module_css_default.notesDate,
+														children: c.date !== null ? c.date.slice(0, 10) : ""
+													}),
+													/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+														className: Market_module_css_default.notesMsg,
+														children: mdInline(c.message)
+													}),
+													notesFor.repoUrl !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("a", {
+														className: Market_module_css_default.notesSha,
+														href: notesFor.repoUrl + "/commit/" + c.sha,
+														target: "_blank",
+														rel: "noreferrer",
+														title: c.message,
+														children: c.sha.slice(0, 7)
+													})
+												]
+											}, c.sha))
+										})
+									] })
 								]
 							}) : updateNotes.kind === "commits" ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 								className: Market_module_css_default.notesBody,
