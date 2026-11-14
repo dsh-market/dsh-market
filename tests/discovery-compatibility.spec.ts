@@ -269,6 +269,43 @@ describe('DiscoveryManifestIndex', () => {
     expect(refetched).toBe(0)
   })
 
+  it('persists exact discovery releases separately from other versions and advisory latest', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'dshm-discovery-'))
+    directories.push(directory)
+    const cache = join(directory, 'discovery.json')
+    const urls: string[] = []
+    const registry = 'https://registry.example'
+    const mirror = 'https://mirror.example'
+    const fetcher = async (url: string) => {
+      urls.push(url)
+      const release = new URL(url).pathname.split('/').at(-1)
+      return Response.json({ version: release === 'latest' ? '1.0.0' : release })
+    }
+    const index = new DiscoveryManifestIndex(cache, { fetcher, now: () => 1_000 })
+    const exact = { versions: new Map([['plugin-a', '2.0.0-rc.1']]) }
+    expect((await index.lookup(['plugin-a'], registry, exact))['plugin-a']?.version).toBe('2.0.0-rc.1')
+    expect((await index.lookup(['plugin-a'], registry, { record: false }))['plugin-a']?.version).toBe('1.0.0')
+
+    const reopened = new DiscoveryManifestIndex(cache, { fetcher, now: () => 1_001 })
+    expect((await reopened.lookup(['plugin-a'], registry, exact))['plugin-a']?.version).toBe('2.0.0-rc.1')
+    expect((await reopened.lookup(['plugin-a'], mirror, exact))['plugin-a']?.version).toBe('2.0.0-rc.1')
+    expect(urls).toEqual([
+      `${registry}/plugin-a/2.0.0-rc.1`,
+      `${registry}/plugin-a/latest`,
+      `${mirror}/plugin-a/2.0.0-rc.1`,
+    ])
+  })
+
+  it('rejects an exact-version response naming a different package', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'dshm-discovery-'))
+    directories.push(directory)
+    const index = new DiscoveryManifestIndex(join(directory, 'discovery.json'), {
+      fetcher: async () => Response.json({ name: 'another-plugin', version: '2.0.0' }),
+    })
+    const versions = new Map([['plugin-a', '2.0.0']])
+    expect(await index.lookup(['plugin-a'], 'https://registry.example', { versions })).toEqual({ 'plugin-a': null })
+  })
+
   it('retries a raw manifest read instead of reporting an unknown requirement (#1148)', async () => {
     // The report measured exactly this: `raw.githubusercontent.com` answered
     // ECONNRESET with no proxy and 200 through one while the catalog and the

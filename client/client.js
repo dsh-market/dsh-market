@@ -577,6 +577,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			hostUnknown: "宿主版本未知",
 			hostFilterLoading: "正在检查宿主要求 {0}/{1}；未声明或无法确认的插件仍会显示",
 			hostFilterActive: "已隐藏 {1} 个与 DSH {0} 不兼容的插件；未声明版本的仍在列表里",
+			hostFilterIncomplete: "已隐藏 {1} 个与 DSH {0} 不兼容的插件。{2} 个暂时无法确认，仍会显示。",
 			hostRequirement: "DSH {0}",
 			hostRequirementLoading: "正在读取宿主要求…",
 			hostRequirementUndeclared: "未声明宿主要求",
@@ -1383,6 +1384,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			hostUnknown: "Host version unknown",
 			hostFilterLoading: "Checking host requirements {0}/{1}; undeclared or unavailable plugins remain visible",
 			hostFilterActive: "Hid {1} plugins incompatible with DSH {0}; those declaring no version stay listed",
+			hostFilterIncomplete: "Hid {1} plugins incompatible with DSH {0}. {2} could not be checked and are still shown.",
 			hostRequirement: "DSH {0}",
 			hostRequirementLoading: "Reading host requirement…",
 			hostRequirementUndeclared: "Host requirement undeclared",
@@ -2189,6 +2191,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			hostUnknown: "ホストのバージョンは不明です",
 			hostFilterLoading: "ホストの要件を確認中 {0}/{1}。宣言していない、または確認できないプラグインも引き続き表示されます",
 			hostFilterActive: "DSH {0} と互換性のないプラグイン {1} 件を隠しました。バージョンを宣言していないものは一覧に残っています",
+			hostFilterIncomplete: "DSH {0} と互換性のないプラグイン {1} 件を隠しました。確認できなかった {2} 件は表示されたままです。",
 			hostRequirement: "DSH {0}",
 			hostRequirementLoading: "ホストの要件を読み取り中…",
 			hostRequirementUndeclared: "ホストの要件は宣言されていません",
@@ -2791,6 +2794,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			if (!/^[A-Za-z0-9_./-]+$/.test(subpath)) return false;
 			return !subpath.split("/").some((seg) => seg === "" || seg === "." || seg === "..");
 		}
+		/** Registry tarball names must be plain npm package names, nothing fancier. */
+		const NPM_NAME_RE = /^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/;
 		/**
 		* Parse a registry source url: a github repo, optionally with a
 		* `/tree/<branch>/<subpath>` suffix (how the curated list links monorepo
@@ -5019,6 +5024,478 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				})]
 			});
 		}
+		//#endregion
+		//#region src/release-candidates.ts
+		function semver(value) {
+			if (typeof value !== "string") return null;
+			const matched = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/.exec(value);
+			if (!matched) return null;
+			const prerelease = matched[4]?.split(".") ?? [];
+			if (prerelease.some((part) => /^\d+$/.test(part) && part.length > 1 && part.startsWith("0"))) return null;
+			return {
+				core: [
+					BigInt(matched[1]),
+					BigInt(matched[2]),
+					BigInt(matched[3])
+				],
+				prerelease
+			};
+		}
+		/** Accept a bounded exact npm release version, including prereleases. */
+		function isExactReleaseVersion(value) {
+			return typeof value === "string" && value.length <= 256 && value === value.trim() && semver(value) !== null;
+		}
+		//#endregion
+		//#region src/client/discovery-scan.ts
+		const BATCH_SIZE = 64;
+		const BATCH_BYTES = 32640;
+		const UNAVAILABLE_RETRY_MS = 3e5;
+		const REQUEST_RETRY_MS = 3e4;
+		const MUTABLE_SOURCE_TTL_MS = 864e5;
+		const REVISION = /^[a-f0-9]{64}$/;
+		const HOST_FILTER_KEY = "dshm-host-filter";
+		const unavailable = {
+			status: "unknown",
+			basis: "unavailable",
+			requirement: null,
+			declarations: []
+		};
+		function initialPreference() {
+			try {
+				return localStorage.getItem(HOST_FILTER_KEY) !== "all";
+			} catch {
+				return true;
+			}
+		}
+		function describeEntry(plugin) {
+			const key = hostCompatibilityKey(plugin);
+			if (key === null) return null;
+			const version = typeof plugin.version === "string" ? plugin.version.trim() : "";
+			if (!key.startsWith("https://")) {
+				if (!NPM_NAME_RE.test(key)) return null;
+				const npmVersion = isExactReleaseVersion(version) ? version : void 0;
+				return {
+					key,
+					fingerprint: npmVersion ?? "",
+					npmVersion,
+					expires: npmVersion === void 0,
+					bytes: entryBytes(key, npmVersion)
+				};
+			}
+			const revision = plugin.compatibilityRevision;
+			const githubRevision = typeof revision === "string" && REVISION.test(revision) ? revision : void 0;
+			return {
+				key,
+				fingerprint: githubRevision ?? JSON.stringify([plugin.tarball ?? null, version]),
+				githubRevision,
+				expires: true,
+				bytes: entryBytes(key, githubRevision)
+			};
+		}
+		const encoder = new TextEncoder();
+		function entryBytes(key, hint) {
+			const keyBytes = encoder.encode(JSON.stringify(key)).byteLength;
+			return keyBytes + 1 + (hint === void 0 ? 0 : keyBytes + encoder.encode(JSON.stringify(hint)).byteLength + 2);
+		}
+		function requestBody(entries) {
+			const packages = entries.filter((entry) => !entry.key.startsWith("https://")).map((entry) => entry.key);
+			const github = entries.filter((entry) => entry.key.startsWith("https://")).map((entry) => entry.key);
+			const versions = entries.filter((entry) => entry.npmVersion !== void 0).map((entry) => [entry.key, entry.npmVersion]);
+			const revisions = entries.filter((entry) => entry.githubRevision !== void 0).map((entry) => [entry.key, entry.githubRevision]);
+			return {
+				packages,
+				...github.length > 0 ? { entries: github } : {},
+				...versions.length > 0 ? { versions: Object.fromEntries(versions) } : {},
+				...revisions.length > 0 ? { githubRevisions: Object.fromEntries(revisions) } : {}
+			};
+		}
+		function readVerdict(value) {
+			if (value == null || ![
+				"compatible",
+				"incompatible",
+				"unknown"
+			].includes(value.status) || ![
+				"manifest",
+				"undeclared",
+				"unavailable"
+			].includes(value.basis) || value.requirement !== null && typeof value.requirement !== "string" || !Array.isArray(value.declarations)) return unavailable;
+			return value.basis === "unavailable" ? {
+				...unavailable,
+				...value.catalogChanged === true ? { catalogChanged: true } : {},
+				...typeof value.retryAfterMs === "number" && Number.isFinite(value.retryAfterMs) && value.retryAfterMs >= 0 ? { retryAfterMs: value.retryAfterMs } : {}
+			} : value;
+		}
+		/** Shared by Settings and the sidebar. Only dispatched entries occupy a slot. */
+		var DiscoveryScan = class {
+			onCatalogGenerationChange;
+			snapshot;
+			listeners = /* @__PURE__ */ new Set();
+			entries = /* @__PURE__ */ new Map();
+			results = /* @__PURE__ */ new Map();
+			demand = /* @__PURE__ */ new Map();
+			inFlight = /* @__PURE__ */ new Map();
+			full;
+			visible;
+			hostVersion;
+			catalog = null;
+			boot;
+			enabled;
+			context = 0;
+			run = 0;
+			catalogRequest = 0;
+			resumeRequest;
+			catalogRefreshUsed = false;
+			active = false;
+			gone = false;
+			cursor = 0;
+			queue = [];
+			timer;
+			verdictsChanged = false;
+			constructor(onCatalogGenerationChange) {
+				this.onCatalogGenerationChange = onCatalogGenerationChange;
+			}
+			getSnapshot = () => {
+				return this.snapshot ??= {
+					enabled: this.enabled ??= initialPreference(),
+					catalog: null,
+					gone: false,
+					hostVersion: void 0,
+					verdicts: Object.create(null),
+					total: 0,
+					attempted: 0,
+					scanning: false
+				};
+			};
+			subscribe = (listener) => {
+				this.listeners.add(listener);
+				return () => {
+					this.listeners.delete(listener);
+				};
+			};
+			reset() {
+				this.stop();
+				this.active = false;
+				this.gone = false;
+				this.context += 1;
+				this.hostVersion = void 0;
+				this.catalog = null;
+				this.catalogRequest += 1;
+				this.resumeRequest = void 0;
+				this.boot = void 0;
+				this.enabled = void 0;
+				this.entries.clear();
+				this.results.clear();
+				this.demand.clear();
+				this.inFlight.clear();
+				this.catalogRefreshUsed = false;
+				this.full = this.visible = void 0;
+				this.verdictsChanged = false;
+				this.snapshot = void 0;
+			}
+			setEnabled(enabled) {
+				if (this.getSnapshot().enabled === enabled) return;
+				try {
+					localStorage.setItem(HOST_FILTER_KEY, enabled ? "compatible" : "all");
+				} catch {}
+				this.enabled = enabled;
+				if (enabled) {
+					this.allowRetry(this.entries.keys());
+					this.restart();
+					if ([...this.results.values()].some((result) => result.verdict.catalogChanged === true)) this.refreshCatalog();
+				} else this.stop();
+				this.update();
+			}
+			async loadCatalog() {
+				const request = ++this.catalogRequest;
+				const response = await fetch(api("/dsh-market/registry"), { cache: "no-store" });
+				if (request !== this.catalogRequest) return "superseded";
+				if (response.status === 404) {
+					this.setUnavailable();
+					return "gone";
+				}
+				const body = await response.json().catch(() => ({}));
+				if (request !== this.catalogRequest) return "superseded";
+				if (!response.ok) throw new Error(typeof body.error === "string" ? body.error : `HTTP ${response.status}`);
+				if (body.registry === void 0) throw new Error("the catalog response carried no data");
+				const host = body.hostVersion;
+				this.setCatalog(body.registry, typeof host === "string" || host === null ? host : void 0);
+				return "loaded";
+			}
+			setCatalog(catalog, hostVersion) {
+				if (catalog.updated !== this.catalog?.updated) this.onCatalogGenerationChange();
+				this.catalog = catalog;
+				const reconnecting = !this.active;
+				this.active = true;
+				this.gone = false;
+				const next = /* @__PURE__ */ new Map();
+				for (const plugin of catalog.plugins) {
+					const described = describeEntry(plugin);
+					if (described === null || next.has(described.key)) continue;
+					const previous = this.entries.get(described.key);
+					next.set(described.key, previous?.fingerprint === described.fingerprint ? previous : described);
+				}
+				const changed = next.size !== this.entries.size || [...next].some(([key, entry]) => this.entries.get(key) !== entry);
+				this.entries = next;
+				const hostChanged = hostVersion !== void 0 && hostVersion !== this.hostVersion;
+				if (hostChanged) {
+					this.hostVersion = hostVersion;
+					this.invalidate();
+				}
+				if (changed) for (const [key, result] of this.results) {
+					if (next.get(key) === result.entry) continue;
+					this.results.delete(key);
+					this.verdictsChanged = true;
+				}
+				if ((changed || hostChanged || reconnecting) && this.getSnapshot().enabled) this.restart(false);
+				this.markOversizedEntries();
+				if ([...this.results.values()].some((result) => result.verdict.catalogChanged === true)) this.refreshCatalog();
+				this.update();
+			}
+			setBoot(boot) {
+				const previous = this.boot;
+				this.boot = boot;
+				if (previous === void 0 || previous === boot) return;
+				this.invalidate();
+				this.markOversizedEntries();
+				if (this.getSnapshot().enabled) this.restart();
+				this.update();
+			}
+			setUnavailable() {
+				if (this.gone) return;
+				this.active = false;
+				this.gone = true;
+				this.stop();
+				this.catalogRequest += 1;
+				this.invalidate();
+				this.update();
+			}
+			resume() {
+				if (this.resumeRequest?.id === this.catalogRequest) return this.resumeRequest.result;
+				const result = this.loadCatalog().finally(() => {
+					if (this.resumeRequest?.result === result) this.resumeRequest = void 0;
+				});
+				this.resumeRequest = {
+					id: this.catalogRequest,
+					result
+				};
+				return result;
+			}
+			setDemand(owner, keys) {
+				const before = this.demand.get(owner) ?? [];
+				this.demand.set(owner, keys);
+				this.allowRetry(keys.filter((key) => !before.includes(key)));
+				this.update();
+			}
+			removeDemand(owner) {
+				this.demand.delete(owner);
+				this.scheduleRetry();
+			}
+			allowRetry(keys) {
+				for (const key of keys) {
+					const result = this.results.get(key);
+					if (result !== void 0 && Number.isFinite(result.retryAt)) result.automaticRetryUsed = false;
+				}
+			}
+			invalidate() {
+				this.context += 1;
+				this.results.clear();
+				this.verdictsChanged = true;
+			}
+			markOversizedEntries() {
+				for (const entry of this.entries.values()) {
+					if (entry.bytes <= BATCH_BYTES) continue;
+					this.results.set(entry.key, {
+						entry,
+						verdict: unavailable,
+						retryAt: Infinity,
+						expiresAt: Infinity,
+						automaticRetryUsed: true
+					});
+					this.verdictsChanged = true;
+				}
+			}
+			restart(newRun = true) {
+				if (newRun) {
+					this.run += 1;
+					this.catalogRefreshUsed = false;
+				}
+				this.queue = [...this.entries.values()];
+				this.cursor = 0;
+			}
+			stop() {
+				this.run += 1;
+				this.catalogRefreshUsed = false;
+				this.queue = [];
+				this.cursor = 0;
+				clearTimeout(this.timer);
+				this.timer = void 0;
+			}
+			visibleKeys() {
+				return [...new Set([...this.demand.values()].flat())];
+			}
+			update() {
+				const previous = this.getSnapshot();
+				const enabled = this.enabled ?? previous.enabled;
+				const now = Date.now();
+				let expired = false;
+				for (const [key, result] of this.results) {
+					if (result.expiresAt > now) continue;
+					this.results.delete(key);
+					expired = true;
+					this.verdictsChanged = true;
+				}
+				if (expired && enabled) this.restart(false);
+				this.pump();
+				let verdicts = previous.verdicts;
+				if (this.verdictsChanged) {
+					verdicts = Object.create(null);
+					for (const [key, result] of this.results) verdicts[key] = result.verdict;
+					this.verdictsChanged = false;
+				}
+				const scanning = this.active && enabled && (this.cursor < this.queue.length || this.full?.run === this.run || this.visible?.kind === "visible");
+				if (previous.enabled === enabled && previous.catalog === this.catalog && previous.gone === this.gone && previous.hostVersion === this.hostVersion && previous.verdicts === verdicts && previous.total === this.entries.size && previous.attempted === this.results.size && previous.scanning === scanning) return;
+				this.snapshot = {
+					enabled,
+					catalog: this.catalog,
+					gone: this.gone,
+					hostVersion: this.hostVersion,
+					verdicts,
+					total: this.entries.size,
+					attempted: this.results.size,
+					scanning
+				};
+				for (const listener of this.listeners) listener();
+			}
+			pump() {
+				if (!this.active) return;
+				const enabled = this.enabled ?? this.getSnapshot().enabled;
+				const now = Date.now();
+				const available = (entry) => this.inFlight.get(entry)?.context !== this.context;
+				const needsLookup = (entry) => {
+					const result = this.results.get(entry.key);
+					return result === void 0 || result.expiresAt <= now;
+				};
+				if (this.visible === void 0) {
+					const entries = this.visibleKeys().flatMap((key) => {
+						const entry = this.entries.get(key);
+						return entry !== void 0 && available(entry) ? [entry] : [];
+					});
+					const fresh = this.visibleBatch(entries.filter(needsLookup));
+					if (fresh.length > 0) this.dispatch(fresh, "visible");
+					else if (enabled) {
+						const retry = this.visibleBatch(entries.filter((entry) => {
+							const result = this.results.get(entry.key);
+							return result !== void 0 && result.retryAt <= now && !result.automaticRetryUsed;
+						}));
+						if (retry.length > 0) this.dispatch(retry, "retry");
+					}
+				}
+				if (enabled && this.full === void 0) {
+					const chunk = [];
+					let bytes = 0;
+					while (this.cursor < this.queue.length && chunk.length < BATCH_SIZE) {
+						const entry = this.queue[this.cursor];
+						if (this.entries.get(entry.key) === entry && available(entry) && needsLookup(entry)) {
+							if (bytes + entry.bytes > BATCH_BYTES) break;
+							bytes += entry.bytes;
+							chunk.push(entry);
+						}
+						this.cursor += 1;
+					}
+					if (chunk.length > 0) this.dispatch(chunk, "full");
+				}
+				this.scheduleRetry();
+			}
+			visibleBatch(entries) {
+				let bytes = 0;
+				let end = 0;
+				for (const entry of entries) {
+					bytes += entry.bytes;
+					if (bytes > BATCH_BYTES || end >= BATCH_SIZE) break;
+					end += 1;
+				}
+				return entries.slice(0, end);
+			}
+			scheduleRetry() {
+				clearTimeout(this.timer);
+				this.timer = void 0;
+				if (!this.active || !(this.enabled ?? this.getSnapshot().enabled) || this.visible !== void 0) return;
+				let next = Infinity;
+				for (const key of this.visibleKeys()) {
+					const result = this.results.get(key);
+					if (result === void 0 || result.automaticRetryUsed || this.inFlight.has(result.entry)) continue;
+					next = Math.min(next, result.retryAt);
+				}
+				if (Number.isFinite(next)) this.timer = setTimeout(() => this.pump(), Math.max(0, next - Date.now()));
+			}
+			dispatch(entries, kind) {
+				const batch = {
+					entries,
+					kind,
+					context: this.context,
+					run: this.run
+				};
+				if (kind === "full") this.full = batch;
+				else this.visible = batch;
+				for (const entry of entries) this.inFlight.set(entry, batch);
+				this.request(batch);
+			}
+			async request(batch) {
+				let responseBody;
+				let requestFailed = false;
+				try {
+					const response = await fetch(api("/dsh-market/discovery-compatibility"), {
+						method: "POST",
+						headers: { "content-type": "application/json" },
+						body: JSON.stringify(requestBody(batch.entries))
+					});
+					if (response.status === 404 && batch.context === this.context) this.setUnavailable();
+					if (!response.ok) throw new Error(`HTTP ${response.status}`);
+					responseBody = await response.json();
+					if (responseBody?.plugins === null || typeof responseBody?.plugins !== "object" || Array.isArray(responseBody.plugins)) throw new Error("Invalid compatibility response");
+				} catch {
+					requestFailed = true;
+				}
+				if (this.full === batch) this.full = void 0;
+				if (this.visible === batch) this.visible = void 0;
+				for (const entry of batch.entries) if (this.inFlight.get(entry) === batch) this.inFlight.delete(entry);
+				if (batch.context !== this.context) {
+					this.update();
+					return;
+				}
+				const responseHost = responseBody?.hostVersion;
+				if ((typeof responseHost === "string" || responseHost === null) && responseHost !== this.hostVersion) {
+					if (this.hostVersion === void 0) this.hostVersion = responseHost;
+					else {
+						if (batch.kind !== "full" || this.getSnapshot().enabled) this.refreshCatalog();
+						requestFailed = true;
+					}
+				}
+				const now = Date.now();
+				let catalogChanged = false;
+				for (const entry of batch.entries) {
+					if (this.entries.get(entry.key) !== entry) continue;
+					const verdict = readVerdict(requestFailed ? void 0 : responseBody?.plugins?.[entry.key]);
+					if (verdict.catalogChanged === true) catalogChanged = true;
+					const retryAt = verdict.basis !== "unavailable" || verdict.catalogChanged === true ? Infinity : now + (verdict.retryAfterMs ?? (requestFailed ? REQUEST_RETRY_MS : UNAVAILABLE_RETRY_MS));
+					this.results.set(entry.key, {
+						entry,
+						verdict,
+						retryAt,
+						automaticRetryUsed: batch.kind === "retry",
+						expiresAt: verdict.basis !== "unavailable" && entry.expires ? now + MUTABLE_SOURCE_TTL_MS : Infinity
+					});
+					this.verdictsChanged = true;
+				}
+				if (catalogChanged && (batch.kind !== "full" || this.getSnapshot().enabled)) this.refreshCatalog();
+				this.update();
+			}
+			refreshCatalog() {
+				if (!this.active || this.catalogRefreshUsed) return;
+				this.catalogRefreshUsed = true;
+				this.loadCatalog().catch(() => {});
+			}
+		};
 		//#endregion
 		//#region src/client/download-stats.ts
 		const validCount = (value) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
@@ -8025,12 +8502,6 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		const RECONNECT_BUDGET_MS = 9e4;
 		const RECONNECT_REQUEST_MS = 4e3;
 		const IGNORED_UPDATES_SESSION_KEY = "dshm-updates-ignored";
-		const UNAVAILABLE_HOST_COMPATIBILITY = {
-			status: "unknown",
-			basis: "unavailable",
-			requirement: null,
-			declarations: []
-		};
 		/**
 		* Read the update reminders dismissed for this host process. The boot id is
 		* part of the value rather than the key so sessionStorage never accumulates
@@ -8831,6 +9302,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			measuredThemePreviewTasks.clear();
 			measuredThemePreviewResults.clear();
 		}
+		const discoveryScan = new DiscoveryScan(() => {
+			resetScreenshotsCache();
+			resetThemePreviewCache();
+		});
 		/** README fetch + geometry probes, shared across search/page remounts. */
 		function measuredThemePreview(plugin) {
 			const cached = measuredThemePreviewTasks.get(plugin.url);
@@ -9818,17 +10293,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		* the Installed tab's red dot / 「更新」buttons flash off then on, and the
 		* two entries disagree until both refetches finish.
 		*/
-		let cachedRegistry = null;
 		let cachedInstalled = null;
 		let cachedLocalDescriptions = {};
 		let cachedRepoIdentities = null;
 		let cachedRepoHints = null;
-		let cachedHostCompatibility = {};
-		let cachedHostVersion = void 0;
-		/** Names with an in-flight discovery-compatibility request (module-wide). */
-		const hostCompatibilityInFlight = /* @__PURE__ */ new Set();
-		/** Subscribers for useSyncExternalStore — every mounted MarketSection. */
-		const hostCompatibilityListeners = /* @__PURE__ */ new Set();
 		let cachedUpdates = {};
 		/** False until /dsh-market/updates has answered at least once this process. */
 		let cachedUpdatesReady = false;
@@ -9851,33 +10319,6 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					return next;
 				});
 			};
-		}
-		/** Any cached answer counts — including unavailable. Re-querying every
-		* remount used to re-POST thousands of names; a host-version change (below)
-		* is what drops the map for a fresh scan. */
-		function hostCompatibilitySettled(name) {
-			return cachedHostCompatibility[name] !== void 0;
-		}
-		function clearHostCompatibilityCache() {
-			cachedHostCompatibility = {};
-			hostCompatibilityInFlight.clear();
-			for (const listener of hostCompatibilityListeners) listener();
-		}
-		function subscribeHostCompatibility(onStoreChange) {
-			hostCompatibilityListeners.add(onStoreChange);
-			return () => {
-				hostCompatibilityListeners.delete(onStoreChange);
-			};
-		}
-		/** Merge into the module cache and notify every mounted MarketSection — a
-		* sidebar/settings switch used to drop in-flight setStates and leave the
-		* note frozen at 「正在检查 665/2455」. */
-		function commitHostCompatibility(accepted) {
-			cachedHostCompatibility = {
-				...cachedHostCompatibility,
-				...accepted
-			};
-			for (const listener of hostCompatibilityListeners) listener();
 		}
 		/** Discover grid page-size choices — the catalog grows daily, so cap each page. */
 		const PAGE_SIZES = [
@@ -10104,21 +10545,6 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			return list.filter((record) => record.id === keepId || record.id !== `host-${operationId}` && record.hostOperationId !== operationId);
 		}
 		/**
-		* Whether the "compatible with this host" filter starts on, and remembers the
-		* answer once the user disagrees with the default (#872).
-		*
-		* Storage may be unavailable (private mode, a locked-down webview); the
-		* default is what matters, so a failure to read it is not a failure.
-		*/
-		const HOST_FILTER_KEY = "dshm-host-filter";
-		function readHostFilterPreference() {
-			try {
-				return localStorage.getItem(HOST_FILTER_KEY) !== "all";
-			} catch {
-				return true;
-			}
-		}
-		/**
 		* 最近收录 display preferences: collapsed / hidden (#940).
 		*
 		* The block only appears on the discover tab with an empty search and both
@@ -10127,7 +10553,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		* are display preferences, not profile settings: since 0.1.7 the settings
 		* surface is deliberately just `allowRestart`.
 		*
-		* Same read discipline as HOST_FILTER_KEY above: an unavailable store falls
+		* When localStorage is unavailable, the preference falls
 		* back to the default, and the default is "expanded and shown".
 		*/
 		const RECENT_COLLAPSED_KEY = "dshm-recent-collapsed";
@@ -10332,7 +10758,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				});
 			}, [sidebar]);
 			const themeSnap = (0, react.useSyncExternalStore)(props.themeStore.subscribe, props.themeStore.getSnapshot);
-			const [data, setData] = (0, react.useState)(cachedRegistry);
+			const compatibility = (0, react.useSyncExternalStore)(discoveryScan.subscribe, discoveryScan.getSnapshot);
+			const { catalog: data, enabled: compatibleWithHost, hostVersion, verdicts: hostCompatibility } = compatibility;
 			const [loadError, setLoadError] = (0, react.useState)(null);
 			/**
 			* The host answered 404 on one of the market's own routes (#962).
@@ -10881,7 +11308,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			* "npm latest" beside a number that is not npm's latest is a bug report
 			* waiting to be filed. Null until the catalog answers.
 			*/
-			const [catalogUpdated, setCatalogUpdated] = (0, react.useState)(null);
+			const catalogUpdated = data?.updated?.trim() || null;
 			const catalogVersionTip = (0, react.useMemo)(() => catalogUpdated === null ? t("catalogVersionUndated") : t("catalogVersionDated").replace("{0}", catalogUpdated), [catalogUpdated, t]);
 			/** Non-live activation results from the last operation, shown as a banner. */
 			const [activationWarnings, setActivationWarnings] = (0, react.useState)([]);
@@ -11019,26 +11446,13 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const [sortField, setSortField] = (0, react.useState)("downloads");
 			const [sortDir, setSortDir] = (0, react.useState)("desc");
 			const [timeRange, setTimeRange] = (0, react.useState)("all");
-			/** Undefined while the first catalog response is pending; null means the host cannot be located. */
-			const [hostVersion, setHostVersionState] = (0, react.useState)(() => cachedHostVersion);
-			const setHostVersion = (0, react.useCallback)((value) => {
-				if (typeof cachedHostVersion === "string" && typeof value === "string" && value !== cachedHostVersion) clearHostCompatibilityCache();
-				cachedHostVersion = value;
-				setHostVersionState(value);
-			}, []);
-			/** v1 is deliberately opt-in: undeclared/unknown entries stay visible even when enabled. */
-			const [compatibleWithHost, setCompatibleWithHostState] = (0, react.useState)(readHostFilterPreference);
 			const setCompatibleWithHost = (0, react.useCallback)((next) => {
-				setCompatibleWithHostState(next);
-				try {
-					localStorage.setItem(HOST_FILTER_KEY, next ? "compatible" : "all");
-				} catch {}
+				discoveryScan.setEnabled(next);
 			}, []);
 			/** The profile this page is running in, for the manual command's own
 			* `--profile` token (#872). The catalog's is always `web`. */
 			const [profileName, setProfileName] = (0, react.useState)(null);
-			const hostCompatibility = (0, react.useSyncExternalStore)(subscribeHostCompatibility, () => cachedHostCompatibility, () => cachedHostCompatibility);
-			const [hostCompatibilityPending, setHostCompatibilityPending] = (0, react.useState)(0);
+			const compatibilityDemandOwner = (0, react.useRef)({});
 			const [catsOpen, setCatsOpen] = (0, react.useState)(false);
 			/** Themes tab: independent from Discover's sort/time state above — a
 			* search or sort choice in one tab has no business resetting the other. */
@@ -11416,6 +11830,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			* with the user left to guess whether the plugin landed.
 			*/
 			const noteMarketGone = (0, react.useCallback)(() => {
+				discoveryScan.setUnavailable();
 				setMarketGone(true);
 				setBusyUrl(null);
 				setUpdatingName(null);
@@ -11430,6 +11845,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					sessionStorage.removeItem("dshm-updating");
 				} catch {}
 			}, [t]);
+			(0, react.useEffect)(() => {
+				if (compatibility.gone) noteMarketGone();
+			}, [compatibility.gone, noteMarketGone]);
 			/**
 			* The status payload, or `null` when the route answered 404 (#962). Every
 			* poll that reads this stops on the null: the market is no longer mounted,
@@ -11444,25 +11862,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			}, [noteMarketGone]);
 			const loadCatalog = (0, react.useCallback)(() => {
 				setLoadError(null);
-				return fetch(api("/dsh-market/registry"), { cache: "no-store" }).then(async (res) => {
-					const body = await res.json().catch(() => ({}));
-					if (res.status === 404) {
+				return discoveryScan.resume().then((outcome) => {
+					if (outcome === "gone") {
 						noteMarketGone();
 						throw new Error(t("marketGoneTitle"));
 					}
-					if (!res.ok) throw new Error(typeof body.error === "string" ? body.error : `HTTP ${String(res.status)}`);
-					return body;
-				}).then((body) => {
-					if (body.registry === void 0) throw new Error("the catalog response carried no data");
-					if (body.registry.updated !== cachedRegistry?.updated) {
-						resetScreenshotsCache();
-						resetThemePreviewCache();
-					}
-					cachedRegistry = body.registry;
-					setData(body.registry);
-					const catalogDate = body.registry.updated;
-					setCatalogUpdated(typeof catalogDate === "string" && catalogDate.trim() !== "" ? catalogDate : null);
-					setHostVersion(typeof body.hostVersion === "string" ? body.hostVersion : null);
 					setLoadError(null);
 				}).catch((error) => {
 					setLoadError(error instanceof Error ? error.message : String(error));
@@ -11496,6 +11900,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						});
 						const status = res.ok ? await res.json() : null;
 						if (!stopped && status !== null && typeof status === "object" && typeof status.boot === "string") {
+							discoveryScan.setBoot(status.boot);
 							setMarketGone(false);
 							loadCatalog();
 							refreshInstalled();
@@ -11528,54 +11933,6 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				loadCatalog,
 				refreshInstalled
 			]);
-			const loadHostCompatibility = (0, react.useCallback)(async (names) => {
-				const unique = [...new Set(names)].filter((name) => {
-					if (name === "" || hostCompatibilitySettled(name) || hostCompatibilityInFlight.has(name)) return false;
-					hostCompatibilityInFlight.add(name);
-					return true;
-				});
-				if (unique.length === 0) return;
-				setHostCompatibilityPending((count) => count + unique.length);
-				for (let offset = 0; offset < unique.length; offset += 64) {
-					const chunk = unique.slice(offset, offset + 64);
-					try {
-						const response = await fetch(api("/dsh-market/discovery-compatibility"), {
-							method: "POST",
-							headers: { "content-type": "application/json" },
-							body: JSON.stringify({
-								packages: chunk.filter((key) => !key.startsWith("https://")),
-								...chunk.some((key) => key.startsWith("https://")) ? { entries: chunk.filter((key) => key.startsWith("https://")) } : {}
-							})
-						});
-						const body = await response.json();
-						if (!response.ok || body.plugins === null || typeof body.plugins !== "object") throw new Error(`HTTP ${String(response.status)}`);
-						if (typeof body.hostVersion === "string" || body.hostVersion === null) setHostVersion(body.hostVersion);
-						const accepted = {};
-						for (const name of chunk) {
-							const item = body.plugins[name];
-							if (item === null || item === void 0 || ![
-								"compatible",
-								"incompatible",
-								"unknown"
-							].includes(item.status) || ![
-								"manifest",
-								"undeclared",
-								"unavailable"
-							].includes(item.basis) || item.requirement !== null && typeof item.requirement !== "string" || !Array.isArray(item.declarations)) {
-								accepted[name] = UNAVAILABLE_HOST_COMPATIBILITY;
-								continue;
-							}
-							accepted[name] = item;
-						}
-						commitHostCompatibility(accepted);
-					} catch {
-						commitHostCompatibility(Object.fromEntries(chunk.map((name) => [name, UNAVAILABLE_HOST_COMPATIBILITY])));
-					} finally {
-						for (const name of chunk) hostCompatibilityInFlight.delete(name);
-						setHostCompatibilityPending((count) => Math.max(0, count - chunk.length));
-					}
-				}
-			}, [setHostVersion]);
 			(0, react.useEffect)(() => {
 				loadCatalog();
 				fetch(api("/dsh-market/status"), { cache: "no-store" }).then(readMarketStatus).then((status) => {
@@ -11591,6 +11948,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					setEnvReady(status.pnpm !== false);
 					applyGithubRouting(status);
 					if (typeof status.boot === "string") {
+						discoveryScan.setBoot(status.boot);
 						setBootId(status.boot);
 						setIgnoredUpdateNames(ignoredUpdatesForBoot(status.boot));
 						try {
@@ -12026,10 +12384,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				data,
 				repoHints
 			]);
-			const { plugins, hostHiddenCount } = (0, react.useMemo)(() => {
+			const { plugins, hostHiddenCount, hostUnavailableCount } = (0, react.useMemo)(() => {
 				if (!compatibleWithHost) return {
 					plugins: pluginsUnblocked,
-					hostHiddenCount: 0
+					hostHiddenCount: 0,
+					hostUnavailableCount: 0
 				};
 				const compatible = (plugin) => {
 					const key = hostCompatibilityKey(plugin);
@@ -12037,9 +12396,15 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				};
 				let hidden = 0;
 				for (const plugin of pluginsAll) if (!compatible(plugin)) hidden += 1;
+				let unavailable = 0;
+				for (const plugin of pluginsUnblocked) {
+					const key = hostCompatibilityKey(plugin);
+					if (key !== null && hostCompatibility[key]?.basis === "unavailable") unavailable += 1;
+				}
 				return {
 					plugins: pluginsUnblocked.filter(compatible),
-					hostHiddenCount: hidden
+					hostHiddenCount: hidden,
+					hostUnavailableCount: unavailable
 				};
 			}, [
 				pluginsAll,
@@ -12107,25 +12472,6 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				compatibleWithHost
 			], DEFAULT_PAGE_SIZE);
 			const pagePlugins = surface === "plugins" ? plugins.slice(0, discoverMore.shown) : plugins.slice((currentPage - 1) * pageSize, currentPage * pageSize);
-			const pageHostPackages = [...new Set([...pagePlugins, ...recentPlugins].flatMap((plugin) => hostCompatibilityKey(plugin) === null ? [] : [hostCompatibilityKey(plugin)]))];
-			const allHostPackages = (0, react.useMemo)(() => [...new Set((data?.plugins ?? []).flatMap((plugin) => hostCompatibilityKey(plugin) === null ? [] : [hostCompatibilityKey(plugin)]))], [data]);
-			const pageHostPackagesKey = pageHostPackages.join("\0");
-			const allHostPackagesKey = allHostPackages.join("\0");
-			(0, react.useEffect)(() => {
-				if (tab === "discover") loadHostCompatibility(pageHostPackages);
-			}, [
-				tab,
-				pageHostPackagesKey,
-				loadHostCompatibility
-			]);
-			(0, react.useEffect)(() => {
-				if (compatibleWithHost) loadHostCompatibility(allHostPackages);
-			}, [
-				compatibleWithHost,
-				allHostPackagesKey,
-				loadHostCompatibility
-			]);
-			const loadedHostPackages = allHostPackages.reduce((count, name) => count + (hostCompatibility[name] === void 0 ? 0 : 1), 0);
 			const themePluginsAll = (0, react.useMemo)(() => data === null ? [] : visiblePlugins(data.plugins, {
 				category: "theme",
 				query: qThemes,
@@ -12209,15 +12555,16 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const favoriteThemeMore = useShownCount(favoriteThemes.length, favResetDeps, DEFAULT_PAGE_SIZE);
 			const favoritePagePlugins = surface === "plugins" ? favoritePlugins.slice(0, favoritePluginMore.shown) : favoritePlugins.slice((favoritePluginPagination.currentPage - 1) * favoritePluginPagination.pageSize, favoritePluginPagination.currentPage * favoritePluginPagination.pageSize);
 			const favoritePageThemes = surface === "plugins" ? favoriteThemes.slice(0, favoriteThemeMore.shown) : favoriteThemes.slice((favoriteThemePagination.currentPage - 1) * favoriteThemePagination.pageSize, favoriteThemePagination.currentPage * favoriteThemePagination.pageSize);
-			const favoritePageHostPackages = [...new Set(favoritePagePlugins.flatMap((plugin) => hostCompatibilityKey(plugin) === null ? [] : [hostCompatibilityKey(plugin)]))];
-			const favoritePageHostPackagesKey = favoritePageHostPackages.join("\0");
+			const compatibilityKeys = (marketGone ? [] : tab === "discover" ? [...pagePlugins, ...!recentHidden && !recentCollapsed ? recentPlugins : []] : tab === "favorites" ? favoritePagePlugins : []).map(hostCompatibilityKey).filter((key) => key !== null).join("\0");
 			(0, react.useEffect)(() => {
-				if (tab === "favorites") loadHostCompatibility(favoritePageHostPackages);
-			}, [
-				tab,
-				favoritePageHostPackagesKey,
-				loadHostCompatibility
-			]);
+				discoveryScan.setDemand(compatibilityDemandOwner.current, compatibilityKeys === "" ? [] : compatibilityKeys.split("\0"));
+			}, [compatibilityKeys]);
+			(0, react.useEffect)(() => {
+				const owner = compatibilityDemandOwner.current;
+				return () => {
+					discoveryScan.removeDemand(owner);
+				};
+			}, []);
 			const favoriteStale = (0, react.useMemo)(() => data === null ? [] : staleFavoriteUrls(favoriteUrls, data.plugins), [data, favoriteUrls]);
 			const favoritesAllStale = favoriteUrls.length > 0 && favoriteStale.length === favoriteUrls.length && qFavorites.trim() === "";
 			/** Tab badge counts catalog-visible bookmarks once the registry is loaded. */
@@ -16032,7 +16379,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 										})]
 									}), compatibleWithHost && typeof hostVersion === "string" && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 										className: Market_module_css_default.hostFilterNote,
-										children: hostCompatibilityPending > 0 || loadedHostPackages < allHostPackages.length ? t("hostFilterLoading").replace("{0}", String(loadedHostPackages)).replace("{1}", String(allHostPackages.length)) : t("hostFilterActive").replace("{0}", hostVersion).replace("{1}", String(hostHiddenCount))
+										children: compatibility.scanning ? t("hostFilterLoading").replace("{0}", String(compatibility.attempted)).replace("{1}", String(compatibility.total)) : t(hostUnavailableCount > 0 ? "hostFilterIncomplete" : "hostFilterActive").replace("{0}", hostVersion).replace("{1}", String(hostHiddenCount)).replace("{2}", String(hostUnavailableCount))
 									})]
 								})]
 							}),

@@ -9,6 +9,7 @@
  * version of the process serving the page.
  */
 
+import { createHash } from 'node:crypto'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { compareSemver, isSemver, satisfiesRange } from './check.ts'
@@ -77,7 +78,20 @@ const MAX_RANGE_LENGTH = 256
 export interface GitHubManifestSource {
   url: string
   tarball?: string | null
+  version?: string | null
   releaseManifest?: unknown
+}
+
+/** Only the selected artifact and its declarations determine a discovery verdict. */
+export function githubCompatibilityRevision(source: GitHubManifestSource): string {
+  const facts = catalogReleaseManifest(source)
+  return createHash('sha256').update(JSON.stringify([
+    source.url,
+    source.tarball ?? null,
+    range(source.version),
+    facts === null ? null : [facts.version, facts.enginesDsh,
+      Object.entries(facts.peerDependencies).sort(), Object.entries(facts.dependencies ?? {}).sort()],
+  ])).digest('hex')
 }
 
 /** Reuse catalog facts only for this repository's exact pinned install asset. */
@@ -93,6 +107,16 @@ export function catalogReleaseManifest(source: GitHubManifestSource): NpmManifes
     peerDependencies: facts.peerDependencies,
     dependencies: facts.dependencies ?? {},
   }
+}
+
+function npmDiscoveryKey(name: string, registry: string, version: string | undefined): string {
+  return version === undefined ? name : `npm:${registry}\u0000${name}\u0000${version}`
+}
+
+function githubDiscoveryKey(source: GitHubManifestSource): string {
+  const key = `github:${source.url}\u0000${source.tarball ?? ''}`
+  const version = range(source.version)
+  return version === null ? key : `${key}\u0000${version}`
 }
 
 /** Read the linked package at its selected release, never the repository root by accident. */
@@ -324,7 +348,7 @@ export function deriveHostCompatibility(
 }
 
 /**
- * Durable, bounded lookup of npm `latest` and catalog GitHub manifests.
+ * Durable, bounded lookup of npm releases and catalog GitHub manifests.
  *
  * Failed requests are intentionally memory-only and short-lived: a mirror
  * outage must not become a day-long false "undeclared" result on disk.
@@ -389,52 +413,63 @@ export class DiscoveryManifestIndex {
   private async withFetchPermit<T>(operation: () => Promise<T>): Promise<T> {
     if (this.activeFetches >= this.concurrency) {
       await new Promise<void>(resolve => this.fetchWaiters.push(resolve))
-    }
-    this.activeFetches += 1
+    } else this.activeFetches += 1
     try {
       return await operation()
     } finally {
-      this.activeFetches -= 1
-      this.fetchWaiters.shift()?.()
+      const next = this.fetchWaiters.shift()
+      if (next === undefined) this.activeFetches -= 1
+      else next()
     }
   }
 
-  private async fetchOne(name: string, registry: string, record = true, readManifest?: () => Promise<unknown>): Promise<NpmManifestFacts | null> {
+  private retryDelay(key: string, now = this.now()): number {
+    return Math.max(0, Math.max(this.failures.get(key) ?? 0, this.unavailableUntil) - now)
+  }
+
+  npmRetryAfterMs(name: string, registry: string, version: string | undefined): number {
+    return this.retryDelay(npmDiscoveryKey(name, registry, version))
+  }
+
+  githubRetryAfterMs(source: GitHubManifestSource): number {
+    return this.retryDelay(githubDiscoveryKey(source))
+  }
+
+  private async fetchOne(
+    cacheKey: string,
+    record: boolean,
+    readManifest: () => Promise<NpmManifestFacts>,
+    expectedVersion?: string,
+  ): Promise<NpmManifestFacts | null> {
     this.load()
     const now = this.now()
-    const cached = this.entries.get(name)
-    if (cached !== undefined && now - cached.checkedAt < this.ttlMs) return cached.facts
-    if ((this.failures.get(name) ?? 0) > now || this.unavailableUntil > now) return null
+    const cached = this.entries.get(cacheKey)
+    if (cached !== undefined && now - cached.checkedAt < this.ttlMs
+      && (expectedVersion === undefined || cached.facts.version === expectedVersion)) return cached.facts
+    if (this.retryDelay(cacheKey, now) > 0) return null
     // Advisory and recording lookups keep separate in-flight slots: an
     // advisory call must not be answered by — or hand its answer to — a
     // recording one, or `record` would stop meaning anything when the two
     // overlap on the same package.
-    const key = record ? name : `${name}\u0000advisory`
+    const key = record ? cacheKey : `${cacheKey}\u0000advisory`
     const pending = this.inflight.get(key)
     if (pending !== undefined) return await pending
 
     const request = (async (): Promise<NpmManifestFacts | null> => {
       try {
-        const value = await this.withFetchPermit(readManifest ?? (async () => {
-          const response = await this.fetcher(`${registry}/${encodeURIComponent(name)}/latest`, {
-            signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-            headers: { accept: 'application/json', 'user-agent': 'dsh-market' },
-          })
-          if (!response.ok) throw new Error(`HTTP ${String(response.status)}`)
-          return await response.json()
-        }))
-        const facts = manifestFacts(value)
+        const facts = await this.withFetchPermit(readManifest)
+        if (expectedVersion !== undefined && facts.version !== expectedVersion) throw new Error('npm returned a different release')
         if (record) {
-          this.entries.set(name, { checkedAt: this.now(), facts })
+          this.entries.set(cacheKey, { checkedAt: this.now(), facts })
           this.dirty = true
-          this.failures.delete(name)
+          this.failures.delete(cacheKey)
           this.consecutiveFailures = 0
         }
         return facts
       } catch {
         if (record) {
           const failedAt = this.now()
-          this.failures.set(name, failedAt + FAILURE_COOLDOWN_MS)
+          this.failures.set(cacheKey, failedAt + FAILURE_COOLDOWN_MS)
           this.consecutiveFailures += 1
           if (this.consecutiveFailures >= this.concurrency) {
             this.unavailableUntil = failedAt + OUTAGE_COOLDOWN_MS
@@ -449,6 +484,15 @@ export class DiscoveryManifestIndex {
     return await request
   }
 
+  private async readNpmManifest(name: string, version: string, registry: string): Promise<unknown> {
+    const response = await this.fetcher(`${registry}/${encodeURIComponent(name)}/${encodeURIComponent(version)}`, {
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      headers: { accept: 'application/json', 'user-agent': 'dsh-market' },
+    })
+    if (!response.ok) throw new Error(`HTTP ${String(response.status)}`)
+    return await response.json()
+  }
+
   /**
    * Facts for ONE named release, rather than for `latest`.
    *
@@ -460,26 +504,16 @@ export class DiscoveryManifestIndex {
    * release declares a range this host misses), and it would equally pass a
    * pinned release that is itself incompatible.
    *
-   * Deliberately outside the cache. The index is keyed by package name, and a
-   * version-keyed one would grow with every release anyone ever pinned to
-   * answer a question asked once per install. Nothing is recorded either: a
-   * pre-flight verdict must not decide what the diagnostics panel sees next
-   * (#619).
+   * Deliberately outside the cache. An install can target any old release,
+   * whereas a discovery query is for the version shown in the catalog. A
+   * pre-flight verdict must not decide what the diagnostics panel sees next (#619).
    *
    * A release whose manifest cannot be read is `null`, like every other
    * unreadable manifest: absence of a claim is not a verdict.
    */
   async lookupVersion(name: string, version: string, registry: string): Promise<NpmManifestFacts | null> {
     try {
-      const response = await this.withFetchPermit(async () => await this.fetcher(
-        `${registry}/${encodeURIComponent(name)}/${encodeURIComponent(version)}`,
-        {
-          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-          headers: { accept: 'application/json', 'user-agent': 'dsh-market' },
-        },
-      ))
-      if (!response.ok) return null
-      return manifestFacts(await response.json())
+      return manifestFacts(await this.withFetchPermit(() => this.readNpmManifest(name, version, registry)))
     } catch {
       return null
     }
@@ -497,16 +531,24 @@ export class DiscoveryManifestIndex {
   async lookup(
     names: readonly string[],
     registry: string,
-    options: { record?: boolean } = {},
+    options: { record?: boolean; versions?: ReadonlyMap<string, string> } = {},
   ): Promise<Record<string, NpmManifestFacts | null>> {
-    const record = options.record !== false
+    const shouldRecord = options.record !== false
     const unique = [...new Set(names)]
     const result: Record<string, NpmManifestFacts | null> = {}
     let next = 0
     const worker = async (): Promise<void> => {
       while (next < unique.length) {
         const name = unique[next++]!
-        result[name] = await this.fetchOne(name, registry, record)
+        const version = options.versions?.get(name)
+        result[name] = await this.fetchOne(npmDiscoveryKey(name, registry, version), shouldRecord, async () => {
+          const manifest = await this.readNpmManifest(name, version ?? 'latest', registry)
+          const returnedName = record(manifest)?.name
+          if (version !== undefined && returnedName !== undefined && returnedName !== name) {
+            throw new Error('npm returned a different package')
+          }
+          return manifestFacts(manifest)
+        }, version)
       }
     }
     await Promise.all(Array.from({ length: Math.min(this.concurrency, unique.length) }, worker))
@@ -525,8 +567,8 @@ export class DiscoveryManifestIndex {
     const worker = async (): Promise<void> => {
       while (next < unique.length) {
         const source = unique[next++]!
-        const key = `github:${source.url}\u0000${source.tarball ?? ''}`
-        result[source.url] = await this.fetchOne(key, '', true, () => githubManifest(source, this.fetcher))
+        result[source.url] = await this.fetchOne(githubDiscoveryKey(source), true, async () =>
+          manifestFacts(await githubManifest(source, this.fetcher)))
       }
     }
     await Promise.all(Array.from({ length: Math.min(this.concurrency, unique.length) }, worker))
