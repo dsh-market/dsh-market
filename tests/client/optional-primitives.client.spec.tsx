@@ -25,6 +25,7 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', async (importOriginal) => ({
 }))
 
 import { MarketSection, resetMarketPortalHost } from '../../src/client/MarketSection.tsx'
+import { UpdateNotificationsPanel } from '../../src/client/UpdateNotificationsPanel.tsx'
 import { resetGithubRouting, resetScreenshotsCache } from '../../src/client/market-data.ts'
 import { en } from '../../src/client/locales.ts'
 
@@ -85,6 +86,17 @@ describe('capability chips on a host that has Tag', () => {
 })
 
 describe('the on/off control on a host that has Switch', () => {
+  it('gives automatic update checks visible text when the host label is accessibility-only', () => {
+    render(<UpdateNotificationsPanel
+      t={key => (en as Record<string, string>)[key] ?? key} busy={false}
+      onUpdate={() => {}} onCheck={async () => {}} onEnabled={async () => {}} onIntervalHours={async () => {}}
+      snapshot={{ enabled: true, intervalHours: 6, checking: false, checkedAt: null, lastSuccessAt: null, nextCheckAt: null,
+        stale: false, error: null, boot: 'boot', updates: {}, updateExempt: [], disabled: [], blocked: [] }}
+    />)
+    expect(screen.getByText(en.updateChecksAutomatic)).toBeTruthy()
+    expect(document.querySelector('[data-host-switch]')?.getAttribute('aria-label')).toBe(en.updateChecksAutomatic)
+  })
+
   it('renders the host switch in the installed rows, not the market one', async () => {
     // The host's own plugin list uses `Switch`; the market's rows sit in that
     // list, so they take it too. The market's markup is the fallback (asserted
@@ -107,9 +119,10 @@ describe('the on/off control on a host that has Switch', () => {
     }))
     render(<MarketSection {...props()} preferredSubsectionId="installed" />)
     await screen.findAllByText('dsh-tagged')
-    const switches = document.querySelectorAll('[data-host-switch]')
-    expect(switches.length).toBeGreaterThan(0)
-    expect(switches[0]!.getAttribute('aria-label')).toMatch(/Disable dsh-tagged/)
+    // The update-check preferences also have a switch; assert the installed
+    // plugin's control rather than whichever switch happens to render first.
+    const pluginSwitch = screen.getByRole('button', { name: /Disable dsh-tagged/ })
+    expect(pluginSwitch.hasAttribute('data-host-switch')).toBe(true)
   })
 })
 

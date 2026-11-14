@@ -24,6 +24,8 @@ import { createHostNavigation } from './host-navigation.ts'
 import { createSidebarEntry, SIDEBAR_PANEL_ID, SIDEBAR_PANEL_ORDER } from './sidebar-entry.ts'
 import type { SidebarEntry } from './sidebar-entry.ts'
 import { MarketLogo } from './MarketSection.tsx'
+import { updateNotifications } from './update-notifications.ts'
+import { installPluginsUpdateIndicator } from './PluginsUpdateIndicator.tsx'
 import css from './Market.module.css'
 import type { ThemeSnapshot, Translate } from './market-data.ts'
 
@@ -168,6 +170,8 @@ export function apply(ctx: MarketClientContext): void {
 function mountMarket(ctx: MarketClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en, ja }), 'dsh-market: dictionaries')
   const t = ctx.locale.bind(NS)
+  ctx.effect(() => updateNotifications.start(), 'dsh-market: update snapshots')
+  ctx.effect(() => installPluginsUpdateIndicator(ctx, t, ctx.locale), 'dsh-market: Plugins update indicator')
 
   // The section's nav glyph. Before dsh 0.2.2 the shell picked icons from its
   // own ids and a registration had nothing to pass, so the market claimed its

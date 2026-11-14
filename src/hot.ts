@@ -18,8 +18,9 @@
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { join } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { dirname, join } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { isUpdateCheckIntervalHours, type UpdateCheckIntervalHours } from './update-notification-settings.ts'
 import { asChannel, type Channel } from './channels.ts'
 import { asRegion, normalizeGithubProxy, type Region } from './regions.ts'
 import { findDshInstallDir } from './dsh-install.ts'
@@ -42,7 +43,7 @@ interface HotContext {
 }
 
 /**
- * Profile-scoped resolution for hot-mount rows: turn a bare package name into
+ * Profile-scoped resolution for hot-mount imports: turn a bare package name into
  * the absolute `file://` entry URL of the package just installed into
  * `profileDir`.
  *
@@ -56,7 +57,7 @@ interface HotContext {
  * back to "restart required", blaming the plugin for what is a resolution
  * anchor problem.
  *
- * Resolving the row name HERE, against the profile the package was actually
+ * Resolving the module at import time, against the profile it was actually
  * installed into, is anchor-independent: `require.resolve` walks
  * `profileDir/node_modules` natively, so the tree hands the loader a
  * `file://` URL needing no further resolution. Non-bare specifiers (relative
@@ -68,8 +69,8 @@ interface HotContext {
  * whose entry cannot be located via `require.resolve` (no `main`/exports —
  * the market's own `entryArtifactExists` heuristic covers those shapes before
  * an install is accepted) is not something this resolver should guess about.
- * Client-only shims never reach this function (their rows are replaced by a
- * no-op host module before the file is written).
+ * Client-only shims never reach this function: their import returns a no-op
+ * host module before attempting package resolution.
  */
 export function resolveProfileEntry(profileDir: string, name: string): string {
   if (!name || name.startsWith('.') || name.startsWith('cordis:') || name.startsWith('file://')) return name
@@ -89,7 +90,7 @@ export function resolveProfileEntry(profileDir: string, name: string): string {
   }
 }
 
-// File URLs may contain apostrophes; YAML single-quoted scalars escape them by doubling.
+// Row names and ids may contain apostrophes; YAML single-quoted scalars double them.
 function yamlSingleQuoted(value: string): string {
   return value.replace(/'/g, "''")
 }
@@ -147,15 +148,18 @@ async function loadHotTreeClass(): Promise<unknown | null> {
     const Include = mod.Include
     if (Include === undefined) throw new Error('no Include export')
     class MarketHotTree extends Include {
+      private readonly profileDir: string
       constructor(...args: never[]) {
         super(...args)
-        hotTrees.set((args[1] as { path: string }).path, this as unknown as HotEntryTree)
+        const path = (args[1] as { path: string }).path
+        this.profileDir = dirname(dirname(fileURLToPath(path)))
+        hotTrees.set(path, this as unknown as HotEntryTree)
       }
       /** Runtime-only mount list; the bundle layer owns persistence. */
       override write(): void {}
       override import(name: string, getOuterStack?: () => string[]): unknown {
         if (shimNames.has(name)) return { name, apply: () => {} }
-        return super.import(name, getOuterStack)
+        return super.import(resolveProfileEntry(this.profileDir, name), getOuterStack)
       }
     }
     hotTreeClass = MarketHotTree
@@ -391,6 +395,10 @@ export interface MarketState {
    * An empty array is how the last name is removed.
    */
   updateExempt?: string[]
+  /** Background update checks run only after an explicit opt-in. */
+  backgroundUpdateChecks?: boolean
+  /** Polling cadence; absent or invalid legacy values use the six-hour default. */
+  backgroundUpdateIntervalHours?: UpdateCheckIntervalHours
   /** User-supplied HTTPS prefix used when the built-in GitHub routes fail. */
   githubProxy?: string
   /**
@@ -690,6 +698,8 @@ export function readMarketState(profileDir: string): MarketState {
       favorites?: unknown
       blocked?: unknown
       updateExempt?: unknown
+      backgroundUpdateChecks?: unknown
+      backgroundUpdateIntervalHours?: unknown
       brokenPlugins?: unknown
       sidebarEntry?: unknown
       settingsSection?: unknown
@@ -737,6 +747,8 @@ export function readMarketState(profileDir: string): MarketState {
       favorites: favoriteUrls(state.favorites),
       blocked: blockedNames(state.blocked),
       updateExempt: updateExemptNames(state.updateExempt),
+      ...(typeof state.backgroundUpdateChecks === 'boolean' ? { backgroundUpdateChecks: state.backgroundUpdateChecks } : {}),
+      ...(isUpdateCheckIntervalHours(state.backgroundUpdateIntervalHours) ? { backgroundUpdateIntervalHours: state.backgroundUpdateIntervalHours } : {}),
       ...(githubProxy === null ? {} : { githubProxy }),
       ...(brokenPlugins === undefined ? {} : { brokenPlugins }),
       ...(installTimes === undefined ? {} : { installTimes }),
@@ -846,6 +858,8 @@ function writeState(profileDir: string, state: MarketState, ownStamps: boolean):
   const favorites = state.favorites ?? onDisk.favorites ?? []
   const blocked = state.blocked ?? onDisk.blocked ?? []
   const updateExempt = state.updateExempt ?? onDisk.updateExempt ?? []
+  const backgroundUpdateChecks = state.backgroundUpdateChecks ?? onDisk.backgroundUpdateChecks
+  const backgroundUpdateIntervalHours = state.backgroundUpdateIntervalHours ?? onDisk.backgroundUpdateIntervalHours
   // This field does have a clear action ("restore automatic"). As with
   // regionAuto, omission preserves while an explicit undefined removes it.
   const githubProxy = Object.prototype.hasOwnProperty.call(state, 'githubProxy')
@@ -875,6 +889,8 @@ function writeState(profileDir: string, state: MarketState, ownStamps: boolean):
     ...(favorites.length > 0 ? { favorites } : {}),
     ...(blocked.length > 0 ? { blocked } : {}),
     ...(updateExempt.length > 0 ? { updateExempt } : {}),
+    ...(typeof backgroundUpdateChecks === 'boolean' ? { backgroundUpdateChecks } : {}),
+    ...(isUpdateCheckIntervalHours(backgroundUpdateIntervalHours) ? { backgroundUpdateIntervalHours } : {}),
     ...(Object.keys(notes).length > 0 ? { notes } : {}),
     // Omitted while unchosen, so "never picked" survives a round trip and
     // keeps deriving from the running build — but only when disk has not
@@ -1174,14 +1190,12 @@ export async function hotMount(ctx: HotContext, profileDir: string, packageName:
     mkdirSync(dir, { recursive: true, mode: 0o700 })
     hotSequence += 1
     const file = join(dir, `hot-${String(hotSequence)}.yml`)
-    // Rows carry ABSOLUTE file:// entry URLs, resolved against this profile:
-    // the loader's own parent-walk (from the host closure) can never reach
-    // `profileDir/node_modules`, so bare names in the file would fail to
-    // import on closure-hosted loaders. The file remains a faithful record —
-    // `cleanHotDir` wipes it on every boot and the bundle layer owns
-    // persistence, so nothing reads these files back.
+    // Keep the package identity on loader entries: the host's client-module
+    // registry uses it to find package.json and the browser bundle. Only the
+    // import resolves against this profile, so closure-hosted loaders still
+    // receive an absolute module URL without making it the plugin's name.
     const yml = rows
-      .map(row => `- id: '${yamlSingleQuoted(`mkt-${row.id}`)}'\n  name: '${yamlSingleQuoted(resolveProfileEntry(profileDir, row.name))}'\n`)
+      .map(row => `- id: '${yamlSingleQuoted(`mkt-${row.id}`)}'\n  name: '${yamlSingleQuoted(row.name)}'\n`)
       .join('')
     writeFileSync(file, yml)
     const handle = ctx.plugin(HotTree, { path: pathToFileURL(file).href })
