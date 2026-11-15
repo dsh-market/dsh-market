@@ -43,6 +43,20 @@ interface HostLogMessage {
   args?: unknown
 }
 
+/**
+ * Sink shape accepted by cordis' `LoggerService.exporter`.
+ *
+ * `levels` is not optional decoration: the service skips a record before it
+ * ever reaches `export` when
+ * `(levels[name] ?? levels.default ?? logger.level ?? 1) < record.level`.
+ * The default threshold is `1`, and `warn` is level `2` — a sink that leaves
+ * `levels` out never sees a single warning.
+ */
+interface HostLogSink {
+  levels?: Record<string, number>
+  export(message: HostLogMessage): void
+}
+
 interface HotContext {
   plugin(plugin: unknown, config: unknown): PluginHandle
   logger?: {
@@ -53,7 +67,7 @@ interface HotContext {
      * every record the process logs and returns a disposer. Absent on hosts
      * whose logger is a bare object, and on test doubles.
      */
-    exporter?(sink: { export(message: HostLogMessage): void }): unknown
+    exporter?(sink: HostLogSink): unknown
   }
 }
 
@@ -1072,12 +1086,16 @@ function watchMountLog(ctx: HotContext): { finish(): string[]; stop(): void } {
   let disposable: unknown
   try {
     disposable = register.call(logger, {
+      // Ask for every level and filter below: the sink exists to catch
+      // warnings, and the service's own default threshold (`1`) drops them
+      // before `export` is ever called.
+      levels: { default: 3 },
       export(message: HostLogMessage) {
         if (lines.length >= MOUNT_LOG_MAX) return
         if (message?.type !== 'warn' && message?.type !== 'error') return
         lines.push(mountLogLine(message))
       },
-    })
+    } satisfies HostLogSink)
   } catch {
     // A host whose exporter rejects this sink shape is not a mount failure.
     return { finish: () => [], stop: () => {} }
@@ -1282,7 +1300,17 @@ export async function hotMount(ctx: HotContext, profileDir: string, packageName:
       .join('')
     writeFileSync(file, yml)
     const mountLog = watchMountLog(ctx)
-    const handle = ctx.plugin(HotTree, { path: pathToFileURL(file).href })
+    let handle: PluginHandle
+    try {
+      handle = ctx.plugin(HotTree, { path: pathToFileURL(file).href })
+    } catch (error) {
+      // `ctx.plugin()` bails out before creating anything when the fiber is no
+      // longer active (a mount issued during teardown) or the plugin is
+      // rejected. The sink is already registered by then, so release it here:
+      // the outer catch reports the failure, it does not clean this up.
+      mountLog.stop()
+      throw error
+    }
     try {
       await raceActivationTimeout(handle.await())
     } catch (error) {

@@ -743,6 +743,48 @@ describe('hotMount records what the host logged while mounting (#1197)', () => {
       `- insert:\n    - id: ${name}-host\n      name: ${name}\n`)
   }
 
+  /** `LoggerType` → numeric severity, as declared by cordis (`error` lowest). */
+  const levelOf = { error: 0, info: 1, warn: 2, debug: 3 } as const
+
+  interface TestSink {
+    levels?: Record<string, number>
+    export(message: { name?: string; type?: string; args?: unknown[] }): void
+  }
+
+  /**
+   * Stand-in for `LoggerService`, including the dispatch rule that decides
+   * whether a record reaches a sink at all: cordis skips the record when
+   * `(levels[name] ?? levels.default ?? logger.level ?? 1) < record.level`.
+   * Reproducing it here is the point of the test — a sink that never opts
+   * into `warn` looks fine against a sink that is handed records directly.
+   */
+  const hostLogger = (): {
+    logger: { info(): void; warn(): void; exporter(next: TestSink): () => void }
+    record(type: 'error' | 'info' | 'warn', name: string, ...args: unknown[]): void
+    disposed: string[]
+  } => {
+    let sink: TestSink | undefined
+    const disposed: string[] = []
+    return {
+      disposed,
+      logger: {
+        info: () => {},
+        warn: () => {},
+        exporter(next: TestSink) {
+          sink = next
+          return () => { disposed.push('disposed') }
+        },
+      },
+      record(type, name, ...args) {
+        if (sink === undefined) return
+        const level = levelOf[type]
+        const threshold = sink.levels?.[name] ?? sink.levels?.default ?? 1
+        if (threshold < level) return
+        sink.export({ name, type, args })
+      },
+    }
+  }
+
   it('writes warn/error lines next to the live event and keeps the verdict', async () => {
     // The reported shape: an entry waits on a service that never arrives.
     // `Fiber#await()` resolves anyway, so the mount reports live and the only
@@ -753,22 +795,14 @@ describe('hotMount records what the host logged while mounting (#1197)', () => {
     configurePersistentLog(logFile)
     try {
       entryPkg(dir, 'quiet-entry')
-      let sink: { export(message: { name?: string; type?: string; args?: unknown[] }): void } | undefined
-      const disposed: string[] = []
+      const host = hostLogger()
       const logging = {
         plugin: () => {
-          sink?.export({ name: 'mkt-quiet-entry', type: 'warn', args: ['service "database" is required but not provided'] })
-          sink?.export({ name: 'unrelated', type: 'info', args: ['must not be copied'] })
+          host.record('warn', 'mkt-quiet-entry', 'service "database" is required but not provided')
+          host.record('info', 'unrelated', 'must not be copied')
           return { await: () => Promise.resolve(), dispose: () => {} }
         },
-        logger: {
-          info: () => {},
-          warn: () => {},
-          exporter: (next: { export(message: { name?: string; type?: string; args?: unknown[] }): void }) => {
-            sink = next
-            return () => { disposed.push('disposed') }
-          },
-        },
+        logger: host.logger,
       }
 
       const result = await hotMount(logging, dir, 'quiet-entry')
@@ -780,9 +814,28 @@ describe('hotMount records what the host logged while mounting (#1197)', () => {
       expect(logged).toContain('is required but not provided')
       expect(logged).not.toContain('must not be copied')
       // The sink must not outlive the mount.
-      expect(disposed).toEqual(['disposed'])
+      expect(host.disposed).toEqual(['disposed'])
     } finally {
       configurePersistentLog(null)
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('releases the sink when the host refuses to create the plugin', async () => {
+    // `ctx.plugin()` throws on a disposed fiber before it creates anything.
+    // The sink is registered by then, and the market's failure branch never
+    // sees it — a leaked sink would collect every later log line.
+    const dir = mkdtempSync(join(tmpdir(), 'dshm-hot-'))
+    try {
+      entryPkg(dir, 'throwing-host')
+      const host = hostLogger()
+      const result = await hotMount({
+        plugin: () => { throw new Error('fiber is disposed') },
+        logger: host.logger,
+      }, dir, 'throwing-host')
+      expect(result.ok).toBe(false)
+      expect(host.disposed).toEqual(['disposed'])
+    } finally {
       rmSync(dir, { recursive: true, force: true })
     }
   })
