@@ -5282,10 +5282,9 @@ export function MarketSection(props: MarketSectionProps) {
             setOperationsOpen(true)
             return
           }
-          // The target says it needs a newer host than this one (#404). Not
-          // a failure to report and move on from — a decision, so it gets a
-          // dialog with the two facts and a way past. The row is dropped
-          // rather than marked failed: nothing was attempted.
+          // The target's declared range excludes this host (#404, #1210).
+          // Show the range and the running version so the user can choose.
+          // Drop the row because the market refused before attempting the update.
           if (body.hostIncompatible && typeof body.hostIncompatible === 'object') {
             const notice = body.hostIncompatible as { name?: unknown; version?: unknown; requirement?: unknown; hostVersion?: unknown; npmName?: unknown }
             setRecords(list => drop(list, updateRecordId))

@@ -2163,6 +2163,43 @@ describe('MarketSection (jsdom)', () => {
     expect(screen.getByRole('button', { name: en.hostIncompatibleInstallAnyway })).toBeTruthy()
   })
 
+  it.each(['install', 'update'] as const)('describes the incompatible range without guessing a direction before %s (#1210)', async (operation) => {
+    const name = '@anionex/dsh-vision-toolkit'
+    const version = '0.1.51'
+    const hostVersion = '0.2.2-rc.3'
+    // The published 0.1.51 manifest's DSH peer ranges end at rc.2.
+    const requirement = '>=0.1.0-rc.8 <0.2.0 || ^0.1.1-rc.1 || ^0.1.2-alpha.1 || ^0.1.5-rc.1 || 0.2.0-rc.2 || 0.2.1-rc.2 || 0.2.1-rc.3 || 0.2.1-rc.5 || 0.2.2-rc.1 || 0.2.2-rc.2'
+    const plugin = { ...REGISTRY.plugins[0], name, npm: name, owner: 'Anionex', url: 'https://github.com/Anionex/agent-vision-toolkit' }
+    const isInstall = operation === 'install'
+    stubFetch({
+      '/dsh-market/registry': { source: 'live', registry: { ...REGISTRY, plugins: [plugin] }, hostVersion },
+      '/dsh-market/installed': { profile: 'desktop', installed: isInstall ? {} : { [name]: '0.1.50' }, live: [] },
+      '/dsh-market/updates': { updates: { [name]: { kind: 'npm', current: '0.1.50', latest: version, updateAvailable: true } } },
+      [`/dsh-market/${operation}`]: { __status: 400, hostIncompatible: { name, npmName: name, version, requirement, hostVersion } },
+      '/dsh-market/find-compatible': { compatibleVersion: null, upgradeOnly: !isInstall },
+    })
+    const dict = isInstall ? zh : en
+    const localeSnapshot = { active: isInstall ? 'zh' : 'en' }
+    localStorage.setItem('dshm-host-filter', 'all')
+    render(<MarketSection {...props()} t={key => (dict as Record<string, string>)[key] ?? key}
+      locale={{ subscribe: () => () => {}, getSnapshot: () => localeSnapshot }} />)
+    if (isInstall) {
+      await screen.findAllByText(name, { exact: true })
+      fireEvent.click(screen.getAllByRole('button', { name: dict.install })[0])
+      fireEvent.click(await screen.findByRole('button', { name: dict.confirmInstall }))
+    } else {
+      fireEvent.click(await screen.findByRole('button', { name: /Installed/ }))
+      fireEvent.click(await screen.findByRole('button', { name: dict.update }))
+    }
+
+    const state = await screen.findByText(re(dict.hostIncompatibleNoCompat))
+    const dialog = state.closest('[role="dialog"]')
+    expect(dialog?.textContent).toContain(hostVersion)
+    expect(dialog?.textContent).toContain(requirement)
+    expect(dialog?.textContent).toContain(isInstall ? '这个插件版本与当前 DSH 不兼容' : 'This plugin release is incompatible with your DSH')
+    expect(dialog?.textContent).not.toMatch(/要求更新的 DSH|needs a newer DSH/)
+  })
+
   it('export log is a real button with visible feedback (#84)', async () => {
     stubFetch({ '/dsh-market/logs': 'log-lines' })
     render(<MarketSection {...props()} />)
