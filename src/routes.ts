@@ -18,7 +18,8 @@ import { packageFileFromRegistry } from './catalog-npm.ts'
 import { forgetCatalog, loadRegistry, pluginCategories, type Registry, type RegistryPlugin } from './registry.ts'
 import { settingsNamespaceState } from './settings.ts'
 import {
-  buildEnvFromUnknown, cleanHotDir, forgetInstalled, hotMount, hotUnmount, listHotMounts, MAX_BLOCKED, MAX_BLOCKED_NAME, MAX_FAVORITES, MAX_NOTE, MAX_UPDATE_EXEMPT,
+  buildEnvFromUnknown, cleanHotDir, forgetInstalled, hotMount, hotMountFailure, hotUnmount, listHotMounts, listLiveHotMounts,
+  MAX_BLOCKED, MAX_BLOCKED_NAME, MAX_FAVORITES, MAX_NOTE, MAX_UPDATE_EXEMPT,
   mountClientOnlyDeps, purgeMarketState, readMarketState, recordInstalled, recordUpdated, writeMarketState,
   type BrokenReason, type MarketState,
 } from './hot.ts'
@@ -1142,6 +1143,7 @@ export function mountMarketRoutes(
     if (enabled) {
       if (listHotMounts().includes(name)) {
         ok = true
+        reason = hotMountFailure(name, dir) ?? undefined
       } else if (carrierRowIds(dir, name).length > 0) {
         // A carrier replaces something: its patch disables stock rows and its
         // own rows stand in for them, with `disabled: !!js …` guards deciding
@@ -1177,7 +1179,7 @@ export function mountMarketRoutes(
           // durable layers half-written: the stack entry re-added, the rows
           // it owns still disabled, and both the stock UI and the plugin's
           // replacement off at the next boot (#1010).
-          ok = result.ok || result.deferred === true
+          ok = result.ok || result.deferred === true || result.retained === true
           reason = result.reason ?? undefined
           // Deliberately NOT clearing replacedWhileLive here (#685). This used
           // to say "a mount that succeeded imported the module as it is on
@@ -1502,7 +1504,7 @@ export function mountMarketRoutes(
    * loader side, every boot-loaded bundle plugin would read as "restart".
    */
   function liveNames(): Set<string> {
-    const live = new Set(listHotMounts())
+    const live = new Set(listLiveHotMounts())
     for (const entry of host.loader.entries()) {
       if (entry.fiber === undefined) continue
       if (entry.options.name !== undefined) {
@@ -3852,7 +3854,7 @@ export function mountMarketRoutes(
           present,
           activation,
           diagnostics,
-          live: listHotMounts(),
+          live: listLiveHotMounts(),
           disabled: [...disabled],
           groups,
           groupOrder,
@@ -4286,9 +4288,11 @@ export function mountMarketRoutes(
             return
           }
           pendingRollbacks.clear()
-          const activated = await themes.activateTheme(name)
+          const { ok: activated, reason } = await themes.activateTheme(name)
           logEvent(activated ? 'info' : 'error', 'use-skin', `${name}: ${activated ? 'active' : 'failed'}`)
-          sendJson(response, activated ? 200 : 502, { ok: activated, live: listHotMounts() })
+          sendJson(response, activated ? 200 : 502, {
+            ok: activated, live: listLiveHotMounts(), ...(reason === undefined ? {} : { error: reason }),
+          })
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
           logEvent('error', 'use-skin', `route error: ${message}`)
@@ -4356,13 +4360,15 @@ export function mountMarketRoutes(
             }
           }
           pendingRollbacks.clear()
+          let themeFailure: string | undefined
           const layers = enabled && (await themes.installedThemeNames()).has(name)
             // Theme exclusivity stays a Themes-page concern: enabling a theme
             // deactivates the previously active one, so only the last-enabled
             // theme is live (same semantics as use-skin).
             ? await switchPluginLayers(name, enabled, async () => {
-              const ok = await themes.activateTheme(name)
-              return { ok, reason: ok ? undefined : 'theme activation failed — restart required / 主题启用失败，需要重启' }
+              const { ok, reason } = await themes.activateTheme(name)
+              themeFailure = reason
+              return { ok, reason: reason ?? (ok ? undefined : 'theme activation failed — restart required / 主题启用失败，需要重启') }
             })
             : await switchPluginLayers(name, enabled)
           const { ok, reason } = layers
@@ -4378,7 +4384,8 @@ export function mountMarketRoutes(
           // (enable failed to hot-mount / disable left the fiber up), the
           // change lands on the next boot via the patch layer + state.json —
           // the client reuses the market's pending-restart banner for it.
-          const liveAfter = liveNames().has(name)
+          const liveNow = liveNames()
+          const liveAfter = liveNow.has(name)
           // A carrier toggle moves the bundle in/out of dsh.profile.bundles,
           // which only takes effect on the next composition — always a restart.
           // Non-carrier plugins keep the live-mount based decision.
@@ -4389,7 +4396,15 @@ export function mountMarketRoutes(
           // module-scope version marker). Enabling cannot make it current;
           // only a restart can.
           const staleModule = enabled && replacedWhileLive.has(name)
-          const restart = isCarrier || staleModule ? true : enabled ? !liveAfter : liveAfter
+          const observed = activationAfterReplace(
+            verifyActivation(config.profile, name, liveNow, activeProfileDir, offNow, undefined, loaderEntryObserved(name)),
+            replacedWhileLive.has(name),
+          )
+          const reported = themeFailure === undefined
+            ? observed
+            : { ...observed, state: 'failed' as const, hot: false, reasons: [themeFailure] }
+          const restart = !(enabled && reported.state === 'failed')
+            && (isCarrier || staleModule || (enabled ? !liveAfter : liveAfter))
           // A client-part plugin's UI is in the page already — toggling it
           // needs a browser refresh to show the change (same signal the
           // install flow uses for the hot banner).
@@ -4399,18 +4414,12 @@ export function mountMarketRoutes(
               name,
               enabled,
               disabled: [...disabled],
-              live: listHotMounts(),
+              live: listLiveHotMounts(),
               // The same verdict the listing gives (#685): the reply used the
               // loader inventory alone and said `live` for a plugin serving
               // its old build, while a refresh of the listing — which applies
               // activationAfterReplace — said `restart`. One moment, one story.
-              activation: {
-                [name]: activationAfterReplace(
-                  verifyActivation(config.profile, name, liveNames(), activeProfileDir, offNow, undefined,
-                    loaderEntryObserved(name)),
-                  replacedWhileLive.has(name),
-                ),
-              },
+              activation: { [name]: reported },
               reason,
               patchRows,
               patchWrite: patchWrite ?? { ok: true, reason: null },
@@ -4739,7 +4748,7 @@ export function mountMarketRoutes(
               if (isNonToggleableLibrary(member)) continue
               let result: { ok: boolean; reason?: string }
               if (enabled && themeNames.has(member)) {
-                result = { ok: await themes.activateTheme(member), reason: undefined }
+                result = await themes.activateTheme(member)
               } else {
                 // The same two durable layers the single switch writes (#696):
                 // which control flipped a plugin must not change what is on disk.
@@ -8336,6 +8345,7 @@ export function mountMarketRoutes(
                 writeMarketState(activeProfileDir, { disabled, groups, groupOrder })
                 // Theme installs auto-activate (and deactivate the previous
                 // theme) so the result is visible right after the refresh.
+                const themeFailures = new Map<string, string>()
                 if (hostActivation) {
                   // The host's watcher owns the entire composition. Waiting
                   // for its replay gives the market a real live/fail verdict
@@ -8399,7 +8409,9 @@ export function mountMarketRoutes(
                         live = (await hotMount(host, activeProfileDir, name)).ok
                       }
                     } else if (!adopted) {
-                      live = await themes.activateTheme(name)
+                      const result = await themes.activateTheme(name)
+                      live = result.ok
+                      if (result.reason !== undefined) themeFailures.set(name, result.reason)
                     }
                     if (!live) hot = false
                   }
@@ -8410,7 +8422,11 @@ export function mountMarketRoutes(
                 // cannot disagree with it within one request.
                 const hostFacts = defaultHostRuntimeFacts(activeProfileDir)
                 for (const name of added) {
-                  activation[name] = verifyActivation(config.profile, name, live, activeProfileDir, disabled.has(name), hostFacts)
+                  const result = verifyActivation(config.profile, name, live, activeProfileDir, disabled.has(name), hostFacts)
+                  const failure = themeFailures.get(name)
+                  activation[name] = failure === undefined
+                    ? result
+                    : { ...result, state: 'failed', hot: false, reasons: [failure] }
                 }
               }
             }
