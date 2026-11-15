@@ -1032,11 +1032,16 @@ export function listHotMounts(): string[] {
   return [...hotHandles.keys()]
 }
 
+function mountedFile(packageName: string, profileDir?: string): string | undefined {
+  const file = hotTreeOf.get(packageName)
+  if (file === undefined || profileDir === undefined) return file
+  return dirname(fileURLToPath(file)) === join(profileDir, HOT_DIR) ? file : undefined
+}
+
 /** Report a failed child only when it belongs to this package's hot-mount tree. */
 export function hotMountFailure(packageName: string, profileDir?: string): string | null {
-  const file = hotTreeOf.get(packageName)
+  const file = mountedFile(packageName, profileDir)
   if (file === undefined) return null
-  if (profileDir !== undefined && dirname(fileURLToPath(file)) !== join(profileDir, HOT_DIR)) return null
   const tree = hotTrees.get(file)
   if (typeof tree?.entries !== 'function') return null
   const failed: string[] = []
@@ -1192,6 +1197,10 @@ export interface HotMountResult {
   deferred?: true
 }
 
+function mountResult(failure: string | null): HotMountResult {
+  return failure === null ? { ok: true, reason: null } : { ok: false, reason: failure, retained: true }
+}
+
 /**
  * Dispose a plugin hot-mounted earlier in this session, removing it from the
  * running composition immediately.
@@ -1273,6 +1282,9 @@ export async function hotUnmount(packageName: string): Promise<boolean> {
  */
 export async function hotMount(ctx: HotContext, profileDir: string, packageName: string): Promise<HotMountResult> {
   try {
+    if (mountedFile(packageName, profileDir) !== undefined) {
+      return mountResult(hotMountFailure(packageName, profileDir))
+    }
     const HotTree = await loadHotTreeClass()
     if (HotTree === null) {
       return {
@@ -1404,7 +1416,7 @@ export async function hotMount(ctx: HotContext, profileDir: string, packageName:
     for (const line of lines) {
       logEvent('warn', 'hot-mount', `${packageName}: the host logged this while mounting — ${line}`)
     }
-    return failure === null ? { ok: true, reason: null } : { ok: false, reason: failure, retained: true }
+    return mountResult(failure)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     ctx.logger?.warn(`[dsh-market] hot mount of ${packageName} failed, restart required: ${message}`)
