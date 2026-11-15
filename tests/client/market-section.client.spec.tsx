@@ -13,6 +13,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { GithubRoutedImg, MarketSection, OwnerAvatar, resetHostCompatibilityCache, resetMarketPortalHost, resetThemePreviewCache } from '../../src/client/MarketSection.tsx'
 import css from '../../src/client/Market.module.css'
+import { DISMISSED_HOST_STORAGE_KEY, resetDismissedHostCache } from '../../src/client/dismissed-host.ts'
 import { downloadStatsText } from '../../src/client/download-stats.ts'
 import { createHostNavigation } from '../../src/client/host-navigation.ts'
 import { SEARCH_DELAY_MS } from '../../src/client/SearchInput.tsx'
@@ -11632,6 +11633,41 @@ describe('Agent-safe drain mode (#411)', () => {
     // must not be projected back by it.
     await new Promise(resolve => setTimeout(resolve, 2200))
     expect(screen.queryByText('dsh-other')).toBeNull()
+  })
+
+  it.each([en.dismissNotice, en.opClear])('persists Host task dismissal through reload with %s', async (action) => {
+    resetDismissedHostCache()
+    const entry = {
+      at: Date.now(),
+      id: 'boot-previous-drain-1',
+      kind: 'install',
+      name: 'already-cancelled-task',
+      state: 'cancelled',
+      agentsAtStart: 0,
+      agentsAtEnd: 0,
+    }
+    stubFetch({
+      '/dsh-market/status': {
+        active: false,
+        pnpm: true,
+        boot: 'boot-now',
+        installed: {},
+        drainOperations: [],
+        drainHistory: [entry],
+      },
+    })
+    const mounted = render(<MarketSection {...props()} />)
+    fireEvent.click(await screen.findByRole('button', { name: en.opTitle }))
+    await screen.findByText(entry.name)
+    fireEvent.click(screen.getByRole('button', { name: action }))
+    await waitFor(() => expect(screen.queryByText(entry.name)).toBeNull())
+    expect(JSON.parse(localStorage.getItem(DISMISSED_HOST_STORAGE_KEY) ?? 'null')).toEqual([entry.id])
+
+    mounted.unmount()
+    resetDismissedHostCache()
+    render(<MarketSection {...props()} />)
+    fireEvent.click(await screen.findByRole('button', { name: en.opTitle }))
+    expect(screen.queryByText(entry.name)).toBeNull()
   })
 
   it('keeps a same-boot drain marker and only drops the stale one', async () => {

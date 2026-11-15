@@ -7137,7 +7137,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		}
 		function write(ids) {
 			try {
-				localStorage.setItem(DISMISSED_HOST_STORAGE_KEY, JSON.stringify(ids.slice(-100)));
+				localStorage.setItem(DISMISSED_HOST_STORAGE_KEY, JSON.stringify(ids));
 			} catch {}
 		}
 		let cache = null;
@@ -7153,11 +7153,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		/** The user cleared this host row: it must stay cleared across a reload. */
 		function rememberDismissedHostId(id) {
 			if (id === "") return;
-			const ids = [...dismissedHostIdSet()];
-			if (ids.includes(id)) return;
-			ids.push(id);
-			cache = new Set(ids.slice(-100));
-			write([...cache]);
+			const ids = cache ??= new Set(read());
+			if (ids.has(id)) return;
+			ids.add(id);
+			if (ids.size > 100) ids.delete(ids.values().next().value);
+			write([...ids]);
 		}
 		//#endregion
 		//#region src/client/preset-panel.tsx
@@ -16324,18 +16324,12 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 										replacing,
 										envReady,
 										onClearSettled: () => {
-											for (const record of recordsRef.current) if (record.hostOperationId !== void 0 && (record.state === "done" || record.state === "warned" || record.state === "failed")) {
-												dismissedHostRef.current.add(record.hostOperationId);
-												rememberDismissedHostId(record.hostOperationId);
-											}
+											for (const record of recordsRef.current) if (record.hostOperationId !== void 0 && (record.state === "done" || record.state === "warned" || record.state === "failed")) rememberDismissedHostId(record.hostOperationId);
 											setRecords((list) => clearSettled(list));
 										},
 										onCancel: (record) => doCancel(record),
 										onDismiss: (record) => {
-											if (record.hostOperationId !== void 0) {
-												dismissedHostRef.current.add(record.hostOperationId);
-												rememberDismissedHostId(record.hostOperationId);
-											}
+											if (record.hostOperationId !== void 0) rememberDismissedHostId(record.hostOperationId);
 											setRecords((list) => drop(list, record.id));
 										},
 										onRefresh: () => location.reload(),
