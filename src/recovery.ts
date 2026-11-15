@@ -412,7 +412,8 @@ export async function applyRecovery(
     }
     if (error === null) {
       for (const row of plugin.rows) {
-        const result = want ? await enableRow(config.patchPath, row) : await disableRow(config.patchPath, row)
+        const options = { packageName: plugin.name }
+        const result = want ? await enableRow(config.patchPath, row, options) : await disableRow(config.patchPath, row, options)
         if (!result.ok) {
           error = result.reason ?? 'the patch layer refused the write'
           break

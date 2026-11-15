@@ -243,6 +243,61 @@ describe('updateNotesFor', () => {
     const notes = await updateNotesFor('web', dir, 'some-plugin')
     expect(notes.kind).toBe('release')
     expect(notes.release?.body).toBe('notes here')
+    // The release also carries the commit slice between the installed commit and
+    // the update target, so the dialog can list what changed (#1193).
+    expect(notes.commits?.items.map(commit => commit.sha)).toEqual([SHA_C])
+  })
+
+  it('does not attach unrelated recent commits to a release when the installed commit is not in the list (#1194)', async () => {
+    writeProfile(dir, { 'some-plugin': 'github:o/r' }, [['o/r', 'f'.repeat(40)]])
+    mkdirSync(join(dir, 'node_modules', 'some-plugin'), { recursive: true })
+    writeFileSync(join(dir, 'node_modules', 'some-plugin', 'package.json'), '{"name":"some-plugin","version":"1.0.0"}')
+    stubWorld({
+      headSha: SHA_C,
+      payload: {
+        count: 1,
+        updates: {
+          'https://github.com/o/r': {
+            release: { tag: 'v2.0.0', name: 'big rewrite', publishedAt: '2026-08-26T00:00:00Z', url: 'https://github.com/o/r/releases/v2.0.0', body: 'notes here' },
+            commits: COMMITS,
+          },
+        },
+      },
+    })
+    const notes = await updateNotesFor('web', dir, 'some-plugin')
+    expect(notes.kind).toBe('release')
+    expect(notes.commits).toBeUndefined()
+  })
+
+  it('says so when the release notes are for a version beyond the update target (#1193)', async () => {
+    // The snapshot's release is the repo's LATEST; the Update button may aim
+    // at an older, installable version. Notes for v2.0.0 must not read as
+    // notes for the 1.5.0 the button installs.
+    writeProfile(dir, { 'some-plugin': 'github:o/r' }, [['o/r', SHA_A]])
+    mkdirSync(join(dir, 'node_modules', 'some-plugin'), { recursive: true })
+    writeFileSync(join(dir, 'node_modules', 'some-plugin', 'package.json'), '{"name":"some-plugin","version":"1.0.0"}')
+    stubWorld({
+      headSha: SHA_C,
+      payload: {
+        count: 1,
+        updates: {
+          'https://github.com/o/r': {
+            release: { tag: 'v2.0.0', name: 'big rewrite', publishedAt: '2026-08-26T00:00:00Z', url: 'https://github.com/o/r/releases/v2.0.0', body: 'notes here' },
+            commits: COMMITS,
+          },
+        },
+      },
+    })
+    const beyond = await updateNotesFor('web', dir, 'some-plugin', '1.5.0')
+    expect(beyond.kind).toBe('release')
+    expect(beyond.release?.body).toBe('notes here')
+    expect(beyond.beyondTarget).toBe('1.5.0')
+    // The beyond-target release also carries the commit slice (#1193).
+    expect(beyond.commits?.items.map(commit => commit.sha)).toEqual([SHA_C, SHA_B])
+    const matching = await updateNotesFor('web', dir, 'some-plugin', '2.0.0')
+    expect(matching.beyondTarget).toBeUndefined()
+    const noTarget = await updateNotesFor('web', dir, 'some-plugin')
+    expect(noTarget.beyondTarget).toBeUndefined()
   })
 
   it('calls the notes unavailable, not missing, when nothing answers at all', async () => {

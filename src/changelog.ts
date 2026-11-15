@@ -365,6 +365,13 @@ export interface UpdateNotes {
   /** Present for `source`: the repository page to read changes on, or null. */
   sourceUrl?: string | null
   /**
+   * Present for `release` when the notes describe a version NEWER than the
+   * one the Update button installs (#1193): the snapshot is the repository's
+   * latest release, while the target may be an older, already installable
+   * one. Carries that target so the dialog can say whose notes these are.
+   */
+  beyondTarget?: string
+  /**
    * Present for `source`: `missing` when the notes loaded without this
    * plugin, `unavailable` when they could not be loaded at all — a passing
    * failure, not a fact about the plugin — and `unreadable` when the source is
@@ -384,6 +391,8 @@ export async function updateNotesFor(
   profile: string,
   explicitDir: string | undefined,
   name: string,
+  /** The version the Update button installs, when it is not simply "latest". */
+  target?: string,
 ): Promise<UpdateNotes> {
   const activeProfileDir = profileDir(profile, explicitDir)
   const spec = readInstalled(profile, activeProfileDir)[name]
@@ -481,7 +490,18 @@ export async function updateNotesFor(
         && (compareVersions(released, installed) ?? 0) <= 0
       const hasCommits = (entry.commits?.length ?? 0) > 0
       if (!(behind && (hasCommits || (specKey === null && npmName !== null)))) {
-        return { kind: 'release', release: entry.release }
+        const beyond = target !== undefined && released !== null
+          && (compareVersions(released, target) ?? 0) > 0
+        // Attach the commit slice so the dialog can list what changed between
+        // the installed commit and the update target, not just the release (#1193).
+        // Only when the installed commit is found in the list: otherwise the
+        // slice is just "recent commits" unrelated to this update, and next to
+        // release notes it would be noise (npm installs never match a sha).
+        const sliced = hasCommits ? sliceCommitsAt(entry.commits!, current) : undefined
+        const withCommits = sliced !== undefined && sliced.found && sliced.items.length > 0 ? { commits: sliced } : {}
+        return beyond
+          ? { kind: 'release', release: entry.release, beyondTarget: target, ...withCommits }
+          : { kind: 'release', release: entry.release, ...withCommits }
       }
     }
     if (entry?.commits !== undefined && entry.commits.length > 0) {

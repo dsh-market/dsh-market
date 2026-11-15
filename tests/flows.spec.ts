@@ -17,6 +17,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { load } from 'js-yaml'
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -699,6 +700,9 @@ vi.mock('../src/hot.ts', async (importOriginal) => ({
     if (state.updateExempt !== undefined) hot.updateExempt = state.updateExempt
   },
   listHotMounts: () => [...hot.mounts],
+  // Nothing in this fake tree can fail a child; the real tree is covered by hot-activation.spec.ts.
+  listLiveHotMounts: () => [...hot.mounts],
+  hotMountFailure: () => null,
   hotMount: (_ctx: unknown, _dir: string, name: string) => {
     if (hot.failNext) {
       hot.failNext = false
@@ -825,7 +829,7 @@ vi.mock('../src/verify.ts', async (importOriginal) => ({
 import { marketVersion, mountMarketRoutes } from '../src/routes.ts'
 import { RELEASE_AGE_OVERRIDE } from '../src/install.ts'
 import { resolveChannel } from '../src/channels.ts'
-import { profileDir } from '../src/profile.ts'
+import { addProfileBundle, profileDir } from '../src/profile.ts'
 import { runDshPlugin, type InstallResult } from '../src/dsh-cli.ts'
 import { createOfficialDesktopRuntime } from '../src/official-desktop.ts'
 import { routesFor } from '../src/regions.ts'
@@ -2436,7 +2440,7 @@ describe('install flow', () => {
 
   it('retargets a collection repo to its contained plugins via #path: (#18)', async () => {
     fake.repos['github:o/skin-pack'] = {
-      name: 'skin-pack', manifest: { name: 'skin-pack', private: true }, junkChildren: ['whale-skin'],
+      name: 'skin-pack', manifest: { name: 'skin-pack', private: true, workspaces: ['whale-skin'] }, junkChildren: ['whale-skin'],
     }
     fake.repos['github:o/skin-pack#path:/whale-skin'] = {
       name: 'whale-skin', manifest: { dsh: {}, main: 'index.js' }, artifacts: ['index.js'],
@@ -2445,6 +2449,38 @@ describe('install flow', () => {
     expect(r.status).toBe(200)
     expect(installedSpec('whale-skin')).toBeDefined()
     expect(installedSpec('skin-pack')).toBeUndefined()
+  })
+
+  it.each([false, true])('refuses a workspace root listed as a different package before pnpm add (archive fallback %s, #1208)', async (archiveFallback) => {
+    const url = 'https://github.com/zjukop3/dsh-verify-kit'
+    const archive = `${url}/releases/download/v0.1.3/dsh-citelint.tgz`
+    const manifest = { name: 'dsh-verify-kit', version: '0.0.0', private: true, workspaces: ['packages/*'] }
+    const commit = 'a'.repeat(40)
+    const manifestUrl = `https://raw.githubusercontent.com/zjukop3/dsh-verify-kit/${commit}/package.json`
+    registryModule.loadRegistry.mockResolvedValueOnce({
+      ...REGISTRY,
+      plugins: [{ ...REGISTRY.plugins[0]!, url, name: 'dsh-citelint', npm: null, ...(archiveFallback ? { tarball: archive } : {}) }],
+    })
+    fake.tarballWithoutIntegrity = archiveFallback
+    fake.repos['github:zjukop3/dsh-verify-kit'] = { name: manifest.name, manifest }
+    const request = vi.fn(async (input: string) => {
+      if (input === `${url}/info/refs?service=git-upload-pack`) {
+        return new Response(`# service=git-upload-pack\n${commit} HEAD\0capabilities`)
+      }
+      if (input === manifestUrl) return Response.json(manifest)
+      throw new Error(`unexpected upstream request: ${input}`)
+    })
+    vi.stubGlobal('fetch', request)
+    const before = readFileSync(join(fake.profileDir, 'package.json'), 'utf8')
+
+    const result = await bed.dispatch('POST', '/dsh-market/install', { url, force: true })
+
+    expect(result.status).toBe(400)
+    expect(result.json.error).toMatch(/dsh-verify-kit.*dsh-citelint/)
+    expect(request.mock.calls.map(([input]) => input)).toContain(manifestUrl)
+    expect(fake.calls.filter(args => args.includes('add')).map(args => args.at(-1))).toEqual(archiveFallback ? [archive] : [])
+    expect(readFileSync(join(fake.profileDir, 'package.json'), 'utf8')).toBe(before)
+    expect(existsSync(join(fake.profileDir, 'node_modules', manifest.name))).toBe(false)
   })
 
   it('inspects the current dsh-excel-chat bundle after collection retargeting', async () => {
@@ -3699,6 +3735,32 @@ describe('update flow — no npm publishing required', () => {
     // implementation of the inputs precisely so they cannot drift.
     const single = await bed.dispatch('GET', '/dsh-market/api/v1/updates?name=dsh-loop&force=1')
     expect(single.json.package).toMatchObject(summary.json.packages[0])
+  })
+
+  it('reports update check failure to the market and retries the first ordinary check after recovery (#1200)', async () => {
+    advanceNpmLatest('1.2.0')
+    const path = '/dsh-market/updates'
+    const v1 = '/dsh-market/api/v1/updates?name=dsh-loop'
+    const fetchHealthy = globalThis.fetch
+    vi.stubGlobal('fetch', (url: RequestInfo | URL, init?: RequestInit) => String(url).endsWith('/dsh-loop/latest')
+      ? Promise.resolve(new Response(null, { status: 503 }))
+      : fetchHealthy(url, init))
+
+    const failed = await bed.dispatch('GET', path)
+    expect(failed.status).toBe(200)
+    expect(failed.json.updates['dsh-loop']).toMatchObject({ checkFailed: true, updateAvailable: false })
+    const versioned = await bed.dispatch('GET', v1)
+    expect(versioned.status).toBe(200)
+    expect(versioned.json.package).toEqual({
+      name: 'dsh-loop', source: 'npm', installedVersion: '1.0.0', latestVersion: null,
+      updateAvailable: false, channelSwitch: null,
+    })
+
+    vi.stubGlobal('fetch', fetchHealthy)
+    const recovered = await bed.dispatch('GET', path)
+    expect(recovered.status).toBe(200)
+    expect(recovered.json.updates['dsh-loop']).toMatchObject({ latest: '1.2.0', updateAvailable: true })
+    expect(recovered.json.updates['dsh-loop'].checkFailed).toBeUndefined()
   })
 
   it('says nothing is updatable rather than staying silent when it is true', async () => {
@@ -8188,6 +8250,47 @@ describe('generic enable/disable toggle (#60)', () => {
     expect(listed.json.disabled).not.toContain('dsh-patchy')
   })
 
+  it('keeps a default-on Desktop bundle component enabled after the official page enables it (#1196)', async () => {
+    const { userPatch, entry } = await installPatchy()
+    const profile = profileDir('web')
+    const rowId = 'patchy-component'
+    const name = 'dsh-patchy'
+    writeFileSync(join(profile, 'node_modules', name, 'cordis.patch.yml'), `- insert:\n    - id: ${rowId}\n      name: ${name}\n`)
+    Object.assign(entry.options, { id: `include:${rowId}` })
+    bed.loaderEntries.push({
+      options: { id: 'include', name: 'cordis:include', config: { path: join(profile, 'cordis.yml') } } as never,
+      update: vi.fn(async () => {}),
+    })
+
+    const off = await bed.dispatch('POST', '/dsh-market/toggle', { name, enabled: false })
+    expect(off.status).toBe(200)
+    expect(off.json.disabled).toContain(name)
+    expect(entry.fiber).toBeUndefined()
+
+    // The official package switch first selects the bundle. Its component
+    // switch then compacts an id/disabled-only override against the bundle's
+    // default. It changes the flag in place when the override carries a name.
+    expect(addProfileBundle(profile, name)).toBe(true)
+    const offPatch = readFileSync(userPatch, 'utf8')
+    const rows = load(offPatch) as { id: string; disabled: boolean; name?: string }[]
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ id: rowId, disabled: true })
+    const compacted = Object.keys(rows[0]!).every(key => key === 'id' || key === 'disabled')
+    const onPatch = compacted ? '[]\n' : offPatch.replace('disabled: true', 'disabled: false')
+    writeFileSync(userPatch, onPatch)
+    entry.options.disabled = null
+    entry.fiber = {}
+    ;(entry.update as ReturnType<typeof vi.fn>).mockClear()
+    bed.emit('internal/plugin', { entry })
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(pushedDown(entry)).toBe(false)
+    expect(entry.fiber).toBeDefined()
+    expect(hot.disabled.has(name)).toBe(false)
+    expect((await bed.dispatch('GET', '/dsh-market/installed')).json.disabled).not.toContain(name)
+    expect(load(onPatch)).toEqual([{ id: rowId, name, disabled: false }])
+  })
+
   it('follows the switch through on, off, on when the row has more keys than the flag (#1099)', async () => {
     // DSH's own plugin page writes the flag after the keys a row already has.
     // The market kept answering "on" here while the listing still said off,
@@ -8200,7 +8303,11 @@ describe('generic enable/disable toggle (#60)', () => {
     const expectOn = async (on: { status: number; json: any }) => {
       expect(on.status).toBe(200)
       expect(on.json.activation['dsh-patchy'].state).toBe('live')
-      expect(readFileSync(userPatch, 'utf8').endsWith('- id: dsh-patchy\n  disabled: false\n')).toBe(true)
+      const patch = readFileSync(userPatch, 'utf8')
+      expect(patch.startsWith(own)).toBe(true)
+      const rows = load(patch) as unknown[]
+      expect(rows).toHaveLength(2)
+      expect(rows[1]).toMatchObject({ id: 'dsh-patchy', disabled: false })
       const listed = await bed.dispatch('GET', '/dsh-market/installed')
       expect(listed.json.patchDisabled).not.toContain('dsh-patchy')
       expect(listed.json.patchForced).toContain('dsh-patchy')
@@ -8212,7 +8319,12 @@ describe('generic enable/disable toggle (#60)', () => {
     const off = await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-patchy', enabled: false })
     expect(off.status).toBe(200)
     expect(off.json.activation['dsh-patchy'].state).toBe('disabled')
-    expect(readFileSync(userPatch, 'utf8').endsWith('- id: dsh-patchy\n  disabled: true\n')).toBe(true)
+    const offPatch = readFileSync(userPatch, 'utf8')
+    expect(offPatch.startsWith(own)).toBe(true)
+    expect(load(offPatch)).toEqual([
+      { id: 'dsh-patchy', name: 'dsh-patchy', inject: ['tools'], disabled: true },
+      { id: 'dsh-patchy', name: 'dsh-patchy', disabled: true },
+    ])
     const listedOff = await bed.dispatch('GET', '/dsh-market/installed')
     expect(listedOff.json.patchDisabled).toContain('dsh-patchy')
     expect(listedOff.json.patchForced).not.toContain('dsh-patchy')
@@ -8240,16 +8352,22 @@ describe('generic enable/disable toggle (#60)', () => {
     const off = await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-patchy', enabled: false })
     expect(off.status).toBe(200)
     // Its own row, written below the stale one; the stale row is untouched.
-    expect(readFileSync(userPatch, 'utf8')).toBe(`${stale}- id: dsh-patchy\n  disabled: true\n`)
+    const offPatch = readFileSync(userPatch, 'utf8')
+    expect(offPatch.startsWith(stale)).toBe(true)
+    expect(load(offPatch)).toEqual([
+      { id: 'dsh-patchy', name: 'old-package-name', disabled: false },
+      { id: 'dsh-patchy', name: 'dsh-patchy', disabled: true },
+    ])
     const listedOff = await bed.dispatch('GET', '/dsh-market/installed')
     expect(listedOff.json.patchDisabled).toContain('dsh-patchy')
   })
 
-  it('still keeps a plugin off when nothing outside the market re-enabled it', async () => {
+  it.each(['present', 'missing'])('keeps a plugin off without an outside enable when the patch is %s', async (patch) => {
     // The guard exists because DSH's own overlay can re-update an entry
     // during activation and wipe the runtime flag; that must still be undone.
-    const { entry } = await installPatchy()
+    const { userPatch, entry } = await installPatchy()
     await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-patchy', enabled: false })
+    if (patch === 'missing') rmSync(userPatch)
     entry.options.disabled = null
     entry.fiber = {}
     ;(entry.update as ReturnType<typeof vi.fn>).mockClear()
@@ -8436,8 +8554,13 @@ describe('generic enable/disable toggle (#60)', () => {
     const off = await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-patchy', enabled: false })
     expect(off.status).toBe(200)
     expect(bundlesNow()).not.toContain('dsh-patchy')
-    expect(readFileSync(userPatch, 'utf8')).toContain('- id: dsh-patchy\n  disabled: true\n')
+    const offPatch = readFileSync(userPatch, 'utf8')
+    expect(load(offPatch)).toEqual([{ id: 'dsh-patchy', name: 'dsh-patchy', disabled: true }])
+    expect(offPatch).toContain('# dsh-market')
 
+    // After a restart the deselected bundle supplies no live entry to identify
+    // the first row when the partial enable needs to put it back.
+    bed.loaderEntries.length = 0
     const on = await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-patchy', enabled: true })
     expect(on.status).toBe(502)
     expect(on.json.ok).toBe(false)
@@ -8445,8 +8568,9 @@ describe('generic enable/disable toggle (#60)', () => {
     expect(bundlesNow()).not.toContain('dsh-patchy')
     // …the row it flipped first is disabled again, and no force-enable block
     // is left behind for the row it could not reach…
-    expect(readFileSync(userPatch, 'utf8')).toContain('- id: dsh-patchy\n  disabled: true\n')
-    expect(readFileSync(userPatch, 'utf8')).not.toContain('disabled: false')
+    const rolledBackPatch = readFileSync(userPatch, 'utf8')
+    expect(load(rolledBackPatch)).toEqual([{ id: 'dsh-patchy', name: 'dsh-patchy', disabled: true }])
+    expect(rolledBackPatch).toContain('# dsh-market')
     // …and the plugin is still the market's to describe as off (#575).
     expect(on.json.activation['dsh-patchy'].state).toBe('disabled')
   })

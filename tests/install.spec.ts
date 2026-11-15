@@ -13,7 +13,7 @@ import {
   diagnosticsTail, failureDetail, FETCH_TIMEOUT_OVERRIDE, groupConflictsByOwner, hostNodeModulesRoot, installApplied,
   isHostPortCollision, isStaleUpdate, normalizedLinkTarget, parseIgnoredBuildEntries, parseIgnoredBuilds,
   parsePrepareKey, parsePrepareNotAllowed, pnpmNeverStarted, pnpmRefusedYoungRelease, refusedReleaseAgePackage, removeDanglingHostBridge,
-  retargetCollections, RELEASE_AGE_OVERRIDE, unwrapPnpmErrors, updateApplied, validateAddedPlugins, withHoistRecovery,
+  removeLeftoverProfileLink, retargetCollections, RELEASE_AGE_OVERRIDE, unwrapPnpmErrors, updateApplied, validateAddedPlugins, withHoistRecovery,
 } from '../src/install.ts'
 import { dropUnparseableBuildKeys, profileDir } from '../src/profile.ts'
 import * as profileHelpers from '../src/profile.ts'
@@ -1633,5 +1633,47 @@ describe('naming the package pnpm actually refused (#944)', () => {
     expect(refusedReleaseAgePackage('')).toBeNull()
     // An unrelated package name that pnpm never attributed to a publish time.
     expect(refusedReleaseAgePackage('dsh-loop@1.2.0 could not be resolved')).toBeNull()
+  })
+})
+
+describe('removeLeftoverProfileLink (#1191)', () => {
+  const linkKind = process.platform === 'win32' ? 'junction' : 'dir'
+
+  it.runIf(canCreateSymlink('dir'))('unlinks a link the uninstall left behind and spares the checkout it points at', () => {
+    const dir = writeProfile({})
+    const checkout = join(home, 'checkout', 'my-plugin')
+    mkdirSync(checkout, { recursive: true })
+    writeFileSync(join(checkout, 'package.json'), '{"name":"my-plugin"}')
+    mkdirSync(join(dir, 'node_modules'), { recursive: true })
+    const link = join(dir, 'node_modules', 'my-plugin')
+    symlinkSync(checkout, link, linkKind)
+
+    expect(removeLeftoverProfileLink('web', 'my-plugin', dir)).toBe(checkout)
+
+    expect(() => lstatSync(link)).toThrow()
+    expect(existsSync(join(checkout, 'package.json'))).toBe(true)
+  })
+
+  it.runIf(canCreateSymlink('dir'))('keeps a link the manifest still lists', () => {
+    const dir = writeProfile({ 'my-plugin': 'link:../checkout' })
+    const checkout = join(home, 'checkout2')
+    mkdirSync(checkout, { recursive: true })
+    mkdirSync(join(dir, 'node_modules'), { recursive: true })
+    const link = join(dir, 'node_modules', 'my-plugin')
+    symlinkSync(checkout, link, linkKind)
+
+    expect(removeLeftoverProfileLink('web', 'my-plugin', dir)).toBeNull()
+
+    expect(lstatSync(link).isSymbolicLink()).toBe(true)
+  })
+
+  it('never touches a real directory or a missing entry', () => {
+    const dir = writeProfile({})
+    writePkg(dir, 'real-plugin', { name: 'real-plugin' })
+
+    expect(removeLeftoverProfileLink('web', 'real-plugin', dir)).toBeNull()
+    expect(removeLeftoverProfileLink('web', 'absent', dir)).toBeNull()
+
+    expect(existsSync(join(dir, 'node_modules', 'real-plugin', 'package.json'))).toBe(true)
   })
 })

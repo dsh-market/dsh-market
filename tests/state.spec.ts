@@ -10,7 +10,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  readDisabled, readDisabledThemes, readMarketState, writeDisabled, writeDisabledThemes, writeMarketState,
+  forgetInstalled, MAX_INSTALL_TIMES, readDisabled, readDisabledThemes, readMarketState, recordInstalled, recordUpdated,
+  writeDisabled, writeDisabledThemes, writeMarketState,
 } from '../src/hot.ts'
 import {
   createGroup, deleteGroup, removeFromGroups, renameGroup, setGroupMembers,
@@ -578,5 +579,154 @@ describe('group CRUD (groups.ts)', () => {
     const state = { groups: { a: ['x', 'y'], b: ['x'] }, groupOrder: ['a', 'b'] }
     removeFromGroups(state, 'x')
     expect(state.groups).toEqual({ a: ['y'], b: [] })
+  })
+})
+
+/**
+ * Install time (#1142/#1121).
+ *
+ * The installed row has no time of its own: `node_modules/<pkg>` mtime is
+ * rewritten by pnpm on every install, and `.plugin-manager/logs/operation-*`
+ * is a log with a retention policy. So the market writes its own stamps, and
+ * these cases pin the three things that shape has to get right — a fresh
+ * install records both moments, an update moves only the update stamp, and a
+ * package the market never installed is never given an invented date.
+ */
+describe('install times (#1142)', () => {
+  it('records both stamps when the market installed a package', () => {
+    const dir = stateDir()
+    try {
+      recordInstalled(dir, ['dsh-loop'], new Date('2026-11-12T08:00:00Z'))
+      const raw = readRaw(dir)
+      expect(raw.installTimes).toEqual({ 'dsh-loop': { installedAt: '2026-11-12T08:00:00.000Z', updatedAt: '2026-11-12T08:00:00.000Z' } })
+      expect(readMarketState(dir).installTimes?.['dsh-loop']?.installedAt).toBe('2026-11-12T08:00:00.000Z')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('an update moves only the update stamp', () => {
+    const dir = stateDir()
+    try {
+      recordInstalled(dir, ['dsh-loop'], new Date('2026-11-01T08:00:00Z'))
+      recordUpdated(dir, ['dsh-loop'], new Date('2026-11-12T08:00:00Z'))
+      expect(readMarketState(dir).installTimes?.['dsh-loop']).toEqual({
+        installedAt: '2026-11-01T08:00:00.000Z',
+        updatedAt: '2026-11-12T08:00:00.000Z',
+      })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('an update of a package this market never installed invents no install time', () => {
+    // Installed with `dsh plugin add`, then updated from the market: the
+    // update is a fact, the install date is not. Writing one here would make
+    // "sorted by install time" an ordering of the moment we first noticed.
+    const dir = stateDir()
+    try {
+      recordUpdated(dir, ['dsh-cli-installed'], new Date('2026-11-12T08:00:00Z'))
+      expect(readMarketState(dir).installTimes?.['dsh-cli-installed']).toEqual({ updatedAt: '2026-11-12T08:00:00.000Z' })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('forgets the stamps of a removed package', () => {
+    const dir = stateDir()
+    try {
+      recordInstalled(dir, ['dsh-loop'], new Date('2026-11-12T08:00:00Z'))
+      forgetInstalled(dir, 'dsh-loop')
+      expect(readMarketState(dir).installTimes).toBeUndefined()
+      expect(readRaw(dir).installTimes).toBeUndefined()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('a partial write by another caller keeps the stamps', () => {
+    // Same trap as #435: every route that writes three fields it owns must
+    // not erase what it never mentioned.
+    const dir = stateDir()
+    try {
+      recordInstalled(dir, ['dsh-loop'], new Date('2026-11-12T08:00:00Z'))
+      writeMarketState(dir, { disabled: new Set(['dsh-loop']), groups: {}, groupOrder: [] })
+      expect(readMarketState(dir).installTimes?.['dsh-loop']?.installedAt).toBe('2026-11-12T08:00:00.000Z')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('does not trust a hand-edited map: junk keys and junk stamps are dropped', () => {
+    const dir = stateDir()
+    try {
+      writeFileSync(join(dir, '.dsh-market', 'state.json'), JSON.stringify({
+        disabled: [],
+        groups: {},
+        groupOrder: [],
+        installTimes: {
+          'dsh-loop': { installedAt: '2026-11-12T08:00:00Z', updatedAt: 'yesterday' },
+          '': { installedAt: '2026-11-12T08:00:00Z' },
+          'dsh-empty': {},
+          'dsh-broken': 'not an object',
+        },
+      }))
+      expect(readMarketState(dir).installTimes).toEqual({
+        'dsh-loop': { installedAt: '2026-11-12T08:00:00.000Z' },
+      })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps the most recently used entries when the map is over the cap', () => {
+    const dir = stateDir()
+    try {
+      const installTimes: Record<string, { installedAt: string; updatedAt: string }> = {}
+      for (let index = 0; index <= MAX_INSTALL_TIMES; index += 1) {
+        const at = new Date(Date.parse('2026-01-01T00:00:00Z') + index * 60_000).toISOString()
+        installTimes[`dsh-${String(index)}`] = { installedAt: at, updatedAt: at }
+      }
+      writeFileSync(join(dir, '.dsh-market', 'state.json'), JSON.stringify({ disabled: [], groups: {}, groupOrder: [], installTimes }))
+      const kept = readMarketState(dir).installTimes ?? {}
+      expect(Object.keys(kept)).toHaveLength(MAX_INSTALL_TIMES)
+      // The oldest install is the one nobody asks about.
+      expect('dsh-0' in kept).toBe(false)
+      expect(kept[`dsh-${String(MAX_INSTALL_TIMES)}`]).toBeDefined()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('install times survive a stale whole-state save (#1142)', () => {
+  it('a snapshot taken before an install does not put the old stamps back', () => {
+    // The routes keep one MarketState from boot and save it whole (#435).
+    // If it carries installTimes, that copy is older than every install since.
+    const dir = stateDir()
+    try {
+      recordInstalled(dir, ['dsh-old'], new Date('2026-11-01T08:00:00Z'))
+      const boot = readMarketState(dir)
+      recordInstalled(dir, ['dsh-new'], new Date('2026-11-12T08:00:00Z'))
+      writeMarketState(dir, boot)
+      const kept = readMarketState(dir).installTimes ?? {}
+      expect(kept['dsh-new']?.installedAt).toBe('2026-11-12T08:00:00.000Z')
+      expect(kept['dsh-old']?.installedAt).toBe('2026-11-01T08:00:00.000Z')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('a stale snapshot does not bring back a package that was removed', () => {
+    const dir = stateDir()
+    try {
+      recordInstalled(dir, ['dsh-old'], new Date('2026-11-01T08:00:00Z'))
+      const boot = readMarketState(dir)
+      forgetInstalled(dir, 'dsh-old')
+      writeMarketState(dir, boot)
+      expect(readMarketState(dir).installTimes).toBeUndefined()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

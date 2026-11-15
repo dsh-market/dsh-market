@@ -1230,3 +1230,45 @@ describe('installCommandFor (#872)', () => {
       .toBe('dsh plugin --profile work add x')
   })
 })
+
+describe('entryForDep answers a monorepo subpackage with its own row', () => {
+  // Registry order is the collection root first, then the subpackages — the
+  // order the Installed tab walks. A subpackage manifest states the parent
+  // repository plus a directory, so its identities carry the bare repo as
+  // well as repo#path:/sub; the bare half used to match the root row first,
+  // and the subpackage card then showed the root plugin's description.
+  const catalog = [
+    plugin({
+      name: 'dsh-subagent-control',
+      npm: 'dsh-subagent-control',
+      url: 'https://github.com/SpaceRelay/dsh-subagent-control',
+    }),
+    plugin({
+      name: 'dsh-subagent-control#human-wait',
+      npm: 'dsh-human-wait',
+      url: 'https://github.com/SpaceRelay/dsh-subagent-control/tree/main/human-wait',
+    }),
+    plugin({
+      name: 'dsh-subagent-control#team-limits',
+      npm: 'dsh-team-limits',
+      url: 'https://github.com/SpaceRelay/dsh-subagent-control/tree/main/team-limits',
+    }),
+  ]
+
+  it('picks the subpackage row, not the collection root', () => {
+    expect(entryForDep(catalog, 'dsh-human-wait', '0.2.1', [
+      'spacerelay/dsh-subagent-control',
+      'spacerelay/dsh-subagent-control#path:/human-wait',
+    ])?.npm).toBe('dsh-human-wait')
+    expect(entryForDep(catalog, 'dsh-team-limits', '1.3.6', [
+      'spacerelay/dsh-subagent-control',
+      'spacerelay/dsh-subagent-control#path:/team-limits',
+    ])?.npm).toBe('dsh-team-limits')
+  })
+
+  it('still answers the root package from the bare repo identity', () => {
+    expect(entryForDep(catalog, 'dsh-subagent-control', '1.0.6', [
+      'spacerelay/dsh-subagent-control',
+    ])?.npm).toBe('dsh-subagent-control')
+  })
+})

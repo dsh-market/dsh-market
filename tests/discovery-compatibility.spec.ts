@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -212,6 +212,20 @@ describe('DiscoveryManifestIndex', () => {
     for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true })
   })
 
+  it('returns newly fetched facts before writing to the compatibility cache (#1170)', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'dshm-discovery-'))
+    directories.push(directory)
+    const index = new DiscoveryManifestIndex(join(directory, 'discovery.json'), {
+      fetcher: async () => Response.json({ version: '1.0.0' }),
+    })
+
+    expect(await index.lookup(['plugin-a'], 'https://registry.example')).toEqual({
+      'plugin-a': manifestFacts({ version: '1.0.0' }),
+    })
+    expect(readdirSync(directory)).toEqual([])
+    await index.dispose()
+  })
+
   it('bounds concurrency and reuses the durable cache in a new index', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'dshm-discovery-'))
     directories.push(directory)
@@ -240,6 +254,7 @@ describe('DiscoveryManifestIndex', () => {
     expect(Object.keys(loaded)).toHaveLength(3)
     expect(calls).toBe(3)
     expect(peak).toBe(2)
+    await first.dispose()
 
     const second = new DiscoveryManifestIndex(cache, {
       fetcher: async () => { throw new Error('the durable cache should answer') },
@@ -248,6 +263,7 @@ describe('DiscoveryManifestIndex', () => {
     })
     expect(await second.lookup(['plugin-a', 'plugin-b', 'plugin-c'], 'https://registry.example'))
       .toEqual(loaded)
+    await second.dispose()
   })
 
   it('keeps a whole catalog-sized scan cached, not just its last 5,000 (#1170)', async () => {
@@ -259,6 +275,7 @@ describe('DiscoveryManifestIndex', () => {
     const fetcher = async (): Promise<Response> => new Response(JSON.stringify({ version: '1.0.0' }), { status: 200 })
     const first = new DiscoveryManifestIndex(cache, { fetcher, now: () => clock++, concurrency: 8 })
     for (let i = 0; i < names.length; i += 64) await first.lookup(names.slice(i, i + 64), 'https://registry.example')
+    await first.dispose()
 
     let refetched = 0
     const second = new DiscoveryManifestIndex(cache, {
@@ -267,6 +284,46 @@ describe('DiscoveryManifestIndex', () => {
     })
     await second.lookup(names, 'https://registry.example')
     expect(refetched).toBe(0)
+    await second.dispose()
+  })
+
+  it('persists exact discovery releases separately from other versions and advisory latest', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'dshm-discovery-'))
+    directories.push(directory)
+    const cache = join(directory, 'discovery.json')
+    const urls: string[] = []
+    const registry = 'https://registry.example'
+    const mirror = 'https://mirror.example'
+    const fetcher = async (url: string) => {
+      urls.push(url)
+      const release = new URL(url).pathname.split('/').at(-1)
+      return Response.json({ version: release === 'latest' ? '1.0.0' : release })
+    }
+    const index = new DiscoveryManifestIndex(cache, { fetcher, now: () => 1_000 })
+    const exact = { versions: new Map([['plugin-a', '2.0.0-rc.1']]) }
+    expect((await index.lookup(['plugin-a'], registry, exact))['plugin-a']?.version).toBe('2.0.0-rc.1')
+    expect((await index.lookup(['plugin-a'], registry, { record: false }))['plugin-a']?.version).toBe('1.0.0')
+    await index.dispose()
+
+    const reopened = new DiscoveryManifestIndex(cache, { fetcher, now: () => 1_001 })
+    expect((await reopened.lookup(['plugin-a'], registry, exact))['plugin-a']?.version).toBe('2.0.0-rc.1')
+    expect((await reopened.lookup(['plugin-a'], mirror, exact))['plugin-a']?.version).toBe('2.0.0-rc.1')
+    expect(urls).toEqual([
+      `${registry}/plugin-a/2.0.0-rc.1`,
+      `${registry}/plugin-a/latest`,
+      `${mirror}/plugin-a/2.0.0-rc.1`,
+    ])
+    await reopened.dispose()
+  })
+
+  it('rejects an exact-version response naming a different package', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'dshm-discovery-'))
+    directories.push(directory)
+    const index = new DiscoveryManifestIndex(join(directory, 'discovery.json'), {
+      fetcher: async () => Response.json({ name: 'another-plugin', version: '2.0.0' }),
+    })
+    const versions = new Map([['plugin-a', '2.0.0']])
+    expect(await index.lookup(['plugin-a'], 'https://registry.example', { versions })).toEqual({ 'plugin-a': null })
   })
 
   it('retries a raw manifest read instead of reporting an unknown requirement (#1148)', async () => {
@@ -290,6 +347,7 @@ describe('DiscoveryManifestIndex', () => {
     const facts = (await index.lookupGitHub([source]))['https://github.com/acme/dsh-notes']!
     expect(facts).toMatchObject({ enginesDsh: '0.2.2-rc.1' })
     expect(urls[0]).toBe(urls[1])
+    await index.dispose()
   })
 
   it('does not persist a registry failure as an undeclared manifest', async () => {
@@ -301,6 +359,7 @@ describe('DiscoveryManifestIndex', () => {
       now: () => 1_000,
     })
     expect(await failed.lookup(['plugin-a'], 'https://registry.example')).toEqual({ 'plugin-a': null })
+    await failed.dispose()
 
     let retried = 0
     const recovered = new DiscoveryManifestIndex(cache, {
@@ -313,6 +372,7 @@ describe('DiscoveryManifestIndex', () => {
     expect((await recovered.lookup(['plugin-a'], 'https://registry.example'))['plugin-a'])
       .toMatchObject({ version: '1.0.0' })
     expect(retried).toBe(1)
+    await recovered.dispose()
   })
 
   it('an advisory pre-flight leaves no failure cooldown behind (#619)', async () => {
@@ -343,6 +403,7 @@ describe('DiscoveryManifestIndex', () => {
     expect((await index.lookup(['plugin-a'], 'https://registry.example'))['plugin-a'])
       .toMatchObject({ version: '2.0.0' })
     expect(asked).toBe(2)
+    await index.dispose()
   })
 
   it('an advisory pre-flight does not seed the durable cache either (#619)', async () => {
@@ -368,6 +429,7 @@ describe('DiscoveryManifestIndex', () => {
     expect((await index.lookup(['plugin-a'], 'https://registry.example'))['plugin-a'])
       .toMatchObject({ version: '2.0.0' })
     expect(served).toBe(2)
+    await index.dispose()
   })
 })
 

@@ -26,6 +26,7 @@ import { readMarketState, writeMarketState } from '../src/hot.ts'
 import { configurePersistentLog, readPersistentLog } from '../src/log.ts'
 import * as orderApi from '../src/order.ts'
 import * as registryApi from '../src/registry.ts'
+import * as netApi from '../src/net.ts'
 import { DiscoveryManifestIndex } from '../src/discovery-compatibility.ts'
 import type { PluginCommandRuntime } from '../src/dsh-cli.ts'
 
@@ -348,9 +349,127 @@ describe('body validation — 400 contracts', () => {
       lookup.mockClear()
       const foreign = await hit(routes, '/dsh-market/discovery-compatibility',
         post('/dsh-market/discovery-compatibility', { packages: [], entries: ['https://github.com/other/unlisted'] }))
-      expect(foreign.status).toBe(400)
+      expect(foreign.status).toBe(200)
+      expect(jsonBody(foreign).plugins).toEqual({
+        'https://github.com/other/unlisted': expect.objectContaining({ basis: 'unavailable', catalogChanged: true }),
+      })
       expect(lookup).not.toHaveBeenCalled()
     } finally { registry.mockRestore(); lookup.mockRestore() }
+  })
+
+  it('keeps valid npm and GitHub results when another GitHub entry left the catalog', async () => {
+    const current = { name: 'Current', owner: 'acme', url: 'https://github.com/acme/current',
+      category: 'workflow', description: {}, install: '', added: '2026-11-13' }
+    const removed = 'https://github.com/acme/removed'
+    const registry = vi.spyOn(registryApi, 'loadRegistry').mockResolvedValue({
+      updated: '2026-11-13', count: 1, categories: {}, plugins: [current],
+    })
+    const facts = { version: '1.0.0', enginesDsh: '^0.1.0', peerDependencies: {} }
+    const npm = vi.spyOn(netApi, 'marketFetch').mockResolvedValue(Response.json({ version: '1.0.0', engines: { dsh: '^0.1.0' } }))
+    // The index captures its fetcher when the route is mounted.
+    const testRoutes = mount().routes
+    const github = vi.spyOn(DiscoveryManifestIndex.prototype, 'lookupGitHub').mockResolvedValue({ [current.url]: facts })
+    try {
+      const path = '/dsh-market/discovery-compatibility'
+      const result = await hit(testRoutes, path, post(path, { packages: ['plugin-a'], entries: [removed, current.url] }))
+      expect(result.status).toBe(200)
+      expect(jsonBody(result).plugins).toMatchObject({
+        'plugin-a': { basis: 'manifest', requirement: '^0.1.0' },
+        [current.url]: { basis: 'manifest', requirement: '^0.1.0' },
+        [removed]: { status: 'unknown', basis: 'unavailable', catalogChanged: true },
+      })
+      expect(github).toHaveBeenCalledWith([current])
+      expect(npm).toHaveBeenCalledOnce()
+    } finally { registry.mockRestore(); npm.mockRestore(); github.mockRestore() }
+  })
+
+  it('matches discovery npm results to the advertised version despite a warm latest cache', async () => {
+    const npm = vi.spyOn(netApi, 'marketFetch').mockImplementation(async url => Response.json({
+      version: url.endsWith('/2.0.0') ? '2.0.0' : '1.0.0',
+      engines: { dsh: url.endsWith('/2.0.0') ? '>=0.2.0' : '^0.1.0' },
+    }))
+    const testRoutes = mount().routes
+    try {
+      const path = '/dsh-market/discovery-compatibility'
+      await hit(testRoutes, path, post(path, { packages: ['plugin-a'] }))
+      const body = { packages: ['plugin-a'], versions: { 'plugin-a': '2.0.0' } }
+      const result = await hit(testRoutes, path, post(path, body))
+      expect(result.status).toBe(200)
+      expect(jsonBody(result).plugins).toMatchObject({ 'plugin-a': { basis: 'manifest', requirement: '>=0.2.0' } })
+      await hit(testRoutes, path, post(path, body))
+      expect(npm.mock.calls.map(([url]) => new URL(url).pathname)).toEqual(['/plugin-a/latest', '/plugin-a/2.0.0'])
+    } finally { npm.mockRestore() }
+  })
+
+  it('answers independent npm queries while the GitHub catalog is unreachable', async () => {
+    const url = 'https://github.com/acme/plugin-a'
+    const registry = vi.spyOn(registryApi, 'loadRegistry').mockRejectedValue(new Error('catalog offline'))
+    const npm = vi.spyOn(netApi, 'marketFetch').mockResolvedValue(Response.json({ version: '1.0.0' }))
+    const testRoutes = mount().routes
+    const github = vi.spyOn(DiscoveryManifestIndex.prototype, 'lookupGitHub')
+    try {
+      const path = '/dsh-market/discovery-compatibility'
+      const result = await hit(testRoutes, path, post(path, { packages: ['plugin-a'], entries: [url] }))
+      expect(result.status).toBe(200)
+      expect(jsonBody(result).plugins).toMatchObject({
+        'plugin-a': { basis: 'undeclared' },
+        [url]: { status: 'unknown', basis: 'unavailable', retryAfterMs: 30_000 },
+      })
+      expect(github).not.toHaveBeenCalled()
+    } finally { registry.mockRestore(); npm.mockRestore(); github.mockRestore() }
+  })
+
+  it('keeps a mismatched npm response unavailable until its retry deadline', async () => {
+    const npm = vi.spyOn(netApi, 'marketFetch').mockResolvedValue(Response.json({ version: '1.0.0', engines: { dsh: '^0.1.0' } }))
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000)
+    try {
+      const testRoutes = mount().routes
+      const path = '/dsh-market/discovery-compatibility'
+      const body = { packages: ['plugin-a'], versions: { 'plugin-a': '2.0.0' } }
+      const failed = await hit(testRoutes, path, post(path, body))
+      expect(jsonBody(failed).plugins).toMatchObject({
+        'plugin-a': { status: 'unknown', basis: 'unavailable', retryAfterMs: 300_000 },
+      })
+      npm.mockResolvedValue(Response.json({ version: '2.0.0', engines: { dsh: '>=0.2.0' } }))
+      now.mockReturnValue(2_000)
+      const cooling = await hit(testRoutes, path, post(path, body))
+      expect(jsonBody(cooling).plugins).toMatchObject({ 'plugin-a': { basis: 'unavailable', retryAfterMs: 299_000 } })
+      expect(npm).toHaveBeenCalledOnce()
+      now.mockReturnValue(301_000)
+      const recovered = await hit(testRoutes, path, post(path, body))
+      expect(jsonBody(recovered).plugins).toMatchObject({ 'plugin-a': { basis: 'manifest', requirement: '>=0.2.0' } })
+      expect(npm).toHaveBeenCalledTimes(2)
+    } finally { npm.mockRestore(); now.mockRestore() }
+  })
+
+  it('identifies the GitHub release displayed by the catalog and rejects a changed revision per item', async () => {
+    const url = 'https://github.com/acme/plugin-a'
+    const tarball = `${url}/releases/download/v1.0.0/plugin.tgz`
+    const entry = { name: 'Plugin A', owner: 'acme', url, tarball,
+      category: 'workflow', description: {}, install: '', added: '2026-11-13',
+      releaseManifest: { tarball, checkedAt: '2026-11-13T00:00:00Z', version: '1.0.0', enginesDsh: '^0.1.0', peerDependencies: {} } }
+    const catalog = { updated: '2026-11-13', count: 1, categories: {}, plugins: [entry] }
+    const registry = vi.spyOn(registryApi, 'loadRegistry').mockResolvedValue(catalog)
+    const github = vi.spyOn(DiscoveryManifestIndex.prototype, 'lookupGitHub')
+    try {
+      const catalogPath = '/dsh-market/registry'
+      const path = '/dsh-market/discovery-compatibility'
+      const response = await hit(routes, catalogPath, { method: 'GET', url: catalogPath, host: HOST })
+      const first = jsonBody(response).registry as { plugins: Array<{ compatibilityRevision?: string }> }
+      const revision = first.plugins[0]?.compatibilityRevision
+      expect(revision).toMatch(/^[a-f0-9]{64}$/)
+      const lookupBody = { packages: [], entries: [url], githubRevisions: { [url]: revision } }
+      const matching = await hit(routes, path, post(path, lookupBody))
+      expect(jsonBody(matching).plugins).toMatchObject({ [url]: { basis: 'manifest', requirement: '^0.1.0' } })
+      registry.mockResolvedValue({ ...catalog, plugins: [{ ...entry, releaseManifest: { ...entry.releaseManifest, checkedAt: '2026-11-14T00:00:00Z' } }] })
+      const rechecked = await hit(routes, catalogPath, { method: 'GET', url: catalogPath, host: HOST })
+      expect(jsonBody(rechecked).registry).toMatchObject({ plugins: [{ compatibilityRevision: revision }] })
+      registry.mockResolvedValue({ ...catalog, plugins: [{ ...entry, releaseManifest: { ...entry.releaseManifest, enginesDsh: '>=0.2.0' } }] })
+      const changed = await hit(routes, path, post(path, lookupBody))
+      expect(changed.status).toBe(200)
+      expect(jsonBody(changed).plugins).toMatchObject({ [url]: { basis: 'unavailable', catalogChanged: true } })
+      expect(github).not.toHaveBeenCalled()
+    } finally { registry.mockRestore(); github.mockRestore() }
   })
 
   it('bounds mixed GitHub/npm batches and refuses non-GitHub manifest URLs before lookup', async () => {
@@ -359,6 +478,21 @@ describe('body validation — 400 contracts', () => {
       const res = await hit(routes, '/dsh-market/discovery-compatibility',
         post('/dsh-market/discovery-compatibility', { packages: ['plugin-a'], entries }))
       expect(res.status).toBe(400)
+    }
+  })
+
+  it('refuses invalid discovery hints and hints for items outside the batch', async () => {
+    const path = '/dsh-market/discovery-compatibility'
+    const url = 'https://github.com/acme/plugin-a'
+    for (const hints of [
+      { versions: { 'plugin-a': 'latest' } },
+      { versions: { 'plugin-a': '2.0.0\n' } },
+      { versions: { 'plugin-b': '2.0.0' } },
+      { githubRevisions: { [url]: 'untrusted revision' } },
+      { githubRevisions: { 'https://github.com/acme/other': 'a'.repeat(64) } },
+    ]) {
+      const response = await hit(routes, path, post(path, { packages: ['plugin-a'], entries: [url], ...hints }))
+      expect(response.status).toBe(400)
     }
   })
 
@@ -582,6 +716,72 @@ describe('GET /dsh-market/installed — local repository evidence', () => {
       installed: { 'dsh-fatfish-notes': spec },
       repoIdentities: { 'dsh-fatfish-notes': ['starwind97/dsh-fatfish-notes'] },
     })
+  })
+})
+
+describe('GET /dsh-market/installed — #1147 local description', () => {
+  const installedPath = '/dsh-market/installed'
+
+  it('returns only the installed packages’ own descriptions, keyed by dependency name', async () => {
+    const spec = 'https://github.com/local/session-folders/releases/download/v0.4.1/plugin.tgz'
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ dependencies: {
+      'dsh-session-folders': spec,
+      '@local/alias': '^1.0.0',
+    } }))
+    for (const [name, manifest] of Object.entries({
+      'dsh-session-folders': { name: 'dsh-session-folders', version: '0.4.1', description: '  整理会话文件夹  ', repository: 'github:upstream/not-the-installed-source' },
+      '@local/alias': { name: '@upstream/actual-name', version: '1.0.0', description: 'An aliased local plugin', unrelatedPrivateSetting: 'must-not-be-exported' },
+      'undeclared-package': { name: 'undeclared-package', version: '1.0.0', description: 'Not a profile dependency' },
+    })) {
+      const pkgDir = join(dir, 'node_modules', name)
+      mkdirSync(pkgDir, { recursive: true })
+      writeFileSync(join(pkgDir, 'package.json'), JSON.stringify(manifest))
+    }
+
+    const res = await hit(routes, installedPath, { method: 'GET', url: installedPath })
+    expect(res.status).toBe(200)
+    expect(jsonBody(res).descriptions).toEqual({
+      'dsh-session-folders': '整理会话文件夹',
+      '@local/alias': 'An aliased local plugin',
+    })
+    expect(jsonBody(res).installed).toEqual({ 'dsh-session-folders': spec, '@local/alias': '^1.0.0' })
+    // Description is display metadata, never a reason to trust the package's
+    // repository field over the source actually installed (#580 / #1147).
+    expect(jsonBody(res).repoIdentities).toMatchObject({ 'dsh-session-folders': ['local/session-folders'] })
+    expect(res.body).not.toContain('must-not-be-exported')
+  })
+
+  it('omits missing, blank or non-string descriptions and tolerates unreadable manifests', async () => {
+    const descriptions: Record<string, unknown> = {
+      absent: undefined, blank: ' \n\t ', object: { en: 'Not a package.json string' },
+      array: ['Not a package.json string'], number: 42, nil: null,
+    }
+    writeProfile([...Object.keys(descriptions), 'unreadable', 'missing'])
+    for (const [name, description] of Object.entries(descriptions)) {
+      const pkgDir = join(dir, 'node_modules', name)
+      mkdirSync(pkgDir, { recursive: true })
+      writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name, version: '1.0.0', description }))
+    }
+    mkdirSync(join(dir, 'node_modules', 'unreadable'), { recursive: true })
+    writeFileSync(join(dir, 'node_modules', 'unreadable', 'package.json'), '{not json')
+
+    const res = await hit(routes, installedPath, { method: 'GET', url: installedPath })
+    expect(res.status).toBe(200)
+    expect(jsonBody(res).descriptions).toEqual({})
+  })
+
+  it('rereads edited descriptions and drops removed packages on refresh', async () => {
+    writeProfile(['local-plugin'])
+    const pkgDir = join(dir, 'node_modules', 'local-plugin')
+    mkdirSync(pkgDir, { recursive: true })
+    const manifestPath = join(pkgDir, 'package.json')
+    const readDescriptions = async () => jsonBody(await hit(routes, installedPath, { method: 'GET', url: installedPath })).descriptions
+    writeFileSync(manifestPath, JSON.stringify({ name: 'local-plugin', version: '1.0.0', description: 'First description' }))
+    expect(await readDescriptions()).toEqual({ 'local-plugin': 'First description' })
+    writeFileSync(manifestPath, JSON.stringify({ name: 'local-plugin', version: '1.0.1', description: 'Updated description' }))
+    expect(await readDescriptions()).toEqual({ 'local-plugin': 'Updated description' })
+    writeProfile([])
+    expect(await readDescriptions()).toEqual({})
   })
 })
 

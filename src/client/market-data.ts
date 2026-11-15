@@ -5,7 +5,7 @@
 
 import type { DiagnosticReportV1 } from '../diagnostics.ts'
 import { findCatalogEntryForLocal } from '../catalog-local-match.ts'
-import { parseSourceUrl } from '../sources.ts'
+import { NPM_NAME_RE, parseSourceUrl } from '../sources.ts'
 export type { SharedHostPackageDependencyFinding } from '../diagnostics.ts'
 
 /** Localized text keyed by language ('zh' / 'en'). */
@@ -40,6 +40,8 @@ export interface RegistryPlugin {
   url: string
   npm?: string | null
   tarball?: string | null
+  /** Server-provided revision of this GitHub-only entry's compatibility source. */
+  compatibilityRevision?: string
   /** One legacy category id or several category ids. */
   category: string | string[]
   description?: LocalizedText
@@ -115,6 +117,8 @@ export interface HostCompatibility {
   basis: 'manifest' | 'undeclared' | 'unavailable'
   requirement: string | null
   declarations: Array<{ kind: 'engine' | 'peer' | 'dependency'; package?: string; range: string }>
+  retryAfterMs?: number
+  catalogChanged?: true
 }
 
 /** npm package name or GitHub catalog URL -> discovery-time host verdict. */
@@ -122,7 +126,7 @@ export type HostCompatibilityMap = Record<string, HostCompatibility>
 
 /** Keep GitHub packages in one repository distinct, independently of their display names. */
 export function hostCompatibilityKey(plugin: Pick<RegistryPlugin, 'npm' | 'url'>): string | null {
-  if (typeof plugin.npm === 'string' && plugin.npm !== '') return plugin.npm
+  if (typeof plugin.npm === 'string' && plugin.npm !== '') return NPM_NAME_RE.test(plugin.npm) ? plugin.npm : null
   return parseSourceUrl(plugin.url) === null ? null : plugin.url
 }
 
@@ -207,9 +211,13 @@ export function isGenerationSpec(spec: string): boolean {
 /** Per-package update status from /dsh-market/updates. */
 export interface UpdateStatus {
   updateAvailable?: boolean
+  /** The source could not be checked, so false is not a no-update verdict. */
+  checkFailed?: true
   /** Server-verified precise Desktop stable npm update target. */
   eligibleVersion?: string
-  version?: string
+  version?: string | null
+  /** The latest check failed; any retained update facts came from an earlier successful check. */
+  checkError?: 'unavailable'
   /** `github` | `npm` | `linked` | `generation` — the last is a host-managed
       install (#497): `latest` names a newer release, never an offer. */
   kind?: string
@@ -726,9 +734,8 @@ export function visiblePlugins(plugins: RegistryPlugin[], options: ListQuery): R
     const categories = pluginCategories(plugin)
     if (options.category !== 'all' && !categories.includes(options.category)) return []
     if (options.sinceDays !== undefined && !withinDays(plugin.added, options.sinceDays)) return []
-    const compatibilityKey = hostCompatibilityKey(plugin)
-    if (options.compatibleWithHost === true && compatibilityKey !== null
-      && options.hostCompatibility?.[compatibilityKey]?.status === 'incompatible') return []
+    const compatibilityKey = options.compatibleWithHost === true ? hostCompatibilityKey(plugin) : null
+    if (compatibilityKey !== null && options.hostCompatibility?.[compatibilityKey]?.status === 'incompatible') return []
     const relevance = query === '' ? 0 : pluginRelevance(plugin, query, tokens, options.lang, options.categories)
     return relevance === 0 && query !== '' ? [] : [{ plugin, relevance, index }]
   })
@@ -1076,6 +1083,23 @@ export function entryForDep(
   }
   const ids = depIdentities(name, String(spec), repoIdentities)
   const conflicts = sourceConflictWith(String(spec), repoIdentities)
+  // A monorepo subpackage manifest states the parent repository plus a
+  // `directory`, so its identity list carries BOTH `owner/repo` and
+  // `owner/repo#path:/sub`. The bare half also names the collection output
+  // root row, and that row almost always comes first in the catalog — so a
+  // single `find()` below answers a subpackage with the root row, and its
+  // card shows the root plugin description and version. An exact `#path:`
+  // hit cannot be ambiguous, so it decides first; the bare-repo pass stays
+  // as the fallback for manifests that declare no `repository.directory`.
+  const subpaths = new Set([...ids].filter(id => id.includes("#path:/")))
+  if (subpaths.size > 0) {
+    const exact = plugins.find((plugin) => {
+      if (conflicts(plugin)) return false
+      for (const id of entryIdentities(plugin)) if (subpaths.has(id)) return true
+      return false
+    })
+    if (exact !== undefined) return exact
+  }
   return plugins.find((plugin) => {
     // Identity first: it rejects nearly every entry for a few set lookups,
     // and only the survivors can be a source conflict (#1097).
@@ -1811,4 +1835,61 @@ export function catalogEntryForInstalled(
     return findCatalogEntryForLocal(plugins, name, repoIdentities, repoHints) ?? undefined
   }
   return entryForDep(plugins, name, spec, repoIdentities, repoHints)
+}
+
+/**
+ * When the market installed or updated a package (#1142/#1121), as sent by
+ * `/dsh-market/installed`. Both are ISO 8601 and both may be absent — the
+ * absent one is a fact, not a zero.
+ */
+export interface InstallStamp {
+  installedAt?: string
+  updatedAt?: string
+}
+
+/** How the installed list is ordered. Its own set — see `installedSort`. */
+export type InstalledSort = 'default' | 'name' | 'newest' | 'oldest'
+
+/** The date a row shows, in the reader's own timezone; null when unknown. */
+export function installedDateText(stamp: string | undefined): string | null {
+  if (stamp === undefined) return null
+  const at = new Date(stamp)
+  if (Number.isNaN(at.getTime())) return null
+  const pad = (value: number): string => String(value).padStart(2, '0')
+  return `${String(at.getFullYear())}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}`
+}
+
+function installedAtMs(stamp: string | undefined): number | null {
+  if (stamp === undefined) return null
+  const at = Date.parse(stamp)
+  return Number.isFinite(at) ? at : null
+}
+
+/**
+ * Order two installed rows by the chosen field.
+ *
+ * `default` answers 0 on purpose: the list already has an order that means
+ * something (a plugin that is off sinks below every one that is on, #745),
+ * and the caller applies that first. This only decides what happens INSIDE
+ * those groups.
+ *
+ * A row with no install time goes last in BOTH directions. "Sort by install
+ * time" cannot place something whose time nobody recorded, and flipping the
+ * arrow must not lift a guess above a fact — the whole point of showing `—`
+ * is that the market says when it does not know.
+ */
+export function compareInstalledRows(
+  sort: InstalledSort,
+  a: { name: string; installedAt?: string },
+  b: { name: string; installedAt?: string },
+): number {
+  if (sort === 'default') return 0
+  if (sort === 'name') return a.name.localeCompare(b.name)
+  const left = installedAtMs(a.installedAt)
+  const right = installedAtMs(b.installedAt)
+  if (left === null && right === null) return a.name.localeCompare(b.name)
+  if (left === null) return 1
+  if (right === null) return -1
+  if (left === right) return a.name.localeCompare(b.name)
+  return sort === 'newest' ? right - left : left - right
 }

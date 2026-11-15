@@ -18,8 +18,10 @@
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { join } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { dirname, join } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { isUpdateCheckIntervalHours, type UpdateCheckIntervalHours } from './update-notification-settings.ts'
+import type { FiberState } from '@deepseek-ai/cordis'
 import { asChannel, type Channel } from './channels.ts'
 import { asRegion, normalizeGithubProxy, type Region } from './regions.ts'
 import { findDshInstallDir } from './dsh-install.ts'
@@ -36,13 +38,43 @@ interface PluginHandle {
   dispose(): Promise<unknown> | void
 }
 
-interface HotContext {
-  plugin(plugin: unknown, config: unknown): PluginHandle
-  logger?: { info?(message: string): void; warn(message: string): void }
+/** One structured record delivered to a host logger exporter (cordis `Message`). */
+interface HostLogMessage {
+  name?: unknown
+  type?: unknown
+  args?: unknown
 }
 
 /**
- * Profile-scoped resolution for hot-mount rows: turn a bare package name into
+ * Sink shape accepted by cordis' `LoggerService.exporter`.
+ *
+ * `levels` is not optional decoration: the service skips a record before it
+ * ever reaches `export` when
+ * `(levels[name] ?? levels.default ?? logger.level ?? 1) < record.level`.
+ * The default threshold is `1`, and `warn` is level `2` — a sink that leaves
+ * `levels` out never sees a single warning.
+ */
+interface HostLogSink {
+  levels?: Record<string, number>
+  export(message: HostLogMessage): void
+}
+
+interface HotContext {
+  plugin(plugin: unknown, config: unknown): PluginHandle
+  logger?: {
+    info?(message: string): void
+    warn(message: string): void
+    /**
+     * Optional structured sink: cordis' `LoggerService.exporter` hands over
+     * every record the process logs and returns a disposer. Absent on hosts
+     * whose logger is a bare object, and on test doubles.
+     */
+    exporter?(sink: HostLogSink): unknown
+  }
+}
+
+/**
+ * Profile-scoped resolution for hot-mount imports: turn a bare package name into
  * the absolute `file://` entry URL of the package just installed into
  * `profileDir`.
  *
@@ -56,7 +88,7 @@ interface HotContext {
  * back to "restart required", blaming the plugin for what is a resolution
  * anchor problem.
  *
- * Resolving the row name HERE, against the profile the package was actually
+ * Resolving the module at import time, against the profile it was actually
  * installed into, is anchor-independent: `require.resolve` walks
  * `profileDir/node_modules` natively, so the tree hands the loader a
  * `file://` URL needing no further resolution. Non-bare specifiers (relative
@@ -68,8 +100,8 @@ interface HotContext {
  * whose entry cannot be located via `require.resolve` (no `main`/exports —
  * the market's own `entryArtifactExists` heuristic covers those shapes before
  * an install is accepted) is not something this resolver should guess about.
- * Client-only shims never reach this function (their rows are replaced by a
- * no-op host module before the file is written).
+ * Client-only shims never reach this function: their import returns a no-op
+ * host module before attempting package resolution.
  */
 export function resolveProfileEntry(profileDir: string, name: string): string {
   if (!name || name.startsWith('.') || name.startsWith('cordis:') || name.startsWith('file://')) return name
@@ -89,7 +121,7 @@ export function resolveProfileEntry(profileDir: string, name: string): string {
   }
 }
 
-// File URLs may contain apostrophes; YAML single-quoted scalars escape them by doubling.
+// Row names and ids may contain apostrophes; YAML single-quoted scalars double them.
 function yamlSingleQuoted(value: string): string {
   return value.replace(/'/g, "''")
 }
@@ -105,6 +137,24 @@ const HOT_DIR = '.dsh-market'
 const HOT_MOUNT_TIMEOUT_MS = Number(process.env.DSH_MARKET_HOT_MOUNT_TIMEOUT_MS) || 10000
 
 let hotTreeClass: unknown | null | undefined
+
+// Cordis declares FiberState as a const enum, so the installed host exposes its numeric values.
+const FAILED_FIBER_STATE: FiberState.FAILED = 3
+
+/** The parts of a loader entry used for reporting activation and unmounting. */
+interface HotEntry {
+  readonly id?: string
+  readonly fiber?: { readonly state: number }
+  update(options: { disabled: boolean }, create: boolean, force: boolean): Promise<unknown>
+}
+interface HotEntryTree {
+  entries(): Iterable<HotEntry>
+}
+
+/** Live hot-mount trees by input file URL, so an unmount can reach the entries. */
+const hotTrees = new Map<string, HotEntryTree>()
+/** Package name -> the input file URL of its live hot mount. */
+const hotTreeOf = new Map<string, string>()
 
 /**
  * The Include subclass, built once per process; null when the loader's include
@@ -134,11 +184,18 @@ async function loadHotTreeClass(): Promise<unknown | null> {
     const Include = mod.Include
     if (Include === undefined) throw new Error('no Include export')
     class MarketHotTree extends Include {
+      private readonly profileDir: string
+      constructor(...args: never[]) {
+        super(...args)
+        const path = (args[1] as { path: string }).path
+        this.profileDir = dirname(dirname(fileURLToPath(path)))
+        hotTrees.set(path, this as unknown as HotEntryTree)
+      }
       /** Runtime-only mount list; the bundle layer owns persistence. */
       override write(): void {}
       override import(name: string, getOuterStack?: () => string[]): unknown {
         if (shimNames.has(name)) return { name, apply: () => {} }
-        return super.import(name, getOuterStack)
+        return super.import(resolveProfileEntry(this.profileDir, name), getOuterStack)
       }
     }
     hotTreeClass = MarketHotTree
@@ -374,6 +431,10 @@ export interface MarketState {
    * An empty array is how the last name is removed.
    */
   updateExempt?: string[]
+  /** Background update checks run only after an explicit opt-in. */
+  backgroundUpdateChecks?: boolean
+  /** Polling cadence; absent or invalid legacy values use the six-hour default. */
+  backgroundUpdateIntervalHours?: UpdateCheckIntervalHours
   /** User-supplied HTTPS prefix used when the built-in GitHub routes fail. */
   githubProxy?: string
   /**
@@ -440,6 +501,32 @@ export interface MarketState {
    * src/dsh-cli.ts spawnEnv for the precedence once it reaches a child.
    */
   buildEnv?: Record<string, string>
+
+  /**
+   * When this market installed or last updated each package (#1142/#1121).
+   *
+   * A row in the installed list has no time of its own. `node_modules/<pkg>`
+   * mtime is not one (pnpm rewrites it on every install, so a batch all
+   * shares one instant) and `.plugin-manager/logs/operation-*` is a log with
+   * a retention policy, not a field. So the market writes its own stamps at
+   * the two moments it knows: an install it ran, and an update that landed.
+   *
+   * Two consequences worth stating in the shape itself:
+   * - A package installed anywhere else (the CLI, the host's plugins page) has
+   *   no entry, and displaying a guessed one would be worse than displaying
+   *   nothing: "按安装时间排" would then be an ordering of guesses.
+   * - Keys carry no profile: the file is per profile already, and a copied
+   *   profile inheriting another's timestamps would be inventing history.
+   */
+  installTimes?: Record<string, InstallTimes>
+}
+
+/** One package's market-recorded timestamps, both ISO 8601. */
+export interface InstallTimes {
+  /** When this market installed the package. Absent when it did not. */
+  installedAt?: string
+  /** When an update of it last landed. Absent when it never updated here. */
+  updatedAt?: string
 }
 
 /** Why a package is no longer declared, and what to put back. */
@@ -526,6 +613,64 @@ function updateExemptNames(value: unknown): string[] {
   return cappedPackageNames(value, MAX_UPDATE_EXEMPT)
 }
 
+/**
+ * Upper bound on the install-time map (#1142). One entry per package the
+ * market itself installed, and a profile with 500 of those is already an
+ * outlier; the cap keeps state.json from growing with every plugin the user
+ * ever tried and removed.
+ */
+export const MAX_INSTALL_TIMES = 500
+
+/** An ISO 8601 timestamp, normalized; anything else is "not recorded". */
+function installTimestamp(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value === '') return undefined
+  const at = Date.parse(value)
+  if (!Number.isFinite(at)) return undefined
+  return new Date(at).toISOString()
+}
+
+/**
+ * Sanitize the stored install-time map. A hand-edited file is not trusted:
+ * a key that is not a name, a value that is not an object, and a stamp that
+ * is not a timestamp are all dropped rather than carried into the UI, where
+ * an unparseable date would sort as `NaN` and land in the middle of the list.
+ *
+ * The cap keeps the entries with the most recent activity, not the first
+ * ones written: the map is a lookup for "when did I install this", and the
+ * oldest 50 installs are exactly the ones nobody is asking about.
+ */
+function installTimesFromUnknown(value: unknown): Record<string, InstallTimes> | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const out: Record<string, InstallTimes> = {}
+  for (const [name, raw] of Object.entries(value)) {
+    if (name === '' || name.length > MAX_BLOCKED_NAME) continue
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) continue
+    const record = raw as { installedAt?: unknown; updatedAt?: unknown }
+    const installedAt = installTimestamp(record.installedAt)
+    const updatedAt = installTimestamp(record.updatedAt)
+    // An entry with neither stamp says nothing; keeping it would list a row
+    // that looks known and sorts nowhere.
+    if (installedAt === undefined && updatedAt === undefined) continue
+    out[name] = {
+      ...(installedAt === undefined ? {} : { installedAt }),
+      ...(updatedAt === undefined ? {} : { updatedAt }),
+    }
+  }
+  const names = Object.keys(out)
+  if (names.length === 0) return undefined
+  return trimInstallTimes(out)
+}
+
+/** Keep the cap, dropping the entries nobody is asking about (oldest first). */
+function trimInstallTimes(map: Record<string, InstallTimes>): Record<string, InstallTimes> | undefined {
+  const names = Object.keys(map)
+  if (names.length === 0) return undefined
+  if (names.length <= MAX_INSTALL_TIMES) return map
+  const stamp = (entry: InstallTimes): number => Date.parse(entry.updatedAt ?? entry.installedAt ?? '')
+  const recent = names.sort((a, b) => stamp(map[b]!) - stamp(map[a]!)).slice(0, MAX_INSTALL_TIMES)
+  return Object.fromEntries(recent.map(name => [name, map[name]!]))
+}
+
 /** A POSIX-looking environment variable name: the name part of `KEY=value`. */
 const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/
 
@@ -589,10 +734,13 @@ export function readMarketState(profileDir: string): MarketState {
       favorites?: unknown
       blocked?: unknown
       updateExempt?: unknown
+      backgroundUpdateChecks?: unknown
+      backgroundUpdateIntervalHours?: unknown
       brokenPlugins?: unknown
       sidebarEntry?: unknown
       settingsSection?: unknown
       pluginsTab?: unknown
+      installTimes?: unknown
     }
     const disabled = uniqueStrings(state.disabled !== undefined ? state.disabled : state.disabledSkins)
     const groups: Record<string, string[]> = {}
@@ -611,6 +759,7 @@ export function readMarketState(profileDir: string): MarketState {
     }
     const githubProxy = normalizeGithubProxy(state.githubProxy)
     const brokenPlugins = brokenPluginsFromUnknown(state.brokenPlugins)
+    const installTimes = installTimesFromUnknown(state.installTimes)
     // The order and the map are two halves of one fact, and a state file can
     // carry them out of step (#964): the UI then lists a group the routes
     // cannot find, so "assign to" and even "delete" answer group-not-found
@@ -634,8 +783,11 @@ export function readMarketState(profileDir: string): MarketState {
       favorites: favoriteUrls(state.favorites),
       blocked: blockedNames(state.blocked),
       updateExempt: updateExemptNames(state.updateExempt),
+      ...(typeof state.backgroundUpdateChecks === 'boolean' ? { backgroundUpdateChecks: state.backgroundUpdateChecks } : {}),
+      ...(isUpdateCheckIntervalHours(state.backgroundUpdateIntervalHours) ? { backgroundUpdateIntervalHours: state.backgroundUpdateIntervalHours } : {}),
       ...(githubProxy === null ? {} : { githubProxy }),
       ...(brokenPlugins === undefined ? {} : { brokenPlugins }),
+      ...(installTimes === undefined ? {} : { installTimes }),
       // true AND false are both preserved: on a host with no settings page
       // this switch is the market's only entry, so "the user turned it off"
       // must be distinguishable from "nobody has chosen yet" (#846).
@@ -715,6 +867,17 @@ function publishFile(path: string, contents: string): void {
  * the whole document" safe for callers that only hold part of it.
  */
 export function writeMarketState(profileDir: string, state: MarketState): void {
+  writeState(profileDir, state, false)
+}
+
+/**
+ * `ownStamps` is true only for the three stamp functions below. Every other
+ * writer holds a whole-state object that may be minutes old (the routes keep
+ * one from boot and save it whole, #435), so a stamp it carries is a stale
+ * copy: letting it through put the install date of the last install back to
+ * what boot saw.
+ */
+function writeState(profileDir: string, state: MarketState, ownStamps: boolean): void {
   mkdirSync(join(profileDir, HOT_DIR), { recursive: true, mode: 0o700 })
   const onDisk = readMarketState(profileDir)
   // `?? {}` only for the type: MarketState declares notes optional, while
@@ -731,6 +894,8 @@ export function writeMarketState(profileDir: string, state: MarketState): void {
   const favorites = state.favorites ?? onDisk.favorites ?? []
   const blocked = state.blocked ?? onDisk.blocked ?? []
   const updateExempt = state.updateExempt ?? onDisk.updateExempt ?? []
+  const backgroundUpdateChecks = state.backgroundUpdateChecks ?? onDisk.backgroundUpdateChecks
+  const backgroundUpdateIntervalHours = state.backgroundUpdateIntervalHours ?? onDisk.backgroundUpdateIntervalHours
   // This field does have a clear action ("restore automatic"). As with
   // regionAuto, omission preserves while an explicit undefined removes it.
   const githubProxy = Object.prototype.hasOwnProperty.call(state, 'githubProxy')
@@ -739,6 +904,9 @@ export function writeMarketState(profileDir: string, state: MarketState): void {
   const broken = Object.prototype.hasOwnProperty.call(state, 'brokenPlugins')
     ? state.brokenPlugins
     : onDisk.brokenPlugins
+  // Only the stamp functions replace the map (an empty one, after the last
+  // uninstall, included); every other writer leaves what is on disk alone.
+  const installTimes = ownStamps ? state.installTimes : onDisk.installTimes
   const sidebarEntry = Object.prototype.hasOwnProperty.call(state, 'sidebarEntry')
     ? state.sidebarEntry
     : onDisk.sidebarEntry
@@ -757,6 +925,8 @@ export function writeMarketState(profileDir: string, state: MarketState): void {
     ...(favorites.length > 0 ? { favorites } : {}),
     ...(blocked.length > 0 ? { blocked } : {}),
     ...(updateExempt.length > 0 ? { updateExempt } : {}),
+    ...(typeof backgroundUpdateChecks === 'boolean' ? { backgroundUpdateChecks } : {}),
+    ...(isUpdateCheckIntervalHours(backgroundUpdateIntervalHours) ? { backgroundUpdateIntervalHours } : {}),
     ...(Object.keys(notes).length > 0 ? { notes } : {}),
     // Omitted while unchosen, so "never picked" survives a round trip and
     // keeps deriving from the running build — but only when disk has not
@@ -771,6 +941,9 @@ export function writeMarketState(profileDir: string, state: MarketState): void {
     // githubProxy above, and the one a repaired plugin needs: the entry
     // exists only while the declaration is still missing.
     ...(broken === undefined ? {} : { brokenPlugins: broken }),
+    // Omitted while empty, so a profile that never installed through the
+    // market keeps a state file with no such key at all.
+    ...(installTimes === undefined || Object.keys(installTimes).length === 0 ? {} : { installTimes }),
     // Written for both answers: on a host with no settings page this switch
     // is the market's only entry, so a deliberate OFF has to survive a reload
     // instead of being read back as "never chosen" (#846).
@@ -809,9 +982,85 @@ export function writeDisabledThemes(profileDir: string, disabled: Set<string>): 
   writeDisabled(profileDir, disabled)
 }
 
-/** Package names currently live through a market hot mount (patch or shim). */
+/**
+ * The market installed these packages just now (#1142): both stamps are this
+ * moment, because the first install is also the last change so far.
+ */
+export function recordInstalled(profileDir: string, names: readonly string[], at = new Date()): void {
+  const stamp = at.toISOString()
+  const state = readMarketState(profileDir)
+  const map: Record<string, InstallTimes> = { ...state.installTimes }
+  for (const name of names) {
+    if (name === '') continue
+    map[name] = { installedAt: stamp, updatedAt: stamp }
+  }
+  state.installTimes = trimInstallTimes(map)
+  writeState(profileDir, state, true)
+}
+
+/**
+ * An update of these packages landed: only the update stamp moves.
+ *
+ * A package with no entry keeps `installedAt` absent — the market never saw
+ * it installed, and "when I first noticed it" is a different fact. Writing it
+ * here would make the sort report a guessed install order as history.
+ */
+export function recordUpdated(profileDir: string, names: readonly string[], at = new Date()): void {
+  const stamp = at.toISOString()
+  const state = readMarketState(profileDir)
+  const map: Record<string, InstallTimes> = { ...state.installTimes }
+  for (const name of names) {
+    if (name === '') continue
+    map[name] = { ...map[name], updatedAt: stamp }
+  }
+  state.installTimes = trimInstallTimes(map)
+  writeState(profileDir, state, true)
+}
+
+/** The package is gone: its stamps must not outlive it. */
+export function forgetInstalled(profileDir: string, name: string): void {
+  const state = readMarketState(profileDir)
+  if (state.installTimes === undefined || state.installTimes[name] === undefined) return
+  const map = { ...state.installTimes }
+  delete map[name]
+  state.installTimes = trimInstallTimes(map)
+  writeState(profileDir, state, true)
+}
+
+/** Package names whose hot-mount trees are still attached and can be removed. */
 export function listHotMounts(): string[] {
   return [...hotHandles.keys()]
+}
+
+function mountedFile(packageName: string, profileDir?: string): string | undefined {
+  const file = hotTreeOf.get(packageName)
+  if (file === undefined || profileDir === undefined) return file
+  return dirname(fileURLToPath(file)) === join(profileDir, HOT_DIR) ? file : undefined
+}
+
+/** Report a failed child only when it belongs to this package's hot-mount tree. */
+export function hotMountFailure(packageName: string, profileDir?: string): string | null {
+  const file = mountedFile(packageName, profileDir)
+  if (file === undefined) return null
+  const tree = hotTrees.get(file)
+  if (typeof tree?.entries !== 'function') return null
+  const failed: string[] = []
+  try {
+    for (const entry of tree.entries()) {
+      if (entry.fiber?.state === FAILED_FIBER_STATE && typeof entry.id === 'string') failed.push(entry.id)
+    }
+  } catch {
+    // Older loaders can have an unreadable activation state.
+    return null
+  }
+  if (failed.length === 0) return null
+  const components = failed.join(', ')
+  return `组件 ${components} 启动失败。请在诊断中查看原因。 / Components failed to start (${components}). Check Diagnostics for the error.`
+}
+
+/** Hot mounts the market can report as live. */
+export function listLiveHotMounts(): string[] {
+  return listHotMounts().filter(name => hotMountFailure(name) === null)
 }
 
 let hotSequence = 0
@@ -841,11 +1090,104 @@ function raceActivationTimeout<T>(awaitable: T | Promise<T>): Promise<T> {
   })
 }
 
+/** Cap on host log lines attached to one hot mount (#1197). */
+const MOUNT_LOG_MAX = 5
+const MOUNT_LOG_LINE_MAX = 200
+
+/** Render one structured host record as a single log line. */
+function mountLogLine(message: HostLogMessage): string {
+  const parts: unknown[] = Array.isArray(message.args) ? message.args : [message.args]
+  const text = parts
+    .filter(part => part !== undefined && part !== null)
+    .map(part => {
+      if (typeof part === 'string') return part
+      // Align with `Logger.format`: an Error records its stack (or message as
+      // a fallback), never the empty object `JSON.stringify` yields. cordis'
+      // `_method` hands the raw `args: [Error]` to exporters without
+      // formatting, so this is what keeps `the host logged this while
+      // mounting — name: Error: ...` readable in the exportable log.
+      if (part instanceof Error) return part.stack || part.message
+      try {
+        return JSON.stringify(part) ?? String(part)
+      } catch {
+        return String(part)
+      }
+    })
+    .join(' ')
+  const name = typeof message.name === 'string' && message.name !== '' ? `${message.name}: ` : ''
+  return `${name}${text}`.slice(0, MOUNT_LOG_LINE_MAX)
+}
+
+/**
+ * Collect the host's warn/error records for the duration of one hot mount.
+ *
+ * `Fiber#await()` resolves normally when an entry is still waiting on a
+ * service that never arrives (#1197): the mount reports live, and the only
+ * trace of the problem is whatever the host logged while composing it.
+ * Recording those lines next to the `live` event keeps that trace in the
+ * exportable log without changing the verdict — the mount really did finish,
+ * and "this entry was the one that complained" is not something the market can
+ * prove yet.
+ *
+ * Attribution stays open on purpose: the exporter is process-wide, so these
+ * lines read as "logged while mounting", not as this entry's own records.
+ * Filtering on a name prefix would bake in a naming contract the host has not
+ * promised.
+ *
+ * @param ctx - host context; the sink is skipped when there is no `exporter`.
+ * @returns the collected lines plus a disposer that is safe to call twice.
+ */
+function watchMountLog(ctx: HotContext): { finish(): string[]; stop(): void } {
+  const logger = ctx.logger
+  const register = logger?.exporter
+  if (logger === undefined || typeof register !== 'function') return { finish: () => [], stop: () => {} }
+  const lines: string[] = []
+  let disposable: unknown
+  try {
+    disposable = register.call(logger, {
+      // Ask for every level and filter below: the sink exists to catch
+      // warnings, and the service's own default threshold (`1`) drops them
+      // before `export` is ever called.
+      levels: { default: 3 },
+      export(message: HostLogMessage) {
+        if (lines.length >= MOUNT_LOG_MAX) return
+        if (message?.type !== 'warn' && message?.type !== 'error') return
+        lines.push(mountLogLine(message))
+      },
+    } satisfies HostLogSink)
+  } catch {
+    // A host whose exporter rejects this sink shape is not a mount failure.
+    return { finish: () => [], stop: () => {} }
+  }
+  let stopped = false
+  const stop = (): void => {
+    if (stopped) return
+    stopped = true
+    try {
+      if (typeof disposable === 'function') void (disposable as () => unknown)()
+      else if (disposable !== null && typeof disposable === 'object' && 'dispose' in disposable) {
+        void (disposable as { dispose(): unknown }).dispose()
+      }
+    } catch {
+      // The mount result matters more than the sink teardown.
+    }
+  }
+  return {
+    finish: () => {
+      stop()
+      return lines.slice()
+    },
+    stop,
+  }
+}
+
 /** Outcome of one hot-mount attempt; `reason` explains non-`ok` results. */
 export interface HotMountResult {
   ok: boolean
   /** Bilingual reason shown to the user instead of a bare restart banner. */
   reason: string | null
+  /** The tree is still attached so its running components can continue. */
+  retained?: true
   /**
    * Set when nothing was attempted because this package can only come up on a
    * start — its patch holds more than plain inserts. That is a verdict about
@@ -853,6 +1195,10 @@ export interface HotMountResult {
    * written, where a crash must not be persisted (#575, #1010).
    */
   deferred?: true
+}
+
+function mountResult(failure: string | null): HotMountResult {
+  return failure === null ? { ok: true, reason: null } : { ok: false, reason: failure, retained: true }
 }
 
 /**
@@ -869,7 +1215,25 @@ export async function hotUnmount(packageName: string): Promise<boolean> {
   // state instead of reusing a handle already being disposed.
   hotHandles.delete(packageName)
   shimNames.delete(packageName)
-  const disposal = Promise.resolve().then(() => handle.dispose())
+  const treeKey = hotTreeOf.get(packageName)
+  hotTreeOf.delete(packageName)
+  const tree = treeKey === undefined ? undefined : hotTrees.get(treeKey)
+  if (treeKey !== undefined) hotTrees.delete(treeKey)
+  const disposal = Promise.resolve().then(async () => {
+    // Switch the tree's entries off BEFORE disposing the tree (#1188).
+    // Disposing the tree stops the plugins but leaves each entry still holding
+    // its fiber, and the host's client-module registry keeps serving a package
+    // to the page for as long as an entry names a live fiber: the browser half
+    // of a plugin switched off here stayed on screen, across reloads, until
+    // the host restarted. Updating the entry itself is the path the host's own
+    // entries take when they are switched off, and the registry follows it.
+    if (tree !== undefined) {
+      for (const entry of [...tree.entries()]) {
+        try { await entry.update({ disabled: true }, false, true) } catch { /* the dispose below still stops it */ }
+      }
+    }
+    await handle.dispose()
+  })
   // Same ceiling as mounting, and the same reason (#582, measured class of
   // report): a plugin whose teardown waits for something that never arrives
   // used to hold the toggle route open forever, and every later operation
@@ -918,6 +1282,9 @@ export async function hotUnmount(packageName: string): Promise<boolean> {
  */
 export async function hotMount(ctx: HotContext, profileDir: string, packageName: string): Promise<HotMountResult> {
   try {
+    if (mountedFile(packageName, profileDir) !== undefined) {
+      return mountResult(hotMountFailure(packageName, profileDir))
+    }
     const HotTree = await loadHotTreeClass()
     if (HotTree === null) {
       return {
@@ -990,20 +1357,30 @@ export async function hotMount(ctx: HotContext, profileDir: string, packageName:
     mkdirSync(dir, { recursive: true, mode: 0o700 })
     hotSequence += 1
     const file = join(dir, `hot-${String(hotSequence)}.yml`)
-    // Rows carry ABSOLUTE file:// entry URLs, resolved against this profile:
-    // the loader's own parent-walk (from the host closure) can never reach
-    // `profileDir/node_modules`, so bare names in the file would fail to
-    // import on closure-hosted loaders. The file remains a faithful record —
-    // `cleanHotDir` wipes it on every boot and the bundle layer owns
-    // persistence, so nothing reads these files back.
+    // Keep the package identity on loader entries: the host's client-module
+    // registry uses it to find package.json and the browser bundle. Only the
+    // import resolves against this profile, so closure-hosted loaders still
+    // receive an absolute module URL without making it the plugin's name.
     const yml = rows
-      .map(row => `- id: '${yamlSingleQuoted(`mkt-${row.id}`)}'\n  name: '${yamlSingleQuoted(resolveProfileEntry(profileDir, row.name))}'\n`)
+      .map(row => `- id: '${yamlSingleQuoted(`mkt-${row.id}`)}'\n  name: '${yamlSingleQuoted(row.name)}'\n`)
       .join('')
     writeFileSync(file, yml)
-    const handle = ctx.plugin(HotTree, { path: pathToFileURL(file).href })
+    const mountLog = watchMountLog(ctx)
+    let handle: PluginHandle
+    try {
+      handle = ctx.plugin(HotTree, { path: pathToFileURL(file).href })
+    } catch (error) {
+      // `ctx.plugin()` bails out before creating anything when the fiber is no
+      // longer active (a mount issued during teardown) or the plugin is
+      // rejected. The sink is already registered by then, so release it here:
+      // the outer catch reports the failure, it does not clean this up.
+      mountLog.stop()
+      throw error
+    }
     try {
       await raceActivationTimeout(handle.await())
     } catch (error) {
+      mountLog.stop()
       // A failed or wedged mount must leave NOTHING behind: the disposed
       // subtree stops retrying the import, and the input file is removed so
       // it cannot be re-imported by a later boot or replay (a leftover file
@@ -1011,6 +1388,7 @@ export async function hotMount(ctx: HotContext, profileDir: string, packageName:
       // produced unbounded error-log growth on a closure-hosted loader).
       try { Promise.resolve(handle.dispose()).catch(() => {}) } catch { /* best effort */ }
       try { rmSync(file, { force: true }) } catch { /* best effort */ }
+      hotTrees.delete(pathToFileURL(file).href)
       if (error instanceof ActivationTimeout) {
         // A wedged activation would otherwise hold this request open forever:
         // the route's `finally { installing = false }` never runs, so every
@@ -1021,9 +1399,24 @@ export async function hotMount(ctx: HotContext, profileDir: string, packageName:
       throw error
     }
     hotHandles.set(packageName, handle)
-    ctx.logger?.info?.(`[dsh-market] hot-mounted ${packageName}`)
-    logEvent('info', 'hot-mount', `${packageName}: live${shimNames.has(packageName) ? ' (client-only shim)' : ''}`)
-    return { ok: true, reason: null }
+    hotTreeOf.set(packageName, pathToFileURL(file).href)
+    const failure = hotMountFailure(packageName, profileDir)
+    const lines = mountLog.finish()
+    if (failure === null) {
+      ctx.logger?.info?.(`[dsh-market] hot-mounted ${packageName}`)
+      logEvent('info', 'hot-mount', `${packageName}: live${shimNames.has(packageName) ? ' (client-only shim)' : ''}`)
+    } else {
+      ctx.logger?.warn(`[dsh-market] ${packageName}: ${failure}`)
+      logEvent('warn', 'hot-mount', `${packageName}: ${failure}`)
+    }
+    // A mount that resolves while an entry is still waiting on a service is
+    // "live" by the host's own verdict, so the verdict stands — but the lines
+    // the host logged meanwhile are the only record of why the entry never
+    // started serving (#1197).
+    for (const line of lines) {
+      logEvent('warn', 'hot-mount', `${packageName}: the host logged this while mounting — ${line}`)
+    }
+    return mountResult(failure)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     ctx.logger?.warn(`[dsh-market] hot mount of ${packageName} failed, restart required: ${message}`)

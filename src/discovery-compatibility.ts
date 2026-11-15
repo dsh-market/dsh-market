@@ -9,10 +9,10 @@
  * version of the process serving the page.
  */
 
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { createHash } from 'node:crypto'
 import { compareSemver, isSemver, satisfiesRange } from './check.ts'
 import { classifyPeer, crossesImplicitCeiling } from './compatibility.ts'
+import { openDiscoveryCache, type CacheEntry } from './discovery-cache.ts'
 import { marketFetch } from './net.ts'
 import { isStableReleaseVersion } from './release-candidates.ts'
 import { activeRegion, githubRoutesFor, rememberGithubRoute, throughProxy } from './regions.ts'
@@ -48,36 +48,35 @@ export interface NpmManifestFacts {
   dependencies?: Record<string, string>
 }
 
-interface CacheEntry {
-  checkedAt: number
-  facts: NpmManifestFacts
-}
-
-interface CacheFile {
-  schema: 'dsh-market/discovery-compatibility-cache/v1'
-  entries: Record<string, CacheEntry>
-}
-
 type FetchLike = (
   url: string,
   init?: { signal?: AbortSignal; headers?: Record<string, string> },
 ) => Promise<Response>
 
-const CACHE_SCHEMA = 'dsh-market/discovery-compatibility-cache/v1' as const
 const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000
 const FAILURE_COOLDOWN_MS = 5 * 60 * 1000
 const OUTAGE_COOLDOWN_MS = 30 * 1000
 const FETCH_TIMEOUT_MS = 8_000
 const DEFAULT_CONCURRENCY = 8
-// Larger than the catalog (10k+ and growing). A cap below the catalog size
-// made a full scan evict its own first half, so no scan ever stayed cached (#1170).
-const MAX_CACHE_ENTRIES = 20_000
 const MAX_RANGE_LENGTH = 256
 
 export interface GitHubManifestSource {
   url: string
   tarball?: string | null
+  version?: string | null
   releaseManifest?: unknown
+}
+
+/** Only the selected artifact and its declarations determine a discovery verdict. */
+export function githubCompatibilityRevision(source: GitHubManifestSource): string {
+  const facts = catalogReleaseManifest(source)
+  return createHash('sha256').update(JSON.stringify([
+    source.url,
+    source.tarball ?? null,
+    range(source.version),
+    facts === null ? null : [facts.version, facts.enginesDsh,
+      Object.entries(facts.peerDependencies).sort(), Object.entries(facts.dependencies ?? {}).sort()],
+  ])).digest('hex')
 }
 
 /** Reuse catalog facts only for this repository's exact pinned install asset. */
@@ -93,6 +92,16 @@ export function catalogReleaseManifest(source: GitHubManifestSource): NpmManifes
     peerDependencies: facts.peerDependencies,
     dependencies: facts.dependencies ?? {},
   }
+}
+
+function npmDiscoveryKey(name: string, registry: string, version: string | undefined): string {
+  return version === undefined ? name : `npm:${registry}\u0000${name}\u0000${version}`
+}
+
+function githubDiscoveryKey(source: GitHubManifestSource): string {
+  const key = `github:${source.url}\u0000${source.tarball ?? ''}`
+  const version = range(source.version)
+  return version === null ? key : `${key}\u0000${version}`
 }
 
 /** Read the linked package at its selected release, never the repository root by accident. */
@@ -218,6 +227,14 @@ function validFacts(value: unknown): value is NpmManifestFacts {
       name.startsWith('@deepseek-ai/') && range(item) === item))
 }
 
+function decodeCacheEntry(value: unknown): CacheEntry | null {
+  const entry = record(value)
+  if (entry === null || typeof entry.checkedAt !== 'number' || !Number.isFinite(entry.checkedAt) || !validFacts(entry.facts)) return null
+  // Normalize the pre-upgrade shape so every consumer sees an object.
+  const facts = entry.facts.dependencies === undefined ? { ...entry.facts, dependencies: {} } : entry.facts
+  return { checkedAt: entry.checkedAt, facts }
+}
+
 function displayRequirement(declarations: HostRequirementDeclaration[]): string | null {
   const unique = [...new Set(declarations.map(item => item.range))]
   return unique.length === 0 ? null : unique.join(' ∩ ')
@@ -324,117 +341,102 @@ export function deriveHostCompatibility(
 }
 
 /**
- * Durable, bounded lookup of npm `latest` and catalog GitHub manifests.
+ * Durable, bounded lookup of npm releases and catalog GitHub manifests.
  *
  * Failed requests are intentionally memory-only and short-lived: a mirror
  * outage must not become a day-long false "undeclared" result on disk.
  */
 export class DiscoveryManifestIndex {
-  private readonly entries = new Map<string, CacheEntry>()
+  private readonly cache: ReturnType<typeof openDiscoveryCache>
   private readonly failures = new Map<string, number>()
   private readonly inflight = new Map<string, Promise<NpmManifestFacts | null>>()
   private readonly fetcher: FetchLike
   private readonly now: () => number
   private readonly ttlMs: number
   private readonly concurrency: number
-  private loaded = false
   private consecutiveFailures = 0
   private unavailableUntil = 0
-  private dirty = false
+  private disposed = false
   private activeFetches = 0
   private readonly fetchWaiters: Array<() => void> = []
 
   constructor(
-    private readonly cacheFile: string,
+    cacheFile: string,
     options: { fetcher?: FetchLike; now?: () => number; ttlMs?: number; concurrency?: number } = {},
   ) {
+    this.cache = openDiscoveryCache(cacheFile, decodeCacheEntry)
     this.fetcher = options.fetcher ?? marketFetch
     this.now = options.now ?? Date.now
     this.ttlMs = options.ttlMs ?? DEFAULT_TTL_MS
     this.concurrency = Math.max(1, Math.floor(options.concurrency ?? DEFAULT_CONCURRENCY))
   }
 
-  private load(): void {
-    if (this.loaded) return
-    this.loaded = true
-    try {
-      const parsed = JSON.parse(readFileSync(this.cacheFile, 'utf8')) as Partial<CacheFile>
-      if (parsed.schema !== CACHE_SCHEMA || record(parsed.entries) === null) return
-      for (const [name, raw] of Object.entries(parsed.entries as Record<string, unknown>)) {
-        const entry = record(raw)
-        if (entry === null || typeof entry.checkedAt !== 'number' || !validFacts(entry.facts)) continue
-        // Normalize the pre-upgrade shape so every consumer sees an object.
-        const facts = entry.facts.dependencies === undefined
-          ? { ...entry.facts, dependencies: {} }
-          : entry.facts
-        this.entries.set(name, { checkedAt: entry.checkedAt, facts })
-      }
-    } catch { /* first run or a truncated cache — fetch fresh */ }
-  }
-
-  private persist(): void {
-    try {
-      mkdirSync(dirname(this.cacheFile), { recursive: true, mode: 0o700 })
-      const newest = [...this.entries.entries()]
-        .sort(([, a], [, b]) => b.checkedAt - a.checkedAt)
-        .slice(0, MAX_CACHE_ENTRIES)
-      this.entries.clear()
-      for (const [name, entry] of newest) this.entries.set(name, entry)
-      const data: CacheFile = { schema: CACHE_SCHEMA, entries: Object.fromEntries(newest) }
-      writeFileSync(this.cacheFile, JSON.stringify(data), { mode: 0o600 })
-    } catch { /* cache failure degrades to in-memory lookups */ }
+  /** Unmount this index, retaining any writes already queued for this profile. */
+  async dispose(): Promise<void> {
+    if (this.disposed) return
+    this.disposed = true
+    await this.cache.release()
   }
 
   /** One semaphore for the whole index, including overlapping HTTP batches. */
   private async withFetchPermit<T>(operation: () => Promise<T>): Promise<T> {
     if (this.activeFetches >= this.concurrency) {
       await new Promise<void>(resolve => this.fetchWaiters.push(resolve))
-    }
-    this.activeFetches += 1
+    } else this.activeFetches += 1
     try {
       return await operation()
     } finally {
-      this.activeFetches -= 1
-      this.fetchWaiters.shift()?.()
+      const next = this.fetchWaiters.shift()
+      if (next === undefined) this.activeFetches -= 1
+      else next()
     }
   }
 
-  private async fetchOne(name: string, registry: string, record = true, readManifest?: () => Promise<unknown>): Promise<NpmManifestFacts | null> {
-    this.load()
+  private retryDelay(key: string, now = this.now()): number {
+    return Math.max(0, Math.max(this.failures.get(key) ?? 0, this.unavailableUntil) - now)
+  }
+
+  npmRetryAfterMs(name: string, registry: string, version: string | undefined): number {
+    return this.retryDelay(npmDiscoveryKey(name, registry, version))
+  }
+
+  githubRetryAfterMs(source: GitHubManifestSource): number {
+    return this.retryDelay(githubDiscoveryKey(source))
+  }
+
+  private async fetchOne(
+    cacheKey: string,
+    record: boolean,
+    readManifest: () => Promise<NpmManifestFacts>,
+    expectedVersion?: string,
+  ): Promise<NpmManifestFacts | null> {
+    const cached = await this.cache.get(cacheKey)
     const now = this.now()
-    const cached = this.entries.get(name)
-    if (cached !== undefined && now - cached.checkedAt < this.ttlMs) return cached.facts
-    if ((this.failures.get(name) ?? 0) > now || this.unavailableUntil > now) return null
+    if (cached !== undefined && now - cached.checkedAt < this.ttlMs
+      && (expectedVersion === undefined || cached.facts.version === expectedVersion)) return cached.facts
+    if (this.retryDelay(cacheKey, now) > 0) return null
     // Advisory and recording lookups keep separate in-flight slots: an
     // advisory call must not be answered by — or hand its answer to — a
     // recording one, or `record` would stop meaning anything when the two
     // overlap on the same package.
-    const key = record ? name : `${name}\u0000advisory`
+    const key = record ? cacheKey : `${cacheKey}\u0000advisory`
     const pending = this.inflight.get(key)
     if (pending !== undefined) return await pending
 
     const request = (async (): Promise<NpmManifestFacts | null> => {
       try {
-        const value = await this.withFetchPermit(readManifest ?? (async () => {
-          const response = await this.fetcher(`${registry}/${encodeURIComponent(name)}/latest`, {
-            signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-            headers: { accept: 'application/json', 'user-agent': 'dsh-market' },
-          })
-          if (!response.ok) throw new Error(`HTTP ${String(response.status)}`)
-          return await response.json()
-        }))
-        const facts = manifestFacts(value)
-        if (record) {
-          this.entries.set(name, { checkedAt: this.now(), facts })
-          this.dirty = true
-          this.failures.delete(name)
+        const facts = await this.withFetchPermit(readManifest)
+        if (expectedVersion !== undefined && facts.version !== expectedVersion) throw new Error('npm returned a different release')
+        if (record && !this.disposed) {
+          this.cache.set(cacheKey, { checkedAt: this.now(), facts })
+          this.failures.delete(cacheKey)
           this.consecutiveFailures = 0
         }
         return facts
       } catch {
         if (record) {
           const failedAt = this.now()
-          this.failures.set(name, failedAt + FAILURE_COOLDOWN_MS)
+          this.failures.set(cacheKey, failedAt + FAILURE_COOLDOWN_MS)
           this.consecutiveFailures += 1
           if (this.consecutiveFailures >= this.concurrency) {
             this.unavailableUntil = failedAt + OUTAGE_COOLDOWN_MS
@@ -449,6 +451,15 @@ export class DiscoveryManifestIndex {
     return await request
   }
 
+  private async readNpmManifest(name: string, version: string, registry: string): Promise<unknown> {
+    const response = await this.fetcher(`${registry}/${encodeURIComponent(name)}/${encodeURIComponent(version)}`, {
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      headers: { accept: 'application/json', 'user-agent': 'dsh-market' },
+    })
+    if (!response.ok) throw new Error(`HTTP ${String(response.status)}`)
+    return await response.json()
+  }
+
   /**
    * Facts for ONE named release, rather than for `latest`.
    *
@@ -460,26 +471,16 @@ export class DiscoveryManifestIndex {
    * release declares a range this host misses), and it would equally pass a
    * pinned release that is itself incompatible.
    *
-   * Deliberately outside the cache. The index is keyed by package name, and a
-   * version-keyed one would grow with every release anyone ever pinned to
-   * answer a question asked once per install. Nothing is recorded either: a
-   * pre-flight verdict must not decide what the diagnostics panel sees next
-   * (#619).
+   * Deliberately outside the cache. An install can target any old release,
+   * whereas a discovery query is for the version shown in the catalog. A
+   * pre-flight verdict must not decide what the diagnostics panel sees next (#619).
    *
    * A release whose manifest cannot be read is `null`, like every other
    * unreadable manifest: absence of a claim is not a verdict.
    */
   async lookupVersion(name: string, version: string, registry: string): Promise<NpmManifestFacts | null> {
     try {
-      const response = await this.withFetchPermit(async () => await this.fetcher(
-        `${registry}/${encodeURIComponent(name)}/${encodeURIComponent(version)}`,
-        {
-          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-          headers: { accept: 'application/json', 'user-agent': 'dsh-market' },
-        },
-      ))
-      if (!response.ok) return null
-      return manifestFacts(await response.json())
+      return manifestFacts(await this.withFetchPermit(() => this.readNpmManifest(name, version, registry)))
     } catch {
       return null
     }
@@ -497,23 +498,27 @@ export class DiscoveryManifestIndex {
   async lookup(
     names: readonly string[],
     registry: string,
-    options: { record?: boolean } = {},
+    options: { record?: boolean; versions?: ReadonlyMap<string, string> } = {},
   ): Promise<Record<string, NpmManifestFacts | null>> {
-    const record = options.record !== false
+    const shouldRecord = options.record !== false
     const unique = [...new Set(names)]
     const result: Record<string, NpmManifestFacts | null> = {}
     let next = 0
     const worker = async (): Promise<void> => {
       while (next < unique.length) {
         const name = unique[next++]!
-        result[name] = await this.fetchOne(name, registry, record)
+        const version = options.versions?.get(name)
+        result[name] = await this.fetchOne(npmDiscoveryKey(name, registry, version), shouldRecord, async () => {
+          const manifest = await this.readNpmManifest(name, version ?? 'latest', registry)
+          const returnedName = record(manifest)?.name
+          if (version !== undefined && returnedName !== undefined && returnedName !== name) {
+            throw new Error('npm returned a different package')
+          }
+          return manifestFacts(manifest)
+        }, version)
       }
     }
     await Promise.all(Array.from({ length: Math.min(this.concurrency, unique.length) }, worker))
-    if (this.dirty) {
-      this.dirty = false
-      this.persist()
-    }
     return result
   }
 
@@ -525,12 +530,11 @@ export class DiscoveryManifestIndex {
     const worker = async (): Promise<void> => {
       while (next < unique.length) {
         const source = unique[next++]!
-        const key = `github:${source.url}\u0000${source.tarball ?? ''}`
-        result[source.url] = await this.fetchOne(key, '', true, () => githubManifest(source, this.fetcher))
+        result[source.url] = await this.fetchOne(githubDiscoveryKey(source), true, async () =>
+          manifestFacts(await githubManifest(source, this.fetcher)))
       }
     }
     await Promise.all(Array.from({ length: Math.min(this.concurrency, unique.length) }, worker))
-    if (this.dirty) { this.persist(); this.dirty = false }
     return result
   }
 }

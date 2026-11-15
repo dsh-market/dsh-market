@@ -14,6 +14,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { describeFetchFailure, forgetCatalog, loadRegistry, pluginPreviousNpm } from '../src/registry.ts'
+import { exportLogs } from '../src/log.ts'
 import { configuredProxy, marketFetch } from '../src/net.ts'
 
 /**
@@ -107,6 +108,10 @@ const ok = (body: unknown): Response =>
   new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } })
 
 describe('loadRegistry', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
   it('passes through source download dates without inventing them for legacy entries', async () => {
     const stats = { downloads: 42, downloadsStart: '2026-08-25', downloadsEnd: '2026-09-23', downloadsCheckedAt: '2026-09-24' }
     scriptedFetch(ok({
@@ -204,6 +209,39 @@ describe('loadRegistry', () => {
     // reporter sent us — cannot tell a slow link from a blocked one.
     scriptedFetch(new Error('The operation was aborted due to timeout'))
     await expect(loadRegistry()).rejects.toThrow(/aborted due to timeout.*\ds, 4 attempts/s)
+  })
+
+  /**
+   * A successful load used to leave nothing behind, which is what made a slow
+   * one impossible to report. #1181 measured thirteen, twenty and forty
+   * seconds on the same machine, five minutes on the run that failed, and
+   * every export said the buffer starts empty. The line has to be there when
+   * it is slow, and absent when it is not — a log that fires on every entry
+   * into the market is worse than one that fires on none.
+   */
+  it('leaves a line when a successful load crossed the slow threshold', async () => {
+    scriptedFetch(ok(CATALOG))
+    const clock = vi.spyOn(Date, 'now')
+    const started = 1_760_000_000_000
+    clock.mockReturnValueOnce(started)
+    clock.mockReturnValue(started + 6_100)
+    await loadRegistry('global')
+    expect(exportLogs({})).toContain('answered in 6.1s')
+  })
+
+  it('says nothing when the catalog arrives quickly', async () => {
+    scriptedFetch(ok(CATALOG))
+    const clock = vi.spyOn(Date, 'now')
+    const started = 1_760_000_000_000
+    clock.mockReturnValueOnce(started)
+    clock.mockReturnValue(started + 900)
+    // "Says nothing" has to mean "adds nothing", not "adds no line saying
+    // 0.9s": the buffer is shared by the whole file, so a slower neighbour's
+    // line is still in the export here, and matching on one duration would
+    // also accept any other duration the quick path might start printing.
+    const before = exportLogs({})
+    await loadRegistry('global')
+    expect(exportLogs({})).toBe(before)
   })
 })
 

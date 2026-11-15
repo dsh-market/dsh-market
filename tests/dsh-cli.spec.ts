@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { join } from 'node:path'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { clearOwnedProfileLock, cmdCommandLine, gitEnvForPnpm, probeCoreSshCommand, isCmdSafeProfileName, nodeExecutable, pnpmConfigEnvForArgs, proxyEnvForPnpm, quoteCmdArg, TARGET_RE, toolSearchDirs } from '../src/dsh-cli.ts'
+import { clearOwnedProfileLock, cmdCommandLine, gitEnvForPnpm, isSafePluginTarget, probeCoreSshCommand, isCmdSafeProfileName, nodeExecutable, pnpmConfigEnvForArgs, proxyEnvForPnpm, quoteCmdArg, TARGET_RE, toolSearchDirs } from '../src/dsh-cli.ts'
 import { AUTO_INSTALL_PEERS_OFF, FETCH_TIMEOUT_OVERRIDE, RELEASE_AGE_OVERRIDE } from '../src/install.ts'
 import { routesFor, setActiveRegion } from '../src/regions.ts'
 
@@ -399,6 +399,46 @@ describe('TARGET_RE plugin target allowlist', () => {
       'dsh-better-sidebar &',
     ]) {
       expect(TARGET_RE.test(target)).toBe(false)
+    }
+  })
+})
+
+describe('isSafePluginTarget', () => {
+  it('admits pnpm monorepo subpath selectors', () => {
+    // pnpm spells a monorepo subdirectory as `#<ref>&path:/<sub>`. TARGET_RE
+    // alone rejects the `&`, so every GitHub subpath install stopped at
+    // "unsafe plugin target" before pnpm ever ran.
+    for (const target of [
+      'github:vlln/monorepo#main&path:/packages/dsh-x',
+      'plugin-registry@github:vlln/plugin-registry#361ad06&path:/pkgs/a',
+      'github:o/r#abc&path:/',
+    ]) {
+      expect(isSafePluginTarget(target)).toBe(true)
+    }
+  })
+
+  it('still refuses a bare ampersand and malformed selectors', () => {
+    // The selector is the ONLY shape `&` may take. Everything below would
+    // background the spawned pnpm or smuggle a second command.
+    for (const target of [
+      'dsh-better-sidebar &',
+      'dsh-better-sidebar&',
+      'dsh&dsh',
+      'a && b',
+      'github:o/r#abc&path:/x&',
+      'github:o/r#abc&path:/x && rm -rf /',
+      'github:o/r#abc&path:/x;rm',
+      'github:o/r#abc&path: /x',
+      '&path:/x',
+    ]) {
+      expect(isSafePluginTarget(target)).toBe(false)
+    }
+  })
+
+  it('agrees with TARGET_RE on everything it accepts whole', () => {
+    for (const target of ['dshmarket@1.14.0', 'github:o/r#sha', '@s/n@^1.2.3', 'dsh-market@=1.2.3']) {
+      expect(TARGET_RE.test(target)).toBe(true)
+      expect(isSafePluginTarget(target)).toBe(true)
     }
   })
 })

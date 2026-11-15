@@ -1,0 +1,5 @@
+# Both a host plugin and a browser plugin (dsh.client): the shape of a plugin
+# that replaces a piece of the page (#1188).
+- insert:
+    - id: dshm-fixture-client
+      name: 'dshm-e2e-fixture-client'

@@ -8,9 +8,10 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { load } from 'js-yaml'
 import { hotMount, hotUnmount, listHotMounts, mountClientOnlyDeps, parseSimplePatch, resolveProfileEntry } from '../src/hot.ts'
 import { configurePersistentLog, readPersistentLog } from '../src/log.ts'
@@ -20,6 +21,7 @@ import { configurePersistentLog, readPersistentLog } from '../src/log.ts'
 vi.mock('@deepseek-ai/cordis-plugin-include', () => ({
   Include: class {
     write(): void {}
+    entries(): [] { return [] }
     import(name: string): unknown { return { name, apply: () => {} } }
   },
 }))
@@ -142,10 +144,10 @@ describe('hotMount reads every declared patch file (#792)', () => {
       const result = await hotMount(ctx, dir, 'quoted-carrier')
       expect(result.ok).toBe(true)
       // The mocked Include never parses the generated YAML.
-      expect(mountedRows(dir)).toContain("o''k-")
+      expect(mountedRows(dir)).toContain("it''s-quoted")
       expect(load(mountedRows(dir))).toEqual([{
         id: "mkt-it's-quoted",
-        name: resolveProfileEntry(dir, name),
+        name,
       }])
     } finally {
       for (const mounted of listHotMounts()) await hotUnmount(mounted)
@@ -566,8 +568,8 @@ describe('parseSimplePatch — hot-mountable or restart-only', () => {
 })
 
 /**
- * Hot-mount rows must reach the loader as absolute file:// URLs resolved
- * against the profile the package was installed into.
+ * Hot-mount imports must reach the loader as absolute file:// URLs resolved
+ * against the profile, while loader rows keep their package identities.
  *
  * The include tree's base class resolves bare names against the LOADER's own
  * location — the host closure — whose parent walk can never reach
@@ -577,7 +579,7 @@ describe('parseSimplePatch — hot-mountable or restart-only', () => {
  * to a restart the host did not even need: the bundle layer + a composition
  * replay had usually already mounted the plugin.
  */
-describe('resolveProfileEntry — hot-mount rows are anchored at the profile', () => {
+describe('resolveProfileEntry — hot-mount imports are anchored at the profile', () => {
   /** A bundle-plugin package shape: main + lib/index.js on disk (the shape
    * every hot-mountable plugin carries — install validation, which runs
    * before hotMount, requires a checkable entry artifact). */
@@ -588,6 +590,57 @@ describe('resolveProfileEntry — hot-mount rows are anchored at the profile', (
       JSON.stringify({ name, main: 'lib/index.js', dsh: { bundle: { patch: './cordis.patch.yml' } } }))
     writeFileSync(join(pkgDir, 'lib', 'index.js'), 'export default {}')
   }
+
+  /** Exercise the real Include subclass without loading the host runtime. */
+  function importingContext() {
+    const rows: Array<{ id: string; name: string }> = []
+    const imports: unknown[] = []
+    const plugin = (Tree: unknown, config: unknown) => {
+      const options = config as { path: string }
+      const tree = new (Tree as new (...args: unknown[]) => { import(name: string): unknown })({}, options)
+      const input = load(readFileSync(fileURLToPath(options.path), 'utf8')) as Array<{ id: string; name: string }>
+      rows.push(...input)
+      imports.push(...input.map(row => tree.import(row.name)))
+      return { await: () => Promise.resolve(), dispose: () => {} }
+    }
+    return { ctx: { plugin }, rows, imports }
+  }
+
+  it('keeps package identities for the client graph while resolving each profile at import time', async () => {
+    const dirs = [mkdtempSync(join(tmpdir(), "dshm-hot-profile o'k-")), mkdtempSync(join(tmpdir(), 'dshm-hot-other-'))]
+    try {
+      for (const dir of dirs) {
+        for (const name of ['dsh-client-graph-plugin', '@scope/dsh-client-graph-plugin']) {
+          bundlePkg(dir, name)
+          writeFileSync(join(dir, 'node_modules', name, 'cordis.patch.yml'), `- insert:\n    - id: client-host\n      name: ${name}\n`)
+          const b = importingContext()
+          expect((await hotMount(b.ctx, dir, name)).ok).toBe(true)
+          expect(b.rows).toEqual([{ id: 'mkt-client-host', name }])
+          expect(b.imports).toEqual([{ name: pathToFileURL(realpathSync(join(dir, 'node_modules', name, 'lib', 'index.js'))).href, apply: expect.any(Function) }])
+          expect(await hotUnmount(name)).toBe(true)
+        }
+      }
+    } finally {
+      for (const dir of dirs) rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('uses the client-only shim before resolving an otherwise importable host artifact', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dshm-hot-shim-'))
+    const name = 'dsh-client-only-artifact'
+    try {
+      clientOnlyPkg(dir, name)
+      writeFileSync(join(dir, 'node_modules', name, 'index.js'), 'throw new Error("host artifact must not run")')
+      const b = importingContext()
+      expect((await hotMount(b.ctx, dir, name)).ok).toBe(true)
+      expect(b.rows[0]?.name).toBe(name)
+      expect(b.imports).toEqual([{ name, apply: expect.any(Function) }])
+      expect(await hotUnmount(name)).toBe(true)
+    } finally {
+      await hotUnmount(name)
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 
   it('resolves a bare package name to the profile-installed entry URL', () => {
     const dir = mkdtempSync(join(tmpdir(), 'dshm-hot-'))
@@ -729,6 +782,160 @@ describe('a teardown that never finishes cannot hold the market open (#582)', ()
       expect(await hotUnmount('failing-plugin')).toBe(false)
       await mounted(dir, 'fine-plugin', () => ({ await: () => Promise.resolve(), dispose: () => {} }))
       expect(await hotUnmount('fine-plugin')).toBe(true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('hotMount records what the host logged while mounting (#1197)', () => {
+  const entryPkg = (dir: string, name: string): void => {
+    mkdirSync(join(dir, 'node_modules', name), { recursive: true })
+    writeFileSync(join(dir, 'node_modules', name, 'package.json'), JSON.stringify({ name }))
+    writeFileSync(join(dir, 'node_modules', name, 'cordis.patch.yml'),
+      `- insert:\n    - id: ${name}-host\n      name: ${name}\n`)
+  }
+
+  /** `LoggerType` → numeric severity, as declared by cordis (`error` lowest). */
+  const levelOf = { error: 0, info: 1, warn: 2, debug: 3 } as const
+
+  interface TestSink {
+    levels?: Record<string, number>
+    export(message: { name?: string; type?: string; args?: unknown[] }): void
+  }
+
+  /**
+   * Stand-in for `LoggerService`, including the dispatch rule that decides
+   * whether a record reaches a sink at all: cordis skips the record when
+   * `(levels[name] ?? levels.default ?? logger.level ?? 1) < record.level`.
+   * Reproducing it here is the point of the test — a sink that never opts
+   * into `warn` looks fine against a sink that is handed records directly.
+   */
+  const hostLogger = (): {
+    logger: { info(): void; warn(): void; exporter(next: TestSink): () => void }
+    record(type: 'error' | 'info' | 'warn', name: string, ...args: unknown[]): void
+    disposed: string[]
+  } => {
+    let sink: TestSink | undefined
+    const disposed: string[] = []
+    return {
+      disposed,
+      logger: {
+        info: () => {},
+        warn: () => {},
+        exporter(next: TestSink) {
+          sink = next
+          return () => { disposed.push('disposed') }
+        },
+      },
+      record(type, name, ...args) {
+        if (sink === undefined) return
+        const level = levelOf[type]
+        const threshold = sink.levels?.[name] ?? sink.levels?.default ?? 1
+        if (threshold < level) return
+        sink.export({ name, type, args })
+      },
+    }
+  }
+
+  it('writes warn/error lines next to the live event and keeps the verdict', async () => {
+    // The reported shape: an entry waits on a service that never arrives.
+    // `Fiber#await()` resolves anyway, so the mount reports live and the only
+    // trace is what the host logged while composing the subtree. Those lines
+    // must survive into the exportable log; the verdict itself must not move.
+    const dir = mkdtempSync(join(tmpdir(), 'dshm-hot-'))
+    const logFile = join(dir, 'events.log')
+    configurePersistentLog(logFile)
+    try {
+      entryPkg(dir, 'quiet-entry')
+      const host = hostLogger()
+      const logging = {
+        plugin: () => {
+          host.record('warn', 'mkt-quiet-entry', 'service "database" is required but not provided')
+          host.record('info', 'unrelated', 'must not be copied')
+          return { await: () => Promise.resolve(), dispose: () => {} }
+        },
+        logger: host.logger,
+      }
+
+      const result = await hotMount(logging, dir, 'quiet-entry')
+      expect(result.ok).toBe(true)
+      expect(result.reason).toBeNull()
+      const logged = readPersistentLog(logFile).join('\n')
+      expect(logged).toContain('quiet-entry: live')
+      expect(logged).toContain('the host logged this while mounting — mkt-quiet-entry: service')
+      expect(logged).toContain('is required but not provided')
+      expect(logged).not.toContain('must not be copied')
+      // The sink must not outlive the mount.
+      expect(host.disposed).toEqual(['disposed'])
+    } finally {
+      configurePersistentLog(null)
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+
+  it('renders an Error argument as its stack or message, not the empty object', async () => {
+    // cordis `_method` hands the raw `args: [Error]` to exporters without
+    // formatting, so a `Logger.format`-style Error in the args must survive
+    // into the exportable line. `JSON.stringify(new Error(...))` is `'{}'`,
+    // which would read as `... — name: {}` and lose the actual complaint.
+    const dir = mkdtempSync(join(tmpdir(), 'dshm-hot-'))
+    const logFile = join(dir, 'events.log')
+    configurePersistentLog(logFile)
+    try {
+      entryPkg(dir, 'error-entry')
+      const host = hostLogger()
+      const logging = {
+        plugin: () => {
+          host.record('error', 'mkt-error-entry', new Error('service "connection" has been registered'))
+          return { await: () => Promise.resolve(), dispose: () => {} }
+        },
+        logger: host.logger,
+      }
+
+      const result = await hotMount(logging, dir, 'error-entry')
+      expect(result.ok).toBe(true)
+      const logged = readPersistentLog(logFile).join('\n')
+      expect(logged).toContain('the host logged this while mounting — mkt-error-entry:')
+      // The log line serializes the stack; the message text must be present.
+      // (The quotes are escaped by JSON serialization, so match around them.)
+      expect(logged).toContain('Error: service')
+      expect(logged).toContain('has been registered')
+      // The empty object `JSON.stringify` would have produced must not appear.
+      expect(logged).not.toContain('mkt-error-entry: {}')
+      expect(host.disposed).toEqual(['disposed'])
+    } finally {
+      configurePersistentLog(null)
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('releases the sink when the host refuses to create the plugin', async () => {
+    // `ctx.plugin()` throws on a disposed fiber before it creates anything.
+    // The sink is registered by then, and the market's failure branch never
+    // sees it — a leaked sink would collect every later log line.
+    const dir = mkdtempSync(join(tmpdir(), 'dshm-hot-'))
+    try {
+      entryPkg(dir, 'throwing-host')
+      const host = hostLogger()
+      const result = await hotMount({
+        plugin: () => { throw new Error('fiber is disposed') },
+        logger: host.logger,
+      }, dir, 'throwing-host')
+      expect(result.ok).toBe(false)
+      expect(host.disposed).toEqual(['disposed'])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('mounts exactly as before when the host logger cannot export', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dshm-hot-'))
+    try {
+      entryPkg(dir, 'plain-host')
+      const result = await hotMount({ plugin: () => ({ await: () => Promise.resolve(), dispose: () => {} }) }, dir, 'plain-host')
+      expect(result.ok).toBe(true)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

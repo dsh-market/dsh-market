@@ -86,6 +86,61 @@ describe('readUserPatchState', () => {
     }
   })
 
+  it('reads the flag of a row the user wrote inside an insert block', () => {
+    // An inserted row is a real loader row at four spaces, so its own fields sit
+    // at six. The include composition applies its `disabled` exactly like a
+    // top-level row's — but the scanner returned after `inserts.push`, so the
+    // market rendered such a plugin as on while the loader had it off.
+    const dir = patchDir()
+    try {
+      writeFileSync(join(dir, 'cordis.patch.yml'), [
+        '- insert:',
+        '    - id: computer-use-cua-driver-mcp',
+        "      name: '@deepseek-ai/dsh-experimental-computer-use-cua-driver-mcp'",
+        '      disabled: true',
+        '    - id: browser-use-playwright-mcp',
+        '      name: dsh-browser-use-playwright-mcp',
+        '',
+      ].join('\n'))
+      expect(readUserPatchState(join(dir, 'cordis.patch.yml'))).toEqual({
+        disables: ['computer-use-cua-driver-mcp'],
+        forced: [],
+        inserts: ['computer-use-cua-driver-mcp', 'browser-use-playwright-mcp'],
+        names: {
+          'computer-use-cua-driver-mcp': '@deepseek-ai/dsh-experimental-computer-use-cua-driver-mcp',
+          'browser-use-playwright-mcp': 'dsh-browser-use-playwright-mcp',
+        },
+      })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('reads an inserted row flag that a comment separates from its other fields', () => {
+    // The field block ends at the next line no deeper than the row itself, so a
+    // comment at the row's indent is not structural — the same rule the
+    // top-level shape follows (#1099).
+    const dir = patchDir()
+    try {
+      writeFileSync(join(dir, 'cordis.patch.yml'), [
+        '- insert:',
+        '    - id: nightshift',
+        '      name: dsh-nightshift-client',
+        '      # This row stays off until the worker bundle ships.',
+        '      disabled: true',
+        '- insert:',
+        '    - id: forced-on',
+        '      disabled: false',
+        '',
+      ].join('\n'))
+      const state = readUserPatchState(join(dir, 'cordis.patch.yml'))
+      expect(state.disables).toEqual(['nightshift'])
+      expect(state.forced).toEqual(['forced-on'])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('does not read a nested config key as the row flag (#1099)', () => {
     // `config: { disabled: true }` is a plugin's own setting, not the loader
     // row's switch; a deeper indent must never count.
@@ -701,6 +756,99 @@ describe('append safety on malformed patch files', () => {
       const text = readPatch(dir)
       expect(text).toContain('- config: [1, 2]\n')
       expect(text).toContain('- id: workbench\n  disabled: true\n')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('market-owned named switch rows (#1196)', () => {
+  const expectedName = '@example/dsh-workbench'
+  const options = { expectedName, recordModuleName: true }
+  const namedRow = (disabled: boolean) =>
+    `- id: workbench\n  disabled: ${disabled}\n  name: '${expectedName}' # dsh-market\n`
+
+  it('keeps the named override through an official enable and the next market toggle', async () => {
+    const dir = patchDir()
+    try {
+      const patch = join(dir, 'cordis.patch.yml')
+      expect((await disableRow(patch, 'workbench', options)).ok).toBe(true)
+      expect(load(readPatch(dir))).toEqual([{ id: 'workbench', name: expectedName, disabled: true }])
+      expect(readPatch(dir)).toContain('# dsh-market')
+
+      // The official YAML writer flips the flag and can emit a double-quoted name.
+      const enabled = namedRow(false).replace(`'${expectedName}'`, `"${expectedName}"`)
+      writeFileSync(patch, enabled)
+      expect(readUserPatchState(patch)).toMatchObject({
+        disables: [], forced: ['workbench'], names: { workbench: expectedName },
+      })
+      expect((await disableRow(patch, 'workbench', options)).ok).toBe(true)
+      const disabled = readPatch(dir)
+      expect(load(disabled)).toEqual([{ id: 'workbench', name: expectedName, disabled: true }])
+      expect((await disableRow(patch, 'workbench', options)).ok).toBe(true)
+      expect(readPatch(dir)).toBe(disabled)
+
+      expect((await enableRow(patch, 'workbench', { expectedName })).ok).toBe(true)
+      expect(load(readPatch(dir))).toEqual([])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('qualifies an existing simple override on an explicit market disable', async () => {
+    const dir = patchDir()
+    try {
+      const patch = join(dir, 'cordis.patch.yml')
+      writeFileSync(patch, '- id: workbench\n  disabled: false\n')
+      expect((await disableRow(patch, 'workbench', options)).ok).toBe(true)
+      expect(load(readPatch(dir))).toEqual([{ id: 'workbench', name: expectedName, disabled: true }])
+      expect(readPatch(dir)).toContain('# dsh-market')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('reads the marked enable even when a later override names another module with the same id', () => {
+    const dir = patchDir()
+    try {
+      const patch = join(dir, 'cordis.patch.yml')
+      const foreign = "- id: workbench\n  disabled: true\n  name: 'another-module'\n"
+      writeFileSync(patch, namedRow(false) + foreign)
+
+      expect(readUserPatchState(patch, id => id === 'workbench' ? expectedName : null)).toMatchObject({
+        disables: [], forced: ['workbench'], names: { workbench: expectedName },
+      })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it.each([true, false])('cleans a marked row with disabled=%s and preserves user rows', (disabled) => {
+    const dir = patchDir()
+    try {
+      const patch = join(dir, 'cordis.patch.yml')
+      const unmarked = "- id: workbench\n  disabled: false\n  name: 'another-module'\n"
+      const configured = `${namedRow(true)}  config:\n    size: 2\n`
+      const foreignMarked = namedRow(true).replace(expectedName, 'another-module')
+      const kept = `${unmarked}${configured}${foreignMarked}`.replaceAll('\n', '\r\n')
+      writeFileSync(patch, kept + namedRow(disabled).replaceAll('\n', '\r\n'))
+
+      expect(removeRowBlocks(patch, ['workbench'], expectedName).ok).toBe(true)
+      expect(readPatch(dir)).toBe(kept)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('leaves a marked row for another module alone when enabling the current module', async () => {
+    const dir = patchDir()
+    try {
+      const patch = join(dir, 'cordis.patch.yml')
+      const stale = namedRow(true).replace(expectedName, 'another-module')
+      writeFileSync(patch, stale + namedRow(true))
+
+      expect((await enableRow(patch, 'workbench', { expectedName })).ok).toBe(true)
+      expect(readPatch(dir)).toBe(stale)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

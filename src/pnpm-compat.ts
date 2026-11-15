@@ -17,6 +17,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { CHINA_NPM_REGISTRY } from './regions.ts'
+import { classifyPeer } from './compatibility.ts'
 
 /**
  * Decide the argv for a `dsh plugin <add|remove> …` call in the given profile.
@@ -455,6 +456,49 @@ function storeRelinkAdvice(
   }
 }
 
+/** The DSH version the host's own rejection line names, or null when it is absent. */
+function hostVersionInRejection(output: string): string | null {
+  return /is incompatible with dsh ([0-9][0-9A-Za-z.+-]*)/.exec(output)?.[1] ?? null
+}
+
+/**
+ * Which side of its declared range the host actually sits on (#1210).
+ *
+ * The host's line carries both facts this needs: the version it rejected
+ * against, and `requirements {...}` — the ranges it evaluated. Direction comes
+ * from {@link classifyPeer}, the same predicate the pre-flight uses, so the
+ * dialog and the pre-flight cannot disagree about which side is behind.
+ *
+ * null means "not provable from this text" — an unparseable range, no version,
+ * or declarations pointing opposite ways. Callers must then name no direction
+ * rather than assume the one the branch was originally written for.
+ */
+function rejectedSide(output: string): 'host-too-old' | 'plugin-too-old' | null {
+  const host = hostVersionInRejection(output)
+  const raw = /requirements (\{[^}]*\})/.exec(output)?.[1] ?? ''
+  if (host === null || raw === '') return null
+  let declared: unknown
+  try {
+    declared = JSON.parse(raw)
+  } catch {
+    return null
+  }
+  if (declared === null || typeof declared !== 'object' || Array.isArray(declared)) return null
+  const sides = new Set<'host-too-old' | 'plugin-too-old'>()
+  for (const [key, value] of Object.entries(declared as Record<string, unknown>)) {
+    if (typeof value !== 'string' || value.trim() === '') continue
+    const verdict = classifyPeer('', key, value, host, false)
+    if (verdict.kind === 'risk') {
+      sides.add(verdict.risk.direction === 'belowMin' ? 'host-too-old' : 'plugin-too-old')
+    } else if (verdict.kind === 'warning' && verdict.warning.reason === 'aboveMax') {
+      // A `^` / `~` ceiling the author never wrote still names the line the
+      // host has left behind; the host is above it either way.
+      sides.add('plugin-too-old')
+    }
+  }
+  return sides.size === 1 ? [...sides][0] ?? null : null
+}
+
 export function classifyPnpmFailure(output: string, exitCode?: number | null, context?: PnpmFailureContext): PnpmFailure | null {
   // #817: the host's silence watchdog (@deepseek-ai/dsh-plugin-manager,
   // `idleTimeoutMs`, 10 minutes by default) killed pnpm. Checked first: it is
@@ -774,10 +818,41 @@ export function classifyPnpmFailure(output: string, exitCode?: number | null, co
   // market failure (#404's question, answered by the host).
   if (output.includes('dsh: installation rejected:') && /is incompatible with dsh \d/.test(output)) {
     const requirement = /requirements (\{[^}]*\})/.exec(output)?.[1] ?? ''
+    // #1210: which SIDE of the range the host sits on decides what the user can
+    // do about it, and both sides land in this one branch. The old text named
+    // one direction only ("needs a newer DSH"), so a release whose ceiling is
+    // BELOW the running host — @anionex/dsh-vision-toolkit capping at
+    // 0.2.2-rc.2 on a 0.2.2-rc.3 host — told the reader to upgrade a host that
+    // was already ahead, and pointed the report at the host instead of the
+    // plugin. Direction comes from the same predicate the pre-flight uses
+    // (`classifyPeer` → belowMin/aboveMax), not from a second one written here.
+    const exemption = '确实要装这一个，需要先在宿主的插件管理器（或 dsh 的 allow-version）里为这个具体版本授权，再重试'
+    const exemptionEn = 'to install this exact one anyway, grant the host\'s exact-version exemption for it first (plugin manager, or dsh\'s allow-version) and retry'
+    const declared = requirement === '' ? '' : `（它声明的需求：${requirement}）`
+    const declaredEn = requirement === '' ? '' : ` (it declares ${requirement})`
+    const side = rejectedSide(output)
+    if (side === 'plugin-too-old') {
+      const host = hostVersionInRejection(output) ?? '当前版本'
+      return {
+        code: 'host-incompatible-install',
+        recoverable: false,
+        message: `这个插件的兼容上界低于当前运行的 DSH ${host}，宿主在安装时自己拒绝了${declared}——是插件还没适配这个宿主版本，不是宿主落后。等插件发布覆盖 ${host} 的新版本，或改装一个仍覆盖它的旧版插件；${exemption} / this plugin's compatible ceiling is below the running DSH ${host}, and the HOST refused the install itself${declaredEn} — the plugin has not caught up with this host line, the host is not behind. Wait for a plugin release that covers ${host}, or install an older plugin version that still does; ${exemptionEn}`,
+      }
+    }
+    if (side === 'host-too-old') {
+      return {
+        code: 'host-incompatible-install',
+        recoverable: false,
+        message: `这个版本要求的 DSH 比当前运行的新，宿主在安装时自己拒绝了${declared}。换一个兼容的版本即可；${exemption} / this release needs a newer DSH than the one running, and the HOST refused the install itself${declaredEn} — not the market's check. Pick a compatible version; ${exemptionEn}`,
+      }
+    }
+    // Neither side is provable from the host's own text (an unparseable range,
+    // several declarations pointing opposite ways, or a rejection the two
+    // bounds do not explain). Keep the facts and name no direction.
     return {
       code: 'host-incompatible-install',
       recoverable: false,
-      message: `这个版本要求的 DSH 比当前运行的新，宿主在安装时自己拒绝了${requirement === '' ? '' : `（它声明的需求：${requirement}）`}。换一个兼容的版本即可；确实要装这一个，需要先在宿主的插件管理器（或 dsh 的 allow-version）里为这个具体版本授权，再重试 / this release needs a newer DSH than the one running, and the HOST refused the install itself${requirement === '' ? '' : ` (it declares ${requirement})`} — not the market's check. Pick a compatible version; to install this exact one anyway, grant the host's exact-version exemption for it first (plugin manager, or dsh's allow-version) and retry`,
+      message: `宿主在安装时以「与当前运行的 DSH 不兼容」为由拒绝了${declared}。换一个兼容的版本即可；${exemption} / the HOST refused the install as incompatible with the running DSH${declaredEn} — not the market's check. Pick a compatible version; ${exemptionEn}`,
     }
   }
   // #69: pnpm >= 10 blocks dependency build scripts by default. The install

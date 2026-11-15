@@ -28,6 +28,11 @@ describe('decodeChildOutput', () => {
     expect(decodeChildOutput(GBK, 'darwin')).toContain('�')
   })
 
+  it('does not read a UTF-8 tail cut mid-character as GBK', () => {
+    const cut = Buffer.from('abc插件市场出错了', 'utf8').subarray(4)
+    expect(decodeChildOutput(cut, 'win32')).toBe('件市场出错了')
+  })
+
   it('answers an empty stream with an empty string', () => {
     expect(decodeChildOutput(Buffer.alloc(0))).toBe('')
   })
@@ -56,5 +61,15 @@ describe('createOutputBuffer', () => {
     const buffer = createOutputBuffer(4)
     buffer.push(Buffer.from('0123456789'))
     expect(buffer.text()).toBe('6789')
+  })
+
+  it.each([
+    { chunks: ['0123456', '789'], expected: '23456789' },
+    { chunks: ['01', '2345', '6789a'], expected: '3456789a' },
+    { chunks: ['01234567', '89', 'ab'], expected: '456789ab' },
+  ])('retains the full tail across uneven chunks: $chunks', ({ chunks, expected }) => {
+    const buffer = createOutputBuffer(8)
+    for (const chunk of chunks) buffer.push(Buffer.from(chunk))
+    expect(buffer.text()).toBe(expected)
   })
 })

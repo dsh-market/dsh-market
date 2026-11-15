@@ -20,6 +20,18 @@ export function decodeChildOutput(bytes: Buffer, platform: NodeJS.Platform = pro
   try {
     return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
   } catch {
+    // A window cut through the middle of a UTF-8 character starts with its
+    // continuation bytes. Dropping them is what makes the rest UTF-8 again;
+    // without this the whole tail was read as GBK on Windows. Only taken when
+    // what remains is non-ASCII UTF-8, which GBK text does not happen to be.
+    let start = 0
+    while (start < 3 && start < bytes.length && (bytes[start]! & 0xc0) === 0x80) start += 1
+    if (start > 0) {
+      try {
+        const rest = new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(start))
+        if (/[^\x00-\x7f]/u.test(rest)) return rest
+      } catch { /* not UTF-8 either way */ }
+    }
     // Not UTF-8. Only Windows consoles hand a child a non-UTF-8 code page;
     // elsewhere keep the previous behaviour (replace the bad bytes) rather
     // than invent Chinese out of binary noise.
@@ -53,7 +65,7 @@ export function createOutputBuffer(limit: number, platform: NodeJS.Platform = pr
       if (chunk.length === 0) return
       chunks.push(chunk)
       size += chunk.length
-      while (size > limit && chunks.length > 1) {
+      while (chunks.length > 1 && size - chunks[0]!.length >= limit) {
         size -= chunks.shift()!.length
       }
       const first = chunks[0]

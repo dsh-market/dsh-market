@@ -155,6 +155,24 @@ describe('Web profiles launched by the bundled Desktop CLI', () => {
       expect(vi.getTimerCount()).toBe(0)
       kill.mockRestore()
     })
+
+    it('does not report a cancel that arrived after the child already succeeded (#1151)', async () => {
+      platform(os)
+      const kill = vi.spyOn(process, 'kill').mockReturnValue(true)
+      process.argv = [process.execPath, join(home, 'node_modules', '@deepseek-ai',
+        'dsh-desktop-host', 'lib', 'cli.js'), 'web']
+      const { runDshPlugin, cancelActive, progress } = await import('../src/dsh-cli.ts')
+      const result = runDshPlugin('web', ['install'])
+      // The user hit stop while pnpm was already past its last gate: the signal
+      // reaches the child too late to change anything, so the exit code is what
+      // happened on disk.
+      expect(cancelActive()).toBe(true)
+      child.emit('close', 0)
+      await expect(result).resolves.toMatchObject({ exitCode: 0, cancelled: false, timedOut: false })
+      expect(progress.cancelling).toBe(false)
+      vi.advanceTimersByTime(5000)
+      kill.mockRestore()
+    })
   })
 
   describe.each(['win32', 'linux', 'darwin'])('%s entry boundaries', (os) => {
