@@ -75,6 +75,63 @@ describe('classifyPnpmFailure', () => {
     expect(classifyPnpmFailure('ERR_PNPM_FETCH_404 GET https://registry/x: Not Found')?.code).not.toBe('host-incompatible-install')
   })
 
+  // #1210: both sides of a range land in this one branch, and the side decides
+  // what the reader can do. Naming the wrong one sends them to upgrade a host
+  // that is already ahead, and points the report at the host instead of at the
+  // plugin that has not caught up.
+  it('names the plugin as the side that is behind when its ceiling is under the host (#1210)', () => {
+    // The reporter's case: @anionex/dsh-vision-toolkit@0.1.51 declares peers up
+    // to 0.2.2-rc.2, the host runs 0.2.2-rc.3.
+    const output = [
+      'dsh: installation rejected: Plugin @anionex/dsh-vision-toolkit@0.1.51 is incompatible with dsh 0.2.2-rc.3:',
+      ' requirements {"peerDependencies.@deepseek-ai/dsh":">=0.1.0-rc.1 <=0.2.2-rc.2"}. Running it may cause crashes or data loss.',
+      ' Update the plugin or install a plugin version compatible with this dsh runtime.',
+    ].join('')
+    const failure = classifyPnpmFailure(output)
+    expect(failure?.code).toBe('host-incompatible-install')
+    // What happened: the ceiling, and which side of it the host is on.
+    expect(failure?.message).toContain('兼容上界')
+    expect(failure?.message).toContain('0.2.2-rc.3')
+    expect(failure?.message).toContain('<=0.2.2-rc.2')
+    // The claim that was wrong: this release does NOT want a newer host.
+    expect(failure?.message).not.toContain('要求的 DSH 比当前运行的新')
+    expect(failure?.message).not.toContain('needs a newer DSH')
+    // The way out still travels, and now points at the plugin's side.
+    expect(failure?.message).toContain('allow-version')
+  })
+
+  it('keeps naming the host when the requirement floor is above it (#1210)', () => {
+    const output = [
+      'dsh: installation rejected: Plugin dshm-e2e-fixture-b@1.0.0 is incompatible with dsh 0.2.1-rc.1:',
+      ' requirements {"engines.dsh":">=0.3.0"}. Running it may cause crashes or data loss.',
+    ].join('')
+    const failure = classifyPnpmFailure(output)
+    expect(failure?.code).toBe('host-incompatible-install')
+    expect(failure?.message).toContain('要求的 DSH 比当前运行的新')
+    expect(failure?.message).not.toContain('兼容上界')
+  })
+
+  it('claims no direction when the host text does not prove one (#1210)', () => {
+    // A range the running host actually satisfies (the two bounds leave it
+    // inside), so neither "too new" nor "too old" is provable from this line.
+    const output = [
+      'dsh: installation rejected: Plugin dshm-e2e-fixture-c@1.0.0 is incompatible with dsh 0.2.2-rc.3:',
+      ' requirements {"engines.dsh":">=0.2.0-rc.2 <0.4.0-0"}. Running it may cause crashes or data loss.',
+    ].join('')
+    const failure = classifyPnpmFailure(output)
+    expect(failure?.code).toBe('host-incompatible-install')
+    expect(failure?.message).toContain('不兼容')
+    expect(failure?.message).not.toContain('要求的 DSH 比当前运行的新')
+    expect(failure?.message).not.toContain('兼容上界')
+    // Unparseable requirements keep the old neutral behaviour too.
+    const malformed = classifyPnpmFailure([
+      'dsh: installation rejected: Plugin dshm-e2e-fixture-d@1.0.0 is incompatible with dsh 0.2.2-rc.3:',
+      ' requirements {not json}. Running it may cause crashes or data loss.',
+    ].join(''))
+    expect(malformed?.code).toBe('host-incompatible-install')
+    expect(malformed?.message).not.toContain('兼容上界')
+  })
+
   it('names the profile write-lock timeout and where the lock is (#914)', () => {
     // The host's atomic-write waits lockWaitMs (120 s by default) and gives
     // up with this line. Before the branch, the dialog showed the bare
