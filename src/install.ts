@@ -5,15 +5,16 @@
  * parameter so tests can substitute a recording fake.
  */
 
-import { closeSync, existsSync, lstatSync, openSync, readFileSync, readlinkSync, readSync, rmSync, statSync } from 'node:fs'
-import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { closeSync, existsSync, lstatSync, mkdtempSync, openSync, readFileSync, readlinkSync, readSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, type Stats } from 'node:fs'
+import { homedir } from 'node:os'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type { InstallResult, PluginRunner } from './dsh-cli.ts'
 import { findDshInstallDir } from './dsh-install.ts'
 import { classifyPnpmFailure, HOST_NAMESPACE_RE, isTransientPnpmFailure } from './pnpm-compat.ts'
 import { conflictingEntryIds, dropFromManifest, hasDshManifest, hasLoadableEntry, mergeDuplicateReleaseAgeExcludes, pluginSubdirs, profileDir, readGitResolutionCommit, readInstalled, readInstalledVersion, readLockCommits, readManifestDeps, readProfileBundles, dropUnparseableBuildKeys } from './profile.ts'
 import { logEvent } from './log.ts'
 import { registryNameOf } from './official-desktop.ts'
-import { hostedRepoKey } from './sources.ts'
+import { hostedRepoKey, NPM_NAME_RE } from './sources.ts'
 import { cleanOrphanedIgnored, cleanOrphanedStore } from './store.ts'
 
 /**
@@ -153,6 +154,7 @@ export async function withHoistRecovery(
     }
   }
   let result = await run(profile, pluginArgs)
+  if (result.repairOnRestart === true) return result
   const ok = (r: InstallResult): boolean => r.exitCode === 0 && !r.timedOut && !r.cancelled
   // A shadowed rule written DURING the run is its own evidence (#732). The
   // file was merged just before the run, so a duplicate now means pnpm — or
@@ -194,6 +196,7 @@ export async function withHoistRecovery(
         // --no-frozen-lockfile: the market runs pnpm with CI=true (TTY hangs),
         // where a lockfile written by the old major would otherwise be refused.
         const rebuild = await run(profile, ['install', '--no-frozen-lockfile'])
+        if (rebuild.repairOnRestart === true) return rebuild
         if (ok(rebuild)) result = await run(profile, pluginArgs)
       }
     } else if (
@@ -287,6 +290,7 @@ export async function withHoistRecovery(
       }
     }
   }
+  if (result.repairOnRestart === true) return result
   if (!ok(result) && !result.cancelled) {
     // A failed, timed-out, or killed run never finishes pnpm's staging, so
     // its store tmp dirs (the WHOLE repo tarball for github: sources) are
@@ -961,6 +965,160 @@ function pointsAtProfilePackage(target: string, expected: string): boolean {
   return process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right
 }
 
+export interface DetachedCheckoutLink {
+  readonly path: string
+  readonly rawTarget: string
+  readonly moduleRoot: string
+}
+
+function assertProfileLinkParent(path: string): void {
+  const parent = dirname(path)
+  if (!pointsAtProfilePackage(realpathSync(parent), parent)) {
+    throw new Error('the profile package directory now resolves outside its original location')
+  }
+}
+
+function absoluteLinkTarget(path: string, target: string): string {
+  return resolve(dirname(path), normalizedLinkTarget(target))
+}
+
+function sameCheckoutTarget(path: string, actual: string, raw: string): boolean {
+  return pointsAtProfilePackage(absoluteLinkTarget(path, actual), absoluteLinkTarget(path, raw))
+}
+
+function unlinkCheckoutEntry(path: string, entry: Stats, target: string): void {
+  const current = lstatSync(path, { throwIfNoEntry: false })
+  if (current?.isSymbolicLink() !== true || current.dev !== entry.dev || current.ino !== entry.ino || readlinkSync(path) !== target) {
+    throw new Error('the profile link changed while preparing the switch')
+  }
+  // unlinkSync removes the profile link, including a Windows junction.
+  unlinkSync(path)
+}
+
+function checkoutSlot(profileDirectory: string, name: string) {
+  if (!NPM_NAME_RE.test(name)) throw new Error('invalid linked profile dependency')
+  const root = realpathSync(profileDirectory)
+  const moduleRoot = join(root, 'node_modules')
+  return { root, moduleRoot, path: join(moduleRoot, name) }
+}
+
+/** Reconstruct a saved link using only the active profile and matching checkout. */
+export function recordedCheckoutLink(profileDirectory: string, name: string, spec: string, rawTarget: string): DetachedCheckoutLink {
+  if (!/^link:.+/i.test(spec)) throw new Error('invalid linked profile dependency')
+  const { root, moduleRoot, path } = checkoutSlot(profileDirectory, name)
+  assertProfileLinkParent(path)
+  const actual = absoluteLinkTarget(path, rawTarget)
+  const recorded = spec.slice(5).replace(/^~(?=$|[\\/])/, () => homedir())
+  const expected = resolve(root, normalizedLinkTarget(recorded))
+  let matches = pointsAtProfilePackage(actual, expected)
+  if (!matches) {
+    try {
+      matches = pointsAtProfilePackage(realpathSync(actual), realpathSync(expected))
+    } catch { /* no filesystem alias proves this is the recorded checkout */ }
+  }
+  if (!matches) throw new Error('the profile link points to a different checkout')
+  return { path, rawTarget, moduleRoot }
+}
+
+/** Disconnect only the profile junction that still matches the recorded local checkout. */
+export function detachCheckoutLink(
+  profileDirectory: string,
+  name: string,
+  spec: string,
+  record: (link: DetachedCheckoutLink) => void,
+): DetachedCheckoutLink | null {
+  const { path } = checkoutSlot(profileDirectory, name)
+  const entry = lstatSync(path, { throwIfNoEntry: false })
+  if (entry?.isSymbolicLink() !== true) return null
+  const rawTarget = readlinkSync(path)
+  const link = recordedCheckoutLink(profileDirectory, name, spec, rawTarget)
+  if (!pointsAtProfilePackage(link.path, path)) throw new Error('the profile directory changed while preparing the switch')
+  record(link)
+  assertProfileLinkParent(path)
+  unlinkCheckoutEntry(path, entry, rawTarget)
+  return link
+}
+
+function isPackageStoreLink(link: DetachedCheckoutLink): boolean {
+  try {
+    const withinStore = relative(join(link.moduleRoot, '.pnpm'), realpathSync(link.path))
+    return withinStore !== '' && !isAbsolute(withinStore) && withinStore !== '..' && !withinStore.startsWith(`..${sep}`)
+  } catch {
+    return false
+  }
+}
+
+/** Recheck the slot before a pnpm recovery retry can replace it again. */
+export function keepCheckoutDetached(link: DetachedCheckoutLink): void {
+  assertProfileLinkParent(link.path)
+  const entry = lstatSync(link.path, { throwIfNoEntry: false })
+  if (entry?.isSymbolicLink() !== true) return
+  const currentTarget = readlinkSync(link.path)
+  if (sameCheckoutTarget(link.path, currentTarget, link.rawTarget)) {
+    unlinkCheckoutEntry(link.path, entry, currentTarget)
+  } else if (!isPackageStoreLink(link)) {
+    throw new Error('the profile link now points to a different checkout')
+  }
+}
+
+/**
+ * Restore the captured checkout link without asking pnpm to touch it. On
+ * rollback a package materialized inside the profile can be staged until the
+ * link and the caller's saved manifest are restored.
+ */
+export function restoreCheckoutLink(link: DetachedCheckoutLink, replacePackage: boolean, restoreMetadata: () => void): void {
+  const { path, rawTarget } = link
+  assertProfileLinkParent(path)
+  const entry = lstatSync(path, { throwIfNoEntry: false })
+  if (entry?.isSymbolicLink() === true && sameCheckoutTarget(path, readlinkSync(path), rawTarget)) {
+    restoreMetadata()
+    return
+  }
+  let staging: string | undefined
+  let displaced: string | undefined
+  let created: ReturnType<typeof lstatSync> | undefined
+  try {
+    if (entry !== undefined) {
+      if (!replacePackage || !(entry.isDirectory() || (entry.isSymbolicLink() && isPackageStoreLink(link)))) {
+        throw new Error('another entry occupies the profile package path')
+      }
+      staging = mkdtempSync(join(dirname(path), '.dshm-restore-'))
+      displaced = join(staging, 'package')
+      renameSync(path, displaced)
+      const moved = lstatSync(displaced)
+      if (moved.dev !== entry.dev || moved.ino !== entry.ino || moved.isSymbolicLink() !== entry.isSymbolicLink()) {
+        throw new Error('the profile package changed before it could be restored')
+      }
+    }
+    if (process.platform === 'win32') symlinkSync(absoluteLinkTarget(path, rawTarget), path, 'junction')
+    else symlinkSync(rawTarget, path, 'dir')
+    created = lstatSync(path)
+    restoreMetadata()
+  } catch (error) {
+    if (created !== undefined) {
+      const now = lstatSync(path, { throwIfNoEntry: false })
+      if (now?.isSymbolicLink() === true && now.dev === created.dev && now.ino === created.ino) unlinkSync(path)
+    }
+    if (displaced !== undefined && lstatSync(displaced, { throwIfNoEntry: false }) !== undefined) {
+      // A concurrently installed entry takes precedence. Leave the displaced
+      // directory available inside the profile if the original slot is taken.
+      if (lstatSync(path, { throwIfNoEntry: false }) !== undefined) {
+        throw new Error(`the profile package path changed; saved package is at ${displaced}`, { cause: error })
+      }
+      renameSync(displaced, path)
+    }
+    if (staging !== undefined) rmSync(staging, { force: true, recursive: true })
+    throw error
+  }
+  if (staging !== undefined) {
+    try {
+      rmSync(staging, { force: true, recursive: true })
+    } catch (error) {
+      logEvent('warn', 'update-rollback', `could not clean the staged profile package at ${staging}: ${String(error)}`)
+    }
+  }
+}
+
 /**
  * Remove the host-side bridge link a confirmed uninstall leaves dangling
  * (#662). The official boot projects profile packages into the host
@@ -1019,10 +1177,9 @@ export function removeDanglingHostBridge(name: string, profileDirectory: string,
  * release) makes pnpm rename `<name>_tmp_*` over it, which Windows refuses
  * with EPERM.
  *
- * Only a link is ever touched, and only when the manifest no longer lists
- * `name` — a link the profile still owns must survive. `rmSync` without
- * `recursive` unlinks the link itself and never reaches the checkout it points
- * at (the same measurement the host-bridge cleanup above relies on).
+ * Only a link is touched, and only when the manifest no longer lists
+ * `name`. `unlinkSync` also handles directory junctions in Desktop's
+ * embedded Node, which reports EISDIR for nonrecursive `rmSync`.
  *
  * @returns the checkout path the removed link pointed at, or null when there
  * was nothing to remove. Never throws: the uninstall already succeeded.
@@ -1033,7 +1190,7 @@ export function removeLeftoverProfileLink(profile: string, name: string, profile
     if (!lstatSync(path).isSymbolicLink()) return null
     if (readInstalled(profile, profileDirectory)[name] !== undefined) return null
     const target = readlinkSync(path)
-    rmSync(path, { force: true })
+    unlinkSync(path)
     logEvent('info', 'uninstall', `${name}: removed the leftover link at node_modules/${name} (it pointed at ${target}); the checkout itself was not touched (#1191)`)
     return target
   } catch (error) {
