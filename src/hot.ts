@@ -1048,6 +1048,12 @@ function mountLogLine(message: HostLogMessage): string {
     .filter(part => part !== undefined && part !== null)
     .map(part => {
       if (typeof part === 'string') return part
+      // Align with `Logger.format`: an Error records its stack (or message as
+      // a fallback), never the empty object `JSON.stringify` yields. cordis'
+      // `_method` hands the raw `args: [Error]` to exporters without
+      // formatting, so this is what keeps `the host logged this while
+      // mounting — name: Error: ...` readable in the exportable log.
+      if (part instanceof Error) return part.stack || part.message
       try {
         return JSON.stringify(part) ?? String(part)
       } catch {
