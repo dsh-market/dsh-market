@@ -292,12 +292,20 @@ describe('updateNotesFor', () => {
     expect(beyond.kind).toBe('release')
     expect(beyond.release?.body).toBe('notes here')
     expect(beyond.beyondTarget).toBe('1.5.0')
-    // The beyond-target release also carries the commit slice (#1193).
-    expect(beyond.commits?.items.map(commit => commit.sha)).toEqual([SHA_C, SHA_B])
+    // A lower SHA boundary alone cannot establish the commits in this update.
+    expect(beyond.commits).toBeUndefined()
     const matching = await updateNotesFor('web', dir, 'some-plugin', '2.0.0')
     expect(matching.beyondTarget).toBeUndefined()
     const noTarget = await updateNotesFor('web', dir, 'some-plugin')
     expect(noTarget.beyondTarget).toBeUndefined()
+  })
+
+  it('clips the commit tail at the update target SHA as well as the installed SHA', async () => {
+    writeProfile(dir, { 'some-plugin': 'github:o/r' }, [['o/r', SHA_A]])
+    stubWorld({ payload: { updates: { 'https://github.com/o/r': { commits: COMMITS } } } })
+    await expect(updateNotesFor('web', dir, 'some-plugin', SHA_B)).resolves.toMatchObject({
+      kind: 'commits', commits: { items: [{ sha: SHA_B, message: 'second' }], found: true },
+    })
   })
 
   it('calls the notes unavailable, not missing, when nothing answers at all', async () => {
@@ -571,6 +579,158 @@ describe('updateNotesFor', () => {
     writeProfile(dir, { 'some-plugin': 'github:o/r' })
     stubWorld({ payload: { count: 1, updates: { 'https://github.com/o/r': { commits: [] } } } })
     await expect(updateNotesFor('web', dir, 'some-plugin')).resolves.toEqual({ kind: 'none' })
+  })
+})
+
+describe('updateNotesFor — release history (#1193)', () => {
+  const repo = 'https://github.com/o/r'
+  const historyPath = '/release-history/v1/o/r.json'
+  const release = (tag: string, commit: string | null = null, body = tag + ' notes') => ({
+    tag, name: null, body, commit, publishedAt: null, url: repo + '/releases/tag/' + tag,
+  })
+  const plugins = [{ name: 'some-plugin', npm: 'some-plugin', url: repo, category: 'utility' }]
+  let dir: string
+  function install(spec = '1.2.27', sha?: string): void {
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ dependencies: { 'some-plugin': spec } }))
+    if (sha !== undefined) {
+      writeFileSync(join(dir, 'pnpm-lock.yaml'),
+        `lockfileVersion: '9.0'\n\nsnapshots:\n  codeload.github.com/o/r/tar.gz/${sha}\n`)
+    }
+    mkdirSync(join(dir, 'node_modules', 'some-plugin'), { recursive: true })
+    writeFileSync(join(dir, 'node_modules', 'some-plugin', 'package.json'), '{"name":"some-plugin","version":"1.2.27"}')
+  }
+  function serve({
+    notes = [release('v1.2.31'), release('v1.2.29'), release('v1.2.28'), release('v1.2.27')],
+    snapshot = release('v1.2.31') as ReturnType<typeof release> | null,
+    commits = COMMITS,
+    entries = plugins,
+    key = repo,
+    historyRepo = 'o/r',
+    complete = true,
+    available = true,
+  } = {}): string[] {
+    const asked: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL) => {
+      const url = String(input)
+      asked.push(url)
+      if (url.endsWith('/dsh-plugin-updates/latest')) return new Response('', { status: 404 })
+      if (url.endsWith('updates.json')) return Response.json({
+        updates: { [key]: { releaseHistory: true, release: snapshot, commits } },
+      })
+      if (url.endsWith(historyPath)) return available
+        ? Response.json({ repo: historyRepo, complete, releases: notes })
+        : new Response('', { status: 503 })
+      if (url.endsWith('/plugins.json')) return Response.json({ plugins: entries })
+      return new Response('', { status: 404 })
+    }))
+    return asked
+  }
+  beforeEach(() => {
+    invalidateUpdateNotes()
+    forgetCatalog()
+    dir = mkdtempSync(join(tmpdir(), 'dshm-release-history-'))
+  })
+  afterEach(() => { vi.unstubAllGlobals(); rmSync(dir, { recursive: true, force: true }) })
+
+  it('returns the target and intermediate releases, with the newer release separate', async () => {
+    install()
+    const asked = serve({ snapshot: release('v1.2.30') })
+    await expect(updateNotesFor('web', dir, 'some-plugin', '1.2.29')).resolves.toMatchObject({
+      kind: 'release', release: { tag: 'v1.2.31' }, beyondTarget: '1.2.29',
+      history: {
+        items: [{ version: '1.2.29', body: 'v1.2.29 notes' }, { version: '1.2.28', body: 'v1.2.28 notes' }],
+        partial: false,
+      },
+    })
+    await updateNotesFor('web', dir, 'some-plugin', '1.2.29')
+    expect(asked.filter(url => url.endsWith(historyPath))).toHaveLength(1)
+    expect(asked.some(url => url.startsWith('https://api.github.com/'))).toBe(false)
+  })
+
+  it('keeps available notes and shows a gap when the target was not published as a GitHub release', async () => {
+    install()
+    serve({ notes: [release('v1.2.31'), release('v1.2.28')] })
+    await expect(updateNotesFor('web', dir, 'some-plugin', '1.2.29')).resolves.toMatchObject({
+      history: { items: [{ version: '1.2.28' }], partial: true },
+      beyondTarget: '1.2.29',
+    })
+  })
+
+  it('keeps loaded release history when npm publish times are unavailable', async () => {
+    install()
+    serve({ snapshot: null, commits: [] })
+    await expect(updateNotesFor('web', dir, 'some-plugin', '1.2.29')).resolves.toMatchObject({
+      history: { items: [{ version: '1.2.29' }, { version: '1.2.28' }], partial: false },
+    })
+  })
+
+  it('keeps loaded release history when a Git subpackage has only a history entry', async () => {
+    const key = repo + '/tree/main/packages/some-plugin'
+    install('github:o/r#path:/packages/some-plugin')
+    writeFileSync(join(dir, 'pnpm-lock.yaml'),
+      `lockfileVersion: '9.0'\n\npackages:\n  some-plugin@git+https://github.com/o/r.git:\n    resolution: {commit: ${SHA_A}, repo: https://github.com/o/r.git, type: git, path: /packages/some-plugin}\n`)
+    serve({
+      key, entries: [{ ...plugins[0]!, url: key }], snapshot: null, commits: [],
+      notes: [release('some-plugin@1.2.29', SHA_B), release('some-plugin@1.2.27', SHA_A)],
+    })
+    await expect(updateNotesFor('web', dir, 'some-plugin', SHA_B)).resolves.toMatchObject({
+      kind: 'none', history: { items: [{ version: '1.2.29' }], partial: false },
+    })
+  })
+
+  it('excludes unsigned package associations in a shared repository', async () => {
+    install()
+    const key = repo + '/tree/main/packages/some-plugin'
+    serve({
+      key,
+      entries: [{ ...plugins[0]!, url: key }, { ...plugins[0]!, npm: 'sibling', url: repo + '/tree/main/packages/sibling' }],
+      notes: [release('sibling-v1.2.29'), release('v1.2.29'), release('some-plugin@1.2.28')],
+      snapshot: release('sibling-v1.2.31'),
+    })
+    const notes = await updateNotesFor('web', dir, 'some-plugin', '1.2.29')
+    expect(notes.history).toMatchObject({ items: [{ version: '1.2.28', tag: 'some-plugin@1.2.28' }], partial: true })
+    expect(notes.release).toBeUndefined()
+  })
+
+  it('retains the old preview when the catalog fragment is unavailable or declares another repository', async () => {
+    install()
+    for (const failure of [{ available: false }, { historyRepo: 'o/sibling' }]) {
+      invalidateUpdateNotes()
+      serve(failure)
+      await expect(updateNotesFor('web', dir, 'some-plugin', '1.2.29')).resolves.toMatchObject({
+        kind: 'release', release: { tag: 'v1.2.31' }, beyondTarget: '1.2.29',
+        history: { items: [], partial: true },
+      })
+    }
+  })
+
+  it('uses only exact tagged endpoints for a git target', async () => {
+    install('github:o/r', SHA_A)
+    serve({
+      notes: [release('v1.2.31'), release('v1.2.29', SHA_B), release('v1.2.28'), release('v1.2.27', SHA_A)],
+    })
+    await expect(updateNotesFor('web', dir, 'some-plugin', SHA_B)).resolves.toMatchObject({
+      history: { items: [{ version: '1.2.29' }, { version: '1.2.28' }], partial: false },
+      beyondTarget: '1.2.29',
+      commits: { items: [{ sha: SHA_B }], found: true },
+    })
+    await expect(updateNotesFor('web', dir, 'some-plugin', SHA_C)).resolves.toMatchObject({
+      history: { items: [], partial: true },
+    })
+  })
+
+  it('anchors to the lock resolution for the subpath instead of a sibling archive in the same repo', async () => {
+    const key = repo + '/tree/main/packages/some-plugin'
+    install('github:o/r#path:/packages/some-plugin')
+    writeFileSync(join(dir, 'pnpm-lock.yaml'),
+      `lockfileVersion: '9.0'\n\npackages:\n  some-plugin@https://github.com/o/r.git:\n    resolution: {commit: ${SHA_A}, repo: https://github.com/o/r.git, path: /packages/some-plugin, type: git}\n\nsnapshots:\n  codeload.github.com/o/r/tar.gz/${SHA_C}\n`)
+    serve({
+      key, entries: [{ ...plugins[0]!, url: key }], snapshot: release('some-plugin@1.2.31'),
+      notes: [release('some-plugin@1.2.29', SHA_B), release('some-plugin@1.2.27', SHA_A)],
+    })
+    await expect(updateNotesFor('web', dir, 'some-plugin', SHA_B)).resolves.toMatchObject({
+      beyondTarget: '1.2.29', history: { items: [{ version: '1.2.29' }], partial: false },
+    })
   })
 })
 
