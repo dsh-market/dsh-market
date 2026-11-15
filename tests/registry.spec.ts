@@ -74,6 +74,7 @@ afterEach(() => {
     else process.env[key] = savedProxy[key]
   }
   vi.unstubAllGlobals()
+  vi.unstubAllEnvs()
 })
 
 /** Headers sent on each call, in order — what a conditional request needs. */
@@ -423,6 +424,85 @@ describe('loadRegistry revalidation', () => {
     scriptedFetch(okTagged(CATALOG, 'W/"abc"'))
     await loadRegistry()
     expect(sent[0]).toEqual({})
+  })
+
+  it('shares the overlapping first catalog download from discovery and updates (#1181)', async () => {
+    const gate = Promise.withResolvers<void>()
+    const fetch = vi.fn(async () => {
+      await gate.promise
+      return okTagged(CATALOG, 'W/"shared"')
+    })
+    vi.stubGlobal('fetch', fetch)
+    const discovery = loadRegistry('global')
+    const updates = loadRegistry('global')
+    gate.resolve()
+    const [first, second] = await Promise.all([discovery, updates])
+    expect(first).toEqual(second)
+    expect(first.plugins[0]?.name).toBe('dsh-loop')
+    expect(fetch).toHaveBeenCalledTimes(1)
+
+    const next = scriptedFetch(notModified())
+    expect(await loadRegistry('global')).toEqual(first)
+    expect(next).toHaveBeenCalledTimes(1)
+    expect(sent[0]).toEqual({ 'if-none-match': 'W/"shared"' })
+  })
+
+  it('lets the next call retry after an overlapping catalog load failed', async () => {
+    const fetch = scriptedFetch(new Error('the catalog is temporarily offline'))
+    const failures = await Promise.allSettled([loadRegistry('global'), loadRegistry('global')])
+    expect(failures.map(result => result.status)).toEqual(['rejected', 'rejected'])
+    expect(fetch).toHaveBeenCalledTimes(4)
+    scriptedFetch(ok(CATALOG))
+    expect((await loadRegistry('global')).plugins[0]?.name).toBe('dsh-loop')
+  })
+
+  it('starts a fresh load after forgetting the catalog and keeps its new validator', async () => {
+    const stale = Promise.withResolvers<Response>()
+    const newer = { ...CATALOG, updated: '2026-08-19' }
+    const fetch = vi.fn().mockReturnValueOnce(stale.promise).mockResolvedValueOnce(okTagged(newer, 'W/"new"'))
+    vi.stubGlobal('fetch', fetch)
+    const previous = loadRegistry('global')
+    forgetCatalog()
+    const current = loadRegistry('global')
+    try {
+      expect(fetch).toHaveBeenCalledTimes(2)
+      expect((await current).updated).toBe(newer.updated)
+    } finally {
+      stale.resolve(okTagged(CATALOG, 'W/"old"'))
+    }
+    expect((await previous).updated).toBe(CATALOG.updated)
+    expect((await current).updated).toBe(newer.updated)
+
+    scriptedFetch(notModified())
+    expect((await loadRegistry('global')).updated).toBe(newer.updated)
+    expect(sent[0]).toEqual({ 'if-none-match': 'W/"new"' })
+  })
+
+  it.each(['region', 'primary source', 'fallback source'])('does not join or clear a load after a %s change', async change => {
+    vi.stubEnv('DSHM_REGISTRY_URL', 'https://one.example/plugins.json')
+    vi.stubEnv('DSHM_NPM_MIRROR', 'https://one.example/npm')
+    const stale = Promise.withResolvers<Response>()
+    const fresh = Promise.withResolvers<Response>()
+    const newer = { ...CATALOG, updated: '2026-08-20' }
+    const fetch = vi.fn()
+      .mockReturnValueOnce(stale.promise)
+      .mockReturnValueOnce(fresh.promise)
+      .mockResolvedValue(okTagged(newer, 'W/"extra"'))
+    vi.stubGlobal('fetch', fetch)
+    const previous = loadRegistry('global')
+    if (change === 'primary source') vi.stubEnv('DSHM_REGISTRY_URL', 'https://two.example/plugins.json')
+    if (change === 'fallback source') vi.stubEnv('DSHM_NPM_MIRROR', 'https://two.example/npm')
+    const region = change === 'region' ? 'china' : 'global'
+    const current = loadRegistry(region)
+    stale.resolve(ok(CATALOG))
+    expect((await previous).updated).toBe(CATALOG.updated)
+
+    const joined = loadRegistry(region)
+    fresh.resolve(okTagged(newer, 'W/"other"'))
+    const [first, second] = await Promise.all([current, joined])
+    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(first.updated).toBe(newer.updated)
+    expect(second).toEqual(first)
   })
 
   it('offers the validator it was given, and reuses the body on 304', async () => {
