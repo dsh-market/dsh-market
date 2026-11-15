@@ -821,6 +821,43 @@ describe('hotMount records what the host logged while mounting (#1197)', () => {
     }
   })
 
+
+  it('renders an Error argument as its stack or message, not the empty object', async () => {
+    // cordis `_method` hands the raw `args: [Error]` to exporters without
+    // formatting, so a `Logger.format`-style Error in the args must survive
+    // into the exportable line. `JSON.stringify(new Error(...))` is `'{}'`,
+    // which would read as `... — name: {}` and lose the actual complaint.
+    const dir = mkdtempSync(join(tmpdir(), 'dshm-hot-'))
+    const logFile = join(dir, 'events.log')
+    configurePersistentLog(logFile)
+    try {
+      entryPkg(dir, 'error-entry')
+      const host = hostLogger()
+      const logging = {
+        plugin: () => {
+          host.record('error', 'mkt-error-entry', new Error('service "connection" has been registered'))
+          return { await: () => Promise.resolve(), dispose: () => {} }
+        },
+        logger: host.logger,
+      }
+
+      const result = await hotMount(logging, dir, 'error-entry')
+      expect(result.ok).toBe(true)
+      const logged = readPersistentLog(logFile).join('\n')
+      expect(logged).toContain('the host logged this while mounting — mkt-error-entry:')
+      // The log line serializes the stack; the message text must be present.
+      // (The quotes are escaped by JSON serialization, so match around them.)
+      expect(logged).toContain('Error: service')
+      expect(logged).toContain('has been registered')
+      // The empty object `JSON.stringify` would have produced must not appear.
+      expect(logged).not.toContain('mkt-error-entry: {}')
+      expect(host.disposed).toEqual(['disposed'])
+    } finally {
+      configurePersistentLog(null)
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('releases the sink when the host refuses to create the plugin', async () => {
     // `ctx.plugin()` throws on a disposed fiber before it creates anything.
     // The sink is registered by then, and the market's failure branch never
