@@ -592,9 +592,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			hostCompatible: "兼容当前 DSH {0}",
 			hostDetecting: "正在识别宿主版本…",
 			hostUnknown: "宿主版本未知",
-			hostFilterLoading: "正在检查宿主要求 {0}/{1}；未声明或无法确认的插件仍会显示",
-			hostFilterActive: "已隐藏 {1} 个与 DSH {0} 不兼容的插件；未声明版本的仍在列表里",
-			hostFilterIncomplete: "已隐藏 {1} 个与 DSH {0} 不兼容的插件。{2} 个暂时无法确认，仍会显示。",
+			hostFilterLoading: "正在检查宿主要求（本页 {0}/{1}）。要求未知的插件仍会显示。",
+			hostFilterActive: "本页已隐藏 {1} 个与 DSH {0} 不兼容的插件。要求未知的插件仍会显示。",
+			hostFilterEmpty: "本页插件均与当前 DSH 不兼容。",
+			hostFilterIncomplete: "本页已隐藏 {1} 个与 DSH {0} 不兼容的插件。另有 {2} 个暂时无法确认，仍会显示。",
 			hostRequirement: "DSH {0}",
 			hostRequirementLoading: "正在读取宿主要求…",
 			hostRequirementUndeclared: "未声明宿主要求",
@@ -1418,9 +1419,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			hostCompatible: "Compatible with current DSH {0}",
 			hostDetecting: "Detecting host version…",
 			hostUnknown: "Host version unknown",
-			hostFilterLoading: "Checking host requirements {0}/{1}; undeclared or unavailable plugins remain visible",
-			hostFilterActive: "Hid {1} plugins incompatible with DSH {0}; those declaring no version stay listed",
-			hostFilterIncomplete: "Hid {1} plugins incompatible with DSH {0}. {2} could not be checked and are still shown.",
+			hostFilterLoading: "Checking host requirements on this page ({0}/{1}). Plugins with unknown requirements stay visible.",
+			hostFilterActive: "Hid {1} plugins on this page that are incompatible with DSH {0}. Plugins with unknown requirements stay visible.",
+			hostFilterEmpty: "All plugins on this page are incompatible with the current DSH.",
+			hostFilterIncomplete: "Hid {1} plugins on this page that are incompatible with DSH {0}. {2} could not be checked and are still shown.",
 			hostRequirement: "DSH {0}",
 			hostRequirementLoading: "Reading host requirement…",
 			hostRequirementUndeclared: "Host requirement undeclared",
@@ -2244,9 +2246,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			hostCompatible: "現在の DSH {0} と互換性あり",
 			hostDetecting: "ホストのバージョンを識別中…",
 			hostUnknown: "ホストのバージョンは不明です",
-			hostFilterLoading: "ホストの要件を確認中 {0}/{1}。宣言していない、または確認できないプラグインも引き続き表示されます",
-			hostFilterActive: "DSH {0} と互換性のないプラグイン {1} 件を隠しました。バージョンを宣言していないものは一覧に残っています",
-			hostFilterIncomplete: "DSH {0} と互換性のないプラグイン {1} 件を隠しました。確認できなかった {2} 件は表示されたままです。",
+			hostFilterLoading: "このページのホスト要件を確認中 {0}/{1}。要件が不明なプラグインも表示されます。",
+			hostFilterActive: "このページで DSH {0} と互換性のないプラグインを {1} 件非表示にしました。要件が不明なプラグインも表示されます。",
+			hostFilterEmpty: "このページのプラグインはすべて現在の DSH と互換性がありません。",
+			hostFilterIncomplete: "このページで DSH {0} と互換性のないプラグインを {1} 件非表示にしました。確認できなかった {2} 件は表示されたままです。",
 			hostRequirement: "DSH {0}",
 			hostRequirementLoading: "ホストの要件を読み取り中…",
 			hostRequirementUndeclared: "ホストの要件は宣言されていません",
@@ -2908,7 +2911,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		}
 		/** Keep GitHub packages in one repository distinct, independently of their display names. */
 		function hostCompatibilityKey(plugin) {
-			if (typeof plugin.npm === "string" && plugin.npm !== "") return plugin.npm;
+			if (typeof plugin.npm === "string" && plugin.npm !== "") return NPM_NAME_RE.test(plugin.npm) ? plugin.npm : null;
 			return parseSourceUrl(plugin.url) === null ? null : plugin.url;
 		}
 		/**
@@ -3155,8 +3158,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				const categories = pluginCategories(plugin);
 				if (options.category !== "all" && !categories.includes(options.category)) return [];
 				if (options.sinceDays !== void 0 && !withinDays(plugin.added, options.sinceDays)) return [];
-				const compatibilityKey = hostCompatibilityKey(plugin);
-				if (options.compatibleWithHost === true && compatibilityKey !== null && options.hostCompatibility?.[compatibilityKey]?.status === "incompatible") return [];
+				const compatibilityKey = options.compatibleWithHost === true ? hostCompatibilityKey(plugin) : null;
+				if (compatibilityKey !== null && options.hostCompatibility?.[compatibilityKey]?.status === "incompatible") return [];
 				const relevance = query === "" ? 0 : pluginRelevance(plugin, query, tokens, options.lang, options.categories);
 				return relevance === 0 && query !== "" ? [] : [{
 					plugin,
@@ -5147,7 +5150,6 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			if (key === null) return null;
 			const version = typeof plugin.version === "string" ? plugin.version.trim() : "";
 			if (!key.startsWith("https://")) {
-				if (!NPM_NAME_RE.test(key)) return null;
 				const npmVersion = isExactReleaseVersion(version) ? version : void 0;
 				return {
 					key,
@@ -5200,7 +5202,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				...typeof value.retryAfterMs === "number" && Number.isFinite(value.retryAfterMs) && value.retryAfterMs >= 0 ? { retryAfterMs: value.retryAfterMs } : {}
 			} : value;
 		}
-		/** Shared by Settings and the sidebar. Only dispatched entries occupy a slot. */
+		/** Shares on-demand badge lookups across the three market surfaces. */
 		var DiscoveryScan = class {
 			onCatalogGenerationChange;
 			snapshot;
@@ -5208,22 +5210,17 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			entries = /* @__PURE__ */ new Map();
 			results = /* @__PURE__ */ new Map();
 			demand = /* @__PURE__ */ new Map();
-			inFlight = /* @__PURE__ */ new Map();
-			full;
-			visible;
+			pending;
 			hostVersion;
 			catalog = null;
 			boot;
 			enabled;
 			context = 0;
-			run = 0;
 			catalogRequest = 0;
 			resumeRequest;
 			catalogRefreshUsed = false;
 			active = false;
 			gone = false;
-			cursor = 0;
-			queue = [];
 			timer;
 			verdictsChanged = false;
 			constructor(onCatalogGenerationChange) {
@@ -5235,10 +5232,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					catalog: null,
 					gone: false,
 					hostVersion: void 0,
-					verdicts: Object.create(null),
-					total: 0,
-					attempted: 0,
-					scanning: false
+					verdicts: Object.create(null)
 				};
 			};
 			subscribe = (listener) => {
@@ -5248,7 +5242,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				};
 			};
 			reset() {
-				this.stop();
+				clearTimeout(this.timer);
+				this.timer = void 0;
 				this.active = false;
 				this.gone = false;
 				this.context += 1;
@@ -5261,9 +5256,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				this.entries.clear();
 				this.results.clear();
 				this.demand.clear();
-				this.inFlight.clear();
 				this.catalogRefreshUsed = false;
-				this.full = this.visible = void 0;
+				this.pending = void 0;
 				this.verdictsChanged = false;
 				this.snapshot = void 0;
 			}
@@ -5273,11 +5267,12 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					localStorage.setItem(HOST_FILTER_KEY, enabled ? "compatible" : "all");
 				} catch {}
 				this.enabled = enabled;
+				this.catalogRefreshUsed = false;
 				if (enabled) {
-					this.allowRetry(this.entries.keys());
-					this.restart();
-					if ([...this.results.values()].some((result) => result.verdict.catalogChanged === true)) this.refreshCatalog();
-				} else this.stop();
+					const keys = this.visibleKeys();
+					this.allowRetry(keys);
+					if (keys.some((key) => this.results.get(key)?.verdict.catalogChanged === true)) this.refreshCatalog();
+				}
 				this.update();
 			}
 			async loadCatalog() {
@@ -5299,7 +5294,6 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			setCatalog(catalog, hostVersion) {
 				if (catalog.updated !== this.catalog?.updated) this.onCatalogGenerationChange();
 				this.catalog = catalog;
-				const reconnecting = !this.active;
 				this.active = true;
 				this.gone = false;
 				const next = /* @__PURE__ */ new Map();
@@ -5309,21 +5303,17 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					const previous = this.entries.get(described.key);
 					next.set(described.key, previous?.fingerprint === described.fingerprint ? previous : described);
 				}
-				const changed = next.size !== this.entries.size || [...next].some(([key, entry]) => this.entries.get(key) !== entry);
 				this.entries = next;
-				const hostChanged = hostVersion !== void 0 && hostVersion !== this.hostVersion;
-				if (hostChanged) {
+				if (hostVersion !== void 0 && hostVersion !== this.hostVersion) {
 					this.hostVersion = hostVersion;
 					this.invalidate();
 				}
-				if (changed) for (const [key, result] of this.results) {
+				for (const [key, result] of this.results) {
 					if (next.get(key) === result.entry) continue;
 					this.results.delete(key);
 					this.verdictsChanged = true;
 				}
-				if ((changed || hostChanged || reconnecting) && this.getSnapshot().enabled) this.restart(false);
 				this.markOversizedEntries();
-				if ([...this.results.values()].some((result) => result.verdict.catalogChanged === true)) this.refreshCatalog();
 				this.update();
 			}
 			setBoot(boot) {
@@ -5332,14 +5322,14 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				if (previous === void 0 || previous === boot) return;
 				this.invalidate();
 				this.markOversizedEntries();
-				if (this.getSnapshot().enabled) this.restart();
+				this.catalogRefreshUsed = false;
 				this.update();
 			}
 			setUnavailable() {
 				if (this.gone) return;
 				this.active = false;
 				this.gone = true;
-				this.stop();
+				this.catalogRefreshUsed = false;
 				this.catalogRequest += 1;
 				this.invalidate();
 				this.update();
@@ -5355,10 +5345,17 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				};
 				return result;
 			}
-			setDemand(owner, keys) {
-				const before = this.demand.get(owner) ?? [];
-				this.demand.set(owner, keys);
-				this.allowRetry(keys.filter((key) => !before.includes(key)));
+			setDemand(owner, catalog, keys) {
+				if (catalog !== this.catalog) return;
+				const before = this.demand.get(owner)?.keys ?? [];
+				if (catalog === null || keys.length === 0) this.demand.delete(owner);
+				else this.demand.set(owner, {
+					catalog,
+					keys
+				});
+				const arrived = keys.filter((key) => !before.includes(key));
+				this.allowRetry(arrived);
+				if (arrived.some((key) => this.results.get(key)?.verdict.catalogChanged === true)) this.refreshCatalog();
 				this.update();
 			}
 			removeDemand(owner) {
@@ -5373,6 +5370,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			}
 			invalidate() {
 				this.context += 1;
+				this.pending = void 0;
 				this.results.clear();
 				this.verdictsChanged = true;
 			}
@@ -5389,37 +5387,23 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					this.verdictsChanged = true;
 				}
 			}
-			restart(newRun = true) {
-				if (newRun) {
-					this.run += 1;
-					this.catalogRefreshUsed = false;
-				}
-				this.queue = [...this.entries.values()];
-				this.cursor = 0;
-			}
-			stop() {
-				this.run += 1;
-				this.catalogRefreshUsed = false;
-				this.queue = [];
-				this.cursor = 0;
-				clearTimeout(this.timer);
-				this.timer = void 0;
-			}
 			visibleKeys() {
-				return [...new Set([...this.demand.values()].flat())];
+				const keys = /* @__PURE__ */ new Set();
+				for (const demand of this.demand.values()) {
+					if (demand.catalog !== this.catalog) continue;
+					for (const key of demand.keys) keys.add(key);
+				}
+				return [...keys];
 			}
 			update() {
 				const previous = this.getSnapshot();
 				const enabled = this.enabled ?? previous.enabled;
 				const now = Date.now();
-				let expired = false;
 				for (const [key, result] of this.results) {
 					if (result.expiresAt > now) continue;
 					this.results.delete(key);
-					expired = true;
 					this.verdictsChanged = true;
 				}
-				if (expired && enabled) this.restart(false);
 				this.pump();
 				let verdicts = previous.verdicts;
 				if (this.verdictsChanged) {
@@ -5427,57 +5411,37 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					for (const [key, result] of this.results) verdicts[key] = result.verdict;
 					this.verdictsChanged = false;
 				}
-				const scanning = this.active && enabled && (this.cursor < this.queue.length || this.full?.run === this.run || this.visible?.kind === "visible");
-				if (previous.enabled === enabled && previous.catalog === this.catalog && previous.gone === this.gone && previous.hostVersion === this.hostVersion && previous.verdicts === verdicts && previous.total === this.entries.size && previous.attempted === this.results.size && previous.scanning === scanning) return;
+				if (previous.enabled === enabled && previous.catalog === this.catalog && previous.gone === this.gone && previous.hostVersion === this.hostVersion && previous.verdicts === verdicts) return;
 				this.snapshot = {
 					enabled,
 					catalog: this.catalog,
 					gone: this.gone,
 					hostVersion: this.hostVersion,
-					verdicts,
-					total: this.entries.size,
-					attempted: this.results.size,
-					scanning
+					verdicts
 				};
 				for (const listener of this.listeners) listener();
 			}
 			pump() {
-				if (!this.active) return;
-				const enabled = this.enabled ?? this.getSnapshot().enabled;
+				if (!this.active || this.pending !== void 0) {
+					this.scheduleRetry();
+					return;
+				}
 				const now = Date.now();
-				const available = (entry) => this.inFlight.get(entry)?.context !== this.context;
-				const needsLookup = (entry) => {
+				const entries = this.visibleKeys().flatMap((key) => {
+					const entry = this.entries.get(key);
+					return entry === void 0 ? [] : [entry];
+				});
+				const fresh = this.visibleBatch(entries.filter((entry) => {
 					const result = this.results.get(entry.key);
 					return result === void 0 || result.expiresAt <= now;
-				};
-				if (this.visible === void 0) {
-					const entries = this.visibleKeys().flatMap((key) => {
-						const entry = this.entries.get(key);
-						return entry !== void 0 && available(entry) ? [entry] : [];
-					});
-					const fresh = this.visibleBatch(entries.filter(needsLookup));
-					if (fresh.length > 0) this.dispatch(fresh, "visible");
-					else if (enabled) {
-						const retry = this.visibleBatch(entries.filter((entry) => {
-							const result = this.results.get(entry.key);
-							return result !== void 0 && result.retryAt <= now && !result.automaticRetryUsed;
-						}));
-						if (retry.length > 0) this.dispatch(retry, "retry");
-					}
-				}
-				if (enabled && this.full === void 0) {
-					const chunk = [];
-					let bytes = 0;
-					while (this.cursor < this.queue.length && chunk.length < BATCH_SIZE) {
-						const entry = this.queue[this.cursor];
-						if (this.entries.get(entry.key) === entry && available(entry) && needsLookup(entry)) {
-							if (bytes + entry.bytes > BATCH_BYTES) break;
-							bytes += entry.bytes;
-							chunk.push(entry);
-						}
-						this.cursor += 1;
-					}
-					if (chunk.length > 0) this.dispatch(chunk, "full");
+				}));
+				if (fresh.length > 0) this.dispatch(fresh, false);
+				else if (this.enabled ?? this.getSnapshot().enabled) {
+					const retry = this.visibleBatch(entries.filter((entry) => {
+						const result = this.results.get(entry.key);
+						return result !== void 0 && result.retryAt <= now && !result.automaticRetryUsed;
+					}));
+					if (retry.length > 0) this.dispatch(retry, true);
 				}
 				this.scheduleRetry();
 			}
@@ -5494,25 +5458,22 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			scheduleRetry() {
 				clearTimeout(this.timer);
 				this.timer = void 0;
-				if (!this.active || !(this.enabled ?? this.getSnapshot().enabled) || this.visible !== void 0) return;
+				if (!this.active || !(this.enabled ?? this.getSnapshot().enabled) || this.pending !== void 0) return;
 				let next = Infinity;
 				for (const key of this.visibleKeys()) {
 					const result = this.results.get(key);
-					if (result === void 0 || result.automaticRetryUsed || this.inFlight.has(result.entry)) continue;
+					if (result === void 0 || result.automaticRetryUsed) continue;
 					next = Math.min(next, result.retryAt);
 				}
 				if (Number.isFinite(next)) this.timer = setTimeout(() => this.pump(), Math.max(0, next - Date.now()));
 			}
-			dispatch(entries, kind) {
+			dispatch(entries, retry) {
 				const batch = {
 					entries,
-					kind,
-					context: this.context,
-					run: this.run
+					retry,
+					context: this.context
 				};
-				if (kind === "full") this.full = batch;
-				else this.visible = batch;
-				for (const entry of entries) this.inFlight.set(entry, batch);
+				this.pending = batch;
 				this.request(batch);
 			}
 			async request(batch) {
@@ -5531,9 +5492,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				} catch {
 					requestFailed = true;
 				}
-				if (this.full === batch) this.full = void 0;
-				if (this.visible === batch) this.visible = void 0;
-				for (const entry of batch.entries) if (this.inFlight.get(entry) === batch) this.inFlight.delete(entry);
+				if (this.pending === batch) this.pending = void 0;
 				if (batch.context !== this.context) {
 					this.update();
 					return;
@@ -5542,7 +5501,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				if ((typeof responseHost === "string" || responseHost === null) && responseHost !== this.hostVersion) {
 					if (this.hostVersion === void 0) this.hostVersion = responseHost;
 					else {
-						if (batch.kind !== "full" || this.getSnapshot().enabled) this.refreshCatalog();
+						if (this.visibleKeys().length > 0) this.refreshCatalog();
 						requestFailed = true;
 					}
 				}
@@ -5557,12 +5516,12 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						entry,
 						verdict,
 						retryAt,
-						automaticRetryUsed: batch.kind === "retry",
+						automaticRetryUsed: batch.retry,
 						expiresAt: verdict.basis !== "unavailable" && entry.expires ? now + MUTABLE_SOURCE_TTL_MS : Infinity
 					});
 					this.verdictsChanged = true;
 				}
-				if (catalogChanged && (batch.kind !== "full" || this.getSnapshot().enabled)) this.refreshCatalog();
+				if (catalogChanged && this.visibleKeys().some((key) => this.results.get(key)?.verdict.catalogChanged === true)) this.refreshCatalog();
 				this.update();
 			}
 			refreshCatalog() {
@@ -9141,6 +9100,16 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			if (phase === "linking") return t("phaseLinking");
 			return t("phaseBuilding");
 		}
+		/** Reset before effects can use the new query with the previous page or limit. */
+		function useResettableCount(initial, deps) {
+			const [count, setCount] = (0, react.useState)(initial);
+			const [previousDeps, setPreviousDeps] = (0, react.useState)(deps);
+			if (deps.length !== previousDeps.length || deps.some((value, index) => !Object.is(value, previousDeps[index]))) {
+				setPreviousDeps(deps);
+				setCount(initial);
+			}
+			return [count, setCount];
+		}
 		/**
 		* Page/page-size state shared by every paged list in this file (Discover,
 		* Themes) — each caller owns its OWN instance (their filters are
@@ -9150,11 +9119,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		* the shared body on any page move) are one implementation, not two.
 		*/
 		function usePagination(count, resetDeps, scrollToTop) {
-			const [page, setPage] = (0, react.useState)(1);
+			const [page, setPage] = useResettableCount(1, resetDeps);
 			const [pageSize, setPageSize] = (0, react.useState)(DEFAULT_PAGE_SIZE);
-			(0, react.useEffect)(() => {
-				setPage(1);
-			}, resetDeps);
 			const totalPages = Math.max(1, Math.ceil(count / pageSize));
 			const currentPage = Math.min(page, totalPages);
 			const goToPage = (next) => {
@@ -9183,10 +9149,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		* starts over, the same moment `usePagination` returns to page 1.
 		*/
 		function useShownCount(count, resetDeps, chunk) {
-			const [limit, setLimit] = (0, react.useState)(chunk);
-			(0, react.useEffect)(() => {
-				setLimit(chunk);
-			}, resetDeps);
+			const [limit, setLimit] = useResettableCount(chunk, resetDeps);
 			const shown = Math.min(count, limit);
 			return {
 				shown,
@@ -9354,10 +9317,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			});
 		}
 		/** Keep an empty search actionable without changing the user's sort or block list. */
-		function EmptyResults({ blocked, onClear, t }) {
+		function EmptyResults({ message, onClear, t }) {
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 				className: Market_module_css_default.empty,
-				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", { children: t(blocked ? "blockedFilteredEmpty" : "empty") }), onClear && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", { children: t(message) }), onClear && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 					variant: "outline",
 					size: "sm",
 					className: Market_module_css_default.retryBtn,
@@ -13108,42 +13071,12 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				data,
 				repoHints
 			]);
-			const { plugins, hostHiddenCount, hostUnavailableCount } = (0, react.useMemo)(() => {
-				if (!compatibleWithHost) return {
-					plugins: pluginsUnblocked,
-					hostHiddenCount: 0,
-					hostUnavailableCount: 0
-				};
-				const compatible = (plugin) => {
-					const key = hostCompatibilityKey(plugin);
-					return key === null || hostCompatibility[key]?.status !== "incompatible";
-				};
-				let hidden = 0;
-				for (const plugin of pluginsAll) if (!compatible(plugin)) hidden += 1;
-				let unavailable = 0;
-				for (const plugin of pluginsUnblocked) {
-					const key = hostCompatibilityKey(plugin);
-					if (key !== null && hostCompatibility[key]?.basis === "unavailable") unavailable += 1;
-				}
-				return {
-					plugins: pluginsUnblocked.filter(compatible),
-					hostHiddenCount: hidden,
-					hostUnavailableCount: unavailable
-				};
-			}, [
-				pluginsAll,
-				pluginsUnblocked,
-				compatibleWithHost,
-				hostCompatibility
-			]);
 			const recentlyAdded = (0, react.useMemo)(() => data === null || tab !== "discover" || q.trim() !== "" || cat !== "all" || timeRange !== "all" || sortField !== "downloads" || sortDir !== "desc" ? [] : visiblePlugins(data.plugins, {
 				category: "all",
 				query: "",
 				lang,
 				sort: "downloads-desc",
-				sinceDays: 7,
-				hostCompatibility,
-				compatibleWithHost
+				sinceDays: 7
 			}).filter((plugin) => !pluginBlocked(plugin)), [
 				data,
 				tab,
@@ -13153,14 +13086,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				sortField,
 				sortDir,
 				lang,
-				hostCompatibility,
-				compatibleWithHost,
 				blockedNameSet,
 				installed,
 				repoIdentities,
 				repoHints
 			]);
-			const hasRecent = recentlyAdded.length > 0;
 			const [recentCollapsed, setRecentCollapsed] = (0, react.useState)(() => readRecentFlag(RECENT_COLLAPSED_KEY));
 			const [recentHidden, setRecentHidden] = (0, react.useState)(() => readRecentFlag(RECENT_HIDDEN_KEY));
 			const toggleRecentCollapsed = (0, react.useCallback)(() => {
@@ -13178,24 +13108,31 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				setRecentCollapsed(false);
 				writeRecentFlag(RECENT_COLLAPSED_KEY, false);
 			}, []);
-			const recentPlugins = recentlyAdded.slice(0, RECENT_STRIP_LIMIT);
-			const { currentPage, totalPages, pageSize, goToPage, changePageSize } = usePagination(plugins.length, [
+			const discoverResetDeps = [
 				q,
 				cat,
 				sortField,
 				sortDir,
-				timeRange,
-				compatibleWithHost
-			], scrollToTop);
-			const discoverMore = useShownCount(plugins.length, [
-				q,
-				cat,
-				sortField,
-				sortDir,
-				timeRange,
-				compatibleWithHost
-			], DEFAULT_PAGE_SIZE);
-			const pagePlugins = surface === "plugins" ? plugins.slice(0, discoverMore.shown) : plugins.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+				timeRange
+			];
+			const { currentPage, totalPages, pageSize, goToPage, changePageSize } = usePagination(pluginsUnblocked.length, discoverResetDeps, scrollToTop);
+			const discoverMore = useShownCount(pluginsUnblocked.length, discoverResetDeps, DEFAULT_PAGE_SIZE);
+			const basePage = surface === "plugins" ? pluginsUnblocked.slice(0, discoverMore.shown) : pluginsUnblocked.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+			const baseRecent = recentlyAdded.slice(0, RECENT_STRIP_LIMIT);
+			const hostVerdict = (plugin) => {
+				const key = hostCompatibilityKey(plugin);
+				return key === null ? void 0 : hostCompatibility[key];
+			};
+			const compatible = (plugin) => !compatibleWithHost || hostVerdict(plugin)?.status !== "incompatible";
+			const pagePlugins = basePage.filter(compatible);
+			const recentPlugins = baseRecent.filter(compatible);
+			const hasRecent = recentPlugins.length > 0;
+			const discoverCandidates = [.../* @__PURE__ */ new Set([...basePage, ...!recentHidden && !recentCollapsed ? baseRecent : []])];
+			const pageHostPackages = [...new Set(discoverCandidates.map(hostCompatibilityKey).filter((key) => key !== null))];
+			const pageVerdicts = discoverCandidates.map(hostVerdict);
+			const loadedHostPackages = pageHostPackages.filter((key) => hostCompatibility[key] !== void 0).length;
+			const hostHiddenCount = pageVerdicts.filter((verdict) => verdict?.status === "incompatible").length;
+			const hostUnavailableCount = pageVerdicts.filter((verdict) => verdict?.basis === "unavailable").length;
 			const themePluginsAll = (0, react.useMemo)(() => data === null ? [] : visiblePlugins(data.plugins, {
 				category: "theme",
 				query: qThemes,
@@ -13279,10 +13216,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const favoriteThemeMore = useShownCount(favoriteThemes.length, favResetDeps, DEFAULT_PAGE_SIZE);
 			const favoritePagePlugins = surface === "plugins" ? favoritePlugins.slice(0, favoritePluginMore.shown) : favoritePlugins.slice((favoritePluginPagination.currentPage - 1) * favoritePluginPagination.pageSize, favoritePluginPagination.currentPage * favoritePluginPagination.pageSize);
 			const favoritePageThemes = surface === "plugins" ? favoriteThemes.slice(0, favoriteThemeMore.shown) : favoriteThemes.slice((favoriteThemePagination.currentPage - 1) * favoriteThemePagination.pageSize, favoriteThemePagination.currentPage * favoriteThemePagination.pageSize);
-			const compatibilityKeys = (marketGone ? [] : tab === "discover" ? [...pagePlugins, ...!recentHidden && !recentCollapsed ? recentPlugins : []] : tab === "favorites" ? favoritePagePlugins : []).map(hostCompatibilityKey).filter((key) => key !== null).join("\0");
+			const compatibilityKeys = (marketGone ? [] : tab === "discover" ? pageHostPackages : tab === "favorites" ? favoritePagePlugins.map(hostCompatibilityKey).filter((key) => key !== null) : []).join("\0");
 			(0, react.useEffect)(() => {
-				discoveryScan.setDemand(compatibilityDemandOwner.current, compatibilityKeys === "" ? [] : compatibilityKeys.split("\0"));
-			}, [compatibilityKeys]);
+				discoveryScan.setDemand(compatibilityDemandOwner.current, data, compatibilityKeys === "" ? [] : compatibilityKeys.split("\0"));
+			}, [data, compatibilityKeys]);
 			(0, react.useEffect)(() => {
 				const owner = compatibilityDemandOwner.current;
 				return () => {
@@ -17129,9 +17066,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 												setCatsOpen(next);
 											}
 										})]
-									}), compatibleWithHost && typeof hostVersion === "string" && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+									}), compatibleWithHost && typeof hostVersion === "string" && pageHostPackages.length > 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 										className: Market_module_css_default.hostFilterNote,
-										children: compatibility.scanning ? t("hostFilterLoading").replace("{0}", String(compatibility.attempted)).replace("{1}", String(compatibility.total)) : t(hostUnavailableCount > 0 ? "hostFilterIncomplete" : "hostFilterActive").replace("{0}", hostVersion).replace("{1}", String(hostHiddenCount)).replace("{2}", String(hostUnavailableCount))
+										children: loadedHostPackages < pageHostPackages.length ? t("hostFilterLoading").replace("{0}", String(loadedHostPackages)).replace("{1}", String(pageHostPackages.length)) : t(hostUnavailableCount > 0 ? "hostFilterIncomplete" : "hostFilterActive").replace("{0}", hostVersion).replace("{1}", String(hostHiddenCount)).replace("{2}", String(hostUnavailableCount))
 									})]
 								})]
 							}),
@@ -17169,8 +17106,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									children: recentPlugins.map((plugin) => recentTile(plugin))
 								})]
 							})),
-							plugins.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(EmptyResults, {
-								blocked: pluginsAll.length > hostHiddenCount,
+							pagePlugins.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(EmptyResults, {
+								message: basePage.length > 0 ? "hostFilterEmpty" : pluginsAll.length > 0 ? "blockedFilteredEmpty" : "empty",
 								t,
 								onClear: data.plugins.length > 0 && (q !== "" || cat !== "all" || timeRange !== "all" || compatibleWithHost) ? () => {
 									setQ("");
@@ -17180,10 +17117,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									setCompatibleWithHost(false);
 									bodyRef.current?.querySelector("input")?.focus();
 								} : void 0
-							}) : /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(Masonry, {
+							}) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)(Masonry, {
 								items: pagePlugins,
 								render: (plugin) => pluginCard(plugin)
-							}), surface === "plugins" ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(LoadMore, {
+							}),
+							pluginsUnblocked.length > 0 && (surface === "plugins" ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(LoadMore, {
 								more: discoverMore.more,
 								onLoad: discoverMore.loadMore,
 								t
@@ -17194,7 +17132,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 								onGoToPage: goToPage,
 								onChangePageSize: changePageSize,
 								t
-							})] })
+							}))
 						] }) : tab === "favorites" ? data === null ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 							className: Market_module_css_default.loading,
 							children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
@@ -17356,7 +17294,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 								className: Market_module_css_default.empty,
 								children: t("themeEmpty")
 							}) : themePlugins$1.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(EmptyResults, {
-								blocked: themePluginsAll.length > 0,
+								message: themePluginsAll.length > 0 ? "blockedFilteredEmpty" : "empty",
 								t,
 								onClear: qThemes !== "" || themeTimeRange !== "all" ? () => {
 									setQThemes("");

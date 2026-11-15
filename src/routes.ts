@@ -522,7 +522,7 @@ function pnpmFailureMessage(result: { exitCode: number | null; stdout: string; s
  * Register the market's HTTP routes.
  * @param host - Acquired webServer + shell services.
  * @param config - Validated market configuration.
- * @returns Disposer removing every registered route.
+ * @returns Disposer removing every registered route and draining queued cache writes.
  */
 export function mountMarketRoutes(
   host: MarketHost,
@@ -530,7 +530,7 @@ export function mountMarketRoutes(
   commandRuntime?: PluginCommandRuntime,
   agentsLookup?: AgentsLookup,
   hostActivation?: HostPluginActivation,
-): () => void {
+): () => Promise<void> {
   let disposed = false
   // An ordinary profile must resolve under DSH_HOME by the same rules as the
   // DSH CLI. A host-authoritative explicit directory (DSH Desktop) does not
@@ -8597,7 +8597,7 @@ export function mountMarketRoutes(
     })),
   ]
 
-  return () => {
+  return async () => {
     disposed = true
     updateNotifications.dispose()
     // Release Agent maintenance holds before the routes disappear. This is the
@@ -8607,6 +8607,7 @@ export function mountMarketRoutes(
     setBuildEnvSource(previousBuildEnvSource)
     configurePersistentLog(null)
     for (const dispose of disposers) dispose()
+    await Promise.all([discoveryManifests.dispose(), githubDiscoveryManifests.dispose()])
   }
 }
 

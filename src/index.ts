@@ -379,9 +379,9 @@ export function apply(ctx: Context, config?: Config): void {
           repairTimer.unref?.()
           return async () => {
             clearTimeout(repairTimer)
-            disposeRoutes()
+            const routesDisposed = disposeRoutes()
             restoreTrustedHosts()
-            await runtime.dispose()
+            await Promise.all([routesDisposed, runtime.dispose()])
           }
         }, 'dsh-market: official Desktop routes and package operations')
         return
@@ -419,8 +419,9 @@ export function apply(ctx: Context, config?: Config): void {
         const restoreTrustedHosts = useTrustedHosts(ctx)
         const disposeRoutes = mountMarketRoutes(host, resolved, undefined, agentsLookupOf(ctx))
         return () => {
-          disposeRoutes()
+          const routesDisposed = disposeRoutes()
           restoreTrustedHosts()
+          return routesDisposed
         }
       }, 'dsh-market: http routes')
       return
@@ -472,9 +473,9 @@ export function apply(ctx: Context, config?: Config): void {
         // market can ask for a replay instead of mounting a second entry.
         const disposeRoutes = mountMarketRoutes(host, resolved, runtime, agentsLookupOf(ctx), desktopProfiles.pluginActivation)
         return async () => {
-          disposeRoutes()
+          const routesDisposed = disposeRoutes()
           restoreTrustedHosts()
-          await runtime.dispose()
+          await Promise.all([routesDisposed, runtime.dispose()])
         }
       }, 'dsh-market: Desktop http routes and package operations')
     })

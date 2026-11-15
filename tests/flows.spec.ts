@@ -700,7 +700,9 @@ vi.mock('../src/hot.ts', async (importOriginal) => ({
     if (state.updateExempt !== undefined) hot.updateExempt = state.updateExempt
   },
   listHotMounts: () => [...hot.mounts],
+  // Nothing in this fake tree can fail a child; the real tree is covered by hot-activation.spec.ts.
   listLiveHotMounts: () => [...hot.mounts],
+  hotMountFailure: () => null,
   hotMount: (_ctx: unknown, _dir: string, name: string) => {
     if (hot.failNext) {
       hot.failNext = false

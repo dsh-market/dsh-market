@@ -159,6 +159,17 @@ function phaseLabel(phase: NonNullable<MarketStatus['phase']>, t: Translate): st
   return t('phaseBuilding')
 }
 
+/** Reset before effects can use the new query with the previous page or limit. */
+function useResettableCount(initial: number, deps: readonly unknown[]) {
+  const [count, setCount] = useState(initial)
+  const [previousDeps, setPreviousDeps] = useState(deps)
+  if (deps.length !== previousDeps.length || deps.some((value, index) => !Object.is(value, previousDeps[index]))) {
+    setPreviousDeps(deps)
+    setCount(initial)
+  }
+  return [count, setCount] as const
+}
+
 /**
  * Page/page-size state shared by every paged list in this file (Discover,
  * Themes) — each caller owns its OWN instance (their filters are
@@ -174,10 +185,8 @@ function usePagination(count: number, resetDeps: readonly unknown[], scrollToTop
   goToPage: (next: number) => void
   changePageSize: (size: number) => void
 } {
-  const [page, setPage] = useState(1)
+  const [page, setPage] = useResettableCount(1, resetDeps)
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE)
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- resetDeps IS the intended dependency list, supplied by the caller.
-  useEffect(() => { setPage(1) }, resetDeps)
   const totalPages = Math.max(1, Math.ceil(count / pageSize))
   // Clamp in case the list shrank while the user was on a later page.
   const currentPage = Math.min(page, totalPages)
@@ -206,9 +215,7 @@ function useShownCount(count: number, resetDeps: readonly unknown[], chunk: numb
   more: number
   loadMore: () => void
 } {
-  const [limit, setLimit] = useState(chunk)
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- resetDeps IS the intended dependency list, supplied by the caller.
-  useEffect(() => { setLimit(chunk) }, resetDeps)
+  const [limit, setLimit] = useResettableCount(chunk, resetDeps)
   const shown = Math.min(count, limit)
   return {
     shown,
@@ -346,9 +353,13 @@ function InstalledSortMenu({ value, onChange, t }: { value: InstalledSort; onCha
 }
 
 /** Keep an empty search actionable without changing the user's sort or block list. */
-function EmptyResults({ blocked, onClear, t }: { blocked: boolean; onClear?: () => void; t: Translate }) {
+function EmptyResults({ message, onClear, t }: {
+  message: 'empty' | 'blockedFilteredEmpty' | 'hostFilterEmpty'
+  onClear?: () => void
+  t: Translate
+}) {
   return <div className={css.empty}>
-    <div>{t(blocked ? 'blockedFilteredEmpty' : 'empty')}</div>
+    <div>{t(message)}</div>
     {onClear && <Button variant="outline" size="sm" className={css.retryBtn} onClick={onClear}>
       {t('clearFilters')}
     </Button>}
@@ -4421,24 +4432,6 @@ export function MarketSection(props: MarketSectionProps) {
     // pluginBlocked closes over the installed map and the catalog match.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [pluginsAll, blockedNameSet, installed, repoIdentities, data, repoHints])
-  // Host filter, applied to the already-blocked list: the same rows
-  // `visiblePlugins` dropped, and the same count the chip reports, at a cost
-  // that does not grow with the catalog.
-  const { plugins, hostHiddenCount, hostUnavailableCount } = useMemo(() => {
-    if (!compatibleWithHost) return { plugins: pluginsUnblocked, hostHiddenCount: 0, hostUnavailableCount: 0 }
-    const compatible = (plugin: RegistryPlugin): boolean => {
-      const key = hostCompatibilityKey(plugin)
-      return key === null || hostCompatibility[key]?.status !== 'incompatible'
-    }
-    let hidden = 0
-    for (const plugin of pluginsAll) if (!compatible(plugin)) hidden += 1
-    let unavailable = 0
-    for (const plugin of pluginsUnblocked) {
-      const key = hostCompatibilityKey(plugin)
-      if (key !== null && hostCompatibility[key]?.basis === 'unavailable') unavailable += 1
-    }
-    return { plugins: pluginsUnblocked.filter(compatible), hostHiddenCount: hidden, hostUnavailableCount: unavailable }
-  }, [pluginsAll, pluginsUnblocked, compatibleWithHost, hostCompatibility])
   // A sort the user chose is a request to see the list in THAT order, and
   // this block ignores the sort by design (it is "what was added in the last
   // seven days", ordered by downloads). Left in place it sits between the
@@ -4452,11 +4445,9 @@ export function MarketSection(props: MarketSectionProps) {
       ? []
       : visiblePlugins(data.plugins, {
           category: 'all', query: '', lang, sort: 'downloads-desc', sinceDays: 7,
-          hostCompatibility, compatibleWithHost,
         }).filter(plugin => !pluginBlocked(plugin)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [data, tab, q, cat, timeRange, sortField, sortDir, lang, hostCompatibility, compatibleWithHost, blockedNameSet, installed, repoIdentities, repoHints])
-  const hasRecent = recentlyAdded.length > 0
+    [data, tab, q, cat, timeRange, sortField, sortDir, lang, blockedNameSet, installed, repoIdentities, repoHints])
   const [recentCollapsed, setRecentCollapsed] = useState(() => readRecentFlag(RECENT_COLLAPSED_KEY))
   const [recentHidden, setRecentHidden] = useState(() => readRecentFlag(RECENT_HIDDEN_KEY))
   const toggleRecentCollapsed = useCallback(() => {
@@ -4477,13 +4468,33 @@ export function MarketSection(props: MarketSectionProps) {
     setRecentCollapsed(false)
     writeRecentFlag(RECENT_COLLAPSED_KEY, false)
   }, [])
-  const recentPlugins = recentlyAdded.slice(0, RECENT_STRIP_LIMIT)
+  // Fix the slice before compatibility resolves. Hiding a card must not
+  // pull in an unchecked replacement and start another batch.
+  const discoverResetDeps = [q, cat, sortField, sortDir, timeRange]
   const { currentPage, totalPages, pageSize, goToPage, changePageSize } =
-    usePagination(plugins.length, [q, cat, sortField, sortDir, timeRange, compatibleWithHost], scrollToTop)
-  const discoverMore = useShownCount(plugins.length, [q, cat, sortField, sortDir, timeRange, compatibleWithHost], DEFAULT_PAGE_SIZE)
-  const pagePlugins = surface === 'plugins'
-    ? plugins.slice(0, discoverMore.shown)
-    : plugins.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+    usePagination(pluginsUnblocked.length, discoverResetDeps, scrollToTop)
+  const discoverMore = useShownCount(pluginsUnblocked.length, discoverResetDeps, DEFAULT_PAGE_SIZE)
+  const basePage = surface === 'plugins'
+    ? pluginsUnblocked.slice(0, discoverMore.shown)
+    : pluginsUnblocked.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+  const baseRecent = recentlyAdded.slice(0, RECENT_STRIP_LIMIT)
+  const hostVerdict = (plugin: RegistryPlugin) => {
+    const key = hostCompatibilityKey(plugin)
+    return key === null ? undefined : hostCompatibility[key]
+  }
+  const compatible = (plugin: RegistryPlugin): boolean =>
+    !compatibleWithHost || hostVerdict(plugin)?.status !== 'incompatible'
+  const pagePlugins = basePage.filter(compatible)
+  const recentPlugins = baseRecent.filter(compatible)
+  const hasRecent = recentPlugins.length > 0
+  // A catalog card can appear both in the grid and in the recent strip.
+  // Keep distinct cards in counts even when they share the same lookup key.
+  const discoverCandidates = [...new Set([...basePage, ...(!recentHidden && !recentCollapsed ? baseRecent : [])])]
+  const pageHostPackages = [...new Set(discoverCandidates.map(hostCompatibilityKey).filter(key => key !== null))]
+  const pageVerdicts = discoverCandidates.map(hostVerdict)
+  const loadedHostPackages = pageHostPackages.filter(key => hostCompatibility[key] !== undefined).length
+  const hostHiddenCount = pageVerdicts.filter(verdict => verdict?.status === 'incompatible').length
+  const hostUnavailableCount = pageVerdicts.filter(verdict => verdict?.basis === 'unavailable').length
 
   const themePluginsAll = useMemo(
     () => (data === null ? [] : visiblePlugins(data.plugins, {
@@ -4549,13 +4560,12 @@ export function MarketSection(props: MarketSectionProps) {
   // Favorites reuse pluginCard (and its host-requirement badge). Discover
   // already loads compatibility for the current page; without the same
   // fetch here the badge stays on "Reading host requirement…" forever.
-  const compatibilityCards = marketGone ? [] : tab === 'discover'
-    ? [...pagePlugins, ...(!recentHidden && !recentCollapsed ? recentPlugins : [])]
-    : tab === 'favorites' ? favoritePagePlugins : []
-  const compatibilityKeys = compatibilityCards.map(hostCompatibilityKey).filter(key => key !== null).join('\u0000')
+  const compatibilityKeys = (marketGone ? [] : tab === 'discover' ? pageHostPackages
+    : tab === 'favorites' ? favoritePagePlugins.map(hostCompatibilityKey).filter(key => key !== null)
+    : []).join('\u0000')
   useEffect(() => {
-    discoveryScan.setDemand(compatibilityDemandOwner.current, compatibilityKeys === '' ? [] : compatibilityKeys.split('\u0000'))
-  }, [compatibilityKeys])
+    discoveryScan.setDemand(compatibilityDemandOwner.current, data, compatibilityKeys === '' ? [] : compatibilityKeys.split('\u0000'))
+  }, [data, compatibilityKeys])
   useEffect(() => {
     const owner = compatibilityDemandOwner.current
     return () => { discoveryScan.removeDemand(owner) }
@@ -8277,12 +8287,12 @@ export function MarketSection(props: MarketSectionProps) {
                         }}
                       />
                       </div>
-                      {compatibleWithHost && typeof hostVersion === 'string' && (
+                      {compatibleWithHost && typeof hostVersion === 'string' && pageHostPackages.length > 0 && (
                         <div className={css.hostFilterNote}>
-                          {compatibility.scanning
+                          {loadedHostPackages < pageHostPackages.length
                             ? t('hostFilterLoading')
-                              .replace('{0}', String(compatibility.attempted))
-                              .replace('{1}', String(compatibility.total))
+                              .replace('{0}', String(loadedHostPackages))
+                              .replace('{1}', String(pageHostPackages.length))
                             : t(hostUnavailableCount > 0 ? 'hostFilterIncomplete' : 'hostFilterActive')
                                 .replace('{0}', hostVersion)
                                 .replace('{1}', String(hostHiddenCount))
@@ -8320,31 +8330,19 @@ export function MarketSection(props: MarketSectionProps) {
                           </div>
                         </section>
                     )}
-                    {plugins.length === 0
-                      ? <EmptyResults blocked={pluginsAll.length > hostHiddenCount} t={t}
+                    {pagePlugins.length === 0
+                      ? <EmptyResults message={basePage.length > 0 ? 'hostFilterEmpty' : pluginsAll.length > 0 ? 'blockedFilteredEmpty' : 'empty'} t={t}
                           onClear={data.plugins.length > 0 && (q !== '' || cat !== 'all' || timeRange !== 'all' || compatibleWithHost) ? () => {
                             setQ(''); resetDiscoverSearch(value => value + 1)
                             setCat('all'); setTimeRange('all'); setCompatibleWithHost(false)
                             bodyRef.current?.querySelector('input')?.focus()
                           } : undefined}
                         />
-                      : (
-                          <>
-                            <Masonry items={pagePlugins} render={plugin => pluginCard(plugin)} />
-                            {surface === 'plugins'
-                              ? <LoadMore more={discoverMore.more} onLoad={discoverMore.loadMore} t={t} />
-                              : (
-                                  <Pager
-                                    currentPage={currentPage}
-                                    totalPages={totalPages}
-                                    pageSize={pageSize}
-                                    onGoToPage={goToPage}
-                                    onChangePageSize={changePageSize}
-                                    t={t}
-                                  />
-                                )}
-                          </>
-                        )}
+                      : <Masonry items={pagePlugins} render={plugin => pluginCard(plugin)} />}
+                    {pluginsUnblocked.length > 0 && (surface === 'plugins'
+                      ? <LoadMore more={discoverMore.more} onLoad={discoverMore.loadMore} t={t} />
+                      : <Pager currentPage={currentPage} totalPages={totalPages} pageSize={pageSize}
+                          onGoToPage={goToPage} onChangePageSize={changePageSize} t={t} />)}
                   </>
                 )
           : tab === 'favorites'
@@ -8495,7 +8493,7 @@ export function MarketSection(props: MarketSectionProps) {
                     : anyThemePlugins.length === 0
                       ? <div className={css.empty}>{t('themeEmpty')}</div>
                       : themePlugins.length === 0
-                        ? <EmptyResults blocked={themePluginsAll.length > 0} t={t}
+                        ? <EmptyResults message={themePluginsAll.length > 0 ? 'blockedFilteredEmpty' : 'empty'} t={t}
                             onClear={qThemes !== '' || themeTimeRange !== 'all' ? () => {
                               setQThemes(''); resetThemeSearch(value => value + 1)
                               setThemeTimeRange('all')

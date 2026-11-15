@@ -5,7 +5,7 @@
 
 import type { DiagnosticReportV1 } from '../diagnostics.ts'
 import { findCatalogEntryForLocal } from '../catalog-local-match.ts'
-import { parseSourceUrl } from '../sources.ts'
+import { NPM_NAME_RE, parseSourceUrl } from '../sources.ts'
 export type { SharedHostPackageDependencyFinding } from '../diagnostics.ts'
 
 /** Localized text keyed by language ('zh' / 'en'). */
@@ -126,7 +126,7 @@ export type HostCompatibilityMap = Record<string, HostCompatibility>
 
 /** Keep GitHub packages in one repository distinct, independently of their display names. */
 export function hostCompatibilityKey(plugin: Pick<RegistryPlugin, 'npm' | 'url'>): string | null {
-  if (typeof plugin.npm === 'string' && plugin.npm !== '') return plugin.npm
+  if (typeof plugin.npm === 'string' && plugin.npm !== '') return NPM_NAME_RE.test(plugin.npm) ? plugin.npm : null
   return parseSourceUrl(plugin.url) === null ? null : plugin.url
 }
 
@@ -734,9 +734,8 @@ export function visiblePlugins(plugins: RegistryPlugin[], options: ListQuery): R
     const categories = pluginCategories(plugin)
     if (options.category !== 'all' && !categories.includes(options.category)) return []
     if (options.sinceDays !== undefined && !withinDays(plugin.added, options.sinceDays)) return []
-    const compatibilityKey = hostCompatibilityKey(plugin)
-    if (options.compatibleWithHost === true && compatibilityKey !== null
-      && options.hostCompatibility?.[compatibilityKey]?.status === 'incompatible') return []
+    const compatibilityKey = options.compatibleWithHost === true ? hostCompatibilityKey(plugin) : null
+    if (compatibilityKey !== null && options.hostCompatibility?.[compatibilityKey]?.status === 'incompatible') return []
     const relevance = query === '' ? 0 : pluginRelevance(plugin, query, tokens, options.lang, options.categories)
     return relevance === 0 && query !== '' ? [] : [{ plugin, relevance, index }]
   })
