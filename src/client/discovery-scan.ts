@@ -1,6 +1,5 @@
 import { api, hostCompatibilityKey, type HostCompatibility, type HostCompatibilityMap, type Registry, type RegistryPlugin } from './market-data.ts'
 import { isExactReleaseVersion } from '../release-candidates.ts'
-import { NPM_NAME_RE } from '../sources.ts'
 
 const BATCH_SIZE = 64
 // The route accepts up to 32 KiB. Versions and revisions repeat their keys.
@@ -35,16 +34,17 @@ interface Snapshot {
   gone: boolean
   hostVersion: string | null | undefined
   verdicts: HostCompatibilityMap
-  total: number
-  attempted: number
-  scanning: boolean
 }
 
 interface Batch {
   entries: Entry[]
   context: number
-  kind: 'full' | 'visible' | 'retry'
-  run: number
+  retry: boolean
+}
+
+interface Demand {
+  catalog: Registry
+  keys: readonly string[]
 }
 
 type CatalogLoad = 'loaded' | 'superseded' | 'gone'
@@ -58,7 +58,6 @@ function describeEntry(plugin: RegistryPlugin): Entry | null {
   if (key === null) return null
   const version = typeof plugin.version === 'string' ? plugin.version.trim() : ''
   if (!key.startsWith('https://')) {
-    if (!NPM_NAME_RE.test(key)) return null
     const npmVersion = isExactReleaseVersion(version) ? version : undefined
     return {
       key, fingerprint: npmVersion ?? '', npmVersion, expires: npmVersion === undefined,
@@ -108,29 +107,24 @@ function readVerdict(value: HostCompatibility | undefined | null): HostCompatibi
   } : value
 }
 
-/** Shared by Settings and the sidebar. Only dispatched entries occupy a slot. */
+/** Shares on-demand badge lookups across the three market surfaces. */
 export class DiscoveryScan {
   private snapshot: Snapshot | undefined
   private readonly listeners = new Set<() => void>()
   private entries = new Map<string, Entry>()
   private results = new Map<string, Result>()
-  private readonly demand = new Map<object, readonly string[]>()
-  private readonly inFlight = new Map<Entry, Batch>()
-  private full: Batch | undefined
-  private visible: Batch | undefined
+  private readonly demand = new Map<object, Demand>()
+  private pending: Batch | undefined
   private hostVersion: Snapshot['hostVersion']
   private catalog: Registry | null = null
   private boot: string | undefined
   private enabled: boolean | undefined
   private context = 0
-  private run = 0
   private catalogRequest = 0
   private resumeRequest: { id: number; result: Promise<CatalogLoad> } | undefined
   private catalogRefreshUsed = false
   private active = false
   private gone = false
-  private cursor = 0
-  private queue: Entry[] = []
   private timer: ReturnType<typeof setTimeout> | undefined
   private verdictsChanged = false
 
@@ -139,8 +133,7 @@ export class DiscoveryScan {
   getSnapshot = (): Snapshot => {
     return this.snapshot ??= {
       enabled: this.enabled ??= initialPreference(),
-      catalog: null, gone: false, hostVersion: undefined, verdicts: Object.create(null), total: 0,
-      attempted: 0, scanning: false,
+      catalog: null, gone: false, hostVersion: undefined, verdicts: Object.create(null),
     }
   }
 
@@ -150,7 +143,8 @@ export class DiscoveryScan {
   }
 
   reset() {
-    this.stop()
+    clearTimeout(this.timer)
+    this.timer = undefined
     this.active = false
     this.gone = false
     this.context += 1
@@ -163,9 +157,8 @@ export class DiscoveryScan {
     this.entries.clear()
     this.results.clear()
     this.demand.clear()
-    this.inFlight.clear()
     this.catalogRefreshUsed = false
-    this.full = this.visible = undefined
+    this.pending = undefined
     this.verdictsChanged = false
     this.snapshot = undefined
   }
@@ -174,14 +167,11 @@ export class DiscoveryScan {
     if (this.getSnapshot().enabled === enabled) return
     try { localStorage.setItem(HOST_FILTER_KEY, enabled ? 'compatible' : 'all') } catch { /* storage is optional */ }
     this.enabled = enabled
+    this.catalogRefreshUsed = false
     if (enabled) {
-      this.allowRetry(this.entries.keys())
-      this.restart()
-      if ([...this.results.values()].some(result => result.verdict.catalogChanged === true)) {
-        this.refreshCatalog()
-      }
-    } else {
-      this.stop()
+      const keys = this.visibleKeys()
+      this.allowRetry(keys)
+      if (keys.some(key => this.results.get(key)?.verdict.catalogChanged === true)) this.refreshCatalog()
     }
     this.update()
   }
@@ -210,7 +200,6 @@ export class DiscoveryScan {
   private setCatalog(catalog: Registry, hostVersion: Snapshot['hostVersion']) {
     if (catalog.updated !== this.catalog?.updated) this.onCatalogGenerationChange()
     this.catalog = catalog
-    const reconnecting = !this.active
     this.active = true
     this.gone = false
     const next = new Map<string, Entry>()
@@ -220,23 +209,18 @@ export class DiscoveryScan {
       const previous = this.entries.get(described.key)
       next.set(described.key, previous?.fingerprint === described.fingerprint ? previous : described)
     }
-    const changed = next.size !== this.entries.size || [...next].some(([key, entry]) => this.entries.get(key) !== entry)
     this.entries = next
     const hostChanged = hostVersion !== undefined && hostVersion !== this.hostVersion
     if (hostChanged) {
       this.hostVersion = hostVersion
       this.invalidate()
     }
-    if (changed) {
-      for (const [key, result] of this.results) {
-        if (next.get(key) === result.entry) continue
-        this.results.delete(key)
-        this.verdictsChanged = true
-      }
+    for (const [key, result] of this.results) {
+      if (next.get(key) === result.entry) continue
+      this.results.delete(key)
+      this.verdictsChanged = true
     }
-    if ((changed || hostChanged || reconnecting) && this.getSnapshot().enabled) this.restart(false)
     this.markOversizedEntries()
-    if ([...this.results.values()].some(result => result.verdict.catalogChanged === true)) this.refreshCatalog()
     this.update()
   }
 
@@ -246,7 +230,7 @@ export class DiscoveryScan {
     if (previous === undefined || previous === boot) return
     this.invalidate()
     this.markOversizedEntries()
-    if (this.getSnapshot().enabled) this.restart()
+    this.catalogRefreshUsed = false
     this.update()
   }
 
@@ -254,7 +238,7 @@ export class DiscoveryScan {
     if (this.gone) return
     this.active = false
     this.gone = true
-    this.stop()
+    this.catalogRefreshUsed = false
     this.catalogRequest += 1
     this.invalidate()
     this.update()
@@ -271,12 +255,18 @@ export class DiscoveryScan {
     return result
   }
 
-  setDemand(owner: object, keys: readonly string[]) {
-    const before = this.demand.get(owner) ?? []
-    this.demand.set(owner, keys)
+  setDemand(owner: object, catalog: Registry | null, keys: readonly string[]) {
+    if (catalog !== this.catalog) return
+    const before = this.demand.get(owner)?.keys ?? []
+    if (catalog === null || keys.length === 0) this.demand.delete(owner)
+    else this.demand.set(owner, { catalog, keys })
     // Revisited rows may retry after their cooldown. A rerender with the same
     // rows never spends another automatic attempt.
-    this.allowRetry(keys.filter(key => !before.includes(key)))
+    const arrived = keys.filter(key => !before.includes(key))
+    this.allowRetry(arrived)
+    if (arrived.some(key => this.results.get(key)?.verdict.catalogChanged === true)) {
+      this.refreshCatalog()
+    }
     this.update()
   }
 
@@ -294,6 +284,7 @@ export class DiscoveryScan {
 
   private invalidate() {
     this.context += 1
+    this.pending = undefined
     this.results.clear()
     this.verdictsChanged = true
   }
@@ -308,40 +299,26 @@ export class DiscoveryScan {
     }
   }
 
-  private restart(newRun = true) {
-    if (newRun) {
-      this.run += 1
-      this.catalogRefreshUsed = false
-    }
-    this.queue = [...this.entries.values()]
-    this.cursor = 0
-  }
-
-  private stop() {
-    this.run += 1
-    this.catalogRefreshUsed = false
-    this.queue = []
-    this.cursor = 0
-    clearTimeout(this.timer)
-    this.timer = undefined
-  }
-
   private visibleKeys(): string[] {
-    return [...new Set([...this.demand.values()].flat())]
+    // A new catalog may reorder or remove rows. Wait for each view to report
+    // its slice of that catalog before using it to start another batch.
+    const keys = new Set<string>()
+    for (const demand of this.demand.values()) {
+      if (demand.catalog !== this.catalog) continue
+      for (const key of demand.keys) keys.add(key)
+    }
+    return [...keys]
   }
 
   private update() {
     const previous = this.getSnapshot()
     const enabled = this.enabled ?? previous.enabled
     const now = Date.now()
-    let expired = false
     for (const [key, result] of this.results) {
       if (result.expiresAt > now) continue
       this.results.delete(key)
-      expired = true
       this.verdictsChanged = true
     }
-    if (expired && enabled) this.restart(false)
     this.pump()
     let verdicts = previous.verdicts
     if (this.verdictsChanged) {
@@ -349,56 +326,35 @@ export class DiscoveryScan {
       for (const [key, result] of this.results) verdicts[key] = result.verdict
       this.verdictsChanged = false
     }
-    const scanning = this.active && enabled && (this.cursor < this.queue.length
-      || this.full?.run === this.run || this.visible?.kind === 'visible')
     if (previous.enabled === enabled && previous.catalog === this.catalog && previous.gone === this.gone
-      && previous.hostVersion === this.hostVersion
-      && previous.verdicts === verdicts && previous.total === this.entries.size
-      && previous.attempted === this.results.size && previous.scanning === scanning) return
+      && previous.hostVersion === this.hostVersion && previous.verdicts === verdicts) return
     this.snapshot = {
       enabled, catalog: this.catalog, gone: this.gone, hostVersion: this.hostVersion, verdicts,
-      total: this.entries.size, attempted: this.results.size, scanning,
     }
     for (const listener of this.listeners) listener()
   }
 
   private pump() {
-    if (!this.active) return
-    const enabled = this.enabled ?? this.getSnapshot().enabled
+    if (!this.active || this.pending !== undefined) {
+      this.scheduleRetry()
+      return
+    }
     const now = Date.now()
-    const available = (entry: Entry): boolean => this.inFlight.get(entry)?.context !== this.context
-    const needsLookup = (entry: Entry): boolean => {
+    const entries = this.visibleKeys().flatMap(key => {
+      const entry = this.entries.get(key)
+      return entry === undefined ? [] : [entry]
+    })
+    const fresh = this.visibleBatch(entries.filter(entry => {
       const result = this.results.get(entry.key)
       return result === undefined || result.expiresAt <= now
-    }
-    if (this.visible === undefined) {
-      const entries = this.visibleKeys().flatMap(key => {
-        const entry = this.entries.get(key)
-        return entry !== undefined && available(entry) ? [entry] : []
-      })
-      const fresh = this.visibleBatch(entries.filter(needsLookup))
-      if (fresh.length > 0) this.dispatch(fresh, 'visible')
-      else if (enabled) {
-        const retry = this.visibleBatch(entries.filter(entry => {
-          const result = this.results.get(entry.key)
-          return result !== undefined && result.retryAt <= now && !result.automaticRetryUsed
-        }))
-        if (retry.length > 0) this.dispatch(retry, 'retry')
-      }
-    }
-    if (enabled && this.full === undefined) {
-      const chunk: Entry[] = []
-      let bytes = 0
-      while (this.cursor < this.queue.length && chunk.length < BATCH_SIZE) {
-        const entry = this.queue[this.cursor]!
-        if (this.entries.get(entry.key) === entry && available(entry) && needsLookup(entry)) {
-          if (bytes + entry.bytes > BATCH_BYTES) break
-          bytes += entry.bytes
-          chunk.push(entry)
-        }
-        this.cursor += 1
-      }
-      if (chunk.length > 0) this.dispatch(chunk, 'full')
+    }))
+    if (fresh.length > 0) this.dispatch(fresh, false)
+    else if (this.enabled ?? this.getSnapshot().enabled) {
+      const retry = this.visibleBatch(entries.filter(entry => {
+        const result = this.results.get(entry.key)
+        return result !== undefined && result.retryAt <= now && !result.automaticRetryUsed
+      }))
+      if (retry.length > 0) this.dispatch(retry, true)
     }
     this.scheduleRetry()
   }
@@ -417,21 +373,19 @@ export class DiscoveryScan {
   private scheduleRetry() {
     clearTimeout(this.timer)
     this.timer = undefined
-    if (!this.active || !(this.enabled ?? this.getSnapshot().enabled) || this.visible !== undefined) return
+    if (!this.active || !(this.enabled ?? this.getSnapshot().enabled) || this.pending !== undefined) return
     let next = Infinity
     for (const key of this.visibleKeys()) {
       const result = this.results.get(key)
-      if (result === undefined || result.automaticRetryUsed || this.inFlight.has(result.entry)) continue
+      if (result === undefined || result.automaticRetryUsed) continue
       next = Math.min(next, result.retryAt)
     }
     if (Number.isFinite(next)) this.timer = setTimeout(() => this.pump(), Math.max(0, next - Date.now()))
   }
 
-  private dispatch(entries: Entry[], kind: Batch['kind']) {
-    const batch = { entries, kind, context: this.context, run: this.run }
-    if (kind === 'full') this.full = batch
-    else this.visible = batch
-    for (const entry of entries) this.inFlight.set(entry, batch)
+  private dispatch(entries: Entry[], retry: boolean) {
+    const batch = { entries, retry, context: this.context }
+    this.pending = batch
     void this.request(batch)
   }
 
@@ -451,11 +405,7 @@ export class DiscoveryScan {
     } catch {
       requestFailed = true
     }
-    if (this.full === batch) this.full = undefined
-    if (this.visible === batch) this.visible = undefined
-    for (const entry of batch.entries) {
-      if (this.inFlight.get(entry) === batch) this.inFlight.delete(entry)
-    }
+    if (this.pending === batch) this.pending = undefined
     if (batch.context !== this.context) {
       this.update()
       return
@@ -466,7 +416,7 @@ export class DiscoveryScan {
     if ((typeof responseHost === 'string' || responseHost === null) && responseHost !== this.hostVersion) {
       if (this.hostVersion === undefined) this.hostVersion = responseHost
       else {
-        if (batch.kind !== 'full' || this.getSnapshot().enabled) this.refreshCatalog()
+        if (this.visibleKeys().length > 0) this.refreshCatalog()
         requestFailed = true
       }
     }
@@ -479,12 +429,14 @@ export class DiscoveryScan {
       const retryAt = verdict.basis !== 'unavailable' || verdict.catalogChanged === true ? Infinity
         : now + (verdict.retryAfterMs ?? (requestFailed ? REQUEST_RETRY_MS : UNAVAILABLE_RETRY_MS))
       this.results.set(entry.key, {
-        entry, verdict, retryAt, automaticRetryUsed: batch.kind === 'retry',
+        entry, verdict, retryAt, automaticRetryUsed: batch.retry,
         expiresAt: verdict.basis !== 'unavailable' && entry.expires ? now + MUTABLE_SOURCE_TTL_MS : Infinity,
       })
       this.verdictsChanged = true
     }
-    if (catalogChanged && (batch.kind !== 'full' || this.getSnapshot().enabled)) this.refreshCatalog()
+    if (catalogChanged && this.visibleKeys().some(key => this.results.get(key)?.verdict.catalogChanged === true)) {
+      this.refreshCatalog()
+    }
     this.update()
   }
 
@@ -492,7 +444,7 @@ export class DiscoveryScan {
     if (!this.active || this.catalogRefreshUsed) return
     this.catalogRefreshUsed = true
     void this.loadCatalog().catch(() => {
-      // Preserve the rendered list. The next explicit scan may refresh again.
+      // Preserve the rendered list. A new visit can revalidate again.
     })
   }
 }
