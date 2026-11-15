@@ -1762,8 +1762,8 @@ export function localizeBilingualList(parts: string[], lang: 'zh' | 'en'): strin
  * The repository name IS the plugin name in the ordinary case, because a
  * repository holding one plugin is named after it. Only the compound form
  * needs unpicking. Prefer its mapped npm package when available: a generic
- * directory such as `plugin` is not the product name. Without that mapping,
- * keep the directory-leaf fallback for source-only entries.
+ * directory such as `plugin` is not the product name. For a source-only entry,
+ * use the repository name when its directory leaf is empty or generic.
  *
  * Not a substitute for the identity: every key, lookup and install still
  * uses `name` unchanged.
@@ -1774,9 +1774,7 @@ export function pluginName(name: string, npm?: string | null): string {
   if (typeof npm === 'string' && npm.trim() !== '') return npm.trim()
   const sub = name.slice(hash + 1)
   const leaf = sub.slice(sub.lastIndexOf('/') + 1)
-  // A sub-path that is empty or trailing-slashed tells us nothing; the
-  // repository half is a better answer than an empty title.
-  return leaf === '' ? name.slice(0, hash) : leaf
+  return leaf === '' || /^(?:dsh|plugin)$/i.test(leaf) ? name.slice(0, hash) : leaf
 }
 
 /**
