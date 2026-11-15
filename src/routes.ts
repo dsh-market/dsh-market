@@ -18,7 +18,8 @@ import { packageFileFromRegistry } from './catalog-npm.ts'
 import { forgetCatalog, loadRegistry, pluginCategories, type Registry, type RegistryPlugin } from './registry.ts'
 import { settingsNamespaceState } from './settings.ts'
 import {
-  buildEnvFromUnknown, cleanHotDir, forgetInstalled, hotMount, hotUnmount, listHotMounts, MAX_BLOCKED, MAX_BLOCKED_NAME, MAX_FAVORITES, MAX_NOTE, MAX_UPDATE_EXEMPT,
+  buildEnvFromUnknown, cleanHotDir, forgetInstalled, hotMount, hotMountFailure, hotUnmount, listHotMounts, listLiveHotMounts,
+  MAX_BLOCKED, MAX_BLOCKED_NAME, MAX_FAVORITES, MAX_NOTE, MAX_UPDATE_EXEMPT,
   mountClientOnlyDeps, purgeMarketState, readMarketState, recordInstalled, recordUpdated, writeMarketState,
   type BrokenReason, type MarketState,
 } from './hot.ts'
@@ -1142,6 +1143,7 @@ export function mountMarketRoutes(
     if (enabled) {
       if (listHotMounts().includes(name)) {
         ok = true
+        reason = hotMountFailure(name, dir) ?? undefined
       } else if (carrierRowIds(dir, name).length > 0) {
         // A carrier replaces something: its patch disables stock rows and its
         // own rows stand in for them, with `disabled: !!js …` guards deciding
@@ -1177,7 +1179,7 @@ export function mountMarketRoutes(
           // durable layers half-written: the stack entry re-added, the rows
           // it owns still disabled, and both the stock UI and the plugin's
           // replacement off at the next boot (#1010).
-          ok = result.ok || result.deferred === true
+          ok = result.ok || result.deferred === true || result.retained === true
           reason = result.reason ?? undefined
           // Deliberately NOT clearing replacedWhileLive here (#685). This used
           // to say "a mount that succeeded imported the module as it is on
@@ -1502,7 +1504,7 @@ export function mountMarketRoutes(
    * loader side, every boot-loaded bundle plugin would read as "restart".
    */
   function liveNames(): Set<string> {
-    const live = new Set(listHotMounts())
+    const live = new Set(listLiveHotMounts())
     for (const entry of host.loader.entries()) {
       if (entry.fiber === undefined) continue
       if (entry.options.name !== undefined) {
@@ -3852,7 +3854,7 @@ export function mountMarketRoutes(
           present,
           activation,
           diagnostics,
-          live: listHotMounts(),
+          live: listLiveHotMounts(),
           disabled: [...disabled],
           groups,
           groupOrder,
@@ -4288,7 +4290,7 @@ export function mountMarketRoutes(
           pendingRollbacks.clear()
           const activated = await themes.activateTheme(name)
           logEvent(activated ? 'info' : 'error', 'use-skin', `${name}: ${activated ? 'active' : 'failed'}`)
-          sendJson(response, activated ? 200 : 502, { ok: activated, live: listHotMounts() })
+          sendJson(response, activated ? 200 : 502, { ok: activated, live: listLiveHotMounts() })
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
           logEvent('error', 'use-skin', `route error: ${message}`)
@@ -4399,7 +4401,7 @@ export function mountMarketRoutes(
               name,
               enabled,
               disabled: [...disabled],
-              live: listHotMounts(),
+              live: listLiveHotMounts(),
               // The same verdict the listing gives (#685): the reply used the
               // loader inventory alone and said `live` for a plugin serving
               // its old build, while a refresh of the listing — which applies

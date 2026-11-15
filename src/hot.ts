@@ -21,6 +21,7 @@ import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { isUpdateCheckIntervalHours, type UpdateCheckIntervalHours } from './update-notification-settings.ts'
+import type { FiberState } from '@deepseek-ai/cordis'
 import { asChannel, type Channel } from './channels.ts'
 import { asRegion, normalizeGithubProxy, type Region } from './regions.ts'
 import { findDshInstallDir } from './dsh-install.ts'
@@ -137,8 +138,13 @@ const HOT_MOUNT_TIMEOUT_MS = Number(process.env.DSH_MARKET_HOT_MOUNT_TIMEOUT_MS)
 
 let hotTreeClass: unknown | null | undefined
 
-/** The part of a loader entry the unmount needs. */
+// Cordis declares FiberState as a const enum, so the installed host exposes its numeric values.
+const FAILED_FIBER_STATE: FiberState.FAILED = 3
+
+/** The parts of a loader entry used for reporting activation and unmounting. */
 interface HotEntry {
+  readonly id?: string
+  readonly fiber?: { readonly state: number }
   update(options: { disabled: boolean }, create: boolean, force: boolean): Promise<unknown>
 }
 interface HotEntryTree {
@@ -1021,9 +1027,35 @@ export function forgetInstalled(profileDir: string, name: string): void {
   writeState(profileDir, state, true)
 }
 
-/** Package names currently live through a market hot mount (patch or shim). */
+/** Package names whose hot-mount trees are still attached and can be removed. */
 export function listHotMounts(): string[] {
   return [...hotHandles.keys()]
+}
+
+/** Report a failed child only when it belongs to this package's hot-mount tree. */
+export function hotMountFailure(packageName: string, profileDir?: string): string | null {
+  const file = hotTreeOf.get(packageName)
+  if (file === undefined) return null
+  if (profileDir !== undefined && dirname(fileURLToPath(file)) !== join(profileDir, HOT_DIR)) return null
+  const tree = hotTrees.get(file)
+  if (typeof tree?.entries !== 'function') return null
+  const failed: string[] = []
+  try {
+    for (const entry of tree.entries()) {
+      if (entry.fiber?.state === FAILED_FIBER_STATE && typeof entry.id === 'string') failed.push(entry.id)
+    }
+  } catch {
+    // Older loaders can have an unreadable activation state.
+    return null
+  }
+  if (failed.length === 0) return null
+  const components = failed.join(', ')
+  return `组件 ${components} 启动失败。请在诊断中查看原因。 / Components failed to start (${components}). Check Diagnostics for the error.`
+}
+
+/** Hot mounts the market can report as live. */
+export function listLiveHotMounts(): string[] {
+  return listHotMounts().filter(name => hotMountFailure(name) === null)
 }
 
 let hotSequence = 0
@@ -1149,6 +1181,8 @@ export interface HotMountResult {
   ok: boolean
   /** Bilingual reason shown to the user instead of a bare restart banner. */
   reason: string | null
+  /** The tree is still attached so its running components can continue. */
+  retained?: true
   /**
    * Set when nothing was attempted because this package can only come up on a
    * start — its patch holds more than plain inserts. That is a verdict about
@@ -1354,16 +1388,23 @@ export async function hotMount(ctx: HotContext, profileDir: string, packageName:
     }
     hotHandles.set(packageName, handle)
     hotTreeOf.set(packageName, pathToFileURL(file).href)
-    ctx.logger?.info?.(`[dsh-market] hot-mounted ${packageName}`)
-    logEvent('info', 'hot-mount', `${packageName}: live${shimNames.has(packageName) ? ' (client-only shim)' : ''}`)
+    const failure = hotMountFailure(packageName, profileDir)
+    const lines = mountLog.finish()
+    if (failure === null) {
+      ctx.logger?.info?.(`[dsh-market] hot-mounted ${packageName}`)
+      logEvent('info', 'hot-mount', `${packageName}: live${shimNames.has(packageName) ? ' (client-only shim)' : ''}`)
+    } else {
+      ctx.logger?.warn(`[dsh-market] ${packageName}: ${failure}`)
+      logEvent('warn', 'hot-mount', `${packageName}: ${failure}`)
+    }
     // A mount that resolves while an entry is still waiting on a service is
     // "live" by the host's own verdict, so the verdict stands — but the lines
     // the host logged meanwhile are the only record of why the entry never
     // started serving (#1197).
-    for (const line of mountLog.finish()) {
+    for (const line of lines) {
       logEvent('warn', 'hot-mount', `${packageName}: the host logged this while mounting — ${line}`)
     }
-    return { ok: true, reason: null }
+    return failure === null ? { ok: true, reason: null } : { ok: false, reason: failure, retained: true }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     ctx.logger?.warn(`[dsh-market] hot mount of ${packageName} failed, restart required: ${message}`)

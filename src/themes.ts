@@ -350,6 +350,10 @@ export function createThemeManager(
    * set is what lets the next attempt try it again.
    */
   async function activateTheme(name: string): Promise<boolean> {
+    const mount = async (theme: string): Promise<boolean> => {
+      const result = await hotMount(host, activeProfileDir, theme)
+      return result.ok || result.retained === true
+    }
     const themes = await installedThemeNames()
     const stopped: { name: string; kind: 'hot' | 'entry' }[] = []
     for (const other of themes) {
@@ -366,11 +370,11 @@ export function createThemeManager(
     writeDisabled(activeProfileDir, disabledThemes)
     const live = listHotMounts().includes(name)
       || await setEntryDisabled(name, false)
-      || (await hotMount(host, activeProfileDir, name)).ok
+      || await mount(name)
     if (live) return true
     for (const previous of stopped) {
       const back = previous.kind === 'hot'
-        ? (await hotMount(host, activeProfileDir, previous.name)).ok
+        ? await mount(previous.name)
         : await setEntryDisabled(previous.name, false)
       if (back) disabledThemes.delete(previous.name)
       else logEvent('warn', 'theme', `${previous.name}: could not be restored after ${name} failed to start`)
