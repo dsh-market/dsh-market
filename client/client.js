@@ -11428,8 +11428,16 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const recordSeq = (0, react.useRef)(0);
 			/** The synthetic install task rebuilt from dshm-pending after a remount. */
 			const recoveredInstall = (0, react.useRef)(null);
-			/** The synthetic task rebuilt from dshm-updating after this section remounts. */
-			const recoveredUpdateRecordId = (0, react.useRef)(null);
+			/** The local task tracking dshm-updating, either awaiting its reply or recovering it. */
+			const pendingUpdate = (0, react.useRef)(null);
+			const mountedRef = (0, react.useRef)(true);
+			(0, react.useEffect)(() => {
+				mountedRef.current = true;
+				return () => {
+					mountedRef.current = false;
+					pendingUpdate.current = null;
+				};
+			}, []);
 			/**
 			* The install queue: agents-busy 409s become `queued` records instead of
 			* failures, and drain automatically when agents go idle (see drainQueue).
@@ -12508,12 +12516,14 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			* with the user left to guess whether the plugin landed.
 			*/
 			const noteMarketGone = (0, react.useCallback)(() => {
+				if (!mountedRef.current) return;
 				discoveryScan.setUnavailable();
 				refreshRequest.current = 0;
 				setCheckingUpdates(false);
 				setMarketGone(true);
 				setBusyUrl(null);
 				setUpdatingName(null);
+				pendingUpdate.current = null;
 				setRemovingName(null);
 				setRecords((list) => list.map((record) => record.state === "running" || record.state === "queued" ? {
 					...record,
@@ -12721,7 +12731,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				if (updating !== null && typeof updating.name === "string" && updating.name !== "") {
 					setUpdatingName(updating.name);
 					const id = `recovered-update:${updating.name}`;
-					recoveredUpdateRecordId.current = id;
+					pendingUpdate.current = {
+						recordId: id,
+						recovering: true
+					};
 					setRecords((list) => list.some((record) => record.kind === "update" && record.name === updating.name && record.state === "running") ? list : enqueue(list, {
 						id,
 						kind: "update",
@@ -12759,6 +12772,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					return;
 				}
 				const timer = setInterval(() => {
+					const polledUpdate = pendingUpdate.current;
 					fetch(api("/dsh-market/status"), { cache: "no-store" }).then(readMarketStatus).then((status) => {
 						if (status === null) return;
 						statusRef.current = {
@@ -12772,6 +12786,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						setHostBusy(status.busy === true);
 						setDebuggerLatch(typeof status.debugger === "string" ? status.debugger : null);
 						if (status.active) {
+							if (pendingUpdate.current === polledUpdate) updateIdleStrikes.current = 0;
 							setCancelling(status.cancelling === true);
 							if (status.phase !== null && status.phase !== void 0) {
 								setProgressPhase(status.phase);
@@ -12834,19 +12849,20 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									setInstallError(t("installFail") + " — " + t("exportLog"));
 								}
 							}
-							if (updatingName !== null && status.busy !== true) {
-								if (++updateIdleStrikes.current >= 2) {
-									updateIdleStrikes.current = 0;
-									sessionStorage.removeItem("dshm-updating");
-									const recoveredId = recoveredUpdateRecordId.current;
-									if (recoveredId !== null) {
-										setRecords((list) => drop(list, recoveredId));
-										recoveredUpdateRecordId.current = null;
-									}
-									setUpdatingName(null);
-									refreshInstalled();
-								}
-							} else updateIdleStrikes.current = 0;
+							if (pendingUpdate.current !== polledUpdate) return;
+							if (updatingName === null || status.busy === true || polledUpdate?.recovering === false) {
+								updateIdleStrikes.current = 0;
+								return;
+							}
+							if (++updateIdleStrikes.current < 2) return;
+							updateIdleStrikes.current = 0;
+							if (polledUpdate !== null) {
+								sessionStorage.removeItem("dshm-updating");
+								pendingUpdate.current = null;
+								setRecords((list) => list.filter((record) => record.id !== polledUpdate.recordId || record.state !== "running" || record.hostOperationId !== void 0));
+							}
+							setUpdatingName(null);
+							refreshInstalled();
 						}
 					}).catch(() => {});
 				}, 2e3);
@@ -13713,6 +13729,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				updateIdleStrikes.current = 0;
 				sessionStorage.setItem("dshm-updating", JSON.stringify({ name }));
 				const updateRecordId = nextRecordId();
+				const attempt = {
+					recordId: updateRecordId,
+					recovering: false
+				};
+				pendingUpdate.current = attempt;
 				setRecords((list) => enqueue(list, {
 					id: updateRecordId,
 					kind: "update",
@@ -13732,12 +13753,19 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						...confirmAgentsRunning ? { confirmAgentsRunning: true } : {},
 						...!restore && statusRef.current.agentDrain && !preferReject ? { busyPolicy: "drain" } : {}
 					})
-				}).then((res) => res.json().then((body) => ({
-					status: res.status,
-					body
-				}))).then(({ status, body }) => {
-					sessionStorage.removeItem("dshm-updating");
-					setUpdatingName(null);
+				}).then(async (res) => {
+					const body = await res.json();
+					if (body === null || typeof body !== "object" || Array.isArray(body)) throw new Error("Invalid update response");
+					return {
+						status: res.status,
+						body
+					};
+				}).then(({ status, body }) => {
+					if (pendingUpdate.current === attempt) {
+						pendingUpdate.current = null;
+						sessionStorage.removeItem("dshm-updating");
+						setUpdatingName(null);
+					}
 					if (status === 202 && typeof body.operationId === "string") {
 						const operation = body.operation;
 						setRecords((list) => patch(withoutHostProjection(list, body.operationId, updateRecordId), updateRecordId, {
@@ -13866,7 +13894,12 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						}));
 						setInstallError((restore ? t("restoreFail") : t("updateFail")) + ": " + name + " — " + localizeBilingual(clipped, lang));
 					}
-				}).catch(() => {});
+				}).catch(() => {
+					if (pendingUpdate.current === attempt) pendingUpdate.current = {
+						...attempt,
+						recovering: true
+					};
+				});
 			}, [
 				refreshInstalled,
 				installed,

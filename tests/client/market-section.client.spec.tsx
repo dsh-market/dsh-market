@@ -4031,6 +4031,81 @@ describe('lost update progress (config page reopened)', () => {
       vi.useRealTimers()
     }
   })
+
+  it('keeps a same-name update tracked when an older mount receives its reply', async () => {
+    vi.useFakeTimers()
+    try {
+      const installed = { 'dsh-loop': '1.0.0' }
+      const update = { kind: 'npm', current: '1.0.0', latest: '1.2.0', updateAvailable: true }
+      let starts = 0
+      let sendFirst: (value: Response) => void = () => { throw new Error('first update not started') }
+      let sendSecond: (value: Response) => void = () => { throw new Error('second update not started') }
+      const first = new Promise<Response>(resolve => { sendFirst = resolve })
+      const second = new Promise<Response>(resolve => { sendSecond = resolve })
+      const base = stubFetch({
+        '/dsh-market/installed': { profile: 'web', installed, live: [] },
+        '/dsh-market/updates': { updates: { 'dsh-loop': update } },
+        '/dsh-market/status': () => ({ active: starts > 1, busy: starts > 1, installed, pnpm: true, boot: 'boot-1' }),
+      })
+      vi.stubGlobal('fetch', vi.fn((input: unknown, init?: RequestInit) => {
+        if (String(input) !== '/dsh-market/update') return base(input, init)
+        return ++starts === 1 ? first : second
+      }))
+      const oldMount = render(<MarketSection {...props()} preferredSubsectionId="installed" />)
+      fireEvent.click(await vi.waitFor(() => screen.getByRole('button', { name: en.update })))
+      expect(starts).toBe(1)
+      oldMount.unmount()
+      render(<MarketSection {...props()} preferredSubsectionId="installed" />)
+      await vi.waitFor(() => expect(screen.getByRole('button', { name: en.updating })).toBeTruthy())
+      await vi.advanceTimersByTimeAsync(4200)
+      await vi.waitFor(() => expect(sessionStorage.getItem('dshm-updating')).toBeNull())
+      fireEvent.click(await vi.waitFor(() => screen.getByRole('button', { name: en.update })))
+      expect(starts).toBe(2)
+      await act(async () => { sendFirst(new Response(JSON.stringify({ ok: false, error: 'old update failed' }), { status: 502 })) })
+      expect(sessionStorage.getItem('dshm-updating')).toBe(JSON.stringify({ name: 'dsh-loop' }))
+      expect(screen.getByRole('button', { name: en.updating })).toBeTruthy()
+      await act(async () => { sendSecond(Response.json({ ok: true })) })
+      expect(sessionStorage.getItem('dshm-updating')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps a pending update and holds the next install during an idle preflight', async () => {
+    vi.useFakeTimers()
+    try {
+      const installed = { 'dsh-loop': '1.0.0' }
+      let installs = 0
+      let complete: (value: Response) => void = () => { throw new Error('update not started') }
+      const response = new Promise<Response>(resolve => { complete = resolve })
+      const base = stubFetch({
+        '/dsh-market/installed': { profile: 'web', installed, live: [] },
+        '/dsh-market/updates': { updates: { 'dsh-loop': {
+          kind: 'npm', current: '1.0.0', latest: '1.2.0', updateAvailable: true,
+        } } },
+        '/dsh-market/status': { active: false, busy: false, installed, pnpm: true, boot: 'boot-1' },
+        '/dsh-market/install': { ok: true, hot: false },
+      })
+      vi.stubGlobal('fetch', vi.fn((input: unknown, init?: RequestInit) => {
+        if (String(input) === '/dsh-market/update') return response
+        if (String(input) === '/dsh-market/install' && init?.method === 'POST') installs += 1
+        return base(input, init)
+      }))
+      localStorage.setItem('dshm-queue-v1', JSON.stringify([
+        { kind: 'install', name: 'dsh-notify', url: 'https://github.com/bob/dsh-notify' },
+      ]))
+      render(<MarketSection {...props()} preferredSubsectionId="installed" />)
+      fireEvent.click(await vi.waitFor(() => screen.getByRole('button', { name: en.update })))
+      await act(async () => { await vi.advanceTimersByTimeAsync(6400) })
+      expect.soft(screen.queryByText(en.opRunning)).toBeTruthy()
+      expect.soft(installs).toBe(0)
+      await act(async () => { complete(Response.json({ ok: true })) })
+      await act(async () => { await vi.advanceTimersByTimeAsync(2200) })
+      expect(installs).toBe(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
 
 describe('P1-6 structured progress', () => {
@@ -6795,6 +6870,75 @@ describe('local-dev restore', () => {
     })
     fireEvent.click(item)
   }
+
+  it.each(['update', 'restore'] as const)('settles a live %s task after a lost response and lets the queued install run', async kind => {
+    vi.useFakeTimers()
+    try {
+      const restore = kind === 'restore'
+      const installed = { 'dsh-loop': restore ? 'link:C:/isolated/dsh-loop' : '1.0.0' }
+      let updateStarted = false
+      let settled = false
+      let nextInstalls = 0
+      let updateBody: unknown
+      let sendBadBody: (value: Response) => void = () => { throw new Error('update was not requested') }
+      let loseResponse: (error: Error) => void = () => { throw new Error('update was not requested') }
+      const response = new Promise<Response>((resolve, reject) => { sendBadBody = resolve; loseResponse = reject })
+      const baseFetch = stubFetch({
+        '/dsh-market/installed': { profile: 'desktop', installed, live: [] },
+        '/dsh-market/updates': { updates: {
+          'dsh-loop': { kind: restore ? 'linked' : 'npm', version: '1.0.0', current: '1.0.0', latest: '1.2.0',
+            updateAvailable: true, restoreRequired: restore },
+        } },
+        '/dsh-market/status': () => ({
+          active: updateStarted && !settled, busy: !settled, pnpm: true, boot: 'boot-1', installed,
+          ...(settled ? { error: 'ERR_PNPM_EPERM: package change could not be applied' } : {}),
+        }),
+        '/dsh-market/install': { ok: true, hot: false },
+      })
+      vi.stubGlobal('fetch', vi.fn((input: unknown, init?: RequestInit) => {
+        const path = String(input).split('?')[0]
+        if (path === '/dsh-market/update' && init?.method === 'POST') {
+          updateStarted = true
+          updateBody = JSON.parse(String(init.body))
+          return response
+        }
+        if (path === '/dsh-market/install' && init?.method === 'POST') nextInstalls += 1
+        return baseFetch(input, init)
+      }))
+      localStorage.setItem('dshm-queue-v1', JSON.stringify([
+        { kind: 'install', name: 'dsh-notify', url: 'https://github.com/bob/dsh-notify' },
+      ]))
+      render(<MarketSection {...props()} preferredSubsectionId="installed" />)
+      const button = await vi.waitFor(() => screen.getByRole('button', { name: restore ? en.restoreOnline : en.update }))
+      fireEvent.click(button)
+      if (restore) fireEvent.click(screen.getByRole('button', { name: en.restoreProceed }))
+      expect(updateBody).toEqual(restore ? { name: 'dsh-loop', restore: true } : { name: 'dsh-loop' })
+      expect(sessionStorage.getItem('dshm-updating')).not.toBeNull()
+      if (document.querySelector('[class*="opPanel"]') === null) {
+        fireEvent.click(screen.getByRole('button', { name: re(en.opInstalling) }))
+      }
+      const panel = document.querySelector('[class*="opPanel"]')
+      expect(panel?.textContent).toContain(en.opRunning)
+      expect(nextInstalls).toBe(0)
+      await vi.advanceTimersByTimeAsync(4200)
+      expect(panel?.textContent).toContain(en.opRunning)
+      expect(sessionStorage.getItem('dshm-updating')).not.toBeNull()
+      expect(nextInstalls).toBe(0)
+
+      settled = true
+      if (restore) loseResponse(new TypeError('the connection closed before the final update response'))
+      else sendBadBody(new Response('Bad Gateway', { status: 502 }))
+      await vi.advanceTimersByTimeAsync(2100)
+      await vi.advanceTimersByTimeAsync(2100)
+      await vi.waitFor(() => expect(sessionStorage.getItem('dshm-updating')).toBeNull())
+      expect(screen.queryByRole('button', { name: en.updating })).toBeNull()
+      expect.soft(panel?.textContent, 'the update already settled on the host').not.toContain(en.opRunning)
+      await vi.advanceTimersByTimeAsync(2200)
+      expect.soft(nextInstalls, 'a dead update task must not block the queue').toBe(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 
   it('confirms before switching a catalog-matched local package to its online source', async () => {
     stubFetch({
@@ -11377,6 +11521,42 @@ describe('OwnerAvatar icon', () => {
 })
 
 describe('Agent-safe drain mode (#411)', () => {
+  it('settles a Host install row after MUTATION_FAILED following a cancelled update and a completed uninstall', async () => {
+    vi.useFakeTimers()
+    try {
+      let failed = false
+      const name = 'dsh-loop'
+      const operationId = 'boot-1-drain-install'
+      const now = Date.now()
+      const journal = (id: string, kind: string, state: string) => ({ at: now, id, kind, state, name, agentsAtEnd: 0, agentsAtStart: 1 })
+      stubFetch({
+        '/dsh-market/status': () => ({
+          active: !failed, busy: !failed, pnpm: true, boot: 'boot-1', installed: {}, agentDrain: true, drainActive: !failed,
+          drainOperations: [{
+            operationId, kind: 'install', name, url: 'https://github.com/alice/dsh-loop',
+            state: failed ? 'failed' : 'running', createdAt: now, startedAt: now, finishedAt: failed ? now + 1 : null,
+            failure: failed ? { code: 'MUTATION_FAILED', message: 'ERR_PNPM_EPERM while importing the archive' } : null,
+            outcome: null, wait: null,
+          }],
+          drainHistory: [
+            journal('boot-1-drain-update', 'update', 'cancelled'),
+            journal('boot-1-drain-uninstall', 'uninstall', 'succeeded'),
+            ...(failed ? [journal(operationId, 'install', 'failed')] : []),
+          ],
+        }),
+      })
+      render(<MarketSection {...props()} />)
+      await vi.waitFor(() => expect(screen.getByText(en.opRunning)).toBeTruthy())
+      failed = true
+      await act(async () => { await vi.advanceTimersByTimeAsync(2200) })
+      await vi.waitFor(() => expect(screen.getByRole('button', { name: en.opTitle })).toBeTruthy())
+      expect(screen.queryByText(en.opRunning)).toBeNull()
+      expect(screen.queryByRole('button', { name: re(en.opInstalling) })).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('shows a Host-owned waiting task, not a failed install, and cancels it by operation id', async () => {
     const waitingSince = Date.now()
     const operation = {
