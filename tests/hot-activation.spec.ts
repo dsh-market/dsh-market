@@ -111,6 +111,24 @@ it('reports a failed child by its own entry, while keeping the mounted siblings 
   }
 })
 
+it('checks a replacement patch when the previously mounted tree is healthy', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dshm-hot-replacement-'))
+  const name = 'dsh-replacement-patch'
+  const { host } = hostWithEntries([entry('mkt-replacement-patch', ACTIVE)])
+  try {
+    installFixture(dir, name)
+    expect(await hotMount(host, dir, name)).toEqual({ ok: true, reason: null })
+
+    const patch = join(dir, 'node_modules', name, 'cordis.patch.yml')
+    writeFileSync(patch, "- id: ui-chat\n  disabled: true\n- insert:\n    - id: replacement\n      name: dsh-replacement-patch\n")
+    expect(await hotMount(host, dir, name)).toMatchObject({ ok: false, deferred: true })
+    expect(host.plugin).toHaveBeenCalledOnce()
+  } finally {
+    await hotUnmount(name)
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 it('disposes a failed replacement theme before restoring the previously active theme', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'dshm-hot-theme-'))
   const previous = 'dsh-previous-theme'
