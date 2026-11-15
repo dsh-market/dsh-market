@@ -1104,7 +1104,7 @@ describe('MarketSection (jsdom)', () => {
       expect(await screen.findAllByText('compat-plugin-0')).toHaveLength(2)
     })
 
-    it('stops queued batches when Show all is selected and resumes without repeating completed packages', async () => {
+    it('keeps pending badges through rapid filter changes without starting any off-page batches', async () => {
       localStorage.setItem('dshm-host-filter', 'all')
       stubFetch({ '/dsh-market/registry': { source: 'live', registry: catalog(165), hostVersion } })
       const baseFetch = globalThis.fetch
@@ -1115,23 +1115,54 @@ describe('MarketSection (jsdom)', () => {
         if (String(input) !== route) return baseFetch(input, init)
         const { packages } = JSON.parse(String(init?.body)) as { packages: string[] }
         calls.push(packages)
-        if (calls.length === 2) await gate
+        if (calls.length === 1) await gate
         return Response.json({ hostVersion, plugins: Object.fromEntries(packages.map(name => [name, declared])) })
       })
       render(<MarketSection {...props()} />)
-      await screen.findAllByText('DSH *')
+      await screen.findByText('compat-plugin-0')
       await selectFilter(true)
-      await waitFor(() => expect(calls).toHaveLength(2))
       await selectFilter(false)
-      await act(async () => { release() })
-      expect(calls).toHaveLength(2)
       await selectFilter(true)
-      await waitFor(() => expect(calls.flat()).toHaveLength(165))
-      expect(new Set(calls.flat()).size).toBe(165)
+      expect(calls.map(batch => batch.length)).toEqual([24])
+      await act(async () => { release() })
+      await screen.findAllByText('DSH *')
+      expect(calls.map(batch => batch.length)).toEqual([24])
+      fireEvent.click(screen.getByRole('button', { name: en.nextPage }))
+      await waitFor(() => expect(calls.map(batch => batch.length)).toEqual([24, 24]))
+      expect(new Set(calls.flat()).size).toBe(48)
+    })
+
+    it('drops unsent rows from a page when a search replaces it', async () => {
+      const baseFetch = stubFetch({ '/dsh-market/registry': { registry: catalog(100), hostVersion } })
+      const calls: string[][] = []
+      let release!: () => void
+      const gate = new Promise<void>(resolve => { release = resolve })
+      vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input) !== route) return baseFetch(input, init)
+        const { packages } = JSON.parse(String(init?.body)) as { packages: string[] }
+        calls.push(packages)
+        if (calls.length === 2) await gate
+        return Response.json({ hostVersion, plugins: Object.fromEntries(packages.map(name => [name, declared])) })
+      })
+
+      render(<MarketSection {...props()} />)
+      await screen.findAllByText('DSH *')
+      fireEvent.click(screen.getByRole('button', { name: en.perPage + ' 24' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: '96' }))
+      await waitFor(() => expect(calls.map(batch => batch.length)).toEqual([24, 64]))
+      const search = screen.getByPlaceholderText(en.searchPh)
+      fireEvent.change(search, { target: { value: 'compat-plugin-99' } })
+      fireEvent.keyDown(search, { key: 'Enter' })
+      expect(await screen.findByText('compat-plugin-99')).toBeTruthy()
+      await act(async () => { release() })
+
+      await screen.findByText('DSH *')
+      expect(calls.map(batch => batch.length)).toEqual([24, 64, 1])
+      expect(calls.at(-1)).toEqual(['compat-plugin-99'])
     })
 
     it.each(['Show all in Sidebar', 'Clear filters in Plugins'])(
-      'stops the shared scan in Settings, Sidebar and Plugins via %s and still loads visible badges',
+      'synchronizes Settings, Sidebar and Plugins via %s and still loads visible badges',
       async (action) => {
         localStorage.setItem('dshm-host-filter', 'all')
         const first = 'compat-plugin-0'
@@ -1146,7 +1177,7 @@ describe('MarketSection (jsdom)', () => {
           if (String(input) !== route) return baseFetch(input, init)
           const { packages } = JSON.parse(String(init?.body)) as { packages: string[] }
           calls.push(packages)
-          if (packages.length > 24) await gate
+          if (calls.length === 2) await gate
           return Response.json({ hostVersion, plugins: Object.fromEntries(packages.map(name => [name,
             name === first ? incompatible : name === last ? { ...declared, requirement } : declared,
           ])) })
@@ -1158,11 +1189,15 @@ describe('MarketSection (jsdom)', () => {
         const surfaces = [settings, sidebar, plugins].map(container => within(container))
         await within(settings).findByText(en.hostRequirement.replace('{0}', incompatible.requirement))
         await selectFilter(true, settings)
-        await waitFor(() => expect(calls.filter(batch => batch.length > 24)).toHaveLength(1))
         for (const view of surfaces) {
-          expect(view.getByText(progress)).toBeTruthy()
+          expect(view.queryByText(progress)).toBeNull()
           expect(view.queryByText(first)).toBeNull()
         }
+        expect(calls.map(batch => batch.length)).toEqual([24])
+        fireEvent.click(within(plugins).getByRole('button', { name: en.loadMore }))
+        await waitFor(() => expect(calls.map(batch => batch.length)).toEqual([24, 24]))
+        expect(within(plugins).getByText(progress)).toBeTruthy()
+        expect(within(settings).queryByText(progress)).toBeNull()
 
         if (action === 'Show all in Sidebar') {
           const filter = within(settings).getByRole('button', { name: en.filter })
@@ -1182,11 +1217,11 @@ describe('MarketSection (jsdom)', () => {
         const input = within(settings).getByPlaceholderText(en.searchPh)
         fireEvent.change(input, { target: { value: last } })
         fireEvent.keyDown(input, { key: 'Enter' })
+        expect(calls).toHaveLength(2)
+        await act(async () => { release() })
         expect(await within(settings).findByText(en.hostRequirement.replace('{0}', requirement))).toBeTruthy()
         expect(calls.at(-1)).toEqual([last])
-        const beforeRelease = calls.length
-        await act(async () => { release() })
-        expect(calls).toHaveLength(beforeRelease)
+        expect(calls).toHaveLength(3)
       },
     )
 
@@ -1209,7 +1244,41 @@ describe('MarketSection (jsdom)', () => {
       expect(attempts).toBe(2)
     })
 
+    it('does not retry a failed entry while the host filter is off', async () => {
+      let now = Date.now()
+      const clock = vi.spyOn(Date, 'now').mockImplementation(() => now)
+      let attempts = 0
+      stubFetch({
+        '/dsh-market/registry': { registry: catalog(1), hostVersion },
+        [route]: () => ({
+          hostVersion,
+          plugins: {
+            'compat-plugin-0': ++attempts === 1
+              ? { status: 'unknown', basis: 'unavailable', requirement: null, declarations: [], retryAfterMs: 250 }
+              : incompatible,
+          },
+        }),
+      })
+      try {
+        render(<MarketSection {...props()} />)
+        await screen.findByText(en.hostRequirementUnavailable)
+        await selectFilter(false)
+        now += 250
+        await act(async () => { await new Promise(resolve => setTimeout(resolve, 300)) })
+        expect(attempts).toBe(1)
+        expect(screen.getByText('compat-plugin-0')).toBeTruthy()
+
+        await selectFilter(true)
+        await screen.findByText(en.hostFilterEmpty)
+        expect(attempts).toBe(2)
+      } finally {
+        clock.mockRestore()
+      }
+    })
+
     it('re-arms a twice-failed result on explicit return without bypassing the cooldown', async () => {
+      let now = Date.now()
+      const clock = vi.spyOn(Date, 'now').mockImplementation(() => now)
       let attempts = 0
       const reply = { status: 'unknown', basis: 'unavailable', requirement: null, declarations: [] }
       stubFetch({
@@ -1219,14 +1288,20 @@ describe('MarketSection (jsdom)', () => {
           plugins: { 'compat-plugin-0': ++attempts <= 2 ? { ...reply, retryAfterMs: attempts === 1 ? 100 : 300 } : incompatible },
         }),
       })
-      render(<MarketSection {...props()} />)
-      await screen.findByText(en.hostRequirementUnavailable)
-      await waitFor(() => expect(attempts).toBe(2))
-      await selectFilter(false)
-      await selectFilter(true)
-      expect(attempts).toBe(2)
-      await waitFor(() => expect(screen.queryByText('compat-plugin-0')).toBeNull())
-      expect(attempts).toBe(3)
+      try {
+        render(<MarketSection {...props()} />)
+        await screen.findByText(en.hostRequirementUnavailable)
+        now += 100
+        await waitFor(() => expect(attempts).toBe(2))
+        await selectFilter(false)
+        await selectFilter(true)
+        expect(attempts).toBe(2)
+        now += 300
+        await waitFor(() => expect(screen.queryByText('compat-plugin-0')).toBeNull())
+        expect(attempts).toBe(3)
+      } finally {
+        clock.mockRestore()
+      }
     })
 
     it('requests a new advertised npm version when the market panel reloads its catalog', async () => {
@@ -1295,8 +1370,8 @@ describe('MarketSection (jsdom)', () => {
       expect(catalogLoads).toBe(2)
     })
 
-    it('refreshes a changed catalog if a full-scan reply arrives after rapid off and on', async () => {
-      const npm = catalog(25).plugins
+    it('refreshes a changed catalog if the current page reply arrives after rapid off and on', async () => {
+      const npm = catalog(24).plugins
       const url = 'https://github.com/alice/off-page-github'
       const oldRevision = '2'.repeat(64)
       const newRevision = '3'.repeat(64)
@@ -1310,7 +1385,7 @@ describe('MarketSection (jsdom)', () => {
         '/dsh-market/registry': () => ({
           hostVersion,
           registry: {
-            ...REGISTRY, count: 26,
+            ...REGISTRY, count: 25,
             plugins: [...npm, catalogLoads++ === 0 ? github : { ...github, compatibilityRevision: newRevision }],
           },
         }),
@@ -1334,6 +1409,8 @@ describe('MarketSection (jsdom)', () => {
       render(<MarketSection {...props()} />)
       await screen.findAllByText('DSH *')
       await selectFilter(true)
+      expect(requested).toEqual([])
+      fireEvent.click(screen.getByRole('button', { name: en.nextPage }))
       await waitFor(() => expect(requested).toEqual([oldRevision]))
       await selectFilter(false)
       await selectFilter(true)
@@ -3691,6 +3768,54 @@ describe('MarketSection (jsdom)', () => {
 
     expect(await screen.findByText(en.rollbackUnavailable)).toBeTruthy()
     expect(screen.queryByRole('button', { name: en.rollbackNow })).toBeNull()
+  })
+
+  it.each(['settings', 'plugins'] as const)('queries only the displayed Discover slice on the %s surface (#1162)', async surface => {
+    const names = Array.from({ length: 73 }, (_, i) => `dsh-range-${String(i + 1).padStart(2, '0')}`)
+    const plugins = names.map((name, i) => ({
+      name, npm: name, owner: 'alice', url: `https://github.com/alice/${name}`,
+      category: i < 48 ? 'tools' : 'skill', downloads: names.length - i, added: '2020-01-01',
+      description: { en: i < 48 ? 'Basic plugin' : 'Later choices' }, install: '',
+    }))
+    stubFetch({
+      '/dsh-market/registry': {
+        source: 'live', hostVersion: '0.1.2-alpha.2',
+        registry: { ...REGISTRY, count: plugins.length, plugins },
+      },
+      '/dsh-market/discovery-compatibility': ({ packages }: { packages: string[] }) => ({
+        hostVersion: '0.1.2-alpha.2',
+        plugins: Object.fromEntries(packages.map(name => [name, {
+          status: names.indexOf(name) < 24 ? 'incompatible' : 'compatible',
+          basis: 'manifest', requirement: '^0.1.2-alpha.2', declarations: ['^0.1.2-alpha.2'],
+        }])),
+      }),
+    })
+    const requested = () => fetchCalls.filter(call => call.path === '/dsh-market/discovery-compatibility')
+      .flatMap(call => (call.body as { packages: string[] }).packages)
+      .filter(name => name.startsWith('dsh-range-'))
+
+    render(<MarketSection {...props()} surface={surface} />)
+    await waitFor(() => expect(requested()).toHaveLength(24))
+    expect(await screen.findByText(en.hostFilterEmpty)).toBeTruthy()
+    expect(requested()).toEqual(names.slice(0, 24))
+    expect(screen.queryByText(names[24]!)).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: surface === 'plugins' ? en.loadMore : en.nextPage }))
+    await waitFor(() => expect(requested()).toEqual(names.slice(0, 48)))
+    expect(await screen.findByText(names[24]!)).toBeTruthy()
+    expect(screen.queryByText(en.hostFilterEmpty)).toBeNull()
+    expect(screen.queryByText(names[48]!)).toBeNull()
+
+    if (surface === 'settings') {
+      fireEvent.click(screen.getByRole('button', { name: 'Skills' }))
+    } else {
+      const search = screen.getByPlaceholderText(en.searchPh)
+      fireEvent.change(search, { target: { value: 'Later choices' } })
+      fireEvent.keyDown(search, { key: 'Enter' })
+    }
+    await waitFor(() => expect(requested()).toEqual(names.slice(0, 72)))
+    expect(screen.getByText(names[48]!)).toBeTruthy()
+    expect(screen.queryByText(names[72]!)).toBeNull()
   })
 
   it('paginates the discover grid and navigates by page number', async () => {
@@ -10013,6 +10138,57 @@ describe('recently added Discover row (#780)', () => {
     vi.spyOn(Date, 'now').mockReturnValue(now)
   })
   afterEach(() => { vi.restoreAllMocks() })
+
+  it('checks only the expanded recent strip and leaves incompatible tiles unfilled (#1162)', async () => {
+    const top = Array.from({ length: 24 }, (_, i) => entry('dsh-top-' + i, 1000 - i, 0, daysAgo(40)))
+    const arrivals = Array.from({ length: 10 }, (_, i) => entry('dsh-arrival-' + i, 10 - i, 0))
+    localStorage.setItem('dshm-recent-collapsed', '1')
+    stubFetch({
+      '/dsh-market/registry': registry([...top, ...arrivals]),
+      '/dsh-market/discovery-compatibility': ({ packages }: { packages: string[] }) => ({
+        hostVersion: '0.1.2-alpha.2',
+        plugins: Object.fromEntries(packages.map(name => [name, name === arrivals[0]!.name ? {
+          status: 'incompatible', basis: 'manifest', requirement: '^9.0.0', declarations: ['^9.0.0'],
+        } : { status: 'unknown', basis: 'undeclared', requirement: null, declarations: [] }])),
+      }),
+    })
+    const requested = (prefix: string) => fetchCalls.filter(call => call.path === '/dsh-market/discovery-compatibility')
+      .flatMap(call => (call.body as { packages: string[] }).packages)
+      .filter(name => name.startsWith(prefix))
+    render(<MarketSection {...props()} />)
+    await screen.findByRole('region', { name: en.recentlyAdded })
+    await waitFor(() => expect(requested('dsh-top-')).toEqual(top.map(plugin => plugin.name)))
+    expect(requested('dsh-arrival-')).toEqual([])
+
+    fireEvent.click(within(recent()).getByRole('button', { name: en.recentlyAdded }))
+    await waitFor(() => expect(names(recent())).toEqual(arrivals.slice(1, 8).map(plugin => plugin.name)))
+    expect(requested('dsh-arrival-')).toEqual(arrivals.slice(0, 8).map(plugin => plugin.name))
+  })
+
+  it('counts separate catalog cards with one lookup key only once across the grid and recent strip (#1162)', async () => {
+    const shared = 'dsh-shared-host'
+    const unknown = 'dsh-unknown-host'
+    const plugins = [shared, unknown].flatMap((npm, i) => ['one', 'two'].map(suffix => ({
+      ...entry(npm + '-' + suffix, 2 - i, 0), npm,
+    })))
+    stubFetch({
+      '/dsh-market/registry': registry(plugins),
+      '/dsh-market/discovery-compatibility': ({ packages }: { packages: string[] }) => ({
+        hostVersion: '0.1.2-alpha.2',
+        plugins: Object.fromEntries(packages.map(name => [name, name === shared ? {
+          status: 'incompatible', basis: 'manifest', requirement: '^9.0.0', declarations: ['^9.0.0'],
+        } : { status: 'unknown', basis: 'unavailable', requirement: null, declarations: [] }])),
+      }),
+    })
+    render(<MarketSection {...props()} />)
+
+    const note = en.hostFilterIncomplete.replace('{0}', '0.1.2-alpha.2').replace('{1}', '2').replace('{2}', '2')
+    expect(await screen.findByText(note)).toBeTruthy()
+    const requested = fetchCalls.filter(call => call.path === '/dsh-market/discovery-compatibility')
+      .flatMap(call => (call.body as { packages: string[] }).packages)
+    expect(requested).toEqual([shared, unknown])
+    expect(names(recent())).toHaveLength(2)
+  })
 
   it('shows recent plugins as one compact strip, not full cards', async () => {
     const plugins = rows().map(plugin => plugin.name === 'recent-high'
