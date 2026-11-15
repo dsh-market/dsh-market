@@ -41,6 +41,7 @@ import css from './Market.module.css'
 import { api, applyGithubRouting } from './market-data.ts'
 import type { MarketStatus } from './market-data.ts'
 import type { Translate } from './market-data.ts'
+import { useUpdateNotifications, refreshUpdateNotifications } from './update-notifications.ts'
 import type { SidebarEntry } from './sidebar-entry.ts'
 import type { EntryKey, EntryVisibility } from './entry-visibility.ts'
 
@@ -133,7 +134,7 @@ interface SelfUpdate {
 type Phase = 'idle' | 'confirming' | 'working' | 'removed' | 'updated' | 'failed'
 
 /** The market's own row as api('/dsh-market/updates') sends it. */
-interface RawUpdate { updateAvailable?: boolean; latest?: string; channelSwitch?: string; restoreRequired?: boolean; kind?: string }
+interface RawUpdate { updateAvailable?: boolean; latest?: string | null; channelSwitch?: string; restoreRequired?: boolean; kind?: string }
 
 const CHANNELS: Channel[] = ['stable', 'beta', 'dev']
 const asChannel = (value: unknown): Channel | null =>
@@ -273,6 +274,12 @@ export function SettingsCard({ t, onRemoved, sidebar, entries }: SettingsCardPro
   }, [entries])
   const [status, setStatus] = useState<SelfStatus | null>(null)
   const [update, setUpdate] = useState<SelfUpdate | null>(null)
+  const notificationSnapshot = useUpdateNotifications()
+  useEffect(() => {
+    if (!notificationSnapshot.loaded) return
+    const own = notificationSnapshot.updates.dshmarket ?? notificationSnapshot.updates['dsh-market']
+    setUpdate(own === undefined ? null : readUpdate(own))
+  }, [notificationSnapshot.updates, notificationSnapshot.loaded])
   const [phase, setPhase] = useState<Phase>('idle')
   const [restoreConfirming, setRestoreConfirming] = useState(false)
   const [purge, setPurge] = useState(false)
@@ -324,6 +331,7 @@ export function SettingsCard({ t, onRemoved, sidebar, entries }: SettingsCardPro
         const body = (await response.json()) as { updates?: Record<string, RawUpdate> }
         const own = body.updates?.['dshmarket'] ?? body.updates?.['dsh-market']
         if (live && own !== undefined) setUpdate(readUpdate(own))
+        void refreshUpdateNotifications()
       } catch { /* an update check that fails leaves the row without an offer */ }
     })()
     return () => { live = false }
@@ -384,6 +392,7 @@ export function SettingsCard({ t, onRemoved, sidebar, entries }: SettingsCardPro
   }, [onRemoved, post, purge, t])
 
   const busy = phase === 'working'
+  const checkIncomplete = notificationSnapshot.loaded && notificationSnapshot.stale
   const version = status?.version ?? null
   // A prerelease says so in its own version string; nothing else has to be
   // consulted to know the running build is one.
@@ -395,6 +404,7 @@ export function SettingsCard({ t, onRemoved, sidebar, entries }: SettingsCardPro
     const body = (await response.json()) as { updates?: Record<string, RawUpdate> }
     const own = body.updates?.['dshmarket'] ?? body.updates?.['dsh-market']
     setUpdate(own === undefined ? null : readUpdate(own))
+    void refreshUpdateNotifications()
   }, [])
 
   /**
@@ -657,7 +667,8 @@ export function SettingsCard({ t, onRemoved, sidebar, entries }: SettingsCardPro
             ? `${t('setSelfUpdateReady')} ${update.latest}`
             : update?.channelSwitch != null
               ? `${t('setChannelSwitch')} ${update.channelSwitch}`
-              : t('setSelfUpToDate'),
+              : checkIncomplete ? t('updateChecksFailed')
+                : update === null ? t('updateChecksPending') : t('setSelfUpToDate'),
           phase === 'updated'
             ? t('setSelfUpdatedHint')
             : update?.channelSwitch != null
@@ -668,7 +679,7 @@ export function SettingsCard({ t, onRemoved, sidebar, entries }: SettingsCardPro
               : update?.updateAvailable === true ? t('setSelfUpdateHint')
                 // Named, not offered: the desktop host owns this install.
                 : update?.hostManaged === true && update.latest !== null ? t('setSelfHostManagedHint')
-                  : t('setSelfUpToDateHint'),
+                  : checkIncomplete ? t('updateChecksFailedHint') : t('setSelfUpToDateHint'),
           phase === 'updated'
             ? null
             : update?.updateAvailable === true

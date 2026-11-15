@@ -47,6 +47,8 @@ import { downloadStatistic, downloadStatsText, starStatsText } from './download-
 import { OperationsPanel } from './OperationsPanel.tsx'
 import { applyRecovery, fetchRecovery, initialKeep, RecoveryPanel, watchRestart, type RecoveryView } from './RecoveryPanel.tsx'
 import { HostRecoveryBanner } from './HostRecoveryBanner.tsx'
+import { UpdateNotificationsPanel } from './UpdateNotificationsPanel.tsx'
+import { useUpdateNotifications, refreshUpdateNotifications, refreshUpdateNotificationsAfterChange, checkUpdateNotifications, setUpdateNotificationsEnabled, setUpdateNotificationsIntervalHours, ignoredUpdatesForBoot, notifyUpdatePreferencesChanged, type UpdateNotificationsState } from './update-notifications.ts'
 import { clearSettled, drop, enqueue, patch as patchRecord, recordForUrl, restoreSettled, serializeSettled, SETTLED_STORAGE_KEY } from './operations.ts'
 import { dismissedHostIdSet, rememberDismissedHostId } from './dismissed-host.ts'
 import type { OperationRecord } from './operations.ts'
@@ -86,27 +88,6 @@ const RECONNECT_BUDGET_MS = 90_000
 const RECONNECT_REQUEST_MS = 4000
 const UPDATE_CHECK_REQUEST_MS = 30_000
 const IGNORED_UPDATES_SESSION_KEY = 'dshm-updates-ignored'
-
-/**
- * Read the update reminders dismissed for this host process. The boot id is
- * part of the value rather than the key so sessionStorage never accumulates
- * one orphaned entry per process. Invalid and stale records fail open: an
- * update reminder is safer than silently hiding one we cannot account for.
- */
-function ignoredUpdatesForBoot(boot: string): string[] {
-  const saved = readSession(IGNORED_UPDATES_SESSION_KEY)
-  const valid = saved !== null
-    && typeof saved === 'object'
-    && !Array.isArray(saved)
-    && saved.boot === boot
-    && Array.isArray(saved.names)
-    && saved.names.every((name: unknown) => typeof name === 'string' && name !== '')
-  if (!valid) {
-    try { sessionStorage.removeItem(IGNORED_UPDATES_SESSION_KEY) } catch { /* storage unavailable */ }
-    return []
-  }
-  return [...new Set(saved.names as string[])]
-}
 
 function HostDependencyDiagnostics({
   findings,
@@ -1887,6 +1868,8 @@ let updateCheckRequest = 0
 let updateCheckCommitted = 0
 let installedCheckCommitted = 0
 const updateCheckListeners = new Set<() => void>()
+/** A manual check on either surface fences older background samples on both. */
+const pendingUpdateNotificationReads = new Set<number>()
 
 function getUpdateCheckSnapshot() { return updateCheckSnapshot }
 
@@ -1900,7 +1883,12 @@ function publishUpdateCheck(snapshot: UpdateCheckSnapshot): void {
   for (const listener of updateCheckListeners) listener()
 }
 
+function releaseUpdateNotificationRead(request: number): void {
+  if (pendingUpdateNotificationReads.delete(request)) publishUpdateCheck({ ...updateCheckSnapshot })
+}
+
 function resetUpdateCheck(boot: string | null): void {
+  pendingUpdateNotificationReads.clear()
   updateCheckBoot = boot
   updateCheckCommitted = ++updateCheckRequest
   installedCheckCommitted = updateCheckRequest
@@ -2038,6 +2026,7 @@ function isUpdateStatus(value: unknown): value is UpdateStatus {
   const status = value as UpdateStatus
   return typeof status.updateAvailable === 'boolean'
     && (status.checkFailed === undefined || status.checkFailed === true)
+    && (status.checkError === undefined || status.checkError === 'unavailable')
     && (status.kind === undefined || typeof status.kind === 'string')
     && (status.version === undefined || status.version === null || typeof status.version === 'string')
     && (status.latest === undefined || status.latest === null || typeof status.latest === 'string')
@@ -2067,11 +2056,11 @@ function applyUpdateCheck(request: number, received: Record<string, UpdateStatus
   }
   const failed = new Set<string>()
   const updates = Object.fromEntries(Object.entries(received).map(([name, status]) => {
-    if (status.checkFailed !== true) return [name, status]
+    if (status.checkFailed !== true && status.checkError !== 'unavailable') return [name, status]
     failed.add(name)
     const confirmed = previous.updates[name]
     // A name can be reinstalled with a different source or local version.
-    if (hasSameSpec(name) && confirmed?.checkFailed !== true && typeof status.version === 'string'
+    if (hasSameSpec(name) && confirmed?.checkFailed !== true && confirmed?.checkError !== 'unavailable' && typeof status.version === 'string'
       && status.version === confirmed?.version && status.kind === confirmed.kind) return [name, confirmed]
     return [name, status]
   }))
@@ -2479,6 +2468,9 @@ export function MarketSection(props: MarketSectionProps) {
   // The host's own page for a bundle (dsh 0.2.1+). Subscribed rather than read
   // once: the service arrives with the host's plugin manager, which may load
   // after this panel is already on screen.
+  const notificationSnapshot = useUpdateNotifications()
+  const latestNotification = useRef(notificationSnapshot)
+  latestNotification.current = notificationSnapshot
   const hostNavigation = props.hostNavigation
   const openInHost = useSyncExternalStore(
     cb => hostNavigation?.subscribe(cb) ?? (() => {}),
@@ -2912,6 +2904,7 @@ export function MarketSection(props: MarketSectionProps) {
    * shows these plugins and their update actions; only proactive prompts use
    * this set. */
   const [ignoredUpdateNames, setIgnoredUpdateNames] = useState<string[]>([])
+  useEffect(() => { notifyUpdatePreferencesChanged() }, [ignoredUpdateNames])
   const [updatingName, setUpdatingName] = useState<string | null>(null)
   /** Update-notes dialog (#294): which row opened it, and what it resolved to. */
   const [notesFor, setNotesFor] = useState<{ name: string; current: string | null; latest: string | null; target: string | null; repoUrl: string | null } | null>(null)
@@ -3071,6 +3064,9 @@ export function MarketSection(props: MarketSectionProps) {
   const [blockedNames, setBlockedNamesState] = useState<string[]>(() => cachedBlockedNames)
   const setBlockedNames = useCallback(cacheState(value => { cachedBlockedNames = value }, setBlockedNamesState), [])
   const [updateExemptNames, setUpdateExemptNames] = useState<string[]>([])
+  useEffect(() => {
+    void refreshUpdateNotificationsAfterChange()
+  }, [updateExemptNames, disabledNames, blockedNames])
   /** Rows the user asked to show the AUTHOR's description on, despite a note. */
   const [showTheirs, setShowTheirs] = useState<string[]>([])
   /** The row whose note is being edited, and the text in the box. */
@@ -3336,22 +3332,35 @@ export function MarketSection(props: MarketSectionProps) {
 
   const mounted = useRef(false)
   const refreshRequest = useRef(0)
+  const refreshInFlight = useRef(false)
+  const bridgedNotification = useRef<UpdateNotificationsState | null>(null)
+  const notificationReads = useRef(new Set<number>())
   const [checkingUpdates, setCheckingUpdates] = useState(false)
   useEffect(() => {
     mounted.current = true
     return () => {
       mounted.current = false
       refreshRequest.current = 0
+      refreshInFlight.current = false
+      for (const request of notificationReads.current) releaseUpdateNotificationRead(request)
+      notificationReads.current.clear()
     }
   }, [])
 
-  const refreshInstalled = useCallback((force?: boolean) => {
+  const refreshInstalled = useCallback((force?: boolean, notification?: UpdateNotificationsState) => {
     if (!mounted.current) return
     const request = ++updateCheckRequest
     const boot = updateCheckBoot
     refreshRequest.current = request
+    refreshInFlight.current = true
+    if (notification === undefined) {
+      bridgedNotification.current = latestNotification.current
+      notificationReads.current.add(request)
+      pendingUpdateNotificationReads.add(request)
+    }
     const ownsRefresh = () => mounted.current && refreshRequest.current === request
     const isCurrent = () => ownsRefresh() && (boot === null || boot === updateCheckBoot)
+      && (notification === undefined || updateCheckBoot === null || notification.boot === updateCheckBoot)
     setCheckingUpdates(true)
     const requestOptions = { cache: 'no-store', signal: AbortSignal.timeout(UPDATE_CHECK_REQUEST_MS) } as const
     const installRead = fetch(api('/dsh-market/installed'), requestOptions)
@@ -3369,6 +3378,11 @@ export function MarketSection(props: MarketSectionProps) {
           installedCheckCommitted = request
         }
         setInstalledState(installed)
+        if (notification !== undefined) {
+          cachedInstalledReady = true
+          setInstalledReady(true)
+          return installed
+        }
         setLocalDescriptions(localDescriptionsFromUnknown(body.descriptions))
         setRepoIdentities(installedRepoIdentities(body.repoIdentities))
         setRepoHints(installedRepoHints(body.repoHints))
@@ -3424,7 +3438,9 @@ export function MarketSection(props: MarketSectionProps) {
         return installed
       })
       .catch(() => null)
-    const updateRead = fetch(api('/dsh-market/updates') + (force === true ? '?force=1' : ''), requestOptions)
+    const updateRead = notification !== undefined
+      ? Promise.resolve(notification.updates)
+      : fetch(api('/dsh-market/updates') + (force === true ? '?force=1' : ''), requestOptions)
       .then(res => {
         if (!res.ok) throw new Error(`HTTP ${String(res.status)}`)
         return res.json()
@@ -3434,14 +3450,52 @@ export function MarketSection(props: MarketSectionProps) {
         // Expose a failed update check even when /installed is still loading.
         // Reconcile any retained entries when that read has settled.
         if (isCurrent()) applyUpdateCheck(request, null, null)
-        if (ownsRefresh()) setCheckingUpdates(false)
+        if (ownsRefresh()) { refreshInFlight.current = false; setCheckingUpdates(false) }
         return null
       })
     void Promise.all([updateRead, installRead]).then(([received, installed]) => {
-      if (isCurrent()) applyUpdateCheck(request, received, installed)
-      if (ownsRefresh()) setCheckingUpdates(false)
+      if (isCurrent()) {
+        if (notification?.checkedAt === null && request >= updateCheckCommitted) {
+          updateCheckCommitted = request
+          publishUpdateCheck({ ...emptyUpdateCheck, installed: installed ?? {} })
+        } else {
+          applyUpdateCheck(request, received, installed)
+          // A partial failure still carries successful results for other
+          // packages. Only an unclassified failure makes the whole check unknown.
+          if (notification?.error != null && request === updateCheckCommitted
+            && updateCheckSnapshot.failed?.size === 0) {
+            publishUpdateCheck({ ...updateCheckSnapshot, failed: null })
+          }
+        }
+      }
+      if (notification === undefined) {
+        const release = () => {
+          notificationReads.current.delete(request)
+          releaseUpdateNotificationRead(request)
+        }
+        // A sample received during this check predates its result. Keep both
+        // surfaces fenced until a trailing local read has passed any older GET.
+        if (ownsRefresh()) void refreshUpdateNotificationsAfterChange().finally(release)
+        else release()
+      }
+      if (ownsRefresh()) { refreshInFlight.current = false; setCheckingUpdates(false) }
     })
   }, [setActivations, setBlockedNames, setDisabledNames, setFavoriteUrls, setInstalledBundles, setInstalledFiles, setLocalDescriptions, setSkins])
+
+  // A background result reuses the shared update snapshot, but still pairs it
+  // with a fresh local inventory before restoring queued work. This reads no
+  // update source and never starts a second scheduler. Manual checks keep their
+  // request/boot fences and finish before a background sample is considered.
+  useEffect(() => {
+    if (!notificationSnapshot.loaded || notificationSnapshot.readFailed || notificationSnapshot.checking
+      || refreshInFlight.current || pendingUpdateNotificationReads.size > 0
+      || (updateCheckBoot !== null && notificationSnapshot.boot !== updateCheckBoot)) return
+    const previous = bridgedNotification.current
+    if (previous?.updates === notificationSnapshot.updates && previous.checkedAt === notificationSnapshot.checkedAt
+      && previous.error === notificationSnapshot.error && previous.boot === notificationSnapshot.boot) return
+    bridgedNotification.current = notificationSnapshot
+    refreshInstalled(undefined, notificationSnapshot)
+  }, [notificationSnapshot, checkingUpdates, updateCheck, refreshInstalled])
 
   /**
    * Host-owned deferred operations (#411).
@@ -3864,6 +3918,7 @@ export function MarketSection(props: MarketSectionProps) {
       })
       .catch(() => {})
     refreshInstalled()
+    void refreshUpdateNotifications()
   }, [applyDrainStatus, refreshInstalled, loadCatalog, readMarketStatus, restoreDrainMarkers])
 
   // Pending-restart flags survive tab switches and page reloads, scoped to
@@ -3890,6 +3945,7 @@ export function MarketSection(props: MarketSectionProps) {
       // Nothing pending: drop any stale entry (e.g. a hot mount cleared the
       // only doneUrl) so a same-boot remount cannot resurrect the banner (#73).
       sessionStorage.removeItem('dshm-restart')
+      notifyUpdatePreferencesChanged()
       return
     }
     sessionStorage.setItem('dshm-restart', JSON.stringify({
@@ -3900,6 +3956,7 @@ export function MarketSection(props: MarketSectionProps) {
       removed: removedCount,
       toggled: toggleRestart,
     }))
+    notifyUpdatePreferencesChanged()
   }, [bootId, doneUrls, updatedNames, restartNames, removedCount, toggleRestart])
 
   const fixEnv = useCallback(() => {
@@ -7820,6 +7877,18 @@ export function MarketSection(props: MarketSectionProps) {
             </span>
           </div>
         )}
+        {tab === 'installed' && <UpdateNotificationsPanel
+          snapshot={notificationSnapshot} t={t}
+          busy={updatingName !== null || busyUrl !== null || removingName !== null}
+          onCheck={checkUpdateNotifications}
+          onEnabled={setUpdateNotificationsEnabled}
+          onIntervalHours={setUpdateNotificationsIntervalHours}
+          onUpdate={name => {
+            if (updates[name]?.restoreRequired === true) askRestore(name)
+            else doUpdate(name)
+          }}
+          onOpenHost={openInHost === undefined ? undefined : name => openInHost.openBundle(name)}
+        />}
         {tab === 'installed' && <HostDependencyDiagnostics findings={hostDependencyFindings} t={t} />}
         {tab === 'installed' && brokenPluginNames.length > 0 && (
           <div className={css.brokenPluginNotice}>

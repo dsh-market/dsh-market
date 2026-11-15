@@ -8,9 +8,10 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { load } from 'js-yaml'
 import { hotMount, hotUnmount, listHotMounts, mountClientOnlyDeps, parseSimplePatch, resolveProfileEntry } from '../src/hot.ts'
 import { configurePersistentLog, readPersistentLog } from '../src/log.ts'
@@ -20,6 +21,7 @@ import { configurePersistentLog, readPersistentLog } from '../src/log.ts'
 vi.mock('@deepseek-ai/cordis-plugin-include', () => ({
   Include: class {
     write(): void {}
+    entries(): [] { return [] }
     import(name: string): unknown { return { name, apply: () => {} } }
   },
 }))
@@ -142,10 +144,10 @@ describe('hotMount reads every declared patch file (#792)', () => {
       const result = await hotMount(ctx, dir, 'quoted-carrier')
       expect(result.ok).toBe(true)
       // The mocked Include never parses the generated YAML.
-      expect(mountedRows(dir)).toContain("o''k-")
+      expect(mountedRows(dir)).toContain("it''s-quoted")
       expect(load(mountedRows(dir))).toEqual([{
         id: "mkt-it's-quoted",
-        name: resolveProfileEntry(dir, name),
+        name,
       }])
     } finally {
       for (const mounted of listHotMounts()) await hotUnmount(mounted)
@@ -566,8 +568,8 @@ describe('parseSimplePatch — hot-mountable or restart-only', () => {
 })
 
 /**
- * Hot-mount rows must reach the loader as absolute file:// URLs resolved
- * against the profile the package was installed into.
+ * Hot-mount imports must reach the loader as absolute file:// URLs resolved
+ * against the profile, while loader rows keep their package identities.
  *
  * The include tree's base class resolves bare names against the LOADER's own
  * location — the host closure — whose parent walk can never reach
@@ -577,7 +579,7 @@ describe('parseSimplePatch — hot-mountable or restart-only', () => {
  * to a restart the host did not even need: the bundle layer + a composition
  * replay had usually already mounted the plugin.
  */
-describe('resolveProfileEntry — hot-mount rows are anchored at the profile', () => {
+describe('resolveProfileEntry — hot-mount imports are anchored at the profile', () => {
   /** A bundle-plugin package shape: main + lib/index.js on disk (the shape
    * every hot-mountable plugin carries — install validation, which runs
    * before hotMount, requires a checkable entry artifact). */
@@ -588,6 +590,57 @@ describe('resolveProfileEntry — hot-mount rows are anchored at the profile', (
       JSON.stringify({ name, main: 'lib/index.js', dsh: { bundle: { patch: './cordis.patch.yml' } } }))
     writeFileSync(join(pkgDir, 'lib', 'index.js'), 'export default {}')
   }
+
+  /** Exercise the real Include subclass without loading the host runtime. */
+  function importingContext() {
+    const rows: Array<{ id: string; name: string }> = []
+    const imports: unknown[] = []
+    const plugin = (Tree: unknown, config: unknown) => {
+      const options = config as { path: string }
+      const tree = new (Tree as new (...args: unknown[]) => { import(name: string): unknown })({}, options)
+      const input = load(readFileSync(fileURLToPath(options.path), 'utf8')) as Array<{ id: string; name: string }>
+      rows.push(...input)
+      imports.push(...input.map(row => tree.import(row.name)))
+      return { await: () => Promise.resolve(), dispose: () => {} }
+    }
+    return { ctx: { plugin }, rows, imports }
+  }
+
+  it('keeps package identities for the client graph while resolving each profile at import time', async () => {
+    const dirs = [mkdtempSync(join(tmpdir(), "dshm-hot-profile o'k-")), mkdtempSync(join(tmpdir(), 'dshm-hot-other-'))]
+    try {
+      for (const dir of dirs) {
+        for (const name of ['dsh-client-graph-plugin', '@scope/dsh-client-graph-plugin']) {
+          bundlePkg(dir, name)
+          writeFileSync(join(dir, 'node_modules', name, 'cordis.patch.yml'), `- insert:\n    - id: client-host\n      name: ${name}\n`)
+          const b = importingContext()
+          expect((await hotMount(b.ctx, dir, name)).ok).toBe(true)
+          expect(b.rows).toEqual([{ id: 'mkt-client-host', name }])
+          expect(b.imports).toEqual([{ name: pathToFileURL(realpathSync(join(dir, 'node_modules', name, 'lib', 'index.js'))).href, apply: expect.any(Function) }])
+          expect(await hotUnmount(name)).toBe(true)
+        }
+      }
+    } finally {
+      for (const dir of dirs) rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('uses the client-only shim before resolving an otherwise importable host artifact', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dshm-hot-shim-'))
+    const name = 'dsh-client-only-artifact'
+    try {
+      clientOnlyPkg(dir, name)
+      writeFileSync(join(dir, 'node_modules', name, 'index.js'), 'throw new Error("host artifact must not run")')
+      const b = importingContext()
+      expect((await hotMount(b.ctx, dir, name)).ok).toBe(true)
+      expect(b.rows[0]?.name).toBe(name)
+      expect(b.imports).toEqual([{ name, apply: expect.any(Function) }])
+      expect(await hotUnmount(name)).toBe(true)
+    } finally {
+      await hotUnmount(name)
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 
   it('resolves a bare package name to the profile-installed entry URL', () => {
     const dir = mkdtempSync(join(tmpdir(), 'dshm-hot-'))

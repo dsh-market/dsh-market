@@ -1042,7 +1042,7 @@ describe('checkUpdates — failed npm lookups (#1200)', () => {
     expect(initial.widget).toMatchObject({ latest: '2.0.0', updateAvailable: true })
     impaired = true
     const failed = await checkUpdates('web', true, dir)
-    expect(failed.widget).toMatchObject({ version: '1.0.0', updateAvailable: false, checkFailed: true })
+    expect(failed.widget).toMatchObject({ version: '1.0.0', updateAvailable: false, checkFailed: true, checkError: 'unavailable' })
     expect(failed.sibling).toMatchObject({ latest: '2.0.0', updateAvailable: true })
     expect(failed.sibling?.checkFailed).toBeUndefined()
 
@@ -1052,6 +1052,7 @@ describe('checkUpdates — failed npm lookups (#1200)', () => {
     const recovered = await checkUpdates('web', false, dir)
     expect(recovered.widget).toMatchObject({ latest: '2.0.0', updateAvailable: true })
     expect(recovered.widget?.checkFailed).toBeUndefined()
+    expect(recovered.widget?.checkError).toBeUndefined()
   })
 
   it('does not treat an npm 404 as a failed check', async () => {
@@ -1060,8 +1061,26 @@ describe('checkUpdates — failed npm lookups (#1200)', () => {
     const checked = await checkUpdates('web', false, dir)
     expect(checked.widget).toMatchObject({ latest: null, updateAvailable: false })
     expect(checked.widget?.checkFailed).toBeUndefined()
+    expect(checked.widget?.checkError).toBeUndefined()
     await checkUpdates('web', false, dir)
     expect(fetchLatest).toHaveBeenCalledTimes(2)
+  })
+
+  it('reports an unavailable mature-release check to both consumers and retries without caching it', async () => {
+    writeFileSync(join(dir, 'pnpm-workspace.yaml'), 'minimumReleaseAge: 1440\n')
+    const fetchLatest = vi.fn(async (url: string) => url.endsWith('/latest')
+      ? json('2.0.0') : new Response(null, { status: 503 }))
+    vi.stubGlobal('fetch', fetchLatest)
+    const failed = await checkUpdates('web', false, dir, new Map(), new Map(), new Map(), { holdYoungReleases: true })
+    expect(failed.widget).toMatchObject({ latest: '2.0.0', updateAvailable: false, checkFailed: true, checkError: 'unavailable' })
+
+    fetchLatest.mockImplementation(async (url: string) => url.endsWith('/latest') ? json('2.0.0')
+      : Response.json({ 'dist-tags': { latest: '2.0.0' }, versions: { '1.0.0': {}, '2.0.0': {} },
+        time: { '1.0.0': '2026-01-01T00:00:00.000Z', '2.0.0': '2026-01-02T00:00:00.000Z' } }))
+    const recovered = await checkUpdates('web', false, dir, new Map(), new Map(), new Map(), { holdYoungReleases: true })
+    expect(recovered.widget).toMatchObject({ latest: '2.0.0', eligibleVersion: '2.0.0', updateAvailable: true })
+    expect(recovered.widget?.checkFailed).toBeUndefined()
+    expect(recovered.widget?.checkError).toBeUndefined()
   })
 
   it('keeps a newer successful cache entry when an earlier check fails late', async () => {
