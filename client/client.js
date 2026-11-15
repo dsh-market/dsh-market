@@ -3385,6 +3385,15 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			}
 			const ids = depIdentities(name, String(spec), repoIdentities);
 			const conflicts = sourceConflictWith(String(spec), repoIdentities);
+			const subpaths = new Set([...ids].filter((id) => id.includes("#path:/")));
+			if (subpaths.size > 0) {
+				const exact = plugins.find((plugin) => {
+					if (conflicts(plugin)) return false;
+					for (const id of entryIdentities(plugin)) if (subpaths.has(id)) return true;
+					return false;
+				});
+				if (exact !== void 0) return exact;
+			}
 			return plugins.find((plugin) => {
 				let meets = false;
 				for (const id of entryIdentities(plugin)) if (ids.has(id)) {

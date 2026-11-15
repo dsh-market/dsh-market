@@ -1082,6 +1082,23 @@ export function entryForDep(
   }
   const ids = depIdentities(name, String(spec), repoIdentities)
   const conflicts = sourceConflictWith(String(spec), repoIdentities)
+  // A monorepo subpackage manifest states the parent repository plus a
+  // `directory`, so its identity list carries BOTH `owner/repo` and
+  // `owner/repo#path:/sub`. The bare half also names the collection output
+  // root row, and that row almost always comes first in the catalog — so a
+  // single `find()` below answers a subpackage with the root row, and its
+  // card shows the root plugin description and version. An exact `#path:`
+  // hit cannot be ambiguous, so it decides first; the bare-repo pass stays
+  // as the fallback for manifests that declare no `repository.directory`.
+  const subpaths = new Set([...ids].filter(id => id.includes("#path:/")))
+  if (subpaths.size > 0) {
+    const exact = plugins.find((plugin) => {
+      if (conflicts(plugin)) return false
+      for (const id of entryIdentities(plugin)) if (subpaths.has(id)) return true
+      return false
+    })
+    if (exact !== undefined) return exact
+  }
   return plugins.find((plugin) => {
     // Identity first: it rejects nearly every entry for a few set lookups,
     // and only the survivors can be a source conflict (#1097).
