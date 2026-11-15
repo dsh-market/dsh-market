@@ -8588,6 +8588,8 @@ export function mountMarketRoutes(
     // disposer half of the single-finally + disposer guarantee (#411): an
     // unloaded market must never leave an Agent parked behind a hold.
     drainCoordinator.dispose()
+    void discoveryManifests.dispose()
+    void githubDiscoveryManifests.dispose()
     setBuildEnvSource(previousBuildEnvSource)
     configurePersistentLog(null)
     for (const dispose of disposers) dispose()

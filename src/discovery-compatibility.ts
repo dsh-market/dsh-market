@@ -10,10 +10,9 @@
  */
 
 import { createHash } from 'node:crypto'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname } from 'node:path'
 import { compareSemver, isSemver, satisfiesRange } from './check.ts'
 import { classifyPeer, crossesImplicitCeiling } from './compatibility.ts'
+import { openDiscoveryCache, type CacheEntry } from './discovery-cache.ts'
 import { marketFetch } from './net.ts'
 import { isStableReleaseVersion } from './release-candidates.ts'
 import { activeRegion, githubRoutesFor, rememberGithubRoute, throughProxy } from './regions.ts'
@@ -49,30 +48,16 @@ export interface NpmManifestFacts {
   dependencies?: Record<string, string>
 }
 
-interface CacheEntry {
-  checkedAt: number
-  facts: NpmManifestFacts
-}
-
-interface CacheFile {
-  schema: 'dsh-market/discovery-compatibility-cache/v1'
-  entries: Record<string, CacheEntry>
-}
-
 type FetchLike = (
   url: string,
   init?: { signal?: AbortSignal; headers?: Record<string, string> },
 ) => Promise<Response>
 
-const CACHE_SCHEMA = 'dsh-market/discovery-compatibility-cache/v1' as const
 const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000
 const FAILURE_COOLDOWN_MS = 5 * 60 * 1000
 const OUTAGE_COOLDOWN_MS = 30 * 1000
 const FETCH_TIMEOUT_MS = 8_000
 const DEFAULT_CONCURRENCY = 8
-// Larger than the catalog (10k+ and growing). A cap below the catalog size
-// made a full scan evict its own first half, so no scan ever stayed cached (#1170).
-const MAX_CACHE_ENTRIES = 20_000
 const MAX_RANGE_LENGTH = 256
 
 export interface GitHubManifestSource {
@@ -242,6 +227,14 @@ function validFacts(value: unknown): value is NpmManifestFacts {
       name.startsWith('@deepseek-ai/') && range(item) === item))
 }
 
+function decodeCacheEntry(value: unknown): CacheEntry | null {
+  const entry = record(value)
+  if (entry === null || typeof entry.checkedAt !== 'number' || !Number.isFinite(entry.checkedAt) || !validFacts(entry.facts)) return null
+  // Normalize the pre-upgrade shape so every consumer sees an object.
+  const facts = entry.facts.dependencies === undefined ? { ...entry.facts, dependencies: {} } : entry.facts
+  return { checkedAt: entry.checkedAt, facts }
+}
+
 function displayRequirement(declarations: HostRequirementDeclaration[]): string | null {
   const unique = [...new Set(declarations.map(item => item.range))]
   return unique.length === 0 ? null : unique.join(' ∩ ')
@@ -354,59 +347,35 @@ export function deriveHostCompatibility(
  * outage must not become a day-long false "undeclared" result on disk.
  */
 export class DiscoveryManifestIndex {
-  private readonly entries = new Map<string, CacheEntry>()
+  private readonly cache: ReturnType<typeof openDiscoveryCache>
   private readonly failures = new Map<string, number>()
   private readonly inflight = new Map<string, Promise<NpmManifestFacts | null>>()
   private readonly fetcher: FetchLike
   private readonly now: () => number
   private readonly ttlMs: number
   private readonly concurrency: number
-  private loaded = false
   private consecutiveFailures = 0
   private unavailableUntil = 0
-  private dirty = false
+  private disposed = false
   private activeFetches = 0
   private readonly fetchWaiters: Array<() => void> = []
 
   constructor(
-    private readonly cacheFile: string,
+    cacheFile: string,
     options: { fetcher?: FetchLike; now?: () => number; ttlMs?: number; concurrency?: number } = {},
   ) {
+    this.cache = openDiscoveryCache(cacheFile, decodeCacheEntry)
     this.fetcher = options.fetcher ?? marketFetch
     this.now = options.now ?? Date.now
     this.ttlMs = options.ttlMs ?? DEFAULT_TTL_MS
     this.concurrency = Math.max(1, Math.floor(options.concurrency ?? DEFAULT_CONCURRENCY))
   }
 
-  private load(): void {
-    if (this.loaded) return
-    this.loaded = true
-    try {
-      const parsed = JSON.parse(readFileSync(this.cacheFile, 'utf8')) as Partial<CacheFile>
-      if (parsed.schema !== CACHE_SCHEMA || record(parsed.entries) === null) return
-      for (const [name, raw] of Object.entries(parsed.entries as Record<string, unknown>)) {
-        const entry = record(raw)
-        if (entry === null || typeof entry.checkedAt !== 'number' || !validFacts(entry.facts)) continue
-        // Normalize the pre-upgrade shape so every consumer sees an object.
-        const facts = entry.facts.dependencies === undefined
-          ? { ...entry.facts, dependencies: {} }
-          : entry.facts
-        this.entries.set(name, { checkedAt: entry.checkedAt, facts })
-      }
-    } catch { /* first run or a truncated cache — fetch fresh */ }
-  }
-
-  private persist(): void {
-    try {
-      mkdirSync(dirname(this.cacheFile), { recursive: true, mode: 0o700 })
-      const newest = [...this.entries.entries()]
-        .sort(([, a], [, b]) => b.checkedAt - a.checkedAt)
-        .slice(0, MAX_CACHE_ENTRIES)
-      this.entries.clear()
-      for (const [name, entry] of newest) this.entries.set(name, entry)
-      const data: CacheFile = { schema: CACHE_SCHEMA, entries: Object.fromEntries(newest) }
-      writeFileSync(this.cacheFile, JSON.stringify(data), { mode: 0o600 })
-    } catch { /* cache failure degrades to in-memory lookups */ }
+  /** Unmount this index, retaining any writes already queued for this profile. */
+  async dispose(): Promise<void> {
+    if (this.disposed) return
+    this.disposed = true
+    await this.cache.release()
   }
 
   /** One semaphore for the whole index, including overlapping HTTP batches. */
@@ -441,9 +410,8 @@ export class DiscoveryManifestIndex {
     readManifest: () => Promise<NpmManifestFacts>,
     expectedVersion?: string,
   ): Promise<NpmManifestFacts | null> {
-    this.load()
+    const cached = await this.cache.get(cacheKey)
     const now = this.now()
-    const cached = this.entries.get(cacheKey)
     if (cached !== undefined && now - cached.checkedAt < this.ttlMs
       && (expectedVersion === undefined || cached.facts.version === expectedVersion)) return cached.facts
     if (this.retryDelay(cacheKey, now) > 0) return null
@@ -459,9 +427,8 @@ export class DiscoveryManifestIndex {
       try {
         const facts = await this.withFetchPermit(readManifest)
         if (expectedVersion !== undefined && facts.version !== expectedVersion) throw new Error('npm returned a different release')
-        if (record) {
-          this.entries.set(cacheKey, { checkedAt: this.now(), facts })
-          this.dirty = true
+        if (record && !this.disposed) {
+          this.cache.set(cacheKey, { checkedAt: this.now(), facts })
           this.failures.delete(cacheKey)
           this.consecutiveFailures = 0
         }
@@ -552,10 +519,6 @@ export class DiscoveryManifestIndex {
       }
     }
     await Promise.all(Array.from({ length: Math.min(this.concurrency, unique.length) }, worker))
-    if (this.dirty) {
-      this.dirty = false
-      this.persist()
-    }
     return result
   }
 
@@ -572,7 +535,6 @@ export class DiscoveryManifestIndex {
       }
     }
     await Promise.all(Array.from({ length: Math.min(this.concurrency, unique.length) }, worker))
-    if (this.dirty) { this.persist(); this.dirty = false }
     return result
   }
 }
