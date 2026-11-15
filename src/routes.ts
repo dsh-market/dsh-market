@@ -57,6 +57,7 @@ import {
 } from './regions.ts'
 import { resolveRegion } from './region-probe.ts'
 import { acceleratedTarget, resolveHeadCommit } from './accelerate.ts'
+import { mismatchedWorkspaceRoot } from './github-install-target.ts'
 import { sourceWebUrl, updateNotesFor } from './changelog.ts'
 import { checkUpdates, isUpdatablePlugin, compareVersions, fetchNpmLatest, invalidateUpdates, readVersionMaturity, resolveDesktopMatureUpdate, resolveGitRemoteHead, isUpgrade, latestPublishedRecently, setUpdateRegistry, versionOnChannel } from './updates.ts'
 import { isExactReleaseVersion, isStableReleaseVersion } from './release-candidates.ts'
@@ -2206,6 +2207,16 @@ export function mountMarketRoutes(
       logEvent('warn', 'install', `bundle resolution check failed: ${error instanceof Error ? error.message : String(error)}`)
       return []
     }
+  }
+
+  async function refuseWorkspaceRoot(target: string, name: string, response: ServerResponse): Promise<boolean> {
+    const root = await mismatchedWorkspaceRoot(target, name, region)
+    if (root === null) return false
+    logEvent('warn', 'install-rejected', `${name}: ${target} resolves to workspace root ${root}`)
+    sendJson(response, 400, {
+      error: `这条收录链接指向仓库根包「${root}」。请到收录仓库反馈，补上「${name}」的子目录或 npm 来源。 / This entry points to the repository root (${root}). Ask the catalog maintainers to link the subdirectory or npm release for ${name}.`,
+    })
+    return true
   }
 
   /**
@@ -8090,6 +8101,7 @@ export function mountMarketRoutes(
             // re-read `latest`'s manifest and refuse the very version the
             // dialog just found for this host — a loop with the user in it.
             if (npmName !== null && await refuseHostIncompatible(npmName, entry.name, requestedVersion, force, response, region, 'install-compat')) return
+            if (await refuseWorkspaceRoot(target, entry.name, response)) return
             const beforeSpecs = readInstalled(config.profile, activeProfileDir)
             const before = new Set(Object.keys(beforeSpecs))
             if (retryAlias !== null) before.delete(retryAlias)
@@ -8234,6 +8246,7 @@ export function mountMarketRoutes(
                 restoreProfileManifest(config.profile, manifestBefore, activeProfileDir)
                 if (lockfileBefore.ok) restoreProfileLockfile(lockfileBefore.snapshot)
                 target = await acceleratedTarget(sourceTarget, region)
+                if (await refuseWorkspaceRoot(target, entry.name, response)) return
                 if (!assertDrainMutation(request, response)) return
                 result = await runPlugin(config.profile, ['add', target])
               }

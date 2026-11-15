@@ -2437,7 +2437,7 @@ describe('install flow', () => {
 
   it('retargets a collection repo to its contained plugins via #path: (#18)', async () => {
     fake.repos['github:o/skin-pack'] = {
-      name: 'skin-pack', manifest: { name: 'skin-pack', private: true }, junkChildren: ['whale-skin'],
+      name: 'skin-pack', manifest: { name: 'skin-pack', private: true, workspaces: ['whale-skin'] }, junkChildren: ['whale-skin'],
     }
     fake.repos['github:o/skin-pack#path:/whale-skin'] = {
       name: 'whale-skin', manifest: { dsh: {}, main: 'index.js' }, artifacts: ['index.js'],
@@ -2446,6 +2446,38 @@ describe('install flow', () => {
     expect(r.status).toBe(200)
     expect(installedSpec('whale-skin')).toBeDefined()
     expect(installedSpec('skin-pack')).toBeUndefined()
+  })
+
+  it.each([false, true])('refuses a workspace root listed as a different package before pnpm add (archive fallback %s, #1208)', async (archiveFallback) => {
+    const url = 'https://github.com/zjukop3/dsh-verify-kit'
+    const archive = `${url}/releases/download/v0.1.3/dsh-citelint.tgz`
+    const manifest = { name: 'dsh-verify-kit', version: '0.0.0', private: true, workspaces: ['packages/*'] }
+    const commit = 'a'.repeat(40)
+    const manifestUrl = `https://raw.githubusercontent.com/zjukop3/dsh-verify-kit/${commit}/package.json`
+    registryModule.loadRegistry.mockResolvedValueOnce({
+      ...REGISTRY,
+      plugins: [{ ...REGISTRY.plugins[0]!, url, name: 'dsh-citelint', npm: null, ...(archiveFallback ? { tarball: archive } : {}) }],
+    })
+    fake.tarballWithoutIntegrity = archiveFallback
+    fake.repos['github:zjukop3/dsh-verify-kit'] = { name: manifest.name, manifest }
+    const request = vi.fn(async (input: string) => {
+      if (input === `${url}/info/refs?service=git-upload-pack`) {
+        return new Response(`# service=git-upload-pack\n${commit} HEAD\0capabilities`)
+      }
+      if (input === manifestUrl) return Response.json(manifest)
+      throw new Error(`unexpected upstream request: ${input}`)
+    })
+    vi.stubGlobal('fetch', request)
+    const before = readFileSync(join(fake.profileDir, 'package.json'), 'utf8')
+
+    const result = await bed.dispatch('POST', '/dsh-market/install', { url, force: true })
+
+    expect(result.status).toBe(400)
+    expect(result.json.error).toMatch(/dsh-verify-kit.*dsh-citelint/)
+    expect(request.mock.calls.map(([input]) => input)).toContain(manifestUrl)
+    expect(fake.calls.filter(args => args.includes('add')).map(args => args.at(-1))).toEqual(archiveFallback ? [archive] : [])
+    expect(readFileSync(join(fake.profileDir, 'package.json'), 'utf8')).toBe(before)
+    expect(existsSync(join(fake.profileDir, 'node_modules', manifest.name))).toBe(false)
   })
 
   it('inspects the current dsh-excel-chat bundle after collection retargeting', async () => {
