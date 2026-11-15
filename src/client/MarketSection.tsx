@@ -2539,6 +2539,8 @@ export function MarketSection(props: MarketSectionProps) {
    * exactly why it owes the user this sentence instead of a spinner.
    */
   const [marketGone, setMarketGone] = useState(false)
+  const [startupRepair, setStartupRepair] = useState<MarketStatus['startupRepair']>()
+  const startupRepairRequest = useRef(0)
   // Whether the page is still trying to reach the market again, and how many
   // times the user asked it to start over (#1151).
   const [reconnecting, setReconnecting] = useState(true)
@@ -3786,6 +3788,8 @@ export function MarketSection(props: MarketSectionProps) {
   const noteMarketGone = useCallback(() => {
     discoveryScan.setUnavailable()
     refreshRequest.current = 0
+    startupRepairRequest.current += 1
+    setStartupRepair(undefined)
     setCheckingUpdates(false)
     setMarketGone(true)
     setBusyUrl(null)
@@ -3816,6 +3820,35 @@ export function MarketSection(props: MarketSectionProps) {
     }
     return await res.json() as MarketStatus
   }, [noteMarketGone])
+
+  const applyStartupRepair = useCallback((report: MarketStatus['startupRepair'], request: number) => {
+    if (!mounted.current || request !== startupRepairRequest.current) return
+    setStartupRepair(previous =>
+      report && previous?.id === report.id && previous.revision > report.revision ? previous : report)
+  }, [])
+
+  const checkingStartupRepair = startupRepair?.checking === true
+  useEffect(() => {
+    if (!checkingStartupRepair || marketGone) return
+    const controller = new AbortController()
+    let timer = setTimeout(() => { void poll() }, 2000)
+    async function poll() {
+      const request = ++startupRepairRequest.current
+      try {
+        const res = await fetch(api('/dsh-market/status'), { cache: 'no-store', signal: controller.signal })
+        if (controller.signal.aborted) return
+        if (res.ok || res.status === 404) {
+          const status = await readMarketStatus(res)
+          if (!controller.signal.aborted && status !== null) applyStartupRepair(status.startupRepair, request)
+        }
+      } catch { /* temporary status failure; read again while the check is pending */ }
+      if (!controller.signal.aborted) timer = setTimeout(() => { void poll() }, 2000)
+    }
+    return () => {
+      controller.abort()
+      clearTimeout(timer)
+    }
+  }, [checkingStartupRepair, marketGone, readMarketStatus, applyStartupRepair])
 
   const loadCatalog = useCallback(() => {
     setLoadError(null)
@@ -3854,12 +3887,14 @@ export function MarketSection(props: MarketSectionProps) {
     let stopped = false
     const attempt = async (): Promise<void> => {
       const boot = updateCheckBoot
+      const repairRequest = ++startupRepairRequest.current
       inFlight = new AbortController()
       const cutoff = setTimeout(() => inFlight?.abort(), RECONNECT_REQUEST_MS)
       try {
         const res = await fetch(api('/dsh-market/status'), { cache: 'no-store', signal: inFlight.signal })
         const status = res.ok ? await res.json() as Partial<MarketStatus> | null : null
         if (!stopped && status !== null && typeof status === 'object' && typeof status.boot === 'string') {
+          applyStartupRepair(status.startupRepair, repairRequest)
           discoveryScan.setBoot(status.boot)
           observeUpdateCheckBoot(status.boot, boot)
           setMarketGone(false)
@@ -3884,15 +3919,17 @@ export function MarketSection(props: MarketSectionProps) {
       clearTimeout(timer)
       inFlight?.abort()
     }
-  }, [marketGone, reconnectRound, loadCatalog, refreshInstalled])
+  }, [marketGone, reconnectRound, loadCatalog, refreshInstalled, applyStartupRepair])
 
   useEffect(() => {
     void loadCatalog()
     const boot = updateCheckBoot
+    const repairRequest = ++startupRepairRequest.current
     fetch(api('/dsh-market/status'), { cache: 'no-store' })
       .then(readMarketStatus)
       .then(status => {
         if (status === null) return
+        applyStartupRepair(status.startupRepair, repairRequest)
         statusRef.current = {
           busy: status.busy === true,
           runningAgents: Array.isArray(status.runningAgents) ? status.runningAgents.map(String) : [],
@@ -3930,7 +3967,7 @@ export function MarketSection(props: MarketSectionProps) {
       .catch(() => {})
     refreshInstalled()
     void refreshUpdateNotifications()
-  }, [applyDrainStatus, refreshInstalled, loadCatalog, readMarketStatus, restoreDrainMarkers])
+  }, [applyDrainStatus, refreshInstalled, loadCatalog, readMarketStatus, restoreDrainMarkers, applyStartupRepair])
 
   // Pending-restart flags survive tab switches and page reloads, scoped to
   // one host process: a different boot id means the restart happened and the
@@ -7707,6 +7744,7 @@ export function MarketSection(props: MarketSectionProps) {
             lang={lang}
             describe={describePlugin}
             records={records}
+            startupRepairEntries={startupRepair?.entries}
             open={operationsOpen}
             onOpenChange={setOperationsOpen}
             replacing={replacing}

@@ -830,6 +830,7 @@
 .opHead{display:flex;align-items:center;gap:8px;padding:9px 14px;
         border-bottom:1px solid var(--dsw-alias-border-l2,#e5e7eb)}
 .opPanelTitle{font-size:12.5px;font-weight:600}
+.opRepairTitle{padding:9px 14px 3px;font-size:12px;font-weight:600;color:var(--dsw-alias-label-secondary,#667085)}
 .opCloseBtn.opCloseBtn{padding:0 6px;min-width:0;color:var(--dsw-alias-label-secondary,#6b7280)}
 .opAggregate{padding:9px 14px;border-bottom:1px solid var(--dsw-alias-border-l2,#e5e7eb);
              background:var(--dsw-alias-bg-layer-2,#f7f8fa)}

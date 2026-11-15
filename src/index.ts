@@ -8,12 +8,13 @@ import z from '@deepseek-ai/schemastery'
 import { dirname, isAbsolute } from 'node:path'
 import { createDesktopPluginRuntime, setHostPackageManager, type DesktopPnpmLike, type HostPackageManager } from './dsh-cli.ts'
 import { createOfficialDesktopRuntime, type OfficialPluginManagerLike } from './official-desktop.ts'
-import { isDshProfileName } from './profile.ts'
+import { isDshProfileName, profileDir } from './profile.ts'
 import { setRequestGateSource, setTrustedHostsSource } from './http.ts'
 import { setLauncherInstallAnchorSource } from './dsh-install.ts'
 import { mountMarketRoutes, type HostPluginActivation, type MarketConfig, type MarketHost } from './routes.ts'
 import { installDesktopMarketSettings, installMarketSettings } from './settings.ts'
 import { MAX_AUTO_REPAIR_ATTEMPTS } from './pending-updates.ts'
+import { observeStartupRepair } from './startup-repair-report.ts'
 import type { AgentsServiceLike } from './agents.ts'
 
 export const name = 'dsh-market'
@@ -366,19 +367,24 @@ export function apply(ctx: Context, config?: Config): void {
         installDesktopMarketSettings(ctx)
         host.effect(() => {
           const restoreTrustedHosts = useTrustedHosts(ctx)
-          const disposeRoutes = mountMarketRoutes(host, resolved, runtime, agentsLookupOf(ctx))
+          const startupRepair = observeStartupRepair(profileName, profileDir(profileName, profileDirectory))
+          const disposeRoutes = mountMarketRoutes(host, { ...resolved, startupRepair: startupRepair.read }, runtime, agentsLookupOf(ctx))
+          let started = false
           const repairTimer = setTimeout(() => {
+            started = true
             void runtime.repairPendingUpdates().then(report => {
+              startupRepair.finish(report)
               if (report.reinstalled.length === 0 && report.failed.length === 0) return
               const abandoned = report.abandoned.length === 0
                 ? ''
                 : `, ${String(report.abandoned.length)} given up on after ${String(MAX_AUTO_REPAIR_ATTEMPTS)} starts — reinstall from Settings → Plugins: ${report.abandoned.join(', ')}`
               console.warn(`dsh-market: ${String(report.reinstalled.length)} interrupted update(s) reinstalled, ${String(report.failed.length)} still pending${abandoned}`)
-            })
+            }, () => { startupRepair.finish() })
           }, PENDING_UPDATE_REPAIR_DELAY_MS)
           repairTimer.unref?.()
           return async () => {
             clearTimeout(repairTimer)
+            if (!started) startupRepair.finish()
             const routesDisposed = disposeRoutes()
             restoreTrustedHosts()
             await Promise.all([routesDisposed, runtime.dispose()])
