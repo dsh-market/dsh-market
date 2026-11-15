@@ -266,7 +266,7 @@ export function createThemeManager(
         ? null
         : new Set(bundleExpressionRowIds(join(activeProfileDir, 'node_modules', name)))
       for (const entry of matchingEntries(name)) {
-        if (expressionIds !== null && expressionIds.has(entry.options.id ?? '')) continue
+        if (expressionIds !== null && expressionIds.has(loaderEntryId(entry))) continue
         matched = true
         if (!disabledFlag && uncertainEntries.has(entry)) {
           throw new LifecycleWaitError('loader entry: runtime state is uncertain; retry disabling before enabling')
