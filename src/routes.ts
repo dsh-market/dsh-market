@@ -72,7 +72,8 @@ import type { RecoveryPlugin } from './recovery.ts'
 import { activationAfterReplace, brokenClientBundles, bundlePatchIsEmpty, checkClientBundle, defaultHostRuntimeFacts, findUnservedConfigNamespaces, hasHostHalf, hostPeerGate, isDeclaredLibraryDsh, newlyBrokenBundles, peerGateRemedy, verifyActivation } from './verify.ts'
 import {
   carrierRowIds, composedRowName, disableRow, enableRow, findUserPatchPath, foreignRowIds, isProtectedModule, loaderEntryId, packagePatchFlags, rowFlagApplies,
-  readUserPatchState, removeRowBlocks, rowIdsForPackage, userPatchPackageReferences,
+  readComponentSwitchPatch, readUserPatchState, removeRowBlocks, rowIdsForPackage,
+  userPatchPackageReferences, writeComponentSwitchPatch,
 } from './patch.ts'
 import {
   createProfileBackup, downloadWebdav, MAX_BACKUP_BYTES, mergeRestoreManifest, pinRunningDeps, restoreProfileBackup, secretFileCount, unportableDeps, uploadWebdav, WebdavUrlError,
@@ -1133,7 +1134,7 @@ export function mountMarketRoutes(
    * user asked for OFF, and a failed unmount leaves the plugin live only for
    * this session. There the durable disable is the contract, not an error.
    */
-  async function setPluginEnabled(name: string, enabled: boolean): Promise<{ ok: boolean; reason?: string }> {
+  async function setPluginEnabled(name: string, enabled: boolean, keepOff?: ReadonlySet<string>): Promise<{ ok: boolean; reason?: string }> {
     const dir = activeProfileDir
     const wasDisabled = disabled.has(name)
     if (enabled) disabled.delete(name)
@@ -1156,7 +1157,7 @@ export function mountMarketRoutes(
         // already reported as "restart to apply" — so nothing is gained by
         // doing it live, and the host can die trying.
         ok = true
-      } else if (await themes.setEntryDisabled(name, false)) {
+      } else if (await themes.setEntryDisabled(name, false, false, false, keepOff)) {
         ok = true
       } else {
         // #758: the group toggle reaches this branch without the route-level
@@ -1172,7 +1173,7 @@ export function mountMarketRoutes(
           ok = false
           reason = `${name} 新版要求宿主 ${gate.range},当前运行 ${gate.runtimeVersion},开了也不会生效;${remedy.zh} / ${name} needs host ${gate.range} but this host runs ${gate.runtimeVersion} — enabling it now would not take effect; ${remedy.en}`
         } else {
-          const result = await hotMount(host, dir, name)
+          const result = await hotMount(host, dir, name, keepOff)
           // A package that can only come up on a start (config rows, a
           // carrier's disables) was never tried, so there is no crash to
           // refuse to persist (#575). Failing the enable here left the
@@ -1235,13 +1236,12 @@ export function mountMarketRoutes(
   async function switchPluginLayers(
     name: string,
     enabled: boolean,
-    switchLive = () => setPluginEnabled(name, enabled),
+    switchLive?: (keepOff?: ReadonlySet<string>) => Promise<{ ok: boolean; reason?: string }>,
   ): Promise<{
     ok: boolean
     reason: string | undefined
     patchRows: string[]
     /** The subset a user decision can be read from (#876). */
-    userRows: string[]
     patchWrite: { ok: boolean; reason: string | null } | null
     /** Foreign rows this bundle rewires: disabled or given a new inject (#224, #938). */
     carrierRows: string[]
@@ -1249,6 +1249,33 @@ export function mountMarketRoutes(
     bundleSwitch: { ok: boolean; reason: string | null }
   }> {
     const packageDir = join(activeProfileDir, 'node_modules', name)
+    const optOutRows = new Set(bundleOptOutRowIds(packageDir))
+    const expressionRows = new Set(bundleExpressionRowIds(packageDir))
+    const wasDisabled = disabled.has(name)
+    const componentRows = rowIdsForPackage(host, activeProfileDir, name)
+    const installed = componentRows.length > 1 ? readInstalled(config.profile, activeProfileDir) : {}
+    const componentNames = new Map<string, string | null>()
+    for (const id of componentRows) {
+      const expected = composedRowName(host, id)
+      const owner = expected === null ? null : packageOfEntryName(expected) ?? expected
+      // The id fallback for carried modules does not make a different
+      // package's live entry ours (#1089).
+      if (owner !== null && owner !== name && Object.hasOwn(installed, owner)) continue
+      componentNames.set(id, expected)
+    }
+    const choices = componentNames.size > 1
+      ? readComponentSwitchPatch(userPatchPath, name, componentNames, new Set([...optOutRows, ...expressionRows]))
+      : null
+    // A package can be partly active by default: its opt-in components are
+    // still off even when the user patch doesn't carry any explicit flags.
+    const hasHeldRows = choices !== null && choices.keepOff.size > 0
+    const preserveUserChoices = choices?.customized === true && (!enabled || hasHeldRows)
+    const preserveDefaultChoices = !enabled && hasHeldRows
+    const componentPatch = choices !== null && (choices.suspended
+      || (!wasDisabled && choices.keepOff.size < componentNames.size
+        && (preserveUserChoices || preserveDefaultChoices)))
+      ? choices : null
+    const keepOff = enabled ? componentPatch?.keepOff : undefined
     // Capture module identity before switching the entry off.
     const namedRows = new Set<string>()
     if (!enabled) {
@@ -1256,7 +1283,9 @@ export function mountMarketRoutes(
         if (composedRowName(host, id) === name) namedRows.add(id)
       }
     }
-    const { ok: liveOk, reason: liveReason } = await switchLive()
+    const { ok: liveOk, reason: liveReason } = await (switchLive === undefined
+      ? setPluginEnabled(name, enabled, keepOff)
+      : switchLive(keepOff))
     let ok = liveOk
     let reason = liveReason
     // Durable patch-layer write (port of dsh-plugin-hub): the package's
@@ -1273,15 +1302,10 @@ export function mountMarketRoutes(
     // side effect of a bug fix. Skipped only while something else is left to
     // flip: a package whose rows are ALL opt-in rows still has to be
     // switchable.
-    const optOutRows = new Set(bundleOptOutRowIds(packageDir))
     // Rows the bundle decides itself, by expression (`disabled: !!js …`),
     // are a third shape next to opt-in rows: the market can neither read
     // nor overrule the condition, so enabling the package must leave them
     // exactly as the bundle ships them (#1043).
-    const expressionRows = new Set(bundleExpressionRowIds(packageDir))
-    const decided = patchRows.filter(rowId => !optOutRows.has(rowId))
-    /** Rows that can carry a USER decision about this package — see above. */
-    const userRows = decided.length > 0 ? decided : patchRows
     // Disable-carrier (#224): a bundle whose patch DISABLES a plugin it
     // does not own (dsh-postgres-backends disables session-persistence-jsonl).
     // Disabling only its inserted rows leaves that foreign disable applying
@@ -1376,10 +1400,16 @@ export function mountMarketRoutes(
       // a row the environment keeps off, which then held the package pending
       // at activation — except, again, to clean a block an earlier disable
       // left, which restores the expression's authority, never a forced on.
-      const targets = enabled
-        ? patchRows.filter(rowId => (!optOutRows.has(rowId) && !expressionRows.has(rowId)) || (rowIsOurs(rowId) && prePatch.disables.includes(rowId)))
-        : patchRows
+      let targets: string[] = []
       const flipped: { rowId: string; removedMarketName?: string }[] = []
+      if (componentPatch !== null) {
+        const result = await writeComponentSwitchPatch(userPatchPath, name, componentPatch, enabled)
+        if (!result.ok) patchWrite = result
+      } else {
+        targets = enabled
+          ? patchRows.filter(rowId => (!optOutRows.has(rowId) && !expressionRows.has(rowId)) || (rowIsOurs(rowId) && prePatch.disables.includes(rowId)))
+          : patchRows
+      }
       for (const rowId of targets) {
         // #1110: an opt-in or expression row that the user's layer still holds
         // closed can only be CLEANED here. `enableRow`'s force-enable appends
@@ -1439,6 +1469,7 @@ export function mountMarketRoutes(
               logEvent('warn', 'toggle', `${name}: dsh.profile.bundles rollback failed — ${bundleSwitch.reason}`)
             }
           }
+          if (wasDisabled) await setPluginEnabled(name, false)
           // #575: a failed enable leaves the plugin as it was, and the
           // reply has to say so — otherwise the switch shows a state the
           // rollback just undid.
@@ -1448,7 +1479,7 @@ export function mountMarketRoutes(
       }
     }
     logEvent(ok ? 'info' : 'error', 'toggle', `${name}: ${enabled ? 'on' : 'off'} ok=${String(ok)}`)
-    return { ok, reason, patchRows, userRows, patchWrite, carrierRows, isCarrier, bundleSwitch }
+    return { ok, reason, patchRows, patchWrite, carrierRows, isCarrier, bundleSwitch }
   }
 
   /**
@@ -4365,21 +4396,19 @@ export function mountMarketRoutes(
             // Theme exclusivity stays a Themes-page concern: enabling a theme
             // deactivates the previously active one, so only the last-enabled
             // theme is live (same semantics as use-skin).
-            ? await switchPluginLayers(name, enabled, async () => {
-              const { ok, reason } = await themes.activateTheme(name)
+            ? await switchPluginLayers(name, enabled, async (keepOff) => {
+              const { ok, reason } = await themes.activateTheme(name, keepOff)
               themeFailure = reason
               return { ok, reason: reason ?? (ok ? undefined : 'theme activation failed — restart required / 主题启用失败，需要重启') }
             })
             : await switchPluginLayers(name, enabled)
           const { ok, reason } = layers
-          const { patchRows, userRows, patchWrite, carrierRows, isCarrier, bundleSwitch } = layers
+          const { patchRows, patchWrite, carrierRows, isCarrier, bundleSwitch } = layers
           // Activation reads the post-write truth: the switch state OR the
           // patch layer, so a disabled plugin never reports "restart to
           // apply".
-          const patchNow = readUserPatchState(userPatchPath)
-          // Read from userRows, like the listing (#876): a disabled opt-in row is
-          // the bundle's own default and does not make the package off.
-          const offNow = disabled.has(name) || userRows.some(id => patchNow.disables.includes(id))
+          const patchNow = readUserPatchState(userPatchPath, id => composedRowName(host, id))
+          const offNow = disabled.has(name) || packagePatchFlags(host, activeProfileDir, [name], patchNow).disabled.includes(name)
           // When the live composition does not match the requested state
           // (enable failed to hot-mount / disable left the fiber up), the
           // change lands on the next boot via the patch layer + state.json —
@@ -4748,7 +4777,7 @@ export function mountMarketRoutes(
               if (isNonToggleableLibrary(member)) continue
               let result: { ok: boolean; reason?: string }
               if (enabled && themeNames.has(member)) {
-                result = await themes.activateTheme(member)
+                result = await switchPluginLayers(member, enabled, keepOff => themes.activateTheme(member, keepOff))
               } else {
                 // The same two durable layers the single switch writes (#696):
                 // which control flipped a plugin must not change what is on disk.

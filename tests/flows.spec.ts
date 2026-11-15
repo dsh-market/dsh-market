@@ -7878,6 +7878,138 @@ describe('a `disabled: !!js` guard survives the toggle (#1175)', () => {
     expect(plain.update).not.toHaveBeenCalled()
   })
 
+  it('preserves an explicit user-disabled component through the package off/on round trip (#1150 remaining)', async () => {
+    const name = 'dsh-audit-components'
+    bed.dispose()
+    seedPackage(name, [
+      '- insert:',
+      '    - id: default-panel',
+      `      name: '${name}'`,
+      '    - id: optional-panel',
+      `      name: '${name}/optional'`,
+      '    - id: preferred-opt-in',
+      `      name: '${name}/opt-in'`,
+      '      disabled: true',
+    ])
+    const path = join(profileDir('web'), 'cordis.patch.yml')
+    const userPatch = '- id: optional-panel\n  disabled: true\n  config:\n    preference: user-keeps-this\n'
+      + '- id: preferred-opt-in\n  disabled: false\n'
+    writeFileSync(path, userPatch)
+    bed = createTestbed()
+    const primary = entry(name, 'default-panel', null)
+    const optional = entry(`${name}/optional`, 'optional-panel', true)
+    const optIn = entry(`${name}/opt-in`, 'preferred-opt-in', false)
+    const other = entry('dsh-independent', 'independent', null)
+    bed.loaderEntries.push(primary, optional, optIn, other)
+    const initialRequest = await bed.dispatch('GET', '/dsh-market/installed')
+    const initial = {
+      packageDisabled: initialRequest.json.patchDisabled.includes(name),
+      active: [primary, optional, optIn].map(row => row.fiber !== undefined),
+      patch: readFileSync(path, 'utf8'),
+    }
+    const off = await bed.dispatch('POST', '/dsh-market/toggle', { name, enabled: false })
+    const whileOff = {
+      status: off.status,
+      active: [primary, optional, optIn].map(row => row.fiber !== undefined),
+      patch: readFileSync(path, 'utf8'),
+    }
+    const on = await bed.dispatch('POST', '/dsh-market/toggle', { name, enabled: true })
+    const after = {
+      status: on.status,
+      active: [primary, optional, optIn].map(row => row.fiber !== undefined),
+      patch: readFileSync(path, 'utf8'),
+    }
+    expect(initial.packageDisabled).toBe(false)
+    expect(whileOff.active).toEqual([false, false, false])
+    expect(after.status).toBe(200)
+    expect(after.active).toEqual(initial.active)
+    expect(whileOff.patch.startsWith(userPatch)).toBe(true)
+    expect(after.patch).toBe(initial.patch)
+    expect(on.json.activation[name].state).toBe('live')
+    expect(other.update).not.toHaveBeenCalled()
+    expect(other.fiber).toBeDefined()
+  })
+
+  it('restores a legacy whole-package disable without inventing prior component settings (#1150)', async () => {
+    const name = 'dsh-audit-legacy'
+    bed.dispose()
+    seedPackage(name, [
+      '- insert:',
+      '    - id: main-legacy',
+      `      name: '${name}'`,
+      '    - id: extra-legacy',
+      `      name: '${name}/extra'`,
+    ])
+    const path = join(profileDir('web'), 'cordis.patch.yml')
+    writeFileSync(path, '- id: main-legacy\n  disabled: true\n- id: extra-legacy\n  disabled: true\n')
+    hot.disabled.add(name)
+    bed = createTestbed()
+    const primary = entry(name, 'main-legacy', true)
+    const optional = entry(`${name}/extra`, 'extra-legacy', true)
+    bed.loaderEntries.push(primary, optional)
+    // Let the boot replay finish before requesting an enable.
+    await new Promise(resolve => setTimeout(resolve, 0))
+    const on = await bed.dispatch('POST', '/dsh-market/toggle', { name, enabled: true })
+    expect(on.status).toBe(200)
+    expect(on.json.disabled).not.toContain(name)
+    expect(primary.fiber).toBeDefined()
+    expect(optional.fiber).toBeDefined()
+    expect(load(readFileSync(path, 'utf8'))).toEqual([])
+  })
+
+  it.each([false, true])('keeps a default-off component off through a full switch with explicit default override = %s (#1150)', async (explicit) => {
+    const name = 'dsh-audit-default'
+    bed.dispose()
+    seedPackage(name, [
+      '- insert:',
+      '    - id: main-default',
+      `      name: '${name}'`,
+      '    - id: opt-in-default',
+      `      name: '${name}/opt-in'`,
+      '      disabled: true',
+    ])
+    const path = join(profileDir('web'), 'cordis.patch.yml')
+    const userPatch = explicit ? '- id: opt-in-default\n  disabled: true\n' : '[]\n'
+    writeFileSync(path, userPatch)
+    bed = createTestbed()
+    const primary = entry(name, 'main-default', null)
+    const optIn = entry(`${name}/opt-in`, 'opt-in-default', true)
+    bed.loaderEntries.push(primary, optIn)
+
+    expect((await bed.dispatch('POST', '/dsh-market/toggle', { name, enabled: false })).status).toBe(200)
+    expect((await bed.dispatch('POST', '/dsh-market/toggle', { name, enabled: true })).status).toBe(200)
+    expect(primary.fiber).toBeDefined()
+    expect(optIn.fiber).toBeUndefined()
+    expect(readFileSync(path, 'utf8')).toBe(userPatch)
+  })
+
+  it('restores from the owned patch overlays even if the market state was lost (#1150)', async () => {
+    const name = 'dsh-audit-recovered'
+    bed.dispose()
+    seedPackage(name, [
+      '- insert:',
+      '    - id: recovered-main',
+      `      name: '${name}'`,
+      '    - id: recovered-extra',
+      `      name: '${name}/extra'`,
+    ])
+    const path = join(profileDir('web'), 'cordis.patch.yml')
+    const userPatch = '- id: recovered-extra\n  disabled: true\n'
+    writeFileSync(path, userPatch)
+    bed = createTestbed()
+    bed.loaderEntries.push(entry(name, 'recovered-main', null), entry(`${name}/extra`, 'recovered-extra', true))
+    expect((await bed.dispatch('POST', '/dsh-market/toggle', { name, enabled: false })).status).toBe(200)
+
+    // An independent Market instance boots without the previous disable set.
+    // The profile still owns the only temporary block it needs to remove.
+    bed.dispose()
+    hot.disabled.clear()
+    bed = createTestbed()
+    expect((await bed.dispatch('POST', '/dsh-market/toggle', { name, enabled: true })).status).toBe(200)
+    expect(readFileSync(path, 'utf8')).toBe(userPatch)
+    expect((await bed.dispatch('GET', '/dsh-market/installed')).json.patchDisabled).not.toContain(name)
+  })
+
   it('still switches on the rows of a non-carrier that carries no guard', async () => {
     const ordinary = 'dsh-guarded'
     bed.dispose()
