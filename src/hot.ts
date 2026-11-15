@@ -36,9 +36,39 @@ interface PluginHandle {
   dispose(): Promise<unknown> | void
 }
 
+/** One structured record delivered to a host logger exporter (cordis `Message`). */
+interface HostLogMessage {
+  name?: unknown
+  type?: unknown
+  args?: unknown
+}
+
+/**
+ * Sink shape accepted by cordis' `LoggerService.exporter`.
+ *
+ * `levels` is not optional decoration: the service skips a record before it
+ * ever reaches `export` when
+ * `(levels[name] ?? levels.default ?? logger.level ?? 1) < record.level`.
+ * The default threshold is `1`, and `warn` is level `2` — a sink that leaves
+ * `levels` out never sees a single warning.
+ */
+interface HostLogSink {
+  levels?: Record<string, number>
+  export(message: HostLogMessage): void
+}
+
 interface HotContext {
   plugin(plugin: unknown, config: unknown): PluginHandle
-  logger?: { info?(message: string): void; warn(message: string): void }
+  logger?: {
+    info?(message: string): void
+    warn(message: string): void
+    /**
+     * Optional structured sink: cordis' `LoggerService.exporter` hands over
+     * every record the process logs and returns a disposer. Absent on hosts
+     * whose logger is a bare object, and on test doubles.
+     */
+    exporter?(sink: HostLogSink): unknown
+  }
 }
 
 /**
@@ -1007,6 +1037,97 @@ function raceActivationTimeout<T>(awaitable: T | Promise<T>): Promise<T> {
   })
 }
 
+/** Cap on host log lines attached to one hot mount (#1197). */
+const MOUNT_LOG_MAX = 5
+const MOUNT_LOG_LINE_MAX = 200
+
+/** Render one structured host record as a single log line. */
+function mountLogLine(message: HostLogMessage): string {
+  const parts: unknown[] = Array.isArray(message.args) ? message.args : [message.args]
+  const text = parts
+    .filter(part => part !== undefined && part !== null)
+    .map(part => {
+      if (typeof part === 'string') return part
+      // Align with `Logger.format`: an Error records its stack (or message as
+      // a fallback), never the empty object `JSON.stringify` yields. cordis'
+      // `_method` hands the raw `args: [Error]` to exporters without
+      // formatting, so this is what keeps `the host logged this while
+      // mounting — name: Error: ...` readable in the exportable log.
+      if (part instanceof Error) return part.stack || part.message
+      try {
+        return JSON.stringify(part) ?? String(part)
+      } catch {
+        return String(part)
+      }
+    })
+    .join(' ')
+  const name = typeof message.name === 'string' && message.name !== '' ? `${message.name}: ` : ''
+  return `${name}${text}`.slice(0, MOUNT_LOG_LINE_MAX)
+}
+
+/**
+ * Collect the host's warn/error records for the duration of one hot mount.
+ *
+ * `Fiber#await()` resolves normally when an entry is still waiting on a
+ * service that never arrives (#1197): the mount reports live, and the only
+ * trace of the problem is whatever the host logged while composing it.
+ * Recording those lines next to the `live` event keeps that trace in the
+ * exportable log without changing the verdict — the mount really did finish,
+ * and "this entry was the one that complained" is not something the market can
+ * prove yet.
+ *
+ * Attribution stays open on purpose: the exporter is process-wide, so these
+ * lines read as "logged while mounting", not as this entry's own records.
+ * Filtering on a name prefix would bake in a naming contract the host has not
+ * promised.
+ *
+ * @param ctx - host context; the sink is skipped when there is no `exporter`.
+ * @returns the collected lines plus a disposer that is safe to call twice.
+ */
+function watchMountLog(ctx: HotContext): { finish(): string[]; stop(): void } {
+  const logger = ctx.logger
+  const register = logger?.exporter
+  if (logger === undefined || typeof register !== 'function') return { finish: () => [], stop: () => {} }
+  const lines: string[] = []
+  let disposable: unknown
+  try {
+    disposable = register.call(logger, {
+      // Ask for every level and filter below: the sink exists to catch
+      // warnings, and the service's own default threshold (`1`) drops them
+      // before `export` is ever called.
+      levels: { default: 3 },
+      export(message: HostLogMessage) {
+        if (lines.length >= MOUNT_LOG_MAX) return
+        if (message?.type !== 'warn' && message?.type !== 'error') return
+        lines.push(mountLogLine(message))
+      },
+    } satisfies HostLogSink)
+  } catch {
+    // A host whose exporter rejects this sink shape is not a mount failure.
+    return { finish: () => [], stop: () => {} }
+  }
+  let stopped = false
+  const stop = (): void => {
+    if (stopped) return
+    stopped = true
+    try {
+      if (typeof disposable === 'function') void (disposable as () => unknown)()
+      else if (disposable !== null && typeof disposable === 'object' && 'dispose' in disposable) {
+        void (disposable as { dispose(): unknown }).dispose()
+      }
+    } catch {
+      // The mount result matters more than the sink teardown.
+    }
+  }
+  return {
+    finish: () => {
+      stop()
+      return lines.slice()
+    },
+    stop,
+  }
+}
+
 /** Outcome of one hot-mount attempt; `reason` explains non-`ok` results. */
 export interface HotMountResult {
   ok: boolean
@@ -1184,10 +1305,22 @@ export async function hotMount(ctx: HotContext, profileDir: string, packageName:
       .map(row => `- id: '${yamlSingleQuoted(`mkt-${row.id}`)}'\n  name: '${yamlSingleQuoted(resolveProfileEntry(profileDir, row.name))}'\n`)
       .join('')
     writeFileSync(file, yml)
-    const handle = ctx.plugin(HotTree, { path: pathToFileURL(file).href })
+    const mountLog = watchMountLog(ctx)
+    let handle: PluginHandle
+    try {
+      handle = ctx.plugin(HotTree, { path: pathToFileURL(file).href })
+    } catch (error) {
+      // `ctx.plugin()` bails out before creating anything when the fiber is no
+      // longer active (a mount issued during teardown) or the plugin is
+      // rejected. The sink is already registered by then, so release it here:
+      // the outer catch reports the failure, it does not clean this up.
+      mountLog.stop()
+      throw error
+    }
     try {
       await raceActivationTimeout(handle.await())
     } catch (error) {
+      mountLog.stop()
       // A failed or wedged mount must leave NOTHING behind: the disposed
       // subtree stops retrying the import, and the input file is removed so
       // it cannot be re-imported by a later boot or replay (a leftover file
@@ -1209,6 +1342,13 @@ export async function hotMount(ctx: HotContext, profileDir: string, packageName:
     hotTreeOf.set(packageName, pathToFileURL(file).href)
     ctx.logger?.info?.(`[dsh-market] hot-mounted ${packageName}`)
     logEvent('info', 'hot-mount', `${packageName}: live${shimNames.has(packageName) ? ' (client-only shim)' : ''}`)
+    // A mount that resolves while an entry is still waiting on a service is
+    // "live" by the host's own verdict, so the verdict stands — but the lines
+    // the host logged meanwhile are the only record of why the entry never
+    // started serving (#1197).
+    for (const line of mountLog.finish()) {
+      logEvent('warn', 'hot-mount', `${packageName}: the host logged this while mounting — ${line}`)
+    }
     return { ok: true, reason: null }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
