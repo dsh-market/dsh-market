@@ -1,9 +1,15 @@
 import fs from 'node:fs/promises'
+import type { IncomingMessage, ServerResponse } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { Readable } from 'node:stream'
+import { Context } from '@deepseek-ai/cordis'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { openDiscoveryCache, type CacheEntry } from '../src/discovery-cache.ts'
 import { DiscoveryManifestIndex, manifestFacts } from '../src/discovery-compatibility.ts'
+import { apply } from '../src/index.ts'
+import * as net from '../src/net.ts'
+import type { MarketHost } from '../src/routes.ts'
 
 const HEADER = '{"schema":"dsh-market/discovery-compatibility-cache/v2"}\n'
 const REGISTRY = 'https://registry.example'
@@ -163,6 +169,63 @@ describe('discovery cache journal', () => {
     await after.dispose()
     expect(fetcher).not.toHaveBeenCalled()
     expect(await fs.readFile(journal, 'utf8')).toContain('"pending"')
+  })
+
+  it('awaits queued compatibility writes when Cordis unloads the market plugin', async () => {
+    const store = join(directory, '.dsh-market')
+    const cacheFile = join(store, 'discovery-compatibility-v1.json.journal')
+    await fs.mkdir(store)
+    await fs.writeFile(join(store, 'state.json'), JSON.stringify({ region: 'global', regionAuto: false }))
+    const started = deferred()
+    const unblock = deferred()
+    const write = fs.writeFile.bind(fs)
+    vi.spyOn(fs, 'writeFile').mockImplementation(async (...args) => {
+      if (args[0] === cacheFile + '.tmp') {
+        started.resolve()
+        await unblock.promise
+      }
+      await write(...args)
+    })
+    vi.spyOn(net, 'marketFetch').mockImplementation(async () => Response.json({ version: '1.0.0' }))
+    const routes = new Map<string, Parameters<MarketHost['webServer']['register']>[0]['handler']>()
+    const webServer: MarketHost['webServer'] = {
+      register(route) {
+        routes.set(route.path, route.handler)
+        return () => { routes.delete(route.path) }
+      },
+    }
+    const root = new Context()
+    root.provide('webServer', webServer)
+    root.provide('loader', { entries: () => [] })
+    root.provide('profileContext', { name: 'web', dir: directory })
+    const plugin = root.plugin(ctx => apply(ctx))
+    const path = '/dsh-market/discovery-compatibility'
+    try {
+      await plugin.await()
+      const request = Readable.from([Buffer.from(JSON.stringify({ packages: ['queued-plugin'] }))]) as IncomingMessage
+      request.method = 'POST'
+      request.url = path
+      request.headers = { host: '127.0.0.1:3080', origin: 'http://127.0.0.1:3080' }
+      const response = { writeHead: vi.fn(), end: vi.fn() }
+      await routes.get(path)!(request, response as unknown as ServerResponse)
+      expect(response.writeHead).toHaveBeenCalledWith(200, expect.any(Object))
+
+      let unloaded = false
+      const unloading = Promise.resolve(plugin.dispose()).then(() => { unloaded = true })
+      try {
+        await started.promise
+        await new Promise<void>(resolve => setImmediate(resolve))
+        expect(routes.has(path)).toBe(false)
+        expect(unloaded).toBe(false)
+      } finally {
+        unblock.resolve()
+        await unloading
+      }
+      expect(await fs.readFile(cacheFile, 'utf8')).toContain('queued-plugin')
+    } finally {
+      unblock.resolve()
+      await root.fiber.dispose()
+    }
   })
 
   it('leaves the old journal intact if compaction fails, then retains the newest 20,000 rows', async () => {
