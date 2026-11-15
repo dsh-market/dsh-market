@@ -700,6 +700,7 @@ vi.mock('../src/hot.ts', async (importOriginal) => ({
     if (state.updateExempt !== undefined) hot.updateExempt = state.updateExempt
   },
   listHotMounts: () => [...hot.mounts],
+  listLiveHotMounts: () => [...hot.mounts],
   hotMount: (_ctx: unknown, _dir: string, name: string) => {
     if (hot.failNext) {
       hot.failNext = false

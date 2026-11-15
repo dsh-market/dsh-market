@@ -1032,16 +1032,11 @@ export function listHotMounts(): string[] {
   return [...hotHandles.keys()]
 }
 
-function mountedFile(packageName: string, profileDir?: string): string | undefined {
-  const file = hotTreeOf.get(packageName)
-  if (file === undefined || profileDir === undefined) return file
-  return dirname(fileURLToPath(file)) === join(profileDir, HOT_DIR) ? file : undefined
-}
-
 /** Report a failed child only when it belongs to this package's hot-mount tree. */
 export function hotMountFailure(packageName: string, profileDir?: string): string | null {
-  const file = mountedFile(packageName, profileDir)
+  const file = hotTreeOf.get(packageName)
   if (file === undefined) return null
+  if (profileDir !== undefined && dirname(fileURLToPath(file)) !== join(profileDir, HOT_DIR)) return null
   const tree = hotTrees.get(file)
   if (typeof tree?.entries !== 'function') return null
   const failed: string[] = []
@@ -1282,9 +1277,8 @@ export async function hotUnmount(packageName: string): Promise<boolean> {
  */
 export async function hotMount(ctx: HotContext, profileDir: string, packageName: string): Promise<HotMountResult> {
   try {
-    if (mountedFile(packageName, profileDir) !== undefined) {
-      return mountResult(hotMountFailure(packageName, profileDir))
-    }
+    const previousFailure = hotMountFailure(packageName, profileDir)
+    if (previousFailure !== null) return mountResult(previousFailure)
     const HotTree = await loadHotTreeClass()
     if (HotTree === null) {
       return {
