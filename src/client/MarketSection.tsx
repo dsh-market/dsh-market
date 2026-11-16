@@ -2725,8 +2725,16 @@ export function MarketSection(props: MarketSectionProps) {
   const recordSeq = useRef(0)
   /** The synthetic install task rebuilt from dshm-pending after a remount. */
   const recoveredInstall = useRef<{ id: string; url: string; name?: string } | null>(null)
-  /** The synthetic task rebuilt from dshm-updating after this section remounts. */
-  const recoveredUpdateRecordId = useRef<string | null>(null)
+  /** The local task tracking dshm-updating, either awaiting its reply or recovering it. */
+  const pendingUpdate = useRef<{ recordId: string; recovering: boolean } | null>(null)
+  const mountedRef = useRef(true)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      pendingUpdate.current = null
+    }
+  }, [])
   /**
    * The install queue: agents-busy 409s become `queued` records instead of
    * failures, and drain automatically when agents go idle (see drainQueue).
@@ -3883,12 +3891,14 @@ export function MarketSection(props: MarketSectionProps) {
    * with the user left to guess whether the plugin landed.
    */
   const noteMarketGone = useCallback(() => {
+    if (!mountedRef.current) return
     discoveryScan.setUnavailable()
     refreshRequest.current = 0
     setCheckingUpdates(false)
     setMarketGone(true)
     setBusyUrl(null)
     setUpdatingName(null)
+    pendingUpdate.current = null
     setRemovingName(null)
     setRecords(list => list.map(record =>
       record.state === 'running' || record.state === 'queued'
@@ -4107,7 +4117,7 @@ export function MarketSection(props: MarketSectionProps) {
     if (updating !== null && typeof updating.name === 'string' && updating.name !== '') {
       setUpdatingName(updating.name)
       const id = `recovered-update:${updating.name}`
-      recoveredUpdateRecordId.current = id
+      pendingUpdate.current = { recordId: id, recovering: true }
       setRecords(list => list.some(record =>
         record.kind === 'update' && record.name === updating.name && record.state === 'running')
         ? list
@@ -4157,6 +4167,7 @@ export function MarketSection(props: MarketSectionProps) {
       return
     }
     const timer = setInterval(() => {
+      const polledUpdate = pendingUpdate.current
       fetch(api('/dsh-market/status'), { cache: 'no-store' })
         .then(readMarketStatus)
         .then(status => {
@@ -4175,6 +4186,7 @@ export function MarketSection(props: MarketSectionProps) {
           setHostBusy(status.busy === true)
           setDebuggerLatch(typeof status.debugger === 'string' ? status.debugger : null)
           if (status.active) {
+            if (pendingUpdate.current === polledUpdate) updateIdleStrikes.current = 0
             setCancelling(status.cancelling === true)
             if (status.phase !== null && status.phase !== undefined) {
               // Structured pnpm progress: stage + current package + count.
@@ -4263,28 +4275,24 @@ export function MarketSection(props: MarketSectionProps) {
                 setInstallError(t('installFail') + ' — ' + t('exportLog'))
               }
             }
-            // An update whose response was lost — the page was closed mid-run
-            // and reopened via the dshm-updating marker — converges the same
-            // way. Once the host reports the operation fully settled (pnpm
-            // exited AND the mutation lock released), hand the running row
-            // back to the refreshed listing instead of showing "updating"
-            // forever. Two idle polls guard the brief window before the host
-            // has actually started the command.
-            if (updatingName !== null && status.busy !== true) {
-              if (++updateIdleStrikes.current >= 2) {
-                updateIdleStrikes.current = 0
-                sessionStorage.removeItem('dshm-updating')
-                const recoveredId = recoveredUpdateRecordId.current
-                if (recoveredId !== null) {
-                  setRecords(list => drop(list, recoveredId))
-                  recoveredUpdateRecordId.current = null
-                }
-                setUpdatingName(null)
-                refreshInstalled()
-              }
-            } else {
+            // An idle sample can precede a POST reaching the host. Only a
+            // lost reply or a remount makes this task eligible for recovery.
+            if (pendingUpdate.current !== polledUpdate) return
+            if (updatingName === null || status.busy === true || polledUpdate?.recovering === false) {
               updateIdleStrikes.current = 0
+              return
             }
+            // Two idle polls allow the host time to begin the command.
+            if (++updateIdleStrikes.current < 2) return
+            updateIdleStrikes.current = 0
+            if (polledUpdate !== null) {
+              sessionStorage.removeItem('dshm-updating')
+              pendingUpdate.current = null
+              setRecords(list => list.filter(record => record.id !== polledUpdate.recordId
+                || record.state !== 'running' || record.hostOperationId !== undefined))
+            }
+            setUpdatingName(null)
+            refreshInstalled()
           }
         })
         .catch(() => {})
@@ -5241,6 +5249,8 @@ export function MarketSection(props: MarketSectionProps) {
     // "update all" left the panel empty while several plugins were mid-flight
     // (#295 by @sanyecao88). One record per attempt, like the install flow.
     const updateRecordId = nextRecordId()
+    const attempt = { recordId: updateRecordId, recovering: false }
+    pendingUpdate.current = attempt
     setRecords(list => enqueue(list, { id: updateRecordId, kind: 'update', name, state: 'running', updateOptions }))
     return fetch(api('/dsh-market/update'), {
       method: 'POST',
@@ -5257,13 +5267,20 @@ export function MarketSection(props: MarketSectionProps) {
         ...(!restore && statusRef.current.agentDrain && !preferReject ? { busyPolicy: 'drain' } : {}),
       }),
     })
-      .then(res => res.json().then(body => ({ status: res.status, body })))
+      .then(async res => {
+        const body = await res.json()
+        if (body === null || typeof body !== 'object' || Array.isArray(body)) throw new Error('Invalid update response')
+        return { status: res.status, body }
+      })
       .then(({ status, body }) => {
         // A response means the host settled the request (even a 4xx/5xx), so
         // the running row can hand back now. Only a lost response keeps the
         // marker + row for the poll to converge.
-        sessionStorage.removeItem('dshm-updating')
-        setUpdatingName(null)
+        if (pendingUpdate.current === attempt) {
+          pendingUpdate.current = null
+          sessionStorage.removeItem('dshm-updating')
+          setUpdatingName(null)
+        }
         if (status === 202 && typeof body.operationId === 'string') {
           const operation = body.operation as DrainOperationWire | undefined
           setRecords(list => patchRecord(withoutHostProjection(list, body.operationId, updateRecordId), updateRecordId, {
@@ -5441,10 +5458,9 @@ export function MarketSection(props: MarketSectionProps) {
         }
       })
       .catch(() => {
-        // A lost response does not mean the update stopped (the route holds
-        // its reply until pnpm finishes, #100): keep the marker AND the
-        // running row, and let the status poll converge the outcome instead
-        // of declaring a false failure — mirroring the install flow's catch.
+        // The host may still be writing. Keep the row until the status poll
+        // confirms idle, and leave this attempt alone if the page was closed.
+        if (pendingUpdate.current === attempt) pendingUpdate.current = { ...attempt, recovering: true }
       })
   }, [refreshInstalled, installed, rememberDrainMarker, t, lang, updates])
 
