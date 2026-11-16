@@ -74,12 +74,22 @@ describe.skipIf(!dshAvailable()).sequential('web e2e: official carrier re-enable
       try { return JSON.parse(readFileSync(responseFile, 'utf8')).id === id } catch { return false }
     }, 'the official manager did not finish enabling the carrier')
     const responseText = readFileSync(responseFile, 'utf8')
-    const enabled = JSON.parse(responseText) as { ok: boolean; executions: number; rows: { moduleName: string }[]; error?: string }
+    const enabled = JSON.parse(responseText) as {
+      ok: boolean; executions: number; bundleSelected: boolean
+      rows: { moduleName: string; enabled: boolean; fiberPhase: string }[]
+      error?: string
+    }
     expect(enabled.error).toBeUndefined()
-    expect(enabled.ok).toBe(true)
+    expect(enabled.ok, responseText).toBe(true)
+    expect(enabled.bundleSelected, responseText).toBe(true)
     expect(enabled.executions).toBe(1)
     expect(existsSync(requestFile)).toBe(false)
-    expect(enabled.rows.map(row => row.moduleName).sort()).toEqual([CARRIER, `${CARRIER}/gate`].sort())
+    expect(enabled.rows.map(row => row.moduleName).sort(), responseText).toEqual([CARRIER, `${CARRIER}/gate`].sort())
+    expect(enabled.rows.every(row => row.enabled && row.fiberPhase === 'active'), responseText).toBe(true)
+    for (const component of ['native', 'gate', 'dependent']) {
+      await waitFor(() => markerPid(component) !== null, `${component} did not load after the official enable`)
+    }
+    expect(JSON.parse(readFileSync(marker('dependent'), 'utf8')).policyReady).toBe(true)
     const enabledPatch = readFileSync(join(profile(), 'cordis.patch.yml'), 'utf8')
     expect(bundles()).toContain(CARRIER)
 
