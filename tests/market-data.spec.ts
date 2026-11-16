@@ -8,12 +8,25 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
-  entryForDep, installCommandFor, extractReadmeImageCandidates, extractReadmeImages, formatCount, groupSwitchState, installedForCatalog, isInstalled, isMarketItself, localizeBilingual, localizeBilingualList, looksTerminal, matchInstalledName, orderedCategories, pageItems, pluginCategories, pluginScreenshotCandidates, pluginsForFavorites, previewDimensionScore, rankThemeScreenshots, releaseNotesHttpsImage, resetGithubRouting, resetScreenshotsCache, safeScreenshots, sanitizeReleaseNotesBody, staleFavoriteUrls, themePlugins, visiblePlugins, humanOutput, failureText, catalogEntryForInstalled} from '../src/client/market-data.ts'
+  entryForDep, installCommandFor, extractReadmeImageCandidates, extractReadmeImages, formatCount, groupSwitchState, installedForCatalog, isInstalled, isMarketItself, localizeBilingual, localizeBilingualList, looksTerminal, matchInstalledName, orderedCategories, pageItems, pluginCategories, pluginName, pluginScreenshotCandidates, pluginsForFavorites, previewDimensionScore, rankThemeScreenshots, releaseNotesHttpsImage, resetGithubRouting, resetScreenshotsCache, safeScreenshots, sanitizeReleaseNotesBody, staleFavoriteUrls, themePlugins, visiblePlugins, humanOutput, failureText, catalogEntryForInstalled} from '../src/client/market-data.ts'
 import type { RegistryPlugin, ScreenshotCandidate, ScreenshotRejection } from '../src/client/market-data.ts'
 
 function plugin(partial: Partial<RegistryPlugin>): RegistryPlugin {
   return { name: 'x', owner: 'o', url: 'https://github.com/o/x', category: 'tool', ...partial }
 }
+
+describe('catalog plugin titles (#1174)', () => {
+  it.each([
+    ['deepseek-time#dsh', null, 'deepseek-time'],
+    ['dsh-paperflight#packages/PLUGIN', null, 'dsh-paperflight'],
+    ['dsh-web#packages/dsh-web-all', null, 'dsh-web-all'],
+    ['workspace#plugin', '@author/tool', '@author/tool'],
+    ['workspace#plugins/', null, 'workspace'],
+    ['dsh', null, 'dsh'],
+  ])('formats %s with npm mapping %s as %s', (name, npm, title) => {
+    expect(pluginName(name, npm)).toBe(title)
+  })
+})
 
 describe('looksTerminal', () => {
   it('does not label a web plugin as terminal-only when the description says a CLI is not required', () => {
