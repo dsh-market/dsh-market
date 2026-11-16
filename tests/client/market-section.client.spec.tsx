@@ -20,7 +20,7 @@ import { SEARCH_DELAY_MS } from '../../src/client/SearchInput.tsx'
 import {
   pluginScreenshotCandidates, resetGithubRouting, resetScreenshotsCache, restartHintKey, setGithubRoutes,
 } from '../../src/client/market-data.ts'
-import { en, zh } from '../../src/client/locales.ts'
+import { en, ja, zh } from '../../src/client/locales.ts'
 
 describe('Issue #991 approval target and queue feedback', () => {
   describe.each(['en', 'zh'])('visible update explanation in %s', (lang) => {
@@ -572,7 +572,7 @@ describe('api() base resolution (#345)', () => {
     expect(fetchCalls.some(call => call.path === '/dsh-market/note')).toBe(false)
     expect(fetchCalls.some(call => call.path === '/dsh-market/changelog')).toBe(false)
     expect(fetchMock.mock.calls.some(([url]) =>
-      url === '/app/my-dsh/dsh-market/changelog?name=dsh-loop')).toBe(true)
+      url === '/app/my-dsh/dsh-market/changelog?name=dsh-loop&target=1.2.0')).toBe(true)
   })
 
   describe('notes the market does not hold (#819)', () => {
@@ -654,6 +654,161 @@ describe('api() base resolution (#345)', () => {
       await openNotes({ kind: 'source', reason: 'missing', sourceUrl: 'javascript:alert(1)' })
       expect(await screen.findByText(new RegExp(en.notesSourceNoLink))).toBeTruthy()
       expect(screen.queryByRole('link', { name: en.notesSourceLink })).toBeNull()
+    })
+  })
+
+  describe('update notes history (#1193)', () => {
+    const release = (version: string, body: string) => ({
+      tag: `v${version}`, name: null, publishedAt: '2026-11-13T12:00:00Z', url: null, body,
+    })
+
+    it.each([
+      ['en', en, 'This update', 'Not available yet', 'Some release notes are missing.'],
+      ['zh', zh, '本次更新', '暂不可安装', '部分版本的说明暂缺。'],
+      ['ja', ja, '今回の更新', 'まだインストールできないバージョン', '一部のリリースノートがありません。'],
+    ] as const)('separates the target history and held release in %s', async (lang, dict, historyTitle, heldTitle, partialHint) => {
+      const fetchMock = stubFetch({
+        '/dsh-market/installed': { profile: 'desktop', installed: { 'dsh-loop': '^1.0.0' }, live: [] },
+        '/dsh-market/updates': { updates: { 'dsh-loop': {
+          kind: 'npm', current: '1.0.0', latest: '1.3.0', eligibleVersion: '1.2.0', updateAvailable: true,
+        } } },
+        '/dsh-market/changelog': {
+          kind: 'release', beyondTarget: '1.2.0', release: release('1.3.0', 'Held version notes'),
+          history: { partial: true, items: [
+            { ...release('1.2.0', '**Target notes**\n\n<img src="https://evil.test/tracker.png">'), version: '1.2.0' },
+            { ...release('1.1.0', 'Earlier notes in range'), version: '1.1.0' },
+            { ...release('1.0.1', '   '), version: '1.0.1' },
+          ] },
+        },
+      })
+      const snapshot = { active: lang }
+      render(<MarketSection {...props()} preferredSubsectionId="installed" t={(key) => (dict as Record<string, string>)[key] ?? key}
+        locale={{ subscribe: () => () => {}, getSnapshot: () => snapshot }} />)
+      fireEvent.click(await screen.findByRole('button', { name: re(dict.notesLink) }))
+      const dialog = within(await screen.findByRole('dialog'))
+      const target = await dialog.findByText('Target notes')
+      expect(target.tagName).toBe('STRONG')
+      expect(target.closest('details')?.open).toBe(true)
+      expect(target.closest('[role="dialog"]')?.querySelector('img')).toBeNull()
+      expect(dialog.getByText(historyTitle)).toBeTruthy()
+      expect(dialog.getByText(partialHint)).toBeTruthy()
+      const earlier = dialog.getByText('v1.1.0', { exact: true })
+      expect(earlier.closest('details')?.open).toBe(false)
+      fireEvent.click(earlier.closest('summary')!)
+      expect(earlier.closest('details')?.open).toBe(true)
+      expect(dialog.getByText('Earlier notes in range')).toBeTruthy()
+      fireEvent.click(dialog.getByText('v1.0.1', { exact: true }).closest('summary')!)
+      expect(dialog.getByText(dict.notesHistoryVersionMissing)).toBeTruthy()
+      expect(dialog.queryByText(dict.notesNone)).toBeNull()
+      const held = dialog.getByText(heldTitle).closest('section')!
+      expect(within(held).getByText('Held version notes')).toBeTruthy()
+      expect(held.textContent).not.toContain('Target notes')
+      expect(fetchMock.mock.calls.some(([url]) => url === '/dsh-market/changelog?name=dsh-loop&target=1.2.0')).toBe(true)
+    })
+
+    it('uses the proposed latest and avoids repeating a release already present in history', async () => {
+      const target = release('1.2.0', 'Same target notes')
+      const fetchMock = stubFetch({
+        '/dsh-market/installed': { profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: [] },
+        '/dsh-market/updates': { updates: { 'dsh-loop': {
+          kind: 'npm', current: '1.0.0', latest: '1.2.0', updateAvailable: true,
+        } } },
+        '/dsh-market/changelog': { kind: 'release', release: target, history: {
+          partial: false, items: [{ ...target, version: '1.2.0' }],
+        } },
+      })
+      render(<MarketSection {...props()} preferredSubsectionId="installed" />)
+      fireEvent.click(await screen.findByRole('button', { name: re(en.notesLink) }))
+      const dialog = within(await screen.findByRole('dialog'))
+      expect((await dialog.findAllByText('Same target notes')).length).toBe(1)
+      expect(dialog.getByText('Same target notes').closest('details')?.open).toBe(true)
+      expect(fetchMock.mock.calls.some(([url]) => url === '/dsh-market/changelog?name=dsh-loop&target=1.2.0')).toBe(true)
+    })
+
+    it.each([
+      [en, 'Recent commits (update range unconfirmed, for reference only)'],
+      [zh, '最近提交（无法确认本次更新范围，仅供参考）'],
+      [ja, '最近のコミット（今回の更新範囲を確認できないため、参考情報として表示しています）'],
+    ] as const)('labels the fallback commits as an unconfirmed update range %#', async (dict, recentLabel) => {
+      stubFetch({
+        '/dsh-market/installed': { profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: [] },
+        '/dsh-market/updates': { updates: { 'dsh-loop': {
+          kind: 'npm', current: '1.0.0', latest: '1.2.0', updateAvailable: true,
+        } } },
+        '/dsh-market/changelog': {
+          kind: 'commits', commits: { found: false, items: [{ sha: 'c'.repeat(40), message: 'Recent commit', date: null }] },
+          history: { partial: true, items: [] },
+        },
+      })
+      render(<MarketSection {...props()} preferredSubsectionId="installed" t={(key) => (dict as Record<string, string>)[key] ?? key} />)
+      fireEvent.click(await screen.findByRole('button', { name: re(dict.notesLink) }))
+      const dialog = within(await screen.findByRole('dialog'))
+      expect(await dialog.findByText(recentLabel)).toBeTruthy()
+      expect(dialog.getByText('Recent commit')).toBeTruthy()
+    })
+
+    it('keeps the source link when no releases in range could be read', async () => {
+      stubFetch({
+        '/dsh-market/installed': { profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: [] },
+        '/dsh-market/updates': { updates: { 'dsh-loop': {
+          kind: 'npm', current: '1.0.0', latest: '1.2.0', updateAvailable: true,
+        } } },
+        '/dsh-market/changelog': {
+          kind: 'source', reason: 'missing', sourceUrl: 'https://github.com/alice/dsh-loop',
+          history: { partial: true, items: [] },
+        },
+      })
+      render(<MarketSection {...props()} preferredSubsectionId="installed" />)
+      fireEvent.click(await screen.findByRole('button', { name: re(en.notesLink) }))
+      expect(await screen.findByText(en.notesHistoryPartial)).toBeTruthy()
+      expect(screen.getByRole('link', { name: en.notesSourceLink }).getAttribute('href')).toBe('https://github.com/alice/dsh-loop')
+    })
+
+    it.each([false, true])('keeps the second plugin open when the previous request settles late (reject: %s)', async (rejectOld) => {
+      const installed = { 'dsh-loop': '^1.0.0', 'dsh-notify': `github:bob/dsh-notify#${'a'.repeat(40)}` }
+      const latestSha = 'b'.repeat(40)
+      const next = stubFetch({
+        '/dsh-market/installed': { profile: 'web', installed, live: [] },
+        '/dsh-market/updates': { updates: {
+          'dsh-loop': { kind: 'npm', current: '1.0.0', latest: '1.2.0', updateAvailable: true },
+          'dsh-notify': { kind: 'github', current: 'a'.repeat(40), latest: latestSha, updateAvailable: true },
+        } },
+        '/dsh-market/changelog': {
+          kind: 'release', release: release('2.0.0', 'Second plugin notes'), history: { partial: false, items: [
+            { ...release('2.0.0', 'Second plugin notes'), version: '2.0.0' },
+            { ...release('1.5.0', 'Second plugin earlier notes'), version: '1.5.0' },
+          ] },
+        },
+      })
+      let settleOld!: () => void
+      let previousSignal: AbortSignal | null = null
+      const delayed = new Promise<Response>((resolve, reject) => {
+        settleOld = () => rejectOld ? reject(new Error('Previous request failed'))
+          : resolve(new Response(JSON.stringify({ kind: 'release', release: release('1.2.0', 'First plugin notes') })))
+      })
+      const fetchMock = vi.fn((input: unknown, init?: RequestInit) => {
+        if (String(input).startsWith('/dsh-market/changelog?name=dsh-loop')) {
+          previousSignal = init?.signal ?? null
+          return delayed
+        }
+        return next(input, init)
+      })
+      vi.stubGlobal('fetch', fetchMock)
+      render(<MarketSection {...props()} preferredSubsectionId="installed" />)
+      const buttons = await screen.findAllByRole('button', { name: re(en.notesLink) })
+      fireEvent.click(buttons.find(button => button.closest(`.${css.irow}`)?.textContent?.includes('dsh-loop'))!)
+      fireEvent.click(screen.getByRole('button', { name: en.gotIt }))
+      fireEvent.click(buttons.find(button => button.closest(`.${css.irow}`)?.textContent?.includes('dsh-notify'))!)
+      expect(await screen.findByText('Second plugin notes')).toBeTruthy()
+      await act(async () => { settleOld() })
+      expect(previousSignal).toMatchObject({ aborted: true })
+      const dialog = within(screen.getByRole('dialog'))
+      expect(dialog.getByRole('heading', { name: 'dsh-notify' })).toBeTruthy()
+      expect(dialog.getByText('Second plugin notes').closest('details')?.open).toBe(true)
+      expect(dialog.getByText('Second plugin earlier notes').closest('details')?.open).toBe(false)
+      expect(dialog.queryByText('First plugin notes')).toBeNull()
+      expect(dialog.queryByText(en.notesLoadFail)).toBeNull()
+      expect(fetchMock.mock.calls.some(([url]) => url === `/dsh-market/changelog?name=dsh-notify&target=${latestSha}`)).toBe(true)
     })
   })
 

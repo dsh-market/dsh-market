@@ -28,6 +28,8 @@ import { profileDir, readGitResolutionCommit, readInstalled, readInstalledRepoEv
 import { githubRepoOfRemote, hostedRepoKey, isGitHostedSpec, lookupRepoFromUrl, parseHostShorthand, parseSourceUrl, repoOf, repoOfTarget } from './sources.ts'
 import { checkUpdates, compareVersions } from './updates.ts'
 import { loadRegistry, type RegistryPlugin } from './registry.ts'
+import { isStableReleaseVersion } from './release-candidates.ts'
+import { invalidateReleaseHistory, isCommitId, loadReleaseHistory, packageReleaseVersion, releaseHistoryBetween, type ReleaseHistory, type ReleaseHistorySource } from './release-history.ts'
 
 const UPDATES_PACKAGE = 'dsh-plugin-updates'
 const UPDATES_FILE = 'package/updates.json'
@@ -54,6 +56,7 @@ export interface CommitNote {
 interface UpdatesEntry {
   release?: ReleaseNotes | null
   commits?: CommitNote[]
+  releaseHistory?: true
 }
 
 interface UpdatesPayload {
@@ -123,6 +126,7 @@ export async function loadUpdateNotes(force = false): Promise<UpdatesPayload> {
 /** Drop the cached payload (nothing currently invalidates it mid-process). */
 export function invalidateUpdateNotes(): void {
   notesCache = null
+  invalidateReleaseHistory()
 }
 
 /**
@@ -141,6 +145,16 @@ export function sliceCommitsAt(items: CommitNote[], installed: string | null): {
     out.push(commit)
   }
   return { items: out, found: false }
+}
+
+/** Report an exact interval only when both the requested target and install are in the tail. */
+function commitsForTarget(
+  items: CommitNote[], installed: string | null, target: string | null | undefined,
+): { items: CommitNote[]; found: boolean } {
+  if (target === undefined) return sliceCommitsAt(items, installed)
+  const upper = target === null ? -1 : items.findIndex(commit => commit.sha.toLowerCase() === target.toLowerCase())
+  if (upper >= 0) return sliceCommitsAt(items.slice(upper), installed)
+  return { items: sliceCommitsAt(items, installed).items, found: false }
 }
 
 /**
@@ -353,11 +367,22 @@ function catalogEntryForGitSource(plugins: readonly RegistryPlugin[], spec: stri
   return matches.length === 1 ? matches[0] : undefined
 }
 
+function releaseHistorySource(
+  plugins: readonly RegistryPlugin[], plugin: RegistryPlugin, packageName: string,
+): ReleaseHistorySource | null {
+  const source = parseSourceUrl(plugin.url)
+  if (source === null || (plugin.npm != null && plugin.npm !== packageName)) return null
+  const repo = source.repo.toLowerCase()
+  const hasSibling = plugins.some(row => row !== plugin && repoOf(row.url)?.toLowerCase() === repo)
+  return { repo, packageName, allowPlainTag: source.subpath === null && !hasSibling }
+}
+
 /** Everything the dialog renders for one plugin, already resolved. */
 export interface UpdateNotes {
   kind: 'release' | 'commits' | 'npm' | 'source' | 'none'
   /** Present for `release`: the author's own notes for the latest release. */
   release?: ReleaseNotes
+  history?: ReleaseHistory
   /** Present for `commits`: the tail, sliced when the boundary was found. */
   commits?: { items: CommitNote[]; found: boolean }
   /** Present for `npm`: recent versions with their publish dates. */
@@ -391,7 +416,7 @@ export async function updateNotesFor(
   profile: string,
   explicitDir: string | undefined,
   name: string,
-  /** The version the Update button installs, when it is not simply "latest". */
+  /** Exact version or Git SHA displayed as the update target. */
   target?: string,
 ): Promise<UpdateNotes> {
   const activeProfileDir = profileDir(profile, explicitDir)
@@ -429,13 +454,20 @@ export async function updateNotesFor(
     // Loading the catalog on a root miss would wait out its timeout to
     // answer "no notes".
     const offGithub = specKey === null && npmName === null && isGitHostedSpec(spec)
+    const hasSubpath = githubIdentityOf(spec)?.includes('#path:/') ?? false
     const needsCatalog = (specKey === null && (npmName !== null || offGithub))
-      || (githubIdentityOf(spec)?.includes('#path:/') ?? false)
-    if (!usableNotes(entry) && needsCatalog) {
+      || hasSubpath
+    let historySource: ReleaseHistorySource | null = null
+    const installed = readInstalledVersion(profile, name, activeProfileDir)
+    const wantsHistory = target !== undefined && isStableReleaseVersion(installed)
+      && (isCommitId(target) || (compareVersions(target, installed) ?? 0) > 0)
+    if ((!usableNotes(entry) && needsCatalog) || (wantsHistory && (entry?.releaseHistory === true || hasSubpath))) {
       try {
         const registry = await loadRegistry()
         const plugin = specKey !== null
-          ? catalogEntryForGitSubpath(registry.plugins, spec)
+          ? hasSubpath
+            ? catalogEntryForGitSubpath(registry.plugins, spec)
+            : registry.plugins.find(row => row.url.toLowerCase() === specKey.toLowerCase())
           : npmName !== null
             ? catalogEntryForNpmInstall(
                 registry.plugins,
@@ -448,9 +480,17 @@ export async function updateNotesFor(
           // An empty row does not become the key. Publish times for an npm
           // install follow from `specKey` staying null, and a subpath install
           // keeps the root key so a sibling's notes are not borrowed.
-          if (usableNotes(catalogEntry)) {
+          if (usableNotes(catalogEntry) && (!usableNotes(entry) || catalogEntry?.releaseHistory === true)) {
             key = plugin.url
             entry = catalogEntry
+          }
+          if (wantsHistory && catalogEntry?.releaseHistory === true) {
+            const source = releaseHistorySource(registry.plugins, plugin, npmName ?? name)
+            const identities = npmName === null ? [] : readInstalledRepoEvidence(profile, name, spec, explicitDir).identities
+            if (source !== null && (identities.length === 0 || identities.some(id => id.split('#')[0]?.toLowerCase() === source.repo))) {
+              key = plugin.url
+              historySource = source
+            }
           }
         }
       } catch {
@@ -467,14 +507,31 @@ export async function updateNotesFor(
     let current: string | null = null
     if (key !== null && key.startsWith('https://github.com/')) {
       const repo = (repoOf(key) ?? key.slice('https://github.com/'.length).split('#')[0]!).toLowerCase()
-      current = readLockCommits(profile, activeProfileDir).get(`github.com/${repo}`)
-        ?? readGitResolutionCommit(profile, spec, explicitDir)
+      current = readGitResolutionCommit(profile, spec, explicitDir)
+        ?? (hasSubpath ? null : readLockCommits(profile, activeProfileDir).get(`github.com/${repo}`) ?? null)
     } else {
       const statuses = await checkUpdates(profile, false, explicitDir).catch(() => null)
       current = statuses?.[name]?.current ?? null
     }
 
-    if (entry?.release !== undefined && entry.release !== null && (entry.release.body !== '' || entry.release.tag !== null)) {
+    const interval = wantsHistory && historySource !== null
+      ? releaseHistoryBetween(await loadReleaseHistory(ORIGIN_UPDATES, historySource.repo), historySource, installed, target, current)
+      : null
+    const history = interval?.history ?? (wantsHistory && entry?.releaseHistory === true ? { items: [], partial: true } : null)
+    const withHistory = history === null ? {} : { history }
+    const targetVersion = interval?.targetVersion ?? (target !== undefined && !isCommitId(target) ? target : null)
+    const targetCommit = target === undefined ? undefined : interval?.targetCommit ?? (isCommitId(target) ? target : null)
+    const sliced = (entry?.commits?.length ?? 0) > 0
+      ? commitsForTarget(entry!.commits!, current, targetCommit)
+      : undefined
+    const snapshotRelease = entry?.release
+    const snapshotVersion = historySource === null ? releaseVersionOf(snapshotRelease?.tag ?? null)
+      : packageReleaseVersion(snapshotRelease?.tag ?? null, historySource)
+    const preview = interval?.preview
+    const usePreview = preview != null && (snapshotVersion === null || (compareVersions(preview.version, snapshotVersion) ?? 0) >= 0)
+    const release = usePreview ? preview : snapshotRelease
+    const released = usePreview ? preview.version : snapshotVersion
+    if (release != null && (release.body !== '' || release.tag !== null) && (historySource === null || released !== null)) {
       // The release feed is a DAILY snapshot while the update target is read
       // live from npm, so the snapshot's newest release is often the version
       // already installed (or older). Showing it next to "1.66.39 → 1.66.40"
@@ -484,39 +541,30 @@ export async function updateNotesFor(
       // install's sha, and npm publish times are newer than the install by
       // construction. With nothing better, the stale release still beats an
       // empty dialog.
-      const installed = readInstalledVersion(profile, name, activeProfileDir)
-      const released = releaseVersionOf(entry.release.tag)
       const behind = installed !== null && released !== null
         && (compareVersions(released, installed) ?? 0) <= 0
-      const hasCommits = (entry.commits?.length ?? 0) > 0
-      if (!(behind && (hasCommits || (specKey === null && npmName !== null)))) {
-        const beyond = target !== undefined && released !== null
-          && (compareVersions(released, target) ?? 0) > 0
-        // Attach the commit slice so the dialog can list what changed between
-        // the installed commit and the update target, not just the release (#1193).
-        // Only when the installed commit is found in the list: otherwise the
-        // slice is just "recent commits" unrelated to this update, and next to
-        // release notes it would be noise (npm installs never match a sha).
-        const sliced = hasCommits ? sliceCommitsAt(entry.commits!, current) : undefined
+      if (!(behind && (sliced !== undefined || (specKey === null && npmName !== null)))) {
+        const beyond = targetVersion !== null && released !== null && (compareVersions(released, targetVersion) ?? 0) > 0
         const withCommits = sliced !== undefined && sliced.found && sliced.items.length > 0 ? { commits: sliced } : {}
         return beyond
-          ? { kind: 'release', release: entry.release, beyondTarget: target, ...withCommits }
-          : { kind: 'release', release: entry.release, ...withCommits }
+          ? { kind: 'release', release, beyondTarget: targetVersion, ...withCommits, ...withHistory }
+          : { kind: 'release', release, ...withCommits, ...withHistory }
       }
     }
-    if (entry?.commits !== undefined && entry.commits.length > 0) {
-      return { kind: 'commits', commits: sliceCommitsAt(entry.commits, current) }
+    if (sliced !== undefined) {
+      return { kind: 'commits', commits: sliced, ...withHistory }
     }
     if (specKey === null && npmName !== null) {
       // An npm install whose catalog row is missing or its probe has no
       // notes: publish times remain.
-      return { kind: 'npm', npmTimes: await npmPublishTimes(npmName) }
+      const npmTimes = await npmPublishTimes(npmName).catch(() => null)
+      return npmTimes === null ? { kind: 'none', ...withHistory } : { kind: 'npm', npmTimes, ...withHistory }
     }
     // Every other source has its history where it came from. Only a probe
     // that ran and found nothing — releases 404 AND an empty log — means the
     // plugin really publishes nothing.
-    if (entry === undefined) return fromSource('missing')
-    return { kind: 'none' }
+    if (entry === undefined && historySource === null) return { ...fromSource('missing'), ...withHistory }
+    return { kind: 'none', ...withHistory }
   } catch {
     return npmName === null ? fromSource('unavailable') : { kind: 'none' }
   }

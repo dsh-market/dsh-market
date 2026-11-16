@@ -588,6 +588,120 @@ function renderMarkdown(md: string): Array<JSX.Element | string> {
   return out
 }
 
+type NoteRelease = { tag: string | null; name: string | null; publishedAt: string | null; url: string | null; body: string }
+type NoteCommit = { sha: string; message: string; date: string | null }
+type NoteCommits = { items: NoteCommit[]; found: boolean }
+type ResolvedNotes = (
+  | { kind: 'release'; release: NoteRelease; beyondTarget?: string; commits?: NoteCommits }
+  | { kind: 'commits'; commits: NoteCommits }
+  | { kind: 'npm'; npmTimes: Array<{ version: string; date: string }> }
+  | { kind: 'source'; sourceUrl?: string | null; reason?: 'missing' | 'unavailable' | 'unreadable' }
+  | { kind: 'none' }
+) & { history?: { items: Array<NoteRelease & { version: string }>; partial: boolean } }
+
+function UpdateNotesContent({ notes, name, target, repoUrl, t, lang }: {
+  notes: ResolvedNotes; name: string; target: string | null; repoUrl: string | null; t: Translate; lang: 'zh' | 'en'
+}) {
+  const history = notes.history?.items ?? []
+  const release = notes.kind === 'release' ? notes.release : null
+  const beyondTarget = notes.kind === 'release' ? notes.beyondTarget : undefined
+  const versionOf = (value: string | null) => value?.replace(/^v(?=\d)/i, '')
+  // Git history is returned only for an exact release match, which is the first item.
+  const expandedVersion = target !== null && /^[0-9a-f]{40}$/i.test(target) ? history[0]?.version : versionOf(target)
+  const legacyRelease = release !== null && beyondTarget === undefined && !history.some(item =>
+    (release.tag !== null && release.tag === item.tag) || versionOf(release.tag) === versionOf(item.version))
+    ? release : null
+  const commits = notes.kind === 'commits' || (notes.kind === 'release' && (notes.commits?.items.length ?? 0) > 0)
+    ? notes.commits : undefined
+
+  return (
+    <div className={css.notesBody}>
+      {(history.length > 0 || notes.history?.partial === true) && (
+        <section className={css.notesHistory}>
+          <div className={css.notesMeta}><strong>{t('notesHistory')}</strong></div>
+          {notes.history?.partial === true && <div className={css.spec}>{t('notesHistoryPartial')}</div>}
+          {history.map(item => (
+            <details key={item.version} className={css.notesEntry} open={versionOf(item.version) === expandedVersion}>
+              <summary className={css.notesSummary}>
+                <strong>{displayLatest(item.version)}</strong>
+                {item.publishedAt !== null && <span className={css.notesDate}>{' · ' + item.publishedAt.slice(0, 10)}</span>}
+              </summary>
+              <div className={css.notesRendered}>{item.body.trim() ? renderMarkdown(item.body) : t('notesHistoryVersionMissing')}</div>
+            </details>
+          ))}
+        </section>
+      )}
+      {legacyRelease !== null && (
+        <>
+          <div className={css.notesMeta}>
+            <strong>{t('notesRelease')}</strong>
+            {legacyRelease.tag !== null && <span>{legacyRelease.tag}</span>}
+            {legacyRelease.publishedAt !== null && <span>{' · ' + legacyRelease.publishedAt.slice(0, 10)}</span>}
+          </div>
+          <div className={css.notesRendered}>{renderMarkdown(legacyRelease.body || t('notesNone'))}</div>
+        </>
+      )}
+      {commits !== undefined && (
+        <>
+          <div className={css.notesMeta}><strong>{t('notesCommits')}</strong></div>
+          {!commits.found && <div className={css.notesMeta}>{t('notesCommitsRecent')}</div>}
+          <ul className={css.notesList}>
+            {commits.items.map(c => (
+              <li key={c.sha} className={css.notesRow}>
+                <span className={css.notesDate}>{c.date !== null ? c.date.slice(0, 10) : ''}</span>
+                <span className={css.notesMsg}>{mdInline(c.message)}</span>
+                {repoUrl !== null && (
+                  <a className={css.notesSha} href={repoUrl + '/commit/' + c.sha}
+                    target="_blank" rel="noreferrer" title={c.message}>{c.sha.slice(0, 7)}</a>
+                )}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      {notes.kind === 'npm' && (
+        <>
+          <div className={css.notesMeta}><strong>{t('notesNpm')}</strong></div>
+          <ul className={css.notesList}>
+            {notes.npmTimes.map(v => (
+              <li key={v.version} className={css.notesRow}>
+                <span className={css.notesDate}>{v.date.slice(0, 10)}</span>
+                <a className={css.notesVer}
+                  href={`https://www.npmjs.com/package/${encodeURIComponent(name)}/v/${encodeURIComponent(v.version)}`}
+                  target="_blank" rel="noreferrer">{v.version}</a>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      {notes.kind === 'source' && (
+        <div className={css.spec}>
+          {t(notes.reason === 'unavailable'
+            ? 'notesLoadFail'
+            : notes.reason === 'unreadable' ? 'notesSourceUnreadable' : 'notesSource')}
+          {typeof notes.sourceUrl === 'string' && /^https?:\/\//i.test(notes.sourceUrl)
+            ? <>{lang === 'zh' ? '' : ' '}<a className={css.notesSourceLink} href={notes.sourceUrl} target="_blank" rel="noreferrer">{t('notesSourceLink')}</a></>
+            : notes.reason !== 'unavailable' && <>{lang === 'zh' ? '' : ' '}{t('notesSourceNoLink')}</>}
+        </div>
+      )}
+      {notes.kind === 'none' && history.length === 0 && notes.history?.partial !== true && (
+        <div className={css.spec}>{t('notesNone')}</div>
+      )}
+      {release !== null && beyondTarget !== undefined && (
+        <section className={css.notesHeld}>
+          <div className={css.notesMeta}>
+            <strong>{t('notesHeldRelease')}</strong>
+            {release.tag !== null && <span>{release.tag}</span>}
+            {release.publishedAt !== null && <span>{' · ' + release.publishedAt.slice(0, 10)}</span>}
+          </div>
+          <div className={css.spec}>{t('notesBeyondTarget').replace('{0}', release.tag ?? '').replace('{1}', beyondTarget)}</div>
+          <div className={css.notesRendered}>{renderMarkdown(release.body || t('notesNone'))}</div>
+        </section>
+      )}
+    </div>
+  )
+}
+
 export function OwnerAvatar({ name, owner, icon, className }: { name: string; owner: string; icon?: string | null; className?: string }) {
   const [failed, setFailed] = useState(false)
   const [routeIndex, setRouteIndex] = useState(0)
@@ -2858,23 +2972,6 @@ export function MarketSection(props: MarketSectionProps) {
   const [pluginMenuUrl, setPluginMenuUrl] = useState<string | null>(null)
   const [installedMenuName, setInstalledMenuName] = useState<string | null>(null)
   const [clearingStale, setClearingStale] = useState(false)
-  /** The notes payload the server answers with, verbatim (see /changelog). */
-  type NoteRelease = { tag: string | null; name: string | null; publishedAt: string | null; url: string | null; body: string }
-  type NoteCommit = { sha: string; message: string; date: string | null }
-  interface UpdateNotes {
-    kind: 'release' | 'commits' | 'npm' | 'source' | 'none'
-    release?: NoteRelease
-    commits?: { items: NoteCommit[]; found: boolean }
-    npmTimes?: Array<{ version: string; date: string }>
-    sourceUrl?: string | null
-    reason?: 'missing' | 'unavailable' | 'unreadable'
-  }
-  type ResolvedNotes =
-    | { kind: 'release'; release: NoteRelease; beyondTarget?: string; commits?: { items: NoteCommit[]; found: boolean } }
-    | { kind: 'commits'; commits: { items: NoteCommit[]; found: boolean } }
-    | { kind: 'npm'; npmTimes: Array<{ version: string; date: string }> }
-    | { kind: 'source'; sourceUrl?: string | null; reason?: 'missing' | 'unavailable' | 'unreadable' }
-    | { kind: 'none' }
   interface CompatibilityNotice {
     code: 'soft-incompatible'
     risks: Array<{ plugin: string; peer: string; range: string; resolved: string; direction: string }>
@@ -2921,6 +3018,8 @@ export function MarketSection(props: MarketSectionProps) {
   const [notesFor, setNotesFor] = useState<{ name: string; current: string | null; latest: string | null; target: string | null; repoUrl: string | null } | null>(null)
   const [updateNotes, setUpdateNotes] = useState<ResolvedNotes | null>(null)
   const [notesState, setNotesState] = useState<'loading' | 'ready' | 'fail'>('loading')
+  const notesRequest = useRef<AbortController | null>(null)
+  useEffect(() => () => notesRequest.current?.abort(), [])
   // Plugin blocked by pnpm's fresh-release safety wait; arms the update-now button.
   const [staleName, setStaleName] = useState<string | null>(null)
   // Local link:/file: restore — a modal asks before swapping to the catalog.
@@ -5451,15 +5550,28 @@ export function MarketSection(props: MarketSectionProps) {
       closing the dialog abandons the render — the server side caches the
       payload, so reopening is cheap. */
   const openNotes = useCallback((name: string, current: string | null, latest: string | null, target: string | null, repoUrl: string | null) => {
+    notesRequest.current?.abort()
+    const request = new AbortController()
+    notesRequest.current = request
     setNotesFor({ name, current, latest, target, repoUrl })
     setUpdateNotes(null)
     setNotesState('loading')
     // The Update button may install an older, mature version than the repo's
     // latest; ask for notes relative to that one (#1193).
-    fetch(`${api('/dsh-market/changelog')}?name=${encodeURIComponent(name)}${target !== null ? `&target=${encodeURIComponent(target)}` : ''}`)
+    fetch(`${api('/dsh-market/changelog')}?name=${encodeURIComponent(name)}${target !== null ? `&target=${encodeURIComponent(target)}` : ''}`, { signal: request.signal })
       .then(res => res.json())
-      .then(body => { setUpdateNotes(body as ResolvedNotes); setNotesState('ready') })
-      .catch(() => setNotesState('fail'))
+      .then(body => {
+        if (request.signal.aborted) return
+        setUpdateNotes(body as ResolvedNotes)
+        setNotesState('ready')
+      })
+      .catch(() => { if (!request.signal.aborted) setNotesState('fail') })
+  }, [])
+
+  const closeNotes = useCallback(() => {
+    notesRequest.current?.abort()
+    notesRequest.current = null
+    setNotesFor(null)
   }, [])
 
   const doUseSkin = useCallback((name: string) => {    setInstallError(null)
@@ -9054,7 +9166,8 @@ export function MarketSection(props: MarketSectionProps) {
                                             <button
                                               type="button"
                                               className={css.notesLink}
-                                              onClick={() => openNotes(name, status?.current ?? null, status?.latest ?? null, status?.eligibleVersion ?? null, repoUrl)}
+                                              onClick={() => openNotes(name, status?.current ?? null, status?.latest ?? null,
+                                                status?.eligibleVersion ?? (status?.updateAvailable === true ? status.latest : null) ?? null, repoUrl)}
                                             >{`${t('notesLink')} ›`}</button>
                                           </div>
                                         )}
@@ -9805,8 +9918,9 @@ export function MarketSection(props: MarketSectionProps) {
       {notesFor !== null && (
         <Modal
           open
-          onClose={() => setNotesFor(null)}
-          className={notesState === 'ready' && updateNotes?.kind === 'release' ? css.notesModalWide : undefined}
+          onClose={closeNotes}
+          className={notesState === 'ready' && (updateNotes?.kind === 'release' || (updateNotes?.history?.items.length ?? 0) > 0)
+            ? css.notesModalWide : undefined}
           /* The host's Modal renders its title node verbatim; the hand-written
              primitives.d.ts narrows the prop to string, so this cast documents
              intent rather than defeating a runtime check. */
@@ -9814,7 +9928,7 @@ export function MarketSection(props: MarketSectionProps) {
             ? <a className={css.nameLink} href={notesFor.repoUrl + '#readme'} target="_blank" rel="noreferrer">{notesFor.name}</a>
             : notesFor.name) as unknown as string}
           footer={(
-            <Button variant="ghost" onClick={() => setNotesFor(null)}>{t('gotIt')}</Button>
+            <Button variant="ghost" onClick={closeNotes}>{t('gotIt')}</Button>
           )}
         >
           {/* The version line reads as versions when both ends are semver and
@@ -9835,92 +9949,8 @@ export function MarketSection(props: MarketSectionProps) {
           {notesState === 'loading' && <div className={css.spec}>{t('loading')}</div>}
           {notesState === 'fail' && <div className={css.spec}>{t('notesLoadFail')}</div>}
           {notesState === 'ready' && updateNotes !== null && (
-            updateNotes.kind === 'release' ? (
-              <div className={css.notesBody}>
-                <div className={css.notesMeta}>
-                  <strong>{t('notesRelease')}</strong>
-                  {updateNotes.release.tag !== null && <span>{' ' + updateNotes.release.tag}</span>}
-                  {updateNotes.release.publishedAt !== null && <span>{' · ' + updateNotes.release.publishedAt.slice(0, 10)}</span>}
-                </div>
-                {updateNotes.beyondTarget !== undefined && (
-                  <div className={css.notesMeta}>
-                    {t('notesBeyondTarget').replace('{0}', updateNotes.release.tag ?? '').replace('{1}', updateNotes.beyondTarget)}
-                  </div>
-                )}
-                {/* Author-written markdown through the tiny converter: HTML is
-                    stripped first; headings, quotes, fences, bullets, bold,
-                    inline code, https links and allowlisted images only. */}
-                <div className={css.notesRendered}>{renderMarkdown(updateNotes.release.body || t('notesNone'))}</div>
-                {updateNotes.commits !== undefined && updateNotes.commits.items.length > 0 && (
-                  <>
-                    <div className={css.notesMeta}><strong>{t('notesCommits')}</strong></div>
-                    {!updateNotes.commits.found && <div className={css.notesMeta}>{t('notesCommitsRecent')}</div>}
-                    <ul className={css.notesList}>
-                      {updateNotes.commits.items.map(c => (
-                        <li key={c.sha} className={css.notesRow}>
-                          <span className={css.notesDate}>{c.date !== null ? c.date.slice(0, 10) : ''}</span>
-                          <span className={css.notesMsg}>{mdInline(c.message)}</span>
-                          {notesFor.repoUrl !== null && (
-                            <a className={css.notesSha}
-                              href={notesFor.repoUrl + '/commit/' + c.sha}
-                              target="_blank" rel="noreferrer"
-                              title={c.message}>{c.sha.slice(0, 7)}</a>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  </>
-                )}
-              </div>
-            )
-            : updateNotes.kind === 'commits' ? (
-              <div className={css.notesBody}>
-                <div className={css.notesMeta}><strong>{t('notesCommits')}</strong></div>
-                {!updateNotes.commits.found && <div className={css.notesMeta}>{t('notesCommitsRecent')}</div>}
-                <ul className={css.notesList}>
-                  {updateNotes.commits.items.map(c => (
-                    <li key={c.sha} className={css.notesRow}>
-                      <span className={css.notesDate}>{c.date !== null ? c.date.slice(0, 10) : ''}</span>
-                      <span className={css.notesMsg}>{mdInline(c.message)}</span>
-                      {notesFor.repoUrl !== null && (
-                        /* The commit itself on GitHub — the escape hatch when
-                           two lines of clamp hide exactly the detail wanted. */
-                        <a className={css.notesSha}
-                          href={notesFor.repoUrl + '/commit/' + c.sha}
-                          target="_blank" rel="noreferrer"
-                          title={c.message}>{c.sha.slice(0, 7)}</a>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )
-            : updateNotes.kind === 'npm' ? (
-              <div className={css.notesBody}>
-                <div className={css.notesMeta}><strong>{t('notesNpm')}</strong></div>
-                <ul className={css.notesList}>
-                  {updateNotes.npmTimes.map(v => (
-                    <li key={v.version} className={css.notesRow}>
-                      <span className={css.notesDate}>{v.date.slice(0, 10)}</span>
-                      <a className={css.notesVer}
-                        href={`https://www.npmjs.com/package/${encodeURIComponent(notesFor.name)}/v/${encodeURIComponent(v.version)}`}
-                        target="_blank" rel="noreferrer">{v.version}</a>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )
-            : updateNotes.kind === 'source' ? (
-              <div className={css.spec}>
-                {t(updateNotes.reason === 'unavailable'
-                  ? 'notesLoadFail'
-                  : updateNotes.reason === 'unreadable' ? 'notesSourceUnreadable' : 'notesSource')}
-                {typeof updateNotes.sourceUrl === 'string' && /^https?:\/\//i.test(updateNotes.sourceUrl)
-                  ? <>{lang === 'zh' ? '' : ' '}<a className={css.notesSourceLink} href={updateNotes.sourceUrl} target="_blank" rel="noreferrer">{t('notesSourceLink')}</a></>
-                  : updateNotes.reason !== 'unavailable' && <>{lang === 'zh' ? '' : ' '}{t('notesSourceNoLink')}</>}
-              </div>
-            )
-            : <div className={css.spec}>{t('notesNone')}</div>
+            <UpdateNotesContent notes={updateNotes} name={notesFor.name} target={notesFor.target ?? notesFor.latest}
+              repoUrl={notesFor.repoUrl} t={t} lang={lang} />
           )}
         </Modal>
       )}

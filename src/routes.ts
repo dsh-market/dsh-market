@@ -62,6 +62,7 @@ import { resolveRegion } from './region-probe.ts'
 import { acceleratedTarget, resolveHeadCommit } from './accelerate.ts'
 import { mismatchedWorkspaceRoot } from './github-install-target.ts'
 import { sourceWebUrl, updateNotesFor } from './changelog.ts'
+import { isCommitId } from './release-history.ts'
 import { checkUpdates, isUpdatablePlugin, compareVersions, fetchNpmLatest, invalidateUpdates, readVersionMaturity, resolveDesktopMatureUpdate, resolveGitRemoteHead, isUpgrade, latestPublishedRecently, setUpdateRegistry, versionOnChannel } from './updates.ts'
 import { isExactReleaseVersion, isStableReleaseVersion } from './release-candidates.ts'
 import { createUpdateNotificationMonitor } from './update-notifications.ts'
@@ -5183,10 +5184,10 @@ export function mountMarketRoutes(
             return
           }
           // The version the Update button installs, when the client knows it
-          // (#1193); anything that is not a plain stable version is ignored.
+          // (#1193); only exact stable versions or Git SHAs set a boundary.
           const target = new URL(request.url ?? '/', 'http://localhost').searchParams.get('target')
           sendJson(response, 200, await updateNotesFor(config.profile, activeProfileDir, name,
-            target !== null && isStableReleaseVersion(target) ? target : undefined))
+            target !== null && (isStableReleaseVersion(target) || isCommitId(target)) ? target : undefined))
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
         }
