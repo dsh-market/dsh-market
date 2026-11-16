@@ -22,6 +22,15 @@ import css from './Market.module.css'
 import { localizeBilingual, type Translate } from './market-data.ts'
 import type { ConflictGroup, OperationRecord } from './operations.ts'
 import { bucketOf, isSettled, needsUser, queuePosition, sortForPanel, summarize } from './operations.ts'
+import type { StartupRepairEntry } from '../startup-repair-report.ts'
+
+const repairStates = {
+  reinstalled: 'startupRepairReinstalled', verified: 'startupRepairVerified', abandoned: 'startupRepairAbandoned',
+} as const
+const repairCauses = {
+  'version-changed': 'startupRepairVersion', refused: 'startupRepairRefused', 'not-composed': 'startupRepairNotComposed',
+  timeout: 'startupRepairTimeout', unknown: 'startupRepairUnknown', abandoned: 'startupRepairAbandoned',
+} as const
 
 /** What the two clash outcomes are, in the order they are offered. */
 const CHOICES = [
@@ -46,6 +55,7 @@ export interface OperationsPanelProps {
   /** Resolves a package name to the identity a card would show for it. */
   describe: DescribePlugin
   records: readonly OperationRecord[]
+  startupRepairEntries?: readonly StartupRepairEntry[] | undefined
   open: boolean
   /** Owned by the parent: a card's "cannot install" marker raises the panel. */
   onOpenChange: (open: boolean) => void
@@ -239,7 +249,8 @@ function statusLine(t: Translate, lang: 'zh' | 'en', record: OperationRecord, ah
 }
 
 export function OperationsPanel(props: OperationsPanelProps) {
-  const { t, records, open } = props
+  const { t, records, open, startupRepairEntries = [] } = props
+  const hasStartupRepair = startupRepairEntries.length > 0
   const setOpen = props.onOpenChange
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const summary = summarize(records)
@@ -292,11 +303,11 @@ export function OperationsPanel(props: OperationsPanelProps) {
     ? batchLabel
     : summary.attention > 0
       ? `${String(summary.attention)} ${t('opNeedsYou')}`
-      : t('opTitle')
+      : hasStartupRepair ? `${t('opTitle')} · ${t('startupRepairBadge')}` : t('opTitle')
 
   // Always render inside .opWrap so the tab-row bottom margin is stable —
   // the old idle-only <button> skipped the wrapper and jumped on first open.
-  const quiet = records.length === 0 && !open
+  const quiet = records.length === 0 && !hasStartupRepair && !open
 
   return (
     <div className={css.opWrap} ref={wrapRef}>
@@ -363,7 +374,24 @@ export function OperationsPanel(props: OperationsPanelProps) {
               <div className={css.opAggregateHint}>{waitingOnAgents ? t('opLeaveHintAgents') : t('opLeaveHint')}</div>
             </div>
           )}
-          {records.length === 0 && (
+          {hasStartupRepair && (
+            <section aria-label={t('startupRepairTitle')}>
+              <div className={css.opRepairTitle}>{t('startupRepairTitle')}</div>
+              {startupRepairEntries.map(entry => (
+                <div key={entry.name} className={css.opRow}>
+                  <div className={css.opMain}>
+                    <div className={css.opName} title={entry.name}>{entry.name}</div>
+                    <div className={css.opStatus}>{t(entry.state === 'pending'
+                      ? repairCauses[entry.cause] ?? 'startupRepairUnknown' : repairStates[entry.state])}</div>
+                    {entry.state === 'pending' && entry.cause !== 'version-changed' && entry.cause !== 'abandoned' && (
+                      <div className={css.opStatus}>{t('startupRepairPending')}</div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </section>
+          )}
+          {records.length === 0 && !hasStartupRepair && (
             <div className={css.opEmpty}>
               {t('opEmpty')}
               <div className={css.opEmptyHint}>{t('opEmptyHint')}</div>

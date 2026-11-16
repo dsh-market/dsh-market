@@ -11676,6 +11676,45 @@ describe('OwnerAvatar icon', () => {
   })
 })
 
+describe('interrupted updates at startup (#1167)', () => {
+  it('reads the completed startup report while the task list is otherwise idle', async () => {
+    vi.useFakeTimers()
+    try {
+      let finished = false
+      stubFetch({
+        '/dsh-market/status': () => ({
+          active: false, busy: false, boot: 'boot-1', installed: {}, pnpm: true,
+          startupRepair: finished ? {
+            id: 'profile-start-1', revision: 2, checking: false, entries: [
+              { name: 'reinstalled-plugin', state: 'reinstalled' },
+              { name: 'intact-plugin', state: 'verified' },
+              { name: 'incomplete-plugin', state: 'pending', cause: 'timeout' },
+              { name: 'manual-plugin', state: 'abandoned' },
+            ],
+          } : { id: 'profile-start-1', revision: 1, checking: true, entries: [] },
+        }),
+      })
+      render(<MarketSection {...props()} />)
+      await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+      expect(screen.getByRole('button', { name: 'Tasks' })).toBeTruthy()
+      finished = true
+      await act(async () => { await vi.advanceTimersByTimeAsync(2500) })
+      const tasks = await vi.waitFor(() => screen.getByRole('button', { name: /Tasks.*Startup recovery/ }))
+      fireEvent.click(tasks)
+      expect(screen.getByText('Interrupted updates at startup')).toBeTruthy()
+      expect(screen.getByText('reinstalled-plugin')).toBeTruthy()
+      expect(screen.getByText('An installed version was intact.')).toBeTruthy()
+      expect(screen.getByText('The desktop app took too long.')).toBeTruthy()
+      expect(screen.getByText(/Automatic retries stopped/)).toBeTruthy()
+      const reads = fetchCalls.filter(call => call.path === '/dsh-market/status').length
+      await act(async () => { await vi.advanceTimersByTimeAsync(6000) })
+      expect(fetchCalls.filter(call => call.path === '/dsh-market/status')).toHaveLength(reads)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
 describe('Agent-safe drain mode (#411)', () => {
   it('settles a Host install row after MUTATION_FAILED following a cancelled update and a completed uninstall', async () => {
     vi.useFakeTimers()
