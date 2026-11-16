@@ -7,6 +7,7 @@ import type { DiagnosticReportV1 } from '../diagnostics.ts'
 import { findCatalogEntryForLocal } from '../catalog-local-match.ts'
 import { NPM_NAME_RE, parseSourceUrl } from '../sources.ts'
 import type { StartupRepairSnapshot } from '../startup-repair-report.ts'
+import type { CheckoutRecoveryStatus } from '../pending-checkout-links.ts'
 export type { SharedHostPackageDependencyFinding } from '../diagnostics.ts'
 
 /** Localized text keyed by language ('zh' / 'en'). */
@@ -296,6 +297,8 @@ export interface DrainHistoryWire {
 export interface MarketStatus {
   /** The official Desktop host's repair of updates interrupted before this start. */
   startupRepair?: StartupRepairSnapshot
+  /** The market's own recovery of local links disconnected by a source switch. */
+  checkoutRecovery?: CheckoutRecoveryStatus
   /** The market's own version — rendered in the heading so screenshots carry it. */
   version?: string
   /** Whether the profile package manager owns the market dependency. */
@@ -1893,4 +1896,11 @@ export function compareInstalledRows(
   if (right === null) return -1
   if (left === right) return a.name.localeCompare(b.name)
   return sort === 'newest' ? right - left : left - right
+}
+
+/** Masonry column count for a given content width. `maxColumns` caps Discover(3) vs Installed(2). */
+export function masonryColumnCount(width: number, maxColumns: number, minColWidth = 290, minColumns = 1): number {
+  if (!Number.isFinite(width) || width <= 0) return minColumns
+  const fitted = Math.floor((width + 10) / minColWidth)
+  return Math.min(maxColumns, Math.max(minColumns, fitted))
 }

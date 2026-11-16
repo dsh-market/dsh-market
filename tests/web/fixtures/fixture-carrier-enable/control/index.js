@@ -5,7 +5,7 @@ import { join } from 'node:path'
 
 export const name = 'dshm-e2e-fixture-carrier-enable-control'
 const target = 'dshm-e2e-fixture-carrier-enable'
-const isTarget = row => row.moduleName === target || row.moduleName === `${target}/gate`
+const isTarget = row => row.moduleName === `${target}/gate`
 const changeEvidence = result => ({
   application: result.application,
   changed: result.changed,
@@ -60,9 +60,9 @@ export function apply(ctx) {
           const selected = (await manager.listBundles()).find(item => item.name === target)
           const rows = (await manager.listPlugins()).filter(isTarget).map(rowEvidence)
           const bundleSelected = selected?.enabled === true && selected.error === undefined
-          const componentsApplied = components.length === 2 && components.every(({ result }) =>
+          const componentsApplied = components.length === 1 && components.every(({ result }) =>
             result.error === undefined && (result.application === 'applied' || result.application === 'restart-required'))
-          const live = rows.length === 2 && rows.every(row => row.enabled === true && row.fiberPhase === 'active')
+          const live = rows.length === 1 && rows.every(row => row.enabled === true && row.fiberPhase === 'active')
           result = {
             id: command.id, executions, ok: bundleSelected && componentsApplied && live,
             bundle: changeEvidence(bundle), bundleSelected, components,

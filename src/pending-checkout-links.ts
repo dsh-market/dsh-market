@@ -14,6 +14,17 @@ export interface PendingCheckoutLink {
   rawTarget: string
 }
 
+export interface CheckoutRecoveryEntry {
+  name: string
+  reason: 'profile-busy' | 'package-run' | 'writer-lock' | 'check-failed'
+  sourceExists: boolean
+}
+
+export interface CheckoutRecoveryStatus {
+  checking: boolean
+  entries: CheckoutRecoveryEntry[]
+}
+
 export class PendingCheckoutLinks {
   readonly file: string
 

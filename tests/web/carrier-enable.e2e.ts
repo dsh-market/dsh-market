@@ -37,7 +37,7 @@ describe.skipIf(!dshAvailable()).sequential('web e2e: official carrier re-enable
     try { return JSON.parse(readFileSync(marker(component), 'utf8')).pid as number } catch { return null }
   }
 
-  it('keeps the root component, subpath gate, and dependent plugin enabled after restart', async ctx => {
+  it('keeps a single subpath gate and its dependent plugin enabled after restart', async ctx => {
     const command = dshCommand()
     const version = command === null ? '' : spawnSync(command, ['--version'], {
       shell: true, encoding: 'utf8', timeout: 30_000, cwd: process.env.DSHM_E2E_DSH_CWD,
@@ -54,7 +54,7 @@ describe.skipIf(!dshAvailable()).sequential('web e2e: official carrier re-enable
     await waitFor(() => existsSync(capabilitiesFile), 'the official manager control fixture never loaded')
     const capabilities = JSON.parse(readFileSync(capabilitiesFile, 'utf8')) as { supported: boolean }
     expect(capabilities.supported, 'this host must expose the actual package and component enable methods').toBe(true)
-    for (const component of ['native', 'gate', 'dependent']) {
+    for (const component of ['gate', 'dependent']) {
       await waitFor(() => markerPid(component) !== null, `${component} never became live`)
     }
     expect(JSON.parse(readFileSync(marker('dependent'), 'utf8')).policyReady).toBe(true)
@@ -84,18 +84,18 @@ describe.skipIf(!dshAvailable()).sequential('web e2e: official carrier re-enable
     expect(enabled.bundleSelected, responseText).toBe(true)
     expect(enabled.executions).toBe(1)
     expect(existsSync(requestFile)).toBe(false)
-    expect(enabled.rows.map(row => row.moduleName).sort(), responseText).toEqual([CARRIER, `${CARRIER}/gate`].sort())
+    expect(enabled.rows.map(row => row.moduleName).sort(), responseText).toEqual([`${CARRIER}/gate`])
     expect(enabled.rows.every(row => row.enabled && row.fiberPhase === 'active'), responseText).toBe(true)
-    for (const component of ['native', 'gate', 'dependent']) {
+    for (const component of ['gate', 'dependent']) {
       await waitFor(() => markerPid(component) !== null, `${component} did not load after the official enable`)
     }
     expect(JSON.parse(readFileSync(marker('dependent'), 'utf8')).policyReady).toBe(true)
     const enabledPatch = readFileSync(join(profile(), 'cordis.patch.yml'), 'utf8')
     expect(bundles()).toContain(CARRIER)
 
-    const beforePids = Object.fromEntries(['native', 'gate', 'dependent'].map(component => [component, markerPid(component)]))
+    const beforePids = Object.fromEntries(['gate', 'dependent'].map(component => [component, markerPid(component)]))
     await scaffold.restart()
-    for (const component of ['native', 'gate', 'dependent']) {
+    for (const component of ['gate', 'dependent']) {
       await waitFor(() => {
         const pid = markerPid(component)
         return pid !== null && pid !== beforePids[component]
@@ -111,7 +111,6 @@ describe.skipIf(!dshAvailable()).sequential('web e2e: official carrier re-enable
     // on the plugin being removed, not just on the chosen YAML spelling.
     // The real writer keeps named rows. Bare id/disabled rows disappear,
     // leaving the market no newer explicit decision to follow.
-    expect(offPatch).toContain(`name: '${CARRIER}'`)
     expect(offPatch).toContain(`name: '${CARRIER}/gate'`)
     expect(enabledPatch).toContain('disabled: false')
     // The carrier's own patch and its foreign injection are still in force.

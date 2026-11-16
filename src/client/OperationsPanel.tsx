@@ -23,6 +23,7 @@ import { localizeBilingual, type Translate } from './market-data.ts'
 import type { ConflictGroup, OperationRecord } from './operations.ts'
 import { bucketOf, isSettled, needsUser, queuePosition, sortForPanel, summarize } from './operations.ts'
 import type { StartupRepairEntry } from '../startup-repair-report.ts'
+import type { CheckoutRecoveryEntry } from '../pending-checkout-links.ts'
 
 const repairStates = {
   reinstalled: 'startupRepairReinstalled', verified: 'startupRepairVerified', abandoned: 'startupRepairAbandoned',
@@ -30,6 +31,12 @@ const repairStates = {
 const repairCauses = {
   'version-changed': 'startupRepairVersion', refused: 'startupRepairRefused', 'not-composed': 'startupRepairNotComposed',
   timeout: 'startupRepairTimeout', unknown: 'startupRepairUnknown', abandoned: 'startupRepairAbandoned',
+} as const
+const checkoutRecoveryCauses = {
+  'profile-busy': 'checkoutRecoveryBusy',
+  'package-run': 'checkoutRecoveryRun',
+  'writer-lock': 'checkoutRecoveryLock',
+  'check-failed': 'checkoutRecoveryCheck',
 } as const
 
 /** What the two clash outcomes are, in the order they are offered. */
@@ -56,6 +63,7 @@ export interface OperationsPanelProps {
   describe: DescribePlugin
   records: readonly OperationRecord[]
   startupRepairEntries?: readonly StartupRepairEntry[] | undefined
+  checkoutRecoveryEntries?: readonly CheckoutRecoveryEntry[] | undefined
   open: boolean
   /** Owned by the parent: a card's "cannot install" marker raises the panel. */
   onOpenChange: (open: boolean) => void
@@ -249,12 +257,16 @@ function statusLine(t: Translate, lang: 'zh' | 'en', record: OperationRecord, ah
 }
 
 export function OperationsPanel(props: OperationsPanelProps) {
-  const { t, records, open, startupRepairEntries = [] } = props
+  const { t, records, open, startupRepairEntries = [], checkoutRecoveryEntries = [] } = props
   const hasStartupRepair = startupRepairEntries.length > 0
+  const needsCheckoutRecovery = checkoutRecoveryEntries.length > 0
   const setOpen = props.onOpenChange
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const summary = summarize(records)
   const busy = summary.running + summary.queued > 0
+  const showStartupRepairBadge = !busy && summary.attention === 0
+    && startupRepairEntries.some(entry => entry.state === 'pending' || entry.state === 'abandoned')
+  const attention = summary.attention > 0 || showStartupRepairBadge || needsCheckoutRecovery
   // The elapsed wait has to move while the Host is holding Agents; the status
   // poll is every 2 s, so a local second tick keeps the row honest without
   // adding requests.
@@ -303,11 +315,11 @@ export function OperationsPanel(props: OperationsPanelProps) {
     ? batchLabel
     : summary.attention > 0
       ? `${String(summary.attention)} ${t('opNeedsYou')}`
-      : hasStartupRepair ? `${t('opTitle')} · ${t('startupRepairBadge')}` : t('opTitle')
+      : showStartupRepairBadge ? `${t('opTitle')} · ${t('startupRepairBadge')}` : t('opTitle')
 
   // Always render inside .opWrap so the tab-row bottom margin is stable —
   // the old idle-only <button> skipped the wrapper and jumped on first open.
-  const quiet = records.length === 0 && !hasStartupRepair && !open
+  const quiet = records.length === 0 && !showStartupRepairBadge && !needsCheckoutRecovery && !open
 
   return (
     <div className={css.opWrap} ref={wrapRef}>
@@ -315,14 +327,14 @@ export function OperationsPanel(props: OperationsPanelProps) {
         type="button"
         className={quiet
           ? `${css.opEntry} ${css.opEntryQuiet}`
-          : summary.attention > 0
+          : attention
             ? `${css.opEntry} ${css.opEntryAlert}`
             : css.opEntry}
         aria-expanded={open}
         onClick={() => setOpen(quiet ? true : !open)}
       >
         {!quiet && busy && <span className={css.spin}><IconLoadingOutline16 size={12} /></span>}
-        {quiet ? t('opTitle') : label}
+        {needsCheckoutRecovery ? `${label} · ${t('checkoutRecoveryTitle')}` : label}
         {/* A chevron, because this is the only door into the task list and a
             word with no affordance read as a caption rather than a control. */}
         {!busy && (
@@ -330,7 +342,7 @@ export function OperationsPanel(props: OperationsPanelProps) {
             <IconChevronDownOutline14 size={12} />
           </span>
         )}
-        {!quiet && summary.attention > 0 && <span className={css.opDot} />}
+        {!quiet && attention && <span className={css.opDot} />}
       </button>
       {open && (
         <div className={css.opPanel}>
@@ -391,7 +403,22 @@ export function OperationsPanel(props: OperationsPanelProps) {
               ))}
             </section>
           )}
-          {records.length === 0 && !hasStartupRepair && (
+          {needsCheckoutRecovery && (
+            <section aria-label={t('checkoutRecoveryTitle')}>
+              <div className={css.opRepairTitle}>{t('checkoutRecoveryTitle')}</div>
+              {checkoutRecoveryEntries.map(entry => (
+                <div key={entry.name} className={`${css.opRow} ${css.opRowAlert}`}>
+                  <div className={css.opMain}>
+                    <div className={css.opName} title={entry.name}>{entry.name}</div>
+                    <div className={css.opStatus}>{t(entry.sourceExists ? 'checkoutSourceRetained' : 'checkoutSourceUnconfirmed')}</div>
+                    <div className={css.opStatus}>{t(checkoutRecoveryCauses[entry.reason])}</div>
+                    <div className={css.opStatus}>{t('checkoutRecoveryRetry')}</div>
+                  </div>
+                </div>
+              ))}
+            </section>
+          )}
+          {records.length === 0 && !hasStartupRepair && !needsCheckoutRecovery && (
             <div className={css.opEmpty}>
               {t('opEmpty')}
               <div className={css.opEmptyHint}>{t('opEmptyHint')}</div>

@@ -57,16 +57,48 @@ import { exportMarketLog } from './self-check.ts'
 import { readInstalledSort, readSortChoice, rememberInstalledSort, rememberSortChoice } from './sort-preference.ts'
 import type { HostNavigationStore } from './host-navigation.ts'
 import type { SidebarEntry } from './sidebar-entry.ts'
+import { parseSourceUrl } from '../sources.ts'
 import {
   installCommandFor, hostCompatibilityKey,
   api, applyGithubRouting, avatarColor, catalogEntryForInstalled, entryForDep, failureText, githubRouteCandidates, groupSwitchState, installedForCatalog, isGenerationSpec, isInstalled, localizeBilingual, localizeBilingualList, looksTerminal, matchInstalledName, orderedCategories, pluginCategories,
   formatCount, pageItems, pluginName, blockAliases, pluginScreenshotCandidates, pluginScreenshots, pluginsForFavorites, previewDimensionScore, queuedRowApplies, rankThemeScreenshots, readSession, safeIcon, releaseNotesHttpsImage, rememberGithubRoute, resetScreenshotsCache, resolveCatalogRestore, safeScreenshots, sanitizeReleaseNotesBody, staleFavoriteUrls, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins, restartHintKey,
-  compareInstalledRows, installedDateText,
+  compareInstalledRows, installedDateText, masonryColumnCount,
 } from './market-data.ts'
 import type {
-ActivationInfo, ActivationState, DrainHistoryWire, DrainOperationWire, GistExportResult, InstalledMap, InstalledRepoHints, InstalledRepoIdentities, InstalledSort, InstallStamp, MarketStatus, Registry, RegistryPlugin,
+ActivationInfo, ActivationState, DrainHistoryWire, DrainOperationWire, GistExportResult, HostCompatibility, InstalledMap, InstalledRepoHints, InstalledRepoIdentities, InstalledSort, InstallStamp, MarketStatus, Registry, RegistryPlugin,
   ScreenshotCandidate, ScreenshotMeasurement, SharedHostPackageDependencyFinding, SortDir, SortField, ThemeSnapshot, TimeRange, Translate, UpdateStatus,
 } from './market-data.ts'
+
+/** Discover + Installed share one chip: same label fallbacks, status tip, bad ink. */
+function hostRequirementChip(
+  compatibility: HostCompatibility | undefined,
+  key: string | null,
+  t: Translate,
+): { label: string; title: string; bad: boolean; status: string } {
+  const label = compatibility?.requirement !== null && compatibility?.requirement !== undefined
+    ? t('hostRequirement').replace('{0}', compatibility.requirement)
+    : key === null
+      ? t('hostRequirementUnavailable')
+      : compatibility === undefined
+        ? t('hostRequirementLoading')
+        : compatibility.basis === 'undeclared'
+          ? t('hostRequirementUndeclared')
+          : t('hostRequirementUnavailable')
+  const detail = compatibility?.declarations.map(declaration =>
+    declaration.kind === 'engine'
+      ? `engines.dsh: ${declaration.range}`
+      : `${declaration.package ?? 'peer'}: ${declaration.range}`,
+  ).join('\n') || label
+  const title = (compatibility?.status === 'compatible' || compatibility?.status === 'incompatible'
+    ? t(compatibility.status === 'compatible' ? 'hostStatusCompatible' : 'hostStatusIncompatible') + '\n'
+    : '') + detail
+  return {
+    label,
+    title,
+    bad: compatibility?.status === 'incompatible',
+    status: compatibility?.status ?? 'unknown',
+  }
+}
 
 function isHostDependencyFinding(value: unknown): value is SharedHostPackageDependencyFinding {
   if (value === null || typeof value !== 'object') return false
@@ -600,46 +632,108 @@ type ResolvedNotes = (
   | { kind: 'none' }
 ) & { history?: { items: Array<NoteRelease & { version: string }>; partial: boolean } }
 
+function notesReleaseBody(release: NoteRelease | null | undefined): string {
+  return typeof release?.body === 'string' && release.body.trim() !== '' ? release.body : ''
+}
+
+/** Bind a supplied release page to the repository and the selected release tag. */
+function notesReleasePage(repo: string | undefined, release?: NoteRelease): string | null {
+  if (repo === undefined) return null
+  const canonicalRepo = repo.replace(/\.git$/iu, '')
+  if (canonicalRepo.split('/').some(segment => segment === '' || segment === '.' || segment === '..')) return null
+  const releasesPath = '/' + canonicalRepo + '/releases'
+  const releasesUrl = 'https://github.com' + releasesPath
+  if (release?.url && release.tag) {
+    try {
+      const page = new URL(release.url)
+      const tagPrefix = releasesPath + '/tag/'
+      if (page.origin === 'https://github.com' && page.username === '' && page.password === ''
+        && page.pathname.slice(0, tagPrefix.length).toLowerCase() === tagPrefix.toLowerCase()
+        && decodeURIComponent(page.pathname.slice(tagPrefix.length)) === release.tag) {
+        return page.origin + page.pathname
+      }
+    } catch { /* Recorded page is unusable; send the reader to the repository's releases. */ }
+  }
+  return releasesUrl
+}
+
 function UpdateNotesContent({ notes, name, target, repoUrl, t, lang }: {
   notes: ResolvedNotes; name: string; target: string | null; repoUrl: string | null; t: Translate; lang: 'zh' | 'en'
 }) {
-  const history = notes.history?.items ?? []
+  const items = notes.history?.items ?? []
   const release = notes.kind === 'release' ? notes.release : null
   const beyondTarget = notes.kind === 'release' ? notes.beyondTarget : undefined
   const versionOf = (value: string | null) => value?.replace(/^v(?=\d)/i, '')
   // Git history is returned only for an exact release match, which is the first item.
-  const expandedVersion = target !== null && /^[0-9a-f]{40}$/i.test(target) ? history[0]?.version : versionOf(target)
-  const legacyRelease = release !== null && beyondTarget === undefined && !history.some(item =>
-    (release.tag !== null && release.tag === item.tag) || versionOf(release.tag) === versionOf(item.version))
-    ? release : null
+  const expandedVersion = target !== null && /^[0-9a-f]{40}$/i.test(target) ? items[0]?.version : versionOf(target)
+  const snapshotRelease = beyondTarget === undefined ? release : null
+  const matchesSnapshot = (item: typeof items[number]): boolean => snapshotRelease !== null &&
+    ((snapshotRelease.tag !== null && snapshotRelease.tag === item.tag) || versionOf(snapshotRelease.tag) === versionOf(item.version))
+  const legacyRelease = items.some(matchesSnapshot) ? null : snapshotRelease
+  const snapshotBody = notesReleaseBody(snapshotRelease)
+  const history = snapshotBody !== ''
+    ? items.map(item => notesReleaseBody(item) === '' && item.tag !== null && item.tag === snapshotRelease?.tag
+      ? { ...item, body: snapshotBody } : item)
+    : items
   const commits = notes.kind === 'commits' || (notes.kind === 'release' && (notes.commits?.items.length ?? 0) > 0)
     ? notes.commits : undefined
+  const sourceUrl = notes.kind === 'source' ? notes.sourceUrl ?? '' : ''
+  const repo = parseSourceUrl(repoUrl ?? '')?.repo ?? parseSourceUrl(sourceUrl)?.repo
+  const targetRelease = history.find(item => versionOf(item.version) === expandedVersion)
+    ?? (expandedVersion !== undefined && versionOf(legacyRelease?.tag ?? null) === expandedVersion
+      ? legacyRelease ?? undefined : undefined)
+  const targetBodyMissing = targetRelease !== undefined && notesReleaseBody(targetRelease) === ''
+  const legacyBody = notesReleaseBody(legacyRelease)
+  const historyIncomplete = notes.history?.partial === true
+    || (history.length === 0 && (notes.history !== undefined || notes.kind === 'none'))
+  const showSourceNotice = notes.kind === 'source' && (!historyIncomplete || notes.reason === 'unreadable')
+  const missingNotes = (message: string, page: string | null) => (
+    <>
+      {message}{lang === 'zh' ? '' : ' '}
+      {page === null ? t('notesHistoryRetry') : (
+        <a className={css.notesSourceLink} href={page} target="_blank" rel="noreferrer">{t('notesHistoryReleasePage')}</a>
+      )}
+    </>
+  )
+  const historyHint = !targetBodyMissing && historyIncomplete && !showSourceNotice
+    ? <div className={css.spec}>{missingNotes(t(history.length === 0 ? 'notesHistoryEmpty' : 'notesHistoryPartial'), notesReleasePage(repo))}</div>
+    : null
 
   return (
     <div className={css.notesBody}>
-      {(history.length > 0 || notes.history?.partial === true) && (
+      {history.length === 0 && historyHint}
+      {history.length > 0 && (
         <section className={css.notesHistory}>
           <div className={css.notesMeta}><strong>{t('notesHistory')}</strong></div>
-          {notes.history?.partial === true && <div className={css.spec}>{t('notesHistoryPartial')}</div>}
+          {historyHint}
           {history.map(item => (
             <details key={item.version} className={css.notesEntry} open={versionOf(item.version) === expandedVersion}>
               <summary className={css.notesSummary}>
                 <strong>{displayLatest(item.version)}</strong>
                 {item.publishedAt !== null && <span className={css.notesDate}>{' · ' + item.publishedAt.slice(0, 10)}</span>}
               </summary>
-              <div className={css.notesRendered}>{item.body.trim() ? renderMarkdown(item.body) : t('notesHistoryVersionMissing')}</div>
+              <div className={css.notesRendered}>
+                {notesReleaseBody(item) !== '' ? renderMarkdown(item.body)
+                  : item === targetRelease
+                    ? missingNotes(t('notesHistoryVersionMissing'), notesReleasePage(repo, item))
+                    : t('notesHistoryVersionMissing')}
+              </div>
             </details>
           ))}
         </section>
       )}
-      {legacyRelease !== null && (
+      {legacyRelease !== null && (legacyBody !== '' || historyHint === null) && (
         <>
           <div className={css.notesMeta}>
             <strong>{t('notesRelease')}</strong>
             {legacyRelease.tag !== null && <span>{legacyRelease.tag}</span>}
             {legacyRelease.publishedAt !== null && <span>{' · ' + legacyRelease.publishedAt.slice(0, 10)}</span>}
           </div>
-          <div className={css.notesRendered}>{renderMarkdown(legacyRelease.body || t('notesNone'))}</div>
+          <div className={css.notesRendered}>
+            {legacyBody === ''
+              ? missingNotes(t('notesHistoryVersionMissing'), notesReleasePage(repo, legacyRelease))
+              : renderMarkdown(legacyBody)}
+          </div>
         </>
       )}
       {commits !== undefined && (
@@ -675,7 +769,7 @@ function UpdateNotesContent({ notes, name, target, repoUrl, t, lang }: {
           </ul>
         </>
       )}
-      {notes.kind === 'source' && (
+      {notes.kind === 'source' && showSourceNotice && (
         <div className={css.spec}>
           {t(notes.reason === 'unavailable'
             ? 'notesLoadFail'
@@ -685,9 +779,7 @@ function UpdateNotesContent({ notes, name, target, repoUrl, t, lang }: {
             : notes.reason !== 'unavailable' && <>{lang === 'zh' ? '' : ' '}{t('notesSourceNoLink')}</>}
         </div>
       )}
-      {notes.kind === 'none' && history.length === 0 && notes.history?.partial !== true && (
-        <div className={css.spec}>{t('notesNone')}</div>
-      )}
+
       {release !== null && beyondTarget !== undefined && (
         <section className={css.notesHeld}>
           <div className={css.notesMeta}>
@@ -696,7 +788,7 @@ function UpdateNotesContent({ notes, name, target, repoUrl, t, lang }: {
             {release.publishedAt !== null && <span>{' · ' + release.publishedAt.slice(0, 10)}</span>}
           </div>
           <div className={css.spec}>{t('notesBeyondTarget').replace('{0}', release.tag ?? '').replace('{1}', beyondTarget)}</div>
-          <div className={css.notesRendered}>{renderMarkdown(release.body || t('notesNone'))}</div>
+          <div className={css.notesRendered}>{notesReleaseBody(release) === '' ? t('notesHistoryVersionMissing') : renderMarkdown(release.body)}</div>
         </section>
       )}
     </div>
@@ -1125,9 +1217,13 @@ function ThemeCover({ plugin, onOpen, t }: {
  * Two columns at the settings dialog's width; the sidebar page is wider and
  * gets a third once each column still has room for a full card.
  */
-function Masonry<T>({ items, render }: {
+function Masonry<T>({ items, render, maxColumns = 3, minColumns = 2, className }: {
   items: T[]
   render: (item: T) => ReactNode
+  maxColumns?: number
+  /** Discover keeps its two-column floor; Installed may collapse to one. */
+  minColumns?: number
+  className?: string
 }) {
   const wide = useMediaWide()
   const ref = useRef<HTMLDivElement>(null)
@@ -1136,18 +1232,19 @@ function Masonry<T>({ items, render }: {
     const el = ref.current
     if (el === null || typeof ResizeObserver === 'undefined') return
     const observer = new ResizeObserver(([entry]) => {
-      if (entry !== undefined) setColumns(Math.min(3, Math.max(2, Math.floor((entry.contentRect.width + 10) / 290))))
+      if (entry !== undefined) setColumns(masonryColumnCount(entry.contentRect.width, maxColumns, 290, minColumns))
     })
     observer.observe(el)
     return () => observer.disconnect()
-  }, [wide])
+  }, [wide, maxColumns, minColumns])
+  const masonryClass = [css.masonry, className].filter(Boolean).join(' ')
   if (!wide) {
-    return <div className={css.masonry}><div className={css.masonryCol}>{items.map(render)}</div></div>
+    return <div className={masonryClass}><div className={css.masonryCol}>{items.map(render)}</div></div>
   }
   const buckets: T[][] = Array.from({ length: columns }, () => [])
   items.forEach((item, index) => { buckets[index % columns]!.push(item) })
   return (
-    <div ref={ref} className={css.masonry}>
+    <div ref={ref} className={masonryClass}>
       {buckets.map((bucket, index) => (
         <div key={index} className={css.masonryCol}>{bucket.map(render)}</div>
       ))}
@@ -1822,6 +1919,27 @@ function IconPlus({ size = 14 }: { size?: number }) {
   )
 }
 
+/** Clock face for held-wait hints (Lucide `clock` geometry). */
+function IconClock({ size = 12 }: { size?: number }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 6v6l4 2" />
+    </svg>
+  )
+}
+
 /** Reminders off (Lucide `bell-off` geometry): the body breaks where the slash crosses it. */
 function IconBellOff({ size = 16 }: { size?: number }) {
   return (
@@ -2213,6 +2331,29 @@ function displayLatest(latest: string): string {
   if (/^\d/.test(latest)) return 'v' + latest
   if (/^[0-9a-f]{12,40}$/i.test(latest)) return latest.slice(0, 7)
   return latest
+}
+
+/** Compact held-wait for the trailing row (clock + short label); version/reason in title. */
+function heldUpdateBeside(
+  held: { latest: string; until: string; estimated?: true },
+  t: (key: string) => string,
+): { label: string; title: string } {
+  const left = Date.parse(held.until) - Date.now()
+  const estimated = held.estimated === true
+  const known = Number.isFinite(left) && left > 0
+  const amount = known
+    ? String(Math.max(1, Math.ceil(left / (estimated ? 60_000 : 3_600_000))))
+    : ''
+  const label = !known
+    ? t('updateHeldBesideUnknown')
+    : estimated
+      ? t('updateHeldBesideEstimated').replace('{1}', amount)
+      : t('updateHeldBeside').replace('{1}', amount)
+  const reason = !known
+    ? t('updateHeldBesideUnknown')
+    : t(estimated ? 'updateHeldEstimatedHint' : 'updateHeldHint').replace('{1}', amount)
+  const title = `${displayLatest(held.latest)} · ${reason}`
+  return { label, title }
 }
 
 /** The tail of a local checkout path; the full path stays in the title and the copy button. */
@@ -2655,7 +2796,8 @@ export function MarketSection(props: MarketSectionProps) {
    */
   const [marketGone, setMarketGone] = useState(false)
   const [startupRepair, setStartupRepair] = useState<MarketStatus['startupRepair']>()
-  const startupRepairRequest = useRef(0)
+  const [checkoutRecovery, setCheckoutRecovery] = useState<MarketStatus['checkoutRecovery']>()
+  const repairStatusRequest = useRef(0)
   // Whether the page is still trying to reach the market again, and how many
   // times the user asked it to start over (#1151).
   const [reconnecting, setReconnecting] = useState(true)
@@ -3916,8 +4058,9 @@ export function MarketSection(props: MarketSectionProps) {
     if (!mountedRef.current) return
     discoveryScan.setUnavailable()
     refreshRequest.current = 0
-    startupRepairRequest.current += 1
+    repairStatusRequest.current += 1
     setStartupRepair(undefined)
+    setCheckoutRecovery(undefined)
     setCheckingUpdates(false)
     setMarketGone(true)
     setBusyUrl(null)
@@ -3942,42 +4085,54 @@ export function MarketSection(props: MarketSectionProps) {
    * poll that reads this stops on the null: the market is no longer mounted,
    * so there is no status to read and nothing left to poll for.
    */
-  const readMarketStatus = useCallback(async (res: Response): Promise<MarketStatus | null> => {
+  const readMarketStatus = useCallback(async (res: Response, repairRequest?: number): Promise<MarketStatus | null> => {
     if (res.status === 404) {
-      noteMarketGone()
+      if (repairRequest === undefined || repairRequest === repairStatusRequest.current) noteMarketGone()
       return null
     }
     return await res.json() as MarketStatus
   }, [noteMarketGone])
 
-  const applyStartupRepair = useCallback((report: MarketStatus['startupRepair'], request: number) => {
-    if (!mounted.current || request !== startupRepairRequest.current) return
+  const applyRepairStatus = useCallback((status: Pick<MarketStatus, 'startupRepair' | 'checkoutRecovery'>, request: number) => {
+    if (!mounted.current || request !== repairStatusRequest.current) return
+    const report = status.startupRepair
     setStartupRepair(previous =>
       report && previous?.id === report.id && previous.revision > report.revision ? previous : report)
+    setCheckoutRecovery(status.checkoutRecovery)
   }, [])
 
-  const checkingStartupRepair = startupRepair?.checking === true
+  const refreshRepairStatus = useCallback(async (signal?: AbortSignal) => {
+    const request = ++repairStatusRequest.current
+    try {
+      const res = await fetch(api('/dsh-market/status'), { cache: 'no-store', signal: signal ?? null })
+      if (!signal?.aborted && (res.ok || res.status === 404)) {
+        const status = await readMarketStatus(res, request)
+        if (!signal?.aborted && status !== null) applyRepairStatus(status, request)
+      }
+    } catch { /* A temporary status failure will be retried while the check is pending. */ }
+  }, [readMarketStatus, applyRepairStatus])
+
+  const checkingRepair = startupRepair?.checking === true || checkoutRecovery?.checking === true
   useEffect(() => {
-    if (!checkingStartupRepair || marketGone) return
+    if (!checkingRepair || marketGone) return
     const controller = new AbortController()
     let timer = setTimeout(() => { void poll() }, 2000)
     async function poll() {
-      const request = ++startupRepairRequest.current
-      try {
-        const res = await fetch(api('/dsh-market/status'), { cache: 'no-store', signal: controller.signal })
-        if (controller.signal.aborted) return
-        if (res.ok || res.status === 404) {
-          const status = await readMarketStatus(res)
-          if (!controller.signal.aborted && status !== null) applyStartupRepair(status.startupRepair, request)
-        }
-      } catch { /* temporary status failure; read again while the check is pending */ }
+      await refreshRepairStatus(controller.signal)
       if (!controller.signal.aborted) timer = setTimeout(() => { void poll() }, 2000)
     }
     return () => {
       controller.abort()
       clearTimeout(timer)
     }
-  }, [checkingStartupRepair, marketGone, readMarketStatus, applyStartupRepair])
+  }, [checkingRepair, marketGone, refreshRepairStatus])
+
+  const wasCheckingCheckout = useRef(false)
+  useEffect(() => {
+    const checking = checkoutRecovery?.checking === true
+    if (wasCheckingCheckout.current && !checking && !marketGone) refreshInstalled()
+    wasCheckingCheckout.current = checking
+  }, [checkoutRecovery, marketGone, refreshInstalled])
 
   const loadCatalog = useCallback(() => {
     setLoadError(null)
@@ -4016,14 +4171,14 @@ export function MarketSection(props: MarketSectionProps) {
     let stopped = false
     const attempt = async (): Promise<void> => {
       const boot = updateCheckBoot
-      const repairRequest = ++startupRepairRequest.current
+      const repairRequest = ++repairStatusRequest.current
       inFlight = new AbortController()
       const cutoff = setTimeout(() => inFlight?.abort(), RECONNECT_REQUEST_MS)
       try {
         const res = await fetch(api('/dsh-market/status'), { cache: 'no-store', signal: inFlight.signal })
         const status = res.ok ? await res.json() as Partial<MarketStatus> | null : null
         if (!stopped && status !== null && typeof status === 'object' && typeof status.boot === 'string') {
-          applyStartupRepair(status.startupRepair, repairRequest)
+          applyRepairStatus(status, repairRequest)
           discoveryScan.setBoot(status.boot)
           observeUpdateCheckBoot(status.boot, boot)
           setMarketGone(false)
@@ -4048,17 +4203,17 @@ export function MarketSection(props: MarketSectionProps) {
       clearTimeout(timer)
       inFlight?.abort()
     }
-  }, [marketGone, reconnectRound, loadCatalog, refreshInstalled, applyStartupRepair])
+  }, [marketGone, reconnectRound, loadCatalog, refreshInstalled, applyRepairStatus])
 
   useEffect(() => {
     void loadCatalog()
     const boot = updateCheckBoot
-    const repairRequest = ++startupRepairRequest.current
+    const repairRequest = ++repairStatusRequest.current
     fetch(api('/dsh-market/status'), { cache: 'no-store' })
-      .then(readMarketStatus)
+      .then(res => readMarketStatus(res, repairRequest))
       .then(status => {
         if (status === null) return
-        applyStartupRepair(status.startupRepair, repairRequest)
+        applyRepairStatus(status, repairRequest)
         statusRef.current = {
           busy: status.busy === true,
           runningAgents: Array.isArray(status.runningAgents) ? status.runningAgents.map(String) : [],
@@ -4096,7 +4251,7 @@ export function MarketSection(props: MarketSectionProps) {
       .catch(() => {})
     refreshInstalled()
     void refreshUpdateNotifications()
-  }, [applyDrainStatus, refreshInstalled, loadCatalog, readMarketStatus, restoreDrainMarkers, applyStartupRepair])
+  }, [applyDrainStatus, refreshInstalled, loadCatalog, readMarketStatus, restoreDrainMarkers, applyRepairStatus])
 
   // Pending-restart flags survive tab switches and page reloads, scoped to
   // one host process: a different boot id means the restart happened and the
@@ -4225,13 +4380,15 @@ export function MarketSection(props: MarketSectionProps) {
     }
     const timer = setInterval(() => {
       const polledUpdate = pendingUpdate.current
+      const repairRequest = polledUpdate === null ? undefined : ++repairStatusRequest.current
       fetch(api('/dsh-market/status'), { cache: 'no-store' })
-        .then(readMarketStatus)
+        .then(res => readMarketStatus(res, repairRequest))
         .then(status => {
           // 404: the host unloaded the market, and this poll is the only
           // witness left of the operation it was tracking — noteMarketGone
           // released the button and settled the row (#962).
           if (status === null) return
+          if (repairRequest !== undefined && typeof status.boot === 'string') applyRepairStatus(status, repairRequest)
           statusRef.current = {
             busy: status.busy === true,
             runningAgents: Array.isArray(status.runningAgents) ? status.runningAgents.map(String) : [],
@@ -4355,7 +4512,7 @@ export function MarketSection(props: MarketSectionProps) {
         .catch(() => {})
     }, 2000)
     return () => clearInterval(timer)
-  }, [applyDrainStatus, busyUrl, updatingName, removingName, data, installed, repoIdentities, repoHints, refreshInstalled, lang, restoreDrainMarkers, t])
+  }, [applyDrainStatus, applyRepairStatus, busyUrl, updatingName, removingName, data, installed, repoIdentities, repoHints, refreshInstalled, lang, restoreDrainMarkers, t])
 
   const scrollToTop = () => {
     const el = listScroller(surface, rootRef.current, bodyRef.current, themesFullscreen)
@@ -4721,11 +4878,28 @@ export function MarketSection(props: MarketSectionProps) {
     : favoriteThemes.slice(
       (favoriteThemePagination.currentPage - 1) * favoriteThemePagination.pageSize,
       favoriteThemePagination.currentPage * favoriteThemePagination.pageSize)
+  // Installed rows need the same discovery-compatibility scan as Discover /
+  // Favorites so an incompatible plugin can say why it cannot run — without
+  // waiting for the user to open the catalog first.
+  // Only keys DiscoveryScan can describe. A bare installed name is dropped by
+  // the scanner (no catalog entry) — demanding it left the chip on Loading forever.
+  const installedHostPackages = useMemo(
+    () => [...new Set(Object.entries(installed).flatMap(([name, spec]) => {
+      const entry = data === null
+        ? undefined
+        : catalogEntryForInstalled(data.plugins, name, String(spec), repoIdentities[name], repoHints[name])
+      if (entry === undefined) return []
+      const key = hostCompatibilityKey(entry)
+      return key === null ? [] : [key]
+    }))],
+    [installed, data, repoIdentities, repoHints],
+  )
   // Favorites reuse pluginCard (and its host-requirement badge). Discover
   // already loads compatibility for the current page; without the same
   // fetch here the badge stays on "Reading host requirement…" forever.
   const compatibilityKeys = (marketGone ? [] : tab === 'discover' ? pageHostPackages
     : tab === 'favorites' ? favoritePagePlugins.map(hostCompatibilityKey).filter(key => key !== null)
+    : tab === 'installed' ? installedHostPackages
     : []).join('\u0000')
   useEffect(() => {
     discoveryScan.setDemand(compatibilityDemandOwner.current, data, compatibilityKeys === '' ? [] : compatibilityKeys.split('\u0000'))
@@ -5519,7 +5693,11 @@ export function MarketSection(props: MarketSectionProps) {
         // confirms idle, and leave this attempt alone if the page was closed.
         if (pendingUpdate.current === attempt) pendingUpdate.current = { ...attempt, recovering: true }
       })
-  }, [refreshInstalled, installed, rememberDrainMarker, t, lang, updates])
+      .finally(() => {
+        // A linked source switch can start its own recovery as the update ends.
+        if (restore && mounted.current) void refreshRepairStatus()
+      })
+  }, [refreshInstalled, refreshRepairStatus, installed, rememberDrainMarker, t, lang, updates])
 
 
   const doSourceMigration = useCallback((name: string, confirmAgentsRunning = false, renameTo?: string) => {
@@ -6343,6 +6521,10 @@ export function MarketSection(props: MarketSectionProps) {
           return true
         }
         const text = (v: unknown) => typeof v === 'string' ? v : v == null ? '' : JSON.stringify(v)
+        if (body.partial === true) {
+          setGroupPayload(body)
+          refreshInstalled()
+        }
         setInstallError(text(body.error) || t('toggleFail'))
         if (Array.isArray(body.restartMembers) && body.restartMembers.length > 0) {
           setToggleRestart(n => n + body.restartMembers.length)
@@ -7289,20 +7471,7 @@ export function MarketSection(props: MarketSectionProps) {
     const blocked = record !== null && (record.state === 'input' || record.state === 'failed')
     const compatibilityKey = hostCompatibilityKey(p)
     const compatibility = compatibilityKey === null ? undefined : hostCompatibility[compatibilityKey]
-    const hostRequirementLabel = compatibility?.requirement !== null && compatibility?.requirement !== undefined
-      ? t('hostRequirement').replace('{0}', compatibility.requirement)
-      : compatibilityKey === null
-        ? t('hostRequirementUnavailable')
-        : compatibility === undefined
-          ? t('hostRequirementLoading')
-          : compatibility.basis === 'undeclared'
-            ? t('hostRequirementUndeclared')
-            : t('hostRequirementUnavailable')
-    const hostRequirementTitle = compatibility?.declarations.map(declaration =>
-      declaration.kind === 'engine'
-        ? `engines.dsh: ${declaration.range}`
-        : `${declaration.package ?? 'peer'}: ${declaration.range}`,
-    ).join('\n') || hostRequirementLabel
+    const hostChip = hostRequirementChip(compatibility, compatibilityKey, t)
     return (
       <div key={p.url} className={blocked ? `${css.card} ${css.cardBlocked}` : css.card}>
         <div className={css.row1}>
@@ -7348,15 +7517,15 @@ export function MarketSection(props: MarketSectionProps) {
         )}
         <div className={css.foot}>
           <div className={css.footTags}>
-            <span
-              className={compatibility?.status === 'incompatible'
-                ? `${css.hostRequirement} ${css.hostRequirementBad}`
-                : css.hostRequirement}
-              data-status={compatibility?.status ?? 'unknown'}
-              title={(compatibility?.status === 'compatible' || compatibility?.status === 'incompatible'
-                ? t(compatibility.status === 'compatible' ? 'hostStatusCompatible' : 'hostStatusIncompatible') + '\n'
-                : '') + hostRequirementTitle}
-            >{hostRequirementLabel}</span>
+            <CardTip label={hostChip.title} maxWidth={320}>
+              <span
+                className={hostChip.bad
+                  ? `${css.hostRequirement} ${css.hostRequirementBad}`
+                  : css.hostRequirement}
+                data-status={hostChip.status}
+                tabIndex={0}
+              >{hostChip.label}</span>
+            </CardTip>
             {pluginCategories(p).map(category => (
               <span key={category} className={css.tag}>
                 {(data!.categories[category] && (data!.categories[category]![lang] || data!.categories[category]!.en)) || category}
@@ -7893,6 +8062,7 @@ export function MarketSection(props: MarketSectionProps) {
             describe={describePlugin}
             records={records}
             startupRepairEntries={startupRepair?.entries}
+            checkoutRecoveryEntries={checkoutRecovery?.entries}
             open={operationsOpen}
             onOpenChange={setOperationsOpen}
             replacing={replacing}
@@ -9021,6 +9191,9 @@ export function MarketSection(props: MarketSectionProps) {
                         ? <div className={css.empty}>{t('installedEmpty')}</div>
                         : (
                           <Masonry
+                            maxColumns={2}
+                            minColumns={1}
+                            className={css.masonryInstalled}
                             items={orderedInstalledEntries
                             .filter(([name, spec]) => {
                               const needle = qInstalled.trim().toLowerCase()
@@ -9076,6 +9249,38 @@ export function MarketSection(props: MarketSectionProps) {
                             // states. inert/broken rows keep their diagnosis
                             // without a misleading toggle (#60).
                             const toggleable = act?.library !== true && (off || (act !== undefined && (act.state === 'live' || act.state === 'restart')))
+                            const updatable = isPluginUpdatable(name, String(spec), status, updatedNames)
+                            const metaBits = [
+                              version,
+                              localDev ? t('linkedDev') : '',
+                              // Third segment of the same line (#1142), and only
+                              // when the market knows it. Every package installed
+                              // before this existed, or through the CLI, has no
+                              // date: a dash on all of those rows is a placeholder
+                              // that says nothing, so the row stays quiet and the
+                              // hover text explains why there is no date. The
+                              // label says what the date is: a bare date beside a
+                              // version reads as a release date.
+                              installedOn === null ? '' : `${t('installedAtLabel')} ${installedOn}`,
+                            ].filter(Boolean)
+                            // Same DSH chip as Discover (label / tip / bad ink).
+                            // - No catalog entry: stay quiet (scan cannot settle → never Loading).
+                            // - Activation incompat: status band only — no second red chip.
+                            // - Local-dev / missing: quiet.
+                            const compatibilityKey = entry !== undefined ? hostCompatibilityKey(entry) : null
+                            const compatibility = compatibilityKey === null
+                              ? undefined
+                              : hostCompatibility[compatibilityKey]
+                            const hostChip = hostRequirementChip(compatibility, compatibilityKey, t)
+                            const showIncompat = !localDev && act?.state === 'incompatible'
+                            const showHostRequirement = !missing && !localDev && !showIncompat && entry !== undefined
+                              // Only a known requirement earns a chip. "undeclared" / "unknown" /
+                              // "loading" on every card is noise the user cannot act on.
+                              && compatibility?.requirement != null
+                            const note = notes[name]
+                            const authored = authoredDescription(name, entry)
+                            const theirs = showTheirs.includes(name)
+                            const shown = note !== undefined && !theirs ? note : authored
                             return (
                               <div key={name} className={missing ? `${css.irow} ${css.irowMissing}` : css.irow}>
                                 <div style={{ minWidth: 0 }}>
@@ -9104,21 +9309,30 @@ export function MarketSection(props: MarketSectionProps) {
                                     <span className={css.irowMenu}>{renderInstalledBlockMenu(name)}</span>
                                   )}
                                   </div>
-                                  {(version !== '' || localDev || installedOn !== null) && (
-                                    <div className={css.irowMeta} title={installedWhenTitle}>
-                                      {[
-                                        version,
-                                        localDev ? t('linkedDev') : '',
-                                        // Third segment of the same line (#1142), and only
-                                        // when the market knows it. Every package installed
-                                        // before this existed, or through the CLI, has no
-                                        // date: a dash on all of those rows is a placeholder
-                                        // that says nothing, so the row stays quiet and the
-                                        // hover text explains why there is no date. The
-                                        // label says what the date is: a bare date beside a
-                                        // version reads as a release date.
-                                        installedOn === null ? '' : `${t('installedAtLabel')} ${installedOn}`,
-                                      ].filter(Boolean).join(' · ')}
+                                  {(metaBits.length > 0 || updatable) && (
+                                    <div className={css.irowMeta}>
+                                      {metaBits.length > 0 && (
+                                        <span className={css.irowMetaText} title={installedWhenTitle}>
+                                          {metaBits.join(' · ')}
+                                        </span>
+                                      )}
+                                      {/* Notes sit beside the installed version — the
+                                          update button already says a newer cut exists,
+                                          so a second "有新版本" band is just empty space. */}
+                                      {updatable && (
+                                        <button
+                                          type="button"
+                                          className={css.notesLink}
+                                          onClick={() => openNotes(
+                                            name,
+                                            status?.current ?? null,
+                                            status?.latest ?? null,
+                                            // Prefer the mature install target (#1193); else latest.
+                                            status?.eligibleVersion ?? status?.latest ?? null,
+                                            repoUrl,
+                                          )}
+                                        >{`${t('notesLink')} ›`}</button>
+                                      )}
                                     </div>
                                   )}
                                   {specRedundant
@@ -9151,38 +9365,34 @@ export function MarketSection(props: MarketSectionProps) {
                                       which is what someone with forty plugins
                                       is asking. The original stays one click
                                       away rather than being lost. */}
-                                  {notingName === name
-                                    ? (
-                                        <div className={css.noteEdit}>
-                                          <Input
-                                            className={css.noteInput}
-                                            value={noteDraft}
-                                            maxLength={NOTE_MAX}
-                                            autoFocus
-                                            placeholder={t('notePlaceholder')}
-                                            onChange={e => setNoteDraft(e.target.value)}
-                                            onKeyDown={(e) => {
-                                              // Enter while an IME is composing commits the candidate, not the note.
-                                              if (e.nativeEvent.isComposing || e.keyCode === 229) return
-                                              if (e.key === 'Enter') saveNote(name, noteDraft)
-                                              if (e.key === 'Escape') setNotingName(null)
-                                            }}
-                                          />
-                                          <div className={css.noteEditBar}>
-                                            <span className={css.noteCount} aria-hidden="true">{`${noteDraft.length}/${NOTE_MAX}`}</span>
-                                            <Button variant="ghost" size="sm" onClick={() => setNotingName(null)}>{t('cancel')}</Button>
-                                            <Button variant="primary" size="sm" onClick={() => saveNote(name, noteDraft)}>{t('noteSave')}</Button>
+                                  <div className={css.irowDescBand}>
+                                    {notingName === name
+                                      ? (
+                                          <div className={css.noteEdit}>
+                                            <Input
+                                              className={css.noteInput}
+                                              value={noteDraft}
+                                              maxLength={NOTE_MAX}
+                                              autoFocus
+                                              placeholder={t('notePlaceholder')}
+                                              onChange={e => setNoteDraft(e.target.value)}
+                                              onKeyDown={(e) => {
+                                                // Enter while an IME is composing commits the candidate, not the note.
+                                                if (e.nativeEvent.isComposing || e.keyCode === 229) return
+                                                if (e.key === 'Enter') saveNote(name, noteDraft)
+                                                if (e.key === 'Escape') setNotingName(null)
+                                              }}
+                                            />
+                                            <div className={css.noteEditBar}>
+                                              <span className={css.noteCount} aria-hidden="true">{`${noteDraft.length}/${NOTE_MAX}`}</span>
+                                              <Button variant="ghost" size="sm" onClick={() => setNotingName(null)}>{t('cancel')}</Button>
+                                              <Button variant="primary" size="sm" onClick={() => saveNote(name, noteDraft)}>{t('noteSave')}</Button>
+                                            </div>
                                           </div>
-                                        </div>
-                                      )
-                                    : (() => {
-                                        const note = notes[name]
-                                        const authored = authoredDescription(name, entry)
-                                        const theirs = showTheirs.includes(name)
-                                        const shown = note !== undefined && !theirs ? note : authored
-                                        return (
-                                          <div className={`${css.desc} ${css.descTight} ${css.noteRow}`}>
-                                            {shown !== '' && (
+                                        )
+                                      : shown !== ''
+                                        ? (
+                                            <div className={`${css.desc} ${css.descTight} ${css.irowBody}`}>
                                               <CardDesc
                                                 key={shown}
                                                 text={shown}
@@ -9191,7 +9401,27 @@ export function MarketSection(props: MarketSectionProps) {
                                                 className={css.irowDesc}
                                                 textClassName={note !== undefined && !theirs ? css.noteMine : undefined}
                                               />
-                                            )}
+                                            </div>
+                                          )
+                                        : null}
+                                    {/* Foot stays outside the note editor so the DSH chip
+                                        does not vanish while editing. Note actions hide
+                                        during edit (the editor is the action). */}
+                                    {(showHostRequirement || notingName !== name) && (
+                                      <div className={(shown === '' || notingName === name) ? `${css.irowFootRow} ${css.irowNoteActionsSpaced}` : css.irowFootRow}>
+                                        {showHostRequirement && (
+                                          <CardTip label={hostChip.title} maxWidth={320}>
+                                            <span
+                                              className={hostChip.bad
+                                                ? `${css.hostRequirement} ${css.hostRequirementBad}`
+                                                : css.hostRequirement}
+                                              data-status={hostChip.status}
+                                              tabIndex={0}
+                                            >{hostChip.label}</span>
+                                          </CardTip>
+                                        )}
+                                        {notingName !== name && (
+                                          <div className={css.irowNoteActions}>
                                             {note !== undefined && authored !== '' && (
                                               <button
                                                 type="button"
@@ -9210,52 +9440,39 @@ export function MarketSection(props: MarketSectionProps) {
                                               {note === undefined ? t('noteAdd') : t('noteEdit')}
                                             </button>
                                           </div>
-                                        )
-                                      })()}
-                                  {/* Update and reminder lines (#294, #728). An up-to-date row
-                                      with reminders on renders neither. */}
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                  {/* Incompat / muted-reminder only (#294, #728). Held waits
+                                      sit with the update control. Compatible rows show the
+                                      Discover-parity DSH chip; incompat rows use this band only. */}
                                   {(() => {
-                                    const updatable = isPluginUpdatable(name, String(spec), status, updatedNames)
                                     const exempt = updateExemptSet.has(name)
-                                    if (!updatable && !exempt) return null
+                                    // Activation is the installed fact. Catalog discovery only
+                                    // fills requirement numbers — never lights the band alone
+                                    // (catalog latest can be incompatible while this install runs).
                                     const ignored = !exempt && bootId !== null && ignoredUpdateSet.has(name)
-                                    const sep = <span className={css.irowStatusSep} aria-hidden="true">·</span>
+                                    if (!exempt && !ignored && !showIncompat) return null
                                     return (
-                                      <>
-                                        {/* The fact and the reminder are separate lines: silencing one
-                                            must never read as hiding the other (#728). */}
-                                        {updatable && (
-                                          <div className={css.irowStatus}>
-                                            {/* A generation's newer release is already stated in the action band. */}
-                                            {!generation && (
-                                              <span className={css.irowStatusPart}>
-                                                <span className={css.irowStatusFact}>
-                                                  {status?.eligibleVersion != null
-                                                    ? t('hostUpdateReady').replace('{0}', displayLatest(status.eligibleVersion))
-                                                    : status?.latest != null ? t('hostUpdateReady').replace('{0}', displayLatest(status.latest)) : t('updateAvailableShort')}
-                                                </span>
-                                                {sep}
-                                              </span>
-                                            )}
-                                            <button
-                                              type="button"
-                                              className={css.notesLink}
-                                              onClick={() => openNotes(name, status?.current ?? null, status?.latest ?? null,
-                                                status?.eligibleVersion ?? (status?.updateAvailable === true ? status.latest : null) ?? null, repoUrl)}
-                                            >{`${t('notesLink')} ›`}</button>
+                                      <div className={css.irowStatusBand}>
+                                        {showIncompat && (
+                                          <div className={css.irowIncompat}>
+                                            <div className={css.irowIncompatTitle}>{t('installedIncompatTitle')}</div>
+                                            <div className={css.irowIncompatBody}>
+                                              {t('installedIncompatWhy')
+                                                .replace('{0}', compatibility?.requirement ?? t('hostIncompatibleUnknown'))
+                                                .replace('{1}', (typeof hostVersion === 'string' ? hostVersion : null) ?? t('hostIncompatibleUnknown'))}
+                                            </div>
+                                            <div className={css.irowIncompatBody}>
+                                              {status?.updateAvailable === true
+                                                ? t('installedIncompatNextUpdate')
+                                                : compatibility?.status === 'incompatible'
+                                                  ? t('installedIncompatNextHost')
+                                                  : t('installedIncompatNextUnknown')}
+                                            </div>
                                           </div>
                                         )}
-                                        {updatable && status?.eligibleVersion !== undefined && status.restoreRequired !== true &&
-                                          status.heldUpdate !== undefined && status.heldUpdate.latest !== status.eligibleVersion && (() => {
-                                            const left = Date.parse(status.heldUpdate.until) - Date.now()
-                                            const known = status.heldUpdate.estimated !== true && Number.isFinite(left) && left > 0
-                                            return <div className={css.irowStatus}><span className={css.metaInline}>{
-                                              t(known ? 'updateHeldTarget' : 'updateHeldTargetUnknown')
-                                                .replace('{0}', displayLatest(status.heldUpdate.latest))
-                                                .replace('{1}', String(Math.max(1, Math.ceil(left / 3_600_000))))
-                                                .replace('{2}', displayLatest(status.eligibleVersion))
-                                            }</span></div>
-                                          })()}
                                         {(exempt || ignored) && (
                                           <div className={css.irowStatus}>
                                             <span className={css.irowStatusIcon}><IconBellOff size={16} /></span>
@@ -9284,17 +9501,18 @@ export function MarketSection(props: MarketSectionProps) {
                                             </span>
                                           </div>
                                         )}
-                                      </>
+                                      </div>
                                     )
                                   })()}
                                   {!off && act !== undefined && meta !== null && (
                                         <div className={css.act}>
                                           {/* Only a state the switch does NOT already show earns a
                                               line here: "installed but not active" is news, "live"
-                                              is what the switch is for. */}
+                                              is what the switch is for. Incompatible already owns
+                                              the quiet status band — do not repeat the same label. */}
                                           {act.library === true
                                             ? <span className={css.metaTag}>{meta.label}</span>
-                                            : meta.dot !== 'done' && (
+                                            : meta.dot !== 'done' && (localDev || act.state !== 'incompatible') && (
                                                 <span className={meta.dot === 'error' ? css.actBroken : css.actWarn}>
                                                   <StateDot state={meta.dot} size={7} />
                                                   {meta.label}
@@ -9384,8 +9602,10 @@ export function MarketSection(props: MarketSectionProps) {
                                     </>
                                   )
                                 })()}
-                                {/* The status tags stay one unit, so a wrap moves them together (#242). */}
+                                {/* Horizontal ops stay in one trailing unit so a
+                                    wrap moves them together (#242, installed layout). */}
                                 <span className={css.irowTrailing}>
+                                <span className={css.irowTrailingRow}>
                                 {!missing && status?.sourceMigration !== undefined && (
                                   <Button
                                     variant="outline"
@@ -9399,49 +9619,60 @@ export function MarketSection(props: MarketSectionProps) {
                                   : updatedNames.includes(name)
                                     ? <span className={`${css.metaTag} ${css.metaTagOk}`}>{act?.library === true ? t('updatedLibrary') : act?.state === 'live' ? t('updatedLive') : t('updated')}</span>
                                     : updatingName === name
-                                      ? <Button variant="outline" size="sm" className={css.warnBtn} disabled>{t('updating')}</Button>
+                                      ? <Button variant="outline" size="sm" className={css.irowUpdateBtn} disabled>{t('updating')}</Button>
                                       : status !== undefined && generation && status.latest != null
                                         ? <span className={css.metaTag} title={t('hostUpdateHint')}>{t('hostUpdateReady').replace('{0}', status.latest)}</span>
                                       : status && status.updateAvailable
-                                        ? (
-                                            <>
-                                              <Button
-                                                variant="outline"
-                                                size="sm"
-                                                className={css.warnBtn}
-                                                disabled={updatingName !== null}
-                                                onClick={() => {
-                                                  if (status.restoreRequired === true) askRestore(name)
-                                                  else doUpdate(name)
-                                                }}
-                                              >{status.restoreRequired === true ? t('restoreOnline')
-                                                : status.eligibleVersion !== undefined ? `${t('update')} ${displayLatest(status.eligibleVersion)}` : t('update')}</Button>
-                                              {status.heldUpdate !== undefined && (
-                                                <span className={css.metaTag}>
-                                                  {t('updateHeldTag').replace('{0}', displayLatest(status.heldUpdate.latest))}
-                                                </span>
-                                              )}
-                                            </>
-                                          )
-                                        : status?.heldUpdate !== undefined
-                                          // A newer release exists but pnpm will refuse
-                                          // it until the profile's fresh-release wait
-                                          // passes (#945). The official Desktop has no
-                                          // bypass, so the honest state is "waiting",
-                                          // not a button that fails by construction.
-                                          ? (() => {
-                                              const left = Date.parse(status.heldUpdate.until) - Date.now()
-                                              // An estimated hold is the registry failing to say when
-                                              // the version shipped (#961), not a known window: say
-                                              // minutes and say why, rather than claiming a wait the
-                                              // market cannot know.
-                                              const estimated = status.heldUpdate.estimated === true
-                                              const amount = String(Math.max(1, Math.ceil(left / (estimated ? 60_000 : 3_600_000))))
-                                              const hint = t(estimated ? 'updateHeldEstimatedHint' : 'updateHeldHint').replace('{1}', amount)
+                                        ? (() => {
+                                              // Hint then button: clock+short wait stays visible,
+                                              // update action stays the rightmost control.
+                                              const held = status.heldUpdate !== undefined
+                                                ? heldUpdateBeside(status.heldUpdate, t)
+                                                : null
                                               return (
-                                                <span className={css.metaTag} title={hint}>
-                                                  {t('updateHeldTag').replace('{0}', displayLatest(status.heldUpdate.latest))}
-                                                </span>
+                                                <>
+                                                  {held !== null && (
+                                                    <Tooltip label={held.title} side="top" delayMs={HOVER_TIP_DELAY_MS} portal maxWidth={280}>
+                                                      <span className={css.irowTrailingHint}>
+                                                        <IconClock size={12} />
+                                                        {held.label}
+                                                      </span>
+                                                    </Tooltip>
+                                                  )}
+                                                  <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    className={css.irowUpdateBtn}
+                                                    disabled={updatingName !== null}
+                                                    onClick={() => {
+                                                      if (status.restoreRequired === true) askRestore(name)
+                                                      else doUpdate(name)
+                                                    }}
+                                                  >{status.restoreRequired === true ? t('restoreOnline')
+                                                    : (() => {
+                                                        // Status fact is versionless; the button is the
+                                                        // one place that still names the target. Prefer
+                                                        // the mature eligible cut, else latest (#layout).
+                                                        const target = status.eligibleVersion ?? status.latest
+                                                        return target != null && target !== ''
+                                                          ? `${t('update')} ${displayLatest(target)}`
+                                                          : t('update')
+                                                      })()}</Button>
+                                                </>
+                                              )
+                                            })()
+                                        : status?.heldUpdate !== undefined
+                                          // Held-only: no installable cut yet (#945). Same quiet
+                                          // clock hint as beside the update button.
+                                          ? (() => {
+                                              const held = heldUpdateBeside(status.heldUpdate, t)
+                                              return (
+                                                <Tooltip label={held.title} side="top" delayMs={HOVER_TIP_DELAY_MS} portal maxWidth={280}>
+                                                  <span className={css.irowTrailingHint}>
+                                                    <IconClock size={12} />
+                                                    {held.label}
+                                                  </span>
+                                                </Tooltip>
                                               )
                                             })()
                                         : localDev
@@ -9471,6 +9702,7 @@ export function MarketSection(props: MarketSectionProps) {
                                                 ? null
                                                 : <span className={css.metaTag} title={t('upToDate')}>{t('upToDate')}</span>}
                                 {removingName === name && <span className={css.metaTag}>{t('uninstalling')}</span>}
+                                </span>
                                 </span>
                                 </div>
                               </div>

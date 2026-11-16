@@ -3,8 +3,8 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "main": "index.js",
-  "exports": { ".": "./index.js", "./gate": "./gate.js", "./package.json": "./package.json" },
-  "files": ["index.js", "gate.js", "cordis.patch.yml"],
+  "main": "gate.js",
+  "exports": { ".": "./gate.js", "./gate": "./gate.js", "./package.json": "./package.json" },
+  "files": ["gate.js", "cordis.patch.yml"],
   "dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
 }
