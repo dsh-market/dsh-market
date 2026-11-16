@@ -8322,6 +8322,42 @@ describe('a `disabled: !!js` guard survives the toggle (#1175)', () => {
     expect(other.fiber).toBeDefined()
   })
 
+  it('keeps a guarded row and a user-disabled component off through off, off, on, and restores the user patch byte for byte (#1150)', async () => {
+    const name = 'dsh-rev-guard'
+    bed.dispose()
+    seedPackage(name, [
+      '- insert:',
+      '    - id: rev-main',
+      `      name: '${name}'`,
+      '    - id: rev-user-off',
+      `      name: '${name}/user-off'`,
+      '    - id: rev-guarded',
+      `      name: '${name}/guarded'`,
+      '      disabled: !!js "[...ctx.loader.entries()].some(entry => entry.options.id === \'x\')"',
+    ])
+    const path = join(profileDir('web'), 'cordis.patch.yml')
+    const userPatch = '- id: rev-user-off\n  disabled: true\n  config:\n    keep: me\n'
+    writeFileSync(path, userPatch)
+    bed = createTestbed()
+    const main = entry(name, 'rev-main', null)
+    const userOff = entry(`${name}/user-off`, 'rev-user-off', true)
+    const guarded = entry(`${name}/guarded`, 'rev-guarded', true)
+    bed.loaderEntries.push(main, userOff, guarded)
+    expect((await bed.dispatch('POST', '/dsh-market/toggle', { name, enabled: false })).status).toBe(200)
+    expect((await bed.dispatch('POST', '/dsh-market/toggle', { name, enabled: false })).status).toBe(200)
+    const off = readFileSync(path, 'utf8')
+    expect((off.match(/package-switch/g) ?? []).length).toBeLessThanOrEqual(2)
+    expect((await bed.dispatch('POST', '/dsh-market/toggle', { name, enabled: true })).status).toBe(200)
+    expect(readFileSync(path, 'utf8')).toBe(userPatch)
+    expect(main.fiber).toBeDefined()
+    expect(userOff.fiber).toBeUndefined()
+    expect(guarded.fiber).toBeUndefined()
+    const calls = guarded.update.mock.calls.map(c => (c[0] as { disabled: boolean | null }).disabled)
+    expect(calls.filter(v => v !== true)).toEqual([])
+    const listing = await bed.dispatch('GET', '/dsh-market/installed')
+    expect(listing.json.patchDisabled).not.toContain(name)
+  })
+
   it('restores a legacy whole-package disable without inventing prior component settings (#1150)', async () => {
     const name = 'dsh-audit-legacy'
     bed.dispose()
