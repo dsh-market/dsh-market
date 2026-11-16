@@ -7027,6 +7027,35 @@ describe('local-dev restore', () => {
     fireEvent.click(item)
   }
 
+  it('checks for a local checkout recovery when the switch response arrives', async () => {
+    const installed = { 'dsh-loop': 'link:C:/isolated/dsh-loop' }
+    let rejected = false
+    stubFetch({
+      '/dsh-market/installed': { profile: 'desktop', installed, live: [] },
+      '/dsh-market/updates': { updates: {
+        'dsh-loop': { kind: 'linked', version: '1.0.0', current: '1.0.0', latest: '1.2.0',
+          updateAvailable: true, restoreRequired: true },
+      } },
+      '/dsh-market/status': () => ({
+        boot: 'checkout-restore', installed, pnpm: true,
+        ...(rejected ? { checkoutRecovery: {
+          checking: false, entries: [{ name: 'dsh-loop', reason: 'writer-lock', sourceExists: true }],
+        } } : {}),
+      }),
+      '/dsh-market/update': () => {
+        rejected = true
+        return { ok: false, __status: 502, error: 'the switch did not finish' }
+      },
+    })
+    render(<MarketSection {...props()} preferredSubsectionId="installed" />)
+    fireEvent.click(await screen.findByRole('button', { name: en.restoreOnline }))
+    fireEvent.click(screen.getByRole('button', { name: en.restoreProceed }))
+    const tasks = await screen.findByRole('button', { name: re(en.checkoutRecoveryTitle) })
+    if (tasks.getAttribute('aria-expanded') !== 'true') fireEvent.click(tasks)
+    const panel = screen.getByRole('region', { name: en.checkoutRecoveryTitle })
+    expect(within(panel).getByText(en.checkoutSourceRetained)).toBeTruthy()
+  })
+
   it.each(['update', 'restore'] as const)('settles a live %s task after a lost response and lets the queued install run', async kind => {
     vi.useFakeTimers()
     try {
@@ -11706,6 +11735,46 @@ describe('interrupted updates at startup (#1167)', () => {
       expect(screen.getByText('An installed version was intact.')).toBeTruthy()
       expect(screen.getByText('The desktop app took too long.')).toBeTruthy()
       expect(screen.getByText(/Automatic retries stopped/)).toBeTruthy()
+      const reads = fetchCalls.filter(call => call.path === '/dsh-market/status').length
+      await act(async () => { await vi.advanceTimersByTimeAsync(6000) })
+      expect(fetchCalls.filter(call => call.path === '/dsh-market/status')).toHaveLength(reads)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('local checkout recovery in Tasks', () => {
+  it('uses the status poll until recovery stops and distinguishes an unconfirmed checkout', async () => {
+    vi.useFakeTimers()
+    try {
+      let stopped = false
+      stubFetch({
+        '/dsh-market/status': () => ({
+          active: false, busy: false, boot: 'checkout-recovery', installed: {}, pnpm: true,
+          checkoutRecovery: stopped ? {
+            checking: false,
+            entries: [
+              { name: 'local-still-on-disk', reason: 'writer-lock', sourceExists: true },
+              { name: 'local-moved', reason: 'package-run', sourceExists: false },
+            ],
+          } : { checking: true, entries: [] },
+        }),
+      })
+      render(<MarketSection {...props()} />)
+      await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+      expect(screen.getByRole('button', { name: en.opTitle })).toBeTruthy()
+      stopped = true
+      await act(async () => { await vi.advanceTimersByTimeAsync(2500) })
+      fireEvent.click(screen.getByRole('button', { name: re(en.checkoutRecoveryTitle) }))
+      const panel = screen.getByRole('region', { name: en.checkoutRecoveryTitle })
+      expect(within(panel).getByText('local-still-on-disk')).toBeTruthy()
+      expect(within(panel).getByText(en.checkoutSourceRetained)).toBeTruthy()
+      expect(within(panel).getByText(en.checkoutRecoveryLock)).toBeTruthy()
+      expect(within(panel).getByText('local-moved')).toBeTruthy()
+      expect(within(panel).getByText(en.checkoutSourceUnconfirmed)).toBeTruthy()
+      expect(within(panel).getByText(en.checkoutRecoveryRun)).toBeTruthy()
+
       const reads = fetchCalls.filter(call => call.path === '/dsh-market/status').length
       await act(async () => { await vi.advanceTimersByTimeAsync(6000) })
       expect(fetchCalls.filter(call => call.path === '/dsh-market/status')).toHaveLength(reads)

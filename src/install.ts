@@ -1020,6 +1020,11 @@ export function recordedCheckoutLink(profileDirectory: string, name: string, spe
   return { path, rawTarget, moduleRoot }
 }
 
+/** Check the saved checkout without creating its profile link. */
+export function checkoutSourceExists(link: DetachedCheckoutLink): boolean {
+  return statSync(absoluteLinkTarget(link.path, link.rawTarget), { throwIfNoEntry: false })?.isDirectory() === true
+}
+
 /** Disconnect only the profile junction that still matches the recorded local checkout. */
 export function detachCheckoutLink(
   profileDirectory: string,

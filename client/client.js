@@ -551,6 +551,14 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			startupRepairNotComposed: "文件已装好，桌面端未能加载插件。",
 			startupRepairTimeout: "桌面端等待超时。",
 			startupRepairUnknown: "重新安装失败。导出日志可查看原因。",
+			checkoutRecoveryTitle: "本地链接未恢复",
+			checkoutSourceRetained: "源码仍在，链接未恢复。",
+			checkoutSourceUnconfirmed: "无法确认源码位置。请检查本地目录。",
+			checkoutRecoveryBusy: "市场无法确认插件操作已结束。",
+			checkoutRecoveryRun: "市场无法确认包管理器已结束。",
+			checkoutRecoveryLock: "插件设置的写入锁仍在。",
+			checkoutRecoveryCheck: "市场无法核实原链接能否安全接回。",
+			checkoutRecoveryRetry: "请在插件操作结束后重启 DSH。",
 			opInstalling: "正在安装",
 			opNeedsYou: "项需处理",
 			opQueued: "排队中",
@@ -1393,6 +1401,14 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			startupRepairNotComposed: "The files were installed, but the desktop app could not load the plugin.",
 			startupRepairTimeout: "The desktop app took too long.",
 			startupRepairUnknown: "Reinstalling failed. Export the log to see why.",
+			checkoutRecoveryTitle: "Local link needs attention",
+			checkoutSourceRetained: "The source files are still there. The link was not restored.",
+			checkoutSourceUnconfirmed: "The source location could not be confirmed. Check the local directory.",
+			checkoutRecoveryBusy: "The market could not confirm that the plugin operation had finished.",
+			checkoutRecoveryRun: "The market could not confirm that the package manager had finished.",
+			checkoutRecoveryLock: "The lock on the plugin settings is still present.",
+			checkoutRecoveryCheck: "The market could not confirm that it was safe to restore the original link.",
+			checkoutRecoveryRetry: "Reopen DSH after the plugin operation has finished.",
 			opInstalling: "Installing",
 			opNeedsYou: "need attention",
 			opQueued: "Queued",
@@ -2235,6 +2251,14 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			startupRepairNotComposed: "ファイルはインストールされましたが、デスクトップアプリでプラグインを読み込めませんでした。",
 			startupRepairTimeout: "デスクトップアプリの応答がタイムアウトしました。",
 			startupRepairUnknown: "再インストールに失敗しました。ログをエクスポートして原因を確認してください。",
+			checkoutRecoveryTitle: "ローカルリンクを復元できませんでした",
+			checkoutSourceRetained: "ソースは残っています。リンクを復元できませんでした。",
+			checkoutSourceUnconfirmed: "ソースの場所を確認できませんでした。ローカルフォルダーを確認してください。",
+			checkoutRecoveryBusy: "プラグイン操作が終了したか確認できませんでした。",
+			checkoutRecoveryRun: "パッケージマネージャーが終了したか確認できませんでした。",
+			checkoutRecoveryLock: "プラグイン設定の書き込みロックが残っています。",
+			checkoutRecoveryCheck: "元のリンクを安全に復元できるか確認できませんでした。",
+			checkoutRecoveryRetry: "プラグイン操作が終了した後、DSH を起動し直してください。",
 			opInstalling: "インストール中",
 			opNeedsYou: "件は対応が必要です",
 			opQueued: "キュー待ち",
@@ -5886,6 +5910,12 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			unknown: "startupRepairUnknown",
 			abandoned: "startupRepairAbandoned"
 		};
+		const checkoutRecoveryCauses = {
+			"profile-busy": "checkoutRecoveryBusy",
+			"package-run": "checkoutRecoveryRun",
+			"writer-lock": "checkoutRecoveryLock",
+			"check-failed": "checkoutRecoveryCheck"
+		};
 		/** What the two clash outcomes are, in the order they are offered. */
 		const CHOICES = [{
 			id: "keep",
@@ -6063,8 +6093,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			}
 		}
 		function OperationsPanel(props) {
-			const { t, records, open, startupRepairEntries = [] } = props;
+			const { t, records, open, startupRepairEntries = [], checkoutRecoveryEntries = [] } = props;
 			const hasStartupRepair = startupRepairEntries.length > 0;
+			const needsCheckoutRecovery = checkoutRecoveryEntries.length > 0;
 			const setOpen = props.onOpenChange;
 			const wrapRef = (0, react.useRef)(null);
 			const summary = summarize(records);
@@ -6095,13 +6126,14 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const waitingOnAgents = summary.running === 0 && summary.blocked > 0;
 			const batchLabel = waitingOnAgents ? t("opWaitingAgents").replace("{0}", String(summary.blocked)) : `${t("opInstalling")} ${String(summary.progressed)}/${String(summary.total)}`;
 			const label = busy ? batchLabel : summary.attention > 0 ? `${String(summary.attention)} ${t("opNeedsYou")}` : hasStartupRepair ? `${t("opTitle")} · ${t("startupRepairBadge")}` : t("opTitle");
-			const quiet = records.length === 0 && !hasStartupRepair && !open;
+			const needsAttention = summary.attention > 0 || needsCheckoutRecovery;
+			const quiet = records.length === 0 && !hasStartupRepair && !needsCheckoutRecovery && !open;
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 				className: Market_module_css_default.opWrap,
 				ref: wrapRef,
 				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("button", {
 					type: "button",
-					className: quiet ? `${Market_module_css_default.opEntry} ${Market_module_css_default.opEntryQuiet}` : summary.attention > 0 ? `${Market_module_css_default.opEntry} ${Market_module_css_default.opEntryAlert}` : Market_module_css_default.opEntry,
+					className: quiet ? `${Market_module_css_default.opEntry} ${Market_module_css_default.opEntryQuiet}` : needsAttention ? `${Market_module_css_default.opEntry} ${Market_module_css_default.opEntryAlert}` : Market_module_css_default.opEntry,
 					"aria-expanded": open,
 					onClick: () => setOpen(quiet ? true : !open),
 					children: [
@@ -6109,12 +6141,12 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 							className: Market_module_css_default.spin,
 							children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(IconLoadingOutline16, { size: 12 })
 						}),
-						quiet ? t("opTitle") : label,
+						needsCheckoutRecovery ? `${label} · ${t("checkoutRecoveryTitle")}` : label,
 						!busy && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 							className: open ? `${Market_module_css_default.opChevron} ${Market_module_css_default.opChevronOpen}` : Market_module_css_default.opChevron,
 							children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(IconChevronDownOutline14, { size: 12 })
 						}),
-						!quiet && summary.attention > 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { className: Market_module_css_default.opDot })
+						!quiet && needsAttention && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { className: Market_module_css_default.opDot })
 					]
 				}), open && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 					className: Market_module_css_default.opPanel,
@@ -6191,7 +6223,38 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 								})
 							}, entry.name))]
 						}),
-						records.length === 0 && !hasStartupRepair && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+						needsCheckoutRecovery && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("section", {
+							"aria-label": t("checkoutRecoveryTitle"),
+							children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+								className: Market_module_css_default.opRepairTitle,
+								children: t("checkoutRecoveryTitle")
+							}), checkoutRecoveryEntries.map((entry) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+								className: `${Market_module_css_default.opRow} ${Market_module_css_default.opRowAlert}`,
+								children: /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+									className: Market_module_css_default.opMain,
+									children: [
+										/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+											className: Market_module_css_default.opName,
+											title: entry.name,
+											children: entry.name
+										}),
+										/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+											className: Market_module_css_default.opStatus,
+											children: t(entry.sourceExists ? "checkoutSourceRetained" : "checkoutSourceUnconfirmed")
+										}),
+										/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+											className: Market_module_css_default.opStatus,
+											children: t(checkoutRecoveryCauses[entry.reason])
+										}),
+										/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+											className: Market_module_css_default.opStatus,
+											children: t("checkoutRecoveryRetry")
+										})
+									]
+								})
+							}, entry.name))]
+						}),
+						records.length === 0 && !hasStartupRepair && !needsCheckoutRecovery && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 							className: Market_module_css_default.opEmpty,
 							children: [t("opEmpty"), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 								className: Market_module_css_default.opEmptyHint,
@@ -11670,7 +11733,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			*/
 			const [marketGone, setMarketGone] = (0, react.useState)(false);
 			const [startupRepair, setStartupRepair] = (0, react.useState)();
-			const startupRepairRequest = (0, react.useRef)(0);
+			const [checkoutRecovery, setCheckoutRecovery] = (0, react.useState)();
+			const repairStatusRequest = (0, react.useRef)(0);
 			const [reconnecting, setReconnecting] = (0, react.useState)(true);
 			const [reconnectRound, setReconnectRound] = (0, react.useState)(0);
 			const [installed, setInstalledState] = (0, react.useState)(cachedInstalled ?? {});
@@ -12869,8 +12933,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				if (!mountedRef.current) return;
 				discoveryScan.setUnavailable();
 				refreshRequest.current = 0;
-				startupRepairRequest.current += 1;
+				repairStatusRequest.current += 1;
 				setStartupRepair(void 0);
+				setCheckoutRecovery(void 0);
 				setCheckingUpdates(false);
 				setMarketGone(true);
 				setBusyUrl(null);
@@ -12895,37 +12960,41 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			* poll that reads this stops on the null: the market is no longer mounted,
 			* so there is no status to read and nothing left to poll for.
 			*/
-			const readMarketStatus = (0, react.useCallback)(async (res) => {
+			const readMarketStatus = (0, react.useCallback)(async (res, repairRequest) => {
 				if (res.status === 404) {
-					noteMarketGone();
+					if (repairRequest === void 0 || repairRequest === repairStatusRequest.current) noteMarketGone();
 					return null;
 				}
 				return await res.json();
 			}, [noteMarketGone]);
-			const applyStartupRepair = (0, react.useCallback)((report, request) => {
-				if (!mounted.current || request !== startupRepairRequest.current) return;
+			const applyRepairStatus = (0, react.useCallback)((status, request) => {
+				if (!mounted.current || request !== repairStatusRequest.current) return;
+				const report = status.startupRepair;
 				setStartupRepair((previous) => report && previous?.id === report.id && previous.revision > report.revision ? previous : report);
+				setCheckoutRecovery(status.checkoutRecovery);
 			}, []);
-			const checkingStartupRepair = startupRepair?.checking === true;
+			const refreshRepairStatus = (0, react.useCallback)(async (signal) => {
+				const request = ++repairStatusRequest.current;
+				try {
+					const res = await fetch(api("/dsh-market/status"), {
+						cache: "no-store",
+						signal: signal ?? null
+					});
+					if (!signal?.aborted && (res.ok || res.status === 404)) {
+						const status = await readMarketStatus(res, request);
+						if (!signal?.aborted && status !== null) applyRepairStatus(status, request);
+					}
+				} catch {}
+			}, [readMarketStatus, applyRepairStatus]);
+			const checkingRepair = startupRepair?.checking === true || checkoutRecovery?.checking === true;
 			(0, react.useEffect)(() => {
-				if (!checkingStartupRepair || marketGone) return;
+				if (!checkingRepair || marketGone) return;
 				const controller = new AbortController();
 				let timer = setTimeout(() => {
 					poll();
 				}, 2e3);
 				async function poll() {
-					const request = ++startupRepairRequest.current;
-					try {
-						const res = await fetch(api("/dsh-market/status"), {
-							cache: "no-store",
-							signal: controller.signal
-						});
-						if (controller.signal.aborted) return;
-						if (res.ok || res.status === 404) {
-							const status = await readMarketStatus(res);
-							if (!controller.signal.aborted && status !== null) applyStartupRepair(status.startupRepair, request);
-						}
-					} catch {}
+					await refreshRepairStatus(controller.signal);
 					if (!controller.signal.aborted) timer = setTimeout(() => {
 						poll();
 					}, 2e3);
@@ -12935,10 +13004,19 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					clearTimeout(timer);
 				};
 			}, [
-				checkingStartupRepair,
+				checkingRepair,
 				marketGone,
-				readMarketStatus,
-				applyStartupRepair
+				refreshRepairStatus
+			]);
+			const wasCheckingCheckout = (0, react.useRef)(false);
+			(0, react.useEffect)(() => {
+				const checking = checkoutRecovery?.checking === true;
+				if (wasCheckingCheckout.current && !checking && !marketGone) refreshInstalled();
+				wasCheckingCheckout.current = checking;
+			}, [
+				checkoutRecovery,
+				marketGone,
+				refreshInstalled
 			]);
 			const loadCatalog = (0, react.useCallback)(() => {
 				setLoadError(null);
@@ -12972,7 +13050,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				let stopped = false;
 				const attempt = async () => {
 					const boot = updateCheckBoot;
-					const repairRequest = ++startupRepairRequest.current;
+					const repairRequest = ++repairStatusRequest.current;
 					inFlight = new AbortController();
 					const cutoff = setTimeout(() => inFlight?.abort(), RECONNECT_REQUEST_MS);
 					try {
@@ -12982,7 +13060,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						});
 						const status = res.ok ? await res.json() : null;
 						if (!stopped && status !== null && typeof status === "object" && typeof status.boot === "string") {
-							applyStartupRepair(status.startupRepair, repairRequest);
+							applyRepairStatus(status, repairRequest);
 							discoveryScan.setBoot(status.boot);
 							observeUpdateCheckBoot(status.boot, boot);
 							setMarketGone(false);
@@ -13016,15 +13094,15 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				reconnectRound,
 				loadCatalog,
 				refreshInstalled,
-				applyStartupRepair
+				applyRepairStatus
 			]);
 			(0, react.useEffect)(() => {
 				loadCatalog();
 				const boot = updateCheckBoot;
-				const repairRequest = ++startupRepairRequest.current;
-				fetch(api("/dsh-market/status"), { cache: "no-store" }).then(readMarketStatus).then((status) => {
+				const repairRequest = ++repairStatusRequest.current;
+				fetch(api("/dsh-market/status"), { cache: "no-store" }).then((res) => readMarketStatus(res, repairRequest)).then((status) => {
 					if (status === null) return;
-					applyStartupRepair(status.startupRepair, repairRequest);
+					applyRepairStatus(status, repairRequest);
 					statusRef.current = {
 						busy: status.busy === true,
 						runningAgents: Array.isArray(status.runningAgents) ? status.runningAgents.map(String) : [],
@@ -13058,7 +13136,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				loadCatalog,
 				readMarketStatus,
 				restoreDrainMarkers,
-				applyStartupRepair
+				applyRepairStatus
 			]);
 			(0, react.useEffect)(() => {
 				if (bootId === null) return;
@@ -13169,8 +13247,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				}
 				const timer = setInterval(() => {
 					const polledUpdate = pendingUpdate.current;
-					fetch(api("/dsh-market/status"), { cache: "no-store" }).then(readMarketStatus).then((status) => {
+					const repairRequest = polledUpdate === null ? void 0 : ++repairStatusRequest.current;
+					fetch(api("/dsh-market/status"), { cache: "no-store" }).then((res) => readMarketStatus(res, repairRequest)).then((status) => {
 						if (status === null) return;
+						if (repairRequest !== void 0 && typeof status.boot === "string") applyRepairStatus(status, repairRequest);
 						statusRef.current = {
 							busy: status.busy === true,
 							runningAgents: Array.isArray(status.runningAgents) ? status.runningAgents.map(String) : [],
@@ -13265,6 +13345,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				return () => clearInterval(timer);
 			}, [
 				applyDrainStatus,
+				applyRepairStatus,
 				busyUrl,
 				updatingName,
 				removingName,
@@ -14295,9 +14376,12 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						...attempt,
 						recovering: true
 					};
+				}).finally(() => {
+					if (restore && mounted.current) refreshRepairStatus();
 				});
 			}, [
 				refreshInstalled,
+				refreshRepairStatus,
 				installed,
 				rememberDrainMarker,
 				t,
@@ -16764,6 +16848,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 										describe: describePlugin,
 										records,
 										startupRepairEntries: startupRepair?.entries,
+										checkoutRecoveryEntries: checkoutRecovery?.entries,
 										open: operationsOpen,
 										onOpenChange: setOperationsOpen,
 										replacing,

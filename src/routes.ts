@@ -38,7 +38,10 @@ import {
 } from './dsh-cli.ts'
 import { packageOfEntryName } from './entry-identity.ts'
 import { PendingRowJournal, repairOrphanedRows } from './pending-rows.ts'
-import { hasUnsettledPackageRun, loadHostProfileLock, PendingCheckoutLinks, withIdleProfile, type PendingCheckoutLink } from './pending-checkout-links.ts'
+import {
+  hasUnsettledPackageRun, loadHostProfileLock, PendingCheckoutLinks, withIdleProfile,
+  type CheckoutRecoveryEntry, type CheckoutRecoveryStatus, type PendingCheckoutLink,
+} from './pending-checkout-links.ts'
 import { addProfileBundle, bundleExpressionRowIds, bundleOptOutRowIds, bundlePatchInsertedIds, bundlesDroppedFromProfile, declareProfileDependency, dropFromManifest, dropReleaseAgeExcludes, generationManagedNames, hasLoadableEntry, holdsNativeAddon, INBOX_BUNDLES, isDshProfileName, profileDir, readDependencyOwners, readGitResolutionCommit, readInstalled, readInstalledManifest, readInstalledPackageName, readInstalledRepoEvidence, readInstalledVersion, readLockCommits, readProfileBundles, readProfileManifestSnapshot, removeProfileBundle, parsePatchRows, restoreProfileManifest, restoreRemovedProfileBundle, setAllowBuilds, shippedInsertedRowIds, type ProfileManifestSnapshot } from './profile.ts'
 import { assessProfile, classifyPeer, introducedDuplicateNames, introducedRisks, type CompatibilityRisk } from './compatibility.ts'
 import { runningAgentIds, type AgentsLookup } from './agents.ts'
@@ -53,7 +56,7 @@ import { readHostRecoveryView, restoreHostRecoveryBackup } from './host-recovery
 import type { StartupRepairSnapshot } from './startup-repair-report.ts'
 import { trialValidate } from './trial.ts'
 import { catalogRepoKey, findCatalogEntryForLocal, findInstalledAlias, gitCommitOfTarget, githubCommitOfTarget, githubTargetAtCommit, gitAllowBuildsKey, gitRefOfTarget, gitTargetAtCommit, gitUpdateTarget, hostedRepoKey, lookupRepoFromUrl, pinnedAllowBuildsKeys, installTargetFor, isGenerationLink, isLocalSpec, NPM_NAME_RE, parseSourceUrl, repoOfTarget, restoreBlockedByWorkspace, restoreTargetForLocal, sourceFallbackFor, workspaceProtocolDeps } from './sources.ts'
-import { detachCheckoutLink, failureDetail, groupConflictsByOwner, installApplied, isHostPortCollision, isStaleUpdate, keepCheckoutDetached, parseIgnoredBuildEntries, parseIgnoredBuilds, parsePrepareKey, parsePrepareNotAllowed, pnpmBlockedByOpenFiles, pnpmNeverStarted, pnpmRefusedYoungRelease, recordedCheckoutLink, RELEASE_AGE_OVERRIDE, removeDanglingHostBridge, removeLeftoverProfileLink, restoreCheckoutLink, retargetCollections, updateApplied, validateAddedPlugins, withHoistRecovery, type DetachedCheckoutLink } from './install.ts'
+import { checkoutSourceExists, detachCheckoutLink, failureDetail, groupConflictsByOwner, installApplied, isHostPortCollision, isStaleUpdate, keepCheckoutDetached, parseIgnoredBuildEntries, parseIgnoredBuilds, parsePrepareKey, parsePrepareNotAllowed, pnpmBlockedByOpenFiles, pnpmNeverStarted, pnpmRefusedYoungRelease, recordedCheckoutLink, RELEASE_AGE_OVERRIDE, removeDanglingHostBridge, removeLeftoverProfileLink, restoreCheckoutLink, retargetCollections, updateApplied, validateAddedPlugins, withHoistRecovery, type DetachedCheckoutLink } from './install.ts'
 import { classifyPnpmFailure } from './pnpm-compat.ts'
 import { asChannel, CHANNELS, DIST_TAG, resolveChannel, type Channel } from './channels.ts'
 import {
@@ -386,6 +389,15 @@ const PROFILE_HMR_ENTRY = '@deepseek-ai/dsh-hmr'
 /** How long to wait for that replay before mounting: the same ceiling as #814. */
 const PROFILE_HMR_REPLAY_WAIT_MS = 8000
 const ACTIVE_FIBER_STATE: FiberState.ACTIVE = 2
+const CHECKOUT_REPAIR_WAIT_MS = 30_000
+const CHECKOUT_REPAIR_INTERVAL_MS = 1_000
+
+type CheckoutRepairRound = {
+  deadline: number
+  inFlight: boolean
+  reason: CheckoutRecoveryEntry['reason']
+  records: PendingCheckoutLink[]
+}
 
 /**
  * The allowBuilds key pnpm itself printed when it refused a build, per package
@@ -991,7 +1003,10 @@ export function mountMarketRoutes(
   let preflightActive = 0
   let mutationBusy = false
   let checkoutRepairTimer: ReturnType<typeof setTimeout> | undefined
+  let checkoutRepairRound: CheckoutRepairRound | undefined
+  let checkoutRecovery: CheckoutRecoveryStatus | undefined
   let checkoutHostLock: ReturnType<typeof loadHostProfileLock> | undefined
+  let checkoutHostLockUnavailableLogged = false
   /** The shared mutation chain: every mutating operation appends to it. */
   let mutationChain: Promise<unknown> = Promise.resolve()
 
@@ -2231,25 +2246,139 @@ export function mountMarketRoutes(
     }
   }
 
-  function scheduleCheckoutRepair(): void {
-    if (disposed || checkoutRepairTimer !== undefined) return
+  function checkingCheckoutRepair(round: CheckoutRepairRound): boolean {
+    return !disposed && checkoutRepairRound === round && performance.now() < round.deadline
+  }
+
+  function reportCheckoutRepair(round: CheckoutRepairRound, entries: CheckoutRecoveryEntry[]): void {
+    if (disposed || checkoutRepairRound !== round) return
+    checkoutRepairRound = undefined
+    if (checkoutRepairTimer !== undefined) clearTimeout(checkoutRepairTimer)
+    checkoutRepairTimer = undefined
+    checkoutRecovery = entries.length === 0 ? undefined : { checking: false, entries }
+  }
+
+  function checkoutRecoveryEntry(record: PendingCheckoutLink, reason: CheckoutRecoveryEntry['reason']): CheckoutRecoveryEntry {
+    let sourceExists = false
+    try {
+      const link = recordedCheckoutLink(activeProfileDir, record.name, record.spec, record.rawTarget)
+      sourceExists = checkoutSourceExists(link)
+    } catch { /* A moved or inaccessible checkout cannot be confirmed. */ }
+    return { name: record.name, reason, sourceExists }
+  }
+
+  function checkoutLinkOutstanding(record: PendingCheckoutLink, manifest: ReturnType<typeof captureUpdateManifest>): boolean {
+    if (manifest.ok && manifest.snapshot.dependencies[record.name] !== record.spec) return false
+    try {
+      return lstatSync(join(activeProfileDir, 'node_modules', record.name), { throwIfNoEntry: false }) === undefined
+    } catch {
+      return true
+    }
+  }
+
+  function checkoutCommandBusy(): boolean {
+    return mutationBusy || commands.busy?.() === true || commands.packageWritesSettled?.() === false
+  }
+
+  function clearCompletedCheckout(record: PendingCheckoutLink): void {
+    if (checkoutCommandBusy() || hasUnsettledPackageRun(activeProfileDir)) return
+    withIdleProfile(activeProfileDir, () => {
+      if (checkoutCommandBusy() || hasUnsettledPackageRun(activeProfileDir)) return
+      const manifest = captureUpdateManifest()
+      if (checkoutLinkOutstanding(record, manifest)) return
+      const latest = checkoutLinks.list()
+      const kept = latest.filter(item => item.name !== record.name || item.spec !== record.spec || item.rawTarget !== record.rawTarget)
+      if (kept.length !== latest.length) checkoutLinks.save(kept)
+    })
+  }
+
+  function tickCheckoutRepair(round: CheckoutRepairRound, attempt: boolean): void {
+    if (disposed || checkoutRepairRound !== round) return
+    if (performance.now() >= round.deadline) {
+      let records = round.records
+      try { records = checkoutLinks.list() } catch { /* Report the last readable records. */ }
+      const manifest = captureUpdateManifest()
+      const entries = records
+        .filter(record => checkoutLinkOutstanding(record, manifest))
+        .map(record => checkoutRecoveryEntry(record, round.reason))
+      if (entries.length > 0) {
+        logEvent('warn', 'checkout-recovery', `automatic checkout recovery stopped after 30 seconds (${round.reason})`)
+      }
+      reportCheckoutRepair(round, entries)
+      return
+    }
+    // The clock also runs while the host helper is pending, so a stalled
+    // import or callback cannot extend the round. Every write checks it again.
+    if (attempt && !round.inFlight) {
+      round.inFlight = true
+      void repairCheckoutLinks(round).finally(() => { round.inFlight = false })
+    }
+    if (checkoutRepairRound !== round) return
     checkoutRepairTimer = setTimeout(() => {
       checkoutRepairTimer = undefined
-      void repairCheckoutLinks()
-    }, 1_000)
+      tickCheckoutRepair(round, true)
+    }, Math.min(CHECKOUT_REPAIR_INTERVAL_MS, round.deadline - performance.now()))
     checkoutRepairTimer.unref?.()
   }
 
-  async function repairCheckoutLinks(): Promise<void> {
+  function startCheckoutRepair(switchedName?: string): void {
+    if (disposed || checkoutRepairRound !== undefined) return
+    let records: PendingCheckoutLink[]
     try {
-      if (checkoutLinks.list().length === 0) return
-      if (mutationBusy || commands.busy?.() === true || commands.packageWritesSettled?.() === false) {
-        scheduleCheckoutRepair()
+      records = checkoutLinks.list()
+    } catch (error) {
+      logEvent('warn', 'checkout-recovery', `could not read pending local checkout links — ${String(error)}`)
+      return
+    }
+    if (records.length === 0) {
+      checkoutRecovery = undefined
+      return
+    }
+    if (switchedName !== undefined) {
+      const switchedRecord = records.find(record => record.name === switchedName)
+      if (switchedRecord === undefined) return
+      // A successful switch or one whose synchronous rollback reconnected the
+      // link must not reopen some other package's expired recovery.
+      if (!checkoutLinkOutstanding(switchedRecord, captureUpdateManifest())) {
+        try {
+          clearCompletedCheckout(switchedRecord)
+        } catch (error) {
+          logEvent('warn', 'checkout-recovery', `could not clear a completed checkout switch record — ${String(error)}`)
+        }
         return
       }
+    }
+    const round: CheckoutRepairRound = {
+      deadline: performance.now() + CHECKOUT_REPAIR_WAIT_MS, inFlight: false, reason: 'profile-busy', records,
+    }
+    checkoutRepairRound = round
+    checkoutRecovery = { checking: true, entries: [] }
+    tickCheckoutRepair(round, switchedName === undefined)
+  }
+
+  function checkoutRepairBlocked(round: CheckoutRepairRound): boolean {
+    if (!checkingCheckoutRepair(round)) return true
+    if (checkoutCommandBusy()) {
+      round.reason = 'profile-busy'
+      return true
+    }
+    if (hasUnsettledPackageRun(activeProfileDir)) {
+      round.reason = 'package-run'
+      return true
+    }
+    return false
+  }
+
+  async function repairCheckoutLinks(round: CheckoutRepairRound): Promise<void> {
+    try {
+      round.records = checkoutLinks.list()
+      if (round.records.length === 0) {
+        reportCheckoutRepair(round, [])
+        return
+      }
+      if (checkoutRepairBlocked(round)) return
       const repairLocked = (): boolean => {
-        if (disposed || mutationBusy || commands.busy?.() === true || commands.packageWritesSettled?.() === false
-          || hasUnsettledPackageRun(activeProfileDir)) return false
+        if (checkoutRepairBlocked(round)) return false
         const records = checkoutLinks.list()
         const current = captureUpdateManifest()
         if (!current.ok) throw new Error(current.detail)
@@ -2274,24 +2403,33 @@ export function mountMarketRoutes(
           }
         }
         if (kept.length !== records.length) checkoutLinks.save(kept)
+        reportCheckoutRepair(round, kept.map(record => checkoutRecoveryEntry(record, 'check-failed')))
         return true
       }
       const repaired = withIdleProfile(activeProfileDir, repairLocked)
-      if (repaired === true) return
-      if (repaired === null && !hasUnsettledPackageRun(activeProfileDir)) {
+      if (repaired === null && !checkoutRepairBlocked(round)) {
+        round.reason = 'writer-lock'
         checkoutHostLock ??= loadHostProfileLock(config.dshInstallDir ?? findDshInstallDir())
         const hostLock = await checkoutHostLock
-        if (hostLock !== null && !disposed) {
+        if (checkoutRepairBlocked(round)) return
+        if (hostLock === null) {
+          if (!checkoutHostLockUnavailableLogged) {
+            checkoutHostLockUnavailableLogged = true
+            logEvent('warn', 'checkout-recovery', 'host checkout lock helper unavailable; only unoccupied profile locks can be used')
+          }
+        } else {
           try {
-            if (await hostLock(join(activeProfileDir, 'package.json'), async () => repairLocked(), { waitMs: 0 })) return
+            await hostLock(join(activeProfileDir, 'package.json'), async () => repairLocked(), { waitMs: 0 })
           } catch (error) {
             if (!(error instanceof Error) || !error.message.includes('timed out waiting for the writer lock')) throw error
           }
         }
       }
-      scheduleCheckoutRepair()
     } catch (error) {
-      logEvent('warn', 'update-rollback', `could not settle pending local checkout links — ${String(error)}`)
+      if (checkingCheckoutRepair(round)) {
+        logEvent('warn', 'checkout-recovery', `could not settle pending local checkout links — ${String(error)}`)
+        reportCheckoutRepair(round, round.records.map(record => checkoutRecoveryEntry(record, 'check-failed')))
+      }
     }
   }
 
@@ -5221,6 +5359,7 @@ export function mountMarketRoutes(
           drainOperations: drainCoordinator.list(),
           drainHistory: drainJournal.recent(10),
           startupRepair: config.startupRepair?.(),
+          checkoutRecovery,
           pnpm: await commands.probePnpm(),
           boot: BOOT_ID,
           agentGuardAvailable: agentsGuardAvailable(),
@@ -5760,6 +5899,7 @@ export function mountMarketRoutes(
           sendJson(response, 403, { error: 'untrusted origin' })
           return
         }
+        let switchedCheckout: string | undefined
         try {
           const body = (await readJsonBody(request)) as {
             name?: unknown
@@ -6546,6 +6686,7 @@ export function mountMarketRoutes(
                 }
                 if (prepared.link !== null) {
                   checkoutSource = { ...prepared, kind: 'linked-checkout', link: prepared.link, target }
+                  switchedCheckout = name
                   rollbackPlan = { available: true, source: checkoutSource }
                 }
               } catch (error) {
@@ -6579,14 +6720,12 @@ export function mountMarketRoutes(
                 ? await runMaturePluginUpdate(config.profile, addArgs)
                 : await runPlugin(config.profile, addArgs, false, runCheckoutSwitch)
             } catch (error) {
-              if (checkoutSource !== null) scheduleCheckoutRepair()
               if (checkoutSource !== null && commands.busy?.() !== true) {
                 const attached = restoreLinkedUpdate(name, checkoutSource, false)
                 if (!attached.ok) logEvent('warn', 'update-rollback', `${name}: could not reconnect the checkout — ${attached.detail}`)
               }
               throw error
             }
-            if (checkoutSource !== null) scheduleCheckoutRepair()
             drainPhaseOf(request)?.('verifying')
             if (checkoutSource !== null && result.repairOnRestart === true) {
               // A direct add can time out without a remove/reinstall journal
@@ -7275,6 +7414,8 @@ export function mountMarketRoutes(
           if (!inProbe()) host.logger?.warn(`[dsh-market] update failed: ${message}`)
           logEvent('error', 'update', `route error: ${message}`)
           sendJson(response, 500, { error: message })
+        } finally {
+          if (switchedCheckout !== undefined) startCheckoutRepair(switchedCheckout)
         }
       },
     })),
@@ -9079,9 +9220,10 @@ export function mountMarketRoutes(
     })),
   ]
 
-  void repairCheckoutLinks()
+  startCheckoutRepair()
   return async () => {
     disposed = true
+    checkoutRepairRound = undefined
     if (checkoutRepairTimer !== undefined) clearTimeout(checkoutRepairTimer)
     updateNotifications.dispose()
     // Release Agent maintenance holds before the routes disappear. This is the
