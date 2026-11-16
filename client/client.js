@@ -9088,6 +9088,85 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			];
 		}
 		//#endregion
+		//#region src/client/sort-preference.ts
+		/** The one key all four lists share; exported for the specs' assertions. */
+		const SORT_PREFERENCE_KEY = "dshm-sort-v1";
+		const DEFAULT_CHOICE = {
+			field: "downloads",
+			dir: "desc"
+		};
+		const FIELDS = [
+			"downloads",
+			"stars",
+			"added"
+		];
+		const DIRS = ["desc", "asc"];
+		const INSTALLED_SORTS = [
+			"default",
+			"name",
+			"newest",
+			"oldest"
+		];
+		/** Whatever is in storage, as an object; anything unreadable reads as empty. */
+		function readStored() {
+			try {
+				const raw = localStorage.getItem(SORT_PREFERENCE_KEY);
+				if (raw === null) return {};
+				const parsed = JSON.parse(raw);
+				return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+			} catch {
+				return {};
+			}
+		}
+		/**
+		* One list's stored choice, key by key.
+		*
+		* A half-written entry (`field` but no `dir`, or the reverse) keeps the part
+		* that is still a known value and fills the rest from the default: falling back
+		* on the whole object would discard a choice the file does record.
+		*/
+		function choiceFrom(value) {
+			if (value === null || typeof value !== "object" || Array.isArray(value)) return DEFAULT_CHOICE;
+			const record = value;
+			const field = typeof record.field === "string" ? FIELDS.find((known) => known === record.field) : void 0;
+			const dir = typeof record.dir === "string" ? DIRS.find((known) => known === record.dir) : void 0;
+			return {
+				field: field ?? DEFAULT_CHOICE.field,
+				dir: dir ?? DEFAULT_CHOICE.dir
+			};
+		}
+		/** Replace one entry, leaving every other list's choice where it was. */
+		function writeStored(list, value) {
+			try {
+				localStorage.setItem(SORT_PREFERENCE_KEY, JSON.stringify({
+					...readStored(),
+					[list]: value
+				}));
+			} catch {}
+		}
+		function readSortChoice(list) {
+			return choiceFrom(readStored()[list]);
+		}
+		/**
+		* Save `patch` on top of the stored choice. The merge base is the file, not
+		* the caller's React state: a field click and a direction click arrive as two
+		* separate calls, and each one has to keep the other half.
+		*/
+		function rememberSortChoice(list, patch) {
+			const current = readSortChoice(list);
+			writeStored(list, {
+				field: patch.field ?? current.field,
+				dir: patch.dir ?? current.dir
+			});
+		}
+		function readInstalledSort() {
+			const value = readStored().installed;
+			return typeof value === "string" ? INSTALLED_SORTS.find((known) => known === value) ?? "default" : "default";
+		}
+		function rememberInstalledSort(value) {
+			writeStored("installed", value);
+		}
+		//#endregion
 		//#region src/client/MarketSection.tsx
 		/**
 		* The Market settings section: Discover / Favorites / Themes / Installed tabs over the
@@ -12061,9 +12140,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			* market's `SortField`: that one is downloads/stars/added, and none of the
 			* three exist for an installed package — `added` is the catalog's
 			* collection date, which is a different question from when the user
-			* installed it.
+			* installed it. The choice outlives this mount (#1142) — the mirror effect
+			* below keeps it in localStorage.
 			*/
-			const [installedSort, setInstalledSort] = (0, react.useState)("default");
+			const [installedSort, setInstalledSort] = (0, react.useState)(() => readInstalledSort());
 			/** Catalog URLs bookmarked for later install (#414). */
 			const [favoriteUrls, setFavoriteUrlsState] = (0, react.useState)(() => cachedFavoriteUrls);
 			const setFavoriteUrls = (0, react.useCallback)(cacheState((value) => {
@@ -12276,8 +12356,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const restoringStickRef = (0, react.useRef)(false);
 			/** Hidden file input behind the Import button (a Button can't host an <input>). */
 			const fileInputRef = (0, react.useRef)(null);
-			const [sortField, setSortField] = (0, react.useState)("downloads");
-			const [sortDir, setSortDir] = (0, react.useState)("desc");
+			const [sortField, setSortField] = (0, react.useState)(() => readSortChoice("discover").field);
+			const [sortDir, setSortDir] = (0, react.useState)(() => readSortChoice("discover").dir);
 			const [timeRange, setTimeRange] = (0, react.useState)("all");
 			const setCompatibleWithHost = (0, react.useCallback)((next) => {
 				discoveryScan.setEnabled(next);
@@ -12289,12 +12369,47 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const [catsOpen, setCatsOpen] = (0, react.useState)(false);
 			/** Themes tab: independent from Discover's sort/time state above — a
 			* search or sort choice in one tab has no business resetting the other. */
-			const [themeSortField, setThemeSortField] = (0, react.useState)("downloads");
-			const [themeSortDir, setThemeSortDir] = (0, react.useState)("desc");
+			const [themeSortField, setThemeSortField] = (0, react.useState)(() => readSortChoice("themes").field);
+			const [themeSortDir, setThemeSortDir] = (0, react.useState)(() => readSortChoice("themes").dir);
 			const [themeTimeRange, setThemeTimeRange] = (0, react.useState)("all");
-			const [favSortField, setFavSortField] = (0, react.useState)("downloads");
-			const [favSortDir, setFavSortDir] = (0, react.useState)("desc");
+			const [favSortField, setFavSortField] = (0, react.useState)(() => readSortChoice("favorites").field);
+			const [favSortDir, setFavSortDir] = (0, react.useState)(() => readSortChoice("favorites").dir);
 			const [favTimeRange, setFavTimeRange] = (0, react.useState)("all");
+			/**
+			* Each list's order is a display preference, not a profile setting (#1142):
+			* the choice used to live only in this component's state, so a tab switch or
+			* a reload put every list back on its default. The mirror writes the value
+			* that is on screen, which is why it also runs on the first render — a fresh
+			* profile records the default it started from, a reloaded one records the
+			* choice it restored, and neither can drift from what the user is seeing.
+			*
+			* localStorage rather than state.json: the same line the catalog's
+			* compatibility filter (`dshm-host-filter`) and the "recently added" flags
+			* (#940) take.
+			*/
+			(0, react.useEffect)(() => {
+				rememberSortChoice("discover", {
+					field: sortField,
+					dir: sortDir
+				});
+				rememberSortChoice("themes", {
+					field: themeSortField,
+					dir: themeSortDir
+				});
+				rememberSortChoice("favorites", {
+					field: favSortField,
+					dir: favSortDir
+				});
+				rememberInstalledSort(installedSort);
+			}, [
+				sortField,
+				sortDir,
+				themeSortField,
+				themeSortDir,
+				favSortField,
+				favSortDir,
+				installedSort
+			]);
 			/** WebDAV provider-preset dropdown (primitives Menu). */
 			const [presetOpen, setPresetOpen] = (0, react.useState)(false);
 			/** Install-command disclosure inside the confirm dialog. */
