@@ -8788,6 +8788,7 @@ describe('a shell that runs the host as its child process owns the restart', () 
   // spawns a detached helper instead — a second lifecycle competing with the
   // shell's for one port. Where the shell publishes its bridge, the button
   // asks the shell and never touches the host route.
+  const restartError = 'Restart is unavailable in this fixture'
   function stubStatus(extra: Record<string, unknown> = {}) {
     const installed = { 'dsh-loop': '^1.0.0' }
     stubFetch({
@@ -8797,6 +8798,9 @@ describe('a shell that runs the host as its child process owns the restart', () 
       },
       '/dsh-market/status': { active: false, busy: false, pnpm: true, boot: 'boot-1', restart: true, installed, ...extra },
       '/dsh-market/updates': { updates: {} },
+      // End the request: a rejected fetch starts restart polling that outlives
+      // this test and can reach a later test's fetch mock.
+      '/dsh-market/restart': { __status: 503, error: restartError },
     })
   }
 
@@ -8825,6 +8829,7 @@ describe('a shell that runs the host as its child process owns the restart', () 
     await waitFor(() => {
       expect(fetchCalls.some(call => call.path === '/dsh-market/restart' && call.method === 'POST')).toBe(true)
     })
+    await screen.findByText(`${en.restartFail}: ${restartError}`)
   })
 
   it('falls back to the host route when the shell bridge throws', async () => {
@@ -8840,6 +8845,7 @@ describe('a shell that runs the host as its child process owns the restart', () 
     await waitFor(() => {
       expect(fetchCalls.some(call => call.path === '/dsh-market/restart' && call.method === 'POST')).toBe(true)
     })
+    await screen.findByText(`${en.restartFail}: ${restartError}`)
   })
 })
 
