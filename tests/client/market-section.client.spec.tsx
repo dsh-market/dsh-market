@@ -330,6 +330,82 @@ afterEach(() => {
   resetGithubRouting()
 })
 
+describe('Market self-update waiting hint (#1244)', () => {
+  const current = '1.73.19'
+  const until = new Date(2026, 10, 17, 4, 45).toISOString()
+  const endpoints = {
+    '/dsh-market/status': { active: false, pnpm: true, boot: 'boot-1', version: current },
+    '/dsh-market/installed': { profile: 'desktop', installed: { dshmarket: current }, live: ['dshmarket'] },
+  }
+  const hint = '(New version)'
+
+  beforeEach(() => { vi.setSystemTime(new Date(2026, 10, 17, 0, 54)) })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('shows when the held version becomes available and then hands off to the existing action', async () => {
+    let updateAvailable = false
+    stubFetch({
+      ...endpoints,
+      '/dsh-market/updates': () => ({ updates: { dshmarket: {
+        kind: 'npm', current, latest: '1.73.20', updateAvailable,
+        ...(updateAvailable ? { eligibleVersion: '1.73.20' } : { heldUpdate: { latest: '1.73.20', until } }),
+      } } }),
+    })
+    render(<MarketSection {...props()} />)
+    const marker = await screen.findByText(hint)
+    expect(marker.tabIndex).toBe(0)
+    expect(screen.queryByRole('button', { name: en.marketUpdate })).toBeNull()
+    expect(screen.queryByRole('tooltip')).toBeNull()
+
+    fireEvent.mouseEnter(marker)
+    expect((await screen.findByRole('tooltip')).textContent).toBe('v1.73.20 available at 04:45')
+    fireEvent.mouseLeave(marker)
+    expect(screen.queryByRole('tooltip')).toBeNull()
+
+    updateAvailable = true
+    fireEvent.click(screen.getByRole('button', { name: re(en.tabInstalled) }))
+    expect(await screen.findByRole('button', { name: en.marketUpdate })).toBeTruthy()
+    expect(screen.queryByText(hint)).toBeNull()
+  })
+
+  it('distinguishes the held release from the existing button’s install target', async () => {
+    stubFetch({
+      ...endpoints,
+      '/dsh-market/updates': { updates: { dshmarket: {
+        kind: 'npm', current, latest: '1.73.21', eligibleVersion: '1.73.20', updateAvailable: true,
+        heldUpdate: { latest: '1.73.21', until },
+      } } },
+      '/dsh-market/update': { ok: true },
+    })
+    render(<MarketSection {...props()} />)
+    const button = await screen.findByRole('button', { name: en.marketUpdate })
+    const marker = screen.getByText(hint)
+    fireEvent.focus(marker)
+    const tooltip = screen.getByRole('tooltip')
+    expect(tooltip.textContent).toContain('v1.73.20 available now')
+    expect(tooltip.textContent).toContain('v1.73.21 available at 04:45')
+    fireEvent.blur(marker)
+    expect(screen.queryByRole('tooltip')).toBeNull()
+
+    fireEvent.click(button)
+    await waitFor(() => expect(fetchCalls.filter(call => call.path === '/dsh-market/update').map(call => call.body))
+      .toEqual([{ name: 'dshmarket', eligibleVersion: '1.73.20' }]))
+  })
+
+  it('identifies a held release without promising an estimated availability time', async () => {
+    stubFetch({
+      ...endpoints,
+      '/dsh-market/updates': { updates: { dshmarket: {
+        kind: 'npm', current, latest: '1.73.20', updateAvailable: false,
+        heldUpdate: { latest: '1.73.20', until, estimated: true },
+      } } },
+    })
+    render(<MarketSection {...props()} />)
+    fireEvent.focus(await screen.findByText(hint))
+    expect(screen.getByRole('tooltip').textContent).toBe('v1.73.20')
+  })
+})
+
 describe('WebDAV daily backup (#868)', () => {
   const day = 24 * 60 * 60 * 1000
   const now = 1_800_000_000_000

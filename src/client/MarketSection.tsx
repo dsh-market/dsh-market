@@ -2333,6 +2333,29 @@ function displayLatest(latest: string): string {
   return latest
 }
 
+/** Describe the pending release separately from any version the update button can install. */
+function marketWaitTip(
+  held: NonNullable<UpdateStatus['heldUpdate']>,
+  eligible: string | null,
+  t: Translate,
+): string {
+  const until = new Date(typeof held.until === 'string' ? held.until : NaN)
+  const now = new Date()
+  let pending = displayLatest(held.latest)
+  if (held.estimated !== true && until.getTime() > now.getTime()) {
+    const time = new Intl.DateTimeFormat(undefined, {
+      ...(until.toDateString() === now.toDateString() ? {} : { month: 'short', day: 'numeric' }),
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    }).format(until)
+    pending = t('marketVersionAvailableAt').replace('{0}', pending).replace('{1}', time)
+  }
+  if (eligible === null) return pending
+  const ready = t('marketVersionAvailableNow').replace('{0}', displayLatest(eligible))
+  return `${ready} · ${pending}`
+}
+
 /** Compact held-wait for the trailing row (clock + short label); version/reason in title. */
 function heldUpdateBeside(
   held: { latest: string; until: string; estimated?: true },
@@ -7911,6 +7934,17 @@ export function MarketSection(props: MarketSectionProps) {
     })
   }, [doGroupAction, groups, installedThemeNames])
 
+  const marketUpdateStatus = updates[selfName]
+  const eligibleMarketVersion = marketUpdateStatus?.updateAvailable === true
+    ? marketUpdateStatus.eligibleVersion ?? marketUpdateStatus.latest ?? null
+    : null
+  const heldMarketVersion = marketUpdateStatus?.heldUpdate
+  const showMarketWait = typeof heldMarketVersion?.latest === 'string'
+    && heldMarketVersion.latest !== ''
+    && heldMarketVersion.latest !== eligibleMarketVersion
+    && !updatedNames.includes(selfName)
+    && !quietUpdateSet.has(selfName)
+
   // Update-the-market, update-all, and "don't remind". On the Plugins tab the
   // host already has a page title, so these sit on the market's own tab row.
   // Settings and the sidebar keep them in the heading.
@@ -8001,7 +8035,16 @@ export function MarketSection(props: MarketSectionProps) {
               market through a client that embeds it, with no other way to
               find the repo it came from. */}
           <a className={css.repoLink} href="https://github.com/dsh-market/dsh-market" target="_blank" rel="noreferrer" title="dsh-market · GitHub">dsh-market</a>
-          {version !== null && <span className={css.version} title={t('versionHint')}>v{version}</span>}
+          {version !== null && (
+            <span className={css.marketVersionGroup}>
+              <span className={css.version} title={t('versionHint')}>v{version}</span>
+              {showMarketWait && (
+                <Tooltip label={() => marketWaitTip(heldMarketVersion, eligibleMarketVersion, t)} side="bottom" delayMs={HOVER_TIP_DELAY_MS} portal maxWidth={320}>
+                  <span className={css.marketVersionWait} tabIndex={0}>{t('marketVersionWaiting')}</span>
+                </Tooltip>
+              )}
+            </span>
+          )}
           <a className={css.submitLink} href="https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/blob/main/contributing.md" target="_blank" rel="noreferrer">{t('submitPlugin')}</a>
           {exportLogButton}
           {batchActions}
