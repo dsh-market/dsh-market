@@ -559,6 +559,8 @@
    version — most reports arrive as a photo of the screen. Selectable
    (not user-select:none) so it can also be copied into an issue. */
 .version{font-size:12px;line-height:20px;color:var(--dsw-alias-label-tertiary,#8b93a1);font-variant-numeric:tabular-nums;flex-shrink:0}
+.marketVersionGroup{display:inline-flex;align-items:center;gap:6px}
+.marketVersionWait{font-size:12px;line-height:20px;color:var(--dsw-alias-label-secondary,#5c6570)}
 .repoLink{font-size:12px;line-height:20px;color:var(--dsw-alias-label-tertiary,#8b93a1);text-decoration:none;flex-shrink:0}
 .repoLink:hover{color:var(--dsw-alias-brand-primary,#4f6ef7)}
 /* The note row (#347). The user's own text reads as theirs — slightly
