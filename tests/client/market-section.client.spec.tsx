@@ -48,18 +48,35 @@ describe('Issue #991 approval target and queue feedback', () => {
       render(<MarketSection {...localizedProps()} />)
       fireEvent.click(await screen.findByRole('button', { name: new RegExp(dict.tabInstalled) }))
       const button = await screen.findByRole('button', { name: `${dict.update} v1.1.0` })
+      const notes = screen.getByRole('button', { name: new RegExp(dict.notesLink) })
+      expect(notes.closest('[class*="irowMeta"]')).toBeTruthy()
+      expect(screen.queryByText(dict.updateAvailableShort)).toBeNull()
+      expect(screen.queryByText(dict.hostUpdateReady.replace('{0}', 'v1.1.0'))).toBeNull()
+      expect(screen.queryByText(dict.hostUpdateReady.replace('{0}', 'v1.2.0'))).toBeNull()
       if (mature) {
         expect(screen.queryByText(/先更新到|Update to .* for now/)).toBeNull()
         expect(screen.queryByText(dict.updateHeldTag)).toBeNull()
+        expect(document.querySelector('[class*="irowTrailingHint"]')).toBeNull()
+        expect(document.querySelector('[class*="irowStatusBand"]')).toBeNull()
       } else {
+        // Compact clock wait before the update button; button stays rightmost.
         const expected = timing === 'known'
-          ? lang === 'zh' ? '最新版 v1.2.0 刚发布，还要约 5 小时。先更新到 v1.1.0。' : 'Latest v1.2.0 was just released; about 5 hours to wait. Update to v1.1.0 for now.'
-          : lang === 'zh' ? '最新版 v1.2.0 的发布时间暂不确定，还需等待。先更新到 v1.1.0。' : 'The release time of latest v1.2.0 is unknown, so it still needs to wait. Update to v1.1.0 for now.'
+          ? dict.updateHeldBeside.replace('{1}', '5')
+          : timing === 'estimated'
+            // 4.5h window expressed in minutes when the hold is a sync guess.
+            ? dict.updateHeldBesideEstimated.replace('{1}', '270')
+            : dict.updateHeldBesideUnknown
         const explanation = screen.getByText(expected)
-        expect(explanation.getAttribute('title')).toBeNull()
         expect(explanation.textContent).not.toMatch(/pnpm|NaN|profile|\/latest/)
-        expect(screen.getByText(dict.updateHeldTag)).toBeTruthy()
-        if (timing !== 'known') expect(explanation.textContent).not.toMatch(/\d+\s*(?:hours?|小时)/)
+        expect(explanation.closest('[class*="irowTrailingRow"]')).toBeTruthy()
+        expect(button.closest('[class*="irowTrailingRow"]')).toBe(explanation.closest('[class*="irowTrailingRow"]'))
+        // Hint precedes the button so the action is the rightmost control.
+        expect(explanation.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+        expect(explanation.closest('[class*="irowStatusBand"]')).toBeNull()
+        expect(screen.queryByText(dict.updateHeldTag)).toBeNull()
+        if (timing === 'invalid' || timing === 'missing') {
+          expect(explanation.textContent).not.toMatch(/\d+\s*(?:hours?|小时|h\b|min|分钟)/)
+        }
       }
       fireEvent.click(button)
       await waitFor(() => expect(fetchCalls.filter(call => call.path === '/dsh-market/update').map(call => call.body))
@@ -224,6 +241,9 @@ const LOCALE_SNAPSHOT = { active: 'en' }
 
 /** Escape a locale string so it can be used inside a RegExp literal. */
 const re = (s: string) => new RegExp(s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+/** Installed-row Update button: bare `Update` or `Update v1.2.0` — not `Update all`. */
+const rowUpdateName = (accessibleName: string) =>
+  accessibleName === en.update || accessibleName.startsWith(`${en.update} v`)
 
 /** Open the "···" menu on one installed row, found by walking up from its name. */
 async function openRowMenu(name: string) {
@@ -2511,7 +2531,7 @@ describe('MarketSection (jsdom)', () => {
       fireEvent.click(await screen.findByRole('button', { name: dict.confirmInstall }))
     } else {
       fireEvent.click(await screen.findByRole('button', { name: /Installed/ }))
-      fireEvent.click(await screen.findByRole('button', { name: dict.update }))
+      fireEvent.click(await screen.findByRole('button', { name: rowUpdateName }))
     }
 
     const state = await screen.findByText(re(dict.hostIncompatibleNoCompat))
@@ -2959,7 +2979,7 @@ describe('MarketSection (jsdom)', () => {
     render(<MarketSection {...props()} />)
     await screen.findByText('dsh-loop')
     fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
-    fireEvent.click(await screen.findByRole('button', { name: en.update }))
+    fireEvent.click(await screen.findByRole('button', { name: rowUpdateName }))
 
     // The panel names the plugin being updated, not just "something running".
     fireEvent.click(await screen.findByRole('button', { name: new RegExp(en.opTitle) }))
@@ -2990,8 +3010,413 @@ describe('MarketSection (jsdom)', () => {
     await screen.findByText('dsh-loop')
     fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
 
-    expect(await screen.findByText(en.updateHeldTag)).toBeTruthy()
-    expect(screen.queryByRole('button', { name: en.update })).toBeNull()
+    expect(await screen.findByText(en.updateHeldBeside.replace('{1}', '5'))).toBeTruthy()
+    expect(screen.queryByRole('button', { name: rowUpdateName })).toBeNull()
+  })
+
+  it('keeps the update target version on the button when only latest is set', async () => {
+    stubFetch({
+      '/dsh-market/installed': { profile: 'desktop', installed: { 'dsh-loop': '^1.0.0' }, live: [] },
+      '/dsh-market/updates': { updates: { 'dsh-loop': {
+        kind: 'npm', current: '1.0.0', latest: '1.2.0', updateAvailable: true,
+      } } },
+    })
+    render(<MarketSection {...props()} />)
+    fireEvent.click(await screen.findByRole('button', { name: /Installed/ }))
+    expect(await screen.findByRole('button', { name: `${en.update} v1.2.0` })).toBeTruthy()
+    expect(screen.getByRole('button', { name: new RegExp(en.notesLink) }).closest('[class*="irowMeta"]')).toBeTruthy()
+    expect(screen.queryByText(en.updateAvailableShort)).toBeNull()
+    expect(screen.queryByText(en.hostUpdateReady.replace('{0}', 'v1.2.0'))).toBeNull()
+  })
+
+  it('shows the held wait before the update button on the same trailing row', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-10-26T00:00:00Z'))
+    stubFetch({
+      '/dsh-market/installed': { profile: 'desktop', installed: { 'dsh-loop': '^1.0.0' }, live: [] },
+      '/dsh-market/updates': { updates: { 'dsh-loop': {
+        kind: 'npm', current: '1.0.0', latest: '1.2.0', eligibleVersion: '1.1.0', updateAvailable: true,
+        heldUpdate: { latest: '1.2.0', until: '2026-10-26T04:30:00Z' },
+      } } },
+    })
+    render(<MarketSection {...props()} />)
+    fireEvent.click(await screen.findByRole('button', { name: /Installed/ }))
+    const button = await screen.findByRole('button', { name: `${en.update} v1.1.0` })
+    // Firmer outline ink — not primary, not the dead warnBtn name.
+    expect(button.className).toMatch(/irowUpdateBtn/)
+    expect(button.className).not.toMatch(/warnBtn/)
+    const hint = screen.getByText(en.updateHeldBeside.replace('{1}', '5'))
+    expect(button.closest('[class*="irowTrailingRow"]')).toBe(hint.closest('[class*="irowTrailingRow"]'))
+    expect(hint.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(screen.queryByText(en.updateHeldTag)).toBeNull()
+    expect(document.querySelector('[class*="irowStatusBand"]')).toBeNull()
+  })
+
+  it('puts held-only explanation in the trailing ops, not in a middle band', async () => {
+    const until = new Date(Date.now() + 5 * 3_600_000).toISOString()
+    stubFetch({
+      '/dsh-market/installed': { profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: [] },
+      '/dsh-market/updates': { updates: { 'dsh-loop': {
+        kind: 'npm', version: '1.0.0', current: '1.0.0', latest: '1.2.0',
+        updateAvailable: false, heldUpdate: { latest: '1.2.0', until },
+      } } },
+    })
+    render(<MarketSection {...props()} />)
+    fireEvent.click(await screen.findByRole('button', { name: /Installed/ }))
+    const hint = await screen.findByText(en.updateHeldBeside.replace('{1}', '5'))
+    expect(hint.closest('[class*="irowTrailing"]')).toBeTruthy()
+    expect(hint.closest('[class*="irowStatusBand"]')).toBeNull()
+    expect(hint.textContent).not.toMatch(/pnpm|NaN|profile|\/latest/)
+    expect(screen.queryByText(en.updateHeldTag)).toBeNull()
+  })
+
+  it('trails the add-note control after the description instead of a left orphan row', async () => {
+    stubFetch({
+      '/dsh-market/installed': { profile: 'desktop', installed: { 'dsh-loop': '^1.0.0' }, live: ['dsh-loop'] },
+      '/dsh-market/updates': { updates: { 'dsh-loop': {
+        kind: 'npm', current: '1.0.0', latest: '1.0.0', updateAvailable: false,
+      } } },
+    })
+    render(<MarketSection {...props()} preferredSubsectionId="installed" />)
+    await screen.findByText('dsh-loop')
+    const addNote = screen.getByRole('button', { name: en.noteAdd })
+    const actions = addNote.closest('[class*="irowNoteActions"]')
+    expect(actions).toBeTruthy()
+    expect(actions!.closest('[class*="irowFootRow"]')).toBeTruthy()
+    expect(actions!.className).not.toMatch(/irowNoteActionsAlone/)
+    expect(document.querySelector('[class*="irowDescBand"] [class*="irowBody"]')).toBeTruthy()
+  })
+
+  it('keeps add-note bottom-right with spacing when the row has no description body', async () => {
+    // No blurb: still bottom-right, but with extra top space so it does not
+    // crowd the version/path line above.
+    const name = 'dsh-localdev-note-alone'
+    stubFetch({
+      '/dsh-market/installed': {
+        profile: 'desktop',
+        installed: { [name]: 'link:/tmp/' + name },
+        live: [name],
+      },
+      '/dsh-market/updates': { updates: {
+        [name]: { kind: 'linked', version: '1.0.0', current: '1.0.0', latest: '1.0.0', updateAvailable: false },
+      } },
+    })
+    render(<MarketSection {...props()} preferredSubsectionId="installed" />)
+    await screen.findByText(name)
+    const addNote = screen.getByRole('button', { name: en.noteAdd })
+    const foot = addNote.closest('[class*="irowFootRow"]')
+    expect(foot).toBeTruthy()
+    expect(foot!.className).toMatch(/irowNoteActionsSpaced/)
+    expect(addNote.closest('[class*="irowMeta"]')).toBeNull()
+  })
+
+  it('loads discovery-compatibility for installed names: quiet DSH chip when ok, band when incompatible', async () => {
+    // Unique npm names so a late discovery-compatibility reply from an
+    // earlier case cannot mark them settled before this stub runs. They must
+    // also appear in the catalog — DiscoveryScan only POSTs keys it can
+    // describe from registry plugins (#1162).
+    const bad = 'dsh-incompat-band'
+    const ok = 'dsh-compat-band'
+    const base = REGISTRY.plugins[0]!
+    localStorage.setItem('dshm-host-filter', 'all')
+    stubFetch({
+      '/dsh-market/registry': {
+        source: 'live',
+        hostVersion: '0.1.0',
+        registry: {
+          ...REGISTRY,
+          count: REGISTRY.count + 2,
+          plugins: [
+            ...REGISTRY.plugins,
+            { ...base, name: bad, npm: bad, url: `https://github.com/t/${bad}` },
+            { ...base, name: ok, npm: ok, url: `https://github.com/t/${ok}` },
+          ],
+        },
+      },
+      '/dsh-market/installed': {
+        profile: 'desktop',
+        installed: { [bad]: '^1.0.0', [ok]: '^1.0.0' },
+        live: [],
+        activation: {
+          [bad]: { state: 'incompatible', hot: false, bundle: true, reasons: ['needs newer dsh'] },
+          [ok]: { state: 'live', hot: true, bundle: true, reasons: [] },
+        },
+      },
+      '/dsh-market/updates': { updates: {
+        [bad]: { kind: 'npm', version: '1.0.0', current: '1.0.0', latest: '1.0.0', updateAvailable: false },
+        [ok]: { kind: 'npm', version: '1.0.0', current: '1.0.0', latest: '1.0.0', updateAvailable: false },
+      } },
+      '/dsh-market/discovery-compatibility': (body: { packages?: string[] }) => ({
+        hostVersion: '0.1.0',
+        plugins: Object.fromEntries((body.packages ?? []).map(name => [name, name === bad
+          ? { status: 'incompatible', requirement: '>=0.2.0', basis: 'manifest', declarations: [{ kind: 'engine', range: '>=0.2.0' }] }
+          : { status: 'compatible', requirement: '>=0.1.0', basis: 'manifest', declarations: [{ kind: 'engine', range: '>=0.1.0' }] }
+        ])),
+      }),
+    })
+    render(<MarketSection {...props()} preferredSubsectionId="installed" />)
+    await screen.findByText(bad)
+    await waitFor(() => {
+      // Other tabs may also POST discovery-compatibility in the same mount;
+      // require a scan that includes both installed names from this case.
+      const hit = fetchCalls.some(c => {
+        if (c.path !== '/dsh-market/discovery-compatibility') return false
+        const packages = (c.body as { packages?: string[] } | undefined)?.packages ?? []
+        return packages.includes(bad) && packages.includes(ok)
+      })
+      expect(hit).toBe(true)
+    })
+    expect(await screen.findByText(en.installedIncompatTitle)).toBeTruthy()
+    // Title can appear from activation alone; wait for the discovery result
+    // so Why/Next use the real requirement rather than "unknown".
+    expect(await screen.findByText(
+      en.installedIncompatWhy.replace('{0}', '>=0.2.0').replace('{1}', '0.1.0'),
+    )).toBeTruthy()
+    expect(screen.getByText(en.installedIncompatNextHost)).toBeTruthy()
+    // Walk past irowName / irowNameText to the row that owns the description band.
+    let okCard: HTMLElement | null = screen.getByText(ok).parentElement
+    while (okCard !== null && okCard.querySelector('[class*="irowDescBand"]') === null) {
+      okCard = okCard.parentElement
+    }
+    expect(okCard).toBeTruthy()
+    // Compatible: Discover-parity chip + host Tooltip (not native title).
+    const okChip = await within(okCard!).findByText(en.hostRequirement.replace('{0}', '>=0.1.0'))
+    expect(okChip.className).toMatch(/hostRequirement/)
+    expect(okChip.className).not.toMatch(/hostRequirementBad/)
+    expect(okChip.getAttribute('title')).toBeNull()
+    expect(okChip.closest('[class*="irowFootRow"]')).toBeTruthy()
+    expect(okChip.closest('[class*="irowMeta"]')).toBeNull()
+    expect(within(okCard!).queryByText(en.installedIncompatTitle)).toBeNull()
+    fireEvent.mouseEnter(okChip)
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 800)) })
+    const okTip = screen.getByRole('tooltip')
+    expect(okTip.textContent).toContain(en.hostStatusCompatible)
+    expect(okTip.textContent).toContain('engines.dsh: >=0.1.0')
+    fireEvent.mouseLeave(okChip)
+    await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull())
+    // Incompatible: status band owns the story — no second red chip in the foot.
+    let badCard: HTMLElement | null = screen.getByText(bad).parentElement
+    while (badCard !== null && badCard.querySelector('[class*="irowDescBand"]') === null) {
+      badCard = badCard.parentElement
+    }
+    expect(badCard).toBeTruthy()
+    expect(badCard!.querySelector('[class*="irowFootRow"] [class*="hostRequirement"]')).toBeNull()
+    expect(within(badCard!).getByText(en.installedIncompatTitle)).toBeTruthy()
+  })
+
+  it('does not leave an uncatalogued install stuck on host-requirement loading', async () => {
+    // DiscoveryScan only POSTs keys it can describe from the catalog. A bare
+    // installed name must not demand a scan that never settles, or the chip
+    // stays on 「正在读取宿主要求…」forever.
+    const name = 'dsh-offcatalog-host-chip'
+    stubFetch({
+      '/dsh-market/installed': {
+        profile: 'desktop',
+        installed: { [name]: '^1.0.0' },
+        live: [name],
+      },
+      '/dsh-market/updates': { updates: {
+        [name]: { kind: 'npm', version: '1.0.0', current: '1.0.0', latest: '1.0.0', updateAvailable: false },
+      } },
+    })
+    render(<MarketSection {...props()} preferredSubsectionId="installed" />)
+    await screen.findByText(name)
+    await waitFor(() => {
+      expect(screen.queryByText(en.hostRequirementLoading)).toBeNull()
+    })
+    expect(fetchCalls.some(c => {
+      if (c.path !== '/dsh-market/discovery-compatibility') return false
+      const packages = (c.body as { packages?: string[] } | undefined)?.packages ?? []
+      return packages.includes(name)
+    })).toBe(false)
+  })
+
+  it('keeps installed cards quiet when no host requirement is known (AGENTS: routine facts are not chips)', async () => {
+    const name = 'dsh-undeclared-host-chip'
+    const base = REGISTRY.plugins[0]!
+    stubFetch({
+      '/dsh-market/registry': {
+        source: 'live',
+        hostVersion: '0.1.0',
+        registry: {
+          ...REGISTRY,
+          count: REGISTRY.count + 1,
+          plugins: [...REGISTRY.plugins, { ...base, name, npm: name, url: `https://github.com/t/${name}` }],
+        },
+      },
+      '/dsh-market/installed': { profile: 'desktop', installed: { [name]: '^1.0.0' }, live: [name] },
+      '/dsh-market/updates': { updates: {
+        [name]: { kind: 'npm', version: '1.0.0', current: '1.0.0', latest: '1.0.0', updateAvailable: false },
+      } },
+      '/dsh-market/discovery-compatibility': {
+        hostVersion: '0.1.0',
+        plugins: { [name]: { status: 'unknown', basis: 'undeclared', requirement: null, declarations: [] } },
+      },
+    })
+    render(<MarketSection {...props()} preferredSubsectionId="installed" />)
+    await screen.findByText(name)
+    await waitFor(() => {
+      expect(fetchCalls.some(c => c.path === '/dsh-market/discovery-compatibility')).toBe(true)
+    })
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(screen.queryByText(en.hostRequirementUndeclared)).toBeNull()
+    expect(screen.queryByText(en.hostRequirementUnavailable)).toBeNull()
+    expect(screen.queryByText(en.hostRequirementLoading)).toBeNull()
+  })
+
+  it('keeps the DSH chip visible while the note editor is open', async () => {
+    const name = 'dsh-note-keeps-host-chip'
+    const base = REGISTRY.plugins[0]!
+    stubFetch({
+      '/dsh-market/registry': {
+        source: 'live',
+        hostVersion: '0.1.0',
+        registry: {
+          ...REGISTRY,
+          count: REGISTRY.count + 1,
+          plugins: [...REGISTRY.plugins, { ...base, name, npm: name, url: `https://github.com/t/${name}` }],
+        },
+      },
+      '/dsh-market/installed': {
+        profile: 'desktop',
+        installed: { [name]: '^1.0.0' },
+        live: [name],
+      },
+      '/dsh-market/updates': { updates: {
+        [name]: { kind: 'npm', version: '1.0.0', current: '1.0.0', latest: '1.0.0', updateAvailable: false },
+      } },
+      '/dsh-market/discovery-compatibility': {
+        hostVersion: '0.1.0',
+        plugins: {
+          [name]: {
+            status: 'compatible', requirement: '>=0.1.0', basis: 'manifest',
+            declarations: [{ kind: 'engine', range: '>=0.1.0' }],
+          },
+        },
+      },
+    })
+    render(<MarketSection {...props()} preferredSubsectionId="installed" />)
+    await screen.findByText(name)
+    const chipLabel = en.hostRequirement.replace('{0}', '>=0.1.0')
+    expect(await screen.findByText(chipLabel)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: en.noteAdd }))
+    await screen.findByPlaceholderText(en.notePlaceholder)
+    expect(screen.getByText(chipLabel)).toBeTruthy()
+  })
+
+  it('skips the installed incompat band for local-dev checkouts', async () => {
+    const name = 'dsh-localdev-incompat-band'
+    stubFetch({
+      '/dsh-market/installed': {
+        profile: 'desktop',
+        installed: { [name]: 'link:/tmp/' + name },
+        live: [],
+        activation: {
+          [name]: { state: 'incompatible', hot: false, bundle: true, reasons: ['needs newer dsh'] },
+        },
+      },
+      '/dsh-market/updates': { updates: {
+        [name]: { kind: 'linked', version: '1.0.0', current: '1.0.0', latest: '1.0.0', updateAvailable: false },
+      } },
+      '/dsh-market/discovery-compatibility': {
+        hostVersion: '0.1.0',
+        plugins: {
+          [name]: {
+            status: 'incompatible', requirement: '>=0.2.0', basis: 'manifest',
+            declarations: [{ kind: 'engine', range: '>=0.2.0' }],
+          },
+        },
+      },
+    })
+    render(<MarketSection {...props()} preferredSubsectionId="installed" />)
+    await screen.findByText(name)
+    expect(screen.queryByText(en.installedIncompatTitle)).toBeNull()
+  })
+
+  it('does not treat catalog-latest incompat as an installed-row failure when activation is live', async () => {
+    // DiscoveryScan describes the catalog entry, not the installed revision.
+    // A live install must not inherit "incompatible" from a newer catalog cut.
+    const name = 'dsh-catalog-only-incompat'
+    const base = REGISTRY.plugins[0]!
+    localStorage.setItem('dshm-host-filter', 'all')
+    stubFetch({
+      '/dsh-market/registry': {
+        source: 'live',
+        hostVersion: '0.1.0',
+        registry: {
+          ...REGISTRY,
+          count: REGISTRY.count + 1,
+          plugins: [...REGISTRY.plugins, { ...base, name, npm: name, url: `https://github.com/t/${name}` }],
+        },
+      },
+      '/dsh-market/installed': {
+        profile: 'desktop',
+        installed: { [name]: '^1.0.0' },
+        live: [name],
+        activation: {
+          [name]: { state: 'live', hot: true, bundle: true, reasons: [] },
+        },
+      },
+      '/dsh-market/updates': { updates: {
+        [name]: { kind: 'npm', version: '1.0.0', current: '1.0.0', latest: '1.0.0', updateAvailable: false },
+      } },
+      '/dsh-market/discovery-compatibility': (body: { packages?: string[] }) => ({
+        hostVersion: '0.1.0',
+        plugins: Object.fromEntries((body.packages ?? []).map(pkg => [pkg, {
+          status: 'incompatible', requirement: '>=0.9.0', basis: 'manifest',
+          declarations: [{ kind: 'engine', range: '>=0.9.0' }],
+        }])),
+      }),
+    })
+    render(<MarketSection {...props()} preferredSubsectionId="installed" />)
+    await screen.findByText(name)
+    await waitFor(() => {
+      expect(fetchCalls.some(c => c.path === '/dsh-market/discovery-compatibility')).toBe(true)
+    })
+    expect(screen.queryByText(en.installedIncompatTitle)).toBeNull()
+    expect(screen.queryByText(en.stateIncompatible)).toBeNull()
+  })
+
+  it('keeps incompat next-step copy from claiming the update is already compatible', async () => {
+    const name = 'dsh-incompat-try-update'
+    const base = REGISTRY.plugins[0]!
+    localStorage.setItem('dshm-host-filter', 'all')
+    stubFetch({
+      '/dsh-market/registry': {
+        source: 'live',
+        hostVersion: '0.1.0',
+        registry: {
+          ...REGISTRY,
+          count: REGISTRY.count + 1,
+          plugins: [...REGISTRY.plugins, { ...base, name, npm: name, url: `https://github.com/t/${name}` }],
+        },
+      },
+      '/dsh-market/installed': {
+        profile: 'desktop',
+        installed: { [name]: '^1.0.0' },
+        live: [],
+        activation: {
+          [name]: { state: 'incompatible', hot: false, bundle: true, reasons: ['needs newer dsh'] },
+        },
+      },
+      '/dsh-market/updates': { updates: {
+        [name]: { kind: 'npm', version: '1.0.0', current: '1.0.0', latest: '1.1.0', updateAvailable: true },
+      } },
+      '/dsh-market/discovery-compatibility': {
+        hostVersion: '0.1.0',
+        plugins: {
+          [name]: {
+            status: 'incompatible', requirement: '>=0.2.0', basis: 'manifest',
+            declarations: [{ kind: 'engine', range: '>=0.2.0' }],
+          },
+        },
+      },
+    })
+    render(<MarketSection {...props()} preferredSubsectionId="installed" />)
+    expect(await screen.findByText(en.installedIncompatTitle)).toBeTruthy()
+    expect(await screen.findByText(en.installedIncompatNextUpdate)).toBeTruthy()
+    expect(en.installedIncompatNextUpdate).not.toMatch(/兼容版本|compatible version|互換/)
+    // One incompat headline — band owns it; the red activation label stays away.
+    expect(screen.queryByText(en.stateIncompatible)).toBeNull()
   })
 
   it('marks a hold the registry could not timestamp as estimated (#961)', async () => {
@@ -3014,10 +3439,16 @@ describe('MarketSection (jsdom)', () => {
     await screen.findByText('dsh-loop')
     fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
 
-    const tag = await screen.findByText(en.updateHeldTag)
-    expect(tag.getAttribute('title')).toMatch(/mirror|镜像/)
-    expect(tag.getAttribute('title')).toMatch(/minute|分钟/)
-    expect(screen.queryByRole('button', { name: en.update })).toBeNull()
+    const hint = await screen.findByText(en.updateHeldBesideEstimated.replace('{1}', '25'))
+    // Host Tooltip, not the native beige title bubble.
+    expect(hint.getAttribute('title')).toBeNull()
+    fireEvent.mouseEnter(hint)
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 800)) })
+    const tip = screen.getByRole('tooltip')
+    expect(tip.textContent).toMatch(/v1\.2\.0/)
+    expect(tip.textContent).toMatch(/mirror|目录|镜像/)
+    expect(tip.textContent).toMatch(/minute|分钟/)
+    expect(screen.queryByRole('button', { name: rowUpdateName })).toBeNull()
   })
 
   it('names a newer prerelease instead of "up to date", and installs that exact version (#867)', async () => {
@@ -3093,8 +3524,8 @@ describe('MarketSection (jsdom)', () => {
       render(<MarketSection {...props()} />)
       await vi.waitFor(() => { screen.getByText('dsh-loop') })
       fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
-      await vi.waitFor(() => { screen.getByRole('button', { name: en.update }) })
-      fireEvent.click(screen.getByRole('button', { name: en.update }))
+      await vi.waitFor(() => { screen.getByRole('button', { name: rowUpdateName }) })
+      fireEvent.click(screen.getByRole('button', { name: rowUpdateName }))
 
       // Observe the route-level mutation lock while the request is in flight.
       // The successful response then arrives before another status poll can
@@ -3166,7 +3597,7 @@ describe('MarketSection (jsdom)', () => {
     render(<MarketSection {...props()} />)
     await screen.findByText('dsh-loop')
     fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
-    const updateButton = await screen.findByRole('button', { name: en.update })
+    const updateButton = await screen.findByRole('button', { name: rowUpdateName })
     fireEvent.click(updateButton)
     // The 502-stale path surfaces the plain-words error plus the one-time bypass.
     expect(await screen.findByRole('button', { name: en.updateNow })).toBeTruthy()
@@ -3185,7 +3616,7 @@ describe('MarketSection (jsdom)', () => {
     render(<MarketSection {...props()} />)
     await screen.findByText('dsh-loop')
     fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
-    fireEvent.click(await screen.findByRole('button', { name: en.update }))
+    fireEvent.click(await screen.findByRole('button', { name: rowUpdateName }))
 
     const banner = await screen.findByText(/ERR_PNPM_PREPARE_PACKAGE/)
     expect(banner).toBeTruthy()
@@ -3214,7 +3645,7 @@ describe('MarketSection (jsdom)', () => {
     render(<MarketSection {...props()} locale={{ subscribe: () => () => {}, getSnapshot: () => ZH }} />)
     await screen.findByText('dsh-loop')
     fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
-    fireEvent.click(await screen.findByRole('button', { name: en.update }))
+    fireEvent.click(await screen.findByRole('button', { name: rowUpdateName }))
 
     // The opening clause AND the clause that says what to do: a tail clip kept
     // neither, and the row must not fall back to pnpm's stack either.
@@ -3252,7 +3683,7 @@ describe('MarketSection (jsdom)', () => {
     render(<MarketSection {...props()} />)
     await screen.findByText('dsh-loop')
     fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
-    const updateButton = await screen.findByRole('button', { name: en.update })
+    const updateButton = await screen.findByRole('button', { name: rowUpdateName })
     fireEvent.click(updateButton)
     // Queued, not failed: the record line carries the queue copy (with the
     // position suffix), so assert on the panel text rather than one element.
@@ -3278,7 +3709,7 @@ describe('MarketSection (jsdom)', () => {
     await screen.findByText('dsh-loop')
     fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
     if (kind === 'update') {
-      fireEvent.click(await screen.findByRole('button', { name: en.update }))
+      fireEvent.click(await screen.findByRole('button', { name: rowUpdateName }))
     } else {
       await openRowMenu('dsh-loop')
       fireEvent.click(await screen.findByRole('menuitem', { name: en.uninstall }))
@@ -3924,7 +4355,7 @@ describe('MarketSection (jsdom)', () => {
     render(<MarketSection {...props()} />)
     await screen.findByText('dsh-loop')
     fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
-    const updateButton = await screen.findByRole('button', { name: en.update })
+    const updateButton = await screen.findByRole('button', { name: rowUpdateName })
     fireEvent.click(updateButton)
     expect(await screen.findByText(en.compatRiskBanner)).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: en.rollbackNow }))
@@ -3954,7 +4385,7 @@ describe('MarketSection (jsdom)', () => {
     render(<MarketSection {...props()} />)
     await screen.findByText('dsh-loop')
     fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
-    fireEvent.click(await screen.findByRole('button', { name: en.update }))
+    fireEvent.click(await screen.findByRole('button', { name: rowUpdateName }))
 
     expect(await screen.findByText(en.shadowNameBanner)).toBeTruthy()
     // #913: the copy no longer claims only one of the two rows will load.
@@ -3983,7 +4414,7 @@ describe('MarketSection (jsdom)', () => {
     render(<MarketSection {...props()} />)
     await screen.findByText('dsh-loop')
     fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
-    fireEvent.click(await screen.findByRole('button', { name: en.update }))
+    fireEvent.click(await screen.findByRole('button', { name: rowUpdateName }))
 
     expect(await screen.findByText(en.compatRiskBannerNoRollback)).toBeTruthy()
     expect(screen.getByText(englishHalf)).toBeTruthy()
@@ -4009,7 +4440,7 @@ describe('MarketSection (jsdom)', () => {
     render(<MarketSection {...props()} />)
     await screen.findByText('dsh-loop')
     fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
-    fireEvent.click(await screen.findByRole('button', { name: en.update }))
+    fireEvent.click(await screen.findByRole('button', { name: rowUpdateName }))
 
     expect(await screen.findByText(en.rollbackUnavailable)).toBeTruthy()
     expect(screen.queryByRole('button', { name: en.rollbackNow })).toBeNull()
@@ -4297,14 +4728,14 @@ describe('lost update progress (config page reopened)', () => {
         return ++starts === 1 ? first : second
       }))
       const oldMount = render(<MarketSection {...props()} preferredSubsectionId="installed" />)
-      fireEvent.click(await vi.waitFor(() => screen.getByRole('button', { name: en.update })))
+      fireEvent.click(await vi.waitFor(() => screen.getByRole('button', { name: `${en.update} v1.2.0` })))
       expect(starts).toBe(1)
       oldMount.unmount()
       render(<MarketSection {...props()} preferredSubsectionId="installed" />)
       await vi.waitFor(() => expect(screen.getByRole('button', { name: en.updating })).toBeTruthy())
       await vi.advanceTimersByTimeAsync(4200)
       await vi.waitFor(() => expect(sessionStorage.getItem('dshm-updating')).toBeNull())
-      fireEvent.click(await vi.waitFor(() => screen.getByRole('button', { name: en.update })))
+      fireEvent.click(await vi.waitFor(() => screen.getByRole('button', { name: `${en.update} v1.2.0` })))
       expect(starts).toBe(2)
       await act(async () => { sendFirst(new Response(JSON.stringify({ ok: false, error: 'old update failed' }), { status: 502 })) })
       expect(sessionStorage.getItem('dshm-updating')).toBe(JSON.stringify({ name: 'dsh-loop' }))
@@ -4340,7 +4771,7 @@ describe('lost update progress (config page reopened)', () => {
         { kind: 'install', name: 'dsh-notify', url: 'https://github.com/bob/dsh-notify' },
       ]))
       render(<MarketSection {...props()} preferredSubsectionId="installed" />)
-      fireEvent.click(await vi.waitFor(() => screen.getByRole('button', { name: en.update })))
+      fireEvent.click(await vi.waitFor(() => screen.getByRole('button', { name: `${en.update} v1.2.0` })))
       await act(async () => { await vi.advanceTimersByTimeAsync(6400) })
       expect.soft(screen.queryByText(en.opRunning)).toBeTruthy()
       expect.soft(installs).toBe(0)
@@ -4587,7 +5018,7 @@ describe('#60 enable/disable switches in the Installed tab', () => {
     expect(screen.queryByText(en.stateInert)).toBeNull()
     expect(screen.queryByText(en.switchOnLabel)).toBeNull()
     expect(screen.queryByRole('switch')).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: en.update }))
+    fireEvent.click(screen.getByRole('button', { name: rowUpdateName }))
     expect(await screen.findByText('✓ Updated')).toBeTruthy()
     expect(screen.queryByText(en.updated)).toBeNull()
 
@@ -5334,8 +5765,8 @@ describe('blocked plugins (#657)', () => {
       .toEqual(['dsh-loop', 'dsh-notify'])
     fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
     let row: HTMLElement | null = await screen.findByText('dsh-third')
-    while (row !== null && within(row).queryByRole('button', { name: en.update }) === null) row = row.parentElement
-    expect(within(row!).getByRole('button', { name: en.update })).toBeTruthy()
+    while (row !== null && within(row).queryByRole('button', { name: rowUpdateName }) === null) row = row.parentElement
+    expect(within(row!).getByRole('button', { name: rowUpdateName })).toBeTruthy()
   })
 
   it('treats a linked checkout and its catalog package name as one block', async () => {
@@ -5426,9 +5857,21 @@ describe('plugin notes (#347)', () => {
     fireEvent.change(screen.getByPlaceholderText(en.notePlaceholder), { target: { value: 'for project A' } })
     fireEvent.click(screen.getByRole('button', { name: en.noteSave }))
 
-    // The note takes the description's place rather than sitting beside it.
-    expect((await screen.findByText('for project A')).className).toMatch(/noteMine/)
-    expect(screen.getByRole('button', { name: en.noteEdit }).className).toMatch(/noteAdd/)
+    // The note takes the description's place rather than sitting beside it —
+    // same body band / `.desc` ramp as the author blurb (installed CSS then
+    // deepens `.noteMine` only; it must not invent a second type size).
+    // Note actions live in the foot row (sibling of irowBody), so the DSH chip
+    // can stay visible while editing.
+    const mine = await screen.findByText('for project A')
+    expect(mine.className).toMatch(/noteMine/)
+    expect(mine.className).toMatch(/desc/)
+    expect(mine.closest('[class*="irowBody"]')).toBeTruthy()
+    const edit = screen.getByRole('button', { name: en.noteEdit })
+    expect(edit.className).toMatch(/noteAdd/)
+    expect(edit.closest('[class*="irowNoteActions"]')).toBeTruthy()
+    expect(edit.closest('[class*="irowFootRow"]')).toBeTruthy()
+    expect(edit.closest('[class*="irowBody"]')).toBeNull()
+    expect(edit.closest('[class*="irowDescBand"]')).toBe(mine.closest('[class*="irowDescBand"]'))
     await waitFor(() => expect(screen.queryByText('Loop task runner')).toBeNull())
   })
 
@@ -6355,6 +6798,8 @@ describe('incompatible install (#758)', () => {
     // the user why the plugin cannot run. Only then is the banner count
     // meaningful — checking too early passes on the unfixed code too.
     await vi.waitFor(() => {
+      // Post-install warning banner names the activation state (Discover stays
+      // open). Installed rows use the quiet incompat band separately.
       expect(screen.getAllByText(re(en.stateIncompatible)).length).toBeGreaterThan(0)
     })
     expect(fetchCalls.some(call => call.path === '/dsh-market/install')).toBe(true)
@@ -6989,7 +7434,7 @@ describe('a removed-declaration notice the user can put away (#763)', () => {
 
     render(<MarketSection {...props()} preferredSubsectionId="installed" />)
     await screen.findByText(en.brokenPluginTitle.replace('{0}', 'dsh-pet'))
-    const update = await screen.findByRole('button', { name: en.update })
+    const update = await screen.findByRole('button', { name: `${en.update} v1.2.0` })
 
     // The update's own re-read is now in flight, and held.
     fireEvent.click(update)
@@ -7071,11 +7516,8 @@ describe('a removed-declaration notice the user can put away (#763)', () => {
     render(<MarketSection {...props()} preferredSubsectionId="installed" />)
 
     // The ordinary row's real affordances, present and accounted for.
-    expect(await screen.findByRole('button', { name: en.update })).toBeTruthy()
-    expect(screen.getByRole('button', { name: re(en.notesLink) })).toBeTruthy()
-    // The panel named the real version, so this really is an update row and
-    // not an empty list that happens to lack a dismiss button.
-    expect(screen.getByText(en.hostUpdateReady.replace('{0}', 'v1.2.0'))).toBeTruthy()
+    expect(await screen.findByRole('button', { name: `${en.update} v1.2.0` })).toBeTruthy()
+    expect(screen.getByRole('button', { name: re(en.notesLink) }).closest('[class*="irowMeta"]')).toBeTruthy()
     // Same plugin, and it is on screen — as an installed row with an update
     // pending. What it must NOT carry is the removed-declaration notice: the
     // title is a different string from the row name, so this can tell the two
@@ -7183,7 +7625,9 @@ describe('local-dev restore', () => {
         { kind: 'install', name: 'dsh-notify', url: 'https://github.com/bob/dsh-notify' },
       ]))
       render(<MarketSection {...props()} preferredSubsectionId="installed" />)
-      const button = await vi.waitFor(() => screen.getByRole('button', { name: restore ? en.restoreOnline : en.update }))
+      const button = await vi.waitFor(() => screen.getByRole('button', {
+        name: restore ? en.restoreOnline : `${en.update} v1.2.0`,
+      }))
       fireEvent.click(button)
       if (restore) fireEvent.click(screen.getByRole('button', { name: en.restoreProceed }))
       expect(updateBody).toEqual(restore ? { name: 'dsh-loop', restore: true } : { name: 'dsh-loop' })
@@ -7486,7 +7930,7 @@ describe('local-dev restore', () => {
     // The host reconciles its generations at startup: an update applied here
     // would silently revert, and a restore would tear down the host's own
     // install. Neither is offered, and the row is not tagged as local work.
-    expect(screen.queryByRole('button', { name: en.update })).toBeNull()
+    expect(screen.queryByRole('button', { name: rowUpdateName })).toBeNull()
     expect(screen.queryByRole('button', { name: en.restoreOnline })).toBeNull()
     expect(screen.queryByText(en.linkedDev)).toBeNull()
     openRowMenu('dsh-loop')
@@ -8998,7 +9442,7 @@ describe('boot-scoped update reminder dismissals (#419)', () => {
     })
     expect(await screen.findByText(en.updateNoticeIgnored)).toBeTruthy()
     // Ignoring means "do not prompt", not "remove the update".
-    expect(screen.getAllByRole('button', { name: en.update })).toHaveLength(2)
+    expect(screen.getAllByRole('button', { name: rowUpdateName })).toHaveLength(2)
     expect(screen.getAllByRole('button', { name: re(en.notesLink) })).toHaveLength(2)
     // dsh-notify is still unignored, so the tab continues to carry its dot.
     expect(updateDot()).toBeTruthy()
@@ -9020,7 +9464,7 @@ describe('boot-scoped update reminder dismissals (#419)', () => {
 
     fireEvent.click(installedTab())
     expect(await screen.findAllByText(en.updateNoticeIgnored)).toHaveLength(2)
-    expect(screen.getAllByRole('button', { name: en.update })).toHaveLength(2)
+    expect(screen.getAllByRole('button', { name: rowUpdateName })).toHaveLength(2)
     expect(screen.getAllByRole('button', { name: re(en.notesLink) })).toHaveLength(2)
   })
 
@@ -9072,7 +9516,7 @@ describe('boot-scoped update reminder dismissals (#419)', () => {
     fireEvent.click(installedTab())
     expect(await screen.findByRole('button', { name: `${en.updateExemptRestore} dsh-loop` })).toBeTruthy()
     expect(screen.getByText(en.updateExemptMark)).toBeTruthy()
-    expect(screen.getAllByRole('button', { name: en.update })).toHaveLength(2)
+    expect(screen.getAllByRole('button', { name: rowUpdateName })).toHaveLength(2)
     expect(screen.getAllByRole('button', { name: re(en.notesLink) })).toHaveLength(2)
     // A saved exemption already covers the boot dismissal, so the menu drops it.
     await openRowMenu('dsh-loop')
@@ -9087,7 +9531,7 @@ describe('boot-scoped update reminder dismissals (#419)', () => {
     stubUpdateReminders()
     render(<MarketSection {...props()} />)
     fireEvent.click(await screen.findByRole('button', { name: /^Installed/ }))
-    expect(await screen.findAllByText(en.hostUpdateReady.replace('{0}', 'v1.1.0'))).toHaveLength(2)
+    expect(await screen.findAllByRole('button', { name: re(en.notesLink) })).toHaveLength(2)
 
     await ignoreRowUntilRestart('dsh-loop')
     expect(await screen.findByText(en.updateNoticeIgnored)).toBeTruthy()
@@ -9118,7 +9562,7 @@ describe('boot-scoped update reminder dismissals (#419)', () => {
     expect(await screen.findByText(en.unreleasedCommits.replace('{0}', 'bbbbbbb'))).toBeTruthy()
     // The row that HAS a release is untouched, and neither row offers a button.
     expect(screen.getAllByText(en.upToDate)).toHaveLength(1)
-    expect(screen.queryByRole('button', { name: en.update })).toBeNull()
+    expect(screen.queryByRole('button', { name: rowUpdateName })).toBeNull()
   })
 
   it('keeps the saved mark on an up-to-date row, and adds no status line to other up-to-date rows', async () => {
@@ -9167,7 +9611,7 @@ describe('boot-scoped update reminder dismissals (#419)', () => {
     })
     expect(await screen.findByText(en.updateExemptOn)).toBeTruthy()
     const mark = screen.getByRole('button', { name: `${en.updateExemptRestore} dsh-loop` })
-    expect(screen.getAllByRole('button', { name: en.update })).toHaveLength(2)
+    expect(screen.getAllByRole('button', { name: rowUpdateName })).toHaveLength(2)
 
     fireEvent.click(mark)
     await waitFor(() => {
@@ -9177,7 +9621,7 @@ describe('boot-scoped update reminder dismissals (#419)', () => {
     await waitFor(() => {
       expect(screen.queryByRole('button', { name: `${en.updateExemptRestore} dsh-loop` })).toBeNull()
     })
-    expect(screen.getAllByRole('button', { name: en.update })).toHaveLength(2)
+    expect(screen.getAllByRole('button', { name: rowUpdateName })).toHaveLength(2)
   })
 
   it('fails open when the stored dismissal is malformed', async () => {
@@ -10395,13 +10839,13 @@ describe('restart banner counts only restart-requiring updates (#558)', () => {
     render(<MarketSection {...props()} />)
     await screen.findByText('dsh-loop')
     fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
-    await screen.findAllByRole('button', { name: en.update }, { timeout: 5000 })
+    await screen.findAllByRole('button', { name: rowUpdateName }, { timeout: 5000 })
     return (name: string) => {
       const rows = [...document.querySelectorAll<HTMLElement>('div[class*="irow"]')]
-        .filter(r => within(r).queryByRole('button', { name: en.update }) && (r.textContent ?? '').includes(name))
+        .filter(r => within(r).queryByRole('button', { name: rowUpdateName }) && (r.textContent ?? '').includes(name))
       const row = rows[rows.length - 1]
       if (!row) throw new Error(`no installed row found for ${name}`)
-      return within(row).getByRole('button', { name: en.update })
+      return within(row).getByRole('button', { name: rowUpdateName })
     }
   }
 
@@ -10437,8 +10881,8 @@ describe('restart banner counts only restart-requiring updates (#558)', () => {
     render(<MarketSection {...props()} />)
     await screen.findByText('dsh-loop')
     fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
-    await screen.findByRole('button', { name: en.update })
-    fireEvent.click(screen.getByRole('button', { name: en.update }))
+    await screen.findByRole('button', { name: rowUpdateName })
+    fireEvent.click(screen.getByRole('button', { name: rowUpdateName }))
     await screen.findByText(re(en.updated))
 
     const banner = await screen.findByText(re(en.restartBanner))

@@ -5224,84 +5224,93 @@ export function mountMarketRoutes(
             sendJson(response, 400, { ok: false, error: 'unknown group action' })
             return
           }
-          const installed = new Set(Object.keys(readInstalled(config.profile, activeProfileDir)))
-          // Theme members follow the global one-active-theme rule: a group
-          // holds at most one, and enabling one deactivates every other.
-          const themeNames = await themes.installedThemeNames()
-          let ok = true
-          let error: string | undefined
-          let appliedSome = false
-          let restartMembers: string[] = []
-          let refreshMembers: string[] = []
-          if (action === 'toggle') {
-            const name = typeof body.name === 'string' ? body.name : ''
-            const enabled = body.enabled === true
-            if (groups[name] === undefined) {
-              sendJson(response, 400, { ok: false, error: 'group not found / 分组不存在' })
-              return
-            }
-            pendingRollbacks.clear()
-            // Batch toggle: on = every installed member enabled, off = every
-            // member disabled. Each member keeps its own persisted flag, so
-            // later individual toggles still work (the group switch itself is
-            // derived state and never stored).
-            const failures: string[] = []
-            let failureReason: string | undefined
-            const replayDeadline = Date.now() + (config.hostReplayWaitMs ?? PROFILE_HMR_REPLAY_WAIT_MS)
-            for (const member of groups[name]) {
-              if (!installed.has(member)) continue
-              if (isNonToggleableLibrary(member)) continue
-              let result: LayerSwitch
-              if (enabled && themeNames.has(member)) {
-                result = await switchPluginLayers(member, enabled, keepOff => themes.activateTheme(member, keepOff), replayDeadline)
-              } else {
-                // The same two durable layers the single switch writes (#696):
-                // which control flipped a plugin must not change what is on disk.
-                result = await switchPluginLayers(member, enabled, undefined, replayDeadline)
+          const applyAction = async () => {
+            const installed = new Set(Object.keys(readInstalled(config.profile, activeProfileDir)))
+            // Theme members follow the global one-active-theme rule: a group
+            // holds at most one, and enabling one deactivates every other.
+            const themeNames = await themes.installedThemeNames()
+            let ok = true
+            let error: string | undefined
+            let appliedSome = false
+            let restartMembers: string[] = []
+            let refreshMembers: string[] = []
+            if (action === 'toggle') {
+              const name = typeof body.name === 'string' ? body.name : ''
+              const enabled = body.enabled === true
+              if (groups[name] === undefined) {
+                sendJson(response, 400, { ok: false, error: 'group not found / 分组不存在' })
+                return
               }
-              if (!result.ok) {
-                failures.push(member)
-                failureReason ??= result.reason
-                continue
+              pendingRollbacks.clear()
+              // Batch toggle: on = every installed member enabled, off = every
+              // member disabled. Each member keeps its own persisted flag, so
+              // later individual toggles still work (the group switch itself is
+              // derived state and never stored).
+              const failures: string[] = []
+              let failureReason: string | undefined
+              const replayDeadline = Date.now() + (config.hostReplayWaitMs ?? PROFILE_HMR_REPLAY_WAIT_MS)
+              for (const member of groups[name]) {
+                if (!installed.has(member)) continue
+                if (isNonToggleableLibrary(member)) continue
+                let result: LayerSwitch
+                if (enabled && themeNames.has(member)) {
+                  result = await switchPluginLayers(member, enabled, keepOff => themes.activateTheme(member, keepOff), replayDeadline)
+                } else {
+                  // The same two durable layers the single switch writes (#696):
+                  // which control flipped a plugin must not change what is on disk.
+                  result = await switchPluginLayers(member, enabled, undefined, replayDeadline)
+                }
+                if (!result.ok) {
+                  failures.push(member)
+                  failureReason ??= result.reason
+                  continue
+                }
+                if (result.unchanged) continue
+                appliedSome = true
+                // Same live-mismatch signal as the single toggle: a member
+                // whose fiber did not follow the switch needs a boot.
+                const liveAfter = liveNames().has(member)
+                if (result.replayPending === true || (enabled ? !liveAfter : liveAfter)) restartMembers.push(member)
+                // Client-part members need a page refresh to show the change.
+                if (packageHasClientPart(activeProfileDir, member)) refreshMembers.push(member)
               }
-              if (result.unchanged) continue
-              appliedSome = true
-              // Same live-mismatch signal as the single toggle: a member
-              // whose fiber did not follow the switch needs a boot.
-              const liveAfter = liveNames().has(member)
-              if (result.replayPending === true || (enabled ? !liveAfter : liveAfter)) restartMembers.push(member)
-              // Client-part members need a page refresh to show the change.
-              if (packageHasClientPart(activeProfileDir, member)) refreshMembers.push(member)
+              ok = failures.length === 0
+              if (!ok) {
+                const names = failures.join(', ')
+                const [zh, en] = failureReason?.split(' / ', 2) ?? []
+                error = '无法' + (enabled ? '启用 ' : '停用 ') + names + '。' + (zh ?? '检查插件设置后重试。')
+                  + ' / Could not ' + (enabled ? 'enable ' : 'disable ') + names + '. ' + (en ?? 'Check the plugin settings and retry.')
+              }
+            } else {
+              const state = { groups, groupOrder }
+              const result = action === 'create' ? createGroup(state, body.name)
+                : action === 'rename' ? renameGroup(state, body.name, body.newName)
+                : action === 'delete' ? deleteGroup(state, body.name)
+                : setGroupMembers(state, body.name, body.members, installed, themeNames)
+              ok = result.ok
+              error = result.error
             }
-            ok = failures.length === 0
-            if (!ok) {
-              const names = failures.join(', ')
-              const [zh, en] = failureReason?.split(' / ', 2) ?? []
-              error = '无法' + (enabled ? '启用 ' : '停用 ') + names + '。' + (zh ?? '检查插件设置后重试。')
-                + ' / Could not ' + (enabled ? 'enable ' : 'disable ') + names + '. ' + (en ?? 'Check the plugin settings and retry.')
-            }
-          } else {
-            const state = { groups, groupOrder }
-            const result = action === 'create' ? createGroup(state, body.name)
-              : action === 'rename' ? renameGroup(state, body.name, body.newName)
-              : action === 'delete' ? deleteGroup(state, body.name)
-              : setGroupMembers(state, body.name, body.members, installed, themeNames)
-            ok = result.ok
-            error = result.error
+            if (ok && action !== 'toggle') writeMarketState(activeProfileDir, { disabled, groups, groupOrder })
+            logEvent(ok ? 'info' : 'warn', 'groups',
+              `${action}${typeof body.name === 'string' ? ' ' + body.name : ''}${ok ? '' : ` — ${error ?? ''}`}`)
+            sendJson(response, ok ? 200 : 400, {
+              ok,
+              error,
+              ...(!ok && appliedSome ? { partial: true } : {}),
+              groups,
+              groupOrder,
+              disabled: [...disabled],
+              restartMembers,
+              refreshMembers,
+            })
           }
-          if (ok && action !== 'toggle') writeMarketState(activeProfileDir, { disabled, groups, groupOrder })
-          logEvent(ok ? 'info' : 'warn', 'groups',
-            `${action}${typeof body.name === 'string' ? ' ' + body.name : ''}${ok ? '' : ` — ${error ?? ''}`}`)
-          sendJson(response, ok ? 200 : 400, {
-            ok,
-            error,
-            ...(!ok && appliedSome ? { partial: true } : {}),
-            groups,
-            groupOrder,
-            disabled: [...disabled],
-            restartMembers,
-            refreshMembers,
-          })
+          if (action === 'toggle') {
+            // Hold the lane before reading state or awaiting theme discovery:
+            // an install rollback must not overwrite a concurrent group switch (#1228).
+            await withMutationLock(response, 'write', applyAction)
+          } else {
+            await applyAction()
+          }
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
           logEvent('error', 'groups', `route error: ${message}`)

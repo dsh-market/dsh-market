@@ -272,6 +272,9 @@
    top-to-bottom, and lets each column close its own gaps. */
 .masonry{display:flex;align-items:flex-start;gap:10px}
 .masonryCol{flex:1;min-width:0;display:flex;flex-direction:column;gap:10px}
+/* Installed density: looser than Discover cards. */
+.masonryInstalled{gap:14px}
+.masonryInstalled .masonryCol{gap:14px}
 /* `.card` carries `align-self:start`, which under CSS grid means "do not
    stretch VERTICALLY to match a taller row-mate". In a flex COLUMN the same
    declaration addresses the other axis: it stops the card stretching
@@ -746,7 +749,10 @@
 .irowHead{display:flex;align-items:flex-start;gap:8px;min-width:0}
 .irowHead .irowName{flex:1 1 0;min-width:0}
 .irowMenu{margin-left:auto;flex-shrink:0;margin-top:-4px;margin-right:-6px}
-.irowMeta{font-size:12px;line-height:18px;margin-top:2px;color:var(--dsw-alias-label-secondary,#6b7280)}
+.irowMeta{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 10px;min-width:0;
+          font-size:12px;line-height:18px;margin-top:2px;color:var(--dsw-alias-label-secondary,#6b7280)}
+.irowMetaText{min-width:0}
+.irowMeta .notesLink{display:inline;margin:0;flex-shrink:0}
 .irowPath{display:flex;align-items:center;gap:6px;min-width:0;margin-top:6px}
 .irowPath .spec{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .irowPathIcon,.irowStatusIcon{display:inline-flex;flex-shrink:0;color:var(--dsw-alias-label-tertiary,#8b93a1)}
@@ -881,18 +887,82 @@
 .dangerArmed.dangerArmed{background:var(--dsw-alias-state-error-primary,#dc2626);border-color:var(--dsw-alias-state-error-primary,#dc2626);color:var(--dsw-alias-label-primary-foreground,#fff)}
 .retryBtn{margin-top:4px}
 .irow{background:var(--dsw-alias-settings-card-fill,var(--dsw-alias-bg-layer-1,#fff));border:.5px solid var(--dsw-alias-settings-card-stroke,var(--dsw-alias-border-l4,#00000029));
-      border-radius:var(--dsw-radius-xl,20px);padding:12px 14px;display:flex;flex-direction:column;gap:10px;min-width:0}
+      border-radius:var(--dsw-radius-xl,20px);padding:16px 18px;display:flex;flex-direction:column;gap:12px;min-width:0}
+/* Clear the version/path line above — head→meta stays tight; body starts a
+   new reading block. Column gap keeps desc / editor / foot evenly spaced. */
+.irowDescBand{display:flex;flex-direction:column;gap:10px;min-width:0;margin-top:10px}
+.irowDescBand .noteEdit{margin-top:0}
+/* Body copy is the reading layer — darker/larger than meta and wait hints.
+   CardDesc still stamps `.desc` (catalog 12px tertiary); override it here so
+   installed body and user notes share one reading size. `.noteMine` only
+   deepens color — same size as the author blurb, not a second type ramp. */
+.irowBody{display:flex;flex-direction:column;gap:10px;min-width:0;margin:0;
+          font-size:13px;line-height:20px;color:var(--dsw-alias-label-secondary,#5c6570)}
+.irowBody .irowDesc{flex:none;width:100%}
+.irowBody .desc{font-size:13px;line-height:20px;color:var(--dsw-alias-label-secondary,#5c6570)}
+.irowBody .noteMine{color:var(--dsw-alias-label-primary,#1f2328)}
+.irowBody .descMore{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#8b93a1)}
+/* Body foot: DSH chip left (same .hostRequirement chrome as Discover), note
+   actions right. Chip stays content-sized — do not flex-grow the pill.
+   Spaced marks empty-body / editor rows for tests; descBand gap supplies air. */
+.irowFootRow{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;min-width:0}
+.irowFootRow .hostRequirement{flex:0 1 auto;min-width:0}
+.irowNoteActions{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:6px 10px;min-width:0;margin-left:auto}
+.irowNoteActionsSpaced{margin-top:0}
+.irowNoteActions .noteAdd,
+.irowNoteActions .noteToggle{margin-top:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#8b93a1)}
+.irowNoteActions .noteAdd:hover,
+.irowNoteActions .noteToggle:hover{color:var(--dsw-alias-label-primary,#1f2328);text-decoration:none}
+/* Status band: quiet fill for incompat / reminder only — not held waits. */
+.irowStatusBand{
+  display:flex;flex-direction:column;gap:6px;min-width:0;
+  margin-top:2px;padding:10px 12px;border-radius:10px;
+  background:var(--dsw-alias-bg-module-platform,#f4f5f7);
+}
+.irowStatusBand .irowStatus{margin-top:0}
+.irowStatusBand .irowStatus + .irowStatus{margin-top:4px}
+.irowStatusMuted{color:var(--dsw-alias-label-secondary,#6b7280);font-size:12px;line-height:18px}
+.irowIncompat{display:flex;flex-direction:column;gap:4px;min-width:0}
+.irowIncompatTitle{font-size:12px;line-height:18px;color:var(--dsw-alias-label-primary,#1f2328);font-weight:600}
+.irowIncompatBody{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#6b7280)}
 /* Everything packs left. Pushing the trailing controls right — whether with
    justify-content or an auto margin on the tag — made the switch's position
    depend on whether its neighbour rendered 更新 or 已是最新, so the switch
    sat at a different x on every row. Packed left, state and switch land at
    the same place regardless of what follows them. */
-.irowActions{display:flex;align-items:center;justify-content:flex-start;gap:8px;flex-wrap:wrap;min-width:0}
-/* The status tag and Uninstall travel together: nowrap so they never split
-   across lines, min-width:0 so the group can still shrink (the tag inside
-   ellipsizes) rather than forcing the whole row wider (#242). */
-.irowTrailing{display:inline-flex;align-items:center;gap:8px;flex-wrap:nowrap;flex-shrink:0;min-width:0}
+.irowActions{
+  display:flex;align-items:center;justify-content:flex-start;gap:8px;
+  /* Half-width masonry columns need wrap; trailing still stacks held hints. */
+  flex-wrap:wrap;min-width:0;
+  /* Card gap is 12px; pull the rule up so 「添加备注」does not float above it. */
+  margin-top:-6px;padding-top:12px;
+  border-top:.5px solid var(--dsw-alias-border-l2,#e5e7eb);
+}
+/* Trailing ops: held wait and update share one horizontal row (hint then button). */
+.irowTrailing{
+  display:inline-flex;flex-direction:column;align-items:flex-end;gap:4px;
+  flex-wrap:nowrap;flex-shrink:0;min-width:0;margin-left:auto;
+}
+.irowTrailingRow{display:inline-flex;flex-wrap:wrap;justify-content:flex-end;align-items:center;gap:6px 8px;min-width:0}
+/* Quiet wait before the update button (clock + short label); button stays rightmost. */
+.irowTrailingHint{
+  display:inline-flex;align-items:center;gap:4px;flex-shrink:0;
+  color:var(--dsw-alias-label-tertiary,#8b93a1);font-size:11px;line-height:16px;
+  white-space:nowrap;
+}
+.irowTrailingHint svg{flex-shrink:0}
 .irowTrailing .metaTag{flex-shrink:1;min-width:0}
+/* Update stays outline — not primary. One step firmer ink/stroke so it reads
+   as a control on the card fill, without shouting on every outdated row. */
+.irowUpdateBtn.irowUpdateBtn{
+  color:var(--dsw-alias-label-primary,#1f2328);
+  border-color:var(--dsw-alias-border-l3,#b8bec8);
+  background:var(--dsw-alias-bg-layer-1,#fff);
+}
+.irowUpdateBtn.irowUpdateBtn:hover:not(:disabled){
+  border-color:var(--dsw-alias-label-secondary,#6b7280);
+  background:var(--dsw-alias-bg-module-platform,#f4f5f7);
+}
 .irowMissing{filter:grayscale(1);opacity:.5}
 .irow>.src,.irow>.owner{white-space:nowrap;flex-shrink:0}
 .irow button{white-space:nowrap;flex-shrink:0}

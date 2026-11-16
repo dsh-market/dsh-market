@@ -62,12 +62,43 @@ import {
   installCommandFor, hostCompatibilityKey,
   api, applyGithubRouting, avatarColor, catalogEntryForInstalled, entryForDep, failureText, githubRouteCandidates, groupSwitchState, installedForCatalog, isGenerationSpec, isInstalled, localizeBilingual, localizeBilingualList, looksTerminal, matchInstalledName, orderedCategories, pluginCategories,
   formatCount, pageItems, pluginName, blockAliases, pluginScreenshotCandidates, pluginScreenshots, pluginsForFavorites, previewDimensionScore, queuedRowApplies, rankThemeScreenshots, readSession, safeIcon, releaseNotesHttpsImage, rememberGithubRoute, resetScreenshotsCache, resolveCatalogRestore, safeScreenshots, sanitizeReleaseNotesBody, staleFavoriteUrls, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins, restartHintKey,
-  compareInstalledRows, installedDateText,
+  compareInstalledRows, installedDateText, masonryColumnCount,
 } from './market-data.ts'
 import type {
-ActivationInfo, ActivationState, DrainHistoryWire, DrainOperationWire, GistExportResult, InstalledMap, InstalledRepoHints, InstalledRepoIdentities, InstalledSort, InstallStamp, MarketStatus, Registry, RegistryPlugin,
+ActivationInfo, ActivationState, DrainHistoryWire, DrainOperationWire, GistExportResult, HostCompatibility, InstalledMap, InstalledRepoHints, InstalledRepoIdentities, InstalledSort, InstallStamp, MarketStatus, Registry, RegistryPlugin,
   ScreenshotCandidate, ScreenshotMeasurement, SharedHostPackageDependencyFinding, SortDir, SortField, ThemeSnapshot, TimeRange, Translate, UpdateStatus,
 } from './market-data.ts'
+
+/** Discover + Installed share one chip: same label fallbacks, status tip, bad ink. */
+function hostRequirementChip(
+  compatibility: HostCompatibility | undefined,
+  key: string | null,
+  t: Translate,
+): { label: string; title: string; bad: boolean; status: string } {
+  const label = compatibility?.requirement !== null && compatibility?.requirement !== undefined
+    ? t('hostRequirement').replace('{0}', compatibility.requirement)
+    : key === null
+      ? t('hostRequirementUnavailable')
+      : compatibility === undefined
+        ? t('hostRequirementLoading')
+        : compatibility.basis === 'undeclared'
+          ? t('hostRequirementUndeclared')
+          : t('hostRequirementUnavailable')
+  const detail = compatibility?.declarations.map(declaration =>
+    declaration.kind === 'engine'
+      ? `engines.dsh: ${declaration.range}`
+      : `${declaration.package ?? 'peer'}: ${declaration.range}`,
+  ).join('\n') || label
+  const title = (compatibility?.status === 'compatible' || compatibility?.status === 'incompatible'
+    ? t(compatibility.status === 'compatible' ? 'hostStatusCompatible' : 'hostStatusIncompatible') + '\n'
+    : '') + detail
+  return {
+    label,
+    title,
+    bad: compatibility?.status === 'incompatible',
+    status: compatibility?.status ?? 'unknown',
+  }
+}
 
 function isHostDependencyFinding(value: unknown): value is SharedHostPackageDependencyFinding {
   if (value === null || typeof value !== 'object') return false
@@ -1186,9 +1217,13 @@ function ThemeCover({ plugin, onOpen, t }: {
  * Two columns at the settings dialog's width; the sidebar page is wider and
  * gets a third once each column still has room for a full card.
  */
-function Masonry<T>({ items, render }: {
+function Masonry<T>({ items, render, maxColumns = 3, minColumns = 2, className }: {
   items: T[]
   render: (item: T) => ReactNode
+  maxColumns?: number
+  /** Discover keeps its two-column floor; Installed may collapse to one. */
+  minColumns?: number
+  className?: string
 }) {
   const wide = useMediaWide()
   const ref = useRef<HTMLDivElement>(null)
@@ -1197,18 +1232,19 @@ function Masonry<T>({ items, render }: {
     const el = ref.current
     if (el === null || typeof ResizeObserver === 'undefined') return
     const observer = new ResizeObserver(([entry]) => {
-      if (entry !== undefined) setColumns(Math.min(3, Math.max(2, Math.floor((entry.contentRect.width + 10) / 290))))
+      if (entry !== undefined) setColumns(masonryColumnCount(entry.contentRect.width, maxColumns, 290, minColumns))
     })
     observer.observe(el)
     return () => observer.disconnect()
-  }, [wide])
+  }, [wide, maxColumns, minColumns])
+  const masonryClass = [css.masonry, className].filter(Boolean).join(' ')
   if (!wide) {
-    return <div className={css.masonry}><div className={css.masonryCol}>{items.map(render)}</div></div>
+    return <div className={masonryClass}><div className={css.masonryCol}>{items.map(render)}</div></div>
   }
   const buckets: T[][] = Array.from({ length: columns }, () => [])
   items.forEach((item, index) => { buckets[index % columns]!.push(item) })
   return (
-    <div ref={ref} className={css.masonry}>
+    <div ref={ref} className={masonryClass}>
       {buckets.map((bucket, index) => (
         <div key={index} className={css.masonryCol}>{bucket.map(render)}</div>
       ))}
@@ -1883,6 +1919,27 @@ function IconPlus({ size = 14 }: { size?: number }) {
   )
 }
 
+/** Clock face for held-wait hints (Lucide `clock` geometry). */
+function IconClock({ size = 12 }: { size?: number }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 6v6l4 2" />
+    </svg>
+  )
+}
+
 /** Reminders off (Lucide `bell-off` geometry): the body breaks where the slash crosses it. */
 function IconBellOff({ size = 16 }: { size?: number }) {
   return (
@@ -2274,6 +2331,29 @@ function displayLatest(latest: string): string {
   if (/^\d/.test(latest)) return 'v' + latest
   if (/^[0-9a-f]{12,40}$/i.test(latest)) return latest.slice(0, 7)
   return latest
+}
+
+/** Compact held-wait for the trailing row (clock + short label); version/reason in title. */
+function heldUpdateBeside(
+  held: { latest: string; until: string; estimated?: true },
+  t: (key: string) => string,
+): { label: string; title: string } {
+  const left = Date.parse(held.until) - Date.now()
+  const estimated = held.estimated === true
+  const known = Number.isFinite(left) && left > 0
+  const amount = known
+    ? String(Math.max(1, Math.ceil(left / (estimated ? 60_000 : 3_600_000))))
+    : ''
+  const label = !known
+    ? t('updateHeldBesideUnknown')
+    : estimated
+      ? t('updateHeldBesideEstimated').replace('{1}', amount)
+      : t('updateHeldBeside').replace('{1}', amount)
+  const reason = !known
+    ? t('updateHeldBesideUnknown')
+    : t(estimated ? 'updateHeldEstimatedHint' : 'updateHeldHint').replace('{1}', amount)
+  const title = `${displayLatest(held.latest)} · ${reason}`
+  return { label, title }
 }
 
 /** The tail of a local checkout path; the full path stays in the title and the copy button. */
@@ -4798,11 +4878,28 @@ export function MarketSection(props: MarketSectionProps) {
     : favoriteThemes.slice(
       (favoriteThemePagination.currentPage - 1) * favoriteThemePagination.pageSize,
       favoriteThemePagination.currentPage * favoriteThemePagination.pageSize)
+  // Installed rows need the same discovery-compatibility scan as Discover /
+  // Favorites so an incompatible plugin can say why it cannot run — without
+  // waiting for the user to open the catalog first.
+  // Only keys DiscoveryScan can describe. A bare installed name is dropped by
+  // the scanner (no catalog entry) — demanding it left the chip on Loading forever.
+  const installedHostPackages = useMemo(
+    () => [...new Set(Object.entries(installed).flatMap(([name, spec]) => {
+      const entry = data === null
+        ? undefined
+        : catalogEntryForInstalled(data.plugins, name, String(spec), repoIdentities[name], repoHints[name])
+      if (entry === undefined) return []
+      const key = hostCompatibilityKey(entry)
+      return key === null ? [] : [key]
+    }))],
+    [installed, data, repoIdentities, repoHints],
+  )
   // Favorites reuse pluginCard (and its host-requirement badge). Discover
   // already loads compatibility for the current page; without the same
   // fetch here the badge stays on "Reading host requirement…" forever.
   const compatibilityKeys = (marketGone ? [] : tab === 'discover' ? pageHostPackages
     : tab === 'favorites' ? favoritePagePlugins.map(hostCompatibilityKey).filter(key => key !== null)
+    : tab === 'installed' ? installedHostPackages
     : []).join('\u0000')
   useEffect(() => {
     discoveryScan.setDemand(compatibilityDemandOwner.current, data, compatibilityKeys === '' ? [] : compatibilityKeys.split('\u0000'))
@@ -7374,20 +7471,7 @@ export function MarketSection(props: MarketSectionProps) {
     const blocked = record !== null && (record.state === 'input' || record.state === 'failed')
     const compatibilityKey = hostCompatibilityKey(p)
     const compatibility = compatibilityKey === null ? undefined : hostCompatibility[compatibilityKey]
-    const hostRequirementLabel = compatibility?.requirement !== null && compatibility?.requirement !== undefined
-      ? t('hostRequirement').replace('{0}', compatibility.requirement)
-      : compatibilityKey === null
-        ? t('hostRequirementUnavailable')
-        : compatibility === undefined
-          ? t('hostRequirementLoading')
-          : compatibility.basis === 'undeclared'
-            ? t('hostRequirementUndeclared')
-            : t('hostRequirementUnavailable')
-    const hostRequirementTitle = compatibility?.declarations.map(declaration =>
-      declaration.kind === 'engine'
-        ? `engines.dsh: ${declaration.range}`
-        : `${declaration.package ?? 'peer'}: ${declaration.range}`,
-    ).join('\n') || hostRequirementLabel
+    const hostChip = hostRequirementChip(compatibility, compatibilityKey, t)
     return (
       <div key={p.url} className={blocked ? `${css.card} ${css.cardBlocked}` : css.card}>
         <div className={css.row1}>
@@ -7433,15 +7517,15 @@ export function MarketSection(props: MarketSectionProps) {
         )}
         <div className={css.foot}>
           <div className={css.footTags}>
-            <span
-              className={compatibility?.status === 'incompatible'
-                ? `${css.hostRequirement} ${css.hostRequirementBad}`
-                : css.hostRequirement}
-              data-status={compatibility?.status ?? 'unknown'}
-              title={(compatibility?.status === 'compatible' || compatibility?.status === 'incompatible'
-                ? t(compatibility.status === 'compatible' ? 'hostStatusCompatible' : 'hostStatusIncompatible') + '\n'
-                : '') + hostRequirementTitle}
-            >{hostRequirementLabel}</span>
+            <CardTip label={hostChip.title} maxWidth={320}>
+              <span
+                className={hostChip.bad
+                  ? `${css.hostRequirement} ${css.hostRequirementBad}`
+                  : css.hostRequirement}
+                data-status={hostChip.status}
+                tabIndex={0}
+              >{hostChip.label}</span>
+            </CardTip>
             {pluginCategories(p).map(category => (
               <span key={category} className={css.tag}>
                 {(data!.categories[category] && (data!.categories[category]![lang] || data!.categories[category]!.en)) || category}
@@ -9107,6 +9191,9 @@ export function MarketSection(props: MarketSectionProps) {
                         ? <div className={css.empty}>{t('installedEmpty')}</div>
                         : (
                           <Masonry
+                            maxColumns={2}
+                            minColumns={1}
+                            className={css.masonryInstalled}
                             items={orderedInstalledEntries
                             .filter(([name, spec]) => {
                               const needle = qInstalled.trim().toLowerCase()
@@ -9162,6 +9249,38 @@ export function MarketSection(props: MarketSectionProps) {
                             // states. inert/broken rows keep their diagnosis
                             // without a misleading toggle (#60).
                             const toggleable = act?.library !== true && (off || (act !== undefined && (act.state === 'live' || act.state === 'restart')))
+                            const updatable = isPluginUpdatable(name, String(spec), status, updatedNames)
+                            const metaBits = [
+                              version,
+                              localDev ? t('linkedDev') : '',
+                              // Third segment of the same line (#1142), and only
+                              // when the market knows it. Every package installed
+                              // before this existed, or through the CLI, has no
+                              // date: a dash on all of those rows is a placeholder
+                              // that says nothing, so the row stays quiet and the
+                              // hover text explains why there is no date. The
+                              // label says what the date is: a bare date beside a
+                              // version reads as a release date.
+                              installedOn === null ? '' : `${t('installedAtLabel')} ${installedOn}`,
+                            ].filter(Boolean)
+                            // Same DSH chip as Discover (label / tip / bad ink).
+                            // - No catalog entry: stay quiet (scan cannot settle → never Loading).
+                            // - Activation incompat: status band only — no second red chip.
+                            // - Local-dev / missing: quiet.
+                            const compatibilityKey = entry !== undefined ? hostCompatibilityKey(entry) : null
+                            const compatibility = compatibilityKey === null
+                              ? undefined
+                              : hostCompatibility[compatibilityKey]
+                            const hostChip = hostRequirementChip(compatibility, compatibilityKey, t)
+                            const showIncompat = !localDev && act?.state === 'incompatible'
+                            const showHostRequirement = !missing && !localDev && !showIncompat && entry !== undefined
+                              // Only a known requirement earns a chip. "undeclared" / "unknown" /
+                              // "loading" on every card is noise the user cannot act on.
+                              && compatibility?.requirement != null
+                            const note = notes[name]
+                            const authored = authoredDescription(name, entry)
+                            const theirs = showTheirs.includes(name)
+                            const shown = note !== undefined && !theirs ? note : authored
                             return (
                               <div key={name} className={missing ? `${css.irow} ${css.irowMissing}` : css.irow}>
                                 <div style={{ minWidth: 0 }}>
@@ -9190,21 +9309,30 @@ export function MarketSection(props: MarketSectionProps) {
                                     <span className={css.irowMenu}>{renderInstalledBlockMenu(name)}</span>
                                   )}
                                   </div>
-                                  {(version !== '' || localDev || installedOn !== null) && (
-                                    <div className={css.irowMeta} title={installedWhenTitle}>
-                                      {[
-                                        version,
-                                        localDev ? t('linkedDev') : '',
-                                        // Third segment of the same line (#1142), and only
-                                        // when the market knows it. Every package installed
-                                        // before this existed, or through the CLI, has no
-                                        // date: a dash on all of those rows is a placeholder
-                                        // that says nothing, so the row stays quiet and the
-                                        // hover text explains why there is no date. The
-                                        // label says what the date is: a bare date beside a
-                                        // version reads as a release date.
-                                        installedOn === null ? '' : `${t('installedAtLabel')} ${installedOn}`,
-                                      ].filter(Boolean).join(' · ')}
+                                  {(metaBits.length > 0 || updatable) && (
+                                    <div className={css.irowMeta}>
+                                      {metaBits.length > 0 && (
+                                        <span className={css.irowMetaText} title={installedWhenTitle}>
+                                          {metaBits.join(' · ')}
+                                        </span>
+                                      )}
+                                      {/* Notes sit beside the installed version — the
+                                          update button already says a newer cut exists,
+                                          so a second "有新版本" band is just empty space. */}
+                                      {updatable && (
+                                        <button
+                                          type="button"
+                                          className={css.notesLink}
+                                          onClick={() => openNotes(
+                                            name,
+                                            status?.current ?? null,
+                                            status?.latest ?? null,
+                                            // Prefer the mature install target (#1193); else latest.
+                                            status?.eligibleVersion ?? status?.latest ?? null,
+                                            repoUrl,
+                                          )}
+                                        >{`${t('notesLink')} ›`}</button>
+                                      )}
                                     </div>
                                   )}
                                   {specRedundant
@@ -9237,38 +9365,34 @@ export function MarketSection(props: MarketSectionProps) {
                                       which is what someone with forty plugins
                                       is asking. The original stays one click
                                       away rather than being lost. */}
-                                  {notingName === name
-                                    ? (
-                                        <div className={css.noteEdit}>
-                                          <Input
-                                            className={css.noteInput}
-                                            value={noteDraft}
-                                            maxLength={NOTE_MAX}
-                                            autoFocus
-                                            placeholder={t('notePlaceholder')}
-                                            onChange={e => setNoteDraft(e.target.value)}
-                                            onKeyDown={(e) => {
-                                              // Enter while an IME is composing commits the candidate, not the note.
-                                              if (e.nativeEvent.isComposing || e.keyCode === 229) return
-                                              if (e.key === 'Enter') saveNote(name, noteDraft)
-                                              if (e.key === 'Escape') setNotingName(null)
-                                            }}
-                                          />
-                                          <div className={css.noteEditBar}>
-                                            <span className={css.noteCount} aria-hidden="true">{`${noteDraft.length}/${NOTE_MAX}`}</span>
-                                            <Button variant="ghost" size="sm" onClick={() => setNotingName(null)}>{t('cancel')}</Button>
-                                            <Button variant="primary" size="sm" onClick={() => saveNote(name, noteDraft)}>{t('noteSave')}</Button>
+                                  <div className={css.irowDescBand}>
+                                    {notingName === name
+                                      ? (
+                                          <div className={css.noteEdit}>
+                                            <Input
+                                              className={css.noteInput}
+                                              value={noteDraft}
+                                              maxLength={NOTE_MAX}
+                                              autoFocus
+                                              placeholder={t('notePlaceholder')}
+                                              onChange={e => setNoteDraft(e.target.value)}
+                                              onKeyDown={(e) => {
+                                                // Enter while an IME is composing commits the candidate, not the note.
+                                                if (e.nativeEvent.isComposing || e.keyCode === 229) return
+                                                if (e.key === 'Enter') saveNote(name, noteDraft)
+                                                if (e.key === 'Escape') setNotingName(null)
+                                              }}
+                                            />
+                                            <div className={css.noteEditBar}>
+                                              <span className={css.noteCount} aria-hidden="true">{`${noteDraft.length}/${NOTE_MAX}`}</span>
+                                              <Button variant="ghost" size="sm" onClick={() => setNotingName(null)}>{t('cancel')}</Button>
+                                              <Button variant="primary" size="sm" onClick={() => saveNote(name, noteDraft)}>{t('noteSave')}</Button>
+                                            </div>
                                           </div>
-                                        </div>
-                                      )
-                                    : (() => {
-                                        const note = notes[name]
-                                        const authored = authoredDescription(name, entry)
-                                        const theirs = showTheirs.includes(name)
-                                        const shown = note !== undefined && !theirs ? note : authored
-                                        return (
-                                          <div className={`${css.desc} ${css.descTight} ${css.noteRow}`}>
-                                            {shown !== '' && (
+                                        )
+                                      : shown !== ''
+                                        ? (
+                                            <div className={`${css.desc} ${css.descTight} ${css.irowBody}`}>
                                               <CardDesc
                                                 key={shown}
                                                 text={shown}
@@ -9277,7 +9401,27 @@ export function MarketSection(props: MarketSectionProps) {
                                                 className={css.irowDesc}
                                                 textClassName={note !== undefined && !theirs ? css.noteMine : undefined}
                                               />
-                                            )}
+                                            </div>
+                                          )
+                                        : null}
+                                    {/* Foot stays outside the note editor so the DSH chip
+                                        does not vanish while editing. Note actions hide
+                                        during edit (the editor is the action). */}
+                                    {(showHostRequirement || notingName !== name) && (
+                                      <div className={(shown === '' || notingName === name) ? `${css.irowFootRow} ${css.irowNoteActionsSpaced}` : css.irowFootRow}>
+                                        {showHostRequirement && (
+                                          <CardTip label={hostChip.title} maxWidth={320}>
+                                            <span
+                                              className={hostChip.bad
+                                                ? `${css.hostRequirement} ${css.hostRequirementBad}`
+                                                : css.hostRequirement}
+                                              data-status={hostChip.status}
+                                              tabIndex={0}
+                                            >{hostChip.label}</span>
+                                          </CardTip>
+                                        )}
+                                        {notingName !== name && (
+                                          <div className={css.irowNoteActions}>
                                             {note !== undefined && authored !== '' && (
                                               <button
                                                 type="button"
@@ -9296,52 +9440,39 @@ export function MarketSection(props: MarketSectionProps) {
                                               {note === undefined ? t('noteAdd') : t('noteEdit')}
                                             </button>
                                           </div>
-                                        )
-                                      })()}
-                                  {/* Update and reminder lines (#294, #728). An up-to-date row
-                                      with reminders on renders neither. */}
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                  {/* Incompat / muted-reminder only (#294, #728). Held waits
+                                      sit with the update control. Compatible rows show the
+                                      Discover-parity DSH chip; incompat rows use this band only. */}
                                   {(() => {
-                                    const updatable = isPluginUpdatable(name, String(spec), status, updatedNames)
                                     const exempt = updateExemptSet.has(name)
-                                    if (!updatable && !exempt) return null
+                                    // Activation is the installed fact. Catalog discovery only
+                                    // fills requirement numbers — never lights the band alone
+                                    // (catalog latest can be incompatible while this install runs).
                                     const ignored = !exempt && bootId !== null && ignoredUpdateSet.has(name)
-                                    const sep = <span className={css.irowStatusSep} aria-hidden="true">·</span>
+                                    if (!exempt && !ignored && !showIncompat) return null
                                     return (
-                                      <>
-                                        {/* The fact and the reminder are separate lines: silencing one
-                                            must never read as hiding the other (#728). */}
-                                        {updatable && (
-                                          <div className={css.irowStatus}>
-                                            {/* A generation's newer release is already stated in the action band. */}
-                                            {!generation && (
-                                              <span className={css.irowStatusPart}>
-                                                <span className={css.irowStatusFact}>
-                                                  {status?.eligibleVersion != null
-                                                    ? t('hostUpdateReady').replace('{0}', displayLatest(status.eligibleVersion))
-                                                    : status?.latest != null ? t('hostUpdateReady').replace('{0}', displayLatest(status.latest)) : t('updateAvailableShort')}
-                                                </span>
-                                                {sep}
-                                              </span>
-                                            )}
-                                            <button
-                                              type="button"
-                                              className={css.notesLink}
-                                              onClick={() => openNotes(name, status?.current ?? null, status?.latest ?? null,
-                                                status?.eligibleVersion ?? (status?.updateAvailable === true ? status.latest : null) ?? null, repoUrl)}
-                                            >{`${t('notesLink')} ›`}</button>
+                                      <div className={css.irowStatusBand}>
+                                        {showIncompat && (
+                                          <div className={css.irowIncompat}>
+                                            <div className={css.irowIncompatTitle}>{t('installedIncompatTitle')}</div>
+                                            <div className={css.irowIncompatBody}>
+                                              {t('installedIncompatWhy')
+                                                .replace('{0}', compatibility?.requirement ?? t('hostIncompatibleUnknown'))
+                                                .replace('{1}', (typeof hostVersion === 'string' ? hostVersion : null) ?? t('hostIncompatibleUnknown'))}
+                                            </div>
+                                            <div className={css.irowIncompatBody}>
+                                              {status?.updateAvailable === true
+                                                ? t('installedIncompatNextUpdate')
+                                                : compatibility?.status === 'incompatible'
+                                                  ? t('installedIncompatNextHost')
+                                                  : t('installedIncompatNextUnknown')}
+                                            </div>
                                           </div>
                                         )}
-                                        {updatable && status?.eligibleVersion !== undefined && status.restoreRequired !== true &&
-                                          status.heldUpdate !== undefined && status.heldUpdate.latest !== status.eligibleVersion && (() => {
-                                            const left = Date.parse(status.heldUpdate.until) - Date.now()
-                                            const known = status.heldUpdate.estimated !== true && Number.isFinite(left) && left > 0
-                                            return <div className={css.irowStatus}><span className={css.metaInline}>{
-                                              t(known ? 'updateHeldTarget' : 'updateHeldTargetUnknown')
-                                                .replace('{0}', displayLatest(status.heldUpdate.latest))
-                                                .replace('{1}', String(Math.max(1, Math.ceil(left / 3_600_000))))
-                                                .replace('{2}', displayLatest(status.eligibleVersion))
-                                            }</span></div>
-                                          })()}
                                         {(exempt || ignored) && (
                                           <div className={css.irowStatus}>
                                             <span className={css.irowStatusIcon}><IconBellOff size={16} /></span>
@@ -9370,17 +9501,18 @@ export function MarketSection(props: MarketSectionProps) {
                                             </span>
                                           </div>
                                         )}
-                                      </>
+                                      </div>
                                     )
                                   })()}
                                   {!off && act !== undefined && meta !== null && (
                                         <div className={css.act}>
                                           {/* Only a state the switch does NOT already show earns a
                                               line here: "installed but not active" is news, "live"
-                                              is what the switch is for. */}
+                                              is what the switch is for. Incompatible already owns
+                                              the quiet status band — do not repeat the same label. */}
                                           {act.library === true
                                             ? <span className={css.metaTag}>{meta.label}</span>
-                                            : meta.dot !== 'done' && (
+                                            : meta.dot !== 'done' && (localDev || act.state !== 'incompatible') && (
                                                 <span className={meta.dot === 'error' ? css.actBroken : css.actWarn}>
                                                   <StateDot state={meta.dot} size={7} />
                                                   {meta.label}
@@ -9470,8 +9602,10 @@ export function MarketSection(props: MarketSectionProps) {
                                     </>
                                   )
                                 })()}
-                                {/* The status tags stay one unit, so a wrap moves them together (#242). */}
+                                {/* Horizontal ops stay in one trailing unit so a
+                                    wrap moves them together (#242, installed layout). */}
                                 <span className={css.irowTrailing}>
+                                <span className={css.irowTrailingRow}>
                                 {!missing && status?.sourceMigration !== undefined && (
                                   <Button
                                     variant="outline"
@@ -9485,49 +9619,60 @@ export function MarketSection(props: MarketSectionProps) {
                                   : updatedNames.includes(name)
                                     ? <span className={`${css.metaTag} ${css.metaTagOk}`}>{act?.library === true ? t('updatedLibrary') : act?.state === 'live' ? t('updatedLive') : t('updated')}</span>
                                     : updatingName === name
-                                      ? <Button variant="outline" size="sm" className={css.warnBtn} disabled>{t('updating')}</Button>
+                                      ? <Button variant="outline" size="sm" className={css.irowUpdateBtn} disabled>{t('updating')}</Button>
                                       : status !== undefined && generation && status.latest != null
                                         ? <span className={css.metaTag} title={t('hostUpdateHint')}>{t('hostUpdateReady').replace('{0}', status.latest)}</span>
                                       : status && status.updateAvailable
-                                        ? (
-                                            <>
-                                              <Button
-                                                variant="outline"
-                                                size="sm"
-                                                className={css.warnBtn}
-                                                disabled={updatingName !== null}
-                                                onClick={() => {
-                                                  if (status.restoreRequired === true) askRestore(name)
-                                                  else doUpdate(name)
-                                                }}
-                                              >{status.restoreRequired === true ? t('restoreOnline')
-                                                : status.eligibleVersion !== undefined ? `${t('update')} ${displayLatest(status.eligibleVersion)}` : t('update')}</Button>
-                                              {status.heldUpdate !== undefined && (
-                                                <span className={css.metaTag}>
-                                                  {t('updateHeldTag').replace('{0}', displayLatest(status.heldUpdate.latest))}
-                                                </span>
-                                              )}
-                                            </>
-                                          )
-                                        : status?.heldUpdate !== undefined
-                                          // A newer release exists but pnpm will refuse
-                                          // it until the profile's fresh-release wait
-                                          // passes (#945). The official Desktop has no
-                                          // bypass, so the honest state is "waiting",
-                                          // not a button that fails by construction.
-                                          ? (() => {
-                                              const left = Date.parse(status.heldUpdate.until) - Date.now()
-                                              // An estimated hold is the registry failing to say when
-                                              // the version shipped (#961), not a known window: say
-                                              // minutes and say why, rather than claiming a wait the
-                                              // market cannot know.
-                                              const estimated = status.heldUpdate.estimated === true
-                                              const amount = String(Math.max(1, Math.ceil(left / (estimated ? 60_000 : 3_600_000))))
-                                              const hint = t(estimated ? 'updateHeldEstimatedHint' : 'updateHeldHint').replace('{1}', amount)
+                                        ? (() => {
+                                              // Hint then button: clock+short wait stays visible,
+                                              // update action stays the rightmost control.
+                                              const held = status.heldUpdate !== undefined
+                                                ? heldUpdateBeside(status.heldUpdate, t)
+                                                : null
                                               return (
-                                                <span className={css.metaTag} title={hint}>
-                                                  {t('updateHeldTag').replace('{0}', displayLatest(status.heldUpdate.latest))}
-                                                </span>
+                                                <>
+                                                  {held !== null && (
+                                                    <Tooltip label={held.title} side="top" delayMs={HOVER_TIP_DELAY_MS} portal maxWidth={280}>
+                                                      <span className={css.irowTrailingHint}>
+                                                        <IconClock size={12} />
+                                                        {held.label}
+                                                      </span>
+                                                    </Tooltip>
+                                                  )}
+                                                  <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    className={css.irowUpdateBtn}
+                                                    disabled={updatingName !== null}
+                                                    onClick={() => {
+                                                      if (status.restoreRequired === true) askRestore(name)
+                                                      else doUpdate(name)
+                                                    }}
+                                                  >{status.restoreRequired === true ? t('restoreOnline')
+                                                    : (() => {
+                                                        // Status fact is versionless; the button is the
+                                                        // one place that still names the target. Prefer
+                                                        // the mature eligible cut, else latest (#layout).
+                                                        const target = status.eligibleVersion ?? status.latest
+                                                        return target != null && target !== ''
+                                                          ? `${t('update')} ${displayLatest(target)}`
+                                                          : t('update')
+                                                      })()}</Button>
+                                                </>
+                                              )
+                                            })()
+                                        : status?.heldUpdate !== undefined
+                                          // Held-only: no installable cut yet (#945). Same quiet
+                                          // clock hint as beside the update button.
+                                          ? (() => {
+                                              const held = heldUpdateBeside(status.heldUpdate, t)
+                                              return (
+                                                <Tooltip label={held.title} side="top" delayMs={HOVER_TIP_DELAY_MS} portal maxWidth={280}>
+                                                  <span className={css.irowTrailingHint}>
+                                                    <IconClock size={12} />
+                                                    {held.label}
+                                                  </span>
+                                                </Tooltip>
                                               )
                                             })()
                                         : localDev
@@ -9557,6 +9702,7 @@ export function MarketSection(props: MarketSectionProps) {
                                                 ? null
                                                 : <span className={css.metaTag} title={t('upToDate')}>{t('upToDate')}</span>}
                                 {removingName === name && <span className={css.metaTag}>{t('uninstalling')}</span>}
+                                </span>
                                 </span>
                                 </div>
                               </div>
