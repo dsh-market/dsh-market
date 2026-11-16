@@ -835,6 +835,7 @@ import { createOfficialDesktopRuntime } from '../src/official-desktop.ts'
 import { PendingCheckoutLinks } from '../src/pending-checkout-links.ts'
 import { routesFor } from '../src/regions.ts'
 import { setRequestGateSource, setTrustedHostsSource } from '../src/http.ts'
+import * as hotModule from '../src/hot.ts'
 import type { AgentsServiceLike } from '../src/agents.ts'
 import { FakeAgent, agentsService } from './drain-agent.ts'
 
@@ -9192,6 +9193,52 @@ describe('generic enable/disable toggle (#60)', () => {
     return { userPatch: join(profileDir('web'), 'cordis.patch.yml'), entry }
   }
 
+  it('refuses a group switch during a failed install without splitting the carrier layers (#1228)', async () => {
+    const { userPatch, entry } = await installSwap()
+    expect(addProfileBundle(fake.profileDir, 'dsh-swap')).toBe(true)
+    await bed.dispatch('POST', '/dsh-market/groups', { action: 'create', name: 'work' })
+    await bed.dispatch('POST', '/dsh-market/groups', { action: 'set-members', name: 'work', members: ['dsh-swap'] })
+    fake.npm['dsh-loop'] = {
+      latest: '1.0.0',
+      versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } },
+    }
+    const manifestPath = join(fake.profileDir, 'package.json')
+    const patchNow = (): string | null => existsSync(userPatch) ? readFileSync(userPatch, 'utf8') : null
+    let release!: () => void
+    fake.gate = new Promise<void>(resolve => { release = resolve })
+    fake.failNextAddStderrOnce = 'test: install failed'
+    fake.failNextAddStderrTimes = 2
+    const install = bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
+    try {
+      await vi.waitFor(() => expect(fake.running).toBe(true))
+      const manifestBefore = readFileSync(manifestPath, 'utf8')
+      const patchBefore = patchNow()
+      const disabledBefore = new Set(hot.disabled)
+      const single = await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-swap', enabled: false })
+      const group = await bed.dispatch('POST', '/dsh-market/groups', { action: 'toggle', name: 'work', enabled: false })
+      expect.soft(single.status).toBe(409)
+      expect.soft(group.status).toBe(409)
+      expect.soft(group.json).toMatchObject({ busy: true })
+      expect.soft(readFileSync(manifestPath, 'utf8')).toBe(manifestBefore)
+      expect.soft(patchNow()).toBe(patchBefore)
+      expect.soft(hot.disabled).toEqual(disabledBefore)
+      expect.soft(entry.update).not.toHaveBeenCalled()
+    } finally {
+      release()
+      fake.gate = null
+      expect((await install).status).toBe(502)
+    }
+    // The failed install restores the carrier declaration. Its replacement
+    // must not also have been disabled by an overlapping group request.
+    expect(readManifestAt(fake.profileDir).dsh?.profile?.bundles).toContain('dsh-swap')
+    expect(patchNow() ?? '').not.toContain('swap-chat')
+    expect(hot.disabled.has('dsh-swap')).toBe(false)
+    const retry = await bed.dispatch('POST', '/dsh-market/groups', { action: 'toggle', name: 'work', enabled: false })
+    expect(retry.status).toBe(200)
+    expect(readManifestAt(fake.profileDir).dsh?.profile?.bundles ?? []).not.toContain('dsh-swap')
+    expect(patchNow()).toContain('swap-chat')
+  })
+
   it('does not stop a swapping bundle\'s rows while the rows it replaced are still off (#1010)', async () => {
     // The CLI Worker plugin disables the stock `ui-*` rows and brings its own.
     // Stopping its rows first, one by one, leaves a window with NEITHER set of
@@ -9752,6 +9799,48 @@ describe('custom groups (#60)', () => {
     const off = await bed.dispatch('POST', '/dsh-market/groups', { action: 'toggle', name: 'looks', enabled: false })
     expect(off.status).toBe(200)
     expect(hot.disabled.has('theme-a')).toBe(true)
+  })
+
+  it.each([
+    { phase: 'classification', failWrite: false },
+    { phase: 'activation', failWrite: true },
+  ])('holds the group lock during theme $phase and releases it after completion (#1228)', async ({ phase, failWrite }) => {
+    for (const name of ['theme-a', 'theme-b']) {
+      fake.repos[`github:o/${name}`] = { name, manifest: { dsh: {}, main: 'index.js' }, artifacts: ['index.js'] }
+      expect((await bed.dispatch('POST', '/dsh-market/install', { url: `https://github.com/o/${name}` })).status).toBe(200)
+    }
+    await bed.dispatch('POST', '/dsh-market/groups', { action: 'create', name: 'looks' })
+    await bed.dispatch('POST', '/dsh-market/groups', { action: 'set-members', name: 'looks', members: ['theme-a'] })
+    let release!: () => void
+    let entered!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const started = new Promise<void>(resolve => { entered = resolve })
+    // activateTheme classifies themes again after the route's first lookup.
+    if (phase === 'activation') registryModule.loadRegistry.mockResolvedValueOnce(REGISTRY)
+    registryModule.loadRegistry.mockImplementationOnce(async () => {
+      entered()
+      await gate
+      return REGISTRY
+    })
+    const writer = vi.spyOn(hotModule, 'writeMarketState')
+    if (failWrite) writer.mockImplementationOnce(() => { throw new Error('test: state write failed') })
+    const toggle = bed.dispatch('POST', '/dsh-market/groups', { action: 'toggle', name: 'looks', enabled: true })
+    let competing: Awaited<ReturnType<Testbed['dispatch']>> | undefined
+    let result: Awaited<ReturnType<Testbed['dispatch']>> | undefined
+    try {
+      await started
+      competing = await bed.dispatch('POST', '/dsh-market/snapshots', {})
+    } finally {
+      release()
+      result = await toggle
+      writer.mockRestore()
+    }
+    expect.soft(competing?.status).toBe(409)
+    expect.soft(competing?.json).toMatchObject({ busy: true })
+    expect(result.status).toBe(failWrite ? 500 : 200)
+    if (failWrite) expect(result.json.error).toBe('test: state write failed')
+    else expect(hot.mounts).toEqual(['theme-a'])
+    expect((await bed.dispatch('POST', '/dsh-market/snapshots', {})).status).toBe(200)
   })
 })
 
@@ -11490,8 +11579,10 @@ describe('Agent-safe drain mode (#411)', () => {
     } finally { drainBed.dispose() }
   })
 
-  it('keeps one mutation lane while a deferred operation waits', async () => {
+  it('keeps one mutation lane for updates and group switches while a deferred operation waits (#1228)', async () => {
     await seedInstalledLoop()
+    await bed.dispatch('POST', '/dsh-market/groups', { action: 'create', name: 'work' })
+    await bed.dispatch('POST', '/dsh-market/groups', { action: 'set-members', name: 'work', members: ['dsh-loop'] })
     advanceLatest('1.2.0')
     const agent = new FakeAgent('main', 'running')
     const drainBed = createTestbed({}, undefined, agentsService([agent]))
@@ -11502,6 +11593,13 @@ describe('Agent-safe drain mode (#411)', () => {
       expect(second.status).toBe(409)
       expect(second.json.failureCode).toBe('OPERATION_BUSY')
       expect(second.json.agentsBusy).toBeUndefined()
+
+      const before = readFileSync(join(fake.profileDir, 'package.json'), 'utf8')
+      const group = await drainBed.dispatch('POST', '/dsh-market/groups', { action: 'toggle', name: 'work', enabled: false })
+      expect.soft(group.status).toBe(409)
+      expect.soft(group.json).toMatchObject({ busy: true, failureCode: 'OPERATION_BUSY' })
+      expect.soft(readFileSync(join(fake.profileDir, 'package.json'), 'utf8')).toBe(before)
+      expect.soft(hot.disabled.has('dsh-loop')).toBe(false)
 
       agent.finishTurn()
       await settled(drainBed, String(accepted.json.operationId))
