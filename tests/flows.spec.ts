@@ -7811,7 +7811,7 @@ describe('a `disabled: !!js` guard survives the toggle (#1175)', () => {
   const manifestPath = (): string => join(profileDir('web'), 'package.json')
 
   /** A loader entry the running host would hold for one row. */
-  function entry(name: string, id: string, disabled: boolean | null): Testbed['loaderEntries'][number] {
+  function entry(name: string, id: string | number, disabled: boolean | null): Testbed['loaderEntries'][number] {
     const row: Testbed['loaderEntries'][number] = {
       options: { id, name, disabled } as never,
       fiber: disabled === true ? undefined : {},
@@ -7903,6 +7903,31 @@ describe('a `disabled: !!js` guard survives the toggle (#1175)', () => {
     expect(guarded.options.disabled).toBe(true)
     expect(plain.options.disabled).toBeNull()
     expect(plain.fiber).toBeDefined()
+  })
+
+  it('leaves an expression-guarded row with a numeric YAML id off while enabling its sibling', async () => {
+    const name = 'dsh-guarded-number'
+    bed.dispose()
+    seedPackage(name, [
+      '- insert:',
+      '    - id: ordinary-row',
+      `      name: '${name}'`,
+      '    - id: 42',
+      `      name: '${name}/guarded'`,
+      '      disabled: !!js "true"',
+    ])
+    bed = createTestbed()
+    const ordinary = entry(name, 'ordinary-row', true)
+    const guarded = entry(`${name}/guarded`, 42, true)
+    bed.loaderEntries.push(ordinary, guarded)
+
+    const on = await bed.dispatch('POST', '/dsh-market/toggle', { name, enabled: true })
+
+    expect(on.status).toBe(200)
+    expect(ordinary.fiber).toBeDefined()
+    expect(guarded.update).not.toHaveBeenCalled()
+    expect(guarded.options.disabled).toBe(true)
+    expect(guarded.fiber).toBeUndefined()
   })
 })
 
