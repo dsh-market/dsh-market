@@ -637,6 +637,7 @@ function escapeRegExp(value: string): string {
 }
 
 const MARKET_ROW_MARKER = '# dsh-market'
+const COMPONENT_MODULE_RE = /^@?[A-Za-z0-9_.~-]+(?:\/[A-Za-z0-9_.~-]+)*$/u
 
 function moduleNameLine(name: string): string {
   return `  name: '${name}' ${MARKET_ROW_MARKER}`
@@ -659,6 +660,7 @@ function rewriteRowBlocks(
   replace: (block: string, name: string | null) => string,
   expected: string | null = null,
   owner: string | null = expected,
+  componentsOnly = false,
 ): string {
   const id = escapeRegExp(rowId)
   const idLine = new RegExp(`^- id: (?:${id}|'${id}'|"${id}")[ \t]*$`, 'u')
@@ -669,15 +671,20 @@ function rewriteRowBlocks(
   for (let index = 0; index < lines.length; index += 1) {
     if (!idLine.test(lines[index]!.replace(/\r?\n$/u, ''))) continue
     const flagIndex = nextPatchContentLine(lines, index + 1)
-    const flag = /^ {2}disabled: (true|false)[ \t]*(?:\r?\n)?$/u.exec(lines[flagIndex] ?? '')
+    const flag = /^ {2}disabled: (true|false)(?:[ \t]+# dsh-market package-switch (\S+))?[ \t]*(?:\r?\n)?$/u.exec(lines[flagIndex] ?? '')
     if (flag === null || (disabled !== 'any' && flag[1] !== disabled)) continue
+    const componentOwner = flag[2]
+    if (componentsOnly && componentOwner === undefined) continue
+    if (componentOwner !== undefined && componentOwner !== owner) continue
     let lastKey = flagIndex
     let name: string | null = null
     let following = nextPatchContentLine(lines, lastKey + 1)
     const marker = /^ {2}name: (['"])([^'"]+)\1[ \t]+# dsh-market[ \t]*(?:\r?\n)?$/u.exec(lines[following] ?? '')
     if (marker !== null) {
       name = marker[2]!
-      if (!NPM_NAME_RE.test(name) || !rowApplies(name, expected) || !rowApplies(name, owner)) continue
+      const validName = componentOwner === undefined ? NPM_NAME_RE : COMPONENT_MODULE_RE
+      if (!validName.test(name) || !rowApplies(name, expected)
+        || (componentOwner === undefined && !rowApplies(name, owner))) continue
       lastKey = following
       following = nextPatchContentLine(lines, lastKey + 1)
     }
@@ -688,6 +695,101 @@ function rewriteRowBlocks(
     index = lastKey
   }
   return result + text.slice(copied)
+}
+
+interface ComponentSwitchPatch {
+  before: string
+  resumed: string
+  rows: ReadonlyMap<string, string | null>
+  suspended: boolean
+  customized: boolean
+  keepOff: ReadonlySet<string>
+  ownOff: ReadonlySet<string>
+}
+
+/**
+ * View the user's component choices without the temporary package-wide
+ * disable overrides. A named override the official page changed to false
+ * is a new choice, so only the still-disabled market overrides are removed.
+ */
+export function readComponentSwitchPatch(
+  patchPath: string,
+  packageName: string,
+  rows: ReadonlyMap<string, string | null>,
+  bundleDecides: ReadonlySet<string>,
+): ComponentSwitchPatch | null {
+  let before = ''
+  try {
+    before = readPatchText(patchPath)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return null
+  }
+  let resumed = before
+  for (const [id, expected] of rows) {
+    resumed = rewriteRowBlocks(resumed, id, 'true', () => '', expected, packageName, true)
+  }
+  const parsed = parsePatchText(withPlaceholderRestored(resumed))
+  if (parsed === null) return null
+  const choices = new Map<string, boolean | 'expression'>()
+  for (const item of parsed) {
+    if (item === null || typeof item !== 'object') continue
+    const insert = (item as { insert?: unknown }).insert
+    for (const row of Array.isArray(insert) ? insert as unknown[] : [item]) {
+      if (row === null || typeof row !== 'object') continue
+      const { id, name, disabled } = row as { id?: unknown; name?: unknown; disabled?: unknown }
+      if (typeof id !== 'string' || !rows.has(id) || !rowApplies(name, rows.get(id) ?? null)) continue
+      if (typeof disabled === 'boolean') choices.set(id, disabled)
+      else if (disabled !== null && typeof disabled === 'object' && '__jsExpr' in disabled) choices.set(id, 'expression')
+    }
+  }
+  const keepOff = new Set<string>()
+  const ownOff = new Set<string>()
+  for (const id of rows.keys()) {
+    const choice = choices.get(id)
+    if (choice === true) ownOff.add(id)
+    if (choice === true || choice === 'expression' || (choice !== false && bundleDecides.has(id))) keepOff.add(id)
+  }
+  const customized = [...choices].some(([id, choice]) => choice !== true || !bundleDecides.has(id))
+  return { before, resumed, rows, suspended: before !== resumed, customized, keepOff, ownOff }
+}
+
+/** Only the switch's own overrides are written or removed. Keep the user's
+ * component flags and accompanying configuration in the file verbatim. */
+export function writeComponentSwitchPatch(
+  patchPath: string,
+  packageName: string,
+  patch: ComponentSwitchPatch,
+  enabled: boolean,
+): Promise<{ ok: boolean; reason: string | null }> {
+  return queuedWrite(async () => {
+    let latest = ''
+    try {
+      latest = readPatchText(patchPath)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        return { ok: false, reason: '无法读取组件配置 / could not read the component settings' }
+      }
+    }
+    if (latest !== patch.before) {
+      return { ok: false, reason: '组件配置刚刚发生变化，请重试 / the component settings just changed, please retry' }
+    }
+    if (enabled) {
+      return patch.suspended
+        ? writePatchFile(patchPath, withPlaceholderRestored(patch.resumed))
+        : { ok: true, reason: null }
+    }
+    const overrides: string[] = []
+    for (const [id, name] of patch.rows) {
+      if (patch.ownOff.has(id)) continue
+      if (!ROW_ID_RE.test(id)) {
+        return { ok: false, reason: `行 id 含特殊字符,不支持写入补丁层 / row id ${id} cannot be written to the patch layer` }
+      }
+      const marker = `${MARKET_ROW_MARKER} package-switch ${packageName}`
+      const qualifiedName = name !== null && COMPONENT_MODULE_RE.test(name) ? moduleNameLine(name) + '\n' : ''
+      overrides.push(`- id: ${id}\n  disabled: true ${marker}\n${qualifiedName}`)
+    }
+    return appendPatchEntry(patchPath, overrides.join(''), patch.resumed)
+  })
 }
 
 /**
@@ -970,7 +1072,7 @@ export function removeRowBlocks(patchPath: string, rowIds: readonly string[], pa
     text = readPatchText(patchPath)
   } catch { return { ok: true, reason: null } } // no file, nothing to remove
   let next = text
-  for (const rowId of rowIds) next = rewriteRowBlocks(next, rowId, 'any', () => '', packageName)
+  for (const rowId of rowIds) next = rewriteRowBlocks(next, rowId, 'any', () => '', null, packageName)
   if (next === text) return { ok: true, reason: null }
   const written = writePatchFile(patchPath, withPlaceholderRestored(next))
   if (written.ok) logEvent('info', 'patch', `removed patch rows for ${rowIds.join(', ')}`)

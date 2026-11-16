@@ -82,6 +82,25 @@ describe('hotMount finds a patch the package declares in a subdirectory (#646)',
     }
   })
 
+  it('does not hot-mount a component the profile keeps disabled (#1150)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dshm-hot-'))
+    const name = 'dsh-test-component-hold'
+    try {
+      const pkg = join(dir, 'node_modules', name)
+      mkdirSync(pkg, { recursive: true })
+      writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name }))
+      writeFileSync(join(pkg, 'cordis.patch.yml'),
+        `- insert:\n    - id: main\n      name: ${name}\n    - id: extra\n      name: ${name}/extra\n`)
+      const plugin = vi.fn((_plugin: unknown, _config: { path: string }) => ctx.plugin())
+      expect((await hotMount({ plugin }, dir, name, new Set(['extra']))).ok).toBe(true)
+      const config = plugin.mock.calls[0]![1]
+      expect(load(readFileSync(fileURLToPath(config.path), 'utf8'))).toEqual([{ id: 'mkt-main', name }])
+    } finally {
+      await hotUnmount(name)
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('still reports a package with neither a patch nor a client surface', async () => {
     // The message the reporter saw must survive for the packages it is
     // actually true of — a bare dependency with no dsh surface at all.

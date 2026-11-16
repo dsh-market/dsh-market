@@ -38,8 +38,8 @@ export interface ThemeHost {
 /** Manages theme exclusivity for one profile. */
 export interface ThemeManager {
   installedThemeNames(): Promise<Set<string>>
-  setEntryDisabled(name: string, disabledFlag: boolean, requireLive?: boolean, rejectPending?: boolean): Promise<boolean>
-  activateTheme(name: string): Promise<ThemeActivationResult>
+  setEntryDisabled(name: string, disabledFlag: boolean, requireLive?: boolean, rejectPending?: boolean, keepOff?: ReadonlySet<string>): Promise<boolean>
+  activateTheme(name: string, keepOff?: ReadonlySet<string>): Promise<ThemeActivationResult>
 }
 
 interface ThemeActivationResult {
@@ -239,7 +239,9 @@ export function createThemeManager(
    *
    * @returns true when a matching live entry was found and updated.
    */
-  async function setEntryDisabled(name: string, disabledFlag: boolean, requireLive = false, rejectPending = false): Promise<boolean> {
+  async function setEntryDisabled(
+    name: string, disabledFlag: boolean, requireLive = false, rejectPending = false, keepOff?: ReadonlySet<string>,
+  ): Promise<boolean> {
     const previous: { entry: LoaderEntry; disabled: boolean | null | undefined; live: boolean }[] = []
     try {
       let found = false
@@ -268,6 +270,7 @@ export function createThemeManager(
       for (const entry of matchingEntries(name)) {
         if (expressionIds !== null && expressionIds.has(loaderEntryId(entry))) continue
         matched = true
+        if (!disabledFlag && keepOff?.has(loaderEntryId(entry).split(':').at(-1) ?? '')) continue
         if (!disabledFlag && uncertainEntries.has(entry)) {
           throw new LifecycleWaitError('loader entry: runtime state is uncertain; retry disabling before enabling')
         }
@@ -355,7 +358,7 @@ export function createThemeManager(
    * theme keeps neither: it never came up, and leaving it out of the disable
    * set is what lets the next attempt try it again.
    */
-  async function activateTheme(name: string): Promise<ThemeActivationResult> {
+  async function activateTheme(name: string, keepOff?: ReadonlySet<string>): Promise<ThemeActivationResult> {
     const stopFailedMount = async (theme: string): Promise<boolean> =>
       !listHotMounts().includes(theme) || await hotUnmount(theme)
     const themes = await installedThemeNames()
@@ -377,8 +380,8 @@ export function createThemeManager(
       reason = hotMountFailure(name, activeProfileDir)
       if (reason === null) return { ok: true }
     } else {
-      if (await setEntryDisabled(name, false)) return { ok: true }
-      const mount = await hotMount(host, activeProfileDir, name)
+      if (await setEntryDisabled(name, false, false, false, keepOff)) return { ok: true }
+      const mount = await hotMount(host, activeProfileDir, name, keepOff)
       if (mount.ok) return { ok: true }
       reason = mount.retained === true ? mount.reason : null
     }

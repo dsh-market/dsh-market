@@ -19,7 +19,8 @@ import { join } from 'node:path'
 import {
   carrierRowIds, composedRowName,
   foreignRowIds, disableRow, enableRow, findUserPatchPath, isProtectedModule, packagePatchFlags,
-  readUserPatchState, removeRowBlocks, rowFlagApplies, rowIdsForPackage, userPatchPackageReferences, type PatchHost,
+  readComponentSwitchPatch, readUserPatchState, removeRowBlocks, rowFlagApplies, rowIdsForPackage,
+  userPatchPackageReferences, writeComponentSwitchPatch, type PatchHost,
 } from '../src/patch.ts'
 
 function patchDir(): string {
@@ -849,6 +850,41 @@ describe('market-owned named switch rows (#1196)', () => {
 
       expect((await enableRow(patch, 'workbench', { expectedName })).ok).toBe(true)
       expect(readPatch(dir)).toBe(stale)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('multi-component package switch (#1150)', () => {
+  it('keeps an official component enable and user choices when lifting the other market overrides', async () => {
+    const dir = patchDir()
+    try {
+      const path = join(dir, 'cordis.patch.yml')
+      const name = 'test-components'
+      const names = new Map([['main', name], ['panel', `${name}/panel`], ['extra', `${name}/extra`]])
+      const userPatch = '- id: extra\n  disabled: true\n  config:\n    keep: true\n'
+      writeFileSync(path, userPatch)
+      const off = readComponentSwitchPatch(path, name, names, new Set())
+      expect(off).not.toBeNull()
+      expect((await writeComponentSwitchPatch(path, name, off!, false)).ok).toBe(true)
+      const paused = readFileSync(path, 'utf8')
+      expect(load(paused)).toEqual([
+        { id: 'extra', disabled: true, config: { keep: true } },
+        { id: 'main', disabled: true, name },
+        { id: 'panel', disabled: true, name: `${name}/panel` },
+      ])
+      // A qualified override has a name, so the official writer keeps the
+      // row and flips the literal disable flag rather than dropping it.
+      const external = paused.replace('- id: panel\n  disabled: true', '- id: panel\n  disabled: false')
+      writeFileSync(path, external)
+      const on = readComponentSwitchPatch(path, name, names, new Set())
+      expect(on?.keepOff).toEqual(new Set(['extra']))
+      expect((await writeComponentSwitchPatch(path, name, on!, true)).ok).toBe(true)
+      expect(load(readFileSync(path, 'utf8'))).toEqual([
+        { id: 'extra', disabled: true, config: { keep: true } },
+        { id: 'panel', disabled: false, name: `${name}/panel` },
+      ])
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
