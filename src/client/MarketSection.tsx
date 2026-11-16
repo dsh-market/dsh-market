@@ -57,6 +57,7 @@ import { exportMarketLog } from './self-check.ts'
 import { readInstalledSort, readSortChoice, rememberInstalledSort, rememberSortChoice } from './sort-preference.ts'
 import type { HostNavigationStore } from './host-navigation.ts'
 import type { SidebarEntry } from './sidebar-entry.ts'
+import { parseSourceUrl } from '../sources.ts'
 import {
   installCommandFor, hostCompatibilityKey,
   api, applyGithubRouting, avatarColor, catalogEntryForInstalled, entryForDep, failureText, githubRouteCandidates, groupSwitchState, installedForCatalog, isGenerationSpec, isInstalled, localizeBilingual, localizeBilingualList, looksTerminal, matchInstalledName, orderedCategories, pluginCategories,
@@ -600,46 +601,108 @@ type ResolvedNotes = (
   | { kind: 'none' }
 ) & { history?: { items: Array<NoteRelease & { version: string }>; partial: boolean } }
 
+function notesReleaseBody(release: NoteRelease | null | undefined): string {
+  return typeof release?.body === 'string' && release.body.trim() !== '' ? release.body : ''
+}
+
+/** Bind a supplied release page to the repository and the selected release tag. */
+function notesReleasePage(repo: string | undefined, release?: NoteRelease): string | null {
+  if (repo === undefined) return null
+  const canonicalRepo = repo.replace(/\.git$/iu, '')
+  if (canonicalRepo.split('/').some(segment => segment === '' || segment === '.' || segment === '..')) return null
+  const releasesPath = '/' + canonicalRepo + '/releases'
+  const releasesUrl = 'https://github.com' + releasesPath
+  if (release?.url && release.tag) {
+    try {
+      const page = new URL(release.url)
+      const tagPrefix = releasesPath + '/tag/'
+      if (page.origin === 'https://github.com' && page.username === '' && page.password === ''
+        && page.pathname.slice(0, tagPrefix.length).toLowerCase() === tagPrefix.toLowerCase()
+        && decodeURIComponent(page.pathname.slice(tagPrefix.length)) === release.tag) {
+        return page.origin + page.pathname
+      }
+    } catch { /* Recorded page is unusable; send the reader to the repository's releases. */ }
+  }
+  return releasesUrl
+}
+
 function UpdateNotesContent({ notes, name, target, repoUrl, t, lang }: {
   notes: ResolvedNotes; name: string; target: string | null; repoUrl: string | null; t: Translate; lang: 'zh' | 'en'
 }) {
-  const history = notes.history?.items ?? []
+  const items = notes.history?.items ?? []
   const release = notes.kind === 'release' ? notes.release : null
   const beyondTarget = notes.kind === 'release' ? notes.beyondTarget : undefined
   const versionOf = (value: string | null) => value?.replace(/^v(?=\d)/i, '')
   // Git history is returned only for an exact release match, which is the first item.
-  const expandedVersion = target !== null && /^[0-9a-f]{40}$/i.test(target) ? history[0]?.version : versionOf(target)
-  const legacyRelease = release !== null && beyondTarget === undefined && !history.some(item =>
-    (release.tag !== null && release.tag === item.tag) || versionOf(release.tag) === versionOf(item.version))
-    ? release : null
+  const expandedVersion = target !== null && /^[0-9a-f]{40}$/i.test(target) ? items[0]?.version : versionOf(target)
+  const snapshotRelease = beyondTarget === undefined ? release : null
+  const matchesSnapshot = (item: typeof items[number]): boolean => snapshotRelease !== null &&
+    ((snapshotRelease.tag !== null && snapshotRelease.tag === item.tag) || versionOf(snapshotRelease.tag) === versionOf(item.version))
+  const legacyRelease = items.some(matchesSnapshot) ? null : snapshotRelease
+  const snapshotBody = notesReleaseBody(snapshotRelease)
+  const history = snapshotBody !== ''
+    ? items.map(item => notesReleaseBody(item) === '' && item.tag !== null && item.tag === snapshotRelease?.tag
+      ? { ...item, body: snapshotBody } : item)
+    : items
   const commits = notes.kind === 'commits' || (notes.kind === 'release' && (notes.commits?.items.length ?? 0) > 0)
     ? notes.commits : undefined
+  const sourceUrl = notes.kind === 'source' ? notes.sourceUrl ?? '' : ''
+  const repo = parseSourceUrl(repoUrl ?? '')?.repo ?? parseSourceUrl(sourceUrl)?.repo
+  const targetRelease = history.find(item => versionOf(item.version) === expandedVersion)
+    ?? (expandedVersion !== undefined && versionOf(legacyRelease?.tag ?? null) === expandedVersion
+      ? legacyRelease ?? undefined : undefined)
+  const targetBodyMissing = targetRelease !== undefined && notesReleaseBody(targetRelease) === ''
+  const legacyBody = notesReleaseBody(legacyRelease)
+  const historyIncomplete = notes.history?.partial === true
+    || (history.length === 0 && (notes.history !== undefined || notes.kind === 'none'))
+  const showSourceNotice = notes.kind === 'source' && (!historyIncomplete || notes.reason === 'unreadable')
+  const missingNotes = (message: string, page: string | null) => (
+    <>
+      {message}{lang === 'zh' ? '' : ' '}
+      {page === null ? t('notesHistoryRetry') : (
+        <a className={css.notesSourceLink} href={page} target="_blank" rel="noreferrer">{t('notesHistoryReleasePage')}</a>
+      )}
+    </>
+  )
+  const historyHint = !targetBodyMissing && historyIncomplete && !showSourceNotice
+    ? <div className={css.spec}>{missingNotes(t(history.length === 0 ? 'notesHistoryEmpty' : 'notesHistoryPartial'), notesReleasePage(repo))}</div>
+    : null
 
   return (
     <div className={css.notesBody}>
-      {(history.length > 0 || notes.history?.partial === true) && (
+      {history.length === 0 && historyHint}
+      {history.length > 0 && (
         <section className={css.notesHistory}>
           <div className={css.notesMeta}><strong>{t('notesHistory')}</strong></div>
-          {notes.history?.partial === true && <div className={css.spec}>{t('notesHistoryPartial')}</div>}
+          {historyHint}
           {history.map(item => (
             <details key={item.version} className={css.notesEntry} open={versionOf(item.version) === expandedVersion}>
               <summary className={css.notesSummary}>
                 <strong>{displayLatest(item.version)}</strong>
                 {item.publishedAt !== null && <span className={css.notesDate}>{' · ' + item.publishedAt.slice(0, 10)}</span>}
               </summary>
-              <div className={css.notesRendered}>{item.body.trim() ? renderMarkdown(item.body) : t('notesHistoryVersionMissing')}</div>
+              <div className={css.notesRendered}>
+                {notesReleaseBody(item) !== '' ? renderMarkdown(item.body)
+                  : item === targetRelease
+                    ? missingNotes(t('notesHistoryVersionMissing'), notesReleasePage(repo, item))
+                    : t('notesHistoryVersionMissing')}
+              </div>
             </details>
           ))}
         </section>
       )}
-      {legacyRelease !== null && (
+      {legacyRelease !== null && (legacyBody !== '' || historyHint === null) && (
         <>
           <div className={css.notesMeta}>
             <strong>{t('notesRelease')}</strong>
             {legacyRelease.tag !== null && <span>{legacyRelease.tag}</span>}
             {legacyRelease.publishedAt !== null && <span>{' · ' + legacyRelease.publishedAt.slice(0, 10)}</span>}
           </div>
-          <div className={css.notesRendered}>{renderMarkdown(legacyRelease.body || t('notesNone'))}</div>
+          <div className={css.notesRendered}>
+            {legacyBody === ''
+              ? missingNotes(t('notesHistoryVersionMissing'), notesReleasePage(repo, legacyRelease))
+              : renderMarkdown(legacyBody)}
+          </div>
         </>
       )}
       {commits !== undefined && (
@@ -675,7 +738,7 @@ function UpdateNotesContent({ notes, name, target, repoUrl, t, lang }: {
           </ul>
         </>
       )}
-      {notes.kind === 'source' && (
+      {notes.kind === 'source' && showSourceNotice && (
         <div className={css.spec}>
           {t(notes.reason === 'unavailable'
             ? 'notesLoadFail'
@@ -685,9 +748,7 @@ function UpdateNotesContent({ notes, name, target, repoUrl, t, lang }: {
             : notes.reason !== 'unavailable' && <>{lang === 'zh' ? '' : ' '}{t('notesSourceNoLink')}</>}
         </div>
       )}
-      {notes.kind === 'none' && history.length === 0 && notes.history?.partial !== true && (
-        <div className={css.spec}>{t('notesNone')}</div>
-      )}
+
       {release !== null && beyondTarget !== undefined && (
         <section className={css.notesHeld}>
           <div className={css.notesMeta}>
@@ -696,7 +757,7 @@ function UpdateNotesContent({ notes, name, target, repoUrl, t, lang }: {
             {release.publishedAt !== null && <span>{' · ' + release.publishedAt.slice(0, 10)}</span>}
           </div>
           <div className={css.spec}>{t('notesBeyondTarget').replace('{0}', release.tag ?? '').replace('{1}', beyondTarget)}</div>
-          <div className={css.notesRendered}>{renderMarkdown(release.body || t('notesNone'))}</div>
+          <div className={css.notesRendered}>{notesReleaseBody(release) === '' ? t('notesHistoryVersionMissing') : renderMarkdown(release.body)}</div>
         </section>
       )}
     </div>

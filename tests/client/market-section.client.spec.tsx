@@ -663,7 +663,7 @@ describe('api() base resolution (#345)', () => {
     })
 
     it.each([
-      ['en', en, 'This update', 'Not available yet', 'Some release notes are missing.'],
+      ['en', en, 'This update', 'Not yet available to install', 'Some release notes are missing.'],
       ['zh', zh, '本次更新', '暂不可安装', '部分版本的说明暂缺。'],
       ['ja', ja, '今回の更新', 'まだインストールできないバージョン', '一部のリリースノートがありません。'],
     ] as const)('separates the target history and held release in %s', async (lang, dict, historyTitle, heldTitle, partialHint) => {
@@ -704,6 +704,93 @@ describe('api() base resolution (#345)', () => {
       expect(within(held).getByText('Held version notes')).toBeTruthy()
       expect(held.textContent).not.toContain('Target notes')
       expect(fetchMock.mock.calls.some(([url]) => url === '/dsh-market/changelog?name=dsh-loop&target=1.2.0')).toBe(true)
+    })
+
+    function loadHistory(changelog: object, repo: string | null = 'https://github.com/alice/dsh-loop/tree/main/plugins/loop') {
+      return stubFetch({
+        '/dsh-market/registry': { source: 'live', registry: {
+          ...REGISTRY,
+          plugins: repo === null ? [] : [{ ...REGISTRY.plugins[0], url: repo }],
+        } },
+        '/dsh-market/installed': { profile: 'desktop', installed: { 'dsh-loop': '^1.0.0' }, live: [] },
+        '/dsh-market/updates': { updates: { 'dsh-loop': {
+          kind: 'npm', current: '1.0.0', latest: '1.2.0', updateAvailable: true,
+        } } },
+        '/dsh-market/changelog': changelog,
+      })
+    }
+
+    it('shows one temporary empty-state hint with a verified repository link, without an empty section', async () => {
+      const fetchMock = loadHistory({ kind: 'none', history: { partial: true, items: [] } })
+      render(<MarketSection {...props()} preferredSubsectionId="installed" />)
+      const button = await screen.findByRole('button', { name: re(en.notesLink) })
+      expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith('/dsh-market/changelog'))).toBe(false)
+      fireEvent.click(button)
+      const dialog = within(await screen.findByRole('dialog'))
+      const link = await dialog.findByRole('link', { name: 'View release page' })
+      expect(link.getAttribute('href')).toBe('https://github.com/alice/dsh-loop/releases')
+      expect(dialog.queryByText(en.notesHistory)).toBeNull()
+      expect(dialog.queryByText(en.notesNone)).toBeNull()
+      expect(fetchMock.mock.calls.filter(([url]) => String(url).startsWith('/dsh-market/changelog'))).toHaveLength(1)
+    })
+
+    it('invites retry when no published release page can be identified', async () => {
+      loadHistory({ kind: 'none', history: { partial: true, items: [] } }, null)
+      render(<MarketSection {...props()} preferredSubsectionId="installed" />)
+      fireEvent.click(await screen.findByRole('button', { name: re(en.notesLink) }))
+      const dialog = within(await screen.findByRole('dialog'))
+      expect(await dialog.findByText(/Try again later\./u)).toBeTruthy()
+      expect(dialog.queryByText(en.notesHistory)).toBeNull()
+      expect(dialog.queryByRole('link', { name: 'View release page' })).toBeNull()
+    })
+
+    it.each([
+      ['https://github.com/alice/dsh-loop/releases/tag/v1.2.0', 'https://github.com/alice/dsh-loop/releases/tag/v1.2.0'],
+      ['https://github.com/another/project/releases/tag/v1.2.0', 'https://github.com/alice/dsh-loop/releases'],
+    ])('keeps the empty target expanded and links only to the expected repository (%s)', async (url, href) => {
+      loadHistory({
+        kind: 'none',
+        history: { partial: true, items: [
+          { ...release('1.2.0', '  '), version: '1.2.0', url },
+          { ...release('1.1.0', 'Earlier release is available'), version: '1.1.0' },
+        ] },
+      })
+      render(<MarketSection {...props()} preferredSubsectionId="installed" />)
+      fireEvent.click(await screen.findByRole('button', { name: re(en.notesLink) }))
+      const dialog = within(await screen.findByRole('dialog'))
+      const link = await dialog.findByRole('link', { name: 'View release page' })
+      expect(link.getAttribute('href')).toBe(href)
+      expect(link.closest('details')?.open).toBe(true)
+      expect(dialog.getByText('Earlier release is available').closest('details')?.open).toBe(false)
+      expect(dialog.queryByText(en.notesHistoryPartial)).toBeNull()
+    })
+
+    it('keeps one actionable hint when the old snapshot also lacks a body', async () => {
+      loadHistory({
+        kind: 'release', release: { ...release('1.1.0', ''), body: null },
+        history: { partial: true, items: [] },
+      })
+      render(<MarketSection {...props()} preferredSubsectionId="installed" />)
+      fireEvent.click(await screen.findByRole('button', { name: re(en.notesLink) }))
+      const dialog = within(await screen.findByRole('dialog'))
+      expect(await dialog.findAllByRole('link', { name: en.notesHistoryReleasePage })).toHaveLength(1)
+      expect(dialog.queryByText(en.notesHistory)).toBeNull()
+      expect(dialog.queryByText(en.notesNone)).toBeNull()
+    })
+
+    it('uses the confirmed snapshot when the same target has an empty history body', async () => {
+      loadHistory({
+        kind: 'release',
+        release: release('1.2.0', 'Confirmed snapshot body'),
+        history: { partial: true, items: [{ ...release('1.2.0', '  '), version: '1.2.0' }] },
+      })
+      render(<MarketSection {...props()} preferredSubsectionId="installed" />)
+      fireEvent.click(await screen.findByRole('button', { name: re(en.notesLink) }))
+      const dialog = within(await screen.findByRole('dialog'))
+      const notes = await dialog.findAllByText('Confirmed snapshot body')
+      expect(notes).toHaveLength(1)
+      expect(notes[0]?.closest('details')?.open).toBe(true)
+      expect(dialog.queryByText(en.notesHistoryVersionMissing)).toBeNull()
     })
 
     it('uses the proposed latest and avoids repeating a release already present in history', async () => {
@@ -747,7 +834,7 @@ describe('api() base resolution (#345)', () => {
       expect(dialog.getByText('Recent commit')).toBeTruthy()
     })
 
-    it('keeps the source link when no releases in range could be read', async () => {
+    it('links to the repository releases when no history in range could be read', async () => {
       stubFetch({
         '/dsh-market/installed': { profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: [] },
         '/dsh-market/updates': { updates: { 'dsh-loop': {
@@ -760,8 +847,9 @@ describe('api() base resolution (#345)', () => {
       })
       render(<MarketSection {...props()} preferredSubsectionId="installed" />)
       fireEvent.click(await screen.findByRole('button', { name: re(en.notesLink) }))
-      expect(await screen.findByText(en.notesHistoryPartial)).toBeTruthy()
-      expect(screen.getByRole('link', { name: en.notesSourceLink }).getAttribute('href')).toBe('https://github.com/alice/dsh-loop')
+      expect(await screen.findByText(en.notesHistoryEmpty)).toBeTruthy()
+      expect(screen.queryByText(en.notesHistory)).toBeNull()
+      expect(screen.getByRole('link', { name: en.notesHistoryReleasePage }).getAttribute('href')).toBe('https://github.com/alice/dsh-loop/releases')
     })
 
     it.each([false, true])('keeps the second plugin open when the previous request settles late (reject: %s)', async (rejectOld) => {

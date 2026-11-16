@@ -451,6 +451,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			notesRelease: "版本说明",
 			notesHistory: "本次更新",
 			notesHistoryPartial: "部分版本的说明暂缺。",
+			notesHistoryEmpty: "暂时读不到本次更新的版本说明。",
+			notesHistoryReleasePage: "查看发布页",
+			notesHistoryRetry: "请稍后重试。",
 			notesHistoryVersionMissing: "这个版本暂无更新说明。",
 			notesHeldRelease: "暂不可安装",
 			notesBeyondTarget: "下面是 {0} 的说明，这个版本还不能装。现在更新到的是 {1}。",
@@ -1293,8 +1296,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			notesRelease: "Release notes",
 			notesHistory: "This update",
 			notesHistoryPartial: "Some release notes are missing.",
+			notesHistoryEmpty: "Release notes for this update are unavailable right now.",
+			notesHistoryReleasePage: "View release page",
+			notesHistoryRetry: "Try again later.",
 			notesHistoryVersionMissing: "Release notes for this version are missing.",
-			notesHeldRelease: "Not available yet",
+			notesHeldRelease: "Not yet available to install",
 			notesBeyondTarget: "These are the notes for {0}, which cannot be installed yet. Update installs {1}.",
 			notesCommits: "Commits",
 			notesCommitsRecent: "Recent commits (update range unconfirmed, for reference only)",
@@ -2135,6 +2141,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			notesRelease: "リリースノート",
 			notesHistory: "今回の更新",
 			notesHistoryPartial: "一部のリリースノートがありません。",
+			notesHistoryEmpty: "今回の更新のリリースノートを現在確認できません。",
+			notesHistoryReleasePage: "リリースページを見る",
+			notesHistoryRetry: "しばらくしてから再試行してください。",
 			notesHistoryVersionMissing: "このバージョンのリリースノートはありません。",
 			notesHeldRelease: "まだインストールできないバージョン",
 			notesBeyondTarget: "以下は {0} の説明です。このバージョンはまだ入れられません。今回の更新で入るのは {1} です。",
@@ -9720,28 +9729,72 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			flushFence();
 			return out;
 		}
+		function notesReleaseBody(release) {
+			return typeof release?.body === "string" && release.body.trim() !== "" ? release.body : "";
+		}
+		/** Bind a supplied release page to the repository and the selected release tag. */
+		function notesReleasePage(repo, release) {
+			if (repo === void 0) return null;
+			const canonicalRepo = repo.replace(/\.git$/iu, "");
+			if (canonicalRepo.split("/").some((segment) => segment === "" || segment === "." || segment === "..")) return null;
+			const releasesPath = "/" + canonicalRepo + "/releases";
+			const releasesUrl = "https://github.com" + releasesPath;
+			if (release?.url && release.tag) try {
+				const page = new URL(release.url);
+				const tagPrefix = releasesPath + "/tag/";
+				if (page.origin === "https://github.com" && page.username === "" && page.password === "" && page.pathname.slice(0, tagPrefix.length).toLowerCase() === tagPrefix.toLowerCase() && decodeURIComponent(page.pathname.slice(tagPrefix.length)) === release.tag) return page.origin + page.pathname;
+			} catch {}
+			return releasesUrl;
+		}
 		function UpdateNotesContent({ notes, name, target, repoUrl, t, lang }) {
-			const history = notes.history?.items ?? [];
+			const items = notes.history?.items ?? [];
 			const release = notes.kind === "release" ? notes.release : null;
 			const beyondTarget = notes.kind === "release" ? notes.beyondTarget : void 0;
 			const versionOf = (value) => value?.replace(/^v(?=\d)/i, "");
-			const expandedVersion = target !== null && /^[0-9a-f]{40}$/i.test(target) ? history[0]?.version : versionOf(target);
-			const legacyRelease = release !== null && beyondTarget === void 0 && !history.some((item) => release.tag !== null && release.tag === item.tag || versionOf(release.tag) === versionOf(item.version)) ? release : null;
+			const expandedVersion = target !== null && /^[0-9a-f]{40}$/i.test(target) ? items[0]?.version : versionOf(target);
+			const snapshotRelease = beyondTarget === void 0 ? release : null;
+			const matchesSnapshot = (item) => snapshotRelease !== null && (snapshotRelease.tag !== null && snapshotRelease.tag === item.tag || versionOf(snapshotRelease.tag) === versionOf(item.version));
+			const legacyRelease = items.some(matchesSnapshot) ? null : snapshotRelease;
+			const snapshotBody = notesReleaseBody(snapshotRelease);
+			const history = snapshotBody !== "" ? items.map((item) => notesReleaseBody(item) === "" && item.tag !== null && item.tag === snapshotRelease?.tag ? {
+				...item,
+				body: snapshotBody
+			} : item) : items;
 			const commits = notes.kind === "commits" || notes.kind === "release" && (notes.commits?.items.length ?? 0) > 0 ? notes.commits : void 0;
+			const sourceUrl = notes.kind === "source" ? notes.sourceUrl ?? "" : "";
+			const repo = parseSourceUrl(repoUrl ?? "")?.repo ?? parseSourceUrl(sourceUrl)?.repo;
+			const targetRelease = history.find((item) => versionOf(item.version) === expandedVersion) ?? (expandedVersion !== void 0 && versionOf(legacyRelease?.tag ?? null) === expandedVersion ? legacyRelease ?? void 0 : void 0);
+			const targetBodyMissing = targetRelease !== void 0 && notesReleaseBody(targetRelease) === "";
+			const legacyBody = notesReleaseBody(legacyRelease);
+			const historyIncomplete = notes.history?.partial === true || history.length === 0 && (notes.history !== void 0 || notes.kind === "none");
+			const showSourceNotice = notes.kind === "source" && (!historyIncomplete || notes.reason === "unreadable");
+			const missingNotes = (message, page) => /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
+				message,
+				lang === "zh" ? "" : " ",
+				page === null ? t("notesHistoryRetry") : /* @__PURE__ */ (0, react_jsx_runtime.jsx)("a", {
+					className: Market_module_css_default.notesSourceLink,
+					href: page,
+					target: "_blank",
+					rel: "noreferrer",
+					children: t("notesHistoryReleasePage")
+				})
+			] });
+			const historyHint = !targetBodyMissing && historyIncomplete && !showSourceNotice ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+				className: Market_module_css_default.spec,
+				children: missingNotes(t(history.length === 0 ? "notesHistoryEmpty" : "notesHistoryPartial"), notesReleasePage(repo))
+			}) : null;
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 				className: Market_module_css_default.notesBody,
 				children: [
-					(history.length > 0 || notes.history?.partial === true) && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("section", {
+					history.length === 0 && historyHint,
+					history.length > 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("section", {
 						className: Market_module_css_default.notesHistory,
 						children: [
 							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 								className: Market_module_css_default.notesMeta,
 								children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("strong", { children: t("notesHistory") })
 							}),
-							notes.history?.partial === true && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
-								className: Market_module_css_default.spec,
-								children: t("notesHistoryPartial")
-							}),
+							historyHint,
 							history.map((item) => /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("details", {
 								className: Market_module_css_default.notesEntry,
 								open: versionOf(item.version) === expandedVersion,
@@ -9753,12 +9806,12 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									})]
 								}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 									className: Market_module_css_default.notesRendered,
-									children: item.body.trim() ? renderMarkdown(item.body) : t("notesHistoryVersionMissing")
+									children: notesReleaseBody(item) !== "" ? renderMarkdown(item.body) : item === targetRelease ? missingNotes(t("notesHistoryVersionMissing"), notesReleasePage(repo, item)) : t("notesHistoryVersionMissing")
 								})]
 							}, item.version))
 						]
 					}),
-					legacyRelease !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+					legacyRelease !== null && (legacyBody !== "" || historyHint === null) && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 						className: Market_module_css_default.notesMeta,
 						children: [
 							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("strong", { children: t("notesRelease") }),
@@ -9767,7 +9820,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						]
 					}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 						className: Market_module_css_default.notesRendered,
-						children: renderMarkdown(legacyRelease.body || t("notesNone"))
+						children: legacyBody === "" ? missingNotes(t("notesHistoryVersionMissing"), notesReleasePage(repo, legacyRelease)) : renderMarkdown(legacyBody)
 					})] }),
 					commits !== void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
 						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
@@ -9822,7 +9875,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 							})]
 						}, v.version))
 					})] }),
-					notes.kind === "source" && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+					notes.kind === "source" && showSourceNotice && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 						className: Market_module_css_default.spec,
 						children: [t(notes.reason === "unavailable" ? "notesLoadFail" : notes.reason === "unreadable" ? "notesSourceUnreadable" : "notesSource"), typeof notes.sourceUrl === "string" && /^https?:\/\//i.test(notes.sourceUrl) ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [lang === "zh" ? "" : " ", /* @__PURE__ */ (0, react_jsx_runtime.jsx)("a", {
 							className: Market_module_css_default.notesSourceLink,
@@ -9831,10 +9884,6 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 							rel: "noreferrer",
 							children: t("notesSourceLink")
 						})] }) : notes.reason !== "unavailable" && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [lang === "zh" ? "" : " ", t("notesSourceNoLink")] })]
-					}),
-					notes.kind === "none" && history.length === 0 && notes.history?.partial !== true && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
-						className: Market_module_css_default.spec,
-						children: t("notesNone")
 					}),
 					release !== null && beyondTarget !== void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("section", {
 						className: Market_module_css_default.notesHeld,
@@ -9853,7 +9902,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 							}),
 							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 								className: Market_module_css_default.notesRendered,
-								children: renderMarkdown(release.body || t("notesNone"))
+								children: notesReleaseBody(release) === "" ? t("notesHistoryVersionMissing") : renderMarkdown(release.body)
 							})
 						]
 					})
