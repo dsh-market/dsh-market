@@ -7715,7 +7715,6 @@ export function MarketSection(props: MarketSectionProps) {
               for (const record of recordsRef.current) {
                 if (record.hostOperationId !== undefined
                   && (record.state === 'done' || record.state === 'warned' || record.state === 'failed')) {
-                  dismissedHostRef.current.add(record.hostOperationId)
                   rememberDismissedHostId(record.hostOperationId)
                 }
               }
@@ -7724,7 +7723,6 @@ export function MarketSection(props: MarketSectionProps) {
             onCancel={record => doCancel(record)}
             onDismiss={record => {
               if (record.hostOperationId !== undefined) {
-                dismissedHostRef.current.add(record.hostOperationId)
                 rememberDismissedHostId(record.hostOperationId)
               }
               setRecords(list => drop(list, record.id))

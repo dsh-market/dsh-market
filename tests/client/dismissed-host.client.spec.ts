@@ -15,7 +15,7 @@ import {
 } from '../../src/client/dismissed-host.ts'
 
 /** A reload: the cache goes, storage stays. */
-function reload(): Set<string> {
+function reload(): ReadonlySet<string> {
   resetDismissedHostCache()
   return dismissedHostIdSet()
 }
@@ -28,6 +28,13 @@ beforeEach(() => {
 describe('cleared host rows', () => {
   it('keeps a cleared id across a reload', () => {
     rememberDismissedHostId('op-1')
+    expect([...reload()]).toEqual(['op-1'])
+  })
+
+  it('updates a reader that was mounted before the dismissal', () => {
+    const mounted = dismissedHostIdSet()
+    rememberDismissedHostId('op-1')
+    expect(mounted.has('op-1')).toBe(true)
     expect([...reload()]).toEqual(['op-1'])
   })
 
