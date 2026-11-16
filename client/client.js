@@ -544,12 +544,12 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			startupRepairTitle: "启动时处理的中断更新",
 			startupRepairReinstalled: "已重新装好。",
 			startupRepairVerified: "已核对，现有版本完整。",
-			startupRepairPending: "下次启动时会再试。",
+			startupRepairPending: "下次启动时会检查是否还能重试。",
 			startupRepairAbandoned: "已停止自动重试。请从「设置 → 插件」重新安装。",
-			startupRepairVersion: "现有版本与原计划不同。请到「已安装」核对。",
-			startupRepairRefused: "桌面端拒绝重新安装。",
-			startupRepairNotComposed: "文件已装好，桌面端未能加载插件。",
-			startupRepairTimeout: "桌面端等待超时。",
+			startupRepairVersion: "现有版本与原计划不同，已保留现有版本。下次启动时会重新核对。请到「已安装」检查。",
+			startupRepairRefused: "桌面端拒绝重新安装。请到「设置 → 插件」检查是否可以安装该插件。",
+			startupRepairNotComposed: "文件已装好，桌面端未能加载插件。请到「已安装」检查插件状态。",
+			startupRepairTimeout: "等待桌面端操作完成时超时。请等操作结束后到「已安装」确认结果。",
 			startupRepairUnknown: "重新安装失败。导出日志可查看原因。",
 			checkoutRecoveryTitle: "本地链接未恢复",
 			checkoutSourceRetained: "源码仍在，链接未恢复。",
@@ -1393,13 +1393,13 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			startupRepairBadge: "Startup recovery",
 			startupRepairTitle: "Interrupted updates at startup",
 			startupRepairReinstalled: "Reinstalled.",
-			startupRepairVerified: "An installed version was intact.",
-			startupRepairPending: "The market will try again on the next start.",
+			startupRepairVerified: "The installed version is intact.",
+			startupRepairPending: "The next start will check whether another retry is available.",
 			startupRepairAbandoned: "Automatic retries stopped. Reinstall it from Settings → Plugins.",
-			startupRepairVersion: "The installed version differs from the planned update. Check Installed.",
-			startupRepairRefused: "The desktop app refused to reinstall it.",
-			startupRepairNotComposed: "The files were installed, but the desktop app could not load the plugin.",
-			startupRepairTimeout: "The desktop app took too long.",
+			startupRepairVersion: "The installed version differs from the planned update and has been kept. DSH will check it again on the next start. Check Installed for the current version.",
+			startupRepairRefused: "The desktop app refused to reinstall the plugin. Check whether it can be installed in Settings → Plugins.",
+			startupRepairNotComposed: "The files are installed. The desktop app could not load the plugin. Check its status in Installed.",
+			startupRepairTimeout: "Timed out waiting for the desktop app. When the operation finishes, check Installed.",
 			startupRepairUnknown: "Reinstalling failed. Export the log to see why.",
 			checkoutRecoveryTitle: "Local link needs attention",
 			checkoutSourceRetained: "The source files are still there. The link was not restored.",
@@ -2244,12 +2244,12 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			startupRepairTitle: "起動時に確認した中断済みの更新",
 			startupRepairReinstalled: "再インストールしました。",
 			startupRepairVerified: "インストール済みのバージョンが正常なことを確認しました。",
-			startupRepairPending: "次回の起動時に再試行します。",
+			startupRepairPending: "次回起動時に再試行できるか確認します。",
 			startupRepairAbandoned: "自動での再試行を終了しました。「設定 → プラグイン」から再インストールしてください。",
-			startupRepairVersion: "インストール済みのバージョンが更新予定と異なります。「インストール済み」で確認してください。",
-			startupRepairRefused: "デスクトップアプリが再インストールを拒否しました。",
-			startupRepairNotComposed: "ファイルはインストールされましたが、デスクトップアプリでプラグインを読み込めませんでした。",
-			startupRepairTimeout: "デスクトップアプリの応答がタイムアウトしました。",
+			startupRepairVersion: "更新予定とは異なるため、現在のバージョンはそのままです。次回起動時に再確認します。「インストール済み」で確認してください。",
+			startupRepairRefused: "デスクトップアプリが再インストールを拒否しました。「設定 → プラグイン」でインストールできるか確認してください。",
+			startupRepairNotComposed: "ファイルはインストール済みです。デスクトップアプリでプラグインを読み込めませんでした。「インストール済み」で状態を確認してください。",
+			startupRepairTimeout: "デスクトップアプリの操作完了を待機中にタイムアウトしました。操作が終わってから「インストール済み」で結果を確認してください。",
 			startupRepairUnknown: "再インストールに失敗しました。ログをエクスポートして原因を確認してください。",
 			checkoutRecoveryTitle: "ローカルリンクを復元できませんでした",
 			checkoutSourceRetained: "ソースは残っています。リンクを復元できませんでした。",
@@ -6100,6 +6100,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const wrapRef = (0, react.useRef)(null);
 			const summary = summarize(records);
 			const busy = summary.running + summary.queued > 0;
+			const showStartupRepairBadge = !busy && summary.attention === 0 && startupRepairEntries.some((entry) => entry.state === "pending" || entry.state === "abandoned");
+			const attention = summary.attention > 0 || showStartupRepairBadge || needsCheckoutRecovery;
 			const waitingOnHost = records.some((record) => record.hostOperationId !== void 0 && record.state === "queued" && record.waitSince !== void 0);
 			const [, setClock] = (0, react.useState)(0);
 			(0, react.useEffect)(() => {
@@ -6125,15 +6127,14 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			}, [open, setOpen]);
 			const waitingOnAgents = summary.running === 0 && summary.blocked > 0;
 			const batchLabel = waitingOnAgents ? t("opWaitingAgents").replace("{0}", String(summary.blocked)) : `${t("opInstalling")} ${String(summary.progressed)}/${String(summary.total)}`;
-			const label = busy ? batchLabel : summary.attention > 0 ? `${String(summary.attention)} ${t("opNeedsYou")}` : hasStartupRepair ? `${t("opTitle")} · ${t("startupRepairBadge")}` : t("opTitle");
-			const needsAttention = summary.attention > 0 || needsCheckoutRecovery;
-			const quiet = records.length === 0 && !hasStartupRepair && !needsCheckoutRecovery && !open;
+			const label = busy ? batchLabel : summary.attention > 0 ? `${String(summary.attention)} ${t("opNeedsYou")}` : showStartupRepairBadge ? `${t("opTitle")} · ${t("startupRepairBadge")}` : t("opTitle");
+			const quiet = records.length === 0 && !showStartupRepairBadge && !needsCheckoutRecovery && !open;
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 				className: Market_module_css_default.opWrap,
 				ref: wrapRef,
 				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("button", {
 					type: "button",
-					className: quiet ? `${Market_module_css_default.opEntry} ${Market_module_css_default.opEntryQuiet}` : needsAttention ? `${Market_module_css_default.opEntry} ${Market_module_css_default.opEntryAlert}` : Market_module_css_default.opEntry,
+					className: quiet ? `${Market_module_css_default.opEntry} ${Market_module_css_default.opEntryQuiet}` : attention ? `${Market_module_css_default.opEntry} ${Market_module_css_default.opEntryAlert}` : Market_module_css_default.opEntry,
 					"aria-expanded": open,
 					onClick: () => setOpen(quiet ? true : !open),
 					children: [
@@ -6146,7 +6147,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 							className: open ? `${Market_module_css_default.opChevron} ${Market_module_css_default.opChevronOpen}` : Market_module_css_default.opChevron,
 							children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(IconChevronDownOutline14, { size: 12 })
 						}),
-						!quiet && needsAttention && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { className: Market_module_css_default.opDot })
+						!quiet && attention && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { className: Market_module_css_default.opDot })
 					]
 				}), open && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 					className: Market_module_css_default.opPanel,

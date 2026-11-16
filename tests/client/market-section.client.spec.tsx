@@ -16,6 +16,7 @@ import css from '../../src/client/Market.module.css'
 import { DISMISSED_HOST_STORAGE_KEY, resetDismissedHostCache } from '../../src/client/dismissed-host.ts'
 import { downloadStatsText } from '../../src/client/download-stats.ts'
 import { createHostNavigation } from '../../src/client/host-navigation.ts'
+import { OperationsPanel } from '../../src/client/OperationsPanel.tsx'
 import { SEARCH_DELAY_MS } from '../../src/client/SearchInput.tsx'
 import {
   pluginScreenshotCandidates, resetGithubRouting, resetScreenshotsCache, restartHintKey, setGithubRoutes,
@@ -11706,6 +11707,75 @@ describe('OwnerAvatar icon', () => {
 })
 
 describe('interrupted updates at startup (#1167)', () => {
+  it('keeps successful outcomes in the panel without a recovery badge', async () => {
+    stubFetch({
+      '/dsh-market/status': {
+        active: false, busy: false, boot: 'boot-1', installed: {}, pnpm: true,
+        startupRepair: {
+          id: 'profile-start-1', revision: 2, checking: false, entries: [
+            { name: 'reinstalled-plugin', state: 'reinstalled' },
+            { name: 'intact-plugin', state: 'verified' },
+          ],
+        },
+      },
+    })
+    render(<MarketSection {...props()} />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Tasks/u }))
+    await screen.findByText('intact-plugin')
+    expect(screen.getByRole('button', { name: 'Tasks', exact: true })).toBeTruthy()
+    expect(screen.getByText('The installed version is intact.')).toBeTruthy()
+    expect(screen.getByText('reinstalled-plugin')).toBeTruthy()
+  })
+
+  it.each([
+    ['en', en, /has been kept.*next start.*Installed/u],
+    ['zh', zh, /已保留.*下次启动.*已安装/u],
+    ['ja', ja, /そのまま.*次回起動時.*インストール済み/u],
+  ] as const)('explains the next step after a version mismatch in %s', async (language, dictionary, message) => {
+    stubFetch({
+      '/dsh-market/status': {
+        active: false, busy: false, boot: 'boot-1', installed: {}, pnpm: true,
+        startupRepair: {
+          id: 'profile-start-1', revision: 2, checking: false,
+          entries: [{ name: 'changed-plugin', state: 'pending', cause: 'version-changed' }],
+        },
+      },
+    })
+    const localeSnapshot = { active: language }
+    render(<MarketSection {...props()}
+      t={key => (dictionary as Record<string, string>)[key] ?? key}
+      locale={{ subscribe: () => () => {}, getSnapshot: () => localeSnapshot }}
+    />)
+    const button = await screen.findByRole('button', { name: dictionary.opTitle + ' · ' + dictionary.startupRepairBadge })
+    fireEvent.click(button)
+    expect(await screen.findByText(message)).toBeTruthy()
+    expect(screen.queryByText(dictionary.startupRepairPending)).toBeNull()
+  })
+
+
+  it('shows the running task before startup results that need attention', () => {
+    const noop = () => {}
+    render(<OperationsPanel
+      t={props().t}
+      lang="en"
+      describe={name => ({ title: name })}
+      records={[{ id: 'working', name: 'working-plugin', kind: 'install', state: 'running' }]}
+      startupRepairEntries={[{ name: 'lost-update', state: 'abandoned' }]}
+      open
+      onOpenChange={noop}
+      replacing={false}
+      envReady
+      onClearSettled={noop}
+      onCancel={noop}
+      onDismiss={noop}
+      onRefresh={noop}
+      onResolveConflict={noop}
+    />)
+    const trigger = screen.getByRole('button', { name: /^Installing /u })
+    expect(trigger.textContent).not.toContain(en.startupRepairBadge)
+    expect(screen.getByText('lost-update')).toBeTruthy()
+  })
+
   it('reads the completed startup report while the task list is otherwise idle', async () => {
     vi.useFakeTimers()
     try {
@@ -11732,8 +11802,8 @@ describe('interrupted updates at startup (#1167)', () => {
       fireEvent.click(tasks)
       expect(screen.getByText('Interrupted updates at startup')).toBeTruthy()
       expect(screen.getByText('reinstalled-plugin')).toBeTruthy()
-      expect(screen.getByText('An installed version was intact.')).toBeTruthy()
-      expect(screen.getByText('The desktop app took too long.')).toBeTruthy()
+      expect(screen.getByText('The installed version is intact.')).toBeTruthy()
+      expect(screen.getByText(/When the operation finishes, check Installed/u)).toBeTruthy()
       expect(screen.getByText(/Automatic retries stopped/)).toBeTruthy()
       const reads = fetchCalls.filter(call => call.path === '/dsh-market/status').length
       await act(async () => { await vi.advanceTimersByTimeAsync(6000) })

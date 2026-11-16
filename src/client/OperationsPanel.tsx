@@ -264,6 +264,9 @@ export function OperationsPanel(props: OperationsPanelProps) {
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const summary = summarize(records)
   const busy = summary.running + summary.queued > 0
+  const showStartupRepairBadge = !busy && summary.attention === 0
+    && startupRepairEntries.some(entry => entry.state === 'pending' || entry.state === 'abandoned')
+  const attention = summary.attention > 0 || showStartupRepairBadge || needsCheckoutRecovery
   // The elapsed wait has to move while the Host is holding Agents; the status
   // poll is every 2 s, so a local second tick keeps the row honest without
   // adding requests.
@@ -312,12 +315,11 @@ export function OperationsPanel(props: OperationsPanelProps) {
     ? batchLabel
     : summary.attention > 0
       ? `${String(summary.attention)} ${t('opNeedsYou')}`
-      : hasStartupRepair ? `${t('opTitle')} · ${t('startupRepairBadge')}` : t('opTitle')
-  const needsAttention = summary.attention > 0 || needsCheckoutRecovery
+      : showStartupRepairBadge ? `${t('opTitle')} · ${t('startupRepairBadge')}` : t('opTitle')
 
   // Always render inside .opWrap so the tab-row bottom margin is stable —
   // the old idle-only <button> skipped the wrapper and jumped on first open.
-  const quiet = records.length === 0 && !hasStartupRepair && !needsCheckoutRecovery && !open
+  const quiet = records.length === 0 && !showStartupRepairBadge && !needsCheckoutRecovery && !open
 
   return (
     <div className={css.opWrap} ref={wrapRef}>
@@ -325,7 +327,7 @@ export function OperationsPanel(props: OperationsPanelProps) {
         type="button"
         className={quiet
           ? `${css.opEntry} ${css.opEntryQuiet}`
-          : needsAttention
+          : attention
             ? `${css.opEntry} ${css.opEntryAlert}`
             : css.opEntry}
         aria-expanded={open}
@@ -340,7 +342,7 @@ export function OperationsPanel(props: OperationsPanelProps) {
             <IconChevronDownOutline14 size={12} />
           </span>
         )}
-        {!quiet && needsAttention && <span className={css.opDot} />}
+        {!quiet && attention && <span className={css.opDot} />}
       </button>
       {open && (
         <div className={css.opPanel}>
