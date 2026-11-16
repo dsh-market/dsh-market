@@ -1388,6 +1388,45 @@ export function removeProfileBundle(profileDirectory: string, name: string): boo
   return true
 }
 
+/** Undo one switch's removal without replacing other manifest fields or a
+ * bundle order edited by another writer. The caller holds the profile lock. */
+export function restoreRemovedProfileBundle(
+  profileDirectory: string,
+  name: string,
+  before: ProfileManifestSnapshot,
+): boolean {
+  if (!before.profileBundles.present || !Array.isArray(before.profileBundles.value)) return false
+  const previous: unknown[] = before.profileBundles.value
+  const originalIndex = previous.indexOf(name)
+  if (originalIndex === -1) return false
+  const manifestPath = join(profileDirectory, 'package.json')
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+    dependencies?: Record<string, string>
+    dsh?: { profile?: { bundles?: unknown } }
+  }
+  const profile = manifest.dsh?.profile
+  const current: unknown = profile?.bundles
+  if (profile === undefined || !Array.isArray(current) || current.includes(name)
+    || manifest.dependencies?.[name] !== before.dependencies[name]) return false
+
+  const remaining = previous.filter(entry => entry !== name)
+  if (isDeepStrictEqual(current, remaining)) {
+    profile.bundles = previous
+  } else {
+    // Nearby surviving entries keep the old position meaningful even
+    // when someone has added, removed, or moved other bundles.
+    if (previous.lastIndexOf(name) !== originalIndex) return false
+    const earlier = new Set(previous.slice(0, originalIndex))
+    const later = new Set(previous.slice(originalIndex + 1))
+    const left = current.findLastIndex(entry => earlier.has(entry))
+    const right = current.findIndex(entry => later.has(entry))
+    if ((left === -1 && right === -1) || (right !== -1 && left >= right)) return false
+    current.splice(right === -1 ? left + 1 : right, 0, name)
+  }
+  writeManifestAtomic(manifestPath, manifest)
+  return true
+}
+
 /**
  * Re-add a bundle to `dsh.profile.bundles` after a carrier toggle-off (#224).
  * Idempotent: a bundle already present is left untouched. The name is appended

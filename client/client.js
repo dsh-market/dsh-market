@@ -15096,6 +15096,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						return true;
 					}
 					const text = (v) => typeof v === "string" ? v : v == null ? "" : JSON.stringify(v);
+					if (body.partial === true) {
+						setGroupPayload(body);
+						refreshInstalled();
+					}
 					setInstallError(text(body.error) || t("toggleFail"));
 					if (Array.isArray(body.restartMembers) && body.restartMembers.length > 0) setToggleRestart((n) => n + body.restartMembers.length);
 					if (Array.isArray(body.refreshMembers) && body.refreshMembers.length > 0) setRefreshNames((names) => [.../* @__PURE__ */ new Set([...names, ...body.refreshMembers])]);

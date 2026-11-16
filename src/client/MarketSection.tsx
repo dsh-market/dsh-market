@@ -6343,6 +6343,10 @@ export function MarketSection(props: MarketSectionProps) {
           return true
         }
         const text = (v: unknown) => typeof v === 'string' ? v : v == null ? '' : JSON.stringify(v)
+        if (body.partial === true) {
+          setGroupPayload(body)
+          refreshInstalled()
+        }
         setInstallError(text(body.error) || t('toggleFail'))
         if (Array.isArray(body.restartMembers) && body.restartMembers.length > 0) {
           setToggleRestart(n => n + body.restartMembers.length)
