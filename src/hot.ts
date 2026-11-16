@@ -1032,11 +1032,16 @@ export function listHotMounts(): string[] {
   return [...hotHandles.keys()]
 }
 
+function mountedFile(packageName: string, profileDir?: string): string | undefined {
+  const file = hotTreeOf.get(packageName)
+  if (file === undefined || profileDir === undefined) return file
+  return dirname(fileURLToPath(file)) === join(profileDir, HOT_DIR) ? file : undefined
+}
+
 /** Report a failed child only when it belongs to this package's hot-mount tree. */
 export function hotMountFailure(packageName: string, profileDir?: string): string | null {
-  const file = hotTreeOf.get(packageName)
+  const file = mountedFile(packageName, profileDir)
   if (file === undefined) return null
-  if (profileDir !== undefined && dirname(fileURLToPath(file)) !== join(profileDir, HOT_DIR)) return null
   const tree = hotTrees.get(file)
   if (typeof tree?.entries !== 'function') return null
   const failed: string[] = []
@@ -1313,7 +1318,8 @@ export async function hotMount(ctx: HotContext, profileDir: string, packageName:
         break
       }
     }
-    let rows: HotRow[] | null
+    let rows: HotRow[]
+    let clientOnly = false
     if (texts !== null && texts.length > 0) {
       const scan = scanPatch(texts.join('\n'))
       if (scan.blocker !== null) {
@@ -1344,9 +1350,15 @@ export async function hotMount(ctx: HotContext, profileDir: string, packageName:
           reason: '该包无 bundle patch 且未声明 dsh.client,没有可热挂载的内容 / no bundle patch and no dsh.client surface — nothing to hot-mount',
         }
       }
-      shimNames.add(packageName)
+      clientOnly = true
       rows = [{ id: `client-${packageName.replace(/[^A-Za-z0-9_.-]/g, '-')}`, name: packageName }]
     }
+    // Recheck the patch even when a tree is already live, but retain its
+    // handle. Registering another include here would orphan the original.
+    if (mountedFile(packageName, profileDir) !== undefined) {
+      return mountResult(hotMountFailure(packageName, profileDir))
+    }
+    if (clientOnly) shimNames.add(packageName)
     const dir = join(profileDir, HOT_DIR)
     mkdirSync(dir, { recursive: true, mode: 0o700 })
     hotSequence += 1

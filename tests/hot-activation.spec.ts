@@ -111,6 +111,29 @@ it('reports a failed child by its own entry, while keeping the mounted siblings 
   }
 })
 
+it.each([false, true])('reuses the healthy tree when only inserts remain (patch changed: %s)', async changed => {
+  const dir = mkdtempSync(join(tmpdir(), 'dshm-hot-reuse-'))
+  const name = 'dsh-reuse-patch'
+  const { host, dispose } = hostWithEntries([entry('mkt-dsh-reuse-patch', ACTIVE)])
+  try {
+    installFixture(dir, name)
+    expect(await hotMount(host, dir, name)).toEqual({ ok: true, reason: null })
+
+    if (changed) {
+      const patch = join(dir, 'node_modules', name, 'cordis.patch.yml')
+      writeFileSync(patch, '- insert:\n    - id: replacement\n      name: dsh-reuse-patch\n')
+    }
+    expect(await hotMount(host, dir, name)).toEqual({ ok: true, reason: null })
+    expect(host.plugin).toHaveBeenCalledOnce()
+    expect(dispose).not.toHaveBeenCalled()
+    expect(await hotUnmount(name)).toBe(true)
+    expect(dispose).toHaveBeenCalledOnce()
+  } finally {
+    await hotUnmount(name)
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 it('checks a replacement patch when the previously mounted tree is healthy', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'dshm-hot-replacement-'))
   const name = 'dsh-replacement-patch'
