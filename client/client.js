@@ -4142,10 +4142,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			return sort === "newest" ? right - left : left - right;
 		}
 		/** Masonry column count for a given content width. `maxColumns` caps Discover(3) vs Installed(2). */
-		function masonryColumnCount(width, maxColumns, minColWidth = 290) {
-			if (!Number.isFinite(width) || width <= 0) return 1;
+		function masonryColumnCount(width, maxColumns, minColWidth = 290, minColumns = 1) {
+			if (!Number.isFinite(width) || width <= 0) return minColumns;
 			const fitted = Math.floor((width + 10) / minColWidth);
-			return Math.min(maxColumns, Math.max(1, fitted));
+			return Math.min(maxColumns, Math.max(minColumns, fitted));
 		}
 		//#endregion
 		//#region src/client/InstallToast.tsx
@@ -10300,7 +10300,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		* Two columns at the settings dialog's width; the sidebar page is wider and
 		* gets a third once each column still has room for a full card.
 		*/
-		function Masonry({ items, render, maxColumns = 3, className }) {
+		function Masonry({ items, render, maxColumns = 3, minColumns = 2, className }) {
 			const wide = useMediaWide();
 			const ref = (0, react.useRef)(null);
 			const [columns, setColumns] = (0, react.useState)(2);
@@ -10308,11 +10308,15 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				const el = ref.current;
 				if (el === null || typeof ResizeObserver === "undefined") return;
 				const observer = new ResizeObserver(([entry]) => {
-					if (entry !== void 0) setColumns(masonryColumnCount(entry.contentRect.width, maxColumns));
+					if (entry !== void 0) setColumns(masonryColumnCount(entry.contentRect.width, maxColumns, 290, minColumns));
 				});
 				observer.observe(el);
 				return () => observer.disconnect();
-			}, [wide, maxColumns]);
+			}, [
+				wide,
+				maxColumns,
+				minColumns
+			]);
 			const masonryClass = [Market_module_css_default.masonry, className].filter(Boolean).join(" ");
 			if (!wide) return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 				className: masonryClass,
@@ -18271,6 +18275,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 								children: t("installedEmpty")
 							}) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)(Masonry, {
 								maxColumns: 2,
+								minColumns: 1,
 								className: Market_module_css_default.masonryInstalled,
 								items: orderedInstalledEntries.filter(([name, spec]) => {
 									const needle = qInstalled.trim().toLowerCase();
@@ -18314,7 +18319,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									const compatibility = compatibilityKey === null ? void 0 : hostCompatibility[compatibilityKey];
 									const hostChip = hostRequirementChip(compatibility, compatibilityKey, t);
 									const showIncompat = !localDev && act?.state === "incompatible";
-									const showHostRequirement = !missing && !localDev && !showIncompat && entry !== void 0;
+									const showHostRequirement = !missing && !localDev && !showIncompat && entry !== void 0 && compatibility?.requirement != null;
 									const note = notes[name];
 									const authored = authoredDescription(name, entry);
 									const theirs = showTheirs.includes(name);

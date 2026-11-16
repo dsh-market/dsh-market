@@ -12,4 +12,9 @@ describe('masonryColumnCount', () => {
     expect(masonryColumnCount(200, 2, 290)).toBe(1)
     expect(masonryColumnCount(590, 2, 290)).toBe(2)
   })
+
+  it('keeps a two-column floor when asked', () => {
+    expect(masonryColumnCount(200, 3, 290, 2)).toBe(2)
+    expect(masonryColumnCount(0, 3, 290, 2)).toBe(2)
+  })
 })

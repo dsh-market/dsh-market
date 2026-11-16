@@ -1156,10 +1156,12 @@ function ThemeCover({ plugin, onOpen, t }: {
  * Two columns at the settings dialog's width; the sidebar page is wider and
  * gets a third once each column still has room for a full card.
  */
-function Masonry<T>({ items, render, maxColumns = 3, className }: {
+function Masonry<T>({ items, render, maxColumns = 3, minColumns = 2, className }: {
   items: T[]
   render: (item: T) => ReactNode
   maxColumns?: number
+  /** Discover keeps its two-column floor; Installed may collapse to one. */
+  minColumns?: number
   className?: string
 }) {
   const wide = useMediaWide()
@@ -1169,11 +1171,11 @@ function Masonry<T>({ items, render, maxColumns = 3, className }: {
     const el = ref.current
     if (el === null || typeof ResizeObserver === 'undefined') return
     const observer = new ResizeObserver(([entry]) => {
-      if (entry !== undefined) setColumns(masonryColumnCount(entry.contentRect.width, maxColumns))
+      if (entry !== undefined) setColumns(masonryColumnCount(entry.contentRect.width, maxColumns, 290, minColumns))
     })
     observer.observe(el)
     return () => observer.disconnect()
-  }, [wide, maxColumns])
+  }, [wide, maxColumns, minColumns])
   const masonryClass = [css.masonry, className].filter(Boolean).join(' ')
   if (!wide) {
     return <div className={masonryClass}><div className={css.masonryCol}>{items.map(render)}</div></div>
@@ -9104,6 +9106,7 @@ export function MarketSection(props: MarketSectionProps) {
                         : (
                           <Masonry
                             maxColumns={2}
+                            minColumns={1}
                             className={css.masonryInstalled}
                             items={orderedInstalledEntries
                             .filter(([name, spec]) => {
@@ -9185,6 +9188,9 @@ export function MarketSection(props: MarketSectionProps) {
                             const hostChip = hostRequirementChip(compatibility, compatibilityKey, t)
                             const showIncompat = !localDev && act?.state === 'incompatible'
                             const showHostRequirement = !missing && !localDev && !showIncompat && entry !== undefined
+                              // Only a known requirement earns a chip. "undeclared" / "unknown" /
+                              // "loading" on every card is noise the user cannot act on.
+                              && compatibility?.requirement != null
                             const note = notes[name]
                             const authored = authoredDescription(name, entry)
                             const theirs = showTheirs.includes(name)

@@ -1896,8 +1896,8 @@ export function compareInstalledRows(
 }
 
 /** Masonry column count for a given content width. `maxColumns` caps Discover(3) vs Installed(2). */
-export function masonryColumnCount(width: number, maxColumns: number, minColWidth = 290): number {
-  if (!Number.isFinite(width) || width <= 0) return 1
+export function masonryColumnCount(width: number, maxColumns: number, minColWidth = 290, minColumns = 1): number {
+  if (!Number.isFinite(width) || width <= 0) return minColumns
   const fitted = Math.floor((width + 10) / minColWidth)
-  return Math.min(maxColumns, Math.max(1, fitted))
+  return Math.min(maxColumns, Math.max(minColumns, fitted))
 }

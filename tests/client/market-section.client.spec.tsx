@@ -3141,6 +3141,39 @@ describe('MarketSection (jsdom)', () => {
     })).toBe(false)
   })
 
+  it('keeps installed cards quiet when no host requirement is known (AGENTS: routine facts are not chips)', async () => {
+    const name = 'dsh-undeclared-host-chip'
+    const base = REGISTRY.plugins[0]!
+    stubFetch({
+      '/dsh-market/registry': {
+        source: 'live',
+        hostVersion: '0.1.0',
+        registry: {
+          ...REGISTRY,
+          count: REGISTRY.count + 1,
+          plugins: [...REGISTRY.plugins, { ...base, name, npm: name, url: `https://github.com/t/${name}` }],
+        },
+      },
+      '/dsh-market/installed': { profile: 'desktop', installed: { [name]: '^1.0.0' }, live: [name] },
+      '/dsh-market/updates': { updates: {
+        [name]: { kind: 'npm', version: '1.0.0', current: '1.0.0', latest: '1.0.0', updateAvailable: false },
+      } },
+      '/dsh-market/discovery-compatibility': {
+        hostVersion: '0.1.0',
+        plugins: { [name]: { status: 'unknown', basis: 'undeclared', requirement: null, declarations: [] } },
+      },
+    })
+    render(<MarketSection {...props()} preferredSubsectionId="installed" />)
+    await screen.findByText(name)
+    await waitFor(() => {
+      expect(fetchCalls.some(c => c.path === '/dsh-market/discovery-compatibility')).toBe(true)
+    })
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(screen.queryByText(en.hostRequirementUndeclared)).toBeNull()
+    expect(screen.queryByText(en.hostRequirementUnavailable)).toBeNull()
+    expect(screen.queryByText(en.hostRequirementLoading)).toBeNull()
+  })
+
   it('keeps the DSH chip visible while the note editor is open', async () => {
     const name = 'dsh-note-keeps-host-chip'
     const base = REGISTRY.plugins[0]!
