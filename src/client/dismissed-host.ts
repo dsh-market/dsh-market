@@ -54,7 +54,7 @@ function read(): string[] {
 
 function write(ids: readonly string[]): void {
   try {
-    localStorage.setItem(DISMISSED_HOST_STORAGE_KEY, JSON.stringify(ids.slice(-DISMISSED_HOST_LIMIT)))
+    localStorage.setItem(DISMISSED_HOST_STORAGE_KEY, JSON.stringify(ids))
   } catch { /* storage unavailable — memory still hides the row for this mount */ }
 }
 
@@ -65,7 +65,7 @@ let cache: Set<string> | null = null
  * set for the lifetime of the mount and asks it on every status poll, so the
  * parse happens once instead of once per render.
  */
-export function dismissedHostIdSet(): Set<string> {
+export function dismissedHostIdSet(): ReadonlySet<string> {
   cache ??= new Set(read())
   return cache
 }
@@ -73,11 +73,13 @@ export function dismissedHostIdSet(): Set<string> {
 /** The user cleared this host row: it must stay cleared across a reload. */
 export function rememberDismissedHostId(id: string): void {
   if (id === '') return
-  const ids = [...dismissedHostIdSet()]
-  if (ids.includes(id)) return
-  ids.push(id)
-  cache = new Set(ids.slice(-DISMISSED_HOST_LIMIT))
-  write([...cache])
+  const ids = cache ??= new Set(read())
+  if (ids.has(id)) return
+  // Mounted readers retain this set. Record the dismissal here so they see it
+  // immediately and the same decision is saved for the next page load.
+  ids.add(id)
+  if (ids.size > DISMISSED_HOST_LIMIT) ids.delete(ids.values().next().value!)
+  write([...ids])
 }
 
 /** Drop the memoized set so a test can start from another storage state. */

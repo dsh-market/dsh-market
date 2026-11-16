@@ -613,6 +613,8 @@ export interface PluginCommandRuntime {
    * "nothing else is running".
    */
   busy?(): boolean
+  /** A managed package command can still write after its caller times out. */
+  packageWritesSettled?(): boolean
 }
 
 /** One running package operation, however it was started. */

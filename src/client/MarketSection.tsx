@@ -54,6 +54,7 @@ import { dismissedHostIdSet, rememberDismissedHostId } from './dismissed-host.ts
 import type { OperationRecord } from './operations.ts'
 import { Diagnostics } from './Diagnostics.tsx'
 import { exportMarketLog } from './self-check.ts'
+import { readInstalledSort, readSortChoice, rememberInstalledSort, rememberSortChoice } from './sort-preference.ts'
 import type { HostNavigationStore } from './host-navigation.ts'
 import type { SidebarEntry } from './sidebar-entry.ts'
 import {
@@ -586,6 +587,120 @@ function renderMarkdown(md: string): Array<JSX.Element | string> {
   flushList()
   flushFence()
   return out
+}
+
+type NoteRelease = { tag: string | null; name: string | null; publishedAt: string | null; url: string | null; body: string }
+type NoteCommit = { sha: string; message: string; date: string | null }
+type NoteCommits = { items: NoteCommit[]; found: boolean }
+type ResolvedNotes = (
+  | { kind: 'release'; release: NoteRelease; beyondTarget?: string; commits?: NoteCommits }
+  | { kind: 'commits'; commits: NoteCommits }
+  | { kind: 'npm'; npmTimes: Array<{ version: string; date: string }> }
+  | { kind: 'source'; sourceUrl?: string | null; reason?: 'missing' | 'unavailable' | 'unreadable' }
+  | { kind: 'none' }
+) & { history?: { items: Array<NoteRelease & { version: string }>; partial: boolean } }
+
+function UpdateNotesContent({ notes, name, target, repoUrl, t, lang }: {
+  notes: ResolvedNotes; name: string; target: string | null; repoUrl: string | null; t: Translate; lang: 'zh' | 'en'
+}) {
+  const history = notes.history?.items ?? []
+  const release = notes.kind === 'release' ? notes.release : null
+  const beyondTarget = notes.kind === 'release' ? notes.beyondTarget : undefined
+  const versionOf = (value: string | null) => value?.replace(/^v(?=\d)/i, '')
+  // Git history is returned only for an exact release match, which is the first item.
+  const expandedVersion = target !== null && /^[0-9a-f]{40}$/i.test(target) ? history[0]?.version : versionOf(target)
+  const legacyRelease = release !== null && beyondTarget === undefined && !history.some(item =>
+    (release.tag !== null && release.tag === item.tag) || versionOf(release.tag) === versionOf(item.version))
+    ? release : null
+  const commits = notes.kind === 'commits' || (notes.kind === 'release' && (notes.commits?.items.length ?? 0) > 0)
+    ? notes.commits : undefined
+
+  return (
+    <div className={css.notesBody}>
+      {(history.length > 0 || notes.history?.partial === true) && (
+        <section className={css.notesHistory}>
+          <div className={css.notesMeta}><strong>{t('notesHistory')}</strong></div>
+          {notes.history?.partial === true && <div className={css.spec}>{t('notesHistoryPartial')}</div>}
+          {history.map(item => (
+            <details key={item.version} className={css.notesEntry} open={versionOf(item.version) === expandedVersion}>
+              <summary className={css.notesSummary}>
+                <strong>{displayLatest(item.version)}</strong>
+                {item.publishedAt !== null && <span className={css.notesDate}>{' · ' + item.publishedAt.slice(0, 10)}</span>}
+              </summary>
+              <div className={css.notesRendered}>{item.body.trim() ? renderMarkdown(item.body) : t('notesHistoryVersionMissing')}</div>
+            </details>
+          ))}
+        </section>
+      )}
+      {legacyRelease !== null && (
+        <>
+          <div className={css.notesMeta}>
+            <strong>{t('notesRelease')}</strong>
+            {legacyRelease.tag !== null && <span>{legacyRelease.tag}</span>}
+            {legacyRelease.publishedAt !== null && <span>{' · ' + legacyRelease.publishedAt.slice(0, 10)}</span>}
+          </div>
+          <div className={css.notesRendered}>{renderMarkdown(legacyRelease.body || t('notesNone'))}</div>
+        </>
+      )}
+      {commits !== undefined && (
+        <>
+          <div className={css.notesMeta}><strong>{t('notesCommits')}</strong></div>
+          {!commits.found && <div className={css.notesMeta}>{t('notesCommitsRecent')}</div>}
+          <ul className={css.notesList}>
+            {commits.items.map(c => (
+              <li key={c.sha} className={css.notesRow}>
+                <span className={css.notesDate}>{c.date !== null ? c.date.slice(0, 10) : ''}</span>
+                <span className={css.notesMsg}>{mdInline(c.message)}</span>
+                {repoUrl !== null && (
+                  <a className={css.notesSha} href={repoUrl + '/commit/' + c.sha}
+                    target="_blank" rel="noreferrer" title={c.message}>{c.sha.slice(0, 7)}</a>
+                )}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      {notes.kind === 'npm' && (
+        <>
+          <div className={css.notesMeta}><strong>{t('notesNpm')}</strong></div>
+          <ul className={css.notesList}>
+            {notes.npmTimes.map(v => (
+              <li key={v.version} className={css.notesRow}>
+                <span className={css.notesDate}>{v.date.slice(0, 10)}</span>
+                <a className={css.notesVer}
+                  href={`https://www.npmjs.com/package/${encodeURIComponent(name)}/v/${encodeURIComponent(v.version)}`}
+                  target="_blank" rel="noreferrer">{v.version}</a>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      {notes.kind === 'source' && (
+        <div className={css.spec}>
+          {t(notes.reason === 'unavailable'
+            ? 'notesLoadFail'
+            : notes.reason === 'unreadable' ? 'notesSourceUnreadable' : 'notesSource')}
+          {typeof notes.sourceUrl === 'string' && /^https?:\/\//i.test(notes.sourceUrl)
+            ? <>{lang === 'zh' ? '' : ' '}<a className={css.notesSourceLink} href={notes.sourceUrl} target="_blank" rel="noreferrer">{t('notesSourceLink')}</a></>
+            : notes.reason !== 'unavailable' && <>{lang === 'zh' ? '' : ' '}{t('notesSourceNoLink')}</>}
+        </div>
+      )}
+      {notes.kind === 'none' && history.length === 0 && notes.history?.partial !== true && (
+        <div className={css.spec}>{t('notesNone')}</div>
+      )}
+      {release !== null && beyondTarget !== undefined && (
+        <section className={css.notesHeld}>
+          <div className={css.notesMeta}>
+            <strong>{t('notesHeldRelease')}</strong>
+            {release.tag !== null && <span>{release.tag}</span>}
+            {release.publishedAt !== null && <span>{' · ' + release.publishedAt.slice(0, 10)}</span>}
+          </div>
+          <div className={css.spec}>{t('notesBeyondTarget').replace('{0}', release.tag ?? '').replace('{1}', beyondTarget)}</div>
+          <div className={css.notesRendered}>{renderMarkdown(release.body || t('notesNone'))}</div>
+        </section>
+      )}
+    </div>
+  )
 }
 
 export function OwnerAvatar({ name, owner, icon, className }: { name: string; owner: string; icon?: string | null; className?: string }) {
@@ -2539,6 +2654,8 @@ export function MarketSection(props: MarketSectionProps) {
    * exactly why it owes the user this sentence instead of a spinner.
    */
   const [marketGone, setMarketGone] = useState(false)
+  const [startupRepair, setStartupRepair] = useState<MarketStatus['startupRepair']>()
+  const startupRepairRequest = useRef(0)
   // Whether the page is still trying to reach the market again, and how many
   // times the user asked it to start over (#1151).
   const [reconnecting, setReconnecting] = useState(true)
@@ -2611,8 +2728,16 @@ export function MarketSection(props: MarketSectionProps) {
   const recordSeq = useRef(0)
   /** The synthetic install task rebuilt from dshm-pending after a remount. */
   const recoveredInstall = useRef<{ id: string; url: string; name?: string } | null>(null)
-  /** The synthetic task rebuilt from dshm-updating after this section remounts. */
-  const recoveredUpdateRecordId = useRef<string | null>(null)
+  /** The local task tracking dshm-updating, either awaiting its reply or recovering it. */
+  const pendingUpdate = useRef<{ recordId: string; recovering: boolean } | null>(null)
+  const mountedRef = useRef(true)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      pendingUpdate.current = null
+    }
+  }, [])
   /**
    * The install queue: agents-busy 409s become `queued` records instead of
    * failures, and drain automatically when agents go idle (see drainQueue).
@@ -2858,23 +2983,6 @@ export function MarketSection(props: MarketSectionProps) {
   const [pluginMenuUrl, setPluginMenuUrl] = useState<string | null>(null)
   const [installedMenuName, setInstalledMenuName] = useState<string | null>(null)
   const [clearingStale, setClearingStale] = useState(false)
-  /** The notes payload the server answers with, verbatim (see /changelog). */
-  type NoteRelease = { tag: string | null; name: string | null; publishedAt: string | null; url: string | null; body: string }
-  type NoteCommit = { sha: string; message: string; date: string | null }
-  interface UpdateNotes {
-    kind: 'release' | 'commits' | 'npm' | 'source' | 'none'
-    release?: NoteRelease
-    commits?: { items: NoteCommit[]; found: boolean }
-    npmTimes?: Array<{ version: string; date: string }>
-    sourceUrl?: string | null
-    reason?: 'missing' | 'unavailable' | 'unreadable'
-  }
-  type ResolvedNotes =
-    | { kind: 'release'; release: NoteRelease; beyondTarget?: string; commits?: { items: NoteCommit[]; found: boolean } }
-    | { kind: 'commits'; commits: { items: NoteCommit[]; found: boolean } }
-    | { kind: 'npm'; npmTimes: Array<{ version: string; date: string }> }
-    | { kind: 'source'; sourceUrl?: string | null; reason?: 'missing' | 'unavailable' | 'unreadable' }
-    | { kind: 'none' }
   interface CompatibilityNotice {
     code: 'soft-incompatible'
     risks: Array<{ plugin: string; peer: string; range: string; resolved: string; direction: string }>
@@ -2921,6 +3029,8 @@ export function MarketSection(props: MarketSectionProps) {
   const [notesFor, setNotesFor] = useState<{ name: string; current: string | null; latest: string | null; target: string | null; repoUrl: string | null } | null>(null)
   const [updateNotes, setUpdateNotes] = useState<ResolvedNotes | null>(null)
   const [notesState, setNotesState] = useState<'loading' | 'ready' | 'fail'>('loading')
+  const notesRequest = useRef<AbortController | null>(null)
+  useEffect(() => () => notesRequest.current?.abort(), [])
   // Plugin blocked by pnpm's fresh-release safety wait; arms the update-now button.
   const [staleName, setStaleName] = useState<string | null>(null)
   // Local link:/file: restore — a modal asks before swapping to the catalog.
@@ -3065,9 +3175,10 @@ export function MarketSection(props: MarketSectionProps) {
    * market's `SortField`: that one is downloads/stars/added, and none of the
    * three exist for an installed package — `added` is the catalog's
    * collection date, which is a different question from when the user
-   * installed it.
+   * installed it. The choice outlives this mount (#1142) — the mirror effect
+   * below keeps it in localStorage.
    */
-  const [installedSort, setInstalledSort] = useState<InstalledSort>('default')
+  const [installedSort, setInstalledSort] = useState<InstalledSort>(() => readInstalledSort())
   /** Catalog URLs bookmarked for later install (#414). */
   const [favoriteUrls, setFavoriteUrlsState] = useState<string[]>(() => cachedFavoriteUrls)
   const setFavoriteUrls = useCallback(cacheState(value => { cachedFavoriteUrls = value }, setFavoriteUrlsState), [])
@@ -3272,8 +3383,8 @@ export function MarketSection(props: MarketSectionProps) {
   const restoringStickRef = useRef(false)
   /** Hidden file input behind the Import button (a Button can't host an <input>). */
   const fileInputRef = useRef<HTMLInputElement | null>(null)
-  const [sortField, setSortField] = useState<SortField>('downloads')
-  const [sortDir, setSortDir] = useState<SortDir>('desc')
+  const [sortField, setSortField] = useState<SortField>(() => readSortChoice('discover').field)
+  const [sortDir, setSortDir] = useState<SortDir>(() => readSortChoice('discover').dir)
   const [timeRange, setTimeRange] = useState<TimeRange>('all')
   const setCompatibleWithHost = useCallback((next: boolean) => { discoveryScan.setEnabled(next) }, [])
   /** The profile this page is running in, for the manual command's own
@@ -3283,12 +3394,30 @@ export function MarketSection(props: MarketSectionProps) {
   const [catsOpen, setCatsOpen] = useState(false)
   /** Themes tab: independent from Discover's sort/time state above — a
    * search or sort choice in one tab has no business resetting the other. */
-  const [themeSortField, setThemeSortField] = useState<SortField>('downloads')
-  const [themeSortDir, setThemeSortDir] = useState<SortDir>('desc')
+  const [themeSortField, setThemeSortField] = useState<SortField>(() => readSortChoice('themes').field)
+  const [themeSortDir, setThemeSortDir] = useState<SortDir>(() => readSortChoice('themes').dir)
   const [themeTimeRange, setThemeTimeRange] = useState<TimeRange>('all')
-  const [favSortField, setFavSortField] = useState<SortField>('downloads')
-  const [favSortDir, setFavSortDir] = useState<SortDir>('desc')
+  const [favSortField, setFavSortField] = useState<SortField>(() => readSortChoice('favorites').field)
+  const [favSortDir, setFavSortDir] = useState<SortDir>(() => readSortChoice('favorites').dir)
   const [favTimeRange, setFavTimeRange] = useState<TimeRange>('all')
+  /**
+   * Each list's order is a display preference, not a profile setting (#1142):
+   * the choice used to live only in this component's state, so a tab switch or
+   * a reload put every list back on its default. The mirror writes the value
+   * that is on screen, which is why it also runs on the first render — a fresh
+   * profile records the default it started from, a reloaded one records the
+   * choice it restored, and neither can drift from what the user is seeing.
+   *
+   * localStorage rather than state.json: the same line the catalog's
+   * compatibility filter (`dshm-host-filter`) and the "recently added" flags
+   * (#940) take.
+   */
+  useEffect(() => {
+    rememberSortChoice('discover', { field: sortField, dir: sortDir })
+    rememberSortChoice('themes', { field: themeSortField, dir: themeSortDir })
+    rememberSortChoice('favorites', { field: favSortField, dir: favSortDir })
+    rememberInstalledSort(installedSort)
+  }, [sortField, sortDir, themeSortField, themeSortDir, favSortField, favSortDir, installedSort])
   /** WebDAV provider-preset dropdown (primitives Menu). */
   const [presetOpen, setPresetOpen] = useState(false)
   /** Install-command disclosure inside the confirm dialog. */
@@ -3784,12 +3913,16 @@ export function MarketSection(props: MarketSectionProps) {
    * with the user left to guess whether the plugin landed.
    */
   const noteMarketGone = useCallback(() => {
+    if (!mountedRef.current) return
     discoveryScan.setUnavailable()
     refreshRequest.current = 0
+    startupRepairRequest.current += 1
+    setStartupRepair(undefined)
     setCheckingUpdates(false)
     setMarketGone(true)
     setBusyUrl(null)
     setUpdatingName(null)
+    pendingUpdate.current = null
     setRemovingName(null)
     setRecords(list => list.map(record =>
       record.state === 'running' || record.state === 'queued'
@@ -3816,6 +3949,35 @@ export function MarketSection(props: MarketSectionProps) {
     }
     return await res.json() as MarketStatus
   }, [noteMarketGone])
+
+  const applyStartupRepair = useCallback((report: MarketStatus['startupRepair'], request: number) => {
+    if (!mounted.current || request !== startupRepairRequest.current) return
+    setStartupRepair(previous =>
+      report && previous?.id === report.id && previous.revision > report.revision ? previous : report)
+  }, [])
+
+  const checkingStartupRepair = startupRepair?.checking === true
+  useEffect(() => {
+    if (!checkingStartupRepair || marketGone) return
+    const controller = new AbortController()
+    let timer = setTimeout(() => { void poll() }, 2000)
+    async function poll() {
+      const request = ++startupRepairRequest.current
+      try {
+        const res = await fetch(api('/dsh-market/status'), { cache: 'no-store', signal: controller.signal })
+        if (controller.signal.aborted) return
+        if (res.ok || res.status === 404) {
+          const status = await readMarketStatus(res)
+          if (!controller.signal.aborted && status !== null) applyStartupRepair(status.startupRepair, request)
+        }
+      } catch { /* temporary status failure; read again while the check is pending */ }
+      if (!controller.signal.aborted) timer = setTimeout(() => { void poll() }, 2000)
+    }
+    return () => {
+      controller.abort()
+      clearTimeout(timer)
+    }
+  }, [checkingStartupRepair, marketGone, readMarketStatus, applyStartupRepair])
 
   const loadCatalog = useCallback(() => {
     setLoadError(null)
@@ -3854,12 +4016,14 @@ export function MarketSection(props: MarketSectionProps) {
     let stopped = false
     const attempt = async (): Promise<void> => {
       const boot = updateCheckBoot
+      const repairRequest = ++startupRepairRequest.current
       inFlight = new AbortController()
       const cutoff = setTimeout(() => inFlight?.abort(), RECONNECT_REQUEST_MS)
       try {
         const res = await fetch(api('/dsh-market/status'), { cache: 'no-store', signal: inFlight.signal })
         const status = res.ok ? await res.json() as Partial<MarketStatus> | null : null
         if (!stopped && status !== null && typeof status === 'object' && typeof status.boot === 'string') {
+          applyStartupRepair(status.startupRepair, repairRequest)
           discoveryScan.setBoot(status.boot)
           observeUpdateCheckBoot(status.boot, boot)
           setMarketGone(false)
@@ -3884,15 +4048,17 @@ export function MarketSection(props: MarketSectionProps) {
       clearTimeout(timer)
       inFlight?.abort()
     }
-  }, [marketGone, reconnectRound, loadCatalog, refreshInstalled])
+  }, [marketGone, reconnectRound, loadCatalog, refreshInstalled, applyStartupRepair])
 
   useEffect(() => {
     void loadCatalog()
     const boot = updateCheckBoot
+    const repairRequest = ++startupRepairRequest.current
     fetch(api('/dsh-market/status'), { cache: 'no-store' })
       .then(readMarketStatus)
       .then(status => {
         if (status === null) return
+        applyStartupRepair(status.startupRepair, repairRequest)
         statusRef.current = {
           busy: status.busy === true,
           runningAgents: Array.isArray(status.runningAgents) ? status.runningAgents.map(String) : [],
@@ -3930,7 +4096,7 @@ export function MarketSection(props: MarketSectionProps) {
       .catch(() => {})
     refreshInstalled()
     void refreshUpdateNotifications()
-  }, [applyDrainStatus, refreshInstalled, loadCatalog, readMarketStatus, restoreDrainMarkers])
+  }, [applyDrainStatus, refreshInstalled, loadCatalog, readMarketStatus, restoreDrainMarkers, applyStartupRepair])
 
   // Pending-restart flags survive tab switches and page reloads, scoped to
   // one host process: a different boot id means the restart happened and the
@@ -4008,7 +4174,7 @@ export function MarketSection(props: MarketSectionProps) {
     if (updating !== null && typeof updating.name === 'string' && updating.name !== '') {
       setUpdatingName(updating.name)
       const id = `recovered-update:${updating.name}`
-      recoveredUpdateRecordId.current = id
+      pendingUpdate.current = { recordId: id, recovering: true }
       setRecords(list => list.some(record =>
         record.kind === 'update' && record.name === updating.name && record.state === 'running')
         ? list
@@ -4058,6 +4224,7 @@ export function MarketSection(props: MarketSectionProps) {
       return
     }
     const timer = setInterval(() => {
+      const polledUpdate = pendingUpdate.current
       fetch(api('/dsh-market/status'), { cache: 'no-store' })
         .then(readMarketStatus)
         .then(status => {
@@ -4076,6 +4243,7 @@ export function MarketSection(props: MarketSectionProps) {
           setHostBusy(status.busy === true)
           setDebuggerLatch(typeof status.debugger === 'string' ? status.debugger : null)
           if (status.active) {
+            if (pendingUpdate.current === polledUpdate) updateIdleStrikes.current = 0
             setCancelling(status.cancelling === true)
             if (status.phase !== null && status.phase !== undefined) {
               // Structured pnpm progress: stage + current package + count.
@@ -4164,28 +4332,24 @@ export function MarketSection(props: MarketSectionProps) {
                 setInstallError(t('installFail') + ' — ' + t('exportLog'))
               }
             }
-            // An update whose response was lost — the page was closed mid-run
-            // and reopened via the dshm-updating marker — converges the same
-            // way. Once the host reports the operation fully settled (pnpm
-            // exited AND the mutation lock released), hand the running row
-            // back to the refreshed listing instead of showing "updating"
-            // forever. Two idle polls guard the brief window before the host
-            // has actually started the command.
-            if (updatingName !== null && status.busy !== true) {
-              if (++updateIdleStrikes.current >= 2) {
-                updateIdleStrikes.current = 0
-                sessionStorage.removeItem('dshm-updating')
-                const recoveredId = recoveredUpdateRecordId.current
-                if (recoveredId !== null) {
-                  setRecords(list => drop(list, recoveredId))
-                  recoveredUpdateRecordId.current = null
-                }
-                setUpdatingName(null)
-                refreshInstalled()
-              }
-            } else {
+            // An idle sample can precede a POST reaching the host. Only a
+            // lost reply or a remount makes this task eligible for recovery.
+            if (pendingUpdate.current !== polledUpdate) return
+            if (updatingName === null || status.busy === true || polledUpdate?.recovering === false) {
               updateIdleStrikes.current = 0
+              return
             }
+            // Two idle polls allow the host time to begin the command.
+            if (++updateIdleStrikes.current < 2) return
+            updateIdleStrikes.current = 0
+            if (polledUpdate !== null) {
+              sessionStorage.removeItem('dshm-updating')
+              pendingUpdate.current = null
+              setRecords(list => list.filter(record => record.id !== polledUpdate.recordId
+                || record.state !== 'running' || record.hostOperationId !== undefined))
+            }
+            setUpdatingName(null)
+            refreshInstalled()
           }
         })
         .catch(() => {})
@@ -5142,6 +5306,8 @@ export function MarketSection(props: MarketSectionProps) {
     // "update all" left the panel empty while several plugins were mid-flight
     // (#295 by @sanyecao88). One record per attempt, like the install flow.
     const updateRecordId = nextRecordId()
+    const attempt = { recordId: updateRecordId, recovering: false }
+    pendingUpdate.current = attempt
     setRecords(list => enqueue(list, { id: updateRecordId, kind: 'update', name, state: 'running', updateOptions }))
     return fetch(api('/dsh-market/update'), {
       method: 'POST',
@@ -5158,13 +5324,20 @@ export function MarketSection(props: MarketSectionProps) {
         ...(!restore && statusRef.current.agentDrain && !preferReject ? { busyPolicy: 'drain' } : {}),
       }),
     })
-      .then(res => res.json().then(body => ({ status: res.status, body })))
+      .then(async res => {
+        const body = await res.json()
+        if (body === null || typeof body !== 'object' || Array.isArray(body)) throw new Error('Invalid update response')
+        return { status: res.status, body }
+      })
       .then(({ status, body }) => {
         // A response means the host settled the request (even a 4xx/5xx), so
         // the running row can hand back now. Only a lost response keeps the
         // marker + row for the poll to converge.
-        sessionStorage.removeItem('dshm-updating')
-        setUpdatingName(null)
+        if (pendingUpdate.current === attempt) {
+          pendingUpdate.current = null
+          sessionStorage.removeItem('dshm-updating')
+          setUpdatingName(null)
+        }
         if (status === 202 && typeof body.operationId === 'string') {
           const operation = body.operation as DrainOperationWire | undefined
           setRecords(list => patchRecord(withoutHostProjection(list, body.operationId, updateRecordId), updateRecordId, {
@@ -5342,10 +5515,9 @@ export function MarketSection(props: MarketSectionProps) {
         }
       })
       .catch(() => {
-        // A lost response does not mean the update stopped (the route holds
-        // its reply until pnpm finishes, #100): keep the marker AND the
-        // running row, and let the status poll converge the outcome instead
-        // of declaring a false failure — mirroring the install flow's catch.
+        // The host may still be writing. Keep the row until the status poll
+        // confirms idle, and leave this attempt alone if the page was closed.
+        if (pendingUpdate.current === attempt) pendingUpdate.current = { ...attempt, recovering: true }
       })
   }, [refreshInstalled, installed, rememberDrainMarker, t, lang, updates])
 
@@ -5451,15 +5623,28 @@ export function MarketSection(props: MarketSectionProps) {
       closing the dialog abandons the render — the server side caches the
       payload, so reopening is cheap. */
   const openNotes = useCallback((name: string, current: string | null, latest: string | null, target: string | null, repoUrl: string | null) => {
+    notesRequest.current?.abort()
+    const request = new AbortController()
+    notesRequest.current = request
     setNotesFor({ name, current, latest, target, repoUrl })
     setUpdateNotes(null)
     setNotesState('loading')
     // The Update button may install an older, mature version than the repo's
     // latest; ask for notes relative to that one (#1193).
-    fetch(`${api('/dsh-market/changelog')}?name=${encodeURIComponent(name)}${target !== null ? `&target=${encodeURIComponent(target)}` : ''}`)
+    fetch(`${api('/dsh-market/changelog')}?name=${encodeURIComponent(name)}${target !== null ? `&target=${encodeURIComponent(target)}` : ''}`, { signal: request.signal })
       .then(res => res.json())
-      .then(body => { setUpdateNotes(body as ResolvedNotes); setNotesState('ready') })
-      .catch(() => setNotesState('fail'))
+      .then(body => {
+        if (request.signal.aborted) return
+        setUpdateNotes(body as ResolvedNotes)
+        setNotesState('ready')
+      })
+      .catch(() => { if (!request.signal.aborted) setNotesState('fail') })
+  }, [])
+
+  const closeNotes = useCallback(() => {
+    notesRequest.current?.abort()
+    notesRequest.current = null
+    setNotesFor(null)
   }, [])
 
   const doUseSkin = useCallback((name: string) => {    setInstallError(null)
@@ -7707,6 +7892,7 @@ export function MarketSection(props: MarketSectionProps) {
             lang={lang}
             describe={describePlugin}
             records={records}
+            startupRepairEntries={startupRepair?.entries}
             open={operationsOpen}
             onOpenChange={setOperationsOpen}
             replacing={replacing}
@@ -7715,7 +7901,6 @@ export function MarketSection(props: MarketSectionProps) {
               for (const record of recordsRef.current) {
                 if (record.hostOperationId !== undefined
                   && (record.state === 'done' || record.state === 'warned' || record.state === 'failed')) {
-                  dismissedHostRef.current.add(record.hostOperationId)
                   rememberDismissedHostId(record.hostOperationId)
                 }
               }
@@ -7724,7 +7909,6 @@ export function MarketSection(props: MarketSectionProps) {
             onCancel={record => doCancel(record)}
             onDismiss={record => {
               if (record.hostOperationId !== undefined) {
-                dismissedHostRef.current.add(record.hostOperationId)
                 rememberDismissedHostId(record.hostOperationId)
               }
               setRecords(list => drop(list, record.id))
@@ -9056,7 +9240,8 @@ export function MarketSection(props: MarketSectionProps) {
                                             <button
                                               type="button"
                                               className={css.notesLink}
-                                              onClick={() => openNotes(name, status?.current ?? null, status?.latest ?? null, status?.eligibleVersion ?? null, repoUrl)}
+                                              onClick={() => openNotes(name, status?.current ?? null, status?.latest ?? null,
+                                                status?.eligibleVersion ?? (status?.updateAvailable === true ? status.latest : null) ?? null, repoUrl)}
                                             >{`${t('notesLink')} ›`}</button>
                                           </div>
                                         )}
@@ -9807,8 +9992,9 @@ export function MarketSection(props: MarketSectionProps) {
       {notesFor !== null && (
         <Modal
           open
-          onClose={() => setNotesFor(null)}
-          className={notesState === 'ready' && updateNotes?.kind === 'release' ? css.notesModalWide : undefined}
+          onClose={closeNotes}
+          className={notesState === 'ready' && (updateNotes?.kind === 'release' || (updateNotes?.history?.items.length ?? 0) > 0)
+            ? css.notesModalWide : undefined}
           /* The host's Modal renders its title node verbatim; the hand-written
              primitives.d.ts narrows the prop to string, so this cast documents
              intent rather than defeating a runtime check. */
@@ -9816,7 +10002,7 @@ export function MarketSection(props: MarketSectionProps) {
             ? <a className={css.nameLink} href={notesFor.repoUrl + '#readme'} target="_blank" rel="noreferrer">{notesFor.name}</a>
             : notesFor.name) as unknown as string}
           footer={(
-            <Button variant="ghost" onClick={() => setNotesFor(null)}>{t('gotIt')}</Button>
+            <Button variant="ghost" onClick={closeNotes}>{t('gotIt')}</Button>
           )}
         >
           {/* The version line reads as versions when both ends are semver and
@@ -9837,92 +10023,8 @@ export function MarketSection(props: MarketSectionProps) {
           {notesState === 'loading' && <div className={css.spec}>{t('loading')}</div>}
           {notesState === 'fail' && <div className={css.spec}>{t('notesLoadFail')}</div>}
           {notesState === 'ready' && updateNotes !== null && (
-            updateNotes.kind === 'release' ? (
-              <div className={css.notesBody}>
-                <div className={css.notesMeta}>
-                  <strong>{t('notesRelease')}</strong>
-                  {updateNotes.release.tag !== null && <span>{' ' + updateNotes.release.tag}</span>}
-                  {updateNotes.release.publishedAt !== null && <span>{' · ' + updateNotes.release.publishedAt.slice(0, 10)}</span>}
-                </div>
-                {updateNotes.beyondTarget !== undefined && (
-                  <div className={css.notesMeta}>
-                    {t('notesBeyondTarget').replace('{0}', updateNotes.release.tag ?? '').replace('{1}', updateNotes.beyondTarget)}
-                  </div>
-                )}
-                {/* Author-written markdown through the tiny converter: HTML is
-                    stripped first; headings, quotes, fences, bullets, bold,
-                    inline code, https links and allowlisted images only. */}
-                <div className={css.notesRendered}>{renderMarkdown(updateNotes.release.body || t('notesNone'))}</div>
-                {updateNotes.commits !== undefined && updateNotes.commits.items.length > 0 && (
-                  <>
-                    <div className={css.notesMeta}><strong>{t('notesCommits')}</strong></div>
-                    {!updateNotes.commits.found && <div className={css.notesMeta}>{t('notesCommitsRecent')}</div>}
-                    <ul className={css.notesList}>
-                      {updateNotes.commits.items.map(c => (
-                        <li key={c.sha} className={css.notesRow}>
-                          <span className={css.notesDate}>{c.date !== null ? c.date.slice(0, 10) : ''}</span>
-                          <span className={css.notesMsg}>{mdInline(c.message)}</span>
-                          {notesFor.repoUrl !== null && (
-                            <a className={css.notesSha}
-                              href={notesFor.repoUrl + '/commit/' + c.sha}
-                              target="_blank" rel="noreferrer"
-                              title={c.message}>{c.sha.slice(0, 7)}</a>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  </>
-                )}
-              </div>
-            )
-            : updateNotes.kind === 'commits' ? (
-              <div className={css.notesBody}>
-                <div className={css.notesMeta}><strong>{t('notesCommits')}</strong></div>
-                {!updateNotes.commits.found && <div className={css.notesMeta}>{t('notesCommitsRecent')}</div>}
-                <ul className={css.notesList}>
-                  {updateNotes.commits.items.map(c => (
-                    <li key={c.sha} className={css.notesRow}>
-                      <span className={css.notesDate}>{c.date !== null ? c.date.slice(0, 10) : ''}</span>
-                      <span className={css.notesMsg}>{mdInline(c.message)}</span>
-                      {notesFor.repoUrl !== null && (
-                        /* The commit itself on GitHub — the escape hatch when
-                           two lines of clamp hide exactly the detail wanted. */
-                        <a className={css.notesSha}
-                          href={notesFor.repoUrl + '/commit/' + c.sha}
-                          target="_blank" rel="noreferrer"
-                          title={c.message}>{c.sha.slice(0, 7)}</a>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )
-            : updateNotes.kind === 'npm' ? (
-              <div className={css.notesBody}>
-                <div className={css.notesMeta}><strong>{t('notesNpm')}</strong></div>
-                <ul className={css.notesList}>
-                  {updateNotes.npmTimes.map(v => (
-                    <li key={v.version} className={css.notesRow}>
-                      <span className={css.notesDate}>{v.date.slice(0, 10)}</span>
-                      <a className={css.notesVer}
-                        href={`https://www.npmjs.com/package/${encodeURIComponent(notesFor.name)}/v/${encodeURIComponent(v.version)}`}
-                        target="_blank" rel="noreferrer">{v.version}</a>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )
-            : updateNotes.kind === 'source' ? (
-              <div className={css.spec}>
-                {t(updateNotes.reason === 'unavailable'
-                  ? 'notesLoadFail'
-                  : updateNotes.reason === 'unreadable' ? 'notesSourceUnreadable' : 'notesSource')}
-                {typeof updateNotes.sourceUrl === 'string' && /^https?:\/\//i.test(updateNotes.sourceUrl)
-                  ? <>{lang === 'zh' ? '' : ' '}<a className={css.notesSourceLink} href={updateNotes.sourceUrl} target="_blank" rel="noreferrer">{t('notesSourceLink')}</a></>
-                  : updateNotes.reason !== 'unavailable' && <>{lang === 'zh' ? '' : ' '}{t('notesSourceNoLink')}</>}
-              </div>
-            )
-            : <div className={css.spec}>{t('notesNone')}</div>
+            <UpdateNotesContent notes={updateNotes} name={notesFor.name} target={notesFor.target ?? notesFor.latest}
+              repoUrl={notesFor.repoUrl} t={t} lang={lang} />
           )}
         </Modal>
       )}

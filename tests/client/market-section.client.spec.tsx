@@ -13,13 +13,14 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { GithubRoutedImg, MarketSection, OwnerAvatar, resetHostCompatibilityCache, resetMarketPortalHost, resetThemePreviewCache } from '../../src/client/MarketSection.tsx'
 import css from '../../src/client/Market.module.css'
+import { DISMISSED_HOST_STORAGE_KEY, resetDismissedHostCache } from '../../src/client/dismissed-host.ts'
 import { downloadStatsText } from '../../src/client/download-stats.ts'
 import { createHostNavigation } from '../../src/client/host-navigation.ts'
 import { SEARCH_DELAY_MS } from '../../src/client/SearchInput.tsx'
 import {
   pluginScreenshotCandidates, resetGithubRouting, resetScreenshotsCache, restartHintKey, setGithubRoutes,
 } from '../../src/client/market-data.ts'
-import { en, zh } from '../../src/client/locales.ts'
+import { en, ja, zh } from '../../src/client/locales.ts'
 
 describe('Issue #991 approval target and queue feedback', () => {
   describe.each(['en', 'zh'])('visible update explanation in %s', (lang) => {
@@ -571,7 +572,7 @@ describe('api() base resolution (#345)', () => {
     expect(fetchCalls.some(call => call.path === '/dsh-market/note')).toBe(false)
     expect(fetchCalls.some(call => call.path === '/dsh-market/changelog')).toBe(false)
     expect(fetchMock.mock.calls.some(([url]) =>
-      url === '/app/my-dsh/dsh-market/changelog?name=dsh-loop')).toBe(true)
+      url === '/app/my-dsh/dsh-market/changelog?name=dsh-loop&target=1.2.0')).toBe(true)
   })
 
   describe('notes the market does not hold (#819)', () => {
@@ -653,6 +654,161 @@ describe('api() base resolution (#345)', () => {
       await openNotes({ kind: 'source', reason: 'missing', sourceUrl: 'javascript:alert(1)' })
       expect(await screen.findByText(new RegExp(en.notesSourceNoLink))).toBeTruthy()
       expect(screen.queryByRole('link', { name: en.notesSourceLink })).toBeNull()
+    })
+  })
+
+  describe('update notes history (#1193)', () => {
+    const release = (version: string, body: string) => ({
+      tag: `v${version}`, name: null, publishedAt: '2026-11-13T12:00:00Z', url: null, body,
+    })
+
+    it.each([
+      ['en', en, 'This update', 'Not available yet', 'Some release notes are missing.'],
+      ['zh', zh, '本次更新', '暂不可安装', '部分版本的说明暂缺。'],
+      ['ja', ja, '今回の更新', 'まだインストールできないバージョン', '一部のリリースノートがありません。'],
+    ] as const)('separates the target history and held release in %s', async (lang, dict, historyTitle, heldTitle, partialHint) => {
+      const fetchMock = stubFetch({
+        '/dsh-market/installed': { profile: 'desktop', installed: { 'dsh-loop': '^1.0.0' }, live: [] },
+        '/dsh-market/updates': { updates: { 'dsh-loop': {
+          kind: 'npm', current: '1.0.0', latest: '1.3.0', eligibleVersion: '1.2.0', updateAvailable: true,
+        } } },
+        '/dsh-market/changelog': {
+          kind: 'release', beyondTarget: '1.2.0', release: release('1.3.0', 'Held version notes'),
+          history: { partial: true, items: [
+            { ...release('1.2.0', '**Target notes**\n\n<img src="https://evil.test/tracker.png">'), version: '1.2.0' },
+            { ...release('1.1.0', 'Earlier notes in range'), version: '1.1.0' },
+            { ...release('1.0.1', '   '), version: '1.0.1' },
+          ] },
+        },
+      })
+      const snapshot = { active: lang }
+      render(<MarketSection {...props()} preferredSubsectionId="installed" t={(key) => (dict as Record<string, string>)[key] ?? key}
+        locale={{ subscribe: () => () => {}, getSnapshot: () => snapshot }} />)
+      fireEvent.click(await screen.findByRole('button', { name: re(dict.notesLink) }))
+      const dialog = within(await screen.findByRole('dialog'))
+      const target = await dialog.findByText('Target notes')
+      expect(target.tagName).toBe('STRONG')
+      expect(target.closest('details')?.open).toBe(true)
+      expect(target.closest('[role="dialog"]')?.querySelector('img')).toBeNull()
+      expect(dialog.getByText(historyTitle)).toBeTruthy()
+      expect(dialog.getByText(partialHint)).toBeTruthy()
+      const earlier = dialog.getByText('v1.1.0', { exact: true })
+      expect(earlier.closest('details')?.open).toBe(false)
+      fireEvent.click(earlier.closest('summary')!)
+      expect(earlier.closest('details')?.open).toBe(true)
+      expect(dialog.getByText('Earlier notes in range')).toBeTruthy()
+      fireEvent.click(dialog.getByText('v1.0.1', { exact: true }).closest('summary')!)
+      expect(dialog.getByText(dict.notesHistoryVersionMissing)).toBeTruthy()
+      expect(dialog.queryByText(dict.notesNone)).toBeNull()
+      const held = dialog.getByText(heldTitle).closest('section')!
+      expect(within(held).getByText('Held version notes')).toBeTruthy()
+      expect(held.textContent).not.toContain('Target notes')
+      expect(fetchMock.mock.calls.some(([url]) => url === '/dsh-market/changelog?name=dsh-loop&target=1.2.0')).toBe(true)
+    })
+
+    it('uses the proposed latest and avoids repeating a release already present in history', async () => {
+      const target = release('1.2.0', 'Same target notes')
+      const fetchMock = stubFetch({
+        '/dsh-market/installed': { profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: [] },
+        '/dsh-market/updates': { updates: { 'dsh-loop': {
+          kind: 'npm', current: '1.0.0', latest: '1.2.0', updateAvailable: true,
+        } } },
+        '/dsh-market/changelog': { kind: 'release', release: target, history: {
+          partial: false, items: [{ ...target, version: '1.2.0' }],
+        } },
+      })
+      render(<MarketSection {...props()} preferredSubsectionId="installed" />)
+      fireEvent.click(await screen.findByRole('button', { name: re(en.notesLink) }))
+      const dialog = within(await screen.findByRole('dialog'))
+      expect((await dialog.findAllByText('Same target notes')).length).toBe(1)
+      expect(dialog.getByText('Same target notes').closest('details')?.open).toBe(true)
+      expect(fetchMock.mock.calls.some(([url]) => url === '/dsh-market/changelog?name=dsh-loop&target=1.2.0')).toBe(true)
+    })
+
+    it.each([
+      [en, 'Recent commits (update range unconfirmed, for reference only)'],
+      [zh, '最近提交（无法确认本次更新范围，仅供参考）'],
+      [ja, '最近のコミット（今回の更新範囲を確認できないため、参考情報として表示しています）'],
+    ] as const)('labels the fallback commits as an unconfirmed update range %#', async (dict, recentLabel) => {
+      stubFetch({
+        '/dsh-market/installed': { profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: [] },
+        '/dsh-market/updates': { updates: { 'dsh-loop': {
+          kind: 'npm', current: '1.0.0', latest: '1.2.0', updateAvailable: true,
+        } } },
+        '/dsh-market/changelog': {
+          kind: 'commits', commits: { found: false, items: [{ sha: 'c'.repeat(40), message: 'Recent commit', date: null }] },
+          history: { partial: true, items: [] },
+        },
+      })
+      render(<MarketSection {...props()} preferredSubsectionId="installed" t={(key) => (dict as Record<string, string>)[key] ?? key} />)
+      fireEvent.click(await screen.findByRole('button', { name: re(dict.notesLink) }))
+      const dialog = within(await screen.findByRole('dialog'))
+      expect(await dialog.findByText(recentLabel)).toBeTruthy()
+      expect(dialog.getByText('Recent commit')).toBeTruthy()
+    })
+
+    it('keeps the source link when no releases in range could be read', async () => {
+      stubFetch({
+        '/dsh-market/installed': { profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: [] },
+        '/dsh-market/updates': { updates: { 'dsh-loop': {
+          kind: 'npm', current: '1.0.0', latest: '1.2.0', updateAvailable: true,
+        } } },
+        '/dsh-market/changelog': {
+          kind: 'source', reason: 'missing', sourceUrl: 'https://github.com/alice/dsh-loop',
+          history: { partial: true, items: [] },
+        },
+      })
+      render(<MarketSection {...props()} preferredSubsectionId="installed" />)
+      fireEvent.click(await screen.findByRole('button', { name: re(en.notesLink) }))
+      expect(await screen.findByText(en.notesHistoryPartial)).toBeTruthy()
+      expect(screen.getByRole('link', { name: en.notesSourceLink }).getAttribute('href')).toBe('https://github.com/alice/dsh-loop')
+    })
+
+    it.each([false, true])('keeps the second plugin open when the previous request settles late (reject: %s)', async (rejectOld) => {
+      const installed = { 'dsh-loop': '^1.0.0', 'dsh-notify': `github:bob/dsh-notify#${'a'.repeat(40)}` }
+      const latestSha = 'b'.repeat(40)
+      const next = stubFetch({
+        '/dsh-market/installed': { profile: 'web', installed, live: [] },
+        '/dsh-market/updates': { updates: {
+          'dsh-loop': { kind: 'npm', current: '1.0.0', latest: '1.2.0', updateAvailable: true },
+          'dsh-notify': { kind: 'github', current: 'a'.repeat(40), latest: latestSha, updateAvailable: true },
+        } },
+        '/dsh-market/changelog': {
+          kind: 'release', release: release('2.0.0', 'Second plugin notes'), history: { partial: false, items: [
+            { ...release('2.0.0', 'Second plugin notes'), version: '2.0.0' },
+            { ...release('1.5.0', 'Second plugin earlier notes'), version: '1.5.0' },
+          ] },
+        },
+      })
+      let settleOld!: () => void
+      let previousSignal: AbortSignal | null = null
+      const delayed = new Promise<Response>((resolve, reject) => {
+        settleOld = () => rejectOld ? reject(new Error('Previous request failed'))
+          : resolve(new Response(JSON.stringify({ kind: 'release', release: release('1.2.0', 'First plugin notes') })))
+      })
+      const fetchMock = vi.fn((input: unknown, init?: RequestInit) => {
+        if (String(input).startsWith('/dsh-market/changelog?name=dsh-loop')) {
+          previousSignal = init?.signal ?? null
+          return delayed
+        }
+        return next(input, init)
+      })
+      vi.stubGlobal('fetch', fetchMock)
+      render(<MarketSection {...props()} preferredSubsectionId="installed" />)
+      const buttons = await screen.findAllByRole('button', { name: re(en.notesLink) })
+      fireEvent.click(buttons.find(button => button.closest(`.${css.irow}`)?.textContent?.includes('dsh-loop'))!)
+      fireEvent.click(screen.getByRole('button', { name: en.gotIt }))
+      fireEvent.click(buttons.find(button => button.closest(`.${css.irow}`)?.textContent?.includes('dsh-notify'))!)
+      expect(await screen.findByText('Second plugin notes')).toBeTruthy()
+      await act(async () => { settleOld() })
+      expect(previousSignal).toMatchObject({ aborted: true })
+      const dialog = within(screen.getByRole('dialog'))
+      expect(dialog.getByRole('heading', { name: 'dsh-notify' })).toBeTruthy()
+      expect(dialog.getByText('Second plugin notes').closest('details')?.open).toBe(true)
+      expect(dialog.getByText('Second plugin earlier notes').closest('details')?.open).toBe(false)
+      expect(dialog.queryByText('First plugin notes')).toBeNull()
+      expect(dialog.queryByText(en.notesLoadFail)).toBeNull()
+      expect(fetchMock.mock.calls.some(([url]) => url === `/dsh-market/changelog?name=dsh-notify&target=${latestSha}`)).toBe(true)
     })
   })
 
@@ -4031,6 +4187,81 @@ describe('lost update progress (config page reopened)', () => {
       vi.useRealTimers()
     }
   })
+
+  it('keeps a same-name update tracked when an older mount receives its reply', async () => {
+    vi.useFakeTimers()
+    try {
+      const installed = { 'dsh-loop': '1.0.0' }
+      const update = { kind: 'npm', current: '1.0.0', latest: '1.2.0', updateAvailable: true }
+      let starts = 0
+      let sendFirst: (value: Response) => void = () => { throw new Error('first update not started') }
+      let sendSecond: (value: Response) => void = () => { throw new Error('second update not started') }
+      const first = new Promise<Response>(resolve => { sendFirst = resolve })
+      const second = new Promise<Response>(resolve => { sendSecond = resolve })
+      const base = stubFetch({
+        '/dsh-market/installed': { profile: 'web', installed, live: [] },
+        '/dsh-market/updates': { updates: { 'dsh-loop': update } },
+        '/dsh-market/status': () => ({ active: starts > 1, busy: starts > 1, installed, pnpm: true, boot: 'boot-1' }),
+      })
+      vi.stubGlobal('fetch', vi.fn((input: unknown, init?: RequestInit) => {
+        if (String(input) !== '/dsh-market/update') return base(input, init)
+        return ++starts === 1 ? first : second
+      }))
+      const oldMount = render(<MarketSection {...props()} preferredSubsectionId="installed" />)
+      fireEvent.click(await vi.waitFor(() => screen.getByRole('button', { name: en.update })))
+      expect(starts).toBe(1)
+      oldMount.unmount()
+      render(<MarketSection {...props()} preferredSubsectionId="installed" />)
+      await vi.waitFor(() => expect(screen.getByRole('button', { name: en.updating })).toBeTruthy())
+      await vi.advanceTimersByTimeAsync(4200)
+      await vi.waitFor(() => expect(sessionStorage.getItem('dshm-updating')).toBeNull())
+      fireEvent.click(await vi.waitFor(() => screen.getByRole('button', { name: en.update })))
+      expect(starts).toBe(2)
+      await act(async () => { sendFirst(new Response(JSON.stringify({ ok: false, error: 'old update failed' }), { status: 502 })) })
+      expect(sessionStorage.getItem('dshm-updating')).toBe(JSON.stringify({ name: 'dsh-loop' }))
+      expect(screen.getByRole('button', { name: en.updating })).toBeTruthy()
+      await act(async () => { sendSecond(Response.json({ ok: true })) })
+      expect(sessionStorage.getItem('dshm-updating')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps a pending update and holds the next install during an idle preflight', async () => {
+    vi.useFakeTimers()
+    try {
+      const installed = { 'dsh-loop': '1.0.0' }
+      let installs = 0
+      let complete: (value: Response) => void = () => { throw new Error('update not started') }
+      const response = new Promise<Response>(resolve => { complete = resolve })
+      const base = stubFetch({
+        '/dsh-market/installed': { profile: 'web', installed, live: [] },
+        '/dsh-market/updates': { updates: { 'dsh-loop': {
+          kind: 'npm', current: '1.0.0', latest: '1.2.0', updateAvailable: true,
+        } } },
+        '/dsh-market/status': { active: false, busy: false, installed, pnpm: true, boot: 'boot-1' },
+        '/dsh-market/install': { ok: true, hot: false },
+      })
+      vi.stubGlobal('fetch', vi.fn((input: unknown, init?: RequestInit) => {
+        if (String(input) === '/dsh-market/update') return response
+        if (String(input) === '/dsh-market/install' && init?.method === 'POST') installs += 1
+        return base(input, init)
+      }))
+      localStorage.setItem('dshm-queue-v1', JSON.stringify([
+        { kind: 'install', name: 'dsh-notify', url: 'https://github.com/bob/dsh-notify' },
+      ]))
+      render(<MarketSection {...props()} preferredSubsectionId="installed" />)
+      fireEvent.click(await vi.waitFor(() => screen.getByRole('button', { name: en.update })))
+      await act(async () => { await vi.advanceTimersByTimeAsync(6400) })
+      expect.soft(screen.queryByText(en.opRunning)).toBeTruthy()
+      expect.soft(installs).toBe(0)
+      await act(async () => { complete(Response.json({ ok: true })) })
+      await act(async () => { await vi.advanceTimersByTimeAsync(2200) })
+      expect(installs).toBe(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
 
 describe('P1-6 structured progress', () => {
@@ -6795,6 +7026,75 @@ describe('local-dev restore', () => {
     })
     fireEvent.click(item)
   }
+
+  it.each(['update', 'restore'] as const)('settles a live %s task after a lost response and lets the queued install run', async kind => {
+    vi.useFakeTimers()
+    try {
+      const restore = kind === 'restore'
+      const installed = { 'dsh-loop': restore ? 'link:C:/isolated/dsh-loop' : '1.0.0' }
+      let updateStarted = false
+      let settled = false
+      let nextInstalls = 0
+      let updateBody: unknown
+      let sendBadBody: (value: Response) => void = () => { throw new Error('update was not requested') }
+      let loseResponse: (error: Error) => void = () => { throw new Error('update was not requested') }
+      const response = new Promise<Response>((resolve, reject) => { sendBadBody = resolve; loseResponse = reject })
+      const baseFetch = stubFetch({
+        '/dsh-market/installed': { profile: 'desktop', installed, live: [] },
+        '/dsh-market/updates': { updates: {
+          'dsh-loop': { kind: restore ? 'linked' : 'npm', version: '1.0.0', current: '1.0.0', latest: '1.2.0',
+            updateAvailable: true, restoreRequired: restore },
+        } },
+        '/dsh-market/status': () => ({
+          active: updateStarted && !settled, busy: !settled, pnpm: true, boot: 'boot-1', installed,
+          ...(settled ? { error: 'ERR_PNPM_EPERM: package change could not be applied' } : {}),
+        }),
+        '/dsh-market/install': { ok: true, hot: false },
+      })
+      vi.stubGlobal('fetch', vi.fn((input: unknown, init?: RequestInit) => {
+        const path = String(input).split('?')[0]
+        if (path === '/dsh-market/update' && init?.method === 'POST') {
+          updateStarted = true
+          updateBody = JSON.parse(String(init.body))
+          return response
+        }
+        if (path === '/dsh-market/install' && init?.method === 'POST') nextInstalls += 1
+        return baseFetch(input, init)
+      }))
+      localStorage.setItem('dshm-queue-v1', JSON.stringify([
+        { kind: 'install', name: 'dsh-notify', url: 'https://github.com/bob/dsh-notify' },
+      ]))
+      render(<MarketSection {...props()} preferredSubsectionId="installed" />)
+      const button = await vi.waitFor(() => screen.getByRole('button', { name: restore ? en.restoreOnline : en.update }))
+      fireEvent.click(button)
+      if (restore) fireEvent.click(screen.getByRole('button', { name: en.restoreProceed }))
+      expect(updateBody).toEqual(restore ? { name: 'dsh-loop', restore: true } : { name: 'dsh-loop' })
+      expect(sessionStorage.getItem('dshm-updating')).not.toBeNull()
+      if (document.querySelector('[class*="opPanel"]') === null) {
+        fireEvent.click(screen.getByRole('button', { name: re(en.opInstalling) }))
+      }
+      const panel = document.querySelector('[class*="opPanel"]')
+      expect(panel?.textContent).toContain(en.opRunning)
+      expect(nextInstalls).toBe(0)
+      await vi.advanceTimersByTimeAsync(4200)
+      expect(panel?.textContent).toContain(en.opRunning)
+      expect(sessionStorage.getItem('dshm-updating')).not.toBeNull()
+      expect(nextInstalls).toBe(0)
+
+      settled = true
+      if (restore) loseResponse(new TypeError('the connection closed before the final update response'))
+      else sendBadBody(new Response('Bad Gateway', { status: 502 }))
+      await vi.advanceTimersByTimeAsync(2100)
+      await vi.advanceTimersByTimeAsync(2100)
+      await vi.waitFor(() => expect(sessionStorage.getItem('dshm-updating')).toBeNull())
+      expect(screen.queryByRole('button', { name: en.updating })).toBeNull()
+      expect.soft(panel?.textContent, 'the update already settled on the host').not.toContain(en.opRunning)
+      await vi.advanceTimersByTimeAsync(2200)
+      expect.soft(nextInstalls, 'a dead update task must not block the queue').toBe(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 
   it('confirms before switching a catalog-matched local package to its online source', async () => {
     stubFetch({
@@ -11376,7 +11676,82 @@ describe('OwnerAvatar icon', () => {
   })
 })
 
+describe('interrupted updates at startup (#1167)', () => {
+  it('reads the completed startup report while the task list is otherwise idle', async () => {
+    vi.useFakeTimers()
+    try {
+      let finished = false
+      stubFetch({
+        '/dsh-market/status': () => ({
+          active: false, busy: false, boot: 'boot-1', installed: {}, pnpm: true,
+          startupRepair: finished ? {
+            id: 'profile-start-1', revision: 2, checking: false, entries: [
+              { name: 'reinstalled-plugin', state: 'reinstalled' },
+              { name: 'intact-plugin', state: 'verified' },
+              { name: 'incomplete-plugin', state: 'pending', cause: 'timeout' },
+              { name: 'manual-plugin', state: 'abandoned' },
+            ],
+          } : { id: 'profile-start-1', revision: 1, checking: true, entries: [] },
+        }),
+      })
+      render(<MarketSection {...props()} />)
+      await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+      expect(screen.getByRole('button', { name: 'Tasks' })).toBeTruthy()
+      finished = true
+      await act(async () => { await vi.advanceTimersByTimeAsync(2500) })
+      const tasks = await vi.waitFor(() => screen.getByRole('button', { name: /Tasks.*Startup recovery/ }))
+      fireEvent.click(tasks)
+      expect(screen.getByText('Interrupted updates at startup')).toBeTruthy()
+      expect(screen.getByText('reinstalled-plugin')).toBeTruthy()
+      expect(screen.getByText('An installed version was intact.')).toBeTruthy()
+      expect(screen.getByText('The desktop app took too long.')).toBeTruthy()
+      expect(screen.getByText(/Automatic retries stopped/)).toBeTruthy()
+      const reads = fetchCalls.filter(call => call.path === '/dsh-market/status').length
+      await act(async () => { await vi.advanceTimersByTimeAsync(6000) })
+      expect(fetchCalls.filter(call => call.path === '/dsh-market/status')).toHaveLength(reads)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
 describe('Agent-safe drain mode (#411)', () => {
+  it('settles a Host install row after MUTATION_FAILED following a cancelled update and a completed uninstall', async () => {
+    vi.useFakeTimers()
+    try {
+      let failed = false
+      const name = 'dsh-loop'
+      const operationId = 'boot-1-drain-install'
+      const now = Date.now()
+      const journal = (id: string, kind: string, state: string) => ({ at: now, id, kind, state, name, agentsAtEnd: 0, agentsAtStart: 1 })
+      stubFetch({
+        '/dsh-market/status': () => ({
+          active: !failed, busy: !failed, pnpm: true, boot: 'boot-1', installed: {}, agentDrain: true, drainActive: !failed,
+          drainOperations: [{
+            operationId, kind: 'install', name, url: 'https://github.com/alice/dsh-loop',
+            state: failed ? 'failed' : 'running', createdAt: now, startedAt: now, finishedAt: failed ? now + 1 : null,
+            failure: failed ? { code: 'MUTATION_FAILED', message: 'ERR_PNPM_EPERM while importing the archive' } : null,
+            outcome: null, wait: null,
+          }],
+          drainHistory: [
+            journal('boot-1-drain-update', 'update', 'cancelled'),
+            journal('boot-1-drain-uninstall', 'uninstall', 'succeeded'),
+            ...(failed ? [journal(operationId, 'install', 'failed')] : []),
+          ],
+        }),
+      })
+      render(<MarketSection {...props()} />)
+      await vi.waitFor(() => expect(screen.getByText(en.opRunning)).toBeTruthy())
+      failed = true
+      await act(async () => { await vi.advanceTimersByTimeAsync(2200) })
+      await vi.waitFor(() => expect(screen.getByRole('button', { name: en.opTitle })).toBeTruthy())
+      expect(screen.queryByText(en.opRunning)).toBeNull()
+      expect(screen.queryByRole('button', { name: re(en.opInstalling) })).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('shows a Host-owned waiting task, not a failed install, and cancels it by operation id', async () => {
     const waitingSince = Date.now()
     const operation = {
@@ -11634,6 +12009,41 @@ describe('Agent-safe drain mode (#411)', () => {
     expect(screen.queryByText('dsh-other')).toBeNull()
   })
 
+  it.each([en.dismissNotice, en.opClear])('persists Host task dismissal through reload with %s', async (action) => {
+    resetDismissedHostCache()
+    const entry = {
+      at: Date.now(),
+      id: 'boot-previous-drain-1',
+      kind: 'install',
+      name: 'already-cancelled-task',
+      state: 'cancelled',
+      agentsAtStart: 0,
+      agentsAtEnd: 0,
+    }
+    stubFetch({
+      '/dsh-market/status': {
+        active: false,
+        pnpm: true,
+        boot: 'boot-now',
+        installed: {},
+        drainOperations: [],
+        drainHistory: [entry],
+      },
+    })
+    const mounted = render(<MarketSection {...props()} />)
+    fireEvent.click(await screen.findByRole('button', { name: en.opTitle }))
+    await screen.findByText(entry.name)
+    fireEvent.click(screen.getByRole('button', { name: action }))
+    await waitFor(() => expect(screen.queryByText(entry.name)).toBeNull())
+    expect(JSON.parse(localStorage.getItem(DISMISSED_HOST_STORAGE_KEY) ?? 'null')).toEqual([entry.id])
+
+    mounted.unmount()
+    resetDismissedHostCache()
+    render(<MarketSection {...props()} />)
+    fireEvent.click(await screen.findByRole('button', { name: en.opTitle }))
+    expect(screen.queryByText(entry.name)).toBeNull()
+  })
+
   it('keeps a same-boot drain marker and only drops the stale one', async () => {
     localStorage.setItem('dshm-drain-v1', JSON.stringify([
       { id: 'boot-1-drain-10', kind: 'update', name: 'same-boot' },
@@ -11880,5 +12290,46 @@ describe('installed rows carry their install time (#1142)', () => {
 
     fireEvent.click(screen.getByRole('menuitem', { name: en.installedSortNewest }))
     await waitFor(() => { expect(rowNames()[0]).toBe('dsh-late') })
+  })
+
+  it('reopens the list in the order chosen last time', async () => {
+    stubFetch({
+      '/dsh-market/installed': installedPayload({ 'dsh-early': '^1.0.0', 'dsh-late': '^1.0.0' }, { 'dsh-early': early, 'dsh-late': late }),
+      '/dsh-market/updates': { updates: {} },
+    })
+    const first = render(<MarketSection {...props()} />)
+    fireEvent.click(await screen.findByRole('button', { name: new RegExp(en.tabInstalled) }))
+    await screen.findByText('dsh-late')
+    fireEvent.click(screen.getByRole('button', { name: en.installedSort }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: en.installedSortNewest }))
+    await waitFor(() => { expect(rowNames()[0]).toBe('dsh-late') })
+
+    // A reload: this mount goes, the browser's storage stays.
+    first.unmount()
+    render(<MarketSection {...props()} />)
+    fireEvent.click(await screen.findByRole('button', { name: new RegExp(en.tabInstalled) }))
+    await screen.findByText('dsh-late')
+    // The menu is not touched in this mount — the order is the stored one.
+    expect(rowNames()[0]).toBe('dsh-late')
+  })
+})
+
+describe('a chosen sort is remembered (#1142)', () => {
+  it('reopens Discover on the field chosen last time', async () => {
+    stubFetch()
+    const first = render(<MarketSection {...props()} />)
+    await screen.findByText('whale-skin')
+    // The fixture has no download counts, so the default order is the catalog's.
+    expect(rankedNames(first.container)[0]).toBe('dsh-notify')
+    fireEvent.click(screen.getByRole('button', { name: en.filter }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: en.sortAdded }))
+    // Newest collection date first: 08-14 beats 08-10 and 08-01.
+    await waitFor(() => { expect(rankedNames(first.container)[0]).toBe('whale-skin') })
+
+    first.unmount()
+    const second = render(<MarketSection {...props()} />)
+    // No click in this mount: the order comes from storage.
+    await screen.findByText('whale-skin')
+    expect(rankedNames(second.container)[0]).toBe('whale-skin')
   })
 })

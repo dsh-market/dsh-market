@@ -217,12 +217,14 @@ export interface RepairOptions {
   timeoutMs?: number
 }
 
+export type RepairFailureCause = 'version-changed' | 'refused' | 'not-composed' | 'timeout' | 'unknown' | 'abandoned'
+
 export interface RepairReport {
   /** Packages a previous start removed and this one put back. */
   reinstalled: string[]
   /** Records that needed no work: the profile already held a settled version. */
   finished: string[]
-  failed: Array<{ name: string; reason: string }>
+  failed: Array<{ name: string; reason: string; cause: RepairFailureCause }>
   /** Packages the market has stopped retrying by itself (see MAX_AUTO_REPAIR_ATTEMPTS). */
   abandoned: string[]
 }
@@ -346,6 +348,7 @@ export async function repairInterruptedUpdates(options: RepairOptions): Promise<
       journal.bump(entry.id)
       report.failed.push({
         name: entry.name,
+        cause: 'version-changed',
         reason: `installed version ${installed} is neither ${entry.from || 'the previous build'} nor ${entry.to || 'the requested build'}`,
       })
       continue
@@ -356,11 +359,12 @@ export async function repairInterruptedUpdates(options: RepairOptions): Promise<
       if (entry.attempts === MAX_AUTO_REPAIR_ATTEMPTS) {
         logEvent('error', 'update-repair', gaveUpCopy(entry.name, entry.attempts))
       }
-      report.failed.push({ name: entry.name, reason: gaveUpCopy(entry.name, entry.attempts) })
+      report.failed.push({ name: entry.name, reason: gaveUpCopy(entry.name, entry.attempts), cause: 'abandoned' })
       report.abandoned.push(entry.name)
       continue
     }
     const spec = entry.to === '' ? entry.spec : `${entry.name}@${entry.to}`
+    let cause: RepairFailureCause = 'unknown'
     try {
       // The interrupted update may have died holding the profile lock; its
       // owner is gone by now, and without this the install below waits out
@@ -378,6 +382,7 @@ export async function repairInterruptedUpdates(options: RepairOptions): Promise<
         // authority, not the application stage.
         const after = readInstalledVersion(options.profile, entry.name, options.profileDirectory)
         if (after === null || (entry.to !== '' && after !== entry.to)) {
+          cause = 'refused'
           throw new Error(`the desktop app refused the reinstall (${result.application})`)
         }
         // The files landing is not the same answer as the plugin loading:
@@ -385,6 +390,7 @@ export async function repairInterruptedUpdates(options: RepairOptions): Promise<
         // that writes `dsh.profile.bundles` (#928). Finishing here cleared
         // the record for a package the host still would not compose.
         if (!composed(options.profile, options.profileDirectory, entry.name)) {
+          cause = 'not-composed'
           throw new Error(`the desktop app wrote ${after} but did not compose it — no dsh.profile.bundles row`)
         }
         journal.finish(entry.id)
@@ -400,7 +406,7 @@ export async function repairInterruptedUpdates(options: RepairOptions): Promise<
     } catch (error) {
       journal.bump(entry.id)
       const reason = error instanceof Error ? error.message : String(error)
-      report.failed.push({ name: entry.name, reason })
+      report.failed.push({ name: entry.name, reason, cause: error instanceof DeadlineExceeded ? 'timeout' : cause })
       logEvent('error', 'update-repair',
         `${entry.name}: could not finish the interrupted update (${reason}); the next start will try again`)
     }

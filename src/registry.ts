@@ -1,7 +1,6 @@
 /**
- * Registry access: the curated list from awesome-dsh-plugin.com, fetched
- * fresh on every request. See `loadRegistry` for why there is nothing
- * behind it any more.
+ * Access to the curated list from awesome-dsh-plugin.com. Each new load
+ * revalidates the catalog with its source.
  */
 
 import { BODY_STALL_TIMEOUT_MS, HEADERS_TIMEOUT_MS, readBodyWhileProgressing } from './body-progress.ts'
@@ -195,10 +194,9 @@ export function pluginPreviousNpm(
  * This is NOT the cache that was removed, and the difference is the whole
  * point. That cache SKIPPED the request for an hour and answered from
  * memory — it asserted freshness without ever asking. This asks the origin
- * every single time; the validator only lets the origin answer "still the
- * same" (304) instead of resending a megabyte. Freshness is verified on
- * every call either way, so `data` below is only ever returned when the
- * server has just confirmed it is current.
+ * on each new load; concurrent readers share that validation. The validator
+ * lets the origin answer "still the same" (304) instead of resending a megabyte.
+ * `data` below is only returned after the origin confirms it is current.
  *
  * In memory rather than on disk: a restart is rare enough that paying one
  * full download for it costs nothing, and a file would be one more thing
@@ -218,6 +216,10 @@ let served: {
   version: string | null
   data: Registry
 } | null = null
+
+let pendingCatalog: { key: string; result: Promise<Registry> } | null = null
+// Each new load or explicit reset supersedes the previous cache writer.
+let catalogRevision = 0
 
 /** Identity of a catalog source, for scoping the validator to its origin. */
 function sourceKey(source: CatalogSource): string {
@@ -244,17 +246,18 @@ function asRegistry(value: unknown): Registry {
 }
 
 /**
- * Drop what we remember, so the next call is unconditional.
- *
- * Exists for tests: the memo is module state, and a spec that asserted a
- * 304 would otherwise leak a validator into the next one.
+ * Drop the validator and detach any earlier load, so the next call starts an
+ * unconditional request. Earlier callers can still receive their own result.
  */
 export function forgetCatalog(): void {
   served = null
+  pendingCatalog = null
+  catalogRevision += 1
 }
 
 /**
- * The catalog, revalidated every time it is asked for.
+ * The catalog, revalidated on each new load. Discovery and the update check
+ * share a revalidation while it is in flight for the same configured sources.
  *
  * There used to be three answers here — live, a one-hour in-memory cache,
  * and a snapshot bundled into the npm package — and only the first was
@@ -273,8 +276,23 @@ export function forgetCatalog(): void {
  * would rebuild exactly the fallback this replaced.
  * @throws when the catalog cannot be fetched or does not look like one.
  */
-export async function loadRegistry(region: Region = activeRegion()): Promise<Registry> {
+export function loadRegistry(region: Region = activeRegion()): Promise<Registry> {
+  const ownSources = routesFor(region).catalog.length
+  const catalogSources = catalogSourcesFor(region)
+  const key = JSON.stringify([region, ownSources, catalogSources.map(sourceKey)])
+  if (pendingCatalog?.key === key) return pendingCatalog.result
+
+  const revision = ++catalogRevision
+  const result = fetchCatalog(region, ownSources, catalogSources, revision).finally(() => {
+    if (revision === catalogRevision) pendingCatalog = null
+  })
+  pendingCatalog = { key, result }
+  return result
+}
+
+async function fetchCatalog(region: Region, ownSources: number, catalogSources: CatalogSource[], revision: number): Promise<Registry> {
   const started = Date.now()
+  const previous = served
   let last: unknown
   let attempts = 0
   /**
@@ -299,8 +317,6 @@ export async function loadRegistry(region: Region = activeRegion()): Promise<Reg
   // decided once and persisted. The catalog's published package, on the
   // registry the probe just proved reachable, is the repair that needs
   // neither the probe nor the decision to change.
-  const ownSources = routesFor(region).catalog.length
-  const catalogSources = catalogSourcesFor(region)
   for (const [sourceIndex, source] of catalogSources.entries()) {
     const key = sourceKey(source)
     const servedBy = <T>(data: T): T => {
@@ -327,7 +343,7 @@ export async function loadRegistry(region: Region = activeRegion()): Promise<Reg
         // A validator only ever goes back to the source that issued it.
         // Carried across a region switch it could earn a "not modified" from
         // an origin whose body we have never seen.
-        const reusable = served?.key === key ? served : null
+        const reusable = previous?.key === key ? previous : null
         if (source.kind === 'npm') {
           const { version, data } = await catalogFromPackage(
             source.registry, source.pkg, reusable?.version ?? undefined,
@@ -336,7 +352,7 @@ export async function loadRegistry(region: Region = activeRegion()): Promise<Reg
           if (data === null && reusable !== null) return servedBy(reusable.data)
           if (data === null) throw new Error('the catalog package reported no change with nothing to reuse')
           const parsed = asRegistry(data)
-          served = { key, etag: null, modified: null, version, data: parsed }
+          if (revision === catalogRevision) served = { key, etag: null, modified: null, version, data: parsed }
           return servedBy(parsed)
         }
         // ETag first: it is exact, while a date has one-second resolution and
@@ -376,8 +392,10 @@ export async function loadRegistry(region: Region = activeRegion()): Promise<Reg
         const data = asRegistry(JSON.parse(new TextDecoder().decode(
           await readBodyWhileProgressing(res, BODY_STALL_TIMEOUT_MS),
         )))
-        served = {
-          key, etag: res.headers.get('etag'), modified: res.headers.get('last-modified'), version: null, data,
+        if (revision === catalogRevision) {
+          served = {
+            key, etag: res.headers.get('etag'), modified: res.headers.get('last-modified'), version: null, data,
+          }
         }
         return servedBy(data)
       } catch (error) {

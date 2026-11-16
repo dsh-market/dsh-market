@@ -830,6 +830,7 @@
 .opHead{display:flex;align-items:center;gap:8px;padding:9px 14px;
         border-bottom:1px solid var(--dsw-alias-border-l2,#e5e7eb)}
 .opPanelTitle{font-size:12.5px;font-weight:600}
+.opRepairTitle{padding:9px 14px 3px;font-size:12px;font-weight:600;color:var(--dsw-alias-label-secondary,#667085)}
 .opCloseBtn.opCloseBtn{padding:0 6px;min-width:0;color:var(--dsw-alias-label-secondary,#6b7280)}
 .opAggregate{padding:9px 14px;border-bottom:1px solid var(--dsw-alias-border-l2,#e5e7eb);
              background:var(--dsw-alias-bg-layer-2,#f7f8fa)}
@@ -1230,6 +1231,13 @@
 .notesArrow{color:var(--dsw-alias-label-tertiary,#8b93a1)}
 .notesMeta{font-size:12px;line-height:18px;letter-spacing:.02em;text-transform:uppercase;color:var(--dsw-alias-label-secondary,#6b7280);display:flex;gap:6px;flex-wrap:wrap;align-items:baseline;margin-top:4px}
 .notesBody>.notesMeta:first-child{margin-top:0}
+.notesHistory,.notesHeld{display:flex;flex-direction:column;gap:8px;min-width:0}
+.notesHistory>.notesMeta:first-child,.notesHeld>.notesMeta:first-child{margin-top:0}
+.notesHeld:not(:first-child){padding-top:10px;border-top:1px solid var(--dsw-alias-border-l2,#e5e7eb)}
+.notesEntry{border-bottom:1px solid var(--dsw-alias-border-l2,#e5e7eb);padding-bottom:8px}
+.notesEntry:last-child{border-bottom:none}
+.notesSummary{cursor:pointer;font-size:13px;line-height:20px;overflow-wrap:anywhere}
+.notesSummary+.notesRendered{margin-top:8px}
 .notesPre{margin:0;white-space:pre-wrap;word-break:break-word;font-size:13px;line-height:20px;padding:10px 12px;background:var(--dsw-alias-bg-layer-2,#eef0f4);border-radius:8px;max-height:40vh;overflow:auto}
 /* markdown轻渲染的层级：标题、段落、引用、围栏代码、行内代码与链接 */
 .notesRendered{display:flex;flex-direction:column;gap:8px;min-width:0}
