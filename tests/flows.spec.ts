@@ -18,7 +18,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { load } from 'js-yaml'
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 
@@ -833,6 +833,8 @@ import { addProfileBundle, profileDir } from '../src/profile.ts'
 import { runDshPlugin, type InstallResult, type PluginRunner } from '../src/dsh-cli.ts'
 import { createOfficialDesktopRuntime } from '../src/official-desktop.ts'
 import { PendingCheckoutLinks } from '../src/pending-checkout-links.ts'
+import * as checkoutLocks from '../src/pending-checkout-links.ts'
+import { readPersistentLog } from '../src/log.ts'
 import { routesFor } from '../src/regions.ts'
 import { setRequestGateSource, setTrustedHostsSource } from '../src/http.ts'
 import type { AgentsServiceLike } from '../src/agents.ts'
@@ -6260,6 +6262,124 @@ describe('local-dev restore flow', () => {
     expect(installedSpec(name)).toBe(changed ? '^9.0.0' : localSpec)
     if (changed) expect(lstatSync(link, { throwIfNoEntry: false })).toBeUndefined()
     else expect(readlinkSync(link)).toBe(checkout)
+  })
+
+  it.each([true, false])('stops checking a corrupt native run record after 30 seconds (source exists: %s)', async sourceExists => {
+    const { name, checkout, link, localSpec } = linkedArchiveFixture()
+    const recorded = new PendingCheckoutLinks(fake.profileDir)
+    const nativeRun = join(fake.profileDir, '.plugin-manager', 'run.json')
+    recorded.record({ name, spec: localSpec, rawTarget: readlinkSync(link) })
+    unlinkSync(link)
+    mkdirSync(dirname(nativeRun), { recursive: true })
+    writeFileSync(nativeRun, '{bad json')
+    if (!sourceExists) renameSync(checkout, checkout + '-moved')
+    bed.dispose()
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
+    try {
+      bed = createTestbed()
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(readFileSync(nativeRun, 'utf8')).toBe('{bad json')
+      unlinkSync(nativeRun)
+      await vi.advanceTimersByTimeAsync(2_000)
+      expect(lstatSync(link, { throwIfNoEntry: false })).toBeUndefined()
+      expect(recorded.list()).toHaveLength(1)
+      expect(readFileSync(join(sourceExists ? checkout : checkout + '-moved', 'index.js'), 'utf8')).toBe('local edits')
+      expect((await bed.dispatch('GET', '/dsh-market/status')).json.checkoutRecovery).toEqual({
+        checking: false,
+        entries: [{ name, reason: 'package-run', sourceExists }],
+      })
+
+      bed.dispose()
+      if (!sourceExists) renameSync(checkout + '-moved', checkout)
+      bed = createTestbed()
+      expect(readlinkSync(link)).toBe(checkout)
+      expect(recorded.list()).toEqual([])
+    } finally {
+      bed.dispose()
+      vi.useRealTimers()
+    }
+  })
+
+  it.each(['after the limit', 'after disposal'])('rejects a late host writer callback %s', async when => {
+    const { name, checkout, link, localSpec } = linkedArchiveFixture()
+    const recorded = new PendingCheckoutLinks(fake.profileDir)
+    const lock = join(fake.profileDir, 'package.json.lock')
+    recorded.record({ name, spec: localSpec, rawTarget: readlinkSync(link) })
+    unlinkSync(link)
+    writeFileSync(lock, String(process.pid))
+    const release = Promise.withResolvers<void>()
+    const called = vi.fn()
+    const helper = vi.spyOn(checkoutLocks, 'loadHostProfileLock').mockResolvedValue(async (_file, action) => {
+      called()
+      await release.promise
+      return await action()
+    })
+    bed.dispose()
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
+    try {
+      bed = createTestbed()
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(called).toHaveBeenCalledOnce()
+      expect((await bed.dispatch('GET', '/dsh-market/status')).json.checkoutRecovery).toEqual({
+        checking: true, entries: [],
+      })
+      if (when === 'after disposal') bed.dispose()
+      else {
+        await vi.advanceTimersByTimeAsync(25_000)
+        expect((await bed.dispatch('GET', '/dsh-market/status')).json.checkoutRecovery).toEqual({
+          checking: false, entries: [{ name, reason: 'writer-lock', sourceExists: true }],
+        })
+      }
+      release.resolve()
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(called).toHaveBeenCalledOnce()
+      expect(readFileSync(lock, 'utf8')).toBe(String(process.pid))
+      expect(lstatSync(link, { throwIfNoEntry: false })).toBeUndefined()
+      expect(recorded.list()).toHaveLength(1)
+      expect(readFileSync(join(checkout, 'index.js'), 'utf8')).toBe('local edits')
+    } finally {
+      release.resolve()
+      bed.dispose()
+      helper.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  it('reports the missing host lock helper once and leaves a residual writer lock alone', async () => {
+    const { name, checkout, link, localSpec } = linkedArchiveFixture()
+    const recorded = new PendingCheckoutLinks(fake.profileDir)
+    const lock = join(fake.profileDir, 'package.json.lock')
+    const log = join(fake.profileDir, '.dsh-market', 'log.ndjson')
+    const exitedPid = '2147483647\n'
+    recorded.record({ name, spec: localSpec, rawTarget: readlinkSync(link) })
+    unlinkSync(link)
+    writeFileSync(lock, exitedPid)
+    const helper = vi.spyOn(checkoutLocks, 'loadHostProfileLock').mockResolvedValue(null)
+    bed.dispose()
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
+    try {
+      bed = createTestbed()
+      await vi.advanceTimersByTimeAsync(50_000)
+      expect(readFileSync(lock, 'utf8')).toBe(exitedPid)
+      expect(helper).toHaveBeenCalledOnce()
+      expect(readPersistentLog(log).filter(line => line.includes('host checkout lock helper unavailable'))).toHaveLength(1)
+      expect((await bed.dispatch('GET', '/dsh-market/status')).json.checkoutRecovery).toEqual({
+        checking: false, entries: [{ name, reason: 'writer-lock', sourceExists: true }],
+      })
+      expect(lstatSync(link, { throwIfNoEntry: false })).toBeUndefined()
+      expect(recorded.list()).toHaveLength(1)
+
+      unlinkSync(lock)
+      bed.dispose()
+      bed = createTestbed()
+      expect(readlinkSync(link)).toBe(checkout)
+      expect(recorded.list()).toEqual([])
+      expect(helper).toHaveBeenCalledOnce()
+    } finally {
+      bed.dispose()
+      helper.mockRestore()
+      vi.useRealTimers()
+    }
   })
 
   it('holds a disconnected checkout through the official manager deadline and reconnects after native work settles', async () => {
