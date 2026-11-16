@@ -113,6 +113,18 @@ describe('shared update review', () => {
     expect(screen.queryByText(en.updateChecksNone)).toBeNull()
   })
 
+  it('reports a changed plugin list instead of a failed check when nothing failed', () => {
+    render(<UpdateNotificationsPanel t={t} busy={false} onUpdate={vi.fn()}
+      onCheck={vi.fn()} onEnabled={vi.fn()} onIntervalHours={vi.fn()} snapshot={snapshot({ stale: true, error: null })} />)
+    // The monitor raises `stale` without an error when another client changed
+    // the inventory; claiming "some information is unavailable" made a healthy
+    // install look like a failed check.
+    expect(screen.getByText(en.updateChecksChanged)).toBeTruthy()
+    expect(screen.getByText(en.updateChecksChangedHint)).toBeTruthy()
+    expect(screen.queryByText(en.updateChecksFailed)).toBeNull()
+    expect(screen.queryByText(en.updateChecksFailedHint)).toBeNull()
+  })
+
   it('requires an explicit check and reports a failed preference save', async () => {
     const onCheck = vi.fn().mockResolvedValue(undefined)
     const onEnabled = vi.fn().mockRejectedValue(new Error('offline'))

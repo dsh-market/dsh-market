@@ -26,11 +26,18 @@ export function UpdateNotificationsPanel({ snapshot, t, busy, onCheck, onEnabled
     try { await action() } catch { setFailed(true) } finally { setPending(false) }
   }
   const entries = notificationNames(snapshot).map(name => [name, snapshot.updates[name]] as const)
-  const state = failed || snapshot.stale ? t('updateChecksFailed')
-    : snapshot.checking || pending ? t('updateChecksChecking')
-      : snapshot.checkedAt === null ? t('updateChecksPending')
-        : entries.length > 0 ? t('updateChecksFound').replace('{0}', String(entries.length))
-          : t('updateChecksNone')
+  // `stale` alone does not mean a check failed: the monitor also raises it when
+  // the local inventory changed under the last result (another client installed
+  // or removed a plugin), and that path clears no error. Reporting it as
+  // "information unavailable" told users a check had failed when nothing had.
+  const failedNotice = failed || (snapshot.stale && snapshot.error !== null)
+  const changedNotice = !failedNotice && snapshot.stale
+  const state = failedNotice ? t('updateChecksFailed')
+    : changedNotice ? t('updateChecksChanged')
+      : snapshot.checking || pending ? t('updateChecksChecking')
+        : snapshot.checkedAt === null ? t('updateChecksPending')
+          : entries.length > 0 ? t('updateChecksFound').replace('{0}', String(entries.length))
+            : t('updateChecksNone')
 
   return <details className={css.updateChecks} data-dsh-market-update-checks>
     <summary>{t('updateChecksTitle')} <span className={css.updateChecksSummary}>{state}</span></summary>
@@ -58,7 +65,7 @@ export function UpdateNotificationsPanel({ snapshot, t, busy, onCheck, onEnabled
         onClick={() => { void run(onCheck) }}>{t('updateChecksNow')}</Button>
     </div>
     <p className={css.updateChecksHint}>{t(snapshot.intervalHours === null ? 'updateChecksLegacyHint' : 'updateChecksHint')}</p>
-    {(snapshot.stale || failed) && <p role="status" className={css.updateChecksHint}>{t('updateChecksFailedHint')}</p>}
+    {(failedNotice || changedNotice) && <p role="status" className={css.updateChecksHint}>{t(failedNotice ? 'updateChecksFailedHint' : 'updateChecksChangedHint')}</p>}
     {snapshot.lastSuccessAt !== null && <p className={css.updateChecksHint}>
       {t('updateChecksLastSuccess').replace('{0}', new Date(snapshot.lastSuccessAt).toLocaleString())}
     </p>}

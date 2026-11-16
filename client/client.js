@@ -212,6 +212,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			updateChecksNone: "暂无更新提醒",
 			updateChecksFailed: "检查暂未完成",
 			updateChecksFailedHint: "部分信息暂时无法获取，保留上次结果。请稍后重试。",
+			updateChecksChanged: "插件清单已变更",
+			updateChecksChangedHint: "上次检查后有插件被安装或移除，之前的结果已不适用。重新检查即可刷新。",
 			updateChecksLastSuccess: "最近完整检查：{0}",
 			updateChecksOpenHost: "到插件页查看",
 			updateNotificationsAnnouncement: "有 {count} 个插件可更新。打开插件市场查看。",
@@ -1055,6 +1057,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			updateChecksNone: "No pending update reminders",
 			updateChecksFailed: "Check incomplete",
 			updateChecksFailedHint: "Some information is unavailable. Previous results are kept; try again later.",
+			updateChecksChanged: "Plugin list changed",
+			updateChecksChangedHint: "A plugin was installed or removed after the last check, so earlier results no longer apply. Re-check to refresh them.",
 			updateChecksLastSuccess: "Last complete check: {0}",
 			updateChecksOpenHost: "View in Plugins",
 			updateNotificationsAnnouncement: "{count} plugin updates available. Open Plugin Market to review.",
@@ -1897,6 +1901,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			updateChecksNone: "通知する更新はありません",
 			updateChecksFailed: "確認が完了していません",
 			updateChecksFailedHint: "一部の情報を取得できないため、前回の結果を保持しています。後でもう一度お試しください。",
+			updateChecksChanged: "プラグイン構成が変更されました",
+			updateChecksChangedHint: "前回の確認後にプラグインが追加または削除されたため、以前の結果は適用できません。再確認すると更新されます。",
 			updateChecksLastSuccess: "前回の確認完了：{0}",
 			updateChecksOpenHost: "プラグイン画面で確認",
 			updateNotificationsAnnouncement: "{count} 件のプラグイン更新があります。プラグインマーケットで確認してください。",
@@ -7077,7 +7083,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				}
 			};
 			const entries = notificationNames(snapshot).map((name) => [name, snapshot.updates[name]]);
-			const state = failed || snapshot.stale ? t("updateChecksFailed") : snapshot.checking || pending ? t("updateChecksChecking") : snapshot.checkedAt === null ? t("updateChecksPending") : entries.length > 0 ? t("updateChecksFound").replace("{0}", String(entries.length)) : t("updateChecksNone");
+			const failedNotice = failed || snapshot.stale && snapshot.error !== null;
+			const changedNotice = !failedNotice && snapshot.stale;
+			const state = failedNotice ? t("updateChecksFailed") : changedNotice ? t("updateChecksChanged") : snapshot.checking || pending ? t("updateChecksChecking") : snapshot.checkedAt === null ? t("updateChecksPending") : entries.length > 0 ? t("updateChecksFound").replace("{0}", String(entries.length)) : t("updateChecksNone");
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("details", {
 				className: Market_module_css_default.updateChecks,
 				"data-dsh-market-update-checks": true,
@@ -7147,10 +7155,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						className: Market_module_css_default.updateChecksHint,
 						children: t(snapshot.intervalHours === null ? "updateChecksLegacyHint" : "updateChecksHint")
 					}),
-					(snapshot.stale || failed) && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+					(failedNotice || changedNotice) && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
 						role: "status",
 						className: Market_module_css_default.updateChecksHint,
-						children: t("updateChecksFailedHint")
+						children: t(failedNotice ? "updateChecksFailedHint" : "updateChecksChangedHint")
 					}),
 					snapshot.lastSuccessAt !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
 						className: Market_module_css_default.updateChecksHint,
