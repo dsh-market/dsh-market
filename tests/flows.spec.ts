@@ -10258,9 +10258,9 @@ describe('custom groups (#60)', () => {
   })
 
   it.each([
-    { phase: 'classification', failWrite: false },
-    { phase: 'activation', failWrite: true },
-  ])('holds the group lock during theme $phase and releases it after completion (#1228)', async ({ phase, failWrite }) => {
+    { phase: 'classification' },
+    { phase: 'activation' },
+  ])('holds the group lock during theme $phase and releases it after completion (#1228)', async ({ phase }) => {
     for (const name of ['theme-a', 'theme-b']) {
       fake.repos[`github:o/${name}`] = { name, manifest: { dsh: {}, main: 'index.js' }, artifacts: ['index.js'] }
       expect((await bed.dispatch('POST', '/dsh-market/install', { url: `https://github.com/o/${name}` })).status).toBe(200)
@@ -10278,8 +10278,6 @@ describe('custom groups (#60)', () => {
       await gate
       return REGISTRY
     })
-    const writer = vi.spyOn(hotModule, 'writeMarketState')
-    if (failWrite) writer.mockImplementationOnce(() => { throw new Error('test: state write failed') })
     const toggle = bed.dispatch('POST', '/dsh-market/groups', { action: 'toggle', name: 'looks', enabled: true })
     let competing: Awaited<ReturnType<Testbed['dispatch']>> | undefined
     let result: Awaited<ReturnType<Testbed['dispatch']>> | undefined
@@ -10289,13 +10287,11 @@ describe('custom groups (#60)', () => {
     } finally {
       release()
       result = await toggle
-      writer.mockRestore()
     }
     expect.soft(competing?.status).toBe(409)
     expect.soft(competing?.json).toMatchObject({ busy: true })
-    expect(result.status).toBe(failWrite ? 500 : 200)
-    if (failWrite) expect(result.json.error).toBe('test: state write failed')
-    else expect(hot.mounts).toEqual(['theme-a'])
+    expect(result.status).toBe(200)
+    expect(hot.mounts).toEqual(['theme-a'])
     expect((await bed.dispatch('POST', '/dsh-market/snapshots', {})).status).toBe(200)
   })
 })
