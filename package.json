@@ -38,7 +38,7 @@
   },
   "dependencies": {
     "js-yaml": "^4.3.2",
-    "undici": "^7.29.1"
+    "undici": "^7.30.2"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
