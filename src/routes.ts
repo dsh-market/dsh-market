@@ -1260,6 +1260,8 @@ export function mountMarketRoutes(
     const packageDir = join(activeProfileDir, 'node_modules', name)
     const optOutRows = new Set(bundleOptOutRowIds(packageDir))
     const expressionRows = new Set(bundleExpressionRowIds(packageDir))
+    const carrierRows = carrierRowIds(activeProfileDir, name)
+    const isCarrier = carrierRows.length > 0
     const wasDisabled = disabled.has(name)
     const componentRows = rowIdsForPackage(host, activeProfileDir, name)
     const installed = componentRows.length > 1 ? readInstalled(config.profile, activeProfileDir) : {}
@@ -1286,10 +1288,13 @@ export function mountMarketRoutes(
       ? choices : null
     const keepOff = enabled ? componentPatch?.keepOff : undefined
     // Capture module identity before switching the entry off.
-    const namedRows = new Set<string>()
+    const namedRows = new Map<string, string>()
     if (!enabled) {
       for (const id of shippedInsertedRowIds(packageDir)) {
-        if (composedRowName(host, id) === name) namedRows.add(id)
+        const moduleName = composedRowName(host, id)
+        if (moduleName === name || (isCarrier && moduleName !== null && packageOfEntryName(moduleName) === name)) {
+          namedRows.set(id, moduleName)
+        }
       }
     }
     const { ok: liveOk, reason: liveReason } = await (switchLive === undefined
@@ -1324,9 +1329,7 @@ export function mountMarketRoutes(
     // A bundle that merely reconfigures a neighbour (config without
     // disabled) is NOT dropped: #147 requires disabling it to leave the
     // neighbour live, and the e2e fixture-cross re-enable breaks otherwise.
-    const carrierRows = carrierRowIds(activeProfileDir, name)
     const foreignRows = foreignRowIds(activeProfileDir, name)
-    const isCarrier = carrierRows.length > 0
     // Both layers, or neither (#696 B). `dsh.profile.bundles` is the
     // package-level declaration the official plugins page's switch reads
     // and the loader composes; the patch rows above are the runtime
@@ -1393,7 +1396,7 @@ export function mountMarketRoutes(
     // The name the loader composed for a row, for the rows whose user-layer
     // entry carries one of its own: the host skips an entry whose `name` is
     // not this one, so its flag is not a decision about the row (#1113).
-    const expectedNameFor = (rowId: string): string | null => namedRows.has(rowId) ? name : composedRowName(host, rowId)
+    const expectedNameFor = (rowId: string): string | null => namedRows.get(rowId) ?? composedRowName(host, rowId)
     /** A user-layer flag counts only when the row it names is this entry. */
     const rowIsOurs = (rowId: string): boolean => prePatch !== null && rowFlagApplies(prePatch, rowId, expectedNameFor(rowId))
     if (patchRows.length > 0 && patchGate && prePatch !== null) {
@@ -1429,8 +1432,10 @@ export function mountMarketRoutes(
         const expectedName = expectedNameFor(rowId)
         // DSH drops a simple id/disabled override when enabling would restore
         // the bundle default. An exact module name keeps the user's enable
-        // in the shared patch layer for followOutsideEnable (#1196).
-        const recordModuleName = stackToggle && !isCarrier && !cleanOnly && namedRows.has(rowId)
+        // in the shared patch layer for followOutsideEnable (#1196). A
+        // carrier's own subpath entries need that same evidence (#1242);
+        // its bundle row can also return through recovery, not user intent.
+        const recordModuleName = stackToggle && !cleanOnly && namedRows.has(rowId)
         const result: Awaited<ReturnType<typeof enableRow>> = enabled
           ? await enableRow(userPatchPath, rowId, { cleanOnly, expectedName, packageName: name })
           : await disableRow(userPatchPath, rowId, { expectedName, recordModuleName, packageName: name })

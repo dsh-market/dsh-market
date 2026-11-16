@@ -29,6 +29,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { logEvent } from './log.ts'
+import { packageOfEntryName } from './entry-identity.ts'
 import { parsePatchFile, parsePatchText } from './check.ts'
 import { bundleOptOutRowIds, bundlePatchInsertedIds, declaredBundlePatchFiles, parsePatchRows } from './profile.ts'
 import { NPM_NAME_RE } from './sources.ts'
@@ -639,6 +640,15 @@ function escapeRegExp(value: string): string {
 const MARKET_ROW_MARKER = '# dsh-market'
 const COMPONENT_MODULE_RE = /^@?[A-Za-z0-9_.~-]+(?:\/[A-Za-z0-9_.~-]+)*$/u
 
+/** Named switch rows can point at an export inside their owning package
+ * (#1242). Keep the full module identity for the host's exact-name match;
+ * cleanup may own the package, but not a similarly prefixed package. */
+function isNamedSwitchModule(name: string, owner: string | null): boolean {
+  const packageName = NPM_NAME_RE.test(name) ? name : packageOfEntryName(name)
+  return COMPONENT_MODULE_RE.test(name) && packageName !== null && NPM_NAME_RE.test(packageName)
+    && (owner === null || name === owner || packageName === owner)
+}
+
 function moduleNameLine(name: string): string {
   return `  name: '${name}' ${MARKET_ROW_MARKER}`
 }
@@ -682,9 +692,9 @@ function rewriteRowBlocks(
     const marker = /^ {2}name: (['"])([^'"]+)\1[ \t]+# dsh-market[ \t]*(?:\r?\n)?$/u.exec(lines[following] ?? '')
     if (marker !== null) {
       name = marker[2]!
-      const validName = componentOwner === undefined ? NPM_NAME_RE : COMPONENT_MODULE_RE
-      if (!validName.test(name) || !rowApplies(name, expected)
-        || (componentOwner === undefined && !rowApplies(name, owner))) continue
+      const validName = componentOwner === undefined
+        ? isNamedSwitchModule(name, owner) : COMPONENT_MODULE_RE.test(name)
+      if (!validName || !rowApplies(name, expected)) continue
       lastKey = following
       following = nextPatchContentLine(lines, lastKey + 1)
     }
@@ -955,7 +965,8 @@ export function disableRow(
   options: { expectedName?: string | null; recordModuleName?: boolean; packageName?: string } = {},
 ): Promise<{ ok: boolean; reason: string | null }> {
   const expected = options.expectedName ?? null
-  const name = options.recordModuleName === true && expected !== null && NPM_NAME_RE.test(expected) ? expected : null
+  const name = options.recordModuleName === true && expected !== null
+    && isNamedSwitchModule(expected, options.packageName ?? expected) ? expected : null
   return queuedWrite(async () => {
     if (!ROW_ID_RE.test(rowId)) {
       return { ok: false, reason: `行 id 含特殊字符,不支持写入补丁层 / row id ${rowId} cannot be written to the patch layer` }

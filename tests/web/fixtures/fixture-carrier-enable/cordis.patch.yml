@@ -1,0 +1,7 @@
+- insert:
+    - id: carrier-enable-native
+      name: dshm-e2e-fixture-carrier-enable
+    - id: carrier-enable-gate
+      name: dshm-e2e-fixture-carrier-enable/gate
+- id: carrier-enable-dependent
+  inject: [e2eCarrierEnablePolicy]

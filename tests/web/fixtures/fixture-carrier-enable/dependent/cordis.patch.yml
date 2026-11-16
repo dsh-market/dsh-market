@@ -1,0 +1,3 @@
+- insert:
+    - id: carrier-enable-dependent
+      name: dshm-e2e-fixture-carrier-enable-dependent

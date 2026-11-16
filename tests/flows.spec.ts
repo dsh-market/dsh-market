@@ -12083,12 +12083,12 @@ describe('boot replay carrier safety', () => {
   }
 
   /** Build a real carrier package: own gate insert plus a foreign inject row. */
-  function seedCarrier(): void {
+  function seedCarrier(name = carrierName, extraRow = false, gateName = `${name}/gate`): void {
     const dir = profileDir('web')
-    const pkgDir = join(dir, 'node_modules', carrierName)
+    const pkgDir = join(dir, 'node_modules', name)
     mkdirSync(pkgDir, { recursive: true })
     writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({
-      name: carrierName,
+      name,
       version: '1.0.0',
       type: 'module',
       dsh: { bundle: { patch: './cordis.patch.yml' } },
@@ -12096,16 +12096,78 @@ describe('boot replay carrier safety', () => {
     writeFileSync(join(pkgDir, 'cordis.patch.yml'), [
       '- insert:',
       '    - id: carrier-gate',
-      `      name: '${carrierName}/gate'`,
+      `      name: '${gateName}'`,
+      ...(extraRow ? ['    - id: carrier-native', `      name: '${name}/native'`] : []),
       '- id: preset-standard',
       '  inject: [carrierGateService]',
       '',
     ].join('\n'))
     writeFileSync(profileManifestPath(), JSON.stringify({
-      dependencies: { [carrierName]: '1.0.0' },
-      dsh: { profile: { bundles: [carrierName] } },
+      dependencies: { [name]: '1.0.0' },
+      dsh: { profile: { bundles: [name] } },
     }, null, 2))
   }
+
+  it.each([
+    { name: carrierName, gateName: carrierName, extraRow: false },
+    { name: carrierName, gateName: `${carrierName}/gate`, extraRow: false },
+    { name: '@example/dsh-carrier-gate', gateName: '@example/dsh-carrier-gate/gate', extraRow: true },
+  ])('keeps $gateName enabled after the official page enables its components (#1242)', async ({ name, gateName, extraRow }) => {
+    bed.dispose()
+    seedCarrier(name, extraRow, gateName)
+    bed = createTestbed()
+    bed.loaderEntries.push(makeEntry(gateName, 'carrier-gate'))
+    if (extraRow) bed.loaderEntries.push(makeEntry(`${name}/native`, 'carrier-native'))
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    const off = await bed.dispatch('POST', '/dsh-market/toggle', { name, enabled: false })
+    expect(off.status).toBe(200)
+    expect(hot.disabled.has(name)).toBe(true)
+    expect(readManifestAt(profileDir('web')).dsh?.profile?.bundles).not.toContain(name)
+    const userPatch = join(profileDir('web'), 'cordis.patch.yml')
+    const offPatch = readFileSync(userPatch, 'utf8')
+    const rows = load(offPatch) as { id: string; disabled: boolean; name?: string }[]
+    expect(rows).toHaveLength(extraRow ? 2 : 1)
+    expect(rows.every(row => row.disabled === true)).toBe(true)
+
+    // The official package switch restores the bundle. Its component
+    // switch removes id/disabled-only overrides against a default-on row,
+    // but preserves a named override and flips its literal flag (#1196).
+    addProfileBundle(profileDir('web'), name)
+    const compacted = rows.every(row => Object.keys(row).every(key => key === 'id' || key === 'disabled'))
+    writeFileSync(userPatch, compacted ? '[]\n' : offPatch.replaceAll('disabled: true', 'disabled: false'))
+
+    // The next market instance must follow that explicit enable instead of
+    // replaying its old disable list and deleting the restored carrier.
+    bed.dispose()
+    bed = createTestbed()
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(readManifestAt(profileDir('web')).dsh?.profile?.bundles).toContain(name)
+    expect(hot.disabled.has(name)).toBe(false)
+  })
+
+  it('recovers a legacy carrier disable only after an explicit market enable', async () => {
+    bed.dispose()
+    seedCarrier()
+    const userPatch = join(profileDir('web'), 'cordis.patch.yml')
+    writeFileSync(userPatch, '- id: carrier-gate\n  disabled: true\n')
+    hot.disabled = new Set([carrierName])
+    bed = createTestbed()
+    bed.loaderEntries.push(makeEntry(`${carrierName}/gate`, 'carrier-gate'))
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(readManifestAt(profileDir('web')).dsh?.profile?.bundles).not.toContain(carrierName)
+    expect(hot.disabled.has(carrierName)).toBe(true)
+
+    const on = await bed.dispatch('POST', '/dsh-market/toggle', { name: carrierName, enabled: true })
+    expect(on.status).toBe(200)
+    expect(on.json.ok).toBe(true)
+    expect(load(readFileSync(userPatch, 'utf8'))).toEqual([])
+    bed.dispose()
+    bed = createTestbed()
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(readManifestAt(profileDir('web')).dsh?.profile?.bundles).toContain(carrierName)
+    expect(hot.disabled.has(carrierName)).toBe(false)
+  })
 
   it('removes a disabled carrier from the bundle stack instead of disabling its gate (#938)', async () => {
     bed.dispose()

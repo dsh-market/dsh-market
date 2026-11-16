@@ -1,0 +1,3 @@
+- insert:
+    - id: carrier-enable-control
+      name: dshm-e2e-fixture-carrier-enable-control

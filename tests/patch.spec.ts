@@ -856,6 +856,52 @@ describe('market-owned named switch rows (#1196)', () => {
   })
 })
 
+describe('carrier module switch records (#1242)', () => {
+  it.each(['carrier-package', '@example/carrier-package'])('preserves %s subpaths through official enable, rollback and uninstall', async (packageName) => {
+    const dir = patchDir()
+    try {
+      const patch = join(dir, 'cordis.patch.yml')
+      const expectedName = `${packageName}/gate`
+      const options = { expectedName, packageName, recordModuleName: true }
+      expect((await disableRow(patch, 'gate', options)).ok).toBe(true)
+      expect(load(readPatch(dir))).toEqual([{ id: 'gate', disabled: true, name: expectedName }])
+
+      // A named override survives the official writer's compaction. Its
+      // false flag is the explicit enable the market follows on the next boot.
+      writeFileSync(patch, readPatch(dir).replace('disabled: true', 'disabled: false'))
+      expect((await disableRow(patch, 'gate', options)).ok).toBe(true)
+      expect(load(readPatch(dir))).toEqual([{ id: 'gate', disabled: true, name: expectedName }])
+      const on = await enableRow(patch, 'gate', { expectedName, packageName })
+      expect(on).toMatchObject({ ok: true, removedMarketName: expectedName })
+      expect(load(readPatch(dir))).toEqual([])
+
+      // A failed package enable restores the exact module identity it removed.
+      expect((await disableRow(patch, 'gate', { ...options, expectedName: on.removedMarketName })).ok).toBe(true)
+      expect(load(readPatch(dir))).toEqual([{ id: 'gate', disabled: true, name: expectedName }])
+      expect(removeRowBlocks(patch, ['gate'], packageName).ok).toBe(true)
+      expect(load(readPatch(dir))).toEqual([])
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('only edits the exact current module and only uninstalls the owning package', async () => {
+    const dir = patchDir()
+    try {
+      const patch = join(dir, 'cordis.patch.yml')
+      const row = (name: string) => `- id: gate\n  disabled: true\n  name: '${name}' # dsh-market\n`
+      const old = row('carrier-package/old')
+      const foreign = row('carrier-package-other/gate')
+      const configured = `${row('carrier-package/gate')}  config: { keep: true }\n`
+      writeFileSync(patch, old + foreign + configured + row('carrier-package/gate'))
+      expect((await enableRow(patch, 'gate', {
+        expectedName: 'carrier-package/gate', packageName: 'carrier-package', cleanOnly: true,
+      })).ok).toBe(true)
+      expect(readPatch(dir)).toBe(old + foreign + configured)
+      expect(removeRowBlocks(patch, ['gate'], 'carrier-package').ok).toBe(true)
+      expect(readPatch(dir)).toBe(foreign + configured)
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+})
+
 describe('multi-component package switch (#1150)', () => {
   it('keeps an official component enable and user choices when lifting the other market overrides', async () => {
     const dir = patchDir()
