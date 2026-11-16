@@ -378,7 +378,7 @@ async function installOrReinstall(
   options: { requestId?: string; registry?: string },
   context?: UpdateContext,
 ): Promise<ManagedResult> {
-  const install = (): Promise<ManagedResult> => manager.installBundle(spec, options)
+  const install = (): Promise<ManagedResult> => trackManagerWrite(manager.installBundle(spec, options))
   let first: ManagedResult
   try {
     first = await install()
@@ -407,7 +407,7 @@ async function installOrReinstall(
   progress.lastLine = '先移除旧版本，桌面端才能装新版本 / Removing the old version so the desktop app can install the new one'
   let removed: ManagedResult
   try {
-    removed = await withDeadline(manager.removeBundle(name), REMOVE_DEADLINE_MS, `remove ${name}`)
+    removed = await withDeadline(trackManagerWrite(manager.removeBundle(name)), REMOVE_DEADLINE_MS, `remove ${name}`)
   } catch (error) {
     if (error instanceof DeadlineExceeded) return interrupted()
     if (record !== undefined) context?.journal.finish(record.id)
@@ -448,6 +448,22 @@ async function installOrReinstall(
  * again, which a module-level variable would not survive.
  */
 const OPERATION_SLOT = Symbol.for('dshmarket.officialDesktop.operation')
+const WRITE_SLOT = Symbol.for('dshmarket.officialDesktop.packageWrites')
+
+/** Keep the native promises across a market reload, including after a route deadline. */
+function pendingManagerWrites(): Set<Promise<ManagedResult>> {
+  const processState = globalThis as { [WRITE_SLOT]?: Set<Promise<ManagedResult>> }
+  return processState[WRITE_SLOT] ??= new Set()
+}
+
+function trackManagerWrite(work: Promise<ManagedResult>): Promise<ManagedResult> {
+  const pending = pendingManagerWrites()
+  pending.add(work)
+  const remove = () => pending.delete(work)
+  void work.then(remove, remove)
+  return work
+}
+
 interface RunningOperation { done: Promise<unknown> }
 function runningOperation(): RunningOperation | undefined {
   return (globalThis as { [OPERATION_SLOT]?: RunningOperation })[OPERATION_SLOT]
@@ -591,7 +607,7 @@ export function createOfficialDesktopRuntime(
       const deadline = command === 'remove' ? REMOVE_DEADLINE_MS : OPERATION_DEADLINE_MS
       operation = withDeadline(
         command === 'remove'
-          ? manager.removeBundle(target)
+          ? trackManagerWrite(manager.removeBundle(target))
           : installOrReinstall(manager, spec, options, updateContext),
         deadline,
         `${command} ${target}`,
@@ -695,6 +711,7 @@ export function createOfficialDesktopRuntime(
     runPlugin,
     repairPendingUpdates,
     busy,
+    packageWritesSettled: () => pendingManagerWrites().size === 0,
     probePnpm: async () => managerLookup() !== undefined,
     provisionPnpm: async () => ({ ok: managerLookup() !== undefined, hint: 'Use the official desktop plugin manager' }),
     cancelActive: () => {
