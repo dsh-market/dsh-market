@@ -11917,4 +11917,45 @@ describe('installed rows carry their install time (#1142)', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: en.installedSortNewest }))
     await waitFor(() => { expect(rowNames()[0]).toBe('dsh-late') })
   })
+
+  it('reopens the list in the order chosen last time', async () => {
+    stubFetch({
+      '/dsh-market/installed': installedPayload({ 'dsh-early': '^1.0.0', 'dsh-late': '^1.0.0' }, { 'dsh-early': early, 'dsh-late': late }),
+      '/dsh-market/updates': { updates: {} },
+    })
+    const first = render(<MarketSection {...props()} />)
+    fireEvent.click(await screen.findByRole('button', { name: new RegExp(en.tabInstalled) }))
+    await screen.findByText('dsh-late')
+    fireEvent.click(screen.getByRole('button', { name: en.installedSort }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: en.installedSortNewest }))
+    await waitFor(() => { expect(rowNames()[0]).toBe('dsh-late') })
+
+    // A reload: this mount goes, the browser's storage stays.
+    first.unmount()
+    render(<MarketSection {...props()} />)
+    fireEvent.click(await screen.findByRole('button', { name: new RegExp(en.tabInstalled) }))
+    await screen.findByText('dsh-late')
+    // The menu is not touched in this mount — the order is the stored one.
+    expect(rowNames()[0]).toBe('dsh-late')
+  })
+})
+
+describe('a chosen sort is remembered (#1142)', () => {
+  it('reopens Discover on the field chosen last time', async () => {
+    stubFetch()
+    const first = render(<MarketSection {...props()} />)
+    await screen.findByText('whale-skin')
+    // The fixture has no download counts, so the default order is the catalog's.
+    expect(rankedNames(first.container)[0]).toBe('dsh-notify')
+    fireEvent.click(screen.getByRole('button', { name: en.filter }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: en.sortAdded }))
+    // Newest collection date first: 08-14 beats 08-10 and 08-01.
+    await waitFor(() => { expect(rankedNames(first.container)[0]).toBe('whale-skin') })
+
+    first.unmount()
+    const second = render(<MarketSection {...props()} />)
+    // No click in this mount: the order comes from storage.
+    await screen.findByText('whale-skin')
+    expect(rankedNames(second.container)[0]).toBe('whale-skin')
+  })
 })

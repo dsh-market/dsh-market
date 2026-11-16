@@ -54,6 +54,7 @@ import { dismissedHostIdSet, rememberDismissedHostId } from './dismissed-host.ts
 import type { OperationRecord } from './operations.ts'
 import { Diagnostics } from './Diagnostics.tsx'
 import { exportMarketLog } from './self-check.ts'
+import { readInstalledSort, readSortChoice, rememberInstalledSort, rememberSortChoice } from './sort-preference.ts'
 import type { HostNavigationStore } from './host-navigation.ts'
 import type { SidebarEntry } from './sidebar-entry.ts'
 import {
@@ -3065,9 +3066,10 @@ export function MarketSection(props: MarketSectionProps) {
    * market's `SortField`: that one is downloads/stars/added, and none of the
    * three exist for an installed package — `added` is the catalog's
    * collection date, which is a different question from when the user
-   * installed it.
+   * installed it. The choice outlives this mount (#1142) — the mirror effect
+   * below keeps it in localStorage.
    */
-  const [installedSort, setInstalledSort] = useState<InstalledSort>('default')
+  const [installedSort, setInstalledSort] = useState<InstalledSort>(() => readInstalledSort())
   /** Catalog URLs bookmarked for later install (#414). */
   const [favoriteUrls, setFavoriteUrlsState] = useState<string[]>(() => cachedFavoriteUrls)
   const setFavoriteUrls = useCallback(cacheState(value => { cachedFavoriteUrls = value }, setFavoriteUrlsState), [])
@@ -3272,8 +3274,8 @@ export function MarketSection(props: MarketSectionProps) {
   const restoringStickRef = useRef(false)
   /** Hidden file input behind the Import button (a Button can't host an <input>). */
   const fileInputRef = useRef<HTMLInputElement | null>(null)
-  const [sortField, setSortField] = useState<SortField>('downloads')
-  const [sortDir, setSortDir] = useState<SortDir>('desc')
+  const [sortField, setSortField] = useState<SortField>(() => readSortChoice('discover').field)
+  const [sortDir, setSortDir] = useState<SortDir>(() => readSortChoice('discover').dir)
   const [timeRange, setTimeRange] = useState<TimeRange>('all')
   const setCompatibleWithHost = useCallback((next: boolean) => { discoveryScan.setEnabled(next) }, [])
   /** The profile this page is running in, for the manual command's own
@@ -3283,12 +3285,30 @@ export function MarketSection(props: MarketSectionProps) {
   const [catsOpen, setCatsOpen] = useState(false)
   /** Themes tab: independent from Discover's sort/time state above — a
    * search or sort choice in one tab has no business resetting the other. */
-  const [themeSortField, setThemeSortField] = useState<SortField>('downloads')
-  const [themeSortDir, setThemeSortDir] = useState<SortDir>('desc')
+  const [themeSortField, setThemeSortField] = useState<SortField>(() => readSortChoice('themes').field)
+  const [themeSortDir, setThemeSortDir] = useState<SortDir>(() => readSortChoice('themes').dir)
   const [themeTimeRange, setThemeTimeRange] = useState<TimeRange>('all')
-  const [favSortField, setFavSortField] = useState<SortField>('downloads')
-  const [favSortDir, setFavSortDir] = useState<SortDir>('desc')
+  const [favSortField, setFavSortField] = useState<SortField>(() => readSortChoice('favorites').field)
+  const [favSortDir, setFavSortDir] = useState<SortDir>(() => readSortChoice('favorites').dir)
   const [favTimeRange, setFavTimeRange] = useState<TimeRange>('all')
+  /**
+   * Each list's order is a display preference, not a profile setting (#1142):
+   * the choice used to live only in this component's state, so a tab switch or
+   * a reload put every list back on its default. The mirror writes the value
+   * that is on screen, which is why it also runs on the first render — a fresh
+   * profile records the default it started from, a reloaded one records the
+   * choice it restored, and neither can drift from what the user is seeing.
+   *
+   * localStorage rather than state.json: the same line the catalog's
+   * compatibility filter (`dshm-host-filter`) and the "recently added" flags
+   * (#940) take.
+   */
+  useEffect(() => {
+    rememberSortChoice('discover', { field: sortField, dir: sortDir })
+    rememberSortChoice('themes', { field: themeSortField, dir: themeSortDir })
+    rememberSortChoice('favorites', { field: favSortField, dir: favSortDir })
+    rememberInstalledSort(installedSort)
+  }, [sortField, sortDir, themeSortField, themeSortDir, favSortField, favSortDir, installedSort])
   /** WebDAV provider-preset dropdown (primitives Menu). */
   const [presetOpen, setPresetOpen] = useState(false)
   /** Install-command disclosure inside the confirm dialog. */
