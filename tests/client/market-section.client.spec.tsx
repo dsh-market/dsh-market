@@ -11636,6 +11636,70 @@ describe('Plugins page tab lays out as page content', () => {
     }
   })
 
+  /**
+   * The report (#1237): a theme that makes `--dsw-alias-bg-base` transparent
+   * — the host's own page colour, so a legitimate thing for a theme to do —
+   * ends up with cards reading through the sticky tab row and category row.
+   * One colour cannot serve both states, and which state a row is in was only
+   * known inside the scroll effect. `data-dshm-stuck` is that answer, on a
+   * selector a theme can use without matching the CSS modules' hashes.
+   */
+  it('marks the chrome rows while they are stuck, and only then (#1237)', async () => {
+    const box = (top: number, bottom: number): DOMRect => ({
+      top, bottom, height: bottom - top, width: 800, left: 0, right: 800, x: 0, y: top, toJSON() { return {} },
+    })
+    const scroller = document.createElement('div')
+    const header = document.createElement('div')
+    const mount = document.createElement('div')
+    scroller.append(header, mount)
+    document.body.append(scroller)
+    Object.defineProperty(scroller, 'scrollHeight', { configurable: true, get: () => 2000 })
+    Object.defineProperty(scroller, 'clientHeight', { configurable: true, get: () => 800 })
+    const realStyle = window.getComputedStyle.bind(window)
+    const styleSpy = vi.spyOn(window, 'getComputedStyle').mockImplementation((elt) => {
+      const style = realStyle(elt as Element)
+      if (elt === scroller) return new Proxy(style, { get: (target, key) => key === 'overflowY' ? 'auto' : Reflect.get(target, key) })
+      if (elt === header) return new Proxy(style, { get: (target, key) => key === 'position' ? 'sticky' : Reflect.get(target, key) })
+      return style
+    })
+    scroller.getBoundingClientRect = () => box(10, 810)
+    header.getBoundingClientRect = () => box(10, 66)
+    const settle = async (): Promise<void> => {
+      fireEvent.scroll(scroller)
+      await act(async () => { await new Promise<void>(resolve => { requestAnimationFrame(() => resolve()) }) })
+    }
+    try {
+      const { container, unmount } = render(<MarketSection {...props()} surface="plugins" />, { container: mount })
+      await screen.findByText('dsh-loop')
+      const head = container.querySelector(`.${css.head}`) as HTMLElement
+      const cats = container.querySelector(`.${css.cats}`) as HTMLElement
+      // In flow, nothing is stuck: a theme keying off the mark must find none.
+      await settle()
+      expect(head.hasAttribute('data-dshm-stuck')).toBe(false)
+      expect(cats.hasAttribute('data-dshm-stuck')).toBe(false)
+
+      // head parks on the host line (10 + the 56px host header), cats one
+      // head-height below it — the same geometry the pin tests above use.
+      head.getBoundingClientRect = () => box(66, 110)
+      cats.getBoundingClientRect = () => box(110, 142)
+      scroller.scrollTop = 300
+      await settle()
+      expect(head.dataset.dshmStuck).toBe('true')
+      expect(cats.dataset.dshmStuck).toBe('true')
+
+      // Back at the top the mark has to leave with the pin — otherwise a theme
+      // keeps an opaque surface on a row that is no longer covering anything.
+      scroller.scrollTop = 0
+      await settle()
+      expect(head.hasAttribute('data-dshm-stuck')).toBe(false)
+      expect(cats.hasAttribute('data-dshm-stuck')).toBe(false)
+      unmount()
+    } finally {
+      styleSpy.mockRestore()
+      scroller.remove()
+    }
+  })
+
   it('appends the next chunk on the Plugins tab and keeps pages everywhere else', async () => {
     const plugins = Array.from({ length: 30 }, (_, i) => ({
       name: `plug-${i}`, owner: 'alice', url: `https://github.com/alice/plug-${i}`,

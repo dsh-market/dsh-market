@@ -34,6 +34,15 @@ const hostDefined = new Set(
  */
 const layoutDefined = new Set(['--dsh-frame-top-clearance'])
 for (const name of layoutDefined) hostDefined.add(name)
+/**
+ * Supplied by a theme at runtime, and deliberately NOT declared by the market:
+ * a local declaration would shadow the inherited value, which is the whole
+ * point of the hook. A theme sets them as inline custom properties on the page
+ * root (or in any rule above the market) when it makes the host's page colour
+ * transparent — see the sticky rows' comment in `Market.module.css` (#1237).
+ */
+const themeSupplied = new Set(['--dshm-sticky-bg', '--dshm-stuck-bg'])
+for (const name of themeSupplied) hostDefined.add(name)
 const marketDefined = new Set(sources.flatMap(({ text }) => [...text.matchAll(/(--[a-zA-Z0-9-]+)\s*:/g)].map(match => match[1]!)))
 
 describe('the CSS variables the market reads', () => {
@@ -58,6 +67,28 @@ describe('the CSS variables the market reads', () => {
       // A host without the theme still gets a Windows monospace font before
       // the generic one, which on Simplified-Chinese Windows is SimSun.
       expect(stack).toMatch(/Consolas[^)]*monospace\)$/)
+    }
+  })
+
+  /**
+   * The theme hooks (#1237) have to be the last fallback of every surface that
+   * can sit over the cards, and the stuck one has to be reachable — a hook the
+   * stylesheet names in its comment but not in its `background` fixes nothing.
+   */
+  it('routes every sticky surface through the theme hooks, unstuck and stuck', () => {
+    const css = readFileSync(join(CLIENT, 'Market.module.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+    // Discover's .stickyHead, then .head and .cats on the Plugins tab.
+    const resting = [...css.matchAll(/background:var\(--dshm-sticky-bg,var\(--dsw-alias-bg-base,#fff\)\)/g)]
+    expect(resting).toHaveLength(3)
+    for (const row of ['head', 'cats']) {
+      expect(css).toMatch(new RegExp(
+        `\\.${row}\\[data-dshm-stuck="true"\\][^{]*\\{[^}]*background:var\\(--dshm-stuck-bg,var\\(--dshm-sticky-bg`,
+      ))
+    }
+    // Neither hook may be declared here: a local declaration would shadow the
+    // value a theme sets above the market, which is the only way it can arrive.
+    for (const hook of ['--dshm-sticky-bg', '--dshm-stuck-bg']) {
+      expect(css).not.toMatch(new RegExp(`${hook}\\s*:`))
     }
   })
 })
