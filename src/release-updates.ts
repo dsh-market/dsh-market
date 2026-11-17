@@ -1,41 +1,8 @@
 /** Published GitHub archives stay archive installs; never infer an npm identity. */
 import { marketFetch } from './net.ts'
 import { activeRegion, githubRoutesFor, rememberGithubRoute, throughProxy } from './regions.ts'
-import { installTargetFor, parseSourceUrl } from './sources.ts'
-
-export interface CatalogReleaseSource {
-  repo: string
-  asset: string
-  manifest: string
-}
-
-/** Only the catalog's own floating asset opts an existing archive into updates. */
-export function catalogReleaseSourceOf(
-  spec: string,
-  entry: { url: string; npm?: unknown; tarball?: unknown },
-): CatalogReleaseSource | null {
-  if (entry.npm !== null && entry.npm !== undefined) return null
-  const source = parseSourceUrl(entry.url)
-  if (source === null || typeof entry.tarball !== 'string' || installTargetFor(entry) !== entry.tarball) return null
-  try {
-    const approved = new URL(entry.tarball)
-    const installed = new URL(spec)
-    const asset = /^\/[^/]+\/[^/]+\/releases\/latest\/download\/([A-Za-z0-9._-]+\.(?:tgz|tar\.gz))$/.exec(approved.pathname)?.[1]
-    if (asset === undefined) return null
-    for (const url of [approved, installed]) {
-      if (url.protocol !== 'https:' || url.host !== 'github.com' || url.username !== '' || url.password !== '' || url.search !== '' || url.hash !== '') return null
-    }
-    const match = /^\/([^/]+\/[^/]+)\/releases\/(?:latest\/download|download\/([^/]+))\/([^/]+)$/.exec(installed.pathname)
-    if (match === null || match[1]!.toLowerCase() !== source.repo.toLowerCase()) return null
-    const [, , tag, installedAsset] = match
-    if (installedAsset !== asset) {
-      // A legacy filename can only add the version from its own stable release tag.
-      const version = /^v?(\d+\.\d+\.\d+)$/.exec(tag ?? '')?.[1]
-      if (version === undefined || installedAsset !== asset.replace(/\.(?:tgz|tar\.gz)$/, extension => `-${version}${extension}`)) return null
-    }
-    return { repo: source.repo, asset, manifest: source.subpath === null ? 'package.json' : `${source.subpath}/package.json` }
-  } catch { return null }
-}
+import type { CatalogReleaseSource } from './sources.ts'
+export { catalogReleaseSourceOf, type CatalogReleaseSource } from './sources.ts'
 
 export async function publishedReleaseUpdate(
   source: CatalogReleaseSource,

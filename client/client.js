@@ -2850,12 +2850,46 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		* installable pnpm target. Pure string logic, no I/O.
 		*/
 		const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+		const MARKET_REPO = "dsh-market/dsh-market";
+		const MARKET_NPM_NAME = "dshmarket";
 		function validSubpath(subpath) {
 			if (!/^[A-Za-z0-9_./-]+$/.test(subpath)) return false;
 			return !subpath.split("/").some((seg) => seg === "" || seg === "." || seg === "..");
 		}
 		/** Registry tarball names must be plain npm package names, nothing fancier. */
 		const NPM_NAME_RE = /^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/;
+		/**
+		* A curated, prebuilt GitHub Release archive accepted as a pnpm target —
+		* but only one belonging to `repo`, the entry's own `owner/name`.
+		*
+		* The binding is the whole point. `npm` gets the same treatment one branch
+		* up (repo-verified, "name-squatting protection"); without it here, an entry
+		* could name a trusted repo and install an archive from somewhere else:
+		*
+		*     url:     https://github.com/good/plugin
+		*     tarball: https://github.com/evil/repo/releases/download/v1/p.tgz
+		*
+		* That is also why the release CDNs (`objects.githubusercontent.com`,
+		* `release-assets.githubusercontent.com`) are not accepted: their paths
+		* carry no owner or repo, so there is nothing to bind the archive to and no
+		* way to tell whose release it is. All 70 entries carrying `tarball` today
+		* use github.com and match their own repo, so nothing real is turned away.
+		*/
+		function releaseTarballTarget(value, repo) {
+			if (typeof value !== "string") return null;
+			const target = value.trim();
+			let url;
+			try {
+				url = new URL(target);
+			} catch {
+				return null;
+			}
+			if (url.protocol !== "https:" || url.hostname !== "github.com") return null;
+			if (!url.pathname.endsWith(".tgz") && !url.pathname.endsWith(".tar.gz")) return null;
+			const segments = url.pathname.split("/").filter((segment) => segment !== "");
+			if (segments.length < 4 || segments[2] !== "releases") return null;
+			return `${segments[0]}/${segments[1]}`.toLowerCase() === repo.toLowerCase() ? target : null;
+		}
 		/**
 		* Parse a registry source url: a github repo, optionally with a
 		* `/tree/<branch>/<subpath>` suffix (how the curated list links monorepo
@@ -2872,6 +2906,51 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				repo: m[1],
 				subpath
 			};
+		}
+		/**
+		* The pnpm install target for a registry entry. Repo-verified npm packages
+		* win, followed by author-supplied prebuilt GitHub Release tarballs; both avoid
+		* full-repo downloads and local build scripts.
+		* @returns the target spec, or null when the source url is unsupported.
+		*/
+		function installTargetFor(entry) {
+			const source = parseSourceUrl(entry.url);
+			if (source === null) return null;
+			if (source.subpath === null && source.repo.toLowerCase() === MARKET_REPO) return MARKET_NPM_NAME;
+			if (typeof entry.npm === "string" && NPM_NAME_RE.test(entry.npm)) return entry.npm;
+			const tarball = releaseTarballTarget(entry.tarball, source.repo);
+			if (tarball !== null) return tarball;
+			return githubSourceTarget(source);
+		}
+		/** Only the catalog's own floating asset opts an existing archive into updates. */
+		function catalogReleaseSourceOf(spec, entry) {
+			if (entry.npm !== null && entry.npm !== void 0) return null;
+			const source = parseSourceUrl(entry.url);
+			if (source === null || typeof entry.tarball !== "string" || installTargetFor(entry) !== entry.tarball) return null;
+			try {
+				const approved = new URL(entry.tarball);
+				const installed = new URL(spec);
+				const asset = /^\/[^/]+\/[^/]+\/releases\/latest\/download\/([A-Za-z0-9._-]+\.(?:tgz|tar\.gz))$/.exec(approved.pathname)?.[1];
+				if (asset === void 0) return null;
+				for (const url of [approved, installed]) if (url.protocol !== "https:" || url.host !== "github.com" || url.username !== "" || url.password !== "" || url.search !== "" || url.hash !== "") return null;
+				const match = /^\/([^/]+\/[^/]+)\/releases\/(?:latest\/download|download\/([^/]+))\/([^/]+)$/.exec(installed.pathname);
+				if (match === null || match[1].toLowerCase() !== source.repo.toLowerCase()) return null;
+				const [, , tag, installedAsset] = match;
+				if (installedAsset !== asset) {
+					const version = /^v?(\d+\.\d+\.\d+)$/.exec(tag ?? "")?.[1];
+					if (version === void 0 || installedAsset !== asset.replace(/\.(?:tgz|tar\.gz)$/, (extension) => `-${version}${extension}`)) return null;
+				}
+				return {
+					repo: source.repo,
+					asset,
+					manifest: source.subpath === null ? "package.json" : `${source.subpath}/package.json`
+				};
+			} catch {
+				return null;
+			}
+		}
+		function githubSourceTarget(source) {
+			return source.subpath !== null ? `github:${source.repo}#path:/${source.subpath}` : `github:${source.repo}`;
 		}
 		//#endregion
 		//#region src/client/market-data.ts
@@ -4033,6 +4112,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		/** Catalog row for an installed dependency — strict for local link:/file: specs. */
 		function catalogEntryForInstalled(plugins, name, spec, repoIdentities = [], repoHints = []) {
 			if (/^(?:link|file):/i.test(spec)) return findCatalogEntryForLocal(plugins, name, repoIdentities, repoHints) ?? void 0;
+			if (spec.startsWith("https://github.com/") && spec.includes("/releases/")) {
+				const matches = plugins.filter((plugin) => catalogReleaseSourceOf(spec, plugin) !== null && !sameSourceConflict(plugin, spec, repoIdentities));
+				if (matches.length === 1) return matches[0];
+			}
 			return entryForDep(plugins, name, spec, repoIdentities, repoHints);
 		}
 		/** The date a row shows, in the reader's own timezone; null when unknown. */
@@ -17759,6 +17842,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									const installedWhenTitle = [installedOn === null ? t("installedAtUnknown") : `${t("installedAtLabel")} ${installedOn}`, updatedOn === null ? "" : `${t("updatedAtLabel")} ${updatedOn}`].filter(Boolean).join(" · ");
 									const specText = String(spec);
 									const specRedundant = version !== "" && /^[\^~]?\d/.test(specText);
+									const releaseSource = entry !== void 0 && catalogReleaseSourceOf(specText, entry) !== null;
 									const localPath = localPathOf(specText);
 									const ghSpec = /^github:([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:#|$)/.exec(specText);
 									const repoUrl = entry !== void 0 ? entry.url : ghSpec !== null ? "https://github.com/" + ghSpec[1] : null;
@@ -17823,6 +17907,19 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 															})
 														})
 													]
+												}) : releaseSource ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+													className: Market_module_css_default.irowPath,
+													children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+														className: Market_module_css_default.irowPathIcon,
+														children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(IconLinkOutline14, { size: 14 })
+													}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("a", {
+														className: `${Market_module_css_default.spec} ${Market_module_css_default.src}`,
+														href: specText,
+														title: specText,
+														target: "_blank",
+														rel: "noreferrer",
+														children: "GitHub Release"
+													})]
 												}) : repoUrl !== null ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 													className: Market_module_css_default.irowPath,
 													children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {

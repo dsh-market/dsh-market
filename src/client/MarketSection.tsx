@@ -56,6 +56,7 @@ import { Diagnostics } from './Diagnostics.tsx'
 import { exportMarketLog } from './self-check.ts'
 import type { HostNavigationStore } from './host-navigation.ts'
 import type { SidebarEntry } from './sidebar-entry.ts'
+import { catalogReleaseSourceOf } from '../sources.ts'
 import {
   installCommandFor, hostCompatibilityKey,
   api, applyGithubRouting, avatarColor, catalogEntryForInstalled, entryForDep, failureText, githubRouteCandidates, groupSwitchState, installedForCatalog, isGenerationSpec, isInstalled, localizeBilingual, localizeBilingualList, looksTerminal, matchInstalledName, orderedCategories, pluginCategories,
@@ -8883,6 +8884,7 @@ export function MarketSection(props: MarketSectionProps) {
                             // link:, a tag — is the only place the row says where
                             // the plugin came from, so it stays.
                             const specRedundant = version !== '' && /^[\^~]?\d/.test(specText)
+                            const releaseSource = entry !== undefined && catalogReleaseSourceOf(specText, entry) !== null
                             const localPath = localPathOf(specText)
                             const ghSpec = /^github:([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:#|$)/.exec(specText)
                             const repoUrl = entry !== undefined ? entry.url : ghSpec !== null ? 'https://github.com/' + ghSpec[1] : null
@@ -8951,6 +8953,13 @@ export function MarketSection(props: MarketSectionProps) {
                                             )}
                                           </div>
                                         )
+                                      : releaseSource
+                                        ? (
+                                            <div className={css.irowPath}>
+                                              <span className={css.irowPathIcon}><IconLinkOutline14 size={14} /></span>
+                                              <a className={`${css.spec} ${css.src}`} href={specText} title={specText} target="_blank" rel="noreferrer">GitHub Release</a>
+                                            </div>
+                                          )
                                       : repoUrl !== null
                                         ? (
                                             <div className={css.irowPath}>
