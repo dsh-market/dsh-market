@@ -1285,3 +1285,34 @@ describe('entryForDep answers a monorepo subpackage with its own row', () => {
     ])?.npm).toBe('dsh-subagent-control')
   })
 })
+
+describe('catalogEntryForInstalled: Release archives match only the approved repo + asset', () => {
+  const entry = {
+    name: 'x', url: 'https://github.com/Owner/Repo',
+    tarball: 'https://github.com/Owner/Repo/releases/latest/download/x.tgz',
+  } as unknown as RegistryPlugin
+  const base = 'https://github.com/Owner/Repo/releases/'
+  it.each([
+    base + 'latest/download/x.tgz',
+    base + 'download/v1.2.3/x-1.2.3.tgz',
+    'https://github.com/owner/repo/releases/latest/download/x.tgz',
+  ])('matches %s even when the installed package name differs', spec => {
+    expect(catalogEntryForInstalled([entry], 'other-name', spec, [], [])).toBe(entry)
+  })
+  it.each([
+    'https://github.com/Owner/Repo2/releases/latest/download/x.tgz',
+    'https://github.com/Owner/Repo-fork/releases/latest/download/x.tgz',
+    'https://github.com/Other/Repo/releases/latest/download/x.tgz',
+    'https://github.com.evil.com/Owner/Repo/releases/latest/download/x.tgz',
+    'https://user@github.com/Owner/Repo/releases/latest/download/x.tgz',
+    'http://github.com/Owner/Repo/releases/latest/download/x.tgz',
+    base + 'latest/download/x.tgz?a=1',
+    base + 'latest/download/x.tgz#f',
+    base + 'latest/download/x.tgz/extra',
+    base + 'download/v1.2.3/y.tgz',
+    base + 'download/v1.2.3/x-1.2.4.tgz',
+    'https://github.com/Owner/Repo.git/releases/latest/download/x.tgz',
+  ])('does not match look-alike %s', spec => {
+    expect(catalogEntryForInstalled([entry], 'other-name', spec, [], [])).toBeUndefined()
+  })
+})
