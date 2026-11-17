@@ -5,7 +5,7 @@
 
 import type { DiagnosticReportV1 } from '../diagnostics.ts'
 import { findCatalogEntryForLocal } from '../catalog-local-match.ts'
-import { NPM_NAME_RE, parseSourceUrl } from '../sources.ts'
+import { catalogReleaseSourceOf, NPM_NAME_RE, parseSourceUrl } from '../sources.ts'
 import type { StartupRepairSnapshot } from '../startup-repair-report.ts'
 import type { CheckoutRecoveryStatus } from '../pending-checkout-links.ts'
 export type { SharedHostPackageDependencyFinding } from '../diagnostics.ts'
@@ -1837,6 +1837,11 @@ export function catalogEntryForInstalled(
 ): RegistryPlugin | undefined {
   if (/^(?:link|file):/i.test(spec)) {
     return findCatalogEntryForLocal(plugins, name, repoIdentities, repoHints) ?? undefined
+  }
+  if (spec.startsWith('https://github.com/') && spec.includes('/releases/')) {
+    const matches = plugins.filter(plugin =>
+      catalogReleaseSourceOf(spec, plugin) !== null && !sameSourceConflict(plugin, spec, repoIdentities))
+    if (matches.length === 1) return matches[0]
   }
   return entryForDep(plugins, name, spec, repoIdentities, repoHints)
 }

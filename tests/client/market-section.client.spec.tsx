@@ -6143,6 +6143,30 @@ describe('#1147 local description', () => {
       expect(await within(await installedRow(RELEASE_NAME)).findByText(LOCAL_DESCRIPTION)).toBeTruthy()
     })
 
+    it('shows the catalog description for WhaleMaid installed from a versioned Release URL', async () => {
+      const name = 'dsh-whalemaid'
+      const repo = 'https://github.com/Xiaxin1235/WhaleMaid'
+      const spec = `${repo}/releases/download/v1.6.5/dsh-whalemaid-full.tgz`
+      const description = '项目自动推进、长期记忆与大肥鱼桌宠'
+      stubFetch({
+        '/dsh-market/registry': {
+          source: 'snapshot', registry: { ...REGISTRY, plugins: [{
+            ...REGISTRY.plugins[0], name: 'WhaleMaid', npm: undefined, url: `${repo}/tree/master/packages/host`,
+            tarball: `${repo}/releases/latest/download/dsh-whalemaid-full.tgz`, description: { zh: description },
+          }] },
+        },
+        '/dsh-market/installed': installedPayload({ [name]: spec }, { descriptions: { [name]: 'Local English description' } }),
+      })
+      await openView('zh')
+      const row = within(await installedRow(name))
+      expect(await row.findByText(description)).toBeTruthy()
+      expect(row.queryByText('Local English description')).toBeNull()
+      if (view === 'installed list') {
+        expect(row.getByRole('link', { name: 'GitHub Release' }).getAttribute('href')).toBe(spec)
+        expect(row.queryByText(spec)).toBeNull()
+      }
+    })
+
     it('falls back when a catalog entry has no usable current-language or English description', async () => {
       const entries = [
         { name: 'dsh-description-missing', description: undefined },
