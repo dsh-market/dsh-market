@@ -16912,7 +16912,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				onClick: doExportLog,
 				children: exportState === "busy" ? t("exportingLog") : t("exportLog")
 			});
-			const updateCheckFailed = updateCheck.failed === null || updateCheck.failed.size > 0;
+			const updateCheckFailed = updateCheck.failed === null || updateCheck.failed.size > 0 && updateCheck.failed.size >= Object.keys(updateCheck.updates).length;
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 				ref: rootRef,
 				className: `${Market_module_css_default.root} notranslate`,

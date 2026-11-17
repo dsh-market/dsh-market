@@ -1290,6 +1290,20 @@ describe('MarketSection (jsdom)', () => {
     expect(within(first.container).getByRole('button', { name: 'Update all (1)' })).toBeTruthy()
   })
 
+  it('keeps the header banner down when one row of several cannot be checked (#1227)', async () => {
+    stubFetch({
+      '/dsh-market/installed': { installed: { 'dsh-loop': '^1.0.0', 'dsh-notify': '^1.0.0', 'private-bundle': 'github:me/private' } },
+      '/dsh-market/updates': { updates: {
+        'dsh-loop': { kind: 'npm', version: '1.0.0', latest: '1.1.0', updateAvailable: true },
+        'dsh-notify': { kind: 'npm', version: '1.0.0', latest: '1.0.0', updateAvailable: false },
+        'private-bundle': { kind: 'github', updateAvailable: false, checkError: 'unavailable' },
+      } },
+    })
+    render(<MarketSection {...props()} />)
+    expect(await screen.findByRole('button', { name: 'Update all (1)' })).toBeTruthy()
+    expect(screen.queryByText('Could not check for updates')).toBeNull()
+  })
+
   it('keeps an unknown saved update pending and restores it only once after retry (#1200)', async () => {
     const update = { kind: 'update', name: 'dsh-loop' }
     localStorage.setItem('dshm-queue-v1', JSON.stringify([update]))

@@ -133,7 +133,8 @@ describe('update notification page integration', () => {
     } }
     await act(async () => { await updateNotifications.refreshAfterChange() })
     await screen.findByRole('button', { name: 'Update v1.3.0' })
-    expect(screen.getByText(en.updateCheckFailed)).toBeTruthy()
+    // One row that cannot be checked is not a failed check (#1227): no header banner.
+    expect(screen.queryByText(en.updateCheckFailed)).toBeNull()
     expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).split('?')[0] === '/dsh-market/updates')).toHaveLength(checkCount)
   })
 

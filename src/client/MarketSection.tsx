@@ -7995,7 +7995,11 @@ export function MarketSection(props: MarketSectionProps) {
       onClick={doExportLog}
     >{exportState === 'busy' ? t('exportingLog') : t('exportLog')}</Button>
   )
-  const updateCheckFailed = updateCheck.failed === null || updateCheck.failed.size > 0
+  // The header banner means "the check did not complete". One row that can never
+  // answer (a private repo probed anonymously) keeps its own per-row hint; it must
+  // not hold the whole page in a retry state forever (#1227).
+  const updateCheckFailed = updateCheck.failed === null
+    || (updateCheck.failed.size > 0 && updateCheck.failed.size >= Object.keys(updateCheck.updates).length)
 
   return (
     <div
