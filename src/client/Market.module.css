@@ -84,7 +84,7 @@
    ::before paints that strip in the same background and inherits the row's
    z-index, so the row covers what it cannot reach. Fixing it by removing the
    scroller's padding would re-space all five tabs to repair one. */
-.stickyHead{position:sticky;top:-1px;z-index:5;background:var(--dsw-alias-bg-base,#fff)}
+.stickyHead{position:sticky;top:-1px;z-index:5;background:var(--dshm-sticky-bg,var(--dsw-alias-bg-base,#fff))}
 .stickyHead::before{content:'';position:absolute;left:0;right:0;bottom:100%;height:14px;background:inherit;pointer-events:none}
 .cats{padding:0 4px 4px;margin:0 -4px 2px}
 .catsRow{display:flex;gap:6px;align-items:flex-start;position:relative}
@@ -449,7 +449,7 @@
    chrome, written by MarketSection. */
 [data-dsh-market-plugins-tab="true"]:not([data-dsh-market-fullscreen="true"]) .head{
   position:sticky;z-index:6;top:var(--dshm-host-sticky-top,0px);
-  margin:0 -4px;padding:4px 4px 6px;background:var(--dsw-alias-bg-base,#fff)
+  margin:0 -4px;padding:4px 4px 6px;background:var(--dshm-sticky-bg,var(--dsw-alias-bg-base,#fff))
 }
 /* Second pin: the category row sits under the tab row. Search stays in
    the flow so the stuck chrome stays two market rows, not three.
@@ -458,7 +458,21 @@
 [data-dsh-market-plugins-tab="true"]:not([data-dsh-market-fullscreen="true"]) .cats{
   position:sticky;z-index:5;
   top:calc(var(--dshm-host-sticky-top,0px) + var(--dshm-plugins-head-height,0px));
-  background:var(--dsw-alias-bg-base,#fff)
+  background:var(--dshm-sticky-bg,var(--dsw-alias-bg-base,#fff))
+}
+/* Both rows paint a surface so cards scrolling under them are not read
+   through it. A theme is allowed to set `--dsw-alias-bg-base` transparent —
+   that is the host's own page-background token — and then no single colour
+   works: transparent at rest keeps the wallpaper, opaque once the row is
+   stuck keeps the cards off the tabs. Two hooks, each read from the cascade
+   and never declared here, so a theme supplies them (inline on the page
+   root, or any rule above the market) without fighting these selectors:
+   `--dshm-sticky-bg` for the resting surface, `--dshm-stuck-bg` for the
+   surface while `data-dshm-stuck` says the row is on its line (#1237).
+   With neither set, both fall back to exactly today's `--dsw-alias-bg-base`. */
+[data-dsh-market-plugins-tab="true"]:not([data-dsh-market-fullscreen="true"]) .head[data-dshm-stuck="true"],
+[data-dsh-market-plugins-tab="true"]:not([data-dsh-market-fullscreen="true"]) .cats[data-dshm-stuck="true"]{
+  background:var(--dshm-stuck-bg,var(--dshm-sticky-bg,var(--dsw-alias-bg-base,#fff)))
 }
 /* Explicit immersive mode: the normal Settings width remains the default,
    while the user can opt into a Wallpaper-style multi-column gallery. */

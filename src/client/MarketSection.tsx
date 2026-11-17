@@ -2731,6 +2731,27 @@ function isPinned(scroller: HTMLElement, el: HTMLElement, inset: number): boolea
 }
 
 /**
+ * Mirrors "this row is sitting on its sticky line" onto the row itself (#1237).
+ *
+ * A theme may set `--dsw-alias-bg-base` to a transparent colour so the
+ * wallpaper shows through — that is the host's own page-background token, and
+ * the market's sticky rows are the only thing between that transparency and
+ * the cards scrolling underneath them. Such a theme wants no surface while the
+ * row is still in flow and one once it sticks; until now it had no way to tell
+ * the two apart except by matching the CSS modules' hashed class names.
+ *
+ * `data-dshm-stuck` is that state, on a selector that survives the hashes.
+ * The market's own stylesheet reads it only to pick `--dshm-stuck-bg`; with
+ * that hook unset the surface stays exactly `--dsw-alias-bg-base`, so a host
+ * without such a theme is unchanged.
+ */
+function markStuck(el: Element | null, pinned: boolean): void {
+  if (!(el instanceof HTMLElement)) return
+  if (pinned) el.dataset.dshmStuck = 'true'
+  else delete el.dataset.dshmStuck
+}
+
+/**
  * ScrollTop where the market's tab row first sticks under the host chrome.
  * Unsticks for one measurement so a currently-pinned head still reports its
  * in-flow offset. That is the "top" Plugins back-to-top aims for — tabs stay
@@ -4627,10 +4648,16 @@ export function MarketSection(props: MarketSectionProps) {
   // Fullscreen drops the flatten rules and scrolls inside `.body` instead.
   useLayoutEffect(() => {
     const root = rootRef.current
+    /** Drops #1237's stuck marks. Scroll state, so it leaves with the offsets. */
+    const clearStuck = (): void => {
+      markStuck(headRef.current, false)
+      markStuck(root?.querySelector(`.${css.cats}`) ?? null, false)
+    }
     if (surface !== 'plugins' || root === null || themesFullscreen) {
       root?.style.removeProperty('--dshm-host-sticky-top')
       root?.style.removeProperty('--dshm-plugins-head-height')
       root?.style.removeProperty('--dshm-empty-view-height')
+      clearStuck()
       return undefined
     }
     const host = listScroller(surface, root, null, false)
@@ -4638,6 +4665,7 @@ export function MarketSection(props: MarketSectionProps) {
       root.style.removeProperty('--dshm-host-sticky-top')
       root.style.removeProperty('--dshm-plugins-head-height')
       root.style.removeProperty('--dshm-empty-view-height')
+      clearStuck()
       return undefined
     }
     let frame = 0
@@ -4663,6 +4691,12 @@ export function MarketSection(props: MarketSectionProps) {
         const view = Math.max(0, Math.round(hostRect.bottom - top))
         root.style.setProperty('--dshm-empty-view-height', `${String(view)}px`)
       }
+      const cats = root.querySelector(`.${css.cats}`)
+      const catsEl = cats instanceof HTMLElement ? cats : null
+      const headPinned = head !== null && isPinned(host, head, hostTop)
+      const catsPinned = catsEl !== null && isPinned(host, catsEl, hostTop + headHeight)
+      markStuck(head, headPinned)
+      markStuck(catsEl, catsPinned)
       if (restoringStickRef.current) return
       const y = host.scrollTop
       // A clamp-to-0 from a shorter list can fire scroll before the restore
@@ -4670,17 +4704,16 @@ export function MarketSection(props: MarketSectionProps) {
       // not drop them on a one-frame !isPinned — only when the reader has
       // scrolled back above the remembered line.
       if (y > 0) pluginsYRef.current = y
-      if (head !== null && isPinned(host, head, hostTop)) {
+      if (headPinned) {
         headFloorRef.current = headFloorRef.current === null ? y : Math.min(headFloorRef.current, y)
       } else if (headFloorRef.current !== null && y > 0 && y + 4 < headFloorRef.current) {
         // y===0 is often a short-list clamp, not a real scroll to the top —
         // keep the floor so the restore layout effect can still use it.
         headFloorRef.current = null
       }
-      const cats = root.querySelector(`.${css.cats}`)
-      if (cats instanceof HTMLElement && isPinned(host, cats, hostTop + headHeight)) {
+      if (catsPinned) {
         catsFloorRef.current = catsFloorRef.current === null ? y : Math.min(catsFloorRef.current, y)
-      } else if (cats === null) {
+      } else if (catsEl === null) {
         catsFloorRef.current = null
       } else if (catsFloorRef.current !== null && y > 0 && y + 4 < catsFloorRef.current) {
         catsFloorRef.current = null
@@ -4698,6 +4731,7 @@ export function MarketSection(props: MarketSectionProps) {
       root.style.removeProperty('--dshm-host-sticky-top')
       root.style.removeProperty('--dshm-plugins-head-height')
       root.style.removeProperty('--dshm-empty-view-height')
+      clearStuck()
     }
     apply()
     host.addEventListener('scroll', schedule, { passive: true })
