@@ -5746,6 +5746,45 @@ describe('favorites (#414)', () => {
     expect(screen.getByText(en.favoritesEmpty)).toBeTruthy()
   })
 
+  it('removes a favorite from the card menu in the favorites tab (#1229)', async () => {
+    const state = favoritesStub(['https://github.com/alice/dsh-loop'])
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: re(en.tabFavorites) }))
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getAllByRole('button', { name: en.groupMore })[0]!)
+    fireEvent.click(await screen.findByRole('menuitem', { name: en.favoriteRemove }))
+    await waitFor(() => expect(state.favorites).toEqual([]))
+    expect(screen.getByText(en.favoritesEmpty)).toBeTruthy()
+  })
+
+  it('removes a single stale favorite directly, not only in bulk (#1229)', async () => {
+    const state = favoritesStub([
+      'https://github.com/alice/dsh-loop',
+      'https://github.com/ghost/removed-plugin',
+      'https://github.com/ghost/removed-two',
+    ])
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: re(en.tabFavorites) }))
+    await screen.findByText('ghost/removed-plugin')
+    fireEvent.click(screen.getByRole('button', { name: `${en.favoriteRemove} https://github.com/ghost/removed-plugin` }))
+    await waitFor(() => expect(state.favorites).toEqual([
+      'https://github.com/alice/dsh-loop', 'https://github.com/ghost/removed-two',
+    ]))
+    expect(screen.queryByText('ghost/removed-plugin')).toBeNull()
+  })
+
+  it('a lone stale favorite can be removed with its own button (#1229)', async () => {
+    const state = favoritesStub(['https://github.com/ghost/removed-plugin'])
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: re(en.tabFavorites) }))
+    await screen.findByText('ghost/removed-plugin')
+    fireEvent.click(screen.getByRole('button', { name: `${en.favoriteRemove} https://github.com/ghost/removed-plugin` }))
+    await waitFor(() => expect(state.favorites).toEqual([]))
+  })
+
   it('groups favorites into plugin and theme sections', async () => {
     favoritesStub([
       'https://github.com/alice/dsh-loop',
@@ -5766,7 +5805,7 @@ describe('favorites (#414)', () => {
     await screen.findByText('dsh-loop')
     fireEvent.click(screen.getByRole('button', { name: re(en.tabFavorites) }))
     expect(await screen.findByText(en.favoritesStaleEmpty)).toBeTruthy()
-    expect(screen.getByRole('button', { name: en.favoritesClearStale })).toBeTruthy()
+    expect(screen.getByRole('button', { name: new RegExp(en.favoriteRemove) })).toBeTruthy()
   })
 })
 

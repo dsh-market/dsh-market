@@ -7091,6 +7091,34 @@ export function MarketSection(props: MarketSectionProps) {
     />
   )
 
+  /** Bookmarks with no catalog entry have no card, so each gets its own row
+   * and its own remove button; a bulk clear sits beside them when there are several. */
+  const renderStaleFavorites = () => (
+    <div className={css.favoritesStaleBar} data-testid="favorites-stale">
+      <span>{t('favoritesStaleNote').replace('{0}', String(favoriteStale.length))}</span>
+      {favoriteStale.map(url => (
+        <div key={url} className={css.favoritesStaleRow}>
+          <span className={css.favoritesStaleName}>{url.replace(/^https?:\/\/(www\.)?github\.com\//, '')}</span>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={clearingStale}
+            aria-label={`${t('favoriteRemove')} ${url}`}
+            onClick={() => toggleFavorite(url)}
+          >{t('favoriteRemove')}</Button>
+        </div>
+      ))}
+      {favoriteStale.length > 1 && (
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={clearingStale}
+          onClick={() => clearStaleFavorites()}
+        >{clearingStale ? t('favoritesClearingStale') : t('favoritesClearStale')}</Button>
+      )}
+    </div>
+  )
+
   const renderPluginMenu = (plugin: RegistryPlugin, key = plugin.url) => {
     const aliases = blockAliases(plugin, matchInstalledName(plugin, installed, repoIdentities, data?.plugins, repoHints))
     const hidden = aliases.some(name => blockedNameSet.has(name))
@@ -7100,6 +7128,7 @@ export function MarketSection(props: MarketSectionProps) {
         onClose={() => setPluginMenuUrl(null)}
         onSelect={(id) => {
           setPluginMenuUrl(null)
+          if (id === 'favorite') toggleFavorite(plugin.url)
           if (id === 'block') toggleBlock(blockToggleName(aliases))
         }}
         align="end"
@@ -7113,7 +7142,10 @@ export function MarketSection(props: MarketSectionProps) {
             onClick={() => setPluginMenuUrl(open => open === key ? null : key)}
           >···</button>
         )}
-        items={[{ id: 'block', label: hidden ? t('blockRemove') : t('blockAdd') }]}
+        items={[
+          { id: 'favorite', label: favoriteUrlSet.has(plugin.url) ? t('favoriteRemove') : t('favoriteAdd') },
+          { id: 'block', label: hidden ? t('blockRemove') : t('blockAdd') },
+        ]}
       />
     )
   }
@@ -8775,27 +8807,14 @@ export function MarketSection(props: MarketSectionProps) {
                           ? (
                               <div className={css.favoritesStaleOnly}>
                                 <div className={css.empty}>{t('favoritesStaleEmpty')}</div>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  disabled={clearingStale}
-                                  onClick={() => clearStaleFavorites()}
-                                >{clearingStale ? t('favoritesClearingStale') : t('favoritesClearStale')}</Button>
+                                {renderStaleFavorites()}
                               </div>
                             )
                           : <div className={css.empty}>{t('empty')}</div>
                         : (
                             <>
                               {favoriteStale.length > 0 && (
-                                <div className={css.favoritesStaleBar}>
-                                  <span>{t('favoritesStaleNote').replace('{0}', String(favoriteStale.length))}</span>
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    disabled={clearingStale}
-                                    onClick={() => clearStaleFavorites()}
-                                  >{clearingStale ? t('favoritesClearingStale') : t('favoritesClearStale')}</Button>
-                                </div>
+                                renderStaleFavorites()
                               )}
                               <div className={css.themeResultBar}>
                                 <span>{t('favoritesResultCount').replace('{0}', String(favoriteListed.length))}</span>
