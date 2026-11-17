@@ -6404,7 +6404,12 @@ describe('local-dev restore flow', () => {
       await vi.advanceTimersByTimeAsync(0)
       expect(install).toHaveBeenCalledExactlyOnceWith(release, expect.anything())
       expect(lstatSync(link, { throwIfNoEntry: false })).toBeUndefined()
-      await vi.advanceTimersByTimeAsync(600_001)
+      // The manager never answers, so the route gives up at the market's
+      // bound — one margin past the two phases, and past the host's own
+      // ten-minute pnpm watchdog so the host can still state its own failure
+      // first (#1250). This call is not an update, so the bound is the single
+      // install phase.
+      await vi.advanceTimersByTimeAsync(660_001)
       expect((await update).status).toBe(502)
       expect(runtime.packageWritesSettled?.()).toBe(false)
 

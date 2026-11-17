@@ -51,9 +51,24 @@ interface ManagedResult {
  * snapshot two minutes later. A deadline is here to end an infinite wait, not
  * to race pnpm's retry budget — a transient that resolves by itself must not
  * turn into a permanent failure.
+ *
+ * Their length is also not ours to pick: every call bounded here has the
+ * host's own silence watchdog inside it (#1250). The plugin manager kills a
+ * pnpm child that prints nothing for ten minutes (`idleTimeoutMs` of
+ * `@deepseek-ai/dsh-plugin-manager`, the default #817 was reported against)
+ * and answers `dsh: pnpm printed nothing for 600000ms and was terminated` —
+ * the sentence `classifyPnpmFailure` turns into "the network stalled, nothing
+ * was installed" (`./pnpm-compat.ts`). A market bound at or under that
+ * instant is not a backstop for a silent host; it is the thing that decides
+ * the answer, and the host's own diagnosis is replaced by
+ * `operation-incomplete` — "the change may already be on disk", said about a
+ * profile that a killed pnpm had not touched.
  */
-const REMOVE_DEADLINE_MS = 300_000
-const INSTALL_DEADLINE_MS = 300_000
+const HOST_IDLE_WATCHDOG_MS = 600_000
+/** Long enough for the host to turn a killed child into its answer. */
+const DEADLINE_MARGIN_MS = 60_000
+const REMOVE_DEADLINE_MS = HOST_IDLE_WATCHDOG_MS + DEADLINE_MARGIN_MS
+const INSTALL_DEADLINE_MS = HOST_IDLE_WATCHDOG_MS + DEADLINE_MARGIN_MS
 /**
  * The bound around a whole `add`, which may be an update and therefore holds
  * two bounded phases in a row. It has to stay strictly longer than their sum:
@@ -62,7 +77,7 @@ const INSTALL_DEADLINE_MS = 300_000
  * "the update did not finish" and started being reported as the plain
  * operation refusal (#928's spec caught it).
  */
-const OPERATION_DEADLINE_MS = REMOVE_DEADLINE_MS + INSTALL_DEADLINE_MS
+const OPERATION_DEADLINE_MS = REMOVE_DEADLINE_MS + INSTALL_DEADLINE_MS + DEADLINE_MARGIN_MS
 
 export interface OfficialPluginManagerLike {
   installBundle(spec: string, options?: { requestId?: string; registry?: string }): Promise<ManagedResult>
@@ -262,6 +277,17 @@ function interrupted(): ManagedResult {
   return { application: 'failed', error: { code: 'update-incomplete' }, repairOnRestart: true }
 }
 
+/**
+ * A manager call the market stopped waiting for.
+ *
+ * Neither "nothing happened" nor "undo it": the manager may have written the
+ * change already, so the next start reconciles against disk instead of the
+ * market inventing an answer here (#1066).
+ */
+function unanswered(): ManagedResult {
+  return { application: 'failed', error: { code: 'operation-incomplete' }, repairOnRestart: true }
+}
+
 /** What an update needs to journal itself and to be repaired later. */
 interface UpdateContext {
   profile: string
@@ -381,8 +407,12 @@ async function installOrReinstall(
   const install = (): Promise<ManagedResult> => trackManagerWrite(manager.installBundle(spec, options))
   let first: ManagedResult
   try {
-    first = await install()
+    // Bounded like every other manager call: a plain install the host never
+    // answers used to be bounded only by the whole-operation backstop, which
+    // has to cover remove-then-install and is therefore twice as long (#1250).
+    first = await withDeadline(install(), INSTALL_DEADLINE_MS, `install ${spec}`)
   } catch (error) {
+    if (error instanceof DeadlineExceeded) return unanswered()
     if (managementCode(error) !== 'already-installed') throw error
     first = { application: 'failed', error }
   }
@@ -613,14 +643,7 @@ export function createOfficialDesktopRuntime(
         `${command} ${target}`,
       ).catch((error: unknown) => {
         if (!(error instanceof DeadlineExceeded)) throw error
-        return {
-          application: 'failed' as const,
-          // Neither "nothing happened" nor "undo it": the manager may have
-          // written the change already. The next start reconciles against
-          // disk instead of the market inventing an answer here.
-          repairOnRestart: true,
-          error: { code: 'operation-incomplete' },
-        }
+        return unanswered()
       })
     } catch (error) {
       progress.active = false
