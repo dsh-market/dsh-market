@@ -20479,7 +20479,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				heldUpdate: own.heldUpdate ?? null,
 				channelSwitch: own.channelSwitch ?? null,
 				restoreRequired: own.restoreRequired === true,
-				hostManaged: own.kind === "generation"
+				hostManaged: own.kind === "generation",
+				profileBlocked: own.profileBlocked ?? null
 			};
 		}
 		/**
@@ -20873,7 +20874,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const offeredVersion = update?.eligibleVersion ?? update?.latest ?? null;
 			const held = update?.heldUpdate;
 			const heldVersionText = held != null && typeof held.latest === "string" && held.latest !== "" && (update?.updateAvailable !== true || held.latest !== offeredVersion) ? marketHeldVersionText(held, activeLocale, t) : null;
-			const body = phase === "removed" ? row(t("setSelfRemoved"), t("setSelfRemovedHint"), null) : (0, react.createElement)(react.Fragment, null, advanced, row(t("setIndexSource"), t("setIndexSourceHint"), null), status?.selfManaged === true ? row((update?.updateAvailable === true || update?.hostManaged === true) && offeredVersion !== null ? `${t("setSelfUpdateReady")} ${offeredVersion}` : update?.channelSwitch != null ? `${t("setChannelSwitch")} ${update.channelSwitch}` : checkFailed ? t("updateChecksFailed") : pluginListChanged ? t("updateChecksChanged") : heldVersionText !== null ? t("setSelfUpdateWaiting") : update === null ? t("updateChecksPending") : t("setSelfUpToDate"), phase === "updated" ? t("setSelfUpdatedHint") : update?.channelSwitch != null ? t("setChannelSwitchHint") : update?.updateAvailable === true ? [t("setSelfUpdateHint"), heldVersionText].filter(Boolean).join(" · ") : update?.hostManaged === true && update.latest !== null ? t("setSelfHostManagedHint") : checkFailed ? t("updateChecksFailedHint") : pluginListChanged ? t("updateChecksChangedHint") : heldVersionText ?? t("setSelfUpToDateHint"), phase === "updated" ? null : update?.updateAvailable === true ? (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+			const body = phase === "removed" ? row(t("setSelfRemoved"), t("setSelfRemovedHint"), null) : (0, react.createElement)(react.Fragment, null, advanced, row(t("setIndexSource"), t("setIndexSourceHint"), null), status?.selfManaged === true ? row((update?.updateAvailable === true || update?.hostManaged === true) && offeredVersion !== null ? `${t("setSelfUpdateReady")} ${offeredVersion}` : update?.channelSwitch != null ? `${t("setChannelSwitch")} ${update.channelSwitch}` : checkFailed ? t("updateChecksFailed") : pluginListChanged ? t("updateChecksChanged") : update?.profileBlocked != null || heldVersionText !== null ? t("setSelfUpdateWaiting") : update === null ? t("updateChecksPending") : t("setSelfUpToDate"), phase === "updated" ? t("setSelfUpdatedHint") : update?.channelSwitch != null ? t("setChannelSwitchHint") : update?.updateAvailable === true ? [t("setSelfUpdateHint"), heldVersionText].filter(Boolean).join(" · ") : update?.hostManaged === true && update.latest !== null ? t("setSelfHostManagedHint") : checkFailed ? t("updateChecksFailedHint") : pluginListChanged ? t("updateChecksChangedHint") : update?.profileBlocked != null ? profileBlockedText(update.profileBlocked, t) : heldVersionText ?? t("setSelfUpToDateHint"), phase === "updated" ? null : update?.updateAvailable === true ? (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 				variant: "primary",
 				size: "sm",
 				disabled: busy,

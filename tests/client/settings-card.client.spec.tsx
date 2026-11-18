@@ -763,6 +763,20 @@ describe('SettingsCard — market release waiting status (#1254)', () => {
     expect(screen.queryByRole('button', { name: en.setSelfUpdate })).toBeNull()
   })
 
+  it('says the update is waiting when another package in the profile is still inside the safety wait (#1252)', async () => {
+    stubFetch({
+      updateStatus: {
+        updateAvailable: false, latest: '1.73.22',
+        profileBlocked: { name: 'dsh-mobile-plugin', version: '0.5.71', readyAt: until },
+      },
+    })
+    await open()
+    expect(await screen.findByText('New version pending')).toBeTruthy()
+    expect(screen.getByText(/dsh-mobile-plugin 0\.5\.71/)).toBeTruthy()
+    expect(screen.queryByText(en.setSelfUpToDate)).toBeNull()
+    expect(screen.queryByRole('button', { name: en.setSelfUpdate })).toBeNull()
+  })
+
   it('names both versions and submits the eligible update target', async () => {
     stubFetch({
       updateStatus: {

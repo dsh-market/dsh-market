@@ -38,7 +38,7 @@ import type { ReactElement } from 'react'
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import { IconChevronDownOutline14, IconLoadingOutline16 } from './icons.ts'
 import css from './Market.module.css'
-import { api, applyGithubRouting, marketHeldVersionText } from './market-data.ts'
+import { api, applyGithubRouting, marketHeldVersionText, profileBlockedText } from './market-data.ts'
 import type { MarketLocaleStore, MarketStatus, Translate, UpdateStatus } from './market-data.ts'
 import { useUpdateNotifications, refreshUpdateNotifications } from './update-notifications.ts'
 import type { SidebarEntry } from './sidebar-entry.ts'
@@ -131,6 +131,8 @@ interface SelfUpdate {
   restoreRequired: boolean
   /** A generation the desktop host installed (#497): a newer release is named here, never applied from here. */
   hostManaged: boolean
+  /** Another package in the profile is still inside the safety wait, so nothing can be updated yet (#1252). */
+  profileBlocked: { name: string; version: string; readyAt: string | null } | null
 }
 
 type Phase = 'idle' | 'confirming' | 'working' | 'removed' | 'updated' | 'failed'
@@ -138,6 +140,7 @@ type Phase = 'idle' | 'confirming' | 'working' | 'removed' | 'updated' | 'failed
 /** The market's own row as api('/dsh-market/updates') sends it. */
 type RawUpdate = Pick<UpdateStatus, 'updateAvailable' | 'latest' | 'eligibleVersion' | 'heldUpdate' | 'restoreRequired' | 'kind'> & {
   channelSwitch?: string
+  profileBlocked?: { name: string; version: string; readyAt: string | null }
 }
 
 const CHANNELS: Channel[] = ['stable', 'beta', 'dev']
@@ -225,6 +228,7 @@ function readUpdate(own: RawUpdate): SelfUpdate {
     channelSwitch: own.channelSwitch ?? null,
     restoreRequired: own.restoreRequired === true,
     hostManaged: own.kind === 'generation',
+    profileBlocked: own.profileBlocked ?? null,
   }
 }
 
@@ -689,7 +693,7 @@ export function SettingsCard({ t, locale, onRemoved, sidebar, entries }: Setting
               ? `${t('setChannelSwitch')} ${update.channelSwitch}`
               : checkFailed ? t('updateChecksFailed')
                 : pluginListChanged ? t('updateChecksChanged')
-                  : heldVersionText !== null ? t('setSelfUpdateWaiting')
+                  : update?.profileBlocked != null || heldVersionText !== null ? t('setSelfUpdateWaiting')
                     : update === null ? t('updateChecksPending') : t('setSelfUpToDate'),
           phase === 'updated'
             ? t('setSelfUpdatedHint')
@@ -702,7 +706,9 @@ export function SettingsCard({ t, locale, onRemoved, sidebar, entries }: Setting
                 // Named, not offered: the desktop host owns this install.
                 : update?.hostManaged === true && update.latest !== null ? t('setSelfHostManagedHint')
                   : checkFailed ? t('updateChecksFailedHint')
-                    : pluginListChanged ? t('updateChecksChangedHint') : heldVersionText ?? t('setSelfUpToDateHint'),
+                    : pluginListChanged ? t('updateChecksChangedHint')
+                      : update?.profileBlocked != null ? profileBlockedText(update.profileBlocked, t)
+                        : heldVersionText ?? t('setSelfUpToDateHint'),
           phase === 'updated'
             ? null
             : update?.updateAvailable === true
