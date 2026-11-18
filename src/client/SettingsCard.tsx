@@ -392,7 +392,9 @@ export function SettingsCard({ t, onRemoved, sidebar, entries }: SettingsCardPro
   }, [onRemoved, post, purge, t])
 
   const busy = phase === 'working'
-  const checkIncomplete = notificationSnapshot.loaded && notificationSnapshot.stale
+  const checkStale = notificationSnapshot.loaded && notificationSnapshot.stale
+  const checkFailed = checkStale && notificationSnapshot.error !== null
+  const pluginListChanged = checkStale && !checkFailed
   const version = status?.version ?? null
   // A prerelease says so in its own version string; nothing else has to be
   // consulted to know the running build is one.
@@ -667,8 +669,9 @@ export function SettingsCard({ t, onRemoved, sidebar, entries }: SettingsCardPro
             ? `${t('setSelfUpdateReady')} ${update.latest}`
             : update?.channelSwitch != null
               ? `${t('setChannelSwitch')} ${update.channelSwitch}`
-              : checkIncomplete ? t('updateChecksFailed')
-                : update === null ? t('updateChecksPending') : t('setSelfUpToDate'),
+              : checkFailed ? t('updateChecksFailed')
+                : pluginListChanged ? t('updateChecksChanged')
+                  : update === null ? t('updateChecksPending') : t('setSelfUpToDate'),
           phase === 'updated'
             ? t('setSelfUpdatedHint')
             : update?.channelSwitch != null
@@ -679,7 +682,8 @@ export function SettingsCard({ t, onRemoved, sidebar, entries }: SettingsCardPro
               : update?.updateAvailable === true ? t('setSelfUpdateHint')
                 // Named, not offered: the desktop host owns this install.
                 : update?.hostManaged === true && update.latest !== null ? t('setSelfHostManagedHint')
-                  : checkIncomplete ? t('updateChecksFailedHint') : t('setSelfUpToDateHint'),
+                  : checkFailed ? t('updateChecksFailedHint')
+                    : pluginListChanged ? t('updateChecksChangedHint') : t('setSelfUpToDateHint'),
           phase === 'updated'
             ? null
             : update?.updateAvailable === true

@@ -20598,7 +20598,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				t
 			]);
 			const busy = phase === "working";
-			const checkIncomplete = notificationSnapshot.loaded && notificationSnapshot.stale;
+			const checkStale = notificationSnapshot.loaded && notificationSnapshot.stale;
+			const checkFailed = checkStale && notificationSnapshot.error !== null;
+			const pluginListChanged = checkStale && !checkFailed;
 			const version = status?.version ?? null;
 			const prerelease = version !== null && version.includes("-");
 			/** Re-ask what this channel offers; the previous answer was for another one. */
@@ -20809,7 +20811,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				id: advancedId,
 				className: Market_module_css_default.setAdvancedBody
 			}, entryRows.map((node, index) => (0, react.createElement)(react.Fragment, { key: index }, node))) : null) : null;
-			const body = phase === "removed" ? row(t("setSelfRemoved"), t("setSelfRemovedHint"), null) : (0, react.createElement)(react.Fragment, null, advanced, row(t("setIndexSource"), t("setIndexSourceHint"), null), status?.selfManaged === true ? row((update?.updateAvailable === true || update?.hostManaged === true) && update.latest !== null ? `${t("setSelfUpdateReady")} ${update.latest}` : update?.channelSwitch != null ? `${t("setChannelSwitch")} ${update.channelSwitch}` : checkIncomplete ? t("updateChecksFailed") : update === null ? t("updateChecksPending") : t("setSelfUpToDate"), phase === "updated" ? t("setSelfUpdatedHint") : update?.channelSwitch != null ? t("setChannelSwitchHint") : update?.updateAvailable === true ? t("setSelfUpdateHint") : update?.hostManaged === true && update.latest !== null ? t("setSelfHostManagedHint") : checkIncomplete ? t("updateChecksFailedHint") : t("setSelfUpToDateHint"), phase === "updated" ? null : update?.updateAvailable === true ? (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+			const body = phase === "removed" ? row(t("setSelfRemoved"), t("setSelfRemovedHint"), null) : (0, react.createElement)(react.Fragment, null, advanced, row(t("setIndexSource"), t("setIndexSourceHint"), null), status?.selfManaged === true ? row((update?.updateAvailable === true || update?.hostManaged === true) && update.latest !== null ? `${t("setSelfUpdateReady")} ${update.latest}` : update?.channelSwitch != null ? `${t("setChannelSwitch")} ${update.channelSwitch}` : checkFailed ? t("updateChecksFailed") : pluginListChanged ? t("updateChecksChanged") : update === null ? t("updateChecksPending") : t("setSelfUpToDate"), phase === "updated" ? t("setSelfUpdatedHint") : update?.channelSwitch != null ? t("setChannelSwitchHint") : update?.updateAvailable === true ? t("setSelfUpdateHint") : update?.hostManaged === true && update.latest !== null ? t("setSelfHostManagedHint") : checkFailed ? t("updateChecksFailedHint") : pluginListChanged ? t("updateChecksChangedHint") : t("setSelfUpToDateHint"), phase === "updated" ? null : update?.updateAvailable === true ? (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 				variant: "primary",
 				size: "sm",
 				disabled: busy,
