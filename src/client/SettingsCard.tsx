@@ -33,14 +33,13 @@
  * from another product.
  */
 
-import { createElement as h, Fragment, useCallback, useEffect, useId, useRef, useState } from 'react'
+import { createElement as h, Fragment, useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from 'react'
 import type { ReactElement } from 'react'
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import { IconChevronDownOutline14, IconLoadingOutline16 } from './icons.ts'
 import css from './Market.module.css'
-import { api, applyGithubRouting } from './market-data.ts'
-import type { MarketStatus } from './market-data.ts'
-import type { Translate } from './market-data.ts'
+import { api, applyGithubRouting, marketHeldVersionText } from './market-data.ts'
+import type { MarketLocaleStore, MarketStatus, Translate, UpdateStatus } from './market-data.ts'
 import { useUpdateNotifications, refreshUpdateNotifications } from './update-notifications.ts'
 import type { SidebarEntry } from './sidebar-entry.ts'
 import type { EntryKey, EntryVisibility } from './entry-visibility.ts'
@@ -50,6 +49,7 @@ const BROWSER_KEYS = ['dshm-webdav', 'dshm-gist-id'] as const
 
 export interface SettingsCardProps {
   t: Translate
+  locale?: MarketLocaleStore
   /**
    * Retire the market's own entry in the left settings menu.
    *
@@ -123,6 +123,8 @@ interface StatusBody {
 interface SelfUpdate {
   updateAvailable: boolean
   latest: string | null
+  eligibleVersion: string | null
+  heldUpdate: NonNullable<UpdateStatus['heldUpdate']> | null
   /** The channel points at this version, and it is not newer: a switch. */
   channelSwitch: string | null
   /** The current build came from a local package and must switch to the online release. */
@@ -134,7 +136,9 @@ interface SelfUpdate {
 type Phase = 'idle' | 'confirming' | 'working' | 'removed' | 'updated' | 'failed'
 
 /** The market's own row as api('/dsh-market/updates') sends it. */
-interface RawUpdate { updateAvailable?: boolean; latest?: string | null; channelSwitch?: string; restoreRequired?: boolean; kind?: string }
+type RawUpdate = Pick<UpdateStatus, 'updateAvailable' | 'latest' | 'eligibleVersion' | 'heldUpdate' | 'restoreRequired' | 'kind'> & {
+  channelSwitch?: string
+}
 
 const CHANNELS: Channel[] = ['stable', 'beta', 'dev']
 const asChannel = (value: unknown): Channel | null =>
@@ -216,6 +220,8 @@ function readUpdate(own: RawUpdate): SelfUpdate {
   return {
     updateAvailable: own.updateAvailable === true,
     latest: own.latest ?? null,
+    eligibleVersion: own.eligibleVersion ?? null,
+    heldUpdate: own.heldUpdate ?? null,
     channelSwitch: own.channelSwitch ?? null,
     restoreRequired: own.restoreRequired === true,
     hostManaged: own.kind === 'generation',
@@ -237,7 +243,11 @@ export function clearBrowserState(storage: Pick<Storage, 'removeItem'>): void {
   }
 }
 
-export function SettingsCard({ t, onRemoved, sidebar, entries }: SettingsCardProps): ReactElement | null {
+export function SettingsCard({ t, locale, onRemoved, sidebar, entries }: SettingsCardProps): ReactElement | null {
+  const activeLocale = useSyncExternalStore(
+    listener => locale?.subscribe(listener) ?? (() => {}),
+    () => locale?.getSnapshot().active ?? 'en',
+  )
   const [open, setOpen] = useState(false)
   const [advancedOpen, setAdvancedOpen] = useState(false)
   // Several cards can be mounted at once (settings list, bundle page, the
@@ -356,6 +366,7 @@ export function SettingsCard({ t, onRemoved, sidebar, entries }: SettingsCardPro
         const body = await post(api('/dsh-market/update'), {
           name: 'dshmarket',
           ...(update?.restoreRequired === true ? { restore: true } : {}),
+          ...(update?.eligibleVersion != null ? { eligibleVersion: update.eligibleVersion } : {}),
           ...(force ? { force: true } : {}),
         }) as {
           ok?: boolean; error?: string; stale?: boolean
@@ -371,7 +382,7 @@ export function SettingsCard({ t, onRemoved, sidebar, entries }: SettingsCardPro
         setPhase('failed')
       }
     })()
-  }, [post, t, update?.restoreRequired])
+  }, [post, t, update?.eligibleVersion, update?.restoreRequired])
 
   const onRemove = useCallback(() => {
     setPhase('working')
@@ -648,6 +659,13 @@ export function SettingsCard({ t, onRemoved, sidebar, entries }: SettingsCardPro
       )
     : null
 
+  const offeredVersion = update?.eligibleVersion ?? update?.latest ?? null
+  const held = update?.heldUpdate
+  const heldVersionText = held != null && typeof held.latest === 'string' && held.latest !== ''
+    && (update?.updateAvailable !== true || held.latest !== offeredVersion)
+    ? marketHeldVersionText(held, activeLocale, t)
+    : null
+
   // The end state REPLACES the controls rather than sitting beside them: the
   // package is gone from disk, so an update button next to "removed" would
   // offer something that cannot happen.
@@ -663,12 +681,13 @@ export function SettingsCard({ t, onRemoved, sidebar, entries }: SettingsCardPro
           // An older offer is not an update, and calling it one would have
           // the user click "更新" to go backwards. It IS what picking an
           // earlier channel asked for, so it is offered — under its own name.
-          (update?.updateAvailable === true || update?.hostManaged === true) && update.latest !== null
-            ? `${t('setSelfUpdateReady')} ${update.latest}`
+          (update?.updateAvailable === true || update?.hostManaged === true) && offeredVersion !== null
+            ? `${t('setSelfUpdateReady')} ${offeredVersion}`
             : update?.channelSwitch != null
               ? `${t('setChannelSwitch')} ${update.channelSwitch}`
               : checkIncomplete ? t('updateChecksFailed')
-                : update === null ? t('updateChecksPending') : t('setSelfUpToDate'),
+                : heldVersionText !== null ? t('setSelfUpdateWaiting')
+                  : update === null ? t('updateChecksPending') : t('setSelfUpToDate'),
           phase === 'updated'
             ? t('setSelfUpdatedHint')
             : update?.channelSwitch != null
@@ -676,10 +695,10 @@ export function SettingsCard({ t, onRemoved, sidebar, entries }: SettingsCardPro
               // Explains what the Update button does — only worth saying
               // when that button is actually on screen. Already up to date,
               // it read as an instruction for an action that wasn't there.
-              : update?.updateAvailable === true ? t('setSelfUpdateHint')
+              : update?.updateAvailable === true ? [t('setSelfUpdateHint'), heldVersionText].filter(Boolean).join(' · ')
                 // Named, not offered: the desktop host owns this install.
                 : update?.hostManaged === true && update.latest !== null ? t('setSelfHostManagedHint')
-                  : checkIncomplete ? t('updateChecksFailedHint') : t('setSelfUpToDateHint'),
+                  : checkIncomplete ? t('updateChecksFailedHint') : heldVersionText ?? t('setSelfUpToDateHint'),
           phase === 'updated'
             ? null
             : update?.updateAvailable === true

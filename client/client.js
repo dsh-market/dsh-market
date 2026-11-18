@@ -221,6 +221,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			setCardDesc: "查看插件市场版本与设置。",
 			setSelfUpToDate: "已是最新版本",
 			setSelfUpdateReady: "有新版本",
+			setSelfUpdateWaiting: "新版等待中",
 			setSelfUpdateHint: "更新会下载新版本，重启后生效。",
 			setSelfUpToDateHint: "",
 			setSelfHostManagedHint: "这份市场由桌面端安装，新版本请在桌面端更新。",
@@ -423,6 +424,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			agentDrainHistoryFailedShort: "上次排队的操作失败了。请检查「已安装」或导出的日志。",
 			agentDrainHistoryCancelled: "上次排队的操作已取消。",
 			favoriteFailed: "收藏失败，请稍后重试",
+			favoriteLimitReached: "最多可收藏 {0} 个插件。",
 			favoriteUnavailable: "收藏功能暂不可用。请刷新页面或重启 dsh web。",
 			favoriteBusy: "插件操作未结束，收藏未保存，请稍后重试",
 			compatRiskBanner: "检测到兼容性风险，建议重启前到诊断页处理，或回滚本次操作。",
@@ -725,7 +727,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			credsWarning: "请注意：备份包含 profile 配置，以及可能含密钥的文件（config.toml、.env 等）。本地导出的文件会原样包含这些内容，上传 WebDAV 前请确认目标可信。",
 			gist: "GitHub Gist",
 			gistToken: "GitHub token（仅本次会话内存，刷新后需重新输入；留空则使用服务端 DSH_GITHUB_TOKEN 或已登录的 gh CLI）",
-			gistId: "Gist ID 或链接（导出留空则新建私有 Gist）",
+			gistId: "Gist ID 或链接",
 			gistVerify: "验证连接",
 			gistExport: "导出到 Gist…",
 			gistImport: "从 Gist 导入",
@@ -739,6 +741,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			gistSelectAll: "全选",
 			gistSelectNone: "全不选",
 			gistIncludeConfig: "包含配置文件（可能含密钥）",
+			gistConfigWarning: "备份包含可能含有密钥的配置文件。持有链接的人可以查看备份。",
+			bundleTag: "插件包（Bundle）",
 			gistNoPlugins: "当前 profile 没有可导出的插件",
 			gistSpecLocal: "本地",
 			gistExportGo: "导出",
@@ -750,9 +754,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			gistErrRateLimit: "GitHub 限流或 Token 权限不足",
 			gistErrInvalid: "Gist 内容无效或备份格式不受支持",
 			gistModeUpdate: "更新到输入框中的 Gist",
-			gistModeCreate: "新建一个私有 Gist",
+			gistModeCreate: "新建 Secret Gist",
 			gistErrNoId: "更新模式需要 Gist ID：请填写，或切换为「新建」",
-			gistNote: "与本地导出（本机存档）不同，Gist 用于跨机器同步：导出到私有 Gist 后，可在其他电脑用同一账号导入复用。Token 仅保存在本次会话内存中，绝不写入浏览器存储；已登录 gh CLI 或设置 DSH_GITHUB_TOKEN 则无需输入。Gist 为私有，单文件上限 1 MB。",
+			gistNote: "Gist 用于跨机器同步：导出后，可在其他电脑用同一账号导入复用。持有链接的人可以查看新建的 Gist。Token 仅保存在本次会话内存中，绝不写入浏览器存储；已登录 gh CLI 或设置 DSH_GITHUB_TOKEN 则无需输入。单文件上限 1 MB。",
 			backupWorking: "处理中…",
 			backupDone: "备份已上传",
 			restoreDone: "恢复完成，请重启 DeepSeek Harness",
@@ -1096,6 +1100,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			setCardDesc: "View the plugin market version and settings.",
 			setSelfUpToDate: "Up to date",
 			setSelfUpdateReady: "New version available:",
+			setSelfUpdateWaiting: "New version pending",
 			setSelfUpdateHint: "Updating downloads the new version; it takes effect after a restart.",
 			setSelfUpToDateHint: "",
 			setSelfHostManagedHint: "This copy was installed by the desktop app; update it from there.",
@@ -1297,6 +1302,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			agentDrainHistoryFailedShort: "The last deferred operation failed. Check Installed or the exported log.",
 			agentDrainHistoryCancelled: "The last deferred operation was cancelled.",
 			favoriteFailed: "Could not update favorites. Try again.",
+			favoriteLimitReached: "You can save up to {0} favorites.",
 			favoriteUnavailable: "Favorites are unavailable. Refresh the page or restart dsh web.",
 			favoriteBusy: "A plugin operation is still running. Favorites were not saved — try again shortly.",
 			compatRiskBanner: "Compatibility risk detected — open Diagnostics before restarting, or roll this operation back.",
@@ -1409,7 +1415,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			restoreFail: "Restore failed",
 			exportLog: "Export log",
 			crashTitle: "The plugin market could not be displayed",
-			crashHint: "'The market could not be displayed. Your plugins are unaffected and nothing was changed.\nReload usually fixes this. If it keeps happening, export the log and attach it to an issue — the log records where the error occurred.\nIf your browser is translating this page, turn translation off and reload. This is a known cause.'",
+			crashHint: "The market could not be displayed. Your plugins are unaffected and nothing was changed.\nReload usually fixes this. If it keeps happening, export the log and attach it to an issue — the log records where the error occurred.\nIf your browser is translating this page, turn translation off and reload. This is a known cause.",
 			crashReload: "Reload",
 			crashDetails: "Error details",
 			exportingLog: "Exporting…",
@@ -1599,7 +1605,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			credsWarning: "Note: backups include profile configuration and files that may hold secrets (config.toml, .env, …). Local exports are unmodified, so upload only to a WebDAV target you trust.",
 			gist: "GitHub Gist",
 			gistToken: "GitHub token (session memory only — re-enter after refresh; leave empty to use server-side DSH_GITHUB_TOKEN or a logged-in gh CLI)",
-			gistId: "Gist ID or URL (leave empty on export to create a new private Gist)",
+			gistId: "Gist ID or URL",
 			gistVerify: "Verify connection",
 			gistExport: "Export to Gist…",
 			gistImport: "Import from Gist",
@@ -1613,6 +1619,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			gistSelectAll: "Select all",
 			gistSelectNone: "Select none",
 			gistIncludeConfig: "Include config files (may contain secrets)",
+			gistConfigWarning: "This backup includes configuration files that may contain secrets. Anyone with the link can view it.",
+			bundleTag: "Bundle",
 			gistNoPlugins: "This profile has no plugins to export",
 			gistSpecLocal: "local",
 			gistExportGo: "Export",
@@ -1624,9 +1632,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			gistErrRateLimit: "GitHub rate limit hit, or the token lacks the gist scope",
 			gistErrInvalid: "Gist content is invalid or uses an unsupported backup format",
 			gistModeUpdate: "Update the Gist in the field",
-			gistModeCreate: "Create a new private Gist",
+			gistModeCreate: "Create a secret Gist",
 			gistErrNoId: "Update mode needs a Gist ID — fill it in, or switch to “Create”",
-			gistNote: "Unlike local export (this-machine archive), Gist is for cross-machine sync: export to a private Gist, then import it on another computer with the same account to reuse your plugins. The token lives in this session's memory only and is never written to browser storage; a logged-in gh CLI or DSH_GITHUB_TOKEN skips entering it. Gists are private, 1 MB per file.",
+			gistNote: "Export to a Gist and import it on another computer with the same account to reuse your plugins. Anyone with the link can view the new Gist. The token lives in this session's memory only and is never written to browser storage; a logged-in gh CLI or DSH_GITHUB_TOKEN skips entering it. The limit is 1 MB per file.",
 			backupWorking: "In progress…",
 			backupDone: "Backup uploaded",
 			restoreDone: "Restore complete — restart DeepSeek Harness",
@@ -1970,6 +1978,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			setCardDesc: "プラグインマーケットのバージョンと設定を確認します。",
 			setSelfUpToDate: "最新バージョンです",
 			setSelfUpdateReady: "新しいバージョンがあります",
+			setSelfUpdateWaiting: "新バージョン（更新待ち）",
 			setSelfUpdateHint: "更新すると新しいバージョンをダウンロードし、再起動後に有効になります。",
 			setSelfUpToDateHint: "",
 			setSelfHostManagedHint: "このマーケットはデスクトップアプリがインストールしたものです。新しいバージョンへの更新はデスクトップアプリで行ってください。",
@@ -2171,6 +2180,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			agentDrainHistoryFailedShort: "前回の保留操作は失敗しました。「インストール済み」またはエクスポートしたログを確認してください。",
 			agentDrainHistoryCancelled: "前回の保留操作はキャンセルされました。",
 			favoriteFailed: "お気に入りを更新できませんでした。しばらくしてから再試行してください",
+			favoriteLimitReached: "お気に入りには最大 {0} 件まで登録できます。",
 			favoriteUnavailable: "お気に入り機能は現在使えません。ページを更新するか、dsh web を再起動してください。",
 			favoriteBusy: "プラグインの操作が終わっていないため、お気に入りは保存されませんでした。しばらくしてから再試行してください",
 			compatRiskBanner: "互換性のリスクが検出されました。再起動する前に診断ページで対処するか、この操作をロールバックすることをおすすめします。",
@@ -2472,7 +2482,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			credsWarning: "注意：バックアップには profile の設定と、キーを含む可能性のあるファイル（config.toml、.env など）が含まれます。ローカルにエクスポートしたファイルにはそれらがそのまま入るため、WebDAV にアップロードする前に、送信先が信頼できることを確認してください。",
 			gist: "GitHub Gist",
 			gistToken: "GitHub token（このセッションのメモリにのみ保持され、更新後は再入力が必要です。空欄にすると、サーバー側の DSH_GITHUB_TOKEN またはサインイン済みの gh CLI を使います）",
-			gistId: "Gist ID またはリンク（エクスポート時に空欄なら、新しい非公開 Gist を作成します）",
+			gistId: "Gist ID または URL",
 			gistVerify: "接続を確認",
 			gistExport: "Gist にエクスポート…",
 			gistImport: "Gist からインポート",
@@ -2486,6 +2496,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			gistSelectAll: "すべて選択",
 			gistSelectNone: "すべて解除",
 			gistIncludeConfig: "設定ファイルを含める（キーを含むことがあります）",
+			gistConfigWarning: "このバックアップには、シークレットが含まれる可能性のある設定ファイルが入っています。リンクを知っている人は閲覧できます。",
+			bundleTag: "バンドル",
 			gistNoPlugins: "現在の profile にはエクスポートできるプラグインがありません",
 			gistSpecLocal: "ローカル",
 			gistExportGo: "エクスポート",
@@ -2497,9 +2509,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			gistErrRateLimit: "GitHub のレート制限に達したか、Token に gist スコープがありません",
 			gistErrInvalid: "Gist の内容が無効か、対応していないバックアップ形式です",
 			gistModeUpdate: "入力欄の Gist を更新",
-			gistModeCreate: "新しい非公開 Gist を作成",
+			gistModeCreate: "Secret Gist を作成",
 			gistErrNoId: "更新モードには Gist ID が必要です。記入するか、「新規作成」に切り替えてください",
-			gistNote: "ローカルエクスポート（このマシンのアーカイブ）と違い、Gist はマシン間の同期のためのものです。非公開 Gist にエクスポートすれば、他のコンピュータで同じアカウントからインポートして再利用できます。Token はこのセッションのメモリにのみ保持され、ブラウザのストレージに書き込まれることは決してありません。gh CLI にサインイン済みか DSH_GITHUB_TOKEN が設定されていれば、入力は不要です。Gist は非公開で、1 ファイルあたり上限 1 MB です。",
+			gistNote: "Gist にエクスポートすると、他のコンピュータでも同じアカウントからインポートしてプラグインを再利用できます。作成した Gist は、リンクを知っている人なら誰でも閲覧できます。Token はこのセッションのメモリにのみ保持され、ブラウザのストレージには書き込まれません。gh CLI にサインイン済みか DSH_GITHUB_TOKEN が設定されていれば、入力は不要です。ファイルの上限は 1 MB です。",
 			backupWorking: "処理中…",
 			backupDone: "バックアップをアップロードしました",
 			restoreDone: "復元が完了しました。DeepSeek Harness を再起動してください",
@@ -3235,6 +3247,34 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			for (const member of list) if (disabled.has(member)) anyOff = true;
 			else anyOn = true;
 			return anyOn && anyOff ? "mixed" : anyOff ? "off" : "on";
+		}
+		/** Match the languages for which the market registers its own dictionary. */
+		function marketUiLocale(active) {
+			const language = active.toLowerCase().split(/[-_]/)[0];
+			return language === "zh" ? "zh-CN" : language === "ja" ? "ja" : "en";
+		}
+		/** Release versions get a prefix and commit targets get a short SHA. */
+		function displayLatest(latest) {
+			if (/^\d/.test(latest)) return "v" + latest;
+			if (/^[0-9a-f]{12,40}$/i.test(latest)) return latest.slice(0, 7);
+			return latest;
+		}
+		/** A time is shown only when a future eligibility deadline is known. */
+		function marketHeldVersionText(held, locale, t) {
+			const version = displayLatest(held.latest);
+			const until = new Date(typeof held.until === "string" ? held.until : NaN);
+			const now = /* @__PURE__ */ new Date();
+			if (held.estimated === true || !(until.getTime() > now.getTime())) return version;
+			const time = new Intl.DateTimeFormat(marketUiLocale(locale), {
+				...until.toDateString() === now.toDateString() ? {} : {
+					month: "short",
+					day: "numeric"
+				},
+				hour: "2-digit",
+				minute: "2-digit",
+				hourCycle: "h23"
+			}).format(until);
+			return t("marketVersionAvailableAt").replace("{0}", version).replace("{1}", time);
 		}
 		function avatarColor(name) {
 			let hash = 0;
@@ -5301,7 +5341,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			return `https://github.com/${GISCUS.repo}/discussions?discussions_q=${encodeURIComponent(term)}`;
 		}
 		/** giscus's own locale codes, which are not the ones this plugin uses. */
-		const giscusLang = (lang) => lang === "zh" ? "zh-CN" : "en";
+		const giscusLang = (lang) => lang === "zh" || lang === "zh-CN" ? "zh-CN" : lang === "ja" ? "ja" : "en";
 		//#endregion
 		//#region src/client/CommentsModal.tsx
 		/**
@@ -11781,29 +11821,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		}
 		/** Same cap as `MAX_NOTE` in hot.ts; the server trims anything longer. */
 		const NOTE_MAX = 200;
-		/** `latest` is a semver for npm installs and a commit sha for github ones. */
-		function displayLatest(latest) {
-			if (/^\d/.test(latest)) return "v" + latest;
-			if (/^[0-9a-f]{12,40}$/i.test(latest)) return latest.slice(0, 7);
-			return latest;
-		}
 		/** Describe the pending release separately from any version the update button can install. */
-		function marketWaitTip(held, eligible, t) {
-			const until = new Date(typeof held.until === "string" ? held.until : NaN);
-			const now = /* @__PURE__ */ new Date();
-			let pending = displayLatest(held.latest);
-			if (held.estimated !== true && until.getTime() > now.getTime()) {
-				const time = new Intl.DateTimeFormat(void 0, {
-					...until.toDateString() === now.toDateString() ? {} : {
-						month: "short",
-						day: "numeric"
-					},
-					hour: "2-digit",
-					minute: "2-digit",
-					hourCycle: "h23"
-				}).format(until);
-				pending = t("marketVersionAvailableAt").replace("{0}", pending).replace("{1}", time);
-			}
+		function marketWaitTip(held, eligible, locale, t) {
+			const pending = marketHeldVersionText(held, locale, t);
 			if (eligible === null) return pending;
 			return `${t("marketVersionAvailableNow").replace("{0}", displayLatest(eligible))} · ${pending}`;
 		}
@@ -12159,8 +12179,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		function MarketSection(props) {
 			const t = props.t;
 			const initialWebdav = (0, react.useMemo)(savedWebdav, []);
-			const localeSnap = (0, react.useSyncExternalStore)((cb) => props.locale.subscribe(cb), () => props.locale.getSnapshot());
-			const lang = String(localeSnap.active).toLowerCase().startsWith("zh") ? "zh" : "en";
+			const uiLocale = marketUiLocale((0, react.useSyncExternalStore)((cb) => props.locale.subscribe(cb), () => props.locale.getSnapshot()).active);
+			const lang = uiLocale === "zh-CN" ? "zh" : "en";
 			const surface = props.surface ?? "settings";
 			const sidebar = props.sidebar;
 			const notificationSnapshot = useUpdateNotifications();
@@ -15143,6 +15163,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						setFavoriteError(t("favoriteBusy"));
 						return;
 					}
+					if (body?.code === "FAVORITES_LIMIT_REACHED" && typeof body.limit === "number") {
+						setFavoriteError(t("favoriteLimitReached").replace("{0}", String(body.limit)));
+						return;
+					}
 					setFavoriteError(typeof body?.error === "string" ? body.error : t("favoriteFailed"));
 				}).catch((error) => {
 					if (gen !== favoriteOpGen.current) return;
@@ -16041,6 +16065,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				if (error instanceof TypeError) return t("gistErrNetwork");
 				return String(error);
 			};
+			/** The picker list: dependency plugins + bundle-only plugins, deduplicated. */
+			const exportOptions = (0, react.useMemo)(() => {
+				return [.../* @__PURE__ */ new Set([...Object.keys(installed), ...installedBundles])].sort();
+			}, [installed, installedBundles]);
+			const exportAllSelected = exportOptions.length > 0 && exportOptions.every((name) => exportSelection.has(name));
 			const runGist = (0, react.useCallback)((action) => {
 				setGistBusy(true);
 				setGistMessage(null);
@@ -16062,12 +16091,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					}
 					body.gistId = gistId.trim();
 				}
-				if (action === "export") {
-					const allNames = /* @__PURE__ */ new Set([...Object.keys(installed), ...installedBundles]);
-					if (!(exportSelection.size === allNames.size && exportSelection.size > 0)) {
-						body.includeDeps = [...exportSelection];
-						if (exportIncludeConfig) body.includeConfig = true;
-					}
+				if (action === "export" && !exportAllSelected) {
+					body.includeDeps = [...exportSelection];
+					if (exportIncludeConfig) body.includeConfig = true;
 				}
 				fetch(api("/dsh-market/gist"), {
 					method: "POST",
@@ -16110,19 +16136,15 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					if (action === "export") setExportError(message);
 				}).finally(() => setGistBusy(false));
 			}, [
+				exportAllSelected,
 				exportIncludeConfig,
 				exportSelection,
 				gistId,
+				gistMode,
 				gistToken,
-				installed,
-				installedBundles,
 				previewBackup,
 				t
 			]);
-			/** The picker list: dependency plugins + bundle-only plugins, deduplicated. */
-			const exportOptions = (0, react.useMemo)(() => {
-				return [.../* @__PURE__ */ new Set([...Object.keys(installed), ...installedBundles])].sort();
-			}, [installed, installedBundles]);
 			/** Classify an install spec for the export picker badge. */
 			const specKind = (spec) => {
 				if (spec === void 0) return "bundle";
@@ -16131,11 +16153,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				return "npm";
 			};
 			const openExportPicker = (0, react.useCallback)(() => {
-				const names = /* @__PURE__ */ new Set([...Object.keys(installed), ...installedBundles]);
-				setExportSelection(new Set(names));
+				setExportSelection(new Set(exportOptions));
 				setExportIncludeConfig(false);
 				setExportOpen(true);
-			}, [installed, installedBundles]);
+			}, [exportOptions]);
 			const runWebdavRef = (0, react.useRef)(runWebdav);
 			(0, react.useEffect)(() => {
 				runWebdavRef.current = runWebdav;
@@ -17353,7 +17374,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 												title: t("versionHint"),
 												children: ["v", version]
 											}), showMarketWait && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {
-												label: () => marketWaitTip(heldMarketVersion, eligibleMarketVersion, t),
+												label: () => marketWaitTip(heldMarketVersion, eligibleMarketVersion, uiLocale, t),
 												side: "bottom",
 												delayMs: HOVER_TIP_DELAY_MS,
 												portal: true,
@@ -19708,7 +19729,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					commentsFor !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(CommentsModal, {
 						name: pluginName(commentsFor.name, commentsFor.npm),
 						url: commentsFor.url,
-						lang,
+						lang: uiLocale,
 						onClose: () => setCommentsFor(null),
 						t
 					}, commentsFor.url),
@@ -20019,9 +20040,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 								className: Market_module_css_default.backupCheck,
 								onChange: setExportIncludeConfig
 							}),
-							exportIncludeConfig && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+							(exportAllSelected || exportIncludeConfig) && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
 								className: Market_module_css_default.backupWarn,
-								children: t("credsWarning")
+								children: t("gistConfigWarning")
 							}),
 							exportError !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
 								className: Market_module_css_default.backupWarn,
@@ -20421,6 +20442,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			return {
 				updateAvailable: own.updateAvailable === true,
 				latest: own.latest ?? null,
+				eligibleVersion: own.eligibleVersion ?? null,
+				heldUpdate: own.heldUpdate ?? null,
 				channelSwitch: own.channelSwitch ?? null,
 				restoreRequired: own.restoreRequired === true,
 				hostManaged: own.kind === "generation"
@@ -20440,7 +20463,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				storage.removeItem(key);
 			} catch {}
 		}
-		function SettingsCard({ t, onRemoved, sidebar, entries }) {
+		function SettingsCard({ t, locale, onRemoved, sidebar, entries }) {
+			const activeLocale = (0, react.useSyncExternalStore)((listener) => locale?.subscribe(listener) ?? (() => {}), () => locale?.getSnapshot().active ?? "en");
 			const [open, setOpen] = (0, react.useState)(false);
 			const [advancedOpen, setAdvancedOpen] = (0, react.useState)(false);
 			const advancedId = (0, react.useId)();
@@ -20551,6 +20575,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						const body = await post(api("/dsh-market/update"), {
 							name: "dshmarket",
 							...update?.restoreRequired === true ? { restore: true } : {},
+							...update?.eligibleVersion != null ? { eligibleVersion: update.eligibleVersion } : {},
 							...force ? { force: true } : {}
 						});
 						if (body.ok === true) setPhase("updated");
@@ -20567,6 +20592,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			}, [
 				post,
 				t,
+				update?.eligibleVersion,
 				update?.restoreRequired
 			]);
 			const onRemove = (0, react.useCallback)(() => {
@@ -20809,7 +20835,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				id: advancedId,
 				className: Market_module_css_default.setAdvancedBody
 			}, entryRows.map((node, index) => (0, react.createElement)(react.Fragment, { key: index }, node))) : null) : null;
-			const body = phase === "removed" ? row(t("setSelfRemoved"), t("setSelfRemovedHint"), null) : (0, react.createElement)(react.Fragment, null, advanced, row(t("setIndexSource"), t("setIndexSourceHint"), null), status?.selfManaged === true ? row((update?.updateAvailable === true || update?.hostManaged === true) && update.latest !== null ? `${t("setSelfUpdateReady")} ${update.latest}` : update?.channelSwitch != null ? `${t("setChannelSwitch")} ${update.channelSwitch}` : checkIncomplete ? t("updateChecksFailed") : update === null ? t("updateChecksPending") : t("setSelfUpToDate"), phase === "updated" ? t("setSelfUpdatedHint") : update?.channelSwitch != null ? t("setChannelSwitchHint") : update?.updateAvailable === true ? t("setSelfUpdateHint") : update?.hostManaged === true && update.latest !== null ? t("setSelfHostManagedHint") : checkIncomplete ? t("updateChecksFailedHint") : t("setSelfUpToDateHint"), phase === "updated" ? null : update?.updateAvailable === true ? (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+			const offeredVersion = update?.eligibleVersion ?? update?.latest ?? null;
+			const held = update?.heldUpdate;
+			const heldVersionText = held != null && typeof held.latest === "string" && held.latest !== "" && (update?.updateAvailable !== true || held.latest !== offeredVersion) ? marketHeldVersionText(held, activeLocale, t) : null;
+			const body = phase === "removed" ? row(t("setSelfRemoved"), t("setSelfRemovedHint"), null) : (0, react.createElement)(react.Fragment, null, advanced, row(t("setIndexSource"), t("setIndexSourceHint"), null), status?.selfManaged === true ? row((update?.updateAvailable === true || update?.hostManaged === true) && offeredVersion !== null ? `${t("setSelfUpdateReady")} ${offeredVersion}` : update?.channelSwitch != null ? `${t("setChannelSwitch")} ${update.channelSwitch}` : checkIncomplete ? t("updateChecksFailed") : heldVersionText !== null ? t("setSelfUpdateWaiting") : update === null ? t("updateChecksPending") : t("setSelfUpToDate"), phase === "updated" ? t("setSelfUpdatedHint") : update?.channelSwitch != null ? t("setChannelSwitchHint") : update?.updateAvailable === true ? [t("setSelfUpdateHint"), heldVersionText].filter(Boolean).join(" · ") : update?.hostManaged === true && update.latest !== null ? t("setSelfHostManagedHint") : checkIncomplete ? t("updateChecksFailedHint") : heldVersionText ?? t("setSelfUpToDateHint"), phase === "updated" ? null : update?.updateAvailable === true ? (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 				variant: "primary",
 				size: "sm",
 				disabled: busy,
@@ -21730,6 +21759,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					inject: () => ({ t })
 				}, () => (0, react.createElement)(SettingsCard, {
 					t,
+					locale: ctx.locale,
 					sidebar,
 					entries,
 					onRemoved: retire
@@ -21743,6 +21773,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				inject: () => ({ t })
 			}, (ownerProps = {}) => ownerProps.view === "summary" ? null : (0, react.createElement)(SettingsCard, {
 				t,
+				locale: ctx.locale,
 				sidebar,
 				entries,
 				onRemoved: retire
@@ -21757,6 +21788,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				inject: () => ({ t })
 			}, () => (0, react.createElement)(SettingsCard, {
 				t,
+				locale: ctx.locale,
 				sidebar,
 				entries,
 				onRemoved: retire

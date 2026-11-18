@@ -418,7 +418,7 @@ function mountMarket(ctx: MarketClientContext): void {
       key: NS,
       locale: NS,
       inject: () => ({ t }),
-    }, () => h(SettingsCard, { t, sidebar, entries, onRemoved: retire })))
+    }, () => h(SettingsCard, { t, locale: ctx.locale, sidebar, entries, onRemoved: retire })))
   })
 
   // The card's seat on 0.1.7+ (#677). The host moved a plugin's own
@@ -448,7 +448,7 @@ function mountMarket(ctx: MarketClientContext): void {
     // `summary` is this entry's one-liner in the list, which the market's own
     // description already carries; the card is the page.
     ? null
-    : h(SettingsCard, { t, sidebar, entries, onRemoved: retire })))
+    : h(SettingsCard, { t, locale: ctx.locale, sidebar, entries, onRemoved: retire })))
 
   // The seat on the 0.1.7 line (#722). That release renamed the client's
   // `settingsScope` service to `settings`, so the nested inject above stopped
@@ -483,7 +483,7 @@ function mountMarket(ctx: MarketClientContext): void {
     label: () => t('nav'),
     locale: NS,
     inject: () => ({ t }),
-  }, () => h(SettingsCard, { t, sidebar, entries, onRemoved: retire })))
+  }, () => h(SettingsCard, { t, locale: ctx.locale, sidebar, entries, onRemoved: retire })))
 
   // The Plugins page tab itself (#1015). Its registration now lives behind
   // `pluginsTabGate` above; this only tells the controller the slot exists,

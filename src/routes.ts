@@ -5015,6 +5015,8 @@ export function mountMarketRoutes(
               }
               if (favorites.length >= MAX_FAVORITES) {
                 sendJson(response, 400, {
+                  code: 'FAVORITES_LIMIT_REACHED',
+                  limit: MAX_FAVORITES,
                   error: `favorites limit reached (${String(MAX_FAVORITES)}) / 收藏已达上限（${String(MAX_FAVORITES)}）`,
                 })
                 return

@@ -62,10 +62,10 @@ import {
   installCommandFor, hostCompatibilityKey,
   api, applyGithubRouting, avatarColor, catalogEntryForInstalled, entryForDep, failureText, githubRouteCandidates, groupSwitchState, installedForCatalog, isGenerationSpec, isInstalled, localizeBilingual, localizeBilingualList, looksTerminal, matchInstalledName, orderedCategories, pluginCategories,
   formatCount, pageItems, pluginName, blockAliases, pluginScreenshotCandidates, pluginScreenshots, pluginsForFavorites, previewDimensionScore, queuedRowApplies, rankThemeScreenshots, readSession, safeIcon, releaseNotesHttpsImage, rememberGithubRoute, resetScreenshotsCache, resolveCatalogRestore, safeScreenshots, sanitizeReleaseNotesBody, staleFavoriteUrls, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins, restartHintKey,
-  compareInstalledRows, installedDateText, masonryColumnCount, profileBlockedText, profileBlockStillHolds,
+  compareInstalledRows, displayLatest, installedDateText, marketHeldVersionText, marketUiLocale, masonryColumnCount, profileBlockedText, profileBlockStillHolds,
 } from './market-data.ts'
 import type {
-ActivationInfo, ActivationState, DrainHistoryWire, DrainOperationWire, GistExportResult, HostCompatibility, InstalledMap, InstalledRepoHints, InstalledRepoIdentities, InstalledSort, InstallStamp, MarketStatus, Registry, RegistryPlugin,
+ActivationInfo, ActivationState, DrainHistoryWire, DrainOperationWire, GistExportResult, HostCompatibility, InstalledMap, InstalledRepoHints, InstalledRepoIdentities, InstalledSort, InstallStamp, MarketLocaleStore, MarketStatus, Registry, RegistryPlugin,
   ScreenshotCandidate, ScreenshotMeasurement, SharedHostPackageDependencyFinding, SortDir, SortField, ThemeSnapshot, TimeRange, Translate, UpdateStatus,
 } from './market-data.ts'
 
@@ -2326,31 +2326,16 @@ const NOTE_MAX = 200
  */
 type DismissBrokenReply = { ok?: unknown; brokenPlugins?: unknown; error?: unknown }
 
-/** `latest` is a semver for npm installs and a commit sha for github ones. */
-function displayLatest(latest: string): string {
-  if (/^\d/.test(latest)) return 'v' + latest
-  if (/^[0-9a-f]{12,40}$/i.test(latest)) return latest.slice(0, 7)
-  return latest
-}
+type FavoriteReply = { ok?: unknown; favorites?: unknown; error?: unknown; code?: unknown; limit?: unknown }
 
 /** Describe the pending release separately from any version the update button can install. */
 function marketWaitTip(
   held: NonNullable<UpdateStatus['heldUpdate']>,
   eligible: string | null,
+  locale: string,
   t: Translate,
 ): string {
-  const until = new Date(typeof held.until === 'string' ? held.until : NaN)
-  const now = new Date()
-  let pending = displayLatest(held.latest)
-  if (held.estimated !== true && until.getTime() > now.getTime()) {
-    const time = new Intl.DateTimeFormat(undefined, {
-      ...(until.toDateString() === now.toDateString() ? {} : { month: 'short', day: 'numeric' }),
-      hour: '2-digit',
-      minute: '2-digit',
-      hourCycle: 'h23',
-    }).format(until)
-    pending = t('marketVersionAvailableAt').replace('{0}', pending).replace('{1}', time)
-  }
+  const pending = marketHeldVersionText(held, locale, t)
   if (eligible === null) return pending
   const ready = t('marketVersionAvailableNow').replace('{0}', displayLatest(eligible))
   return `${ready} · ${pending}`
@@ -2463,10 +2448,7 @@ const TIME_OPTIONS: ReadonlyArray<{ key: TimeRange; label: string }> = [
 
 export interface MarketSectionProps {
   t: Translate
-  locale: {
-    subscribe(callback: () => void): () => void
-    getSnapshot(): { active: string }
-  }
+  locale: MarketLocaleStore
   theme: { setTheme(id: string): void }
   themeStore: {
     subscribe(callback: () => void): () => void
@@ -2773,7 +2755,8 @@ export function MarketSection(props: MarketSectionProps) {
     cb => props.locale.subscribe(cb),
     () => props.locale.getSnapshot(),
   )
-  const lang = String(localeSnap.active).toLowerCase().startsWith('zh') ? 'zh' : 'en'
+  const uiLocale = marketUiLocale(localeSnap.active)
+  const lang = uiLocale === 'zh-CN' ? 'zh' : 'en'
   const surface = props.surface ?? 'settings'
   const sidebar = props.sidebar
   // The host's own page for a bundle (dsh 0.2.1+). Subscribed rather than read
@@ -5972,9 +5955,9 @@ export function MarketSection(props: MarketSectionProps) {
     })
       .then(async (res) => {
         const text = await res.text()
-        let body: { ok?: unknown; favorites?: unknown; error?: unknown } | null = null
+        let body: FavoriteReply | null = null
         if (text !== '') {
-          try { body = JSON.parse(text) as { ok?: unknown; favorites?: unknown; error?: unknown } } catch { /* non-JSON */ }
+          try { body = JSON.parse(text) as FavoriteReply } catch { /* non-JSON */ }
         }
         return { status: res.status, body }
       })
@@ -5991,6 +5974,10 @@ export function MarketSection(props: MarketSectionProps) {
         }
         if (status === 409) {
           setFavoriteError(t('favoriteBusy'))
+          return
+        }
+        if (body?.code === 'FAVORITES_LIMIT_REACHED' && typeof body.limit === 'number') {
+          setFavoriteError(t('favoriteLimitReached').replace('{0}', String(body.limit)))
           return
         }
         setFavoriteError(typeof body?.error === 'string' ? body.error : t('favoriteFailed'))
@@ -6951,6 +6938,13 @@ export function MarketSection(props: MarketSectionProps) {
     return String(error)
   }
 
+  /** The picker list: dependency plugins + bundle-only plugins, deduplicated. */
+  const exportOptions = useMemo(() => {
+    const names = new Set([...Object.keys(installed), ...installedBundles])
+    return [...names].sort()
+  }, [installed, installedBundles])
+  const exportAllSelected = exportOptions.length > 0 && exportOptions.every(name => exportSelection.has(name))
+
   const runGist = useCallback((action: 'export' | 'import' | 'verify') => {
     setGistBusy(true)
     setGistMessage(null)
@@ -6971,15 +6965,11 @@ export function MarketSection(props: MarketSectionProps) {
       }
       body.gistId = gistId.trim()
     }
-    if (action === 'export') {
-      // All plugins selected → full backup (with config); partial → only
-      // the checked plugins, config optional via the picker flag.
-      const allNames = new Set([...Object.keys(installed), ...installedBundles])
-      const allSelected = exportSelection.size === allNames.size && exportSelection.size > 0
-      if (!allSelected) {
-        body.includeDeps = [...exportSelection]
-        if (exportIncludeConfig) body.includeConfig = true
-      }
+    // A full export includes configuration by default. A partial export
+    // includes only the selected plugins and any explicitly selected config.
+    if (action === 'export' && !exportAllSelected) {
+      body.includeDeps = [...exportSelection]
+      if (exportIncludeConfig) body.includeConfig = true
     }
     fetch(api('/dsh-market/gist'), {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
@@ -7026,13 +7016,7 @@ export function MarketSection(props: MarketSectionProps) {
       // inside it — never hidden behind the dialog.
       if (action === 'export') setExportError(message)
     }).finally(() => setGistBusy(false))
-  }, [exportIncludeConfig, exportSelection, gistId, gistToken, installed, installedBundles, previewBackup, t])
-
-  /** The picker list: dependency plugins + bundle-only plugins, deduplicated. */
-  const exportOptions = useMemo(() => {
-    const names = new Set([...Object.keys(installed), ...installedBundles])
-    return [...names].sort()
-  }, [installed, installedBundles])
+  }, [exportAllSelected, exportIncludeConfig, exportSelection, gistId, gistMode, gistToken, previewBackup, t])
 
   /** Classify an install spec for the export picker badge. */
   const specKind = (spec: string | undefined): 'npm' | 'git' | 'file' | 'bundle' => {
@@ -7043,11 +7027,10 @@ export function MarketSection(props: MarketSectionProps) {
   }
 
   const openExportPicker = useCallback(() => {
-    const names = new Set([...Object.keys(installed), ...installedBundles])
-    setExportSelection(new Set(names))
+    setExportSelection(new Set(exportOptions))
     setExportIncludeConfig(false)
     setExportOpen(true)
-  }, [installed, installedBundles])
+  }, [exportOptions])
 
   const runWebdavRef = useRef(runWebdav)
   useEffect(() => { runWebdavRef.current = runWebdav }, [runWebdav])
@@ -8155,7 +8138,7 @@ export function MarketSection(props: MarketSectionProps) {
             <span className={css.marketVersionGroup}>
               <span className={css.version} title={t('versionHint')}>v{version}</span>
               {showMarketWait && (
-                <Tooltip label={() => marketWaitTip(heldMarketVersion, eligibleMarketVersion, t)} side="bottom" delayMs={HOVER_TIP_DELAY_MS} portal maxWidth={320}>
+                <Tooltip label={() => marketWaitTip(heldMarketVersion, eligibleMarketVersion, uiLocale, t)} side="bottom" delayMs={HOVER_TIP_DELAY_MS} portal maxWidth={320}>
                   <span className={css.marketVersionWait} tabIndex={0}>{t('marketVersionWaiting')}</span>
                 </Tooltip>
               )}
@@ -10173,7 +10156,7 @@ export function MarketSection(props: MarketSectionProps) {
           key={commentsFor.url}
           name={pluginName(commentsFor.name, commentsFor.npm)}
           url={commentsFor.url}
-          lang={lang}
+          lang={uiLocale}
           onClose={() => setCommentsFor(null)}
           t={t}
         />
@@ -10492,7 +10475,7 @@ export function MarketSection(props: MarketSectionProps) {
                 className: css.backupCheck,
                 onChange: setExportIncludeConfig,
               })}
-              {exportIncludeConfig && <p className={css.backupWarn}>{t('credsWarning')}</p>}
+              {(exportAllSelected || exportIncludeConfig) && <p className={css.backupWarn}>{t('gistConfigWarning')}</p>}
               {exportError !== null && <p className={css.backupWarn}>{exportError}</p>}
             </>
           )}
