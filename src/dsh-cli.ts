@@ -546,6 +546,12 @@ export interface InstallResult {
    * an ordinary failure without parsing a sentence.
    */
   refusalCode?: string
+  /**
+   * The desktop host refused with `bundle-in-use` after an update already
+   * settled behind a restart in this process (#1253): the answer is "restart",
+   * not "that plugin is in use".
+   */
+  needsRestart?: boolean
   /** Package names pnpm reported as having ignored build scripts (ndjson). */
   ignoredBuilds?: string[]
   /**

@@ -3581,6 +3581,46 @@ describe('update flow — no npm publishing required', () => {
     expect(after.dsh?.profile?.bundles).toContain('dsh-loop')
   })
 
+  it('answers RESTART_REQUIRED, keeps the dropped row, and says what to do when the host wants a restart first (#1253)', async () => {
+    advanceNpmLatest('1.2.0')
+    const seeded = readManifestAt(fake.profileDir)
+    writeFileSync(join(fake.profileDir, 'package.json'), JSON.stringify({
+      ...seeded,
+      dsh: { ...seeded.dsh, profile: { ...seeded.dsh?.profile, bundles: ['dsh-loop'] } },
+    }))
+    bed.dispose()
+    bed = createTestbed({}, {
+      runPlugin: async (_profile, args) => {
+        if (args[0] === 'add') {
+          const manifestPath = join(fake.profileDir, 'package.json')
+          const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { dsh?: { profile?: { bundles?: string[] } } }
+          manifest.dsh!.profile!.bundles = []
+          writeFileSync(manifestPath, JSON.stringify(manifest))
+          return {
+            exitCode: 1, timedOut: false, stdout: '', cancelled: false, wroteNothing: true,
+            stderr: '这一轮只能更新到这里。重启后再点「全部更新」继续。 / This run can only go this far. Restart, then click Update all to continue.',
+            refusalCode: 'bundle-in-use', needsRestart: true,
+          }
+        }
+        return { exitCode: 0, timedOut: false, stdout: '', stderr: '', cancelled: false }
+      },
+      acceptsMarketPnpmFlags: false,
+      probePnpm: () => Promise.resolve(true),
+      provisionPnpm: () => Promise.resolve({ ok: true }),
+      cancelActive: () => false,
+    })
+
+    const r = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+
+    expect(r.status).toBe(502)
+    expect(r.json).toMatchObject({ ok: false, failureCode: 'RESTART_REQUIRED' })
+    expect(String(r.json.error)).toContain('重启后再点「全部更新」继续')
+    expect(String(r.json.error)).not.toContain('bundle-in-use')
+    // The row the host dropped before refusing is still put back (#935).
+    const after = JSON.parse(readFileSync(join(fake.profileDir, 'package.json'), 'utf8')) as { dsh?: { profile?: { bundles?: string[] } } }
+    expect(after.dsh?.profile?.bundles).toContain('dsh-loop')
+  })
+
   it('writes the update intent before the command runs (#928)', async () => {
     // An update is remove-then-add. If the host dies between them the plugin
     // is simply gone and the completion log never runs — the start entry is

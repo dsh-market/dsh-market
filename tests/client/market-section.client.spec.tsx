@@ -3185,6 +3185,46 @@ describe('MarketSection (jsdom)', () => {
     })
   })
 
+  describe('the host asks for a restart before the next update (#1253)', () => {
+    const restartRefusal = {
+      ok: false, failureCode: 'RESTART_REQUIRED', error: '这一轮只能更新到这里 / This run can only go this far', __status: 502,
+    }
+    const upd = { kind: 'npm', version: '1.0.0', current: '1.0.0', latest: '1.2.0', updateAvailable: true }
+
+    it('stops "update all" at the first refusal, says what to do once, and does not count a failure', async () => {
+      stubFetch({
+        '/dsh-market/installed': { profile: 'desktop', installed: { 'dsh-a': '^1.0.0', 'dsh-b': '^1.0.0', 'dsh-c': '^1.0.0' }, live: [] },
+        '/dsh-market/updates': { updates: Object.fromEntries(['dsh-a', 'dsh-b', 'dsh-c'].map(name => [name, upd])) },
+        '/dsh-market/update': restartRefusal,
+      })
+      render(<MarketSection {...props()} />)
+      fireEvent.click(await screen.findByRole('button', { name: new RegExp(en.updateAll) }))
+      await waitFor(() => expect(screen.queryByRole('button', { name: new RegExp(en.updating) })).toBeNull())
+      expect(fetchCalls.filter(call => call.path === '/dsh-market/update')).toHaveLength(1)
+      // One plain statement, no "update failed" banner.
+      expect(await screen.findAllByText(en.restartFirstNote)).not.toHaveLength(0)
+      expect(screen.queryByText(new RegExp(en.updateFail))).toBeNull()
+    })
+
+    it('keeps queued updates queued instead of retrying them into the same refusal', async () => {
+      localStorage.setItem('dshm-queue-v1', JSON.stringify([
+        { kind: 'update', name: 'dsh-a' }, { kind: 'update', name: 'dsh-b' },
+      ]))
+      stubFetch({
+        '/dsh-market/installed': { profile: 'desktop', installed: { 'dsh-a': '^1.0.0', 'dsh-b': '^1.0.0' }, live: [] },
+        '/dsh-market/updates': { updates: { 'dsh-a': upd, 'dsh-b': upd } },
+        '/dsh-market/update': restartRefusal,
+      })
+      render(<MarketSection {...props()} />)
+      await screen.findAllByText('dsh-a')
+      await waitFor(() => expect(fetchCalls.filter(call => call.path === '/dsh-market/update')).toHaveLength(1), { timeout: 8000 })
+      // Give the 2 s drain loop another turn: the second one must not start.
+      await new Promise(resolve => setTimeout(resolve, 2600))
+      expect(fetchCalls.filter(call => call.path === '/dsh-market/update')).toHaveLength(1)
+      expect(JSON.parse(localStorage.getItem('dshm-queue-v1') ?? '[]').some((item: { name?: string }) => item.name === 'dsh-b')).toBe(true)
+    })
+  })
+
   it('keeps the update target version on the button when only latest is set', async () => {
     stubFetch({
       '/dsh-market/installed': { profile: 'desktop', installed: { 'dsh-loop': '^1.0.0' }, live: [] },
