@@ -2945,6 +2945,13 @@ export function MarketSection(props: MarketSectionProps) {
     [updates],
   )
   useEffect(() => { profileBlockRef.current = profileBlocked }, [profileBlocked])
+  /**
+   * The host answered an update with "restart first" (#1253): an earlier one in
+   * this run already moved the loaded packages, and every later one would be
+   * refused the same way. Tied to the host's boot id, so a restart ends it.
+   */
+  const [restartHold, setRestartHold] = useState<{ boot: string | null } | null>(null)
+  const restartHoldRef = useRef(false)
   const queueRestoredRef = useRef(false)
   const [installedReady, setInstalledReady] = useState(cachedInstalledReady)
   useEffect(() => {
@@ -3515,6 +3522,12 @@ export function MarketSection(props: MarketSectionProps) {
   const [envFixing, setEnvFixing] = useState(false)
   const [envFailed, setEnvFailed] = useState(false)
   const [bootId, setBootId] = useState<string | null>(null)
+  const bootIdRef = useRef<string | null>(null)
+  useEffect(() => {
+    bootIdRef.current = bootId
+    // A new host process ends the hold: its packages resolve afresh (#1253).
+    restartHoldRef.current = restartHold !== null && restartHold.boot === bootId
+  }, [bootId, restartHold])
   /** One-click restart (#14 by @ysyyhhh): server capability + in-flight state. */
   const [restartEnabled, setRestartEnabled] = useState(false)
   /** Supervisor the host detected around itself, when it named one (#229). */
@@ -5618,6 +5631,15 @@ export function MarketSection(props: MarketSectionProps) {
           }
           refreshInstalled(true)
         }
+        // The host wants a restart before any further update (#1253). Not a
+        // failure of this plugin: it is waiting like the rest, so it keeps its
+        // row, says why, and the batch stops here.
+        if (body.failureCode === 'RESTART_REQUIRED') {
+          restartHoldRef.current = true
+          setRestartHold({ boot: bootIdRef.current })
+          setRecords(list => patchRecord(list, updateRecordId, { state: 'warned', reason: t('restartFirstNote') }))
+          return
+        }
         if (status === 409 && body.staleTarget === true) {
           setRecords(list => patchRecord(list, updateRecordId, { state: 'failed', reason: String(body.error ?? 'Update target changed') }))
           setInstallError(localizeBilingual(String(body.error ?? 'Update target changed'), lang))
@@ -6447,6 +6469,8 @@ export function MarketSection(props: MarketSectionProps) {
           if (task === undefined || recordsRef.current.some(record => record.state === 'running' && record.hostOperationId === undefined)) return
           // A queued update meets the same wall as the one that failed (#1252):
           // end it with the reason instead of starting a run that cannot work.
+          // A queued update waits for the restart too; it stays queued (#1253).
+          if (task.kind === 'update' && restartHoldRef.current) return
           const blocked = profileBlockRef.current
           if (task.kind === 'update' && blocked !== null && profileBlockStillHolds(blocked)) {
             const reason = t('profileBlockedSkipped').replace('{0}', profileBlockedText(blocked, t))
@@ -6814,6 +6838,9 @@ export function MarketSection(props: MarketSectionProps) {
           id: nextRecordId(), kind: 'update', name: item.name, state: 'failed', reason,
         }), list))
       }
+      // The host asked for a restart (#1253): the rest would be refused the
+      // same way. They stay un-updated and listed; the notice says what to do.
+      if (restartHoldRef.current) names.splice(0, names.length)
       const item = names.shift()
       if (item === undefined) {
         setUpdatingAll(false)
@@ -8277,6 +8304,11 @@ export function MarketSection(props: MarketSectionProps) {
               disabled={checkingUpdates}
               onClick={() => refreshInstalled(true)}
             >{t('loadRetry')}</Button>
+          </div>
+        )}
+        {!marketGone && restartHold !== null && restartHold.boot === bootId && (
+          <div className={css.updateCheckNotice}>
+            <span role="status">{t('restartFirstNote')}</span>
           </div>
         )}
         {!marketGone && profileBlocked !== null && (

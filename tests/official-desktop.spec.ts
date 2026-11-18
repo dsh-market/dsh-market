@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createOfficialDesktopRuntime, type OfficialPluginManagerLike } from '../src/official-desktop.ts'
+import { createOfficialDesktopRuntime, forgetRestartPending, type OfficialPluginManagerLike } from '../src/official-desktop.ts'
 import type { HostPackageManager } from '../src/dsh-cli.ts'
 import { PendingUpdateJournal, pendingUpdatesFile } from '../src/pending-updates.ts'
 import { withHoistRecovery } from '../src/install.ts'
@@ -16,6 +16,7 @@ const roots: string[] = []
 beforeEach(() => {
   vi.stubEnv('DSHM_NPM_MIRROR', '')
   setActiveRegion('global')
+  forgetRestartPending()
 })
 
 function profile(): string {
@@ -676,6 +677,42 @@ describe('official Electron profile runtime', () => {
       await expect(runtime.runPlugin('desktop', ['add', 'example@2.0.0'])).resolves
         .toMatchObject({ exitCode: 1, stderr: expect.stringContaining('(bundle-in-use)'), wroteNothing: true })
       expect(service.installBundle).toHaveBeenCalledTimes(1)
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('answers "restart first" when bundle-in-use follows an update that landed behind a restart (#1253)', async () => {
+    const service = manager()
+    service.installBundle
+      .mockResolvedValueOnce({ application: 'failed', error: { code: 'already-installed' }, packageResult: { exitCode: 1, output: '' } })
+      .mockResolvedValueOnce({ application: 'restart-required', packageResult: { exitCode: 0, output: 'installed' } })
+      .mockResolvedValueOnce({ application: 'failed', error: { code: 'already-installed' }, packageResult: { exitCode: 1, output: '' } })
+    service.removeBundle
+      .mockResolvedValueOnce({ application: 'applied', packageResult: { exitCode: 0, output: 'removed' } })
+      .mockResolvedValueOnce({ application: 'failed', error: { code: 'bundle-in-use' } })
+    const runtime = createOfficialDesktopRuntime(() => service, 'desktop', profile())
+    try {
+      await expect(runtime.runPlugin('desktop', ['add', 'first@2.0.0'])).resolves.toMatchObject({ exitCode: 0 })
+      const second = await runtime.runPlugin('desktop', ['add', 'second@2.0.0'])
+      expect(second).toMatchObject({ exitCode: 1, wroteNothing: true, needsRestart: true, refusalCode: 'bundle-in-use' })
+      expect(second.stderr).toContain('重启后再点「全部更新」继续')
+      expect(second.stderr).toContain('Restart')
+      expect(second.stderr).not.toContain('bundle-in-use')
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('keeps bundle-in-use a plain refusal when no update has settled behind a restart (#1253)', async () => {
+    const service = manager()
+    service.installBundle.mockResolvedValueOnce({ application: 'failed', error: { code: 'already-installed' }, packageResult: { exitCode: 1, output: '' } })
+    service.removeBundle.mockResolvedValueOnce({ application: 'failed', error: { code: 'bundle-in-use' } })
+    const runtime = createOfficialDesktopRuntime(() => service, 'desktop', profile())
+    try {
+      const result = await runtime.runPlugin('desktop', ['add', 'example@2.0.0'])
+      expect(result.needsRestart).toBeUndefined()
+      expect(result.stderr).toContain('(bundle-in-use)')
     } finally {
       await runtime.dispose()
     }

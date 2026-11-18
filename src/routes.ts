@@ -7415,7 +7415,7 @@ export function mountMarketRoutes(
               // The host's own refusal code when it stopped before pnpm
               // (#909): `market-self-update` tells a client that the button
               // cannot work on this host, not that the update was broken.
-              failureCode: versionFailureCode ?? result.refusalCode ?? (learnedBlocker === null ? undefined : 'PROFILE_RELEASE_BLOCKED'),
+              failureCode: versionFailureCode ?? (result.needsRestart === true ? 'RESTART_REQUIRED' : undefined) ?? result.refusalCode ?? (learnedBlocker === null ? undefined : 'PROFILE_RELEASE_BLOCKED'),
               ...(learnedBlocker === null ? {} : { profileBlocked: { name: learnedBlocker.name, version: learnedBlocker.version, readyAt: learnedBlocker.readyAt } }),
               renamedTo: renamedTo ?? undefined,
               removedDeclaration: removedDeclaration ?? undefined,

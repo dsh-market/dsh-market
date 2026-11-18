@@ -456,6 +456,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			profileBlockedNote: "要等 {0} {1} 满安全等待期（约 {2}）后才能更新。到时再点更新即可。",
 			profileBlockedNoteUnknown: "要等 {0} {1} 满安全等待期后才能更新（时间未知）。稍后市场会再确认。",
 			profileBlockedSkipped: "已跳过：{0}",
+			restartFirstNote: "这一轮只能更新到这里。重启后再点「全部更新」继续。",
 			newerPrereleaseAvailable: "预发布版 {0} 已发布",
 			newerPrereleaseHint: "npm 上的 latest 没有更新；你在跟的这条预发布线发布了更新的版本。",
 			unreleasedCommits: "有新提交（未发版）{0}",
@@ -1330,6 +1331,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			profileBlockedNote: "Updates wait until {0} {1} has passed the safety wait (about {2}). Update again then.",
 			profileBlockedNoteUnknown: "Updates wait until {0} {1} has passed the safety wait (time unknown). The market will check again shortly.",
 			profileBlockedSkipped: "Skipped: {0}",
+			restartFirstNote: "This run can only go this far. Restart, then click Update all to continue.",
 			newerPrereleaseAvailable: "prerelease {0} published",
 			newerPrereleaseHint: "The package's latest tag has no update; the prerelease line you are on published a newer build.",
 			unreleasedCommits: "New commits (unreleased) {0}",
@@ -2204,6 +2206,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			profileBlockedNote: "{0} {1} が安全待機期間を過ぎる（約 {2}）まで更新できません。その頃にもう一度更新してください。",
 			profileBlockedNoteUnknown: "{0} {1} が安全待機期間を過ぎるまで更新できません（時刻は不明）。しばらくしてからもう一度確認します。",
 			profileBlockedSkipped: "スキップしました：{0}",
+			restartFirstNote: "今回の更新はここまでです。再起動してから「すべて更新」をもう一度押してください。",
 			newerPrereleaseAvailable: "プレリリース版 {0} が公開されました",
 			newerPrereleaseHint: "npm の latest は更新されていません。あなたが追っているプレリリースの系列で、より新しいバージョンが公開されました。",
 			unreleasedCommits: "新しいコミットがあります（未リリース）{0}",
@@ -12315,6 +12318,13 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			(0, react.useEffect)(() => {
 				profileBlockRef.current = profileBlocked;
 			}, [profileBlocked]);
+			/**
+			* The host answered an update with "restart first" (#1253): an earlier one in
+			* this run already moved the loaded packages, and every later one would be
+			* refused the same way. Tied to the host's boot id, so a restart ends it.
+			*/
+			const [restartHold, setRestartHold] = (0, react.useState)(null);
+			const restartHoldRef = (0, react.useRef)(false);
 			const queueRestoredRef = (0, react.useRef)(false);
 			const [installedReady, setInstalledReady] = (0, react.useState)(cachedInstalledReady);
 			(0, react.useEffect)(() => {
@@ -12842,6 +12852,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const [envFixing, setEnvFixing] = (0, react.useState)(false);
 			const [envFailed, setEnvFailed] = (0, react.useState)(false);
 			const [bootId, setBootId] = (0, react.useState)(null);
+			const bootIdRef = (0, react.useRef)(null);
+			(0, react.useEffect)(() => {
+				bootIdRef.current = bootId;
+				restartHoldRef.current = restartHold !== null && restartHold.boot === bootId;
+			}, [bootId, restartHold]);
 			/** One-click restart (#14 by @ysyyhhh): server capability + in-flight state. */
 			const [restartEnabled, setRestartEnabled] = (0, react.useState)(false);
 			/** Supervisor the host detected around itself, when it named one (#229). */
@@ -14794,6 +14809,15 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						};
 						refreshInstalled(true);
 					}
+					if (body.failureCode === "RESTART_REQUIRED") {
+						restartHoldRef.current = true;
+						setRestartHold({ boot: bootIdRef.current });
+						setRecords((list) => patch(list, updateRecordId, {
+							state: "warned",
+							reason: t("restartFirstNote")
+						}));
+						return;
+					}
 					if (status === 409 && body.staleTarget === true) {
 						setRecords((list) => patch(list, updateRecordId, {
 							state: "failed",
@@ -15565,6 +15589,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						if (operationInFlight()) return;
 						const task = recordsRef.current.find((record) => record.state === "queued" && record.hostOperationId === void 0 && (record.kind === "install" || runningAgents.length === 0));
 						if (task === void 0 || recordsRef.current.some((record) => record.state === "running" && record.hostOperationId === void 0)) return;
+						if (task.kind === "update" && restartHoldRef.current) return;
 						const blocked = profileBlockRef.current;
 						if (task.kind === "update" && blocked !== null && profileBlockStillHolds(blocked)) {
 							const reason = t("profileBlockedSkipped").replace("{0}", profileBlockedText(blocked, t));
@@ -15915,6 +15940,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 							reason
 						}), list));
 					}
+					if (restartHoldRef.current) names.splice(0, names.length);
 					const item = names.shift();
 					if (item === void 0) {
 						setUpdatingAll(false);
@@ -17501,6 +17527,13 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									onClick: () => refreshInstalled(true),
 									children: t("loadRetry")
 								})]
+							}),
+							!marketGone && restartHold !== null && restartHold.boot === bootId && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+								className: Market_module_css_default.updateCheckNotice,
+								children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+									role: "status",
+									children: t("restartFirstNote")
+								})
 							}),
 							!marketGone && profileBlocked !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 								className: Market_module_css_default.updateCheckNotice,

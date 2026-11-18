@@ -30,6 +30,8 @@ interface ManagedResult {
    * must not try to "restore" it through the same stuck manager.
    */
   repairOnRestart?: boolean
+  /** The refusal is the host's restart-first state, not a plugin in use (#1253). */
+  needsRestart?: boolean
 }
 
 /**
@@ -446,6 +448,12 @@ async function installOrReinstall(
   if (removed.application === 'failed' || removed.application === 'cancelled') {
     // Nothing was unloaded, so there is nothing for a later start to repair.
     if (record !== undefined) context?.journal.finish(record.id)
+    // An update already landed behind a restart in this process, and the
+    // host now says `bundle-in-use` for a plugin it put back itself (#1253).
+    // It is the same wait for a restart, not a plugin that is really in use.
+    if (removed.application === 'failed' && managementCode(removed.error) === 'bundle-in-use' && restartPending()) {
+      return { ...removed, needsRestart: true }
+    }
     return removed
   }
   if (record !== undefined) context?.journal.mark(record.id, 'installing')
@@ -458,6 +466,7 @@ async function installOrReinstall(
       return installed
     }
     if (record !== undefined) context?.journal.finish(record.id)
+    if (installed.application === 'restart-required') markRestartPending()
     return installed
   } catch (error) {
     if (error instanceof DeadlineExceeded) return interrupted()
@@ -477,6 +486,27 @@ async function installOrReinstall(
  * The slot lives on `globalThis` because a reload may evaluate this module
  * again, which a module-level variable would not survive.
  */
+const RESTART_SLOT = Symbol.for('dshmarket.officialDesktop.restartPending')
+
+/**
+ * Whether an update in THIS host process already settled behind a restart.
+ * On the global like the slots below: a market reload keeps the process, and
+ * the process is what has to restart.
+ */
+function restartPending(): boolean {
+  return (globalThis as { [RESTART_SLOT]?: boolean })[RESTART_SLOT] === true
+}
+function markRestartPending(): void {
+  (globalThis as { [RESTART_SLOT]?: boolean })[RESTART_SLOT] = true
+}
+/** Test seam: a new host process starts with nothing pending. */
+export function forgetRestartPending(): void {
+  delete (globalThis as { [RESTART_SLOT]?: boolean })[RESTART_SLOT]
+}
+
+/** What the user reads when the host asks for a restart before the next update (#1253). */
+const RESTART_FIRST_MESSAGE = '这一轮只能更新到这里。重启后再点「全部更新」继续。 / This run can only go this far. Restart, then click Update all to continue.'
+
 const OPERATION_SLOT = Symbol.for('dshmarket.officialDesktop.operation')
 const WRITE_SLOT = Symbol.for('dshmarket.officialDesktop.packageWrites')
 
@@ -665,7 +695,7 @@ export function createOfficialDesktopRuntime(
         result.packageResult?.output ?? '',
         result.application === 'overridden' ? 'the plugin manager kept this change, but another layer overrides whether it is enabled' : '',
       ].filter(Boolean).join('\n')
-      const message = ok ? '' : detail(result.error)
+      const message = ok ? '' : result.needsRestart === true ? RESTART_FIRST_MESSAGE : detail(result.error)
       if (!ok) progress.error = message
       // The manager never settled: the profile may be half-updated, so this
       // is neither "nothing happened" nor something the route can restore
@@ -689,6 +719,7 @@ export function createOfficialDesktopRuntime(
         // The manager's own code, kept machine-readable (#909): a client can
         // tell a self-update refusal from an ordinary failure.
         ...(ok ? {} : { refusalCode: managementCode(result.error) }),
+        ...(result.needsRestart === true ? { needsRestart: true } : {}),
       }
     }, (error): InstallResult => {
       const message = detail(error)
