@@ -1402,3 +1402,11 @@
 
 .updateChecksInterval { display: inline-flex; align-items: center; gap: 8px; }
 .updateChecksInterval select { color: inherit; background: var(--dsw-alias-bg-layer-1, #fff); border: 1px solid var(--dsw-alias-border-l2, #e5e7eb); border-radius: 6px; padding: 4px 8px; font: inherit; }
+
+/* "This entry has moved" line above the market in Settings. A statement, so no
+   warning colour; wraps under the text on a narrow panel. */
+.noticeFrame{display:flex;flex-direction:column;height:100%;min-height:0;min-width:0}
+.noticeFrameOff{display:contents}
+.noticeBody{flex:1;min-height:0;min-width:0;display:flex;flex-direction:column}
+.moveNotice{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;flex:none;box-sizing:border-box;margin:0 0 8px;padding:8px 12px;border-radius:var(--dsw-radius-md,12px);background:var(--dsw-alias-bg-module-platform,#f4f5f7);color:var(--dsw-alias-label-secondary,#5c6570);font-size:12px;line-height:18px}
+.moveNoticeText{flex:1 1 220px;min-width:0}

@@ -13,6 +13,7 @@ import { en, ja, zh } from './locales.ts'
 import { InstallToast } from './InstallToast.tsx'
 import { MarketErrorBoundary } from './ErrorBoundary.tsx'
 import { MarketSection } from './MarketSection.tsx'
+import { SettingsNoticeFrame } from './SettingsNotice.tsx'
 import { marketElement } from './market-element.ts'
 import { createSectionGate } from './section-gate.ts'
 import { createEntryVisibility } from './entry-visibility.ts'
@@ -243,7 +244,11 @@ function mountMarket(ctx: MarketClientContext): void {
       label: () => t('nav'),
       locale: NS,
       inject: () => ({ t }),
-    }, (ownerProps: { preferredSubsectionId?: string } = {}) => buildMarketElement({ ...ownerProps, surface: 'settings' }))
+    }, (ownerProps: { preferredSubsectionId?: string } = {}) => h(
+      SettingsNoticeFrame,
+      { t, entries, hostNavigation },
+      buildMarketElement({ ...ownerProps, surface: 'settings' }) as ReactNode,
+    ))
     // `slots.register` may not hand back a disposer on every host; the gate
     // needs one regardless, so the absence becomes a no-op rather than a
     // silently unretractable entry.
@@ -354,9 +359,14 @@ function mountMarket(ctx: MarketClientContext): void {
   // below: naming the service in the module-level `inject` would keep the
   // whole plugin unmounted on every host without it, and this one is young.
   ;(ctx as unknown as {
-    inject(services: string[], callback: (scoped: { pluginNavigation: { openBundle(name: string): void } }) => void): void
+    inject(services: string[], callback: (scoped: { pluginNavigation: { openBundle(name: string): void; openList?(): void } }) => void): void
   }).inject(['pluginNavigation'], (scoped) => {
-    hostNavigation.attach({ openBundle: (name) => { scoped.pluginNavigation.openBundle(name) } })
+    hostNavigation.attach({
+      openBundle: (name) => { scoped.pluginNavigation.openBundle(name) },
+      ...(typeof scoped.pluginNavigation.openList === 'function'
+        ? { openList: () => { scoped.pluginNavigation.openList?.() } }
+        : {}),
+    })
   })
   const retire = (): void => {
     entries.retire()

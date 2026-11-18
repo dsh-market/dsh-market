@@ -16,6 +16,12 @@
 /** What the host offers, as much of it as this package uses. */
 export interface HostNavigation {
   openBundle(packageName: string): void
+  /**
+   * Select the Plugins page on its list view (Installed tab). Optional: the
+   * service shipped with `openBundle` first, and a host without this call
+   * simply cannot be steered to the page from here.
+   */
+  openList?(): void
 }
 
 export interface HostNavigationStore {
