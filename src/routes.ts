@@ -68,7 +68,8 @@ import { acceleratedTarget, resolveHeadCommit } from './accelerate.ts'
 import { mismatchedWorkspaceRoot } from './github-install-target.ts'
 import { sourceWebUrl, updateNotesFor } from './changelog.ts'
 import { isCommitId } from './release-history.ts'
-import { checkUpdates, isUpdatablePlugin, compareVersions, fetchNpmLatest, invalidateUpdates, readVersionMaturity, resolveDesktopMatureUpdate, resolveGitRemoteHead, isUpgrade, latestPublishedRecently, setUpdateRegistry, versionOnChannel } from './updates.ts'
+import { activeReleaseBlockers, headlineBlocker, releaseBlockedMessage } from './release-blockers.ts'
+import { applyProfileBlockers, checkUpdates, isUpdatablePlugin, compareVersions, fetchNpmLatest, invalidateUpdates, readVersionMaturity, resolveDesktopMatureUpdate, resolveGitRemoteHead, isUpgrade, latestPublishedRecently, setUpdateRegistry, versionOnChannel } from './updates.ts'
 import { isExactReleaseVersion, isStableReleaseVersion } from './release-candidates.ts'
 import { createUpdateNotificationMonitor } from './update-notifications.ts'
 import { DEFAULT_UPDATE_CHECK_INTERVAL_HOURS, isUpdateCheckIntervalHours } from './update-notification-settings.ts'
@@ -3207,6 +3208,7 @@ export function mountMarketRoutes(
     profileKey: createHash('sha256').update(activeProfileDir).digest('hex'),
     enabled: marketState.backgroundUpdateChecks === true,
     intervalHours: marketState.backgroundUpdateIntervalHours,
+    overlay: updates => applyProfileBlockers(updates, activeProfileDir),
     inventory: () => {
       const installed = readInstalled(config.profile, activeProfileDir)
       const commits = readLockCommits(config.profile, activeProfileDir)
@@ -6603,6 +6605,25 @@ export function mountMarketRoutes(
                           detail: `更新前的来源 ${spec} 不是受支持的精确回滚目标（${previousVersionZh}），因此自动回滚不可用；需要时请从可信来源手工重新安装先前版本。 / The previous source ${spec} is not a supported exact rollback target (${previousVersionEn}), so automatic rollback is unavailable. Reinstall the prior version manually from a trusted source if needed.`,
                           lockfileBefore: lockfileCapture.snapshot,
                         }
+            // Another release already in this profile is still inside the safety
+            // wait (#1252). pnpm checks the whole lockfile before any change, so
+            // this update would fail exactly as the last one did — and write
+            // and restore the profile on the way. Where a one-shot bypass is
+            // available the run can still succeed, so only the hosts without
+            // one (the official Desktop, mature-only updates) stop here.
+            if (!marketFlags || enforceMatureReleaseAge) {
+              const blocker = headlineBlocker(activeReleaseBlockers(activeProfileDir))
+              if (blocker !== null) {
+                logEvent('info', 'update-held', `${name}: not started — ${blocker.name}@${blocker.version} in this profile is still inside the safety wait${blocker.readyAt === null ? ' (end unknown)' : ` until ${blocker.readyAt}`} (#1252)`)
+                sendJson(response, 409, {
+                  ok: false,
+                  failureCode: 'PROFILE_RELEASE_BLOCKED',
+                  profileBlocked: { name: blocker.name, version: blocker.version, readyAt: blocker.readyAt },
+                  error: releaseBlockedMessage(blocker),
+                })
+                return
+              }
+            }
             // The desktop host names the package a run installed by diffing the
             // profile manifest before and after pnpm. A floating re-resolve is
             // sent as the bare remote URL, which pnpm writes back byte-for-byte
@@ -7370,6 +7391,11 @@ export function mountMarketRoutes(
             if (ok) recordUpdated(activeProfileDir, [name])
             logEvent(ok || cancelled ? 'info' : 'error', 'update',
               `${name} -> ${target} exit=${String(result.exitCode)}${result.timedOut ? ' TIMEOUT' : ''}${cancelled ? ' CANCELLED' : ''}${stale ? ` STALE(${staleReason ?? 'unknown'})` : ''}${ok || cancelled ? '' : ` err=${failureDetail(result)}`}`)
+            // The run this update just made is what taught the market which
+            // release is in the way (#1252): say it by name, with the time.
+            const learnedBlocker = !ok && !cancelled && pnpmRefusedYoungRelease(result)
+              ? headlineBlocker(activeReleaseBlockers(activeProfileDir))
+              : null
             // A user-cancelled run is a quiet outcome, not an error.
             sendJson(response, ok || cancelled ? 200 : result.busy === true ? 409 : 502, {
               ok,
@@ -7389,7 +7415,8 @@ export function mountMarketRoutes(
               // The host's own refusal code when it stopped before pnpm
               // (#909): `market-self-update` tells a client that the button
               // cannot work on this host, not that the update was broken.
-              failureCode: versionFailureCode ?? result.refusalCode ?? undefined,
+              failureCode: versionFailureCode ?? result.refusalCode ?? (learnedBlocker === null ? undefined : 'PROFILE_RELEASE_BLOCKED'),
+              ...(learnedBlocker === null ? {} : { profileBlocked: { name: learnedBlocker.name, version: learnedBlocker.version, readyAt: learnedBlocker.readyAt } }),
               renamedTo: renamedTo ?? undefined,
               removedDeclaration: removedDeclaration ?? undefined,
               // #1047: no version could be pinned, so this is the one pnpm

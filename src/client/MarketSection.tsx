@@ -62,7 +62,7 @@ import {
   installCommandFor, hostCompatibilityKey,
   api, applyGithubRouting, avatarColor, catalogEntryForInstalled, entryForDep, failureText, githubRouteCandidates, groupSwitchState, installedForCatalog, isGenerationSpec, isInstalled, localizeBilingual, localizeBilingualList, looksTerminal, matchInstalledName, orderedCategories, pluginCategories,
   formatCount, pageItems, pluginName, blockAliases, pluginScreenshotCandidates, pluginScreenshots, pluginsForFavorites, previewDimensionScore, queuedRowApplies, rankThemeScreenshots, readSession, safeIcon, releaseNotesHttpsImage, rememberGithubRoute, resetScreenshotsCache, resolveCatalogRestore, safeScreenshots, sanitizeReleaseNotesBody, staleFavoriteUrls, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins, restartHintKey,
-  compareInstalledRows, installedDateText, masonryColumnCount,
+  compareInstalledRows, installedDateText, masonryColumnCount, profileBlockedText, profileBlockStillHolds,
 } from './market-data.ts'
 import type {
 ActivationInfo, ActivationState, DrainHistoryWire, DrainOperationWire, GistExportResult, HostCompatibility, InstalledMap, InstalledRepoHints, InstalledRepoIdentities, InstalledSort, InstallStamp, MarketStatus, Registry, RegistryPlugin,
@@ -2932,6 +2932,19 @@ export function MarketSection(props: MarketSectionProps) {
    */
   const updateCheck = useSyncExternalStore(subscribeUpdateCheck, getUpdateCheckSnapshot)
   const { updates } = updateCheck
+  /**
+   * The release in this profile that is still inside the safety wait, as last
+   * heard from the server (#1252). pnpm refuses every change while it holds,
+   * so a batch or the queue stops at the first such refusal instead of trying
+   * each plugin in turn. The update check is the authority: whatever it says
+   * next replaces this.
+   */
+  const profileBlockRef = useRef<{ name: string; version: string; readyAt: string | null } | null>(null)
+  const profileBlocked = useMemo(
+    () => Object.values(updates).find(status => status.profileBlocked !== undefined)?.profileBlocked ?? null,
+    [updates],
+  )
+  useEffect(() => { profileBlockRef.current = profileBlocked }, [profileBlocked])
   const queueRestoredRef = useRef(false)
   const [installedReady, setInstalledReady] = useState(cachedInstalledReady)
   useEffect(() => {
@@ -5591,6 +5604,20 @@ export function MarketSection(props: MarketSectionProps) {
           if (body.partial === true) setInstallError(t('partialNote'))
           return
         }
+        // Another release in the profile is still inside the safety wait
+        // (#1252): remember it so a batch stops here, and re-read the list so
+        // every row shows the wait instead of an update that cannot start.
+        const releaseBlocked = body.failureCode === 'PROFILE_RELEASE_BLOCKED' && body.profileBlocked !== null
+          && typeof body.profileBlocked === 'object'
+          ? body.profileBlocked as { name?: unknown; version?: unknown; readyAt?: unknown }
+          : null
+        if (releaseBlocked !== null && typeof releaseBlocked.name === 'string' && typeof releaseBlocked.version === 'string') {
+          profileBlockRef.current = {
+            name: releaseBlocked.name, version: releaseBlocked.version,
+            readyAt: typeof releaseBlocked.readyAt === 'string' ? releaseBlocked.readyAt : null,
+          }
+          refreshInstalled(true)
+        }
         if (status === 409 && body.staleTarget === true) {
           setRecords(list => patchRecord(list, updateRecordId, { state: 'failed', reason: String(body.error ?? 'Update target changed') }))
           setInstallError(localizeBilingual(String(body.error ?? 'Update target changed'), lang))
@@ -5649,7 +5676,8 @@ export function MarketSection(props: MarketSectionProps) {
             void doUpdate(name, force, restore, compatVersion, confirmAgentsRunning, eligibleVersion, true)
             return
           }
-          if (status === 409) {
+          // A wait is a failure with its own answer below, not a lock to queue behind.
+          if (status === 409 && releaseBlocked === null) {
             if (body.failureCode === 'AGENT_BARRIER_LOST') {
               setRecords(list => patchRecord(list, updateRecordId, {
                 state: 'failed',
@@ -6417,6 +6445,14 @@ export function MarketSection(props: MarketSectionProps) {
             && record.hostOperationId === undefined
             && (record.kind === 'install' || runningAgents.length === 0))
           if (task === undefined || recordsRef.current.some(record => record.state === 'running' && record.hostOperationId === undefined)) return
+          // A queued update meets the same wall as the one that failed (#1252):
+          // end it with the reason instead of starting a run that cannot work.
+          const blocked = profileBlockRef.current
+          if (task.kind === 'update' && blocked !== null && profileBlockStillHolds(blocked)) {
+            const reason = t('profileBlockedSkipped').replace('{0}', profileBlockedText(blocked, t))
+            setRecords(list => patchRecord(list, task.id, { state: 'failed', reason }))
+            return
+          }
           setRecords(list => list.filter(record => record.id !== task.id))
           drainingRef.current = true
           try {
@@ -6438,7 +6474,7 @@ export function MarketSection(props: MarketSectionProps) {
       disposed = true
       clearInterval(timer)
     }
-  }, [applyDrainStatus, readMarketStatus, restoreDrainMarkers])
+  }, [applyDrainStatus, readMarketStatus, restoreDrainMarkers, t])
 
   /** A queued record's "run now": retry immediately instead of waiting for idle. */
   const runQueuedNow = useCallback((record: OperationRecord, confirmAgentsRunning = false) => {
@@ -6768,6 +6804,16 @@ export function MarketSection(props: MarketSectionProps) {
     const names = reminderBatchUpdatableNames.map(name => ({ name, eligibleVersion: updates[name]?.eligibleVersion }))
     setUpdatingAll(true)
     const next = () => {
+      // The first refusal for a profile-wide wait ends the batch (#1252): the
+      // rest would meet the same wall, so say so once per plugin and stop.
+      const blocked = profileBlockRef.current
+      if (names.length > 0 && blocked !== null && profileBlockStillHolds(blocked)) {
+        const reason = t('profileBlockedSkipped').replace('{0}', profileBlockedText(blocked, t))
+        const skipped = names.splice(0, names.length)
+        setRecords(list => skipped.reduce((acc, item) => enqueue(acc, {
+          id: nextRecordId(), kind: 'update', name: item.name, state: 'failed', reason,
+        }), list))
+      }
       const item = names.shift()
       if (item === undefined) {
         setUpdatingAll(false)
@@ -6781,7 +6827,7 @@ export function MarketSection(props: MarketSectionProps) {
       doUpdate(item.name, false, false, undefined, false, item.eligibleVersion).then(next, next)
     }
     next()
-  }, [reminderBatchUpdatableNames, doUpdate, refreshInstalled, updates])
+  }, [reminderBatchUpdatableNames, doUpdate, refreshInstalled, updates, t, nextRecordId])
 
   const finishRestore = useCallback((body: { errors?: unknown; unportable?: unknown; pinned?: unknown; bootErrors?: unknown }) => {
     const errors = Array.isArray(body.errors) ? body.errors as { name?: unknown; error?: unknown }[] : []
@@ -8231,6 +8277,11 @@ export function MarketSection(props: MarketSectionProps) {
               disabled={checkingUpdates}
               onClick={() => refreshInstalled(true)}
             >{t('loadRetry')}</Button>
+          </div>
+        )}
+        {!marketGone && profileBlocked !== null && (
+          <div className={css.updateCheckNotice}>
+            <span role="status">{profileBlockedText(profileBlocked, t)}</span>
           </div>
         )}
         {/* Backup & Restore and Diagnostics sit under Advanced rather than as
@@ -9730,6 +9781,18 @@ export function MarketSection(props: MarketSectionProps) {
                                       ? <Button variant="outline" size="sm" className={css.irowUpdateBtn} disabled>{t('updating')}</Button>
                                       : status !== undefined && generation && status.latest != null
                                         ? <span className={css.metaTag} title={t('hostUpdateHint')}>{t('hostUpdateReady').replace('{0}', status.latest)}</span>
+                                      : status?.profileBlocked !== undefined && status.updateAvailable !== true
+                                        // Another release in the profile is in the way (#1252).
+                                        // One short word here; the sentence is in the tooltip
+                                        // and, once, in the note above the list.
+                                        ? (
+                                            <Tooltip label={profileBlockedText(status.profileBlocked, t)} side="top" delayMs={HOVER_TIP_DELAY_MS} portal maxWidth={280}>
+                                              <span className={css.irowTrailingHint}>
+                                                <IconClock size={12} />
+                                                {t('profileBlockedBeside')}
+                                              </span>
+                                            </Tooltip>
+                                          )
                                       : status && status.updateAvailable
                                         ? (() => {
                                               // Hint then button: clock+short wait stays visible,

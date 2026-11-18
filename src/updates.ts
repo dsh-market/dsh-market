@@ -19,6 +19,7 @@ import { isNumericReleaseAgeWindow, readMinimumReleaseAgeMs } from './install.ts
 import { isStableReleaseVersion, selectMatureUpdate, versionMaturity, type MatureUpdateSelection, type NpmPackument } from './release-candidates.ts'
 import { hasDshManifest, profileDir, readGitResolutionCommit, readInstalled, readInstalledVersion, readLockCommits, readProfileBundles } from './profile.ts'
 import { userPatchPackageReferences } from './patch.ts'
+import { activeReleaseBlockers, headlineBlocker } from './release-blockers.ts'
 import { catalogRepoKey, gitCommitOfTarget, gitRefOfTarget, gitUploadPackUrl, hasSemverSelector, hostedRepoKey, githubCommitOfTarget, githubRefOfTarget, isGenerationLink, isGitHostedSpec, lookupRepoFromUrl, parseGitHubRemote, repoOfTarget } from './sources.ts'
 
 export interface UpdateStatus {
@@ -95,6 +96,14 @@ export interface UpdateStatus {
    * `until` is when the newer held release should become installable.
    */
   heldUpdate?: { latest: string; until: string; estimated?: true }
+  /**
+   * An update exists, but ANOTHER release already in this profile's lockfile
+   * is still inside the safety wait, and pnpm refuses every change until it is
+   * past (#1252). Separate from {@link heldUpdate}, which is about this
+   * plugin's own target. `readyAt` is null when the end time is unknown.
+   * `updateAvailable` is false while this is set.
+   */
+  profileBlocked?: { name: string; version: string; readyAt: string | null }
   /**
    * The version this package's channel points at, when it differs from what
    * is installed and is NOT newer.
@@ -813,6 +822,25 @@ async function releaseAgeHold(name: string, latest: string | null, profile: stri
   }
   const until = age.at + windowMs
   return until > Date.now() ? { until: new Date(until).toISOString(), estimated: false } : 'past'
+}
+
+/**
+ * Mark the updates a known profile-level blocker would turn into a failed
+ * click (#1252). Applied to what is served, not to the cached registry
+ * answer, so a blocker learned a second ago and one that just ended both show
+ * on the very next read without another round of registry traffic.
+ */
+export function applyProfileBlockers(
+  statuses: Record<string, UpdateStatus>,
+  activeProfileDir: string,
+  now = Date.now(),
+): Record<string, UpdateStatus> {
+  if (!Object.values(statuses).some(status => status.updateAvailable === true)) return statuses
+  const blocker = headlineBlocker(activeReleaseBlockers(activeProfileDir, now))
+  if (blocker === null) return statuses
+  const profileBlocked = { name: blocker.name, version: blocker.version, readyAt: blocker.readyAt }
+  return Object.fromEntries(Object.entries(statuses).map(([name, status]) =>
+    [name, status.updateAvailable === true ? { ...status, updateAvailable: false, profileBlocked } : status]))
 }
 
 /** A hold expiration invalidates evidence; it cannot itself authorize an install. */

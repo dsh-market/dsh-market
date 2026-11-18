@@ -13,6 +13,7 @@ import { findDshInstallDir } from './dsh-install.ts'
 import { classifyPnpmFailure, HOST_NAMESPACE_RE, isTransientPnpmFailure } from './pnpm-compat.ts'
 import { conflictingEntryIds, dropFromManifest, hasDshManifest, hasLoadableEntry, mergeDuplicateReleaseAgeExcludes, pluginSubdirs, profileDir, readGitResolutionCommit, readInstalled, readInstalledVersion, readLockCommits, readManifestDeps, readProfileBundles, dropUnparseableBuildKeys } from './profile.ts'
 import { logEvent } from './log.ts'
+import { clearReleaseBlockers, parseReleaseAgeBlockers, recordReleaseBlockers } from './release-blockers.ts'
 import { registryNameOf } from './official-desktop.ts'
 import { hostedRepoKey, NPM_NAME_RE } from './sources.ts'
 import { cleanOrphanedIgnored, cleanOrphanedStore } from './store.ts'
@@ -136,6 +137,8 @@ export async function withHoistRecovery(
   options: { releaseAgeBypass?: boolean; marketFlags?: boolean; preserveProfilePolicy?: boolean } = {},
 ): Promise<InstallResult> {
   const marketFlags = options.marketFlags !== false
+  /** The release-age bypass ran, so a success proves nothing about the lockfile (#1252). */
+  let bypassed = pluginArgs.includes(RELEASE_AGE_OVERRIDE)
   // An already verified mature update must not rewrite the user's workspace
   // policy as a side effect of market-level recovery (#991).
   const repairProfilePolicy = options.preserveProfilePolicy !== true
@@ -221,6 +224,7 @@ export async function withHoistRecovery(
         // Already carrying it (a caller's forced retry): nothing left to add.
       } else {
         logEvent('warn', 'install', `a too-young release blocks pnpm's lockfile verification (#39) — retrying once with ${RELEASE_AGE_OVERRIDE}`)
+        bypassed = true
         result = await run(profile, [pluginArgs[0], RELEASE_AGE_OVERRIDE, ...pluginArgs.slice(1)])
       }
     } else if (
@@ -421,6 +425,7 @@ export async function withHoistRecovery(
       logEvent('warn', 'install', `could not merge minimumReleaseAgeExclude after success (#883, #878): ${String(error)}`)
     }
   }
+  learnReleaseBlockers(profile, profileDirectory, pluginArgs, result, bypassed)
   // After every mutation — success, failure, and cancel. Garbage lands in
   // `.ignored` on the NEXT pnpm run, so a success-only hook would miss the
   // run that just moved it there (#974). Must not fail the user's command.
@@ -432,6 +437,36 @@ export async function withHoistRecovery(
     }
   } catch { /* cleanup must never fail the install */ }
   return result
+}
+
+/**
+ * Keep what the last run taught about the profile's young lockfile entries
+ * (#1252): a refusal names them, a success without the bypass proves there
+ * are none. Must never fail the user's command.
+ */
+function learnReleaseBlockers(
+  profile: string,
+  profileDirectory: string | undefined,
+  pluginArgs: readonly string[],
+  result: InstallResult,
+  bypassed: boolean,
+): void {
+  try {
+    const verb = pluginArgs.find(argument => !argument.startsWith('-'))
+    const mutates = verb === 'add' || verb === 'remove' || verb === 'install' || verb === 'update'
+    if (!mutates || result.cancelled) return
+    const dir = profileDir(profile, profileDirectory)
+    if (result.exitCode === 0 && !result.timedOut) {
+      if (!bypassed) clearReleaseBlockers(dir)
+      return
+    }
+    const output = `${result.stderr}\n${result.stdout}`
+    if (classifyPnpmFailure(output, result.exitCode, { profileDirectory })?.code !== 'release-age-violation') return
+    const blockers = parseReleaseAgeBlockers(output, readMinimumReleaseAgeMs(profile, profileDirectory))
+    if (blockers.length === 0) return
+    recordReleaseBlockers(dir, blockers)
+    logEvent('warn', 'install', `the profile's lockfile holds ${blockers.length} release(s) still inside the safety wait (${blockers.slice(0, 3).map(blocker => `${blocker.name}@${blocker.version}${blocker.readyAt === null ? ' (end unknown)' : ` until ${blocker.readyAt}`}`).join(', ')}) — updates are held until then (#1252)`)
+  } catch { /* bookkeeping must never fail the install */ }
 }
 
 /**

@@ -8,12 +8,38 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
-  entryForDep, installCommandFor, extractReadmeImageCandidates, extractReadmeImages, formatCount, groupSwitchState, installedForCatalog, isInstalled, isMarketItself, localizeBilingual, localizeBilingualList, looksTerminal, matchInstalledName, orderedCategories, pageItems, pluginCategories, pluginName, pluginScreenshotCandidates, pluginsForFavorites, previewDimensionScore, rankThemeScreenshots, releaseNotesHttpsImage, resetGithubRouting, resetScreenshotsCache, safeScreenshots, sanitizeReleaseNotesBody, staleFavoriteUrls, themePlugins, visiblePlugins, humanOutput, failureText, catalogEntryForInstalled} from '../src/client/market-data.ts'
+  entryForDep, installCommandFor, extractReadmeImageCandidates, extractReadmeImages, formatCount, groupSwitchState, installedForCatalog, isInstalled, isMarketItself, localizeBilingual, localizeBilingualList, looksTerminal, matchInstalledName, orderedCategories, pageItems, pluginCategories, pluginName, pluginScreenshotCandidates, pluginsForFavorites, previewDimensionScore, rankThemeScreenshots, releaseNotesHttpsImage, resetGithubRouting, resetScreenshotsCache, safeScreenshots, sanitizeReleaseNotesBody, staleFavoriteUrls, themePlugins, visiblePlugins, humanOutput, failureText, catalogEntryForInstalled, profileBlockedText, profileBlockStillHolds } from '../src/client/market-data.ts'
 import type { RegistryPlugin, ScreenshotCandidate, ScreenshotRejection } from '../src/client/market-data.ts'
 
 function plugin(partial: Partial<RegistryPlugin>): RegistryPlugin {
   return { name: 'x', owner: 'o', url: 'https://github.com/o/x', category: 'tool', ...partial }
 }
+
+describe('profileBlockedText (#1252)', () => {
+  const t = (key: string): string => ({
+    profileBlockedNote: 'wait for {0} {1} until {2}',
+    profileBlockedNoteUnknown: 'wait for {0} {1}, time unknown',
+  } as Record<string, string>)[key] ?? key
+
+  it('names the package, the version and the time', () => {
+    const text = profileBlockedText({ name: 'dsh-mobile-plugin', version: '0.5.71', readyAt: '2999-11-19T04:56:47.000Z' }, t)
+    expect(text).toMatch(/^wait for dsh-mobile-plugin 0\.5\.71 until \S/)
+    expect(text).not.toContain('{')
+  })
+
+  it('says the time is unknown instead of inventing one', () => {
+    expect(profileBlockedText({ name: 'a', version: '1.0.0', readyAt: null }, t)).toBe('wait for a 1.0.0, time unknown')
+    expect(profileBlockedText({ name: 'a', version: '1.0.0', readyAt: 'garbage' }, t)).toBe('wait for a 1.0.0, time unknown')
+  })
+
+  it('holds until the end, and for as long as the end is unknown', () => {
+    const now = Date.parse('2026-11-18T00:00:00Z')
+    expect(profileBlockStillHolds({ readyAt: '2026-11-18T01:00:00Z' }, now)).toBe(true)
+    expect(profileBlockStillHolds({ readyAt: '2026-11-17T23:00:00Z' }, now)).toBe(false)
+    expect(profileBlockStillHolds({ readyAt: null }, now)).toBe(true)
+    expect(profileBlockStillHolds(undefined, now)).toBe(false)
+  })
+})
 
 describe('catalog plugin titles (#1174)', () => {
   it.each([

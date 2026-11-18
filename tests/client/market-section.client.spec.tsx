@@ -3104,6 +3104,87 @@ describe('MarketSection (jsdom)', () => {
     expect(screen.queryByRole('button', { name: rowUpdateName })).toBeNull()
   })
 
+  describe('another release in the profile is inside the safety wait (#1252)', () => {
+    const readyAt = '2999-11-19T04:56:47.000Z'
+    const blocked = { name: 'dsh-mobile-plugin', version: '0.5.71', readyAt }
+    const row = (over: Record<string, unknown> = {}) => ({
+      kind: 'npm', version: '1.0.0', current: '1.0.0', latest: '1.2.0', updateAvailable: false, profileBlocked: blocked, ...over,
+    })
+
+    it('says once what to wait for and until when, and offers no update that cannot start', async () => {
+      stubFetch({
+        '/dsh-market/installed': { profile: 'desktop', installed: { 'dsh-loop': '^1.0.0', 'dsh-other': '^1.0.0' }, live: [] },
+        '/dsh-market/updates': { updates: { 'dsh-loop': row(), 'dsh-other': row() } },
+      })
+      render(<MarketSection {...props()} />)
+      await screen.findByText('dsh-loop')
+      fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+
+      const sentence = await screen.findAllByText(/Updates wait until dsh-mobile-plugin 0\.5\.71 has passed the safety wait \(about .+\)\./)
+      // One statement for the whole list, not one per row.
+      expect(sentence).toHaveLength(1)
+      // Each row carries only the short word; the sentence is its tooltip.
+      expect(screen.getAllByText(en.profileBlockedBeside)).toHaveLength(2)
+      expect(screen.queryByRole('button', { name: rowUpdateName })).toBeNull()
+      expect(screen.queryByRole('button', { name: new RegExp(en.updateAll) })).toBeNull()
+    })
+
+    it('says the time is unknown when the server does not know it', async () => {
+      stubFetch({
+        '/dsh-market/installed': { profile: 'desktop', installed: { 'dsh-loop': '^1.0.0' }, live: [] },
+        '/dsh-market/updates': { updates: { 'dsh-loop': row({ profileBlocked: { ...blocked, readyAt: null } }) } },
+      })
+      render(<MarketSection {...props()} />)
+      await screen.findByText('dsh-loop')
+      fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+      expect(await screen.findByText(/has passed the safety wait \(time unknown\)/)).toBeTruthy()
+    })
+
+    it('does not start queued updates while the wait holds, and says why', async () => {
+      localStorage.setItem('dshm-queue-v1', JSON.stringify([
+        { kind: 'update', name: 'dsh-a' }, { kind: 'update', name: 'dsh-b' },
+      ]))
+      stubFetch({
+        '/dsh-market/installed': { profile: 'desktop', installed: { 'dsh-a': '^1.0.0', 'dsh-b': '^1.0.0' }, live: [] },
+        '/dsh-market/updates': { updates: { 'dsh-a': row(), 'dsh-b': row() } },
+        '/dsh-market/update': { ok: true },
+      })
+      render(<MarketSection {...props()} />)
+      // A restored queue opens the Tasks panel by itself.
+      await screen.findAllByText('dsh-a')
+      const skipped = en.profileBlockedSkipped.split('{0}')[0]!
+      await waitFor(() => {
+        const panel = document.querySelector('[class*="opPanel"]')
+        expect((panel?.textContent?.match(new RegExp(skipped, 'g')) ?? []).length).toBe(2)
+      }, { timeout: 8000 })
+      expect(fetchCalls.filter(call => call.path === '/dsh-market/update')).toEqual([])
+    })
+
+    it('stops "update all" at the first refusal and marks the rest as skipped', async () => {
+      stubFetch({
+        '/dsh-market/installed': { profile: 'desktop', installed: { 'dsh-a': '^1.0.0', 'dsh-b': '^1.0.0', 'dsh-c': '^1.0.0' }, live: [] },
+        '/dsh-market/updates': { updates: Object.fromEntries(['dsh-a', 'dsh-b', 'dsh-c'].map(name => [name,
+          { kind: 'npm', version: '1.0.0', current: '1.0.0', latest: '1.2.0', updateAvailable: true }])) },
+        '/dsh-market/update': {
+          ok: false, failureCode: 'PROFILE_RELEASE_BLOCKED', profileBlocked: blocked,
+          error: '要等 dsh-mobile-plugin 0.5.71 满安全等待期后才能更新 / Updates wait', __status: 502,
+        },
+      })
+      render(<MarketSection {...props()} />)
+      fireEvent.click(await screen.findByRole('button', { name: new RegExp(en.updateAll) }))
+      await waitFor(() => expect(screen.queryByRole('button', { name: new RegExp(en.updating) })).toBeNull())
+      // Only the first plugin was tried; the others never reached the server.
+      expect(fetchCalls.filter(call => call.path === '/dsh-market/update').map(call => call.body)).toHaveLength(1)
+      fireEvent.click(await screen.findByRole('button', { name: new RegExp(en.opTitle) }))
+      await waitFor(() => {
+        const panel = document.querySelector('[class*="opPanel"]')
+        expect(panel).toBeTruthy()
+        const skipped = en.profileBlockedSkipped.split('{0}')[0]!
+        expect((panel!.textContent!.match(new RegExp(skipped, 'g')) ?? []).length).toBe(2)
+      })
+    })
+  })
+
   it('keeps the update target version on the button when only latest is set', async () => {
     stubFetch({
       '/dsh-market/installed': { profile: 'desktop', installed: { 'dsh-loop': '^1.0.0' }, live: [] },
