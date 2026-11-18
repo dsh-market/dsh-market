@@ -41,6 +41,12 @@ interface MonitorDependencies {
   inventory(): UpdateNotificationInventory
   preferences(): Pick<UpdateNotificationSnapshot, 'updateExempt' | 'disabled' | 'blocked'>
   check(force: boolean): Promise<{ updates: Record<string, UpdateStatus>; error?: string }>
+  /**
+   * Applied to every answer on the way out, never stored: facts that change
+   * between checks (a profile-level wait learned from a failed click, #1252)
+   * must show on the next read, not the next poll.
+   */
+  overlay?(updates: Record<string, UpdateStatus>): Record<string, UpdateStatus>
 }
 
 export interface UpdateNotificationMonitor {
@@ -100,7 +106,7 @@ export function createUpdateNotificationMonitor(deps: MonitorDependencies): Upda
     stopTimer()
     if (disposed || !enabled) return
     nextCheckAt = Date.now() + delay
-    timer = setTimeout(() => { void check(stale) }, delay)
+    timer = setTimeout(() => { void runCheck(stale) }, delay)
     timer.unref?.()
   }
 
@@ -108,13 +114,19 @@ export function createUpdateNotificationMonitor(deps: MonitorDependencies): Upda
     ? Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** Math.min(failures - 1, 5))
     : intervalHours * 60 * 60_000
 
-  const check = (force = false): Promise<Record<string, UpdateStatus>> => {
+  const view = (value: Record<string, UpdateStatus>): Record<string, UpdateStatus> =>
+    deps.overlay === undefined ? value : deps.overlay(value)
+
+  const check = (force = false): Promise<Record<string, UpdateStatus>> =>
+    deps.overlay === undefined ? runCheck(force) : runCheck(force).then(view)
+
+  const runCheck = (force = false): Promise<Record<string, UpdateStatus>> => {
     if (disposed) return Promise.resolve({ ...updates })
     if (pending !== null) {
       if (!force || pendingForced) return pending
       // A manual refresh arriving during a cache-eligible read must still
       // bypass that cache, once. Several such callers share the follow-up.
-      queuedForce ??= pending.then(() => check(true)).finally(() => { queuedForce = null })
+      queuedForce ??= pending.then(() => runCheck(true)).finally(() => { queuedForce = null })
       return queuedForce
     }
     stopTimer()
@@ -174,7 +186,7 @@ export function createUpdateNotificationMonitor(deps: MonitorDependencies): Upda
       reconcile()
       return {
         enabled, intervalHours, checking: pending !== null, checkedAt, lastSuccessAt, nextCheckAt,
-        stale, error, updates: { ...updates }, boot: deps.boot, ...deps.preferences(),
+        stale, error, updates: view({ ...updates }), boot: deps.boot, ...deps.preferences(),
         ...(deps.profileKey === undefined ? {} : { profileKey: deps.profileKey }),
       }
     },

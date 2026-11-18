@@ -448,6 +448,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			updateHeldBesideEstimated: "约 {1} min",
 			updateHeldHint: "当前设置要求新版本发布满一段时间才允许安装，大约还要 {1} 小时。",
 			updateHeldEstimatedHint: "新版本已出现，但目录信息还没同步，所以先不提供更新；大约 {1} 分钟后会再检查。",
+			profileBlockedBeside: "等待中",
+			profileBlockedNote: "要等 {0} {1} 满安全等待期（约 {2}）后才能更新。到时再点更新即可。",
+			profileBlockedNoteUnknown: "要等 {0} {1} 满安全等待期后才能更新（时间未知）。稍后市场会再确认。",
+			profileBlockedSkipped: "已跳过：{0}",
 			newerPrereleaseAvailable: "预发布版 {0} 已发布",
 			newerPrereleaseHint: "npm 上的 latest 没有更新；你在跟的这条预发布线发布了更新的版本。",
 			unreleasedCommits: "有新提交（未发版）{0}",
@@ -1314,6 +1318,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			updateHeldBesideEstimated: "~{1} min",
 			updateHeldHint: "Your settings wait a while before installing a fresh release; about {1} hour(s) left.",
 			updateHeldEstimatedHint: "The new version is listed, but the registry mirror has not caught up with its metadata, so the update is held; the market checks again in about {1} minute(s).",
+			profileBlockedBeside: "waiting",
+			profileBlockedNote: "Updates wait until {0} {1} has passed the safety wait (about {2}). Update again then.",
+			profileBlockedNoteUnknown: "Updates wait until {0} {1} has passed the safety wait (time unknown). The market will check again shortly.",
+			profileBlockedSkipped: "Skipped: {0}",
 			newerPrereleaseAvailable: "prerelease {0} published",
 			newerPrereleaseHint: "The package's latest tag has no update; the prerelease line you are on published a newer build.",
 			unreleasedCommits: "New commits (unreleased) {0}",
@@ -2180,6 +2188,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			updateHeldBesideEstimated: "約 {1} min",
 			updateHeldHint: "現在の設定では、新しいバージョンが公開されてから一定期間が経つまでインストールできません。あと約 {1} 時間です。",
 			updateHeldEstimatedHint: "新しいバージョンは出ていますが、ディレクトリ情報がまだ同期されていないため、更新は保留しています。約 {1} 分後に再確認します。",
+			profileBlockedBeside: "待機中",
+			profileBlockedNote: "{0} {1} が安全待機期間を過ぎる（約 {2}）まで更新できません。その頃にもう一度更新してください。",
+			profileBlockedNoteUnknown: "{0} {1} が安全待機期間を過ぎるまで更新できません（時刻は不明）。しばらくしてからもう一度確認します。",
+			profileBlockedSkipped: "スキップしました：{0}",
 			newerPrereleaseAvailable: "プレリリース版 {0} が公開されました",
 			newerPrereleaseHint: "npm の latest は更新されていません。あなたが追っているプレリリースの系列で、より新しいバージョンが公開されました。",
 			unreleasedCommits: "新しいコミットがあります（未リリース）{0}",
@@ -3132,7 +3144,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				return world.plugins.some((plugin) => plugin.url === row.url) ? null : "gone";
 			}
 			if (world.installed[row.name] === void 0) return "gone";
-			if (row.kind === "update" && world.updates[row.name]?.updateAvailable !== true) {
+			if (row.kind === "update" && world.updates[row.name]?.updateAvailable !== true && world.updates[row.name]?.profileBlocked === void 0) {
 				if (row.restore === true && world.updates[row.name]?.kind === "linked" && findCatalogEntryForLocal(world.plugins, row.name) !== null) return null;
 				return "no-update";
 			}
@@ -4277,6 +4289,36 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			if (!Number.isFinite(width) || width <= 0) return minColumns;
 			const fitted = Math.floor((width + 10) / minColWidth);
 			return Math.min(maxColumns, Math.max(minColumns, fitted));
+		}
+		/**
+		* The one plain sentence for "another release in this profile is still inside
+		* the safety wait" (#1252): what to wait for, and until when. Says the time is
+		* unknown when it is, instead of inventing one.
+		* @param blocked - the blocker the server named.
+		* @param t - the locale lookup; `{0}` package, `{1}` version, `{2}` time.
+		* @param now - injectable for tests.
+		*/
+		function profileBlockedText(blocked, t, now = /* @__PURE__ */ new Date()) {
+			const ready = blocked.readyAt === null ? NaN : Date.parse(blocked.readyAt);
+			if (!Number.isFinite(ready)) return t("profileBlockedNoteUnknown").replace("{0}", blocked.name).replace("{1}", blocked.version);
+			const at = new Date(ready);
+			const time = new Intl.DateTimeFormat(void 0, {
+				...at.toDateString() === now.toDateString() ? {} : {
+					month: "2-digit",
+					day: "2-digit"
+				},
+				hour: "2-digit",
+				minute: "2-digit",
+				hourCycle: "h23"
+			}).format(at);
+			return t("profileBlockedNote").replace("{0}", blocked.name).replace("{1}", blocked.version).replace("{2}", time);
+		}
+		/** Whether a blocker still holds at `now`; an unknown end is believed until the server says otherwise. */
+		function profileBlockStillHolds(blocked, now = Date.now()) {
+			if (blocked === null || blocked === void 0) return false;
+			if (blocked.readyAt === null) return true;
+			const ready = Date.parse(blocked.readyAt);
+			return !Number.isFinite(ready) || ready > now;
 		}
 		//#endregion
 		//#region src/client/InstallToast.tsx
@@ -12110,6 +12152,18 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			*/
 			const updateCheck = (0, react.useSyncExternalStore)(subscribeUpdateCheck, getUpdateCheckSnapshot);
 			const { updates } = updateCheck;
+			/**
+			* The release in this profile that is still inside the safety wait, as last
+			* heard from the server (#1252). pnpm refuses every change while it holds,
+			* so a batch or the queue stops at the first such refusal instead of trying
+			* each plugin in turn. The update check is the authority: whatever it says
+			* next replaces this.
+			*/
+			const profileBlockRef = (0, react.useRef)(null);
+			const profileBlocked = (0, react.useMemo)(() => Object.values(updates).find((status) => status.profileBlocked !== void 0)?.profileBlocked ?? null, [updates]);
+			(0, react.useEffect)(() => {
+				profileBlockRef.current = profileBlocked;
+			}, [profileBlocked]);
 			const queueRestoredRef = (0, react.useRef)(false);
 			const [installedReady, setInstalledReady] = (0, react.useState)(cachedInstalledReady);
 			(0, react.useEffect)(() => {
@@ -14580,6 +14634,15 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						if (body.partial === true) setInstallError(t("partialNote"));
 						return;
 					}
+					const releaseBlocked = body.failureCode === "PROFILE_RELEASE_BLOCKED" && body.profileBlocked !== null && typeof body.profileBlocked === "object" ? body.profileBlocked : null;
+					if (releaseBlocked !== null && typeof releaseBlocked.name === "string" && typeof releaseBlocked.version === "string") {
+						profileBlockRef.current = {
+							name: releaseBlocked.name,
+							version: releaseBlocked.version,
+							readyAt: typeof releaseBlocked.readyAt === "string" ? releaseBlocked.readyAt : null
+						};
+						refreshInstalled(true);
+					}
 					if (status === 409 && body.staleTarget === true) {
 						setRecords((list) => patch(list, updateRecordId, {
 							state: "failed",
@@ -14615,7 +14678,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 							doUpdate(name, force, restore, compatVersion, confirmAgentsRunning, eligibleVersion, true);
 							return;
 						}
-						if (status === 409) {
+						if (status === 409 && releaseBlocked === null) {
 							if (body.failureCode === "AGENT_BARRIER_LOST") {
 								setRecords((list) => patch(list, updateRecordId, {
 									state: "failed",
@@ -15351,6 +15414,15 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						if (operationInFlight()) return;
 						const task = recordsRef.current.find((record) => record.state === "queued" && record.hostOperationId === void 0 && (record.kind === "install" || runningAgents.length === 0));
 						if (task === void 0 || recordsRef.current.some((record) => record.state === "running" && record.hostOperationId === void 0)) return;
+						const blocked = profileBlockRef.current;
+						if (task.kind === "update" && blocked !== null && profileBlockStillHolds(blocked)) {
+							const reason = t("profileBlockedSkipped").replace("{0}", profileBlockedText(blocked, t));
+							setRecords((list) => patch(list, task.id, {
+								state: "failed",
+								reason
+							}));
+							return;
+						}
 						setRecords((list) => list.filter((record) => record.id !== task.id));
 						drainingRef.current = true;
 						try {
@@ -15371,7 +15443,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			}, [
 				applyDrainStatus,
 				readMarketStatus,
-				restoreDrainMarkers
+				restoreDrainMarkers,
+				t
 			]);
 			/** A queued record's "run now": retry immediately instead of waiting for idle. */
 			const runQueuedNow = (0, react.useCallback)((record, confirmAgentsRunning = false) => {
@@ -15679,6 +15752,18 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				}));
 				setUpdatingAll(true);
 				const next = () => {
+					const blocked = profileBlockRef.current;
+					if (names.length > 0 && blocked !== null && profileBlockStillHolds(blocked)) {
+						const reason = t("profileBlockedSkipped").replace("{0}", profileBlockedText(blocked, t));
+						const skipped = names.splice(0, names.length);
+						setRecords((list) => skipped.reduce((acc, item) => enqueue(acc, {
+							id: nextRecordId(),
+							kind: "update",
+							name: item.name,
+							state: "failed",
+							reason
+						}), list));
+					}
 					const item = names.shift();
 					if (item === void 0) {
 						setUpdatingAll(false);
@@ -15692,7 +15777,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				reminderBatchUpdatableNames,
 				doUpdate,
 				refreshInstalled,
-				updates
+				updates,
+				t,
+				nextRecordId
 			]);
 			const finishRestore = (0, react.useCallback)((body) => {
 				const errors = Array.isArray(body.errors) ? body.errors : [];
@@ -17263,6 +17350,13 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									onClick: () => refreshInstalled(true),
 									children: t("loadRetry")
 								})]
+							}),
+							!marketGone && profileBlocked !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+								className: Market_module_css_default.updateCheckNotice,
+								children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+									role: "status",
+									children: profileBlockedText(profileBlocked, t)
+								})
 							}),
 							(tab === "backup" || tab === "diagnostics") && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 								className: Market_module_css_default.subTabs,
@@ -19029,6 +19123,16 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 																className: Market_module_css_default.metaTag,
 																title: t("hostUpdateHint"),
 																children: t("hostUpdateReady").replace("{0}", status.latest)
+															}) : status?.profileBlocked !== void 0 && status.updateAvailable !== true ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {
+																label: profileBlockedText(status.profileBlocked, t),
+																side: "top",
+																delayMs: HOVER_TIP_DELAY_MS,
+																portal: true,
+																maxWidth: 280,
+																children: /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
+																	className: Market_module_css_default.irowTrailingHint,
+																	children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(IconClock, { size: 12 }), t("profileBlockedBeside")]
+																})
 															}) : status && status.updateAvailable ? (() => {
 																const held = status.heldUpdate !== void 0 ? heldUpdateBeside(status.heldUpdate, t) : null;
 																return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [held !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {

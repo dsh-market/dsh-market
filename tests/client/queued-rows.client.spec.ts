@@ -28,6 +28,13 @@ function world(over: {
 }
 
 describe('queuedRowApplies', () => {
+  it('keeps a queued update that is only waiting on another release in the profile (#1252)', () => {
+    const waiting = { kind: 'npm', version: '1.0.0', updateAvailable: false, profileBlocked: { name: 'x', version: '1.0.0', readyAt: null } } as UpdateStatus
+    expect(queuedRowApplies({ kind: 'update', name: 'dsh-loop' }, world({ installed: { 'dsh-loop': '^1.0.0' }, updates: { 'dsh-loop': waiting } }))).toBeNull()
+    // ...but a plugin with nothing to update at all is still skipped.
+    expect(queuedRowApplies({ kind: 'update', name: 'dsh-loop' }, world({ installed: { 'dsh-loop': '^1.0.0' }, updates: { 'dsh-loop': { ...waiting, profileBlocked: undefined } } }))).toBe('no-update')
+  })
+
   it('lets an install run while its catalog entry is still listed', () => {
     expect(queuedRowApplies({ kind: 'install', name: 'dsh-loop', url: 'https://github.com/o/dsh-loop' }, world())).toBeNull()
   })

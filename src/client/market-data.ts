@@ -170,7 +170,10 @@ export function queuedRowApplies(
     return world.plugins.some(plugin => plugin.url === row.url) ? null : 'gone'
   }
   if (world.installed[row.name] === undefined) return 'gone'
-  if (row.kind === 'update' && world.updates[row.name]?.updateAvailable !== true) {
+  // A profile-wide wait (#1252) is not "no update any more": the update is
+  // still there, it just cannot start yet. Keep the row; the drain says why.
+  if (row.kind === 'update' && world.updates[row.name]?.updateAvailable !== true
+    && world.updates[row.name]?.profileBlocked === undefined) {
     // A local restore replaces a checkout, not a newer release.
     if (row.restore === true && world.updates[row.name]?.kind === 'linked' &&
         findCatalogEntryForLocal(world.plugins, row.name) !== null) return null
@@ -243,6 +246,9 @@ export interface UpdateStatus {
       remain available as `eligibleVersion` (#991); this names the held latest.
       `estimated` means the publication time is unknown, not a release-age ETA. */
   heldUpdate?: { latest: string; until: string; estimated?: true }
+  /** Another release in this profile is still inside the safety wait, so no
+      update can start (#1252). `readyAt` is null when the end is unknown. */
+  profileBlocked?: { name: string; version: string; readyAt: string | null }
   /** Explicit source migration; never part of update-all. */
   sourceMigration?:
     | { kind: 'git-to-npm'; repo: string; target: string }
@@ -1908,4 +1914,39 @@ export function masonryColumnCount(width: number, maxColumns: number, minColWidt
   if (!Number.isFinite(width) || width <= 0) return minColumns
   const fitted = Math.floor((width + 10) / minColWidth)
   return Math.min(maxColumns, Math.max(minColumns, fitted))
+}
+
+/**
+ * The one plain sentence for "another release in this profile is still inside
+ * the safety wait" (#1252): what to wait for, and until when. Says the time is
+ * unknown when it is, instead of inventing one.
+ * @param blocked - the blocker the server named.
+ * @param t - the locale lookup; `{0}` package, `{1}` version, `{2}` time.
+ * @param now - injectable for tests.
+ */
+export function profileBlockedText(
+  blocked: { name: string; version: string; readyAt: string | null },
+  t: (key: string) => string,
+  now = new Date(),
+): string {
+  const ready = blocked.readyAt === null ? Number.NaN : Date.parse(blocked.readyAt)
+  if (!Number.isFinite(ready)) {
+    return t('profileBlockedNoteUnknown').replace('{0}', blocked.name).replace('{1}', blocked.version)
+  }
+  const at = new Date(ready)
+  const time = new Intl.DateTimeFormat(undefined, {
+    ...(at.toDateString() === now.toDateString() ? {} : { month: '2-digit', day: '2-digit' }),
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).format(at)
+  return t('profileBlockedNote').replace('{0}', blocked.name).replace('{1}', blocked.version).replace('{2}', time)
+}
+
+/** Whether a blocker still holds at `now`; an unknown end is believed until the server says otherwise. */
+export function profileBlockStillHolds(blocked: { readyAt: string | null } | null | undefined, now = Date.now()): boolean {
+  if (blocked === null || blocked === undefined) return false
+  if (blocked.readyAt === null) return true
+  const ready = Date.parse(blocked.readyAt)
+  return !Number.isFinite(ready) || ready > now
 }

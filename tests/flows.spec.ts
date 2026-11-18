@@ -3390,6 +3390,113 @@ describe('update flow — no npm publishing required', () => {
     expect(error).not.toContain('minimumReleaseAgeExclude')
   })
 
+  describe('another release in the profile is inside the safety wait (#1252)', () => {
+    /** A Desktop-shaped bed: pnpm refuses on a lockfile entry that is not the plugin asked for. */
+    function desktopRefusing(stderr: () => string, adds: string[][]): void {
+      bed.dispose()
+      bed = createTestbed({}, {
+        runPlugin: async (_profile, args) => {
+          if (args[0] === 'add') adds.push(args)
+          return { exitCode: 1, timedOut: false, stdout: '', stderr: stderr(), cancelled: false, wroteNothing: false }
+        },
+        acceptsMarketPnpmFlags: false,
+        probePnpm: () => Promise.resolve(true),
+        provisionPnpm: () => Promise.resolve({ ok: true }),
+        cancelActive: () => false,
+      })
+    }
+    /** The lockfile really pins the refused entry, as pnpm's does; a blocker the lockfile no longer holds is dropped. */
+    function pinInLockfile(entry = 'dsh-mobile-plugin@0.5.71'): void {
+      const file = join(fake.profileDir, 'pnpm-lock.yaml')
+      writeFileSync(file, `${existsSync(file) ? readFileSync(file, 'utf8') : ''}\npackages:\n  ${entry}:\n    resolution: {integrity: sha512-x}\n`)
+    }
+    const refusal = (publishedAt: string) =>
+      `✗ Lockfile failed supply-chain policy check (229 entries in 3.8s)\n[ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION] 1 lockfile entries failed verification:\n  dsh-mobile-plugin@0.5.71 was published at ${publishedAt},\n  within the minimumReleaseAge cutoff`
+
+    afterEach(() => { vi.useRealTimers() })
+
+    it('learns the blocker from the first refusal and does not run pnpm for the next update', async () => {
+      advanceNpmLatest('1.2.0')
+      const adds: string[][] = []
+      const published = new Date(Date.now() - 2 * 3_600_000).toISOString()
+      desktopRefusing(() => refusal(published), adds)
+      pinInLockfile()
+
+      // Before any failure nothing is known: the update is offered.
+      const before = await bed.dispatch('GET', '/dsh-market/updates?force=1')
+      expect(before.json.updates['dsh-loop']).toMatchObject({ updateAvailable: true })
+      expect(before.json.updates['dsh-loop'].profileBlocked).toBeUndefined()
+
+      const first = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+      expect(first.status).toBe(502)
+      expect(first.json).toMatchObject({
+        failureCode: 'PROFILE_RELEASE_BLOCKED',
+        profileBlocked: { name: 'dsh-mobile-plugin', version: '0.5.71' },
+      })
+      expect(adds).toHaveLength(1)
+
+      // The second click is answered without touching pnpm.
+      const second = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+      expect(second.status).toBe(409)
+      expect(second.json).toMatchObject({ failureCode: 'PROFILE_RELEASE_BLOCKED' })
+      const [zh, en] = String(second.json.error).split(' / ')
+      expect(zh).toMatch(/要等 dsh-mobile-plugin 0\.5\.71 满安全等待期（约 \d\d-\d\d \d\d:\d\d）后才能更新/)
+      expect(en).toContain('dsh-mobile-plugin 0.5.71')
+      expect(adds).toHaveLength(1)
+
+      // The check stops offering what cannot start, and says why.
+      const after = await bed.dispatch('GET', '/dsh-market/updates')
+      expect(after.json.updates['dsh-loop']).toMatchObject({
+        updateAvailable: false,
+        profileBlocked: { name: 'dsh-mobile-plugin', version: '0.5.71' },
+      })
+      // ...and it is the profile's fact, not the plugin's: no per-target hold on it.
+      expect(after.json.updates['dsh-loop'].heldUpdate).toBeUndefined()
+      expect(installedSpec('dsh-loop')).toBe('^1.0.0')
+    })
+
+    it('lets the update through again once the wait has ended', async () => {
+      advanceNpmLatest('1.2.0')
+      const adds: string[][] = []
+      const published = new Date(Date.now() - 2 * 3_600_000).toISOString()
+      desktopRefusing(() => refusal(published), adds)
+      pinInLockfile()
+      expect((await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })).status).toBe(502)
+      expect((await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })).status).toBe(409)
+      expect(adds).toHaveLength(1)
+
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(Date.parse(published) + 24 * 3_600_000 + 1000)
+      const listed = await bed.dispatch('GET', '/dsh-market/updates')
+      expect(listed.json.updates['dsh-loop'].profileBlocked).toBeUndefined()
+      const retry = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+      expect(retry.status).toBe(502)
+      expect(adds).toHaveLength(2)
+    })
+
+    it('says the time is unknown rather than inventing one', async () => {
+      advanceNpmLatest('1.2.0')
+      const adds: string[][] = []
+      desktopRefusing(() => refusal('sometime-yesterday'), adds)
+      pinInLockfile()
+      expect((await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })).status).toBe(502)
+      const second = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+      expect(second.status).toBe(409)
+      expect(String(second.json.error)).toContain('时间未知')
+      expect(second.json.profileBlocked).toMatchObject({ name: 'dsh-mobile-plugin', readyAt: null })
+      expect(adds).toHaveLength(1)
+    })
+
+    it('does not hold updates on a host whose one-shot bypass gets through', async () => {
+      advanceNpmLatest('1.2.0')
+      fake.youngLockfile = true
+      const first = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+      expect(first.status, JSON.stringify(first.json)).toBe(200)
+      const listed = await bed.dispatch('GET', '/dsh-market/updates?force=1')
+      expect(listed.json.updates['dsh-loop'].profileBlocked).toBeUndefined()
+    })
+  })
+
   it('reports the host refusal code as failureCode, not just as text (#909)', async () => {
     // The desktop manager refuses a self-update before pnpm runs and the
     // bridge now carries its code (market-self-update). The route has to put
