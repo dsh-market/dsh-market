@@ -11,6 +11,8 @@ English | [中文](README.zh.md)
 
 The plugin market inside DeepSeek Harness. On dsh 0.2.1+ it is a tab on the **Plugins** page, right next to **Installed**; on older hosts open Settings → **Plugin Market**. Browse, search, one-click install.
 
+> **The market has moved to the Plugins page.** Open **Plugins → Plugin Market** (dsh 0.2.1+). The entry in Settings will be phased out; on dsh 0.2.0 and earlier, keep opening it from Settings.
+
 > 📡 **The same catalog is also a plugin market index.** On dsh 0.2.1+, open **Plugins → Discover → Index sources** and add `https://cdn.jsdelivr.net/npm/dsh-plugin-catalog/index.json`. That is this list as a format-1 index, served from npm so it loads quickly everywhere — dsh gives a source 15 seconds, and the GitHub Pages copies (`https://awesome-dsh-plugin.com/index.json` and `https://dshmarket.com/index.json`) can exceed that from some networks. The host's Discover tab and the `plugin_market` agent tool then search it.
 
 ![dsh-market](assets/demo-en.png)
@@ -48,8 +50,8 @@ the app's **Settings → Plugins** instead; Desktop's profile is managed by the 
 Once it is installed, open the **Plugins** page and pick the **Plugin Market**
 tab next to **Installed** (dsh 0.2.1 and newer — plain `dsh web` included, no
 desktop app needed). The market is also still a section of **Settings → Plugin
-Market**: on dsh 0.2.0 and older that is the only way in, and from 0.2.1 the
-Settings dialog lives in the account menu. If you would rather reach it in one
+Market**, but that entry will be phased out: it is only needed on dsh 0.2.0 and
+older, where it is the only way in. If you would rather reach it in one
 click from anywhere, the market can also put its own **Plugin Market** row in
 the sidebar; turn it on from the market's card under **Plugins**. All three
 entries can be switched individually under **Advanced** in that card, and the
