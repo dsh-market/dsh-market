@@ -1,3 +1,5 @@
 {
-  "meta": {}
+  "meta": {
+    "description": "Browse, search, and install community plugins for DeepSeek Harness."
+  }
 }

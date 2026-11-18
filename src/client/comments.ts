@@ -51,4 +51,5 @@ export function commentsDiscussionUrl(url: string): string {
 }
 
 /** giscus's own locale codes, which are not the ones this plugin uses. */
-export const giscusLang = (lang: string): string => (lang === 'zh' ? 'zh-CN' : 'en')
+export const giscusLang = (lang: string): string =>
+  lang === 'zh' || lang === 'zh-CN' ? 'zh-CN' : lang === 'ja' ? 'ja' : 'en'

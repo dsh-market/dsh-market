@@ -11436,6 +11436,7 @@ describe('favorites (#414)', () => {
     hot.favorites = Array.from({ length: 500 }, (_, index) => `https://github.com/o/p-${index}`)
     const add = await bed.dispatch('POST', '/dsh-market/favorite', { url: 'https://github.com/o/one-more', favorited: true })
     expect(add.status).toBe(400)
+    expect(add.json).toMatchObject({ code: 'FAVORITES_LIMIT_REACHED', limit: 500 })
     expect(hot.favorites).toHaveLength(500)
   })
 

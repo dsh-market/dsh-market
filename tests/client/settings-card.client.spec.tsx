@@ -16,6 +16,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SettingsCard, clearBrowserState } from '../../src/client/SettingsCard.tsx'
 import { en } from '../../src/client/locales.ts'
+import type { UpdateStatus } from '../../src/client/market-data.ts'
 import type { SidebarEntry } from '../../src/client/sidebar-entry.ts'
 import type { EntryKey, EntryVisibility } from '../../src/client/entry-visibility.ts'
 
@@ -26,6 +27,7 @@ let calls: Array<{ path: string; body: unknown }> = []
 function stubFetch(options: {
   version?: string; restart?: boolean; latest?: string | null; restoreRequired?: boolean; removeOk?: boolean; error?: string; selfManaged?: boolean
   kind?: string
+  updateStatus?: UpdateStatus
   channel?: string; channelSwitch?: string; channelError?: string
   region?: string; regionAuto?: boolean; regionError?: string; githubProxy?: string | null
   githubProxyCustom?: string | null; githubProxyManaged?: boolean; githubProxyError?: string
@@ -67,7 +69,7 @@ function stubFetch(options: {
         : json({ ok: true, buildEnv: (JSON.parse(String(init?.body)) as { buildEnv: Record<string, string> }).buildEnv })
     }
     if (path.includes('/dsh-market/updates')) {
-      return json({ updates: { dshmarket: options.channelSwitch !== undefined
+      return json({ updates: { dshmarket: options.updateStatus ?? (options.channelSwitch !== undefined
         ? { updateAvailable: false, latest: options.channelSwitch, channelSwitch: options.channelSwitch }
         : {
             // A generation (#497) names its newer release without offering it.
@@ -75,7 +77,7 @@ function stubFetch(options: {
             latest: options.latest ?? null,
             restoreRequired: options.restoreRequired === true,
             ...(options.kind === undefined ? {} : { kind: options.kind }),
-          } } })
+          }) } })
     }
     if (path.endsWith('/dsh-market/channel')) {
       return options.channelError !== undefined
@@ -738,6 +740,44 @@ describe('SettingsCard — a channel switch is not an update', () => {
     await open()
     await waitFor(() => { expect(screen.getByText(`${t('setSelfUpdateReady')} 1.14.0`)).toBeTruthy() })
     expect(screen.getByRole('button', { name: t('setSelfUpdate') })).toBeTruthy()
+  })
+})
+
+describe('SettingsCard — market release waiting status (#1254)', () => {
+  const until = new Date(2026, 10, 20, 15, 30).toISOString()
+
+  beforeEach(() => { vi.setSystemTime(new Date(2026, 10, 20, 9)) })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('shows the release and time when the newer version is still waiting', async () => {
+    stubFetch({
+      updateStatus: {
+        updateAvailable: false, latest: '1.73.22',
+        heldUpdate: { latest: '1.73.22', until },
+      },
+    })
+    await open()
+    expect(await screen.findByText('New version pending')).toBeTruthy()
+    expect(screen.getByText('v1.73.22 available at 15:30')).toBeTruthy()
+    expect(screen.queryByText(en.setSelfUpToDate)).toBeNull()
+    expect(screen.queryByRole('button', { name: en.setSelfUpdate })).toBeNull()
+  })
+
+  it('names both versions and submits the eligible update target', async () => {
+    stubFetch({
+      updateStatus: {
+        updateAvailable: true, latest: '1.73.22', eligibleVersion: '1.73.21',
+        heldUpdate: { latest: '1.73.22', until },
+      },
+    })
+    await open()
+    expect(await screen.findByText(`${en.setSelfUpdateReady} 1.73.21`)).toBeTruthy()
+    expect(screen.getByText(/v1\.73\.22 available at 15:30/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: en.setSelfUpdate }))
+    await waitFor(() => {
+      expect(calls.find(call => call.path === '/dsh-market/update')?.body)
+        .toEqual({ name: 'dshmarket', eligibleVersion: '1.73.21' })
+    })
   })
 })
 

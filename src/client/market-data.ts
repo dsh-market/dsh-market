@@ -520,6 +520,43 @@ export interface ThemeSnapshot {
 /** Bound locale translator for the dsh-market namespace. */
 export type Translate = (key: string) => string
 
+export interface MarketLocaleStore {
+  subscribe(callback: () => void): () => void
+  getSnapshot(): { active: string }
+}
+
+/** Match the languages for which the market registers its own dictionary. */
+export function marketUiLocale(active: string): 'zh-CN' | 'en' | 'ja' {
+  const language = active.toLowerCase().split(/[-_]/)[0]
+  return language === 'zh' ? 'zh-CN' : language === 'ja' ? 'ja' : 'en'
+}
+
+/** Release versions get a prefix and commit targets get a short SHA. */
+export function displayLatest(latest: string): string {
+  if (/^\d/.test(latest)) return 'v' + latest
+  if (/^[0-9a-f]{12,40}$/i.test(latest)) return latest.slice(0, 7)
+  return latest
+}
+
+/** A time is shown only when a future eligibility deadline is known. */
+export function marketHeldVersionText(
+  held: NonNullable<UpdateStatus['heldUpdate']>,
+  locale: string,
+  t: Translate,
+): string {
+  const version = displayLatest(held.latest)
+  const until = new Date(typeof held.until === 'string' ? held.until : NaN)
+  const now = new Date()
+  if (held.estimated === true || !(until.getTime() > now.getTime())) return version
+  const time = new Intl.DateTimeFormat(marketUiLocale(locale), {
+    ...(until.toDateString() === now.toDateString() ? {} : { month: 'short', day: 'numeric' }),
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).format(until)
+  return t('marketVersionAvailableAt').replace('{0}', version).replace('{1}', time)
+}
+
 export function avatarColor(name: string): string {
   let hash = 0
   for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) | 0

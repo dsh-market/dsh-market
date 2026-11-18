@@ -324,7 +324,7 @@ async function sendGistRequest(token: string, method: 'GET' | 'POST' | 'PATCH', 
   return response
 }
 
-/** Create a new private Gist carrying one backup file. */
+/** Create a secret Gist carrying one backup file. */
 export async function createGist(token: string, content: string, signal?: AbortSignal): Promise<GistRef> {
   const body = JSON.stringify({
     description: 'dshmarket profile backup',

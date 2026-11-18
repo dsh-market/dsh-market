@@ -404,6 +404,81 @@ describe('Market self-update waiting hint (#1244)', () => {
     fireEvent.focus(await screen.findByText(hint))
     expect(screen.getByRole('tooltip').textContent).toBe('v1.73.20')
   })
+
+  it('formats a next-day waiting time in the UI language (#1254)', async () => {
+    const DateTimeFormat = Intl.DateTimeFormat
+    const formatter = vi.spyOn(Intl, 'DateTimeFormat').mockImplementation(function (locales, options) {
+      return new DateTimeFormat(locales ?? 'zh-CN', options)
+    })
+    try {
+      stubFetch({
+        ...endpoints,
+        '/dsh-market/updates': { updates: { dshmarket: {
+          kind: 'npm', current, latest: '1.73.20', updateAvailable: false,
+          heldUpdate: { latest: '1.73.20', until: new Date(2026, 10, 18, 4, 45).toISOString() },
+        } } },
+      })
+      render(<MarketSection {...props()} />)
+      fireEvent.focus(await screen.findByText(hint))
+      expect(screen.getByRole('tooltip').textContent).toBe('v1.73.20 available at Nov 18, 04:45')
+    } finally {
+      formatter.mockRestore()
+    }
+  })
+})
+
+describe('localized Gist export and catalog actions (#1254)', () => {
+  const jaSnapshot = { active: 'ja' }
+  const japaneseProps = () => ({
+    ...props(),
+    t: (key: string) => (ja as Record<string, string>)[key] ?? key,
+    locale: { subscribe: () => () => {}, getSnapshot: () => jaSnapshot },
+  })
+
+  it('labels bundle-only plugins and warns when either kind of Gist export includes config', async () => {
+    stubFetch({
+      '/dsh-market/installed': {
+        profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, bundles: ['dsh-bundle'], live: ['dsh-loop', 'dsh-bundle'],
+      },
+    })
+    render(<MarketSection {...props()} />)
+    expect(await screen.findByText('dsh-loop')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: en.tabAdvanced }))
+    expect(screen.getByRole('radio', { name: 'Create a secret Gist' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: en.gistExport }))
+    const dialog = within(await screen.findByRole('dialog', { name: en.gistExportSelect }))
+    expect(dialog.getByText('Bundle')).toBeTruthy()
+    const warning = /This backup includes configuration files that may contain secrets/
+    expect(dialog.getByText(warning)).toBeTruthy()
+    fireEvent.click(dialog.getByRole('checkbox', { name: /^dsh-loop/ }))
+    expect(dialog.queryByText(warning)).toBeNull()
+    fireEvent.click(dialog.getByRole('checkbox', { name: en.gistIncludeConfig }))
+    expect(dialog.getByText(warning)).toBeTruthy()
+    expect(dialog.queryByText(/WebDAV/)).toBeNull()
+  })
+
+  it('localizes the favorites limit using the limit returned by the server', async () => {
+    stubFetch({
+      '/dsh-market/favorite': {
+        __status: 400, code: 'FAVORITES_LIMIT_REACHED', limit: 500,
+        error: 'favorites limit reached (500) / 收藏已达上限（500）',
+      },
+    })
+    render(<MarketSection {...japaneseProps()} />)
+    const description = await screen.findByText('Loop task runner')
+    const card = description.closest('[class*="card"]') as HTMLElement
+    fireEvent.click(within(card).getByRole('button', { name: ja.favoriteAdd }))
+    expect(await screen.findByText('お気に入りには最大 500 件まで登録できます。')).toBeTruthy()
+  })
+
+  it('opens the Japanese comments widget from the Japanese market', async () => {
+    render(<MarketSection {...japaneseProps()} />)
+    const description = await screen.findByText('Loop task runner')
+    const card = description.closest('[class*="card"]') as HTMLElement
+    fireEvent.click(within(card).getByRole('button', { name: ja.comments }))
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog.querySelector('script[src="https://giscus.app/client.js"]')?.getAttribute('data-lang')).toBe('ja')
+  })
 })
 
 describe('WebDAV daily backup (#868)', () => {
