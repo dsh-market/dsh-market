@@ -333,6 +333,35 @@ function githubUpdateTarget(spec: string): string {
   return selectors.length === 0 ? repo : `${repo}#${selectors.join('&')}`
 }
 
+/**
+ * What an update of `spec` re-resolves, before any region acceleration:
+ * `gitSpec` for a GitHub source in either spelling (the `github:` shortcut or
+ * a legacy proxied codeload URL), `genericGitTarget` for any other git remote
+ * (#525). Both are null for a source that is not git.
+ */
+function gitUpdateTargets(spec: string): { gitSpec: string | null; genericGitTarget: string | null } {
+  const codeloadRepo = spec.startsWith('github:') ? null : repoOfTarget(spec)
+  const gitSpec = spec.startsWith('github:')
+    ? githubUpdateTarget(spec)
+    : codeloadRepo === null ? null : `github:${codeloadRepo}`
+  return { gitSpec, genericGitTarget: gitSpec === null ? gitUpdateTarget(spec) : null }
+}
+
+/**
+ * Whether the update route may send this install's update as
+ * `pnpm update <name>` on a host that takes the market's options: a floating
+ * git source, whose update target is the specifier itself (#562). The
+ * one-shot release-age retry (#39) covers only `add` and `remove`, so that
+ * update fails on a young lockfile entry. "May": in an accelerated region (a
+ * bare `github:owner/repo`) and for a deferred run (any `github:` source) the
+ * route first pins the source to its head commit when it can resolve one, and
+ * the pinned target goes out as an `add`.
+ */
+function mayUpdateGitInPlace(spec: string): boolean {
+  const { gitSpec, genericGitTarget } = gitUpdateTargets(spec)
+  return (genericGitTarget ?? gitSpec) === spec
+}
+
 
 /**
  * Whether an installed package declares a client part (`dsh.client`). Its UI
@@ -3210,7 +3239,23 @@ export function mountMarketRoutes(
     profileKey: createHash('sha256').update(activeProfileDir).digest('hex'),
     enabled: marketState.backgroundUpdateChecks === true,
     intervalHours: marketState.backgroundUpdateIntervalHours,
-    overlay: updates => applyProfileBlockers(updates, activeProfileDir),
+    // A learned blocker (#1252) holds the offered updates that would stop or
+    // fail on it. On the official Desktop bridge (no market options) and on
+    // Desktop hosts that is every one, as before; checkUpdates holds young
+    // releases on those hosts too (#945). Elsewhere the update route never
+    // stops on a blocker, and it sends most updates as an `add`, which it
+    // retries once with the release-age bypass (#39) when pnpm refuses it for
+    // a young lockfile entry, so those rows stay offered. A floating git
+    // source may go out as `pnpm update <name>` instead; that verb gets no
+    // retry and fails on the blocker, so its row stays held.
+    overlay: updates => {
+      if (!marketFlags || config.desktopHost === true) return applyProfileBlockers(updates, activeProfileDir)
+      const installed = readInstalled(config.profile, activeProfileDir)
+      return applyProfileBlockers(updates, activeProfileDir, Date.now(), name => {
+        const spec = installed[name]
+        return spec === undefined || mayUpdateGitInPlace(spec)
+      })
+    },
     inventory: () => {
       const installed = readInstalled(config.profile, activeProfileDir)
       const commits = readLockCommits(config.profile, activeProfileDir)
@@ -6118,14 +6163,11 @@ export function mountMarketRoutes(
             // from it. Without this branch these fell through to the npm path
             // below, where `name@latest` either fails or — far worse —
             // installs an unrelated package that shares the plugin's name.
-            const codeloadRepo = spec.startsWith('github:') ? null : repoOfTarget(spec)
-            const gitSpec = spec.startsWith('github:')
-              ? githubUpdateTarget(spec)
-              : codeloadRepo === null ? null : `github:${codeloadRepo}`
+            //
             // Non-GitHub git remotes (Gitea / git+https): keep the remote URL
             // as the add target. Falling through to name@latest is what #525
             // reported — a colliding npm package replaced the private install.
-            const genericGitTarget = gitSpec === null ? gitUpdateTarget(spec) : null
+            const { gitSpec, genericGitTarget } = gitUpdateTargets(spec)
             const isGit = gitSpec !== null || genericGitTarget !== null
             const isReleaseTarball = !restore && isGitHubReleaseTarballSpec(spec)
             let releaseUpdate: Awaited<ReturnType<typeof publishedReleaseUpdate>> = null

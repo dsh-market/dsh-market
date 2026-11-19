@@ -830,6 +830,7 @@ vi.mock('../src/verify.ts', async (importOriginal) => ({
 // ---------------------------------------------------------------- testbed
 import { marketVersion, mountMarketRoutes } from '../src/routes.ts'
 import { RELEASE_AGE_OVERRIDE } from '../src/install.ts'
+import { activeReleaseBlockers } from '../src/release-blockers.ts'
 import { resolveChannel } from '../src/channels.ts'
 import { addProfileBundle, profileDir } from '../src/profile.ts'
 import { runDshPlugin, type InstallResult, type PluginRunner } from '../src/dsh-cli.ts'
@@ -3515,6 +3516,70 @@ describe('update flow — no npm publishing required', () => {
       expect(first.status, JSON.stringify(first.json)).toBe(200)
       const listed = await bed.dispatch('GET', '/dsh-market/updates?force=1')
       expect(listed.json.updates['dsh-loop'].profileBlocked).toBeUndefined()
+    })
+
+    it('does not hold updates on that host once a fresh install has learned a blocker', async () => {
+      advanceNpmLatest('1.2.0')
+      fake.npm['dsh-share'] = { latest: '1.2.0', versions: { '1.2.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } } }
+      fake.youngLockfile = true
+      // A fresh install keeps the profile's wait (#594), so pnpm's refusal of
+      // the pinned release is learned as a blocker; the bare name then goes
+      // through with the bypass.
+      const installed = await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/h/dsh-share' })
+      expect(installed.status, JSON.stringify(installed.json)).toBe(200)
+      // FakeDsh's npm add rewrote pnpm-lock.yaml with dsh-share's entry alone,
+      // dropping the dsh-loop@1.0.0 entry its young-lockfile refusal names;
+      // real pnpm keeps it. Put it back, or the blocker is dropped as unpinned.
+      pinInLockfile('dsh-loop@1.0.0')
+      expect(activeReleaseBlockers(fake.profileDir)).toMatchObject([{ name: 'dsh-loop', version: '1.0.0' }])
+
+      // The update route lets the update through here, so the list offers it.
+      const listed = await bed.dispatch('GET', '/dsh-market/updates?force=1')
+      expect(listed.json.updates['dsh-loop']).toMatchObject({ updateAvailable: true })
+      expect(listed.json.updates['dsh-loop'].profileBlocked).toBeUndefined()
+      const updated = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+      expect(updated.status, JSON.stringify(updated.json)).toBe(200)
+      expect(installedSpec('dsh-loop')).toBe('^1.2.0')
+    })
+
+    it('still holds a floating git update on that host: `pnpm update` gets no bypass', async () => {
+      const OLD = 'c'.repeat(40)
+      const NEW = 'd'.repeat(40)
+      fake.repos['github:o/blue-whale'] = { name: 'dsh-blue-whale', manifest: { dsh: {}, main: 'index.js' }, artifacts: ['index.js'], lockCommit: OLD }
+      expect((await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/blue-whale' })).status).toBe(200)
+      expect(installedSpec('dsh-blue-whale')).toBe('github:o/blue-whale')
+      // FakeDsh's github add rewrote pnpm-lock.yaml with this repo's commit
+      // alone, dropping the dsh-loop@1.0.0 entry its young-lockfile refusal
+      // names; real pnpm keeps it. Put it back, or the blocker is dropped as
+      // unpinned.
+      pinInLockfile('dsh-loop@1.0.0')
+      // A new commit lands upstream, and dsh-loop has a new release.
+      fake.repos['github:o/blue-whale'] = { name: 'dsh-blue-whale', manifest: { dsh: {}, main: 'index.js' }, artifacts: ['index.js'], lockCommit: NEW }
+      advanceNpmLatest('1.2.0')
+      const registry = globalThis.fetch
+      vi.stubGlobal('fetch', (url: string, init?: RequestInit) => String(url).includes('/info/refs')
+        ? Promise.resolve(new Response(`001e# service=git-upload-pack\n00000155${NEW} HEAD\0multi_ack\n0000`, { status: 200 }))
+        : registry(url, init))
+      fake.youngLockfile = true
+
+      // The floating spec is re-resolved with `pnpm update`, and the one-shot
+      // retry covers only add and remove: the refusal stands, and is learned.
+      const callsBefore = fake.calls.length
+      const refused = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-blue-whale' })
+      expect(refused.status, JSON.stringify(refused.json)).toBe(502)
+      expect(refused.json).toMatchObject({ failureCode: 'PROFILE_RELEASE_BLOCKED', profileBlocked: { name: 'dsh-loop', version: '1.0.0' } })
+      expect(fake.calls.slice(callsBefore).filter(call => call[0] !== 'store')).toEqual([['update', 'dsh-blue-whale']])
+
+      // So the list holds that row, and still offers the npm one the route takes past the blocker.
+      const listed = await bed.dispatch('GET', '/dsh-market/updates?force=1')
+      expect(listed.json.updates['dsh-blue-whale']).toMatchObject({
+        kind: 'github', updateAvailable: false, profileBlocked: { name: 'dsh-loop', version: '1.0.0' },
+      })
+      expect(listed.json.updates['dsh-loop']).toMatchObject({ kind: 'npm', updateAvailable: true })
+      expect(listed.json.updates['dsh-loop'].profileBlocked).toBeUndefined()
+      const updated = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop' })
+      expect(updated.status, JSON.stringify(updated.json)).toBe(200)
+      expect(installedSpec('dsh-loop')).toBe('^1.2.0')
     })
   })
 
@@ -12069,6 +12134,20 @@ describe('Issue #991 Desktop stable npm update route', () => {
     expect(fake.calls.some(call => call[0] === 'add' && call.includes('dsh-loop@1.1.0'))).toBe(true)
     expect(fake.calls.some(call => call.includes(RELEASE_AGE_OVERRIDE))).toBe(false)
     expect(installedSpec('dsh-loop')).toBe('^1.0.0')
+  })
+
+  it('holds the listed update once a mature update was refused, as the route does (#1252)', async () => {
+    // This host takes the market's pnpm options, but a mature update keeps the wait.
+    fake.youngLockfile = true
+    expect((await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop', eligibleVersion: '1.1.0' })).status).toBe(502)
+    const listed = await bed.dispatch('GET', '/dsh-market/updates?force=1')
+    expect(listed.json.updates['dsh-loop']).toMatchObject({
+      updateAvailable: false,
+      profileBlocked: { name: 'dsh-loop', version: '1.0.0' },
+    })
+    const second = await bed.dispatch('POST', '/dsh-market/update', { name: 'dsh-loop', eligibleVersion: '1.1.0' })
+    expect(second.status).toBe(409)
+    expect(second.json.failureCode).toBe('PROFILE_RELEASE_BLOCKED')
   })
 })
 
