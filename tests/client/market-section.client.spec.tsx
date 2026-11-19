@@ -5838,7 +5838,7 @@ describe('catalog card tips match official Discover', () => {
   })
 
   it('asks the host Tooltip to portal out of the card, at the recent-strip delay', () => {
-    const source = ['MarketSection.tsx', 'MarketCardParts.tsx'].map(name => readFileSync(resolve('src/client', name), 'utf8')).join('\n')
+    const source = ['MarketCardParts.tsx', 'InstalledTab.tsx'].map(name => readFileSync(resolve('src/client', name), 'utf8')).join('\n')
     expect(source).toMatch(/function CardTip/)
     expect(source).toMatch(/const HOVER_TIP_DELAY_MS = 700/)
     expect(source).toMatch(/delayMs=\{HOVER_TIP_DELAY_MS\} portal/)
