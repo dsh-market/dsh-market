@@ -108,7 +108,7 @@ interface OrderConflict {
 interface ResidualDirectory {
   name: string
   path: string
-  kind: 'incomplete-package' | 'tmp-directory'
+  kind: 'incomplete-package' | 'tmp-directory' | 'empty-directory'
   declared: boolean
 }
 
@@ -840,7 +840,9 @@ export function Diagnostics(props: { t: Translate }) {
             <div key={residual.path} className={css.diagRow}>
               <span className={css.nm}>{residual.name}</span>
               <span className={css.spec}>
-                {t(residual.kind === 'tmp-directory' ? 'checkResidualTmp' : 'checkResidualIncomplete')}
+                {t(residual.kind === 'tmp-directory'
+                  ? 'checkResidualTmp'
+                  : residual.kind === 'empty-directory' ? 'checkResidualEmpty' : 'checkResidualIncomplete')}
               </span>
               <code className={css.diagVal}>{residual.path}</code>
             </div>

@@ -128,7 +128,7 @@ export interface ResidualDirectory {
   name: string
   /** Path relative to the profile, for the diagnostics listing. */
   path: string
-  kind: 'incomplete-package' | 'tmp-directory'
+  kind: 'incomplete-package' | 'tmp-directory' | 'empty-directory'
   /**
    * The profile still declares it. Then this is not junk: composition will
    * try to load it, and the bundle layers above already report why it fails.
@@ -1386,7 +1386,10 @@ export function findResidualDirectories(
   // pnpm's staging name, from its own rename: `<name>_tmp_<pid>_<n>`.
   const tmpShape = /^(.+)_tmp_\d+_\w+$/
 
-  const consider = (directory: string, entry: string, relative: string): void => {
+  // `scope` is '@x/' when `directory` is a scope root: the name a package
+  // is declared under is the FULL name, so the exemption and the report both
+  // need it (#1261).
+  const consider = (directory: string, entry: string, relative: string, scope = ''): void => {
     // pnpm's own bookkeeping lives in here beside the packages: `.pnpm` (the
     // virtual store), `.bin`, `.modules.yaml`, `.ignored`. None of them is a
     // package, so none of them is a broken one.
@@ -1404,16 +1407,35 @@ export function findResidualDirectories(
     if (!stats.isDirectory()) return
     const tmp = tmpShape.exec(entry)
     if (tmp !== null) {
-      out.push({ name: tmp[1]!, path: join(relative, entry), kind: 'tmp-directory', declared: declared.has(tmp[1]!) })
+      out.push({ name: scope + tmp[1]!, path: join(relative, entry), kind: 'tmp-directory', declared: declared.has(scope + tmp[1]!) })
       return
     }
-    if (declared.has(entry)) return
+    // A scope root (`@x`) never has a package.json of its own: it only holds
+    // packages. Judge each child by the same rules, and never report the
+    // root while a valid package may live in it — in a hoisted layout those
+    // are in-use plugins and their dependencies (#1261).
+    if (scope === '' && entry.startsWith('@')) {
+      let children: string[]
+      try {
+        children = readdirSync(join(directory, entry))
+      } catch {
+        return
+      }
+      if (children.length === 0) {
+        out.push({ name: entry, path: join(relative, entry), kind: 'empty-directory', declared: false })
+        return
+      }
+      for (const child of children) consider(join(directory, entry), child, join(relative, entry), `${entry}/`)
+      return
+    }
+    const fullName = scope + entry
+    if (declared.has(fullName)) return
     let readable = false
     try {
       JSON.parse(readFileSync(join(directory, entry, 'package.json'), 'utf8'))
       readable = true
     } catch { /* missing or unparseable — that is the finding */ }
-    if (!readable) out.push({ name: entry, path: join(relative, entry), kind: 'incomplete-package', declared: false })
+    if (!readable) out.push({ name: fullName, path: join(relative, entry), kind: 'incomplete-package', declared: false })
   }
 
   const nodeModules = join(profileDirectory, 'node_modules')
