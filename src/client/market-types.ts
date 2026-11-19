@@ -2,7 +2,7 @@
  * Shared types for the Market section: its props, the notices and the reply shapes.
  */
 
-import type { MarketLocaleStore, ThemeSnapshot, Translate } from './market-data.ts'
+import type { MarketLocaleStore, RegistryPlugin, ThemeSnapshot, Translate } from './market-data.ts'
 import type { SidebarEntry } from './sidebar-entry.ts'
 import type { HostNavigationStore } from './host-navigation.ts'
 
@@ -53,3 +53,21 @@ export interface SourceMigrationConfirm {
  * package rename (#1012). Same confirmation, same transaction.
  */
 type SourceMigrationKind = 'git-to-npm' | 'npm-rename'
+
+/** A rejected install and the installed plugins it clashed with, one entry
+   * per owner as grouped by the host. */
+  export interface ConflictNotice {
+    plugin: RegistryPlugin
+    groups: Array<{ owner: string; ids: string[] }>
+  }
+
+export interface CompatibilityNotice {
+    code: 'soft-incompatible'
+    risks: Array<{ plugin: string; peer: string; range: string; resolved: string; direction: string }>
+    /** Cross-layer loader-name collisions this operation introduced (#230). */
+    shadowedNames?: Array<{ name: string; layers: string[]; count: number }>
+    /** Client bundles that no longer parse after the operation (#222). */
+    brokenBundles?: Array<{ name: string; reason: string }>
+    rollbackId?: string
+    rollbackUnavailable?: string
+  }
