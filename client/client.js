@@ -3003,6 +3003,284 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			};
 		}
 		//#endregion
+		//#region src/client/search-synonyms.ts
+		const SEARCH_SYNONYM_GROUPS = [
+			{ terms: [
+				"通知",
+				"提醒",
+				"推送",
+				"notify",
+				"notification",
+				"alert",
+				"reminder",
+				"消息提醒"
+			] },
+			{ terms: [
+				"生图",
+				"画图",
+				"绘图",
+				"作图",
+				"出图",
+				"图片生成",
+				"生成图片",
+				"生成图",
+				"文生图",
+				"image generation",
+				"image gen",
+				"imagegen",
+				"text2img",
+				"text to image"
+			] },
+			{ terms: [
+				"图片",
+				"图像",
+				"image",
+				"picture"
+			] },
+			{ terms: ["视频", "video"] },
+			{ terms: [
+				"飞书",
+				"feishu",
+				"lark"
+			] },
+			{ terms: [
+				"微信",
+				"wechat",
+				"weixin"
+			] },
+			{ terms: [
+				"企业微信",
+				"企微",
+				"wecom"
+			] },
+			{ terms: ["钉钉", "dingtalk"] },
+			{ terms: [
+				"qq",
+				"qqbot",
+				"onebot",
+				"napcat"
+			] },
+			{ terms: ["机器人", "bot"] },
+			{ terms: [
+				"记忆",
+				"长期记忆",
+				"记忆库",
+				"memory",
+				"long term memory"
+			] },
+			{ terms: [
+				"主题",
+				"皮肤",
+				"配色",
+				"换肤",
+				"theme",
+				"skin",
+				"color scheme"
+			] },
+			{
+				terms: [
+					"语音",
+					"voice",
+					"speech"
+				],
+				broad: [
+					"tts",
+					"stt",
+					"朗读",
+					"语音识别",
+					"语音合成",
+					"text to speech",
+					"speech to text"
+				]
+			},
+			{ terms: [
+				"tts",
+				"text to speech",
+				"朗读",
+				"语音合成",
+				"文字转语音"
+			] },
+			{ terms: [
+				"stt",
+				"asr",
+				"speech to text",
+				"语音识别",
+				"语音转文字",
+				"听写"
+			] },
+			{ terms: [
+				"翻译",
+				"translate",
+				"translation",
+				"translator",
+				"双语",
+				"bilingual"
+			] },
+			{ terms: [
+				"搜索",
+				"检索",
+				"search",
+				"联网搜索",
+				"网页搜索",
+				"web search"
+			] },
+			{
+				terms: ["浏览器", "browser"],
+				broad: [
+					"chrome",
+					"cdp",
+					"playwright",
+					"puppeteer",
+					"网页自动化"
+				]
+			},
+			{ terms: [
+				"mcp",
+				"model context protocol",
+				"模型上下文协议"
+			] },
+			{ terms: [
+				"模型接入",
+				"接入模型",
+				"模型供应商",
+				"模型提供商",
+				"自定义模型",
+				"provider",
+				"供应商",
+				"中转"
+			] },
+			{ terms: [
+				"api key",
+				"apikey",
+				"密钥",
+				"api 密钥"
+			] },
+			{ terms: [
+				"费用",
+				"花费",
+				"计费",
+				"账单",
+				"cost",
+				"billing",
+				"spend"
+			] },
+			{ terms: [
+				"用量",
+				"额度",
+				"usage",
+				"quota"
+			] },
+			{
+				terms: [
+					"上下文",
+					"上下文窗口",
+					"context window",
+					"context"
+				],
+				broad: [
+					"上下文压缩",
+					"context compression",
+					"compaction"
+				]
+			},
+			{ terms: [
+				"压缩",
+				"上下文压缩",
+				"compaction",
+				"compress",
+				"compression",
+				"context compression"
+			] },
+			{ terms: [
+				"ppt",
+				"pptx",
+				"powerpoint",
+				"幻灯片",
+				"slides",
+				"演示文稿"
+			] },
+			{ terms: [
+				"excel",
+				"xlsx",
+				"表格",
+				"spreadsheet"
+			] },
+			{ terms: [
+				"docx",
+				"word 文档",
+				"microsoft word"
+			] },
+			{ terms: ["剪贴板", "clipboard"] },
+			{ terms: [
+				"邮件",
+				"邮箱",
+				"email",
+				"mail"
+			] },
+			{ terms: [
+				"定时",
+				"定时任务",
+				"计划任务",
+				"cron",
+				"schedule",
+				"scheduler"
+			] },
+			{ terms: [
+				"git",
+				"版本控制",
+				"version control"
+			] },
+			{
+				terms: [
+					"终端",
+					"terminal",
+					"shell",
+					"命令行",
+					"command line"
+				],
+				broad: [
+					"pty",
+					"tmux",
+					"tui"
+				]
+			},
+			{
+				terms: [
+					"桌宠",
+					"宠物",
+					"桌面宠物",
+					"看板娘",
+					"pet",
+					"mascot"
+				],
+				broad: ["live2d"]
+			},
+			{
+				terms: [
+					"手机",
+					"手机端",
+					"移动端",
+					"mobile",
+					"phone"
+				],
+				broad: [
+					"pwa",
+					"android",
+					"ios"
+				]
+			},
+			{
+				terms: [
+					"远程",
+					"远程控制",
+					"远程访问",
+					"remote",
+					"remote control"
+				],
+				broad: ["内网穿透", "tunnel"]
+			}
+		];
+		//#endregion
 		//#region src/sources.ts
 		/**
 		* Registry-source knowledge: how a curated registry entry's URL maps to an
@@ -3357,6 +3635,60 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			return normalized;
 		}
 		/**
+		* Synonym lookup built from the curated table in search-synonyms.ts: a
+		* normalized term -> the other words that mean the same thing. Built on first
+		* use so it can reuse `searchText` above.
+		*/
+		let synonymIndex = null;
+		function synonymsOf(term) {
+			if (synonymIndex === null) {
+				const index = /* @__PURE__ */ new Map();
+				for (const group of SEARCH_SYNONYM_GROUPS) {
+					const terms = [...new Set(group.terms.map(searchText))].filter(Boolean);
+					const broad = (group.broad ?? []).map(searchText).filter(Boolean);
+					for (const term of terms) {
+						if ([...term].length < 2) continue;
+						const alts = index.get(term) ?? /* @__PURE__ */ new Set();
+						for (const other of [...terms, ...broad]) if (other !== term) alts.add(other);
+						index.set(term, alts);
+					}
+				}
+				synonymIndex = new Map([...index].map(([term, alts]) => [term, [...alts]]));
+			}
+			return synonymIndex.get(term) ?? [];
+		}
+		const hanScript = /\p{Script=Han}/u;
+		/**
+		* Latin synonyms match whole words only (plus a plural "s"), so `git` never
+		* matches "digital" and `qq` never matches inside a longer token. Han words
+		* have no word boundaries and match as substrings.
+		*/
+		function synonymMatcher(alt) {
+			if (hanScript.test(alt)) return (text) => text.includes(alt);
+			const exact = ` ${alt} `;
+			const plural = ` ${alt}s `;
+			return (text) => {
+				const padded = ` ${text} `;
+				return padded.includes(exact) || padded.includes(plural);
+			};
+		}
+		function queryUnits(query, tokens) {
+			const whole = query === "" ? [] : synonymsOf(query);
+			if (whole.length > 0) return [{
+				words: tokens,
+				alts: whole.map(synonymMatcher)
+			}];
+			return tokens.map((token) => ({
+				words: [token],
+				alts: synonymsOf(token).map(synonymMatcher)
+			}));
+		}
+		const WEIGHT_NAME = 700;
+		const WEIGHT_OWNER = 400;
+		const WEIGHT_PREFERRED_DESCRIPTION = 280;
+		const WEIGHT_OTHER_DESCRIPTION = 240;
+		const WEIGHT_CATEGORY = 180;
+		/**
 		* Relevance within one field. Exact matches beat phrase matches, which beat
 		* words scattered through the field; for a multi-word query every word must
 		* occur in the same field. A prefix match is NOT ranked above a phrase match
@@ -3364,29 +3696,71 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		* distinction mostly punished the naming convention and overrode the sort
 		* the user picked (#815: `computer-use-vision` with 355 downloads above
 		* `dsh-computer-use` with 3.6k, under "downloads").
+		*
+		* Within a tier, two small tie-breakers (together under 40, so they never
+		* lift a hit into the next tier): the query as a whole word beats the query
+		* buried in a longer word ("git" in "digital"), and a field that says it more
+		* than once beats one that says it once. Without them a few hundred
+		* description hits shared one score and fell back to download order.
 		*/
 		function fieldRelevance(plugin, value, query, tokens, weight) {
 			if (!value) return 0;
 			const text = cachedPluginSearchText(plugin, value);
 			if (text === "" || !tokens.every((token) => text.includes(token))) return 0;
 			if (text === query) return weight + 300;
-			if (text.includes(query)) return weight + 200;
-			return weight + 150;
+			const padded = ` ${text} `;
+			const wholeWord = tokens.every((token) => !hanScript.test(token) && padded.includes(` ${token} `));
+			const first = tokens[0] ?? "";
+			const repeats = first === "" ? 0 : Math.min(2, text.split(first).length - 2);
+			const bonus = (wholeWord ? 16 : 0) + repeats * 4;
+			return weight + (text.includes(query) ? 200 : 150) + bonus;
+		}
+		/**
+		* Score for a field that only matches through synonyms: every typed unit is
+		* present either literally or as a synonym. Always below the lowest literal
+		* score (180 + 150), so a literal hit anywhere outranks it.
+		*/
+		function synonymFieldRelevance(plugin, value, units, weight) {
+			if (!value) return 0;
+			const text = cachedPluginSearchText(plugin, value);
+			if (text === "") return 0;
+			return units.every((unit) => unit.words.every((word) => text.includes(word)) || unit.alts.some((match) => match(text))) ? Math.floor(weight / 10) : 0;
 		}
 		/**
 		* Search ranking is field-aware rather than a popularity-only filter:
-		* package identities outrank owners, descriptions, and categories. The
-		* selected popularity/date sort remains the tie-breaker between equally
-		* relevant entries.
+		* package identities outrank owners, descriptions, and categories. A hit that
+		* appears in several kinds of field (name and description, say) ranks above
+		* one that appears in a single field. Words found only through the synonym
+		* table (通知 -> 推送) rank below every literal hit. The selected
+		* popularity/date sort remains the tie-breaker between equally relevant
+		* entries.
 		*/
-		function pluginRelevance(plugin, query, tokens, lang, categories) {
+		function pluginRelevance(plugin, query, tokens, units, lang, categories) {
 			const descriptions = plugin.description ?? {};
 			const preferredLocale = descriptions[lang] ? lang : descriptions.en ? "en" : null;
 			const preferredDescription = descriptions[lang] || descriptions.en;
 			const otherDescriptions = Object.entries(descriptions).filter(([locale, value]) => locale !== preferredLocale && typeof value === "string").map(([, value]) => value);
 			const categoryIds = pluginCategories(plugin);
 			const categoryLabels = categoryIds.flatMap((category) => Object.values(categories?.[category] ?? {}));
-			return Math.max(fieldRelevance(plugin, plugin.name, query, tokens, 700), fieldRelevance(plugin, plugin.npm ?? void 0, query, tokens, 700), fieldRelevance(plugin, plugin.owner, query, tokens, 400), fieldRelevance(plugin, preferredDescription, query, tokens, 280), ...otherDescriptions.map((value) => fieldRelevance(plugin, value, query, tokens, 240)), ...categoryIds.map((value) => fieldRelevance(plugin, value, query, tokens, 180)), ...categoryLabels.map((value) => fieldRelevance(plugin, value, query, tokens, 180)));
+			const best = (scores) => Math.max(0, ...scores);
+			const kinds = [
+				best([fieldRelevance(plugin, plugin.name, query, tokens, WEIGHT_NAME), fieldRelevance(plugin, plugin.npm ?? void 0, query, tokens, WEIGHT_NAME)]),
+				fieldRelevance(plugin, plugin.owner, query, tokens, WEIGHT_OWNER),
+				best([fieldRelevance(plugin, preferredDescription, query, tokens, WEIGHT_PREFERRED_DESCRIPTION), ...otherDescriptions.map((value) => fieldRelevance(plugin, value, query, tokens, WEIGHT_OTHER_DESCRIPTION))]),
+				best([...categoryIds.map((value) => fieldRelevance(plugin, value, query, tokens, WEIGHT_CATEGORY)), ...categoryLabels.map((value) => fieldRelevance(plugin, value, query, tokens, WEIGHT_CATEGORY))])
+			];
+			const literal = Math.max(...kinds);
+			if (literal > 0) return literal + (kinds.filter((score) => score > 0).length - 1) * 5;
+			if (!units.some((unit) => unit.alts.length > 0)) return 0;
+			return best([
+				synonymFieldRelevance(plugin, plugin.name, units, WEIGHT_NAME),
+				synonymFieldRelevance(plugin, plugin.npm ?? void 0, units, WEIGHT_NAME),
+				synonymFieldRelevance(plugin, plugin.owner, units, WEIGHT_OWNER),
+				synonymFieldRelevance(plugin, preferredDescription, units, WEIGHT_PREFERRED_DESCRIPTION),
+				...otherDescriptions.map((value) => synonymFieldRelevance(plugin, value, units, WEIGHT_OTHER_DESCRIPTION)),
+				...categoryIds.map((value) => synonymFieldRelevance(plugin, value, units, WEIGHT_CATEGORY)),
+				...categoryLabels.map((value) => synonymFieldRelevance(plugin, value, units, WEIGHT_CATEGORY))
+			]);
 		}
 		/** Compare two already-filtered entries using the user's selected sort. */
 		function comparePlugins(a, b, sort) {
@@ -3419,6 +3793,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		function visiblePlugins(plugins, options) {
 			const query = searchText(options.query);
 			const tokens = query.split(" ").filter(Boolean);
+			const units = queryUnits(query, tokens);
 			return plugins.flatMap((plugin, index) => {
 				if (isMarketItself(plugin)) return [];
 				const categories = pluginCategories(plugin);
@@ -3426,7 +3801,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				if (options.sinceDays !== void 0 && !withinDays(plugin.added, options.sinceDays)) return [];
 				const compatibilityKey = options.compatibleWithHost === true ? hostCompatibilityKey(plugin) : null;
 				if (compatibilityKey !== null && options.hostCompatibility?.[compatibilityKey]?.status === "incompatible") return [];
-				const relevance = query === "" ? 0 : pluginRelevance(plugin, query, tokens, options.lang, options.categories);
+				const relevance = query === "" ? 0 : pluginRelevance(plugin, query, tokens, units, options.lang, options.categories);
 				return relevance === 0 && query !== "" ? [] : [{
 					plugin,
 					relevance,
