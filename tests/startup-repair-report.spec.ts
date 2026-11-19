@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { observeStartupRepair } from '../src/startup-repair-report.ts'
+import { clearStartupRepairEntry, observeStartupRepair } from '../src/startup-repair-report.ts'
 
 describe('startup repair report', () => {
   it('keeps a completed report across remounts, scoped to the active profile, with no raw errors', () => {
@@ -62,5 +62,17 @@ describe('startup repair report', () => {
     })
     older.finish()
     expect(recent.read().revision).toBe(ahead.revision + 1)
+  })
+
+  it('drops a failed entry once a later install of that package settles', () => {
+    const directory = join(tmpdir(), randomUUID())
+    const active = observeStartupRepair('desktop', directory)
+    active.finish({
+      reinstalled: [], finished: [],
+      failed: [{ name: 'example', reason: 'x', cause: 'refused' }, { name: 'other', reason: 'x', cause: 'refused' }],
+      abandoned: [],
+    })
+    clearStartupRepairEntry('desktop', directory, 'example')
+    expect(active.read().entries).toEqual([{ name: 'other', state: 'pending', cause: 'refused' }])
   })
 })

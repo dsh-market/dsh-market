@@ -36,6 +36,22 @@ function entriesOf(report: RepairReport): StartupRepairEntry[] {
   ].filter(({ name }) => NPM_NAME_RE.test(name))
 }
 
+function keyOf(profile: string, directory: string): string {
+  const absolute = resolve(directory)
+  return JSON.stringify([profile, process.platform === 'win32' ? absolute.toLowerCase() : absolute])
+}
+
+/**
+ * A later install or update of this package settled in this process, so what
+ * start-up repair said about it is out of date. Drop it, or the panel keeps
+ * saying "still pending" until the next restart.
+ */
+export function clearStartupRepairEntry(profile: string, directory: string, name: string): void {
+  const state = (globalThis as { [REPORTS]?: Map<string, ProfileReport> })[REPORTS]?.get(keyOf(profile, directory))
+  if (state === undefined || !state.entries.delete(name)) return
+  state.revision += 1
+}
+
 /** Track what the existing startup repair found, without owning any package writes. */
 export function observeStartupRepair(profile: string, directory: string): {
   read: () => StartupRepairSnapshot
@@ -43,8 +59,7 @@ export function observeStartupRepair(profile: string, directory: string): {
 } {
   const global = globalThis as { [REPORTS]?: Map<string, ProfileReport> }
   const reports = global[REPORTS] ??= new Map()
-  const absolute = resolve(directory)
-  const key = JSON.stringify([profile, process.platform === 'win32' ? absolute.toLowerCase() : absolute])
+  const key = keyOf(profile, directory)
   const state: ProfileReport = reports.get(key) ?? { id: randomUUID(), revision: 0, outstanding: new Set(), entries: new Map() }
   reports.set(key, state)
   const attempt = ++state.revision

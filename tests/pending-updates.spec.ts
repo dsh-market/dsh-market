@@ -282,6 +282,74 @@ describe('repairing an update a previous start interrupted', () => {
     expect(journal.list()).toEqual([])
   })
 
+  it('finishes the interrupted removal, then installs, when the manager says already-installed (#1259)', async () => {
+    // The update died after its removal began: the dependency and the build
+    // are still there, but the bundle row is gone, so the profile is not
+    // composed. `add` is refused outright on this host (#896).
+    const dir = profile()
+    declare(dir, 'example')
+    install(dir, 'example', '1.0.0', { bundle: { patch: './cordis.patch.yml' } })
+    const journal = new PendingUpdateJournal(pendingUpdatesFile(dir))
+    journal.begin({ profile: 'desktop', name: 'example', from: '1.0.0', to: '2.0.0', spec: 'example@2.0.0' })
+
+    const installBundle = vi.fn(async () => {
+      if (installBundle.mock.calls.length === 1) {
+        return { application: 'failed', error: Object.assign(new Error('already installed'), { code: 'already-installed' }) }
+      }
+      install(dir, 'example', '2.0.0', { bundle: { patch: './cordis.patch.yml' } })
+      bundle(dir, 'example')
+      return { application: 'applied' }
+    })
+    const removeBundle = vi.fn(async () => ({ application: 'applied' }))
+    const report = await repairInterruptedUpdates({
+      profile: 'desktop', profileDirectory: dir, manager: { installBundle, removeBundle },
+    })
+
+    expect(removeBundle).toHaveBeenCalledWith('example')
+    expect(installBundle).toHaveBeenCalledTimes(2)
+    expect(report.reinstalled).toEqual(['example'])
+    expect(report.failed).toEqual([])
+    expect(journal.list()).toEqual([])
+  })
+
+  it('does not call an install the old build survived "refused", and does not count it toward giving up (#1259)', async () => {
+    const dir = profile()
+    declare(dir, 'example')
+    install(dir, 'example', '1.0.0', { bundle: { patch: './cordis.patch.yml' } })
+    const journal = new PendingUpdateJournal(pendingUpdatesFile(dir))
+    journal.begin({ profile: 'desktop', name: 'example', from: '1.0.0', to: '2.0.0', spec: 'example@2.0.0' })
+
+    const service = manager(async () => {
+      // Whatever the manager did, the old build ends up loaded again.
+      bundle(dir, 'example')
+      return { application: 'failed', error: Object.assign(new Error('x'), { code: 'install-failed' }) } as never
+    })
+    const report = await repairInterruptedUpdates({ profile: 'desktop', profileDirectory: dir, manager: service })
+
+    expect(report.failed).toHaveLength(1)
+    expect(report.failed[0]).toMatchObject({ name: 'example', cause: 'kept-old' })
+    expect(report.failed[0]?.reason).toContain('install-failed')
+    expect(report.abandoned).toEqual([])
+    expect(journal.list()).toEqual([])
+  })
+
+  it('names the manager error code when the removal itself is refused (#1259)', async () => {
+    const dir = profile()
+    declare(dir, 'example')
+    install(dir, 'example', '1.0.0', { bundle: { patch: './cordis.patch.yml' } })
+    const journal = new PendingUpdateJournal(pendingUpdatesFile(dir))
+    journal.begin({ profile: 'desktop', name: 'example', from: '1.0.0', to: '2.0.0', spec: 'example@2.0.0' })
+    const report = await repairInterruptedUpdates({
+      profile: 'desktop', profileDirectory: dir,
+      manager: {
+        installBundle: async () => ({ application: 'failed', error: Object.assign(new Error('x'), { code: 'already-installed' }) }),
+        removeBundle: async () => ({ application: 'failed', error: Object.assign(new Error('x'), { code: 'bundle-in-use' }) }),
+      },
+    })
+    expect(report.failed[0]?.reason).toContain('bundle-in-use')
+    expect(journal.list()).toMatchObject([{ attempts: 1 }])
+  })
+
   it('clears a profile write lock whose owner is gone, and keeps a live one', () => {
     const dir = profile()
     const lock = join(dir, 'package.json.lock')

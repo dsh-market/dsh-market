@@ -207,6 +207,12 @@ export interface RepairManager {
     spec: string,
     options?: { requestId?: string },
   ): Promise<{ application: string; error?: unknown; packageResult?: { exitCode: number | null } }>
+  /**
+   * Optional so a minimal manager still works. Needed when the interrupted
+   * update died between its install being refused and its removal landing:
+   * the dependency line is still there, so `add` answers `already-installed`.
+   */
+  removeBundle?(name: string): Promise<{ application: string; error?: unknown }>
 }
 
 export interface RepairOptions {
@@ -217,7 +223,10 @@ export interface RepairOptions {
   timeoutMs?: number
 }
 
-export type RepairFailureCause = 'version-changed' | 'refused' | 'not-composed' | 'timeout' | 'unknown' | 'abandoned'
+export type RepairFailureCause =
+  | 'version-changed' | 'refused' | 'not-composed' | 'timeout' | 'unknown' | 'abandoned'
+  /** The reinstall did not run, but the build from before the update is installed and loaded. */
+  | 'kept-old'
 
 export interface RepairReport {
   /** Packages a previous start removed and this one put back. */
@@ -248,6 +257,16 @@ export const MAX_AUTO_REPAIR_ATTEMPTS = 3
 /** What the user is told once the cap is reached: what, why, and what to do. */
 function gaveUpCopy(name: string, attempts: number): string {
   return `${name} 还没装回来：之前 ${String(attempts)} 次启动都没能装好，市场不再自动重试。请到「设置 → 插件」重新安装它 / ${name} is still missing: ${String(attempts)} starts could not reinstall it, so the market stopped retrying — reinstall it from Settings → Plugins`
+}
+
+function errorCodeOf(error: unknown): string | undefined {
+  const code = (error as { code?: unknown } | null | undefined)?.code
+  return typeof code === 'string' ? code : undefined
+}
+
+/** The manager's own code, when it named one, so a log line says why and not just "refused". */
+function withCode(message: string, code: string | undefined): string {
+  return code === undefined ? message : `${message} [${code}]`
 }
 
 function managerSucceeded(result: { application: string }): boolean {
@@ -365,16 +384,37 @@ export async function repairInterruptedUpdates(options: RepairOptions): Promise<
     }
     const spec = entry.to === '' ? entry.spec : `${entry.name}@${entry.to}`
     let cause: RepairFailureCause = 'unknown'
+    let lastCode: string | undefined
     try {
       // The interrupted update may have died holding the profile lock; its
       // owner is gone by now, and without this the install below waits out
       // the whole timeout on every start.
       clearStaleProfileLock(options.profileDirectory)
-      const result = await withDeadline(
-        options.manager.installBundle(spec, { requestId: randomUUID() }),
-        options.timeoutMs ?? REPAIR_INSTALL_TIMEOUT_MS,
-        `reinstall ${spec}`,
-      )
+      const timeoutMs = options.timeoutMs ?? REPAIR_INSTALL_TIMEOUT_MS
+      const install = (): ReturnType<RepairManager['installBundle']> => withDeadline(
+        options.manager.installBundle(spec, { requestId: randomUUID() }), timeoutMs, `reinstall ${spec}`)
+      let result: Awaited<ReturnType<RepairManager['installBundle']>>
+      try {
+        result = await install()
+      } catch (error) {
+        if (errorCodeOf(error) !== 'already-installed') throw error
+        result = { application: 'failed', error }
+      }
+      if (result.application === 'failed' && errorCodeOf(result.error) === 'already-installed'
+        && options.manager.removeBundle !== undefined) {
+        // The same two steps the normal update takes (#896): the interrupted
+        // update stopped before its removal landed, so the dependency is
+        // still declared and `add` is refused. Finish the removal, then add.
+        const removed = await withDeadline(options.manager.removeBundle(entry.name), timeoutMs, `remove ${entry.name}`)
+        if (removed.application === 'failed' || removed.application === 'cancelled') {
+          lastCode = errorCodeOf(removed.error)
+          cause = 'refused'
+          throw new Error(withCode(`the desktop app could not remove the old build first (${removed.application})`, lastCode))
+        }
+        journal.mark(entry.id, 'installing')
+        result = await install()
+      }
+      lastCode = errorCodeOf(result.error)
       if (!managerSucceeded(result)) {
         // A failed application can still be a written package: pnpm may have
         // installed the new build while only the live start failed — which is
@@ -382,8 +422,23 @@ export async function repairInterruptedUpdates(options: RepairOptions): Promise<
         // authority, not the application stage.
         const after = readInstalledVersion(options.profile, entry.name, options.profileDirectory)
         if (after === null || (entry.to !== '' && after !== entry.to)) {
+          // The update never landed but the build from before is installed and
+          // loaded: nothing is broken and nothing is left to repair, so this
+          // is neither a refusal nor a reason to count toward giving up. The
+          // user can run the update again from the market.
+          if (entry.from !== '' && after === entry.from && composed(options.profile, options.profileDirectory, entry.name)) {
+            journal.finish(entry.id)
+            report.failed.push({
+              name: entry.name,
+              cause: 'kept-old',
+              reason: withCode(`still on ${after}; the update to ${entry.to || spec} did not run (${result.application})`, lastCode),
+            })
+            logEvent('warn', 'update-repair',
+              withCode(`${entry.name}: the interrupted update did not finish and ${after} is still installed and loaded; the update can be retried from the market (${result.application})`, lastCode))
+            continue
+          }
           cause = 'refused'
-          throw new Error(`the desktop app refused the reinstall (${result.application})`)
+          throw new Error(withCode(`the desktop app refused the reinstall (${result.application})`, lastCode))
         }
         // The files landing is not the same answer as the plugin loading:
         // this manager failed at the application stage, which is the step
@@ -391,7 +446,7 @@ export async function repairInterruptedUpdates(options: RepairOptions): Promise<
         // the record for a package the host still would not compose.
         if (!composed(options.profile, options.profileDirectory, entry.name)) {
           cause = 'not-composed'
-          throw new Error(`the desktop app wrote ${after} but did not compose it — no dsh.profile.bundles row`)
+          throw new Error(withCode(`the desktop app wrote ${after} but did not compose it — no dsh.profile.bundles row`, lastCode))
         }
         journal.finish(entry.id)
         report.reinstalled.push(entry.name)
