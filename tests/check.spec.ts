@@ -723,9 +723,14 @@ describe('user patch package resolution (#205)', () => {
     writeLoadablePackage(dir, 'healthy')
     // Every installed package is a symlink into the store; flagging those
     // would put every profile in existence on this list.
-    mkdirSync(join(dir, 'node_modules', '.pnpm', 'linked@1.0.0', 'node_modules', 'linked'), { recursive: true })
-    writeFileSync(join(dir, 'node_modules', '.pnpm', 'linked@1.0.0', 'node_modules', 'linked', 'package.json'), '{"name":"linked"}')
-    symlinkSync(join('..', '.pnpm', 'linked@1.0.0', 'node_modules', 'linked'), join(dir, 'node_modules', 'linked'), 'dir')
+    const storeLink = join('.pnpm', 'linked@1.0.0', 'node_modules', 'linked')
+    const target = join(dir, 'node_modules', storeLink)
+    mkdirSync(target, { recursive: true })
+    writeFileSync(join(target, 'package.json'), '{"name":"linked"}')
+    const link = join(dir, 'node_modules', 'linked')
+    // On Windows a real directory junction needs no developer-mode symlink privilege.
+    if (process.platform === 'win32') symlinkSync(target, link, 'junction')
+    else symlinkSync(join('..', storeLink), link, 'dir')
 
     const report = analyzeProfile(dir, { dshInstallDir: null, homeDir: join(tmp, 'empty-home') })
 
