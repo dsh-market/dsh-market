@@ -22,6 +22,14 @@ a standalone service:
 
 - It holds **no credentials of its own** — no GitHub token, no account. Gist
   backups use a token the user pastes in per action, and nothing is stored.
+  The one exception is opt-in: if the user turns on "Remember password" for
+  WebDAV backup (off by default), that password is kept in
+  `<DSH_HOME>/dsh-market/webdav.json` with mode 0600 — the host offers
+  plugins no secret store. It lives outside the profile, so exported backups
+  never contain it; it is never kept in browser storage, never logged, and is
+  only used for the exact URL and username it was saved for. Turning the
+  option off deletes the file. Anything running as the same OS user can read
+  it, which is why it is not the default.
 - Its HTTP routes are registered with the host's web server and are meant to
   be reachable only where the host is reachable. It does not implement its
   own login.

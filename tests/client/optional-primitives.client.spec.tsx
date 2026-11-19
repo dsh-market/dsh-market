@@ -148,8 +148,8 @@ describe('labelled checkboxes on a host that has Checkbox', () => {
     fireEvent.click(advanced!)
     const boxes = await screen.findAllByText(en.autoBackup)
     expect(boxes.length).toBeGreaterThan(0)
-    const host = document.querySelector('[data-host-checkbox]')
-    expect(host).toBeTruthy()
-    expect(host!.textContent).toBe(en.autoBackup)
+    const hosts = [...document.querySelectorAll('[data-host-checkbox]')]
+    expect(hosts.length).toBeGreaterThan(0)
+    expect(hosts.map(node => node.textContent)).toContain(en.autoBackup)
   })
 })

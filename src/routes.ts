@@ -76,6 +76,7 @@ import { DEFAULT_UPDATE_CHECK_INTERVAL_HOURS, isUpdateCheckIntervalHours } from 
 import { createThemeManager, type LoaderEntry } from './themes.ts'
 import { readJsonBody, refuseUnadmitted, sameOrigin, sendJson } from './http.ts'
 import { resolveDshHome } from './home-paths.ts'
+import { clearWebdavSecret, readWebdavSecret, webdavSecretFor, writeWebdavSecret } from './webdav-secret.ts'
 import { detectedDebugger, detectedSupervisor, restartAllowed, scheduleRestart, servingPort, trustedRestartRequest, trustedDownloadRequest, trustedSelfUninstallRequest, selfUninstallReachableFrom, type RecoveryHandoffConfig, restartReachableFrom } from './restart.ts'
 import type { RecoveryPlugin } from './recovery.ts'
 import { activationAfterReplace, brokenClientBundles, bundlePatchIsEmpty, checkClientBundle, defaultHostRuntimeFacts, findUnservedConfigNamespaces, hasHostHalf, hostPeerGate, isDeclaredLibraryDsh, newlyBrokenBundles, peerGateRemedy, verifyActivation } from './verify.ts'
@@ -3912,19 +3913,39 @@ export function mountMarketRoutes(
       kind: 'exact',
       path: '/dsh-market/webdav',
       handler: async (request, response) => {
+        if (request.method === 'GET') {
+          // #1058: whether a password is remembered, and for which address —
+          // never the password itself.
+          if (!sameOrigin(request)) return sendJson(response, 403, { error: 'untrusted origin' })
+          const stored = readWebdavSecret()
+          return sendJson(response, 200, stored === null ? { remembered: false } : { remembered: true, url: stored.url, username: stored.username })
+        }
         if (request.method !== 'POST') {
-          response.writeHead(405, { allow: 'POST' })
+          response.writeHead(405, { allow: 'GET, POST' })
           response.end()
           return
         }
         if (!sameOrigin(request)) return sendJson(response, 403, { error: 'untrusted origin' })
         try {
-          const body = await readJsonBody(request) as { action?: unknown; url?: unknown; username?: unknown; password?: unknown }
+          const body = await readJsonBody(request) as { action?: unknown; url?: unknown; username?: unknown; password?: unknown; remember?: unknown }
           const url = typeof body.url === 'string' ? body.url : ''
           const username = typeof body.username === 'string' ? body.username : ''
-          const password = typeof body.password === 'string' ? body.password : ''
+          const typed = typeof body.password === 'string' ? body.password : ''
+          if (body.action === 'forget') {
+            clearWebdavSecret()
+            return sendJson(response, 200, { ok: true })
+          }
+          if (body.action === 'remember') {
+            if (typed === '' || url === '') return sendJson(response, 400, { error: 'nothing to remember' })
+            writeWebdavSecret({ url, username, password: typed })
+            return sendJson(response, 200, { ok: true })
+          }
+          // An empty field falls back to the remembered password, but only for
+          // the exact address and user it was saved for.
+          const password = typed !== '' ? typed : (username !== '' ? webdavSecretFor(url, username) ?? '' : '')
           if (body.action === 'backup') {
             await uploadWebdav(url, username, password, createProfileBackup(config.profile, activeProfileDir))
+            if (body.remember === true && typed !== '') writeWebdavSecret({ url, username, password: typed })
             sendJson(response, 200, { ok: true })
           } else if (body.action === 'restore') {
             // The preview flow first returns the downloaded backup so the
@@ -3932,7 +3953,9 @@ export function mountMarketRoutes(
             // posts it to /dsh-market/restore, where downloadWebdav's strict
             // validation guarantees the fetch result is never blindly echoed
             // (review #63).
-            sendJson(response, 200, { ok: true, backup: await downloadWebdav(url, username, password) })
+            const backup = await downloadWebdav(url, username, password)
+            if (body.remember === true && typed !== '') writeWebdavSecret({ url, username, password: typed })
+            sendJson(response, 200, { ok: true, backup })
           } else sendJson(response, 400, { error: 'invalid WebDAV action' })
         } catch (error) {
           // #999: a refusal that is not "the URL is wrong" says so — the code

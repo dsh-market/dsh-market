@@ -18,7 +18,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { load } from 'js-yaml'
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 
@@ -1488,6 +1488,27 @@ describe('backup and restore (#55)', () => {
 
   it('rejects cross-origin restore requests', async () => {
     expect((await bed.dispatch('POST', '/dsh-market/restore', { backup: {} }, { crossOrigin: true })).status).toBe(403)
+  })
+
+  it('remembers a WebDAV password only on request, never reports or exports it (#1058)', async () => {
+    const url = 'https://dav.example/dsh/backup.json'
+    expect((await bed.dispatch('GET', '/dsh-market/webdav')).json).toEqual({ remembered: false })
+    expect((await bed.dispatch('POST', '/dsh-market/webdav', { action: 'remember', url, username: 'a', password: '' })).status).toBe(400)
+    expect((await bed.dispatch('POST', '/dsh-market/webdav', { action: 'remember', url, username: 'a', password: 'hunter2' }, { crossOrigin: true })).status).toBe(403)
+    expect((await bed.dispatch('POST', '/dsh-market/webdav', { action: 'remember', url, username: 'a', password: 'hunter2' })).status).toBe(200)
+
+    const file = join(home, 'dsh-market', 'webdav.json')
+    if (process.platform !== 'win32') expect(statSync(file).mode & 0o777).toBe(0o600)
+    // The state answer says whether and for what, never the password.
+    const state = await bed.dispatch('GET', '/dsh-market/webdav')
+    expect(state.json).toEqual({ remembered: true, url, username: 'a' })
+    expect(JSON.stringify(state.json)).not.toContain('hunter2')
+    // The password is outside the profile, so exports cannot carry it.
+    expect(JSON.stringify((await bed.dispatch('GET', '/dsh-market/backup')).json)).not.toContain('hunter2')
+
+    expect((await bed.dispatch('POST', '/dsh-market/webdav', { action: 'forget' })).status).toBe(200)
+    expect(existsSync(file)).toBe(false)
+    expect((await bed.dispatch('GET', '/dsh-market/webdav')).json).toEqual({ remembered: false })
   })
 
   it('continues with remaining plugins when one dependency fails', async () => {
