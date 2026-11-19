@@ -2187,13 +2187,12 @@ export function resetHostCompatibilityCache(): void {
 }
 
 /**
- * Sponsors sit in the row that already holds the repo link and version, so they
- * add no height. One sponsor shows its name; several show logos only (the name is
- * in the tooltip) and never more than three, so the row cannot grow with the list.
+ * Sponsors sit in the tab row, logos only (the name is in the tooltip). Every
+ * active sponsor is shown, in sponsors.json order: that order is the ranking.
  */
 function SponsorMark({ lang, t }: { lang: 'zh' | 'en'; t: Translate }) {
   const today = new Date().toISOString().slice(0, 10)
-  const list = SPONSORS.filter(sponsor => sponsor.until === null || sponsor.until >= today).slice(0, 3)
+  const list = SPONSORS.filter(sponsor => sponsor.until === null || sponsor.until >= today)
   if (list.length === 0) return null
   return (
     <span className={css.sponsorMark}>
@@ -8245,11 +8244,11 @@ export function MarketSection(props: MarketSectionProps) {
             className={(tab === 'backup' || tab === 'diagnostics') ? `${css.tab} ${css.on}` : css.tab}
             onClick={() => { if (tab !== 'backup' && tab !== 'diagnostics') setTab('backup') }}
           >{t('tabAdvanced')}</button>
-          {/* Sponsors live in the spacer, not beside it: the spacer only gets the
-              width the tabs and actions leave over, so the mark can never push a
-              button onto a second line. When it does not fit it drops out whole. */}
+          {/* Sponsors live in the spacer. It never shrinks below the mark, so
+              when the row has no room the spacer (and the buttons after it)
+              moves to the next line instead of hiding a sponsor. */}
           <span className={surface === 'plugins' ? `${css.grow} ${css.sponsorSlot}` : css.grow}>
-            {surface === 'plugins' && <><span className={css.sponsorWrapFloor} /><SponsorMark lang={lang} t={t} /></>}
+            {surface === 'plugins' && <SponsorMark lang={lang} t={t} />}
           </span>
           {/* The host page already names this tab, so these sit here instead
               of a second title row. Settings and the sidebar keep them in

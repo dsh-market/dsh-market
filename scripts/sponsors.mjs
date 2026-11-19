@@ -4,6 +4,8 @@
  *   - README.md / README.zh.md  — the block between the sponsors markers
  *   - src/client/sponsors.generated.ts — what the market shows (logos inlined)
  *   - the site strip, via sponsorStripHtml() used by build-site.mjs
+ * The order of the list is the display order everywhere (highest sponsorship
+ * first); amounts never go in this file.
  * An entry with `until` (YYYY-MM-DD) drops out of all of them by itself once
  * that day has passed, so ending a sponsorship never needs a code change.
  * SPONSORS_FILE=other.json builds from a different list (previews).
