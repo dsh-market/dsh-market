@@ -395,7 +395,7 @@ export async function uploadWebdav(url: string, username: string, password: stri
  */
 function describeUploadFailure(status: number): string {
   if (status === 401) {
-    return 'WebDAV 上传被拒绝（HTTP 401）：服务端不认这个用户名或密码。密码不会保存到磁盘，刷新页面或重启后需要重新输入；填好后点「上传备份」重试。 / The WebDAV server rejected these credentials (HTTP 401). The password is never stored, so it has to be entered again after a reload or restart; fill it in and press Upload backup.'
+    return 'WebDAV 上传被拒绝（HTTP 401）：服务端不认这个用户名或密码，可能是密码没填，或填错了。重新输入密码后点「上传备份」重试；密码默认不保存，勾选「记住密码」可省去重复输入。 / The WebDAV server rejected these credentials (HTTP 401): the password is missing or wrong. Enter it again and press Upload backup. The password is not saved by default; turn on Remember password to skip this next time.'
   }
   if (status === 403) {
     return 'WebDAV 上传被拒绝（HTTP 403）：凭据有效，但这个账号没有写入该路径的权限。换一个可写的目录，或检查服务商的权限设置。 / The WebDAV server refused the write (HTTP 403): the credentials are valid but this account cannot write to that path. Use a writable folder, or check the provider\'s permissions.'

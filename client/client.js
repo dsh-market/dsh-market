@@ -719,11 +719,12 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			webdavUrl: "备份文件 URL",
 			webdavUser: "用户名（可选）",
 			webdavPassword: "密码（可选）",
+			webdavRemember: "记住密码（只保存在这台电脑上）",
 			webdavUpload: "上传备份",
 			webdavRestore: "从 WebDAV 恢复",
 			autoBackup: "每天自动备份（打开市场时）",
-			webdavNote: "WebDAV 地址与用户名仅保存在当前浏览器；密码只留在当前页面，刷新或重启后需要重新输入。",
-			webdavAutoBackupPaused: "每天自动备份没能完成：这个服务需要密码认证，而密码不会保存到磁盘，刷新或重启后要重新输入。填好后点「上传备份」即可。",
+			webdavNote: "WebDAV 地址与用户名只保存在当前浏览器。密码默认不保存，刷新或重启后要重新输入；想省去这一步，可勾选「记住密码」。",
+			webdavAutoBackupPaused: "需要重新输入密码，才能继续每天自动备份。填好后点「上传备份」即可；想以后不用再输，勾选「记住密码」。",
 			webdavPathHint: "填完整的文件地址（含文件名）：备份写进这个文件，恢复也从它读。开启自动备份后每天最多上传一次。",
 			localOnly: "WebDAV 地址和用户名只保存在此浏览器。",
 			credsWarning: "请注意：备份包含 profile 配置，以及可能含密钥的文件（config.toml、.env 等）。本地导出的文件会原样包含这些内容，上传 WebDAV 前请确认目标可信。",
@@ -1599,11 +1600,12 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			webdavUrl: "Backup file URL",
 			webdavUser: "Username (optional)",
 			webdavPassword: "Password (optional)",
+			webdavRemember: "Remember password (kept on this computer only)",
 			webdavUpload: "Upload backup",
 			webdavRestore: "Restore from WebDAV",
 			autoBackup: "Back up daily (when the market opens)",
-			webdavNote: "The WebDAV URL and username stay in this browser only; the password lives in this page and has to be re-entered after a reload.",
-			webdavAutoBackupPaused: "Daily backup could not run: this server needs a password, and the password is never stored, so it has to be entered again after a reload. Enter it and press Upload backup.",
+			webdavNote: "The WebDAV URL and username stay in this browser only. The password is not saved by default, so it has to be entered again after a reload or restart. Turn on \"Remember password\" to skip that.",
+			webdavAutoBackupPaused: "Daily backup is waiting for your password. Enter it and press Upload backup. Turn on \"Remember password\" so you will not be asked again.",
 			webdavPathHint: "Give the whole file path, name included: the backup writes that file and restore reads it back. With automatic backup on it uploads at most once a day.",
 			localOnly: "The WebDAV URL and username stay in this browser only.",
 			credsWarning: "Note: backups include profile configuration and files that may hold secrets (config.toml, .env, …). Local exports are unmodified, so upload only to a WebDAV target you trust.",
@@ -2478,11 +2480,12 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			webdavUrl: "バックアップファイルの URL",
 			webdavUser: "ユーザー名（任意）",
 			webdavPassword: "パスワード（任意）",
+			webdavRemember: "パスワードを記憶（このコンピューターにのみ保存）",
 			webdavUpload: "バックアップをアップロード",
 			webdavRestore: "WebDAV から復元",
 			autoBackup: "毎日自動でバックアップ（マーケットを開いたとき）",
-			webdavNote: "WebDAV のアドレスとユーザー名はこのブラウザにのみ保存されます。パスワードはこのページ内にのみ保持され、再読み込み後は再入力が必要です。",
-			webdavAutoBackupPaused: "毎日の自動バックアップは完了できませんでした。このサーバーはパスワード認証が必要ですが、パスワードは保存されないため、再読み込み後の再入力が必要です。入力して「バックアップをアップロード」を押してください。",
+			webdavNote: "WebDAV のアドレスとユーザー名はこのブラウザにのみ保存されます。パスワードは既定では保存されず、再読み込みや再起動のあとに再入力が必要です。省くには「パスワードを記憶」をオンにしてください。",
+			webdavAutoBackupPaused: "毎日の自動バックアップを続けるには、パスワードの再入力が必要です。入力して「バックアップをアップロード」を押してください。今後入力を省くには「パスワードを記憶」をオンにします。",
 			webdavPathHint: "ファイル名まで含めた完全なファイルアドレスを記入してください。バックアップはそのファイルに書き込まれ、復元もそこから読みます。自動バックアップをオンにすると、アップロードは 1 日に最大 1 回です。",
 			localOnly: "WebDAV のアドレスとユーザー名はこのブラウザにのみ保存されます。",
 			credsWarning: "注意：バックアップには profile の設定と、キーを含む可能性のあるファイル（config.toml、.env など）が含まれます。ローカルにエクスポートしたファイルにはそれらがそのまま入るため、WebDAV にアップロードする前に、送信先が信頼できることを確認してください。",
@@ -13327,6 +13330,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			*/
 			const [webdavNeedsPassword, setWebdavNeedsPassword] = (0, react.useState)(false);
 			const [autoBackup, setAutoBackup] = (0, react.useState)(initialWebdav.auto);
+			const [webdavSaved, setWebdavSaved] = (0, react.useState)(void 0);
+			const [rememberPassword, setRememberPassword] = (0, react.useState)(false);
+			const webdavKept = webdavSaved?.remembered === true && webdavSaved.url === webdavUrl.trim() && webdavSaved.username === webdavUser;
+			const webdavPasswordUsable = webdavPassword !== "" || webdavKept;
 			/** GitHub token — session memory only, never written to any storage. */
 			const [gistToken, setGistToken] = (0, react.useState)("");
 			/** Gist id — persisted across reloads (non-sensitive: the Gist itself is private). */
@@ -16460,11 +16467,17 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						action,
 						url: webdavUrl.trim(),
 						username: webdavUser,
-						password: webdavPassword
+						password: webdavPassword,
+						remember: rememberPassword
 					})
 				}).then(async (response) => {
 					const body = await response.json();
 					if (!response.ok) throw new Error(String(body.error || "WebDAV failed"));
+					if (rememberPassword && webdavPassword !== "") setWebdavSaved({
+						remembered: true,
+						url: webdavUrl.trim(),
+						username: webdavUser
+					});
 					if (action === "restore") previewBackup(body.backup);
 					if (action === "backup") {
 						try {
@@ -16474,7 +16487,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					}
 				}).catch((error) => {
 					const message = String(error);
-					if (action === "backup" && webdavPassword === "" && /HTTP 401|401/u.test(message)) {
+					if (action === "backup" && !webdavPasswordUsable && /HTTP 401|401/u.test(message)) {
 						setWebdavNeedsPassword(true);
 						setBackupMessage(null);
 						return;
@@ -16486,8 +16499,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				});
 			}, [
 				previewBackup,
+				rememberPassword,
 				t,
 				webdavPassword,
+				webdavPasswordUsable,
 				webdavUrl,
 				webdavUser
 			]);
@@ -16622,13 +16637,27 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				webdavUser
 			]);
 			(0, react.useEffect)(() => {
+				fetch(api("/dsh-market/webdav")).then((response) => response.json()).then((body) => {
+					setWebdavSaved({
+						remembered: body.remembered === true,
+						url: body.url,
+						username: body.username
+					});
+					setRememberPassword(body.remembered === true);
+				}).catch(() => setWebdavSaved({ remembered: false }));
+			}, []);
+			(0, react.useEffect)(() => {
 				if (!autoBackup) return;
+				if (webdavUser !== "" && !webdavPasswordUsable) {
+					if (webdavSaved !== void 0) setWebdavNeedsPassword(true);
+					return;
+				}
 				let last = 0;
 				try {
 					last = Number(localStorage.getItem("dshm-webdav-last")) || 0;
 				} catch {}
 				if (Date.now() - last >= 864e5) runWebdavRef.current("backup");
-			}, [autoBackup]);
+			}, [autoBackup, webdavUser === "" || webdavSaved !== void 0]);
 			const sessionPendingRestart = doneUrls.length + restartNames.length + removedCount + toggleRestart + (backupRestored ? 1 : 0);
 			/**
 			* Plugins the HOST reports as restart-pending, independent of what this
@@ -18475,6 +18504,30 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 												if (e.target.value !== "") setWebdavNeedsPassword(false);
 											}
 										}),
+										labelledCheckbox({
+											label: t("webdavRemember"),
+											checked: rememberPassword,
+											className: Market_module_css_default.backupCheck,
+											onChange: (on) => {
+												setRememberPassword(on);
+												const call = on ? webdavPassword === "" ? null : {
+													action: "remember",
+													url: webdavUrl.trim(),
+													username: webdavUser,
+													password: webdavPassword
+												} : { action: "forget" };
+												if (call === null) return;
+												fetch(api("/dsh-market/webdav"), {
+													method: "POST",
+													headers: { "content-type": "application/json" },
+													body: JSON.stringify(call)
+												}).then(() => setWebdavSaved(on ? {
+													remembered: true,
+													url: webdavUrl.trim(),
+													username: webdavUser
+												} : { remembered: false })).catch(() => {});
+											}
+										}),
 										/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 											className: Market_module_css_default.backupActions,
 											children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
@@ -18498,10 +18551,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 											onChange: setAutoBackup
 										}),
 										/* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", { children: t("webdavNote") }),
-										webdavNeedsPassword && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
-											className: Market_module_css_default.backupWarn,
-											children: t("webdavAutoBackupPaused")
-										}),
+										webdavNeedsPassword && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", { children: t("webdavAutoBackupPaused") }),
 										/* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
 											className: Market_module_css_default.backupWarn,
 											children: t("credsWarning")

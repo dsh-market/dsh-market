@@ -484,8 +484,10 @@ describe('localized Gist export and catalog actions (#1254)', () => {
 describe('WebDAV daily backup (#868)', () => {
   const day = 24 * 60 * 60 * 1000
   const now = 1_800_000_000_000
-  const config = { url: 'https://dav.example/dsh/backup.json', username: 'alice', auto: true }
-  const requests = () => fetchCalls.filter(call => call.path === '/dsh-market/webdav')
+  // No username: an open server, so the daily upload needs no password.
+  const config = { url: 'https://dav.example/dsh/backup.json', username: '', auto: true }
+  const authed = { ...config, username: 'alice' }
+  const requests = () => fetchCalls.filter(call => call.path === '/dsh-market/webdav' && call.method === 'POST')
 
   beforeEach(() => { vi.spyOn(Date, 'now').mockReturnValue(now) })
   afterEach(() => { vi.restoreAllMocks() })
@@ -520,21 +522,57 @@ describe('WebDAV daily backup (#868)', () => {
   })
 
   it('turns a password-less 401 into a stated condition, not a bare error (#1058)', async () => {
-    // The password is never stored, so after a reload the daily upload runs
-    // with an empty field and the server answers 401. The reporter met this
-    // as an `HTTP 401` banner on every market open, with nothing saying why.
+    // An open-looking server that answers 401 anyway: the failure is named on
+    // the card instead of a bare `HTTP 401`, and clears once a password is typed.
     localStorage.setItem('dshm-webdav', JSON.stringify(config))
     stubFetch({ '/dsh-market/webdav': { __status: 401, error: 'WebDAV upload failed: HTTP 401' } })
     render(<MarketSection {...props()} />)
     await openBackup()
 
     expect(await screen.findByText(en.webdavAutoBackupPaused)).toBeTruthy()
-    // The raw status is not repeated on top of the explanation.
     expect(screen.queryByText(/HTTP 401/u)).toBeNull()
-    // Entering a password retires the note.
     fireEvent.change(screen.getByPlaceholderText(en.webdavPassword), { target: { value: 'secret' } })
     await act(async () => {})
     expect(screen.queryByText(en.webdavAutoBackupPaused)).toBeNull()
+  })
+
+  it('never fires the daily upload for a signed-in server without a password (#1058)', async () => {
+    localStorage.setItem('dshm-webdav', JSON.stringify(authed))
+    stubFetch({ '/dsh-market/webdav': { remembered: false } })
+    render(<MarketSection {...props()} />)
+    await openBackup()
+    expect(await screen.findByText(en.webdavAutoBackupPaused)).toBeTruthy()
+    expect(requests()).toHaveLength(0)
+    // A calm statement, not the red warning style.
+    expect(screen.getByText(en.webdavAutoBackupPaused).className).not.toMatch(/backupWarn/u)
+  })
+
+  it('uses the remembered password for the daily upload without ever holding it (#1058)', async () => {
+    localStorage.setItem('dshm-webdav', JSON.stringify(authed))
+    stubFetch({ '/dsh-market/webdav': { remembered: true, url: authed.url, username: 'alice', ok: true } })
+    render(<MarketSection {...props()} />)
+    await openBackup()
+    await waitFor(() => expect(requests()).toHaveLength(1))
+    expect(requests()[0]?.body).toMatchObject({ action: 'backup', username: 'alice', password: '' })
+    expect(screen.queryByText(en.webdavAutoBackupPaused)).toBeNull()
+    expect((screen.getByRole('checkbox', { name: en.webdavRemember }) as HTMLInputElement).checked).toBe(true)
+    expect(JSON.stringify(Object.entries(localStorage))).not.toMatch(/password/iu)
+  })
+
+  it('remembering is off by default; turning it on saves, turning it off forgets (#1058)', async () => {
+    localStorage.setItem('dshm-webdav', JSON.stringify({ ...authed, auto: false }))
+    stubFetch({ '/dsh-market/webdav': { remembered: false, ok: true } })
+    render(<MarketSection {...props()} />)
+    await openBackup()
+    const box = screen.getByRole('checkbox', { name: en.webdavRemember }) as HTMLInputElement
+    expect(box.checked).toBe(false)
+    fireEvent.change(screen.getByPlaceholderText(en.webdavPassword), { target: { value: 'pw' } })
+    fireEvent.click(box)
+    await waitFor(() => expect(requests()).toHaveLength(1))
+    expect(requests()[0]?.body).toEqual({ action: 'remember', url: authed.url, username: 'alice', password: 'pw' })
+    fireEvent.click(box)
+    await waitFor(() => expect(requests()).toHaveLength(2))
+    expect(requests()[1]?.body).toEqual({ action: 'forget' })
   })
 
   it('says what the address field wants, in the words the reporter had to guess (#868)', async () => {
@@ -570,7 +608,7 @@ describe('WebDAV daily backup (#868)', () => {
     let finish!: (response: Response) => void
     const pending = new Promise<Response>(resolve => { finish = resolve })
     vi.stubGlobal('fetch', (input: unknown, init?: RequestInit) => {
-      if (String(input) !== '/dsh-market/webdav') return fallback(input, init)
+      if (String(input) !== '/dsh-market/webdav' || init === undefined) return fallback(input, init)
       fetchCalls.push({ path: String(input), method: init!.method!, body: JSON.parse(String(init!.body)) })
       return pending
     })
@@ -607,7 +645,7 @@ describe('WebDAV daily backup (#868)', () => {
     render(<MarketSection {...props()} />)
     await openBackup()
     expect(requests()).toHaveLength(1)
-    expect(requests()[0]?.body).toEqual({ action: 'backup', url: config.url, username: config.username, password: '' })
+    expect(requests()[0]?.body).toEqual({ action: 'backup', url: config.url, username: config.username, password: '', remember: false })
   })
 
   it('uses current settings when enabled and still supports manual upload and restore without storing passwords', async () => {
@@ -628,7 +666,7 @@ describe('WebDAV daily backup (#868)', () => {
     expect(JSON.parse(localStorage.getItem('dshm-webdav')!)).toEqual({ url: editedUrl, username: 'bob', auto: false })
     fireEvent.click(screen.getByRole('checkbox', { name: en.autoBackup }))
     await screen.findByText(en.backupDone)
-    const body = { action: 'backup', url: editedUrl, username: 'bob', password: 'session-secret' }
+    const body = { action: 'backup', url: editedUrl, username: 'bob', password: 'session-secret', remember: false }
     expect(requests().map(call => call.body)).toEqual([body])
     expect(JSON.parse(localStorage.getItem('dshm-webdav')!)).toEqual({ url: editedUrl, username: 'bob', auto: true })
     fireEvent.click(screen.getByRole('button', { name: en.webdavUpload }))

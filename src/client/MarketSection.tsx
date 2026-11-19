@@ -3570,6 +3570,13 @@ export function MarketSection(props: MarketSectionProps) {
    */
   const [webdavNeedsPassword, setWebdavNeedsPassword] = useState(false)
   const [autoBackup, setAutoBackup] = useState(initialWebdav.auto)
+  // #1058: opt-in "remember password". The password itself stays on the
+  // server side; the client only learns whether one is kept, and for which
+  // address. undefined = not answered yet.
+  const [webdavSaved, setWebdavSaved] = useState<{ remembered: boolean; url?: string; username?: string } | undefined>(undefined)
+  const [rememberPassword, setRememberPassword] = useState(false)
+  const webdavKept = webdavSaved?.remembered === true && webdavSaved.url === webdavUrl.trim() && webdavSaved.username === webdavUser
+  const webdavPasswordUsable = webdavPassword !== '' || webdavKept
   /** GitHub token — session memory only, never written to any storage. */
   const [gistToken, setGistToken] = useState('')
   /** Gist id — persisted across reloads (non-sensitive: the Gist itself is private). */
@@ -6940,10 +6947,11 @@ export function MarketSection(props: MarketSectionProps) {
     setRestoreErrors([])
     fetch(api('/dsh-market/webdav'), {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ action, url: webdavUrl.trim(), username: webdavUser, password: webdavPassword }),
+      body: JSON.stringify({ action, url: webdavUrl.trim(), username: webdavUser, password: webdavPassword, remember: rememberPassword }),
     }).then(async response => {
       const body = await response.json()
       if (!response.ok) throw new Error(String(body.error || 'WebDAV failed'))
+      if (rememberPassword && webdavPassword !== '') setWebdavSaved({ remembered: true, url: webdavUrl.trim(), username: webdavUser })
       if (action === 'restore') {
         previewBackup(body.backup)
       }
@@ -6957,7 +6965,7 @@ export function MarketSection(props: MarketSectionProps) {
       // password is never stored, so this is what every reload looks like.
       // Name the state on the card instead of a bare `HTTP 401`, and clear it
       // the moment a password is typed.
-      if (action === 'backup' && webdavPassword === '' && /HTTP 401|401/u.test(message)) {
+      if (action === 'backup' && !webdavPasswordUsable && /HTTP 401|401/u.test(message)) {
         setWebdavNeedsPassword(true)
         setBackupMessage(null)
         return
@@ -6967,7 +6975,7 @@ export function MarketSection(props: MarketSectionProps) {
       webdavInFlight.current = false
       setBackupBusy(false)
     })
-  }, [previewBackup, t, webdavPassword, webdavUrl, webdavUser])
+  }, [previewBackup, rememberPassword, t, webdavPassword, webdavPasswordUsable, webdavUrl, webdavUser])
 
   /** Map the server's token-source string to a localized label. */
   const gistSourceLabel = (source: string): string => {
@@ -7102,13 +7110,29 @@ export function MarketSection(props: MarketSectionProps) {
   // Check when the market opens or daily backup is enabled. Editing the
   // settings (or changing the locale) must not start another upload.
   useEffect(() => {
+    fetch(api('/dsh-market/webdav')).then(response => response.json()).then((body: { remembered?: boolean; url?: string; username?: string }) => {
+      setWebdavSaved({ remembered: body.remembered === true, url: body.url, username: body.username })
+      setRememberPassword(body.remembered === true)
+    }).catch(() => setWebdavSaved({ remembered: false }))
+  }, [])
+
+  useEffect(() => {
     if (!autoBackup) return
+    // #1058: a server that needs a login cannot be backed up without its
+    // password. Wait quietly (the card says so) instead of uploading with an
+    // empty one and getting a 401 on every market open.
+    if (webdavUser !== '' && !webdavPasswordUsable) {
+      if (webdavSaved !== undefined) setWebdavNeedsPassword(true)
+      return
+    }
     let last = 0
     try {
       last = Number(localStorage.getItem('dshm-webdav-last')) || 0
     } catch { /* ignore */ }
     if (Date.now() - last >= 24 * 60 * 60 * 1000) runWebdavRef.current('backup')
-  }, [autoBackup])
+    // Only the first answer matters: later edits to the form must not retrigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoBackup, webdavUser === '' || webdavSaved !== undefined])
 
   // #558: count restart-pending session changes (restartNames), not every
   // completed `updatedNames` entry (which would double-count a batch update
@@ -8712,6 +8736,21 @@ export function MarketSection(props: MarketSectionProps) {
                   <p>{t('webdavPathHint')}</p>
                   <Input className={css.backupInput} autoComplete="username" value={webdavUser} placeholder={t('webdavUser')} onChange={e => setWebdavUser(e.target.value)} />
                   <Input className={css.backupInput} type="password" autoComplete="current-password" value={webdavPassword} placeholder={t('webdavPassword')} onChange={e => { setWebdavPassword(e.target.value); if (e.target.value !== '') setWebdavNeedsPassword(false) }} />
+                  {labelledCheckbox({
+                    label: t('webdavRemember'),
+                    checked: rememberPassword,
+                    className: css.backupCheck,
+                    onChange: on => {
+                      setRememberPassword(on)
+                      const call = on
+                        ? (webdavPassword === '' ? null : { action: 'remember', url: webdavUrl.trim(), username: webdavUser, password: webdavPassword })
+                        : { action: 'forget' }
+                      if (call === null) return
+                      fetch(api('/dsh-market/webdav'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(call) })
+                        .then(() => setWebdavSaved(on ? { remembered: true, url: webdavUrl.trim(), username: webdavUser } : { remembered: false }))
+                        .catch(() => { /* the next upload carries the choice again */ })
+                    },
+                  })}
                   <div className={css.backupActions}>
                     <Button variant="primary" size="sm" disabled={backupBusy || webdavUrl.trim() === ''} onClick={() => runWebdav('backup')}>{backupBusy ? t('backupWorking') : t('webdavUpload')}</Button>
                     <Button variant="outline" size="sm" disabled={backupBusy || webdavUrl.trim() === ''} onClick={() => runWebdav('restore')}>{t('webdavRestore')}</Button>
@@ -8723,7 +8762,7 @@ export function MarketSection(props: MarketSectionProps) {
                     onChange: setAutoBackup,
                   })}
                   <p>{t('webdavNote')}</p>
-                  {webdavNeedsPassword && <p className={css.backupWarn}>{t('webdavAutoBackupPaused')}</p>}
+                  {webdavNeedsPassword && <p>{t('webdavAutoBackupPaused')}</p>}
                   <p className={css.backupWarn}>{t('credsWarning')}</p>
                 </section>
                 <section className={css.backupCard}>
