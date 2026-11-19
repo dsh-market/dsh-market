@@ -30,7 +30,7 @@ const repairStates = {
 } as const
 const repairCauses = {
   'version-changed': 'startupRepairVersion', refused: 'startupRepairRefused', 'not-composed': 'startupRepairNotComposed',
-  timeout: 'startupRepairTimeout', unknown: 'startupRepairUnknown', abandoned: 'startupRepairAbandoned',
+  timeout: 'startupRepairTimeout', 'kept-old': 'startupRepairKeptOld', unknown: 'startupRepairUnknown', abandoned: 'startupRepairAbandoned',
 } as const
 const checkoutRecoveryCauses = {
   'profile-busy': 'checkoutRecoveryBusy',
@@ -395,7 +395,7 @@ export function OperationsPanel(props: OperationsPanelProps) {
                     <div className={css.opName} title={entry.name}>{entry.name}</div>
                     <div className={css.opStatus}>{t(entry.state === 'pending'
                       ? repairCauses[entry.cause] ?? 'startupRepairUnknown' : repairStates[entry.state])}</div>
-                    {entry.state === 'pending' && entry.cause !== 'version-changed' && entry.cause !== 'abandoned' && (
+                    {entry.state === 'pending' && entry.cause !== 'version-changed' && entry.cause !== 'abandoned' && entry.cause !== 'kept-old' && (
                       <div className={css.opStatus}>{t('startupRepairPending')}</div>
                     )}
                   </div>
