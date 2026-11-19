@@ -706,7 +706,7 @@ export function SettingsCard({ t, locale, onRemoved, sidebar, entries }: Setting
                 // Named, not offered: the desktop host owns this install.
                 : update?.hostManaged === true && update.latest !== null ? t('setSelfHostManagedHint')
                   : checkFailed ? t('updateChecksFailedHint')
-                    : pluginListChanged ? t('updateChecksChangedHint')
+                    : pluginListChanged ? t('setSelfChangedHint')
                       : update?.profileBlocked != null ? profileBlockedText(update.profileBlocked, t)
                         : heldVersionText ?? t('setSelfUpToDateHint'),
           phase === 'updated'
