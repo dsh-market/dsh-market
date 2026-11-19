@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MarketSection, resetHostCompatibilityCache, resetThemePreviewCache } from '../../src/client/MarketSection.tsx'
 import { SettingsCard } from '../../src/client/SettingsCard.tsx'
-import { en } from '../../src/client/locales.ts'
+import { en, ja, zh } from '../../src/client/locales.ts'
 import { resetGithubRouting, resetScreenshotsCache } from '../../src/client/market-data.ts'
 import { updateNotifications } from '../../src/client/update-notifications.ts'
 import type { UpdateNotificationSnapshot } from '../../src/update-notifications.ts'
@@ -108,33 +108,34 @@ describe('update notification page integration', () => {
     expect(screen.queryByText(en.setSelfUpToDate)).toBeNull()
   })
 
-  it('distinguishes an inventory change from a failed self-update check (#1240)', async () => {
+  it.each([en, zh, ja])('directs a changed inventory to $updateChecksNow and distinguishes a failed check (#1240)', async (copy) => {
     const own = { kind: 'npm', current: '1.0.0', latest: null, updateAvailable: false } as const
     current = { ...current, enabled: false, nextCheckAt: null, updates: { ...current.updates, dshmarket: own } }
     await updateNotifications.refreshAfterChange()
-    render(<SettingsCard t={t} />)
+    render(<SettingsCard t={key => (copy as Record<string, string>)[key] ?? key} />)
     fireEvent.click(screen.getByRole('button', { expanded: false }))
-    await screen.findByText(en.setSelfUpToDate)
+    await screen.findByText(copy.setSelfUpToDate)
 
     // Another client installed a plugin. The market's cached row survives,
     // but the shared check no longer covers the current plugin list.
     current = { ...current, stale: true }
     await act(async () => { await updateNotifications.refreshAfterChange() })
-    expect(screen.getByText(en.updateChecksChanged)).toBeTruthy()
-    expect(screen.getByText(en.updateChecksChangedHint)).toBeTruthy()
-    expect(screen.queryByText(en.updateChecksFailed)).toBeNull()
-    expect(screen.queryByText(en.setSelfUpToDate)).toBeNull()
+    expect(screen.getByText(copy.updateChecksChanged)).toBeTruthy()
+    const labels = [copy.nav, copy.tabInstalled, copy.updateChecksTitle, copy.updateChecksNow]
+    expect(screen.getByText(text => labels.every(label => text.includes(label)))).toBeTruthy()
+    expect(screen.queryByText(copy.updateChecksFailed)).toBeNull()
+    expect(screen.queryByText(copy.setSelfUpToDate)).toBeNull()
 
     current = { ...current, error: 'Check incomplete' }
     await act(async () => { await updateNotifications.refreshAfterChange() })
-    expect(screen.getByText(en.updateChecksFailed)).toBeTruthy()
-    expect(screen.getByText(en.updateChecksFailedHint)).toBeTruthy()
-    expect(screen.queryByText(en.updateChecksChanged)).toBeNull()
-    expect(screen.queryByText(en.setSelfUpToDate)).toBeNull()
+    expect(screen.getByText(copy.updateChecksFailed)).toBeTruthy()
+    expect(screen.getByText(copy.updateChecksFailedHint)).toBeTruthy()
+    expect(screen.queryByText(copy.updateChecksChanged)).toBeNull()
+    expect(screen.queryByText(copy.setSelfUpToDate)).toBeNull()
 
     current = { ...current, stale: false, error: null, checkedAt: 102, lastSuccessAt: 102 }
     await act(async () => { await updateNotifications.refreshAfterChange() })
-    expect(screen.getByText(en.setSelfUpToDate)).toBeTruthy()
+    expect(screen.getByText(copy.setSelfUpToDate)).toBeTruthy()
     expect(vi.mocked(fetch).mock.calls.some(([url, init]) =>
       String(url) === '/dsh-market/update-notifications' && init?.method === 'POST')).toBe(false)
   })

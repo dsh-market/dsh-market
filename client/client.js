@@ -224,6 +224,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			setSelfUpdateWaiting: "新版等待中",
 			setSelfUpdateHint: "更新会下载新版本，重启后生效。",
 			setSelfUpToDateHint: "",
+			setSelfChangedHint: "上次检查后有插件被安装或移除。请打开「插件市场 → 已安装 → 更新检查」，点「立即检查」刷新结果。",
 			setSelfHostManagedHint: "这份市场由桌面端安装，新版本请在桌面端更新。",
 			setSelfUpdate: "更新",
 			setSelfUpdatedHint: "已下载完成。重启 DeepSeek Harness 后新版本才会生效——页面会先显示新版本号。",
@@ -1108,6 +1109,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			setSelfUpdateWaiting: "New version pending",
 			setSelfUpdateHint: "Updating downloads the new version; it takes effect after a restart.",
 			setSelfUpToDateHint: "",
+			setSelfChangedHint: "A plugin was installed or removed after the last check. Open Plugin Market → Installed → Update checks and select Check now to refresh the results.",
 			setSelfHostManagedHint: "This copy was installed by the desktop app; update it from there.",
 			setSelfUpdate: "Update",
 			setSelfUpdatedHint: "Downloaded. Restart DeepSeek Harness for it to take effect — the page will already show the new version.",
@@ -1991,6 +1993,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			setSelfUpdateWaiting: "新バージョン（更新待ち）",
 			setSelfUpdateHint: "更新すると新しいバージョンをダウンロードし、再起動後に有効になります。",
 			setSelfUpToDateHint: "",
+			setSelfChangedHint: "前回の確認後にプラグインが追加または削除されました。「プラグインマーケット → インストール済み → 更新の確認」で「今すぐ確認」を選択してください。",
 			setSelfHostManagedHint: "このマーケットはデスクトップアプリがインストールしたものです。新しいバージョンへの更新はデスクトップアプリで行ってください。",
 			setSelfUpdate: "更新",
 			setSelfUpdatedHint: "ダウンロードが完了しました。新しいバージョンは DeepSeek Harness を再起動すると有効になります。ページには先に新しいバージョン番号が表示されます。",
@@ -22072,7 +22075,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const offeredVersion = update?.eligibleVersion ?? update?.latest ?? null;
 			const held = update?.heldUpdate;
 			const heldVersionText = held != null && typeof held.latest === "string" && held.latest !== "" && (update?.updateAvailable !== true || held.latest !== offeredVersion) ? marketHeldVersionText(held, activeLocale, t) : null;
-			const body = phase === "removed" ? row(t("setSelfRemoved"), t("setSelfRemovedHint"), null) : (0, react.createElement)(react.Fragment, null, advanced, row(t("setIndexSource"), t("setIndexSourceHint"), null), status?.selfManaged === true ? row((update?.updateAvailable === true || update?.hostManaged === true) && offeredVersion !== null ? `${t("setSelfUpdateReady")} ${offeredVersion}` : update?.channelSwitch != null ? `${t("setChannelSwitch")} ${update.channelSwitch}` : checkFailed ? t("updateChecksFailed") : pluginListChanged ? t("updateChecksChanged") : update?.profileBlocked != null || heldVersionText !== null ? t("setSelfUpdateWaiting") : update === null ? t("updateChecksPending") : t("setSelfUpToDate"), phase === "updated" ? t("setSelfUpdatedHint") : update?.channelSwitch != null ? t("setChannelSwitchHint") : update?.updateAvailable === true ? [t("setSelfUpdateHint"), heldVersionText].filter(Boolean).join(" · ") : update?.hostManaged === true && update.latest !== null ? t("setSelfHostManagedHint") : checkFailed ? t("updateChecksFailedHint") : pluginListChanged ? t("updateChecksChangedHint") : update?.profileBlocked != null ? profileBlockedText(update.profileBlocked, t) : heldVersionText ?? t("setSelfUpToDateHint"), phase === "updated" ? null : update?.updateAvailable === true ? (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+			const body = phase === "removed" ? row(t("setSelfRemoved"), t("setSelfRemovedHint"), null) : (0, react.createElement)(react.Fragment, null, advanced, row(t("setIndexSource"), t("setIndexSourceHint"), null), status?.selfManaged === true ? row((update?.updateAvailable === true || update?.hostManaged === true) && offeredVersion !== null ? `${t("setSelfUpdateReady")} ${offeredVersion}` : update?.channelSwitch != null ? `${t("setChannelSwitch")} ${update.channelSwitch}` : checkFailed ? t("updateChecksFailed") : pluginListChanged ? t("updateChecksChanged") : update?.profileBlocked != null || heldVersionText !== null ? t("setSelfUpdateWaiting") : update === null ? t("updateChecksPending") : t("setSelfUpToDate"), phase === "updated" ? t("setSelfUpdatedHint") : update?.channelSwitch != null ? t("setChannelSwitchHint") : update?.updateAvailable === true ? [t("setSelfUpdateHint"), heldVersionText].filter(Boolean).join(" · ") : update?.hostManaged === true && update.latest !== null ? t("setSelfHostManagedHint") : checkFailed ? t("updateChecksFailedHint") : pluginListChanged ? t("setSelfChangedHint") : update?.profileBlocked != null ? profileBlockedText(update.profileBlocked, t) : heldVersionText ?? t("setSelfUpToDateHint"), phase === "updated" ? null : update?.updateAvailable === true ? (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 				variant: "primary",
 				size: "sm",
 				disabled: busy,
