@@ -2207,8 +2207,7 @@ function SponsorMark({ lang, t }: { lang: 'zh' | 'en'; t: Translate }) {
           rel="noreferrer sponsored"
           title={`${sponsor.name[lang]} · ${sponsor.scope[lang]}`}
         >
-          <img className={css.sponsorLogo} src={sponsor.logo} alt="" height={14} />
-          {list.length <= 2 && <span>{sponsor.name[lang]}</span>}
+          <img className={css.sponsorLogo} src={sponsor.logo} alt={sponsor.name[lang]} height={14} />
         </a>
       ))}
     </span>

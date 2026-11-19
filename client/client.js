@@ -11762,18 +11762,18 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 					className: Market_module_css_default.sponsorLabel,
 					children: t("sponsorsLabel")
-				}), list.map((sponsor) => /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("a", {
+				}), list.map((sponsor) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)("a", {
 					className: Market_module_css_default.sponsorItem,
 					href: sponsor.url,
 					target: "_blank",
 					rel: "noreferrer sponsored",
 					title: `${sponsor.name[lang]} · ${sponsor.scope[lang]}`,
-					children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("img", {
+					children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("img", {
 						className: Market_module_css_default.sponsorLogo,
 						src: sponsor.logo,
-						alt: "",
+						alt: sponsor.name[lang],
 						height: 14
-					}), list.length <= 2 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: sponsor.name[lang] })]
+					})
 				}, sponsor.id))]
 			});
 		}

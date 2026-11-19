@@ -58,7 +58,7 @@ export function sponsorStripHtml(list, lang) {
   const items = list.map(s => {
     const name = zh ? s.name.zh : s.name.en
     const scope = zh ? s.scope.zh : s.scope.en
-    return `<a href="${linkFor(s, 'site')}" rel="sponsored noopener" title="${esc(name)} · ${esc(scope)}"><img src="${zh ? '../' : ''}assets/${logoName(s)}" alt="" loading="lazy"><span>${esc(name)}</span></a>`
+    return `<a href="${linkFor(s, 'site')}" rel="sponsored noopener" title="${esc(name)} · ${esc(scope)}"><img src="${zh ? '../' : ''}assets/${logoName(s)}" alt="${esc(name)}" loading="lazy"></a>`
   }).join('')
   return `<div class="sponsor"><div class="wrap"><span class="sponsorLabel">${zh ? '赞助商' : 'Sponsors'}</span>${items}</div></div>\n`
 }
