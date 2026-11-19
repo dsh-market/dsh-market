@@ -28,10 +28,10 @@ export interface SynonymGroup {
 
 export const SEARCH_SYNONYM_GROUPS: readonly SynonymGroup[] = [
   // Notifications
-  { terms: ['通知', '提醒', '推送', 'notify', 'notification', 'alert', 'reminder', '消息提醒'] },
+  // 推送 (also git push) and alert are left out on purpose: two meanings.
+  { terms: ['通知', 'notify', 'notification', 'notifier', '消息提醒'], broad: ['提醒', 'reminder'] },
   // Image generation
   { terms: ['生图', '画图', '绘图', '作图', '出图', '图片生成', '生成图片', '生成图', '文生图', 'image generation', 'image gen', 'imagegen', 'text2img', 'text to image'] },
-  { terms: ['图片', '图像', 'image', 'picture'] },
   { terms: ['视频', 'video'] },
   // Chat apps
   { terms: ['飞书', 'feishu', 'lark'] },
@@ -39,7 +39,6 @@ export const SEARCH_SYNONYM_GROUPS: readonly SynonymGroup[] = [
   { terms: ['企业微信', '企微', 'wecom'] },
   { terms: ['钉钉', 'dingtalk'] },
   { terms: ['qq', 'qqbot', 'onebot', 'napcat'] },
-  { terms: ['机器人', 'bot'] },
   // Memory
   { terms: ['记忆', '长期记忆', '记忆库', 'memory', 'long term memory'] },
   // Themes
@@ -58,21 +57,21 @@ export const SEARCH_SYNONYM_GROUPS: readonly SynonymGroup[] = [
   { terms: ['浏览器', 'browser'], broad: ['chrome', 'cdp', 'playwright', 'puppeteer', '网页自动化'] },
   { terms: ['mcp', 'model context protocol', '模型上下文协议'] },
   // Models and keys
-  { terms: ['模型接入', '接入模型', '模型供应商', '模型提供商', '自定义模型', 'provider', '供应商', '中转'] },
+  { terms: ['模型接入', '接入模型', '模型供应商', '模型提供商', '自定义模型', 'provider'] },
   { terms: ['api key', 'apikey', '密钥', 'api 密钥'] },
   // Cost and usage
-  { terms: ['费用', '花费', '计费', '账单', 'cost', 'billing', 'spend'] },
+  { terms: ['费用', '花费', '计费', '账单', 'cost', 'billing'] },
   { terms: ['用量', '额度', 'usage', 'quota'] },
   // Context
   { terms: ['上下文', '上下文窗口', 'context window', 'context'], broad: ['上下文压缩', 'context compression', 'compaction'] },
-  { terms: ['压缩', '上下文压缩', 'compaction', 'compress', 'compression', 'context compression'] },
+  { terms: ['上下文压缩', 'context compression', 'compaction'] },
   // Office
   { terms: ['ppt', 'pptx', 'powerpoint', '幻灯片', 'slides', '演示文稿'] },
-  { terms: ['excel', 'xlsx', '表格', 'spreadsheet'] },
+  { terms: ['excel', 'xlsx', 'spreadsheet'] },
   { terms: ['docx', 'word 文档', 'microsoft word'] },
   { terms: ['剪贴板', 'clipboard'] },
   { terms: ['邮件', '邮箱', 'email', 'mail'] },
-  { terms: ['定时', '定时任务', '计划任务', 'cron', 'schedule', 'scheduler'] },
+  { terms: ['定时', '定时任务', '计划任务', 'cron'] },
   // Developer
   { terms: ['git', '版本控制', 'version control'] },
   { terms: ['终端', 'terminal', 'shell', '命令行', 'command line'], broad: ['pty', 'tmux', 'tui'] },

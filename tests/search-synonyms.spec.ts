@@ -12,7 +12,7 @@ const search = (rows: RegistryPlugin[], query: string, sort = 'downloads-desc', 
 
 describe('search synonyms (#611)', () => {
   const rows = [
-    plugin({ name: 'push-only', downloads: 9_000, description: { zh: '任务完成后推送到手机' } }),
+    plugin({ name: 'push-only', downloads: 9_000, description: { zh: '任务完成后提醒我' } }),
     plugin({ name: 'notice-literal', downloads: 10, description: { zh: '任务完成后发送通知' } }),
     plugin({ name: 'english-only', downloads: 5_000, description: { en: 'Desktop notification when a task ends' } }),
     plugin({ name: 'unrelated', downloads: 99_999, description: { zh: '主题皮肤' } }),
@@ -20,7 +20,10 @@ describe('search synonyms (#611)', () => {
 
   it('finds plugins that only use another word for the same intent', () => {
     expect(search(rows, '通知')).toEqual(['notice-literal', 'push-only', 'english-only'])
-    expect(search(rows, '推送')).toContain('notice-literal')
+    // 提醒 is a one-way neighbour: 通知 finds it, but it does not expand back.
+    expect(search(rows, '提醒')).toEqual(['push-only'])
+    // 推送 also means git push, so it is not part of the group.
+    expect(search([plugin({ name: 'g', description: { zh: '推送到仓库' } })], '通知')).toEqual([])
     expect(search(rows, 'notification')).toEqual(expect.arrayContaining(['notice-literal', 'push-only', 'english-only']))
   })
 
@@ -57,7 +60,7 @@ describe('search synonyms (#611)', () => {
 
   it('does not expand one-character or unlisted tokens', () => {
     const list = [
-      plugin({ name: 'a-tool', description: { zh: '推送' } }),
+      plugin({ name: 'a-tool', description: { zh: '提醒' } }),
       plugin({ name: 'other', description: { en: 'notify' } }),
     ]
     expect(search(list, 'a')).toEqual(['a-tool'])
@@ -76,7 +79,7 @@ describe('search synonyms (#611)', () => {
     ]
     expect(search(list, 'image gen').sort()).toEqual(['gen-a', 'gen-b'])
     // Every typed word must be satisfied in the same field.
-    const mixed = [plugin({ name: 'm', description: { zh: '飞书推送' } }), plugin({ name: 'n', description: { zh: '飞书' } })]
+    const mixed = [plugin({ name: 'm', description: { zh: '飞书提醒' } }), plugin({ name: 'n', description: { zh: '飞书' } })]
     expect(search(mixed, 'lark 通知')).toEqual(['m'])
   })
 
@@ -97,26 +100,18 @@ describe('relevance tie-breaks (#611)', () => {
     expect(search(list, 'git')).toEqual(['whole', 'buried'])
   })
 
-  it('ranks a hit in several kinds of field above a hit in one', () => {
+  it('lets the selected sort decide between equal tiers; repeating the word does not help', () => {
     const list = [
-      plugin({ name: 'one-field', downloads: 100_000, owner: 'zed', description: { en: 'Search for things' } }),
-      plugin({ name: 'dsh-search', downloads: 10, owner: 'zed', description: { en: 'Search for things' } }),
+      plugin({ name: 'popular', downloads: 100_000, description: { en: 'Has a timer somewhere' } }),
+      plugin({ name: 'stuffed', downloads: 10, description: { en: 'Timer for timer timer fans' } }),
     ]
-    expect(search(list, 'search')).toEqual(['dsh-search', 'one-field'])
-  })
-
-  it('ranks a description that says it more than once above one that says it once', () => {
-    const list = [
-      plugin({ name: 'once', downloads: 100_000, description: { en: 'Has a timer somewhere' } }),
-      plugin({ name: 'twice', downloads: 10, description: { en: 'Timer for timer fans' } }),
-    ]
-    expect(search(list, 'timer')).toEqual(['twice', 'once'])
+    expect(search(list, 'timer')).toEqual(['popular', 'stuffed'])
   })
 
   it('never lets a tie-break lift a hit into a higher tier', () => {
     const list = [
       // Phrase hit with every bonus vs a plain exact-field hit.
-      plugin({ name: 'phrase', description: { en: 'git git git and more' }, owner: 'git', category: 'git' }),
+      plugin({ name: 'phrase', description: { en: 'a git hook' }, owner: 'git' }),
       plugin({ name: 'exact', description: { en: 'git' } }),
     ]
     expect(search(list, 'git', 'x', 'en')[0]).toBe('phrase')

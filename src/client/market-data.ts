@@ -754,11 +754,10 @@ const WEIGHT_CATEGORY = 180
  * the user picked (#815: `computer-use-vision` with 355 downloads above
  * `dsh-computer-use` with 3.6k, under "downloads").
  *
- * Within a tier, two small tie-breakers (together under 40, so they never
- * lift a hit into the next tier): the query as a whole word beats the query
- * buried in a longer word ("git" in "digital"), and a field that says it more
- * than once beats one that says it once. Without them a few hundred
- * description hits shared one score and fell back to download order.
+ * Within a tier, one small tie-breaker (16, so it never lifts a hit into the
+ * next tier): the query as a whole word beats the query buried in a longer
+ * word ("git" in "digital"). Counting repeated mentions was tried and
+ * dropped: it rewards keyword stuffing over popularity.
  */
 function fieldRelevance(
   plugin: RegistryPlugin,
@@ -773,10 +772,7 @@ function fieldRelevance(
   if (text === query) return weight + 300
   const padded = ` ${text} `
   const wholeWord = tokens.every(token => !hanScript.test(token) && padded.includes(` ${token} `))
-  const first = tokens[0] ?? ''
-  const repeats = first === '' ? 0 : Math.min(2, text.split(first).length - 2)
-  const bonus = (wholeWord ? 16 : 0) + repeats * 4
-  return weight + (text.includes(query) ? 200 : 150) + bonus
+  return weight + (text.includes(query) ? 200 : 150) + (wholeWord ? 16 : 0)
 }
 
 /**
@@ -799,9 +795,7 @@ function synonymFieldRelevance(
 
 /**
  * Search ranking is field-aware rather than a popularity-only filter:
- * package identities outrank owners, descriptions, and categories. A hit that
- * appears in several kinds of field (name and description, say) ranks above
- * one that appears in a single field. Words found only through the synonym
+ * package identities outrank owners, descriptions, and categories. Words found only through the synonym
  * table (通知 -> 推送) rank below every literal hit. The selected
  * popularity/date sort remains the tie-breaker between equally relevant
  * entries.
@@ -841,8 +835,7 @@ function pluginRelevance(
   ]
   const literal = Math.max(...kinds)
   if (literal > 0) {
-    // +5 per extra kind of field that also matches (max +15).
-    return literal + (kinds.filter(score => score > 0).length - 1) * 5
+    return literal
   }
 
   if (!units.some(unit => unit.alts.length > 0)) return 0

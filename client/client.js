@@ -3005,16 +3005,16 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		//#endregion
 		//#region src/client/search-synonyms.ts
 		const SEARCH_SYNONYM_GROUPS = [
-			{ terms: [
-				"通知",
-				"提醒",
-				"推送",
-				"notify",
-				"notification",
-				"alert",
-				"reminder",
-				"消息提醒"
-			] },
+			{
+				terms: [
+					"通知",
+					"notify",
+					"notification",
+					"notifier",
+					"消息提醒"
+				],
+				broad: ["提醒", "reminder"]
+			},
 			{ terms: [
 				"生图",
 				"画图",
@@ -3030,12 +3030,6 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				"imagegen",
 				"text2img",
 				"text to image"
-			] },
-			{ terms: [
-				"图片",
-				"图像",
-				"image",
-				"picture"
 			] },
 			{ terms: ["视频", "video"] },
 			{ terms: [
@@ -3060,7 +3054,6 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				"onebot",
 				"napcat"
 			] },
-			{ terms: ["机器人", "bot"] },
 			{ terms: [
 				"记忆",
 				"长期记忆",
@@ -3145,9 +3138,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				"模型供应商",
 				"模型提供商",
 				"自定义模型",
-				"provider",
-				"供应商",
-				"中转"
+				"provider"
 			] },
 			{ terms: [
 				"api key",
@@ -3161,8 +3152,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				"计费",
 				"账单",
 				"cost",
-				"billing",
-				"spend"
+				"billing"
 			] },
 			{ terms: [
 				"用量",
@@ -3184,12 +3174,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				]
 			},
 			{ terms: [
-				"压缩",
 				"上下文压缩",
-				"compaction",
-				"compress",
-				"compression",
-				"context compression"
+				"context compression",
+				"compaction"
 			] },
 			{ terms: [
 				"ppt",
@@ -3202,7 +3189,6 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			{ terms: [
 				"excel",
 				"xlsx",
-				"表格",
 				"spreadsheet"
 			] },
 			{ terms: [
@@ -3221,9 +3207,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				"定时",
 				"定时任务",
 				"计划任务",
-				"cron",
-				"schedule",
-				"scheduler"
+				"cron"
 			] },
 			{ terms: [
 				"git",
@@ -3697,11 +3681,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		* the user picked (#815: `computer-use-vision` with 355 downloads above
 		* `dsh-computer-use` with 3.6k, under "downloads").
 		*
-		* Within a tier, two small tie-breakers (together under 40, so they never
-		* lift a hit into the next tier): the query as a whole word beats the query
-		* buried in a longer word ("git" in "digital"), and a field that says it more
-		* than once beats one that says it once. Without them a few hundred
-		* description hits shared one score and fell back to download order.
+		* Within a tier, one small tie-breaker (16, so it never lifts a hit into the
+		* next tier): the query as a whole word beats the query buried in a longer
+		* word ("git" in "digital"). Counting repeated mentions was tried and
+		* dropped: it rewards keyword stuffing over popularity.
 		*/
 		function fieldRelevance(plugin, value, query, tokens, weight) {
 			if (!value) return 0;
@@ -3710,10 +3693,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			if (text === query) return weight + 300;
 			const padded = ` ${text} `;
 			const wholeWord = tokens.every((token) => !hanScript.test(token) && padded.includes(` ${token} `));
-			const first = tokens[0] ?? "";
-			const repeats = first === "" ? 0 : Math.min(2, text.split(first).length - 2);
-			const bonus = (wholeWord ? 16 : 0) + repeats * 4;
-			return weight + (text.includes(query) ? 200 : 150) + bonus;
+			return weight + (text.includes(query) ? 200 : 150) + (wholeWord ? 16 : 0);
 		}
 		/**
 		* Score for a field that only matches through synonyms: every typed unit is
@@ -3728,9 +3708,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		}
 		/**
 		* Search ranking is field-aware rather than a popularity-only filter:
-		* package identities outrank owners, descriptions, and categories. A hit that
-		* appears in several kinds of field (name and description, say) ranks above
-		* one that appears in a single field. Words found only through the synonym
+		* package identities outrank owners, descriptions, and categories. Words found only through the synonym
 		* table (通知 -> 推送) rank below every literal hit. The selected
 		* popularity/date sort remains the tie-breaker between equally relevant
 		* entries.
@@ -3750,7 +3728,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				best([...categoryIds.map((value) => fieldRelevance(plugin, value, query, tokens, WEIGHT_CATEGORY)), ...categoryLabels.map((value) => fieldRelevance(plugin, value, query, tokens, WEIGHT_CATEGORY))])
 			];
 			const literal = Math.max(...kinds);
-			if (literal > 0) return literal + (kinds.filter((score) => score > 0).length - 1) * 5;
+			if (literal > 0) return literal;
 			if (!units.some((unit) => unit.alts.length > 0)) return 0;
 			return best([
 				synonymFieldRelevance(plugin, plugin.name, units, WEIGHT_NAME),
