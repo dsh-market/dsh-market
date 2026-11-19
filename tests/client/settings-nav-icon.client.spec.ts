@@ -137,7 +137,7 @@ describe('settings nav glyph', () => {
 
     // And the section must not have gone back to carrying its own copy of the
     // numbers: a second copy is how the nav entry and the page it opens drift.
-    const section = readFileSync(resolve('src/client/MarketSection.tsx'), 'utf8')
+    const section = readFileSync(resolve('src/client/MarketLogo.tsx'), 'utf8')
     expect(section).toContain('MARK_GRID_BLOCKS')
     expect(section).not.toContain('x="1.96"')
     expect(section).not.toContain('x="10.74"')

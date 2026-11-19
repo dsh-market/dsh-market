@@ -5838,7 +5838,7 @@ describe('catalog card tips match official Discover', () => {
   })
 
   it('asks the host Tooltip to portal out of the card, at the recent-strip delay', () => {
-    const source = readFileSync(resolve('src/client/MarketSection.tsx'), 'utf8')
+    const source = ['MarketSection.tsx', 'MarketCardParts.tsx'].map(name => readFileSync(resolve('src/client', name), 'utf8')).join('\n')
     expect(source).toMatch(/function CardTip/)
     expect(source).toMatch(/const HOVER_TIP_DELAY_MS = 700/)
     expect(source).toMatch(/delayMs=\{HOVER_TIP_DELAY_MS\} portal/)
@@ -9121,7 +9121,7 @@ describe('per-tab search boxes', () => {
   })
 
   it('asks the theme-cover observer for a short root margin so off-screen rows do not prefetch (#1060)', () => {
-    const source = readFileSync(resolve('src/client/MarketSection.tsx'), 'utf8')
+    const source = readFileSync(resolve('src/client/MarketImages.tsx'), 'utf8')
     expect(source).toMatch(/const THEME_COVER_HEIGHT = 320/)
     expect(source).toMatch(/const THEME_COVER_ROOT_MARGIN = '80px'/)
     expect(source).toMatch(/useNearViewport<HTMLButtonElement>\(THEME_COVER_ROOT_MARGIN\)/)
