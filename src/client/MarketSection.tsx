@@ -4,6 +4,7 @@
  * pending-restart bookkeeping in sessionStorage.
  */
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactElement, type ReactNode, type Ref } from 'react'
+import { SPONSORS } from './sponsors.generated.ts'
 import { createPortal } from 'react-dom'
 import {
   Button,
@@ -2183,6 +2184,35 @@ export function resetHostCompatibilityCache(): void {
   cachedInstalledBundles = []
   cachedActivations = {}
   cachedMarketVersion = null
+}
+
+/**
+ * Sponsors sit in the row that already holds the repo link and version, so they
+ * add no height. One sponsor shows its name; several show logos only (the name is
+ * in the tooltip) and never more than three, so the row cannot grow with the list.
+ */
+function SponsorMark({ lang, t }: { lang: 'zh' | 'en'; t: Translate }) {
+  const today = new Date().toISOString().slice(0, 10)
+  const list = SPONSORS.filter(sponsor => sponsor.until === null || sponsor.until >= today).slice(0, 3)
+  if (list.length === 0) return null
+  return (
+    <span className={css.sponsorMark}>
+      <span className={css.sponsorLabel}>{t('sponsorsLabel')}</span>
+      {list.map(sponsor => (
+        <a
+          key={sponsor.id}
+          className={css.sponsorItem}
+          href={sponsor.url}
+          target="_blank"
+          rel="noreferrer sponsored"
+          title={`${sponsor.name[lang]} · ${sponsor.scope[lang]}`}
+        >
+          <img className={css.sponsorLogo} src={sponsor.logo} alt="" height={14} />
+          {list.length <= 2 && <span>{sponsor.name[lang]}</span>}
+        </a>
+      ))}
+    </span>
+  )
 }
 
 /** Discover grid page-size choices — the catalog grows daily, so cap each page. */
@@ -8216,7 +8246,12 @@ export function MarketSection(props: MarketSectionProps) {
             className={(tab === 'backup' || tab === 'diagnostics') ? `${css.tab} ${css.on}` : css.tab}
             onClick={() => { if (tab !== 'backup' && tab !== 'diagnostics') setTab('backup') }}
           >{t('tabAdvanced')}</button>
-          <span className={css.grow} />
+          {/* Sponsors live in the spacer, not beside it: the spacer only gets the
+              width the tabs and actions leave over, so the mark can never push a
+              button onto a second line. When it does not fit it drops out whole. */}
+          <span className={surface === 'plugins' ? `${css.grow} ${css.sponsorSlot}` : css.grow}>
+            {surface === 'plugins' && <><span className={css.sponsorWrapFloor} /><SponsorMark lang={lang} t={t} /></>}
+          </span>
           {/* The host page already names this tab, so these sit here instead
               of a second title row. Settings and the sidebar keep them in
               the heading. Export stays reachable on this surface — install

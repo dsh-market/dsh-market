@@ -19,6 +19,21 @@ The plugin market inside DeepSeek Harness. On dsh 0.2.1+ it is a tab on the **Pl
 
 One-click themes: install, switch live, no restart.
 
+<!-- sponsors:start -->
+## Sponsors
+
+<table>
+<tr>
+<td width="180" align="center"><a href="https://www.qiniu.com/ai/free-models/conatus-2026?utm_source=dsh-market&utm_medium=oss&utm_campaign=comatus_202611&utm_content=readme"><img src="assets/partners/qiniu.png" alt="Qiniu Cloud" width="150"></a></td>
+<td>Thanks to <strong>Qiniu Cloud</strong> for sponsoring this project!<br>Qiniu Cloud (02567.HK) runs an enterprise MaaS platform: one place to call 150+ leading models from around the world, compatible with the major model vendors' protocols, covering text, image, audio, video and file processing. It serves more than 1.8 million enterprise developers. <strong>New enterprise users get 20 million tokens free. Year-end offer: new users can <a href="https://www.qiniu.com/ai/free-models/conatus-2026?utm_source=dsh-market&utm_medium=oss&utm_campaign=comatus_202611&utm_content=readme">get up to 1 billion free tokens a day</a>.</strong></td>
+</tr>
+<tr>
+<td width="180" align="center"><a href="https://api.fenno.ai/?utm_source=dsh-market&utm_medium=oss&utm_campaign=fenno_202611&utm_content=readme"><img src="assets/partners/fenno.png" alt="Fenno.ai" width="150"></a></td>
+<td>Thanks to <strong>Fenno.ai</strong> for sponsoring this project!<br>Fenno.ai is an API relay service built for coding, best known for its Codex relay. It puts GPT, Claude, Grok and other coding models behind one API key, speaks both the OpenAI and Anthropic protocols, and plugs straight into Codex, Claude Code, Cline, OpenCode and other popular coding tools. Company-to-company billing and invoicing are available for both mainland China and overseas entities. <strong>New users <a href="https://api.fenno.ai/?utm_source=dsh-market&utm_medium=oss&utm_campaign=fenno_202611&utm_content=readme">get $50 of credit for $1.99</a>; invite friends and earn up to 20% back.</strong></td>
+</tr>
+</table>
+<!-- sponsors:end -->
+
 ## Install
 
 - **Official DSH Desktop:** Open **Settings → Plugins** in the app, search for

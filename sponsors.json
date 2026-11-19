@@ -1,0 +1,32 @@
+[
+  {
+    "id": "qiniu",
+    "tier": "title",
+    "name": { "zh": "七牛云", "en": "Qiniu Cloud", "ja": "七牛云 (Qiniu Cloud)" },
+    "scope": { "zh": "企业级 MaaS 平台", "en": "Enterprise MaaS platform", "ja": "エンタープライズ MaaS プラットフォーム" },
+    "url": "https://www.qiniu.com/ai/free-models/conatus-2026?utm_source=dsh-market&utm_medium=oss&utm_campaign=comatus_202611&utm_content=readme",
+    "logo": "assets/partners/qiniu.png",
+    "mark": "assets/partners/qiniu-mark.png",
+    "site": "site/assets/qiniu.png",
+    "readme": {
+      "zh": "感谢 <strong>七牛云</strong> 赞助本项目！<br>七牛云（02567.HK）旗下企业级 MaaS 平台，一站式调用全球 150+ 主流模型，兼容全球主流模型厂商协议，覆盖文本、图像、音频、视频、文件处理等全模态处理能力，服务超过 180 万企业级开发者用户。<strong>企业新用户免费领 2000 万 token；年终回馈，新用户<a href=\"{url}\">最高免费享 10 亿 Token/日</a></strong>",
+      "en": "Thanks to <strong>Qiniu Cloud</strong> for sponsoring this project!<br>Qiniu Cloud (02567.HK) runs an enterprise MaaS platform: one place to call 150+ leading models from around the world, compatible with the major model vendors' protocols, covering text, image, audio, video and file processing. It serves more than 1.8 million enterprise developers. <strong>New enterprise users get 20 million tokens free. Year-end offer: new users can <a href=\"{url}\">get up to 1 billion free tokens a day</a>.</strong>"
+    },
+    "until": null
+  },
+  {
+    "id": "fenno",
+    "tier": "title",
+    "name": { "zh": "Fenno.ai", "en": "Fenno.ai", "ja": "Fenno.ai" },
+    "scope": { "zh": "编程模型 API 中转", "en": "API relay for coding models", "ja": "コーディング向けモデルの API 中継" },
+    "url": "https://api.fenno.ai/?utm_source=dsh-market&utm_medium=oss&utm_campaign=fenno_202611&utm_content=readme",
+    "logo": "assets/partners/fenno.png",
+    "mark": "assets/partners/fenno-mark.png",
+    "site": "site/assets/fenno.png",
+    "readme": {
+      "zh": "感谢 <strong>Fenno.ai</strong> 赞助了本项目！<br>Fenno.ai 是面向编程场景的 API 中转服务商，主营 Codex 中转，把 GPT、Claude、Grok 等编程模型统一到一个 API Key 下，兼容 OpenAI 与 Anthropic 双协议，可直连 Codex、Claude Code、Cline、OpenCode 等主流编程工具，支持国内及海外主体公对公结算与开票。<strong>新用户<a href=\"{url}\">1.99 美元体验 50 美元额度</a>；邀请好友最高 20% 返佣，多邀多得。</strong>",
+      "en": "Thanks to <strong>Fenno.ai</strong> for sponsoring this project!<br>Fenno.ai is an API relay service built for coding, best known for its Codex relay. It puts GPT, Claude, Grok and other coding models behind one API key, speaks both the OpenAI and Anthropic protocols, and plugs straight into Codex, Claude Code, Cline, OpenCode and other popular coding tools. Company-to-company billing and invoicing are available for both mainland China and overseas entities. <strong>New users <a href=\"{url}\">get $50 of credit for $1.99</a>; invite friends and earn up to 20% back.</strong>"
+    },
+    "until": null
+  }
+]

@@ -19,6 +19,21 @@
 
 主题一键换：装完即生效，点一下切换，不用重启。
 
+<!-- sponsors:start -->
+## 赞助商
+
+<table>
+<tr>
+<td width="180" align="center"><a href="https://www.qiniu.com/ai/free-models/conatus-2026?utm_source=dsh-market&utm_medium=oss&utm_campaign=comatus_202611&utm_content=readme"><img src="assets/partners/qiniu.png" alt="七牛云" width="150"></a></td>
+<td>感谢 <strong>七牛云</strong> 赞助本项目！<br>七牛云（02567.HK）旗下企业级 MaaS 平台，一站式调用全球 150+ 主流模型，兼容全球主流模型厂商协议，覆盖文本、图像、音频、视频、文件处理等全模态处理能力，服务超过 180 万企业级开发者用户。<strong>企业新用户免费领 2000 万 token；年终回馈，新用户<a href="https://www.qiniu.com/ai/free-models/conatus-2026?utm_source=dsh-market&utm_medium=oss&utm_campaign=comatus_202611&utm_content=readme">最高免费享 10 亿 Token/日</a></strong></td>
+</tr>
+<tr>
+<td width="180" align="center"><a href="https://api.fenno.ai/?utm_source=dsh-market&utm_medium=oss&utm_campaign=fenno_202611&utm_content=readme"><img src="assets/partners/fenno.png" alt="Fenno.ai" width="150"></a></td>
+<td>感谢 <strong>Fenno.ai</strong> 赞助了本项目！<br>Fenno.ai 是面向编程场景的 API 中转服务商，主营 Codex 中转，把 GPT、Claude、Grok 等编程模型统一到一个 API Key 下，兼容 OpenAI 与 Anthropic 双协议，可直连 Codex、Claude Code、Cline、OpenCode 等主流编程工具，支持国内及海外主体公对公结算与开票。<strong>新用户<a href="https://api.fenno.ai/?utm_source=dsh-market&utm_medium=oss&utm_campaign=fenno_202611&utm_content=readme">1.99 美元体验 50 美元额度</a>；邀请好友最高 20% 返佣，多邀多得。</strong></td>
+</tr>
+</table>
+<!-- sponsors:end -->
+
 ## 安装
 
 - **官方 DSH Desktop 桌面端：** 在应用内打开 **设置 → 插件**，搜索

@@ -14,6 +14,8 @@
  * Usage: node scripts/build-site.mjs
  */
 import fs from 'node:fs'
+import { loadSponsors, sponsorStripHtml } from './sponsors.mjs'
+const sponsors = loadSponsors()
 import path from 'node:path'
 import LOCALES from '../site/locales.mjs'
 import { GUIDES, UI, CAP_NAMES, guideBody, reportBody } from './site-content.mjs'
@@ -244,6 +246,7 @@ for (const loc of LOCALES) {
       .replaceAll('__BROWSE__', () => loc.browsePath)
       .replaceAll('__HOME_CSS__', () => (landing ? homeCss() : ''))
       .replaceAll('__HOME_CATALOG__', () => (landing ? homeCatalog(loc) : ''))
+      .replaceAll('__SPONSORS__', () => (landing ? sponsorStripHtml(sponsors, loc.index.includes('.zh.') ? 'zh' : 'en') : ''))
     page = applyStrings(page, loc)
     if (urlPath === '/') fs.writeFileSync(`${OUT}/index.html`, page)
     else write(urlPath, page)
