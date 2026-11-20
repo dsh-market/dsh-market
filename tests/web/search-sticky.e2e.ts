@@ -202,8 +202,10 @@ describe.skipIf(!dshAvailable())('web e2e: search clear controls and sticky head
         - Math.max(box!.x, current!.x)).toBeGreaterThan(0)
       await button.click({ trial: true })
     }
-    const tasks = tabs.getByRole('button', { name: /^(任务|Tasks)$/ })
-    await tasks.click()
+    // Tasks has no button of its own while there is nothing to show; it opens
+    // from the header menu, which pops out of the narrow strip.
+    await tabs.getByRole('button', { name: /^(更多选项|More options)$/ }).click()
+    await page.getByRole('menuitem', { name: /^(任务|Tasks)$/ }).click()
     const panel = page.locator('[data-dsh-market-root] [class$="_opPanel"]')
     await panel.waitFor()
     expect(await panel.evaluate(el => {

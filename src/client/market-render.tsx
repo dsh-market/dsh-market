@@ -18,24 +18,22 @@ import {
 } from './market-data.ts'
 import css from './Market.module.css'
 import { HostCheckbox, HostSwitch, HostTag } from './optional-primitives.ts'
-import { IconDownloadOutline16, IconLoadingOutline16, IconWarningOutline16 } from './icons.ts'
+import { IconLoadingOutline16, IconWarningOutline16 } from './icons.ts'
 import { recordForUrl } from './operations.ts'
 import { isLocalDev, isPluginUpdatable } from './market-helpers.ts'
 import { hostRequirementChip, phaseLabel } from './MarketStatusParts.tsx'
 import {
   aheadFacts,
   AheadMark,
+  CardStats,
   CardTip,
-  CatalogVersionMark,
   ConfirmCapabilityIcon,
   ConfirmFold,
-  DownloadCount,
   FavoriteButton,
   groupCapabilities,
   HOVER_TIP_DELAY_MS,
   redLineIsUrgent,
   redLineNamesAddress,
-  StarCount,
   UNCOMMON_CAPABILITIES,
 } from './MarketCardParts.tsx'
 import { CardShot, OwnerAvatar, ThemeCover } from './MarketImages.tsx'
@@ -52,7 +50,7 @@ type MarketRenderIn = { props: MarketSectionProps }
   & Pick<MarketStateCtx,
     'activations' | 'backupRestored' | 'bodyRef' | 'bootId' | 'busyUrl' | 'cancelling' | 'capsOpen' |
     'catalogVersionTip' | 'catsOpen' | 'catsSentinel' | 'catsStuck' | 'catsWrapRef' |
-    'clearingStale' | 'data' | 'doExportLog' | 'doneUrls' | 'envReady' | 'exportState' |
+    'clearingStale' | 'data' | 'doneUrls' | 'envReady' |
     'groupOrder' | 'groups' | 'hostCompatibility' | 'hotNames' | 'hotUrls' | 'installTimes' |
     'installed' | 'installedFiles' | 'installedMenuName' | 'installedSort' | 'installedView' |
     'lang' | 'localDescriptions' | 'notes' | 'openInHost' | 'openLightbox' | 'openOperations' |
@@ -75,7 +73,7 @@ type MarketRenderIn = { props: MarketSectionProps }
   & Pick<MarketGroupsBackupCtx,
     'dependencyOnlyNames' | 'doGroupAction' | 'doToggle' | 'doUpdateAll' | 'ignoreUpdateNotices' |
     'ignoredUpdateSet' | 'quietUpdateSet' | 'reminderBatchUpdatableNames' | 'reminderUpdatableNames' |
-    'reminderUpdateNames' | 'selfName'>
+    'selfName'>
 
 /** derived display values and the card/row render helpers. */
 export function useMarketRender(c: MarketRenderIn) {
@@ -83,14 +81,14 @@ export function useMarketRender(c: MarketRenderIn) {
     activations, askRestore, backupRestored, blockToggleName, blockedNameSet, bodyRef, bootId,
     busyUrl, cancelling, capsOpen, catalogInstalled, catalogVersionTip, catsOpen, catsSentinel,
     catsStuck, catsWrapRef, clearStaleFavorites, clearingStale, data, dependencyOnlyNames, doCancel,
-    doExportLog, doGroupAction, doToggle, doUpdate, doUpdateAll, doUseSkin, doneUrls,
-    effectiveDisabledSet, envReady, exportState, favoriteStale, favoriteUrlSet, groupOrder, groups,
+    doGroupAction, doToggle, doUpdate, doUpdateAll, doUseSkin, doneUrls,
+    effectiveDisabledSet, envReady, favoriteStale, favoriteUrlSet, groupOrder, groups,
     hostCompatibility, hotNames, hotUrls, ignoreUpdateNotices, ignoredUpdateSet, installTimes,
     installed, installedFiles, installedMenuName, installedSort, installedView, lang,
     localDescriptions, notes, openInHost, openLightbox, openOperations, pendingBackup,
     pendingDependencies, pluginMenuUrl, progressCurrent, progressDone, progressLine, progressPct,
     progressPhase, props, qInstalled, quietUpdateSet, records, refreshNames,
-    reminderBatchUpdatableNames, reminderUpdatableNames, reminderUpdateNames, removedCount,
+    reminderBatchUpdatableNames, reminderUpdatableNames, removedCount,
     removingName, repoHints, repoIdentities, restartNames, restartNoticeDismissed, selfName,
     setAddPanel, setCapsOpen, setCatsStuck, setCommentsFor, setConfirming, setDeletingGroup,
     setGroupMenuFor, setInstallError, setInstalledMenuName, setPluginMenuUrl, setRemoveConfirm,
@@ -642,18 +640,22 @@ export function useMarketRender(c: MarketRenderIn) {
               to be just the plugin — and lets two authors ship a plugin of
               the same name without either card needing a qualifier. */}
           <div style={{ minWidth: 0 }}>
-            <a className={`${css.nm} ${css.nmLink}`} href={p.url} target="_blank" rel="noreferrer" title={p.name} aria-label={`${p.name} — ${t('repoLink')}`}>
-              {pluginName(p.name, p.npm)}
-              <GithubRepoMark className={css.repoMark} />
+            {/* The name opens the detail dialog, the same one Install opens;
+                the GitHub mark beside it is still the way to the source. */}
+            <div className={`${css.nm} ${css.nmRow}`}>
+              <button type="button" className={css.nmButton} title={p.name} onClick={() => setConfirming(p)}>
+                {pluginName(p.name, p.npm)}
+              </button>
+              <a className={css.repoMarkLink} href={p.url} target="_blank" rel="noreferrer" aria-label={`${p.name} — ${t('repoLink')}`} title={t('repoLink')}>
+                <GithubRepoMark className={css.repoMark} />
+              </a>
               {p.deprecated === true && <span className={css.depBadge}>{t('deprecatedBadge')}</span>}
-            </a>
+            </div>
             <div className={css.byline}>
               <OwnerAvatar name={p.name} owner={p.owner || ''} icon={p.icon ?? undefined} />
               <span className={css.owner} title={p.owner}>{p.owner}</span>
-              <CatalogVersionMark version={p.version} tip={catalogVersionTip} />
-              <DownloadCount plugin={p} t={t} />
-              <StarCount plugin={p} t={t} />
             </div>
+            <CardStats plugin={p} t={t} versionTip={catalogVersionTip} />
           </div>
           {/* Top right, at its natural size: in the footer it needed a row of
               its own once the cards went two-up, which cost every card that
@@ -663,7 +665,7 @@ export function useMarketRender(c: MarketRenderIn) {
             {installAction(p)}
           </div>
         </div>
-        <CardDesc text={desc} t={t} />
+        <CardDesc text={desc} t={t} onOpen={() => setConfirming(p)} />
         <CardShot plugin={p} onOpen={openLightbox} />
         {p.deprecated === true && (
           <div className={css.deprecate}>
@@ -765,10 +767,8 @@ export function useMarketRender(c: MarketRenderIn) {
               <div className={css.byline}>
                 <OwnerAvatar name={p.name} owner={p.owner || ''} icon={p.icon ?? undefined} />
                 <span className={css.owner} title={p.owner}>{p.owner}</span>
-                <CatalogVersionMark version={p.version} tip={catalogVersionTip} />
-                <DownloadCount plugin={p} t={t} />
-                <StarCount plugin={p} t={t} />
               </div>
+              <CardStats plugin={p} t={t} versionTip={catalogVersionTip} />
             </div>
             {p.deprecated === true && <span className={css.depBadge}>{t('deprecatedBadge')}</span>}
             {mounted && <span className={css.themeStatus}>{t('themeActive')}</span>}
@@ -1115,24 +1115,7 @@ export function useMarketRender(c: MarketRenderIn) {
           onClick={() => { setTab('installed'); doUpdateAll() }}
         >{updatingAll ? t('updating') : t('updateAll') + ' (' + reminderBatchUpdatableNames.length + ')'}</Button>
       )}
-      {bootId !== null && reminderUpdateNames.length > 0 && (
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => ignoreUpdateNotices(reminderUpdateNames)}
-        >{t('ignoreAllUpdateNotices')}</Button>
-      )}
     </>
-  )
-  const exportLogButton = (
-    <Button
-      variant="ghost"
-      size="sm"
-      className={css.exportLogBtn}
-      icon={<IconDownloadOutline16 size={14} />}
-      disabled={exportState === 'busy'}
-      onClick={doExportLog}
-    >{exportState === 'busy' ? t('exportingLog') : t('exportLog')}</Button>
   )
   // The header banner means "the check did not complete". One row that can never
   // answer (a private repo probed anonymously) keeps its own per-row hint; it must
@@ -1141,7 +1124,7 @@ export function useMarketRender(c: MarketRenderIn) {
     || (updateCheck.failed.size > 0 && updateCheck.failed.size >= Object.keys(updateCheck.updates).length)
   return {
     anyThemePlugins, applyGroupTheme, authoredDescription, batchActions, capabilityDetail,
-    categories, catsExpanded, eligibleMarketVersion, exportLogButton, groupQuery, hasUpdates,
+    categories, catsExpanded, eligibleMarketVersion, groupQuery, hasUpdates,
     heldMarketVersion, installedBlurb, installedThemeNames, labelledCheckbox, matchesInstalledQuery,
     missingRestoreCount, onOffSwitch, openThemePanel, orderedInstalledEntries, pendingRefreshNames,
     pendingRestart, pluginCard, progressText, recentTile, renderInstalledBlockMenu,

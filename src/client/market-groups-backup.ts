@@ -475,11 +475,6 @@ export function useMarketGroupsBackup(c: MarketGroupsBackupIn) {
   )
   const reminderUpdatableNames = updatableNames.filter(name => !quietUpdateSet.has(name) && !installedBlocked(name))
   const reminderBatchUpdatableNames = batchUpdatableNames.filter(name => !quietUpdateSet.has(name) && !installedBlocked(name))
-  const selfUpdateAvailable = updates[selfName]?.updateAvailable === true && !updatedNames.includes(selfName)
-  const reminderUpdateNames = [
-    ...(selfUpdateAvailable ? [selfName] : []),
-    ...updatableNames,
-  ].filter(name => !quietUpdateSet.has(name) && !installedBlocked(name))
   // The market manages itself from its own settings card (Settings → Plugins
   // → Plugin configuration), not as a row here — listing it in both places
   // read as two different controls for the same thing.
@@ -816,7 +811,7 @@ export function useMarketGroupsBackup(c: MarketGroupsBackupIn) {
     doRestore, doToggle, doUpdateAll, exportAllSelected, exportOptions, ignoreUpdateNotices,
     ignoredUpdateSet, installedOtherCount, openAddPanel, openExportPicker, previewBackup,
     quietUpdateSet, recordsRef, reminderBatchUpdatableNames, reminderUpdatableNames,
-    reminderUpdateNames, runGist, runQueuedNow, runWebdav, selfName, specKind, toggleCollapsedGroup,
+    runGist, runQueuedNow, runWebdav, selfName, specKind, toggleCollapsedGroup,
     unignoreUpdateNotice,
   } as const
 }

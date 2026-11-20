@@ -141,11 +141,9 @@ describe('labelled checkboxes on a host that has Checkbox', () => {
     }))
     render(<MarketSection {...props()} />)
     await screen.findByText('dsh-tagged')
-    const advanced = screen.getAllByRole('button', { name: /^(Advanced|高级)$/u })
-      .find(button => /(^|_)tab(_|$)/u.test(button.className))
-    expect(advanced, 'no Advanced tab').toBeTruthy()
-    const { fireEvent } = await import('@testing-library/react')
-    fireEvent.click(advanced!)
+    // Advanced is reached from the header menu, not a tab-row button.
+    fireEvent.click(screen.getByRole('button', { name: en.headMore }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: en.tabAdvanced }))
     const boxes = await screen.findAllByText(en.autoBackup)
     expect(boxes.length).toBeGreaterThan(0)
     const hosts = [...document.querySelectorAll('[data-host-checkbox]')]

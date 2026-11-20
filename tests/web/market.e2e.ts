@@ -35,7 +35,12 @@ async function pinHostFilterOff(page: Page): Promise<void> {
   })
 }
 
-/** If a prior run left the filter on, wait until the note stops saying "checking". */
+/**
+ * If a prior run left the filter on, wait until the note stops saying
+ * "checking". (The note now appears only once the page is fully checked, so
+ * this returns at once; it stays as the single place that would catch a
+ * regression back to a half-finished count.)
+ */
 async function waitHostFilterQuiet(page: Page): Promise<void> {
   await page.waitForFunction(() => {
     const note = (globalThis as any).document.querySelector('[class*="hostFilterNote"]')
@@ -143,7 +148,7 @@ describe.skipIf(!HAS_DSH)('web e2e: plugin market', () => {
   it('search and category filter the grid', async () => {
     await waitHostFilterQuiet(page)
     const search = page.getByPlaceholder(/搜索插件|Search plugins/)
-    const gridNames = () => page.locator('[class*="masonryCol"] [class*="nm"]').allTextContents()
+    const gridNames = () => page.locator('[class*="masonryCol"] [class*="nmButton"]').allTextContents()
 
     const beforeSearch = await gridNames()
     await search.fill('memory')
@@ -203,7 +208,7 @@ describe.skipIf(!HAS_DSH)('web e2e: plugin market', () => {
     await page.getByRole('button', { name: /^(发现|Discover)$/ }).click()
     await waitHostFilterQuiet(page)
     const search = page.getByPlaceholder(/搜索插件|Search plugins/)
-    const gridNames = () => page.locator('[class*="masonryCol"] [class*="nm"]').allTextContents()
+    const gridNames = () => page.locator('[class*="masonryCol"] [class*="nmButton"]').allTextContents()
 
     for (const [compact, spaced] of [['MCP管理', 'MCP 管理'], ['管理MCP', '管理 MCP']]) {
       await search.fill(compact)

@@ -56,6 +56,8 @@ export type DescribePlugin = (name: string) => {
 }
 
 export interface OperationsPanelProps {
+  /** Render nothing while there is nothing to show; another control opens it. */
+  hideWhenQuiet?: boolean
   t: Translate
   /** Active UI language — used to pick one half of bilingual wire errors. */
   lang: 'zh' | 'en'
@@ -320,6 +322,8 @@ export function OperationsPanel(props: OperationsPanelProps) {
   // Always render inside .opWrap so the tab-row bottom margin is stable —
   // the old idle-only <button> skipped the wrapper and jumped on first open.
   const quiet = records.length === 0 && !showStartupRepairBadge && !needsCheckoutRecovery && !open
+
+  if (props.hideWhenQuiet === true && quiet) return null
 
   return (
     <div className={css.opWrap} ref={wrapRef}>

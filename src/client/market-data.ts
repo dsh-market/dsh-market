@@ -1974,6 +1974,11 @@ export function blockAliases(plugin: Pick<RegistryPlugin, 'name' | 'npm'>, insta
  */
 export function formatCount(n: number): string {
   if (!Number.isFinite(n) || n < 1000) return String(n)
+  // 3742.4k reads as noise; past a million, count in millions.
+  if (n >= 999_950) {
+    const m = Math.round(n / 100_000) / 10
+    return `${Number.isInteger(m) ? m.toFixed(0) : m.toFixed(1)}M`
+  }
   const k = Math.round(n / 100) / 10
   return `${Number.isInteger(k) ? k.toFixed(0) : k.toFixed(1)}k`
 }

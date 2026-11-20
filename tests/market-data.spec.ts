@@ -1026,7 +1026,17 @@ describe('formatCount', () => {
     expect(formatCount(1086)).toBe('1.1k')
     expect(formatCount(11862)).toBe('11.9k')
     expect(formatCount(20006)).toBe('20k')
-    expect(formatCount(999_999)).toBe('1000k')
+    expect(formatCount(999_949)).toBe('999.9k')
+  })
+
+  it('counts in millions once the thousands would round up to 1000k', () => {
+    // 3742.4k reads as noise, and 999,999 used to print as "1000k".
+    expect(formatCount(999_950)).toBe('1M')
+    expect(formatCount(999_999)).toBe('1M')
+    expect(formatCount(1_000_000)).toBe('1M')
+    expect(formatCount(1_250_000)).toBe('1.3M')
+    expect(formatCount(3_742_400)).toBe('3.7M')
+    expect(formatCount(12_000_000)).toBe('12M')
   })
 })
 

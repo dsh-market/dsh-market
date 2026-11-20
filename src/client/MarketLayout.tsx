@@ -105,10 +105,12 @@ function useMediaWide(): boolean {
  * actually overflows the clamp: a two-line description has nothing to
  * "expand", so no button beats a button that does nothing.
  */
-export function CardDesc({ text, t, lines = 5, className, textClassName }: {
+export function CardDesc({ text, t, lines = 5, className, textClassName, onOpen }: {
   text: string
   t: Translate
   lines?: 3 | 5
+  /** When set, the text opens the detail view instead of expanding in place. */
+  onOpen?: () => void
   className?: string
   textClassName?: string
 }) {
@@ -135,14 +137,25 @@ export function CardDesc({ text, t, lines = 5, className, textClassName }: {
   }, [text, clamp])
   return (
     <div className={className}>
-      <div ref={ref} className={expanded ? base : `${base} ${clamp}`}>{text}</div>
-      {canExpand && lines === 3 && (
+      {onOpen !== undefined
+        ? (
+            <div
+              ref={ref}
+              role="button"
+              tabIndex={0}
+              className={`${base} ${clamp} ${css.descOpen}`}
+              onClick={onOpen}
+              onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onOpen() } }}
+            >{text}</div>
+          )
+        : <div ref={ref} className={expanded ? base : `${base} ${clamp}`}>{text}</div>}
+      {onOpen === undefined && canExpand && lines === 3 && (
         <button type="button" className={css.descMore} onClick={() => setExpanded(e => !e)}>
           {expanded ? t('descCollapse') : t('descMore')}
           {expanded ? <IconChevronUpOutline14 size={12} /> : <IconChevronRightOutline14 size={12} />}
         </button>
       )}
-      {canExpand && lines === 5 && (
+      {onOpen === undefined && canExpand && lines === 5 && (
         <button
           type="button"
           className={css.descToggle}

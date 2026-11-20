@@ -68,14 +68,14 @@ type InstalledTabCtx = { props: MarketSectionProps }
     'doGroupToggle' | 'doRemoveMember' | 'doToggle' | 'ignoredUpdateSet' | 'openAddPanel' |
     'toggleCollapsedGroup' | 'unignoreUpdateNotice'>
   & Pick<MarketRenderCtx,
-    'authoredDescription' | 'groupQuery' | 'installedBlurb' | 'installedThemeNames' |
+    'authoredDescription' | 'batchActions' | 'groupQuery' | 'installedBlurb' | 'installedThemeNames' |
     'matchesInstalledQuery' | 'onOffSwitch' | 'openThemePanel' | 'orderedInstalledEntries' |
     'progressText' | 'renderInstalledBlockMenu' | 'ungroupedNames' | 'visibleGroupIds' |
     'visibleUngrouped'>
 
 export function InstalledTab({ c }: { c: InstalledTabCtx }) {
   const {
-    activations, askRestore, askSourceMigration, assignFor, authoredDescription, bootId, busyUrl,
+    activations, askRestore, askSourceMigration, assignFor, authoredDescription, batchActions, bootId, busyUrl,
     cancelCreateGroup, cancelling, catalogInstalled, collapsedGroups, creatingGroup, data,
     deletingGroup, dependencyOnlyNames, doAssign, doCancel, doCreateGroup, doDeleteGroup,
     doGroupToggle, doRemoveMember, doToggle, doUpdate, effectiveDisabledSet, groupMenuFor,
@@ -93,9 +93,14 @@ export function InstalledTab({ c }: { c: InstalledTabCtx }) {
   } = c
   return (
     <>
-      <div className={css.viewBar}>
-        <button type="button" className={installedView === 'list' ? `${css.viewBtn} ${css.viewOn}` : css.viewBtn} onClick={() => setInstalledView('list')}>{t('tabList')}</button>
-        <button type="button" className={installedView === 'groups' ? `${css.viewBtn} ${css.viewOn}` : css.viewBtn} onClick={() => setInstalledView('groups')}>{t('tabGroups')}</button>
+      {/* On the Plugins page the update actions live here, beside the rows
+          they act on, instead of in the tab row on every tab. */}
+      <div className={css.installedTopRow}>
+        <div className={css.viewBar}>
+          <button type="button" className={installedView === 'list' ? `${css.viewBtn} ${css.viewOn}` : css.viewBtn} onClick={() => setInstalledView('list')}>{t('tabList')}</button>
+          <button type="button" className={installedView === 'groups' ? `${css.viewBtn} ${css.viewOn}` : css.viewBtn} onClick={() => setInstalledView('groups')}>{t('tabGroups')}</button>
+        </div>
+        <div className={css.installedBatch}>{batchActions}</div>
       </div>
       <div className={css.tabSearchRow}>
         <SearchInput key="installed" resetToken={installedSearchReset} className={css.tabSearch} placeholder={t('searchPh')} value={qInstalled} onCommit={setQInstalled} t={t} />

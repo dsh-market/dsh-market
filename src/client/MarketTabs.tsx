@@ -3,9 +3,13 @@
  */
 
 import { Button, Input, Menu, Pill, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { useEffect, useRef, useState } from 'react'
+import type { RefObject } from 'react'
 import css from './Market.module.css'
+import { IconCloseOutline16 } from './icons.ts'
 import {
   IconChevronDownOutline14,
+  IconChevronLeftOutline14,
   IconChevronRightOutline14,
   IconChevronUpOutline14,
   IconDownloadOutline16,
@@ -28,6 +32,73 @@ import type { MarketSectionProps } from './market-types.ts'
 
 type MarketGoneNoticeCtx = { props: MarketSectionProps }
   & Pick<MarketStateCtx, 'reconnecting' | 'setReconnectRound' | 't'>
+
+/**
+ * Recently added scrolls sideways, and a thin scrollbar that only shows on
+ * hover (or never, on macOS) does not say so. Two arrows in the section head
+ * do: each one is there only while there is more to see in its direction.
+ */
+function RecentArrows({ rowRef, t }: { rowRef: RefObject<HTMLDivElement | null>; t: (key: 'recentPrev' | 'recentNext') => string }) {
+  const [edges, setEdges] = useState({ left: false, right: false })
+  useEffect(() => {
+    const row = rowRef.current
+    if (row === null) return
+    const measure = () => {
+      const max = row.scrollWidth - row.clientWidth
+      setEdges({ left: row.scrollLeft > 2, right: row.scrollLeft < max - 2 })
+    }
+    measure()
+    row.addEventListener('scroll', measure, { passive: true })
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure)
+    observer?.observe(row)
+    return () => { row.removeEventListener('scroll', measure); observer?.disconnect() }
+  }, [rowRef])
+  if (!edges.left && !edges.right) return null
+  const page = (direction: 1 | -1) => {
+    const row = rowRef.current
+    if (row === null) return
+    row.scrollBy({ left: direction * row.clientWidth * 0.85, behavior: 'smooth' })
+  }
+  return (
+    <span className={css.recentArrows}>
+      <button type="button" className={css.recentArrow} disabled={!edges.left} aria-label={t('recentPrev')} onClick={() => page(-1)}>
+        <IconChevronLeftOutline14 size={14} />
+      </button>
+      <button type="button" className={css.recentArrow} disabled={!edges.right} aria-label={t('recentNext')} onClick={() => page(1)}>
+        <IconChevronRightOutline14 size={14} />
+      </button>
+    </span>
+  )
+}
+
+const HOST_FILTER_NOTE_KEY = 'dshm-host-filter-note-closed'
+
+/**
+ * How many incompatible plugins the compatibility filter hid on this page.
+ * Closing it is remembered: the filter itself stays switchable under Filter,
+ * so the count is never the only way to know it is on.
+ */
+function HostFilterNote({ text, t }: { text: string; t: (key: 'dismissNotice') => string }) {
+  const [closed, setClosed] = useState(() => {
+    try { return localStorage.getItem(HOST_FILTER_NOTE_KEY) === '1' } catch { return false }
+  })
+  if (closed) return null
+  return (
+    <div className={`${css.hostFilterNote} ${css.hostFilterNoteRow}`}>
+      <span>{text}</span>
+      <button
+        type="button"
+        className={css.bannerClose}
+        aria-label={t('dismissNotice')}
+        title={t('dismissNotice')}
+        onClick={() => {
+          setClosed(true)
+          try { localStorage.setItem(HOST_FILTER_NOTE_KEY, '1') } catch { /* storage unavailable */ }
+        }}
+      ><IconCloseOutline16 size={12} /></button>
+    </div>
+  )
+}
 
 export function MarketGoneNotice({ c }: { c: MarketGoneNoticeCtx }) {
   const { reconnecting, setReconnectRound, t } = c
@@ -268,6 +339,7 @@ export function DiscoverTab({ c }: { c: DiscoverTabCtx }) {
     setSortDir, setSortField, setStuckExpanded, setTimeRange, showRecent, sortDir, sortField,
     surface, t, timeRange, toggleRecentCollapsed, totalPages, visibleCats,
   } = c
+  const recentRowRef = useRef<HTMLDivElement | null>(null)
   return (
     loadError !== null || data === null
       ? <CatalogStatus c={c} />
@@ -342,17 +414,17 @@ export function DiscoverTab({ c }: { c: DiscoverTabCtx }) {
                   }}
                 />
                 </div>
-                {compatibleWithHost && typeof hostVersion === 'string' && pageHostPackages.length > 0 && (
-                  <div className={css.hostFilterNote}>
-                    {loadedHostPackages < pageHostPackages.length
-                      ? t('hostFilterLoading')
-                        .replace('{0}', String(loadedHostPackages))
-                        .replace('{1}', String(pageHostPackages.length))
-                      : t(hostUnavailableCount > 0 ? 'hostFilterIncomplete' : 'hostFilterActive')
-                          .replace('{0}', hostVersion)
-                          .replace('{1}', String(hostHiddenCount))
-                          .replace('{2}', String(hostUnavailableCount))}
-                  </div>
+                {/* Quiet unless something is actually hidden or unchecked: a line that
+                    says "hid 0" on every visit trains people to skip it. */}
+                {compatibleWithHost && typeof hostVersion === 'string' && pageHostPackages.length > 0
+                  && loadedHostPackages >= pageHostPackages.length && (hostHiddenCount > 0 || hostUnavailableCount > 0) && (
+                  <HostFilterNote
+                    t={t}
+                    text={t(hostUnavailableCount > 0 ? 'hostFilterIncomplete' : 'hostFilterActive')
+                      .replace('{0}', hostVersion)
+                      .replace('{1}', String(hostHiddenCount))
+                      .replace('{2}', String(hostUnavailableCount))}
+                  />
                 )}
               </div>
               </div>
@@ -374,11 +446,13 @@ export function DiscoverTab({ c }: { c: DiscoverTabCtx }) {
                           {t('recentlyAdded')}
                         </button>
                       </h3>
+                      {!recentCollapsed && <RecentArrows rowRef={recentRowRef} t={t} />}
                       <Button variant="ghost" size="sm" className={css.recentHide} onClick={hideRecent}>{t('recentHide')}</Button>
                     </div>
                     {/* #940: clipped in place, never unmounted. */}
                     <div
                       id="dshm-recent-grid"
+                      ref={recentRowRef}
                       className={recentCollapsed ? `${css.recentRow} ${css.recentCollapsed}` : css.recentRow}
                     >
                       {recentPlugins.map(plugin => recentTile(plugin))}

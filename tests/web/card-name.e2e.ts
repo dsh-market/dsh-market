@@ -41,7 +41,7 @@ describe.skipIf(!dshAvailable())('web e2e: card header', () => {
       // Locators rather than page.evaluate: the callback of evaluate runs
       // in the browser but is type-checked against the Node lib, where
       // `document` does not exist.
-      const names = page.locator('[class*="masonryCol"] [class*="nm"]')
+      const names = page.locator('[class*="masonryCol"] [class*="nmButton"]')
       for (let i = 0; i < await names.count(); i++) {
         const identity = (await names.nth(i).getAttribute('title')) ?? ''
         if (identity.includes('#')) {

@@ -96,7 +96,10 @@ describe('Issue #991 approval target and queue feedback', () => {
         '/dsh-market/update': { ok: true },
       })
       render(<MarketSection {...localizedProps()} />)
-      if (entry === 'batch') fireEvent.click(await screen.findByRole('button', { name: new RegExp(dict.updateAll) }))
+      if (entry === 'batch') {
+        fireEvent.click(await screen.findByRole('button', { name: new RegExp(`^${dict.tabInstalled}`) }))
+        fireEvent.click(await screen.findByRole('button', { name: new RegExp(dict.updateAll) }))
+      }
       await waitFor(() => expect(fetchCalls.filter(call => call.path === '/dsh-market/update').map(call => call.body))
         .toEqual([{ name: 'dsh-loop', eligibleVersion: '1.1.0' }]), { timeout: 8000 })
     })
@@ -210,7 +213,12 @@ function stubFetch(overrides: Record<string, unknown> = {}, mountPath = '') {
       route === '/dsh-market/registry' ? { source: 'live', registry: REGISTRY, hostVersion: '0.1.2-alpha.2' }
       : route === '/dsh-market/discovery-compatibility' ? {
           hostVersion: '0.1.2-alpha.2',
-          plugins: Object.fromEntries(((body as { packages?: string[] } | undefined)?.packages ?? []).map(name => [name, {
+          // Answer GitHub-only entries too: a default fixture that leaves them
+          // unanswered reads as "could not be checked" and raises the note.
+          plugins: Object.fromEntries([
+            ...((body as { packages?: string[] } | undefined)?.packages ?? []),
+            ...((body as { entries?: string[] } | undefined)?.entries ?? []),
+          ].map(name => [name, {
             status: 'unknown', basis: 'undeclared', requirement: null, declarations: [],
           }])),
         }
@@ -264,6 +272,26 @@ async function openCardUninstall() {
   fireEvent.click(await screen.findByRole('menuitem', { name: en.uninstall }))
 }
 
+/**
+ * Pick one entry from the header "···" menu: Hidden, Advanced, Tasks or
+ * Export log. Those are no longer tab-row buttons, so this is the one way in.
+ */
+async function openHeadMenu(item: string | RegExp) {
+  fireEvent.click(screen.getByRole('button', { name: en.headMore }))
+  fireEvent.click(await screen.findByRole('menuitem', { name: item }))
+}
+
+/** Update all and the market's own update button live on the Installed tab. */
+async function openInstalled() {
+  fireEvent.click(await screen.findByRole('button', { name: new RegExp(`^${en.tabInstalled}`) }))
+}
+
+/** The pending-restart banner shows on Installed only; wait for it there. */
+async function showRestartBanner() {
+  await openInstalled()
+  await waitFor(() => { expect(screen.getAllByText(re(en.restartBanner)).length).toBeGreaterThan(0) })
+}
+
 function props() {
   return {
     t: (key: string) => (en as Record<string, string>)[key] ?? key,
@@ -285,10 +313,10 @@ function props() {
 function rankedNames(container: HTMLElement): Array<string | undefined> {
   const themeGallery = container.querySelector('[class*="themeGallery"]')
   if (themeGallery !== null) {
-    return [...themeGallery.querySelectorAll('[class*="nm"]')].map(el => el.textContent?.trim())
+    return [...themeGallery.querySelectorAll(`.${css.nm}`)].map(el => el.textContent?.trim())
   }
   const columns = [...container.querySelectorAll('[class*="masonryCol"]')]
-    .map(col => [...col.querySelectorAll('[class*="nm"]')].map(el => el.textContent?.trim()))
+    .map(col => [...col.querySelectorAll(`.${css.nm}`)].map(el => el.textContent?.trim()))
   const out: Array<string | undefined> = []
   for (let row = 0; row < Math.max(0, ...columns.map(col => col.length)); row++) {
     for (const col of columns) if (row < col.length) out.push(col[row])
@@ -378,6 +406,7 @@ describe('Market self-update waiting hint (#1244)', () => {
       '/dsh-market/update': { ok: true },
     })
     render(<MarketSection {...props()} />)
+    await openInstalled()
     const button = await screen.findByRole('button', { name: en.marketUpdate })
     const marker = screen.getByText(hint)
     fireEvent.focus(marker)
@@ -443,7 +472,7 @@ describe('localized Gist export and catalog actions (#1254)', () => {
     })
     render(<MarketSection {...props()} />)
     expect(await screen.findByText('dsh-loop')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: en.tabAdvanced }))
+    await openHeadMenu(en.tabAdvanced)
     expect(screen.getByRole('radio', { name: 'Create a secret Gist' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: en.gistExport }))
     const dialog = within(await screen.findByRole('dialog', { name: en.gistExportSelect }))
@@ -494,7 +523,7 @@ describe('WebDAV daily backup (#868)', () => {
 
   async function openBackup() {
     await screen.findByText('dsh-loop')
-    fireEvent.click(screen.getByRole('button', { name: en.tabAdvanced }))
+    await openHeadMenu(en.tabAdvanced)
   }
 
   it.each([
@@ -1162,6 +1191,7 @@ describe('MarketSection (jsdom)', () => {
       },
     })
     render(<MarketSection {...props()} />)
+    await openInstalled()
     expect(await screen.findByRole('button', { name: /Update all \(1\)/ })).toBeTruthy()
   })
 
@@ -1250,33 +1280,43 @@ describe('MarketSection (jsdom)', () => {
       },
     })
     const { unmount } = render(<MarketSection {...props()} />)
+    await openInstalled()
     expect(await screen.findByRole('button', { name: /Update all \(1\)/ })).toBeTruthy()
     unmount()
     // No network yet — the button must still come from the shared cache, not
     // wait on /dsh-market/updates the way an empty remount used to.
     render(<MarketSection {...props()} />)
+    await openInstalled()
     expect(screen.getByRole('button', { name: /Update all \(1\)/ })).toBeTruthy()
   })
 
   it.each([false, true])('retains confirmed updates on HTTP 500 and clears them on a genuine empty retry (installed error: %s) (#1200)', async installedError => {
     const installed = { 'dsh-loop': '^1.0.0' }
     let fail = false
+    let retried = false
     const fetchMock = stubFetch({
       '/dsh-market/installed': () => fail && installedError ? { error: 'read failed', __status: 400 } : { installed },
       '/dsh-market/updates': () => fail ? { error: 'check failed', __status: 500 } : {
         updates: { 'dsh-loop': { kind: 'npm', version: '1.0.0', latest: '1.1.0', updateAvailable: true } },
       },
-      '/dsh-market/updates?force=1': { updates: {} },
+      // Opening Installed re-checks too: it fails while the check is failing,
+      // and only the explicit retry finds the genuinely empty answer.
+      '/dsh-market/updates?force=1': () => fail ? { error: 'check failed', __status: 500 }
+        : retried ? { updates: {} }
+          : { updates: { 'dsh-loop': { kind: 'npm', version: '1.0.0', latest: '1.1.0', updateAvailable: true } } },
     })
     const first = render(<MarketSection {...props()} />)
+    await openInstalled()
     expect(await screen.findByRole('button', { name: 'Update all (1)' })).toBeTruthy()
     first.unmount()
     fail = true
     render(<MarketSection {...props()} surface="sidebar" />)
+    await openInstalled()
 
     expect(await screen.findByText('Could not check for updates')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Update all (1)' })).toBeTruthy()
     fail = false
+    retried = true
     fireEvent.click(screen.getByRole('button', { name: 'Retry update check' }))
     await waitFor(() => {
       expect(screen.queryByText('Could not check for updates')).toBeNull()
@@ -1304,6 +1344,7 @@ describe('MarketSection (jsdom)', () => {
     render(<MarketSection {...props()} />)
     expect(await screen.findByText('Could not check for updates')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Retry update check' }))
+    await openInstalled()
     expect(await screen.findByRole('button', { name: 'Update all (1)' })).toBeTruthy()
     await act(async () => { settleInstalled(new Response(JSON.stringify({ installed: {} }))) })
     expect(screen.getByRole('button', { name: 'Update all (1)' })).toBeTruthy()
@@ -1326,9 +1367,11 @@ describe('MarketSection (jsdom)', () => {
     })
     render(<MarketSection {...props()} surface="plugins" />)
 
+    // Update all lives on Installed, and opening that tab re-checks. Stay on
+    // Discover until the retry, so the first load is what gets retried.
     expect(await screen.findByText('Could not check for updates')).toBeTruthy()
-    expect(screen.queryByRole('button', { name: /^Update all/ })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Retry update check' }))
+    await openInstalled()
     expect(await screen.findByRole('button', { name: 'Update all (1)' })).toBeTruthy()
     expect(screen.queryByText('Could not check for updates')).toBeNull()
   })
@@ -1352,10 +1395,12 @@ describe('MarketSection (jsdom)', () => {
         : { [same]: previous, [changedSpec]: previous, [changedVersion]: previous, [exempt]: previous, [removed]: previous } }),
     })
     const first = render(<MarketSection {...props()} />)
+    await openInstalled()
     expect(await screen.findByRole('button', { name: 'Update all (5)' })).toBeTruthy()
     first.unmount()
     fail = true
     render(<MarketSection {...props()} surface="sidebar" />)
+    await openInstalled()
     expect(await screen.findByText('Could not check for updates')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Update all (1)' })).toBeTruthy()
   })
@@ -1379,6 +1424,7 @@ describe('MarketSection (jsdom)', () => {
     expect(screen.queryByText('Could not check for updates')).toBeNull()
     first.unmount()
     render(<MarketSection {...props()} surface="sidebar" />)
+    await openInstalled()
     expect(screen.getByRole('button', { name: 'Update all (1)' })).toBeTruthy()
   })
 
@@ -1398,6 +1444,9 @@ describe('MarketSection (jsdom)', () => {
     })
     const first = render(<MarketSection {...props()} />)
     const other = render(<MarketSection {...props()} surface="sidebar" />)
+    for (const view of [first, other]) {
+      fireEvent.click(await within(view.container).findByRole('button', { name: new RegExp(`^${en.tabInstalled}`) }))
+    }
     expect(await within(other.container).findByRole('button', { name: 'Update all (1)' })).toBeTruthy()
     await act(async () => { settleInstalled(new Response(JSON.stringify({ installed }))) })
     expect(within(first.container).getByRole('button', { name: 'Update all (1)' })).toBeTruthy()
@@ -1413,6 +1462,7 @@ describe('MarketSection (jsdom)', () => {
       } },
     })
     render(<MarketSection {...props()} />)
+    await openInstalled()
     expect(await screen.findByRole('button', { name: 'Update all (1)' })).toBeTruthy()
     expect(screen.queryByText('Could not check for updates')).toBeNull()
   })
@@ -1475,9 +1525,11 @@ describe('MarketSection (jsdom)', () => {
       },
     })
     render(<MarketSection {...props()} />)
-    expect(await screen.findByText(en.hostFilterActive.replace('{0}', '0.2.0-rc.2').replace('{1}', '0'))).toBeTruthy()
-    expect(screen.getByText('dsh-loop')).toBeTruthy()
-    expect(fetchCalls.filter(call => call.path.includes('discovery-compatibility')).length).toBeGreaterThan(0)
+    expect(await screen.findByText('dsh-loop')).toBeTruthy()
+    await waitFor(() => expect(fetchCalls.filter(call => call.path.includes('discovery-compatibility')).length).toBeGreaterThan(0))
+    await act(async () => {})
+    // Nothing is hidden on the new host, so the note stays away: it never says "Hid 0".
+    expect(screen.queryByText(/Hid \d+ plugins/)).toBeNull()
     expect(compatBefore).toBeGreaterThan(0)
   })
 
@@ -1636,7 +1688,9 @@ describe('MarketSection (jsdom)', () => {
         const first = 'compat-plugin-0'
         const last = 'compat-plugin-164'
         const requirement = '^0.1.0'
-        const progress = re(en.hostFilterLoading.split('{0}')[0]!)
+        // While a page is still being checked there is no count to report, so
+        // the note is absent; once it is fully checked it names what was hidden.
+        const note = /Hid 1 plugins on this page/
         const baseFetch = stubFetch({ '/dsh-market/registry': { registry: catalog(165), hostVersion } })
         const calls: string[][] = []
         let release!: () => void
@@ -1658,14 +1712,14 @@ describe('MarketSection (jsdom)', () => {
         await within(settings).findByText(en.hostRequirement.replace('{0}', incompatible.requirement))
         await selectFilter(true, settings)
         for (const view of surfaces) {
-          expect(view.queryByText(progress)).toBeNull()
+          expect(await view.findByText(note)).toBeTruthy()
           expect(view.queryByText(first)).toBeNull()
         }
         expect(calls.map(batch => batch.length)).toEqual([24])
         fireEvent.click(within(plugins).getByRole('button', { name: en.loadMore }))
         await waitFor(() => expect(calls.map(batch => batch.length)).toEqual([24, 24]))
-        expect(within(plugins).getByText(progress)).toBeTruthy()
-        expect(within(settings).queryByText(progress)).toBeNull()
+        expect(within(plugins).queryByText(note)).toBeNull()
+        expect(within(settings).getByText(note)).toBeTruthy()
 
         if (action === 'Show all in Sidebar') {
           const filter = within(settings).getByRole('button', { name: en.filter })
@@ -1678,7 +1732,7 @@ describe('MarketSection (jsdom)', () => {
           fireEvent.click(await within(plugins).findByRole('button', { name: en.clearFilters }))
         }
         for (const view of surfaces) {
-          expect(view.queryByText(progress)).toBeNull()
+          expect(view.queryByText(note)).toBeNull()
           expect(view.getByText(first)).toBeTruthy()
         }
 
@@ -1998,10 +2052,9 @@ describe('MarketSection (jsdom)', () => {
     expect(search).toHaveProperty('value', 'whale-skin')
   })
 
-  /** #256 / #365: the title has always opened the repo, but `color:inherit`
-   * with no underline meant nothing said so until the cursor was already on
-   * it. The link now carries a GitHub mark and names its destination, so it
-   * is findable without hovering every card to look for one. */
+  /** #256 / #365: the way to the repo has to be findable without hovering
+   * every card. The title now opens the detail view, and the GitHub mark
+   * beside it is the link that names its destination. */
   it('shows the mapped product name on a subdirectory card and install dialog without changing its target', async () => {
     const plugin = {
       name: 'dsh-plugin-compat-check#plugin', owner: 'lcy0121',
@@ -2014,12 +2067,20 @@ describe('MarketSection (jsdom)', () => {
       '/dsh-market/install': { cancelled: true },
     })
     render(<MarketSection {...props()} />)
+    // The name is a button that opens the detail dialog; the GitHub mark next
+    // to it is the link to the repository.
     const links = await screen.findAllByRole('link', { name: `${plugin.name} — ${en.repoLink}` })
     for (const link of links) {
-      expect(link.textContent?.trim()).toBe('dsh-plugin-compat-check')
-      expect(link.getAttribute('title')).toBe('dsh-plugin-compat-check#plugin')
       expect(link.getAttribute('href')).toBe('https://github.com/lcy0121/dsh-plugin-compat-check/tree/main/plugin')
+      const name = link.parentElement!.querySelector('button[class*="nmButton"]')!
+      expect(name.textContent?.trim()).toBe('dsh-plugin-compat-check')
+      expect(name.getAttribute('title')).toBe('dsh-plugin-compat-check#plugin')
     }
+    const nameButton = screen.getAllByRole('button', { name: 'dsh-plugin-compat-check' })[0]!
+    fireEvent.click(nameButton)
+    expect(await screen.findByRole('dialog', { name: `${en.confirmTitle} dsh-plugin-compat-check?` })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: en.cancel }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     fireEvent.click(screen.getAllByRole('button', { name: en.install, exact: true })[0]!)
     expect(await screen.findByRole('dialog', { name: `${en.confirmTitle} dsh-plugin-compat-check?` })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: en.confirmInstall }))
@@ -2043,12 +2104,14 @@ describe('MarketSection (jsdom)', () => {
         const mark = link.querySelector('svg[aria-hidden="true"]')
         expect(mark).toBeTruthy()
         expect(mark?.getAttribute('viewBox')).toBe('0 0 16 16')
-        expect(link.textContent).toContain(plugin.name)
-        // The tooltip still carries the RAW catalog identity. For a compound
-        // entry (owner#packages/x) the card shows only the short name, so
-        // this attribute is the one place the full identity is readable —
-        // 1.23.0 replaced it with the link wording and lost it.
-        expect(link.getAttribute('title')).toBe(plugin.name)
+        // The name itself is a button beside the mark, not part of the link.
+        const name = link.parentElement!.querySelector('button[class*="nmButton"]')!
+        expect(name.textContent).toContain(plugin.name)
+        // The name's tooltip still carries the RAW catalog identity. For a
+        // compound entry (owner#packages/x) the card shows only the short
+        // name, so this attribute is the one place the full identity is
+        // readable — 1.23.0 replaced it with the link wording and lost it.
+        expect(name.getAttribute('title')).toBe(plugin.name)
         expect(link.getAttribute('href')).toBe(plugin.url)
       }
     }
@@ -2062,7 +2125,7 @@ describe('MarketSection (jsdom)', () => {
     })
     render(<MarketSection {...props()} />)
     await screen.findByText('dsh-loop')
-    fireEvent.click(screen.getByRole('button', { name: en.tabAdvanced }))
+    await openHeadMenu(en.tabAdvanced)
     fireEvent.click(await screen.findByRole('button', { name: en.backupDownload }))
     const banner = await screen.findByText(/配置文件超过 256 个/)
     expect(banner.textContent).toContain(en.backupExportFailed)
@@ -2078,7 +2141,7 @@ describe('MarketSection (jsdom)', () => {
     expect(screen.queryByRole('button', { name: en.tabDiagnostics })).toBeNull()
 
     // Clicking Advanced defaults to the first sub-tab (Backup & Restore).
-    fireEvent.click(screen.getByRole('button', { name: en.tabAdvanced }))
+    await openHeadMenu(en.tabAdvanced)
     expect(screen.getByRole('button', { name: en.tabAdvanced }).className).toMatch(/\bon\b|_on_/)
     const backupSubTab = screen.getByRole('button', { name: en.tabBackup })
     expect(backupSubTab.className).toMatch(/\bon\b|_on_/)
@@ -2110,7 +2173,7 @@ describe('MarketSection (jsdom)', () => {
     expect(scroller.scrollTop).toBe(0)
 
     scroller.scrollTop = 800
-    fireEvent.click(screen.getByRole('button', { name: en.tabAdvanced }))
+    await openHeadMenu(en.tabAdvanced)
     expect(scroller.scrollTop).toBe(0)
   })
 
@@ -2745,14 +2808,14 @@ describe('MarketSection (jsdom)', () => {
     expect(dialog?.textContent).not.toMatch(/要求更新的 DSH|needs a newer DSH/)
   })
 
-  it('export log is a real button with visible feedback (#84)', async () => {
+  it('export log lives in the header menu and gives visible feedback (#84)', async () => {
     stubFetch({ '/dsh-market/logs': 'log-lines' })
     render(<MarketSection {...props()} />)
     await screen.findByText('dsh-loop')
-    const exportButton = screen.getByRole('button', { name: en.exportLog })
-    fireEvent.click(exportButton)
-    // Success feedback appears as a Toast (body portal, no layout impact),
-    // then the button returns to idle.
+    // No longer a standalone header button.
+    expect(screen.queryByRole('button', { name: en.exportLog })).toBeNull()
+    await openHeadMenu(en.exportLog)
+    // Success feedback appears as a Toast (body portal, no layout impact).
     await waitFor(() => { expect(screen.getByText(en.exportedLog)).toBeTruthy() })
   })
 
@@ -2775,7 +2838,7 @@ describe('MarketSection (jsdom)', () => {
       stubFetch({ '/dsh-market/logs': 'log-lines' })
       render(<MarketSection {...props()} />)
       await screen.findByText('dsh-loop')
-      fireEvent.click(screen.getByRole('button', { name: en.exportLog }))
+      await openHeadMenu(en.exportLog)
       await waitFor(() => { expect(screen.getByText(en.exportedLog)).toBeTruthy() })
       await waitFor(() => { expect(saved).toContain('## browser') })
       expect(saved).toContain('portal containers:')
@@ -3140,7 +3203,7 @@ describe('MarketSection (jsdom)', () => {
     const { container } = render(<MarketSection {...props()} />)
     await screen.findByText('dsh-loop')
     // Backup & Restore lives under the Advanced tab, defaulting to it on entry.
-    fireEvent.click(screen.getByRole('button', { name: en.tabAdvanced }))
+    await openHeadMenu(en.tabAdvanced)
     const backup = {
       format: 'dsh-profile-backup', version: 0.2, files: [
         { path: 'package.json', json: { dependencies: { 'already-here': '^1.0.0', 'ghost-dependency': '^1.0.0', 'missing-backup': '^2.0.0' } } },
@@ -3160,13 +3223,14 @@ describe('MarketSection (jsdom)', () => {
   it('keeps the Tasks entry wrapped so opening the panel does not shift the tab row', async () => {
     render(<MarketSection {...props()} />)
     await screen.findByText('dsh-loop')
-    const entry = await screen.findByRole('button', { name: new RegExp(`^${en.opTitle}$`) })
-    const wrapBefore = entry.parentElement
-    expect(wrapBefore?.className, 'idle Tasks entry must sit in .opWrap for stable tab-row spacing').toMatch(/opWrap/)
-    fireEvent.click(entry)
+    // Nothing to show yet, so the entry stays out of the tab row; the header
+    // menu is the way in.
+    expect(screen.queryByRole('button', { name: new RegExp(`^${en.opTitle}$`) })).toBeNull()
+    await openHeadMenu(en.opTitle)
     await screen.findByText(en.opEmpty)
-    expect(entry.parentElement, 'opening the panel must not drop the .opWrap wrapper').toBe(wrapBefore)
-    expect(entry.parentElement?.className).toMatch(/opWrap/)
+    const entry = await screen.findByRole('button', { name: new RegExp(`^${en.opTitle}$`) })
+    expect(entry.parentElement?.className, 'the open Tasks entry must sit in .opWrap for stable tab-row spacing').toMatch(/opWrap/)
+    expect(entry.parentElement?.contains(document.querySelector('[class*="opPanel"]')), 'the panel opens inside the same .opWrap').toBe(true)
   })
 
   it('shows a running update in the Tasks panel (#295)', async () => {
@@ -3185,7 +3249,8 @@ describe('MarketSection (jsdom)', () => {
     fireEvent.click(await screen.findByRole('button', { name: rowUpdateName }))
 
     // The panel names the plugin being updated, not just "something running".
-    fireEvent.click(await screen.findByRole('button', { name: new RegExp(en.opTitle) }))
+    await waitFor(() => expect(screen.getByRole('button', { name: new RegExp(en.opTitle) })).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(en.opTitle) }))
     await waitFor(() => {
       const panel = document.querySelector('[class*="opPanel"]')
       expect(panel, 'the Tasks panel did not open').toBeTruthy()
@@ -3284,6 +3349,7 @@ describe('MarketSection (jsdom)', () => {
         },
       })
       render(<MarketSection {...props()} />)
+      await openInstalled()
       fireEvent.click(await screen.findByRole('button', { name: new RegExp(en.updateAll) }))
       await waitFor(() => expect(screen.queryByRole('button', { name: new RegExp(en.updating) })).toBeNull())
       // Only the first plugin was tried; the others never reached the server.
@@ -3311,6 +3377,7 @@ describe('MarketSection (jsdom)', () => {
         '/dsh-market/update': restartRefusal,
       })
       render(<MarketSection {...props()} />)
+      await openInstalled()
       fireEvent.click(await screen.findByRole('button', { name: new RegExp(en.updateAll) }))
       await waitFor(() => expect(screen.queryByRole('button', { name: new RegExp(en.updating) })).toBeNull())
       expect(fetchCalls.filter(call => call.path === '/dsh-market/update')).toHaveLength(1)
@@ -4616,7 +4683,8 @@ describe('MarketSection (jsdom)', () => {
       render(<MarketSection {...props()} />)
       await screen.findByText('dsh-loop')
       // The entry stays quiet, and opening it shows the ordinary empty state.
-      fireEvent.click(screen.getByRole('button', { name: en.opTitle }))
+      expect(screen.queryByRole('button', { name: en.opTitle })).toBeNull()
+      await openHeadMenu(en.opTitle)
       const panel = document.querySelector('[class*="opPanel"]')
       expect(panel!.textContent).toContain(en.opEmpty)
       // The bad value is dropped instead of being re-parsed on every mount.
@@ -5781,8 +5849,11 @@ describe('discover card download count stays compact', () => {
     stubFetch({ '/dsh-market/registry': { hostVersion: '0.2.1-rc.5', registry: { ...REGISTRY, count: 1, plugins: [plugin] } } })
     render(<MarketSection {...props()} />)
     const card = (await screen.findByText('dsh-loop')).closest('[class*="card"]') as HTMLElement
+    // Numbers sit on their own line under the author; the first one present
+    // carries no leading dot, the ones after it do.
     expect(within(card).getByText('· GitHub ↓ 7k')).toBeTruthy()
-    expect(within(card).getByText('· v1.3.0')).toBeTruthy()
+    const version = within(card).getByText('v1.3.0')
+    expect(version.parentElement?.className).toMatch(/cardStats/)
     expect(within(card).getByLabelText(/GitHub Release asset downloads, all time: 7000.*2026-10-31 08:35 UTC/)).toBeTruthy()
     expect(within(card).getByLabelText(/GitHub stars: 45.*2026-10-31 08:35 UTC/)).toBeTruthy()
     expect(within(card).queryByLabelText(/Last 30 days on npm/)).toBeNull()
@@ -5807,7 +5878,10 @@ describe('discover card download count stays compact', () => {
     })
     render(<MarketSection {...props()} />)
     const card = (await screen.findByText('dsh-loop')).closest('[class*="card"]') as HTMLElement
-    expect(within(card).getByText('· ↓ 182.4k')).toBeTruthy()
+    // No version on this entry, so downloads open the stats line: no dot.
+    expect(within(card).getByText('↓ 182.4k')).toBeTruthy()
+    expect(within(card).getByText('↓ 182.4k').parentElement?.className).toMatch(/cardStats/)
+    expect(within(card).getByText('· ★ 50')).toBeTruthy()
     expect(within(card).queryByText(re(en.downloadsPeriod))).toBeNull()
     const tip = downloadStatsText(plugin, props().t)
     expect(tip).toBeTruthy()
@@ -6092,7 +6166,7 @@ describe('blocked plugins (#657)', () => {
     })
     await waitFor(() => expect(screen.queryByText('Loop task runner')).toBeNull())
     expect(await screen.findByText(en.blockMoved)).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: en.tabBlocked + ' (1)' }))
+    await openHeadMenu(en.tabBlocked + ' (1)')
     const hidden = (await screen.findByText('Loop task runner')).closest('[class*="card"]') as HTMLElement
     fireEvent.click(within(hidden).getByRole('button', { name: en.groupMore }))
     fireEvent.click(screen.getByRole('menuitem', { name: en.blockRemove }))
@@ -6120,13 +6194,13 @@ describe('blocked plugins (#657)', () => {
       '/dsh-market/update': { ok: true },
     })
     render(<MarketSection {...props()} />)
+    await openInstalled()
     fireEvent.click(await screen.findByRole('button', { name: /Update all \(2\)/ }))
     await waitFor(() => {
       expect(fetchCalls.filter(call => call.path === '/dsh-market/update')).toHaveLength(2)
     })
     expect(fetchCalls.filter(call => call.path === '/dsh-market/update').map(call => call.body?.name).sort())
       .toEqual(['dsh-loop', 'dsh-notify'])
-    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
     let row: HTMLElement | null = await screen.findByText('dsh-third')
     while (row !== null && within(row).queryByRole('button', { name: rowUpdateName }) === null) row = row.parentElement
     expect(within(row!).getByRole('button', { name: rowUpdateName })).toBeTruthy()
@@ -6173,11 +6247,11 @@ describe('blocked plugins (#657)', () => {
     expect(screen.queryByText('Forked loop')).toBeNull()
     fireEvent.change(screen.getByPlaceholderText(en.searchPh), { target: { value: 'Forked loop' } })
     expect(await screen.findByText(en.blockedFilteredEmpty)).toBeTruthy()
+    await openInstalled()
     fireEvent.click(await screen.findByRole('button', { name: /Update all \(1\)/ }))
     await waitFor(() => {
       expect(fetchCalls.filter(call => call.path === '/dsh-market/update').map(call => call.body?.name)).toEqual(['dsh-notify'])
     })
-    fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
     let row: HTMLElement | null = await screen.findByText('my-loop')
     while (row !== null && within(row).queryByRole('button', { name: en.groupMore }) === null) row = row.parentElement
     fireEvent.click(within(row!).getByRole('button', { name: en.groupMore }))
@@ -7115,6 +7189,8 @@ describe('status-poll / install-response race (#73)', () => {
       fireEvent.click(within(card!).getByRole('button', { name: en.install }))
       await vi.waitFor(() => { screen.getByRole('button', { name: en.confirmInstall }) })
       fireEvent.click(screen.getByRole('button', { name: en.confirmInstall }))
+      // The restart banner is shown on Installed only; Discover carries a dot.
+      fireEvent.click(screen.getByRole('button', { name: new RegExp(`^${en.tabInstalled}`) }))
       // The /install response is still pending; the 2s status poll now sees
       // idle + installed and the recovery path counts dsh-loop as a pending
       // restart even though the mount may still come back hot.
@@ -8141,6 +8217,7 @@ describe('local-dev restore', () => {
       '/dsh-market/update': { ok: true },
     })
     render(<MarketSection {...props()} />)
+    await openInstalled()
     fireEvent.click(await screen.findByRole('button', { name: /Update all \(2\)/ }))
     await waitFor(() => {
       expect(fetchCalls.filter(call => call.path === '/dsh-market/update')).toHaveLength(2)
@@ -8168,6 +8245,7 @@ describe('local-dev restore', () => {
       '/dsh-market/update': { ok: true },
     })
     render(<MarketSection {...props()} />)
+    await openInstalled()
 
     fireEvent.click(await screen.findByRole('button', { name: /Update all \(2\)/ }))
     await waitFor(() => {
@@ -9605,7 +9683,7 @@ describe('standing restart notice for host-reported pending plugins', () => {
     // was needed while offering nothing to press.
     stubWithActivation('boot-1')
     render(<MarketSection {...props()} />)
-    await waitFor(() => { expect(screen.getAllByText(re(en.restartBanner)).length).toBeGreaterThan(0) })
+    await showRestartBanner()
     expect(screen.getByRole('button', { name: en.restartNow })).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: en.dismissNotice }))
@@ -9617,7 +9695,7 @@ describe('standing restart notice for host-reported pending plugins', () => {
     sessionStorage.setItem('dshm-restart-dismissed', 'boot-1')
     stubWithActivation('boot-2')
     render(<MarketSection {...props()} />)
-    await waitFor(() => { expect(screen.getAllByText(re(en.restartBanner)).length).toBeGreaterThan(0) })
+    await showRestartBanner()
   })
 
   it('stays quiet when nothing is pending', async () => {
@@ -9645,7 +9723,7 @@ describe('standing restart notice for host-reported pending plugins', () => {
       return Promise.resolve(new Response(JSON.stringify(payload), { status: 200 }))
     }))
     render(<MarketSection {...props()} />)
-    await waitFor(() => { expect(screen.getAllByText(re(en.restartBanner)).length).toBeGreaterThan(0) })
+    await showRestartBanner()
     expect(screen.queryByRole('button', { name: en.restartNow })).toBeNull()
   })
 
@@ -9706,7 +9784,7 @@ describe('standing restart notice for host-reported pending plugins', () => {
     it('keeps the banner, drops the button, and puts the reason in the hint', async () => {
       stubStatus({ restartReachable: false })
       render(<MarketSection {...props()} />)
-      await waitFor(() => { expect(screen.getAllByText(re(en.restartBanner)).length).toBeGreaterThan(0) })
+      await showRestartBanner()
       // The fact that a restart is needed is still stated — only the impossible
       // action goes. A banner that vanished would hide the fact itself.
       expect(screen.queryByRole('button', { name: en.restartNow })).toBeNull()
@@ -9716,7 +9794,7 @@ describe('standing restart notice for host-reported pending plugins', () => {
     it('keeps the button on an ordinary local host, where the signal is true', async () => {
       stubStatus({ restartReachable: true })
       render(<MarketSection {...props()} />)
-      await waitFor(() => { expect(screen.getAllByText(re(en.restartBanner)).length).toBeGreaterThan(0) })
+      await showRestartBanner()
       expect(screen.getByRole('button', { name: en.restartNow })).toBeTruthy()
     })
 
@@ -9725,7 +9803,7 @@ describe('standing restart notice for host-reported pending plugins', () => {
       // the old behaviour, never a button taken away on a guess.
       stubStatus({})
       render(<MarketSection {...props()} />)
-      await waitFor(() => { expect(screen.getAllByText(re(en.restartBanner)).length).toBeGreaterThan(0) })
+      await showRestartBanner()
       expect(screen.getByRole('button', { name: en.restartNow })).toBeTruthy()
     })
   })
@@ -9760,7 +9838,7 @@ describe('a shell that runs the host as its child process owns the restart', () 
     Reflect.set(window, '__dshHostShell', { restart: shellRestart })
     stubStatus()
     render(<MarketSection {...props()} />)
-    await waitFor(() => { expect(screen.getAllByText(re(en.restartBanner)).length).toBeGreaterThan(0) })
+    await showRestartBanner()
 
     fireEvent.click(screen.getByRole('button', { name: en.restartNow }))
 
@@ -9771,7 +9849,7 @@ describe('a shell that runs the host as its child process owns the restart', () 
   it('falls back to the host route when the shell bridge is absent', async () => {
     stubStatus()
     render(<MarketSection {...props()} />)
-    await waitFor(() => { expect(screen.getAllByText(re(en.restartBanner)).length).toBeGreaterThan(0) })
+    await showRestartBanner()
 
     fireEvent.click(screen.getByRole('button', { name: en.restartNow }))
 
@@ -9787,7 +9865,7 @@ describe('a shell that runs the host as its child process owns the restart', () 
     Reflect.set(window, '__dshHostShell', { restart: () => { throw new Error('bridge is gone') } })
     stubStatus()
     render(<MarketSection {...props()} />)
-    await waitFor(() => { expect(screen.getAllByText(re(en.restartBanner)).length).toBeGreaterThan(0) })
+    await showRestartBanner()
 
     fireEvent.click(screen.getByRole('button', { name: en.restartNow }))
 
@@ -9820,14 +9898,15 @@ describe('boot-scoped update reminder dismissals (#419)', () => {
 
   const installedTab = () => screen.getByRole('button', { name: /^Installed \(2\)/ })
   const updateDot = () => installedTab().querySelector('[class*="dot"]')
+  const openInstalledTab = async () => { fireEvent.click(await screen.findByRole('button', { name: /^Installed \(2\)/ })) }
 
   it('dismisses one plugin without hiding its Installed-row information or update action', async () => {
     stubUpdateReminders()
     render(<MarketSection {...props()} />)
+    await openInstalledTab()
     expect(await screen.findByRole('button', { name: /Update all \(2\)/ })).toBeTruthy()
     expect(updateDot()).toBeTruthy()
 
-    fireEvent.click(installedTab())
     await ignoreRowUntilRestart('dsh-loop')
 
     expect(JSON.parse(sessionStorage.getItem('dshm-updates-ignored')!)).toEqual({
@@ -9842,20 +9921,22 @@ describe('boot-scoped update reminder dismissals (#419)', () => {
     expect(screen.queryByRole('button', { name: /Update all \(2\)/ })).toBeNull()
   })
 
-  it('ignores all current reminders while preserving the complete Installed update list', async () => {
+  it('ignores every current reminder row by row while preserving the complete Installed update list', async () => {
+    // The one-click "don't remind any" batch button is gone; each row's own
+    // "don't remind until restart" is the way, and it must still add up.
     stubUpdateReminders()
     render(<MarketSection {...props()} />)
-    fireEvent.click(await screen.findByRole('button', { name: en.ignoreAllUpdateNotices }))
+    await openInstalledTab()
+    await ignoreRowUntilRestart('dsh-loop')
+    await ignoreRowUntilRestart('dsh-notify')
 
     await waitFor(() => {
-      expect(screen.queryByRole('button', { name: en.marketUpdate })).toBeNull()
       expect(screen.queryByRole('button', { name: /Update all/ })).toBeNull()
       expect(updateDot()).toBeNull()
     })
     expect(new Set(JSON.parse(sessionStorage.getItem('dshm-updates-ignored')!).names))
-      .toEqual(new Set(['dshmarket', 'dsh-loop', 'dsh-notify']))
+      .toEqual(new Set(['dsh-loop', 'dsh-notify']))
 
-    fireEvent.click(installedTab())
     expect(await screen.findAllByText(en.updateNoticeIgnored)).toHaveLength(2)
     expect(screen.getAllByRole('button', { name: rowUpdateName })).toHaveLength(2)
     expect(screen.getAllByRole('button', { name: re(en.notesLink) })).toHaveLength(2)
@@ -9864,15 +9945,16 @@ describe('boot-scoped update reminder dismissals (#419)', () => {
   it('keeps reminders dismissed after a page remount in the same boot', async () => {
     stubUpdateReminders('boot-1')
     const first = render(<MarketSection {...props()} />)
-    fireEvent.click(await screen.findByRole('button', { name: en.ignoreAllUpdateNotices }))
+    await openInstalledTab()
+    await ignoreRowUntilRestart('dsh-loop')
+    await ignoreRowUntilRestart('dsh-notify')
     await waitFor(() => expect(updateDot()).toBeNull())
     first.unmount()
 
     render(<MarketSection {...props()} />)
+    await openInstalledTab()
     await screen.findByText('dsh-loop')
     await waitFor(() => {
-      expect(screen.queryByRole('button', { name: en.ignoreAllUpdateNotices })).toBeNull()
-      expect(screen.queryByRole('button', { name: en.marketUpdate })).toBeNull()
       expect(screen.queryByRole('button', { name: /Update all/ })).toBeNull()
       expect(updateDot()).toBeNull()
     })
@@ -9885,8 +9967,8 @@ describe('boot-scoped update reminder dismissals (#419)', () => {
     stubUpdateReminders('boot-2')
     render(<MarketSection {...props()} />)
 
-    expect(await screen.findByRole('button', { name: en.ignoreAllUpdateNotices })).toBeTruthy()
-    expect(screen.getByRole('button', { name: en.marketUpdate })).toBeTruthy()
+    await openInstalledTab()
+    expect(await screen.findByRole('button', { name: en.marketUpdate })).toBeTruthy()
     expect(screen.getByRole('button', { name: /Update all \(2\)/ })).toBeTruthy()
     expect(updateDot()).toBeTruthy()
     expect(sessionStorage.getItem('dshm-updates-ignored')).toBeNull()
@@ -9903,10 +9985,10 @@ describe('boot-scoped update reminder dismissals (#419)', () => {
     })
     render(<MarketSection {...props()} />)
 
+    await openInstalledTab()
     expect(await screen.findByRole('button', { name: /Update all \(1\)/ })).toBeTruthy()
     expect(updateDot()).toBeTruthy()
 
-    fireEvent.click(installedTab())
     expect(await screen.findByRole('button', { name: `${en.updateExemptRestore} dsh-loop` })).toBeTruthy()
     expect(screen.getByText(en.updateExemptMark)).toBeTruthy()
     expect(screen.getAllByRole('button', { name: rowUpdateName })).toHaveLength(2)
@@ -10022,8 +10104,8 @@ describe('boot-scoped update reminder dismissals (#419)', () => {
     stubUpdateReminders()
     render(<MarketSection {...props()} />)
 
-    expect(await screen.findByRole('button', { name: en.ignoreAllUpdateNotices })).toBeTruthy()
-    expect(screen.getByRole('button', { name: /Update all \(2\)/ })).toBeTruthy()
+    await openInstalledTab()
+    expect(await screen.findByRole('button', { name: /Update all \(2\)/ })).toBeTruthy()
     expect(updateDot()).toBeTruthy()
     expect(sessionStorage.getItem('dshm-updates-ignored')).toBeNull()
   })
@@ -10640,7 +10722,8 @@ describe('card thumbnail + lightbox (curated screenshots only)', () => {
     // Wait on the labelled mark itself: the name can paint before the
     // registry fields that feed the tip have been applied to the card.
     const count = await screen.findByLabelText(tip)
-    expect(count.textContent).toBe('· ↓ 4.2k')
+    // First on the card's stats line (no version here), so no leading dot.
+    expect(count.textContent).toBe('↓ 4.2k')
     expect(count.getAttribute('tabindex')).toBe('0')
     expect(count.getAttribute('aria-label')).not.toContain('2026-09-24')
     let card: HTMLElement | null = count
@@ -10976,7 +11059,9 @@ describe('card thumbnail + lightbox (curated screenshots only)', () => {
     const themeSnapshot = { preference: 'light', themes: [] }
     render(<MarketSection {...props()} themeStore={{ subscribe: () => () => {}, getSnapshot: () => themeSnapshot }} />)
 
-    fireEvent.click(screen.getByRole('button', { name: re(tab) }))
+    // Hidden is opened from the header menu, not a tab button.
+    if (tab === en.tabBlocked) await openHeadMenu(new RegExp(`^${en.tabBlocked}`))
+    else fireEvent.click(screen.getByRole('button', { name: re(tab) }))
     await screen.findByText(en.loadFail)
     expect(screen.getByText('HTTP 500')).toBeTruthy()
     expect(screen.queryByText(en.loading)).toBeNull()
@@ -11012,37 +11097,57 @@ describe('card owner name and description overflow', () => {
     expect(screen.queryByLabelText(re(en.descExpand))).toBeNull()
   })
 
-  it('offers an expand/collapse toggle only once the clamped text actually overflows, and it flips the clamp', async () => {
+  describe('when the clamped text overflows', () => {
     const scrollHeightDesc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollHeight')
     const clientHeightDesc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientHeight')
-    Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
-      configurable: true,
-      get(this: HTMLElement) { return this.className.includes('desc') ? 90 : 0 },
+    beforeEach(() => {
+      Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
+        configurable: true,
+        get(this: HTMLElement) { return this.className.includes('desc') ? 90 : 0 },
+      })
+      Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+        configurable: true,
+        get(this: HTMLElement) { return this.className.includes('desc') ? 54 : 0 },
+      })
     })
-    Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
-      configurable: true,
-      get(this: HTMLElement) { return this.className.includes('desc') ? 54 : 0 },
-    })
-    try {
-      stubFetch({ '/dsh-market/registry': { source: 'live', registry: REGISTRY } })
-      const { container } = render(<MarketSection {...props()} />)
-      await screen.findByText('dsh-loop')
-
-      const toggle = screen.getAllByLabelText(re(en.descExpand))[0]!
-      const desc = () => container.querySelector('[class*="desc"]:not([class*="descTight"])')
-      expect(desc()?.className).toMatch(/descClamp/)
-
-      fireEvent.click(toggle)
-      await waitFor(() => expect(screen.queryAllByLabelText(re(en.descCollapse)).length).toBeGreaterThan(0))
-      expect(desc()?.className).not.toMatch(/descClamp/)
-
-      fireEvent.click(screen.getAllByLabelText(re(en.descCollapse))[0]!)
-      await waitFor(() => expect(screen.queryAllByLabelText(re(en.descExpand)).length).toBeGreaterThan(0))
-      expect(desc()?.className).toMatch(/descClamp/)
-    } finally {
+    afterEach(() => {
       if (scrollHeightDesc) Object.defineProperty(HTMLElement.prototype, 'scrollHeight', scrollHeightDesc)
       if (clientHeightDesc) Object.defineProperty(HTMLElement.prototype, 'clientHeight', clientHeightDesc)
-    }
+    })
+
+    it('opens the detail dialog from a catalog card instead of expanding in place', async () => {
+      stubFetch({ '/dsh-market/registry': { source: 'live', registry: REGISTRY } })
+      render(<MarketSection {...props()} />)
+      await screen.findByText('dsh-loop')
+
+      // A card's text is a button that opens the detail view; there is no
+      // inline expand/collapse toggle on it, overflowing or not.
+      expect(screen.queryAllByLabelText(re(en.descExpand))).toHaveLength(0)
+      expect(screen.queryAllByLabelText(re(en.descCollapse))).toHaveLength(0)
+      const desc = screen.getByRole('button', { name: 'Loop task runner' })
+      expect(desc.className).toMatch(/descClamp/)
+      fireEvent.click(desc)
+      expect(await screen.findByRole('dialog', { name: `${en.confirmTitle} dsh-loop?` })).toBeTruthy()
+      expect(desc.className).toMatch(/descClamp/)
+    })
+
+    it('offers an expand/collapse toggle on an installed row only once the text overflows, and it flips the clamp', async () => {
+      stubFetch({
+        '/dsh-market/installed': { profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: ['dsh-loop'], disabled: [] },
+      })
+      render(<MarketSection {...props()} />)
+      await openInstalled()
+      const text = await screen.findByText('Loop task runner')
+      expect(text.className).toMatch(/descClamp3/)
+
+      fireEvent.click(await screen.findByRole('button', { name: en.descMore }))
+      await waitFor(() => expect(screen.queryAllByRole('button', { name: en.descCollapse }).length).toBeGreaterThan(0))
+      expect(screen.getByText('Loop task runner').className).not.toMatch(/descClamp3/)
+
+      fireEvent.click(screen.getAllByRole('button', { name: en.descCollapse })[0]!)
+      await waitFor(() => expect(screen.queryAllByRole('button', { name: en.descMore }).length).toBeGreaterThan(0))
+      expect(screen.getByText('Loop task runner').className).toMatch(/descClamp3/)
+    })
   })
 })
 
@@ -11328,6 +11433,7 @@ describe('Update all button visible for a single updatable plugin (#555)', () =>
   it('shows the Update all button when only one plugin is updatable', async () => {
     stubSingleUpdatable()
     render(<MarketSection {...props()} />)
+    await openInstalled()
     const btn = await screen.findByRole('button', { name: /Update all \(1\)/ })
     expect(btn).toBeTruthy()
   })
@@ -11342,8 +11448,9 @@ describe('catalog version in discover byline (#348)', () => {
     render(<MarketSection {...props()} />)
     const loop = (await screen.findByText('dsh-loop')).closest('[class*="card"]') as HTMLElement
     const notify = screen.getByText('dsh-notify').closest('[class*="card"]') as HTMLElement
-    expect(within(loop).getByText('· v1.2.3')).toBeTruthy()
-    expect(within(notify).queryByText(/^· v/)).toBeNull()
+    // First item on the card's stats line, so no leading dot.
+    expect(within(loop).getByText('v1.2.3')).toBeTruthy()
+    expect(within(notify).queryByText(/^(· )?v\d/)).toBeNull()
   })
 
   it('says the number comes from the catalog, with the date it was built (#712)', async () => {
@@ -11355,7 +11462,7 @@ describe('catalog version in discover byline (#348)', () => {
     registry.updated = '2026-09-24'
     stubFetch({ '/dsh-market/registry': { source: 'live', registry, hostVersion: '0.1.2-alpha.2' } })
     render(<MarketSection {...props()} />)
-    const mark = await screen.findByText('· v1.2.3')
+    const mark = await screen.findByText('v1.2.3')
     fireEvent.mouseEnter(mark)
     const tip = await screen.findByText(/2026-09-24/)
     // The test's locale is English; assert the claim, not the translation.
@@ -11369,7 +11476,7 @@ describe('catalog version in discover byline (#348)', () => {
     registry.updated = ''
     stubFetch({ '/dsh-market/registry': { source: 'live', registry, hostVersion: '0.1.2-alpha.2' } })
     render(<MarketSection {...props()} />)
-    const mark = await screen.findByText('· v1.2.3')
+    const mark = await screen.findByText('v1.2.3')
     fireEvent.mouseEnter(mark)
     const tip = await screen.findByText(/updates daily/)
     expect(tip.textContent).not.toMatch(/\(\)/)
@@ -11405,6 +11512,38 @@ describe('recently added Discover row (#780)', () => {
     vi.spyOn(Date, 'now').mockReturnValue(now)
   })
   afterEach(() => { vi.restoreAllMocks() })
+
+  it('shows the previous/next arrows only while the row overflows', async () => {
+    stubFetch({ '/dsh-market/registry': registry() })
+    const first = render(<MarketSection {...props()} />)
+    await screen.findByRole('region', { name: en.recentlyAdded })
+    // jsdom lays nothing out: the row fits, so there is nothing to page through.
+    expect(screen.queryByRole('button', { name: en.recentPrev })).toBeNull()
+    expect(screen.queryByRole('button', { name: en.recentNext })).toBeNull()
+    first.unmount()
+
+    // jsdom keeps these on Element.prototype; restoring means deleting our own.
+    const scrollWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollWidth')
+    const clientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth')
+    Object.defineProperty(HTMLElement.prototype, 'scrollWidth', {
+      configurable: true, get(this: HTMLElement) { return this.id === 'dshm-recent-grid' ? 1200 : 0 },
+    })
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+      configurable: true, get(this: HTMLElement) { return this.id === 'dshm-recent-grid' ? 600 : 0 },
+    })
+    try {
+      render(<MarketSection {...props()} />)
+      await screen.findByRole('region', { name: en.recentlyAdded })
+      // At the start only "next" can move.
+      expect((await screen.findByRole('button', { name: en.recentNext }) as HTMLButtonElement).disabled).toBe(false)
+      expect((screen.getByRole('button', { name: en.recentPrev }) as HTMLButtonElement).disabled).toBe(true)
+    } finally {
+      if (scrollWidth) Object.defineProperty(HTMLElement.prototype, 'scrollWidth', scrollWidth)
+      else Reflect.deleteProperty(HTMLElement.prototype, 'scrollWidth')
+      if (clientWidth) Object.defineProperty(HTMLElement.prototype, 'clientWidth', clientWidth)
+      else Reflect.deleteProperty(HTMLElement.prototype, 'clientWidth')
+    }
+  })
 
   it('checks only the expanded recent strip and leaves incompatible tiles unfilled (#1162)', async () => {
     const top = Array.from({ length: 24 }, (_, i) => entry('dsh-top-' + i, 1000 - i, 0, daysAgo(40)))
@@ -11669,8 +11808,10 @@ describe('recently added Discover row (#780)', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: en.sortDownloads }))
     await screen.findByRole('region', { name: en.recentlyAdded })
     fireEvent.click(screen.getByRole('button', { name: en.filter }))
+    // Hidden and Advanced are reached through the header menu, not the tab row.
     for (const tab of [en.tabThemes, en.tabFavorites, en.tabInstalled, en.tabBlocked, en.tabAdvanced]) {
-      fireEvent.click(within(document.getElementsByClassName(css.tabs)[0] as HTMLElement).getByRole('button', { name: tab }))
+      if (tab === en.tabBlocked || tab === en.tabAdvanced) await openHeadMenu(tab)
+      else fireEvent.click(within(document.getElementsByClassName(css.tabs)[0] as HTMLElement).getByRole('button', { name: tab }))
       expectHidden()
       fireEvent.click(screen.getByRole('button', { name: en.tabDiscover }))
       await screen.findByRole('region', { name: en.recentlyAdded })
@@ -11811,7 +11952,10 @@ describe('Plugins page tab lays out as page content', () => {
     expect(await screen.findByRole('heading', { name: en.nav })).toBeTruthy()
     expect(screen.getByText(en.subtitle)).toBeTruthy()
     expect(screen.getByRole('link', { name: en.submitPlugin })).toBeTruthy()
-    expect(screen.getByRole('button', { name: en.exportLog })).toBeTruthy()
+    // Export log is no longer a button in the heading row; it is in the menu.
+    expect(screen.queryByRole('button', { name: en.exportLog })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: en.headMore }))
+    expect(await screen.findByRole('menuitem', { name: en.exportLog })).toBeTruthy()
     expect(container.querySelector('[data-dsh-market-plugins-tab]')).toBeNull()
   })
 
@@ -11821,9 +11965,13 @@ describe('Plugins page tab lays out as page content', () => {
     expect(screen.queryByRole('heading', { name: en.nav })).toBeNull()
     expect(screen.queryByText(en.subtitle)).toBeNull()
     expect(screen.queryByRole('link', { name: en.submitPlugin })).toBeNull()
-    // Export stays on the tab row — install failures ask for a log here.
-    const exportButton = screen.getByRole('button', { name: en.exportLog })
-    expect(exportButton.closest(`.${css.tabs}`)).toBeTruthy()
+    // The menu stays on the tab row, and Export log is in it — install
+    // failures ask for a log here.
+    expect(screen.queryByRole('button', { name: en.exportLog })).toBeNull()
+    const more = screen.getByRole('button', { name: en.headMore })
+    expect(more.closest(`.${css.tabs}`)).toBeTruthy()
+    fireEvent.click(more)
+    expect(await screen.findByRole('menuitem', { name: en.exportLog })).toBeTruthy()
     const root = container.querySelector('[data-dsh-market-root]')
     expect(root?.getAttribute('data-dsh-market-plugins-tab')).toBe('true')
     expect(root?.getAttribute('style') ?? '').not.toMatch(/height\s*:/)
@@ -11840,7 +11988,7 @@ describe('Plugins page tab lays out as page content', () => {
     )
   })
 
-  it('keeps Update all on the tab row when the heading is gone', async () => {
+  it('keeps Update all at the top of Installed when the heading is gone', async () => {
     stubFetch({
       '/dsh-market/installed': { profile: 'desktop', installed: { 'dsh-loop': '^1.0.0' }, live: [] },
       '/dsh-market/updates': { updates: { 'dsh-loop': {
@@ -11848,7 +11996,11 @@ describe('Plugins page tab lays out as page content', () => {
       } } },
     })
     render(<MarketSection {...props()} surface="plugins" />)
-    expect(await screen.findByRole('button', { name: new RegExp(en.updateAll) })).toBeTruthy()
+    await openInstalled()
+    const updateAll = await screen.findByRole('button', { name: new RegExp(en.updateAll) })
+    // Beside the List / Groups switch, not in the tab row.
+    expect(updateAll.closest('[class*="installedTopRow"]')).toBeTruthy()
+    expect(updateAll.closest(`.${css.tabs}`)).toBeNull()
     expect(screen.queryByRole('heading', { name: en.nav })).toBeNull()
   })
 
@@ -12721,7 +12873,11 @@ describe('interrupted updates at startup (#1167)', () => {
       },
     })
     render(<MarketSection {...props()} />)
-    fireEvent.click(await screen.findByRole('button', { name: /^Tasks/u }))
+    // Only successes: nothing to flag, so there is no Tasks button; the header
+    // menu is the way to read the report.
+    await screen.findByText('dsh-loop')
+    expect(screen.queryByRole('button', { name: /^Tasks/u })).toBeNull()
+    await openHeadMenu(en.opTitle)
     await screen.findByText('intact-plugin')
     expect(screen.getByRole('button', { name: 'Tasks', exact: true })).toBeTruthy()
     expect(screen.getByText('The installed version is intact.')).toBeTruthy()
@@ -12796,7 +12952,8 @@ describe('interrupted updates at startup (#1167)', () => {
       })
       render(<MarketSection {...props()} />)
       await act(async () => { await vi.advanceTimersByTimeAsync(0) })
-      expect(screen.getByRole('button', { name: 'Tasks' })).toBeTruthy()
+      // Still checking: nothing to show yet, so no Tasks button.
+      expect(screen.queryByRole('button', { name: 'Tasks' })).toBeNull()
       finished = true
       await act(async () => { await vi.advanceTimersByTimeAsync(2500) })
       const tasks = await vi.waitFor(() => screen.getByRole('button', { name: /Tasks.*Startup recovery/ }))
@@ -12834,7 +12991,8 @@ describe('local checkout recovery in Tasks', () => {
       })
       render(<MarketSection {...props()} />)
       await act(async () => { await vi.advanceTimersByTimeAsync(0) })
-      expect(screen.getByRole('button', { name: en.opTitle })).toBeTruthy()
+      // Still checking: nothing to show yet, so no Tasks button.
+      expect(screen.queryByRole('button', { name: en.opTitle })).toBeNull()
       stopped = true
       await act(async () => { await vi.advanceTimersByTimeAsync(2500) })
       fireEvent.click(screen.getByRole('button', { name: re(en.checkoutRecoveryTitle) }))
@@ -13180,7 +13338,11 @@ describe('Agent-safe drain mode (#411)', () => {
     mounted.unmount()
     resetDismissedHostCache()
     render(<MarketSection {...props()} />)
-    fireEvent.click(await screen.findByRole('button', { name: en.opTitle }))
+    // Nothing left to show, so the entry stays out of the row; the menu still opens it.
+    await screen.findByText('dsh-loop')
+    expect(screen.queryByRole('button', { name: en.opTitle })).toBeNull()
+    await openHeadMenu(en.opTitle)
+    expect(await screen.findByText(en.opEmpty)).toBeTruthy()
     expect(screen.queryByText(entry.name)).toBeNull()
   })
 
@@ -13471,5 +13633,118 @@ describe('a chosen sort is remembered (#1142)', () => {
     // No click in this mount: the order comes from storage.
     await screen.findByText('whale-skin')
     expect(rankedNames(second.container)[0]).toBe('whale-skin')
+  })
+})
+
+describe('compact header, detail view and quiet notes', () => {
+  it('shows only the four everyday tabs, and opens Hidden and Advanced from the menu', async () => {
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    const tabs = within(document.getElementsByClassName(css.tabs)[0] as HTMLElement)
+    // (Themes only joins the row when the host reports any themes.)
+    for (const name of [en.tabDiscover, en.tabFavorites, en.tabInstalled]) {
+      expect(tabs.getByRole('button', { name: new RegExp(`^${name}`) })).toBeTruthy()
+    }
+    expect(tabs.queryByRole('button', { name: new RegExp(`^${en.tabBlocked}`) })).toBeNull()
+    expect(tabs.queryByRole('button', { name: en.tabAdvanced })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: en.headMore }))
+    for (const name of [en.tabBlocked, en.tabAdvanced, en.opTitle, en.exportLog]) {
+      expect(await screen.findByRole('menuitem', { name })).toBeTruthy()
+    }
+    fireEvent.click(screen.getByRole('menuitem', { name: en.tabBlocked }))
+    // While open, the tab is shown (highlighted) so you can see where you are.
+    const open = within(document.getElementsByClassName(css.tabs)[0] as HTMLElement)
+      .getByRole('button', { name: new RegExp(`^${en.tabBlocked}`) })
+    expect(open.className).toMatch(/\bon\b|_on_/)
+  })
+
+  const pendingRestart = () => {
+    const installed = { 'dsh-loop': '^1.0.0' }
+    stubFetch({
+      '/dsh-market/installed': {
+        profile: 'web', installed, live: [],
+        activation: { 'dsh-loop': { state: 'restart', reasons: ['in the bundle layer'], bundle: true, hot: false } },
+      },
+      '/dsh-market/status': { active: false, busy: false, pnpm: true, boot: 'boot-1', restart: true, installed },
+    })
+  }
+
+  it('keeps the restart banner on Installed and marks the tab with a dot elsewhere', async () => {
+    pendingRestart()
+    render(<MarketSection {...props()} />)
+    const installedTab = await screen.findByRole('button', { name: new RegExp(`^${en.tabInstalled}`) })
+    await waitFor(() => expect(installedTab.querySelector('[class*="dot"]')).toBeTruthy())
+    expect(screen.queryByText(re(en.restartBanner))).toBeNull()
+    fireEvent.click(installedTab)
+    expect(await screen.findByText(re(en.restartBanner))).toBeTruthy()
+    // The banner is on screen, so the tab no longer needs the dot.
+    expect(installedTab.querySelector('[class*="dot"]')).toBeNull()
+  })
+
+  it('closes the restart banner with its X and does not bring it back on its own', async () => {
+    pendingRestart()
+    render(<MarketSection {...props()} />)
+    await showRestartBanner()
+    fireEvent.click(screen.getByRole('button', { name: en.dismissNotice }))
+    await waitFor(() => expect(screen.queryByText(re(en.restartBanner))).toBeNull())
+    // Closed for good while the count stays the same: no dot either.
+    const tab = screen.getByRole('button', { name: new RegExp(`^${en.tabInstalled}`) })
+    fireEvent.click(screen.getByRole('button', { name: en.tabDiscover }))
+    expect(tab.querySelector('[class*="dot"]')).toBeNull()
+  })
+
+  describe('the host-compatibility note under the categories', () => {
+    const route = '/dsh-market/discovery-compatibility'
+    const incompatible = { status: 'incompatible', basis: 'manifest', requirement: '^0.9.0', declarations: ['^0.9.0'] }
+    const note = /Hid 1 plugins on this page/
+
+    it('stays away when nothing is hidden or unchecked, and never says 0', async () => {
+      render(<MarketSection {...props()} />)
+      await screen.findByText('dsh-loop')
+      await waitFor(() => expect(fetchCalls.some(call => call.path === route)).toBe(true))
+      await act(async () => {})
+      expect(screen.queryByText(/Hid \d+ plugins/)).toBeNull()
+      expect(screen.queryByText(/Checking host requirements/)).toBeNull()
+    })
+
+    it('can be closed with its X, and stays closed across visits', async () => {
+      const stub = () => stubFetch({
+        [route]: { hostVersion: '0.1.2-alpha.2', plugins: { 'dsh-loop': incompatible, ...UNDECLARED_GITHUB_COMPATIBILITY } },
+      })
+      stub()
+      const first = render(<MarketSection {...props()} />)
+      expect(await screen.findByText(note)).toBeTruthy()
+      fireEvent.click(screen.getByRole('button', { name: en.dismissNotice }))
+      expect(screen.queryByText(note)).toBeNull()
+      expect(localStorage.getItem('dshm-host-filter-note-closed')).toBe('1')
+      first.unmount()
+
+      resetHostCompatibilityCache()
+      stub()
+      render(<MarketSection {...props()} />)
+      await screen.findByText('dsh-notify')
+      await waitFor(() => expect(screen.queryByText('dsh-loop')).toBeNull())
+      expect(screen.queryByText(note)).toBeNull()
+    })
+  })
+
+  describe('the detail view of an installed plugin', () => {
+    it('shows the plugin name and a single Close, with no install question', async () => {
+      stubFetch({
+        '/dsh-market/installed': { profile: 'web', installed: { 'dsh-loop': '^1.0.0' }, live: ['dsh-loop'], disabled: [] },
+      })
+      render(<MarketSection {...props()} />)
+      await waitFor(() => expect(screen.getAllByRole('button', { name: 'dsh-loop' }).length).toBeGreaterThan(0))
+      fireEvent.click(screen.getAllByRole('button', { name: 'dsh-loop' })[0]!)
+      const dialog = await screen.findByRole('dialog', { name: 'dsh-loop' })
+      // The footer has the one Close (the dialog's own corner X shares the name).
+      const close = within(dialog).getAllByRole('button', { name: en.detailClose })
+      expect(close.length).toBeGreaterThan(0)
+      expect(within(dialog).queryByRole('button', { name: en.confirmInstall })).toBeNull()
+      expect(within(dialog).queryByRole('button', { name: en.cancel })).toBeNull()
+      fireEvent.click(close.at(-1)!)
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    })
   })
 })

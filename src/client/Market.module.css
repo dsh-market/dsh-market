@@ -1415,3 +1415,41 @@
 .sponsorItem:hover{color:var(--dsw-alias-brand-primary,#4f6ef7)}
 .sponsorLogo{display:block;height:14px;width:auto;max-width:56px;border-radius:3px;background:#fff;object-fit:contain}
 .sponsorSlot{display:flex;justify-content:flex-end;align-items:center;align-self:center;flex:1 0 auto;max-width:100%;padding-right:4px}
+
+/* Compact header: ··· after the tabs, update actions on Installed. */
+.headMore{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;height:28px;min-width:28px;padding:0 6px;
+          border:none;border-radius:8px;background:none;font:inherit;font-size:14px;letter-spacing:1px;cursor:pointer;
+          color:var(--dsw-alias-label-secondary,#5c6570)}
+.headMore:hover,.headMore[aria-expanded="true"]{background:var(--dsw-alias-interactive-bg-hover,#2631480f);color:var(--dsw-alias-label-primary,#1f2328)}
+.installedTopRow{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+.installedTopRow > .viewBar{margin-bottom:0}
+.installedBatch{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-left:auto}
+.installedBatch:empty{display:none}
+.tabs .opWrap{margin-bottom:0}
+[data-dsh-market-plugins-tab="true"]:not([data-dsh-market-fullscreen="true"]) .head{padding:2px 4px 2px;gap:4px}
+.bannerClose{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;width:24px;height:24px;margin-right:-4px;
+             border:none;border-radius:6px;background:none;cursor:pointer;color:var(--dsw-alias-label-tertiary,#8b93a1)}
+.bannerClose:hover{background:var(--dsw-alias-interactive-bg-hover,#2631480f);color:var(--dsw-alias-label-primary,#1f2328)}
+/* Tasks and ··· sit with the tabs on the left, so the Tasks
+   panel hangs from its own button instead of the row's right edge. */
+.tabs .opWrap{position:relative}
+.tabs .opPanel{left:0;right:auto;max-width:min(460px,calc(100cqw - 24px))}
+/* The right side of the row is the sponsors' alone, so the logos can be read. */
+[data-dsh-market-plugins-tab="true"] .sponsorMark{gap:10px}
+[data-dsh-market-plugins-tab="true"] .sponsorLogo{height:24px;max-width:80px;border-radius:4px}
+.hostFilterNoteRow{display:flex;align-items:center;gap:4px}
+.hostFilterNoteRow .bannerClose{width:20px;height:20px;margin:0}
+.cardStats{display:flex;align-items:center;gap:4px;min-width:0;margin-top:2px;flex-wrap:wrap}
+.nmRow{display:flex;align-items:center;min-width:0}
+.nmButton{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0;border:none;background:none;
+          font:inherit;color:inherit;text-align:left;cursor:pointer}
+.nmButton:hover{color:var(--dsw-alias-brand-primary,#4f6ef7);text-decoration:underline}
+.repoMarkLink{display:inline-flex;flex-shrink:0;color:inherit}
+.repoMarkLink:hover .repoMark{color:var(--dsw-alias-brand-primary,#4f6ef7)}
+.descOpen{cursor:pointer;border-radius:4px}
+.descOpen:hover{color:var(--dsw-alias-label-secondary,#5c6570)}
+.recentArrows{display:inline-flex;align-items:center;gap:2px;margin-left:auto}
+.recentArrow{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;padding:0;border:none;border-radius:8px;
+             background:none;cursor:pointer;color:var(--dsw-alias-label-secondary,#5c6570)}
+.recentArrow:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,#2631480f);color:var(--dsw-alias-label-primary,#1f2328)}
+.recentArrow:disabled{opacity:.35;cursor:default}

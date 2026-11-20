@@ -127,24 +127,24 @@ function BookmarkMark({ size = 14, filled = false, className, markRef }: {
 }
 
 /** Compact count; hover names the exact figure, source and reporting scope. */
-export function DownloadCount({ plugin, t }: { plugin: RegistryPlugin; t: Translate }) {
+export function DownloadCount({ plugin, t, dot = true }: { plugin: RegistryPlugin; t: Translate; dot?: boolean }) {
   const tip = downloadStatsText(plugin, t)
   const statistic = downloadStatistic(plugin)
   if (tip === null || statistic === null) return null
   return (
     <CardTip label={tip}>
       <span className={css.star} tabIndex={0} aria-label={tip}>
-        {'· ' + (statistic.source === 'github' ? 'GitHub ' : '') + '↓ ' + formatCount(statistic.count)}
+        {(dot ? '· ' : '') + (statistic.source === 'github' ? 'GitHub ' : '') + '↓ ' + formatCount(statistic.count)}
       </span>
     </CardTip>
   )
 }
 
-export function StarCount({ plugin, t }: { plugin: RegistryPlugin; t: Translate }) {
+export function StarCount({ plugin, t, dot = true }: { plugin: RegistryPlugin; t: Translate; dot?: boolean }) {
   const tip = starStatsText(plugin, t)
   if (tip === null) return null
   return <CardTip label={tip}><span className={css.star} tabIndex={0} aria-label={tip}>
-    {'· ★ ' + formatCount(plugin.stars!)}
+    {(dot ? '· ' : '') + '★ ' + formatCount(plugin.stars!)}
   </span></CardTip>
 }
 
@@ -435,12 +435,12 @@ export function ConfirmFold({ icon, title, meta, open, onToggle, children }: {
 }
 
 /** Catalog npm latest, omitted for github-only and not-yet-backfilled rows. */
-export function CatalogVersionMark({ version, tip }: { version: string | null | undefined; tip: string }) {
+export function CatalogVersionMark({ version, tip, dot = true }: { version: string | null | undefined; tip: string; dot?: boolean }) {
   if (typeof version !== 'string' || version.length === 0) return null
   const label = /^v/i.test(version) ? version : `v${version}`
   return (
     <CardTip label={tip} maxWidth={280}>
-      <span className={css.star}>{`· ${label}`}</span>
+      <span className={css.star}>{dot ? `· ${label}` : label}</span>
     </CardTip>
   )
 }
@@ -469,5 +469,24 @@ export function SponsorMark({ lang, t }: { lang: 'zh' | 'en'; t: Translate }) {
         </a>
       ))}
     </span>
+  )
+}
+
+/**
+ * A card's numbers on their own line, under the author: version, downloads,
+ * stars. The dots sit only BETWEEN items that are present, so the line never
+ * starts with one — which is what a single wrapping line used to do.
+ */
+export function CardStats({ plugin, t, versionTip }: { plugin: RegistryPlugin; t: Translate; versionTip: string }) {
+  const hasVersion = typeof plugin.version === 'string' && plugin.version.length > 0
+  const hasDownloads = downloadStatsText(plugin, t) !== null && downloadStatistic(plugin) !== null
+  const hasStars = starStatsText(plugin, t) !== null
+  if (!hasVersion && !hasDownloads && !hasStars) return null
+  return (
+    <div className={css.cardStats}>
+      <CatalogVersionMark version={plugin.version} tip={versionTip} dot={false} />
+      <DownloadCount plugin={plugin} t={t} dot={hasVersion} />
+      <StarCount plugin={plugin} t={t} dot={hasVersion || hasDownloads} />
+    </div>
   )
 }
