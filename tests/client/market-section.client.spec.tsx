@@ -3362,6 +3362,139 @@ describe('MarketSection (jsdom)', () => {
         expect((panel!.textContent!.match(new RegExp(skipped, 'g')) ?? []).length).toBe(2)
       })
     })
+
+    it('updates the rows the list still offers beside a held one', async () => {
+      // A cli host holds only the floating git row; its update route takes
+      // the npm ones past the blocker.
+      const offered = { kind: 'npm', version: '1.0.0', current: '1.0.0', latest: '1.2.0', updateAvailable: true }
+      stubFetch({
+        '/dsh-market/installed': { profile: 'web', installed: { 'dsh-a': '^1.0.0', 'dsh-b': '^1.0.0', 'dsh-w': 'github:o/w' }, live: [] },
+        '/dsh-market/updates': { updates: {
+          'dsh-a': offered,
+          'dsh-b': offered,
+          'dsh-w': { kind: 'github', version: null, current: 'c'.repeat(40), latest: 'd'.repeat(40), updateAvailable: false, profileBlocked: blocked },
+        } },
+        '/dsh-market/update': { ok: true },
+      })
+      render(<MarketSection {...props()} />)
+      fireEvent.click(await screen.findByRole('button', { name: new RegExp(en.updateAll) }))
+      await waitFor(() => expect(screen.queryByRole('button', { name: new RegExp(en.updating) })).toBeNull())
+      expect(fetchCalls.filter(call => call.path === '/dsh-market/update').map(call => (call.body as { name: string }).name).sort())
+        .toEqual(['dsh-a', 'dsh-b'])
+      // The held row says why on its own; no sentence says that every update waits.
+      fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+      expect(await screen.findByText(en.profileBlockedBeside)).toBeTruthy()
+      expect(screen.queryByText(/Updates wait until dsh-mobile-plugin 0\.5\.71/)).toBeNull()
+    })
+
+    it('lets the list read after a refusal decide what the next "update all" sends', async () => {
+      // On a cli host the list offers a floating git row until its update is
+      // refused: that update gets no bypass, so the refusal stops the batch.
+      // The list read after it holds that row alone, and the next "update
+      // all" sends the rows it still offers.
+      const offered = { kind: 'npm', version: '1.0.0', current: '1.0.0', latest: '1.2.0', updateAvailable: true }
+      const git = { kind: 'github', version: null, current: 'c'.repeat(40), latest: 'd'.repeat(40) }
+      const unknownEnd = { ...blocked, readyAt: null }
+      let refused = false
+      stubFetch({
+        '/dsh-market/installed': { profile: 'web', installed: { 'dsh-w': 'github:o/w', 'dsh-a': '^1.0.0', 'dsh-b': '^1.0.0' }, live: [] },
+        '/dsh-market/updates': () => ({ updates: {
+          'dsh-w': refused ? { ...git, updateAvailable: false, profileBlocked: unknownEnd } : { ...git, updateAvailable: true },
+          'dsh-a': offered,
+          'dsh-b': offered,
+        } }),
+        '/dsh-market/update': (body: unknown) => {
+          if ((body as { name: string }).name !== 'dsh-w') return { ok: true }
+          refused = true
+          return {
+            ok: false, failureCode: 'PROFILE_RELEASE_BLOCKED', profileBlocked: unknownEnd,
+            error: '要等 dsh-mobile-plugin 0.5.71 满安全等待期后才能更新 / Updates wait', __status: 502,
+          }
+        },
+      })
+      const sent = () => fetchCalls.filter(call => call.path === '/dsh-market/update').map(call => (call.body as { name: string }).name)
+      render(<MarketSection {...props()} />)
+      fireEvent.click(await screen.findByRole('button', { name: new RegExp(en.updateAll) }))
+      await waitFor(() => expect(screen.queryByRole('button', { name: new RegExp(en.updating) })).toBeNull())
+      // The batch stopped at the refusal, as before.
+      expect(sent()).toEqual(['dsh-w'])
+      fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+      expect(await screen.findByText(en.profileBlockedBeside)).toBeTruthy()
+      expect(screen.queryByText(/Updates wait until dsh-mobile-plugin 0\.5\.71/)).toBeNull()
+
+      fireEvent.click(await screen.findByRole('button', { name: new RegExp(en.updateAll) }))
+      await waitFor(() => expect(sent()).toHaveLength(3))
+      await waitFor(() => expect(screen.queryByRole('button', { name: new RegExp(en.updating) })).toBeNull())
+      expect(sent().slice(1).sort()).toEqual(['dsh-a', 'dsh-b'])
+    })
+
+    // On a Desktop host the list read after a refusal holds every row it
+    // checked. A row whose check failed keeps its last good answer, which
+    // still offers the update, so it says nothing about the wait.
+    const unchecked = { kind: 'npm', version: '1.0.0', latest: null, updateAvailable: false, checkFailed: true }
+    it.each([
+      { read: 'one row could not be checked', note: 1, after: { updates: { 'dsh-a': row(), 'dsh-b': unchecked, 'dsh-c': row() } } },
+      { read: 'no row could be checked', note: 0, after: { updates: { 'dsh-a': unchecked, 'dsh-b': unchecked, 'dsh-c': unchecked } } },
+      { read: 'the list could not be read', note: 0, after: { error: 'unavailable', __status: 500 } },
+    ])('keeps the stop a refusal set when $read in the list read after it', async ({ note, after }) => {
+      localStorage.setItem('dshm-queue-v1', JSON.stringify(['dsh-a', 'dsh-b', 'dsh-c'].map(name => ({ kind: 'update', name }))))
+      const offered = { kind: 'npm', version: '1.0.0', current: '1.0.0', latest: '1.2.0', updateAvailable: true }
+      let refused = false
+      stubFetch({
+        '/dsh-market/installed': { profile: 'desktop', installed: { 'dsh-a': '^1.0.0', 'dsh-b': '^1.0.0', 'dsh-c': '^1.0.0' }, live: [] },
+        '/dsh-market/updates': () => refused ? after : { updates: { 'dsh-a': offered, 'dsh-b': offered, 'dsh-c': offered } },
+        '/dsh-market/update': () => {
+          refused = true
+          return {
+            ok: false, failureCode: 'PROFILE_RELEASE_BLOCKED', profileBlocked: blocked,
+            error: '要等 dsh-mobile-plugin 0.5.71 满安全等待期后才能更新 / Updates wait', __status: 502,
+          }
+        },
+      })
+      const sent = () => fetchCalls.filter(call => call.path === '/dsh-market/update').map(call => (call.body as { name: string }).name)
+      const skipped = () => {
+        const panel = document.querySelector('[class*="opPanel"]')
+        return (panel?.textContent?.match(new RegExp(en.profileBlockedSkipped.split('{0}')[0]!, 'g')) ?? []).length
+      }
+      render(<MarketSection {...props()} />)
+      // The queue takes one row every 2 s: the refused one, then each other
+      // row is either skipped or sent.
+      await waitFor(() => expect(sent().length + skipped()).toBe(3), { timeout: 15_000 })
+      expect(sent()).toEqual(['dsh-a'])
+      expect(skipped()).toBe(2)
+      fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+      const notes = () => screen.queryAllByRole('status')
+        .filter(node => node.textContent?.startsWith('Updates wait until dsh-mobile-plugin 0.5.71') === true)
+      await waitFor(() => expect(notes()).toHaveLength(note))
+    }, 30_000)
+
+    it('leaves a held row beside offered ones as it was when a list read fails', async () => {
+      // A cli host's list holds the floating git row and offers the rest. A
+      // read that fails keeps those rows; it does not turn the held one into
+      // a wait for every update.
+      const offered = { kind: 'npm', version: '1.0.0', current: '1.0.0', latest: '1.2.0', updateAvailable: true }
+      let fail = false
+      stubFetch({
+        '/dsh-market/installed': { profile: 'web', installed: { 'dsh-a': '^1.0.0', 'dsh-b': '^1.0.0', 'dsh-w': 'github:o/w' }, live: [] },
+        '/dsh-market/updates': () => fail ? { error: 'unavailable', __status: 500 } : { updates: {
+          'dsh-a': offered,
+          'dsh-b': offered,
+          'dsh-w': { kind: 'github', version: null, current: 'c'.repeat(40), latest: 'd'.repeat(40), updateAvailable: false, profileBlocked: blocked },
+        } },
+        '/dsh-market/update': { ok: true },
+      })
+      render(<MarketSection {...props()} />)
+      expect(await screen.findByRole('button', { name: /Update all \(2\)/ })).toBeTruthy()
+      fail = true
+      // Opening the Installed tab checks again.
+      fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+      expect(await screen.findByText(en.updateCheckFailed)).toBeTruthy()
+      expect(screen.getByText(en.profileBlockedBeside)).toBeTruthy()
+      expect(screen.queryByText(/Updates wait until dsh-mobile-plugin 0\.5\.71/)).toBeNull()
+      fireEvent.click(screen.getByRole('button', { name: /Update all \(2\)/ }))
+      await waitFor(() => expect(fetchCalls.filter(call => call.path === '/dsh-market/update')
+        .map(call => (call.body as { name: string }).name).sort()).toEqual(['dsh-a', 'dsh-b']))
+    })
   })
 
   describe('the host asks for a restart before the next update (#1253)', () => {

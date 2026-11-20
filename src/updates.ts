@@ -829,18 +829,20 @@ async function releaseAgeHold(name: string, latest: string | null, profile: stri
  * click (#1252). Applied to what is served, not to the cached registry
  * answer, so a blocker learned a second ago and one that just ended both show
  * on the very next read without another round of registry traffic.
+ * @param holds - which offered updates the blocker stops; every one by default.
  */
 export function applyProfileBlockers(
   statuses: Record<string, UpdateStatus>,
   activeProfileDir: string,
   now = Date.now(),
+  holds: (name: string) => boolean = () => true,
 ): Record<string, UpdateStatus> {
-  if (!Object.values(statuses).some(status => status.updateAvailable === true)) return statuses
+  if (!Object.entries(statuses).some(([name, status]) => status.updateAvailable === true && holds(name))) return statuses
   const blocker = headlineBlocker(activeReleaseBlockers(activeProfileDir, now))
   if (blocker === null) return statuses
   const profileBlocked = { name: blocker.name, version: blocker.version, readyAt: blocker.readyAt }
   return Object.fromEntries(Object.entries(statuses).map(([name, status]) =>
-    [name, status.updateAvailable === true ? { ...status, updateAvailable: false, profileBlocked } : status]))
+    [name, status.updateAvailable === true && holds(name) ? { ...status, updateAvailable: false, profileBlocked } : status]))
 }
 
 /** A hold expiration invalidates evidence; it cannot itself authorize an install. */

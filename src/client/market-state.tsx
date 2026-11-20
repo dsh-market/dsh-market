@@ -350,14 +350,36 @@ const t = props.t
    * heard from the server (#1252). pnpm refuses every change while it holds,
    * so a batch or the queue stops at the first such refusal instead of trying
    * each plugin in turn. The update check is the authority: whatever it says
-   * next replaces this.
+   * next replaces this. A list that still offers an update beside a held row
+   * comes from a host whose update route takes the offered ones past the
+   * wait, so that list stops nothing and the held rows say why on their own.
    */
   const profileBlockRef = useRef<{ name: string; version: string; readyAt: string | null } | null>(null)
-  const profileBlocked = useMemo(
-    () => Object.values(updates).find(status => status.profileBlocked !== undefined)?.profileBlocked ?? null,
-    [updates],
-  )
-  useEffect(() => { profileBlockRef.current = profileBlocked }, [profileBlocked])
+  const { profileBlocked, listChecked } = useMemo(() => {
+    const failed = updateCheck.failed
+    const rows = Object.entries(updates)
+    // A row whose check failed in this read keeps its last good answer
+    // (applyUpdateCheck), which can still offer an update the server now
+    // holds, so only the rows this read checked say whether an update is
+    // offered beside a held one. A read that checked no row (the request
+    // failed, or every row's check did) leaves the rows as earlier reads
+    // answered them.
+    const checked = failed === null ? [] : rows.filter(([name]) => !failed.has(name))
+    const offered = (checked.length > 0 ? checked : rows).some(([, status]) => status.updateAvailable === true)
+    return {
+      profileBlocked: offered ? null : rows.find(([, status]) => status.profileBlocked !== undefined)?.[1].profileBlocked ?? null,
+      listChecked: checked.length > 0,
+    }
+  }, [updates, updateCheck.failed])
+  // Every new list (a new `updates` object) that checked a row replaces what
+  // a refusal set here, also when `profileBlocked` stays null, so Update all
+  // and the queue do what the rows on screen say: on such a host the list
+  // read after a floating git row was refused holds that row alone and
+  // offers the rest. A read that checked no row says nothing about the wait,
+  // so the stop stays until one does.
+  useEffect(() => {
+    if (listChecked) profileBlockRef.current = profileBlocked
+  }, [listChecked, profileBlocked, updates])
   /**
    * The host answered an update with "restart first" (#1253): an earlier one in
    * this run already moved the loaded packages, and every later one would be

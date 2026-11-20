@@ -9604,13 +9604,27 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			* heard from the server (#1252). pnpm refuses every change while it holds,
 			* so a batch or the queue stops at the first such refusal instead of trying
 			* each plugin in turn. The update check is the authority: whatever it says
-			* next replaces this.
+			* next replaces this. A list that still offers an update beside a held row
+			* comes from a host whose update route takes the offered ones past the
+			* wait, so that list stops nothing and the held rows say why on their own.
 			*/
 			const profileBlockRef = (0, react.useRef)(null);
-			const profileBlocked = (0, react.useMemo)(() => Object.values(updates).find((status) => status.profileBlocked !== void 0)?.profileBlocked ?? null, [updates]);
+			const { profileBlocked, listChecked } = (0, react.useMemo)(() => {
+				const failed = updateCheck.failed;
+				const rows = Object.entries(updates);
+				const checked = failed === null ? [] : rows.filter(([name]) => !failed.has(name));
+				return {
+					profileBlocked: (checked.length > 0 ? checked : rows).some(([, status]) => status.updateAvailable === true) ? null : rows.find(([, status]) => status.profileBlocked !== void 0)?.[1].profileBlocked ?? null,
+					listChecked: checked.length > 0
+				};
+			}, [updates, updateCheck.failed]);
 			(0, react.useEffect)(() => {
-				profileBlockRef.current = profileBlocked;
-			}, [profileBlocked]);
+				if (listChecked) profileBlockRef.current = profileBlocked;
+			}, [
+				listChecked,
+				profileBlocked,
+				updates
+			]);
 			/**
 			* The host answered an update with "restart first" (#1253): an earlier one in
 			* this run already moved the loaded packages, and every later one would be

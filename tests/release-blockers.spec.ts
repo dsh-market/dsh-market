@@ -182,4 +182,13 @@ describe('applyProfileBlockers (#1252)', () => {
     const offered = { a: status() }
     expect(applyProfileBlockers(offered, dir)).toBe(offered)
   })
+
+  it('holds only the offered updates the caller says the blocker stops', () => {
+    recordReleaseBlockers(dir, [{ name: 'x', version: '1.0.0', publishedAt: null, readyAt: '2999-01-01T00:00:00.000Z' }])
+    const offered = { a: status(), b: status({ kind: 'github' }) }
+    const out = applyProfileBlockers(offered, dir, Date.now(), name => name === 'b')
+    expect(out.a).toBe(offered.a)
+    expect(out.b).toMatchObject({ updateAvailable: false, profileBlocked: { name: 'x', version: '1.0.0' } })
+    expect(applyProfileBlockers(offered, dir, Date.now(), () => false)).toBe(offered)
+  })
 })
