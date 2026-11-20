@@ -10954,7 +10954,12 @@ describe('card thumbnail + lightbox (curated screenshots only)', () => {
     await waitFor(() => expect(screen.getByText(installCmd)).toBeTruthy())
   })
 
-  it('offers a Retry button on a catalog load failure, which re-fetches and recovers (#188)', async () => {
+  it.each([
+    [en.tabDiscover, 'dsh-loop'],
+    [en.tabFavorites, 'dsh-loop'],
+    [en.tabThemes, 'whale-skin'],
+    [en.tabBlocked, 'dsh-notify'],
+  ])('offers a Retry button on a catalog load failure in %s (#188)', async (tab, plugin) => {
     let calls = 0
     stubFetch({
       '/dsh-market/registry': () => {
@@ -10963,16 +10968,23 @@ describe('card thumbnail + lightbox (curated screenshots only)', () => {
           ? { __status: 500, error: 'HTTP 500' }
           : { source: 'live', registry: REGISTRY }
       },
+      '/dsh-market/installed': {
+        profile: 'web', installed: {}, live: [],
+        favorites: [REGISTRY.plugins[0]!.url], blocked: ['dsh-notify'],
+      },
     })
-    render(<MarketSection {...props()} />)
+    const themeSnapshot = { preference: 'light', themes: [] }
+    render(<MarketSection {...props()} themeStore={{ subscribe: () => () => {}, getSnapshot: () => themeSnapshot }} />)
 
+    fireEvent.click(screen.getByRole('button', { name: re(tab) }))
     await screen.findByText(en.loadFail)
     expect(screen.getByText('HTTP 500')).toBeTruthy()
+    expect(screen.queryByText(en.loading)).toBeNull()
     expect(calls).toBe(1)
 
     fireEvent.click(screen.getByRole('button', { name: en.loadRetry }))
 
-    await screen.findByText('dsh-loop')
+    await screen.findByText(plugin)
     expect(screen.queryByText(en.loadFail)).toBeNull()
     expect(calls).toBe(2)
   })
