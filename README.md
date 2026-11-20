@@ -118,7 +118,7 @@ Installs prefer repo-verified npm packages, then author-supplied prebuilt GitHub
 - Installs are restricted to sources listed in the curated [awesome-dsh-plugin](https://awesome-dsh-plugin.com) registry — anything else is rejected
 - Build scripts stay blocked by default (pnpm ≥10); allowing one is your explicit per-package choice
 - Terminal/CLI-surface plugins are flagged before you install them into the web profile
-- The install endpoint accepts same-origin POST only; the market never phones home
+- The install endpoint accepts same-origin POST only; one anonymous count a day, no personal information, can be turned off in Settings (details in SECURITY.md)
 - Backups can contain credentials from your profile config — the UI warns before export and upload; WebDAV sync is https-only, refuses private-network targets, and never stores your password in the browser
 - Authenticated Gist requests always go directly to `api.github.com`; bearer tokens are never sent to a public GitHub acceleration service. GitHub source archives also stay on canonical codeload URLs so pnpm's integrity policy remains in force
 - The restart endpoint additionally requires a direct loopback client (forwarded requests are rejected) and relaunches the exact DSH entry, arguments, environment, and working directory

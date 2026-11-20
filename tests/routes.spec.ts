@@ -1526,3 +1526,25 @@ describe('host recovery (#875)', () => {
     expect(res.status).toBe(400)
   })
 })
+
+describe('anonymous usage count route', () => {
+  it('reads the default, saves the switch, and keeps the rest of the file', async () => {
+    expect(jsonBody(await hit(routes, '/dsh-market/telemetry', { method: 'GET', url: '/dsh-market/telemetry' }))).toEqual({ enabled: true })
+    const file = join(tmp, 'dsh-market', 'telemetry.json')
+    mkdirSync(join(tmp, 'dsh-market'), { recursive: true })
+    writeFileSync(file, JSON.stringify({ id: 'a'.repeat(32), lastDay: '2026-01-01', enabled: true }))
+    const res = await hit(routes, '/dsh-market/telemetry', post('/dsh-market/telemetry', { enabled: false }))
+    expect(res.status).toBe(200)
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ id: 'a'.repeat(32), lastDay: '2026-01-01', enabled: false })
+    expect(jsonBody(await hit(routes, '/dsh-market/telemetry', { method: 'GET', url: '/dsh-market/telemetry' }))).toEqual({ enabled: false })
+  })
+
+  it('refuses a cross-origin write, a non-boolean, and other methods', async () => {
+    const cross = await hit(routes, '/dsh-market/telemetry', { method: 'POST', url: '/dsh-market/telemetry', origin: 'http://evil.example', host: HOST, body: { enabled: false } })
+    expect(cross.status).toBe(403)
+    expect((await hit(routes, '/dsh-market/telemetry', post('/dsh-market/telemetry', { enabled: 'no' }))).status).toBe(400)
+    const del = await hit(routes, '/dsh-market/telemetry', { method: 'DELETE', url: '/dsh-market/telemetry' })
+    expect(del.status).toBe(405)
+    expect(del.headers.allow).toBe('GET, POST')
+  })
+})

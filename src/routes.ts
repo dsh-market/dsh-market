@@ -76,6 +76,7 @@ import { DEFAULT_UPDATE_CHECK_INTERVAL_HOURS, isUpdateCheckIntervalHours } from 
 import { createThemeManager, type LoaderEntry } from './themes.ts'
 import { readJsonBody, refuseUnadmitted, sameOrigin, sendJson } from './http.ts'
 import { resolveDshHome } from './home-paths.ts'
+import { readTelemetryState, setTelemetryEnabled, startHeartbeat } from './telemetry.ts'
 import { clearWebdavSecret, readWebdavSecret, webdavSecretFor, writeWebdavSecret } from './webdav-secret.ts'
 import { detectedDebugger, detectedSupervisor, restartAllowed, scheduleRestart, servingPort, trustedRestartRequest, trustedDownloadRequest, trustedSelfUninstallRequest, selfUninstallReachableFrom, type RecoveryHandoffConfig, restartReachableFrom } from './restart.ts'
 import type { RecoveryPlugin } from './recovery.ts'
@@ -3365,6 +3366,36 @@ export function mountMarketRoutes(
   const disposers = [
     registerRoute({
       kind: 'exact',
+      path: '/dsh-market/telemetry',
+      handler: async (request, response) => {
+        if (request.method === 'GET') {
+          sendJson(response, 200, { enabled: readTelemetryState().enabled })
+          return
+        }
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'GET, POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) {
+          sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        try {
+          const body = await readJsonBody(request) as { enabled?: unknown } | null
+          if (body === null || typeof body !== 'object' || typeof body.enabled !== 'boolean') {
+            sendJson(response, 400, { error: 'enabled must be a boolean' })
+            return
+          }
+          setTelemetryEnabled(body.enabled)
+          sendJson(response, 200, { ok: true, enabled: body.enabled })
+        } catch {
+          sendJson(response, 400, { error: '没能保存这个设置，请再试一次。 / Could not save this setting. Try again.' })
+        }
+      },
+    }),
+    registerRoute({
+      kind: 'exact',
       path: '/dsh-market/update-notifications',
       handler: async (request, response) => {
         if (request.method === 'GET') {
@@ -5410,6 +5441,7 @@ export function mountMarketRoutes(
           channels: CHANNELS,
           region,
           regions: REGIONS,
+          anonymousCount: readTelemetryState().enabled,
           // The padded/PATH- and CI-safe build environment currently pinned
           // (issue #336): composition plus any card-saved override. The card
           // edits exactly what this reports, so the form never shows a stale
@@ -9287,8 +9319,15 @@ export function mountMarketRoutes(
   ]
 
   startCheckoutRepair()
+  const stopHeartbeat = startHeartbeat({
+    version: marketVersion(),
+    hostVersion: () => dshHostInfo()?.version ?? null,
+    kind: () => (config.desktopHost === true ? 'desktop' : 'web'),
+    region: () => region,
+  })
   return async () => {
     disposed = true
+    stopHeartbeat()
     checkoutRepairRound = undefined
     if (checkoutRepairTimer !== undefined) clearTimeout(checkoutRepairTimer)
     updateNotifications.dispose()

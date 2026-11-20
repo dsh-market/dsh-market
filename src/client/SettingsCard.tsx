@@ -99,6 +99,8 @@ interface SelfStatus {
   selfUninstallReachable: boolean
   /** The effective build environment (composition + card-saved override). */
   buildEnv: Record<string, string>
+  /** The anonymous daily count; null on a server too old to have the switch. */
+  anonymousCount: boolean | null
 }
 
 /** The subset of api('/dsh-market/status') this card reads. */
@@ -117,6 +119,7 @@ interface StatusBody {
   githubProxyManaged?: boolean
   selfManaged?: boolean
   buildEnv?: Record<string, string>
+  anonymousCount?: boolean
 }
 
 /** What api('/dsh-market/updates') says about the market's own row. */
@@ -192,6 +195,7 @@ function readStatus(body: StatusBody): SelfStatus {
     selfManaged: body.selfManaged !== false,
     selfUninstallReachable: body.selfUninstallReachable !== false,
     buildEnv: body.buildEnv ?? {},
+    anonymousCount: typeof body.anonymousCount === 'boolean' ? body.anonymousCount : null,
   }
 }
 
@@ -336,7 +340,7 @@ export function SettingsCard({ t, locale, onRemoved, sidebar, entries }: Setting
           setStatus({
             version: null, restart: false, channel: 'stable', channels: ['stable', 'beta'],
             region: 'global', regions: REGIONS, regionAuto: false,
-            githubProxyCustom: null, githubProxyManaged: false, selfManaged: true, selfUninstallReachable: true, buildEnv: {},
+            githubProxyCustom: null, githubProxyManaged: false, selfManaged: true, selfUninstallReachable: true, buildEnv: {}, anonymousCount: null,
           })
         }
       }
@@ -470,6 +474,20 @@ export function SettingsCard({ t, locale, onRemoved, sidebar, entries }: Setting
           const status = (await fresh.json()) as StatusBody
           applyGithubRouting(status)
         } catch { /* images keep the previous route until the next load */ }
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause))
+      }
+    })()
+  }, [post, t])
+
+  /** Turn the anonymous daily count on or off; shows what the server saved. */
+  const onCount = useCallback((next: boolean) => {
+    setError(null)
+    void (async () => {
+      try {
+        const body = await post(api('/dsh-market/telemetry'), { enabled: next }) as { ok?: boolean; error?: string; enabled?: boolean }
+        if (body.ok !== true) { setError(body.error ?? t('setSelfFailed')); return }
+        setStatus(current => (current === null ? current : { ...current, anonymousCount: body.enabled ?? next }))
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : String(cause))
       }
@@ -776,6 +794,19 @@ export function SettingsCard({ t, locale, onRemoved, sidebar, entries }: Setting
               onClick: () => { onRegion(id) },
             }, t(REGION_LABEL[id]))),
           )),
+        status?.anonymousCount !== null && status?.anonymousCount !== undefined ? row(
+          t('setCount'),
+          t('setCountHint'),
+          h('div', { className: css.setSeg },
+            ([true, false] as const).map(value => h('button', {
+              key: String(value),
+              type: 'button',
+              className: status.anonymousCount === value ? `${css.setSegBtn} ${css.setSegOn}` : css.setSegBtn,
+              disabled: busy,
+              'aria-pressed': status.anonymousCount === value,
+              onClick: () => { if (status.anonymousCount !== value) onCount(value) },
+            }, t(value ? 'setCountOn' : 'setCountOff'))),
+          )) : null,
         row(
           t('setGithubProxy'),
           status?.githubProxyManaged === true

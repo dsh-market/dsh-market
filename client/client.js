@@ -256,6 +256,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			setRegionGlobalHint: "从 npm 和 GitHub 官方源下载。",
 			setRegionChinaHint: "中国大陆访问更快。仅改变下载线路，插件来源不变。",
 			setRegionAuto: "已根据网络状况自动选择，可随时切换。",
+			setCount: "匿名使用统计",
+			setCountHint: "每天一次匿名计数，不含任何个人信息，可随时关闭。只发送：随机安装编号、市场版本、DSH 版本、桌面端或网页端、下载区域。",
+			setCountOn: "开启",
+			setCountOff: "关闭",
 			setGithubProxy: "GitHub 加速",
 			setGithubProxyAutoHint: "自动选择可用线路，失败时才切换。",
 			setGithubProxyCustom: "自定义",
@@ -1141,6 +1145,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			setRegionGlobalHint: "Downloads directly from npm and GitHub.",
 			setRegionChinaHint: "Faster in mainland China. Changes the download route, not the source.",
 			setRegionAuto: "Selected from a network check. Change it anytime.",
+			setCount: "Anonymous usage count",
+			setCountHint: "One anonymous count a day, no personal information, can be turned off anytime. It sends only: a random install ID, market version, DSH version, desktop or web, and download region.",
+			setCountOn: "On",
+			setCountOff: "Off",
 			setGithubProxy: "GitHub acceleration",
 			setGithubProxyAutoHint: "Chooses a working route automatically and switches only after a failure.",
 			setGithubProxyCustom: "Custom",
@@ -2025,6 +2033,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			setRegionGlobalHint: "npm と GitHub の公式ソースからダウンロードします。",
 			setRegionChinaHint: "中国本土ではより高速です。ダウンロード経路が変わるだけで、プラグインの入手元は変わりません。",
 			setRegionAuto: "ネットワーク状況から自動で選択済みです。いつでも切り替えできます。",
+			setCount: "匿名の利用カウント",
+			setCountHint: "1日1回の匿名カウントです。個人情報は含まれず、いつでもオフにできます。送るのは、ランダムなインストール ID、マーケットのバージョン、DSH のバージョン、デスクトップかウェブか、ダウンロード地域だけです。",
+			setCountOn: "オン",
+			setCountOff: "オフ",
 			setGithubProxy: "GitHub 高速化",
 			setGithubProxyAutoHint: "使える経路を自動で選び、失敗したときだけ切り替えます。",
 			setGithubProxyCustom: "カスタム",
@@ -21650,7 +21662,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				githubProxyManaged: body.githubProxyManaged === true,
 				selfManaged: body.selfManaged !== false,
 				selfUninstallReachable: body.selfUninstallReachable !== false,
-				buildEnv: body.buildEnv ?? {}
+				buildEnv: body.buildEnv ?? {},
+				anonymousCount: typeof body.anonymousCount === "boolean" ? body.anonymousCount : null
 			};
 		}
 		/** Render the effective build environment as one `KEY=value` line each. */
@@ -21779,7 +21792,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 							githubProxyManaged: false,
 							selfManaged: true,
 							selfUninstallReachable: true,
-							buildEnv: {}
+							buildEnv: {},
+							anonymousCount: null
 						});
 					}
 					try {
@@ -21927,6 +21941,25 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						try {
 							applyGithubRouting(await (await fetch(api("/dsh-market/status"), { cache: "no-store" })).json());
 						} catch {}
+					} catch (cause) {
+						setError(cause instanceof Error ? cause.message : String(cause));
+					}
+				})();
+			}, [post, t]);
+			/** Turn the anonymous daily count on or off; shows what the server saved. */
+			const onCount = (0, react.useCallback)((next) => {
+				setError(null);
+				(async () => {
+					try {
+						const body = await post(api("/dsh-market/telemetry"), { enabled: next });
+						if (body.ok !== true) {
+							setError(body.error ?? t("setSelfFailed"));
+							return;
+						}
+						setStatus((current) => current === null ? current : {
+							...current,
+							anonymousCount: body.enabled ?? next
+						});
 					} catch (cause) {
 						setError(cause instanceof Error ? cause.message : String(cause));
 					}
@@ -22115,7 +22148,16 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				onClick: () => {
 					onRegion(id);
 				}
-			}, t(REGION_LABEL[id]))))), row(t("setGithubProxy"), status?.githubProxyManaged === true ? t("setGithubProxyManagedHint") : status?.githubProxyCustom !== null && status?.githubProxyCustom !== void 0 ? t("setGithubProxyCustomHint") : t("setGithubProxyAutoHint"), status?.githubProxyManaged === true ? null : status?.githubProxyCustom !== null && status?.githubProxyCustom !== void 0 ? (0, react.createElement)("div", { className: Market_module_css_default.setInlineActions }, (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+			}, t(REGION_LABEL[id]))))), status?.anonymousCount !== null && status?.anonymousCount !== void 0 ? row(t("setCount"), t("setCountHint"), (0, react.createElement)("div", { className: Market_module_css_default.setSeg }, [true, false].map((value) => (0, react.createElement)("button", {
+				key: String(value),
+				type: "button",
+				className: status.anonymousCount === value ? `${Market_module_css_default.setSegBtn} ${Market_module_css_default.setSegOn}` : Market_module_css_default.setSegBtn,
+				disabled: busy,
+				"aria-pressed": status.anonymousCount === value,
+				onClick: () => {
+					if (status.anonymousCount !== value) onCount(value);
+				}
+			}, t(value ? "setCountOn" : "setCountOff"))))) : null, row(t("setGithubProxy"), status?.githubProxyManaged === true ? t("setGithubProxyManagedHint") : status?.githubProxyCustom !== null && status?.githubProxyCustom !== void 0 ? t("setGithubProxyCustomHint") : t("setGithubProxyAutoHint"), status?.githubProxyManaged === true ? null : status?.githubProxyCustom !== null && status?.githubProxyCustom !== void 0 ? (0, react.createElement)("div", { className: Market_module_css_default.setInlineActions }, (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 				variant: "outline",
 				size: "sm",
 				disabled: proxySaving,
