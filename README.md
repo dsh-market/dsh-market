@@ -7,13 +7,11 @@
 English | [中文](README.zh.md)
 
 [![npm](https://img.shields.io/npm/v/dshmarket)](https://www.npmjs.com/package/dshmarket)
+[![downloads](https://img.shields.io/npm/dm/dshmarket)](https://www.npmjs.com/package/dshmarket)
 [![stars](https://img.shields.io/github/stars/dsh-market/dsh-market?style=flat)](https://github.com/dsh-market/dsh-market)
+[![license](https://img.shields.io/github/license/dsh-market/dsh-market)](LICENSE)
 
-The plugin market inside DeepSeek Harness. On dsh 0.2.1+ it is a tab on the **Plugins** page, right next to **Installed**; on older hosts open Settings → **Plugin Market**. Browse, search, one-click install.
-
-> **The market has moved to the Plugins page.** Open **Plugins → Plugin Market** (dsh 0.2.1+). The entry in Settings will be phased out; on dsh 0.2.0 and earlier, keep opening it from Settings.
-
-> 📡 **The same catalog is also a plugin market index.** On dsh 0.2.1+, open **Plugins → Discover → Index sources** and add `https://cdn.jsdelivr.net/npm/dsh-plugin-catalog/index.json`. That is this list as a format-1 index, served from npm so it loads quickly everywhere — dsh gives a source 15 seconds, and the GitHub Pages copies (`https://awesome-dsh-plugin.com/index.json` and `https://dshmarket.com/index.json`) can exceed that from some networks. The host's Discover tab and the `plugin_market` agent tool then search it.
+The plugin market inside DeepSeek Harness: browse 12,000+ community plugins, install with one click, keep them updated.
 
 ![dsh-market](assets/demo-en.png)
 
@@ -62,6 +60,11 @@ may report success but installs the market into `profiles/web`, **not** the
 profile used by the Desktop app. It will not appear in Desktop. Install through
 the app's **Settings → Plugins** instead; Desktop's profile is managed by the app.
 
+Once installed, open **Plugins → Plugin Market** (dsh 0.2.1+). On dsh 0.2.0 and earlier it is under **Settings → Plugin Market**.
+
+<details>
+<summary>Other entries, older hosts and plugin pages</summary>
+
 Once it is installed, open the **Plugins** page and pick the **Plugin Market**
 tab next to **Installed** (dsh 0.2.1 and newer — plain `dsh web` included, no
 desktop app needed). The market is also still a section of **Settings → Plugin
@@ -81,9 +84,23 @@ against primitives that are not there — if the Plugin Market entry never
 appears, that is usually why. Worth checking when a desktop build bundles
 its own dsh: it may be older than the one `npm` would give you (#139).
 
+</details>
+
 ## What you get
 
-- **Browse & search** the full community catalog (10,000+ plugins, growing daily) — category filters, star counts, top/new sorting, bilingual descriptions that follow your UI language
+- **Browse & search** 12,000+ community plugins, with screenshots and comments
+- **One-click install**: most plugins work after a page refresh, no restart
+- **Themes**: install and switch with one click
+- **Updates**: one click for one plugin or all of them; reminders are off unless you turn them on
+- **Turn plugins on and off** without a restart
+- **Groups, favorites and notes** to keep a long list tidy
+- **Backup & restore**: export to a file, WebDAV or a private Gist
+- **When something breaks**: a diagnostics page, a recovery page if DSH will not start, and a one-click log export
+
+<details>
+<summary>Full feature list</summary>
+
+- **Browse & search** the full community catalog (12,000+ plugins, growing daily) — category filters, star counts, top/new sorting, bilingual descriptions that follow your UI language
 - **Host-aware discovery** — cards show the DSH requirement declared by `engines.dsh` or lockstep `@deepseek-ai/dsh-*` peers; the compatibility filter hides only confirmed mismatches with the running host. GitHub-only entries read the linked package's manifest, including monorepo subdirectories; Release downloads read the selected release tag, including the current tag behind `latest/download`. Undeclared, malformed or unavailable requirements stay unknown and visible. Public manifest facts are cached; compatibility is evaluated against the running host
 - **Screenshots** — AppStore-style screenshots, auto-carousel when there's more than one, click to preview full-size: author-curated shots show right on the card (zero extra requests); plugins without curated shots fall back to automatic README extraction once you open the install dialog. Images load from GitHub hosting only
 - **Comments** — every card opens the plugin's discussion thread in place. It is the same thread its pages on [dshmarket.com](https://dshmarket.com) and the [catalog](https://awesome-dsh-plugin.com) show, so a plugin has one conversation rather than three. Backed by GitHub Discussions through giscus: it loads when you open it, needs a GitHub account only to post, and the note above it says plainly that opening it contacts giscus.app and GitHub. On local dsh web, reading stays embedded while a dedicated GitHub action opens the exact discussion in a new tab for sign-in and posting, so the cross-site return never carries or depends on the host session
@@ -101,13 +118,14 @@ its own dsh: it may be older than the one `npm` would give you (#139).
 - **Hot disable / enable** — toggles write `- id: …` + `disabled: true|false` into the profile's `cordis.patch.yml` (the official patch layer, mechanism ported from [dsh-plugin-hub](https://github.com/Noob-stupid/dsh-plugin-hub)): DSH's HMR re-composes within ~1s, no restart, and the loader re-applies the choice on every boot; hand-edited patch rows show as badges, host-infrastructure plugins are protected from toggling, and a malformed patch file is never made worse
 - **Restart when needed** — changes that cannot hot-load show a one-click restart beside the pending-change banner; the action is restricted to same-origin loopback requests
 - **Recovery when a restart does not come back** — DSH's boot is all-or-nothing: one plugin that cannot load stops the whole process, and the market's own UI dies with the host it was serving from. Now that failure prompt offers **Adjust plugins**: the ones DSH blamed are marked red and left unticked, you choose what should be enabled at the next start, the choice is written through the same `cordis.patch.yml` rows the market's own toggles use (plus `dsh.profile.bundles` for a disable-carrier), and the boot is retried. It is served by the detached restart helper on the same address the page was already polling, so it works even though the host is gone — and opening the URL fresh renders a standalone version of the same page. When DSH starts normally, none of it appears
-- **Zero jargon** — if a component is missing (pnpm), the market detects it and offers a one-click automatic setup
+- **Missing tools set up for you** — if a component is missing (pnpm), the market detects it and offers a one-click automatic setup
 - **Log export** — one click produces a sanitized plain-text log for bug reports (home paths and credential shapes are masked; nothing is ever sent anywhere). The market's version sits next to the page heading, so a screenshot of a problem already carries it
 - **Settings card** — on dsh 0.1.0-rc.7 and newer the market manages *itself* next to every other plugin — under **Settings → Plugins → Plugin configuration** while the host still has a Settings page, and on the market's own card on the **Plugins** page from dsh 0.2.1, where Settings is gone: see the running version, pick a **release channel** (stable, or beta to try builds still being verified — the market only, never your other plugins; a third *dev* channel appears once developer mode is switched on, and carries builds published straight off a branch), update, or remove the market — with an opt-in cleanup that also drops the disable rows it wrote, so plugins it switched off start running again rather than staying off with no UI left to switch them back on
 - **Diagnostics** — the plugin load order and conflict surface, one page: bundle stack with official/community badges, duplicate loader entries, dependency version mismatches, multi-version core packages, overrides and invalid config entries, and leftover directories — a package directory an interrupted update left without its `package.json`, and pnpm's own `*_tmp_*` staging directories. Nothing there stops a start, so it is listed rather than warned about, and it is the only place that names what is on disk. Plain-language terms, problem blocks highlighted, everything collapsible
-
 - **Load order** — drag community bundles into the order you want, or take the suggested one derived from the plugins' own before/after rules. Nothing is written until a trial composition passes, and the panel tells you what the new order would change (overrides, invalid or duplicate entries) before you apply it
 - **AI fix** — one click copies a diagnostics-driven fix prompt (errors/warnings/order conflicts + conservative scope instructions) to the clipboard; you paste it into a new conversation and decide whether to send. The prompt first asks the agent to detect whether it is itself the harness running this profile — if so it hard-forbids mutating the live composition, upgrading/restarting the harness or core packages, or reinstalling deps, and instead has it write an idempotent `apply` script plus a `rollback` script, have you run them in an external terminal, and paste the output back
+
+</details>
 
 ## Speed
 
@@ -122,6 +140,23 @@ Installs prefer repo-verified npm packages, then author-supplied prebuilt GitHub
 - Backups can contain credentials from your profile config — the UI warns before export and upload; WebDAV sync is https-only, refuses private-network targets, and never stores your password in the browser
 - Authenticated Gist requests always go directly to `api.github.com`; bearer tokens are never sent to a public GitHub acceleration service. GitHub source archives also stay on canonical codeload URLs so pnpm's integrity policy remains in force
 - The restart endpoint additionally requires a direct loopback client (forwarded requests are rejected) and relaunches the exact DSH entry, arguments, environment, and working directory
+- Listing ≠ endorsement: plugins are third-party code, install sources you trust
+
+## Submit your plugin
+
+**This repo is the market app, not the catalog.** The plugin list comes from the curated [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin) registry — to get your plugin listed in the market, open a PR **there** (one entry in the list; the site and this market pick it up automatically, usually within a day). Please don't PR plugin entries against this repo.
+
+## Roadmap & feedback
+
+- **Bugs** go in [issues](https://github.com/dsh-market/dsh-market/issues) — attaching the market's "Export log" makes diagnosis roughly ten times faster
+- **Feature ideas** go on the [Roadmap](https://github.com/orgs/dsh-market/projects/1). Issues are kept for things that are broken, so a proposal filed as an issue gets moved there and closed; the discussion stays where you wrote it either way
+- Every roadmap item welcomes community PRs — say so on the item before starting, so two people don't build it twice
+
+## Advanced
+
+<details>
+<summary>Restart and build settings (systemd, pm2, compilers)</summary>
+
 - One-click restart launches a detached replacement. **When this host is systemd's own service process the button is hidden automatically** — the market would otherwise kill the takeover process along with the unit's cgroup and the service would not come back. The pending-change notice stays visible and says so. Detection requires both a systemd marker AND being the unit's main process, because `INVOCATION_ID` is inherited by every descendant of a unit (an ordinary terminal included) and hiding the button for those would be the worse bug. pm2 and launchd are not detected, so those deployments need the explicit setting below. Either flip **Allow restart** off in **Settings → Plugins → Plugin configuration**, or write it into the profile patch — where it has to sit under `config:`, because the loader passes only that sub-object to a plugin and a top-level `allowRestart:` is silently ignored (#227 by @Fantasymax):
 
   ```yaml
@@ -147,19 +182,18 @@ Installs prefer repo-verified npm packages, then author-supplied prebuilt GitHub
 
   In the UI the same variables are edited live in **Settings → Plugins → Plugin configuration → dshmarket → Build environment** (one `KEY=value` per line; saving applies to the next install without a restart, and saving an empty list goes back to the profile config above). `PATH` and `CI` are always managed by the market and cannot be overridden from either place.
 - For terminal-attached launches, the detached replacement keeps running after the original terminal closes
-- Listing ≠ endorsement: plugins are third-party code, install sources you trust
 
-## Submit your plugin
+</details>
 
-**This repo is the market app, not the catalog.** The plugin list comes from the curated [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin) registry — to get your plugin listed in the market, open a PR **there** (one entry in the list; the site and this market pick it up automatically, usually within a day). Please don't PR plugin entries against this repo.
+<details>
+<summary>Use this catalog as a DSH index source</summary>
 
-## Roadmap & feedback
+**The same catalog is also a plugin market index.** On dsh 0.2.1+, open **Plugins → Discover → Index sources** and add `https://cdn.jsdelivr.net/npm/dsh-plugin-catalog/index.json`. That is this list as a format-1 index, served from npm so it loads quickly everywhere — dsh gives a source 15 seconds, and the GitHub Pages copies (`https://awesome-dsh-plugin.com/index.json` and `https://dshmarket.com/index.json`) can exceed that from some networks. The host's Discover tab and the `plugin_market` agent tool then search it.
 
-- **Bugs** go in [issues](https://github.com/dsh-market/dsh-market/issues) — attaching the market's "Export log" makes diagnosis roughly ten times faster
-- **Feature ideas** go on the [Roadmap](https://github.com/orgs/dsh-market/projects/1). Issues are kept for things that are broken, so a proposal filed as an issue gets moved there and closed; the discussion stays where you wrote it either way
-- Every roadmap item welcomes community PRs — say so on the item before starting, so two people don't build it twice
+</details>
 
-## Data source
+<details>
+<summary>Where the catalog comes from</summary>
 
 Catalog statistics preserve their source: npm counts cover the stated 30-day window; GitHub-only releases can show lifetime downloads of all public repository Release assets, including packages, checksums and companion files. The counts are never added together or called installations/users. Tooltips include the available collection time; npm-download sorting keeps its existing window. Catalog host declarations are accepted only for the exact pinned install URL, with the existing on-demand manifest lookup retained for older catalogs.
 
@@ -174,6 +208,8 @@ In the China download region the same catalog is read from npm first, through th
 ```sh
 DSHM_REGISTRY_URL=https://your-mirror.example/plugins.json dsh web
 ```
+
+</details>
 
 ## Friends
 

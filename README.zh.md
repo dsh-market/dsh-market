@@ -7,13 +7,11 @@
 [English](README.md) | 中文
 
 [![npm](https://img.shields.io/npm/v/dshmarket)](https://www.npmjs.com/package/dshmarket)
+[![downloads](https://img.shields.io/npm/dm/dshmarket)](https://www.npmjs.com/package/dshmarket)
 [![stars](https://img.shields.io/github/stars/dsh-market/dsh-market?style=flat)](https://github.com/dsh-market/dsh-market)
+[![license](https://img.shields.io/github/license/dsh-market/dsh-market)](LICENSE)
 
-装在 DeepSeek Harness 里的插件市场。dsh 0.2.1 起它就在 **插件** 页上，是紧挨着 **已安装** 的一个页签；更早的宿主从设置 → **插件市场** 进入。逛一逛，点一下，装好。
-
-> **插件市场已移到「插件」页。** 打开 **插件 → 插件市场**（dsh 0.2.1 及以上）。设置里的这个入口之后会逐步下线；dsh 0.2.0 及更早的版本，仍从设置进入。
-
-> 📡 **同一份目录也是一份插件市场索引。** dsh 0.2.1 起，打开 **插件 → 发现（Discover）→ 索引源（Index sources）**，添加 `https://cdn.jsdelivr.net/npm/dsh-plugin-catalog/index.json`。它就是这份列表的 format 1 索引，放在 npm 上分发，所以在哪里都快——dsh 给索引源的时间只有 15 秒，而 GitHub Pages 上的那两份（`https://awesome-dsh-plugin.com/index.json` 与 `https://dshmarket.com/index.json`）在部分网络下会超过。宿主自己的发现页和 `plugin_market` 智能体工具就能搜索它。
+装在 DeepSeek Harness 里的插件市场：12,000+ 社区插件，逛一逛，点一下，装好，还能一键更新。
 
 ![dsh-market](assets/demo-zh.png)
 
@@ -59,6 +57,11 @@
 profile，因此不会出现在桌面端。请通过应用内的 **设置 → 插件** 安装；桌面端
 的 profile 由应用自己的插件管理器管理。
 
+装好后打开 **插件 → 插件市场**（dsh 0.2.1 及以上）。dsh 0.2.0 及更早的版本在 **设置 → 插件市场**。
+
+<details>
+<summary>其他入口、旧版宿主与插件页</summary>
+
 装好后打开 **插件** 页，点 **已安装** 旁边的 **插件市场** 页签
 （dsh 0.2.1 及以上；普通的 `dsh web` 就有，不需要桌面端）。市场目前仍是
 **设置 → 插件市场** 里的一个分区，但这个入口之后会逐步下线：只有 dsh 0.2.0
@@ -72,9 +75,23 @@ profile，因此不会出现在桌面端。请通过应用内的 **设置 → �
 控制台说明原因，而不是拿缺失的原语去渲染——如果哪里都没出现「插件市场」这
 一项，通常就是这个原因。桌面端要留意：它可能内置了比 `npm` 装到的更旧的 dsh（#139）。
 
+</details>
+
 ## 你会得到
 
-- **逛与搜**——完整社区目录（10000+ 插件，每天在涨），分类筛选、star 数、最热/最新排序，中英描述跟随界面语言
+- **逛与搜**：12,000+ 社区插件，带截图和评论
+- **一键安装**：多数插件刷新页面就能用，不用重启
+- **主题**：一键安装、一键切换
+- **更新**：单个或全部一键更新；更新提醒默认关闭，需要时再打开
+- **开关插件**：不用重启
+- **分组、收藏、备注**：插件多了也好管
+- **备份与恢复**：导出成文件，或存到 WebDAV、私有 Gist
+- **出问题时**：诊断页；DSH 起不来时有恢复页；一键导出日志
+
+<details>
+<summary>完整功能清单</summary>
+
+- **逛与搜**——完整社区目录（12,000+ 插件，每天在涨），分类筛选、star 数、最热/最新排序，中英描述跟随界面语言
 - **按宿主发现**——卡片展示插件通过 `engines.dsh` 或同版本线 `@deepseek-ai/dsh-*` peer 声明的 DSH 要求；兼容筛选只隐藏与当前宿主明确不匹配的插件。仅 GitHub 发布的条目也会读取链接所指包的清单，支持子目录；Release 下载读取对应标签，`latest/download` 则读取当前发布标签。未声明、格式异常或暂时取不到清单时保持未知并继续显示。公开清单信息会缓存，兼容结论按当前宿主重新判断
 - **截图展示**——App Store 式截图，多图自动轮播，点开还能看大图；作者在 registry 里策展的截图列表卡片就直接显示（零额外请求），没有策展的插件则在打开安装弹窗时自动从 README 抽取；图片仅从 GitHub 图床加载
 - **评论**——每张卡片都能就地打开该插件的讨论。它和插件在 [dshmarket.com](https://dshmarket.com) 与[目录站](https://awesome-dsh-plugin.com)上的页面共用同一条讨论，一个插件只有一处对话，而不是三处。底层是 GitHub Discussions（经由 giscus）：打开即加载，只有发表评论才需要 GitHub 账号；说明里也直说打开会连接 giscus.app 与 GitHub。本地 dsh web 继续内嵌评论供阅读，登录和发表则通过专用 GitHub 入口在新标签页打开当前插件的精确讨论，不让跨站回跳携带或依赖宿主会话
@@ -92,12 +109,14 @@ profile，因此不会出现在桌面端。请通过应用内的 **设置 → �
 - **热禁用 / 启用**——开关会往 profile 的 `cordis.patch.yml`（官方补丁层，机制移植自 [dsh-plugin-hub](https://github.com/Noob-stupid/dsh-plugin-hub)）写入 `- id: …` + `disabled: true|false`：DSH 的 HMR 约 1 秒内重新组合，无需重启，loader 每次启动都会重新应用这个选择；手工改过的补丁行会显示成徽标，宿主基础设施插件禁止开关，补丁文件格式不对时绝不会被写得更糟
 - **按需重启**——无法热加载的变更会在待重启提示旁显示一键重启；操作仅接受本机同源请求
 - **重启没起来时的恢复**——DSH 的启动是全有全无：一个插件加载失败，整个进程就退出，市场自己的界面也随宿主一起消失。现在这个失败提示处多了一个 **调整插件**：DSH 点名的插件会标红并默认取消勾选，你自己选下次启动要启用哪些，选择写进市场开关用的同一套 `cordis.patch.yml` 停用行（停用载体还会同步 `dsh.profile.bundles`），然后自动重试启动。这个恢复界面由脱离终端的重启助手在同一个地址上提供——页面原本就在轮询它，所以宿主已经没了也照样能打开；直接访问地址则会渲染同一份内容的独立页面。DSH 正常启动时，这一切都不会出现
-- **零术语**——缺组件（pnpm）时市场自己发现、一键自动装好，全程不见命令行
+- **缺什么自动补**——缺组件（pnpm）时市场自己发现、一键自动装好，全程不见命令行
 - **导出日志**——一键生成脱敏纯文本日志方便反馈（home 路径与密钥形状已打码；任何数据都不会被上传）。市场版本号就在标题旁边，截图反馈时自带版本信息
 - **设置卡片**——dsh 0.1.0-rc.7 起，市场在插件页里管理**它自己**，和其它插件并排（宿主还有设置页时在 **设置 → 插件 → 插件配置**，dsh 0.2.1 起在 **插件** 页市场自己的卡片上）：看当前版本、选择**更新通道**（稳定版，或 Beta 抢先试用还在验证中的版本——只影响市场自己，不影响你装的其它插件；打开开发者模式后还会多出「开发版」通道，直接取开发分支上的构建）、更新、或者移除市场。移除时可勾选一并清理——包括市场写进补丁层的停用行，被它关掉的插件会恢复运行，而不是保持停用却再没有界面能打开它们
 - **诊断**——插件加载顺序与冲突一页看全：bundle 栈（官方/社区徽标）、重复的 loader 条目、依赖版本不一致、核心包多版本共存、覆盖项与非法配置条目，以及残留目录——更新被打断后留下的、缺少 `package.json` 的包目录，和 pnpm 自己的 `*_tmp_*` 暂存目录。它们都不妨碍启动，所以只列出来而不报成警告，也是唯一会说清磁盘上到底有什么的地方。术语说人话，问题块高亮，全部可折叠
 - **加载顺序**——拖拽调整社区 bundle 的顺序，或直接采用按插件自身 before/after 规则推导出的建议顺序。写入前先跑一次静态组合校验，通过才落盘；应用之前面板会告诉你这个顺序会改变什么（多少处覆盖、多少无效或重复条目）
 - **AI 修复**——一键把诊断结果生成的修复 prompt（错误/警告/顺序冲突 + 保守的改动范围约束）复制到剪贴板，你粘进新对话，自己决定发不发。提示词会先让 Agent 判断自己是不是就是这个 profile 所在的 harness——若是，则严禁改动运行中组合、升级/重启 harness 或核心包、重装依赖，而是让它生成一份幂等的 `apply` 修改脚本和一份 `rollback` 回滚脚本，由你在外部终端执行并把输出拷回给它
+
+</details>
 
 ## 速度
 
@@ -112,6 +131,23 @@ profile，因此不会出现在桌面端。请通过应用内的 **设置 → �
 - 备份可能包含 profile 配置里的密钥——导出与上传前 UI 会明确提醒;WebDAV 同步仅限 https、拒绝内网地址,且密码永不落盘浏览器
 - 带鉴权的 Gist 请求始终直连 `api.github.com`，Bearer token 不会交给公共 GitHub 加速服务；GitHub 源码归档也保持 canonical codeload URL，以保留 pnpm 的完整性校验边界
 - 重启接口还要求客户端直接来自环回地址（拒绝代理转发请求），并使用原入口、参数、环境和工作目录重新启动 DSH
+- 收录 ≠ 背书:插件是第三方代码,请只安装你信任的来源
+
+## 提交你的插件
+
+**这个仓库是市场应用本身，不是插件目录。** 市场里的插件列表来自精选列表 [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin)——想让你的插件上架，请去**那边**提 PR（在列表里加一条即可，站点和本市场会自动收录，通常一天内生效）。请不要往本仓库提插件条目。
+
+## 路线图与反馈
+
+- **Bug** 提 [issue](https://github.com/dsh-market/dsh-market/issues)，附上市场页面的「导出日志」能让排查快十倍
+- **功能建议**放 [Roadmap](https://github.com/orgs/dsh-market/projects/1)。issues 只留「坏掉的东西」，所以提成 issue 的建议会被移到那边并关闭；讨论仍留在你写的地方
+- 路线图上的每一项都欢迎社区 PR——动手前在对应条目里说一声，免得两个人重复造
+
+## 进阶
+
+<details>
+<summary>重启与编译设置（systemd、pm2、编译器）</summary>
+
 - 一键重启会启动脱离终端的替代进程。**当本进程就是 systemd 服务的主进程时，按钮会自动隐藏**——否则市场重启会连带杀掉 cgroup 里的接管进程，服务起不来，待重启提示会说明原因。判定要求「systemd 标记」和「本进程是该 unit 的主进程」同时成立：`INVOCATION_ID` 会被 unit 的所有后代继承（包括普通终端），只看它会误伤一大批本来能正常重启的机器。pm2 和 launchd 不做检测，这类部署需要下面的显式配置。两种做法：在**设置 → 插件 → 插件配置**里关掉「允许重启」，或者写进 profile 补丁——注意必须嵌在 `config:` 下面，因为 loader 只把这个子对象传给插件，写在顶层会静默失效（#227，感谢 @Fantasymax）：
 
   ```yaml
@@ -137,19 +173,18 @@ profile，因此不会出现在桌面端。请通过应用内的 **设置 → �
 
   界面上也可以在**设置 → 插件 → 插件配置 → dshmarket → 编译环境变量**里直接改（每行一个 `KEY=value`；保存后下一次安装即生效，留空保存则回到上面的 profile 配置）。无论在哪里配，`PATH` 和 `CI` 都由市场接管，不能覆盖。
 - 从终端启动时，替代进程脱离原终端，关闭原终端后仍会继续运行
-- 收录 ≠ 背书:插件是第三方代码,请只安装你信任的来源
 
-## 提交你的插件
+</details>
 
-**这个仓库是市场应用本身，不是插件目录。** 市场里的插件列表来自精选列表 [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin)——想让你的插件上架，请去**那边**提 PR（在列表里加一条即可，站点和本市场会自动收录，通常一天内生效）。请不要往本仓库提插件条目。
+<details>
+<summary>把这份目录当作 DSH 的索引源</summary>
 
-## 路线图与反馈
+**同一份目录也是一份插件市场索引。** dsh 0.2.1 起，打开 **插件 → 发现（Discover）→ 索引源（Index sources）**，添加 `https://cdn.jsdelivr.net/npm/dsh-plugin-catalog/index.json`。它就是这份列表的 format 1 索引，放在 npm 上分发，所以在哪里都快——dsh 给索引源的时间只有 15 秒，而 GitHub Pages 上的那两份（`https://awesome-dsh-plugin.com/index.json` 与 `https://dshmarket.com/index.json`）在部分网络下会超过。宿主自己的发现页和 `plugin_market` 智能体工具就能搜索它。
 
-- **Bug** 提 [issue](https://github.com/dsh-market/dsh-market/issues)，附上市场页面的「导出日志」能让排查快十倍
-- **功能建议**放 [Roadmap](https://github.com/orgs/dsh-market/projects/1)。issues 只留「坏掉的东西」，所以提成 issue 的建议会被移到那边并关闭；讨论仍留在你写的地方
-- 路线图上的每一项都欢迎社区 PR——动手前在对应条目里说一声，免得两个人重复造
+</details>
 
-## 数据源
+<details>
+<summary>目录从哪里来</summary>
 
 目录统计保留来源与口径：npm 显示注明日期范围的近 30 天下载量；仅通过 GitHub 发行的插件可显示仓库所有公开发行附件的累计下载量，包括安装包、校验和配套文件。两者不会相加，也不表示安装次数或用户数。提示中保留可用的采集时间，npm 下载排序仍使用原有时间窗口。目录提供的宿主声明仅用于完全匹配的固定安装地址，旧目录继续按需读取包清单。
 
@@ -164,6 +199,8 @@ profile，因此不会出现在桌面端。请通过应用内的 **设置 → �
 ```sh
 DSHM_REGISTRY_URL=https://your-mirror.example/plugins.json dsh web
 ```
+
+</details>
 
 ## 友情链接
 
