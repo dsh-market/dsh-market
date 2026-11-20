@@ -213,6 +213,10 @@ DSHM_REGISTRY_URL=https://your-mirror.example/plugins.json dsh web
 dsh plugin --profile web add @liustack/modlens
 ```
 
+## Business inquiries
+
+For partnerships, sponsorship or anything commercial: [fkysly@gmail.com](mailto:fkysly@gmail.com). Bugs and feature requests belong in issues, not email.
+
 ## License
 
 MIT · [dshmarket.com](https://dshmarket.com)
