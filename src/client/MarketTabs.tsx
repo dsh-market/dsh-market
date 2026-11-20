@@ -223,14 +223,32 @@ export function BackupTab({ c }: { c: BackupTabCtx }) {
 }
 
 
-type DiscoverTabCtx = { props: MarketSectionProps }
+type CatalogStatusCtx = Pick<MarketStateCtx, 'loadError' | 't'>
+  & Pick<MarketSyncCtx, 'loadCatalog'>
+
+function CatalogStatus({ c }: { c: CatalogStatusCtx }) {
+  const { loadError, loadCatalog, t } = c
+  if (loadError === null) {
+    return <div className={css.loading}><span className={css.logoMark}><MarketLogo size={26} animated /></span>{t('loading')}</div>
+  }
+  return (
+    <div className={css.empty}>
+      <div>{t('loadFail')}</div>
+      <div className={css.err}>{loadError}</div>
+      <Button variant="outline" size="sm" className={css.retryBtn} onClick={() => { void loadCatalog() }}>
+        {t('loadRetry')}
+      </Button>
+    </div>
+  )
+}
+
+type DiscoverTabCtx = { props: MarketSectionProps } & CatalogStatusCtx
   & Pick<MarketStateCtx,
     'bodyRef' | 'cat' | 'catsStuck' | 'catsWrapRef' | 'compatibleWithHost' | 'data' |
-    'discoverSearchReset' | 'hostVersion' | 'lang' | 'loadError' | 'q' | 'resetDiscoverSearch' |
+    'discoverSearchReset' | 'hostVersion' | 'lang' | 'q' | 'resetDiscoverSearch' |
     'setCat' | 'setCatsOpen' | 'setCatsSentinel' | 'setCompatibleWithHost' | 'setQ' | 'setSortDir' |
-    'setSortField' | 'setStuckExpanded' | 'setTimeRange' | 'sortDir' | 'sortField' | 'surface' | 't' |
+    'setSortField' | 'setStuckExpanded' | 'setTimeRange' | 'sortDir' | 'sortField' | 'surface' |
     'timeRange' | 'visibleCats'>
-  & Pick<MarketSyncCtx, 'loadCatalog'>
   & Pick<MarketInstallCtx,
     'basePage' | 'changePageSize' | 'currentPage' | 'discoverMore' | 'goToPage' | 'hasRecent' |
     'hideRecent' | 'hostHiddenCount' | 'hostUnavailableCount' | 'loadedHostPackages' |
@@ -243,7 +261,7 @@ export function DiscoverTab({ c }: { c: DiscoverTabCtx }) {
   const {
     basePage, bodyRef, cat, categories, catsExpanded, catsStuck, catsWrapRef, changePageSize,
     compatibleWithHost, currentPage, data, discoverMore, discoverSearchReset, goToPage, hasRecent,
-    hideRecent, hostHiddenCount, hostUnavailableCount, hostVersion, lang, loadCatalog, loadError,
+    hideRecent, hostHiddenCount, hostUnavailableCount, hostVersion, lang, loadError,
     loadedHostPackages, pageHostPackages, pagePlugins, pageSize, pluginCard, pluginsAll,
     pluginsUnblocked, q, recentCollapsed, recentHidden, recentPlugins, recentTile,
     resetDiscoverSearch, setCat, setCatsOpen, setCatsSentinel, setCompatibleWithHost, setQ,
@@ -251,17 +269,9 @@ export function DiscoverTab({ c }: { c: DiscoverTabCtx }) {
     surface, t, timeRange, toggleRecentCollapsed, totalPages, visibleCats,
   } = c
   return (
-    loadError !== null
-      ? <div className={css.empty}>
-          <div>{t('loadFail')}</div>
-          <div className={css.err}>{loadError}</div>
-          <Button variant="outline" size="sm" className={css.retryBtn} onClick={() => { void loadCatalog() }}>
-            {t('loadRetry')}
-          </Button>
-        </div>
-      : data === null
-        ? <div className={css.loading}><span className={css.logoMark}><MarketLogo size={26} animated /></span>{t('loading')}</div>
-        : (
+    loadError !== null || data === null
+      ? <CatalogStatus c={c} />
+      : (
             <>
               <div ref={setCatsSentinel} />
               <div className={css.stickyHead}>
@@ -394,10 +404,10 @@ export function DiscoverTab({ c }: { c: DiscoverTabCtx }) {
 }
 
 
-type FavoritesTabCtx = { props: MarketSectionProps }
+type FavoritesTabCtx = { props: MarketSectionProps } & CatalogStatusCtx
   & Pick<MarketStateCtx,
     'data' | 'favSortDir' | 'favSortField' | 'favTimeRange' | 'favoriteUrls' | 'qFavorites' |
-    'setFavSortDir' | 'setFavSortField' | 'setFavTimeRange' | 'setQFavorites' | 'surface' | 't'>
+    'setFavSortDir' | 'setFavSortField' | 'setFavTimeRange' | 'setQFavorites' | 'surface'>
   & Pick<MarketInstallCtx,
     'favoriteListed' | 'favoritePagePlugins' | 'favoritePageThemes' | 'favoritePluginMore' |
     'favoritePluginPagination' | 'favoritePlugins' | 'favoriteStale' | 'favoriteThemeMore' |
@@ -414,7 +424,7 @@ export function FavoritesTab({ c }: { c: FavoritesTabCtx }) {
   } = c
   return (
     data === null
-      ? <div className={css.loading}><span className={css.logoMark}><MarketLogo size={26} animated /></span>{t('loading')}</div>
+      ? <CatalogStatus c={c} />
       : favoriteUrls.length === 0
         ? <div className={css.empty}>{t('favoritesEmpty')}</div>
         : (
@@ -507,10 +517,10 @@ export function FavoritesTab({ c }: { c: FavoritesTabCtx }) {
 }
 
 
-type ThemesTabCtx = { props: MarketSectionProps }
+type ThemesTabCtx = { props: MarketSectionProps } & CatalogStatusCtx
   & Pick<MarketStateCtx,
     'bodyRef' | 'data' | 'qThemes' | 'resetThemeSearch' | 'setQThemes' | 'setThemeSortDir' |
-    'setThemeSortField' | 'setThemeTimeRange' | 'setThemesFullscreen' | 'surface' | 't' |
+    'setThemeSortField' | 'setThemeTimeRange' | 'setThemesFullscreen' | 'surface' |
     'themeSearchReset' | 'themeSnap' | 'themeSortDir' | 'themeSortField' | 'themeTimeRange' |
     'themesFullscreen'>
   & Pick<MarketInstallCtx,
@@ -563,7 +573,7 @@ export function ThemesTab({ c }: { c: ThemesTabCtx }) {
         )
       })()}
       {data === null
-        ? <div className={css.loading}><span className={css.logoMark}><MarketLogo size={26} animated /></span>{t('loading')}</div>
+        ? <CatalogStatus c={c} />
         : anyThemePlugins.length === 0
           ? <div className={css.empty}>{t('themeEmpty')}</div>
           : themePlugins.length === 0
@@ -601,8 +611,8 @@ export function ThemesTab({ c }: { c: ThemesTabCtx }) {
 }
 
 
-type BlockedTabCtx = { props: MarketSectionProps }
-  & Pick<MarketStateCtx, 'blockedNames' | 'data' | 't'>
+type BlockedTabCtx = { props: MarketSectionProps } & CatalogStatusCtx
+  & Pick<MarketStateCtx, 'blockedNames' | 'data'>
   & Pick<MarketInstallCtx, 'blockedMissing' | 'blockedPlugins'>
   & Pick<MarketOperationsCtx, 'toggleBlock'>
   & Pick<MarketRenderCtx, 'pluginCard'>
@@ -611,7 +621,7 @@ export function BlockedTab({ c }: { c: BlockedTabCtx }) {
   const { blockedMissing, blockedNames, blockedPlugins, data, pluginCard, t, toggleBlock } = c
   return (
     data === null
-      ? <div className={css.loading}><span className={css.logoMark}><MarketLogo size={26} animated /></span>{t('loading')}</div>
+      ? <CatalogStatus c={c} />
       : blockedNames.length === 0
         ? <div className={css.empty}>{t('blockedEmpty')}</div>
         : (

@@ -18831,9 +18831,19 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				]
 			});
 		}
-		function DiscoverTab({ c }) {
-			const { basePage, bodyRef, cat, categories, catsExpanded, catsStuck, catsWrapRef, changePageSize, compatibleWithHost, currentPage, data, discoverMore, discoverSearchReset, goToPage, hasRecent, hideRecent, hostHiddenCount, hostUnavailableCount, hostVersion, lang, loadCatalog, loadError, loadedHostPackages, pageHostPackages, pagePlugins, pageSize, pluginCard, pluginsAll, pluginsUnblocked, q, recentCollapsed, recentHidden, recentPlugins, recentTile, resetDiscoverSearch, setCat, setCatsOpen, setCatsSentinel, setCompatibleWithHost, setQ, setSortDir, setSortField, setStuckExpanded, setTimeRange, showRecent, sortDir, sortField, surface, t, timeRange, toggleRecentCollapsed, totalPages, visibleCats } = c;
-			return loadError !== null ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+		function CatalogStatus({ c }) {
+			const { loadError, loadCatalog, t } = c;
+			if (loadError === null) return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+				className: Market_module_css_default.loading,
+				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+					className: Market_module_css_default.logoMark,
+					children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(MarketLogo, {
+						size: 26,
+						animated: true
+					})
+				}), t("loading")]
+			});
+			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 				className: Market_module_css_default.empty,
 				children: [
 					/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", { children: t("loadFail") }),
@@ -18851,16 +18861,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						children: t("loadRetry")
 					})
 				]
-			}) : data === null ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-				className: Market_module_css_default.loading,
-				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-					className: Market_module_css_default.logoMark,
-					children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(MarketLogo, {
-						size: 26,
-						animated: true
-					})
-				}), t("loading")]
-			}) : /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
+			});
+		}
+		function DiscoverTab({ c }) {
+			const { basePage, bodyRef, cat, categories, catsExpanded, catsStuck, catsWrapRef, changePageSize, compatibleWithHost, currentPage, data, discoverMore, discoverSearchReset, goToPage, hasRecent, hideRecent, hostHiddenCount, hostUnavailableCount, hostVersion, lang, loadError, loadedHostPackages, pageHostPackages, pagePlugins, pageSize, pluginCard, pluginsAll, pluginsUnblocked, q, recentCollapsed, recentHidden, recentPlugins, recentTile, resetDiscoverSearch, setCat, setCatsOpen, setCatsSentinel, setCompatibleWithHost, setQ, setSortDir, setSortField, setStuckExpanded, setTimeRange, showRecent, sortDir, sortField, surface, t, timeRange, toggleRecentCollapsed, totalPages, visibleCats } = c;
+			return loadError !== null || data === null ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(CatalogStatus, { c }) : /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
 				/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", { ref: setCatsSentinel }),
 				/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 					className: Market_module_css_default.stickyHead,
@@ -18991,16 +18996,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		}
 		function FavoritesTab({ c }) {
 			const { data, favSortDir, favSortField, favTimeRange, favoriteListed, favoritePagePlugins, favoritePageThemes, favoritePluginMore, favoritePluginPagination, favoritePlugins, favoriteStale, favoriteThemeMore, favoriteThemePagination, favoriteThemes, favoriteUrls, favoritesAllStale, pluginCard, qFavorites, renderStaleFavorites, setFavSortDir, setFavSortField, setFavTimeRange, setQFavorites, surface, t, themePluginCard } = c;
-			return data === null ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-				className: Market_module_css_default.loading,
-				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-					className: Market_module_css_default.logoMark,
-					children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(MarketLogo, {
-						size: 26,
-						animated: true
-					})
-				}), t("loading")]
-			}) : favoriteUrls.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+			return data === null ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(CatalogStatus, { c }) : favoriteUrls.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 				className: Market_module_css_default.empty,
 				children: t("favoritesEmpty")
 			}) : /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
@@ -19128,16 +19124,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						children: extra.map((def) => themeCard(def.id, def.id, themeSwatch(def)))
 					});
 				})(),
-				data === null ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-					className: Market_module_css_default.loading,
-					children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-						className: Market_module_css_default.logoMark,
-						children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(MarketLogo, {
-							size: 26,
-							animated: true
-						})
-					}), t("loading")]
-				}) : anyThemePlugins.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+				data === null ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(CatalogStatus, { c }) : anyThemePlugins.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 					className: Market_module_css_default.empty,
 					children: t("themeEmpty")
 				}) : themePlugins.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(EmptyResults, {
@@ -19175,16 +19162,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		}
 		function BlockedTab({ c }) {
 			const { blockedMissing, blockedNames, blockedPlugins, data, pluginCard, t, toggleBlock } = c;
-			return data === null ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-				className: Market_module_css_default.loading,
-				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-					className: Market_module_css_default.logoMark,
-					children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(MarketLogo, {
-						size: 26,
-						animated: true
-					})
-				}), t("loading")]
-			}) : blockedNames.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+			return data === null ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(CatalogStatus, { c }) : blockedNames.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 				className: Market_module_css_default.empty,
 				children: t("blockedEmpty")
 			}) : /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
