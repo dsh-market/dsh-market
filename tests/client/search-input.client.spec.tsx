@@ -109,3 +109,17 @@ it('returns focus to the field it cleared', () => {
   // this is the assertion that keeps the lookup inside this component honest.
   expect(document.activeElement).toBe(input())
 })
+
+it('pressing clear keeps focus in the field, so the pending query is never applied first', () => {
+  // Real browsers blur the input on the button's mousedown; onBlur would then
+  // commit the query still inside its wait, the list reflows, the button
+  // moves and the mouseup misses it (Favorites at 640px, 1.74.0 CI).
+  const commit = vi.fn()
+  render(<SearchInput t={label} value="" onCommit={commit} />)
+  type('memory')
+  const pressed = fireEvent.mouseDown(clear())
+  expect(pressed, 'mousedown default must be prevented so the input keeps focus').toBe(false)
+  fireEvent.click(clear())
+  tick(SEARCH_DELAY_MS * 2)
+  expect(commit.mock.calls).toEqual([['']])
+})

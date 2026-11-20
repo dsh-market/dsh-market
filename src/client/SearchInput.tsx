@@ -110,6 +110,12 @@ export function SearchInput({ value, onCommit, className, placeholder, resetToke
         type="button"
         className={css.searchClear}
         aria-label={t('clearSearch')}
+        // Keep focus in the field while the button is pressed. Otherwise the
+        // press blurs the input, onBlur commits the query that was still
+        // inside its 250ms wait, the list reflows (e.g. to "No plugins
+        // match"), the button moves, and the release lands elsewhere — so the
+        // clear never happens. Clearing should never apply the old query first.
+        onMouseDown={event => event.preventDefault()}
         onClick={clear}
       >
         <span aria-hidden="true">×</span>

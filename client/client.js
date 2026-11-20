@@ -18643,6 +18643,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					type: "button",
 					className: Market_module_css_default.searchClear,
 					"aria-label": t("clearSearch"),
+					onMouseDown: (event) => event.preventDefault(),
 					onClick: clear,
 					children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 						"aria-hidden": "true",
