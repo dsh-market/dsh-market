@@ -29,6 +29,10 @@ One-click themes: install, switch live, no restart.
 <td width="180" align="center"><a href="https://api.fenno.ai/?utm_source=dsh-market&utm_medium=oss&utm_campaign=fenno_202611&utm_content=readme"><img src="assets/partners/fenno.png" alt="Fenno.ai" width="150"></a></td>
 <td>Thanks to <strong>Fenno.ai</strong> for sponsoring this project!<br>Fenno.ai is an API relay service built for coding, best known for its Codex relay. It puts GPT, Claude, Grok and other coding models behind one API key, speaks both the OpenAI and Anthropic protocols, and plugs straight into Codex, Claude Code, Cline, OpenCode and other popular coding tools. Company-to-company billing and invoicing are available for both mainland China and overseas entities. <strong>New users <a href="https://api.fenno.ai/?utm_source=dsh-market&utm_medium=oss&utm_campaign=fenno_202611&utm_content=readme">get $50 of credit for $1.99</a>; invite friends and earn up to 20% back.</strong></td>
 </tr>
+<tr>
+<td width="180" align="center"><a href="https://dsh-market.hualong-ai.com/"><img src="assets/partners/hualong.png" alt="HuaLongAI" width="150"></a></td>
+<td>Thanks to <strong>HuaLongAI</strong> for sponsoring this project!<br>HuaLongAI is a stable, efficient API relay service focused on Codex, DeepSeek and Claude models: 100% direct from official sources, never diluted, highly available, with average SLA above 99.2%. Billing is transparent, with token-level bills you can verify line by line, and enterprise contracts and invoices are supported. <a href="https://dsh-market.hualong-ai.com/">dsh-market.hualong-ai.com</a></td>
+</tr>
 </table>
 <!-- sponsors:end -->
 

@@ -28,5 +28,20 @@
       "en": "Thanks to <strong>Fenno.ai</strong> for sponsoring this project!<br>Fenno.ai is an API relay service built for coding, best known for its Codex relay. It puts GPT, Claude, Grok and other coding models behind one API key, speaks both the OpenAI and Anthropic protocols, and plugs straight into Codex, Claude Code, Cline, OpenCode and other popular coding tools. Company-to-company billing and invoicing are available for both mainland China and overseas entities. <strong>New users <a href=\"{url}\">get $50 of credit for $1.99</a>; invite friends and earn up to 20% back.</strong>"
     },
     "until": null
+  },
+  {
+    "id": "hualong",
+    "tier": "title",
+    "name": { "zh": "华龙算力", "en": "HuaLongAI", "ja": "華龍算力 (HuaLongAI)" },
+    "scope": { "zh": "Codex、DeepSeek 与 Claude 模型 API 中转", "en": "API relay for Codex, DeepSeek and Claude models", "ja": "Codex・DeepSeek・Claude モデルの API 中継" },
+    "url": "https://dsh-market.hualong-ai.com/",
+    "logo": "assets/partners/hualong.png",
+    "mark": "assets/partners/hualong-mark.png",
+    "site": "site/assets/hualong.png",
+    "readme": {
+      "zh": "感谢 <strong>华龙算力（HuaLongAI）</strong> 赞助本项目！<br>HuaLongAI（华龙算力） 是一家稳定、高效的 API 中转服务商，主营 Codex 、Deepseek与 Claude 系列模型，100% 官方源直供、不掺假、高可用，平均SLA高于99.2%；计费透明，Token 级账单可逐笔核验，支持企业合同与发票，<a href=\"{url}\">dsh-market.hualong-ai.com</a>",
+      "en": "Thanks to <strong>HuaLongAI</strong> for sponsoring this project!<br>HuaLongAI is a stable, efficient API relay service focused on Codex, DeepSeek and Claude models: 100% direct from official sources, never diluted, highly available, with average SLA above 99.2%. Billing is transparent, with token-level bills you can verify line by line, and enterprise contracts and invoices are supported. <a href=\"{url}\">dsh-market.hualong-ai.com</a>"
+    },
+    "until": null
   }
 ]

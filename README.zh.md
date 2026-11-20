@@ -29,6 +29,10 @@
 <td width="180" align="center"><a href="https://api.fenno.ai/?utm_source=dsh-market&utm_medium=oss&utm_campaign=fenno_202611&utm_content=readme"><img src="assets/partners/fenno.png" alt="Fenno.ai" width="150"></a></td>
 <td>感谢 <strong>Fenno.ai</strong> 赞助了本项目！<br>Fenno.ai 是面向编程场景的 API 中转服务商，主营 Codex 中转，把 GPT、Claude、Grok 等编程模型统一到一个 API Key 下，兼容 OpenAI 与 Anthropic 双协议，可直连 Codex、Claude Code、Cline、OpenCode 等主流编程工具，支持国内及海外主体公对公结算与开票。<strong>新用户<a href="https://api.fenno.ai/?utm_source=dsh-market&utm_medium=oss&utm_campaign=fenno_202611&utm_content=readme">1.99 美元体验 50 美元额度</a>；邀请好友最高 20% 返佣，多邀多得。</strong></td>
 </tr>
+<tr>
+<td width="180" align="center"><a href="https://dsh-market.hualong-ai.com/"><img src="assets/partners/hualong.png" alt="华龙算力" width="150"></a></td>
+<td>感谢 <strong>华龙算力（HuaLongAI）</strong> 赞助本项目！<br>HuaLongAI（华龙算力） 是一家稳定、高效的 API 中转服务商，主营 Codex 、Deepseek与 Claude 系列模型，100% 官方源直供、不掺假、高可用，平均SLA高于99.2%；计费透明，Token 级账单可逐笔核验，支持企业合同与发票，<a href="https://dsh-market.hualong-ai.com/">dsh-market.hualong-ai.com</a></td>
+</tr>
 </table>
 <!-- sponsors:end -->
 
