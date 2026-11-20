@@ -3377,6 +3377,7 @@ describe('MarketSection (jsdom)', () => {
         '/dsh-market/update': { ok: true },
       })
       render(<MarketSection {...props()} />)
+      await openInstalled()
       fireEvent.click(await screen.findByRole('button', { name: new RegExp(en.updateAll) }))
       await waitFor(() => expect(screen.queryByRole('button', { name: new RegExp(en.updating) })).toBeNull())
       expect(fetchCalls.filter(call => call.path === '/dsh-market/update').map(call => (call.body as { name: string }).name).sort())
@@ -3414,6 +3415,7 @@ describe('MarketSection (jsdom)', () => {
       })
       const sent = () => fetchCalls.filter(call => call.path === '/dsh-market/update').map(call => (call.body as { name: string }).name)
       render(<MarketSection {...props()} />)
+      await openInstalled()
       fireEvent.click(await screen.findByRole('button', { name: new RegExp(en.updateAll) }))
       await waitFor(() => expect(screen.queryByRole('button', { name: new RegExp(en.updating) })).toBeNull())
       // The batch stopped at the refusal, as before.
@@ -3484,10 +3486,12 @@ describe('MarketSection (jsdom)', () => {
         '/dsh-market/update': { ok: true },
       })
       render(<MarketSection {...props()} />)
-      expect(await screen.findByRole('button', { name: /Update all \(2\)/ })).toBeTruthy()
+      // Update all lives on Installed (1.74). Let the first read land, then
+      // make the check that opening the Installed tab triggers fail.
+      await waitFor(() => expect(fetchCalls.some(call => call.path === '/dsh-market/updates')).toBe(true))
+      await waitFor(() => expect(fetchCalls.some(call => call.path === '/dsh-market/installed')).toBe(true))
       fail = true
-      // Opening the Installed tab checks again.
-      fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
+      fireEvent.click(screen.getByRole('button', { name: /^Installed/ }))
       expect(await screen.findByText(en.updateCheckFailed)).toBeTruthy()
       expect(screen.getByText(en.profileBlockedBeside)).toBeTruthy()
       expect(screen.queryByText(/Updates wait until dsh-mobile-plugin 0\.5\.71/)).toBeNull()
