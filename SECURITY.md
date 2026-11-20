@@ -42,6 +42,26 @@ reads or writes outside the profile it was pointed at; a place where a
 plugin's own metadata (its name, its manifest, a URL in its spec) is trusted
 for something it should not be.
 
+## Anonymous usage count
+
+The market sends one anonymous count a day. It is on by default and can be
+turned off. It is sent from the Node side of the plugin, never from the
+browser, and never carries a path, a plugin list, a hostname or a username.
+
+- **Fields**, exactly five, as JSON: `id` (a random 128-bit hex string made on
+  first use and kept in `<DSH_HOME>/dsh-market/telemetry.json`), `v` (market
+  version), `hv` (DSH version, or null), `kind` (`desktop` or `web`) and
+  `region` (the download region, `global` or `china`).
+- **Endpoint**: `POST https://t.dshmarket.com/v1/ping`, at most once per UTC
+  day per install, with a 10 second timeout. A failure is not retried before
+  the next scheduled check and never surfaces as an error.
+- **Retention**: rows older than 400 days are deleted. We do not store the
+  sender's IP address.
+- **Turn it off**: the "Anonymous usage count" switch in the market's card
+  under Settings, which takes effect immediately and deletes nothing else; or
+  set `DSH_MARKET_TELEMETRY=0` or `DO_NOT_TRACK=1` in the environment. It is
+  also never sent when `CI` is set or under test runs.
+
 ## Supported versions
 
 The latest published version on npm is the one that gets fixes. There are no

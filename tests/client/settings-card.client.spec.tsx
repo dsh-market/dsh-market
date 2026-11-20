@@ -32,6 +32,7 @@ function stubFetch(options: {
   region?: string; regionAuto?: boolean; regionError?: string; githubProxy?: string | null
   githubProxyCustom?: string | null; githubProxyManaged?: boolean; githubProxyError?: string
   buildEnv?: Record<string, string>; buildEnvError?: string
+  anonymousCount?: boolean
 } = {}): void {
   calls = []
   let githubProxyCustom = options.githubProxyCustom ?? null
@@ -59,7 +60,11 @@ function stubFetch(options: {
         githubProxyManaged: options.githubProxyManaged === true,
         selfManaged: options.selfManaged !== false,
         buildEnv: options.buildEnv ?? {},
+        ...(options.anonymousCount === undefined ? {} : { anonymousCount: options.anonymousCount }),
       })
+    }
+    if (path.endsWith('/dsh-market/telemetry')) {
+      return json({ ok: true, enabled: (JSON.parse(String(init?.body)) as { enabled: boolean }).enabled })
     }
     if (path.endsWith('/dsh-market/build-env')) {
       // The server answers with what it APPLIED — here, the same map sent
@@ -842,5 +847,33 @@ describe('SettingsCard — build environment (#336)', () => {
     fireEvent.change(editor(), { target: { value: 'CC=/usr/bin/gcc-11' } })
     fireEvent.click(screen.getByRole('button', { name: t('setBuildEnvSave') }))
     await waitFor(() => { expect(screen.getByText(/PATH is managed by the market/)).toBeTruthy() })
+  })
+})
+
+describe('SettingsCard — anonymous usage count', () => {
+  it('says exactly what is sent, and is on by default', async () => {
+    stubFetch({ anonymousCount: true })
+    await open()
+    await waitFor(() => { expect(screen.getByText(t('setCount'))).toBeTruthy() })
+    expect(screen.getByText(t('setCountHint'))).toBeTruthy()
+    expect(screen.getByRole('button', { name: t('setCountOn') }).getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('turns off at once and shows what the server saved', async () => {
+    stubFetch({ anonymousCount: true })
+    await open()
+    await waitFor(() => { expect(screen.getByRole('button', { name: t('setCountOff') })).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: t('setCountOff') }))
+    await waitFor(() => {
+      expect(calls.find(call => call.path.endsWith('/dsh-market/telemetry'))?.body).toEqual({ enabled: false })
+      expect(screen.getByRole('button', { name: t('setCountOff') }).getAttribute('aria-pressed')).toBe('true')
+    })
+  })
+
+  it('offers no switch on a server that does not have one', async () => {
+    stubFetch()
+    await open()
+    await waitFor(() => { expect(screen.getByText(t('setRegion'), { selector: 'div' })).toBeTruthy() })
+    expect(screen.queryByText(t('setCount'))).toBeNull()
   })
 })

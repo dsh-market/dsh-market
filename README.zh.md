@@ -108,7 +108,7 @@ profile，因此不会出现在桌面端。请通过应用内的 **设置 → �
 - 只允许安装 [awesome-dsh-plugin](https://awesome-dsh-plugin.com) 精选列表内的来源,其它一律拒绝
 - 构建脚本默认禁止执行（pnpm ≥10）,放行与否由你按包显式决定
 - 终端/命令行类插件装进网页版前会被明确提醒
-- 安装接口只接受同源 POST;市场不会向任何地方上报数据
+- 安装接口只接受同源 POST;每天一次匿名计数，不含任何个人信息，可在设置里关闭（详见 SECURITY.md）
 - 备份可能包含 profile 配置里的密钥——导出与上传前 UI 会明确提醒;WebDAV 同步仅限 https、拒绝内网地址,且密码永不落盘浏览器
 - 带鉴权的 Gist 请求始终直连 `api.github.com`，Bearer token 不会交给公共 GitHub 加速服务；GitHub 源码归档也保持 canonical codeload URL，以保留 pnpm 的完整性校验边界
 - 重启接口还要求客户端直接来自环回地址（拒绝代理转发请求），并使用原入口、参数、环境和工作目录重新启动 DSH
