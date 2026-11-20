@@ -1,0 +1,15 @@
+name = "dsh-market-telemetry"
+main = "worker.js"
+compatibility_date = "2026-11-01"
+account_id = "15ac3a953b6fdf5bc933d7a53c2ba486"
+workers_dev = false
+
+routes = [{ pattern = "t.dshmarket.com", custom_domain = true }]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "dsh-market-telemetry"
+database_id = "fabf7043-d625-4e61-b016-1e569b947d02"
+
+[triggers]
+crons = ["17 3 * * *"]
