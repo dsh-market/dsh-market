@@ -85,12 +85,12 @@ footer a:hover{color:var(--accent)}
 <p>This site sets none of its own, and carries no advertising. Nothing here is served by a third party, so no one else can set a cookie for you from this site.</p>
 
 <h2>The dsh-market plugin</h2>
-<p>The plugin runs inside your own DeepSeek Harness, on your machine. There is no dsh-market account. One anonymous count a day, no personal information, can be turned off in Settings: a random install ID, the market version, the DSH version, desktop or web, and the download region. We cannot see what you install.</p>
+<p>The plugin runs inside your own DeepSeek Harness, on your machine. There is no dsh-market account. One anonymous count a day, no personal information, can be turned off in Settings: a random install ID, the market version, the DSH version, desktop or web, the download region, and whether you opened the market that day (only that you did, not what you did there). We cannot see what you install.</p>
 
 <h3>What it connects to, and why</h3>
 <table>
 <tr><th>Destination</th><th>When</th><th>What is sent</th></tr>
-<tr><td><code>t.dshmarket.com</code></td><td>Once a day, unless turned off</td><td>The anonymous count described above. No IP address is stored by us, and rows older than 400 days are deleted.</td></tr>
+<tr><td><code>t.dshmarket.com</code></td><td>Once a day, plus once more on a day you open the market, unless turned off</td><td>The anonymous count described above. No IP address is stored by us, and rows older than 400 days are deleted.</td></tr>
 <tr><td><code>awesome-dsh-plugin.com</code></td><td>Opening the market</td><td>A plain request for the catalog. No identifier.</td></tr>
 <tr><td><code>registry.npmjs.org</code>, <code>github.com</code></td><td>Installing or checking updates</td><td>The name of the package being fetched — the same request any install would make.</td></tr>
 <tr><td><code>raw.githubusercontent.com</code></td><td>Only after you open an install dialog</td><td>A request for that plugin's screenshots.</td></tr>

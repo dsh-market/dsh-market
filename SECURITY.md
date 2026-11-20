@@ -48,12 +48,15 @@ The market sends one anonymous count a day. It is on by default and can be
 turned off. It is sent from the Node side of the plugin, never from the
 browser, and never carries a path, a plugin list, a hostname or a username.
 
-- **Fields**, exactly five, as JSON: `id` (a random 128-bit hex string made on
+- **Fields**, five, as JSON: `id` (a random 128-bit hex string made on
   first use and kept in `<DSH_HOME>/dsh-market/telemetry.json`), `v` (market
   version), `hv` (DSH version, or null), `kind` (`desktop` or `web`) and
-  `region` (the download region, `global` or `china`).
+  `region` (the download region, `global` or `china`). On a day the user
+  opens the market page, one more post carries the same five plus
+  `opened: true`: only that the page was opened, never which tab, search,
+  plugin or how long.
 - **Endpoint**: `POST https://t.dshmarket.com/v1/ping`, at most once per UTC
-  day per install, with a 10 second timeout. A failure is not retried before
+  day per install for the count and once more for `opened`, with a 10 second timeout. A failure is not retried before
   the next scheduled check and never surfaces as an error.
 - **Retention**: rows older than 400 days are deleted. We do not store the
   sender's IP address.

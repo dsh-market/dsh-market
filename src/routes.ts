@@ -76,7 +76,7 @@ import { DEFAULT_UPDATE_CHECK_INTERVAL_HOURS, isUpdateCheckIntervalHours } from 
 import { createThemeManager, type LoaderEntry } from './themes.ts'
 import { readJsonBody, refuseUnadmitted, sameOrigin, sendJson } from './http.ts'
 import { resolveDshHome } from './home-paths.ts'
-import { readTelemetryState, setTelemetryEnabled, startHeartbeat } from './telemetry.ts'
+import { readTelemetryState, sendOpened, setTelemetryEnabled, startHeartbeat, type HeartbeatOptions } from './telemetry.ts'
 import { clearWebdavSecret, readWebdavSecret, webdavSecretFor, writeWebdavSecret } from './webdav-secret.ts'
 import { detectedDebugger, detectedSupervisor, restartAllowed, scheduleRestart, servingPort, trustedRestartRequest, trustedDownloadRequest, trustedSelfUninstallRequest, selfUninstallReachableFrom, type RecoveryHandoffConfig, restartReachableFrom } from './restart.ts'
 import type { RecoveryPlugin } from './recovery.ts'
@@ -3363,7 +3363,35 @@ export function mountMarketRoutes(
     })
   }
 
+  const telemetryOptions: HeartbeatOptions = {
+    version: marketVersion(),
+    hostVersion: () => dshHostInfo()?.version ?? null,
+    kind: () => (config.desktopHost === true ? 'desktop' : 'web'),
+    region: () => region,
+  }
+
   const disposers = [
+    // The market page was opened. The page says so once per load; the count
+    // keeps the first one of each UTC day and ignores the rest. Answered at
+    // once: the page never waits on a network round trip for a count.
+    registerRoute({
+      kind: 'exact',
+      path: '/dsh-market/telemetry/opened',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) {
+          sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        void sendOpened(telemetryOptions)
+        response.writeHead(204)
+        response.end()
+      },
+    }),
     registerRoute({
       kind: 'exact',
       path: '/dsh-market/telemetry',
@@ -9319,12 +9347,7 @@ export function mountMarketRoutes(
   ]
 
   startCheckoutRepair()
-  const stopHeartbeat = startHeartbeat({
-    version: marketVersion(),
-    hostVersion: () => dshHostInfo()?.version ?? null,
-    kind: () => (config.desktopHost === true ? 'desktop' : 'web'),
-    region: () => region,
-  })
+  const stopHeartbeat = startHeartbeat(telemetryOptions)
   return async () => {
     disposed = true
     stopHeartbeat()

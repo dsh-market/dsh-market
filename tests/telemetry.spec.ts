@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { readTelemetryState, sendHeartbeat, setTelemetryEnabled, suppressedBy, telemetryFile, TELEMETRY_URL, type HeartbeatOptions } from '../src/telemetry.ts'
+import { readTelemetryState, sendHeartbeat, sendOpened, setTelemetryEnabled, suppressedBy, telemetryFile, TELEMETRY_URL, type HeartbeatOptions } from '../src/telemetry.ts'
 
 const dirs: string[] = []
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
@@ -27,7 +27,7 @@ describe('anonymous usage count', () => {
     expect(telemetryFile('/h/.dsh')).toBe(join('/h/.dsh', 'dsh-market', 'telemetry.json'))
   })
 
-  it('sends exactly five fields to the endpoint', async () => {
+  it('sends exactly five fields for the daily count', async () => {
     const { options, fetch, file } = setup()
     expect(await sendHeartbeat(options)).toBe('sent')
     const [url, init] = fetch.mock.calls[0] as [string, { method: string; body: string }]
@@ -38,6 +38,45 @@ describe('anonymous usage count', () => {
     expect(body).toMatchObject({ v: '1.2.3', hv: '0.2.1', kind: 'web', region: 'china' })
     expect(body.id).toMatch(/^[0-9a-f]{32}$/)
     expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ id: body.id, lastDay: '2026-11-20', enabled: true })
+  })
+
+  it('adds one flag, and only one, on the day the page is opened', async () => {
+    const { options, fetch, file } = setup()
+    await sendHeartbeat(options)
+    expect(await sendOpened(options)).toBe('sent')
+    const body = JSON.parse((fetch.mock.calls[1] as [string, { body: string }])[1].body) as Record<string, unknown>
+    expect(Object.keys(body).sort()).toEqual(['hv', 'id', 'kind', 'opened', 'region', 'v'])
+    expect(body.opened).toBe(true)
+    expect(readTelemetryState(file)).toMatchObject({ lastDay: '2026-11-20', lastOpenDay: '2026-11-20' })
+  })
+
+  it('reports an open once per UTC day, and again the next day', async () => {
+    const { options, fetch, day } = setup()
+    expect(await sendOpened(options)).toBe('sent')
+    expect(await sendOpened(options)).toBe('skipped')
+    day.at = Date.UTC(2026, 10, 21, 0, 1)
+    expect(await sendOpened(options)).toBe('sent')
+    expect(fetch).toHaveBeenCalledTimes(2)
+  })
+
+  it('an open on its own already counts as the day\'s heartbeat', async () => {
+    const { options, fetch } = setup()
+    await sendOpened(options)
+    expect(await sendHeartbeat(options)).toBe('skipped')
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('an open after turning the count off sends nothing', async () => {
+    const { options, fetch, file } = setup()
+    setTelemetryEnabled(false, file)
+    expect(await sendOpened(options)).toBe('skipped')
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('does not record the open when the request fails', async () => {
+    const { options, file } = setup({ fetch: ok(500) })
+    expect(await sendOpened(options)).toBe('failed')
+    expect(readTelemetryState(file).lastOpenDay).toBeUndefined()
   })
 
   it('sends a null host version and the desktop kind as they are', async () => {

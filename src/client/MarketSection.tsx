@@ -4,7 +4,9 @@
  * pending-restart bookkeeping in sessionStorage.
  */
 
+import { useEffect } from 'react'
 import css from './Market.module.css'
+import { api } from './market-data.ts'
 import { Diagnostics } from './Diagnostics.tsx'
 import { useMarketState } from './market-state.tsx'
 import { useMarketSync } from './market-sync.ts'
@@ -24,7 +26,23 @@ export { MarketLogo } from './MarketLogo.tsx'
 export { resetHostCompatibilityCache } from './market-state.tsx'
 export type { MarketSectionProps } from './market-types.ts'
 
+/**
+ * Tell the Node side the page was opened. The server keeps the first one of
+ * each UTC day for the anonymous count and drops the rest; this only avoids
+ * repeating the call within a day, so a window left open overnight still
+ * reports the next time the page is shown. A failure changes nothing the user
+ * can see.
+ */
+let openedReportedOn = ''
+function reportOpened(): void {
+  const day = new Date().toISOString().slice(0, 10)
+  if (openedReportedOn === day) return
+  openedReportedOn = day
+  void fetch(api('/dsh-market/telemetry/opened'), { method: 'POST' }).catch(() => {})
+}
+
 export function MarketSection(props: MarketSectionProps) {
+  useEffect(reportOpened, [])
   const c1 = useMarketState({ props })
   const c2 = useMarketSync({ props, ...c1 })
   const c3 = useMarketInstall({ props, ...c1, ...c2 })

@@ -85,12 +85,12 @@ footer a:hover{color:var(--accent)}
 <p>本站自身不设置任何 cookie，也没有任何广告。这里没有任何第三方脚本，所以没有别人能从本站给你设置 cookie。</p>
 
 <h2>dsh-market 插件</h2>
-<p>插件运行在你自己的 DeepSeek Harness 里，在你自己的机器上。没有 dsh-market 账号。每天一次匿名计数，不含任何个人信息，可在设置里关闭：只含随机安装编号、市场版本、DSH 版本、桌面端或网页端、下载区域。<strong>我们无法知道你装了什么。</strong></p>
+<p>插件运行在你自己的 DeepSeek Harness 里，在你自己的机器上。没有 dsh-market 账号。每天一次匿名计数，不含任何个人信息，可在设置里关闭：只含随机安装编号、市场版本、DSH 版本、桌面端或网页端、下载区域，以及当天有没有打开过市场（只记「打开过」，不记你在里面做了什么）。<strong>我们无法知道你装了什么。</strong></p>
 
 <h3>它会连接哪些地方，以及为什么</h3>
 <table>
 <tr><th>目标</th><th>时机</th><th>发送的内容</th></tr>
-<tr><td><code>t.dshmarket.com</code></td><td>每天一次（可关闭）</td><td>上文所说的匿名计数。我们不保存 IP 地址，超过 400 天的记录会被删除</td></tr>
+<tr><td><code>t.dshmarket.com</code></td><td>每天一次，打开市场的那天多一次（可关闭）</td><td>上文所说的匿名计数。我们不保存 IP 地址，超过 400 天的记录会被删除</td></tr>
 <tr><td><code>awesome-dsh-plugin.com</code></td><td>打开市场时</td><td>一个普通的目录请求，不含任何标识</td></tr>
 <tr><td><code>registry.npmjs.org</code>、<code>github.com</code></td><td>安装或检查更新时</td><td>要获取的包名——与任何一次普通安装发出的请求相同</td></tr>
 <tr><td><code>raw.githubusercontent.com</code></td><td>仅在你打开安装弹窗之后</td><td>该插件截图的请求</td></tr>

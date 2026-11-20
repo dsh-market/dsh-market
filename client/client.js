@@ -257,7 +257,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			setRegionChinaHint: "中国大陆访问更快。仅改变下载线路，插件来源不变。",
 			setRegionAuto: "已根据网络状况自动选择，可随时切换。",
 			setCount: "匿名使用统计",
-			setCountHint: "每天一次匿名计数，不含任何个人信息，可随时关闭。只发送：随机安装编号、市场版本、DSH 版本、桌面端或网页端、下载区域。",
+			setCountHint: "每天一次匿名计数，不含任何个人信息，可随时关闭。只发送：随机安装编号、市场版本、DSH 版本、桌面端或网页端、下载区域，以及当天有没有打开过市场。",
 			setCountOn: "开启",
 			setCountOff: "关闭",
 			setGithubProxy: "GitHub 加速",
@@ -1146,7 +1146,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			setRegionChinaHint: "Faster in mainland China. Changes the download route, not the source.",
 			setRegionAuto: "Selected from a network check. Change it anytime.",
 			setCount: "Anonymous usage count",
-			setCountHint: "One anonymous count a day, no personal information, can be turned off anytime. It sends only: a random install ID, market version, DSH version, desktop or web, and download region.",
+			setCountHint: "One anonymous count a day, no personal information, can be turned off anytime. It sends only: a random install ID, market version, DSH version, desktop or web, download region, and whether you opened the market that day.",
 			setCountOn: "On",
 			setCountOff: "Off",
 			setGithubProxy: "GitHub acceleration",
@@ -2034,7 +2034,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			setRegionChinaHint: "中国本土ではより高速です。ダウンロード経路が変わるだけで、プラグインの入手元は変わりません。",
 			setRegionAuto: "ネットワーク状況から自動で選択済みです。いつでも切り替えできます。",
 			setCount: "匿名の利用カウント",
-			setCountHint: "1日1回の匿名カウントです。個人情報は含まれず、いつでもオフにできます。送るのは、ランダムなインストール ID、マーケットのバージョン、DSH のバージョン、デスクトップかウェブか、ダウンロード地域だけです。",
+			setCountHint: "1日1回の匿名カウントです。個人情報は含まれず、いつでもオフにできます。送るのは、ランダムなインストール ID、マーケットのバージョン、DSH のバージョン、デスクトップかウェブか、ダウンロード地域、その日にマーケットを開いたかどうかだけです。",
 			setCountOn: "オン",
 			setCountOff: "オフ",
 			setGithubProxy: "GitHub 高速化",
@@ -21268,7 +21268,22 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		* /dsh-market/* host routes, with install/update/uninstall flows and the
 		* pending-restart bookkeeping in sessionStorage.
 		*/
+		/**
+		* Tell the Node side the page was opened. The server keeps the first one of
+		* each UTC day for the anonymous count and drops the rest; this only avoids
+		* repeating the call within a day, so a window left open overnight still
+		* reports the next time the page is shown. A failure changes nothing the user
+		* can see.
+		*/
+		let openedReportedOn = "";
+		function reportOpened() {
+			const day = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+			if (openedReportedOn === day) return;
+			openedReportedOn = day;
+			fetch(api("/dsh-market/telemetry/opened"), { method: "POST" }).catch(() => {});
+		}
 		function MarketSection(props) {
+			(0, react.useEffect)(reportOpened, []);
 			const c1 = useMarketState({ props });
 			const c2 = useMarketSync({
 				props,

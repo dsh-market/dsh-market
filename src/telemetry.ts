@@ -8,10 +8,13 @@ import { marketFetch } from './net.ts'
 /**
  * The anonymous daily count.
  *
- * One POST per install per UTC day, from the Node side only, carrying exactly
- * five fields (see `Ping`). It is on by default and off with one switch in
- * the settings card or with an environment variable. Everything about it is
- * best effort: a failure changes nothing for the user and is never an error.
+ * One POST per install per UTC day, from the Node side only, carrying five
+ * fields (see `Ping`). On a day the user opens the market page, a second POST
+ * carries the same five plus `opened: true` — the only thing it adds is that
+ * the page was opened, never what was done there. It is on by default and off
+ * with one switch in the settings card or with an environment variable.
+ * Everything about it is best effort: a failure changes nothing for the user
+ * and is never an error.
  */
 
 export const TELEMETRY_URL = 'https://t.dshmarket.com/v1/ping'
@@ -26,9 +29,11 @@ export interface Ping {
   hv: string | null
   kind: 'desktop' | 'web'
   region: string
+  /** Present (and true) only on the day's first open of the market page. */
+  opened?: true
 }
 
-interface TelemetryState { id?: string; lastDay?: string; enabled: boolean }
+interface TelemetryState { id?: string; lastDay?: string; lastOpenDay?: string; enabled: boolean }
 
 export function telemetryFile(home: string = resolveDshHome()): string {
   return join(home, 'dsh-market', 'telemetry.json')
@@ -40,6 +45,7 @@ export function readTelemetryState(file: string = telemetryFile()): TelemetrySta
     return {
       ...(typeof value.id === 'string' && /^[0-9a-f]{32}$/.test(value.id) ? { id: value.id } : {}),
       ...(typeof value.lastDay === 'string' ? { lastDay: value.lastDay } : {}),
+      ...(typeof value.lastOpenDay === 'string' ? { lastOpenDay: value.lastOpenDay } : {}),
       enabled: value.enabled !== false,
     }
   } catch { return { enabled: true } }
@@ -81,8 +87,7 @@ export interface HeartbeatOptions {
   fetch?: typeof marketFetch
 }
 
-/** Send today's count if it is due. Never throws. */
-export async function sendHeartbeat(options: HeartbeatOptions): Promise<'sent' | 'skipped' | 'failed'> {
+async function send(options: HeartbeatOptions, opened: boolean): Promise<'sent' | 'skipped' | 'failed'> {
   try {
     const env = options.env ?? process.env
     const file = options.file ?? telemetryFile()
@@ -90,9 +95,12 @@ export async function sendHeartbeat(options: HeartbeatOptions): Promise<'sent' |
     const state = readTelemetryState(file)
     if (!state.enabled) return 'skipped'
     const day = utcDay((options.now ?? Date.now)())
-    if (state.lastDay === day) return 'skipped'
+    if ((opened ? state.lastOpenDay : state.lastDay) === day) return 'skipped'
     const id = state.id ?? randomBytes(16).toString('hex')
-    const ping: Ping = { id, v: options.version, hv: options.hostVersion(), kind: options.kind(), region: options.region() }
+    const ping: Ping = {
+      id, v: options.version, hv: options.hostVersion(), kind: options.kind(), region: options.region(),
+      ...(opened ? { opened: true as const } : {}),
+    }
     const response = await (options.fetch ?? marketFetch)(env.DSH_MARKET_TELEMETRY_URL || TELEMETRY_URL, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -101,12 +109,23 @@ export async function sendHeartbeat(options: HeartbeatOptions): Promise<'sent' |
     })
     if (response.status < 200 || response.status > 299) return 'failed'
     // Re-read: the user may have turned it off while the request was in flight.
-    writeState({ ...readTelemetryState(file), id, lastDay: day }, file)
+    // An open also counts as today's heartbeat: the server row is the same.
+    writeState({ ...readTelemetryState(file), id, lastDay: day, ...(opened ? { lastOpenDay: day } : {}) }, file)
     return 'sent'
   } catch (error) {
     logEvent('info', 'telemetry', `not sent: ${error instanceof Error ? error.message : 'unknown'}`)
     return 'failed'
   }
+}
+
+/** Send today's count if it is due. Never throws. */
+export function sendHeartbeat(options: HeartbeatOptions): Promise<'sent' | 'skipped' | 'failed'> {
+  return send(options, false)
+}
+
+/** Note that the market page was opened today, if that has not been sent yet. Never throws. */
+export function sendOpened(options: HeartbeatOptions): Promise<'sent' | 'skipped' | 'failed'> {
+  return send(options, true)
 }
 
 /** Start the schedule: first check after a short delay, then every ~6 hours. */
