@@ -49,7 +49,7 @@ import type { MarketSectionProps } from './market-types.ts'
 type MarketRenderIn = { props: MarketSectionProps }
   & Pick<MarketStateCtx,
     'activations' | 'backupRestored' | 'bodyRef' | 'bootId' | 'busyUrl' | 'cancelling' | 'capsOpen' |
-    'catalogVersionTip' | 'catsOpen' | 'catsSentinel' | 'catsStuck' | 'catsWrapRef' |
+    'catalogPreview' | 'catalogVersionTip' | 'catsOpen' | 'catsSentinel' | 'catsStuck' | 'catsWrapRef' |
     'clearingStale' | 'data' | 'doneUrls' | 'envReady' |
     'groupOrder' | 'groups' | 'hostCompatibility' | 'hotNames' | 'hotUrls' | 'installTimes' |
     'installed' | 'installedFiles' | 'installedMenuName' | 'installedSort' | 'installedView' |
@@ -79,7 +79,7 @@ type MarketRenderIn = { props: MarketSectionProps }
 export function useMarketRender(c: MarketRenderIn) {
   const {
     activations, askRestore, backupRestored, blockToggleName, blockedNameSet, bodyRef, bootId,
-    busyUrl, cancelling, capsOpen, catalogInstalled, catalogVersionTip, catsOpen, catsSentinel,
+    busyUrl, cancelling, capsOpen, catalogInstalled, catalogPreview, catalogVersionTip, catsOpen, catsSentinel,
     catsStuck, catsWrapRef, clearStaleFavorites, clearingStale, data, dependencyOnlyNames, doCancel,
     doGroupAction, doToggle, doUpdate, doUpdateAll, doUseSkin, doneUrls,
     effectiveDisabledSet, envReady, favoriteStale, favoriteUrlSet, groupOrder, groups,
@@ -97,6 +97,8 @@ export function useMarketRender(c: MarketRenderIn) {
     toggleUpdateExempt, togglingName, updateCheck, updateExemptSet, updatedNames, updates,
     updatingAll, updatingName, visibleCats,
   } = c
+  const discoverCatalog = data ?? catalogPreview
+  const categoryNames = discoverCatalog?.categories
 // #558: count restart-pending session changes (restartNames), not every
   // completed `updatedNames` entry (which would double-count a batch update
   // that reports both a done URL and a name for the same plugin).
@@ -692,7 +694,7 @@ export function useMarketRender(c: MarketRenderIn) {
             </CardTip>
             {pluginCategories(p).map(category => (
               <span key={category} className={css.tag}>
-                {(data!.categories[category] && (data!.categories[category]![lang] || data!.categories[category]!.en)) || category}
+                {categoryNames?.[category]?.[lang] || categoryNames?.[category]?.en || category}
               </span>
             ))}
           </div>
@@ -894,7 +896,7 @@ export function useMarketRender(c: MarketRenderIn) {
     )
   }
 
-  const categories = data === null ? [] : Object.keys(data.categories)
+  const categories = discoverCatalog === null ? [] : Object.keys(discoverCatalog.categories)
 
   useLayoutEffect(() => { setVisibleCats(null) }, [lang, categories.length])
   // The sidebar page is often much wider than the settings dialog. A budget
@@ -915,7 +917,7 @@ export function useMarketRender(c: MarketRenderIn) {
     })
     observer.observe(el)
     return () => observer.disconnect()
-  }, [data])
+  }, [discoverCatalog])
   useLayoutEffect(() => {
     if (visibleCats !== null) return
     const el = catsWrapRef.current
@@ -930,7 +932,7 @@ export function useMarketRender(c: MarketRenderIn) {
     let fits = 0
     for (const chip of chips) { if (chip.offsetTop < rowTwoTop) fits += 1 }
     setVisibleCats(Math.max(1, fits))
-  }, [visibleCats, data])
+  }, [visibleCats, discoverCatalog])
 
   useEffect(() => {
     // The Plugins tab scrolls with the host page. Collapse-on-scroll against

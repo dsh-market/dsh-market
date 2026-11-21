@@ -358,6 +358,32 @@ afterEach(() => {
   resetGithubRouting()
 })
 
+it('renders Discover cards while the full catalog is still downloading', async () => {
+  const baseFetch = stubFetch()
+  let release = () => {}
+  const remainder = new Promise<void>(resolve => { release = resolve })
+  vi.stubGlobal('fetch', vi.fn(async (input: unknown, init?: RequestInit) => {
+    const url = new URL(String(input), 'http://localhost')
+    if (url.pathname !== '/dsh-market/registry') return baseFetch(input, init)
+    const page = Number(url.searchParams.get('page') ?? 0)
+    if (page === 1) await remainder
+    return Response.json({
+      registry: { ...REGISTRY, plugins: page === 0 ? REGISTRY.plugins.slice(0, 1) : REGISTRY.plugins.slice(1) },
+      hostVersion: '0.1.2-alpha.2', snapshot: 'test-snapshot', page, pages: 2,
+    })
+  }))
+  render(<MarketSection {...props()} />)
+  try {
+    expect(await screen.findByText(en.catalogProgress)).toBeTruthy()
+    expect(screen.getByText('dsh-loop')).toBeTruthy()
+    expect(screen.queryByText('dsh-notify')).toBeNull()
+    fireEvent.click(screen.getByText('dsh-loop'))
+    expect(within(await screen.findByRole('dialog')).getByText('Tools')).toBeTruthy()
+  } finally { release() }
+  expect(await screen.findByText('dsh-notify')).toBeTruthy()
+  expect(screen.queryByText(en.catalogProgress)).toBeNull()
+})
+
 describe('Market self-update waiting hint (#1244)', () => {
   const current = '1.73.19'
   const until = new Date(2026, 10, 17, 4, 45).toISOString()

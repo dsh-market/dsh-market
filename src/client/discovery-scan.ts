@@ -1,5 +1,6 @@
 import { api, hostCompatibilityKey, type HostCompatibility, type HostCompatibilityMap, type Registry, type RegistryPlugin } from './market-data.ts'
 import { isExactReleaseVersion } from '../release-candidates.ts'
+import { BODY_STALL_TIMEOUT_MS, HEADERS_TIMEOUT_MS, readBodyWhileProgressing } from '../body-progress.ts'
 
 const BATCH_SIZE = 64
 // The route accepts up to 32 KiB. Versions and revisions repeat their keys.
@@ -31,6 +32,7 @@ interface Result {
 interface Snapshot {
   enabled: boolean
   catalog: Registry | null
+  catalogPreview: Registry | null
   gone: boolean
   hostVersion: string | null | undefined
   verdicts: HostCompatibilityMap
@@ -48,6 +50,53 @@ interface Demand {
 }
 
 type CatalogLoad = 'loaded' | 'superseded' | 'gone'
+
+interface CatalogPage {
+  registry: Registry
+  hostVersion?: Snapshot['hostVersion']
+  snapshot?: string
+  page?: number
+  pages?: number
+}
+
+async function readCatalogPage(page: number, snapshot?: string): Promise<CatalogPage | 'gone' | 'expired'> {
+  const query = snapshot === undefined ? '' : '?' + new URLSearchParams({ page: String(page), snapshot })
+  for (let attempt = 0; ; attempt++) {
+    const controller = new AbortController()
+    // The first request may wait on the catalog origin. Later pages read only
+    // from a local snapshot, so cap the wait for their headers separately.
+    const timer = page === 0 ? undefined : setTimeout(() => controller.abort(), HEADERS_TIMEOUT_MS)
+    let status: number | undefined
+    try {
+      const response = await fetch(api('/dsh-market/registry') + query, {
+        cache: 'no-store', headers: { 'x-dsh-catalog-paging': '1' }, signal: controller.signal,
+      }).finally(() => clearTimeout(timer))
+      status = response.status
+      if (status === 404 || status === 409) {
+        await response.body?.cancel().catch(() => {})
+        return status === 404 ? 'gone' : 'expired'
+      }
+      const bytes = await readBodyWhileProgressing(response, BODY_STALL_TIMEOUT_MS, 'the catalog page')
+      const body = JSON.parse(new TextDecoder().decode(bytes)) as Partial<CatalogPage> & { error?: string }
+      if (!response.ok) throw new Error(typeof body?.error === 'string' ? body.error : `HTTP ${status}`)
+      if (!Array.isArray(body?.registry?.plugins)) throw new Error('the catalog response carried no data')
+      if (page !== 0 || body.snapshot !== undefined || body.pages !== undefined) {
+        if (typeof body.snapshot !== 'string' || body.page !== page || typeof body.pages !== 'number'
+          || !Number.isInteger(body.pages) || body.pages <= page || (snapshot !== undefined && body.snapshot !== snapshot)) {
+          throw new Error('the catalog page did not match the current download')
+        }
+      }
+      return body as CatalogPage
+    } catch (error) {
+      // The first request already has source-side retries. Retry transport
+      // errors here, but let an origin's explicit failure reach the user.
+      if (attempt >= 2 || (status !== undefined && status >= 400 && (
+        page === 0 || (status < 500 && status !== 429)
+      ))) throw error
+      await new Promise<void>(resolve => setTimeout(resolve, 350 * (attempt + 1)))
+    }
+  }
+}
 
 function initialPreference(): boolean {
   try { return localStorage.getItem(HOST_FILTER_KEY) !== 'all' } catch { return true }
@@ -117,6 +166,8 @@ export class DiscoveryScan {
   private pending: Batch | undefined
   private hostVersion: Snapshot['hostVersion']
   private catalog: Registry | null = null
+  private catalogPreview: Registry | null = null
+  private catalogDownload: { first: CatalogPage; items: Array<RegistryPlugin[] | undefined> } | undefined
   private boot: string | undefined
   private enabled: boolean | undefined
   private context = 0
@@ -133,7 +184,7 @@ export class DiscoveryScan {
   getSnapshot = (): Snapshot => {
     return this.snapshot ??= {
       enabled: this.enabled ??= initialPreference(),
-      catalog: null, gone: false, hostVersion: undefined, verdicts: Object.create(null),
+      catalog: null, catalogPreview: null, gone: false, hostVersion: undefined, verdicts: Object.create(null),
     }
   }
 
@@ -150,6 +201,8 @@ export class DiscoveryScan {
     this.context += 1
     this.hostVersion = undefined
     this.catalog = null
+    this.catalogPreview = null
+    this.catalogDownload = undefined
     this.catalogRequest += 1
     this.resumeRequest = undefined
     this.boot = undefined
@@ -178,23 +231,62 @@ export class DiscoveryScan {
 
   private async loadCatalog(): Promise<CatalogLoad> {
     const request = ++this.catalogRequest
-    const response = await fetch(api('/dsh-market/registry'), { cache: 'no-store' })
-    if (request !== this.catalogRequest) return 'superseded'
-    if (response.status === 404) {
-      this.setUnavailable()
-      return 'gone'
+    // A retry resumes only missing pages. If the server restarted or discarded
+    // the snapshot, start once from a new catalog instead of mixing revisions.
+    for (let restart = 0; restart <= 1; restart++) {
+      let download = this.catalogDownload
+      if (download === undefined) {
+        const first = await readCatalogPage(0)
+        if (request !== this.catalogRequest) return 'superseded'
+        if (first === 'gone') {
+          this.setUnavailable()
+          return 'gone'
+        }
+        if (first === 'expired') throw new Error('the catalog changed while loading')
+        download = { first, items: [first.registry.plugins] }
+        this.catalogDownload = download
+      }
+      const { first, items } = download
+      const pages = first.pages ?? 1
+      if (pages > 1 && this.catalog === null) {
+        this.catalogPreview = first.registry
+        this.update()
+      }
+      const missing = Array.from({ length: pages }, (_, page) => page).filter(page => items[page] === undefined)
+      let expired = false
+      for (let offset = 0; offset < missing.length; offset += 3) {
+        const batch = missing.slice(offset, offset + 3)
+        const results = await Promise.allSettled(batch.map(page => readCatalogPage(page, first.snapshot)))
+        if (request !== this.catalogRequest) return 'superseded'
+        for (const [index, result] of results.entries()) {
+          if (result.status === 'rejected') continue
+          if (result.value === 'gone') {
+            this.setUnavailable()
+            return 'gone'
+          }
+          if (result.value === 'expired') {
+            expired = true
+            continue
+          }
+          if (result.value.pages !== pages) throw new Error('the catalog page count changed while loading')
+          items[batch[index]!] = result.value.registry.plugins
+        }
+        if (expired) break
+        const failure = results.find(result => result.status === 'rejected')
+        if (failure?.status === 'rejected') throw failure.reason
+      }
+      if (expired) {
+        this.catalogDownload = undefined
+        continue
+      }
+      const host = first.hostVersion
+      this.catalogDownload = undefined
+      this.catalogPreview = null
+      this.setCatalog({ ...first.registry, plugins: items.flatMap(items => items ?? []) },
+        typeof host === 'string' || host === null ? host : undefined)
+      return 'loaded'
     }
-    const body = (await response.json().catch(() => ({}))) as {
-      registry?: Registry
-      hostVersion?: Snapshot['hostVersion']
-      error?: string
-    }
-    if (request !== this.catalogRequest) return 'superseded'
-    if (!response.ok) throw new Error(typeof body.error === 'string' ? body.error : `HTTP ${response.status}`)
-    if (body.registry === undefined) throw new Error('the catalog response carried no data')
-    const host = body.hostVersion
-    this.setCatalog(body.registry, typeof host === 'string' || host === null ? host : undefined)
-    return 'loaded'
+    throw new Error('the catalog changed while loading')
   }
 
   private setCatalog(catalog: Registry, hostVersion: Snapshot['hostVersion']) {
@@ -238,6 +330,8 @@ export class DiscoveryScan {
     if (this.gone) return
     this.active = false
     this.gone = true
+    this.catalogDownload = undefined
+    this.catalogPreview = null
     this.catalogRefreshUsed = false
     this.catalogRequest += 1
     this.invalidate()
@@ -326,10 +420,10 @@ export class DiscoveryScan {
       for (const [key, result] of this.results) verdicts[key] = result.verdict
       this.verdictsChanged = false
     }
-    if (previous.enabled === enabled && previous.catalog === this.catalog && previous.gone === this.gone
+    if (previous.enabled === enabled && previous.catalog === this.catalog && previous.catalogPreview === this.catalogPreview && previous.gone === this.gone
       && previous.hostVersion === this.hostVersion && previous.verdicts === verdicts) return
     this.snapshot = {
-      enabled, catalog: this.catalog, gone: this.gone, hostVersion: this.hostVersion, verdicts,
+      enabled, catalog: this.catalog, catalogPreview: this.catalogPreview, gone: this.gone, hostVersion: this.hostVersion, verdicts,
     }
     for (const listener of this.listeners) listener()
   }
