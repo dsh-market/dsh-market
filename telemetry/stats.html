@@ -1,0 +1,660 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>dsh-market 数据</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7; --surface-1: #fcfcfb; --surface-2: #f3f2ee;
+    --ink-1: #0b0b0b; --ink-2: #52514e; --ink-3: #898781;
+    --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,0.10);
+    --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --s5: #e87ba4; --s6: #008300;
+    --other: #b9b8b0;
+    --up: #006300; --down: #d03b3b;
+    --seq-100: #cde2fb; --seq-200: #9ec5f4; --seq-300: #6da7ec; --seq-400: #3987e5; --seq-500: #256abf; --seq-600: #184f95; --seq-700: #0d366b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --page: #0d0d0d; --surface-1: #1a1a19; --surface-2: #232321;
+      --ink-1: #f0efec; --ink-2: #c3c2b7; --ink-3: #898781;
+      --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+      --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #0ca30c;
+      --other: #5a5955;
+      --up: #0ca30c; --down: #e66767;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--page); color: var(--ink-1);
+    font: 14px/1.5 system-ui, -apple-system, "PingFang SC", "Segoe UI", sans-serif; }
+  main { max-width: 1240px; margin: 0 auto; padding: 20px 20px 64px; }
+  .top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
+  .top h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  .top .spacer { flex: 1; }
+  .top a { color: var(--ink-2); text-decoration: none; font-size: 13px; }
+  .top a:hover { color: var(--ink-1); }
+  .sub { color: var(--ink-3); font-size: 12px; margin: 0 0 16px; }
+  .filters { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+  .seg { display: inline-flex; background: var(--surface-2); border-radius: 8px; padding: 2px; }
+  .seg button { border: 0; background: transparent; color: var(--ink-2); padding: 4px 12px; border-radius: 6px; font: inherit; font-size: 13px; cursor: pointer; }
+  .seg button[aria-pressed="true"] { background: var(--surface-1); color: var(--ink-1); box-shadow: 0 0 0 1px var(--border); }
+  .live { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px 14px; margin-bottom: 16px; font-size: 13px; color: var(--ink-2); }
+  .live b { color: var(--ink-1); font-weight: 600; }
+  .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--s3); box-shadow: 0 0 0 3px color-mix(in srgb, var(--s3) 25%, transparent); }
+  .kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 16px; min-width: 0; }
+  .kpi { display: flex; flex-direction: column; gap: 2px; }
+  .kpi.hero { grid-row: span 2; justify-content: space-between; }
+  .kpi .label { color: var(--ink-2); font-size: 13px; display: flex; gap: 6px; align-items: baseline; }
+  .kpi .label small { color: var(--ink-3); font-size: 11px; }
+  .kpi .value { font-size: 26px; font-weight: 600; letter-spacing: -0.01em; }
+  .kpi.hero .value { font-size: 52px; line-height: 1.1; }
+  .kpi .delta { font-size: 12px; color: var(--ink-3); display: flex; gap: 10px; flex-wrap: wrap; }
+  .kpi .delta .up { color: var(--up); } .kpi .delta .down { color: var(--down); }
+  .kpi svg.spark { margin-top: 6px; }
+  .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 16px; }
+  .section { margin-bottom: 16px; }
+  .head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+  .head h2 { font-size: 15px; font-weight: 600; margin: 0; }
+  .head p { margin: 2px 0 0; color: var(--ink-3); font-size: 12px; }
+  .legend { display: flex; gap: 6px 14px; flex-wrap: wrap; font-size: 12px; color: var(--ink-2); margin-bottom: 6px; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .key-line { display: inline-block; width: 14px; height: 2px; border-radius: 1px; }
+  .key-rect { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
+  .chart { position: relative; }
+  svg { display: block; width: 100%; overflow: visible; }
+  svg text { fill: var(--ink-3); font-size: 11px; font-variant-numeric: tabular-nums; }
+  svg text.end { fill: var(--ink-2); font-size: 12px; font-weight: 600; }
+  svg:focus { outline: none; }
+  svg:focus-visible { outline: 2px solid var(--s1); outline-offset: 4px; border-radius: 4px; }
+  .tip { position: fixed; pointer-events: none; z-index: 10; display: none; min-width: 160px;
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+    box-shadow: 0 6px 24px rgb(0 0 0 / 0.14); font-size: 12px; }
+  .tip .t { color: var(--ink-3); margin-bottom: 4px; }
+  .tip .r { display: flex; align-items: center; gap: 8px; line-height: 1.7; }
+  .tip .r b { font-variant-numeric: tabular-nums; color: var(--ink-1); }
+  .tip .r span.n { color: var(--ink-2); }
+  .tip .r .key-line, .tip .r .key-rect { flex: none; }
+  .empty { color: var(--ink-3); font-size: 13px; padding: 28px 0; text-align: center; }
+  .heat { width: 100%; border-collapse: separate; border-spacing: 2px; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .heat th { color: var(--ink-3); font-weight: 500; padding: 4px 6px; text-align: center; white-space: nowrap; }
+  .heat th:first-child, .heat td:first-child { text-align: left; color: var(--ink-2); white-space: nowrap; }
+  .heat td { text-align: center; padding: 6px 4px; border-radius: 4px; min-width: 44px; }
+  .heat td.size { color: var(--ink-2); text-align: right; padding-right: 10px; }
+  .splits { display: grid; gap: 14px; }
+  .split .row1 { display: flex; justify-content: space-between; font-size: 13px; color: var(--ink-2); margin-bottom: 6px; }
+  .split .bar { display: flex; gap: 2px; height: 8px; }
+  .split .bar i { display: block; height: 100%; border-radius: 4px; }
+  .split .vals { display: flex; gap: 16px; margin-top: 6px; font-size: 12px; color: var(--ink-2); flex-wrap: wrap; }
+  .split .vals span { display: inline-flex; gap: 6px; align-items: center; }
+  .split .vals b { color: var(--ink-1); font-weight: 600; }
+  .scroll { overflow-x: auto; }
+  table.detail { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+  table.detail th, table.detail td { padding: 7px 10px; text-align: right; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+  table.detail th:first-child, table.detail td:first-child { text-align: left; }
+  table.detail th { color: var(--ink-3); font-weight: 500; font-size: 12px; }
+  .tag { display: inline-block; font-size: 11px; color: var(--ink-3); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; margin-left: 6px; }
+  details.notes { color: var(--ink-2); font-size: 13px; }
+  details.notes summary { cursor: pointer; color: var(--ink-1); font-weight: 600; }
+  details.notes li { margin: 4px 0; }
+  .error { color: var(--down); }
+  .loading { opacity: .5; transition: opacity .2s; }
+  @media (max-width: 1000px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } .kpi.hero { grid-column: span 2; grid-row: auto; } .grid2 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main id="app">
+  <div class="top">
+    <h1>dsh-market 数据</h1>
+    <span class="spacer"></span>
+    <a href="#" id="csv">下载 CSV</a>
+    <a href="/logout">退出登录</a>
+  </div>
+  <p class="sub" id="updated">加载中…</p>
+
+  <div class="filters">
+    <div class="seg" id="range" role="group" aria-label="时间范围">
+      <button data-days="7">近 7 天</button>
+      <button data-days="30" aria-pressed="true">近 30 天</button>
+      <button data-days="90">近 90 天</button>
+      <button data-days="0">全部</button>
+    </div>
+  </div>
+
+  <div class="live" id="live" hidden></div>
+  <div class="kpis" id="kpis"></div>
+
+  <div class="card section">
+    <div class="head"><div><h2>活跃趋势</h2><p>日活、周活、月活都按「打开过市场」计；灰线是当天在运行的安装数。</p></div></div>
+    <div class="legend" id="trendLegend"></div>
+    <div class="chart" id="trend"></div>
+  </div>
+
+  <div class="grid2">
+    <div class="card">
+      <div class="head"><div><h2>新增用户</h2><p>第一次打开市场的安装数。统计刚开始的几天，老用户也会被算作新增。</p></div></div>
+      <div class="chart" id="newUsers"></div>
+    </div>
+    <div class="card">
+      <div class="head"><div><h2>打开率与覆盖率</h2><p>打开率 = 日活 ÷ 能上报打开的安装；覆盖率 = 能上报打开的安装 ÷ 全部安装。</p></div></div>
+      <div class="legend" id="ratioLegend"></div>
+      <div class="chart" id="ratios"></div>
+    </div>
+  </div>
+
+  <div class="card section">
+    <div class="head"><div><h2>留存</h2><p>按第一次打开市场的日期分组，看之后第 N 天又打开的比例。</p></div></div>
+    <div id="retention"></div>
+  </div>
+
+  <div class="grid2">
+    <div class="card">
+      <div class="head"><div><h2>市场版本</h2><p id="versionNote">每天活跃安装里各版本的占比。</p></div></div>
+      <div class="legend" id="versionLegend"></div>
+      <div class="chart" id="versions"></div>
+    </div>
+    <div class="card">
+      <div class="head"><div><h2>DSH 宿主版本</h2><p id="hostNote"></p></div></div>
+      <div class="chart" id="hosts"></div>
+    </div>
+  </div>
+
+  <div class="card section">
+    <div class="head"><div><h2>用户构成</h2><p id="splitNote"></p></div></div>
+    <div class="splits" id="splits"></div>
+  </div>
+
+  <div class="card section">
+    <div class="head"><div><h2>每日明细</h2><p>时间范围内的全部数字；图表上的每个值在这里都能查到。</p></div></div>
+    <div class="scroll"><table class="detail" id="table"></table></div>
+  </div>
+
+  <div class="card section">
+    <details class="notes">
+      <summary>口径说明</summary>
+      <ul>
+        <li>一天按 UTC 计算，即北京时间 08:00 到次日 08:00。今天的数字在北京时间明早 08:00 之前都还会涨。</li>
+        <li><b>日活</b>：当天打开过插件市场页面的安装数。<b>活跃安装</b>：当天在运行（发过心跳）的安装数。</li>
+        <li><b>周活 / 月活</b>：截至当天的 7 / 30 天里至少打开过一次市场的安装数（去重）。<b>粘性</b> = 日活 ÷ 月活。</li>
+        <li>1.73.24 起的版本才上报；1.73.25 起才报「打开过市场」。覆盖率没到 100% 前，日活、周活、月活都偏低。</li>
+        <li>统计从 2026-11-20 北京时间约 15:00 开始，那天只统计了半天，不计入任何图表和对比（明细表里灰色显示）。周活、月活在攒满 7 / 30 天前只算已有的天数。最早几天的「新增」和留存里混有老用户，会偏高。</li>
+        <li>完整的日子每小时汇总一次；今天的数字每 5 分钟最多刷新一次，新增用户每小时更新。</li>
+      </ul>
+    </details>
+  </div>
+</main>
+<div class="tip" id="tip"></div>
+
+<script>
+// ---------- helpers ----------
+const $ = id => document.getElementById(id)
+const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+const fmt = n => n == null || !isFinite(n) ? '—' : Math.round(n).toLocaleString('zh-CN')
+const pct = (x, digits = 0) => x == null || !isFinite(x) ? '—' : (x * 100).toFixed(digits) + '%'
+const axisNum = v => v >= 10000 ? (v / 10000).toLocaleString('zh-CN', { maximumFractionDigits: 1 }) + '万' : v.toLocaleString('zh-CN')
+const md = day => `${+day.slice(5, 7)}/${+day.slice(8, 10)}`
+const ratio = (a, b) => b ? a / b : null
+const shiftDay = (day, n) => new Date(Date.parse(day + 'T00:00:00Z') + n * 864e5).toISOString().slice(0, 10)
+const parseV = v => v.split(/[.+-]/).slice(0, 3).map(x => parseInt(x, 10) || 0)
+const cmpV = (a, b) => { const x = parseV(a), y = parseV(b); for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] - y[i]; return 0 }
+const SVGNS = 'http://www.w3.org/2000/svg'
+function el(tag, attrs = {}, text) {
+  const n = document.createElementNS(SVGNS, tag)
+  for (const [k, v] of Object.entries(attrs)) if (v != null) n.setAttribute(k, v)
+  if (text != null) n.textContent = text
+  return n
+}
+// Plain DOM builder; children are appended as text nodes, never parsed as HTML.
+function h(tag, attrs = {}, ...kids) {
+  const n = document.createElement(tag)
+  for (const [k, v] of Object.entries(attrs)) { if (k === 'style') n.style.cssText = v; else if (k === 'class') n.className = v; else n.setAttribute(k, v) }
+  for (const k of kids) if (k != null) n.append(k)
+  return n
+}
+function niceTicks(max, count = 4) {
+  if (!(max > 0)) return { max: 1, ticks: [0, 1] }
+  const raw = max / count, p = 10 ** Math.floor(Math.log10(raw)), m = raw / p
+  const step = (m <= 1 ? 1 : m <= 2 ? 2 : m <= 2.5 ? 2.5 : m <= 5 ? 5 : 10) * p
+  const top = Math.ceil(max / step) * step
+  const ticks = []; for (let v = 0; v <= top + step / 2; v += step) ticks.push(v)
+  return { max: top, ticks }
+}
+// Rounded data-end, square at the baseline.
+function colPath(x, y, w, hgt, r = 4) {
+  if (hgt <= 0) return ''
+  r = Math.min(r, w / 2, hgt)
+  return `M${x},${y + hgt}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + hgt}Z`
+}
+function barPath(x, y, w, hgt, r = 4) {
+  if (w <= 0) return ''
+  r = Math.min(r, hgt / 2, w)
+  return `M${x},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + hgt - r}Q${x + w},${y + hgt} ${x + w - r},${y + hgt}H${x}Z`
+}
+
+// ---------- tooltip ----------
+const tip = $('tip')
+function showTip(clientX, clientY, title, rows, foot) {
+  tip.replaceChildren(h('div', { class: 't' }, title))
+  for (const r of rows) {
+    const key = h('span', { class: r.rect ? 'key-rect' : 'key-line', style: `background:${r.color}` })
+    tip.append(h('div', { class: 'r' }, key, h('b', {}, r.value), h('span', { class: 'n' }, r.name)))
+  }
+  if (foot) tip.append(h('div', { class: 't', style: 'margin:4px 0 0' }, foot))
+  tip.style.display = 'block'
+  const w = tip.offsetWidth, ht = tip.offsetHeight
+  let x = clientX + 14, y = clientY + 14
+  if (x + w > innerWidth - 8) x = clientX - w - 14
+  if (y + ht > innerHeight - 8) y = clientY - ht - 14
+  tip.style.left = Math.max(8, x) + 'px'; tip.style.top = Math.max(8, y) + 'px'
+}
+const hideTip = () => { tip.style.display = 'none' }
+
+// ---------- state ----------
+let DATA = null, RANGE = 30
+
+function prepare(json) {
+  const days = json.days.map(d => {
+    const latest = Object.keys(d.v ?? {}).sort(cmpV).at(-1)
+    return {
+      ...d,
+      openRate: ratio(d.opened, d.covered),
+      coverage: ratio(d.covered, d.installs),
+      stickiness: d.mau ? d.opened / d.mau : null,
+      excluded: d.day === json.startDay,
+      latest, latestShare: latest ? ratio(d.v[latest], d.installs) : null,
+    }
+  })
+  return { ...json, days }
+}
+
+// The first day only counted from mid-day, so it is left out of every chart,
+// tile and comparison; the detail table still lists it, marked.
+const usable = () => DATA.days.filter(d => !d.excluded)
+function inRange() {
+  const all = usable()
+  if (!RANGE) return all
+  const keep = new Set(all.filter(d => !d.live).slice(-RANGE).map(d => d.day))
+  return all.filter(d => d.live || keep.has(d.day))
+}
+const finishedDays = () => usable().filter(d => !d.live && !d.provisional)
+
+// ---------- KPI tiles ----------
+function sparkline(values, w, hgt) {
+  const pts = values.map((v, i) => [i, v]).filter(p => p[1] != null)
+  const svg = el('svg', { class: 'spark', viewBox: `0 0 ${w} ${hgt}`, height: hgt, preserveAspectRatio: 'none', 'aria-hidden': 'true' })
+  if (pts.length < 2) return svg
+  const max = Math.max(...pts.map(p => p[1])), min = Math.min(...pts.map(p => p[1]))
+  const x = i => 4 + i / Math.max(1, values.length - 1) * (w - 8)
+  const y = v => hgt - 5 - (v - min) / (max - min || 1) * (hgt - 10)
+  svg.append(el('polyline', { points: pts.map(p => `${x(p[0])},${y(p[1])}`).join(' '), fill: 'none', stroke: css('--axis'), 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round', 'vector-effect': 'non-scaling-stroke' }))
+  const last = pts.at(-1)
+  svg.append(el('circle', { cx: x(last[0]), cy: y(last[1]), r: 4, fill: css('--s1'), stroke: css('--surface-1'), 'stroke-width': 2 }))
+  return svg
+}
+function deltaSpan(cur, prev, label, asPoints) {
+  if (cur == null || prev == null || (!asPoints && !prev)) return null
+  const diff = asPoints ? (cur - prev) * 100 : (cur - prev) / prev * 100
+  if (!isFinite(diff)) return null
+  const up = diff > 0.05, down = diff < -0.05
+  const text = `${up ? '▲' : down ? '▼' : '–'} ${Math.abs(diff).toFixed(1)}${asPoints ? ' 个点' : '%'}`
+  return h('span', {}, h('span', { class: up ? 'up' : down ? 'down' : '' }, text), ` ${label}`)
+}
+function renderKpis() {
+  const finished = finishedDays()
+  const box = $('kpis'); box.replaceChildren()
+  const last = finished.at(-1)
+  if (!last) { box.append(h('div', { class: 'card empty', style: 'grid-column:1/-1' }, '第一个完整的日子是 11/21，北京时间 11/22 早上 08:00 之后出现在这里。今天的实时数字看上面那一条。')); return }
+  const prev = finished.at(-2), week = finished.find(d => d.day === shiftDay(last.day, -7))
+  const series = RANGE ? finished.slice(-RANGE) : finished
+  const windowNote = need => {
+    const have = finished.filter(d => d.day > shiftDay(last.day, -need)).length
+    return have < need ? `仅 ${have} 天数据` : `近 ${need} 天`
+  }
+  const tiles = [
+    { hero: true, label: '日活', note: `${md(last.day)} · 打开过市场`, value: fmt(last.opened), get: d => d.opened, deltas: [[prev?.opened, '比前一天'], [week?.opened, '比上周同日']] },
+    { label: '周活', note: windowNote(7), value: fmt(last.wau), get: d => d.wau, deltas: [[prev?.wau, '比前一天']] },
+    { label: '月活', note: windowNote(30), value: fmt(last.mau), get: d => d.mau, deltas: [[prev?.mau, '比前一天']] },
+    { label: '粘性', note: '日活 ÷ 月活', value: pct(last.stickiness), get: d => d.stickiness, points: true, deltas: [[prev?.stickiness, '比前一天']] },
+    { label: '活跃安装', note: '当天在运行', value: fmt(last.installs), get: d => d.installs, deltas: [[prev?.installs, '比前一天']] },
+    { label: '新增用户', note: '首次打开市场', value: fmt(last.newOpeners), get: d => d.newOpeners, deltas: [[prev?.newOpeners, '比前一天']] },
+    { label: '打开率', note: '日活 ÷ 能上报的安装', value: pct(last.openRate), get: d => d.openRate, points: true, deltas: [[prev?.openRate, '比前一天']] },
+  ]
+  for (const t of tiles) {
+    const cur = t.get(last)
+    const parts = t.deltas.map(([p, label]) => deltaSpan(cur, p, label, t.points)).filter(Boolean)
+    const deltas = h('div', { class: 'delta' }, ...(parts.length ? parts : [prev ? '' : '还没有前一天可比']))
+    box.append(h('div', { class: 'card kpi' + (t.hero ? ' hero' : '') },
+      h('div', {},
+        h('div', { class: 'label' }, t.label, h('small', {}, t.note)),
+        h('div', { class: 'value' }, t.value),
+        deltas),
+      sparkline(series.map(t.get), t.hero ? 300 : 240, t.hero ? 64 : 30)))
+  }
+}
+
+function renderLive() {
+  const box = $('live'), cur = DATA.days.find(d => d.live)
+  if (!cur) { box.hidden = true; return }
+  const left = Math.max(0, Date.parse(shiftDay(cur.day, 1) + 'T00:00:00Z') - Date.now())
+  box.hidden = false
+  box.replaceChildren(h('span', { class: 'pulse' }), h('span', {}, `今天 ${md(cur.day)}（进行中）`),
+    h('span', {}, '日活 ', h('b', {}, fmt(cur.opened))),
+    h('span', {}, '活跃安装 ', h('b', {}, fmt(cur.installs))),
+    h('span', {}, '新增用户 ', h('b', {}, fmt(cur.newOpeners))),
+    h('span', {}, '覆盖率 ', h('b', {}, pct(cur.coverage))),
+    h('span', { style: 'margin-left:auto;color:var(--ink-3)' }, `离今天结束（北京 08:00）还有 ${Math.floor(left / 36e5)} 小时 ${Math.floor(left % 36e5 / 6e4)} 分`))
+}
+
+// ---------- line chart ----------
+function lineChart(box, days, series, { height = 280, yFmt = axisNum, valueFmt = fmt, yMax, foot } = {}) {
+  box.replaceChildren()
+  if (!days.length) { box.append(h('div', { class: 'empty' }, '这个时间范围里还没有数据。')); return }
+  const W = Math.max(320, box.clientWidth), H = height, m = { t: 16, r: 64, b: 28, l: 48 }
+  const iw = W - m.l - m.r, ih = H - m.t - m.b
+  const vals = series.flatMap(s => days.map(s.get)).filter(v => v != null)
+  const { max, ticks } = yMax ? { max: yMax, ticks: [0, .25, .5, .75, 1].map(f => f * yMax) } : niceTicks(Math.max(1, ...vals))
+  const x = i => m.l + (days.length < 2 ? iw / 2 : i / (days.length - 1) * iw)
+  const y = v => m.t + ih - v / max * ih
+  const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, height: H, tabindex: 0, role: 'img', 'aria-label': series.map(s => s.name).join('、') + '的趋势，左右方向键逐日查看' })
+  for (const t of ticks) {
+    svg.append(el('line', { x1: m.l, x2: W - m.r, y1: y(t), y2: y(t), stroke: t === 0 ? css('--axis') : css('--grid'), 'stroke-width': 1 }))
+    svg.append(el('text', { x: m.l - 8, y: y(t) + 4, 'text-anchor': 'end' }, yFmt(t)))
+  }
+  const every = Math.max(1, Math.ceil(days.length / Math.max(2, Math.floor(iw / 56))))
+  days.forEach((d, i) => { if ((days.length - 1 - i) % every === 0) svg.append(el('text', { x: x(i), y: H - 8, 'text-anchor': 'middle' }, md(d.day))) })
+  const ends = []
+  for (const s of series) {
+    const pts = days.map((d, i) => [x(i), s.get(d), d]).filter(p => p[1] != null)
+    const solid = pts.filter(p => !p[2].live), live = pts.find(p => p[2].live)
+    if (s.area && solid.length > 1) svg.append(el('path', { d: `M${solid[0][0]},${y(0)}` + solid.map(p => `L${p[0]},${y(p[1])}`).join('') + `L${solid.at(-1)[0]},${y(0)}Z`, fill: s.color, 'fill-opacity': .1 }))
+    if (solid.length > 1) svg.append(el('polyline', { points: solid.map(p => `${p[0]},${y(p[1])}`).join(' '), fill: 'none', stroke: s.color, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }))
+    // Today is still filling up: a dotted link and a hollow dot, never a solid segment.
+    if (live && solid.length) svg.append(el('line', { x1: solid.at(-1)[0], y1: y(solid.at(-1)[1]), x2: live[0], y2: y(live[1]), stroke: s.color, 'stroke-width': 2, 'stroke-dasharray': '1 5', 'stroke-linecap': 'round' }))
+    for (const p of pts) if (pts.length <= 3 || p === solid.at(-1) || p === live)
+      svg.append(el('circle', { cx: p[0], cy: y(p[1]), r: 4, fill: p[2].live ? css('--surface-1') : s.color, stroke: p[2].live ? s.color : css('--surface-1'), 'stroke-width': 2 }))
+    const endP = solid.at(-1)
+    if (endP) ends.push({ y: y(endP[1]), x: endP[0], text: valueFmt(endP[1]) })
+  }
+  // Direct labels on the last finished day; one that would collide is left to the legend and tooltip.
+  ends.sort((a, b) => a.y - b.y)
+  let lastY = -Infinity
+  for (const e of ends) { if (e.y - lastY < 14) continue; svg.append(el('text', { x: e.x + 8, y: e.y + 4, class: 'end' }, e.text)); lastY = e.y }
+  const cross = el('line', { y1: m.t, y2: m.t + ih, stroke: css('--axis'), 'stroke-width': 1, visibility: 'hidden' })
+  svg.append(cross)
+  const hit = el('rect', { x: m.l - 12, y: 0, width: iw + 24, height: H, fill: 'transparent' })
+  svg.append(hit)
+  let idx = days.length - 1
+  const show = (i, cx, cy) => {
+    idx = Math.max(0, Math.min(days.length - 1, i)); const d = days[idx]
+    cross.setAttribute('x1', x(idx)); cross.setAttribute('x2', x(idx)); cross.setAttribute('visibility', 'visible')
+    const rows = series.map(s => ({ color: s.color, name: s.name, value: valueFmt(s.get(d)) }))
+    showTip(cx, cy, `${d.day}${d.live ? '（进行中）' : ''}`, rows, foot?.(d))
+  }
+  hit.addEventListener('pointermove', ev => {
+    const r = svg.getBoundingClientRect(), px = (ev.clientX - r.left) * (W / r.width)
+    show(Math.round((px - m.l) / (iw / Math.max(1, days.length - 1))), ev.clientX, ev.clientY)
+  })
+  const reset = () => { hideTip(); cross.setAttribute('visibility', 'hidden') }
+  hit.addEventListener('pointerleave', reset)
+  svg.addEventListener('keydown', ev => {
+    if (ev.key !== 'ArrowLeft' && ev.key !== 'ArrowRight') return
+    ev.preventDefault()
+    const r = svg.getBoundingClientRect(), i = Math.max(0, Math.min(days.length - 1, idx + (ev.key === 'ArrowRight' ? 1 : -1)))
+    show(i, r.left + x(i) * r.width / W, r.top + 24)
+  })
+  svg.addEventListener('blur', reset)
+  box.append(svg)
+}
+
+function legend(box, items) {
+  box.replaceChildren(...items.map(i => h('span', {}, h('span', { class: i.rect ? 'key-rect' : 'key-line', style: `background:${i.color}` }), i.name)))
+}
+
+// ---------- column chart ----------
+function columnChart(box, days, { get, name, color, height = 220, extra }) {
+  box.replaceChildren()
+  if (!days.length) { box.append(h('div', { class: 'empty' }, '这个时间范围里还没有数据。')); return }
+  const W = Math.max(320, box.clientWidth), H = height, m = { t: 20, r: 12, b: 28, l: 48 }
+  const iw = W - m.l - m.r, ih = H - m.t - m.b
+  const { max, ticks } = niceTicks(Math.max(1, ...days.map(d => get(d) ?? 0)))
+  const band = iw / days.length, bw = Math.min(24, band * 0.6)
+  const y = v => m.t + ih - v / max * ih
+  const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, height: H, role: 'img', 'aria-label': name })
+  for (const t of ticks) {
+    svg.append(el('line', { x1: m.l, x2: W - m.r, y1: y(t), y2: y(t), stroke: t === 0 ? css('--axis') : css('--grid') }))
+    svg.append(el('text', { x: m.l - 8, y: y(t) + 4, 'text-anchor': 'end' }, axisNum(t)))
+  }
+  const every = Math.max(1, Math.ceil(days.length / Math.max(2, Math.floor(iw / 56))))
+  days.forEach((d, i) => {
+    const cx = m.l + band * i + band / 2, v = get(d) ?? 0, base = d.live ? .4 : 1
+    const bar = el('path', { d: colPath(cx - bw / 2, y(v), bw, y(0) - y(v)), fill: color, 'fill-opacity': base })
+    svg.append(bar)
+    if ((days.length - 1 - i) % every === 0) svg.append(el('text', { x: cx, y: H - 8, 'text-anchor': 'middle' }, md(d.day)))
+    if (days.length <= 10) svg.append(el('text', { x: cx, y: y(v) - 6, 'text-anchor': 'middle', class: 'end' }, fmt(v)))
+    const hitR = el('rect', { x: m.l + band * i, y: m.t, width: band, height: ih, fill: 'transparent' })
+    hitR.addEventListener('pointermove', ev => { bar.setAttribute('fill-opacity', base * .7); showTip(ev.clientX, ev.clientY, `${d.day}${d.live ? '（进行中）' : ''}`, [{ color, name, value: fmt(v), rect: true }, ...(extra ? extra(d) : [])]) })
+    hitR.addEventListener('pointerleave', () => { bar.setAttribute('fill-opacity', base); hideTip() })
+    svg.append(hitR)
+  })
+  box.append(svg)
+}
+
+// ---------- version share (100% stacked columns) ----------
+const VERSION_SLOTS = ['--s1', '--s2', '--s3', '--s4', '--s5']
+function versionChart(box, days) {
+  box.replaceChildren()
+  if (!days.length) { box.append(h('div', { class: 'empty' }, '这个时间范围里还没有数据。')); return }
+  // Colours follow the version, not its rank in this range: the five newest
+  // versions across all data get the slots; everything older is folded.
+  const allVersions = [...new Set(usable().flatMap(d => Object.keys(d.v ?? {})))].sort(cmpV).reverse()
+  const named = allVersions.slice(0, 5)
+  const groups = [...named.map((v, i) => ({ name: v, color: css(VERSION_SLOTS[i]), get: d => d.v?.[v] ?? 0 })),
+    { name: '更早版本', color: css('--other'), get: d => Object.entries(d.v ?? {}).filter(([v]) => !named.includes(v)).reduce((s, [, n]) => s + n, 0) }]
+  legend($('versionLegend'), groups.filter(g => usable().some(d => g.get(d) > 0)).map(g => ({ ...g, rect: true })))
+  const W = Math.max(320, box.clientWidth), H = 240, m = { t: 8, r: 12, b: 28, l: 40 }
+  const iw = W - m.l - m.r, ih = H - m.t - m.b
+  const band = iw / days.length, bw = Math.min(24, band * 0.6)
+  const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, height: H, role: 'img', 'aria-label': '每天各市场版本的占比' })
+  for (const t of [0, .25, .5, .75, 1]) {
+    const yy = m.t + ih - t * ih
+    svg.append(el('line', { x1: m.l, x2: W - m.r, y1: yy, y2: yy, stroke: t === 0 ? css('--axis') : css('--grid') }))
+    svg.append(el('text', { x: m.l - 8, y: yy + 4, 'text-anchor': 'end' }, pct(t)))
+  }
+  const every = Math.max(1, Math.ceil(days.length / Math.max(2, Math.floor(iw / 56))))
+  days.forEach((d, i) => {
+    const cx = m.l + band * i + band / 2, total = d.installs || 1
+    const parts = groups.map(g => ({ g, n: g.get(d) })).filter(p => p.n > 0)
+    // Oldest at the bottom, newest on top, 2px surface gap between segments.
+    const stack = [...parts].reverse()
+    let acc = 0
+    stack.forEach((p, j) => {
+      const yTop = m.t + ih - (acc + p.n) / total * ih, full = p.n / total * ih
+      const top = j === stack.length - 1, hh = Math.max(0, full - (top ? 0 : 2))
+      svg.append(top ? el('path', { d: colPath(cx - bw / 2, yTop, bw, hh), fill: p.g.color }) : el('rect', { x: cx - bw / 2, y: yTop + 2, width: bw, height: hh, fill: p.g.color }))
+      acc += p.n
+    })
+    if ((days.length - 1 - i) % every === 0) svg.append(el('text', { x: cx, y: H - 8, 'text-anchor': 'middle' }, md(d.day)))
+    const hitR = el('rect', { x: m.l + band * i, y: m.t, width: band, height: ih, fill: 'transparent' })
+    hitR.addEventListener('pointermove', ev => showTip(ev.clientX, ev.clientY, `${d.day}${d.live ? '（进行中）' : ''}`,
+      parts.map(p => ({ color: p.g.color, rect: true, name: p.g.name, value: `${pct(p.n / total, 1)} · ${fmt(p.n)}` }))))
+    hitR.addEventListener('pointerleave', hideTip)
+    svg.append(hitR)
+  })
+  box.append(svg)
+  const last = days.filter(d => !d.live).at(-1) ?? days.at(-1)
+  $('versionNote').textContent = last?.latest ? `每天活跃安装里各版本的占比。${last.live ? '今天' : md(last.day)} 最新的 ${last.latest} 占 ${pct(last.latestShare)}。` : '每天活跃安装里各版本的占比。'
+}
+
+// ---------- ranked horizontal bars ----------
+function rankedBars(box, entries, total, { color, top = 8 } = {}) {
+  box.replaceChildren()
+  if (!entries.length) { box.append(h('div', { class: 'empty' }, '还没有数据。')); return }
+  const sorted = [...entries].sort((a, b) => b[1] - a[1])
+  const shown = sorted.slice(0, top), rest = sorted.slice(top).reduce((s, [, n]) => s + n, 0)
+  if (rest) shown.push(['其他', rest])
+  const W = Math.max(320, box.clientWidth), row = 30, m = { l: 110, r: 120 }, H = shown.length * row
+  const iw = W - m.l - m.r, max = Math.max(...shown.map(e => e[1]))
+  const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, height: H, role: 'img', 'aria-label': 'DSH 版本排名' })
+  shown.forEach(([name, n]) => {
+    const i = shown.findIndex(e => e[0] === name), yy = i * row + 4, w = Math.max(2, n / max * iw)
+    const c = name === '其他' ? css('--other') : color, label = name === 'unknown' ? '未知' : name
+    svg.append(el('text', { x: m.l - 10, y: yy + 15, 'text-anchor': 'end', style: `fill:${css('--ink-2')};font-size:12px` }, label))
+    const bar = el('path', { d: barPath(m.l, yy + 4, w, 14), fill: c })
+    svg.append(bar)
+    svg.append(el('text', { x: m.l + w + 8, y: yy + 15 }, `${fmt(n)} · ${pct(n / total, 1)}`))
+    const hitR = el('rect', { x: 0, y: yy, width: W, height: row, fill: 'transparent' })
+    hitR.addEventListener('pointermove', ev => { bar.setAttribute('fill-opacity', .7); showTip(ev.clientX, ev.clientY, label, [{ color: c, rect: true, name: '活跃安装', value: `${fmt(n)}（${pct(n / total, 1)}）` }]) })
+    hitR.addEventListener('pointerleave', () => { bar.setAttribute('fill-opacity', 1); hideTip() })
+    svg.append(hitR)
+  })
+  box.append(svg)
+}
+
+// ---------- retention heatmap ----------
+const RET_COLS = [1, 2, 3, 4, 5, 6, 7, 14, 30]
+function retentionTable() {
+  const box = $('retention'); box.replaceChildren()
+  const byCohort = new Map()
+  for (const r of DATA.retention) { if (!byCohort.has(r.cohort)) byCohort.set(r.cohort, {}); byCohort.get(r.cohort)[r.k] = r.n }
+  const lastFinished = shiftDay(DATA.today, -1)
+  const cohorts = [...byCohort.keys()].filter(c => c !== DATA.startDay).sort().reverse().slice(0, 21)
+  if (!cohorts.some(c => shiftDay(c, 1) <= lastFinished)) {
+    box.append(h('div', { class: 'empty' }, '第一组是 11/21 首次打开的用户，次日留存要等 11/22 过完（北京时间 11/23 早上 08:00）才有。')); return
+  }
+  const ramp = ['--seq-100', '--seq-200', '--seq-300', '--seq-400', '--seq-500', '--seq-600', '--seq-700'].map(css)
+  const table = h('table', { class: 'heat' })
+  table.append(h('tr', {}, h('th', {}, '首次打开'), h('th', {}, '人数'), ...RET_COLS.map(k => h('th', {}, k === 1 ? '次日' : `第 ${k} 天`))))
+  for (const c of cohorts) {
+    const m = byCohort.get(c), size = m[0] ?? 0
+    const tr = h('tr', {}, h('td', {}, c), h('td', { class: 'size' }, fmt(size)))
+    for (const k of RET_COLS) {
+      if (shiftDay(c, k) > lastFinished || !size) { tr.append(h('td', {})); continue }
+      const r = (m[k] ?? 0) / size, i = Math.min(ramp.length - 1, Math.floor(r * ramp.length))
+      tr.append(h('td', { style: `background:${ramp[i]};color:${i >= 3 ? '#ffffff' : '#0b0b0b'}`,
+        title: `${c} 首次打开的 ${fmt(size)} 个安装里，第 ${k} 天又打开的有 ${fmt(m[k] ?? 0)} 个（${pct(r, 1)}）` }, pct(r)))
+    }
+    table.append(tr)
+  }
+  box.append(h('div', { class: 'scroll' }, table))
+}
+
+// ---------- splits ----------
+function renderSplits(day, label) {
+  const box = $('splits'); box.replaceChildren()
+  if (!day) return
+  $('splitNote').textContent = `${label}的活跃安装，共 ${fmt(day.installs)} 个。`
+  const overseas = Object.entries(day.region ?? {}).filter(([k]) => k !== 'china').reduce((s, [, n]) => s + n, 0)
+  const defs = [
+    { title: '地区', parts: [['国内', day.region?.china ?? 0, '--s1'], ['海外', overseas, '--s2']] },
+    { title: '使用方式', parts: [['桌面端', day.kind?.desktop ?? 0, '--s1'], ['网页端', day.kind?.web ?? 0, '--s2']] },
+    { title: '能否上报「打开过市场」', parts: [['能（1.73.25 起）', day.covered, '--s1'], ['不能（更早版本）', day.installs - day.covered, '--other']] },
+  ]
+  for (const d of defs) {
+    const total = d.parts.reduce((s, p) => s + p[1], 0) || 1
+    box.append(h('div', { class: 'split' },
+      h('div', { class: 'row1' }, h('span', {}, d.title)),
+      h('div', { class: 'bar', role: 'img', 'aria-label': d.parts.map(p => `${p[0]} ${pct(p[1] / total)}`).join('，') },
+        ...d.parts.filter(p => p[1] > 0).map(p => h('i', { style: `width:${p[1] / total * 100}%;background:${css(p[2])}` }))),
+      h('div', { class: 'vals' }, ...d.parts.map(p => h('span', {}, h('span', { class: 'key-rect', style: `background:${css(p[2])}` }), p[0], h('b', {}, pct(p[1] / total, 1)), `（${fmt(p[1])}）`)))))
+  }
+}
+
+// ---------- table + CSV ----------
+const COLUMNS = [
+  ['日期（UTC）', d => d.day, null],
+  ['日活', d => d.opened, fmt], ['周活', d => d.wau, fmt], ['月活', d => d.mau, fmt], ['粘性', d => d.stickiness, v => pct(v, 1)],
+  ['活跃安装', d => d.installs, fmt], ['新增用户', d => d.newOpeners, fmt], ['新增安装', d => d.newInstalls, fmt],
+  ['打开率', d => d.openRate, v => pct(v, 1)], ['覆盖率', d => d.coverage, v => pct(v, 1)],
+  ['国内', d => d.region?.china ?? 0, fmt], ['海外', d => d.installs - (d.region?.china ?? 0), fmt],
+  ['桌面端', d => d.kind?.desktop ?? 0, fmt], ['网页端', d => d.kind?.web ?? 0, fmt],
+]
+const VOID_ON_START = new Set(['日活', '周活', '月活', '粘性', '新增用户', '打开率'])
+function renderTable(days) {
+  const t = $('table'); t.replaceChildren()
+  t.append(h('thead', {}, h('tr', {}, ...COLUMNS.map(c => h('th', {}, c[0])))))
+  const body = h('tbody')
+  for (const d of [...days].reverse()) {
+    const tr = h('tr', d.excluded ? { style: 'color:var(--ink-3)' } : {}, ...COLUMNS.map(([, get, f], i) => {
+      // Opened-based numbers of the half-counted first day are void, not just greyed.
+      const voided = d.excluded && VOID_ON_START.has(COLUMNS[i][0])
+      const td = h('td', {}, voided ? '—' : f ? f(get(d)) : get(d))
+      if (i === 0 && (d.live || d.excluded || d.provisional)) td.append(h('span', { class: 'tag' }, d.live ? '进行中' : d.excluded ? '只统计了半天，不计入' : '汇总中'))
+      return td
+    }))
+    body.append(tr)
+  }
+  t.append(body)
+}
+$('csv').addEventListener('click', ev => {
+  ev.preventDefault(); if (!DATA) return
+  const esc = v => { const s = v == null ? '' : String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s }
+  const lines = [COLUMNS.map(c => c[0]).join(',')]
+  for (const d of DATA.days) lines.push(COLUMNS.map(([name, get]) => { const v = d.excluded && VOID_ON_START.has(name) ? '' : get(d); return esc(typeof v === 'number' && !Number.isInteger(v) ? v.toFixed(4) : v) }).join(','))
+  const a = h('a', { href: URL.createObjectURL(new Blob(['﻿' + lines.join('\n')], { type: 'text/csv' })), download: `dsh-market-stats-${DATA.today}.csv` })
+  a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000)
+})
+
+// ---------- render ----------
+function render() {
+  if (!DATA) return
+  const days = inRange()
+  renderLive(); renderKpis()
+  const trend = [
+    { name: '日活', color: css('--s1'), get: d => d.opened, area: true },
+    { name: '周活', color: css('--s2'), get: d => d.live ? null : d.wau ?? null },
+    { name: '月活', color: css('--s3'), get: d => d.live ? null : d.mau ?? null },
+    { name: '活跃安装', color: css('--axis'), get: d => d.installs },
+  ]
+  legend($('trendLegend'), trend)
+  lineChart($('trend'), days, trend, { height: 300, foot: d => `打开率 ${pct(d.openRate, 1)} · 覆盖率 ${pct(d.coverage, 1)}` })
+  columnChart($('newUsers'), days, { get: d => d.newOpeners ?? 0, name: '新增用户', color: css('--s1'),
+    extra: d => [{ color: css('--axis'), rect: true, name: '新增安装', value: fmt(d.newInstalls) }] })
+  const ratios = [{ name: '打开率', color: css('--s1'), get: d => d.openRate }, { name: '覆盖率', color: css('--s2'), get: d => d.coverage }]
+  legend($('ratioLegend'), ratios)
+  lineChart($('ratios'), days, ratios, { height: 220, yMax: 1, yFmt: v => pct(v), valueFmt: v => pct(v, 1) })
+  retentionTable()
+  versionChart($('versions'), days)
+  const ref = finishedDays().at(-1) ?? usable().at(-1)
+  const refLabel = ref ? (ref.live ? `今天（${md(ref.day)}）到现在` : md(ref.day)) : ''
+  $('hostNote').textContent = ref ? `${refLabel}活跃安装用的 DSH 版本，前 8 名。` : ''
+  rankedBars($('hosts'), Object.entries(ref?.hv ?? {}), ref?.installs || 1, { color: css('--s1') })
+  renderSplits(ref, refLabel)
+  renderTable([...DATA.days.filter(d => d.excluded), ...days])
+}
+
+$('range').addEventListener('click', ev => {
+  const b = ev.target.closest('button'); if (!b) return
+  RANGE = Number(b.dataset.days)
+  for (const x of ev.currentTarget.querySelectorAll('button')) x.setAttribute('aria-pressed', String(x === b))
+  render()
+})
+let resizeTimer
+addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(render, 150) })
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', render)
+
+async function load() {
+  $('app').classList.add('loading')
+  try {
+    const r = await fetch('/api/dashboard')
+    if (r.status === 401) { location.href = '/'; return }
+    if (!r.ok) throw new Error(`HTTP ${r.status}`)
+    DATA = prepare(await r.json())
+    $('updated').className = 'sub'
+    $('updated').textContent = `数据更新于 ${new Date(DATA.generatedAt).toLocaleString('zh-CN', { hour12: false })} · 一天按 UTC 计（北京 08:00 – 次日 08:00）`
+    render()
+  } catch (err) {
+    $('updated').className = 'sub error'
+    $('updated').textContent = `数据没加载出来（${err.message}）。刷新页面重试；一直不行就检查 Worker 是否在线。`
+  } finally {
+    $('app').classList.remove('loading')
+  }
+}
+load()
+setInterval(load, 5 * 60e3)
+</script>
+</body>
+</html>

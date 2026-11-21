@@ -60,6 +60,10 @@ browser, and never carries a path, a plugin list, a hostname or a username.
   the next scheduled check and never surfaces as an error.
 - **Retention**: rows older than 400 days are deleted. We do not store the
   sender's IP address.
+  For the maintainers' private dashboard, each install id also keeps its
+  first day seen, first day the market was opened and last day seen (to
+  count new users and how many come back); that row is deleted 400 days
+  after the install was last seen. Everything else is daily totals with no id.
 - **Turn it off**: the "Anonymous usage count" switch in the market's card
   under Settings, which takes effect immediately and deletes nothing else; or
   set `DSH_MARKET_TELEMETRY=0` or `DO_NOT_TRACK=1` in the environment. It is
