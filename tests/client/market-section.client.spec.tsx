@@ -358,6 +358,54 @@ afterEach(() => {
   resetGithubRouting()
 })
 
+describe('the market names its own new version on Installed', () => {
+  const current = '1.74.0'
+  const endpoints = (latest: string) => ({
+    '/dsh-market/status': { active: false, pnpm: true, boot: 'boot-1', version: current },
+    '/dsh-market/installed': { profile: 'desktop', installed: { dshmarket: current }, live: ['dshmarket'] },
+    '/dsh-market/updates': { updates: { dshmarket: { kind: 'npm', current, latest, eligibleVersion: latest, updateAvailable: true } } },
+    '/dsh-market/update': { ok: true },
+  })
+  const offer = () => document.querySelector('[data-dshm-market-offer]') as HTMLElement | null
+  const installedDot = () => screen.getByRole('button', { name: new RegExp(`^${en.tabInstalled}`) }).querySelector('[class*="dot"]')
+
+  it('says which version and what updating does, lights the tab, and updates on click', async () => {
+    stubFetch(endpoints('1.74.1'))
+    render(<MarketSection {...props()} />)
+    await waitFor(() => expect(installedDot()).toBeTruthy())
+    await openInstalled()
+    await waitFor(() => expect(offer()).toBeTruthy())
+    expect(offer()!.textContent).toContain('1.74.1')
+    expect(offer()!.textContent).toContain(en.marketOfferHint)
+    fireEvent.click(within(offer()!).getByRole('button', { name: en.marketUpdate }))
+    await waitFor(() => expect(fetchCalls.filter(call => call.path === '/dsh-market/update').map(call => call.body))
+      .toEqual([{ name: 'dshmarket', eligibleVersion: '1.74.1' }]))
+  })
+
+  it('closing it hides that version, across a reload, and a newer one shows again', async () => {
+    stubFetch(endpoints('1.74.1'))
+    const first = render(<MarketSection {...props()} />)
+    await openInstalled()
+    await waitFor(() => expect(offer()).toBeTruthy())
+    fireEvent.click(within(offer()!).getByRole('button', { name: en.dismissNotice }))
+    expect(offer()).toBeNull()
+    await waitFor(() => expect(installedDot()).toBeNull())
+    first.unmount()
+
+    render(<MarketSection {...props()} />)
+    await openInstalled()
+    await screen.findByRole('button', { name: new RegExp(`^${en.tabInstalled}`) })
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(offer()).toBeNull()
+    cleanup()
+
+    stubFetch(endpoints('1.74.2'))
+    render(<MarketSection {...props()} />)
+    await openInstalled()
+    await waitFor(() => expect(offer()?.textContent).toContain('1.74.2'))
+  })
+})
+
 describe('Market self-update waiting hint (#1244)', () => {
   const current = '1.73.19'
   const until = new Date(2026, 10, 17, 4, 45).toISOString()
@@ -10058,6 +10106,11 @@ describe('boot-scoped update reminder dismissals (#419)', () => {
     expect(screen.queryByRole('button', { name: /Update all \(2\)/ })).toBeNull()
   })
 
+  const closeMarketOffer = (): void => {
+    const offer = document.querySelector('[data-dshm-market-offer]') as HTMLElement
+    fireEvent.click(within(offer).getByRole('button', { name: en.dismissNotice }))
+  }
+
   it('ignores every current reminder row by row while preserving the complete Installed update list', async () => {
     // The one-click "don't remind any" batch button is gone; each row's own
     // "don't remind until restart" is the way, and it must still add up.
@@ -10066,6 +10119,9 @@ describe('boot-scoped update reminder dismissals (#419)', () => {
     await openInstalledTab()
     await ignoreRowUntilRestart('dsh-loop')
     await ignoreRowUntilRestart('dsh-notify')
+    // The market's own new version keeps the dot lit until its notice is closed.
+    expect(updateDot()).toBeTruthy()
+    closeMarketOffer()
 
     await waitFor(() => {
       expect(screen.queryByRole('button', { name: /Update all/ })).toBeNull()
@@ -10085,6 +10141,7 @@ describe('boot-scoped update reminder dismissals (#419)', () => {
     await openInstalledTab()
     await ignoreRowUntilRestart('dsh-loop')
     await ignoreRowUntilRestart('dsh-notify')
+    closeMarketOffer()
     await waitFor(() => expect(updateDot()).toBeNull())
     first.unmount()
 

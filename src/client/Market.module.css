@@ -1427,6 +1427,7 @@
 .installedBatch:empty{display:none}
 .tabs .opWrap{margin-bottom:0}
 [data-dsh-market-plugins-tab="true"]:not([data-dsh-market-fullscreen="true"]) .head{padding:2px 4px 2px;gap:4px}
+.bannerSub{margin-left:8px;color:var(--dsw-alias-label-tertiary,#8b93a1)}
 .bannerClose{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;width:24px;height:24px;margin-right:-4px;
              border:none;border-radius:6px;background:none;cursor:pointer;color:var(--dsw-alias-label-tertiary,#8b93a1)}
 .bannerClose:hover{background:var(--dsw-alias-interactive-bg-hover,#2631480f);color:var(--dsw-alias-label-primary,#1f2328)}

@@ -1084,29 +1084,31 @@ export function useMarketRender(c: MarketRenderIn) {
     && !updatedNames.includes(selfName)
     && !quietUpdateSet.has(selfName)
 
-  // Update-the-market, update-all, and "don't remind". On the Plugins tab the
-  // host already has a page title, so these sit on the market's own tab row.
-  // Settings and the sidebar keep them in the heading.
+  // The market's own new version. It used to be a bare button on the
+  // Installed row; it is now a one-line notice on Installed that says what
+  // updating does (MarketHead), so the version is named before it is taken.
+  const marketOffer = (() => {
+    const self = installed['dshmarket'] !== undefined ? 'dshmarket' : 'dsh-market'
+    const status = updates[self]
+    if (!status || !status.updateAvailable || updatedNames.includes(self) || quietUpdateSet.has(self)) return null
+    return {
+      name: self,
+      version: status.eligibleVersion ?? status.latest ?? null,
+      restoreRequired: status.restoreRequired === true,
+    }
+  })()
+  const takeMarketOffer = (): void => {
+    if (marketOffer === null) return
+    setTab('installed')
+    if (marketOffer.restoreRequired) askRestore(marketOffer.name)
+    else doUpdate(marketOffer.name)
+  }
+
+  // Update-all on the Installed row. On the Plugins tab the host already has
+  // a page title, so it sits on the market's own tab row; Settings and the
+  // sidebar keep it in the heading.
   const batchActions = (
     <>
-      {(() => {
-        const self = installed['dshmarket'] !== undefined ? 'dshmarket' : 'dsh-market'
-        const status = updates[self]
-        return status && status.updateAvailable && !updatedNames.includes(self)
-          && !quietUpdateSet.has(self)
-          && (
-            <Button
-              variant="primary"
-              size="sm"
-              disabled={updatingName !== null || busyUrl !== null}
-              onClick={() => {
-                setTab('installed')
-                if (status.restoreRequired === true) askRestore(self)
-                else doUpdate(self)
-              }}
-            >{updatingName === self ? t('updating') : status.restoreRequired === true ? t('restoreOnline') : t('marketUpdate')}</Button>
-          )
-      })()}
       {reminderBatchUpdatableNames.length >= 1 && (
         <Button
           variant="primary"
@@ -1129,7 +1131,7 @@ export function useMarketRender(c: MarketRenderIn) {
     missingRestoreCount, onOffSwitch, openThemePanel, orderedInstalledEntries, pendingRefreshNames,
     pendingRestart, pluginCard, progressText, recentTile, renderInstalledBlockMenu,
     renderStaleFavorites, replacementOf, showHostPending, showMarketWait, themeCard, themePluginCard,
-    ungroupedNames, updateCheckFailed, visibleGroupIds, visibleUngrouped,
+    ungroupedNames, updateCheckFailed, visibleGroupIds, visibleUngrouped, marketOffer, takeMarketOffer,
   } as const
 }
 

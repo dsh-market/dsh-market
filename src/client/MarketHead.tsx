@@ -63,7 +63,9 @@ type MarketHeadCtx = { props: MarketSectionProps }
   & Pick<MarketRenderCtx,
     'eligibleMarketVersion' | 'hasUpdates' |
     'heldMarketVersion' | 'missingRestoreCount' | 'pendingRefreshNames' | 'pendingRestart' |
-    'showHostPending' | 'showMarketWait' | 'updateCheckFailed'>
+    'showHostPending' | 'showMarketWait' | 'updateCheckFailed' | 'marketOffer' | 'takeMarketOffer'>
+
+const MARKET_OFFER_CLOSED_KEY = 'dshm-market-offer-closed'
 
 export function MarketHead({ c }: { c: MarketHeadCtx }) {
   const {
@@ -82,7 +84,7 @@ export function MarketHead({ c }: { c: MarketHeadCtx }) {
     setRestartNoticeDismissed, setRestoreConfirmOpen, setSidebarTipDismissed, setTab, shadowSummary,
     showHostPending, showMarketWait, showSidebarTip, sidebarTipError, sidebarTipSaving, staleName,
     startupRepair, supervisor, surface, t, tab, themeSnap, uiLocale, updateCheckFailed, updates,
-    updatingName, version,
+    updatingName, version, marketOffer, takeMarketOffer,
   } = c
   // Four everyday tabs in the row; the rarely used ones (Hidden, Advanced)
   // and the rarely used actions sit behind ···.
@@ -90,6 +92,12 @@ export function MarketHead({ c }: { c: MarketHeadCtx }) {
   // A restart notice can be closed. It comes back when another change needs
   // a restart, so closing it never hides something new.
   const [restartClosedAt, setRestartClosedAt] = useState(0)
+  // Closing the new-version notice hides that version only; a newer one shows
+  // again. Kept across reloads, since the offer itself is.
+  const [offerClosed, setOfferClosed] = useState<string | null>(() => {
+    try { return localStorage.getItem(MARKET_OFFER_CLOSED_KEY) } catch { return null }
+  })
+  const showMarketOffer = marketOffer !== null && (marketOffer.version === null || marketOffer.version !== offerClosed)
   return (
     <>
       <div ref={headRef} className={css.head}>
@@ -149,7 +157,7 @@ export function MarketHead({ c }: { c: MarketHeadCtx }) {
           >{t('tabFavorites') + (favoriteTabCount > 0 ? ' (' + favoriteTabCount + ')' : '')}</button>
           <button className={tab === 'installed' ? `${css.tab} ${css.on}` : css.tab} onClick={() => { setTab('installed'); refreshInstalled(true) }}>
             {t('tabInstalled') + (installedOtherCount > 0 ? ' (' + installedOtherCount + ')' : '')}
-            {(hasUpdates || (tab !== 'installed' && pendingRestart > restartClosedAt)) && <StateDot state="error" size={7} className={css.dot} />}
+            {(hasUpdates || showMarketOffer || (tab !== 'installed' && pendingRestart > restartClosedAt)) && <StateDot state="error" size={7} className={css.dot} />}
           </button>
           {tab === 'blocked' && (
             <button className={tab === 'blocked' ? `${css.tab} ${css.on}` : css.tab} onClick={() => setTab('blocked')}>
@@ -335,6 +343,37 @@ export function MarketHead({ c }: { c: MarketHeadCtx }) {
                 location.reload()
               }}
             >{t('refresh')}</Button>
+          </div>
+        )}
+        {/* The market's own new version: named, with what updating does, on
+            Installed; the Installed tab carries a dot so it is found. Once it
+            is downloaded the restart notice below takes over. */}
+        {showMarketOffer && tab === 'installed' && (
+          <div className={css.banner} data-dshm-market-offer>
+            <IconDownloadOutline16 size={14} className={css.bannerIcon} />
+            <span className={css.grow}>
+              {marketOffer.version !== null
+                ? <>{t('marketOfferBanner')} <b>{marketOffer.version}</b></>
+                : t('marketOfferBanner')}
+              <span className={css.bannerSub}>{t('marketOfferHint')}</span>
+            </span>
+            <Button
+              variant="primary"
+              size="sm"
+              aria-label={marketOffer.restoreRequired ? t('restoreOnline') : t('marketUpdate')}
+              disabled={updatingName !== null || busyUrl !== null}
+              onClick={takeMarketOffer}
+            >{updatingName === marketOffer.name ? t('updating') : marketOffer.restoreRequired ? t('restoreOnline') : t('update')}</Button>
+            <button
+              type="button"
+              className={css.bannerClose}
+              aria-label={t('dismissNotice')}
+              title={t('dismissNotice')}
+              onClick={() => {
+                setOfferClosed(marketOffer.version)
+                try { if (marketOffer.version !== null) localStorage.setItem(MARKET_OFFER_CLOSED_KEY, marketOffer.version) } catch { /* storage unavailable */ }
+              }}
+            ><IconCloseOutline16 size={14} /></button>
           </div>
         )}
         {/* On the Plugins page this lives on Installed, next to the rows it is
