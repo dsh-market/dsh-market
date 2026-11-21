@@ -42,7 +42,7 @@ type MarketHeadCtx = { props: MarketSectionProps }
     'activationWarnings' | 'backupBusy' | 'backupMessage' | 'blockedNames' | 'bootId' |
     'brokenPluginNames' | 'brokenPlugins' | 'buildsSkipped' | 'busyUrl' | 'checkingUpdates' |
     'checkoutRecovery' | 'compatibilityNotice' | 'configNamespaceIssues' | 'data' | 'debuggerLatch' |
-    'describePlugin' | 'dismissBrokenError' | 'dismissingBroken' | 'doExportLog' | 'enableSidebar' |
+    'describePlugin' | 'dismissBrokenError' | 'dismissingBroken' | 'doExportLog' | 'enableSidebar' | 'undoSidebar' | 'showSidebarAdded' |
     'envFailed' | 'envFixing' | 'envReady' | 'exportState' | 'headRef' | 'hostBusy' |
     'hostDependencyFindings' | 'hotNames' | 'installError' | 'lang' | 'marketGone' |
     'notificationSnapshot' | 'openInHost' | 'operationsOpen' | 'pendingBackup' | 'profileBlocked' |
@@ -74,7 +74,7 @@ export function MarketHead({ c }: { c: MarketHeadCtx }) {
     checkoutRecovery, compatibilityNotice, compatibilitySummary, configNamespaceIssues, data,
     debuggerLatch, describePlugin, dismissBrokenError, dismissBrokenPlugin, dismissingBroken,
     doCancel, doExportLog, doInstall, doRestart, doRollback, doUpdate, eligibleMarketVersion,
-    enableSidebar, envFailed, envFixing, envReady, exportState, favoriteTabCount,
+    enableSidebar, undoSidebar, showSidebarAdded, envFailed, envFixing, envReady, exportState, favoriteTabCount,
     fixEnv, hasUpdates, headRef, heldMarketVersion, hostBusy, hostDependencyFindings, hotNames,
     installError, installedOtherCount, lang, marketGone, missingRestoreCount, notificationSnapshot,
     openInHost, operationsOpen, pendingBackup, pendingRefreshNames, pendingRestart, profileBlocked,
@@ -126,6 +126,18 @@ export function MarketHead({ c }: { c: MarketHeadCtx }) {
           <a className={css.submitLink} href="https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/blob/main/contributing.md" target="_blank" rel="noreferrer">{t('submitPlugin')}</a>
           </div>
         </div>
+        )}
+        {showSidebarAdded && (
+          <div className={css.sidebarTip}>
+            <span>{t('sidebarTipAdded')}</span>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={sidebarTipSaving}
+              onClick={undoSidebar}
+            >{t('sidebarTipUndo')}</Button>
+            {sidebarTipError !== null && <span>{sidebarTipError}</span>}
+          </div>
         )}
         {showSidebarTip && (
           <div className={css.sidebarTip}>

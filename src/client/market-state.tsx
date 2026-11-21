@@ -214,6 +214,8 @@ const t = props.t
   const [sidebarTipDismissed, setSidebarTipDismissed] = useState(readSidebarTipDismissed)
   const [sidebarTipSaving, setSidebarTipSaving] = useState(false)
   const [sidebarTipError, setSidebarTipError] = useState<string | null>(null)
+  /** This page turned the row on just now, so it owes the user a way back (#1276). */
+  const [sidebarTipAdded, setSidebarTipAdded] = useState(false)
   useEffect(() => {
     if (sidebar === undefined) return undefined
     const sync = (): void => {
@@ -232,14 +234,23 @@ const t = props.t
     && sidebarSnap.supported
     && !sidebarSnap.enabled
     && !sidebarTipDismissed
-  const enableSidebar = useCallback(() => {
+  // The row is a choice the user can change their mind about, and the only
+  // other switch for it is inside the plugin's own page, behind a collapsed
+  // group (#1276). Turning it on from here therefore leaves an Undo here
+  // instead of a tip that simply vanishes.
+  const showSidebarAdded = surface === 'settings' && sidebarTipAdded && sidebarSnap.enabled
+  const setSidebarFromTip = useCallback((next: boolean) => {
     if (sidebar === undefined) return
     setSidebarTipError(null)
     setSidebarTipSaving(true)
-    void sidebar.set(true).catch((cause: unknown) => {
+    void sidebar.set(next).then(() => {
+      setSidebarTipAdded(next)
+    }).catch((cause: unknown) => {
       setSidebarTipError(cause instanceof Error ? cause.message : String(cause))
     }).finally(() => { setSidebarTipSaving(false) })
   }, [sidebar])
+  const enableSidebar = useCallback(() => { setSidebarFromTip(true) }, [setSidebarFromTip])
+  const undoSidebar = useCallback(() => { setSidebarFromTip(false) }, [setSidebarFromTip])
   // null when the composition has no theme service — the Themes tab hides.
   const themeSnap = useSyncExternalStore(
     props.themeStore.subscribe,
@@ -1314,7 +1325,7 @@ const t = props.t
     compatibilityNotice, compatibleWithHost, configNamespaceIssues, confirming, creatingGroup, data,
     debuggerLatch, deletingGroup, describePlugin, disabledNames, discoverSearchReset,
     dismissBrokenError, dismissBrokenGen, dismissingBroken, doExportLog, doneUrls, drainingRef,
-    enableSidebar, envFailed, envFixing, envReady, exportError, exportIncludeConfig, exportOpen,
+    enableSidebar, undoSidebar, envFailed, envFixing, envReady, exportError, exportIncludeConfig, exportOpen,
     exportSelection, exportState, exportToastDone, favSortDir, favSortField, favTimeRange,
     favoriteError, favoriteErrorDone, favoriteOpGen, favoriteUrls, fileInputRef, findingCompat,
     gistBusy, gistId, gistMessage, gistMode, gistOk, gistResult, gistToken, groupMenuFor, groupOrder,
@@ -1364,7 +1375,7 @@ const t = props.t
     setTimeRange, setToggleRestart, setToggled, setTogglingName, setUpdateExemptError,
     setUpdateExemptNames, setUpdateExemptNotice, setUpdateNotes, setUpdatedNames, setUpdatingAll,
     setUpdatingName, setVersion, setVisibleCats, setWebdavNeedsPassword, setWebdavPassword,
-    setWebdavSaved, setWebdavUrl, setWebdavUser, setWhyOpen, settledHostRef, showSidebarTip,
+    setWebdavSaved, setWebdavUrl, setWebdavUser, setWhyOpen, settledHostRef, showSidebarAdded, showSidebarTip,
     showTheirs, showTop, sidebarTipError, sidebarTipSaving, skins, sortDir, sortField, staleName,
     startupRepair, statusRef, stuckExpanded, supervisor, surface, t, tab, themePanel, themePick,
     themeSearchReset, themeSnap, themeSortDir, themeSortField, themeTimeRange, themesFullscreen,
