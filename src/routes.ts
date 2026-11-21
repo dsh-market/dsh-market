@@ -994,21 +994,60 @@ export function mountMarketRoutes(
     if (await themes.setEntryDisabled(name, true)) logEvent('info', 'boot', `plugin kept off: ${name}`)
   }
 
+  /**
+   * The boot pass: shim-mount client-only packages, then put the persisted
+   * disable list back down.
+   *
+   * It is started from the `ctx.inject(['webServer','loader'], …)` callback,
+   * so it runs on that callback's context — and it keeps running after the
+   * callback returns. The host re-provisions services while it boots, and
+   * cordis refreshes EVERY fiber that injects a re-provided name: that
+   * disposes this context and re-runs `apply` on a fresh one, while the work
+   * started here is still going against the disposed copy. Reading
+   * `host.loader` there throws `cannot get required service "loader" in
+   * inactive context` — including from `includePrefix`, whose only job is to
+   * strip a row-id prefix (#1277).
+   *
+   * Nothing awaits this pass, so the throw left as a rejection nobody
+   * handled, and the host turned that into `fatal load failure`: on a profile
+   * whose disable list was non-empty the app came up empty — no sessions, no
+   * workspace, "settings could not be read, saving paused" — while the
+   * profile on disk was untouched. The list is what decides whether the pass
+   * runs at all, which is why an empty one never showed this.
+   *
+   * Catching here is not bookkeeping. The instance that replaced this one
+   * reads the same state and replays the same list, so the stale pass has
+   * nothing left to do — and if nothing replaced it, the next boot replays.
+   * Whatever else a replay can throw, one package's boot work must never be
+   * able to take the host down with it.
+   */
+  async function replayBootDisables(): Promise<void> {
+    // Named in the log line, so a reader knows which step stopped rather than
+    // being told "boot failed" and nothing else.
+    let stage = 'mounting client-only shims'
+    try {
+      const mounted = await mountClientOnlyDeps(host, activeProfileDir)
+      if (mounted.length > 0) logEvent('info', 'boot', `client-only shims mounted: ${mounted.join(', ')}`)
+      // Replay the persisted disable list: bundle-layer plugins the user
+      // switched away from get live-disabled again (bundle trees are
+      // in-memory, so the disable never persists on its own). Client-only
+      // shims for disabled plugins were already skipped by mountClientOnlyDeps.
+      for (const name of [...disabled]) {
+        stage = `replaying ${name}`
+        if (followOutsideEnable(name)) continue
+        noteHomeLayerConflict(name)
+        await replayDisabledPackage(name)
+      }
+    } catch (error) {
+      logEvent('warn', 'boot',
+        `boot replay stopped while ${stage}: ${error instanceof Error ? error.message : String(error)}. The disable list on disk is unchanged, so the next boot applies it again — and so does the market instance that replaces this one when the host rebuilt it mid-boot; a package this pass had not reached yet stays on until then (#1277)`)
+    }
+  }
+
   // Client-only packages (dsh.client without dsh.bundle) are invisible to the
   // bundle layer in every boot; the market shim-mounts them so their client
   // bundles are actually served.
-  void mountClientOnlyDeps(host, activeProfileDir).then(async (mounted) => {
-    if (mounted.length > 0) logEvent('info', 'boot', `client-only shims mounted: ${mounted.join(', ')}`)
-    // Replay the persisted disable list: bundle-layer plugins the user
-    // switched away from get live-disabled again (bundle trees are
-    // in-memory, so the disable never persists on its own). Client-only
-    // shims for disabled plugins were already skipped by mountClientOnlyDeps.
-    for (const name of [...disabled]) {
-      if (followOutsideEnable(name)) continue
-      noteHomeLayerConflict(name)
-      await replayDisabledPackage(name)
-    }
-  })
+  void replayBootDisables()
 
   // Self-healing guard: dsh's own patch overlay can re-update entries during
   // activation and wipe the runtime disabled flag — whenever a fiber comes
