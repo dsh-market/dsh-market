@@ -1527,6 +1527,49 @@ describe('host recovery (#875)', () => {
   })
 })
 
+describe('boot work started on a context the host has replaced (#1277)', () => {
+  /**
+   * A host whose `loader` goes away the way a disposed context does: cordis
+   * throws from the property accessor, not from `entries()` — the injected
+   * context declares `loader`, and no live fiber in its chain provides it any
+   * more. The mount itself needs the loader, so the context is only lost
+   * afterwards, which is the shape of the report: the market mounts, then the
+   * host re-provisions a service, refreshes every fiber that injects it, and
+   * the boot pass keeps running on the context that refresh disposed.
+   */
+  function mountOnContextThatDiesAfterMount(): { loseContext: () => void } {
+    let alive = true
+    const host = {
+      webServer: { register: () => () => undefined },
+      get loader(): { entries(): [] } {
+        if (!alive) throw new Error('cannot get required service "loader" in inactive context')
+        return { entries: () => [] }
+      },
+      plugin: () => ({ await: async () => undefined, dispose: async () => undefined }),
+    } as unknown as MarketHost
+    mountMarketRoutes(host, { profile: 'web', region: 'global' })
+    return { loseContext: () => { alive = false } }
+  }
+
+  it('records why the disable-list replay stopped instead of rejecting out of the boot chain', async () => {
+    writeStandardProfile()
+    writeMarketState(dir, { disabled: new Set(['alpha', 'beta']), groups: {}, groupOrder: [] })
+    mountOnContextThatDiesAfterMount().loseContext()
+    // The boot pass is a detached promise: give its microtasks their turn.
+    await tick()
+    await tick()
+    // The market persists its own log beside the state it just replayed. The
+    // line names the package it stopped at and why; the quotes around the
+    // service name are JSON-escaped by the log's own sanitizer.
+    const logged = readPersistentLog(join(dir, '.dsh-market', 'log.ndjson')).join('\n')
+    expect(logged).toContain('boot replay stopped while replaying alpha')
+    expect(logged).toContain('inactive context')
+    // A stopped pass leaves the list exactly as it found it: the next boot —
+    // or the instance that replaced this one — still has both names to apply.
+    expect([...readMarketState(dir).disabled].sort()).toEqual(['alpha', 'beta'])
+  })
+})
+
 describe('anonymous usage count route', () => {
   it('reads the default, saves the switch, and keeps the rest of the file', async () => {
     expect(jsonBody(await hit(routes, '/dsh-market/telemetry', { method: 'GET', url: '/dsh-market/telemetry' }))).toEqual({ enabled: true })
