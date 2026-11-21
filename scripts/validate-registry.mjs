@@ -26,44 +26,24 @@
  * are intentionally out of scope: they need network, are slow, and are flaky in
  * CI. They belong in a separate `--probe` maintainer tool, not the merge gate.
  *
- * Exit code: 0 when there are no hard errors, 1 otherwise. Warnings never
- * fail the run. DSHM_REGISTRY_ADVISORY=1 is CI-only and only excuses the
- * listed (entry, code) pairs below — a new E10 or any other code still
- * fails the merge. A local draft (no env) always fails on every error.
+ * Every validation error exits 1. Warnings alone do not fail the run.
  */
 
 import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
-/**
- * Where the catalog is read from, live first.
- *
- * It used to be a committed `data/registry-snapshot.json`, and that copy went
- * eleven days stale without anyone noticing — because nothing depends on it
- * being fresh: the site build downloads its own copy into a throwaway
- * checkout, and the market has read the live catalog since the bundled
- * fallback was deliberately removed (see loadRegistry: for a catalog, stale
- * is not a degraded answer, it is a wrong one).
- *
- * So the only thing the committed file did was gate merges on an old copy of
- * data this repository does not own, while looking enough like the source of
- * truth that people tried to add plugins to it (#545 by @Icstick, and the
- * CI guard that exists because it had happened before).
- *
- * Now the gate reads what users actually get. A local file still wins when
- * present, so an offline run works by dropping one in (or by pointing
- * DSHM_REGISTRY_FILE at a draft).
- */
 const CATALOG_URL = process.env.DSHM_REGISTRY_URL ?? 'https://awesome-dsh-plugin.com/plugins.json'
-const LOCAL = process.env.DSHM_REGISTRY_FILE ?? fileURLToPath(new URL('../data/registry-snapshot.json', import.meta.url))
+const SNAPSHOT = fileURLToPath(new URL('../data/registry-snapshot.json', import.meta.url))
 
-/** The catalog and where it came from, or null when neither source answers. */
+/** CI specifies a fixture and Site health specifies its download. With no
+ * explicit input, local runs can use an existing snapshot or try the live URL. */
 async function loadCatalog() {
-  if (fs.existsSync(LOCAL)) {
+  const file = process.env.DSHM_REGISTRY_FILE ?? (fs.existsSync(SNAPSHOT) ? SNAPSHOT : undefined)
+  if (file !== undefined) {
     try {
-      return { raw: JSON.parse(fs.readFileSync(LOCAL, 'utf8')), from: LOCAL }
+      return { raw: JSON.parse(fs.readFileSync(file, 'utf8')), from: file }
     } catch (e) {
-      console.error(`validate-registry: cannot read ${LOCAL}: ${e.message}`)
+      console.error(`validate-registry: cannot read ${file}: ${e.message}`)
       process.exit(1)
     }
   }
@@ -72,9 +52,7 @@ async function loadCatalog() {
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
     return { raw: await response.json(), from: CATALOG_URL }
   } catch (e) {
-    // Not a failure: an origin that cannot be reached has not said anything
-    // about the catalog, and failing every unrelated PR on someone else's
-    // outage would teach people to ignore this gate.
+    // The default live lookup is best-effort for local use.
     console.log(`validate-registry: skipped — ${CATALOG_URL} unreachable (${e.message})`)
     return null
   }
@@ -109,17 +87,6 @@ function releaseTargetRepo(target) {
 function fail(errors, entry, code, msg) {
   errors.push({ entry: entry && entry.name ? entry.name : '<unknown>', code, msg })
 }
-
-/**
- * Live catalog rows this repository cannot edit that have been failing
- * every unrelated PR since 1.71.0. Empty the set and drop the CI env when
- * the catalog itself is clean again.
- */
-const KNOWN_LIVE_DRIFT = new Set([
-  'dsh-quick-restart:E10',
-  'dsh-gitui:E10',
-  'dsh-friends#plugin:E10',
-])
 
 async function main() {
   const errors = []
@@ -380,11 +347,6 @@ async function main() {
       console.error(`   [${e.code}] ${e.entry}: ${e.msg}`)
     }
     console.log(`\n  warnings: ${warnings.length} (display-name collisions: ${nameCollisionGroups}, stars=0: ${stars0})`)
-    const unexpected = errors.filter((e) => !KNOWN_LIVE_DRIFT.has(`${e.entry}:${e.code}`))
-    if (process.env.DSHM_REGISTRY_ADVISORY === '1' && unexpected.length === 0) {
-      console.log('\n  advisory: known live-catalog drift only; not failing this repo\'s merge')
-      return
-    }
     process.exit(1)
   }
 
