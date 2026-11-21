@@ -16,6 +16,8 @@ import { installDesktopMarketSettings, installMarketSettings } from './settings.
 import { MAX_AUTO_REPAIR_ATTEMPTS } from './pending-updates.ts'
 import { observeStartupRepair } from './startup-repair-report.ts'
 import type { AgentsServiceLike } from './agents.ts'
+import { modelAccess, registerFindPlugin, setModelAccess, type CommandsServiceLike, type LlmLike, type ModelSelectionLike } from './find-plugin.ts'
+import { loadRegistry } from './registry.ts'
 
 export const name = 'dsh-market'
 
@@ -485,5 +487,26 @@ export function apply(ctx: Context, config?: Config): void {
         }
       }, 'dsh-market: Desktop http routes and package operations')
     })
+  })
+
+  // The user's own model, for `/find-plugin` and the market's AI search. Both
+  // services are read at call time: a host without them answers "no model".
+  setModelAccess({
+    llm: () => ctx.get('llm') as LlmLike | undefined,
+    defaultSelection: () => {
+      const config = ctx.get('agentDefaultModel') as { currentSelection(): ModelSelectionLike } | undefined
+      try { return config?.currentSelection() } catch { return undefined }
+    },
+  })
+
+  // `/find-plugin` in the chat. Only hosts that ship the command registry
+  // (dsh-commands) offer it; on an older host this never runs and nothing
+  // else depends on it.
+  ctx.inject(['commands'], (commandsCtx: Context) => {
+    const commands = (commandsCtx as unknown as { commands: CommandsServiceLike }).commands
+    ;(commandsCtx as unknown as MarketEffectHost).effect(
+      () => registerFindPlugin(commands, () => loadRegistry(), modelAccess()),
+      'dsh-market: /find-plugin command',
+    )
   })
 }

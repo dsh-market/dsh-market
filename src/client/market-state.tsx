@@ -34,6 +34,7 @@ import {
 import { type OperationRecord, restoreSettled, serializeSettled, SETTLED_STORAGE_KEY } from './operations.ts'
 import type { RecoveryView } from './RecoveryPanel.tsx'
 import { exportMarketLog } from './self-check.ts'
+import { claimOpenPlugin, pendingOpenPlugin, subscribeOpenPlugin } from './open-request.ts'
 import { readInstalledSort, readSortChoice, rememberInstalledSort, rememberSortChoice } from './sort-preference.ts'
 import {
   installedRepoHints,
@@ -314,6 +315,17 @@ const t = props.t
     }
   }, [props.preferredSubsectionId])
   const [confirming, setConfirming] = useState<RegistryPlugin | null>(null)
+  // A plugin someone asked to open from outside this page (the /find-plugin
+  // card, AI search): show its install dialog once the catalog can name it.
+  const openRequest = useSyncExternalStore(subscribeOpenPlugin, pendingOpenPlugin, () => null)
+  useEffect(() => {
+    if (openRequest === null || data === null) return
+    const entry = data.plugins.find(plugin => plugin.name === openRequest || plugin.npm === openRequest)
+    if (entry === undefined) return
+    claimOpenPlugin(openRequest)
+    setTab('discover')
+    setConfirming(entry)
+  }, [openRequest, data])
   /** The plugin whose comment thread is open, or null. */
   const [commentsFor, setCommentsFor] = useState<RegistryPlugin | null>(null)
   

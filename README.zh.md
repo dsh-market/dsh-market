@@ -81,8 +81,26 @@ profile，因此不会出现在桌面端。请通过应用内的 **设置 → �
 
 </details>
 
+## 亮点功能
+
+<table>
+<tr>
+<td width="50%" valign="top"><b>AI 搜索</b><br>一句话描述你想要的插件，由你在 DSH 里配置的模型挑选；结果就是普通的插件卡片。默认关闭，打开开关、按回车才会用你的 token。<br><br><img src="assets/features/ai-search-zh.png" alt="AI 搜索结果"></td>
+<td width="50%" valign="top"><b>在聊天里 /find-plugin</b><br>对话中直接说要什么，模型从市场里挑几个并说明理由；卡片上可去市场安装、直接安装或复制命令。<br><br><img src="assets/features/find-plugin-zh.png" alt="/find-plugin 结果卡片"></td>
+</tr>
+<tr>
+<td width="50%" valign="top"><b>装之前看清它会做什么</b><br>每个插件都做过静态扫描：读写文件、联网、执行命令一目了然；构建脚本默认不运行。<br><br><img src="assets/features/install-zh.png" alt="安装确认弹窗"></td>
+<td width="50%" valign="top"><b>主题一键切换</b><br>装上即生效，主题之间互斥，选择重启后仍然保留。<br><br><img src="assets/themes-zh.png" alt="主题页"></td>
+</tr>
+<tr>
+<td width="50%" valign="top"><b>更新</b><br>单个或全部一键更新，每个更新都附「更新内容」；市场自己也这样升级。<br><br><img src="assets/features/updates-zh.png" alt="已安装页的更新提示"></td>
+<td width="50%" valign="top"><b>备份与恢复</b><br>导出成文件，或存到 WebDAV、私有 Gist；恢复前先校验，失败自动回滚。<br><br><img src="assets/features/backup-zh.png" alt="备份与恢复页"></td>
+</tr>
+</table>
+
 ## 你会得到
 
+- **AI 搜索与 `/find-plugin`**：一句话找插件，用你自己的模型挑选
 - **逛与搜**：12,000+ 社区插件，带截图和评论
 - **一键安装**：多数插件刷新页面就能用，不用重启
 - **主题**：一键安装、一键切换
@@ -95,6 +113,8 @@ profile，因此不会出现在桌面端。请通过应用内的 **设置 → �
 <details>
 <summary>完整功能清单</summary>
 
+- **AI 搜索**——「发现」页搜索框里的一个开关：用一句话描述想要的插件，由你在 DSH 里配置的模型（默认模型和 API Key）从目录里挑选，结果按模型给的顺序显示成普通插件卡片。默认关闭、会记住开关状态；按回车才会调用，所以只在你主动搜索时花你的 token。没配模型或 Key 时会直接说明并指向「设置 → 模型」，不会报错了事
+- **聊天里的 `/find-plugin`**——DSH 0.2.0 起，市场会注册一个斜杠命令：`/find-plugin 能发通知的插件`。用当前对话的模型做同样的粗筛加挑选，结果画成卡片，可「去市场安装」（打开该插件的安装弹窗）、「直接安装」（先确认）或「复制安装命令」。结果是命令的输出，不会进入模型看到的对话。在首页（DSH 还没画出对话时）运行，同样的卡片会以弹窗出现
 - **逛与搜**——完整社区目录（12,000+ 插件，每天在涨），分类筛选、star 数、最热/最新排序，中英描述跟随界面语言
 - **按宿主发现**——卡片展示插件通过 `engines.dsh` 或同版本线 `@deepseek-ai/dsh-*` peer 声明的 DSH 要求；兼容筛选只隐藏与当前宿主明确不匹配的插件。仅 GitHub 发布的条目也会读取链接所指包的清单，支持子目录；Release 下载读取对应标签，`latest/download` 则读取当前发布标签。未声明、格式异常或暂时取不到清单时保持未知并继续显示。公开清单信息会缓存，兼容结论按当前宿主重新判断
 - **截图展示**——App Store 式截图，多图自动轮播，点开还能看大图；作者在 registry 里策展的截图列表卡片就直接显示（零额外请求），没有策展的插件则在打开安装弹窗时自动从 README 抽取；图片仅从 GitHub 图床加载

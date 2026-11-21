@@ -17,6 +17,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { FiberState } from '@deepseek-ai/cordis'
 import { load as loadYaml } from 'js-yaml'
 import { packageFileFromRegistry } from './catalog-npm.ts'
+import { aiSearch, FindPluginError, resultFor } from './find-plugin.ts'
 import { forgetCatalog, loadRegistry, pluginCategories, type Registry, type RegistryPlugin } from './registry.ts'
 import { settingsNamespaceState } from './settings.ts'
 import {
@@ -4122,6 +4123,57 @@ export function mountMarketRoutes(
           sendJson(response, 400, { error: error instanceof Error ? error.message : String(error), code: gistErrorCode(error) })
         } finally {
           clearTimeout(timer)
+        }
+      },
+    }),
+
+    registerRoute({
+      kind: 'exact',
+      // The card behind one `/find-plugin` row: the chat keeps only the
+      // command's text, the structured picks live here under its command id.
+      path: '/dsh-market/find-plugin/result',
+      handler: async (request, response) => {
+        if (request.method !== 'GET') {
+          response.writeHead(405, { allow: 'GET' })
+          response.end()
+          return
+        }
+        const params = new URL(request.url ?? '', 'http://x').searchParams
+        const id = params.get('id') ?? ''
+        const session = params.get('session') ?? ''
+        const result = id !== '' ? resultFor(id) : session !== '' ? resultFor(`session:${session}`) : undefined
+        if (result === undefined) sendJson(response, 404, { error: 'unknown result' })
+        else sendJson(response, 200, { result })
+      },
+    }),
+    registerRoute({
+      kind: 'exact',
+      // The market page's AI search: the user's default model picks from the catalog.
+      path: '/dsh-market/ai-search',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) {
+          sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        const body = await readJsonBody(request).catch(() => null) as { query?: unknown } | null
+        const query = typeof body?.query === 'string' ? body.query.slice(0, 500) : ''
+        if (query.trim() === '') {
+          sendJson(response, 400, { code: 'empty', error: '请先描述你想要什么样的插件。 / Describe the plugin you want first.' })
+          return
+        }
+        try {
+          sendJson(response, 200, { result: await aiSearch(query, () => loadRegistry()) })
+        } catch (error) {
+          if (error instanceof FindPluginError) {
+            sendJson(response, error.code === 'no-model' ? 409 : 502, { code: error.code, error: error.message })
+            return
+          }
+          sendJson(response, 500, { code: 'model-failed', error: error instanceof Error ? error.message : String(error) })
         }
       },
     }),

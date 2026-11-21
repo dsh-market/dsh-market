@@ -22,6 +22,7 @@
 <meta property="og:image" content="https://dshmarket.com/assets/demo-zh.png">
 <meta property="og:url" content="https://dshmarket.com/zh/">
 <style>
+.feats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1.25rem;margin-top:1rem}.feat{margin:0;border:1px solid var(--line,#e5e7eb);border-radius:14px;overflow:hidden;background:var(--card,#fff)}.feat img{display:block;width:100%;height:220px;object-fit:cover;object-position:top;border-bottom:1px solid var(--line,#e5e7eb)}.feat figcaption{padding:.9rem 1rem 1rem}.feat h3{margin:0 0 .35rem;font-size:1.02rem}.feat p{margin:0;color:var(--ink2,#4b5563);font-size:.92rem;line-height:1.55}@media (max-width:720px){.feats{grid-template-columns:1fr}}
 :root{--accent:#c0392b;--accent-soft:#f7e5e2;--ink:#101722;--ink2:#5b6472;--ink3:#9aa3b2;--line:#e7eaf0;--bg:#fafbfd;--card:#fff}
 *{margin:0;box-sizing:border-box}
 body{font-family:-apple-system,"PingFang SC","SF Pro Text","Segoe UI",sans-serif;background:var(--bg);color:var(--ink);line-height:1.65}
@@ -110,6 +111,18 @@ __SPONSORS__<div class="wrap">
 </section>
 
 __HOME_CATALOG__
+
+<section class="features">
+  <h2>亮点功能</h2>
+  <div class="feats">
+  <figure class="feat"><img src="../assets/feat-ai-search-zh.png" alt="AI 搜索" loading="lazy"><figcaption><h3>AI 搜索</h3><p>一句话描述想要的插件，由你在 DSH 里配置的模型挑选。默认关闭，打开开关、按回车才会用你的 token。</p></figcaption></figure>
+  <figure class="feat"><img src="../assets/feat-find-plugin-zh.png" alt="聊天里 /find-plugin" loading="lazy"><figcaption><h3>聊天里 /find-plugin</h3><p>对话中直接说要什么，模型挑出几个并说明理由，卡片上一键去市场安装。</p></figcaption></figure>
+  <figure class="feat"><img src="../assets/feat-install-zh.png" alt="装之前看清它会做什么" loading="lazy"><figcaption><h3>装之前看清它会做什么</h3><p>静态扫描列出读写文件、联网、执行命令；构建脚本默认不运行。</p></figcaption></figure>
+  <figure class="feat"><img src="../assets/themes-zh.png" alt="主题一键切换" loading="lazy"><figcaption><h3>主题一键切换</h3><p>装上即生效，互斥切换，重启后仍保留。</p></figcaption></figure>
+  <figure class="feat"><img src="../assets/feat-updates-zh.png" alt="更新" loading="lazy"><figcaption><h3>更新</h3><p>单个或全部一键更新，每个更新附「更新内容」。</p></figcaption></figure>
+  <figure class="feat"><img src="../assets/feat-backup-zh.png" alt="备份与恢复" loading="lazy"><figcaption><h3>备份与恢复</h3><p>导出文件、WebDAV、私有 Gist；恢复前校验，失败自动回滚。</p></figcaption></figure>
+  </div>
+</section>
 
 <section class="about">
   <h2>dsh-market 是什么</h2>

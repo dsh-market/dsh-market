@@ -123,3 +123,29 @@ it('pressing clear keeps focus in the field, so the pending query is never appli
   tick(SEARCH_DELAY_MS * 2)
   expect(commit.mock.calls).toEqual([['']])
 })
+
+it('in AI mode typing never filters, Enter asks the model, and switching back applies the text as a filter', () => {
+  const commit = vi.fn()
+  const submit = vi.fn()
+  const ai = { on: true, toggle: vi.fn(), submit, placeholder: 'describe it' }
+  const { rerender } = render(<SearchInput t={label} value="" onCommit={commit} ai={ai} />)
+  expect(input().placeholder).toBe('describe it')
+  type('a plugin that remembers what I said'); tick(); fireEvent.blur(input()); tick()
+  expect(commit).not.toHaveBeenCalled()
+  fireEvent.keyDown(input(), { key: 'Enter' })
+  expect(submit).toHaveBeenCalledWith('a plugin that remembers what I said')
+  expect(commit).not.toHaveBeenCalled()
+  // The switch is labelled and reports its state; turning it off filters by what is typed.
+  const toggle = screen.getByRole('switch', { name: 'aiSearchLabel' })
+  expect(toggle.getAttribute('aria-checked')).toBe('true')
+  fireEvent.click(toggle)
+  expect(ai.toggle).toHaveBeenCalled()
+  expect(commit).toHaveBeenLastCalledWith('a plugin that remembers what I said')
+  rerender(<SearchInput t={label} value="" onCommit={commit} ai={{ ...ai, on: false }} />)
+  expect(screen.getByRole('switch', { name: 'aiSearchLabel' }).getAttribute('aria-checked')).toBe('false')
+})
+
+it('explains what AI search needs and costs next to the switch', () => {
+  render(<SearchInput t={label} value="" onCommit={vi.fn()} ai={{ on: false, toggle: vi.fn(), submit: vi.fn(), placeholder: 'x' }} />)
+  expect(screen.getByLabelText('aiSearchHelp')).toBeTruthy()
+})

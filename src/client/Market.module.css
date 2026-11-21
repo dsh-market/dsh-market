@@ -1454,3 +1454,45 @@
              background:none;cursor:pointer;color:var(--dsw-alias-label-secondary,#5c6570)}
 .recentArrow:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,#2631480f);color:var(--dsw-alias-label-primary,#1f2328)}
 .recentArrow:disabled{opacity:.35;cursor:default}
+/* /find-plugin card (chat command row) and the AI search results that share it */
+.fpRow{display:flex;flex-direction:column;gap:8px;font-size:13px;color:var(--dsw-alias-label-primary,#1f2328)}
+.fpTitle{display:flex;align-items:baseline;gap:8px;color:var(--dsw-alias-label-tertiary,#8b93a1);font-size:12px}
+.fpCmd{font-family:var(--ds-font-family-code,ui-monospace,Menlo,Consolas,monospace)}
+.fpRequest{color:var(--dsw-alias-label-secondary,#4b5563);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.fpRoot{display:flex;flex-direction:column;gap:10px}
+.fpIntro{margin:0;font-size:14px;line-height:1.6}
+.fpList{display:grid;gap:8px}
+.fpCard{display:flex;gap:12px;align-items:flex-start;padding:12px 14px;border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:12px;background:var(--dsw-alias-bg-layer-1,#fff)}
+.fpAvatar{width:36px;height:36px;border-radius:8px;flex:none}
+.fpBody{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.fpHead{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.fpName{font-weight:600;font-size:14px;color:inherit;text-decoration:none}
+.fpName:hover{text-decoration:underline}
+.fpMeta{font-size:12px;color:var(--dsw-alias-label-tertiary,#8b93a1)}
+.fpWhy{font-size:13px;line-height:1.55;color:var(--dsw-alias-label-secondary,#4b5563)}
+.fpActions{flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:6px;align-self:center}
+.fpButtons{display:flex;gap:6px}
+.fpCopy{border:0;background:none;padding:0;font:inherit;font-size:12px;cursor:pointer;color:var(--dsw-alias-label-tertiary,#8b93a1)}
+.fpCopy:hover{color:var(--dsw-alias-label-primary,#1f2328)}
+.fpConfirm{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px;font-size:12px}
+.fpNote{font-size:12px;margin-top:4px;color:var(--dsw-alias-label-tertiary,#8b93a1)}
+.fpNote[data-tone="ok"]{color:var(--dsw-alias-state-success-primary,#16a34a)}
+.fpNote[data-tone="error"]{color:var(--dsw-alias-state-error-primary,#dc2626)}
+.fpFoot{margin:0;font-size:12px;color:var(--dsw-alias-label-tertiary,#8b93a1)}
+.fpPlain{margin:0;white-space:pre-wrap;font:inherit;font-size:13px}
+@media (max-width:640px){.fpCard{flex-wrap:wrap}.fpActions{align-items:flex-start;align-self:auto;width:100%}}
+/* AI search in the market's search box */
+.aiStatus{display:flex;flex-direction:column;gap:4px;margin:0 0 12px}
+.aiHint{font-size:12px;color:var(--dsw-alias-label-tertiary,#8b93a1)}
+/* With the AI switch inside the field, the clear button and the text make room for it. */
+.aiGroup{position:absolute;right:8px;top:50%;transform:translateY(-50%);display:flex;align-items:center;gap:6px;padding-left:10px;border-left:1px solid var(--dsw-alias-border-l2,#e5e7eb);font-size:12px;color:var(--dsw-alias-label-secondary,#4b5563);white-space:nowrap}
+.aiHelp{display:inline-flex;color:var(--dsw-alias-label-tertiary,#8b93a1);cursor:help;border-radius:4px}
+.aiHelp:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary,#4f6ef7);outline-offset:1px}
+.aiLabel{font-weight:500}
+.searchField[data-ai] .searchInput.searchInput{padding-right:150px}
+.searchField[data-ai] .searchClear{right:128px}
+.fpOverlay{position:fixed;inset:0;z-index:2000;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(0,0,0,.32);pointer-events:auto}
+.fpDialog{width:min(760px,100%);max-height:calc(100vh - 48px);overflow:auto;display:flex;flex-direction:column;gap:10px;padding:16px 18px 18px;border-radius:14px;background:var(--dsw-alias-bg-layer-1,#fff);box-shadow:0 12px 40px rgba(0,0,0,.2);color:var(--dsw-alias-label-primary,#1f2328);font-size:13px}
+.fpDialogHead{display:flex;align-items:center;justify-content:space-between;color:var(--dsw-alias-label-tertiary,#8b93a1);font-size:12px}
+.fpClose{border:0;background:none;font:inherit;font-size:20px;line-height:1;cursor:pointer;color:var(--dsw-alias-label-tertiary,#8b93a1);padding:2px 6px;border-radius:6px}
+.fpClose:hover{background:var(--dsw-alias-interactive-bg-hover,#2631480f);color:var(--dsw-alias-label-primary,#1f2328)}

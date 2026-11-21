@@ -98,7 +98,7 @@ function hostWith(declared: readonly string[]) {
 it('keeps the main market on hosts without settingsScope (#516)', () => {
   const { registrations, injections } = hostWith(['settings.section', 'shell.overlay'])
   expect(injections).toEqual([['layout'], ['pluginNavigation'], ['settingsScope']])
-  expect(registrations).toEqual(['settings.section', 'shell.overlay'])
+  expect(registrations).toEqual(['settings.section', 'shell.overlay', 'shell.overlay'])
 })
 
 it('offers the market as a Plugins-page tab on the line that declares one (#722)', () => {
@@ -108,14 +108,14 @@ it('offers the market as a Plugins-page tab on the line that declares one (#722)
   // page inside the Plugins section, and it is the one the market must follow.
   const { registrations, injections } = hostWith(['settings.section', 'shell.overlay', 'settings.plugins.tab'])
   expect(injections).toEqual([['layout'], ['pluginNavigation'], ['settingsScope']])
-  expect(registrations).toEqual(['settings.section', 'settings.plugins.tab', 'shell.overlay'])
+  expect(registrations).toEqual(['settings.section', 'settings.plugins.tab', 'shell.overlay', 'shell.overlay'])
 })
 
 it('adds nothing to a sidebar that has panels until the user opts in (#846)', () => {
   // The slot existing is not consent: the row is off by default, so a host
   // with sidebar panels gets exactly the registrations it got before.
   const { registrations } = hostWith(['settings.section', 'shell.overlay', 'sidebar.panellist', 'main'])
-  expect(registrations).toEqual(['settings.section', 'shell.overlay'])
+  expect(registrations).toEqual(['settings.section', 'shell.overlay', 'shell.overlay'])
 })
 
 it('adds the market as a tab on the Plugins page when the host declares one', () => {
@@ -123,7 +123,7 @@ it('adds the market as a tab on the Plugins page when the host declares one', ()
   // the host's own Discover tab is a registration into it. The market follows
   // the slot, and everything it registered before stays as it was.
   const host = hostWithEntries(['settings.section', 'shell.overlay', 'plugins.tab'])
-  expect(host.registrations.map(entry => entry.name)).toEqual(['settings.section', 'plugins.tab', 'shell.overlay'])
+  expect(host.registrations.map(entry => entry.name)).toEqual(['settings.section', 'plugins.tab', 'shell.overlay', 'shell.overlay'])
   const tab = host.registrations.find(entry => entry.name === 'plugins.tab')!
   // Placed before the host's Discover (which registers with no order, i.e. 0),
   // so the market sits next to 已安装.
@@ -145,7 +145,7 @@ it('places the settings card on the bundle page a 0.1.7 host declares (#677)', (
   // slot, and the market must still register everything else.
   const { registrations, injections } = hostWith(['settings.section', 'shell.overlay', 'plugins.bundle.config'])
   expect(injections).toEqual([['layout'], ['pluginNavigation'], ['settingsScope']])
-  expect(registrations).toEqual(['settings.section', 'plugins.bundle.config', 'shell.overlay'])
+  expect(registrations).toEqual(['settings.section', 'plugins.bundle.config', 'shell.overlay', 'shell.overlay'])
 })
 
 /**

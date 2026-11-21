@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { visiblePlugins } from '../src/client/market-data.ts'
 import type { RegistryPlugin } from '../src/client/market-data.ts'
-import { SEARCH_SYNONYM_GROUPS } from '../src/client/search-synonyms.ts'
+import { SEARCH_SYNONYM_GROUPS } from '../src/search-synonyms.ts'
 
 function plugin(partial: Partial<RegistryPlugin>): RegistryPlugin {
   return { name: 'x', owner: 'o', url: 'https://github.com/o/x', category: 'tool', ...partial }

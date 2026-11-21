@@ -367,7 +367,8 @@ describe('host adaptation', () => {
     })
     apply(ctx as never, { profile: 'must-not-win', allowRestart: true })
 
-    expect(ctx.injectCalls).toEqual([['webServer', 'loader'], ['desktopPnpm'], ['settings']])
+    // `commands` is the separate, optional /find-plugin registration.
+    expect(ctx.injectCalls).toEqual([['webServer', 'loader'], ['desktopPnpm'], ['settings'], ['commands']])
     expect(state.factoryArgs).toEqual([[desktopPnpm, '/private/dsh/desktop']])
     expect(state.mounts).toHaveLength(1)
     expect(state.mounts[0]).toMatchObject({
@@ -422,7 +423,7 @@ describe('host adaptation', () => {
     })
     apply(ctx as never)
 
-    expect(ctx.injectCalls).toEqual([['webServer', 'loader'], ['desktopPnpm']])
+    expect(ctx.injectCalls).toEqual([['webServer', 'loader'], ['desktopPnpm'], ['commands']])
     expect(state.mounts).toEqual([])
     expect(state.factoryArgs).toEqual([])
   })

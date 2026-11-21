@@ -5,7 +5,7 @@
 
 import type { DiagnosticReportV1 } from '../diagnostics.ts'
 import { findCatalogEntryForLocal } from '../catalog-local-match.ts'
-import { SEARCH_SYNONYM_GROUPS } from './search-synonyms.ts'
+import { SEARCH_SYNONYM_GROUPS } from '../search-synonyms.ts'
 import { catalogReleaseSourceOf, NPM_NAME_RE, parseSourceUrl } from '../sources.ts'
 import type { StartupRepairSnapshot } from '../startup-repair-report.ts'
 import type { CheckoutRecoveryStatus } from '../pending-checkout-links.ts'

@@ -16,6 +16,7 @@
 <meta property="og:image" content="https://dshmarket.com/assets/demo-en.png">
 <meta property="og:url" content="https://dshmarket.com/">
 <style>
+.feats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1.25rem;margin-top:1rem}.feat{margin:0;border:1px solid var(--line,#e5e7eb);border-radius:14px;overflow:hidden;background:var(--card,#fff)}.feat img{display:block;width:100%;height:220px;object-fit:cover;object-position:top;border-bottom:1px solid var(--line,#e5e7eb)}.feat figcaption{padding:.9rem 1rem 1rem}.feat h3{margin:0 0 .35rem;font-size:1.02rem}.feat p{margin:0;color:var(--ink2,#4b5563);font-size:.92rem;line-height:1.55}@media (max-width:720px){.feats{grid-template-columns:1fr}}
 :root{--accent:#c0392b;--accent-soft:#f7e5e2;--ink:#101722;--ink2:#5b6472;--ink3:#9aa3b2;--line:#e7eaf0;--bg:#fafbfd;--card:#fff}
 *{margin:0;box-sizing:border-box}
 body{font-family:-apple-system,"SF Pro Text","Segoe UI","PingFang SC",sans-serif;background:var(--bg);color:var(--ink);line-height:1.65}
@@ -108,6 +109,18 @@ __SPONSORS__<div class="wrap">
 </section>
 
 __HOME_CATALOG__
+
+<section class="features">
+  <h2>Features</h2>
+  <div class="feats">
+  <figure class="feat"><img src="../assets/feat-ai-search-en.png" alt="AI search" loading="lazy"><figcaption><h3>AI search</h3><p>Describe the plugin you want in a sentence; the model you configured in DSH picks it. Off by default; it uses your tokens only when you switch it on and press Enter.</p></figcaption></figure>
+  <figure class="feat"><img src="../assets/feat-find-plugin-en.png" alt="/find-plugin in the chat" loading="lazy"><figcaption><h3>/find-plugin in the chat</h3><p>Say what you need mid-conversation; the model picks a few plugins and says why, with one click to install in the market.</p></figcaption></figure>
+  <figure class="feat"><img src="../assets/feat-install-en.png" alt="See what it does before installing" loading="lazy"><figcaption><h3>See what it does before installing</h3><p>A static scan lists file access, network and command execution; build scripts do not run by default.</p></figcaption></figure>
+  <figure class="feat"><img src="../assets/themes-en.png" alt="Themes in one click" loading="lazy"><figcaption><h3>Themes in one click</h3><p>Install and it applies; switch any time, and your choice survives restarts.</p></figcaption></figure>
+  <figure class="feat"><img src="../assets/feat-updates-en.png" alt="Updates" loading="lazy"><figcaption><h3>Updates</h3><p>Update one plugin or all of them, each with its "What changed".</p></figcaption></figure>
+  <figure class="feat"><img src="../assets/feat-backup-en.png" alt="Backup & restore" loading="lazy"><figcaption><h3>Backup & restore</h3><p>Export to a file, WebDAV or a private Gist; validated first, rolled back on failure.</p></figcaption></figure>
+  </div>
+</section>
 
 <section class="about">
   <h2>What dsh-market is</h2>

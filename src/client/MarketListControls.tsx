@@ -222,7 +222,7 @@ export function InstalledSortMenu({ value, onChange, t }: { value: InstalledSort
 
 /** Keep an empty search actionable without changing the user's sort or block list. */
 export function EmptyResults({ message, onClear, t }: {
-  message: 'empty' | 'blockedFilteredEmpty' | 'hostFilterEmpty'
+  message: 'empty' | 'blockedFilteredEmpty' | 'hostFilterEmpty' | 'aiSearchEmpty'
   onClear?: () => void
   t: Translate
 }) {

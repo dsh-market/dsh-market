@@ -3,7 +3,7 @@
  */
 
 import { Button, Input, Menu, Pill, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { RefObject } from 'react'
 import css from './Market.module.css'
 import { IconCloseOutline16 } from './icons.ts'
@@ -29,6 +29,7 @@ import type { MarketRenderCtx } from './market-render.tsx'
 import type { MarketSyncCtx } from './market-sync.ts'
 import type { MarketOperationsCtx } from './market-operations.ts'
 import type { MarketSectionProps } from './market-types.ts'
+import { useAiSearch } from './AiSearch.tsx'
 
 type MarketGoneNoticeCtx = { props: MarketSectionProps }
   & Pick<MarketStateCtx, 'reconnecting' | 'setReconnectRound' | 't'>
@@ -340,6 +341,17 @@ export function DiscoverTab({ c }: { c: DiscoverTabCtx }) {
     surface, t, timeRange, toggleRecentCollapsed, totalPages, visibleCats,
   } = c
   const recentRowRef = useRef<HTMLDivElement | null>(null)
+  const aiSearch = useAiSearch(t)
+  // AI picks resolved to the catalog's own entries (by repository URL: names
+  // are not unique), in the model's order, drawn exactly like ordinary results.
+  const aiPlugins = useMemo(() => {
+    if (aiSearch.picks === null || data === null) return null
+    const byUrl = new Map(data.plugins.map(plugin => [plugin.url, plugin]))
+    return aiSearch.picks.flatMap(pick => {
+      const plugin = byUrl.get(pick.url)
+      return plugin === undefined ? [] : [plugin]
+    })
+  }, [aiSearch.picks, data])
   return (
     loadError !== null || data === null
       ? <CatalogStatus c={c} />
@@ -348,7 +360,7 @@ export function DiscoverTab({ c }: { c: DiscoverTabCtx }) {
               <div ref={setCatsSentinel} />
               <div className={css.stickyHead}>
               <div className={css.tabSearchRow}>
-                <SearchInput key="discover" resetToken={discoverSearchReset} className={css.tabSearch} placeholder={t('searchPh')} value={q} onCommit={setQ} t={t} />
+                <SearchInput key="discover" resetToken={discoverSearchReset} className={css.tabSearch} placeholder={t('searchPh')} value={q} onCommit={setQ} t={t} ai={aiSearch.mode} />
                 <FilterMenu
                   sortField={sortField}
                   sortDir={sortDir}
@@ -428,7 +440,8 @@ export function DiscoverTab({ c }: { c: DiscoverTabCtx }) {
                 )}
               </div>
               </div>
-              {hasRecent && (recentHidden
+              {aiSearch.status}
+              {aiPlugins === null && hasRecent && (recentHidden
                 ? <button type="button" className={css.recentShow} onClick={showRecent}>
                     <IconChevronRightOutline14 size={14} />{t('recentShow')}
                   </button>
@@ -459,7 +472,11 @@ export function DiscoverTab({ c }: { c: DiscoverTabCtx }) {
                     </div>
                   </section>
               )}
-              {pagePlugins.length === 0
+              {aiPlugins !== null
+                ? (aiPlugins.length === 0
+                    ? <EmptyResults message="aiSearchEmpty" t={t} />
+                    : <Masonry items={aiPlugins} render={plugin => pluginCard(plugin)} />)
+                : pagePlugins.length === 0
                 ? <EmptyResults message={basePage.length > 0 ? 'hostFilterEmpty' : pluginsAll.length > 0 ? 'blockedFilteredEmpty' : 'empty'} t={t}
                     onClear={data.plugins.length > 0 && (q !== '' || cat !== 'all' || timeRange !== 'all' || compatibleWithHost) ? () => {
                       setQ(''); resetDiscoverSearch(value => value + 1)
@@ -468,7 +485,7 @@ export function DiscoverTab({ c }: { c: DiscoverTabCtx }) {
                     } : undefined}
                   />
                 : <Masonry items={pagePlugins} render={plugin => pluginCard(plugin)} />}
-              {pluginsUnblocked.length > 0 && (surface === 'plugins'
+              {aiPlugins === null && pluginsUnblocked.length > 0 && (surface === 'plugins'
                 ? <LoadMore more={discoverMore.more} onLoad={discoverMore.loadMore} t={t} />
                 : <Pager currentPage={currentPage} totalPages={totalPages} pageSize={pageSize}
                     onGoToPage={goToPage} onChangePageSize={changePageSize} t={t} />)}

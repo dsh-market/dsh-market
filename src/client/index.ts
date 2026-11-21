@@ -22,6 +22,8 @@ import { SettingsCard } from './SettingsCard.tsx'
 import { SourceRepoLink } from './SourceRepoLink.tsx'
 import { installSettingsNavIcon } from './settings-nav-icon.ts'
 import { createHostNavigation } from './host-navigation.ts'
+import { FindPluginOverlay, FindPluginRow, FindPluginRowBoundary } from './FindPluginCard.tsx'
+import { onFindPluginExecuted } from './find-plugin-overlay.ts'
 import { createSidebarEntry, SIDEBAR_PANEL_ID, SIDEBAR_PANEL_ORDER } from './sidebar-entry.ts'
 import type { SidebarEntry } from './sidebar-entry.ts'
 import { MarketLogo } from './MarketSection.tsx'
@@ -209,6 +211,19 @@ function mountMarket(ctx: MarketClientContext): void {
    * or after this package mounts. See host-navigation.ts.
    */
   const hostNavigation = createHostNavigation()
+
+  // The `/find-plugin` command's row in the chat, drawn as plugin cards. The
+  // chat lets a plugin replace a command's row by name; where the slot is
+  // missing the row falls back to the command's own text.
+  ctx.slots.inject('conversation.chat.commandview', () => {
+    const off = ctx.slots.register({
+      name: 'conversation.chat.commandview',
+      key: 'find-plugin',
+      locale: NS,
+    }, ((props: { node: Parameters<typeof FindPluginRow>[0]['node'] }) => h(FindPluginRowBoundary, { fallback: props.node.outcome?.text ?? '' },
+      h(FindPluginRow, { node: props.node, t, navigation: hostNavigation }))) as unknown as () => unknown)
+    return off
+  })
   /**
    * The market's own panel, as an element — one builder for the settings
    * section this package registers and for `market.render()` (#602). Built
@@ -521,4 +536,14 @@ function mountMarket(ctx: MarketClientContext): void {
     id: 'dsh-market-toast',
     label: () => 'dsh-market',
   }, Toast))
+  // A /find-plugin run on the home screen (a blank session) draws no chat
+  // row; show its result in a frame-wide overlay instead.
+  ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+    name: 'shell.overlay',
+    id: `${NS}.find-plugin`,
+    locale: NS,
+  }, (() => h(FindPluginOverlay, { t, navigation: hostNavigation })) as unknown as () => unknown))
+  ;(ctx as unknown as { on(name: string, listener: (...args: unknown[]) => void): unknown }).on('command/executed', (sessionId: unknown, name: unknown, result: unknown) => {
+    if (name === 'find-plugin' && typeof sessionId === 'string') onFindPluginExecuted(sessionId, result as { kind?: string; text?: string } | undefined)
+  })
 }

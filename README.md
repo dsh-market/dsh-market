@@ -90,8 +90,26 @@ its own dsh: it may be older than the one `npm` would give you (#139).
 
 </details>
 
+## Features
+
+<table>
+<tr>
+<td width="50%" valign="top"><b>AI search</b><br>Describe the plugin you want in a sentence; the model you configured in DSH picks from the catalog, and the results are ordinary plugin cards. Off by default; it uses your tokens only when you switch it on and press Enter.<br><br><img src="assets/features/ai-search-en.png" alt="AI search results"></td>
+<td width="50%" valign="top"><b>/find-plugin in the chat</b><br>Say what you need mid-conversation; the model picks a few plugins from the market and says why. Each card offers install in the market, install here, or copy the command.<br><br><img src="assets/features/find-plugin-en.png" alt="/find-plugin result cards"></td>
+</tr>
+<tr>
+<td width="50%" valign="top"><b>See what it does before installing</b><br>Every plugin is statically scanned: file access, network, running commands, at a glance. Build scripts do not run by default.<br><br><img src="assets/features/install-en.png" alt="Install confirmation dialog"></td>
+<td width="50%" valign="top"><b>Themes in one click</b><br>Install and it applies; themes are mutually exclusive and your choice survives restarts.<br><br><img src="assets/themes-en.png" alt="Themes tab"></td>
+</tr>
+<tr>
+<td width="50%" valign="top"><b>Updates</b><br>Update one plugin or all of them, each with its "What changed"; the market updates itself the same way.<br><br><img src="assets/features/updates-en.png" alt="Update offer on Installed"></td>
+<td width="50%" valign="top"><b>Backup & restore</b><br>Export to a file, WebDAV or a private Gist; restores are validated first and roll back on failure.<br><br><img src="assets/features/backup-en.png" alt="Backup & restore page"></td>
+</tr>
+</table>
+
 ## What you get
 
+- **AI search and `/find-plugin`**: find plugins by describing what you want, picked by your own model
 - **Browse & search** 12,000+ community plugins, with screenshots and comments
 - **One-click install**: most plugins work after a page refresh, no restart
 - **Themes**: install and switch with one click
@@ -104,6 +122,8 @@ its own dsh: it may be older than the one `npm` would give you (#139).
 <details>
 <summary>Full feature list</summary>
 
+- **AI search** — a switch inside the Discover search box: describe the plugin you want in a sentence and the model you configured in DSH (its default model and API key) picks from the catalog; the picks show as ordinary plugin cards in the model's order. Off by default and remembered; it runs only on Enter, so it spends your tokens only when you ask. With no model or key set up it says so and points at Settings → Models instead of failing
+- **`/find-plugin` in the chat** — on DSH 0.2.0+ the market registers a slash command: `/find-plugin plugins that send notifications`. The same recall-then-pick runs on the model of the current chat, and the result draws as cards with *Install in market* (opens that plugin's install dialog), *Install here* (confirms first) and *Copy install command*. The answer is a command result, so it never enters the conversation the model sees. Run on the home screen, where DSH draws no conversation yet, the same cards open in an overlay
 - **Browse & search** the full community catalog (12,000+ plugins, growing daily) — category filters, star counts, top/new sorting, bilingual descriptions that follow your UI language
 - **Host-aware discovery** — cards show the DSH requirement declared by `engines.dsh` or lockstep `@deepseek-ai/dsh-*` peers; the compatibility filter hides only confirmed mismatches with the running host. GitHub-only entries read the linked package's manifest, including monorepo subdirectories; Release downloads read the selected release tag, including the current tag behind `latest/download`. Undeclared, malformed or unavailable requirements stay unknown and visible. Public manifest facts are cached; compatibility is evaluated against the running host
 - **Screenshots** — AppStore-style screenshots, auto-carousel when there's more than one, click to preview full-size: author-curated shots show right on the card (zero extra requests); plugins without curated shots fall back to automatic README extraction once you open the install dialog. Images load from GitHub hosting only
