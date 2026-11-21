@@ -315,7 +315,7 @@ function CatalogStatus({ c }: { c: CatalogStatusCtx }) {
 
 type DiscoverTabCtx = { props: MarketSectionProps } & CatalogStatusCtx
   & Pick<MarketStateCtx,
-    'bodyRef' | 'cat' | 'catsStuck' | 'catsWrapRef' | 'compatibleWithHost' | 'data' |
+    'bodyRef' | 'cat' | 'catalogPreview' | 'catsStuck' | 'catsWrapRef' | 'compatibleWithHost' | 'data' |
     'discoverSearchReset' | 'hostVersion' | 'lang' | 'q' | 'resetDiscoverSearch' |
     'setCat' | 'setCatsOpen' | 'setCatsSentinel' | 'setCompatibleWithHost' | 'setQ' | 'setSortDir' |
     'setSortField' | 'setStuckExpanded' | 'setTimeRange' | 'sortDir' | 'sortField' | 'surface' |
@@ -330,21 +330,30 @@ type DiscoverTabCtx = { props: MarketSectionProps } & CatalogStatusCtx
 
 export function DiscoverTab({ c }: { c: DiscoverTabCtx }) {
   const {
-    basePage, bodyRef, cat, categories, catsExpanded, catsStuck, catsWrapRef, changePageSize,
-    compatibleWithHost, currentPage, data, discoverMore, discoverSearchReset, goToPage, hasRecent,
-    hideRecent, hostHiddenCount, hostUnavailableCount, hostVersion, lang, loadError,
+    basePage, bodyRef, cat, catalogPreview, categories, catsExpanded, catsStuck, catsWrapRef, changePageSize,
+    compatibleWithHost, currentPage, discoverMore, discoverSearchReset, goToPage, hasRecent,
+    hideRecent, hostHiddenCount, hostUnavailableCount, hostVersion, lang, loadCatalog, loadError,
     loadedHostPackages, pageHostPackages, pagePlugins, pageSize, pluginCard, pluginsAll,
     pluginsUnblocked, q, recentCollapsed, recentHidden, recentPlugins, recentTile,
     resetDiscoverSearch, setCat, setCatsOpen, setCatsSentinel, setCompatibleWithHost, setQ,
     setSortDir, setSortField, setStuckExpanded, setTimeRange, showRecent, sortDir, sortField,
     surface, t, timeRange, toggleRecentCollapsed, totalPages, visibleCats,
   } = c
+  const data = c.data ?? catalogPreview
   const recentRowRef = useRef<HTMLDivElement | null>(null)
   return (
-    loadError !== null || data === null
+    data === null || (loadError !== null && catalogPreview === null)
       ? <CatalogStatus c={c} />
       : (
             <>
+              {catalogPreview !== null && (
+                <div className={css.updateCheckNotice}>
+                  <span role="status">{t(loadError !== null ? 'catalogInterrupted' : 'catalogProgress')}</span>
+                  {loadError !== null && (
+                    <Button variant="ghost" size="sm" onClick={() => { void loadCatalog() }}>{t('loadRetry')}</Button>
+                  )}
+                </div>
+              )}
               <div ref={setCatsSentinel} />
               <div className={css.stickyHead}>
               <div className={css.tabSearchRow}>
