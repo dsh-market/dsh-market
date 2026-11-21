@@ -256,6 +256,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			setSidebarOff: "不显示",
 			sidebarTip: "想更快打开？可在侧栏显示。",
 			sidebarTipDismiss: "不再提示",
+			sidebarTipAdded: "已在侧栏显示。",
+			sidebarTipUndo: "撤销",
 			setRegion: "下载区域",
 			setRegionGlobal: "全球",
 			setRegionChina: "中国大陆",
@@ -1194,6 +1196,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			setSidebarOff: "Hide",
 			sidebarTip: "Want a quicker open? Show it in the sidebar.",
 			sidebarTipDismiss: "Don't show again",
+			sidebarTipAdded: "Now in the sidebar.",
+			sidebarTipUndo: "Undo",
 			setRegion: "Download region",
 			setRegionGlobal: "Global",
 			setRegionChina: "China mainland",
@@ -2131,6 +2135,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			setSidebarOff: "表示しない",
 			sidebarTip: "もっと早く開きたいですか？サイドバーに表示できます。",
 			sidebarTipDismiss: "今後表示しない",
+			sidebarTipAdded: "サイドバーに表示しました。",
+			sidebarTipUndo: "元に戻す",
 			setRegion: "ダウンロード地域",
 			setRegionGlobal: "グローバル",
 			setRegionChina: "中国本土",
@@ -9679,6 +9685,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const [sidebarTipDismissed, setSidebarTipDismissed] = (0, react.useState)(readSidebarTipDismissed);
 			const [sidebarTipSaving, setSidebarTipSaving] = (0, react.useState)(false);
 			const [sidebarTipError, setSidebarTipError] = (0, react.useState)(null);
+			/** This page turned the row on just now, so it owes the user a way back (#1276). */
+			const [sidebarTipAdded, setSidebarTipAdded] = (0, react.useState)(false);
 			(0, react.useEffect)(() => {
 				if (sidebar === void 0) return void 0;
 				const sync = () => {
@@ -9692,16 +9700,25 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				return sidebar.subscribe(sync);
 			}, [sidebar]);
 			const showSidebarTip = surface === "settings" && sidebarSnap.ready && sidebarSnap.supported && !sidebarSnap.enabled && !sidebarTipDismissed;
-			const enableSidebar = (0, react.useCallback)(() => {
+			const showSidebarAdded = surface === "settings" && sidebarTipAdded && sidebarSnap.enabled;
+			const setSidebarFromTip = (0, react.useCallback)((next) => {
 				if (sidebar === void 0) return;
 				setSidebarTipError(null);
 				setSidebarTipSaving(true);
-				sidebar.set(true).catch((cause) => {
+				sidebar.set(next).then(() => {
+					setSidebarTipAdded(next);
+				}).catch((cause) => {
 					setSidebarTipError(cause instanceof Error ? cause.message : String(cause));
 				}).finally(() => {
 					setSidebarTipSaving(false);
 				});
 			}, [sidebar]);
+			const enableSidebar = (0, react.useCallback)(() => {
+				setSidebarFromTip(true);
+			}, [setSidebarFromTip]);
+			const undoSidebar = (0, react.useCallback)(() => {
+				setSidebarFromTip(false);
+			}, [setSidebarFromTip]);
 			const themeSnap = (0, react.useSyncExternalStore)(props.themeStore.subscribe, props.themeStore.getSnapshot);
 			const compatibility = (0, react.useSyncExternalStore)(discoveryScan.subscribe, discoveryScan.getSnapshot);
 			const { catalog: data, enabled: compatibleWithHost, hostVersion, verdicts: hostCompatibility } = compatibility;
@@ -10765,6 +10782,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				doneUrls,
 				drainingRef,
 				enableSidebar,
+				undoSidebar,
 				envFailed,
 				envFixing,
 				envReady,
@@ -11054,6 +11072,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				setWebdavUser,
 				setWhyOpen,
 				settledHostRef: (0, react.useRef)(/* @__PURE__ */ new Set()),
+				showSidebarAdded,
 				showSidebarTip,
 				showTheirs,
 				showTop,
@@ -18175,7 +18194,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		*/
 		const MARKET_OFFER_CLOSED_KEY = "dshm-market-offer-closed";
 		function MarketHead({ c }) {
-			const { activationWarnings, approveAndRetry, askRestore, backupBusy, backupMessage, blockedNames, bootId, brokenPluginNames, brokenPlugins, buildsSkipped, busyUrl, checkingUpdates, checkoutRecovery, compatibilityNotice, compatibilitySummary, configNamespaceIssues, data, debuggerLatch, describePlugin, dismissBrokenError, dismissBrokenPlugin, dismissingBroken, doCancel, doExportLog, doInstall, doRestart, doRollback, doUpdate, eligibleMarketVersion, enableSidebar, envFailed, envFixing, envReady, exportState, favoriteTabCount, fixEnv, hasUpdates, headRef, heldMarketVersion, hostBusy, hostDependencyFindings, hotNames, installError, installedOtherCount, lang, marketGone, missingRestoreCount, notificationSnapshot, openInHost, operationsOpen, pendingBackup, pendingRefreshNames, pendingRestart, profileBlocked, records, recordsRef, recovery, refreshInstalled, removingName, replacing, resolveConflict, restartEnabled, restartHold, restartReachable, restarting, restoreErrors, rollingBack, runQueuedNow, setBuildsSkipped, setCat, setOperationsOpen, setQ, setRecords, setRecoveryOpen, setRestartNoticeDismissed, setRestoreConfirmOpen, setSidebarTipDismissed, setTab, shadowSummary, showHostPending, showMarketWait, showSidebarTip, sidebarTipError, sidebarTipSaving, staleName, startupRepair, supervisor, surface, t, tab, themeSnap, uiLocale, updateCheckFailed, updates, updatingName, version, marketOffer, takeMarketOffer } = c;
+			const { activationWarnings, approveAndRetry, askRestore, backupBusy, backupMessage, blockedNames, bootId, brokenPluginNames, brokenPlugins, buildsSkipped, busyUrl, checkingUpdates, checkoutRecovery, compatibilityNotice, compatibilitySummary, configNamespaceIssues, data, debuggerLatch, describePlugin, dismissBrokenError, dismissBrokenPlugin, dismissingBroken, doCancel, doExportLog, doInstall, doRestart, doRollback, doUpdate, eligibleMarketVersion, enableSidebar, undoSidebar, showSidebarAdded, envFailed, envFixing, envReady, exportState, favoriteTabCount, fixEnv, hasUpdates, headRef, heldMarketVersion, hostBusy, hostDependencyFindings, hotNames, installError, installedOtherCount, lang, marketGone, missingRestoreCount, notificationSnapshot, openInHost, operationsOpen, pendingBackup, pendingRefreshNames, pendingRestart, profileBlocked, records, recordsRef, recovery, refreshInstalled, removingName, replacing, resolveConflict, restartEnabled, restartHold, restartReachable, restarting, restoreErrors, rollingBack, runQueuedNow, setBuildsSkipped, setCat, setOperationsOpen, setQ, setRecords, setRecoveryOpen, setRestartNoticeDismissed, setRestoreConfirmOpen, setSidebarTipDismissed, setTab, shadowSummary, showHostPending, showMarketWait, showSidebarTip, sidebarTipError, sidebarTipSaving, staleName, startupRepair, supervisor, surface, t, tab, themeSnap, uiLocale, updateCheckFailed, updates, updatingName, version, marketOffer, takeMarketOffer } = c;
 			const [moreOpen, setMoreOpen] = (0, react.useState)(false);
 			const [restartClosedAt, setRestartClosedAt] = (0, react.useState)(0);
 			const [offerClosed, setOfferClosed] = (0, react.useState)(() => {
@@ -18249,6 +18268,20 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									})
 								]
 							})]
+						}),
+						showSidebarAdded && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+							className: Market_module_css_default.sidebarTip,
+							children: [
+								/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: t("sidebarTipAdded") }),
+								/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+									size: "sm",
+									variant: "ghost",
+									disabled: sidebarTipSaving,
+									onClick: undoSidebar,
+									children: t("sidebarTipUndo")
+								}),
+								sidebarTipError !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: sidebarTipError })
+							]
 						}),
 						showSidebarTip && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 							className: Market_module_css_default.sidebarTip,
