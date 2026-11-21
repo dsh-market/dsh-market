@@ -8,7 +8,8 @@ import { useCallback, useRef, useState, type ReactElement } from 'react'
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import css from './Market.module.css'
 import { api } from './market-data.ts'
-import type { FindPick, FindResult } from './FindPluginCard.tsx'
+import { openModelSettings } from './model-settings.ts'
+import { UseMyPluginsNote, type FindPick, type FindResult } from './FindPluginCard.tsx'
 import type { SearchAiMode } from './SearchInput.tsx'
 
 type Translate = (key: string) => string
@@ -67,12 +68,14 @@ export function useAiSearch(t: Translate): { mode: SearchAiMode; status: ReactEl
         {state.phase === 'error' && (
           <span className={css.fpNote} data-tone="error">
             {state.code === 'no-model' ? t('aiSearchNoModel') : t('aiSearchFailed') + state.message}
+            {state.code === 'no-model' && <> <Button size="sm" variant="primary" onClick={() => { void openModelSettings() }}>{t('recSetupModel')}</Button></>}
             {state.code !== 'no-model' && <> <Button size="sm" variant="outline" onClick={() => submit(state.query)}>{t('aiSearchRetry')}</Button></>}
           </span>
         )}
         {state.phase === 'done' && (
           <>
             <span className={css.aiHint}>{t('fpFoot')}</span>
+            <UseMyPluginsNote key={state.result.at} personalized={state.result.personalized === true} t={t} />
           </>
         )}
       </div>

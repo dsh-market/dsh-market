@@ -30,6 +30,7 @@ import type { MarketSyncCtx } from './market-sync.ts'
 import type { MarketOperationsCtx } from './market-operations.ts'
 import type { MarketSectionProps } from './market-types.ts'
 import { useAiSearch } from './AiSearch.tsx'
+import { AiRecommend } from './AiRecommend.tsx'
 
 type MarketGoneNoticeCtx = { props: MarketSectionProps }
   & Pick<MarketStateCtx, 'reconnecting' | 'setReconnectRound' | 't'>
@@ -471,6 +472,9 @@ export function DiscoverTab({ c }: { c: DiscoverTabCtx }) {
                       {recentPlugins.map(plugin => recentTile(plugin))}
                     </div>
                   </section>
+              )}
+              {aiPlugins === null && (
+                <AiRecommend t={t} lang={lang} plugins={data.plugins} render={items => <Masonry items={items} render={plugin => pluginCard(plugin)} />} />
               )}
               {aiPlugins !== null
                 ? (aiPlugins.length === 0

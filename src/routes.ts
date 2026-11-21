@@ -17,7 +17,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { FiberState } from '@deepseek-ai/cordis'
 import { load as loadYaml } from 'js-yaml'
 import { packageFileFromRegistry } from './catalog-npm.ts'
-import { aiSearch, FindPluginError, resultFor } from './find-plugin.ts'
+import { aiRecommend, aiSearch, FindPluginError, resultFor, setUserPluginsReader, setUsesMyPlugins, usesMyPlugins } from './find-plugin.ts'
 import { forgetCatalog, loadRegistry, pluginCategories, type Registry, type RegistryPlugin } from './registry.ts'
 import { settingsNamespaceState } from './settings.ts'
 import {
@@ -602,6 +602,11 @@ export function mountMarketRoutes(
     throw new Error(message)
   }
   const activeProfileDir = profileDir(config.profile, config.profileDirectory)
+  // AI search and /find-plugin read these only after the user allowed it.
+  setUserPluginsReader(() => ({
+    installed: Object.keys(readInstalled(config.profile, activeProfileDir)),
+    favorites: readMarketState(activeProfileDir).favorites ?? [],
+  }))
   // #987: a remove that died between deleting the package and clearing the
   // rows its bundle patch declares leaves an insert naming a missing module —
   // and DSH's boot is all-or-nothing, so that row can keep the host from
@@ -4171,6 +4176,75 @@ export function mountMarketRoutes(
         } catch (error) {
           if (error instanceof FindPluginError) {
             sendJson(response, error.code === 'no-model' ? 409 : 502, { code: error.code, error: error.message })
+            return
+          }
+          sendJson(response, 500, { code: 'model-failed', error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    }),
+
+    registerRoute({
+      kind: 'exact',
+      // The user's say-so for AI search and /find-plugin to read their
+      // installed and favorited plugins. GET reads it, POST {on} sets it.
+      path: '/dsh-market/ai-use-my-plugins',
+      handler: async (request, response) => {
+        if (request.method === 'GET') {
+          sendJson(response, 200, { on: usesMyPlugins() })
+          return
+        }
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'GET, POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) {
+          sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        const body = await readJsonBody(request).catch(() => null) as { on?: unknown } | null
+        if (typeof body?.on !== 'boolean') {
+          sendJson(response, 400, { error: 'on must be true or false' })
+          return
+        }
+        try {
+          setUsesMyPlugins(body.on)
+          sendJson(response, 200, { on: body.on })
+        } catch (error) {
+          sendJson(response, 500, { error: `没能保存这个设置（${error instanceof Error ? error.message : String(error)}）。请重试。 / Could not save this setting. Try again.` })
+        }
+      },
+    }),
+
+    registerRoute({
+      kind: 'exact',
+      // "Recommend for me": the user's installed and favorited plugins, judged
+      // by their default model. Only on a click (it reads both lists and spends
+      // the user's tokens); nothing here runs by itself.
+      path: '/dsh-market/ai-recommend',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) {
+          sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        const body = await readJsonBody(request).catch(() => null) as { exclude?: unknown; lang?: unknown } | null
+        const exclude = Array.isArray(body?.exclude) ? body.exclude.filter((name): name is string => typeof name === 'string').slice(0, 200) : []
+        try {
+          const result = await aiRecommend({
+            installed: Object.keys(readInstalled(config.profile, activeProfileDir)),
+            favorites: readMarketState(activeProfileDir).favorites ?? [],
+            exclude,
+            preferZh: body?.lang !== 'en' && body?.lang !== 'ja',
+          }, () => loadRegistry())
+          sendJson(response, 200, { result })
+        } catch (error) {
+          if (error instanceof FindPluginError) {
+            sendJson(response, error.code === 'no-model' || error.code === 'no-seeds' ? 409 : 502, { code: error.code, error: error.message })
             return
           }
           sendJson(response, 500, { code: 'model-failed', error: error instanceof Error ? error.message : String(error) })
