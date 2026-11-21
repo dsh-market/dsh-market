@@ -1,34 +1,29 @@
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import validCatalog from './fixtures/registry-valid.json'
 
-/**
- * The catalog gate is a script, not a module, so these run it for real against
- * a draft file. #1012 adds `previousNpm`, and a rule that only ever runs on the
- * live catalog would stay unexercised until the first rename lands — exactly
- * when a mistake is most expensive.
- */
-function runCatalog(plugins: unknown[], extraEnv: Record<string, string> = {}): { status: number; output: string } {
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-validate-'))
-  const file = join(dir, 'catalog.json')
-  writeFileSync(file, JSON.stringify({
-    updated: '2026-01-01',
-    count: plugins.length,
-    categories: { tool: { en: 'Tools' } },
-    plugins,
-  }))
-  const env = { ...process.env, DSHM_REGISTRY_FILE: file }
-  delete env.DSHM_REGISTRY_ADVISORY
-  Object.assign(env, extraEnv)
+function runValidator(file: string, extraEnv: Record<string, string> = {}) {
   const result = spawnSync(process.execPath, ['scripts/validate-registry.mjs'], {
     encoding: 'utf8',
-    env,
+    env: { ...process.env, ...extraEnv, DSHM_REGISTRY_FILE: file },
   })
   return {
-    status: result.status ?? 1,
+    status: result.status,
     output: `${result.stdout ?? ''}${result.stderr ?? ''}`,
+  }
+}
+
+function runCatalog(plugins: unknown[]) {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-validate-'))
+  try {
+    const file = join(dir, 'catalog.json')
+    writeFileSync(file, JSON.stringify({ ...validCatalog, count: plugins.length, plugins }))
+    return runValidator(file)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
   }
 }
 
@@ -95,61 +90,50 @@ describe('validate-registry previousNpm (#1012 P1)', () => {
   })
 })
 
-const gitOnly = (
-  name: string,
-  owner: string,
-  repo: string,
-  tarballRepo: string,
-  extra: Record<string, unknown> = {},
-) => ({
-  name,
-  owner,
-  url: `https://github.com/${owner}/${repo}`,
-  category: 'tool',
-  npm: null,
-  page: `https://awesome-dsh-plugin.com/p/${owner}/${repo}/`,
-  description: { en: name, zh: name },
-  stars: 0,
-  install: `dsh plugin --profile web add "https://github.com/${tarballRepo}/releases/download/v1.0.0/x.tgz"`,
-  added: '2026-01-01',
-  ...extra,
+const [notifier, formatter, linter] = validCatalog.plugins
+
+describe('validate-registry install identities', () => {
+  it('accepts distinct release-installed subpaths of the same repository', () => {
+    const run = runValidator(join('tests', 'fixtures', 'registry-valid.json'))
+    expect(run.status, run.output).toBe(0)
+    expect(run.output).toContain('registry ok')
+  })
+
+  it('rejects two repositories that claim the same npm package', () => {
+    const alias = { ...notifier, name: 'other-notifier', url: 'https://github.com/example/other-notifier' }
+    const run = runCatalog([notifier, alias])
+    expect(run.status, run.output).toBe(1)
+    expect(run.output).toContain('[E11] other-notifier: duplicate install identity with "notifier"')
+  })
+
+  it('rejects two entries with the same repository and subpath', () => {
+    const run = runCatalog([formatter, { ...linter, url: formatter.url }])
+    expect(run.status, run.output).toBe(1)
+    expect(run.output).toContain('[E11] linter: duplicate install identity with "formatter"')
+  })
 })
 
-/** The two live rows that have been failing every unrelated PR since 1.71.0. */
-const knownDrifts = [
-  gitOnly('dsh-quick-restart', 'GraptK', 'dsh-quick-restart', 'iQingke/dsh-quick-restart'),
-  gitOnly('dsh-gitui', 'yaanlaan', 'dsh-gitui', 'yaanlaan/ds-gitui'),
-]
-
-describe('validate-registry known live-catalog drift', () => {
-  it('still fails a local draft on an E10 owner mismatch', () => {
-    const run = runCatalog([gitOnly('plug', 'Alice', 'plug', 'Bob/plug')])
-    expect(run.status).toBe(1)
-    expect(run.output).toContain('[E10] plug: release archive')
-    expect(run.output).toContain('belongs to bob/plug, not Alice/plug')
-  })
-
-  it('still fails an unknown E10 even when advisory', () => {
-    const run = runCatalog([gitOnly('plug', 'Alice', 'plug', 'Bob/plug')], { DSHM_REGISTRY_ADVISORY: '1' })
-    expect(run.status, run.output).toBe(1)
-    expect(run.output).toContain('[E10] plug: release archive')
-  })
-
-  it('excuses only the listed live rows when advisory', () => {
-    const run = runCatalog(knownDrifts, { DSHM_REGISTRY_ADVISORY: '1' })
-    expect(run.status, run.output).toBe(0)
-    expect(run.output).toContain('[E10] dsh-quick-restart: release archive')
-    expect(run.output).toContain('[E10] dsh-gitui: release archive')
-    expect(run.output).toContain('known live-catalog drift')
-  })
-
-  it('still fails when a listed row is joined by a new error', () => {
-    const extra = gitOnly('plug', 'Alice', 'plug', 'Alice/plug', {
-      screenshots: ['https://evil.example/pixel.gif'],
+describe('validate-registry catalog errors', () => {
+  it('fails a missing explicit file even when the remote catalog is valid', () => {
+    const missingFile = join('tests', 'fixtures', 'missing-catalog.json')
+    const run = runValidator(missingFile, {
+      DSHM_REGISTRY_URL: `data:application/json,${encodeURIComponent(JSON.stringify(validCatalog))}`,
     })
-    const run = runCatalog([...knownDrifts, extra], { DSHM_REGISTRY_ADVISORY: '1' })
     expect(run.status, run.output).toBe(1)
-    expect(run.output).toContain('[E12] plug:')
+    expect(run.output).toContain(missingFile)
+  })
+
+  it('rejects a release archive hosted in another repository', () => {
+    const run = runCatalog([{ ...formatter, install: formatter.install.replace('example/tools', 'other/tools') }])
+    expect(run.status, run.output).toBe(1)
+    expect(run.output).toContain('[E10] formatter: release archive')
+    expect(run.output).toContain('belongs to other/tools, not example/tools')
+  })
+
+  it('rejects a screenshot outside the allowed GitHub hosts', () => {
+    const run = runCatalog([{ ...notifier, screenshots: ['https://example.com/image.png'] }])
+    expect(run.status, run.output).toBe(1)
+    expect(run.output).toContain('[E12] notifier: screenshot must be an https URL on GitHub hosting')
   })
 })
 
