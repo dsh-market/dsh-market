@@ -257,7 +257,7 @@ const t = props.t
     props.themeStore.getSnapshot,
   )
   const compatibility = useSyncExternalStore(discoveryScan.subscribe, discoveryScan.getSnapshot)
-  const { catalog: data, enabled: compatibleWithHost, hostVersion, verdicts: hostCompatibility } = compatibility
+  const { catalog: data, catalogPreview, enabled: compatibleWithHost, hostVersion, verdicts: hostCompatibility } = compatibility
   const [loadError, setLoadError] = useState<string | null>(null)
   /**
    * The host answered 404 on one of the market's own routes (#962).
@@ -1324,7 +1324,7 @@ const t = props.t
     activationWarnings, activations, addPanel, addQuery, addSelected, agentsConfirm, assignFor,
     autoBackup, backupBusy, backupMessage, backupRestored, blockError, blockErrorDone, blockNotice,
     blockNoticeDone, blockOpGen, blockedNames, bodyRef, bootId, bootIdRef, brokenPluginNames,
-    brokenPlugins, buildsSkipped, busyUrl, cancelling, capsOpen, cat, catalogVersionTip,
+    brokenPlugins, buildsSkipped, busyUrl, cancelling, capsOpen, cat, catalogPreview, catalogVersionTip,
     catsFloorRef, catsOpen, catsSentinel, catsStuck, catsWrapRef, checkingUpdates, checkoutRecovery,
     clearingStale, cmdOpen, collapsedGroups, commentsFor, compatibility, compatibilityDemandOwner,
     compatibilityNotice, compatibleWithHost, configNamespaceIssues, confirming, creatingGroup, data,

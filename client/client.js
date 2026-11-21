@@ -458,6 +458,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			marketGoneReconnecting: "正在重新连接…",
 			marketGoneReconnect: "重新连接",
 			loadFail: "插件目录加载失败，请稍后重试",
+			catalogProgress: "完整目录加载中。当前只搜索已显示的条目。",
+			catalogInterrupted: "目录加载中断。重试可继续加载。",
 			loadRetry: "重试",
 			installFail: "安装失败",
 			viewSource: "源码",
@@ -1451,6 +1453,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			marketGoneReconnecting: "Reconnecting…",
 			marketGoneReconnect: "Reconnect",
 			loadFail: "The plugin catalog failed to load. Try again later.",
+			catalogProgress: "Loading the full catalog. Search covers the items shown so far.",
+			catalogInterrupted: "Catalog loading was interrupted. Retry to continue.",
 			loadRetry: "Retry",
 			installFail: "Install failed",
 			viewSource: "Source",
@@ -2444,6 +2448,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			marketGoneReconnecting: "再接続しています…",
 			marketGoneReconnect: "再接続",
 			loadFail: "プラグインカタログの読み込みに失敗しました。しばらくしてから再試行してください",
+			catalogProgress: "カタログを読み込んでいます。検索対象は表示中の項目のみです。",
+			catalogInterrupted: "カタログの読み込みが中断されました。再試行すると続きから読み込めます。",
 			loadRetry: "再試行",
 			installFail: "インストールに失敗しました",
 			viewSource: "ソース",
@@ -7808,6 +7814,142 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			return typeof value === "string" && value.length <= 256 && value === value.trim() && semver(value) !== null;
 		}
 		//#endregion
+		//#region src/body-progress.ts
+		/**
+		* Reading a response body under a stall watchdog instead of a total budget.
+		*
+		* Lives on its own because two downloads need exactly this rule and they are
+		* not the same file: the catalog served from its origin (#750/#766) and the
+		* catalog carried by a published package (#1049). The npm source had kept a
+		* fixed 20s ceiling, which is fine for a metadata answer and wrong for a
+		* multi-megabyte tarball: at 3.2 MB it needs 158 KB/s sustained, and a China
+		* mirror jittering to 17–40 KB/s cannot make that, so both attempts died at
+		* the ceiling while the link was still delivering bytes.
+		*/
+		/**
+		* How long to wait for the response to START answering.
+		*
+		* Headers arrive in one burst or not at all, so a fixed budget still fits
+		* them. It fits nothing else: the body of a catalog download keeps trickling
+		* long after any honest total budget, and a total timer cuts off a download
+		* that was still moving — measured: killed at 15s on both attempts, 89.9s
+		* end-to-end when allowed to run.
+		*/
+		const HEADERS_TIMEOUT_MS = 15e3;
+		/**
+		* How long the body may stay SILENT before we give up on it.
+		*
+		* Deliberately not a total budget. As long as bytes keep arriving, however
+		* slowly, the read continues; the watchdog only fires on a download that has
+		* actually stopped, which is the one failure a slow link cannot fake.
+		*/
+		const BODY_STALL_TIMEOUT_MS = 15e3;
+		/**
+		* How long the whole body may take, however much progress it keeps making.
+		*
+		* The stall watchdog can only act on a pause, so a mirror that sends one
+		* byte inside every 15s window would hold the read open forever. 10 minutes
+		* is ~7x the slowest measured full download (89.9s); a body still going
+		* after that is broken, not slow, and the byte count in the message says
+		* which of the two it was.
+		*/
+		const BODY_TOTAL_CEILING_MS = 6e5;
+		/**
+		* The most body bytes to accept before declaring the response not a catalog.
+		*
+		* The catalog passed 5 MB in September 2026 (9.5 MB unpacked by October);
+		* 256 MB is decades of headroom — and still a hard bound on memory, because
+		* the whole body is buffered before parsing and a mirror streaming garbage
+		* at line speed would otherwise grow that buffer until the process dies.
+		* backup.ts and gist.ts cap their downloads for the same reason.
+		*/
+		const MAX_BODY_BYTES = 268435456;
+		/**
+		* Read a body under a stall watchdog instead of a total budget.
+		*
+		* One timer for the whole fetch was the mistake both before and after #188:
+		* at 4s it hid slowness behind a stale snapshot, at 15s it kills downloads
+		* that are still moving. On a lossy proxied link the catalog body trickles
+		* for far longer than 15s while never once going silent — measured 89.9s
+		* end-to-end for a body the 15s cutoff had declared dead twice. This reader
+		* lets a moving body run as long as it keeps moving, in either direction's
+		* sense of "slow", and ends one that goes quiet for `stallMs` with a message
+		* that says what actually happened and how much had arrived.
+		*
+		* The rejection comes from here, not from an abort: undici's abort message
+		* ("This operation was aborted") cannot tell a user anything actionable, and
+		* a bug report containing this string will contain the byte count too.
+		*
+		* Two backstops keep "still moving" from meaning "forever", because the
+		* watchdog can only see pauses: a total ceiling for a body that trickles
+		* without ever pausing, and a size cap for one that outruns any catalog.
+		*
+		* @param res - the response whose body to read.
+		* @param stallMs - silence that ends the read, in milliseconds.
+		* @param what - the download, for the rejection message ("the catalog").
+		* @param maxBytes - maximum decoded response size.
+		*/
+		function readBodyWhileProgressing(res, stallMs, what = "the catalog", maxBytes = MAX_BODY_BYTES) {
+			const reader = (res.body ?? new ReadableStream({ start(controller) {
+				controller.close();
+			} })).getReader();
+			return new Promise((resolve, reject) => {
+				const chunks = [];
+				let received = 0;
+				let settled = false;
+				let timer;
+				const finish = (error) => {
+					if (settled) return;
+					settled = true;
+					if (timer !== void 0) clearTimeout(timer);
+					clearTimeout(ceiling);
+					reader.cancel().catch(() => {});
+					if (error !== void 0) reject(error);
+					else if (received === 0) reject(/* @__PURE__ */ new Error(`${what} response carried no body`));
+					else resolve(concatBytes(chunks));
+				};
+				const ceiling = setTimeout(() => {
+					finish(new DOMException(`${what} download did not finish within ${String(Math.round(BODY_TOTAL_CEILING_MS / 1e3))}s (received ${String(received)} bytes)`, "TimeoutError"));
+				}, BODY_TOTAL_CEILING_MS);
+				const arm = () => {
+					if (timer !== void 0) clearTimeout(timer);
+					timer = setTimeout(() => {
+						finish(new DOMException(`no new data for ${String(Math.round(stallMs / 1e3))}s while downloading ${what} (received ${String(received)} bytes)`, "TimeoutError"));
+					}, stallMs);
+				};
+				const step = () => {
+					reader.read().then((r) => {
+						if (settled) return;
+						if (r.done || r.value === void 0) {
+							finish();
+							return;
+						}
+						chunks.push(r.value);
+						received += r.value.byteLength;
+						if (received > maxBytes) {
+							finish(/* @__PURE__ */ new Error(`${what} response grew past ${String(maxBytes / 1024 / 1024)} MB without ending (received ${String(received)} bytes)`));
+							return;
+						}
+						arm();
+						step();
+					}, (error) => {
+						finish(error instanceof Error ? error : new Error(String(error)));
+					});
+				};
+				arm();
+				step();
+			});
+		}
+		function concatBytes(chunks) {
+			const all = new Uint8Array(chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0));
+			let at = 0;
+			for (const chunk of chunks) {
+				all.set(chunk, at);
+				at += chunk.byteLength;
+			}
+			return all;
+		}
+		//#endregion
 		//#region src/client/source-status.ts
 		let failed = [];
 		const listeners$2 = /* @__PURE__ */ new Set();
@@ -7844,6 +7986,41 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			requirement: null,
 			declarations: []
 		};
+		async function readCatalogPage(page, snapshot, reportSources) {
+			const query = snapshot === void 0 ? "" : "?" + new URLSearchParams({
+				page: String(page),
+				snapshot
+			});
+			for (let attempt = 0;; attempt++) {
+				const controller = new AbortController();
+				const timer = page === 0 ? void 0 : setTimeout(() => controller.abort(), HEADERS_TIMEOUT_MS);
+				let status;
+				try {
+					const response = await fetch(api("/dsh-market/registry") + query, {
+						cache: "no-store",
+						headers: { "x-dsh-catalog-paging": "1" },
+						signal: controller.signal
+					}).finally(() => clearTimeout(timer));
+					status = response.status;
+					if (status === 404 || status === 409) {
+						await response.body?.cancel().catch(() => {});
+						return status === 404 ? "gone" : "expired";
+					}
+					const bytes = await readBodyWhileProgressing(response, BODY_STALL_TIMEOUT_MS, "the catalog page");
+					const body = JSON.parse(new TextDecoder().decode(bytes));
+					reportSources?.(body?.registry?.sources ?? body?.sources);
+					if (!response.ok) throw new Error(typeof body?.error === "string" ? body.error : `HTTP ${status}`);
+					if (!Array.isArray(body?.registry?.plugins)) throw new Error("the catalog response carried no data");
+					if (page !== 0 || body.snapshot !== void 0 || body.pages !== void 0) {
+						if (typeof body.snapshot !== "string" || body.page !== page || typeof body.pages !== "number" || !Number.isInteger(body.pages) || body.pages <= page || snapshot !== void 0 && body.snapshot !== snapshot) throw new Error("the catalog page did not match the current download");
+					}
+					return body;
+				} catch (error) {
+					if (attempt >= 2 || status !== void 0 && status >= 400 && (page === 0 || status < 500 && status !== 429)) throw error;
+					await new Promise((resolve) => setTimeout(resolve, 350 * (attempt + 1)));
+				}
+			}
+		}
 		function initialPreference() {
 			try {
 				return localStorage.getItem(HOST_FILTER_KEY) !== "all";
@@ -7919,6 +8096,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			pending;
 			hostVersion;
 			catalog = null;
+			catalogPreview = null;
+			catalogDownload;
 			boot;
 			enabled;
 			context = 0;
@@ -7936,6 +8115,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				return this.snapshot ??= {
 					enabled: this.enabled ??= initialPreference(),
 					catalog: null,
+					catalogPreview: null,
 					gone: false,
 					hostVersion: void 0,
 					verdicts: Object.create(null)
@@ -7955,6 +8135,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				this.context += 1;
 				this.hostVersion = void 0;
 				this.catalog = null;
+				this.catalogPreview = null;
+				this.catalogDownload = void 0;
 				this.catalogRequest += 1;
 				this.resumeRequest = void 0;
 				this.boot = void 0;
@@ -7983,21 +8165,68 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			}
 			async loadCatalog() {
 				const request = ++this.catalogRequest;
-				const response = await fetch(api("/dsh-market/registry"), { cache: "no-store" });
-				if (request !== this.catalogRequest) return "superseded";
-				if (response.status === 404) {
-					this.setUnavailable();
-					return "gone";
+				for (let restart = 0; restart <= 1; restart++) {
+					let download = this.catalogDownload;
+					if (download === void 0) {
+						const first = await readCatalogPage(0, void 0, (sources) => {
+							if (request === this.catalogRequest) noteSources(sources);
+						});
+						if (request !== this.catalogRequest) return "superseded";
+						if (first === "gone") {
+							this.setUnavailable();
+							return "gone";
+						}
+						if (first === "expired") throw new Error("the catalog changed while loading");
+						setOrgPolicy(first.policy);
+						download = {
+							first,
+							items: [first.registry.plugins]
+						};
+						this.catalogDownload = download;
+					}
+					const { first, items } = download;
+					const pages = first.pages ?? 1;
+					if (pages > 1 && this.catalog === null) {
+						this.catalogPreview = first.registry;
+						this.update();
+					}
+					const missing = Array.from({ length: pages }, (_, page) => page).filter((page) => items[page] === void 0);
+					let expired = false;
+					for (let offset = 0; offset < missing.length; offset += 3) {
+						const batch = missing.slice(offset, offset + 3);
+						const results = await Promise.allSettled(batch.map((page) => readCatalogPage(page, first.snapshot)));
+						if (request !== this.catalogRequest) return "superseded";
+						for (const [index, result] of results.entries()) {
+							if (result.status === "rejected") continue;
+							if (result.value === "gone") {
+								this.setUnavailable();
+								return "gone";
+							}
+							if (result.value === "expired") {
+								expired = true;
+								continue;
+							}
+							if (result.value.pages !== pages) throw new Error("the catalog page count changed while loading");
+							items[batch[index]] = result.value.registry.plugins;
+						}
+						if (expired) break;
+						const failure = results.find((result) => result.status === "rejected");
+						if (failure?.status === "rejected") throw failure.reason;
+					}
+					if (expired) {
+						this.catalogDownload = void 0;
+						continue;
+					}
+					const host = first.hostVersion;
+					this.catalogDownload = void 0;
+					this.catalogPreview = null;
+					this.setCatalog({
+						...first.registry,
+						plugins: items.flatMap((items) => items ?? [])
+					}, typeof host === "string" || host === null ? host : void 0);
+					return "loaded";
 				}
-				const body = await response.json().catch(() => ({}));
-				if (request !== this.catalogRequest) return "superseded";
-				noteSources(body.registry?.sources ?? body.sources);
-				if (!response.ok) throw new Error(typeof body.error === "string" ? body.error : `HTTP ${response.status}`);
-				if (body.registry === void 0) throw new Error("the catalog response carried no data");
-				setOrgPolicy(body.policy);
-				const host = body.hostVersion;
-				this.setCatalog(body.registry, typeof host === "string" || host === null ? host : void 0);
-				return "loaded";
+				throw new Error("the catalog changed while loading");
 			}
 			setCatalog(catalog, hostVersion) {
 				if (catalog.updated !== this.catalog?.updated) this.onCatalogGenerationChange();
@@ -8037,6 +8266,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				if (this.gone) return;
 				this.active = false;
 				this.gone = true;
+				this.catalogDownload = void 0;
+				this.catalogPreview = null;
 				this.catalogRefreshUsed = false;
 				this.catalogRequest += 1;
 				this.invalidate();
@@ -8119,10 +8350,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					for (const [key, result] of this.results) verdicts[key] = result.verdict;
 					this.verdictsChanged = false;
 				}
-				if (previous.enabled === enabled && previous.catalog === this.catalog && previous.gone === this.gone && previous.hostVersion === this.hostVersion && previous.verdicts === verdicts) return;
+				if (previous.enabled === enabled && previous.catalog === this.catalog && previous.catalogPreview === this.catalogPreview && previous.gone === this.gone && previous.hostVersion === this.hostVersion && previous.verdicts === verdicts) return;
 				this.snapshot = {
 					enabled,
 					catalog: this.catalog,
+					catalogPreview: this.catalogPreview,
 					gone: this.gone,
 					hostVersion: this.hostVersion,
 					verdicts
@@ -10038,7 +10270,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			}, [setSidebarFromTip]);
 			const themeSnap = (0, react.useSyncExternalStore)(props.themeStore.subscribe, props.themeStore.getSnapshot);
 			const compatibility = (0, react.useSyncExternalStore)(discoveryScan.subscribe, discoveryScan.getSnapshot);
-			const { catalog: data, enabled: compatibleWithHost, hostVersion, verdicts: hostCompatibility } = compatibility;
+			const { catalog: data, catalogPreview, enabled: compatibleWithHost, hostVersion, verdicts: hostCompatibility } = compatibility;
 			const [loadError, setLoadError] = (0, react.useState)(null);
 			/**
 			* The host answered 404 on one of the market's own routes (#962).
@@ -11076,6 +11308,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				cancelling,
 				capsOpen,
 				cat,
+				catalogPreview,
 				catalogVersionTip,
 				catsFloorRef,
 				catsOpen,
@@ -12877,24 +13110,25 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		*/
 		/** derived lists and pagination, download and install. */
 		function useMarketInstall(c) {
-			const { blockedNameSet, blockedNames, cat, source, compatibilityDemandOwner, compatibleWithHost, data, favSortDir, favSortField, favTimeRange, favoriteUrlSet, favoriteUrls, hostCompatibility, installed, lang, marketGone, nextRecordId, q, qFavorites, qThemes, refreshInstalled, rememberDrainMarker, repoHints, repoIdentities, scrollToTop, setActivationWarnings, setActivations, setBuildsSkipped, setBusyUrl, setCompatibilityNotice, setConfirming, setDoneUrls, setHostIncompatible, setHotNames, setHotUrls, setInstallError, setMigrationConfirm, setOperationsOpen, setRecords, setReplacing, setRollingBack, sortDir, sortField, statusRef, surface, t, tab, themeSortDir, themeSortField, themeTimeRange, timeRange } = c;
+			const { blockedNameSet, blockedNames, cat, catalogPreview, source, compatibilityDemandOwner, compatibleWithHost, data, favSortDir, favSortField, favTimeRange, favoriteUrlSet, favoriteUrls, hostCompatibility, installed, lang, marketGone, nextRecordId, q, qFavorites, qThemes, refreshInstalled, rememberDrainMarker, repoHints, repoIdentities, scrollToTop, setActivationWarnings, setActivations, setBuildsSkipped, setBusyUrl, setCompatibilityNotice, setConfirming, setDoneUrls, setHostIncompatible, setHotNames, setHotUrls, setInstallError, setMigrationConfirm, setOperationsOpen, setRecords, setReplacing, setRollingBack, sortDir, sortField, statusRef, surface, t, tab, themeSortDir, themeSortField, themeTimeRange, timeRange } = c;
+			const discoverCatalog = data ?? catalogPreview;
 			const pluginsAll = (0, react.useMemo)(() => {
-				if (data === null) return [];
+				if (discoverCatalog === null) return [];
 				const query = {
 					category: cat,
 					source,
 					query: q,
 					lang,
-					categories: data.categories,
+					categories: discoverCatalog.categories,
 					sort: `${sortField}-${sortDir}`,
 					sinceDays: timeRange === "all" ? void 0 : TIME_RANGE_DAYS[timeRange]
 				};
-				return visiblePlugins(data.plugins, {
+				return visiblePlugins(discoverCatalog.plugins, {
 					...query,
 					compatibleWithHost: false
 				});
 			}, [
-				data,
+				discoverCatalog,
 				q,
 				cat,
 				source,
@@ -16679,7 +16913,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		*/
 		/** derived display values and the card/row render helpers. */
 		function useMarketRender(c) {
-			const { activations, askRestore, backupRestored, blockToggleName, blockedNameSet, bodyRef, bootId, busyUrl, cancelling, capsOpen, catalogInstalled, catalogVersionTip, catsOpen, catsSentinel, catsStuck, catsWrapRef, clearStaleFavorites, clearingStale, data, dependencyOnlyNames, doCancel, doGroupAction, doToggle, doUpdate, doUpdateAll, doUseSkin, doneUrls, effectiveDisabledSet, envReady, favoriteStale, favoriteUrlSet, groupOrder, groups, hostCompatibility, hotNames, hotUrls, ignoreUpdateNotices, ignoredUpdateSet, installTimes, installed, installedFiles, installedMenuName, installedSort, installedView, lang, localDescriptions, notes, openInHost, openLightbox, openOperations, pendingBackup, pendingDependencies, pluginMenuUrl, progressCurrent, progressDone, progressLine, progressPct, progressPhase, props, qInstalled, quietUpdateSet, records, refreshNames, reminderBatchUpdatableNames, reminderUpdatableNames, removedCount, removingName, repoHints, repoIdentities, restartNames, restartNoticeDismissed, selfName, setAddPanel, setCapsOpen, setCatsStuck, setCommentsFor, setConfirming, setDeletingGroup, setGroupMenuFor, setInstallError, setInstalledMenuName, setPluginMenuUrl, setRemoveConfirm, setRenamingGroup, setStuckExpanded, setTab, setThemePanel, setThemePick, setVisibleCats, skins, stuckExpanded, surface, t, tab, themeSnap, toggleBlock, toggleFavorite, toggleRestart, toggleUpdateExempt, togglingName, updateCheck, updateExemptSet, updatedNames, updates, updatingAll, updatingName, visibleCats } = c;
+			const { activations, askRestore, backupRestored, blockToggleName, blockedNameSet, bodyRef, bootId, busyUrl, cancelling, capsOpen, catalogInstalled, catalogPreview, catalogVersionTip, catsOpen, catsSentinel, catsStuck, catsWrapRef, clearStaleFavorites, clearingStale, data, dependencyOnlyNames, doCancel, doGroupAction, doToggle, doUpdate, doUpdateAll, doUseSkin, doneUrls, effectiveDisabledSet, envReady, favoriteStale, favoriteUrlSet, groupOrder, groups, hostCompatibility, hotNames, hotUrls, ignoreUpdateNotices, ignoredUpdateSet, installTimes, installed, installedFiles, installedMenuName, installedSort, installedView, lang, localDescriptions, notes, openInHost, openLightbox, openOperations, pendingBackup, pendingDependencies, pluginMenuUrl, progressCurrent, progressDone, progressLine, progressPct, progressPhase, props, qInstalled, quietUpdateSet, records, refreshNames, reminderBatchUpdatableNames, reminderUpdatableNames, removedCount, removingName, repoHints, repoIdentities, restartNames, restartNoticeDismissed, selfName, setAddPanel, setCapsOpen, setCatsStuck, setCommentsFor, setConfirming, setDeletingGroup, setGroupMenuFor, setInstallError, setInstalledMenuName, setPluginMenuUrl, setRemoveConfirm, setRenamingGroup, setStuckExpanded, setTab, setThemePanel, setThemePick, setVisibleCats, skins, stuckExpanded, surface, t, tab, themeSnap, toggleBlock, toggleFavorite, toggleRestart, toggleUpdateExempt, togglingName, updateCheck, updateExemptSet, updatedNames, updates, updatingAll, updatingName, visibleCats } = c;
+			const discoverCatalog = data ?? catalogPreview;
+			const categoryNames = discoverCatalog?.categories;
 			const sessionPendingRestart = doneUrls.length + restartNames.length + removedCount + toggleRestart + (backupRestored ? 1 : 0);
 			/**
 			* Plugins the HOST reports as restart-pending, independent of what this
@@ -17352,7 +17588,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									}),
 									pluginCategories(p).map((category) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 										className: Market_module_css_default.tag,
-										children: data.categories[category] && (data.categories[category][lang] || data.categories[category].en) || category
+										children: categoryNames?.[category]?.[lang] || categoryNames?.[category]?.en || category
 									}, category))
 								]
 							}), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
@@ -17624,7 +17860,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					})]
 				}, "th-" + id);
 			};
-			const categories = data === null ? [] : Object.keys(data.categories);
+			const categories = discoverCatalog === null ? [] : Object.keys(discoverCatalog.categories);
 			(0, react.useLayoutEffect)(() => {
 				setVisibleCats(null);
 			}, [lang, categories.length]);
@@ -17640,7 +17876,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				});
 				observer.observe(el);
 				return () => observer.disconnect();
-			}, [data]);
+			}, [discoverCatalog]);
 			(0, react.useLayoutEffect)(() => {
 				if (visibleCats !== null) return;
 				const el = catsWrapRef.current;
@@ -17652,7 +17888,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				let fits = 0;
 				for (const chip of chips) if (chip.offsetTop < rowTwoTop) fits += 1;
 				setVisibleCats(Math.max(1, fits));
-			}, [visibleCats, data]);
+			}, [visibleCats, discoverCatalog]);
 			(0, react.useEffect)(() => {
 				if (surface === "plugins" || catsSentinel === null || typeof IntersectionObserver === "undefined") return;
 				const observer = new IntersectionObserver(([entry]) => {
@@ -20818,19 +21054,34 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			});
 		}
 		function DiscoverTab({ c }) {
-			const { basePage, bodyRef, cat, categories, catsExpanded, catsStuck, catsWrapRef, changePageSize, compatibleWithHost, currentPage, data, discoverMore, discoverSearchReset, goToPage, hasRecent, hideRecent, hostHiddenCount, hostUnavailableCount, hostVersion, lang, loadCatalog, loadError, loadedHostPackages, pageHostPackages, pagePlugins, pageSize, pluginCard, pluginsAll, pluginsUnblocked, q, recentCollapsed, recentHidden, recentPlugins, recentTile, resetDiscoverSearch, setCat, source, setSource, setCatsOpen, setCatsSentinel, setCompatibleWithHost, setQ, setSortDir, setSortField, setStuckExpanded, setTimeRange, showRecent, sortDir, sortField, surface, t, timeRange, toggleRecentCollapsed, totalPages, visibleCats } = c;
+			const { basePage, bodyRef, cat, catalogPreview, categories, catsExpanded, catsStuck, catsWrapRef, changePageSize, compatibleWithHost, currentPage, data: catalog, discoverMore, discoverSearchReset, goToPage, hasRecent, hideRecent, hostHiddenCount, hostUnavailableCount, hostVersion, lang, loadCatalog, loadError, loadedHostPackages, pageHostPackages, pagePlugins, pageSize, pluginCard, pluginsAll, pluginsUnblocked, q, recentCollapsed, recentHidden, recentPlugins, recentTile, resetDiscoverSearch, setCat, source, setSource, setCatsOpen, setCatsSentinel, setCompatibleWithHost, setQ, setSortDir, setSortField, setStuckExpanded, setTimeRange, showRecent, sortDir, sortField, surface, t, timeRange, toggleRecentCollapsed, totalPages, visibleCats } = c;
+			const data = catalog ?? catalogPreview;
 			const recentRowRef = (0, react.useRef)(null);
 			const failedSources = useFailedSources();
 			const aiSearch = useAiSearch(t);
 			const aiPlugins = (0, react.useMemo)(() => {
-				if (aiSearch.picks === null || data === null) return null;
-				const byUrl = new Map(data.plugins.map((plugin) => [plugin.url, plugin]));
+				if (aiSearch.picks === null || catalog === null) return null;
+				const byUrl = new Map(catalog.plugins.map((plugin) => [plugin.url, plugin]));
 				return aiSearch.picks.flatMap((pick) => {
 					const plugin = byUrl.get(pick.url);
 					return plugin === void 0 ? [] : [plugin];
 				});
-			}, [aiSearch.picks, data]);
-			return loadError !== null || data === null ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(CatalogStatus, { c }) : /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
+			}, [aiSearch.picks, catalog]);
+			return data === null || loadError !== null && catalogPreview === null ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(CatalogStatus, { c }) : /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
+				catalogPreview !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+					className: Market_module_css_default.updateCheckNotice,
+					children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+						role: "status",
+						children: t(loadError !== null ? "catalogInterrupted" : "catalogProgress")
+					}), loadError !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+						variant: "ghost",
+						size: "sm",
+						onClick: () => {
+							loadCatalog();
+						},
+						children: t("loadRetry")
+					})]
+				}),
 				/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", { ref: setCatsSentinel }),
 				/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 					className: Market_module_css_default.stickyHead,
@@ -22563,7 +22814,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		* The modals, panels and toasts the Market section opens on top of its tabs.
 		*/
 		function MarketDialogs({ c }) {
-			const { activations, addPanel, addQuery, addSelected, agentsConfirm, applyGroupTheme, applyRecoveryChoice, backupBusy, blockError, blockErrorDone, blockNotice, blockNoticeDone, busyUrl, capabilityDetail, catalogInstalled, catalogVersionTip, closeNotes, cmdOpen, commentsFor, confirming, data, repoHints, repoIdentities, doAddSelectedMembers, doInstall, doRenameGroup, doRestore, doSourceMigration, doUninstall, doUpdate, effectiveDisabledSet, exportAllSelected, exportError, exportIncludeConfig, exportOpen, exportOptions, exportSelection, exportState, exportToastDone, favoriteError, favoriteErrorDone, findingCompat, gistBusy, groups, hostCompatHeld, hostCompatHeldHours, hostCompatWindowHours, hostIncompatible, installed, installedThemeNames, labelledCheckbox, lang, lightbox, migrationConfirm, notesFor, notesState, openLightbox, pendingBackup, profileName, recovery, recoveryBusy, recoveryKeep, recoveryOpen, removeConfirm, removingName, renamingGroup, renamingValue, replacementOf, restoreBlocked, restoreConfirm, restoreConfirmOpen, runGist, scrollToTop, setAddPanel, setAddQuery, setAddSelected, setAgentsConfirm, setCmdOpen, setCommentsFor, setCompatRetry, setConfirming, setExportIncludeConfig, setExportOpen, setExportSelection, setHostIncompatible, setLightbox, setMigrationConfirm, setRecoveryKeep, setRecoveryOpen, setRemoveConfirm, setRenamingGroup, setRenamingValue, setRestoreBlocked, setRestoreConfirm, setRestoreConfirmOpen, setThemePanel, setThemePick, showTop, specKind, t, themePanel, themePick, toggled, toggledDone, uiLocale, ungroupedNames, updateExemptError, updateExemptErrorDone, updateExemptNotice, updateExemptNoticeDone, updateNotes, updatingName } = c;
+			const { activations, addPanel, addQuery, addSelected, agentsConfirm, applyGroupTheme, applyRecoveryChoice, backupBusy, blockError, blockErrorDone, blockNotice, blockNoticeDone, busyUrl, capabilityDetail, catalogInstalled, catalogPreview, catalogVersionTip, closeNotes, cmdOpen, commentsFor, confirming, data, repoHints, repoIdentities, doAddSelectedMembers, doInstall, doRenameGroup, doRestore, doSourceMigration, doUninstall, doUpdate, effectiveDisabledSet, exportAllSelected, exportError, exportIncludeConfig, exportOpen, exportOptions, exportSelection, exportState, exportToastDone, favoriteError, favoriteErrorDone, findingCompat, gistBusy, groups, hostCompatHeld, hostCompatHeldHours, hostCompatWindowHours, hostIncompatible, installed, installedThemeNames, labelledCheckbox, lang, lightbox, migrationConfirm, notesFor, notesState, openLightbox, pendingBackup, profileName, recovery, recoveryBusy, recoveryKeep, recoveryOpen, removeConfirm, removingName, renamingGroup, renamingValue, replacementOf, restoreBlocked, restoreConfirm, restoreConfirmOpen, runGist, scrollToTop, setAddPanel, setAddQuery, setAddSelected, setAgentsConfirm, setCmdOpen, setCommentsFor, setCompatRetry, setConfirming, setExportIncludeConfig, setExportOpen, setExportSelection, setHostIncompatible, setLightbox, setMigrationConfirm, setRecoveryKeep, setRecoveryOpen, setRemoveConfirm, setRenamingGroup, setRenamingValue, setRestoreBlocked, setRestoreConfirm, setRestoreConfirmOpen, setThemePanel, setThemePick, showTop, specKind, t, themePanel, themePick, toggled, toggledDone, uiLocale, ungroupedNames, updateExemptError, updateExemptErrorDone, updateExemptNotice, updateExemptNoticeDone, updateNotes, updatingName } = c;
+			const categoryNames = (data ?? catalogPreview)?.categories;
 			const confirmingInstalled = confirming !== null && isInstalled(confirming, catalogInstalled, repoIdentities, data?.plugins, repoHints);
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
 				showTop && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {
@@ -22818,7 +23070,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									}),
 									pluginCategories(confirming).map((category) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 										className: Market_module_css_default.tag,
-										children: data.categories[category] && (data.categories[category][lang] || data.categories[category].en) || category
+										children: categoryNames?.[category]?.[lang] || categoryNames?.[category]?.en || category
 									}, category))
 								]
 							}),

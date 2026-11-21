@@ -35,7 +35,7 @@ type MarketDialogsCtx = { props: MarketSectionProps }
   & Pick<MarketStateCtx,
     'activations' | 'addPanel' | 'addQuery' | 'addSelected' | 'agentsConfirm' | 'backupBusy' |
     'blockError' | 'blockErrorDone' | 'blockNotice' | 'blockNoticeDone' | 'busyUrl' |
-    'catalogVersionTip' | 'cmdOpen' | 'commentsFor' | 'confirming' | 'data' | 'exportError' | 'repoHints' | 'repoIdentities' |
+    'catalogPreview' | 'catalogVersionTip' | 'cmdOpen' | 'commentsFor' | 'confirming' | 'data' | 'exportError' | 'repoHints' | 'repoIdentities' |
     'exportIncludeConfig' | 'exportOpen' | 'exportSelection' | 'exportState' | 'exportToastDone' |
     'favoriteError' | 'favoriteErrorDone' | 'findingCompat' | 'gistBusy' | 'groups' |
     'hostCompatHeld' | 'hostCompatHeldHours' | 'hostCompatWindowHours' | 'hostIncompatible' |
@@ -66,7 +66,7 @@ export function MarketDialogs({ c }: { c: MarketDialogsCtx }) {
   const {
     activations, addPanel, addQuery, addSelected, agentsConfirm, applyGroupTheme,
     applyRecoveryChoice, backupBusy, blockError, blockErrorDone, blockNotice, blockNoticeDone,
-    busyUrl, capabilityDetail, catalogInstalled, catalogVersionTip, closeNotes, cmdOpen, commentsFor, confirming, data,
+    busyUrl, capabilityDetail, catalogInstalled, catalogPreview, catalogVersionTip, closeNotes, cmdOpen, commentsFor, confirming, data,
     repoHints, repoIdentities,
     doAddSelectedMembers, doInstall, doRenameGroup, doRestore, doSourceMigration, doUninstall,
     doUpdate, effectiveDisabledSet, exportAllSelected, exportError, exportIncludeConfig, exportOpen,
@@ -84,6 +84,7 @@ export function MarketDialogs({ c }: { c: MarketDialogsCtx }) {
     themePanel, themePick, toggled, toggledDone, uiLocale, ungroupedNames, updateExemptError,
     updateExemptErrorDone, updateExemptNotice, updateExemptNoticeDone, updateNotes, updatingName,
   } = c
+  const categoryNames = (data ?? catalogPreview)?.categories
   // The card title opens this same dialog as a detail view. For a plugin that
   // is already installed it is only that: no "Install X?", no install button.
   const confirmingInstalled = confirming !== null
@@ -283,7 +284,7 @@ export function MarketDialogs({ c }: { c: MarketDialogsCtx }) {
               <PinnedNote plugin={confirming} t={t} />
               {pluginCategories(confirming).map(category => (
                 <span key={category} className={css.tag}>
-                  {(data!.categories[category] && (data!.categories[category]![lang] || data!.categories[category]!.en)) || category}
+                  {categoryNames?.[category]?.[lang] || categoryNames?.[category]?.en || category}
                 </span>
               ))}
             </div>

@@ -30,7 +30,7 @@ import type { MarketSyncCtx } from './market-sync.ts'
 
 type MarketInstallIn = { props: MarketSectionProps }
   & Pick<MarketStateCtx,
-    'blockedNames' | 'cat' | 'source' | 'compatibilityDemandOwner' | 'compatibleWithHost' | 'data' |
+    'blockedNames' | 'cat' | 'catalogPreview' | 'source' | 'compatibilityDemandOwner' | 'compatibleWithHost' | 'data' |
     'favSortDir' | 'favSortField' | 'favTimeRange' | 'favoriteUrls' | 'hostCompatibility' |
     'installed' | 'lang' | 'marketGone' | 'nextRecordId' | 'q' | 'qFavorites' | 'qThemes' |
     'refreshInstalled' | 'repoHints' | 'repoIdentities' | 'setActivationWarnings' | 'setActivations' |
@@ -45,7 +45,7 @@ type MarketInstallIn = { props: MarketSectionProps }
 /** derived lists and pagination, download and install. */
 export function useMarketInstall(c: MarketInstallIn) {
   const {
-    blockedNameSet, blockedNames, cat, source, compatibilityDemandOwner, compatibleWithHost, data,
+    blockedNameSet, blockedNames, cat, catalogPreview, source, compatibilityDemandOwner, compatibleWithHost, data,
     favSortDir, favSortField, favTimeRange, favoriteUrlSet, favoriteUrls, hostCompatibility,
     installed, lang, marketGone, nextRecordId, q, qFavorites, qThemes, refreshInstalled,
     rememberDrainMarker, repoHints, repoIdentities, scrollToTop, setActivationWarnings,
@@ -63,16 +63,17 @@ export function useMarketInstall(c: MarketInstallIn) {
   // scan below. Measured against a 9.7k-entry catalog: 433 ms of main thread
   // per arrival, 227–433 ms per scroll step (#1097). Screening by host is a
   // map lookup per row, so it runs after that scan instead of feeding it.
+  const discoverCatalog = data ?? catalogPreview
   const pluginsAll = useMemo(() => {
-    if (data === null) return [] as RegistryPlugin[]
+    if (discoverCatalog === null) return [] as RegistryPlugin[]
     const query = {
-      category: cat, source, query: q, lang, categories: data.categories,
+      category: cat, source, query: q, lang, categories: discoverCatalog.categories,
       sort: `${sortField}-${sortDir}` as `${typeof sortField}-${typeof sortDir}`,
       sinceDays: timeRange === 'all' ? undefined : TIME_RANGE_DAYS[timeRange],
     }
-    return visiblePlugins(data.plugins, { ...query, compatibleWithHost: false })
+    return visiblePlugins(discoverCatalog.plugins, { ...query, compatibleWithHost: false })
   },
-    [data, q, cat, source, lang, sortField, sortDir, timeRange])
+    [discoverCatalog, q, cat, source, lang, sortField, sortDir, timeRange])
   // One plugin can be stored under the installed name or the catalog name.
   // Both have to hide the card and skip Update all (#657).
   // With nothing blocked — the default — the answer is false for every entry,
