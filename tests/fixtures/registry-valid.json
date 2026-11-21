@@ -1,0 +1,40 @@
+{
+  "updated": "2026-01-01",
+  "count": 3,
+  "categories": { "tool": { "en": "Tools" } },
+  "plugins": [
+    {
+      "name": "notifier",
+      "owner": "example",
+      "url": "https://github.com/example/notifier",
+      "category": "tool",
+      "npm": "@example/notifier",
+      "page": "https://awesome-dsh-plugin.com/p/example/notifier/",
+      "description": { "en": "Notifications", "zh": "通知" },
+      "install": "dsh plugin --profile web add @example/notifier",
+      "added": "2026-01-01"
+    },
+    {
+      "name": "formatter",
+      "owner": "example",
+      "url": "https://github.com/example/tools/tree/main/plugins/formatter",
+      "category": "tool",
+      "npm": null,
+      "page": "https://awesome-dsh-plugin.com/p/example/tools/formatter/",
+      "description": { "en": "Formatting", "zh": "格式化" },
+      "install": "dsh plugin --profile web add https://github.com/example/tools/releases/download/v1.0.0/formatter.tgz",
+      "added": "2026-01-01"
+    },
+    {
+      "name": "linter",
+      "owner": "example",
+      "url": "https://github.com/example/tools/tree/main/plugins/linter",
+      "category": "tool",
+      "npm": null,
+      "page": "https://awesome-dsh-plugin.com/p/example/tools/linter/",
+      "description": { "en": "Linting", "zh": "静态检查" },
+      "install": "dsh plugin --profile web add https://github.com/example/tools/releases/download/v1.0.0/linter.tgz",
+      "added": "2026-01-01"
+    }
+  ]
+}

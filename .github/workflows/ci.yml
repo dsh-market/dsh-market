@@ -31,7 +31,7 @@ jobs:
           # blocks its own retirement — which is how this one first fired,
           # on the PR deleting the file it was written to protect.
           if git diff --name-only --diff-filter=AM "$BASE" "$HEAD" | grep -qx 'data/registry-snapshot.json'; then
-            echo "::error file=data/registry-snapshot.json::This repository does not carry a copy of the plugin catalog any more (#545). The market reads the live catalog, the site build downloads its own, and the merge gate validates the live one — so a file added here is read by nothing and goes stale immediately, while looking enough like the source of truth to mislead the next person. To list a plugin, add it to https://github.com/awesome-dsh-plugin/awesome-dsh-plugin."
+            echo "::error file=data/registry-snapshot.json::The market reads the published catalog and Site health validates it. A committed copy goes stale (#545). To list a plugin, add it to https://github.com/awesome-dsh-plugin/awesome-dsh-plugin."
             exit 1
           fi
           echo "no committed catalog copy"
@@ -80,11 +80,10 @@ jobs:
           echo "client/ matches src/client"
       - run: npm test
       - run: node scripts/preflight.mjs
-      - run: node scripts/validate-registry.mjs
+      - name: Validate the registry fixture
+        run: node scripts/validate-registry.mjs
         env:
-          # Excuses only the listed (entry, code) pairs in the script.
-          # A new catalog error still fails the merge. Local drafts (no env) fail hard.
-          DSHM_REGISTRY_ADVISORY: '1'
+          DSHM_REGISTRY_FILE: tests/fixtures/registry-valid.json
       - run: node scripts/smoke-spawn.mjs
 
   # Real-pnpm matrix (9/10/11/12 via npx) pinning the failure signatures behind

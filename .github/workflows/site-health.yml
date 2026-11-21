@@ -47,3 +47,19 @@ jobs:
             --live https://dshmarket.com/browse/ \
             --catalog-url https://awesome-dsh-plugin.com/plugins.json \
             --tolerance ${{ inputs.tolerance || 300 }}
+
+  catalog:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Validate the live plugin catalog
+        env:
+          DSHM_REGISTRY_FILE: ${{ runner.temp }}/plugins.json
+        shell: bash
+        run: |
+          curl --fail --silent --show-error --location --retry 2 --max-time 60 \
+            --output "$DSHM_REGISTRY_FILE" https://awesome-dsh-plugin.com/plugins.json
+          node scripts/validate-registry.mjs
