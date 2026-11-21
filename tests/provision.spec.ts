@@ -6,6 +6,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
+import { tmpdir } from 'node:os'
 import { dirname } from 'node:path'
 import { Readable } from 'node:stream'
 
@@ -140,5 +141,89 @@ describe('provisionPnpm (#149)', () => {
     expect(hint).toContain('PNPM_HOME')
     // And it must not misfile itself as the npm-missing case.
     expect(hint).not.toContain('找不到 npm/corepack')
+  })
+
+  it('does not report npm as missing when npm started and died in getcwd (#1270)', async () => {
+    // Verbatim shape from the reported log: corepack is genuinely absent
+    // (exit=127), and npm RAN and then failed to read the current directory,
+    // which the host had deleted. Both outputs carry the word `ENOENT`, and
+    // the `ENOENT && ENOENT` test read that as one fact — two unrelated
+    // meanings on one token.
+    const { provisionHint } = await import('../src/dsh-cli.ts')
+    const hint = provisionHint(
+      'corepack enable: exit=127 spawn corepack ENOENT',
+      "npm error errno: -2, code: 'ENOENT', syscall: 'uv_cwd'\nnpm error Node.js v26.13.1",
+      true,
+    )
+    expect(hint).toBeDefined()
+    // npm is on disk, so telling this user it is missing sends them to
+    // install a pnpm and abandon their supervisor over a problem they do not
+    // have.
+    expect(hint).not.toContain('找不到 npm/corepack')
+    // The fact that explains the failure has to survive into the hint.
+    expect(hint).toContain('uv_cwd')
+  })
+
+  it('still names the toolchain when a spawn never found its command (#32)', async () => {
+    // What the ENOENT match was written for: neither command could be
+    // spawned at all, so "this machine has no npm/corepack" is true and the
+    // PATH advice applies.
+    const { provisionHint } = await import('../src/dsh-cli.ts')
+    expect(provisionHint('spawn corepack ENOENT', 'spawn npm ENOENT', true)).toContain('找不到 npm/corepack')
+  })
+
+  it('inherits the working directory while it is still readable (#1270)', async () => {
+    // Any cwd it can read has to stay the child's cwd: npm reads a
+    // per-project `.npmrc` from there, and quietly moving that lookup is a
+    // behaviour change no part of this fix needs.
+    const { provisionCwd } = await import('../src/dsh-cli.ts')
+    expect(provisionCwd()).toBeUndefined()
+  })
+
+  it('falls back to a directory that exists when the working directory is gone (#1270)', async () => {
+    // `process.cwd()` throws rather than returning a path that no longer
+    // exists, so the check has to be the call itself.
+    const { provisionCwd } = await import('../src/dsh-cli.ts')
+    const original = process.cwd
+    process.cwd = () => {
+      throw Object.assign(new Error('ENOENT: no such file or directory, uv_cwd'), {
+        code: 'ENOENT',
+        syscall: 'uv_cwd',
+      })
+    }
+    try {
+      expect(provisionCwd()).toBe(tmpdir())
+    } finally {
+      process.cwd = original
+    }
+  })
+
+  it('spawns the provisioning commands where they can actually start (#1270)', async () => {
+    // A deleted boot directory is inherited by every child that is not given
+    // a cwd, and npm dies in getcwd() before running a line of its own logic.
+    // Neither `corepack enable` nor `npm i -g` reads project files, so a
+    // known-live directory turns "setup failed" into "pnpm installed".
+    const seen: (string | undefined)[] = []
+    childProcess.spawn.mockImplementation((file: string, args: string[], options: { cwd?: string }) => {
+      const command = commandOf(file, args)
+      seen.push(options.cwd)
+      if (command.startsWith('corepack')) return fakeChild(1, 'spawn corepack ENOENT')
+      if (command.startsWith('npm install')) return fakeChild(1, "code: 'ENOENT', syscall: 'uv_cwd'")
+      return fakeChild(1)
+    })
+    const original = process.cwd
+    process.cwd = () => {
+      throw Object.assign(new Error('ENOENT: no such file or directory, uv_cwd'), {
+        code: 'ENOENT',
+        syscall: 'uv_cwd',
+      })
+    }
+    try {
+      const { provisionPnpm } = await import('../src/dsh-cli.ts')
+      await provisionPnpm()
+    } finally {
+      process.cwd = original
+    }
+    expect(seen).toContain(tmpdir())
   })
 })

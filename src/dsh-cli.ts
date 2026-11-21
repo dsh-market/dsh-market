@@ -10,7 +10,7 @@
 import { spawn, spawnSync } from 'node:child_process'
 import type { ChildProcess, SpawnOptions } from 'node:child_process'
 import { existsSync, readFileSync, rmSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { logEvent } from './log.ts'
 import { createProgressTracker, type ProgressPhase } from './ndjson.ts'
@@ -977,6 +977,34 @@ export function probePnpm(): Promise<boolean> {
   return probeHostPackageManager().then(ready => ready ? true : probePnpmOnPath())
 }
 
+/**
+ * The cwd to hand a provisioning child.
+ *
+ * `corepack enable`, `npm i -g` and `npm prefix -g` read no project files, so
+ * they gain nothing from inheriting this process's directory — and a host
+ * whose boot directory was deleted loses everything to it: the child dies
+ * inside `getcwd()` before running a line of its own logic, which is how a
+ * one-click setup ended up reporting `npm -g: exit=7` with `syscall:
+ * 'uv_cwd'` (#1270).
+ *
+ * A readable directory is still inherited unchanged, so a healthy machine
+ * behaves exactly as before, including the per-project `.npmrc` npm would
+ * read from it. Only an unreadable one is replaced, and then with a directory
+ * that exists by definition.
+ *
+ * `process.cwd()` throws instead of returning a stale path, so the call
+ * itself is the test.
+ * @returns `undefined` to inherit, or a directory that is known to exist.
+ */
+export function provisionCwd(): string | undefined {
+  try {
+    process.cwd()
+    return undefined
+  } catch {
+    return tmpdir()
+  }
+}
+
 /** Probe `pnpm --version` on PATH. */
 function probePnpmOnPath(): Promise<boolean> {
   if (pnpmReady) return Promise.resolve(true)
@@ -1007,6 +1035,7 @@ function runQuiet(file: string, args: string[], timeoutMs: number): Promise<{ co
       env: spawnEnv(),
       stdio: ['ignore', 'pipe', 'pipe'],
       viaShell: winCmdShim,
+      cwd: provisionCwd(),
     })
     const output = createOutputBuffer(8 * 1024)
     const timer = setTimeout(() => killChild(child), timeoutMs)
@@ -1125,11 +1154,29 @@ export function provisionHint(
   npmFound = true,
   probeFailure: { kind: 'missing' | 'failed'; output: string } | null = null,
 ): string | undefined {
+  // npm started and then could not read the directory it was started in: the
+  // host's own cwd had been deleted, so `getcwd()` failed before npm reached
+  // any of its logic (#1270). Nothing is missing and nothing is
+  // misconfigured, which makes every PATH-shaped hint below — install pnpm,
+  // start from a terminal, set PNPM_HOME — advice for a problem this user
+  // does not have. `provisionCwd` now keeps a dead directory from being
+  // inherited in the first place, so reaching this means the cwd went away
+  // after the spawn; naming it is still the only accurate thing to say.
+  if (/syscall:\s*['"]uv_cwd['"]/.test(`${corepackOutput}\n${npmOutput}`)) {
+    return '这台机器上 dsh 进程启动时的工作目录已经被删掉了，所以 npm 还没跑到自己的逻辑就退了（`syscall: \'uv_cwd\'` 是取当前目录失败，不是找不到文件）。这不是 pnpm 的问题，也不是 PATH 的问题，装什么都修不好。请从一个存在的目录重启 dsh：launchd / systemd 托管的部署把工作目录指到一个确定存在的目录（例如 /tmp），或者先在终端 cd 到任意存在的目录再启动 / The directory this dsh process was started in no longer exists, so npm exited inside `getcwd()` before reaching any of its own logic (`syscall: \'uv_cwd\'` — reading the current directory failed, nothing is missing on disk). This is not a pnpm problem and not a PATH problem, and no install can fix it. Restart dsh from a directory that exists: for launchd/systemd deployments point the working directory at one that does (e.g. /tmp), or `cd` somewhere real before starting it'
+  }
   // Node itself unreachable: pointing the user back at this same button
   // would be a dead end (#32). `npmFound` answers this from disk, so it
   // holds on a Windows console that reports the same thing in a codepage we
-  // cannot read (#167); the ENOENT match stays for callers without it.
-  if (!npmFound || (/ENOENT/.test(corepackOutput) && /ENOENT/.test(npmOutput))) {
+  // cannot read (#167).
+  //
+  // The ENOENT pair stays as a fallback for callers that do not pass
+  // `npmFound`, but it now has to be a spawn-level miss — `spawn npm ENOENT`,
+  // the shape a command that was never found produces. Matching the bare
+  // word is how a genuine `spawn corepack ENOENT` got ANDed with npm's
+  // `uv_cwd` ENOENT: two unrelated meanings on one token (#1270).
+  const spawnMissed = (output: string, tool: string): boolean => output.includes(`spawn ${tool} ENOENT`)
+  if (!npmFound || (spawnMissed(corepackOutput, 'corepack') && spawnMissed(npmOutput, 'npm'))) {
     // The searched list is spelled out because the previous wording named
     // only the Node directory, which was both incomplete and unhelpful: a
     // user who HAD installed pnpm could not tell whether we looked in the
