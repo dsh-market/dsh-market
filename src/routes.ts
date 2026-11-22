@@ -23,6 +23,7 @@ import {
   catalogConfig, entryAllowed, MAX_USER_CATALOGS, parseCatalogInput, probeCatalog, setUserCatalogs, userCatalogId, type SourceInfo,
 } from './catalogs.ts'
 import { getPolicy } from './policy.ts'
+import { setNpmrcProfileDir } from './npmrc.ts'
 import { settingsNamespaceState } from './settings.ts'
 import {
   buildEnvFromUnknown, cleanHotDir, forgetInstalled, hotMount, hotMountFailure, hotUnmount, listHotMounts, listLiveHotMounts,
@@ -761,6 +762,8 @@ export function mountMarketRoutes(
   const marketState = readMarketState(activeProfileDir)
   setCustomGithubProxy(marketState.githubProxy ?? null)
   setUserCatalogs(marketState.userCatalogs ?? [])
+  // The profile's own .npmrc is the first place a private registry is named.
+  setNpmrcProfileDir(activeProfileDir)
   const disabled = marketState.disabled
   /**
    * The saved answer to "which doors into the market are open" (#1015).

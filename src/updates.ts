@@ -12,6 +12,7 @@ import { DIST_TAG, type Channel } from './channels.ts'
 import { resolveHeadCommit } from './accelerate.ts'
 import { inProbe } from './probe-context.ts'
 import { marketFetch } from './net.ts'
+import { registryFor } from './npmrc.ts'
 import { publishedReleaseUpdate, type CatalogReleaseSource } from './release-updates.ts'
 import { activeRegion, githubRoutesFor, rememberGithubRoute, throughProxy, type Region } from './regions.ts'
 import type { GitToNpmMigration, NpmRenameMigration } from './source-migration.ts'
@@ -306,7 +307,11 @@ export function setUpdateRegistry(base: string): void {
 
 /** A registry URL for `path`, on whichever registry is currently in force. */
 function npmUrl(path: string): string {
-  return `${registryBase}/${path}`
+  // The first segment is the encoded package name. A scope an `.npmrc` routes
+  // to a private registry is asked there, not on the region's registry.
+  let name = ''
+  try { name = decodeURIComponent(path.split('/')[0] ?? '') } catch { /* leave the default registry */ }
+  return `${name === '' ? registryBase : registryFor(name, registryBase)}/${path}`
 }
 
 type ReleaseAgeExclusions = { exemptPackage: boolean; exemptVersions: Set<string> }
