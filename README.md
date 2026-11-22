@@ -240,6 +240,19 @@ DSHM_REGISTRY_URL=https://your-mirror.example/plugins.json dsh web
 
 </details>
 
+## Enterprise
+
+For teams that want their own plugins next to the public catalog, or need the market locked down. All optional; with nothing configured the market behaves as before.
+
+- **Private catalogs**: add your own `plugins.json` by URL or file. Its plugins show on Discover with a source tag, and AI search and recommendations include them
+- **Private npm**: Verdaccio, Nexus, Artifactory and GitHub Packages through the profile's `.npmrc`; updates and changelogs work for private packages too
+- **Internal Git**: install from GitLab, Gitea and other Git hosts over https or ssh
+- **Offline bundles**: pack a catalog with its plugin files and import it on machines without npm access
+- **Policy file**: an administrator decides which catalogs load, what may be installed, which versions are pinned, and turns off telemetry, comments or outside images
+- **Same safety boundary**: only entries from loaded catalogs can be installed, and tokens never leave the server
+
+Setup, the full `policy.json` reference and examples: [ENTERPRISE.md](ENTERPRISE.md).
+
 ## Friends
 
 ### DSH Desktop (dataelement)

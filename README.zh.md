@@ -231,6 +231,19 @@ DSHM_REGISTRY_URL=https://your-mirror.example/plugins.json dsh web
 
 </details>
 
+## 企业
+
+适合想在公共目录之外加上自己的插件、或需要统一管控市场的团队。全部可选，什么都不配置时市场和以前一样。
+
+- **私有目录**：用 URL 或本地文件加上你们自己的 `plugins.json`，插件出现在「发现」页并标出来源，AI 搜索和推荐也会算进去
+- **私有 npm**：通过 profile 的 `.npmrc` 支持 Verdaccio、Nexus、Artifactory、GitHub Packages，私有包同样能查更新、看更新日志
+- **内网 Git**：从 GitLab、Gitea 等通过 https 或 ssh 安装
+- **离线包**：把目录和插件文件打成一个包，在访问不了 npm 的机器上导入安装
+- **策略文件**：管理员决定加载哪些目录、允许装什么、固定哪些版本，以及关闭遥测、评论或外部图片
+- **安全边界不变**：只能安装已加载目录里的插件，token 不会离开服务端
+
+配置方法、`policy.json` 完整说明和示例见 [ENTERPRISE.zh.md](ENTERPRISE.zh.md)。
+
 ## 友情链接
 
 ### DSH Desktop（dataelement）
