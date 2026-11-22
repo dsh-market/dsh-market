@@ -25,14 +25,15 @@
 
 import { createHash } from 'node:crypto'
 import { readFileSync, statSync } from 'node:fs'
-import { basename, extname, isAbsolute } from 'node:path'
+import { basename, dirname, extname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { BODY_STALL_TIMEOUT_MS, HEADERS_TIMEOUT_MS, readBodyWhileProgressing } from './body-progress.ts'
 import { expandHomePath } from './home-paths.ts'
 import { logEvent } from './log.ts'
 import { marketFetch } from './net.ts'
+import { isInsideOfflineRoot, resolveBundleFile } from './offline.ts'
 import {
-  asLabel, CATALOG_ID_RE, expandEnv, getPolicy, globMatch, PUBLIC_SOURCE_ID, type LocalizedLabel, type Policy,
+  asLabel, CATALOG_ID_RE, expandEnv, getPolicy, globMatch, pinnedVersion, PUBLIC_SOURCE_ID, type LocalizedLabel, type Policy,
 } from './policy.ts'
 import type { Registry, RegistryPlugin } from './registry.ts'
 
@@ -69,6 +70,8 @@ export interface SourceInfo {
   error?: SourceError
   /** Set by the organization: the user cannot remove or switch it. */
   locked: boolean
+  /** Its entries install from package files shipped with it, not from a registry. */
+  offline?: true
 }
 
 /** The public catalog's label, as plugin cards and the source list show it. */
@@ -151,14 +154,14 @@ export function catalogConfig(): CatalogConfig {
       if (!taken.has(entry.id)) extras.push(userSource(entry))
     }
   }
-  const active = extras.length > 0 || !policy.publicCatalog || policy.allow !== null
+  const active = extras.length > 0 || !policy.publicCatalog || policy.allow !== null || Object.keys(policy.pins).length > 0
   return {
     policy,
     publicEnabled: policy.publicCatalog,
     extras,
     active,
     signature: JSON.stringify([
-      policy.publicCatalog, policy.allow,
+      policy.publicCatalog, policy.allow, policy.pins,
       extras.map(source => [source.id, source.url ?? null, source.file ?? null, source.headers]),
     ]),
   }
@@ -227,6 +230,7 @@ interface Cached {
   registry: Registry
   label: LocalizedLabel | null
   skipped: number
+  offline: boolean
 }
 
 const cache = new Map<string, Cached>()
@@ -237,8 +241,36 @@ export function forgetExtraCatalogs(): void {
   cache.clear()
 }
 
+/**
+ * A git source an entry may install from, as pnpm's spec, or null.
+ *
+ * https and ssh remotes (plus plain http for hosts that only speak it), an
+ * optional `#ref`. A password in the address is refused: a catalog is shared
+ * text, and a secret does not belong in it. ssh keys are the machine's own.
+ */
+export function normalizeGitSpec(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const text = value.trim()
+  const ref = '(?:#[A-Za-z0-9][A-Za-z0-9._/@^~+-]{0,120})?'
+  let spec: string | null = null
+  if (new RegExp(`^git\\+(?:https?|ssh)://[^\\s#@:/]+(?::\\d+)?(?:/[^\\s#]*)?${ref}$`, 'u').test(text.replace(/\/\/[^\s/@]*@/u, '//'))) spec = text
+  else if (new RegExp(`^(?:https?|ssh)://[^\\s#]+\\.git${ref}$`, 'u').test(text.replace(/\/\/[^\s/@]*@/u, '//'))) spec = `git+${text}`
+  else {
+    const scp = new RegExp(`^([A-Za-z0-9._-]+)@([A-Za-z0-9][A-Za-z0-9.-]*):([^\\s#]+)(${ref})$`, 'u').exec(text)
+    if (scp !== null) spec = `git+ssh://${scp[1]!}@${scp[2]!}/${scp[3]!}${scp[4] ?? ''}`
+  }
+  if (spec === null) return null
+  try {
+    const url = new URL(spec.replace(/^git\+/u, '').replace(/#.*$/u, ''))
+    if (url.password !== '' || (url.protocol !== 'ssh:' && url.username !== '')) return null
+    // A host that starts with a dash would be read as an option by git.
+    if (!/^[A-Za-z0-9[]/u.test(url.hostname)) return null
+  } catch { return null }
+  return spec
+}
+
 /** Entries a private catalog may carry, made safe to hand to the rest of the market. */
-function cleanEntries(value: unknown): { plugins: RegistryPlugin[]; skipped: number; categories: Record<string, Record<string, string>>; updated: string; label: LocalizedLabel | null } {
+function cleanEntries(value: unknown, baseDir?: string): { plugins: RegistryPlugin[]; skipped: number; categories: Record<string, Record<string, string>>; updated: string; label: LocalizedLabel | null } {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new SourceFailure('invalid', 'not a catalog document')
   const doc = value as Record<string, unknown>
   if (!Array.isArray(doc.plugins)) throw new SourceFailure('invalid', 'no "plugins" list')
@@ -261,7 +293,23 @@ function cleanEntries(value: unknown): { plugins: RegistryPlugin[]; skipped: num
         : {}
     // A catalog cannot claim to be another source: the market stamps `source`
     // itself after the merge, so a stray one is dropped here.
-    const { source: _claimed, ...rest } = entry as Record<string, unknown> & { source?: unknown }
+    const {
+      source: _claimed, offlineTarball: _offline, pinned: _pinned, git: _git, tarball: declaredTarball, screenshots: _shots, ...rest
+    } = entry as Record<string, unknown>
+    // A package file that ships with the catalog: resolved here, once, against
+    // the catalog's own directory, and kept as an absolute path the install
+    // reads. The request never names a path; a bad one skips the entry.
+    let offlineTarball: string | undefined
+    if (typeof declaredTarball === 'string' && baseDir !== undefined && !/^https?:/iu.test(declaredTarball)) {
+      const resolved = resolveBundleFile(baseDir, declaredTarball)
+      if (resolved === null) { skipped += 1; continue }
+      offlineTarball = resolved
+    }
+    const git = normalizeGitSpec(entry.git)
+    if (entry.git !== undefined && git === null) { skipped += 1; continue }
+    const screenshots = Array.isArray(entry.screenshots)
+      ? entry.screenshots.filter((item): item is string => typeof item === 'string' && /^https:\/\//iu.test(item)).slice(0, 6)
+      : []
     plugins.push({
       ...rest,
       name,
@@ -272,6 +320,10 @@ function cleanEntries(value: unknown): { plugins: RegistryPlugin[]; skipped: num
       npm,
       install: typeof entry.install === 'string' && entry.install !== '' ? entry.install : npm ?? name,
       added: typeof entry.added === 'string' ? entry.added : today,
+      ...(typeof declaredTarball === 'string' && offlineTarball === undefined ? { tarball: declaredTarball } : {}),
+      ...(offlineTarball === undefined ? {} : { offlineTarball }),
+      ...(git === null ? {} : { git }),
+      ...(screenshots.length === 0 ? {} : { screenshots }),
     } as RegistryPlugin)
   }
   const categories: Record<string, Record<string, string>> = {}
@@ -318,18 +370,22 @@ async function readSource(
   const previous = fresh ? undefined : cache.get(source.id)
 
   if (source.file !== undefined) {
+    // A directory is an unpacked bundle: its catalog is `plugins.json` inside.
+    const file = (() => {
+      try { return statSync(source.file).isDirectory() ? join(source.file, 'plugins.json') : source.file } catch { return source.file }
+    })()
     let info
-    try { info = statSync(source.file) } catch (error) {
+    try { info = statSync(file) } catch (error) {
       throw new SourceFailure('file', (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'not found' : error instanceof Error ? error.message : String(error))
     }
     const fileStamp = `${String(info.mtimeMs)}:${String(info.size)}`
-    const stamp = `file:${source.file}`
+    const stamp = `file:${file}`
     if (previous !== undefined && previous.stamp === stamp && previous.fileStamp === fileStamp) return { cached: previous, secrets }
     let text: string
-    try { text = readFileSync(source.file, 'utf8') } catch (error) {
+    try { text = readFileSync(file, 'utf8') } catch (error) {
       throw new SourceFailure('file', error instanceof Error ? error.message : String(error))
     }
-    return { cached: remember(source, stamp, null, null, fileStamp, text, previous), secrets }
+    return { cached: remember(source, stamp, null, null, fileStamp, text, previous, dirname(file)), secrets }
   }
 
   const url = source.url!
@@ -360,7 +416,7 @@ async function readSource(
 
 function remember(
   source: ExtraSource, stamp: string, etag: string | null, modified: string | null, fileStamp: string | null,
-  text: string, previous: Cached | undefined,
+  text: string, previous: Cached | undefined, baseDir?: string,
 ): Cached {
   const digest = digestOf(text)
   // The same content is the same object: nothing downstream (the discovery
@@ -374,7 +430,7 @@ function remember(
   try { parsed = JSON.parse(text) } catch {
     throw new SourceFailure('invalid', 'not JSON')
   }
-  const clean = cleanEntries(parsed)
+  const clean = cleanEntries(parsed, baseDir)
   if (clean.plugins.length === 0) throw new SourceFailure('empty', clean.skipped > 0 ? `${String(clean.skipped)} unusable entries` : '')
   const registry: Registry = {
     updated: clean.updated,
@@ -382,7 +438,7 @@ function remember(
     categories: clean.categories,
     plugins: clean.plugins,
   }
-  const cached: Cached = { stamp, etag, modified, fileStamp, digest, registry, label: clean.label, skipped: clean.skipped }
+  const cached: Cached = { stamp, etag, modified, fileStamp, digest, registry, label: clean.label, skipped: clean.skipped, offline: clean.plugins.some(plugin => plugin.offlineTarball !== undefined) }
   cache.set(source.id, cached)
   return cached
 }
@@ -407,7 +463,7 @@ export async function loadExtra(source: ExtraSource, options: { fresh?: boolean;
     // A user's catalog may name itself; the organization's label always wins.
     const label = source.kind === 'user' && cached.label !== null ? cached.label : source.label
     return {
-      info: { ...base, label, status: 'ok', count: cached.registry.plugins.length, skipped: cached.skipped },
+      info: { ...base, label, status: 'ok', count: cached.registry.plugins.length, skipped: cached.skipped, ...(cached.offline ? { offline: true as const } : {}) },
       registry: cached.registry,
     }
   } catch (error) {
@@ -441,6 +497,8 @@ export interface MergeInput {
   /** In priority order: policy catalogs, then the user's. */
   extras: readonly { info: SourceInfo; registry: Registry | null }[]
   allow: readonly string[] | null
+  /** The administrator's exact-version pins by npm package name. */
+  pins?: Readonly<Record<string, string>>
 }
 
 /**
@@ -454,7 +512,7 @@ export interface MergeInput {
  *   describes shows under its own id.
  * - `source` is stamped here on every private entry, and removed from public
  *   ones, so a catalog cannot pass itself off as another source.
- * - `allow` filters the union.
+ * - `allow` filters the union; `pins` fix the version an entry shows and installs.
  */
 export function mergeSources(input: MergeInput): Registry {
   const taken = new Set<string>()
@@ -486,7 +544,12 @@ export function mergeSources(input: MergeInput): Registry {
   for (const { registry } of input.extras) {
     for (const [id, label] of Object.entries(registry?.categories ?? {})) categories[id] ??= label
   }
-  const plugins = [...merged, ...publicPlugins].filter(plugin => entryAllowed(plugin, input.allow))
+  const pins = input.pins ?? {}
+  const plugins = [...merged, ...publicPlugins].filter(plugin => entryAllowed(plugin, input.allow)).map(plugin => {
+    const pin = typeof plugin.npm === 'string' && Object.keys(pins).length > 0 ? pinnedVersion(plugin.npm, { pins } as Policy) : undefined
+    // A pinned entry shows the pinned version, and says why.
+    return pin === undefined ? plugin : { ...plugin, version: pin, pinned: pin }
+  })
   for (const plugin of plugins) {
     const ids = Array.isArray(plugin.category) ? plugin.category : [plugin.category]
     for (const id of ids) categories[id] ??= { zh: id, en: id }

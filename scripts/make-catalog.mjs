@@ -152,6 +152,9 @@ export async function buildCatalog(input, options = {}) {
       npm,
       install: npm ?? display,
       added: typeof raw.added === 'string' ? raw.added : today,
+      // An internal repository to install from, and curated screenshots: passed through as written.
+      ...(typeof raw.git === 'string' && raw.git !== '' ? { git: raw.git } : {}),
+      ...(Array.isArray(raw.screenshots) ? { screenshots: raw.screenshots.filter((item) => typeof item === 'string') } : {}),
       ...(typeof manifest?.version === 'string' ? { version: manifest.version } : {}),
     })
   }

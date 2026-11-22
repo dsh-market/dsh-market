@@ -1036,3 +1036,126 @@ describe('SettingsCard — plugin catalogs', () => {
     expect(calls.find(call => call.path.endsWith('/catalogs/remove'))?.body).toEqual({ id: MINE.id })
   })
 })
+
+describe('SettingsCard — what the organization set', () => {
+  it('shows the anonymous count as off and locked, and says why', async () => {
+    stubFetch({ anonymousCount: false })
+    const inner = globalThis.fetch as unknown as (input: unknown, init?: RequestInit) => Promise<Response>
+    vi.stubGlobal('fetch', vi.fn(async (input: unknown, init?: RequestInit) => {
+      const response = await inner(input, init)
+      if (!String(input).endsWith('/dsh-market/status')) return response
+      const body = await response.json() as Record<string, unknown>
+      return new Response(JSON.stringify({ ...body, anonymousCount: false, anonymousCountLocked: true }), { status: 200 })
+    }))
+    await open()
+    await waitFor(() => { expect(screen.getByText(t('setCountLockedHint'))).toBeTruthy() })
+    expect(screen.queryByText(t('setCountHint'))).toBeNull()
+    const on = screen.getByRole('button', { name: t('setCountOn') })
+    const off = screen.getByRole('button', { name: t('setCountOff') })
+    expect(on.hasAttribute('disabled')).toBe(true)
+    expect(off.hasAttribute('disabled')).toBe(true)
+    expect(off.getAttribute('aria-pressed')).toBe('true')
+    fireEvent.click(on)
+    expect(calls.some(call => call.path.endsWith('/dsh-market/telemetry'))).toBe(false)
+  })
+
+  it('leaves the count switchable when nobody locked it', async () => {
+    stubFetch({ anonymousCount: true })
+    await open()
+    await waitFor(() => { expect(screen.getByText(t('setCountHint'))).toBeTruthy() })
+    expect(screen.getByRole('button', { name: t('setCountOff') }).hasAttribute('disabled')).toBe(false)
+  })
+
+  it('says the GitHub route was set by the organization, with nothing to edit', async () => {
+    stubFetch({ githubProxyManaged: true })
+    const inner = globalThis.fetch as unknown as (input: unknown, init?: RequestInit) => Promise<Response>
+    vi.stubGlobal('fetch', vi.fn(async (input: unknown, init?: RequestInit) => {
+      const response = await inner(input, init)
+      if (!String(input).endsWith('/dsh-market/status')) return response
+      const body = await response.json() as Record<string, unknown>
+      return new Response(JSON.stringify({ ...body, githubProxyByPolicy: true }), { status: 200 })
+    }))
+    await open()
+    await waitFor(() => { expect(screen.getByText(t('setGithubProxyOrgHint'))).toBeTruthy() })
+    expect(screen.queryByText(t('setGithubProxyManagedHint'))).toBeNull()
+    expect(screen.queryByRole('button', { name: t('setGithubProxyCustom') })).toBeNull()
+  })
+})
+
+describe('SettingsCard — importing an offline bundle', () => {
+  const baseCatalogs = { sources: [] as unknown[], publicCatalog: { enabled: true, locked: false }, userCatalogsAllowed: true, limit: 8, problems: [] as unknown[] }
+  const BUNDLE = { id: 'offline-ab12cd34', kind: 'user', label: { en: 'Acme bundle' }, where: '/home/u/.dsh/dsh-market/offline/offline-ab12cd34/plugins.json', status: 'ok', count: 2, skipped: 0, locked: false, offline: true }
+
+  function stubImport(answer: (body: Blob) => unknown, sources: () => unknown[] = () => []): { uploads: Array<{ type: string | null; size: number }> } {
+    stubFetch()
+    const inner = globalThis.fetch as unknown as (input: unknown, init?: RequestInit) => Promise<Response>
+    const uploads: Array<{ type: string | null; size: number }> = []
+    const reply = (value: unknown): Promise<Response> => Promise.resolve(new Response(JSON.stringify(value), { status: 200 }))
+    vi.stubGlobal('fetch', vi.fn((input: unknown, init?: RequestInit) => {
+      const path = String(input)
+      if (path.endsWith('/dsh-market/catalogs')) return reply({ ...baseCatalogs, sources: sources() })
+      if (path.endsWith('/dsh-market/offline/import')) {
+        const body = init?.body as Blob
+        uploads.push({ type: new Headers(init?.headers).get('content-type'), size: body.size })
+        return reply(answer(body))
+      }
+      return inner(input, init)
+    }))
+    return { uploads }
+  }
+
+  async function openAdvanced(): Promise<void> {
+    render(<SettingsCard t={t} />)
+    fireEvent.click(screen.getByRole('button', { expanded: false }))
+    await waitFor(() => { expect(screen.getByRole('button', { name: t('setAdvanced') })).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: t('setAdvanced') }))
+  }
+  const choose = (file: File): void => {
+    fireEvent.change(screen.getByLabelText(t('setCatalogImport'), { selector: 'input' }), { target: { files: [file] } })
+  }
+  const bundleFile = (): File => new File([new Uint8Array(1200)], 'acme-offline.tgz', { type: 'application/gzip' })
+
+  it('offers the import beside Add catalog, with what it is for on hover', async () => {
+    stubImport(() => ({ ok: true }))
+    await openAdvanced()
+    const button = screen.getByRole('button', { name: t('setCatalogImport') })
+    expect(button.getAttribute('title')).toBe(t('setCatalogImportHint'))
+    expect(screen.getByRole('button', { name: t('setCatalogAdd') })).toBeTruthy()
+  })
+
+  it('sends the chosen file as it is, shows the count, and re-reads the list with the bundle marked offline', async () => {
+    let imported = false
+    const { uploads } = stubImport(() => { imported = true; return { ok: true, count: 2 } }, () => (imported ? [BUNDLE] : []))
+    await openAdvanced()
+    choose(bundleFile())
+    await waitFor(() => { expect(screen.getByText(t('setCatalogImported').replace('{0}', '2'))).toBeTruthy() })
+    expect(uploads).toEqual([{ type: 'application/octet-stream', size: 1200 }])
+    await waitFor(() => { expect(screen.getByText(new RegExp(`2 plugins · ${t('setCatalogOffline')}`))).toBeTruthy() })
+    // an imported bundle is removable like the user's own catalogs
+    expect(screen.getByRole('button', { name: `${t('setCatalogRemove')} Acme bundle` })).toBeTruthy()
+  })
+
+  it.each([
+    ['not-archive', 'setCatalogImportBad'],
+    ['layout', 'setCatalogImportBad'],
+    ['unreadable', 'setCatalogImportBad'],
+    ['unsafe', 'setCatalogImportUnsafe'],
+    ['too-big', 'setCatalogImportBig'],
+    ['locked', 'setCatalogErrLocked'],
+  ])('words the server\'s %s refusal as what happened and what to do', async (code, key) => {
+    stubImport(() => ({ ok: false, code }))
+    await openAdvanced()
+    choose(bundleFile())
+    await waitFor(() => { expect(screen.getByText(t(key))).toBeTruthy() })
+  })
+
+  it('offers no import when the organization forbids adding catalogs', async () => {
+    stubFetch()
+    const inner = globalThis.fetch as unknown as (input: unknown, init?: RequestInit) => Promise<Response>
+    vi.stubGlobal('fetch', vi.fn((input: unknown, init?: RequestInit) => String(input).endsWith('/dsh-market/catalogs')
+      ? Promise.resolve(new Response(JSON.stringify({ ...baseCatalogs, userCatalogsAllowed: false, problems: [{ zh: '问题', en: 'problem' }] }), { status: 200 }))
+      : inner(input, init)))
+    await openAdvanced()
+    expect(screen.queryByRole('button', { name: t('setCatalogImport') })).toBeNull()
+  })
+})

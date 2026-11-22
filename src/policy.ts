@@ -62,6 +62,14 @@ export interface Policy {
   /** Glob list (`*` only); null means "anything that is listed". */
   allow: string[] | null
   mirrors: PolicyMirrors
+  /** npm package name -> the one version to install; updates are offered only up to it. */
+  pins: Record<string, string>
+  /** false = the anonymous daily count is forced off and its switch locked. */
+  telemetry: boolean
+  /** false = no comment threads (no giscus, no GitHub contact). */
+  comments: boolean
+  /** false = no images from outside hosts (screenshots, avatars, README images, icons). */
+  externalImages: boolean
   /** Plain-language problems with the file, for the settings list. */
   problems: PolicyProblem[]
 }
@@ -82,6 +90,10 @@ export const NO_POLICY: Policy = Object.freeze({
   userCatalogs: true,
   allow: null,
   mirrors: {},
+  pins: {},
+  telemetry: true,
+  comments: true,
+  externalImages: true,
   problems: [],
 }) as Policy
 
@@ -211,6 +223,36 @@ function readMirrors(value: unknown, problems: string[]): PolicyMirrors {
   return out
 }
 
+const VERSION_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u
+const PIN_NAME_RE = /^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/u
+
+function readPins(value: unknown, problems: string[]): Record<string, string> {
+  if (value === undefined) return {}
+  if (!isRecord(value)) {
+    problems.push('"pins" 不是对象，已忽略 / "pins" is not an object and was ignored')
+    return {}
+  }
+  const out: Record<string, string> = {}
+  for (const [name, version] of Object.entries(value)) {
+    if (!PIN_NAME_RE.test(name) || typeof version !== 'string' || !VERSION_RE.test(version)) {
+      problems.push(`pins 里的「${name}」需要一个 npm 包名和一个完整版本号（如 1.2.3），已忽略 / the pin for "${name}" needs an npm package name and an exact version such as 1.2.3 and was ignored`)
+      continue
+    }
+    out[name] = version
+  }
+  return out
+}
+
+/** The exact version an administrator pinned this npm package to, if any. */
+export function pinnedVersion(name: string | null | undefined, policy: Policy = getPolicy()): string | undefined {
+  if (typeof name !== 'string' || name === '') return undefined
+  const key = name.toLowerCase()
+  for (const [pinned, version] of Object.entries(policy.pins)) {
+    if (pinned.toLowerCase() === key) return version
+  }
+  return undefined
+}
+
 /** Interpret a parsed policy document. Pure. */
 export function readPolicyFields(doc: unknown, path: string): Policy {
   if (!isRecord(doc)) {
@@ -230,6 +272,10 @@ export function readPolicyFields(doc: unknown, path: string): Policy {
     userCatalogs: flag('userCatalogs'),
     allow: readAllow(doc.allow, problems),
     mirrors: readMirrors(doc.mirrors, problems),
+    pins: readPins(doc.pins, problems),
+    telemetry: flag('telemetry'),
+    comments: flag('comments'),
+    externalImages: flag('externalImages'),
     problems: problems.map(bilingual),
   }
 }
@@ -315,4 +361,16 @@ export function expandEnv(text: string, env: NodeJS.ProcessEnv = process.env): {
 export function globMatch(pattern: string, text: string): boolean {
   const re = new RegExp(`^${pattern.split('*').map(part => part.replace(/[.+?^${}()|[\]\\]/gu, String.raw`\$&`)).join('.*')}$`, 'iu')
   return re.test(text)
+}
+
+/**
+ * What the browser needs to know to reflect the policy: only the switches an
+ * administrator turned OFF. Empty — and so absent from the response — for
+ * everyone with no policy. The server enforces; the page only follows.
+ */
+export function clientPolicy(policy: Policy = getPolicy()): { externalImages?: false; comments?: false } {
+  return {
+    ...(policy.externalImages ? {} : { externalImages: false as const }),
+    ...(policy.comments ? {} : { comments: false as const }),
+  }
 }

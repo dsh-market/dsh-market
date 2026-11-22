@@ -1,3 +1,4 @@
+import { getPolicy } from './policy.ts'
 import { randomBytes } from 'node:crypto'
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -67,6 +68,8 @@ const utcDay = (now: number): string => new Date(now).toISOString().slice(0, 10)
 
 /** Why nothing may be sent right now, or null. Explicit opt-outs always win. */
 export function suppressedBy(env: Record<string, string | undefined>): string | null {
+  // An organization that forbids the count wins over the user's own switch.
+  if (getPolicy().telemetry === false) return 'organization policy'
   if (env.DSH_MARKET_TELEMETRY === '0') return 'DSH_MARKET_TELEMETRY=0'
   if (env.DO_NOT_TRACK === '1') return 'DO_NOT_TRACK=1'
   // Tests and CI never count, unless a test points the URL at its own server.

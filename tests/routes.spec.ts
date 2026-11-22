@@ -28,6 +28,9 @@ import * as orderApi from '../src/order.ts'
 import * as registryApi from '../src/registry.ts'
 import * as catalogsApi from '../src/catalogs.ts'
 import * as policyApi from '../src/policy.ts'
+import { gzipSync } from 'node:zlib'
+// @ts-expect-error -- plain .mjs script, no types
+import { makeTar } from '../scripts/offline-pack.mjs'
 import * as netApi from '../src/net.ts'
 import { DiscoveryManifestIndex } from '../src/discovery-compatibility.ts'
 import type { PluginCommandRuntime } from '../src/dsh-cli.ts'
@@ -108,6 +111,8 @@ interface RequestOpts {
   body?: unknown
   /** Verbatim body bytes (malformed JSON / empty stream cases). */
   rawBody?: string
+  /** Binary body (an uploaded archive). */
+  rawBytes?: Buffer
   /** Peer address the download/restart fences read; loopback unless a test says otherwise. */
   remoteAddress?: string
 }
@@ -118,7 +123,8 @@ function makeRequest(opts: RequestOpts): IncomingMessage {
   if (opts.origin !== undefined) headers.origin = opts.origin
   if (opts.host !== undefined) headers.host = opts.host
   const chunks: Buffer[] = []
-  if (opts.rawBody !== undefined) chunks.push(Buffer.from(opts.rawBody))
+  if (opts.rawBytes !== undefined) chunks.push(opts.rawBytes)
+  else if (opts.rawBody !== undefined) chunks.push(Buffer.from(opts.rawBody))
   else if (opts.body !== undefined) chunks.push(Buffer.from(JSON.stringify(opts.body)))
   const request = {
     method: opts.method,
@@ -1723,5 +1729,157 @@ describe('plugin catalogs routes', () => {
     const res = await hit(routes, '/dsh-market/registry', { method: 'GET', url: '/dsh-market/registry' })
     expect(res.status).toBe(502)
     expect(jsonBody(res)).toMatchObject({ error: 'offline', sources: [{ id: 'public', status: 'failed' }] })
+  })
+})
+
+// --- offline bundles, and the switches an organization turns off --------------
+
+describe('offline bundle import', () => {
+  const bundle = (files: Array<{ name: string; data: Buffer }>): Buffer => gzipSync(makeTar(files))
+  const PLUGINS = { label: 'Acme bundle', plugins: [{ name: '@acme/badge', url: 'https://repo.acme.internal/tools/badge', category: 'hr', description: 'Badge', version: '1.0.0', tarball: './tarballs/acme-badge-1.0.0.tgz' }] }
+  const GOOD = (): Buffer => bundle([
+    { name: 'plugins.json', data: Buffer.from(JSON.stringify(PLUGINS)) },
+    { name: 'tarballs/acme-badge-1.0.0.tgz', data: Buffer.from('tarball bytes') },
+  ])
+  const importBundle = (body: Buffer, options: { origin?: string } = {}) => hit(routes, '/dsh-market/offline/import', {
+    method: 'POST', url: '/dsh-market/offline/import', origin: options.origin ?? ORIGIN, host: HOST, rawBytes: body,
+  })
+
+  afterEach(() => {
+    delete process.env.DSH_MARKET_POLICY
+    policyApi.resetPolicyCache()
+    catalogsApi.setUserCatalogs([])
+  })
+
+  it('unpacks the bundle under the market\'s own directory, saves it as a catalog and reports what is in it', async () => {
+    const res = await importBundle(GOOD())
+    expect(res.status, res.body).toBe(200)
+    expect(jsonBody(res)).toMatchObject({ ok: true, count: 1, label: { en: 'Acme bundle' } })
+    const saved = readMarketState(dir).userCatalogs!
+    expect(saved).toHaveLength(1)
+    const file = saved[0]!.file!
+    expect(file.startsWith(join(tmp, 'dsh-market', 'offline'))).toBe(true)
+    expect(readFileSync(join(file, '..', 'tarballs', 'acme-badge-1.0.0.tgz'), 'utf8')).toBe('tarball bytes')
+  })
+
+  it('refuses a bundle that tries to leave its directory, and keeps nothing', async () => {
+    const evil = bundle([
+      { name: 'plugins.json', data: Buffer.from(JSON.stringify(PLUGINS)) },
+      { name: 'tarballs/../../escape.tgz', data: Buffer.from('x') },
+    ])
+    const res = await importBundle(evil)
+    expect(res.status).toBe(400)
+    expect(jsonBody(res)).toMatchObject({ ok: false, code: 'unsafe' })
+    expect(readMarketState(dir)).not.toHaveProperty('userCatalogs')
+    expect(existsSync(join(tmp, 'escape.tgz'))).toBe(false)
+    const offline = join(tmp, 'dsh-market', 'offline')
+    expect(existsSync(offline) ? readdirSync(offline) : []).toEqual([])
+  })
+
+  it('refuses something that is not a bundle, and a bundle whose catalog cannot be read', async () => {
+    const junk = await importBundle(Buffer.from('not an archive'))
+    expect(junk.status).toBe(400)
+    expect(jsonBody(junk).code).toBe('not-archive')
+    const noCatalog = await importBundle(bundle([{ name: 'plugins.json', data: Buffer.from('{ nope') }]))
+    expect(noCatalog.status).toBe(400)
+    expect(jsonBody(noCatalog)).toMatchObject({ code: 'unreadable', source: { code: 'invalid' } })
+    // the unreadable one was removed again
+    const offline = join(tmp, 'dsh-market', 'offline')
+    expect(existsSync(offline) ? readdirSync(offline) : []).toEqual([])
+    expect(readMarketState(dir)).not.toHaveProperty('userCatalogs')
+  })
+
+  it('is refused while the organization forbids adding catalogs, from another origin, and with the wrong method', async () => {
+    const policyPath = join(tmp, 'policy.json')
+    writeFileSync(policyPath, JSON.stringify({ userCatalogs: false }))
+    process.env.DSH_MARKET_POLICY = policyPath
+    policyApi.resetPolicyCache()
+    const locked = await importBundle(GOOD())
+    expect(locked.status).toBe(403)
+    expect(jsonBody(locked).code).toBe('locked')
+    delete process.env.DSH_MARKET_POLICY
+    policyApi.resetPolicyCache()
+    expect((await importBundle(GOOD(), { origin: 'http://evil.example' })).status).toBe(403)
+    expect((await hit(routes, '/dsh-market/offline/import', { method: 'GET', url: '/x' })).status).toBe(405)
+    expect(readMarketState(dir)).not.toHaveProperty('userCatalogs')
+  })
+
+  it('removing an imported bundle deletes its files', async () => {
+    await importBundle(GOOD())
+    const saved = readMarketState(dir).userCatalogs![0]!
+    const bundleDir = join(saved.file!, '..')
+    expect(existsSync(bundleDir)).toBe(true)
+    const res = await hit(routes, '/dsh-market/catalogs/remove', post('/dsh-market/catalogs/remove', { id: saved.id }))
+    expect(res.status).toBe(200)
+    expect(existsSync(bundleDir)).toBe(false)
+  })
+
+  it('removing a catalog that is the user\'s own file never deletes that file\'s directory', async () => {
+    const mine = join(tmp, 'mine')
+    mkdirSync(mine)
+    const file = join(mine, 'plugins.json')
+    writeFileSync(file, JSON.stringify(PLUGINS.plugins.length > 0 ? { plugins: [{ ...PLUGINS.plugins[0], tarball: undefined }] } : {}))
+    const added = await hit(routes, '/dsh-market/catalogs/add', post('/dsh-market/catalogs/add', { source: file }))
+    expect(added.status).toBe(200)
+    const id = readMarketState(dir).userCatalogs![0]!.id
+    await hit(routes, '/dsh-market/catalogs/remove', post('/dsh-market/catalogs/remove', { id }))
+    expect(existsSync(file)).toBe(true)
+  })
+})
+
+describe('what the organization turned off, as the routes report it', () => {
+  const policy = (doc: unknown): void => {
+    const path = join(tmp, 'policy.json')
+    writeFileSync(path, JSON.stringify(doc))
+    process.env.DSH_MARKET_POLICY = path
+    policyApi.resetPolicyCache()
+  }
+  afterEach(() => {
+    vi.restoreAllMocks()
+    delete process.env.DSH_MARKET_POLICY
+    policyApi.resetPolicyCache()
+  })
+
+  it('locks the anonymous count: reported off and locked, and the switch refuses to move', async () => {
+    policy({ telemetry: false })
+    const status = await hit(routes, '/dsh-market/status', { method: 'GET', url: '/dsh-market/status' })
+    expect(jsonBody(status)).toMatchObject({ anonymousCount: false, anonymousCountLocked: true })
+    const read = await hit(routes, '/dsh-market/telemetry', { method: 'GET', url: '/dsh-market/telemetry' })
+    expect(jsonBody(read)).toEqual({ enabled: false, locked: true })
+    const write = await hit(routes, '/dsh-market/telemetry', post('/dsh-market/telemetry', { enabled: true }))
+    expect(write.status).toBe(403)
+    expect(jsonBody(write).code).toBe('locked')
+  })
+
+  it('leaves the count as the user set it when there is no such policy', async () => {
+    const status = await hit(routes, '/dsh-market/status', { method: 'GET', url: '/dsh-market/status' })
+    expect(jsonBody(status)).toMatchObject({ anonymousCountLocked: false })
+    const write = await hit(routes, '/dsh-market/telemetry', post('/dsh-market/telemetry', { enabled: false }))
+    expect(write.status).toBe(200)
+  })
+
+  it('tells the page which switches are off, and only those', async () => {
+    const catalog = { updated: 'u', count: 0, categories: {}, plugins: [] }
+    vi.spyOn(registryApi, 'loadRegistry').mockResolvedValue(catalog)
+    const plain = await hit(routes, '/dsh-market/registry', { method: 'GET', url: '/dsh-market/registry' })
+    expect(jsonBody(plain)).not.toHaveProperty('policy')
+    policy({ comments: false, externalImages: false })
+    const restricted = await hit(routes, '/dsh-market/registry', { method: 'GET', url: '/dsh-market/registry' })
+    expect(jsonBody(restricted).policy).toEqual({ externalImages: false, comments: false })
+  })
+
+  it('never tells the page where a bundle\'s package file sits on this machine', async () => {
+    const entry = { name: 'a', owner: '', url: 'https://repo.acme.internal/a', category: 'x', description: {}, install: 'a', added: '', npm: null, source: { id: 's', label: { en: 's' } }, offlineTarball: '/home/u/.dsh/dsh-market/offline/offline-1/tarballs/a-1.0.0.tgz' }
+    vi.spyOn(registryApi, 'loadRegistry').mockResolvedValue({ updated: 'u', count: 1, categories: {}, plugins: [entry] })
+    const res = await hit(routes, '/dsh-market/registry', { method: 'GET', url: '/dsh-market/registry' })
+    expect(res.body).not.toContain('offlineTarball')
+    expect(res.body).not.toContain('/home/u')
+    expect((jsonBody(res).registry as { plugins: Array<{ name: string }> }).plugins[0]!.name).toBe('a')
+  })
+
+  it('reports a GitHub route fixed by policy, so the settings row can say who set it', async () => {
+    policy({ mirrors: { githubProxy: 'https://gh.acme.internal/proxy' } })
+    const status = await hit(routes, '/dsh-market/status', { method: 'GET', url: '/dsh-market/status' })
+    expect(jsonBody(status)).toMatchObject({ githubProxyManaged: true, githubProxyByPolicy: true })
   })
 })

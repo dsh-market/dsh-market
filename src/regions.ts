@@ -266,6 +266,11 @@ function policyGithubProxy(): string | null {
   return value === undefined ? null : normalizeGithubProxy(value)
 }
 
+/** Whether an administrator's policy (not just the environment) fixed the GitHub route. */
+export function githubProxyByPolicy(): boolean {
+  return policyGithubProxy() !== null
+}
+
 /** Whether the operator-owned environment variable disables UI changes. */
 export function githubProxyManaged(env: NodeJS.ProcessEnv = process.env): boolean {
   return policyGithubProxy() !== null || override(env, 'DSHM_GITHUB_PROXY') !== null

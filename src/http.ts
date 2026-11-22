@@ -257,6 +257,19 @@ export function sameOrigin(request: IncomingMessage): boolean {
   }
 }
 
+/** Read a request body as bytes, refusing anything over `maxBytes` (stops reading as soon as it is over). */
+export async function readRawBody(request: IncomingMessage, maxBytes: number): Promise<Buffer> {
+  const chunks: Buffer[] = []
+  let size = 0
+  for await (const chunk of request) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+    size += buffer.length
+    if (size > maxBytes) throw new Error('request body too large')
+    chunks.push(buffer)
+  }
+  return Buffer.concat(chunks)
+}
+
 /** Read and parse a JSON request body, rejecting anything over 4 KiB. */
 export async function readJsonBody(request: IncomingMessage, maxBytes = 4096): Promise<unknown> {
   const chunks: Buffer[] = []

@@ -8,7 +8,8 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
-  entryForDep, installCommandFor, extractReadmeImageCandidates, extractReadmeImages, formatCount, groupSwitchState, installedForCatalog, isInstalled, isMarketItself, localizeBilingual, localizeBilingualList, looksTerminal, matchInstalledName, orderedCategories, pageItems, pluginCategories, pluginName, pluginScreenshotCandidates, pluginsForFavorites, previewDimensionScore, rankThemeScreenshots, releaseNotesHttpsImage, resetGithubRouting, resetScreenshotsCache, safeScreenshots, sanitizeReleaseNotesBody, staleFavoriteUrls, themePlugins, visiblePlugins, sourceLabel, sourceErrorText, loadedSources, humanOutput, failureText, catalogEntryForInstalled, profileBlockedText, profileBlockStillHolds } from '../src/client/market-data.ts'
+  entryForDep, installCommandFor, extractReadmeImageCandidates, extractReadmeImages, formatCount, groupSwitchState, installedForCatalog, isInstalled, isMarketItself, localizeBilingual, localizeBilingualList, looksTerminal, matchInstalledName, orderedCategories, pageItems, pluginCategories, pluginName, pluginScreenshotCandidates, pluginsForFavorites, previewDimensionScore, rankThemeScreenshots, releaseNotesHttpsImage, resetGithubRouting, resetScreenshotsCache, safeScreenshots, sanitizeReleaseNotesBody, staleFavoriteUrls, themePlugins, visiblePlugins, sourceLabel, sourceErrorText, loadedSources, isPublicImageHost, safeIcon, humanOutput, failureText, catalogEntryForInstalled, profileBlockedText, profileBlockStillHolds } from '../src/client/market-data.ts'
+import { imageAllowed, orgPolicy, setOrgPolicy } from '../src/client/org-policy.ts'
 import type { RegistryPlugin, ScreenshotCandidate, ScreenshotRejection } from '../src/client/market-data.ts'
 
 function plugin(partial: Partial<RegistryPlugin>): RegistryPlugin {
@@ -1390,5 +1391,60 @@ describe('catalog sources on the client', () => {
     expect(loadedSources(null)).toEqual([])
     expect(loadedSources({})).toEqual([])
     expect(loadedSources({ sources: [{ ...base, id: 'a', status: 'ok' }, { ...base, id: 'b', status: 'failed' }, { ...base, id: 'c', status: 'off' }] }).map(s => s.id)).toEqual(['a'])
+  })
+})
+
+describe('images under the organization\'s policy', () => {
+  afterEach(() => { setOrgPolicy(null) })
+
+  it('lets an entry from an added catalog show images from its own hosts, and nobody else', () => {
+    const own = ['https://img.acme.internal/a.png', 'https://github.com/o/r/raw/main/b.png', 'http://insecure.example/c.png', 'https://img.acme.internal/d.svg']
+    expect(safeScreenshots(own)).toEqual(['https://github.com/o/r/raw/main/b.png'])
+    expect(safeScreenshots(own, { anyHost: true })).toEqual(['https://img.acme.internal/a.png', 'https://github.com/o/r/raw/main/b.png'])
+    expect(safeIcon('https://img.acme.internal/i.png')).toBeNull()
+    expect(safeIcon('https://img.acme.internal/i.png', true)).toBe('https://img.acme.internal/i.png')
+  })
+
+  it('knows which hosts a public resizing service may be handed', () => {
+    expect(isPublicImageHost('https://raw.githubusercontent.com/o/r/HEAD/a.png')).toBe(true)
+    expect(isPublicImageHost('https://img.acme.internal/a.png')).toBe(false)
+    expect(isPublicImageHost('nonsense')).toBe(false)
+  })
+
+  it('shows no outside image at all once externalImages is off — public, private, and the icon', () => {
+    setOrgPolicy({ externalImages: false })
+    const reasons: string[] = []
+    const urls = ['https://raw.githubusercontent.com/o/r/HEAD/a.png', 'https://img.acme.internal/a.png', 'http://localhost/elsewhere.png']
+    expect(safeScreenshots(urls, { anyHost: true, onReject: rejection => { reasons.push(rejection.reason) } })).toEqual([])
+    expect(reasons).toEqual(['blocked by your organization', 'blocked by your organization', 'blocked by your organization'])
+    expect(safeIcon('https://raw.githubusercontent.com/o/r/HEAD/i.png', true)).toBeNull()
+  })
+
+  it('still shows an image from the page\'s own origin, which is no outside contact', () => {
+    vi.stubGlobal('location', new URL('http://127.0.0.1:3080/market'))
+    setOrgPolicy({ externalImages: false })
+    expect(safeScreenshots(['http://127.0.0.1:3080/assets/a.png', '/assets/b.png', 'http://127.0.0.1:9999/other.png'])).toEqual(['http://127.0.0.1:3080/assets/a.png', '/assets/b.png'])
+    expect(safeScreenshots(['/assets/c.svg'])).toEqual([])
+    vi.unstubAllGlobals()
+  })
+
+  it('asks GitHub for no README to find images in, when outside images are off', async () => {
+    const fetcher = vi.fn(async () => new Response('# readme\n![shot](shot.png)'))
+    vi.stubGlobal('fetch', fetcher)
+    try {
+      setOrgPolicy({ externalImages: false })
+      expect(await pluginScreenshotCandidates({ name: 'p', owner: 'o', url: 'https://github.com/o/p-offline-test', category: 'x' })).toEqual([])
+      expect(fetcher).not.toHaveBeenCalled()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('treats an absent policy as no restriction', () => {
+    setOrgPolicy(undefined)
+    expect(orgPolicy()).toEqual({ externalImages: true, comments: true })
+    setOrgPolicy({ comments: false })
+    expect(orgPolicy()).toEqual({ externalImages: true, comments: false })
+    expect(imageAllowed('https://anywhere.example/a.png')).toBe(true)
   })
 })

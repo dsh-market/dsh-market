@@ -25,12 +25,13 @@ const undici = vi.hoisted(() => ({
 vi.mock('undici', () => undici)
 
 import {
-  catalogConfig, entryAllowed, loadExtra, mergeSources, parseCatalogInput, probeCatalog, scrub,
+  catalogConfig, entryAllowed, loadExtra, mergeSources, normalizeGitSpec, parseCatalogInput, probeCatalog, scrub,
   setUserCatalogs, userCatalogId, validUserCatalog, forgetExtraCatalogs,
   type SourceInfo,
 } from '../src/catalogs.ts'
 import { CatalogLoadError, forgetCatalog, loadRegistry, type Registry, type RegistryPlugin } from '../src/registry.ts'
 import { resetPolicyCache } from '../src/policy.ts'
+import { installTargetFor } from '../src/sources.ts'
 import { exportLogs } from '../src/log.ts'
 
 const plugin = (name: string, url: string, extra: Partial<RegistryPlugin> = {}): RegistryPlugin => ({
@@ -482,5 +483,63 @@ describe('the policy file on disk, end to end', () => {
     writeFileSync(join(tmp, 'catalogs', 'a.json'), JSON.stringify(PRIVATE_DOC))
     writePolicy({ publicCatalog: false, catalogs: [{ id: 'a', label: 'A', file: join(tmp, 'catalogs', 'a.json') }] })
     expect((await loadRegistry('global')).count).toBe(2)
+  })
+})
+
+describe('internal repository entries', () => {
+  it.each([
+    ['git+https://repo.acme.internal/tools/badge.git#v1.2.0', 'git+https://repo.acme.internal/tools/badge.git#v1.2.0'],
+    ['git+https://repo.acme.internal/tools/badge', 'git+https://repo.acme.internal/tools/badge'],
+    ['git+ssh://git@repo.acme.internal/tools/badge.git', 'git+ssh://git@repo.acme.internal/tools/badge.git'],
+    ['git+ssh://git@repo.acme.internal:2222/tools/badge.git#main', 'git+ssh://git@repo.acme.internal:2222/tools/badge.git#main'],
+    ['https://repo.acme.internal/tools/badge.git#abc123', 'git+https://repo.acme.internal/tools/badge.git#abc123'],
+    ['ssh://git@repo.acme.internal/tools/badge.git', 'git+ssh://git@repo.acme.internal/tools/badge.git'],
+    ['git@repo.acme.internal:tools/badge.git#v2', 'git+ssh://git@repo.acme.internal/tools/badge.git#v2'],
+    ['git+http://127.0.0.1:8080/badge.git', 'git+http://127.0.0.1:8080/badge.git'],
+  ])('accepts %s', (input, spec) => {
+    expect(normalizeGitSpec(input)).toBe(spec)
+  })
+
+  it.each([
+    'git+https://user:token@repo.acme.internal/tools/badge.git',
+    'https://user:token@repo.acme.internal/tools/badge.git',
+    'git+file:///srv/repos/badge.git',
+    'file:///srv/repos/badge.git',
+    'git://repo.acme.internal/badge.git',
+    'github:acme/badge',
+    'badge',
+    'git+https://repo.acme.internal/badge.git#bad ref',
+    'git+https://repo.acme.internal/badge.git#--upload-pack=x',
+    'git+https://-oProxyCommand=x/badge.git',
+    '',
+    42,
+    null,
+  ])('refuses %j', (input) => {
+    expect(normalizeGitSpec(input)).toBeNull()
+  })
+
+  it('keeps a valid git address and curated screenshots on an entry, and skips an entry with a bad address', async () => {
+    const file = writeJson('plugins.json', {
+      plugins: [
+        { name: 'ok', url: 'https://repo.acme.internal/ok', category: 'x', description: 'ok', git: 'git@repo.acme.internal:tools/ok.git#v1', screenshots: ['https://img.acme.internal/a.png', 'http://insecure.example/b.png', 7] },
+        { name: 'bad', url: 'https://repo.acme.internal/bad', category: 'x', description: 'bad', git: 'file:///etc' },
+      ],
+    })
+    const result = await loadExtra({ id: 'acme', kind: 'policy', label: { zh: 'A', en: 'A' }, file, headers: {} })
+    expect(result.registry!.plugins.map(entry => entry.name)).toEqual(['ok'])
+    expect(result.registry!.plugins[0]).toMatchObject({ git: 'git+ssh://git@repo.acme.internal/tools/ok.git#v1', screenshots: ['https://img.acme.internal/a.png'] })
+    expect(result.info.skipped).toBe(1)
+  })
+
+  it('installs from the address only for an entry from an added catalog with no registry name', () => {
+    const git = 'git+https://repo.acme.internal/tools/badge.git#v1.2.0'
+    const entry = { url: 'https://repo.acme.internal/tools/badge', git }
+    expect(installTargetFor({ ...entry, source: { id: 'acme' } })).toBe(git)
+    // a public entry cannot carry one: no source, no install target at all
+    expect(installTargetFor(entry)).toBeNull()
+    // a registry name wins over a repository
+    expect(installTargetFor({ ...entry, npm: '@acme/badge', source: { id: 'acme' } })).toBe('@acme/badge')
+    // and nothing that is not a git address is ever passed to pnpm as one
+    expect(installTargetFor({ ...entry, git: 'file:///etc', source: { id: 'acme' } })).toBeNull()
   })
 })

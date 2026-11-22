@@ -103,6 +103,10 @@ interface SelfStatus {
   buildEnv: Record<string, string>
   /** The anonymous daily count; null on a server too old to have the switch. */
   anonymousCount: boolean | null
+  /** The organization turned the count off: shown, not switchable. */
+  anonymousCountLocked: boolean
+  /** The GitHub route was fixed by the organization's policy. */
+  githubProxyByPolicy: boolean
 }
 
 /** The subset of api('/dsh-market/status') this card reads. */
@@ -122,6 +126,8 @@ interface StatusBody {
   selfManaged?: boolean
   buildEnv?: Record<string, string>
   anonymousCount?: boolean
+  anonymousCountLocked?: boolean
+  githubProxyByPolicy?: boolean
 }
 
 /** What api('/dsh-market/updates') says about the market's own row. */
@@ -198,6 +204,8 @@ function readStatus(body: StatusBody): SelfStatus {
     selfUninstallReachable: body.selfUninstallReachable !== false,
     buildEnv: body.buildEnv ?? {},
     anonymousCount: typeof body.anonymousCount === 'boolean' ? body.anonymousCount : null,
+    anonymousCountLocked: body.anonymousCountLocked === true,
+    githubProxyByPolicy: body.githubProxyByPolicy === true,
   }
 }
 
@@ -345,6 +353,7 @@ export function SettingsCard({ t, locale, onRemoved, sidebar, entries }: Setting
             version: null, restart: false, channel: 'stable', channels: ['stable', 'beta'],
             region: 'global', regions: REGIONS, regionAuto: false,
             githubProxyCustom: null, githubProxyManaged: false, selfManaged: true, selfUninstallReachable: true, buildEnv: {}, anonymousCount: null,
+            anonymousCountLocked: false, githubProxyByPolicy: false,
           })
         }
       }
@@ -818,20 +827,22 @@ export function SettingsCard({ t, locale, onRemoved, sidebar, entries }: Setting
           )),
         status?.anonymousCount !== null && status?.anonymousCount !== undefined ? row(
           t('setCount'),
-          t('setCountHint'),
+          status.anonymousCountLocked ? t('setCountLockedHint') : t('setCountHint'),
           h('div', { className: css.setSeg },
             ([true, false] as const).map(value => h('button', {
               key: String(value),
               type: 'button',
               className: status.anonymousCount === value ? `${css.setSegBtn} ${css.setSegOn}` : css.setSegBtn,
-              disabled: busy,
+              disabled: busy || status.anonymousCountLocked,
               'aria-pressed': status.anonymousCount === value,
               onClick: () => { if (status.anonymousCount !== value) onCount(value) },
             }, t(value ? 'setCountOn' : 'setCountOff'))),
           )) : null,
         row(
           t('setGithubProxy'),
-          status?.githubProxyManaged === true
+          status?.githubProxyByPolicy === true
+            ? t('setGithubProxyOrgHint')
+            : status?.githubProxyManaged === true
             ? t('setGithubProxyManagedHint')
             : status?.githubProxyCustom !== null && status?.githubProxyCustom !== undefined
               ? t('setGithubProxyCustomHint')

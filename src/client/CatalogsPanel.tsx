@@ -13,7 +13,7 @@
  * back.
  */
 
-import { createElement as h, useCallback, useState } from 'react'
+import { createElement as h, useCallback, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import css from './Market.module.css'
@@ -80,6 +80,7 @@ export function CatalogsPanel({ data, t, lang, reload }: CatalogsPanelProps): Re
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<{ text: string; bad: boolean } | null>(null)
+  const chooser = useRef<HTMLInputElement | null>(null)
 
   const changed = useCallback(async (): Promise<void> => {
     await reload()
@@ -119,6 +120,34 @@ export function CatalogsPanel({ data, t, lang, reload }: CatalogsPanelProps): Re
     })()
   }, [changed, data.limit, draft, t])
 
+  /** Send a chosen offline bundle to the server as it is; the server unpacks it under its own rules. */
+  const onImport = useCallback((file: File) => {
+    setBusy(true)
+    setMessage({ text: t('setCatalogImporting'), bad: false })
+    void (async () => {
+      try {
+        const response = await fetch(api('/dsh-market/offline/import'), {
+          method: 'POST',
+          headers: { 'content-type': 'application/octet-stream' },
+          body: file,
+        })
+        const body = await response.json() as { ok?: boolean; count?: number; code?: string; limit?: number; source?: SourceError }
+        if (body.ok === true) {
+          setMessage({ text: body.count === 1 ? t('setCatalogImportedOne') : t('setCatalogImported').replace('{0}', String(body.count ?? 0)), bad: false })
+          await changed()
+        } else if (body.code === 'too-big') setMessage({ text: t('setCatalogImportBig'), bad: true })
+        else if (body.code === 'unsafe') setMessage({ text: t('setCatalogImportUnsafe'), bad: true })
+        else if (body.code === 'locked' || body.code === 'limit') setMessage({ text: t(ADD_ERRORS[body.code]!).replace('{0}', String(body.limit ?? data.limit)), bad: true })
+        else setMessage({ text: t('setCatalogImportBad'), bad: true })
+      } catch {
+        setMessage({ text: t('srcErrNetwork'), bad: true })
+      } finally {
+        setBusy(false)
+        if (chooser.current !== null) chooser.current.value = ''
+      }
+    })()
+  }, [changed, data.limit, t])
+
   const onRemove = useCallback((id: string) => {
     setBusy(true)
     setMessage(null)
@@ -152,7 +181,7 @@ export function CatalogsPanel({ data, t, lang, reload }: CatalogsPanelProps): Re
     h('div', { className: css.setCatalogName },
       h('div', { className: css.setLabel }, nameOf(source.label)),
       h('div', { className: css.setCatalogMeta },
-        [source.status === 'ok' ? countText(t, source.count) : '', source.where].filter(Boolean).join(' · ')),
+        [source.status === 'ok' ? countText(t, source.count) : '', source.offline === true ? t('setCatalogOffline') : source.where].filter(Boolean).join(' · ')),
       source.status === 'failed'
         ? h('div', { className: css.setCatalogErr, title: source.error?.detail }, sourceErrorText(source.error, t))
         : null,
@@ -218,8 +247,25 @@ export function CatalogsPanel({ data, t, lang, reload }: CatalogsPanelProps): Re
         ? h('div', { className: css.setInlineActions },
             h(Button, {
               variant: 'outline', size: 'sm', disabled: busy,
+              title: t('setCatalogImportHint'),
+              onClick: () => { chooser.current?.click() },
+            }, t('setCatalogImport')),
+            h(Button, {
+              variant: 'outline', size: 'sm', disabled: busy,
               onClick: () => { setAdding(true); setMessage(null) },
             }, t('setCatalogAdd')),
+            // The file chooser itself stays out of sight; the button above opens it.
+            h('input', {
+              ref: chooser,
+              type: 'file',
+              accept: '.tgz,.tar.gz,application/gzip',
+              hidden: true,
+              'aria-label': t('setCatalogImport'),
+              onChange: (event: { currentTarget: { files: FileList | null } }) => {
+                const picked = event.currentTarget.files?.[0]
+                if (picked !== undefined) onImport(picked)
+              },
+            }),
           )
         : null,
     message === null

@@ -271,6 +271,18 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			setCatalogErrDuplicate: "这个目录已经添加过了。",
 			setCatalogErrLimit: "最多添加 {0} 个目录。请先移除不用的。",
 			setCatalogErrLocked: "你的组织不允许添加目录。",
+			pinnedByOrg: "版本由你的组织固定 · {0}",
+			setCountLockedHint: "你的组织已关闭这项统计，这里不能改。",
+			setGithubProxyOrgHint: "由你的组织设置，这里不能改。",
+			setCatalogImport: "导入离线包",
+			setCatalogImportHint: "选择公司给你的离线包文件。里面带着目录和插件，安装时不用联网。",
+			setCatalogImporting: "正在导入…",
+			setCatalogImported: "已导入，共 {0} 个插件。",
+			setCatalogImportedOne: "已导入，共 1 个插件。",
+			setCatalogOffline: "离线包",
+			setCatalogImportBad: "这不是可用的离线包。请向管理员要一份新的。",
+			setCatalogImportBig: "离线包太大，没有导入。请向管理员要一份更小的。",
+			setCatalogImportUnsafe: "离线包里有不安全的内容，没有导入。请联系管理员。",
 			setCatalogPolicyProblem: "你的组织的设置文件有问题：",
 			setEntrySection: "设置页入口",
 			setEntrySectionHint: "在设置中显示插件市场分区。",
@@ -1244,6 +1256,18 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			setCatalogErrDuplicate: "This catalog is already added.",
 			setCatalogErrLimit: "You can add up to {0} catalogs. Remove one you no longer use first.",
 			setCatalogErrLocked: "Your organization does not allow adding catalogs.",
+			pinnedByOrg: "Version set by your organization · {0}",
+			setCountLockedHint: "Your organization turned this off; it cannot be changed here.",
+			setGithubProxyOrgHint: "Set by your organization; it cannot be changed here.",
+			setCatalogImport: "Import offline bundle",
+			setCatalogImportHint: "Choose the offline bundle file your company gave you. It carries the catalog and the plugins, so installing needs no network.",
+			setCatalogImporting: "Importing…",
+			setCatalogImported: "Imported. {0} plugins.",
+			setCatalogImportedOne: "Imported. 1 plugin.",
+			setCatalogOffline: "Offline bundle",
+			setCatalogImportBad: "This is not a usable offline bundle. Ask your administrator for a new one.",
+			setCatalogImportBig: "The bundle is too large and was not imported. Ask your administrator for a smaller one.",
+			setCatalogImportUnsafe: "The bundle contains something unsafe and was not imported. Contact your administrator.",
 			setCatalogPolicyProblem: "There is a problem in your organization's settings file:",
 			setEntrySection: "Settings entry",
 			setEntrySectionHint: "Shows the market section in Settings.",
@@ -2216,6 +2240,18 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			setCatalogErrDuplicate: "このカタログはすでに追加されています。",
 			setCatalogErrLimit: "カタログは最大 {0} 件まで追加できます。使わないものを先に削除してください。",
 			setCatalogErrLocked: "組織の設定により、カタログは追加できません。",
+			pinnedByOrg: "バージョンは組織によって固定されています · {0}",
+			setCountLockedHint: "組織によりオフにされているため、ここでは変更できません。",
+			setGithubProxyOrgHint: "組織によって設定されています。ここでは変更できません。",
+			setCatalogImport: "オフラインバンドルを読み込む",
+			setCatalogImportHint: "会社から渡されたオフラインバンドルのファイルを選びます。カタログとプラグインが入っているので、インストールにネットワークは不要です。",
+			setCatalogImporting: "読み込み中…",
+			setCatalogImported: "読み込みました。{0} 件のプラグイン。",
+			setCatalogImportedOne: "読み込みました。1 件のプラグイン。",
+			setCatalogOffline: "オフラインバンドル",
+			setCatalogImportBad: "使えるオフラインバンドルではありません。管理者に新しいものを依頼してください。",
+			setCatalogImportBig: "バンドルが大きすぎるため読み込みませんでした。より小さいものを管理者に依頼してください。",
+			setCatalogImportUnsafe: "バンドルに安全でない内容が含まれていたため読み込みませんでした。管理者に連絡してください。",
 			setCatalogPolicyProblem: "組織の設定ファイルに問題があります:",
 			setEntrySection: "設定の入口",
 			setEntrySectionHint: "設定にマーケットのセクションを表示します。",
@@ -3617,8 +3653,15 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		* @returns the target spec, or null when the source url is unsupported.
 		*/
 		function installTargetFor(entry) {
+			if (entry.source !== void 0 && typeof entry.offlineTarball === "string" && entry.offlineTarball !== "") return `file:${entry.offlineTarball}`;
+			const hasNpm = typeof entry.npm === "string" && NPM_NAME_RE.test(entry.npm);
+			if (entry.source !== void 0 && !hasNpm && typeof entry.git === "string" && /^git\+(?:https?|ssh):\/\//u.test(entry.git)) return entry.git;
 			const source = parseSourceUrl(entry.url);
-			if (source === null) return entry.source !== void 0 && typeof entry.npm === "string" && NPM_NAME_RE.test(entry.npm) ? entry.npm : null;
+			if (source === null) {
+				if (entry.source === void 0) return null;
+				if (typeof entry.npm === "string" && NPM_NAME_RE.test(entry.npm)) return entry.npm;
+				return typeof entry.git === "string" && /^git\+(?:https?|ssh):\/\//u.test(entry.git) ? entry.git : null;
+			}
 			if (source.subpath === null && source.repo.toLowerCase() === MARKET_REPO) return MARKET_NPM_NAME;
 			if (typeof entry.npm === "string" && NPM_NAME_RE.test(entry.npm)) return entry.npm;
 			const tarball = releaseTarballTarget(entry.tarball, source.repo);
@@ -3654,6 +3697,35 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		}
 		function githubSourceTarget(source) {
 			return source.subpath !== null ? `github:${source.repo}#path:/${source.subpath}` : `github:${source.repo}`;
+		}
+		//#endregion
+		//#region src/client/org-policy.ts
+		const OPEN = {
+			externalImages: true,
+			comments: true
+		};
+		let current = OPEN;
+		/** Replace the policy with what the server sent (`undefined`/absent = no restrictions). */
+		function setOrgPolicy(sent) {
+			current = sent === null || sent === void 0 ? OPEN : {
+				externalImages: sent.externalImages !== false,
+				comments: sent.comments !== false
+			};
+		}
+		function orgPolicy() {
+			return current;
+		}
+		/** Whether an image URL may be loaded under the policy: any, or only the page's own origin. */
+		function imageAllowed(url) {
+			if (current.externalImages) return true;
+			try {
+				const base = typeof location === "undefined" ? "http://localhost/" : location.href;
+				const parsed = new URL(url, base);
+				if (parsed.protocol === "file:" || parsed.protocol === "data:") return true;
+				return typeof location !== "undefined" && parsed.origin === location.origin;
+			} catch {
+				return false;
+			}
 		}
 		//#endregion
 		//#region src/client/market-data.ts
@@ -4477,11 +4549,25 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			"github.com"
 		]);
 		const MAX_SCREENSHOTS = 6;
-		function gateScreenshot(value) {
+		function gateScreenshot(value, anyHost = false) {
 			if (typeof value !== "string") return {
 				ok: false,
 				reason: "not a string"
 			};
+			if (!orgPolicy().externalImages) {
+				if (!imageAllowed(value)) return {
+					ok: false,
+					reason: "blocked by your organization"
+				};
+				if (/\.svg$/iu.test(value.split(/[?#]/u)[0])) return {
+					ok: false,
+					reason: "svg is not rendered"
+				};
+				return {
+					ok: true,
+					src: value
+				};
+			}
 			let parsed;
 			try {
 				parsed = new URL(value);
@@ -4495,7 +4581,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				ok: false,
 				reason: "not https"
 			};
-			if (!SCREENSHOT_HOSTS.has(parsed.hostname)) return {
+			if (!anyHost && !SCREENSHOT_HOSTS.has(parsed.hostname)) return {
 				ok: false,
 				reason: `host not allowlisted (${parsed.hostname})`
 			};
@@ -4509,8 +4595,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			};
 		}
 		/** Return one safe screenshot URL without applying the public list limit. */
-		function safeScreenshot(value) {
-			const gate = gateScreenshot(value);
+		function safeScreenshot(value, anyHost = false) {
+			const gate = gateScreenshot(value, anyHost);
 			return gate.ok ? gate.src : null;
 		}
 		/**
@@ -4518,8 +4604,16 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		* screenshots (an icon URL is still a request carrying the user's IP) and
 		* raster-only, because an SVG tile is a document, not an image.
 		*/
-		function safeIcon(value) {
-			return safeScreenshot(value);
+		function safeIcon(value, anyHost = false) {
+			return safeScreenshot(value, anyHost);
+		}
+		/** Whether a screenshot URL is on one of the public image hosts (the only ones a resizing service may be handed). */
+		function isPublicImageHost(url) {
+			try {
+				return SCREENSHOT_HOSTS.has(new URL(url).hostname);
+			} catch {
+				return false;
+			}
 		}
 		/**
 		* Prepare a GitHub release body for the update-notes dialog's tiny markdown
@@ -4559,10 +4653,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		*/
 		function safeScreenshots(urls, options = {}) {
 			if (!Array.isArray(urls)) return [];
-			const { onReject } = options;
+			const { onReject, anyHost } = options;
 			const safe = [];
 			for (const value of urls) {
-				const gate = gateScreenshot(value);
+				const gate = gateScreenshot(value, anyHost === true);
 				if (!gate.ok) {
 					onReject?.({
 						value,
@@ -4735,9 +4829,12 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		*/
 		function pluginScreenshotCandidates(plugin) {
 			const refused = [];
-			const curated = safeScreenshots(plugin.screenshots, { onReject: (rejection) => {
-				refused.push(rejection);
-			} });
+			const curated = safeScreenshots(plugin.screenshots, {
+				anyHost: plugin.source !== void 0,
+				onReject: (rejection) => {
+					refused.push(rejection);
+				}
+			});
 			if (refused.length > 0) warnRefusedCuratedScreenshots(plugin, refused);
 			if (curated.length > 0) return Promise.resolve(curated.map((src, order) => ({
 				src,
@@ -4745,6 +4842,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				semanticScore: 1e3 - order,
 				curated: true
 			})));
+			if (!orgPolicy().externalImages) return Promise.resolve([]);
 			const m = /^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\/tree\/[^/]+\/(.+?))?\/?$/.exec(plugin.url);
 			if (m === null) return Promise.resolve([]);
 			const [, owner, repo, subpath = null] = m;
@@ -7849,6 +7947,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				noteSources(body.registry?.sources ?? body.sources);
 				if (!response.ok) throw new Error(typeof body.error === "string" ? body.error : `HTTP ${response.status}`);
 				if (body.registry === void 0) throw new Error("the catalog response carried no data");
+				setOrgPolicy(body.policy);
 				const host = body.hostVersion;
 				this.setCatalog(body.registry, typeof host === "string" || host === null ? host : void 0);
 				return "loaded";
@@ -8126,13 +8225,13 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				}
 			}, key);
 		}
-		function OwnerAvatar({ name, owner, icon, className }) {
+		function OwnerAvatar({ name, owner, icon, className, trusted }) {
 			const [failed, setFailed] = (0, react.useState)(false);
 			const [routeIndex, setRouteIndex] = (0, react.useState)(0);
 			const [iconFailed, setIconFailed] = (0, react.useState)(false);
 			const [iconRouteIndex, setIconRouteIndex] = (0, react.useState)(0);
 			const av = className === void 0 ? Market_module_css_default.av : `${Market_module_css_default.av} ${className}`;
-			const tile = iconFailed ? null : safeIcon(icon);
+			const tile = iconFailed ? null : safeIcon(icon, trusted === true);
 			if (tile !== null) {
 				const candidates = githubRouteCandidates("raw", tile);
 				const candidate = candidates[Math.min(iconRouteIndex, candidates.length - 1)];
@@ -8150,7 +8249,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					}
 				});
 			}
-			if (failed || owner === "") return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+			if (failed || owner === "" || !orgPolicy().externalImages) return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 				className: av,
 				style: { background: avatarColor(name) },
 				children: name.replace(/^dsh[-_]/i, "").charAt(0).toUpperCase() || "P"
@@ -8252,6 +8351,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		* share a cache entry with the full-size open anyway.
 		*/
 		function thumbUrl(src, height, options = {}) {
+			if (!isPublicImageHost(src)) return src;
 			let url = `https://images.weserv.nl/?url=${encodeURIComponent(src.replace(/^https?:\/\//, ""))}&h=${String(height)}&fit=inside&we=1`;
 			if (options.webp === true && /\.(?:png|jpe?g|webp)(?:$|[?#])/iu.test(src)) url += "&output=webp";
 			else if (/\.gif(?:$|[?#])/iu.test(src)) {
@@ -8315,7 +8415,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		* measured too — otherwise a later landscape is dropped before ranking. */
 		const THEME_PREVIEW_PROBE_LIMIT = 3;
 		function CardShot({ plugin, onOpen }) {
-			const shots = safeScreenshots(plugin.screenshots);
+			const shots = safeScreenshots(plugin.screenshots, { anyHost: plugin.source !== void 0 });
 			const [broken, setBroken] = (0, react.useState)([]);
 			const visible = shots.filter((src) => !broken.includes(src)).slice(0, CARD_SHOT_LIMIT);
 			const [setStripRef, near] = useNearViewport();
@@ -8407,7 +8507,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		* ranked by both README semantics and measured image geometry.
 		*/
 		function ThemeCover({ plugin, onOpen, t }) {
-			const curated = safeScreenshots(plugin.screenshots);
+			const curated = safeScreenshots(plugin.screenshots, { anyHost: plugin.source !== void 0 });
 			const curatedKey = curated.join("\n");
 			const cachedFallback = curated.length === 0 ? measuredThemePreviewResults.get(plugin.url) : void 0;
 			const [fallback, setFallback] = (0, react.useState)({
@@ -10237,7 +10337,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					avatar: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(OwnerAvatar, {
 						name: entry.name,
 						owner: entry.owner || "",
-						icon: entry.icon ?? void 0
+						icon: entry.icon ?? void 0,
+						trusted: entry.source !== void 0
 					})
 				};
 			}, [data]);
@@ -15951,6 +16052,16 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				children: label
 			});
 		}
+		/** "Version set by your organization": the plugin installs and updates only to this release. */
+		function PinnedNote({ plugin, t }) {
+			if (plugin.pinned === void 0) return null;
+			const text = t("pinnedByOrg").replace("{0}", plugin.pinned);
+			return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+				className: `${Market_module_css_default.tag} ${Market_module_css_default.srcTag}`,
+				title: text,
+				children: text
+			});
+		}
 		/**
 		* "All sources / Public / Acme": only when at least two catalogs loaded —
 		* with one there is nothing to choose between.
@@ -17024,6 +17135,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 								name: p.name,
 								owner: p.owner || "",
 								icon: p.icon ?? void 0,
+								trusted: p.source !== void 0,
 								className: Market_module_css_default.recentAv
 							}),
 							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
@@ -17108,7 +17220,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 											children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(OwnerAvatar, {
 												name: p.name,
 												owner: p.owner || "",
-												icon: p.icon ?? void 0
+												icon: p.icon ?? void 0,
+												trusted: p.source !== void 0
 											}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 												className: Market_module_css_default.owner,
 												title: p.owner,
@@ -17170,6 +17283,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 										plugin: p,
 										lang
 									}),
+									/* @__PURE__ */ (0, react_jsx_runtime.jsx)(PinnedNote, {
+										plugin: p,
+										t
+									}),
 									pluginCategories(p).map((category) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 										className: Market_module_css_default.tag,
 										children: data.categories[category] && (data.categories[category][lang] || data.categories[category].en) || category
@@ -17179,7 +17296,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 								className: Market_module_css_default.footActions,
 								children: [
 									renderFavoriteControl(p.url),
-									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+									orgPolicy().comments && p.source === void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
 										type: "button",
 										className: Market_module_css_default.commentsLink,
 										onClick: () => setCommentsFor(p),
@@ -17264,7 +17381,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 												children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(OwnerAvatar, {
 													name: p.name,
 													owner: p.owner || "",
-													icon: p.icon ?? void 0
+													icon: p.icon ?? void 0,
+													trusted: p.source !== void 0
 												}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 													className: Market_module_css_default.owner,
 													title: p.owner,
@@ -22450,7 +22568,8 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									/* @__PURE__ */ (0, react_jsx_runtime.jsx)(OwnerAvatar, {
 										name: confirming.name,
 										owner: confirming.owner || "",
-										icon: confirming.icon ?? void 0
+										icon: confirming.icon ?? void 0,
+										trusted: confirming.source !== void 0
 									}),
 									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 										className: Market_module_css_default.owner,
@@ -22476,15 +22595,22 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 									})
 								]
 							}),
-							(pluginCategories(confirming).length > 0 || confirming.source !== void 0) && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+							(pluginCategories(confirming).length > 0 || confirming.source !== void 0 || confirming.pinned !== void 0) && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 								className: Market_module_css_default.confirmTags,
-								children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(SourceTag, {
-									plugin: confirming,
-									lang
-								}), pluginCategories(confirming).map((category) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-									className: Market_module_css_default.tag,
-									children: data.categories[category] && (data.categories[category][lang] || data.categories[category].en) || category
-								}, category))]
+								children: [
+									/* @__PURE__ */ (0, react_jsx_runtime.jsx)(SourceTag, {
+										plugin: confirming,
+										lang
+									}),
+									/* @__PURE__ */ (0, react_jsx_runtime.jsx)(PinnedNote, {
+										plugin: confirming,
+										t
+									}),
+									pluginCategories(confirming).map((category) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+										className: Market_module_css_default.tag,
+										children: data.categories[category] && (data.categories[category][lang] || data.categories[category].en) || category
+									}, category))
+								]
 							}),
 							(() => {
 								const text = confirming.description && (confirming.description[lang] || confirming.description.en) || "";
@@ -23339,6 +23465,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const [draft, setDraft] = (0, react.useState)("");
 			const [busy, setBusy] = (0, react.useState)(false);
 			const [message, setMessage] = (0, react.useState)(null);
+			const chooser = (0, react.useRef)(null);
 			const changed = (0, react.useCallback)(async () => {
 				await reload();
 				discoveryScan.resume().catch(() => {});
@@ -23390,6 +23517,57 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				draft,
 				t
 			]);
+			/** Send a chosen offline bundle to the server as it is; the server unpacks it under its own rules. */
+			const onImport = (0, react.useCallback)((file) => {
+				setBusy(true);
+				setMessage({
+					text: t("setCatalogImporting"),
+					bad: false
+				});
+				(async () => {
+					try {
+						const body = await (await fetch(api("/dsh-market/offline/import"), {
+							method: "POST",
+							headers: { "content-type": "application/octet-stream" },
+							body: file
+						})).json();
+						if (body.ok === true) {
+							setMessage({
+								text: body.count === 1 ? t("setCatalogImportedOne") : t("setCatalogImported").replace("{0}", String(body.count ?? 0)),
+								bad: false
+							});
+							await changed();
+						} else if (body.code === "too-big") setMessage({
+							text: t("setCatalogImportBig"),
+							bad: true
+						});
+						else if (body.code === "unsafe") setMessage({
+							text: t("setCatalogImportUnsafe"),
+							bad: true
+						});
+						else if (body.code === "locked" || body.code === "limit") setMessage({
+							text: t(ADD_ERRORS[body.code]).replace("{0}", String(body.limit ?? data.limit)),
+							bad: true
+						});
+						else setMessage({
+							text: t("setCatalogImportBad"),
+							bad: true
+						});
+					} catch {
+						setMessage({
+							text: t("srcErrNetwork"),
+							bad: true
+						});
+					} finally {
+						setBusy(false);
+						if (chooser.current !== null) chooser.current.value = "";
+					}
+				})();
+			}, [
+				changed,
+				data.limit,
+				t
+			]);
 			const onRemove = (0, react.useCallback)((id) => {
 				setBusy(true);
 				setMessage(null);
@@ -23422,7 +23600,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			const sourceRow = (source) => (0, react.createElement)("div", {
 				key: source.id,
 				className: Market_module_css_default.setCatalogRow
-			}, (0, react.createElement)("div", { className: Market_module_css_default.setCatalogName }, (0, react.createElement)("div", { className: Market_module_css_default.setLabel }, nameOf(source.label)), (0, react.createElement)("div", { className: Market_module_css_default.setCatalogMeta }, [source.status === "ok" ? countText(t, source.count) : "", source.where].filter(Boolean).join(" · ")), source.status === "failed" ? (0, react.createElement)("div", {
+			}, (0, react.createElement)("div", { className: Market_module_css_default.setCatalogName }, (0, react.createElement)("div", { className: Market_module_css_default.setLabel }, nameOf(source.label)), (0, react.createElement)("div", { className: Market_module_css_default.setCatalogMeta }, [source.status === "ok" ? countText(t, source.count) : "", source.offline === true ? t("setCatalogOffline") : source.where].filter(Boolean).join(" · ")), source.status === "failed" ? (0, react.createElement)("div", {
 				className: Market_module_css_default.setCatalogErr,
 				title: source.error?.detail
 			}, sourceErrorText(source.error, t)) : null), source.locked ? (0, react.createElement)("span", { className: Market_module_css_default.setCatalogLock }, t("setCatalogOrg")) : (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
@@ -23465,11 +23643,29 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				variant: "outline",
 				size: "sm",
 				disabled: busy,
+				title: t("setCatalogImportHint"),
+				onClick: () => {
+					chooser.current?.click();
+				}
+			}, t("setCatalogImport")), (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+				variant: "outline",
+				size: "sm",
+				disabled: busy,
 				onClick: () => {
 					setAdding(true);
 					setMessage(null);
 				}
-			}, t("setCatalogAdd"))) : null, message === null ? null : (0, react.createElement)("div", {
+			}, t("setCatalogAdd")), (0, react.createElement)("input", {
+				ref: chooser,
+				type: "file",
+				accept: ".tgz,.tar.gz,application/gzip",
+				hidden: true,
+				"aria-label": t("setCatalogImport"),
+				onChange: (event) => {
+					const picked = event.currentTarget.files?.[0];
+					if (picked !== void 0) onImport(picked);
+				}
+			})) : null, message === null ? null : (0, react.createElement)("div", {
 				className: message.bad ? Market_module_css_default.setCatalogErr : Market_module_css_default.setHint,
 				role: "status"
 			}, message.text));
@@ -23561,7 +23757,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				selfManaged: body.selfManaged !== false,
 				selfUninstallReachable: body.selfUninstallReachable !== false,
 				buildEnv: body.buildEnv ?? {},
-				anonymousCount: typeof body.anonymousCount === "boolean" ? body.anonymousCount : null
+				anonymousCount: typeof body.anonymousCount === "boolean" ? body.anonymousCount : null,
+				anonymousCountLocked: body.anonymousCountLocked === true,
+				githubProxyByPolicy: body.githubProxyByPolicy === true
 			};
 		}
 		/** Render the effective build environment as one `KEY=value` line each. */
@@ -23693,7 +23891,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 							selfManaged: true,
 							selfUninstallReachable: true,
 							buildEnv: {},
-							anonymousCount: null
+							anonymousCount: null,
+							anonymousCountLocked: false,
+							githubProxyByPolicy: false
 						});
 					}
 					try {
@@ -24066,16 +24266,16 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				onClick: () => {
 					onRegion(id);
 				}
-			}, t(REGION_LABEL[id]))))), status?.anonymousCount !== null && status?.anonymousCount !== void 0 ? row(t("setCount"), t("setCountHint"), (0, react.createElement)("div", { className: Market_module_css_default.setSeg }, [true, false].map((value) => (0, react.createElement)("button", {
+			}, t(REGION_LABEL[id]))))), status?.anonymousCount !== null && status?.anonymousCount !== void 0 ? row(t("setCount"), status.anonymousCountLocked ? t("setCountLockedHint") : t("setCountHint"), (0, react.createElement)("div", { className: Market_module_css_default.setSeg }, [true, false].map((value) => (0, react.createElement)("button", {
 				key: String(value),
 				type: "button",
 				className: status.anonymousCount === value ? `${Market_module_css_default.setSegBtn} ${Market_module_css_default.setSegOn}` : Market_module_css_default.setSegBtn,
-				disabled: busy,
+				disabled: busy || status.anonymousCountLocked,
 				"aria-pressed": status.anonymousCount === value,
 				onClick: () => {
 					if (status.anonymousCount !== value) onCount(value);
 				}
-			}, t(value ? "setCountOn" : "setCountOff"))))) : null, row(t("setGithubProxy"), status?.githubProxyManaged === true ? t("setGithubProxyManagedHint") : status?.githubProxyCustom !== null && status?.githubProxyCustom !== void 0 ? t("setGithubProxyCustomHint") : t("setGithubProxyAutoHint"), status?.githubProxyManaged === true ? null : status?.githubProxyCustom !== null && status?.githubProxyCustom !== void 0 ? (0, react.createElement)("div", { className: Market_module_css_default.setInlineActions }, (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+			}, t(value ? "setCountOn" : "setCountOff"))))) : null, row(t("setGithubProxy"), status?.githubProxyByPolicy === true ? t("setGithubProxyOrgHint") : status?.githubProxyManaged === true ? t("setGithubProxyManagedHint") : status?.githubProxyCustom !== null && status?.githubProxyCustom !== void 0 ? t("setGithubProxyCustomHint") : t("setGithubProxyAutoHint"), status?.githubProxyManaged === true ? null : status?.githubProxyCustom !== null && status?.githubProxyCustom !== void 0 ? (0, react.createElement)("div", { className: Market_module_css_default.setInlineActions }, (0, react.createElement)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 				variant: "outline",
 				size: "sm",
 				disabled: proxySaving,

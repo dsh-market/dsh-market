@@ -22,8 +22,9 @@ import { CatalogLoadError, forgetCatalog, loadRegistry, pluginCategories, type R
 import {
   catalogConfig, entryAllowed, MAX_USER_CATALOGS, parseCatalogInput, probeCatalog, setUserCatalogs, userCatalogId, type SourceInfo,
 } from './catalogs.ts'
-import { getPolicy } from './policy.ts'
+import { clientPolicy, getPolicy, pinnedVersion } from './policy.ts'
 import { setNpmrcProfileDir } from './npmrc.ts'
+import { BundleError, extractBundle, isInsideOfflineRoot, MAX_BUNDLE_BYTES, type ExtractedBundle } from './offline.ts'
 import { settingsNamespaceState } from './settings.ts'
 import {
   buildEnvFromUnknown, cleanHotDir, forgetInstalled, hotMount, hotMountFailure, hotUnmount, listHotMounts, listLiveHotMounts,
@@ -66,7 +67,7 @@ import { checkoutSourceExists, detachCheckoutLink, failureDetail, groupConflicts
 import { classifyPnpmFailure } from './pnpm-compat.ts'
 import { asChannel, CHANNELS, DIST_TAG, resolveChannel, type Channel } from './channels.ts'
 import {
-  asRegion, githubProxyManaged, normalizeGithubProxy, REGIONS, routesFor, setActiveRegion,
+  asRegion, githubProxyByPolicy, githubProxyManaged, normalizeGithubProxy, REGIONS, routesFor, setActiveRegion,
   setCustomGithubProxy, type Region,
 } from './regions.ts'
 import { resolveRegion } from './region-probe.ts'
@@ -75,12 +76,12 @@ import { mismatchedWorkspaceRoot } from './github-install-target.ts'
 import { sourceWebUrl, updateNotesFor } from './changelog.ts'
 import { isCommitId } from './release-history.ts'
 import { activeReleaseBlockers, headlineBlocker, releaseBlockedMessage } from './release-blockers.ts'
-import { applyProfileBlockers, checkUpdates, isUpdatablePlugin, compareVersions, fetchNpmLatest, invalidateUpdates, readVersionMaturity, resolveDesktopMatureUpdate, resolveGitRemoteHead, isUpgrade, latestPublishedRecently, setUpdateRegistry, versionOnChannel } from './updates.ts'
+import { applyProfileBlockers, checkUpdates, isUpdatablePlugin, compareVersions, fetchNpmLatest, fetchRegistryLatest, invalidateUpdates, readVersionMaturity, resolveDesktopMatureUpdate, resolveGitRemoteHead, isUpgrade, latestPublishedRecently, setUpdateRegistry, versionOnChannel } from './updates.ts'
 import { isExactReleaseVersion, isStableReleaseVersion } from './release-candidates.ts'
 import { createUpdateNotificationMonitor } from './update-notifications.ts'
 import { DEFAULT_UPDATE_CHECK_INTERVAL_HOURS, isUpdateCheckIntervalHours } from './update-notification-settings.ts'
 import { createThemeManager, type LoaderEntry } from './themes.ts'
-import { readJsonBody, refuseUnadmitted, sameOrigin, sendJson } from './http.ts'
+import { readJsonBody, readRawBody, refuseUnadmitted, sameOrigin, sendJson } from './http.ts'
 import { resolveDshHome } from './home-paths.ts'
 import { readTelemetryState, sendOpened, setTelemetryEnabled, startHeartbeat, type HeartbeatOptions } from './telemetry.ts'
 import { clearWebdavSecret, readWebdavSecret, webdavSecretFor, writeWebdavSecret } from './webdav-secret.ts'
@@ -121,7 +122,9 @@ function discoveryCatalog(registry: Registry) {
   const previous = discoveryCatalogs.get(registry)
   if (previous !== undefined) return previous
   const revisions = new Map<string, { entry: RegistryPlugin; revision: string }>()
-  const plugins = registry.plugins.map((entry): DiscoveryPlugin => {
+  const plugins = registry.plugins.map((original): DiscoveryPlugin => {
+    // Where a bundle's package file sits on this machine is the server's business, not the page's.
+    const entry: RegistryPlugin = original.offlineTarball === undefined ? original : (({ offlineTarball: _path, ...rest }) => rest)(original)
     if ((entry.npm == null || entry.npm === '') && typeof entry.url === 'string' && parseSourceUrl(entry.url) !== null) {
       const revision = githubCompatibilityRevision(entry)
       revisions.set(entry.url, { entry, revision })
@@ -3497,7 +3500,7 @@ export function mountMarketRoutes(
       path: '/dsh-market/telemetry',
       handler: async (request, response) => {
         if (request.method === 'GET') {
-          sendJson(response, 200, { enabled: readTelemetryState().enabled })
+          sendJson(response, 200, { enabled: readTelemetryState().enabled && getPolicy().telemetry !== false, ...(getPolicy().telemetry === false ? { locked: true } : {}) })
           return
         }
         if (request.method !== 'POST') {
@@ -3507,6 +3510,10 @@ export function mountMarketRoutes(
         }
         if (!sameOrigin(request)) {
           sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        if (getPolicy().telemetry === false) {
+          sendJson(response, 403, { ok: false, code: 'locked', error: '你的组织已关闭匿名使用统计，这里不能改。 / Your organization turned the anonymous count off; it cannot be changed here.' })
           return
         }
         try {
@@ -4315,6 +4322,7 @@ export function mountMarketRoutes(
             const registry = await loadRegistry()
             sendJson(response, 200, {
               registry: discoveryCatalog(registry).response,
+              ...(Object.keys(clientPolicy()).length > 0 ? { policy: clientPolicy() } : {}),
               hostVersion: dshHostInfo()?.version ?? null,
             })
           } catch (error) {
@@ -5384,6 +5392,75 @@ export function mountMarketRoutes(
       },
     }),
 
+    /**
+     * Import an offline bundle: the request body IS the archive. It is
+     * unpacked under the market's own directory with strict rules (see
+     * offline.ts), read once as a catalog, and only then saved as one of the
+     * user's catalogs.
+     */
+    registerRoute({
+      kind: 'exact',
+      path: '/dsh-market/offline/import',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) {
+          sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        try {
+          await withMutationQueued(async () => {
+            if (!getPolicy().userCatalogs) {
+              sendJson(response, 403, { ok: false, code: 'locked', error: '你的组织不允许添加目录 / your organization does not allow adding catalogs' })
+              return
+            }
+            let archive: Buffer
+            try {
+              archive = await readRawBody(request, MAX_BUNDLE_BYTES)
+            } catch {
+              sendJson(response, 413, { ok: false, code: 'too-big', error: 'the bundle is too large / 离线包太大' })
+              return
+            }
+            let extracted: ExtractedBundle
+            try {
+              extracted = extractBundle(archive)
+            } catch (error) {
+              const refused = error instanceof BundleError ? error : null
+              logEvent('warn', 'offline', `bundle refused: ${refused === null ? String(error) : `${refused.code} ${refused.detail}`}`)
+              sendJson(response, 400, { ok: false, code: refused?.code ?? 'not-archive', detail: refused?.detail ?? '', error: 'not a usable offline bundle / 这不是可用的离线包' })
+              return
+            }
+            const entry = { file: extracted.catalogFile }
+            const probe = await probeCatalog(entry)
+            if (probe.registry === null) {
+              rmSync(extracted.dir, { recursive: true, force: true })
+              sendJson(response, 400, { ok: false, code: 'unreadable', source: probe.info.error, error: 'the bundle has no readable catalog / 离线包里的目录读不了' })
+              return
+            }
+            const state = readMarketState(activeProfileDir)
+            const id = userCatalogId(entry)
+            const saved = (state.userCatalogs ?? []).filter(item => item.id !== id)
+            if (saved.length >= MAX_USER_CATALOGS) {
+              rmSync(extracted.dir, { recursive: true, force: true })
+              sendJson(response, 400, { ok: false, code: 'limit', limit: MAX_USER_CATALOGS, error: `at most ${String(MAX_USER_CATALOGS)} catalogs / 最多添加 ${String(MAX_USER_CATALOGS)} 个目录` })
+              return
+            }
+            writeMarketState(activeProfileDir, { ...state, userCatalogs: [...saved, { id, ...entry }] })
+            refreshMarketState()
+            forgetCatalog()
+            invalidateUpdates()
+            logEvent('info', 'offline', `imported bundle ${extracted.id}: ${String(probe.info.count)} plugins, ${String(extracted.files)} files`)
+            sendJson(response, 200, { ok: true, id, count: probe.info.count, label: probe.info.label })
+          })
+        } catch (error) {
+          sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    }),
+
     registerRoute({
       kind: 'exact',
       path: '/dsh-market/catalogs/remove',
@@ -5408,7 +5485,12 @@ export function mountMarketRoutes(
               sendJson(response, 404, { ok: false, error: 'no such catalog / 没有这个目录' })
               return
             }
+            const gone = saved.find(entry => entry.id === id)
             writeMarketState(activeProfileDir, { ...state, userCatalogs: saved.filter(entry => entry.id !== id) })
+            // An imported bundle is the market's own copy: removing the catalog removes its files.
+            if (gone?.file !== undefined && isInsideOfflineRoot(gone.file)) {
+              rmSync(dirname(gone.file), { recursive: true, force: true })
+            }
             refreshMarketState()
             forgetCatalog()
             invalidateUpdates()
@@ -5824,7 +5906,9 @@ export function mountMarketRoutes(
           channels: CHANNELS,
           region,
           regions: REGIONS,
-          anonymousCount: readTelemetryState().enabled,
+          anonymousCount: readTelemetryState().enabled && getPolicy().telemetry !== false,
+          // Set by the organization: shown, not switchable.
+          anonymousCountLocked: getPolicy().telemetry === false,
           // The padded/PATH- and CI-safe build environment currently pinned
           // (issue #336): composition plus any card-saved override. The card
           // edits exactly what this reports, so the form never shows a stale
@@ -5840,6 +5924,7 @@ export function mountMarketRoutes(
           githubRoutes: routesFor(region).githubRoutes,
           githubProxyCustom: marketState.githubProxy ?? null,
           githubProxyManaged: githubProxyManaged(),
+          githubProxyByPolicy: githubProxyByPolicy(),
           // Whether the region was decided by the network check rather than
           // by the user — the card explains a choice it made on their behalf
           // exactly once, so nobody has to wonder why downloads moved.
@@ -6624,15 +6709,17 @@ export function mountMarketRoutes(
                 }
               }
               if (desktopStable) {
-                const endpointLatest = await fetchNpmLatest(name)
+                const endpointLatest = await fetchRegistryLatest(name)
+                // What the organization allows as the newest, when it pinned one.
+                const orgNewest = pinnedVersion(name) ?? endpointLatest
                 // Repeated legacy requests are already complete. An explicit
                 // client target must still pass the stale-target checks below.
-                if (body.eligibleVersion === undefined && compatVersion === null && endpointLatest === installedVersion) {
+                if (body.eligibleVersion === undefined && compatVersion === null && orgNewest === installedVersion) {
                   invalidateUpdates()
                   sendJson(response, 200, { ok: true, skipped: 'current', name, version: installedVersion })
                   return
                 }
-                const eligible = await resolveDesktopMatureUpdate(name, installedVersion, config.profile, activeProfileDir, endpointLatest, compatVersion ?? undefined)
+                const eligible = await resolveDesktopMatureUpdate(name, installedVersion, config.profile, activeProfileDir, endpointLatest, compatVersion ?? pinnedVersion(name))
                 if (body.eligibleVersion !== undefined && body.eligibleVersion !== eligible.candidate) {
                   invalidateUpdates()
                   sendJson(response, 409, {
@@ -6652,7 +6739,7 @@ export function mountMarketRoutes(
                 // Older clients have no target token. They may still install
                 // a mature latest, but cannot silently get a different build
                 // from the version their UI presented.
-                if (compatVersion === null && body.eligibleVersion === undefined && eligible.candidate !== endpointLatest) {
+                if (compatVersion === null && body.eligibleVersion === undefined && eligible.candidate !== orgNewest) {
                   invalidateUpdates()
                   sendJson(response, 409, { staleTarget: true, error: '当前最新版仍在等待期；请刷新市场以确认可安装的成熟版本。 / The latest release is held. Refresh the market to confirm the exact mature target.' })
                   return
@@ -9049,7 +9136,7 @@ export function mountMarketRoutes(
             // A release the user picked from the refusal dialog's own search
             // (#581): it was confirmed compatible by /dsh-market/find-compatible,
             // so it is pinned below instead of resolving `latest` again.
-            const requestedVersion = typeof body.version === 'string' && /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(body.version)
+            let requestedVersion = typeof body.version === 'string' && /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(body.version)
               ? body.version
               : null
             const registry = await loadRegistry()
@@ -9067,6 +9154,10 @@ export function mountMarketRoutes(
               sendJson(response, 403, { error: '你的组织不允许安装这个插件 / your organization does not allow installing this plugin' })
               return
             }
+            // The organization fixed this package's version: that exact release
+            // installs, whatever the page asked for.
+            const orgPin = typeof entry.npm === 'string' ? pinnedVersion(entry.npm) : undefined
+            if (orgPin !== undefined) requestedVersion = orgPin
             const plainTarget = installTargetFor(entry)
             if (plainTarget === null) {
               sendJson(response, 400, { error: 'unsupported source url' })

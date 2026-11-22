@@ -82,6 +82,22 @@ export interface RegistryPlugin {
    */
   source?: { id: string; label: Record<string, string> }
   /**
+   * Internal repository to install from (`git+https://…#ref`, `git+ssh://…`).
+   * Honored only on an entry from an added catalog — the market stamps
+   * `source` itself — and never taken from a request.
+   */
+  git?: string
+  /**
+   * Absolute path of a package file that ships with an offline bundle. Set by
+   * the market while reading a file catalog, after checking it lies inside
+   * that catalog's own directory; a catalog's own text cannot set it.
+   */
+  offlineTarball?: string
+  /** The version an administrator's policy fixed this entry to. */
+  pinned?: string
+  /** Curated screenshot URLs. */
+  screenshots?: string[]
+  /**
    * Catalog-side deprecation flags (#60): supplied by awesome-dsh-plugin,
    * absent for every normal entry — the market only consumes them, so a
    * catalog without the fields behaves exactly as before.
@@ -373,7 +389,7 @@ async function loadMerged(region: Region, config: ReturnType<typeof catalogConfi
     throw new CatalogLoadError(message === '' ? 'no catalog is available' : message, sources)
   }
   const inputs: unknown[] = [publicRegistry, ...extras.map(extra => extra.registry)]
-  const stamp = JSON.stringify([config.policy.allow, publicInfo, extras.map(extra => extra.info)])
+  const stamp = JSON.stringify([config.policy.allow, config.policy.pins, publicInfo, extras.map(extra => extra.info)])
   if (lastMerged !== null && lastMerged.allow === stamp
     && lastMerged.inputs.length === inputs.length && lastMerged.inputs.every((value, index) => value === inputs[index])) {
     return lastMerged.out
@@ -383,6 +399,7 @@ async function loadMerged(region: Region, config: ReturnType<typeof catalogConfi
     publicInfo: publicResult === null ? null : publicInfo,
     extras,
     allow: config.policy.allow,
+    pins: config.policy.pins,
   })
   lastMerged = { inputs, allow: stamp, out }
   return out

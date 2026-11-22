@@ -25,6 +25,13 @@ export function SourceTag({ plugin, lang }: { plugin: Pick<RegistryPlugin, 'sour
   return <span className={`${css.tag} ${css.srcTag}`} title={label}>{label}</span>
 }
 
+/** "Version set by your organization": the plugin installs and updates only to this release. */
+export function PinnedNote({ plugin, t }: { plugin: Pick<RegistryPlugin, 'pinned'>; t: Translate }) {
+  if (plugin.pinned === undefined) return null
+  const text = t('pinnedByOrg').replace('{0}', plugin.pinned)
+  return <span className={`${css.tag} ${css.srcTag}`} title={text}>{text}</span>
+}
+
 /**
  * "All sources / Public / Acme": only when at least two catalogs loaded —
  * with one there is nothing to choose between.

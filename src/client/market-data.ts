@@ -7,6 +7,7 @@ import type { DiagnosticReportV1 } from '../diagnostics.ts'
 import { findCatalogEntryForLocal } from '../catalog-local-match.ts'
 import { SEARCH_SYNONYM_GROUPS } from '../search-synonyms.ts'
 import { catalogReleaseSourceOf, NPM_NAME_RE, parseSourceUrl } from '../sources.ts'
+import { imageAllowed, orgPolicy } from './org-policy.ts'
 import type { StartupRepairSnapshot } from '../startup-repair-report.ts'
 import type { CheckoutRecoveryStatus } from '../pending-checkout-links.ts'
 export type { SharedHostPackageDependencyFinding } from '../diagnostics.ts'
@@ -90,6 +91,8 @@ export interface RegistryPlugin {
   icon?: string | null
   /** Author-curated screenshot URLs from the registry (#61); optional. */
   screenshots?: string[]
+  /** The version an administrator's policy fixed; the card says so. */
+  pinned?: string
   /**
    * Which added catalog listed this entry. Absent for the public catalog's
    * own entries, so nothing about an ordinary card changes.
@@ -137,6 +140,8 @@ export interface CatalogSourceInfo {
   skipped: number
   error?: SourceError
   locked: boolean
+  /** An imported offline bundle: its plugins install from files that came with it. */
+  offline?: true
 }
 
 /** The catalog payload under `registry` in /dsh-market/registry. */
@@ -1492,19 +1497,27 @@ export interface ScreenshotRejection {
 /** The single acceptance rule: the URL to load, or the sentence explaining the refusal. */
 type ScreenshotGate = { ok: true; src: string } | { ok: false; reason: string }
 
-function gateScreenshot(value: unknown): ScreenshotGate {
+function gateScreenshot(value: unknown, anyHost = false): ScreenshotGate {
   if (typeof value !== 'string') return { ok: false, reason: 'not a string' }
+  // An organization that forbids outside images: only the page's own origin.
+  if (!orgPolicy().externalImages) {
+    if (!imageAllowed(value)) return { ok: false, reason: 'blocked by your organization' }
+    if (/\.svg$/iu.test(value.split(/[?#]/u)[0]!)) return { ok: false, reason: 'svg is not rendered' }
+    return { ok: true, src: value }
+  }
   let parsed: URL
   try { parsed = new URL(value) } catch { return { ok: false, reason: 'not a parseable URL' } }
   if (parsed.protocol !== 'https:') return { ok: false, reason: 'not https' }
-  if (!SCREENSHOT_HOSTS.has(parsed.hostname)) return { ok: false, reason: `host not allowlisted (${parsed.hostname})` }
+  // An entry from an added catalog may show images from its own hosts: the
+  // catalog is the organization's (or the user's) own choice, not README text.
+  if (!anyHost && !SCREENSHOT_HOSTS.has(parsed.hostname)) return { ok: false, reason: `host not allowlisted (${parsed.hostname})` }
   if (/\.svg$/iu.test(parsed.pathname)) return { ok: false, reason: 'svg is not rendered' }
   return { ok: true, src: value }
 }
 
 /** Return one safe screenshot URL without applying the public list limit. */
-function safeScreenshot(value: unknown): string | null {
-  const gate = gateScreenshot(value)
+function safeScreenshot(value: unknown, anyHost = false): string | null {
+  const gate = gateScreenshot(value, anyHost)
   return gate.ok ? gate.src : null
 }
 
@@ -1513,8 +1526,13 @@ function safeScreenshot(value: unknown): string | null {
  * screenshots (an icon URL is still a request carrying the user's IP) and
  * raster-only, because an SVG tile is a document, not an image.
  */
-export function safeIcon(value: unknown): string | null {
-  return safeScreenshot(value)
+export function safeIcon(value: unknown, anyHost = false): string | null {
+  return safeScreenshot(value, anyHost)
+}
+
+/** Whether a screenshot URL is on one of the public image hosts (the only ones a resizing service may be handed). */
+export function isPublicImageHost(url: string): boolean {
+  try { return SCREENSHOT_HOSTS.has(new URL(url).hostname) } catch { return false }
 }
 
 /**
@@ -1556,13 +1574,13 @@ export function releaseNotesHttpsImage(line: string): { alt: string; src: string
  */
 export function safeScreenshots(
   urls: unknown,
-  options: { onReject?: (rejection: ScreenshotRejection) => void } = {},
+  options: { onReject?: (rejection: ScreenshotRejection) => void; anyHost?: boolean } = {},
 ): string[] {
   if (!Array.isArray(urls)) return []
-  const { onReject } = options
+  const { onReject, anyHost } = options
   const safe: string[] = []
   for (const value of urls) {
-    const gate = gateScreenshot(value)
+    const gate = gateScreenshot(value, anyHost === true)
     if (!gate.ok) {
       onReject?.({ value, reason: gate.reason })
       continue
@@ -1786,11 +1804,14 @@ export function resetScreenshotsCache(): void {
  */
 export function pluginScreenshotCandidates(plugin: RegistryPlugin): Promise<ScreenshotCandidate[]> {
   const refused: ScreenshotRejection[] = []
-  const curated = safeScreenshots(plugin.screenshots, { onReject: rejection => { refused.push(rejection) } })
+  const curated = safeScreenshots(plugin.screenshots, { anyHost: plugin.source !== undefined, onReject: rejection => { refused.push(rejection) } })
   if (refused.length > 0) warnRefusedCuratedScreenshots(plugin, refused)
   if (curated.length > 0) {
     return Promise.resolve(curated.map((src, order) => ({ src, order, semanticScore: 1_000 - order, curated: true })))
   }
+  // README images come from GitHub: nothing to ask when the organization
+  // allows no outside contact, or the entry is not a GitHub repository.
+  if (!orgPolicy().externalImages) return Promise.resolve([])
   const m = /^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\/tree\/[^/]+\/(.+?))?\/?$/.exec(plugin.url)
   if (m === null) return Promise.resolve([])
   const [, owner, repo, subpath = null] = m

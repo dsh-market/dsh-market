@@ -607,7 +607,7 @@ const t = props.t
     return {
       title: pluginName(entry.name, entry.npm),
       author: entry.owner === '' ? undefined : entry.owner,
-      avatar: <OwnerAvatar name={entry.name} owner={entry.owner || ''} icon={entry.icon ?? undefined} />,
+      avatar: <OwnerAvatar name={entry.name} owner={entry.owner || ''} icon={entry.icon ?? undefined} trusted={entry.source !== undefined} />,
     }
   }, [data])
   /** Ids are sequential rather than random so a replayed session is stable. */

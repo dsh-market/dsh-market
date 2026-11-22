@@ -38,7 +38,8 @@ import {
   UNCOMMON_CAPABILITIES,
 } from './MarketCardParts.tsx'
 import { CardShot, OwnerAvatar, ThemeCover } from './MarketImages.tsx'
-import { SourceTag } from './SourceParts.tsx'
+import { PinnedNote, SourceTag } from './SourceParts.tsx'
+import { orgPolicy } from './org-policy.ts'
 import { GithubRepoMark } from './MarketLogo.tsx'
 import { CardDesc } from './MarketLayout.tsx'
 import type { MarketStateCtx } from './market-state.tsx'
@@ -600,7 +601,7 @@ export function useMarketRender(c: MarketRenderIn) {
     return (
       <div key={p.url} className={blocked ? `${css.recentTile} ${css.cardBlocked}` : css.recentTile}>
         <div className={css.recentTitle}>
-          <OwnerAvatar name={p.name} owner={p.owner || ''} icon={p.icon ?? undefined} className={css.recentAv} />
+          <OwnerAvatar name={p.name} owner={p.owner || ''} icon={p.icon ?? undefined} trusted={p.source !== undefined} className={css.recentAv} />
           <div className={css.recentName}>
             <Tooltip label={p.name} side="bottom" maxWidth={320} delayMs={HOVER_TIP_DELAY_MS}>
               <a className={`${css.nm} ${css.nmLink}`} href={p.url} target="_blank" rel="noreferrer" aria-label={`${p.name} — ${t('repoLink')}`}>
@@ -656,7 +657,7 @@ export function useMarketRender(c: MarketRenderIn) {
               {p.deprecated === true && <span className={css.depBadge}>{t('deprecatedBadge')}</span>}
             </div>
             <div className={css.byline}>
-              <OwnerAvatar name={p.name} owner={p.owner || ''} icon={p.icon ?? undefined} />
+              <OwnerAvatar name={p.name} owner={p.owner || ''} icon={p.icon ?? undefined} trusted={p.source !== undefined} />
               <span className={css.owner} title={p.owner}>{p.owner}</span>
             </div>
             <CardStats plugin={p} t={t} versionTip={catalogVersionTip} />
@@ -695,6 +696,7 @@ export function useMarketRender(c: MarketRenderIn) {
               >{hostChip.label}</span>
             </CardTip>
             <SourceTag plugin={p} lang={lang} />
+            <PinnedNote plugin={p} t={t} />
             {pluginCategories(p).map(category => (
               <span key={category} className={css.tag}>
                 {(data!.categories[category] && (data!.categories[category]![lang] || data!.categories[category]!.en)) || category}
@@ -707,9 +709,14 @@ export function useMarketRender(c: MarketRenderIn) {
               own line, splitting one card's footer into two visual rows. */}
           <span className={css.footActions}>
             {renderFavoriteControl(p.url)}
-            <button type="button" className={css.commentsLink} onClick={() => setCommentsFor(p)}>
-              {t('comments')}
-            </button>
+            {/* No thread when the organization turned comments off, and none for an
+                entry from an added catalog: its thread would live on the public
+                site, under the name of something that is not listed there. */}
+            {orgPolicy().comments && p.source === undefined && (
+              <button type="button" className={css.commentsLink} onClick={() => setCommentsFor(p)}>
+                {t('comments')}
+              </button>
+            )}
             {renderPluginMenu(p, menuKey)}
           </span>
         </div>
@@ -770,7 +777,7 @@ export function useMarketRender(c: MarketRenderIn) {
                 {linksToGithub(p) && <GithubRepoMark className={css.repoMark} />}
               </a>
               <div className={css.byline}>
-                <OwnerAvatar name={p.name} owner={p.owner || ''} icon={p.icon ?? undefined} />
+                <OwnerAvatar name={p.name} owner={p.owner || ''} icon={p.icon ?? undefined} trusted={p.source !== undefined} />
                 <span className={css.owner} title={p.owner}>{p.owner}</span>
               </div>
               <CardStats plugin={p} t={t} versionTip={catalogVersionTip} />

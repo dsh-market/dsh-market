@@ -22,6 +22,7 @@ import {
   pluginScreenshotCandidates, resetGithubRouting, resetScreenshotsCache, restartHintKey, setGithubRoutes,
 } from '../../src/client/market-data.ts'
 import { en, ja, zh } from '../../src/client/locales.ts'
+import { setOrgPolicy } from '../../src/client/org-policy.ts'
 
 describe('Issue #991 approval target and queue feedback', () => {
   describe.each(['en', 'zh'])('visible update explanation in %s', (lang) => {
@@ -14064,5 +14065,73 @@ describe('catalogs beyond the public one', () => {
     expect(notice.textContent).toContain('Public catalog')
     expect(notice.textContent).toContain(en.srcErrFile)
     expect(screen.queryByText('public: network · acme: file')).toBeNull()
+  })
+})
+
+describe('what an organization turned off or fixed', () => {
+  const PRIVATE = {
+    name: 'badge', owner: '', url: 'https://repo.acme.internal/tools/badge', category: 'tools', npm: '@acme/badge', added: '2026-08-12',
+    description: { en: 'Show a badge' }, install: '@acme/badge',
+    screenshots: ['https://img.acme.internal/badge.png'],
+    source: { id: 'acme', label: { en: 'Acme internal' } },
+  }
+  const withPolicy = (policy: Record<string, unknown> | undefined, plugins: unknown[] = [PRIVATE, ...REGISTRY.plugins]) => stubFetch({
+    '/dsh-market/registry': {
+      source: 'live', hostVersion: '0.1.2-alpha.2', registry: { ...REGISTRY, count: plugins.length, plugins },
+      ...(policy === undefined ? {} : { policy }),
+    },
+  })
+  afterEach(() => { setOrgPolicy(null) })
+
+  it('keeps the Comments button for a public entry, and drops it for an entry from an added catalog', async () => {
+    withPolicy(undefined)
+    render(<MarketSection {...props()} />)
+    await screen.findAllByRole('button', { name: 'badge' })
+    const comments = screen.getAllByRole('button', { name: en.comments })
+    // every public card has it; the private one does not
+    expect(comments).toHaveLength(REGISTRY.plugins.length)
+  })
+
+  it('drops every Comments button when the organization turned comments off', async () => {
+    withPolicy({ comments: false })
+    render(<MarketSection {...props()} />)
+    await screen.findAllByRole('button', { name: 'badge' })
+    expect(screen.queryAllByRole('button', { name: en.comments })).toHaveLength(0)
+  })
+
+  it('shows an image from the entry\'s own host directly, and not through a public resizing service', async () => {
+    withPolicy(undefined)
+    const { container } = render(<MarketSection {...props()} />)
+    await screen.findAllByRole('button', { name: 'badge' })
+    const shots = [...container.querySelectorAll('img')].map(img => img.getAttribute('src') ?? '')
+    expect(shots).toContain('https://img.acme.internal/badge.png')
+    expect(shots.some(src => src.includes('images.weserv.nl') && src.includes('acme.internal'))).toBe(false)
+  })
+
+  it('loads no outside image at all — no screenshot, no avatar — when the organization forbids them', async () => {
+    withPolicy({ externalImages: false }, [PRIVATE, { ...REGISTRY.plugins[0], screenshots: ['https://raw.githubusercontent.com/alice/dsh-loop/HEAD/a.png'] }])
+    const { container } = render(<MarketSection {...props()} />)
+    await screen.findAllByRole('button', { name: 'badge' })
+    const sources = [...container.querySelectorAll('img')].map(img => img.getAttribute('src') ?? '')
+    expect(sources.filter(src => /^https?:/.test(src) && !src.startsWith(location.origin))).toEqual([])
+    // the owner still gets a letter tile instead of a blank
+    expect(container.querySelector(`.${css.av}`)?.textContent).toMatch(/\S/)
+  })
+
+  it('still loads public images for someone with no policy', async () => {
+    withPolicy(undefined, [{ ...REGISTRY.plugins[0], screenshots: ['https://raw.githubusercontent.com/alice/dsh-loop/HEAD/a.png'] }])
+    const { container } = render(<MarketSection {...props()} />)
+    await screen.findAllByRole('button', { name: 'dsh-loop' })
+    const sources = [...container.querySelectorAll('img')].map(img => img.getAttribute('src') ?? '')
+    expect(sources.some(src => src.includes('githubusercontent.com'))).toBe(true)
+  })
+
+  it('says a plugin\'s version was set by the organization, on its card', async () => {
+    withPolicy(undefined, [{ ...PRIVATE, version: '1.21.6', pinned: '1.21.6' }, ...REGISTRY.plugins])
+    render(<MarketSection {...props()} />)
+    await screen.findAllByRole('button', { name: 'badge' })
+    expect(screen.getByText(en.pinnedByOrg.replace('{0}', '1.21.6'))).toBeTruthy()
+    // and says nothing of the kind about the rest
+    expect(screen.getAllByText(/Version set by your organization/)).toHaveLength(1)
   })
 })
