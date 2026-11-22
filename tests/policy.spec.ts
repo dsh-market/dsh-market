@@ -114,12 +114,14 @@ describe('policy fields', () => {
   })
 
   it('fails closed for installs when the file is not valid JSON, and reports it', () => {
-    const file = write(join(tmp, 'broken.json'), '{ "allow": [')
+    const file = write(join(tmp, 'broken.json'), '{ "allow": ["a" "b"] }')
     const policy = loadPolicy(envFor({ DSH_MARKET_POLICY: file }), 'win32', join(tmp, 'home'))
     expect(policy.allow).toEqual([])
     expect(policy.path).toBe(file)
-    expect(policy.problems[0]!.en).toMatch(/could not be read.*nothing can be installed/)
-    expect(policy.problems[0]!.zh).toMatch(/读不了/)
+    expect(policy.problems[0]!.en).toContain(file)
+    expect(policy.problems[0]!.en).toMatch(/could not be read.*position \d+.*nothing can be installed.*Ask your administrator/)
+    expect(policy.problems[0]!.zh).toContain(file)
+    expect(policy.problems[0]!.zh).toMatch(/读不了.*不能安装任何插件.*联系管理员/)
   })
 
   it('fails closed when the document is not an object', () => {

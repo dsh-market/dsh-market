@@ -22,6 +22,7 @@ import {
   setNpmrcHome, setNpmrcProfileDir,
 } from '../src/npmrc.ts'
 import { fetchNpmLatest } from '../src/updates.ts'
+import { resetPolicyCache } from '../src/policy.ts'
 
 describe('parseNpmrc', () => {
   it('reads scoped registries, ignoring comments, blanks and the unscoped registry', () => {
@@ -181,5 +182,77 @@ describe('on disk: profile .npmrc over ~/.npmrc', () => {
     await fetchNpmLatest('plain-pkg')
     expect(String(undici.fetch.mock.calls[1]![0])).toMatch(/^https:\/\/registry\.npmjs\.org\/plain-pkg\//)
     expect(undici.fetch.mock.calls[1]![1]!.headers!.authorization).toBeUndefined()
+  })
+})
+
+describe('the profile\'s unscoped registry=', () => {
+  it('parses it, without a trailing slash, and ignores one that is not a URL', () => {
+    expect(parseNpmrc('registry=https://npm.acme.internal/repo/\n').defaultRegistry).toBe('https://npm.acme.internal/repo')
+    expect(parseNpmrc('registry=nonsense\n').defaultRegistry).toBeUndefined()
+    expect(parseNpmrc('@acme:registry=https://x.example/\n').defaultRegistry).toBeUndefined()
+  })
+
+  it('becomes the default for every package, with a scope still winning', () => {
+    const config = parseNpmrc('registry=https://npm.acme.internal/\n@pub:registry=https://registry.npmjs.org/\n')
+    expect(registryIn(config, 'plain', 'https://mirror.example')).toBe('https://npm.acme.internal')
+    expect(registryIn(config, '@other/x', 'https://mirror.example')).toBe('https://npm.acme.internal')
+    expect(registryIn(config, '@pub/x', 'https://mirror.example')).toBe('https://registry.npmjs.org')
+  })
+
+  it('yields to an administrator\'s mirror', () => {
+    const config = parseNpmrc('registry=https://npm.acme.internal/\n')
+    expect(registryIn(config, 'plain', 'https://policy.example', true)).toBe('https://policy.example')
+  })
+
+  it('attaches its matching credential, and no other', () => {
+    const config = parseNpmrc('registry=https://npm.acme.internal/repo/\n//npm.acme.internal/repo/:_authToken=T\n//registry.npmjs.org/:_authToken=publish\n')
+    expect(authorizationIn(config, 'https://npm.acme.internal/repo/plain')).toBe('Bearer T')
+    expect(authorizationIn(config, 'https://registry.npmjs.org/plain')).toBeNull()
+  })
+
+  describe('on disk', () => {
+    let tmp: string
+    beforeEach(() => {
+      tmp = mkdtempSync(join(tmpdir(), 'dshm-npmrc-default-'))
+      mkdirSync(join(tmp, 'home'))
+      mkdirSync(join(tmp, 'profile'))
+      vi.stubEnv('npm_config_userconfig', '')
+      vi.stubEnv('NPM_CONFIG_USERCONFIG', '')
+      vi.stubEnv('DSH_MARKET_POLICY', '')
+      resetPolicyCache()
+      setNpmrcHome(join(tmp, 'home'))
+      setNpmrcProfileDir(join(tmp, 'profile'))
+    })
+    afterEach(() => {
+      vi.unstubAllEnvs()
+      resetPolicyCache()
+      setNpmrcHome(null)
+      setNpmrcProfileDir(null)
+      rmSync(tmp, { recursive: true, force: true })
+    })
+
+    it('reads the profile\'s, and never the user\'s own ~/.npmrc', () => {
+      writeFileSync(join(tmp, 'home', '.npmrc'), 'registry=https://home.example/\n')
+      expect(registryFor('plain', 'https://registry.npmjs.org')).toBe('https://registry.npmjs.org')
+      writeFileSync(join(tmp, 'profile', '.npmrc'), 'registry=https://profile.example/\n')
+      expect(currentNpmrc(process.env, performance.now() + 10_000).defaultRegistry).toBe('https://profile.example')
+      expect(registryFor('plain', 'https://registry.npmjs.org')).toBe('https://profile.example')
+    })
+
+    it('sends the market\'s own request there, with the credential, and an administrator\'s mirror still wins', async () => {
+      writeFileSync(join(tmp, 'profile', '.npmrc'), 'registry=https://npm.acme.internal/\n//npm.acme.internal/:_authToken=tok-d\n')
+      undici.fetch.mockClear()
+      undici.fetch.mockImplementation(async () => new Response(JSON.stringify({ version: '1.0.0' }), { status: 200 }))
+      expect(await fetchNpmLatest('plain-pkg')).toBe('1.0.0')
+      const [url, init] = undici.fetch.mock.calls[0]!
+      expect(String(url)).toBe('https://npm.acme.internal/plain-pkg/latest')
+      expect(init!.headers!.authorization).toBe('Bearer tok-d')
+      expect(registryFor('plain-pkg', 'https://policy.example')).toBe('https://npm.acme.internal')
+      const policy = join(tmp, 'policy.json')
+      writeFileSync(policy, JSON.stringify({ mirrors: { npm: 'https://policy.example' } }))
+      vi.stubEnv('DSH_MARKET_POLICY', policy)
+      resetPolicyCache()
+      expect(registryFor('plain-pkg', 'https://policy.example')).toBe('https://policy.example')
+    })
   })
 })

@@ -16,12 +16,19 @@
  * - {@link authorizationFor}: a request to a registry that an `.npmrc` routes
  *   a scope to carries the credential the `.npmrc` holds for it.
  *
- * Precedence is the profile's `.npmrc` over `~/.npmrc`, per key. The
- * unscoped `registry=` line is deliberately NOT read: the market's default
- * route is the download region's, and a user who set a mirror there did so
- * for installs. Credentials are attached only to registries a scope points
- * at, so a publish token for registry.npmjs.org in `~/.npmrc` is never sent
- * by the market just because it exists.
+ * Precedence is the profile's `.npmrc` over `~/.npmrc`, per key.
+ *
+ * The unscoped `registry=` line is read from the PROFILE's `.npmrc` only. A
+ * profile `.npmrc` is deliberate configuration for that profile (a company
+ * registry for everything), so the market asks the same registry pnpm
+ * installs from. `~/.npmrc` is not read for it: it is the user's own file,
+ * shared with every other tool, and the market's default route stays the
+ * download region's. An administrator's policy `mirrors.npm` outranks both.
+ *
+ * Credentials are attached only to registries the profile configuration
+ * routes to (a scope, or that profile default), so a publish token for
+ * registry.npmjs.org in `~/.npmrc` is never sent by the market just because
+ * it exists.
  *
  * A credential never leaves this module except as the header value handed to
  * {@link marketFetch}; nothing here logs one.
@@ -30,6 +37,7 @@
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { getPolicy } from './policy.ts'
 
 interface Credential {
   /** Value for the Authorization header. */
@@ -39,6 +47,8 @@ interface Credential {
 export interface NpmrcConfig {
   /** `@scope` -> registry base URL, no trailing slash. */
   scopes: Map<string, string>
+  /** The unscoped `registry=`, no trailing slash; only meaningful from the profile's file. */
+  defaultRegistry?: string
   /** Nerf-darted registry (`//host/path/`) -> credential. */
   credentials: Map<string, Credential>
   /** Variables a credential line referenced that are not set — names only. */
@@ -72,6 +82,7 @@ function unquote(value: string): string {
  */
 export function parseNpmrc(text: string, env: NodeJS.ProcessEnv = process.env): NpmrcConfig {
   const scopes = new Map<string, string>()
+  let defaultRegistry: string | undefined
   const missingEnv: string[] = []
   const raw = new Map<string, string>()
   for (const line of text.split(/\r?\n/u)) {
@@ -103,6 +114,13 @@ export function parseNpmrc(text: string, env: NodeJS.ProcessEnv = process.env): 
     return created as { token?: string; basic?: string; user?: string; password?: string }
   }
   for (const [key, value] of raw) {
+    if (key === 'registry') {
+      try {
+        const url = new URL(value)
+        if (url.protocol === 'https:' || url.protocol === 'http:') defaultRegistry = url.href.replace(/\/+$/u, '')
+      } catch { /* not a URL: pnpm will say so */ }
+      continue
+    }
     const scope = /^(@[A-Za-z0-9._~-]+):registry$/u.exec(key)
     if (scope !== null) {
       try {
@@ -132,25 +150,28 @@ export function parseNpmrc(text: string, env: NodeJS.ProcessEnv = process.env): 
       credentials.set(registry, { header: `Basic ${Buffer.from(`${entry.user}:${password}`).toString('base64')}` })
     }
   }
-  return { scopes, credentials, missingEnv }
+  return { scopes, credentials, missingEnv, ...(defaultRegistry === undefined ? {} : { defaultRegistry }) }
 }
 
 /** The per-key union, `over` winning. */
 export function mergeNpmrc(base: NpmrcConfig, over: NpmrcConfig): NpmrcConfig {
   return {
     scopes: new Map([...base.scopes, ...over.scopes]),
+    ...((over.defaultRegistry ?? base.defaultRegistry) === undefined ? {} : { defaultRegistry: (over.defaultRegistry ?? base.defaultRegistry)! }),
     credentials: new Map([...base.credentials, ...over.credentials]),
     missingEnv: [...new Set([...base.missingEnv, ...over.missingEnv])],
   }
 }
 
 /** The registry for one package, given a config; `fallback` for everything else. */
-export function registryIn(config: NpmrcConfig, name: string, fallback: string): string {
+export function registryIn(config: NpmrcConfig, name: string, fallback: string, defaultLocked = false): string {
   if (name.startsWith('@')) {
     const scope = name.split('/')[0]!.toLowerCase()
     const own = config.scopes.get(scope)
     if (own !== undefined) return own
   }
+  // The profile's own default, unless an administrator's policy fixed the registry.
+  if (!defaultLocked && config.defaultRegistry !== undefined) return config.defaultRegistry
   return fallback.replace(/\/+$/u, '')
 }
 
@@ -160,10 +181,14 @@ export function registryIn(config: NpmrcConfig, name: string, fallback: string):
  * the longest nerf-darted prefix of the URL.
  */
 export function authorizationIn(config: NpmrcConfig, url: string): string | null {
-  if (config.scopes.size === 0 || config.credentials.size === 0) return null
+  if ((config.scopes.size === 0 && config.defaultRegistry === undefined) || config.credentials.size === 0) return null
   const target = nerfDart(url)
   if (target === null) return null
   const routed = new Set<string>()
+  if (config.defaultRegistry !== undefined) {
+    const key = nerfDart(config.defaultRegistry)
+    if (key !== null) routed.add(key)
+  }
   for (const registry of config.scopes.values()) {
     const key = nerfDart(registry)
     if (key !== null) routed.add(key)
@@ -215,10 +240,13 @@ export function currentNpmrc(env: NodeJS.ProcessEnv = process.env, now: number =
     return loaded.config
   }
   let config: NpmrcConfig = { scopes: new Map(), credentials: new Map(), missingEnv: [] }
-  for (const file of files) {
+  for (const [index, file] of files.entries()) {
     if (!existsSync(file)) continue
     try {
-      config = mergeNpmrc(config, parseNpmrc(readFileSync(file, 'utf8'), env))
+      const parsed = parseNpmrc(readFileSync(file, 'utf8'), env)
+      // Only the profile's file (the one after ~/.npmrc) may name the default registry.
+      if (index === 0) delete parsed.defaultRegistry
+      config = mergeNpmrc(config, parsed)
     } catch { /* an unreadable .npmrc is no .npmrc; pnpm will say why */ }
   }
   loaded = { at: now, where, stamp, config }
@@ -227,7 +255,7 @@ export function currentNpmrc(env: NodeJS.ProcessEnv = process.env, now: number =
 
 /** The registry the market should ask about `name`. */
 export function registryFor(name: string, fallback: string): string {
-  return registryIn(currentNpmrc(), name, fallback)
+  return registryIn(currentNpmrc(), name, fallback, getPolicy().mirrors.npm !== undefined)
 }
 
 /** Authorization header for a URL on a scope-routed registry, or null. */

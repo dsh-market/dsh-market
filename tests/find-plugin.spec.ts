@@ -249,3 +249,39 @@ describe('/find-plugin: a thinking model', () => {
     expect(result.picks.map(p => p.name)).toEqual(['callai-seo-mcp'])
   })
 })
+
+describe('entries from an added catalog', () => {
+  // No downloads, no stars, no owner, a link that is not on the public host, and a source tag.
+  const priv = (name: string, zh: string, en: string, category: string, npm: string | null = name): RegistryPlugin => ({
+    name, owner: '', url: `https://repo.acme.internal/tools/${name}`, category, description: { zh, en }, npm,
+    install: npm ?? name, added: '2026-11-01', source: { id: 'acme', label: { en: 'Acme internal' } },
+  })
+  const merged: Registry = {
+    ...registry,
+    categories: { ...registry.categories, hr: { zh: '人事', en: 'People' } },
+    plugins: [priv('acme-badge', '打印员工工牌', 'Print employee badges', 'hr', '@acme/badge'), ...registry.plugins],
+  }
+
+  it('recalls them by name, description and category without choking on missing numbers', () => {
+    const byWord = recall(merged, extractTerms('员工工牌'), 3).candidates
+    expect(byWord[0]!.plugin.name).toBe('acme-badge')
+    expect(recall(merged, extractTerms('人事'), 3).candidates[0]!.plugin.name).toBe('acme-badge')
+    // and they still fill a vague request instead of throwing on a missing count
+    expect(() => recall(merged, [], 10)).not.toThrow()
+  })
+
+  it('finds them among the user\'s own by npm name and by favorited link', () => {
+    const installed = userSeeds(merged, { installed: ['@acme/badge'], favorites: [] })
+    expect(installed.installed.map(p => p.name)).toEqual(['acme-badge'])
+    const favorited = userSeeds(merged, { installed: [], favorites: ['https://repo.acme.internal/tools/acme-badge/'] })
+    expect(favorited.favorited.map(p => p.name)).toEqual(['acme-badge'])
+  })
+
+  it('offers them as recommendations, and learns taste from one', () => {
+    const fromPublic = recommendCandidates(merged, [merged.plugins.find(p => p.name === 'dsh-notify-me')!])
+    expect(fromPublic.map(c => c.plugin.name)).toContain('acme-badge')
+    const fromPrivate = recommendCandidates(merged, [merged.plugins[0]!])
+    expect(fromPrivate.map(c => c.plugin.name)).not.toContain('acme-badge')
+    expect(fromPrivate.length).toBeGreaterThan(0)
+  })
+})

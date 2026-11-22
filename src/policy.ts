@@ -250,7 +250,10 @@ export function loadPolicy(
       ...NO_POLICY,
       path,
       allow: [],
-      problems: [bilingual(`策略文件读不了（${why.slice(0, 120)}），现在不能安装任何插件。请联系管理员修好它 / The policy file could not be read (${why.slice(0, 120)}), so nothing can be installed right now. Ask your administrator to fix it`)],
+      problems: [{
+        zh: `策略文件 ${path} 读不了：${why.slice(0, 160)}。出于安全，现在不能安装任何插件，浏览不受影响。请联系管理员修好这个文件。`,
+        en: `The policy file ${path} could not be read: ${why.slice(0, 160)}. For safety nothing can be installed right now; browsing still works. Ask your administrator to fix this file.`,
+      }],
     }
   }
 }
