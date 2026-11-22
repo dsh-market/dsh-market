@@ -45,13 +45,39 @@ function harness(
 const both = { settingsSection: true, pluginsTab: true }
 
 describe('createEntryVisibility', () => {
-  it('registers both entries once their slots arrive', () => {
-    const { entries, live } = harness(() => ({ body: both }))
+  it('registers both entries once their slots arrive, when the user turned the settings entry on', async () => {
+    const { entries, live } = harness(() => ({ body: { ...both, settingsSectionChosen: true } }))
     expect(live).toEqual({ settings: 0, tab: 0 })
+    await entries.load()
     entries.markSettingsSection()
     entries.markPluginsTab()
     expect(live).toEqual({ settings: 1, tab: 1 })
     expect(entries.settingsVisible()).toBe(true)
+  })
+
+  it('keeps the settings entry off by default once the Plugins tab or the sidebar is a way in', async () => {
+    const unchosen = () => ({ body: { settingsSection: false, pluginsTab: true, settingsSectionChosen: false } })
+    const tab = harness(unchosen)
+    await tab.entries.load()
+    tab.entries.markSettingsSection()
+    tab.entries.markPluginsTab()
+    expect(tab.live).toEqual({ settings: 0, tab: 1 })
+
+    let sidebar = false
+    const side = harness(unchosen, { sidebarSupported: () => sidebar, sidebarShown: () => sidebar })
+    await side.entries.load()
+    side.entries.markSettingsSection()
+    expect(side.live.settings).toBe(1)
+    sidebar = true
+    side.entries.reapply()
+    expect(side.live.settings).toBe(0)
+  })
+
+  it('still shows the settings entry by default on a host where it is the only door', async () => {
+    const { entries, live } = harness(() => ({ body: { settingsSection: false, pluginsTab: true, settingsSectionChosen: false } }))
+    await entries.load()
+    entries.markSettingsSection()
+    expect(live.settings).toBe(1)
   })
 
   it('does not register a door the user turned off, whichever arrives first', async () => {
@@ -63,21 +89,21 @@ describe('createEntryVisibility', () => {
     expect(before.live).toEqual({ settings: 0, tab: 0 })
 
     const after = harness(savedOff)
-    after.entries.markSettingsSection()
     after.entries.markPluginsTab()
-    expect(after.live).toEqual({ settings: 1, tab: 1 })
+    expect(after.live.tab).toBe(1)
+    after.entries.markSettingsSection()
     await after.entries.load()
     expect(after.live).toEqual({ settings: 0, tab: 0 })
   })
 
-  it('treats an unreadable answer as the shown default', async () => {
+  it('treats an unreadable answer as the defaults: Plugins tab on, settings entry off', async () => {
     const { entries, live } = harness(() => ({ status: 500, body: { error: 'boom' } }))
     await entries.load()
     entries.markSettingsSection()
     entries.markPluginsTab()
-    expect(entries.settingsSection()).toBe(true)
+    expect(entries.settingsSection()).toBe(false)
     expect(entries.pluginsTab()).toBe(true)
-    expect(live).toEqual({ settings: 1, tab: 1 })
+    expect(live).toEqual({ settings: 0, tab: 1 })
   })
 
   it('posts one answer and applies the pair the server accepted', async () => {
@@ -263,8 +289,9 @@ describe('createEntryVisibility', () => {
     expect(live).toEqual({ settings: 0, tab: 1 })
   })
 
-  it('never registers again after the package is removed', () => {
-    const { entries, live } = harness(() => ({ body: both }))
+  it('never registers again after the package is removed', async () => {
+    const { entries, live } = harness(() => ({ body: { ...both, settingsSectionChosen: true } }))
+    await entries.load()
     entries.markSettingsSection()
     entries.markPluginsTab()
     expect(live).toEqual({ settings: 1, tab: 1 })

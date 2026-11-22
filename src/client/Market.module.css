@@ -1520,3 +1520,7 @@
 .setCatalogMeta{color:var(--dsw-alias-label-secondary,#6b7280);font-size:11px;line-height:16px;word-break:break-all}
 .setCatalogErr{color:var(--dsw-alias-state-error-primary,#dc2626);font-size:11px;line-height:16px}
 .setCatalogLock{color:var(--dsw-alias-label-secondary,#6b7280);font-size:11px;white-space:nowrap}
+.addMenuCopy{display:flex;flex-direction:column;gap:2px;white-space:normal;text-align:left}
+.addMenuDescription{overflow-wrap:anywhere;max-height:36px;color:var(--dsw-alias-label-secondary,#6b7280);font-size:12px;line-height:18px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.addMenuFallback{display:flex;align-items:center;gap:10px;width:100%;min-height:72px;padding:6px 12px;border:0;border-radius:8px;background:none;font:inherit;color:inherit;cursor:pointer}
+.addMenuFallback:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.04))}

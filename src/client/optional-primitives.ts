@@ -88,3 +88,11 @@ export type CheckboxComponent = (props: {
 }) => ReactNode
 
 export const HostCheckbox: CheckboxComponent | null = optionalComponent<CheckboxComponent>('Checkbox')
+
+/**
+ * The host's menu row with an icon and a two-line label (dsh 0.2.2+), used in
+ * the Plugins page's "Add plugin" menu. Older hosts have neither the menu slot
+ * nor this component; the caller falls back to a plain menu button.
+ */
+export type MenuItemButtonComponent = (props: { icon?: ReactNode; disabled?: boolean; onSelect?: () => void; children?: ReactNode }) => ReactNode
+export const HostMenuItemButton: MenuItemButtonComponent | null = optionalComponent<MenuItemButtonComponent>('MenuItemButton')

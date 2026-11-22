@@ -104,7 +104,9 @@ export function MarketHead({ c }: { c: MarketHeadCtx }) {
   return (
     <>
       <div ref={headRef} className={css.head}>
-        {surface !== 'plugins' && (
+        {/* The logo title row, on every surface: the sidebar and the Plugins
+            page tab carry the same heading, so either one reads as the market. */}
+        {(
         <div className={css.headTop}>
         <div className={css.titleRow}>
           <MarketLogo size={18} ambient style={{ flexShrink: 0 }} />

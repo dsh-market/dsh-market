@@ -51,6 +51,8 @@ export interface EntryVisibility {
    * duplicate entry back because a user flipped a switch.
    */
   setHostSettingsVisible(visible: boolean): void
+  /** Re-judge visibility after another door appeared (the sidebar seat). */
+  reapply(): void
   /** Called when the host declares the slot; safe before or after load(). */
   markSettingsSection(): void
   markPluginsTab(): void
@@ -88,15 +90,25 @@ export function createEntryVisibility({ settingsGate, pluginsTabGate, fetch, sid
   let settingsSeat = false
   let pluginsTabSeat = false
   let hostSettings = true
-  let settingsSection = true
+  /** The saved answer; off unless the user turned it on (see settingsWanted). */
+  let settingsSection = false
+  let settingsChosen = false
   let pluginsTab = true
   /** Bumped by every `set` so a slow initial `load` cannot overwrite it. */
   let epoch = 0
   const listeners = new Set<() => void>()
   const notify = (): void => { for (const listener of listeners) listener() }
 
+  /**
+   * The settings page entry is the old door: off by default now that the
+   * Plugins page tab and the sidebar row exist, but shown while nobody has
+   * chosen and this host offers neither of them (a host before 0.2.1), so the
+   * market never ends up with no way in.
+   */
+  const settingsWanted = (): boolean => settingsSection || (!settingsChosen && !pluginsTabSeat && !sidebarSupported())
+
   const apply = (): void => {
-    settingsGate.setVisible(hostSettings && settingsSection)
+    settingsGate.setVisible(hostSettings && settingsWanted())
     pluginsTabGate.setVisible(pluginsTab)
   }
 
@@ -106,7 +118,7 @@ export function createEntryVisibility({ settingsGate, pluginsTabGate, fetch, sid
    * user's answer. The sidebar's two facts arrive through callbacks because
    * that controller keeps its own state.
    */
-  const settingsOpen = (): boolean => settingsSeat && hostSettings && settingsSection
+  const settingsOpen = (): boolean => settingsSeat && hostSettings && settingsWanted()
   const pluginsOpen = (): boolean => pluginsTabSeat && pluginsTab
   const sidebarOpen = (): boolean => sidebarSupported() && sidebarShown()
   const otherDoorOpen = (key: EntryKey | 'sidebar'): boolean =>
@@ -119,10 +131,12 @@ export function createEntryVisibility({ settingsGate, pluginsTabGate, fetch, sid
     try {
       const response = await fetch(api('/dsh-market/entry-visibility'), { cache: 'no-store' })
       if (response.ok) {
-        const body = (await response.json()) as { settingsSection?: unknown; pluginsTab?: unknown }
+        const body = (await response.json()) as { settingsSection?: unknown; pluginsTab?: unknown; settingsSectionChosen?: unknown }
         // A POST that finished while we were in flight already owns these.
         if (at === epoch) {
           if (typeof body.settingsSection === 'boolean') settingsSection = body.settingsSection
+          // An older server reports only the answer: treat it as chosen.
+          settingsChosen = body.settingsSectionChosen !== false
           if (typeof body.pluginsTab === 'boolean') pluginsTab = body.pluginsTab
           apply()
         }
@@ -178,6 +192,7 @@ export function createEntryVisibility({ settingsGate, pluginsTabGate, fetch, sid
       // A newer set() started after we did — let that one paint.
       if (at === epoch) {
         settingsSection = body.settingsSection
+        if (key === 'settingsSection') settingsChosen = true
         pluginsTab = body.pluginsTab
         apply()
         notify()
@@ -203,6 +218,7 @@ export function createEntryVisibility({ settingsGate, pluginsTabGate, fetch, sid
       apply()
       notify()
     },
+    reapply: () => { apply(); notify() },
     markSettingsSection: () => {
       settingsSeat = true
       // Apply before available(): a saved OFF that arrived first must not

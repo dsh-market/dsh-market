@@ -463,11 +463,10 @@ export interface MarketState {
   /**
    * Whether the market still lists its own page in Settings (#1015).
    *
-   * Absent means shown. Only an explicit `false` is stored, unlike
-   * `sidebarEntry`: this entry has always been on, and every host before
-   * 0.2.1 offers it as the only door, so an absent field is the ordinary
-   * case rather than an unanswered question. Turning it back on clears the
-   * field so a later default change still reaches users who never touched it.
+   * Absent means "not chosen": hidden wherever the Plugins page tab or the
+   * sidebar row is a way in, shown where it is the only one (a host before
+   * 0.2.1). Both answers are stored, like `sidebarEntry`, so turning it on
+   * keeps it on.
    */
   settingsSection?: boolean
   /**
@@ -816,9 +815,7 @@ export function readMarketState(profileDir: string): MarketState {
       // this switch is the market's only entry, so "the user turned it off"
       // must be distinguishable from "nobody has chosen yet" (#846).
       ...(typeof state.sidebarEntry === 'boolean' ? { sidebarEntry: state.sidebarEntry } : {}),
-      // Only `false` is a stored answer here: shown is the default, and a
-      // state file that says anything else reads as "never touched".
-      ...(state.settingsSection === false ? { settingsSection: false } : {}),
+      ...(typeof state.settingsSection === 'boolean' ? { settingsSection: state.settingsSection } : {}),
       ...(state.pluginsTab === false ? { pluginsTab: false } : {}),
       buildEnv: buildEnvFromUnknown(state.buildEnv),
     }
@@ -976,7 +973,7 @@ function writeState(profileDir: string, state: MarketState, ownStamps: boolean):
     ...(typeof sidebarEntry === 'boolean' ? { sidebarEntry } : {}),
     // Only the OFF is written; `true` means "the default", so re-enabling
     // clears the field rather than pinning today's default forever (#1015).
-    ...(settingsSection === false ? { settingsSection: false } : {}),
+    ...(typeof settingsSection === 'boolean' ? { settingsSection } : {}),
     ...(pluginsTab === false ? { pluginsTab: false } : {}),
     ...(state.region === undefined ? {} : { region: state.region }),
     ...(state.regionAuto === true ? { regionAuto: true } : {}),

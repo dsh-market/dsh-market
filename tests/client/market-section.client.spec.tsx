@@ -12154,12 +12154,12 @@ describe('Plugins page tab lays out as page content', () => {
     expect(container.querySelector('[data-dsh-market-plugins-tab]')).toBeNull()
   })
 
-  it('drops the page heading and the inner scroller height on the Plugins tab', async () => {
+  it('keeps the logo heading but drops the inner scroller height on the Plugins tab', async () => {
     const { container } = render(<MarketSection {...props()} surface="plugins" />)
     await screen.findByText('dsh-loop')
-    expect(screen.queryByRole('heading', { name: en.nav })).toBeNull()
-    expect(screen.queryByText(en.subtitle)).toBeNull()
-    expect(screen.queryByRole('link', { name: en.submitPlugin })).toBeNull()
+    // The same logo title row the sidebar shows, so both surfaces read as the market.
+    expect(screen.getByRole('heading', { name: en.nav })).toBeTruthy()
+    expect(screen.getByText(en.subtitle)).toBeTruthy()
     // The menu stays on the tab row, and Export log is in it — install
     // failures ask for a log here.
     expect(screen.queryByRole('button', { name: en.exportLog })).toBeNull()
@@ -12183,7 +12183,7 @@ describe('Plugins page tab lays out as page content', () => {
     )
   })
 
-  it('keeps Update all at the top of Installed when the heading is gone', async () => {
+  it('keeps Update all at the top of Installed on the Plugins tab', async () => {
     stubFetch({
       '/dsh-market/installed': { profile: 'desktop', installed: { 'dsh-loop': '^1.0.0' }, live: [] },
       '/dsh-market/updates': { updates: { 'dsh-loop': {
@@ -12196,7 +12196,7 @@ describe('Plugins page tab lays out as page content', () => {
     // Beside the List / Groups switch, not in the tab row.
     expect(updateAll.closest('[class*="installedTopRow"]')).toBeTruthy()
     expect(updateAll.closest(`.${css.tabs}`)).toBeNull()
-    expect(screen.queryByRole('heading', { name: en.nav })).toBeNull()
+    expect(screen.getByRole('heading', { name: en.nav })).toBeTruthy()
   })
 
   /**

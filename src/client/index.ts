@@ -27,6 +27,7 @@ import { onFindPluginExecuted } from './find-plugin-overlay.ts'
 import { createSidebarEntry, SIDEBAR_PANEL_ID, SIDEBAR_PANEL_ORDER } from './sidebar-entry.ts'
 import type { SidebarEntry } from './sidebar-entry.ts'
 import { MarketLogo } from './MarketSection.tsx'
+import { AddMenuMarketItem } from './AddMenuMarketItem.tsx'
 import { updateNotifications } from './update-notifications.ts'
 import { installPluginsUpdateIndicator } from './PluginsUpdateIndicator.tsx'
 import css from './Market.module.css'
@@ -359,7 +360,7 @@ function mountMarket(ctx: MarketClientContext): void {
     hasOtherSeat: () => entries.settingsSupported() || entries.pluginsTabSupported(),
   })
   void sidebar.load()
-  ctx.slots.inject('sidebar.panellist', () => { sidebar?.markSupported() })
+  ctx.slots.inject('sidebar.panellist', () => { sidebar?.markSupported(); entries.reapply() })
   // The slot injections above either fire synchronously (the host declares the
   // slot) or never; this re-answers once the setup pass is over so a host with
   // no settings page shows the row without waiting for the server round trip.
@@ -508,6 +509,22 @@ function mountMarket(ctx: MarketClientContext): void {
     entries.markPluginsTab()
     sidebar?.refresh()
   })
+
+  // "Browse the Plugin Market" in the Plugins page's "Add plugin" menu: the
+  // host's own seat for extra ways to add a plugin (dsh 0.2.2+).
+  const addMenuCtx = ctx as unknown as {
+    slots: {
+      inject(name: string, register: () => unknown): void
+      register(options: Record<string, unknown>, render: (ownerProps: { onDismiss?: () => void }) => unknown): unknown
+    }
+  }
+  addMenuCtx.slots.inject('plugins.add.actions', () => addMenuCtx.slots.register({
+    name: 'plugins.add.actions',
+    id: 'dsh-market-browse',
+    order: -10,
+    locale: NS,
+    inject: () => ({ t }),
+  }, (ownerProps: { onDismiss?: () => void } = {}) => h(AddMenuMarketItem, { t, navigation: hostNavigation, ...(ownerProps.onDismiss === undefined ? {} : { onDismiss: ownerProps.onDismiss }) })))
 
   // "View source" on every bundle's detail page: the page states a package's
   // origin as an install spec, a version range nobody can open. No key, so it

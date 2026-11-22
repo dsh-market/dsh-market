@@ -657,7 +657,7 @@ vi.mock('../src/hot.ts', async (importOriginal) => ({
     // answers since the row became the only way in on a host with no
     // settings page (#846).
     ...(typeof hot.sidebarEntry === 'boolean' ? { sidebarEntry: hot.sidebarEntry } : {}),
-    ...(hot.settingsSection === false ? { settingsSection: false } : {}),
+    ...(typeof hot.settingsSection === 'boolean' ? { settingsSection: hot.settingsSection } : {}),
     ...(hot.pluginsTab === false ? { pluginsTab: false } : {}),
     notes: hot.notes, favorites: hot.favorites, blocked: hot.blocked,
     updateExempt: hot.updateExempt,
@@ -683,7 +683,7 @@ vi.mock('../src/hot.ts', async (importOriginal) => ({
     // `true` is the default and is not persisted, exactly like the real
     // writer: it clears the stored OFF instead of pinning today's default.
     if (Object.prototype.hasOwnProperty.call(state, 'settingsSection')) {
-      hot.settingsSection = state.settingsSection === false ? false : undefined
+      hot.settingsSection = typeof state.settingsSection === 'boolean' ? state.settingsSection : undefined
     }
     if (Object.prototype.hasOwnProperty.call(state, 'pluginsTab')) {
       hot.pluginsTab = state.pluginsTab === false ? false : undefined
@@ -10701,12 +10701,12 @@ describe('self-uninstall — the market removing itself from its settings card',
 })
 
 describe('sidebar entry (#846)', () => {
-  it('is off until the user turns it on, and says nobody has chosen', async () => {
-    // `chosen` is what lets the client tell "never asked" from "said no":
-    // on a host with no settings page the row is shown by default, and a
-    // deliberate off has to survive (#846 on DSH 0.2.1+).
-    expect((await bed.dispatch('GET', '/dsh-market/sidebar-entry')).json).toEqual({ enabled: false, chosen: false })
-    expect((await bed.dispatch('GET', '/dsh-market/status')).json.sidebarEntry).toBe(false)
+  it('is on until the user turns it off, and says nobody has chosen', async () => {
+    // The sidebar row and the Plugins page tab are the default doors; the
+    // settings page entry is the one that defaults off. `chosen` still tells
+    // "never asked" from "said no", so a deliberate off survives (#846).
+    expect((await bed.dispatch('GET', '/dsh-market/sidebar-entry')).json).toEqual({ enabled: true, chosen: false })
+    expect((await bed.dispatch('GET', '/dsh-market/status')).json.sidebarEntry).toBe(true)
   })
 
   it('round-trips the choice through state.json and /status', async () => {
@@ -10744,25 +10744,25 @@ describe('sidebar entry (#846)', () => {
 })
 
 describe('entry visibility (#1015)', () => {
-  it('shows both page entries until the user says otherwise', async () => {
+  it('hides the settings page entry and shows the Plugins tab until the user says otherwise', async () => {
     expect((await bed.dispatch('GET', '/dsh-market/entry-visibility')).json)
-      .toEqual({ settingsSection: true, pluginsTab: true })
+      .toEqual({ settingsSection: false, pluginsTab: true, settingsSectionChosen: false })
   })
 
-  it('round-trips each choice through state.json, and stores only the OFF', async () => {
-    const off = await bed.dispatch('POST', '/dsh-market/entry-visibility', { settingsSection: false })
-    expect(off.status).toBe(200)
-    expect(off.json).toEqual({ ok: true, settingsSection: false, pluginsTab: true })
-    expect(hot.settingsSection).toBe(false)
+  it('round-trips each choice through state.json; the settings entry keeps both answers', async () => {
+    const on = await bed.dispatch('POST', '/dsh-market/entry-visibility', { settingsSection: true })
+    expect(on.status).toBe(200)
+    expect(on.json).toEqual({ ok: true, settingsSection: true, pluginsTab: true })
+    expect(hot.settingsSection).toBe(true)
     expect(hot.pluginsTab).toBeUndefined()
     expect((await bed.dispatch('GET', '/dsh-market/entry-visibility')).json)
-      .toEqual({ settingsSection: false, pluginsTab: true })
+      .toEqual({ settingsSection: true, pluginsTab: true, settingsSectionChosen: true })
 
-    // Turning it back on clears the stored OFF instead of pinning the
-    // default, so a later default change still reaches this user.
-    const on = await bed.dispatch('POST', '/dsh-market/entry-visibility', { settingsSection: true })
-    expect(on.json).toEqual({ ok: true, settingsSection: true, pluginsTab: true })
-    expect(hot.settingsSection).toBeUndefined()
+    // Off is stored too: "chose off" and "never chose" differ on a host where
+    // the settings page is the only door.
+    const off = await bed.dispatch('POST', '/dsh-market/entry-visibility', { settingsSection: false })
+    expect(off.json).toEqual({ ok: true, settingsSection: false, pluginsTab: true })
+    expect(hot.settingsSection).toBe(false)
 
     // The Plugins tab is its own answer, not a side effect of the section.
     expect((await bed.dispatch('POST', '/dsh-market/entry-visibility', { pluginsTab: false })).status).toBe(200)
@@ -10777,6 +10777,7 @@ describe('entry visibility (#1015)', () => {
   })
 
   it('refuses to close the last door, and says why', async () => {
+    await bed.dispatch('POST', '/dsh-market/sidebar-entry', { enabled: false })
     await bed.dispatch('POST', '/dsh-market/entry-visibility', { settingsSection: false })
     const refused = await bed.dispatch('POST', '/dsh-market/entry-visibility', { pluginsTab: false })
     expect(refused.status).toBe(409)
@@ -10815,16 +10816,16 @@ describe('entry visibility (#1015)', () => {
   })
 
   it('takes an external change rather than restoring the boot-time copy (#435)', async () => {
-    await bed.dispatch('POST', '/dsh-market/entry-visibility', { settingsSection: false })
-    expect(hot.settingsSection).toBe(false)
+    await bed.dispatch('POST', '/dsh-market/entry-visibility', { settingsSection: true })
+    expect(hot.settingsSection).toBe(true)
     // A restore or another writer puts the field back to its default.
     hot.settingsSection = undefined
     // The note route reads the state fresh and refreshes the long-lived copy.
     expect((await bed.dispatch('POST', '/dsh-market/note', { name: 'dsh-loop', text: 'after restore' })).status).toBe(200)
-    // A later whole-state write must not resurrect the pre-restore OFF.
+    // A later whole-state write must not resurrect the pre-restore answer.
     expect((await bed.dispatch('POST', '/dsh-market/region', { region: 'china' })).status).toBe(200)
     expect(hot.settingsSection).toBeUndefined()
-    expect((await bed.dispatch('GET', '/dsh-market/entry-visibility')).json.settingsSection).toBe(true)
+    expect((await bed.dispatch('GET', '/dsh-market/entry-visibility')).json.settingsSectionChosen).toBe(false)
   })
 })
 

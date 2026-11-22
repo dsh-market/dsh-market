@@ -429,7 +429,7 @@ describe('a partial write must not erase the rest of the state (#435)', () => {
     }
   })
 
-  it('stores only an OFF for the settings page and the Plugins tab (#1015)', () => {
+  it('stores both answers for the settings page entry and only an OFF for the Plugins tab (#1015)', () => {
     const dir = stateDir()
     try {
       expect(readMarketState(dir).settingsSection).toBeUndefined()
@@ -447,26 +447,29 @@ describe('a partial write must not erase the rest of the state (#435)', () => {
       expect(readMarketState(dir).settingsSection).toBe(false)
       expect(readMarketState(dir).pluginsTab).toBe(false)
 
-      // `true` is the default, so re-enabling clears the stored OFF instead
-      // of pinning today's default forever.
+      // The settings entry defaults off now, so ON is a choice and is kept;
+      // the Plugins tab still defaults on, so re-enabling clears its OFF.
       writeMarketState(dir, { ...readMarketState(dir), settingsSection: true, pluginsTab: true })
-      expect(readMarketState(dir).settingsSection).toBeUndefined()
+      expect(readMarketState(dir).settingsSection).toBe(true)
       expect(readMarketState(dir).pluginsTab).toBeUndefined()
-      expect('settingsSection' in readRaw(dir)).toBe(false)
+      expect(readRaw(dir).settingsSection).toBe(true)
       expect('pluginsTab' in readRaw(dir)).toBe(false)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
   })
 
-  it('reads anything but a literal false as the page entries being shown', () => {
+  it('reads anything but a boolean as no settings-entry answer, and anything but false as the Plugins tab shown', () => {
     const dir = stateDir()
     try {
-      for (const value of ['false', 0, null, {}, true]) {
+      for (const value of ['false', 0, null, {}]) {
         writeFileSync(join(dir, '.dsh-market', 'state.json'), JSON.stringify({ settingsSection: value, pluginsTab: value }))
         expect(readMarketState(dir).settingsSection).toBeUndefined()
         expect(readMarketState(dir).pluginsTab).toBeUndefined()
       }
+      writeFileSync(join(dir, '.dsh-market', 'state.json'), JSON.stringify({ settingsSection: true, pluginsTab: true }))
+      expect(readMarketState(dir).settingsSection).toBe(true)
+      expect(readMarketState(dir).pluginsTab).toBeUndefined()
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

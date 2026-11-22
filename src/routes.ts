@@ -778,15 +778,16 @@ export function mountMarketRoutes(
    *
    * The HOST decides which doors exist; this only combines the user's
    * preferences, because a request handler cannot see the browser's slots.
-   * `sidebarEntry` defaults off while the two page tabs default on, so
-   * "every door closed" is expressible — and has to be refused before it
-   * reaches disk. A market with no entry can only be recovered by editing
+   * The Plugins page tab and the sidebar row default on; the settings page
+   * entry defaults off (it is the old door, kept for hosts without the other
+   * two — the browser shows it there anyway). "Every door closed" is still
+   * expressible, and has to be refused before it reaches disk. A market with no entry can only be recovered by editing
    * state.json or removing the package, which the card must never cause.
    */
   const entryDoors = (state: MarketState = marketState): { settingsSection: boolean; pluginsTab: boolean; sidebarEntry: boolean } => ({
-    settingsSection: state.settingsSection !== false,
+    settingsSection: state.settingsSection === true,
     pluginsTab: state.pluginsTab !== false,
-    sidebarEntry: state.sidebarEntry === true,
+    sidebarEntry: state.sidebarEntry !== false,
   })
   const closesEveryDoor = (doors: { settingsSection: boolean; pluginsTab: boolean; sidebarEntry: boolean }): boolean =>
     !doors.settingsSection && !doors.pluginsTab && !doors.sidebarEntry
@@ -5929,7 +5930,7 @@ export function mountMarketRoutes(
           // by the user — the card explains a choice it made on their behalf
           // exactly once, so nobody has to wonder why downloads moved.
           regionAuto,
-          sidebarEntry: marketState.sidebarEntry === true,
+          sidebarEntry: marketState.sidebarEntry !== false,
           // Whether DSH Desktop owns this process (the market cannot restart it).
           desktopHost: config.desktopHost === true,
           restart: restartAllowed(config),
@@ -8131,7 +8132,8 @@ export function mountMarketRoutes(
       handler: async (request, response) => {
         if (request.method === 'GET') {
           sendJson(response, 200, {
-            enabled: marketState.sidebarEntry === true,
+            // Shown unless turned off (the default changed from off to on).
+            enabled: marketState.sidebarEntry !== false,
             // Absent means nobody has ever chosen. On a host with no settings
             // page the row is then shown by default, because it is the only
             // way into the market (#846).
@@ -8194,7 +8196,13 @@ export function mountMarketRoutes(
       handler: async (request, response) => {
         if (request.method === 'GET') {
           const doors = entryDoors()
-          sendJson(response, 200, { settingsSection: doors.settingsSection, pluginsTab: doors.pluginsTab })
+          sendJson(response, 200, {
+            settingsSection: doors.settingsSection,
+            pluginsTab: doors.pluginsTab,
+            // Unchosen, the browser still shows the settings entry when it is
+            // the host's only door.
+            settingsSectionChosen: typeof marketState.settingsSection === 'boolean',
+          })
           return
         }
         if (request.method !== 'POST') {
