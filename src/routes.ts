@@ -5930,6 +5930,8 @@ export function mountMarketRoutes(
           // exactly once, so nobody has to wonder why downloads moved.
           regionAuto,
           sidebarEntry: marketState.sidebarEntry === true,
+          // Whether DSH Desktop owns this process (the market cannot restart it).
+          desktopHost: config.desktopHost === true,
           restart: restartAllowed(config),
           // Named so the UI can say WHY the button is gone. A blank
           // "no restart button" is the state #229 reported as broken.

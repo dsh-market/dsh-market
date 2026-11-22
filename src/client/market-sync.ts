@@ -31,6 +31,7 @@ import type { MarketSectionProps } from './market-types.ts'
 
 type MarketSyncIn = { props: MarketSectionProps }
   & Pick<MarketStateCtx,
+    'setHostCaps' |
     'blockedNames' | 'bodyRef' | 'bootId' | 'busyUrl' | 'cat' | 'source' | 'catsFloorRef' | 'checkoutRecovery' |
     'compatibility' | 'compatibleWithHost' | 'data' | 'disabledNames' | 'doneUrls' | 'favSortDir' |
     'favSortField' | 'favTimeRange' | 'favoriteUrls' | 'headFloorRef' | 'headRef' | 'idleStrikes' |
@@ -70,7 +71,7 @@ export function useMarketSync(c: MarketSyncIn) {
     setReconnecting, setRecords, setRemovedCount, setRemovingName, setRestartEnabled,
     setRestartNames, setRestartNoticeDismissed, setRestartReachable, setShowTop, setStartupRepair,
     setSupervisor, setThemesFullscreen, setToggleRestart, setUpdatedNames, setUpdatingName,
-    setVersion, settledHostRef, sortDir, sortField, startupRepair, statusRef, surface, t, tab,
+    setHostCaps, setVersion, settledHostRef, sortDir, sortField, startupRepair, statusRef, surface, t, tab,
     themeSortDir, themeSortField, themeTimeRange, themesFullscreen, timeRange, toggleRestart,
     unbundledNames, updateExemptNames, updateIdleStrikes, updatedNames, updatingName,
   } = c
@@ -526,6 +527,7 @@ const knownHostIdsRef = useRef(new Set<string>())
           } catch { /* storage unavailable */ }
         }
         setRestartEnabled(status.restart === true)
+        setHostCaps({ desktop: status.desktopHost === true, selfReload: status.selfReload === true })
         setSupervisor(typeof status.supervisor === 'string' ? status.supervisor : null)
         setDebuggerLatch(typeof status.debugger === 'string' ? status.debugger : null)
         // Only an explicit false takes the button away. Absent (an older host) or

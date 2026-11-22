@@ -10,6 +10,7 @@ import { useCallback, useMemo, useRef, useState, type ReactElement, type ReactNo
 import { Button, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import css from './Market.module.css'
 import { api } from './market-data.ts'
+import { readMarketJson } from './client-version.ts'
 import type { RegistryPlugin } from './market-data.ts'
 import type { FindResult } from './FindPluginCard.tsx'
 import { IconQuestionOutline14 } from './icons.ts'
@@ -65,7 +66,7 @@ export function AiRecommend({ t, lang, plugins, render }: {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ exclude, lang }),
     })
-      .then(res => res.json().then((body: { result?: FindResult; code?: string; error?: string }) => ({ ok: res.ok, body })))
+      .then(res => readMarketJson<{ result?: FindResult }>(res))
       .then(({ ok, body }) => {
         if (mine !== seq.current) return
         if (ok && body.result !== undefined) {
@@ -121,9 +122,10 @@ export function AiRecommend({ t, lang, plugins, render }: {
           </>
         )}
         {state.phase === 'error' && state.code === 'no-seeds' && <span>{t('recNoSeeds')}</span>}
-        {state.phase === 'error' && state.code !== 'no-model' && state.code !== 'no-seeds' && (
+        {state.phase === 'error' && state.code === 'stale-server' && <span data-tone="error">{t('staleServer')}</span>}
+        {state.phase === 'error' && state.code !== 'no-model' && state.code !== 'no-seeds' && state.code !== 'stale-server' && (
           <>
-            <span data-tone="error">{t('recFailed') + state.message}</span>
+            <span data-tone="error">{t('recFailed') + (state.code === 'bad-reply' ? t('badReply') : state.message)}</span>
             <Button size="sm" variant="outline" onClick={() => run([])}>{t('recRetry')}</Button>
           </>
         )}

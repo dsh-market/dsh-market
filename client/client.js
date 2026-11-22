@@ -423,6 +423,13 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			installedBadge: "✓ 已安装",
 			alreadyInstalled: "✓ 已安装",
 			restartBanner: "项变更需重启 DeepSeek Harness 后生效",
+			staleServer: "市场已经更新，但后台还在运行旧版本，这个功能要等它换成新版后才能用。按页面顶部的提示操作即可。",
+			badReply: "没有收到完整的回答，连接可能中途断了。请重试。",
+			staleBanner: "市场已更新到 v{0}，后台还在运行 v{1}，部分新功能暂时用不了。",
+			staleRestart: "重启生效",
+			staleReload: "立即生效",
+			staleDesktopHint: "完全退出 DeepSeek Harness 再重新打开即可生效。",
+			staleManualHint: "重启 DeepSeek Harness 后生效。",
 			uninstall: "卸载",
 			confirmRemove: "确认卸载？",
 			uninstalling: "卸载中…",
@@ -1407,6 +1414,13 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			installedBadge: "✓ Installed",
 			alreadyInstalled: "✓ Installed",
 			restartBanner: "change(s) pending restart — restart DeepSeek Harness to apply",
+			staleServer: "The market was updated, but the old version is still running in the background, so this is not available until it switches. Follow the notice at the top of the page.",
+			badReply: "No complete answer came back; the connection may have dropped. Try again.",
+			staleBanner: "The market was updated to v{0}, but v{1} is still running in the background, so some new features are unavailable for now.",
+			staleRestart: "Restart to apply",
+			staleReload: "Apply now",
+			staleDesktopHint: "Quit DeepSeek Harness completely and open it again to apply.",
+			staleManualHint: "Restart DeepSeek Harness to apply.",
 			uninstall: "Uninstall",
 			confirmRemove: "Uninstall?",
 			uninstalling: "Uninstalling…",
@@ -2391,6 +2405,13 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			installedBadge: "✓ インストール済み",
 			alreadyInstalled: "✓ インストール済み",
 			restartBanner: "件の変更は DeepSeek Harness の再起動後に有効になります",
+			staleServer: "マーケットは更新されましたが、バックグラウンドではまだ旧バージョンが動いているため、この機能は切り替わるまで使えません。ページ上部の案内に従ってください。",
+			badReply: "完全な応答を受け取れませんでした。接続が途中で切れた可能性があります。もう一度お試しください。",
+			staleBanner: "マーケットは v{0} に更新されましたが、バックグラウンドではまだ v{1} が動いているため、一部の新機能はまだ使えません。",
+			staleRestart: "再起動して適用",
+			staleReload: "今すぐ適用",
+			staleDesktopHint: "DeepSeek Harness を完全に終了して開き直すと適用されます。",
+			staleManualHint: "DeepSeek Harness を再起動すると適用されます。",
 			uninstall: "アンインストール",
 			confirmRemove: "アンインストールしますか？",
 			uninstalling: "アンインストール中…",
@@ -10669,6 +10690,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			}, [bootId, restartHold]);
 			/** One-click restart (#14 by @ysyyhhh): server capability + in-flight state. */
 			const [restartEnabled, setRestartEnabled] = (0, react.useState)(false);
+			/** What the host can do about a server half older than this page (see client-version.ts). */
+			const [hostCaps, setHostCaps] = (0, react.useState)({
+				desktop: false,
+				selfReload: false
+			});
 			/** Supervisor the host detected around itself, when it named one (#229). */
 			const [supervisor, setSupervisor] = (0, react.useState)(null);
 			/** Debugger latch when one-click restart must not kill the host (#447). */
@@ -11168,6 +11194,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				repoHints,
 				repoIdentities,
 				resetDiscoverSearch,
+				hostCaps,
 				resetThemeSearch,
 				restartEnabled,
 				restartHold,
@@ -11296,6 +11323,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 				setRenamingGroup,
 				setRenamingValue,
 				setReplacing,
+				setHostCaps,
 				setRestartEnabled,
 				setRestartHold,
 				setRestartNames,
@@ -11628,7 +11656,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		*/
 		/** drain/repair status, catalog loading, compatibility checks, sticky layout effects. */
 		function useMarketSync(c) {
-			const { blockedNames, bodyRef, bootId, busyUrl, cat, source, catsFloorRef, checkoutRecovery, compatibility, compatibleWithHost, data, disabledNames, doneUrls, favSortDir, favSortField, favTimeRange, favoriteUrls, headFloorRef, headRef, idleStrikes, installed, installedBundles, installedView, lang, lightbox, marketGone, mounted, mountedRef, patchDisabledNames, pendingUpdate, pluginsYRef, q, qFavorites, qInstalled, qThemes, reconnectRound, recoveredInstall, refreshInstalled, refreshRequest, removedCount, removingName, repairStatusRequest, repoHints, repoIdentities, restartNames, restoringStickRef, rootRef, setAssignFor, setBootId, setBusyUrl, setCancelling, setCheckingUpdates, setCheckoutRecovery, setDebuggerLatch, setDoneUrls, setEnvFailed, setEnvFixing, setEnvReady, setGroupMenuFor, setHostBusy, setIgnoredUpdateNames, setInstallError, setInstalledMenuName, setLoadError, setMarketGone, setOperationsOpen, setPluginMenuUrl, setProgressCurrent, setProgressDone, setProgressLine, setProgressPct, setProgressPhase, setReconnecting, setRecords, setRemovedCount, setRemovingName, setRestartEnabled, setRestartNames, setRestartNoticeDismissed, setRestartReachable, setShowTop, setStartupRepair, setSupervisor, setThemesFullscreen, setToggleRestart, setUpdatedNames, setUpdatingName, setVersion, settledHostRef, sortDir, sortField, startupRepair, statusRef, surface, t, tab, themeSortDir, themeSortField, themeTimeRange, themesFullscreen, timeRange, toggleRestart, unbundledNames, updateExemptNames, updateIdleStrikes, updatedNames, updatingName } = c;
+			const { blockedNames, bodyRef, bootId, busyUrl, cat, source, catsFloorRef, checkoutRecovery, compatibility, compatibleWithHost, data, disabledNames, doneUrls, favSortDir, favSortField, favTimeRange, favoriteUrls, headFloorRef, headRef, idleStrikes, installed, installedBundles, installedView, lang, lightbox, marketGone, mounted, mountedRef, patchDisabledNames, pendingUpdate, pluginsYRef, q, qFavorites, qInstalled, qThemes, reconnectRound, recoveredInstall, refreshInstalled, refreshRequest, removedCount, removingName, repairStatusRequest, repoHints, repoIdentities, restartNames, restoringStickRef, rootRef, setAssignFor, setBootId, setBusyUrl, setCancelling, setCheckingUpdates, setCheckoutRecovery, setDebuggerLatch, setDoneUrls, setEnvFailed, setEnvFixing, setEnvReady, setGroupMenuFor, setHostBusy, setIgnoredUpdateNames, setInstallError, setInstalledMenuName, setLoadError, setMarketGone, setOperationsOpen, setPluginMenuUrl, setProgressCurrent, setProgressDone, setProgressLine, setProgressPct, setProgressPhase, setReconnecting, setRecords, setRemovedCount, setRemovingName, setRestartEnabled, setRestartNames, setRestartNoticeDismissed, setRestartReachable, setShowTop, setStartupRepair, setSupervisor, setThemesFullscreen, setToggleRestart, setUpdatedNames, setUpdatingName, setHostCaps, setVersion, settledHostRef, sortDir, sortField, startupRepair, statusRef, surface, t, tab, themeSortDir, themeSortField, themeTimeRange, themesFullscreen, timeRange, toggleRestart, unbundledNames, updateExemptNames, updateIdleStrikes, updatedNames, updatingName } = c;
 			const knownHostIdsRef = (0, react.useRef)(/* @__PURE__ */ new Set());
 			/**
 			* Host operations the user cleared; a status poll must not add them back —
@@ -12072,6 +12100,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						} catch {}
 					}
 					setRestartEnabled(status.restart === true);
+					setHostCaps({
+						desktop: status.desktopHost === true,
+						selfReload: status.selfReload === true
+					});
 					setSupervisor(typeof status.supervisor === "string" ? status.supervisor : null);
 					setDebuggerLatch(typeof status.debugger === "string" ? status.debugger : null);
 					setRestartReachable(status.restartReachable !== false);
@@ -18292,6 +18324,54 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			});
 		}
 		//#endregion
+		//#region src/client/client-version.ts
+		const CLIENT_VERSION = "1.78.0";
+		/** Numeric x.y.z comparison; prerelease tags are ignored. null if either is not a version. */
+		function compareMarketVersions(a, b) {
+			const parse = (v) => {
+				const m = /^v?(\d+)\.(\d+)\.(\d+)/.exec(v.trim());
+				return m === null ? null : [
+					Number(m[1]),
+					Number(m[2]),
+					Number(m[3])
+				];
+			};
+			const x = parse(a), y = parse(b);
+			if (x === null || y === null) return null;
+			for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i] ? 1 : -1;
+			return 0;
+		}
+		/** The server half is older than this page: it updated itself and has not been reloaded. */
+		function serverIsBehind(serverVersion, clientVersion = CLIENT_VERSION) {
+			if (serverVersion === null || clientVersion === null) return false;
+			return (compareMarketVersions(clientVersion, serverVersion) ?? 0) > 0;
+		}
+		/**
+		* Read a JSON reply; an empty or non-JSON body from a route this server does
+		* not have (the host answers 404/405 with nothing) becomes `stale-server`,
+		* never a JSON parse error.
+		*/
+		async function readMarketJson(res) {
+			const text = await res.text().catch(() => "");
+			try {
+				return {
+					ok: res.ok,
+					status: res.status,
+					body: JSON.parse(text)
+				};
+			} catch {
+				const stale = res.status === 404 || res.status === 405;
+				return {
+					ok: false,
+					status: res.status,
+					body: {
+						code: stale ? "stale-server" : "bad-reply",
+						error: ""
+					}
+				};
+			}
+		}
+		//#endregion
 		//#region src/client/HostRecoveryBanner.tsx
 		/**
 		* #875: the way back from DSH's own fatal recovery.
@@ -18576,7 +18656,9 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		*/
 		const MARKET_OFFER_CLOSED_KEY = "dshm-market-offer-closed";
 		function MarketHead({ c }) {
-			const { activationWarnings, approveAndRetry, askRestore, backupBusy, backupMessage, blockedNames, bootId, brokenPluginNames, brokenPlugins, buildsSkipped, busyUrl, checkingUpdates, checkoutRecovery, compatibilityNotice, compatibilitySummary, configNamespaceIssues, data, debuggerLatch, describePlugin, dismissBrokenError, dismissBrokenPlugin, dismissingBroken, doCancel, doExportLog, doInstall, doRestart, doRollback, doUpdate, eligibleMarketVersion, enableSidebar, undoSidebar, showSidebarAdded, envFailed, envFixing, envReady, exportState, favoriteTabCount, fixEnv, hasUpdates, headRef, heldMarketVersion, hostBusy, hostDependencyFindings, hotNames, installError, installedOtherCount, lang, marketGone, missingRestoreCount, notificationSnapshot, openInHost, operationsOpen, pendingBackup, pendingRefreshNames, pendingRestart, profileBlocked, records, recordsRef, recovery, refreshInstalled, removingName, replacing, resolveConflict, restartEnabled, restartHold, restartReachable, restarting, restoreErrors, rollingBack, runQueuedNow, setBuildsSkipped, setCat, setOperationsOpen, setQ, setRecords, setRecoveryOpen, setRestartNoticeDismissed, setRestoreConfirmOpen, setSidebarTipDismissed, setTab, shadowSummary, showHostPending, showMarketWait, showSidebarTip, sidebarTipError, sidebarTipSaving, staleName, startupRepair, supervisor, surface, t, tab, themeSnap, uiLocale, updateCheckFailed, updates, updatingName, version, marketOffer, takeMarketOffer } = c;
+			const { activationWarnings, approveAndRetry, askRestore, backupBusy, backupMessage, blockedNames, bootId, brokenPluginNames, brokenPlugins, buildsSkipped, busyUrl, checkingUpdates, checkoutRecovery, compatibilityNotice, compatibilitySummary, configNamespaceIssues, data, debuggerLatch, describePlugin, dismissBrokenError, dismissBrokenPlugin, dismissingBroken, doCancel, doExportLog, doInstall, doRestart, doRollback, doUpdate, eligibleMarketVersion, enableSidebar, undoSidebar, showSidebarAdded, envFailed, envFixing, envReady, exportState, favoriteTabCount, fixEnv, hasUpdates, headRef, heldMarketVersion, hostBusy, hostDependencyFindings, hotNames, installError, installedOtherCount, lang, marketGone, missingRestoreCount, notificationSnapshot, openInHost, operationsOpen, pendingBackup, pendingRefreshNames, pendingRestart, profileBlocked, records, recordsRef, recovery, refreshInstalled, removingName, replacing, resolveConflict, restartEnabled, restartHold, restartReachable, restarting, restoreErrors, rollingBack, runQueuedNow, setBuildsSkipped, setCat, setOperationsOpen, setQ, setRecords, setRecoveryOpen, setRestartNoticeDismissed, setRestoreConfirmOpen, setSidebarTipDismissed, setTab, shadowSummary, showHostPending, showMarketWait, showSidebarTip, sidebarTipError, sidebarTipSaving, staleName, startupRepair, supervisor, surface, t, tab, themeSnap, uiLocale, updateCheckFailed, updates, updatingName, version, marketOffer, takeMarketOffer, hostCaps } = c;
+			const [reloadingSelf, setReloadingSelf] = (0, react.useState)("idle");
+			const staleServer = serverIsBehind(version);
 			const [moreOpen, setMoreOpen] = (0, react.useState)(false);
 			const [restartClosedAt, setRestartClosedAt] = (0, react.useState)(0);
 			const [offerClosed, setOfferClosed] = (0, react.useState)(() => {
@@ -18955,6 +19037,44 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 										location.reload();
 									},
 									children: t("refresh")
+								})
+							]
+						}),
+						staleServer && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+							className: Market_module_css_default.banner,
+							"data-dshm-stale-server": true,
+							children: [
+								/* @__PURE__ */ (0, react_jsx_runtime.jsx)(IconRefreshOutline14, {
+									size: 14,
+									className: Market_module_css_default.bannerIcon
+								}),
+								/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
+									className: Market_module_css_default.grow,
+									children: [
+										t("staleBanner").replace("{0}", "1.78.0").replace("{1}", version ?? ""),
+										" ",
+										hostCaps.selfReload || restartEnabled && restartReachable && debuggerLatch === null ? null : t(hostCaps.desktop ? "staleDesktopHint" : "staleManualHint"),
+										reloadingSelf === "failed" && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [" ", t(hostCaps.desktop ? "staleDesktopHint" : "staleManualHint")] })
+									]
+								}),
+								hostCaps.selfReload && reloadingSelf !== "failed" ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+									variant: "primary",
+									size: "sm",
+									disabled: reloadingSelf === "working" || hostBusy || busyUrl !== null || updatingName !== null || removingName !== null,
+									onClick: () => {
+										setReloadingSelf("working");
+										fetch(api("/dsh-market/reload-self"), { method: "POST" }).then((res) => {
+											if (res.ok) location.reload();
+											else setReloadingSelf("failed");
+										}).catch(() => setReloadingSelf("failed"));
+									},
+									children: reloadingSelf === "working" ? t("restarting") : t("staleReload")
+								}) : restartEnabled && restartReachable && debuggerLatch === null && recovery === null && !marketGone && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+									variant: "primary",
+									size: "sm",
+									disabled: restarting || hostBusy || busyUrl !== null || updatingName !== null || removingName !== null,
+									onClick: doRestart,
+									children: restarting ? t("restarting") : t("staleRestart")
 								})
 							]
 						}),
@@ -19921,10 +20041,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					method: "POST",
 					headers: { "content-type": "application/json" },
 					body: JSON.stringify({ query })
-				}).then((res) => res.json().then((body) => ({
-					ok: res.ok,
-					body
-				}))).then(({ ok, body }) => {
+				}).then((res) => readMarketJson(res)).then(({ ok, body }) => {
 					if (mine !== seq.current) return;
 					if (ok && body.result !== void 0) setState({
 						phase: "done",
@@ -19976,7 +20093,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						className: Market_module_css_default.fpNote,
 						"data-tone": "error",
 						children: [
-							state.code === "no-model" ? t("aiSearchNoModel") : t("aiSearchFailed") + state.message,
+							state.code === "no-model" ? t("aiSearchNoModel") : state.code === "stale-server" ? t("staleServer") : state.code === "bad-reply" ? t("aiSearchFailed") + t("badReply") : t("aiSearchFailed") + state.message,
 							state.code === "no-model" && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [" ", /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 								size: "sm",
 								variant: "primary",
@@ -19985,7 +20102,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 								},
 								children: t("recSetupModel")
 							})] }),
-							state.code !== "no-model" && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [" ", /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+							state.code !== "no-model" && state.code !== "stale-server" && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [" ", /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 								size: "sm",
 								variant: "outline",
 								onClick: () => submit(state.query),
@@ -20068,10 +20185,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						exclude,
 						lang
 					})
-				}).then((res) => res.json().then((body) => ({
-					ok: res.ok,
-					body
-				}))).then(({ ok, body }) => {
+				}).then((res) => readMarketJson(res)).then(({ ok, body }) => {
 					if (mine !== seq.current) return;
 					if (ok && body.result !== void 0) {
 						const urls = body.result.picks.map((pick) => pick.url);
@@ -20173,9 +20287,13 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 								setupFailed && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: t("recSetupManual") })
 							] }),
 							state.phase === "error" && state.code === "no-seeds" && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: t("recNoSeeds") }),
-							state.phase === "error" && state.code !== "no-model" && state.code !== "no-seeds" && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+							state.phase === "error" && state.code === "stale-server" && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 								"data-tone": "error",
-								children: t("recFailed") + state.message
+								children: t("staleServer")
+							}),
+							state.phase === "error" && state.code !== "no-model" && state.code !== "no-seeds" && state.code !== "stale-server" && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+								"data-tone": "error",
+								children: t("recFailed") + (state.code === "bad-reply" ? t("badReply") : state.message)
 							}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 								size: "sm",
 								variant: "outline",

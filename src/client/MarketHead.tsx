@@ -8,7 +8,8 @@ import css from './Market.module.css'
 import { OperationsPanel } from './OperationsPanel.tsx'
 import { rememberDismissedHostId } from './dismissed-host.ts'
 import { clearSettled, drop } from './operations.ts'
-import { localizeBilingual, localizeBilingualList, profileBlockedText, restartHintKey } from './market-data.ts'
+import { CLIENT_VERSION, serverIsBehind } from './client-version.ts'
+import { api, localizeBilingual, localizeBilingualList, profileBlockedText, restartHintKey } from './market-data.ts'
 import {
   IconCordisPluginOutline14,
   IconDownloadOutline16,
@@ -52,7 +53,7 @@ type MarketHeadCtx = { props: MarketSectionProps }
     'setRestartNoticeDismissed' | 'setRestoreConfirmOpen' | 'setSidebarTipDismissed' | 'setTab' |
     'showSidebarTip' | 'sidebarTipError' | 'sidebarTipSaving' | 'staleName' | 'startupRepair' |
     'supervisor' | 'surface' | 't' | 'tab' | 'themeSnap' | 'uiLocale' | 'updates' | 'updatingName' |
-    'version'>
+    'version' | 'hostCaps'>
   & Pick<MarketSyncCtx, 'fixEnv'>
   & Pick<MarketInstallCtx,
     'compatibilitySummary' | 'doInstall' | 'doRollback' | 'favoriteTabCount' | 'shadowSummary'>
@@ -84,8 +85,10 @@ export function MarketHead({ c }: { c: MarketHeadCtx }) {
     setRestartNoticeDismissed, setRestoreConfirmOpen, setSidebarTipDismissed, setTab, shadowSummary,
     showHostPending, showMarketWait, showSidebarTip, sidebarTipError, sidebarTipSaving, staleName,
     startupRepair, supervisor, surface, t, tab, themeSnap, uiLocale, updateCheckFailed, updates,
-    updatingName, version, marketOffer, takeMarketOffer,
+    updatingName, version, marketOffer, takeMarketOffer, hostCaps,
   } = c
+  const [reloadingSelf, setReloadingSelf] = useState<'idle' | 'working' | 'failed'>('idle')
+  const staleServer = serverIsBehind(version)
   // Four everyday tabs in the row; the rarely used ones (Hidden, Advanced)
   // and the rarely used actions sit behind ···.
   const [moreOpen, setMoreOpen] = useState(false)
@@ -355,6 +358,43 @@ export function MarketHead({ c }: { c: MarketHeadCtx }) {
                 location.reload()
               }}
             >{t('refresh')}</Button>
+          </div>
+        )}
+        {/* The page is newer than the server half still running: the market
+            updated itself and DSH has not reloaded it. Routes the page relies
+            on may not exist yet, so say so, with the one action that fixes
+            it where the host allows one. */}
+        {staleServer && (
+          <div className={css.banner} data-dshm-stale-server>
+            <IconRefreshOutline14 size={14} className={css.bannerIcon} />
+            <span className={css.grow}>
+              {t('staleBanner').replace('{0}', CLIENT_VERSION ?? '').replace('{1}', version ?? '')}
+              {' '}
+              {hostCaps.selfReload || (restartEnabled && restartReachable && debuggerLatch === null)
+                ? null
+                : t(hostCaps.desktop ? 'staleDesktopHint' : 'staleManualHint')}
+              {reloadingSelf === 'failed' && <> {t(hostCaps.desktop ? 'staleDesktopHint' : 'staleManualHint')}</>}
+            </span>
+            {hostCaps.selfReload && reloadingSelf !== 'failed' ? (
+              <Button
+                variant="primary"
+                size="sm"
+                disabled={reloadingSelf === 'working' || hostBusy || busyUrl !== null || updatingName !== null || removingName !== null}
+                onClick={() => {
+                  setReloadingSelf('working')
+                  fetch(api('/dsh-market/reload-self'), { method: 'POST' })
+                    .then(res => { if (res.ok) location.reload(); else setReloadingSelf('failed') })
+                    .catch(() => setReloadingSelf('failed'))
+                }}
+              >{reloadingSelf === 'working' ? t('restarting') : t('staleReload')}</Button>
+            ) : restartEnabled && restartReachable && debuggerLatch === null && recovery === null && !marketGone && (
+              <Button
+                variant="primary"
+                size="sm"
+                disabled={restarting || hostBusy || busyUrl !== null || updatingName !== null || removingName !== null}
+                onClick={doRestart}
+              >{restarting ? t('restarting') : t('staleRestart')}</Button>
+            )}
           </div>
         )}
         {/* The market's own new version: named, with what updating does, on

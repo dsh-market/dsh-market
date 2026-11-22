@@ -443,6 +443,10 @@ export interface MarketStatus {
    * older host, which reads as "no button": the banner explains instead.
    */
   restart?: boolean
+  /** DSH Desktop owns the process: the market cannot restart it. */
+  desktopHost?: boolean
+  /** The server can swap in its own newer version without a restart. */
+  selfReload?: boolean
 }
 
 /**

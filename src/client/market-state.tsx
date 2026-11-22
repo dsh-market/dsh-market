@@ -982,6 +982,8 @@ const t = props.t
   }, [bootId, restartHold])
   /** One-click restart (#14 by @ysyyhhh): server capability + in-flight state. */
   const [restartEnabled, setRestartEnabled] = useState(false)
+  /** What the host can do about a server half older than this page (see client-version.ts). */
+  const [hostCaps, setHostCaps] = useState<{ desktop: boolean; selfReload: boolean }>({ desktop: false, selfReload: false })
   /** Supervisor the host detected around itself, when it named one (#229). */
   const [supervisor, setSupervisor] = useState<string | null>(null)
   /** Debugger latch when one-click restart must not kill the host (#447). */
@@ -1346,7 +1348,7 @@ const t = props.t
     recovery, recoveryBusy, recoveryKeep, recoveryOpen, refreshInstalled, refreshNames,
     refreshRequest, rememberPassword, removeConfirm, removedCount, removingName, renamingGroup,
     renamingValue, repairStatusRequest, replacing, repoHints, repoIdentities, resetDiscoverSearch,
-    resetThemeSearch, restartEnabled, restartHold, restartHoldRef, restartNames,
+    hostCaps, resetThemeSearch, restartEnabled, restartHold, restartHoldRef, restartNames,
     restartNoticeDismissed, restartReachable, restarting, restoreBlocked, restoreConfirm,
     restoreConfirmOpen, restoreErrors, restoringStickRef, rollingBack, rootRef,
     setActivationWarnings, setActivations, setAddPanel, setAddQuery, setAddSelected,
@@ -1369,7 +1371,7 @@ const t = props.t
     setProgressPhase, setQ, setQFavorites, setQInstalled, setQThemes, setReconnectRound,
     setReconnecting, setRecords, setRecovery, setRecoveryBusy, setRecoveryKeep, setRecoveryOpen,
     setRefreshNames, setRememberPassword, setRemoveConfirm, setRemovedCount, setRemovingName,
-    setRenamingGroup, setRenamingValue, setReplacing, setRestartEnabled, setRestartHold,
+    setRenamingGroup, setRenamingValue, setReplacing, setHostCaps, setRestartEnabled, setRestartHold,
     setRestartNames, setRestartNoticeDismissed, setRestartReachable, setRestarting,
     setRestoreBlocked, setRestoreConfirm, setRestoreConfirmOpen, setRestoreErrors, setRollingBack,
     setShowTheirs, setShowTop, setSidebarTipDismissed, setSkins, setSortDir, setSortField,
