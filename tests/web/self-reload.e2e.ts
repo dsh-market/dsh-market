@@ -18,10 +18,11 @@
  * only in the NEW build is introduced: the old instance has never heard of it.
  */
 
-import { execSync, spawnSync } from 'node:child_process'
-import { existsSync, linkSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { landBuild as landMarketBuild, type BuildOptions } from './market-build.ts'
 import { dshAvailable, dshCommand, launchMarketScaffold } from './scaffold.ts'
 import type { WebScaffold } from './scaffold.ts'
 
@@ -68,7 +69,7 @@ describe.skipIf(!HAS_DSH || HOST_CAN_SWAP).sequential('web e2e: a host that cann
       body: '{}',
     })
     expect(res.status).toBe(501)
-    expect(await res.json()).toMatchObject({ ok: false, state: 'unsupported' })
+    expect(await res.json()).toMatchObject({ ok: false, outcome: 'unsupported' })
   }, 120_000)
 })
 
@@ -104,80 +105,9 @@ describe.skipIf(!HOST_CAN_SWAP).sequential('web e2e: the market reloads its own 
 
   const profileDir = (): string => join(scaffold.home, 'profiles', 'web')
   const marker = (): string => join(scaffold.home, `e2e-${A}.alive`)
-  const baseTarball = (): string => join(scaffold.home, readdirSync(scaffold.home).find(n => /^dshmarket-.*\.tgz$/.test(n))!)
-  const baseVersion = (): string =>
-    (JSON.parse(execSync(`tar xzOf ${JSON.stringify(baseTarball())} package/package.json`, { encoding: 'utf8' })) as { version: string }).version
-
-  /**
-   * Land a different build of the market on disk, the way an update does:
-   * `dsh plugin add` of a tarball, while the host is running.
-   *
-   * `newRoute` appears only in this build; `breakImport` makes the build throw
-   * the moment it is loaded; `breakApply` loads fine and throws when started.
-   *
-   * `keepIdentity` gives every file whose content did not change the identity
-   * it had (same inode and time), the way pnpm's hard links from its store do
-   * on Linux. The host replaces a module only when its file's identity
-   * changed, so this is the difference between "every module is replaced"
-   * (what a copying or cloning pnpm, as on macOS, gives) and "only the changed
-   * ones are" — the case where state kept by an UNCHANGED module has to be
-   * right, because that module survives the swap.
-   */
-  const landBuild = (options: { newRoute?: string; breakImport?: boolean; breakApply?: boolean; keepIdentity?: boolean } = {}): string => {
+  const landBuild = (options: BuildOptions = {}): string => {
     counter += 1
-    const [major, minor, patch] = baseVersion().split('.').map(Number)
-    const version = `${String(major)}.${String(minor)}.${String(patch! + counter)}`
-    const work = join(scaffold.home, `build-${String(counter)}`)
-    mkdirSync(work)
-    execSync(`tar xzf ${JSON.stringify(baseTarball())} -C ${JSON.stringify(work)}`)
-    const manifestPath = join(work, 'package', 'package.json')
-    writeFileSync(manifestPath, readFileSync(manifestPath, 'utf8').replace(/"version": "[^"]+"/, `"version": "${version}"`))
-    const entry = join(work, 'package', 'lib', 'index.js')
-    let source = readFileSync(entry, 'utf8')
-    if (options.newRoute !== undefined) {
-      source = source.replace('export function apply(', 'function applyBase(')
-        + `
-export function apply(ctx, config) {
-  applyBase(ctx, config)
-  ctx.inject(['webServer'], (host) => {
-    host.effect(() => host.webServer.register({
-      kind: 'exact',
-      path: ${JSON.stringify(options.newRoute)},
-      handler: (request, response) => { response.writeHead(200, { 'content-type': 'text/plain' }); response.end('new-build ${version}') },
-    }), 'e2e: route that only the new build has')
-  })
-}
-`
-    }
-    if (options.breakApply === true) {
-      source = source.replace('export function apply(', 'function applyBase(')
-        + "\nexport function apply() { throw new Error('e2e: this build cannot start') }\n"
-    }
-    if (options.breakImport === true) source += "\nthrow new Error('e2e: this build cannot be loaded')\n"
-    writeFileSync(entry, source)
-    const tarball = join(scaffold.home, `dshmarket-${version}.tgz`)
-    execSync(`tar czf ${JSON.stringify(tarball)} -C ${JSON.stringify(work)} package`)
-    const installedLib = join(profileDir(), 'node_modules', 'dshmarket', 'lib')
-    const kept = join(scaffold.home, `identity-${String(counter)}`)
-    if (options.keepIdentity === true) {
-      mkdirSync(kept)
-      for (const name of readdirSync(installedLib).filter(file => file.endsWith('.js'))) linkSync(join(installedLib, name), join(kept, name))
-    }
-    execSync(`${dshCommand()} plugin --profile web add ${JSON.stringify(tarball)}`, {
-      env: { ...process.env, DSH_HOME: scaffold.home, CI: 'true' },
-      cwd: process.env.DSHM_E2E_DSH_CWD ?? process.cwd(),
-      stdio: 'pipe',
-      timeout: 300_000,
-    })
-    if (options.keepIdentity === true) {
-      for (const name of readdirSync(kept)) {
-        const now = join(installedLib, name)
-        if (!existsSync(now) || !readFileSync(now).equals(readFileSync(join(kept, name)))) continue
-        rmSync(now)
-        linkSync(join(kept, name), now)
-      }
-    }
-    return version
+    return landMarketBuild(scaffold, counter, options)
   }
 
   const routeAnswers = async (path: string): Promise<string | null> => {
@@ -213,8 +143,8 @@ export function apply(ctx, config) {
   it('reload-self swaps the new server half in, in the same process', async () => {
     const res = await post('/dsh-market/reload-self')
     expect(res.status).toBe(200)
-    const body = await res.json() as { ok: boolean; state: string; to: string }
-    expect(body).toMatchObject({ ok: true, state: 'reloaded' })
+    const body = await res.json() as { ok: boolean; outcome: string; to: string }
+    expect(body).toMatchObject({ ok: true, outcome: 'reloaded' })
 
     const after = await status()
     expect(after.version).toBe(body.to)
@@ -237,14 +167,14 @@ export function apply(ctx, config) {
   it('answers a second reload of the same files as already current', async () => {
     const res = await post('/dsh-market/reload-self')
     expect(res.status).toBe(200)
-    expect(await res.json()).toMatchObject({ ok: true, state: 'current' })
+    expect(await res.json()).toMatchObject({ ok: true, outcome: 'current' })
   }, 60_000)
 
   it('swaps a second time, from the build the first swap brought in', async () => {
     const version = landBuild({ newRoute: '/dsh-market/e2e-newer-only' })
     const res = await post('/dsh-market/reload-self')
     expect(res.status).toBe(200)
-    expect(await res.json()).toMatchObject({ ok: true, state: 'reloaded', to: version })
+    expect(await res.json()).toMatchObject({ ok: true, outcome: 'reloaded', to: version })
     expect(await routeAnswers('/dsh-market/e2e-newer-only')).toBe(`new-build ${version}`)
     expect((await status()).version).toBe(version)
     expect(pidOf((await status()).boot)).toBe(pidOf(bootBefore))
@@ -258,7 +188,7 @@ export function apply(ctx, config) {
     const broken = landBuild({ newRoute: '/dsh-market/e2e-never-seen', breakImport: true })
     const res = await post('/dsh-market/reload-self')
     expect(res.status).toBe(422)
-    expect(await res.json()).toMatchObject({ ok: false, state: 'refused' })
+    expect(await res.json()).toMatchObject({ ok: false, outcome: 'refused' })
 
     // The old instance never stopped: same version, same routes, same process.
     const after = await status()
@@ -275,7 +205,7 @@ export function apply(ctx, config) {
     const version = landBuild({ newRoute: '/dsh-market/e2e-recovered' })
     const res = await post('/dsh-market/reload-self')
     expect(res.status).toBe(200)
-    expect(await res.json()).toMatchObject({ ok: true, state: 'reloaded', to: version })
+    expect(await res.json()).toMatchObject({ ok: true, outcome: 'reloaded', to: version })
     expect(await routeAnswers('/dsh-market/e2e-recovered')).toBe(`new-build ${version}`)
     expect(pidOf((await status()).boot)).toBe(pidOf(bootBefore))
   }, 300_000)
@@ -287,7 +217,7 @@ export function apply(ctx, config) {
     landBuild({ breakApply: true })
     const res = await post('/dsh-market/reload-self')
     expect(res.status).toBe(502)
-    expect(await res.json()).toMatchObject({ ok: false, state: 'failed', serving: false })
+    expect(await res.json()).toMatchObject({ ok: false, outcome: 'failed', serving: false })
     expect((await scaffold.api('/dsh-market/status')).status, 'no market instance should be serving').not.toBe(200)
 
     // The host is still up and the other plugins are untouched.
@@ -317,7 +247,7 @@ export function apply(ctx, config) {
     const version = landBuild({ newRoute: '/dsh-market/e2e-client-only', keepIdentity: true })
     const res = await post('/dsh-market/reload-self')
     expect(res.status).toBe(200)
-    expect(await res.json()).toMatchObject({ ok: true, state: 'reloaded', to: version })
+    expect(await res.json()).toMatchObject({ ok: true, outcome: 'reloaded', to: version })
     expect(pidOf((await status()).boot)).toBe(pidOf(bootAtStart))
 
     await vi.waitFor(async () => { expect(await pageLoads(), 'the page stopped serving the plugin').toBe(true) }, { timeout: 20_000, interval: 500 })
@@ -355,7 +285,7 @@ export function apply(ctx, config) {
     const version = landBuild({ newRoute: '/dsh-market/e2e-live-mount', keepIdentity: true })
     const res = await post('/dsh-market/reload-self')
     expect(res.status).toBe(200)
-    expect(await res.json()).toMatchObject({ ok: true, state: 'reloaded', to: version })
+    expect(await res.json()).toMatchObject({ ok: true, outcome: 'reloaded', to: version })
     expect(pidOf((await status()).boot)).toBe(pidOf(bootAtStart))
 
     // Up again, and listed again — however the new instance got it there.
@@ -418,7 +348,7 @@ export function apply(ctx) {
     const version = landBuild({ newRoute: '/dsh-market/e2e-desktop-new' })
     const res = await post('/dsh-market/reload-self')
     expect(res.status).toBe(200)
-    expect(await res.json()).toMatchObject({ ok: true, state: 'reloaded', to: version })
+    expect(await res.json()).toMatchObject({ ok: true, outcome: 'reloaded', to: version })
     expect(await routeAnswers('/dsh-market/e2e-desktop-new')).toBe(`new-build ${version}`)
     const after = await status()
     expect(after.version).toBe(version)
