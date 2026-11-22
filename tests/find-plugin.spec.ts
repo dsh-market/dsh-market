@@ -2,7 +2,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { buildPickPrompt, extractTerms, findPlugins, forgetResults, parsePickReply, recall, registerFindPlugin, resultFor, runFindPlugin, type LlmLike } from '../src/find-plugin.ts'
+import { buildPickPrompt, extractTerms, findPlugins, forgetResults, parsePickReply, recall, recommendCandidates, recommendPlugins, registerFindPlugin, resultFor, runFindPlugin, setUserPluginsReader, setUsesMyPlugins, userSeeds, usesMyPlugins, type LlmLike } from '../src/find-plugin.ts'
 import type { Registry, RegistryPlugin } from '../src/registry.ts'
 
 const plugin = (name: string, zh: string, en: string, category: string, downloads: number | null = null): RegistryPlugin => ({
@@ -146,5 +146,142 @@ describe('/find-plugin: the command', () => {
     const register = vi.fn(() => dispose)
     expect(registerFindPlugin({ register }, async () => registry, { llm: () => undefined, defaultSelection: () => undefined })).toBe(dispose)
     expect(register).toHaveBeenCalledWith(expect.objectContaining({ name: 'find-plugin', input: { hint: expect.any(String) } }))
+  })
+})
+
+describe('AI recommendations from what the user has', () => {
+  it('finds the user\'s plugins by package name and by favorited URL, never the market itself', () => {
+    const seeds = userSeeds(registry, { installed: ['dsh-notify-me', 'dshmarket'], favorites: ['https://github.com/someone/dsh-novel/'] })
+    expect(seeds.installed.map(p => p.name)).toEqual(['dsh-notify-me'])
+    expect(seeds.favorited.map(p => p.name)).toEqual(['dsh-novel'])
+  })
+
+  it('offers neither what the user has, nor what was just shown, nor a deprecated entry; leans to their categories', () => {
+    const seeds = userSeeds(registry, { installed: ['dsh-notify-me'], favorites: [] })
+    const names = recommendCandidates(registry, seeds.installed, ['memory-eternal'], 3).map(c => c.plugin.name)
+    expect(names).not.toContain('dsh-notify-me')
+    expect(names).not.toContain('memory-eternal')
+    expect(names).not.toContain('dsh-old-notify')
+    expect(names[0]).toBe('dsh-qqbot')
+  })
+
+  it('does not call the model when there is nothing to go on', async () => {
+    const llm = fakeModel('{}')
+    await expect(recommendPlugins({ registry, installed: [], favorites: [], preferZh: true, llm, selection: SELECTION })).rejects.toMatchObject({ code: 'no-seeds' })
+    expect(llm.calls).toHaveLength(0)
+  })
+
+  it('sends the user\'s plugins with the candidates, and keeps up to ten offered picks', async () => {
+    const llm = fakeModel('{"intro":"你常用通知","picks":[{"name":"dsh-qqbot","why":"同类"},{"name":"dsh-notify-me","why":"已装"}]}')
+    const result = await recommendPlugins({ registry, installed: ['dsh-notify-me'], favorites: [], preferZh: true, llm, selection: SELECTION })
+    expect(JSON.stringify(llm.calls[0].messages)).toMatch(/Installed:[\s\S]*dsh-notify-me[\s\S]*Candidates:/)
+    expect(result.picks.map(p => p.name)).toEqual(['dsh-qqbot'])
+  })
+})
+
+describe('/find-plugin and AI search with the user\'s plugins', () => {
+  beforeEach(() => {
+    forgetResults()
+    vi.stubEnv('DSH_HOME', mkdtempSync(join(tmpdir(), 'dshm-consent-')))
+    setUserPluginsReader(() => ({ installed: ['dsh-notify-me'], favorites: [] }))
+  })
+  afterEach(() => { vi.unstubAllEnvs(); forgetResults(); setUserPluginsReader(() => ({ installed: [], favorites: [] })) })
+
+  const run = async (llm: ReturnType<typeof fakeModel>) => runFindPlugin(
+    { commandId: 'c', agent: { options: SELECTION }, rawInput: '通知', signal: new AbortController().signal },
+    async () => registry, { llm: () => llm, defaultSelection: () => undefined })
+
+  it('reads nothing of the user\'s until they allow it, and says so on the result', async () => {
+    expect(usesMyPlugins()).toBe(false)
+    const llm = fakeModel('{"intro":"","picks":[{"name":"dsh-notify-me","why":"x"}]}')
+    await run(llm)
+    expect(JSON.stringify(llm.calls[0].messages)).not.toContain('Already installed')
+    expect(resultFor('c')?.personalized).toBe(false)
+  })
+
+  it('once allowed, leaves installed plugins out and tells the model what the user has', async () => {
+    setUsesMyPlugins(true)
+    expect(usesMyPlugins()).toBe(true)
+    const llm = fakeModel('{"intro":"","picks":[{"name":"dsh-qqbot","why":"x"}]}')
+    await run(llm)
+    const sent = JSON.stringify(llm.calls[0].messages)
+    expect(sent).toMatch(/Already installed:[\s\S]*dsh-notify-me/)
+    expect(sent.split('Candidates:')[1]).not.toContain('dsh-notify-me')
+    expect(resultFor('c')?.personalized).toBe(true)
+    setUsesMyPlugins(false)
+    expect(usesMyPlugins()).toBe(false)
+  })
+})
+
+describe('/find-plugin: a reply cut off mid-way', () => {
+  it('keeps the complete picks before the cut', () => {
+    const cut = '{"intro":"ok","picks":[{"name":"a","why":"one"},{"name":"b","why":"two"},{"name":"c","wh'
+    expect(parsePickReply(cut, new Set(['a', 'b', 'c']), 10)).toEqual({ intro: 'ok', picks: [{ name: 'a', why: 'one' }, { name: 'b', why: 'two' }, { name: 'c', why: '' }] })
+  })
+})
+
+describe('/find-plugin: failures the host reports inside the stream', () => {
+  it('reads a missing key reported as an error chunk as "set up a model"', async () => {
+    const llm: LlmLike = { stream: () => (async function* () { yield { type: 'error', error: { code: 'MISSING_CREDENTIAL', message: 'no key' } } })() }
+    await expect(findPlugins({ request: 'seo', registry, llm, selection: SELECTION })).rejects.toMatchObject({ code: 'no-model' })
+  })
+})
+
+describe('/find-plugin: a call the host ends with an error finish', () => {
+  it('reads a missing key as "set up a model"', async () => {
+    const llm: LlmLike = { stream: () => (async function* () { yield { type: 'finish', reason: { kind: 'error', failure: { message: 'no API key', code: 'MISSING_CREDENTIAL' } } } })() }
+    await expect(findPlugins({ request: 'seo', registry, llm, selection: SELECTION })).rejects.toMatchObject({ code: 'no-model' })
+  })
+})
+
+describe('/find-plugin: a thinking model', () => {
+  it('asks a model with an effort setting to think little, and leaves "off" off', async () => {
+    const llm = fakeModel('{"intro":"","picks":[]}')
+    await findPlugins({ request: 'seo', registry, llm, selection: { ...SELECTION, reasoningEffort: 'high' } })
+    await findPlugins({ request: 'seo', registry, llm, selection: { ...SELECTION, reasoningEffort: 'off' } })
+    await findPlugins({ request: 'seo', registry, llm, selection: SELECTION })
+    expect(llm.calls.map(call => (call as { reasoningEffort?: string }).reasoningEffort)).toEqual(['low', 'off', undefined])
+  })
+
+  it('takes the answer from the thinking when the budget ran out before the reply', async () => {
+    const llm: LlmLike = { stream: () => (async function* () { yield { type: 'reasoning-delta', text: 'so: {"intro":"","picks":[{"name":"callai-seo-mcp","why":"fits"}]}' } })() }
+    const result = await findPlugins({ request: 'seo', registry, llm, selection: SELECTION })
+    expect(result.picks.map(p => p.name)).toEqual(['callai-seo-mcp'])
+  })
+})
+
+describe('entries from an added catalog', () => {
+  // No downloads, no stars, no owner, a link that is not on the public host, and a source tag.
+  const priv = (name: string, zh: string, en: string, category: string, npm: string | null = name): RegistryPlugin => ({
+    name, owner: '', url: `https://repo.acme.internal/tools/${name}`, category, description: { zh, en }, npm,
+    install: npm ?? name, added: '2026-11-01', source: { id: 'acme', label: { en: 'Acme internal' } },
+  })
+  const merged: Registry = {
+    ...registry,
+    categories: { ...registry.categories, hr: { zh: '人事', en: 'People' } },
+    plugins: [priv('acme-badge', '打印员工工牌', 'Print employee badges', 'hr', '@acme/badge'), ...registry.plugins],
+  }
+
+  it('recalls them by name, description and category without choking on missing numbers', () => {
+    const byWord = recall(merged, extractTerms('员工工牌'), 3).candidates
+    expect(byWord[0]!.plugin.name).toBe('acme-badge')
+    expect(recall(merged, extractTerms('人事'), 3).candidates[0]!.plugin.name).toBe('acme-badge')
+    // and they still fill a vague request instead of throwing on a missing count
+    expect(() => recall(merged, [], 10)).not.toThrow()
+  })
+
+  it('finds them among the user\'s own by npm name and by favorited link', () => {
+    const installed = userSeeds(merged, { installed: ['@acme/badge'], favorites: [] })
+    expect(installed.installed.map(p => p.name)).toEqual(['acme-badge'])
+    const favorited = userSeeds(merged, { installed: [], favorites: ['https://repo.acme.internal/tools/acme-badge/'] })
+    expect(favorited.favorited.map(p => p.name)).toEqual(['acme-badge'])
+  })
+
+  it('offers them as recommendations, and learns taste from one', () => {
+    const fromPublic = recommendCandidates(merged, [merged.plugins.find(p => p.name === 'dsh-notify-me')!])
+    expect(fromPublic.map(c => c.plugin.name)).toContain('acme-badge')
+    const fromPrivate = recommendCandidates(merged, [merged.plugins[0]!])
+    expect(fromPrivate.map(c => c.plugin.name)).not.toContain('acme-badge')
+    expect(fromPrivate.length).toBeGreaterThan(0)
   })
 })

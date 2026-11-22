@@ -30,7 +30,7 @@ import type { MarketSyncCtx } from './market-sync.ts'
 
 type MarketInstallIn = { props: MarketSectionProps }
   & Pick<MarketStateCtx,
-    'blockedNames' | 'cat' | 'compatibilityDemandOwner' | 'compatibleWithHost' | 'data' |
+    'blockedNames' | 'cat' | 'source' | 'compatibilityDemandOwner' | 'compatibleWithHost' | 'data' |
     'favSortDir' | 'favSortField' | 'favTimeRange' | 'favoriteUrls' | 'hostCompatibility' |
     'installed' | 'lang' | 'marketGone' | 'nextRecordId' | 'q' | 'qFavorites' | 'qThemes' |
     'refreshInstalled' | 'repoHints' | 'repoIdentities' | 'setActivationWarnings' | 'setActivations' |
@@ -45,7 +45,7 @@ type MarketInstallIn = { props: MarketSectionProps }
 /** derived lists and pagination, download and install. */
 export function useMarketInstall(c: MarketInstallIn) {
   const {
-    blockedNameSet, blockedNames, cat, compatibilityDemandOwner, compatibleWithHost, data,
+    blockedNameSet, blockedNames, cat, source, compatibilityDemandOwner, compatibleWithHost, data,
     favSortDir, favSortField, favTimeRange, favoriteUrlSet, favoriteUrls, hostCompatibility,
     installed, lang, marketGone, nextRecordId, q, qFavorites, qThemes, refreshInstalled,
     rememberDrainMarker, repoHints, repoIdentities, scrollToTop, setActivationWarnings,
@@ -66,13 +66,13 @@ export function useMarketInstall(c: MarketInstallIn) {
   const pluginsAll = useMemo(() => {
     if (data === null) return [] as RegistryPlugin[]
     const query = {
-      category: cat, query: q, lang, categories: data.categories,
+      category: cat, source, query: q, lang, categories: data.categories,
       sort: `${sortField}-${sortDir}` as `${typeof sortField}-${typeof sortDir}`,
       sinceDays: timeRange === 'all' ? undefined : TIME_RANGE_DAYS[timeRange],
     }
     return visiblePlugins(data.plugins, { ...query, compatibleWithHost: false })
   },
-    [data, q, cat, lang, sortField, sortDir, timeRange])
+    [data, q, cat, source, lang, sortField, sortDir, timeRange])
   // One plugin can be stored under the installed name or the catalog name.
   // Both have to hide the card and skip Update all (#657).
   // With nothing blocked — the default — the answer is false for every entry,
@@ -122,14 +122,14 @@ export function useMarketInstall(c: MarketInstallIn) {
   // block is a front-page teaser for the unfiltered default view — one more
   // narrowing, alongside query, category and time range.
   const recentlyAdded = useMemo(
-    () => data === null || tab !== 'discover' || q.trim() !== '' || cat !== 'all' || timeRange !== 'all'
+    () => data === null || tab !== 'discover' || q.trim() !== '' || cat !== 'all' || source !== 'all' || timeRange !== 'all'
       || sortField !== 'downloads' || sortDir !== 'desc'
       ? []
       : visiblePlugins(data.plugins, {
           category: 'all', query: '', lang, sort: 'downloads-desc', sinceDays: 7,
         }).filter(plugin => !pluginBlocked(plugin)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [data, tab, q, cat, timeRange, sortField, sortDir, lang, blockedNameSet, installed, repoIdentities, repoHints])
+    [data, tab, q, cat, source, timeRange, sortField, sortDir, lang, blockedNameSet, installed, repoIdentities, repoHints])
   const [recentCollapsed, setRecentCollapsed] = useState(() => readRecentFlag(RECENT_COLLAPSED_KEY))
   const [recentHidden, setRecentHidden] = useState(() => readRecentFlag(RECENT_HIDDEN_KEY))
   const toggleRecentCollapsed = useCallback(() => {
@@ -152,7 +152,7 @@ export function useMarketInstall(c: MarketInstallIn) {
   }, [])
   // Fix the slice before compatibility resolves. Hiding a card must not
   // pull in an unchecked replacement and start another batch.
-  const discoverResetDeps = [q, cat, sortField, sortDir, timeRange]
+  const discoverResetDeps = [q, cat, source, sortField, sortDir, timeRange]
   const { currentPage, totalPages, pageSize, goToPage, changePageSize } =
     usePagination(pluginsUnblocked.length, discoverResetDeps, scrollToTop)
   const discoverMore = useShownCount(pluginsUnblocked.length, discoverResetDeps, DEFAULT_PAGE_SIZE)

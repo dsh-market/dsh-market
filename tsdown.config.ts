@@ -11,6 +11,7 @@
  * scripts/preflight.mjs asserts the emitted client/client.js starts with the
  * exact `window.__ModuleLoader__.load({ id: "dshmarket"` prefix.
  */
+import { readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { basename, dirname, relative, resolve as resolvePath } from 'node:path'
 import { defineConfig } from 'tsdown'
@@ -69,6 +70,9 @@ export default defineConfig({
   noExternal: (source: string) => (CLIENT_EXTERNALS.includes(source) ? undefined : true),
   define: {
     'process.env.NODE_ENV': JSON.stringify('production'),
+    // The version this bundle was built as, so the page can tell when the
+    // server half still running is older (it updated itself, DSH did not restart).
+    '__DSHM_CLIENT_VERSION__': JSON.stringify((JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as { version: string }).version),
     'import.meta.env.MODE': JSON.stringify('production'),
     'import.meta.env': JSON.stringify({ MODE: 'production' }),
   },

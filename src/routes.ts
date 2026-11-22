@@ -17,8 +17,14 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { FiberState } from '@deepseek-ai/cordis'
 import { load as loadYaml } from 'js-yaml'
 import { packageFileFromRegistry } from './catalog-npm.ts'
-import { aiSearch, FindPluginError, resultFor } from './find-plugin.ts'
-import { forgetCatalog, loadRegistry, pluginCategories, type Registry, type RegistryPlugin } from './registry.ts'
+import { aiRecommend, aiSearch, FindPluginError, resultFor, setUserPluginsReader, setUsesMyPlugins, usesMyPlugins } from './find-plugin.ts'
+import { CatalogLoadError, forgetCatalog, loadRegistry, pluginCategories, type Registry, type RegistryPlugin } from './registry.ts'
+import {
+  catalogConfig, entryAllowed, MAX_USER_CATALOGS, parseCatalogInput, probeCatalog, setUserCatalogs, userCatalogId, type SourceInfo,
+} from './catalogs.ts'
+import { clientPolicy, getPolicy, pinnedVersion } from './policy.ts'
+import { setNpmrcProfileDir } from './npmrc.ts'
+import { BundleError, extractBundle, isInsideOfflineRoot, MAX_BUNDLE_BYTES, type ExtractedBundle } from './offline.ts'
 import { settingsNamespaceState } from './settings.ts'
 import {
   buildEnvFromUnknown, cleanHotDir, forgetInstalled, hotMount, hotMountFailure, hotUnmount, listHotMounts, listLiveHotMounts, resetHotState,
@@ -61,7 +67,7 @@ import { checkoutSourceExists, detachCheckoutLink, failureDetail, groupConflicts
 import { classifyPnpmFailure } from './pnpm-compat.ts'
 import { asChannel, CHANNELS, DIST_TAG, resolveChannel, type Channel } from './channels.ts'
 import {
-  asRegion, githubProxyManaged, normalizeGithubProxy, REGIONS, routesFor, setActiveRegion,
+  asRegion, githubProxyByPolicy, githubProxyManaged, normalizeGithubProxy, REGIONS, routesFor, setActiveRegion,
   setCustomGithubProxy, type Region,
 } from './regions.ts'
 import { resolveRegion } from './region-probe.ts'
@@ -70,12 +76,12 @@ import { mismatchedWorkspaceRoot } from './github-install-target.ts'
 import { sourceWebUrl, updateNotesFor } from './changelog.ts'
 import { isCommitId } from './release-history.ts'
 import { activeReleaseBlockers, headlineBlocker, releaseBlockedMessage } from './release-blockers.ts'
-import { applyProfileBlockers, checkUpdates, isUpdatablePlugin, compareVersions, fetchNpmLatest, invalidateUpdates, readVersionMaturity, resolveDesktopMatureUpdate, resolveGitRemoteHead, isUpgrade, latestPublishedRecently, setUpdateRegistry, versionOnChannel } from './updates.ts'
+import { applyProfileBlockers, checkUpdates, isUpdatablePlugin, compareVersions, fetchNpmLatest, fetchRegistryLatest, invalidateUpdates, readVersionMaturity, resolveDesktopMatureUpdate, resolveGitRemoteHead, isUpgrade, latestPublishedRecently, setUpdateRegistry, versionOnChannel } from './updates.ts'
 import { isExactReleaseVersion, isStableReleaseVersion } from './release-candidates.ts'
 import { createUpdateNotificationMonitor } from './update-notifications.ts'
 import { DEFAULT_UPDATE_CHECK_INTERVAL_HOURS, isUpdateCheckIntervalHours } from './update-notification-settings.ts'
 import { createThemeManager, type LoaderEntry } from './themes.ts'
-import { readJsonBody, refuseUnadmitted, sameOrigin, sendJson } from './http.ts'
+import { readJsonBody, readRawBody, refuseUnadmitted, sameOrigin, sendJson } from './http.ts'
 import { resolveDshHome } from './home-paths.ts'
 import { asHmr, claimInstance, reloadSelf, selfReloadReply, type SelfReloadOutcome } from './self-reload.ts'
 import { readTelemetryState, sendOpened, setTelemetryEnabled, startHeartbeat, type HeartbeatOptions } from './telemetry.ts'
@@ -117,7 +123,9 @@ function discoveryCatalog(registry: Registry) {
   const previous = discoveryCatalogs.get(registry)
   if (previous !== undefined) return previous
   const revisions = new Map<string, { entry: RegistryPlugin; revision: string }>()
-  const plugins = registry.plugins.map((entry): DiscoveryPlugin => {
+  const plugins = registry.plugins.map((original): DiscoveryPlugin => {
+    // Where a bundle's package file sits on this machine is the server's business, not the page's.
+    const entry: RegistryPlugin = original.offlineTarball === undefined ? original : (({ offlineTarball: _path, ...rest }) => rest)(original)
     if ((entry.npm == null || entry.npm === '') && typeof entry.url === 'string' && parseSourceUrl(entry.url) !== null) {
       const revision = githubCompatibilityRevision(entry)
       revisions.set(entry.url, { entry, revision })
@@ -617,6 +625,11 @@ export function mountMarketRoutes(
     throw new Error(message)
   }
   const activeProfileDir = profileDir(config.profile, config.profileDirectory)
+  // AI search and /find-plugin read these only after the user allowed it.
+  setUserPluginsReader(() => ({
+    installed: Object.keys(readInstalled(config.profile, activeProfileDir)),
+    favorites: readMarketState(activeProfileDir).favorites ?? [],
+  }))
   // #987: a remove that died between deleting the package and clearing the
   // rows its bundle patch declares leaves an insert naming a missing module —
   // and DSH's boot is all-or-nothing, so that row can keep the host from
@@ -771,21 +784,25 @@ export function mountMarketRoutes(
   // group, install and uninstall mutates this shared state and persists it.
   const marketState = readMarketState(activeProfileDir)
   setCustomGithubProxy(marketState.githubProxy ?? null)
+  setUserCatalogs(marketState.userCatalogs ?? [])
+  // The profile's own .npmrc is the first place a private registry is named.
+  setNpmrcProfileDir(activeProfileDir)
   const disabled = marketState.disabled
   /**
    * The saved answer to "which doors into the market are open" (#1015).
    *
    * The HOST decides which doors exist; this only combines the user's
    * preferences, because a request handler cannot see the browser's slots.
-   * `sidebarEntry` defaults off while the two page tabs default on, so
-   * "every door closed" is expressible — and has to be refused before it
-   * reaches disk. A market with no entry can only be recovered by editing
+   * The Plugins page tab and the sidebar row default on; the settings page
+   * entry defaults off (it is the old door, kept for hosts without the other
+   * two — the browser shows it there anyway). "Every door closed" is still
+   * expressible, and has to be refused before it reaches disk. A market with no entry can only be recovered by editing
    * state.json or removing the package, which the card must never cause.
    */
   const entryDoors = (state: MarketState = marketState): { settingsSection: boolean; pluginsTab: boolean; sidebarEntry: boolean } => ({
-    settingsSection: state.settingsSection !== false,
+    settingsSection: state.settingsSection === true,
     pluginsTab: state.pluginsTab !== false,
-    sidebarEntry: state.sidebarEntry === true,
+    sidebarEntry: state.sidebarEntry !== false,
   })
   const closesEveryDoor = (doors: { settingsSection: boolean; pluginsTab: boolean; sidebarEntry: boolean }): boolean =>
     !doors.settingsSection && !doors.pluginsTab && !doors.sidebarEntry
@@ -902,6 +919,8 @@ export function mountMarketRoutes(
     updateNotifications.setEnabled(fresh.backgroundUpdateChecks === true)
     updateNotifications.setIntervalHours(fresh.backgroundUpdateIntervalHours ?? DEFAULT_UPDATE_CHECK_INTERVAL_HOURS)
     marketState.githubProxy = fresh.githubProxy
+    marketState.userCatalogs = fresh.userCatalogs
+    setUserCatalogs(fresh.userCatalogs ?? [])
     // A restore or an external writer can change these two too; a stale copy
     // here would put the old answer back on the next whole-state save (#435).
     marketState.settingsSection = fresh.settingsSection
@@ -1009,21 +1028,60 @@ export function mountMarketRoutes(
     if (await themes.setEntryDisabled(name, true)) logEvent('info', 'boot', `plugin kept off: ${name}`)
   }
 
+  /**
+   * The boot pass: shim-mount client-only packages, then put the persisted
+   * disable list back down.
+   *
+   * It is started from the `ctx.inject(['webServer','loader'], …)` callback,
+   * so it runs on that callback's context — and it keeps running after the
+   * callback returns. The host re-provisions services while it boots, and
+   * cordis refreshes EVERY fiber that injects a re-provided name: that
+   * disposes this context and re-runs `apply` on a fresh one, while the work
+   * started here is still going against the disposed copy. Reading
+   * `host.loader` there throws `cannot get required service "loader" in
+   * inactive context` — including from `includePrefix`, whose only job is to
+   * strip a row-id prefix (#1277).
+   *
+   * Nothing awaits this pass, so the throw left as a rejection nobody
+   * handled, and the host turned that into `fatal load failure`: on a profile
+   * whose disable list was non-empty the app came up empty — no sessions, no
+   * workspace, "settings could not be read, saving paused" — while the
+   * profile on disk was untouched. The list is what decides whether the pass
+   * runs at all, which is why an empty one never showed this.
+   *
+   * Catching here is not bookkeeping. The instance that replaced this one
+   * reads the same state and replays the same list, so the stale pass has
+   * nothing left to do — and if nothing replaced it, the next boot replays.
+   * Whatever else a replay can throw, one package's boot work must never be
+   * able to take the host down with it.
+   */
+  async function replayBootDisables(): Promise<void> {
+    // Named in the log line, so a reader knows which step stopped rather than
+    // being told "boot failed" and nothing else.
+    let stage = 'mounting client-only shims'
+    try {
+      const mounted = await mountClientOnlyDeps(host, activeProfileDir)
+      if (mounted.length > 0) logEvent('info', 'boot', `client-only shims mounted: ${mounted.join(', ')}`)
+      // Replay the persisted disable list: bundle-layer plugins the user
+      // switched away from get live-disabled again (bundle trees are
+      // in-memory, so the disable never persists on its own). Client-only
+      // shims for disabled plugins were already skipped by mountClientOnlyDeps.
+      for (const name of [...disabled]) {
+        stage = `replaying ${name}`
+        if (followOutsideEnable(name)) continue
+        noteHomeLayerConflict(name)
+        await replayDisabledPackage(name)
+      }
+    } catch (error) {
+      logEvent('warn', 'boot',
+        `boot replay stopped while ${stage}: ${error instanceof Error ? error.message : String(error)}. The disable list on disk is unchanged, so the next boot applies it again — and so does the market instance that replaces this one when the host rebuilt it mid-boot; a package this pass had not reached yet stays on until then (#1277)`)
+    }
+  }
+
   // Client-only packages (dsh.client without dsh.bundle) are invisible to the
   // bundle layer in every boot; the market shim-mounts them so their client
   // bundles are actually served.
-  void mountClientOnlyDeps(host, activeProfileDir).then(async (mounted) => {
-    if (mounted.length > 0) logEvent('info', 'boot', `client-only shims mounted: ${mounted.join(', ')}`)
-    // Replay the persisted disable list: bundle-layer plugins the user
-    // switched away from get live-disabled again (bundle trees are
-    // in-memory, so the disable never persists on its own). Client-only
-    // shims for disabled plugins were already skipped by mountClientOnlyDeps.
-    for (const name of [...disabled]) {
-      if (followOutsideEnable(name)) continue
-      noteHomeLayerConflict(name)
-      await replayDisabledPackage(name)
-    }
-  })
+  void replayBootDisables()
 
   // Self-healing guard: dsh's own patch overlay can re-update entries during
   // activation and wipe the runtime disabled flag — whenever a fiber comes
@@ -3473,7 +3531,7 @@ export function mountMarketRoutes(
       path: '/dsh-market/telemetry',
       handler: async (request, response) => {
         if (request.method === 'GET') {
-          sendJson(response, 200, { enabled: readTelemetryState().enabled })
+          sendJson(response, 200, { enabled: readTelemetryState().enabled && getPolicy().telemetry !== false, ...(getPolicy().telemetry === false ? { locked: true } : {}) })
           return
         }
         if (request.method !== 'POST') {
@@ -3483,6 +3541,10 @@ export function mountMarketRoutes(
         }
         if (!sameOrigin(request)) {
           sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        if (getPolicy().telemetry === false) {
+          sendJson(response, 403, { ok: false, code: 'locked', error: '你的组织已关闭匿名使用统计，这里不能改。 / Your organization turned the anonymous count off; it cannot be changed here.' })
           return
         }
         try {
@@ -4210,6 +4272,75 @@ export function mountMarketRoutes(
 
     registerRoute({
       kind: 'exact',
+      // The user's say-so for AI search and /find-plugin to read their
+      // installed and favorited plugins. GET reads it, POST {on} sets it.
+      path: '/dsh-market/ai-use-my-plugins',
+      handler: async (request, response) => {
+        if (request.method === 'GET') {
+          sendJson(response, 200, { on: usesMyPlugins() })
+          return
+        }
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'GET, POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) {
+          sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        const body = await readJsonBody(request).catch(() => null) as { on?: unknown } | null
+        if (typeof body?.on !== 'boolean') {
+          sendJson(response, 400, { error: 'on must be true or false' })
+          return
+        }
+        try {
+          setUsesMyPlugins(body.on)
+          sendJson(response, 200, { on: body.on })
+        } catch (error) {
+          sendJson(response, 500, { error: `没能保存这个设置（${error instanceof Error ? error.message : String(error)}）。请重试。 / Could not save this setting. Try again.` })
+        }
+      },
+    }),
+
+    registerRoute({
+      kind: 'exact',
+      // "Recommend for me": the user's installed and favorited plugins, judged
+      // by their default model. Only on a click (it reads both lists and spends
+      // the user's tokens); nothing here runs by itself.
+      path: '/dsh-market/ai-recommend',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) {
+          sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        const body = await readJsonBody(request).catch(() => null) as { exclude?: unknown; lang?: unknown } | null
+        const exclude = Array.isArray(body?.exclude) ? body.exclude.filter((name): name is string => typeof name === 'string').slice(0, 200) : []
+        try {
+          const result = await aiRecommend({
+            installed: Object.keys(readInstalled(config.profile, activeProfileDir)),
+            favorites: readMarketState(activeProfileDir).favorites ?? [],
+            exclude,
+            preferZh: body?.lang !== 'en' && body?.lang !== 'ja',
+          }, () => loadRegistry())
+          sendJson(response, 200, { result })
+        } catch (error) {
+          if (error instanceof FindPluginError) {
+            sendJson(response, error.code === 'no-model' || error.code === 'no-seeds' ? 409 : 502, { code: error.code, error: error.message })
+            return
+          }
+          sendJson(response, 500, { code: 'model-failed', error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    }),
+
+    registerRoute({
+      kind: 'exact',
       path: '/dsh-market/registry',
       handler: async (request, response) => {
         if (request.method !== 'GET') {
@@ -4222,6 +4353,7 @@ export function mountMarketRoutes(
             const registry = await loadRegistry()
             sendJson(response, 200, {
               registry: discoveryCatalog(registry).response,
+              ...(Object.keys(clientPolicy()).length > 0 ? { policy: clientPolicy() } : {}),
               hostVersion: dshHostInfo()?.version ?? null,
             })
           } catch (error) {
@@ -4230,7 +4362,11 @@ export function mountMarketRoutes(
             // reachable one with fewer plugins in it.
             const message = error instanceof Error ? error.message : String(error)
             logEvent('warn', 'registry', `catalog fetch failed: ${message}`)
-            sendJson(response, 502, { error: message })
+            sendJson(response, 502, {
+              error: message,
+              // Which source said what, so the page can name the one to fix.
+              ...(error instanceof CatalogLoadError ? { sources: error.sources } : {}),
+            })
           }
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
@@ -5193,6 +5329,211 @@ export function mountMarketRoutes(
       },
     }),
 
+    /**
+     * The catalogs list in Settings: what is configured and how each source
+     * answered the last read. Never carries a header, a token or a query string.
+     */
+    registerRoute({
+      kind: 'exact',
+      path: '/dsh-market/catalogs',
+      handler: async (request, response) => {
+        if (request.method !== 'GET') {
+          response.writeHead(405, { allow: 'GET' })
+          response.end()
+          return
+        }
+        try {
+          const config = catalogConfig()
+          let sources: SourceInfo[] = []
+          if (config.active) {
+            // Reading also refreshes each source's status; a total failure
+            // still carries the per-source answers.
+            sources = await loadRegistry().then(registry => registry.sources ?? [], (error: unknown) => (error instanceof CatalogLoadError ? error.sources : []))
+          }
+          sendJson(response, 200, {
+            sources,
+            publicCatalog: { enabled: config.publicEnabled, locked: config.policy.publicCatalog === false },
+            userCatalogsAllowed: config.policy.userCatalogs,
+            limit: MAX_USER_CATALOGS,
+            problems: config.policy.problems,
+          })
+        } catch (error) {
+          sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    }),
+
+    /**
+     * Add a catalog of the user's own: one URL or absolute file path, read
+     * once to prove it is a catalog, then saved. Refused wholesale while the
+     * organization's policy says users may not add catalogs.
+     */
+    registerRoute({
+      kind: 'exact',
+      path: '/dsh-market/catalogs/add',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) {
+          sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        try {
+          await withMutationQueued(async () => {
+            if (!getPolicy().userCatalogs) {
+              sendJson(response, 403, { ok: false, code: 'locked', error: '你的组织不允许添加目录 / your organization does not allow adding catalogs' })
+              return
+            }
+            const body = (await readJsonBody(request)) as { source?: unknown } | null
+            const parsed = parseCatalogInput(typeof body?.source === 'string' ? body.source : '')
+            if ('error' in parsed) {
+              sendJson(response, 400, { ok: false, code: parsed.error, error: `invalid catalog address (${parsed.error}) / 目录地址不对` })
+              return
+            }
+            const state = readMarketState(activeProfileDir)
+            const saved = [...(state.userCatalogs ?? [])]
+            const id = userCatalogId(parsed)
+            if (saved.some(entry => entry.id === id) || catalogConfig().extras.some(source => source.id === id)) {
+              sendJson(response, 409, { ok: false, code: 'duplicate', error: 'this catalog is already added / 这个目录已经添加过了' })
+              return
+            }
+            if (saved.length >= MAX_USER_CATALOGS) {
+              sendJson(response, 400, { ok: false, code: 'limit', limit: MAX_USER_CATALOGS, error: `at most ${String(MAX_USER_CATALOGS)} catalogs / 最多添加 ${String(MAX_USER_CATALOGS)} 个目录` })
+              return
+            }
+            // Read it once before keeping it: what is saved is known to work.
+            const probe = await probeCatalog(parsed)
+            if (probe.registry === null) {
+              sendJson(response, 400, { ok: false, code: 'unreadable', source: probe.info.error, error: `could not read the catalog (${probe.info.error?.code ?? 'unknown'}) / 读不了这个目录` })
+              return
+            }
+            writeMarketState(activeProfileDir, { ...readMarketState(activeProfileDir), userCatalogs: [...saved, { id, ...parsed }] })
+            refreshMarketState()
+            forgetCatalog()
+            invalidateUpdates()
+            logEvent('info', 'catalog', `added catalog ${id} (${probe.info.where}), ${String(probe.info.count)} plugins`)
+            sendJson(response, 200, { ok: true, id, count: probe.info.count, label: probe.info.label })
+          })
+        } catch (error) {
+          sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    }),
+
+    /**
+     * Import an offline bundle: the request body IS the archive. It is
+     * unpacked under the market's own directory with strict rules (see
+     * offline.ts), read once as a catalog, and only then saved as one of the
+     * user's catalogs.
+     */
+    registerRoute({
+      kind: 'exact',
+      path: '/dsh-market/offline/import',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) {
+          sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        try {
+          await withMutationQueued(async () => {
+            if (!getPolicy().userCatalogs) {
+              sendJson(response, 403, { ok: false, code: 'locked', error: '你的组织不允许添加目录 / your organization does not allow adding catalogs' })
+              return
+            }
+            let archive: Buffer
+            try {
+              archive = await readRawBody(request, MAX_BUNDLE_BYTES)
+            } catch {
+              sendJson(response, 413, { ok: false, code: 'too-big', error: 'the bundle is too large / 离线包太大' })
+              return
+            }
+            let extracted: ExtractedBundle
+            try {
+              extracted = extractBundle(archive)
+            } catch (error) {
+              const refused = error instanceof BundleError ? error : null
+              logEvent('warn', 'offline', `bundle refused: ${refused === null ? String(error) : `${refused.code} ${refused.detail}`}`)
+              sendJson(response, 400, { ok: false, code: refused?.code ?? 'not-archive', detail: refused?.detail ?? '', error: 'not a usable offline bundle / 这不是可用的离线包' })
+              return
+            }
+            const entry = { file: extracted.catalogFile }
+            const probe = await probeCatalog(entry)
+            if (probe.registry === null) {
+              rmSync(extracted.dir, { recursive: true, force: true })
+              sendJson(response, 400, { ok: false, code: 'unreadable', source: probe.info.error, error: 'the bundle has no readable catalog / 离线包里的目录读不了' })
+              return
+            }
+            const state = readMarketState(activeProfileDir)
+            const id = userCatalogId(entry)
+            const saved = (state.userCatalogs ?? []).filter(item => item.id !== id)
+            if (saved.length >= MAX_USER_CATALOGS) {
+              rmSync(extracted.dir, { recursive: true, force: true })
+              sendJson(response, 400, { ok: false, code: 'limit', limit: MAX_USER_CATALOGS, error: `at most ${String(MAX_USER_CATALOGS)} catalogs / 最多添加 ${String(MAX_USER_CATALOGS)} 个目录` })
+              return
+            }
+            writeMarketState(activeProfileDir, { ...state, userCatalogs: [...saved, { id, ...entry }] })
+            refreshMarketState()
+            forgetCatalog()
+            invalidateUpdates()
+            logEvent('info', 'offline', `imported bundle ${extracted.id}: ${String(probe.info.count)} plugins, ${String(extracted.files)} files`)
+            sendJson(response, 200, { ok: true, id, count: probe.info.count, label: probe.info.label })
+          })
+        } catch (error) {
+          sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    }),
+
+    registerRoute({
+      kind: 'exact',
+      path: '/dsh-market/catalogs/remove',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) {
+          sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        try {
+          await withMutationQueued(async () => {
+            const body = (await readJsonBody(request)) as { id?: unknown } | null
+            const id = typeof body?.id === 'string' ? body.id : ''
+            const state = readMarketState(activeProfileDir)
+            const saved = state.userCatalogs ?? []
+            // A catalog the organization set is not the user's to remove.
+            if (!saved.some(entry => entry.id === id)) {
+              sendJson(response, 404, { ok: false, error: 'no such catalog / 没有这个目录' })
+              return
+            }
+            const gone = saved.find(entry => entry.id === id)
+            writeMarketState(activeProfileDir, { ...state, userCatalogs: saved.filter(entry => entry.id !== id) })
+            // An imported bundle is the market's own copy: removing the catalog removes its files.
+            if (gone?.file !== undefined && isInsideOfflineRoot(gone.file)) {
+              rmSync(dirname(gone.file), { recursive: true, force: true })
+            }
+            refreshMarketState()
+            forgetCatalog()
+            invalidateUpdates()
+            logEvent('info', 'catalog', `removed catalog ${id}`)
+            sendJson(response, 200, { ok: true })
+          })
+        } catch (error) {
+          sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    }),
+
     registerRoute({
       kind: 'exact',
       path: '/dsh-market/favorite',
@@ -5596,7 +5937,9 @@ export function mountMarketRoutes(
           channels: CHANNELS,
           region,
           regions: REGIONS,
-          anonymousCount: readTelemetryState().enabled,
+          anonymousCount: readTelemetryState().enabled && getPolicy().telemetry !== false,
+          // Set by the organization: shown, not switchable.
+          anonymousCountLocked: getPolicy().telemetry === false,
           // The padded/PATH- and CI-safe build environment currently pinned
           // (issue #336): composition plus any card-saved override. The card
           // edits exactly what this reports, so the form never shows a stale
@@ -5612,11 +5955,14 @@ export function mountMarketRoutes(
           githubRoutes: routesFor(region).githubRoutes,
           githubProxyCustom: marketState.githubProxy ?? null,
           githubProxyManaged: githubProxyManaged(),
+          githubProxyByPolicy: githubProxyByPolicy(),
           // Whether the region was decided by the network check rather than
           // by the user — the card explains a choice it made on their behalf
           // exactly once, so nobody has to wonder why downloads moved.
           regionAuto,
-          sidebarEntry: marketState.sidebarEntry === true,
+          sidebarEntry: marketState.sidebarEntry !== false,
+          // Whether DSH Desktop owns this process (the market cannot restart it).
+          desktopHost: config.desktopHost === true,
           restart: restartAllowed(config),
           // Named so the UI can say WHY the button is gone. A blank
           // "no restart button" is the state #229 reported as broken.
@@ -6401,15 +6747,17 @@ export function mountMarketRoutes(
                 }
               }
               if (desktopStable) {
-                const endpointLatest = await fetchNpmLatest(name)
+                const endpointLatest = await fetchRegistryLatest(name)
+                // What the organization allows as the newest, when it pinned one.
+                const orgNewest = pinnedVersion(name) ?? endpointLatest
                 // Repeated legacy requests are already complete. An explicit
                 // client target must still pass the stale-target checks below.
-                if (body.eligibleVersion === undefined && compatVersion === null && endpointLatest === installedVersion) {
+                if (body.eligibleVersion === undefined && compatVersion === null && orgNewest === installedVersion) {
                   invalidateUpdates()
                   sendJson(response, 200, { ok: true, skipped: 'current', name, version: installedVersion })
                   return
                 }
-                const eligible = await resolveDesktopMatureUpdate(name, installedVersion, config.profile, activeProfileDir, endpointLatest, compatVersion ?? undefined)
+                const eligible = await resolveDesktopMatureUpdate(name, installedVersion, config.profile, activeProfileDir, endpointLatest, compatVersion ?? pinnedVersion(name))
                 if (body.eligibleVersion !== undefined && body.eligibleVersion !== eligible.candidate) {
                   invalidateUpdates()
                   sendJson(response, 409, {
@@ -6429,7 +6777,7 @@ export function mountMarketRoutes(
                 // Older clients have no target token. They may still install
                 // a mature latest, but cannot silently get a different build
                 // from the version their UI presented.
-                if (compatVersion === null && body.eligibleVersion === undefined && eligible.candidate !== endpointLatest) {
+                if (compatVersion === null && body.eligibleVersion === undefined && eligible.candidate !== orgNewest) {
                   invalidateUpdates()
                   sendJson(response, 409, { staleTarget: true, error: '当前最新版仍在等待期；请刷新市场以确认可安装的成熟版本。 / The latest release is held. Refresh the market to confirm the exact mature target.' })
                   return
@@ -7819,7 +8167,8 @@ export function mountMarketRoutes(
       handler: async (request, response) => {
         if (request.method === 'GET') {
           sendJson(response, 200, {
-            enabled: marketState.sidebarEntry === true,
+            // Shown unless turned off (the default changed from off to on).
+            enabled: marketState.sidebarEntry !== false,
             // Absent means nobody has ever chosen. On a host with no settings
             // page the row is then shown by default, because it is the only
             // way into the market (#846).
@@ -7882,7 +8231,13 @@ export function mountMarketRoutes(
       handler: async (request, response) => {
         if (request.method === 'GET') {
           const doors = entryDoors()
-          sendJson(response, 200, { settingsSection: doors.settingsSection, pluginsTab: doors.pluginsTab })
+          sendJson(response, 200, {
+            settingsSection: doors.settingsSection,
+            pluginsTab: doors.pluginsTab,
+            // Unchosen, the browser still shows the settings entry when it is
+            // the host's only door.
+            settingsSectionChosen: typeof marketState.settingsSection === 'boolean',
+          })
           return
         }
         if (request.method !== 'POST') {
@@ -8869,7 +9224,7 @@ export function mountMarketRoutes(
             // A release the user picked from the refusal dialog's own search
             // (#581): it was confirmed compatible by /dsh-market/find-compatible,
             // so it is pinned below instead of resolving `latest` again.
-            const requestedVersion = typeof body.version === 'string' && /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(body.version)
+            let requestedVersion = typeof body.version === 'string' && /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(body.version)
               ? body.version
               : null
             const registry = await loadRegistry()
@@ -8879,6 +9234,18 @@ export function mountMarketRoutes(
               sendJson(response, 400, { error: 'plugin is not in the curated registry' })
               return
             }
+            // The list above is already narrowed by the policy's `allow`; asked
+            // again here so this route does not depend on that happening
+            // upstream (the check that matters is the one next to the install).
+            if (!entryAllowed(entry, getPolicy().allow)) {
+              logEvent('warn', 'install-rejected', `not allowed by policy: ${entry.name}`)
+              sendJson(response, 403, { error: '你的组织不允许安装这个插件 / your organization does not allow installing this plugin' })
+              return
+            }
+            // The organization fixed this package's version: that exact release
+            // installs, whatever the page asked for.
+            const orgPin = typeof entry.npm === 'string' ? pinnedVersion(entry.npm) : undefined
+            if (orgPin !== undefined) requestedVersion = orgPin
             const plainTarget = installTargetFor(entry)
             if (plainTarget === null) {
               sendJson(response, 400, { error: 'unsupported source url' })

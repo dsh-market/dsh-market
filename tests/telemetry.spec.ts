@@ -2,6 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { resetPolicyCache } from '../src/policy.ts'
 import { readTelemetryState, sendHeartbeat, sendOpened, setTelemetryEnabled, suppressedBy, telemetryFile, TELEMETRY_URL, type HeartbeatOptions } from '../src/telemetry.ts'
 
 const dirs: string[] = []
@@ -142,5 +143,37 @@ describe('anonymous usage count', () => {
     setTelemetryEnabled(true, file)
     writeFileSync(file, '{nope')
     expect(readTelemetryState(file)).toEqual({ enabled: true })
+  })
+})
+
+describe('anonymous usage count under an organization policy', () => {
+  const withPolicy = (doc: unknown): void => {
+    const dir = mkdtempSync(join(tmpdir(), 'dshm-telemetry-policy-'))
+    dirs.push(dir)
+    const file = join(dir, 'policy.json')
+    writeFileSync(file, JSON.stringify(doc))
+    vi.stubEnv('DSH_MARKET_POLICY', file)
+    resetPolicyCache()
+  }
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    resetPolicyCache()
+  })
+
+  it('sends nothing, for the daily count and for the opened mark, even when the user left it on', async () => {
+    withPolicy({ telemetry: false })
+    const { options, fetch } = setup()
+    expect(suppressedBy({})).toBe('organization policy')
+    expect(await sendHeartbeat(options)).toBe('skipped')
+    expect(await sendOpened(options)).toBe('skipped')
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('changes nothing for a policy that says nothing about it, or says true', async () => {
+    withPolicy({ telemetry: true })
+    const { options, fetch } = setup()
+    expect(suppressedBy({})).toBeNull()
+    expect(await sendHeartbeat(options)).toBe('sent')
+    expect(fetch).toHaveBeenCalledTimes(1)
   })
 })

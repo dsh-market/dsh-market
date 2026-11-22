@@ -12,6 +12,8 @@ import { DIST_TAG, type Channel } from './channels.ts'
 import { resolveHeadCommit } from './accelerate.ts'
 import { inProbe } from './probe-context.ts'
 import { marketFetch } from './net.ts'
+import { registryFor } from './npmrc.ts'
+import { pinnedVersion } from './policy.ts'
 import { publishedReleaseUpdate, type CatalogReleaseSource } from './release-updates.ts'
 import { activeRegion, githubRoutesFor, rememberGithubRoute, throughProxy, type Region } from './regions.ts'
 import type { GitToNpmMigration, NpmRenameMigration } from './source-migration.ts'
@@ -306,7 +308,11 @@ export function setUpdateRegistry(base: string): void {
 
 /** A registry URL for `path`, on whichever registry is currently in force. */
 function npmUrl(path: string): string {
-  return `${registryBase}/${path}`
+  // The first segment is the encoded package name. A scope an `.npmrc` routes
+  // to a private registry is asked there, not on the region's registry.
+  let name = ''
+  try { name = decodeURIComponent(path.split('/')[0] ?? '') } catch { /* leave the default registry */ }
+  return `${name === '' ? registryBase : registryFor(name, registryBase)}/${path}`
 }
 
 type ReleaseAgeExclusions = { exemptPackage: boolean; exemptVersions: Set<string> }
@@ -639,6 +645,14 @@ async function tagVersion(name: string, tag: string): Promise<string | null> {
 }
 
 export async function fetchNpmLatest(name: string): Promise<string | null> {
+  // An administrator's pin IS the newest release this machine may be offered.
+  const pin = pinnedVersion(name)
+  if (pin !== undefined) return pin
+  return await fetchRegistryLatest(name)
+}
+
+/** What the registry itself calls `latest`, whatever a pin says (the desktop path checks the registry's identity against it). */
+export async function fetchRegistryLatest(name: string): Promise<string | null> {
   try {
     const meta = (await fetchJson(npmUrl(`${encodeURIComponent(name)}/latest`))) as { version?: string }
     if (typeof meta.version === 'string') return meta.version
@@ -1053,9 +1067,13 @@ export async function checkUpdates(
           }
         }
         const meta = (await fetchJson(npmUrl(`${encodeURIComponent(name)}/latest`), true)) as { version?: unknown } | null | undefined
-        const stable = typeof meta?.version === 'string' && parseSemver(meta.version) !== null ? meta.version : null
-        if (meta !== undefined && stable === null) throw new Error('npm latest response has no valid version')
-        const channel = channelFor.get(name)
+        const registryStable = typeof meta?.version === 'string' && parseSemver(meta.version) !== null ? meta.version : null
+        if (meta !== undefined && registryStable === null) throw new Error('npm latest response has no valid version')
+        // A pin from the organization's policy replaces what the registry
+        // calls newest, and a channel cannot go past it.
+        const pin = pinnedVersion(name)
+        const stable = pin ?? registryStable
+        const channel = pin !== undefined ? undefined : channelFor.get(name)
         const latest = channel === undefined ? stable : await versionOnChannel(name, channel, stable)
         // Forwards is an update; a difference in the other direction is a
         // channel switch and is reported as one, under its own field.
@@ -1084,7 +1102,7 @@ export async function checkUpdates(
           && isStableReleaseVersion(version)
           && !/^https?:/i.test(spec) && !spec.includes(':') && !spec.includes('/')
         const mature = desktopStable && upgrade
-          ? await resolveDesktopMatureUpdate(name, version, profile, activeProfileDir, stable)
+          ? await resolveDesktopMatureUpdate(name, version, profile, activeProfileDir, registryStable, pin)
           : null
         if (mature?.nextMaturityAt !== null && mature?.nextMaturityAt !== undefined) {
           nextCandidateMaturityAt = Math.min(nextCandidateMaturityAt, mature.nextMaturityAt)

@@ -31,7 +31,8 @@ import type { MarketSectionProps } from './market-types.ts'
 
 type MarketSyncIn = { props: MarketSectionProps }
   & Pick<MarketStateCtx,
-    'blockedNames' | 'bodyRef' | 'bootId' | 'busyUrl' | 'cat' | 'catsFloorRef' | 'checkoutRecovery' |
+    'setHostCaps' |
+    'blockedNames' | 'bodyRef' | 'bootId' | 'busyUrl' | 'cat' | 'source' | 'catsFloorRef' | 'checkoutRecovery' |
     'compatibility' | 'compatibleWithHost' | 'data' | 'disabledNames' | 'doneUrls' | 'favSortDir' |
     'favSortField' | 'favTimeRange' | 'favoriteUrls' | 'headFloorRef' | 'headRef' | 'idleStrikes' |
     'installed' | 'installedBundles' | 'installedView' | 'lang' | 'lightbox' | 'marketGone' |
@@ -56,7 +57,7 @@ type MarketSyncIn = { props: MarketSectionProps }
 /** drain/repair status, catalog loading, compatibility checks, sticky layout effects. */
 export function useMarketSync(c: MarketSyncIn) {
   const {
-    blockedNames, bodyRef, bootId, busyUrl, cat, catsFloorRef, checkoutRecovery, compatibility,
+    blockedNames, bodyRef, bootId, busyUrl, cat, source, catsFloorRef, checkoutRecovery, compatibility,
     compatibleWithHost, data, disabledNames, doneUrls, favSortDir, favSortField, favTimeRange,
     favoriteUrls, headFloorRef, headRef, idleStrikes, installed, installedBundles, installedView,
     lang, lightbox, marketGone, mounted, mountedRef, patchDisabledNames, pendingUpdate, pluginsYRef,
@@ -70,7 +71,7 @@ export function useMarketSync(c: MarketSyncIn) {
     setReconnecting, setRecords, setRemovedCount, setRemovingName, setRestartEnabled,
     setRestartNames, setRestartNoticeDismissed, setRestartReachable, setShowTop, setStartupRepair,
     setSupervisor, setThemesFullscreen, setToggleRestart, setUpdatedNames, setUpdatingName,
-    setVersion, settledHostRef, sortDir, sortField, startupRepair, statusRef, surface, t, tab,
+    setHostCaps, setVersion, settledHostRef, sortDir, sortField, startupRepair, statusRef, surface, t, tab,
     themeSortDir, themeSortField, themeTimeRange, themesFullscreen, timeRange, toggleRestart,
     unbundledNames, updateExemptNames, updateIdleStrikes, updatedNames, updatingName,
   } = c
@@ -526,6 +527,7 @@ const knownHostIdsRef = useRef(new Set<string>())
           } catch { /* storage unavailable */ }
         }
         setRestartEnabled(status.restart === true)
+        setHostCaps({ desktop: status.desktopHost === true, selfReload: status.selfReload === true })
         setSupervisor(typeof status.supervisor === 'string' ? status.supervisor : null)
         setDebuggerLatch(typeof status.debugger === 'string' ? status.debugger : null)
         // Only an explicit false takes the button away. Absent (an older host) or
@@ -863,7 +865,7 @@ const knownHostIdsRef = useRef(new Set<string>())
       }
     }
     setShowTop(false)
-  }, [surface, themesFullscreen, tab, q, cat, sortField, sortDir, timeRange, compatibleWithHost, qThemes, themeSortField, themeSortDir, themeTimeRange, qFavorites, favSortField, favSortDir, favTimeRange, qInstalled, installedView])
+  }, [surface, themesFullscreen, tab, q, cat, source, sortField, sortDir, timeRange, compatibleWithHost, qThemes, themeSortField, themeSortDir, themeTimeRange, qFavorites, favSortField, favSortDir, favTimeRange, qInstalled, installedView])
   // Menus are portaled and would stay put while the host page scrolls. `.body`
   // does not scroll on this surface (unless Themes fullscreen), so the close
   // and the back-to-top affordance listen to the host.

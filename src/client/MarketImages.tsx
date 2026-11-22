@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react'
 import {
   avatarColor,
   githubRouteCandidates,
+  isPublicImageHost,
   pluginName,
   pluginScreenshotCandidates,
   pluginScreenshots,
@@ -21,6 +22,7 @@ import {
   type Translate,
 } from './market-data.ts'
 import css from './Market.module.css'
+import { orgPolicy } from './org-policy.ts'
 import { DiscoveryScan } from './discovery-scan.ts'
 import { IconLoadingOutline16, IconSearchOutline16, IconSparkle16 } from './icons.ts'
 
@@ -56,13 +58,13 @@ export function GithubRoutedImg({ src, alt, className, key }: { src: string; alt
   )
 }
 
-export function OwnerAvatar({ name, owner, icon, className }: { name: string; owner: string; icon?: string | null; className?: string }) {
+export function OwnerAvatar({ name, owner, icon, className, trusted }: { name: string; owner: string; icon?: string | null; className?: string; trusted?: boolean }) {
   const [failed, setFailed] = useState(false)
   const [routeIndex, setRouteIndex] = useState(0)
   const [iconFailed, setIconFailed] = useState(false)
   const [iconRouteIndex, setIconRouteIndex] = useState(0)
   const av = className === undefined ? css.av : `${css.av} ${className}`
-  const tile = iconFailed ? null : safeIcon(icon)
+  const tile = iconFailed ? null : safeIcon(icon, trusted === true)
   if (tile !== null) {
     // A declared icon is almost always a raw.githubusercontent.com URL, so it
     // goes through the raw route candidates the lightbox uses (#1070) instead
@@ -87,7 +89,8 @@ export function OwnerAvatar({ name, owner, icon, className }: { name: string; ow
       />
     )
   }
-  if (failed || owner === '') {
+  // No outside contact allowed: the letter tile, never a request for the owner's avatar.
+  if (failed || owner === '' || !orgPolicy().externalImages) {
     return (
       <div className={av} style={{ background: avatarColor(name) }}>
         {name.replace(/^dsh[-_]/i, '').charAt(0).toUpperCase() || 'P'}
@@ -193,6 +196,10 @@ export function useAutoCarousel(count: number, initial: number, intervalMs = 350
  * share a cache entry with the full-size open anyway.
  */
 function thumbUrl(src: string, height: number, options: { webp?: boolean } = {}): string {
+  // An image on the organization's own host is never handed to a public resizing
+  // service: that would tell a third party an internal address, and the service
+  // could not reach it anyway.
+  if (!isPublicImageHost(src)) return src
   // The resizer stays in every region, including China.
   //
   // It was briefly bypassed there on the assumption that a service in the
@@ -280,7 +287,7 @@ const THEME_COVER_ROOT_MARGIN = '80px'
 const THEME_PREVIEW_PROBE_LIMIT = 3
 
 export function CardShot({ plugin, onOpen }: { plugin: RegistryPlugin; onOpen: (shots: string[], index: number) => void }) {
-  const shots = safeScreenshots(plugin.screenshots)
+  const shots = safeScreenshots(plugin.screenshots, { anyHost: plugin.source !== undefined })
   const [broken, setBroken] = useState<string[]>([])
   const visible = shots.filter(src => !broken.includes(src)).slice(0, CARD_SHOT_LIMIT)
   const [setStripRef, near] = useNearViewport<HTMLDivElement>()
@@ -381,7 +388,7 @@ export function ThemeCover({ plugin, onOpen, t }: {
   onOpen: (shots: string[], index: number) => void
   t: Translate
 }) {
-  const curated = safeScreenshots(plugin.screenshots)
+  const curated = safeScreenshots(plugin.screenshots, { anyHost: plugin.source !== undefined })
   const curatedKey = curated.join('\n')
   const cachedFallback = curated.length === 0 ? measuredThemePreviewResults.get(plugin.url) : undefined
   const [fallback, setFallback] = useState<{ loading: boolean; shots: string[] }>({

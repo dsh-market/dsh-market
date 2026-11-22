@@ -22,6 +22,7 @@
 import { gunzipSync } from 'node:zlib'
 import { fetchBodyWhileProgressing } from './body-progress.ts'
 import { marketFetch } from './net.ts'
+import { registryFor } from './npmrc.ts'
 
 /** Long enough for a multi-megabyte tarball on a slow link, short enough to fall back. */
 const TIMEOUT_MS = 20_000
@@ -169,7 +170,8 @@ export async function catalogFromPackage(
  * @param pkg - package name.
  * @param file - exact entry name inside the tarball (`package/cordis.patch.yml`).
  */
-export async function packageFileFromRegistry(registry: string, pkg: string, file: string): Promise<Buffer | null> {
+export async function packageFileFromRegistry(base: string, pkg: string, file: string): Promise<Buffer | null> {
+  const registry = registryFor(pkg, base)
   try {
     const metaRes = await marketFetch(`${registry}/${encodeURIComponent(pkg)}/latest`, {
       signal: AbortSignal.timeout(TIMEOUT_MS),

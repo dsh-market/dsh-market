@@ -86,21 +86,25 @@ profile，因此不会出现在桌面端。请通过应用内的 **设置 → �
 <table>
 <tr>
 <td width="50%" valign="top"><b>AI 搜索</b><br>一句话描述你想要的插件，由你在 DSH 里配置的模型挑选；结果就是普通的插件卡片。默认关闭，打开开关、按回车才会用你的 token。<br><br><img src="assets/features/ai-search-zh.png" alt="AI 搜索结果"></td>
+<td width="50%" valign="top"><b>AI 猜你喜欢</b><br>点一下「让 AI 猜你喜欢什么插件」，模型会根据你装过和收藏的插件，挑出你可能还需要的。只在你点的时候读取这两份列表、用你的 token。<br><br><img src="assets/features/recommend-zh.png" alt="AI 猜你喜欢"></td>
+</tr>
+<tr>
 <td width="50%" valign="top"><b>在聊天里 /find-plugin</b><br>对话中直接说要什么，模型从市场里挑几个并说明理由；卡片上可去市场安装、直接安装或复制命令。<br><br><img src="assets/features/find-plugin-zh.png" alt="/find-plugin 结果卡片"></td>
-</tr>
-<tr>
 <td width="50%" valign="top"><b>装之前看清它会做什么</b><br>每个插件都做过静态扫描：读写文件、联网、执行命令一目了然；构建脚本默认不运行。<br><br><img src="assets/features/install-zh.png" alt="安装确认弹窗"></td>
-<td width="50%" valign="top"><b>主题一键切换</b><br>装上即生效，主题之间互斥，选择重启后仍然保留。<br><br><img src="assets/themes-zh.png" alt="主题页"></td>
 </tr>
 <tr>
+<td width="50%" valign="top"><b>主题一键切换</b><br>装上即生效，主题之间互斥，选择重启后仍然保留。<br><br><img src="assets/themes-zh.png" alt="主题页"></td>
 <td width="50%" valign="top"><b>更新</b><br>单个或全部一键更新，每个更新都附「更新内容」；市场自己也这样升级。<br><br><img src="assets/features/updates-zh.png" alt="已安装页的更新提示"></td>
+</tr>
+<tr>
 <td width="50%" valign="top"><b>备份与恢复</b><br>导出成文件，或存到 WebDAV、私有 Gist；恢复前先校验，失败自动回滚。<br><br><img src="assets/features/backup-zh.png" alt="备份与恢复页"></td>
+<td width="50%" valign="top"><b>收藏</b><br>先收藏、以后再装；「收藏」页可以搜索、排序、直接安装，AI 猜你喜欢也会参考它。<br><br><img src="assets/features/favorites-zh.png" alt="收藏页"></td>
 </tr>
 </table>
 
 ## 你会得到
 
-- **AI 搜索与 `/find-plugin`**：一句话找插件，用你自己的模型挑选
+- **AI 搜索、`/find-plugin` 与 AI 猜你喜欢**：一句话找插件，或让 AI 根据你已有的插件推荐，都用你自己的模型
 - **逛与搜**：12,000+ 社区插件，带截图和评论
 - **一键安装**：多数插件刷新页面就能用，不用重启
 - **主题**：一键安装、一键切换
@@ -114,7 +118,8 @@ profile，因此不会出现在桌面端。请通过应用内的 **设置 → �
 <summary>完整功能清单</summary>
 
 - **AI 搜索**——「发现」页搜索框里的一个开关：用一句话描述想要的插件，由你在 DSH 里配置的模型（默认模型和 API Key）从目录里挑选，结果按模型给的顺序显示成普通插件卡片。默认关闭、会记住开关状态；按回车才会调用，所以只在你主动搜索时花你的 token。没配模型或 Key 时会直接说明并指向「设置 → 模型」，不会报错了事
-- **聊天里的 `/find-plugin`**——DSH 0.2.0 起，市场会注册一个斜杠命令：`/find-plugin 能发通知的插件`。用当前对话的模型做同样的粗筛加挑选，结果画成卡片，可「去市场安装」（打开该插件的安装弹窗）、「直接安装」（先确认）或「复制安装命令」。结果是命令的输出，不会进入模型看到的对话。在首页（DSH 还没画出对话时）运行，同样的卡片会以弹窗出现
+- **聊天里的 `/find-plugin`**——DSH 0.2.0 起，市场会注册一个斜杠命令：`/find-plugin 能发通知的插件`。用当前对话的模型做同样的粗筛加挑选，结果画成卡片，可「去市场安装」（打开该插件的安装弹窗）、「直接安装」（先确认）或「复制安装命令」。结果是命令的输出，不会进入模型看到的对话。在首页（DSH 还没画出对话时）运行，同样的卡片会以弹窗出现。结果下方有一行可以允许 AI 参考你已安装和收藏的插件：点一下就开启（同一处可以关掉），之后的搜索会避开你已经装了的，并偏向和它们搭配的
+- **AI 猜你喜欢**——「发现」页「最近收录」下面的一行小字链接。点了之后，你的默认模型会读取你已安装和收藏的插件，挑出最多十个你可能还需要的，显示成普通插件卡片；「换一批」会重新挑且不重复上一批。点之前不读取任何列表、不花 token；上一批结果保存在本机。没配置模型时，「去配置模型」会直接打开「设置 → 模型」
 - **逛与搜**——完整社区目录（12,000+ 插件，每天在涨），分类筛选、star 数、最热/最新排序，中英描述跟随界面语言
 - **按宿主发现**——卡片展示插件通过 `engines.dsh` 或同版本线 `@deepseek-ai/dsh-*` peer 声明的 DSH 要求；兼容筛选只隐藏与当前宿主明确不匹配的插件。仅 GitHub 发布的条目也会读取链接所指包的清单，支持子目录；Release 下载读取对应标签，`latest/download` 则读取当前发布标签。未声明、格式异常或暂时取不到清单时保持未知并继续显示。公开清单信息会缓存，兼容结论按当前宿主重新判断
 - **截图展示**——App Store 式截图，多图自动轮播，点开还能看大图；作者在 registry 里策展的截图列表卡片就直接显示（零额外请求），没有策展的插件则在打开安装弹窗时自动从 README 抽取；图片仅从 GitHub 图床加载
@@ -225,6 +230,19 @@ DSHM_REGISTRY_URL=https://your-mirror.example/plugins.json dsh web
 ```
 
 </details>
+
+## 企业
+
+适合想在公共目录之外加上自己的插件、或需要统一管控市场的团队。全部可选，什么都不配置时市场和以前一样。
+
+- **私有目录**：用 URL 或本地文件加上你们自己的 `plugins.json`，插件出现在「发现」页并标出来源，AI 搜索和推荐也会算进去
+- **私有 npm**：通过 profile 的 `.npmrc` 支持 Verdaccio、Nexus、Artifactory、GitHub Packages，私有包同样能查更新、看更新日志
+- **内网 Git**：从 GitLab、Gitea 等通过 https 或 ssh 安装
+- **离线包**：把目录和插件文件打成一个包，在访问不了 npm 的机器上导入安装
+- **策略文件**：管理员决定加载哪些目录、允许装什么、固定哪些版本，以及关闭遥测、评论或外部图片
+- **安全边界不变**：只能安装已加载目录里的插件，token 不会离开服务端
+
+配置方法、`policy.json` 完整说明和示例见 [ENTERPRISE.zh.md](ENTERPRISE.zh.md)。
 
 ## 友情链接
 

@@ -69,6 +69,38 @@ browser, and never carries a path, a plugin list, a hostname or a username.
   set `DSH_MARKET_TELEMETRY=0` or `DO_NOT_TRACK=1` in the environment. It is
   also never sent when `CI` is set or under test runs.
 
+## AI search, `/find-plugin` and AI recommendations
+
+These call the model **you** configured in DSH, through DSH's own model
+service, with your API key; the market runs no model and has no server of its
+own in this path. What goes to that model: your request, and short catalog
+entries (name, categories, description, download and star counts) for the
+candidates.
+
+Your installed and favorited plugins (names and descriptions) are added only
+in two cases: when you click *Let AI guess what you'd like*, for that one
+call, or after you click *Allow* under an AI result, which keeps the choice in
+`<DSH_HOME>/dsh-market/ai-consent.json` until you click *Stop* under a later
+result. Nothing of this runs on its own: AI search runs on Enter with its
+switch on, `/find-plugin` when you send it, recommendations when you click.
+
+## Private catalogs and the policy file
+
+An organization can add catalogs and set a read-only policy file
+([ENTERPRISE.md](ENTERPRISE.md)). This does not widen what a web page can do:
+the install route still accepts only entries from catalogs the server itself
+loaded (the union of the public catalog, policy catalogs and the user's own),
+filtered by the policy's `allow`; a source sent in a request body is never
+installed. Adding or removing a catalog requires a same-origin request.
+Catalog `headers` (with `${ENV}` expanded at request time) and `.npmrc`
+credentials are used only for requests to their own host, and are masked in
+logs and exported logs and never sent to the browser. An offline bundle is
+unpacked only after every member passes a layout check (no `..`, absolute
+paths, links or devices; only `plugins.json` and `tarballs/*.tgz`; size and
+count caps), and its install paths resolve on the server, inside the bundle.
+A policy file that is not valid JSON pauses all installs rather than being
+read as no policy.
+
 ## Supported versions
 
 The latest published version on npm is the one that gets fixes. There are no

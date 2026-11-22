@@ -877,3 +877,285 @@ describe('SettingsCard — anonymous usage count', () => {
     expect(screen.queryByText(t('setCount'))).toBeNull()
   })
 })
+
+describe('SettingsCard — plugin catalogs', () => {
+  const PUBLIC_OK = { id: 'public', kind: 'public', label: { en: 'Public catalog' }, where: '', status: 'ok', count: 1200, skipped: 0, locked: false }
+  const ACME = { id: 'acme', kind: 'policy', label: { zh: 'Acme 内部', en: 'Acme internal' }, where: 'plugins.acme.internal/p.json', status: 'ok', count: 12, skipped: 0, locked: true }
+  const MINE = { id: 'user-ab12cd34', kind: 'user', label: { en: 'catalogs.example' }, where: 'catalogs.example/p.json', status: 'ok', count: 1, skipped: 0, locked: false }
+  const baseCatalogs = { sources: [] as unknown[], publicCatalog: { enabled: true, locked: false }, userCatalogsAllowed: true, limit: 8, problems: [] as unknown[] }
+
+  /** The card's fetch, plus the catalogs endpoints this block drives. */
+  function stubCatalogs(answer: () => unknown, handlers: { add?: (body: { source: string }) => unknown; remove?: (body: { id: string }) => unknown } = {}): void {
+    stubFetch()
+    const inner = globalThis.fetch as unknown as (input: unknown, init?: RequestInit) => Promise<Response>
+    const reply = (value: unknown): Promise<Response> =>
+      Promise.resolve(new Response(JSON.stringify(value), { status: 200, headers: { 'content-type': 'application/json' } }))
+    vi.stubGlobal('fetch', vi.fn((input: unknown, init?: RequestInit) => {
+      const path = String(input)
+      if (path.endsWith('/dsh-market/catalogs')) { calls.push({ path, body: null }); return reply(answer()) }
+      if (path.endsWith('/dsh-market/catalogs/add') && handlers.add !== undefined) {
+        const body = JSON.parse(String(init?.body)) as { source: string }
+        calls.push({ path, body })
+        return reply(handlers.add(body))
+      }
+      if (path.endsWith('/dsh-market/catalogs/remove') && handlers.remove !== undefined) {
+        const body = JSON.parse(String(init?.body)) as { id: string }
+        calls.push({ path, body })
+        return reply(handlers.remove(body))
+      }
+      return inner(input, init)
+    }))
+  }
+
+  /** Open the card, then the Advanced group the list lives in. */
+  async function openCatalogs(): Promise<void> {
+    render(<SettingsCard t={t} />)
+    fireEvent.click(screen.getByRole('button', { expanded: false }))
+    await waitFor(() => { expect(screen.getByRole('button', { name: t('setAdvanced') })).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: t('setAdvanced') }))
+  }
+
+  it('keeps the list behind the collapsed Advanced group, with one quiet public row and an add button', async () => {
+    stubCatalogs(() => baseCatalogs)
+    render(<SettingsCard t={t} />)
+    fireEvent.click(screen.getByRole('button', { expanded: false }))
+    await waitFor(() => { expect(screen.getByRole('button', { name: t('setAdvanced') })).toBeTruthy() })
+    expect(screen.queryByText(t('setCatalogs'))).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: t('setAdvanced') }))
+    expect(screen.getByText(t('setCatalogs'))).toBeTruthy()
+    expect(screen.getByText(t('setCatalogPublic'))).toBeTruthy()
+    expect(screen.getByRole('button', { name: t('setCatalogAdd') })).toBeTruthy()
+    // nothing set by an organization, so nothing says so
+    expect(screen.queryByText(t('setCatalogOrg'))).toBeNull()
+  })
+
+  it('shows organization catalogs locked, and the user\'s own with a remove button', async () => {
+    stubCatalogs(() => ({ ...baseCatalogs, sources: [PUBLIC_OK, ACME, MINE] }))
+    await openCatalogs()
+    expect(screen.getByText('Acme internal')).toBeTruthy()
+    expect(screen.getByText(t('setCatalogOrg'))).toBeTruthy()
+    expect(screen.getByText(/12 plugins/)).toBeTruthy()
+    // a singular count reads as one
+    expect(screen.getByText(/^1 plugin · catalogs\.example/)).toBeTruthy()
+    expect(screen.getByText(t('setCatalogCount').replace('{0}', '1200'))).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Remove Acme/ })).toBeNull()
+    expect(screen.getByRole('button', { name: `${t('setCatalogRemove')} catalogs.example` })).toBeTruthy()
+  })
+
+  it('shows the public catalog as turned off by the organization, and offers no add when the organization forbids it', async () => {
+    stubCatalogs(() => ({
+      ...baseCatalogs, sources: [ACME], publicCatalog: { enabled: false, locked: true }, userCatalogsAllowed: false,
+    }))
+    await openCatalogs()
+    expect(screen.getByText(`${t('setCatalogOff')} · ${t('setCatalogOrg')}`)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: t('setCatalogAdd') })).toBeNull()
+  })
+
+  it('shows nothing at all when the organization forbids adding and has nothing else to say', async () => {
+    stubCatalogs(() => ({ ...baseCatalogs, userCatalogsAllowed: false }))
+    render(<SettingsCard t={t} />)
+    fireEvent.click(screen.getByRole('button', { expanded: false }))
+    await waitFor(() => { expect(screen.getByText(t('setSelfRemove'), { selector: 'div' })).toBeTruthy() })
+    expect(screen.queryByRole('button', { name: t('setAdvanced') })).toBeNull()
+  })
+
+  it('shows no catalogs section against a server that predates it', async () => {
+    stubFetch()
+    render(<SettingsCard t={t} />)
+    fireEvent.click(screen.getByRole('button', { expanded: false }))
+    await waitFor(() => { expect(screen.getByText(t('setSelfRemove'), { selector: 'div' })).toBeTruthy() })
+    expect(screen.queryByRole('button', { name: t('setAdvanced') })).toBeNull()
+  })
+
+  it('says why a catalog could not be read, on its own row, in words', async () => {
+    stubCatalogs(() => ({
+      ...baseCatalogs,
+      sources: [PUBLIC_OK, { ...ACME, status: 'failed', count: 0, error: { code: 'auth', detail: '401' } }],
+    }))
+    await openCatalogs()
+    expect(screen.getByText(t('srcErrAuth').replace('{0}', '401'))).toBeTruthy()
+  })
+
+  it('shows the policy file problems in the reader\'s language', async () => {
+    stubCatalogs(() => ({ ...baseCatalogs, problems: [{ zh: '中文问题', en: 'English problem' }] }))
+    await openCatalogs()
+    expect(screen.getByText(t('setCatalogPolicyProblem'))).toBeTruthy()
+    expect(screen.getByText('English problem')).toBeTruthy()
+  })
+
+  it('adds a catalog in one step: sends the address, shows the count, and re-reads the list', async () => {
+    let added = false
+    stubCatalogs(() => ({ ...baseCatalogs, sources: added ? [PUBLIC_OK, MINE] : [PUBLIC_OK] }), {
+      add: () => { added = true; return { ok: true, id: MINE.id, count: 3 } },
+    })
+    await openCatalogs()
+    fireEvent.click(screen.getByRole('button', { name: t('setCatalogAdd') }))
+    const input = screen.getByRole('textbox', { name: t('setCatalogInput') })
+    expect(screen.getByRole('button', { name: t('setCatalogSave') }).hasAttribute('disabled')).toBe(true)
+    fireEvent.change(input, { target: { value: ' https://catalogs.example/p.json ' } })
+    fireEvent.click(screen.getByRole('button', { name: t('setCatalogSave') }))
+    await waitFor(() => { expect(screen.getByText(t('setCatalogAdded').replace('{0}', '3'))).toBeTruthy() })
+    expect(calls.find(call => call.path.endsWith('/catalogs/add'))?.body).toEqual({ source: ' https://catalogs.example/p.json ' })
+    await waitFor(() => { expect(screen.getByRole('button', { name: `${t('setCatalogRemove')} catalogs.example` })).toBeTruthy() })
+  })
+
+  it('keeps the box open and explains, when the address could not be read', async () => {
+    stubCatalogs(() => baseCatalogs, {
+      add: () => ({ ok: false, code: 'unreadable', source: { code: 'invalid', detail: 'not JSON' } }),
+    })
+    await openCatalogs()
+    fireEvent.click(screen.getByRole('button', { name: t('setCatalogAdd') }))
+    fireEvent.change(screen.getByRole('textbox', { name: t('setCatalogInput') }), { target: { value: 'https://x.example/p.json' } })
+    fireEvent.click(screen.getByRole('button', { name: t('setCatalogSave') }))
+    await waitFor(() => { expect(screen.getByText(t('srcErrInvalid'))).toBeTruthy() })
+    expect(screen.getByRole('textbox', { name: t('setCatalogInput') })).toBeTruthy()
+  })
+
+  it.each([
+    ['duplicate', 'setCatalogErrDuplicate'],
+    ['unrecognized', 'setCatalogErrAddress'],
+    ['credentials', 'setCatalogErrCreds'],
+    ['locked', 'setCatalogErrLocked'],
+  ])('words the server\'s %s refusal', async (code, key) => {
+    stubCatalogs(() => baseCatalogs, { add: () => ({ ok: false, code }) })
+    await openCatalogs()
+    fireEvent.click(screen.getByRole('button', { name: t('setCatalogAdd') }))
+    fireEvent.change(screen.getByRole('textbox', { name: t('setCatalogInput') }), { target: { value: 'x' } })
+    fireEvent.click(screen.getByRole('button', { name: t('setCatalogSave') }))
+    await waitFor(() => { expect(screen.getByText(t(key))).toBeTruthy() })
+  })
+
+  it('removes a catalog at once, without asking, and re-reads the list', async () => {
+    let removed = false
+    stubCatalogs(() => ({ ...baseCatalogs, sources: removed ? [PUBLIC_OK] : [PUBLIC_OK, MINE] }), {
+      remove: () => { removed = true; return { ok: true } },
+    })
+    await openCatalogs()
+    fireEvent.click(screen.getByRole('button', { name: `${t('setCatalogRemove')} catalogs.example` }))
+    await waitFor(() => { expect(screen.queryByText('catalogs.example')).toBeNull() })
+    expect(calls.find(call => call.path.endsWith('/catalogs/remove'))?.body).toEqual({ id: MINE.id })
+  })
+})
+
+describe('SettingsCard — what the organization set', () => {
+  it('shows the anonymous count as off and locked, and says why', async () => {
+    stubFetch({ anonymousCount: false })
+    const inner = globalThis.fetch as unknown as (input: unknown, init?: RequestInit) => Promise<Response>
+    vi.stubGlobal('fetch', vi.fn(async (input: unknown, init?: RequestInit) => {
+      const response = await inner(input, init)
+      if (!String(input).endsWith('/dsh-market/status')) return response
+      const body = await response.json() as Record<string, unknown>
+      return new Response(JSON.stringify({ ...body, anonymousCount: false, anonymousCountLocked: true }), { status: 200 })
+    }))
+    await open()
+    await waitFor(() => { expect(screen.getByText(t('setCountLockedHint'))).toBeTruthy() })
+    expect(screen.queryByText(t('setCountHint'))).toBeNull()
+    const on = screen.getByRole('button', { name: t('setCountOn') })
+    const off = screen.getByRole('button', { name: t('setCountOff') })
+    expect(on.hasAttribute('disabled')).toBe(true)
+    expect(off.hasAttribute('disabled')).toBe(true)
+    expect(off.getAttribute('aria-pressed')).toBe('true')
+    fireEvent.click(on)
+    expect(calls.some(call => call.path.endsWith('/dsh-market/telemetry'))).toBe(false)
+  })
+
+  it('leaves the count switchable when nobody locked it', async () => {
+    stubFetch({ anonymousCount: true })
+    await open()
+    await waitFor(() => { expect(screen.getByText(t('setCountHint'))).toBeTruthy() })
+    expect(screen.getByRole('button', { name: t('setCountOff') }).hasAttribute('disabled')).toBe(false)
+  })
+
+  it('says the GitHub route was set by the organization, with nothing to edit', async () => {
+    stubFetch({ githubProxyManaged: true })
+    const inner = globalThis.fetch as unknown as (input: unknown, init?: RequestInit) => Promise<Response>
+    vi.stubGlobal('fetch', vi.fn(async (input: unknown, init?: RequestInit) => {
+      const response = await inner(input, init)
+      if (!String(input).endsWith('/dsh-market/status')) return response
+      const body = await response.json() as Record<string, unknown>
+      return new Response(JSON.stringify({ ...body, githubProxyByPolicy: true }), { status: 200 })
+    }))
+    await open()
+    await waitFor(() => { expect(screen.getByText(t('setGithubProxyOrgHint'))).toBeTruthy() })
+    expect(screen.queryByText(t('setGithubProxyManagedHint'))).toBeNull()
+    expect(screen.queryByRole('button', { name: t('setGithubProxyCustom') })).toBeNull()
+  })
+})
+
+describe('SettingsCard — importing an offline bundle', () => {
+  const baseCatalogs = { sources: [] as unknown[], publicCatalog: { enabled: true, locked: false }, userCatalogsAllowed: true, limit: 8, problems: [] as unknown[] }
+  const BUNDLE = { id: 'offline-ab12cd34', kind: 'user', label: { en: 'Acme bundle' }, where: '/home/u/.dsh/dsh-market/offline/offline-ab12cd34/plugins.json', status: 'ok', count: 2, skipped: 0, locked: false, offline: true }
+
+  function stubImport(answer: (body: Blob) => unknown, sources: () => unknown[] = () => []): { uploads: Array<{ type: string | null; size: number }> } {
+    stubFetch()
+    const inner = globalThis.fetch as unknown as (input: unknown, init?: RequestInit) => Promise<Response>
+    const uploads: Array<{ type: string | null; size: number }> = []
+    const reply = (value: unknown): Promise<Response> => Promise.resolve(new Response(JSON.stringify(value), { status: 200 }))
+    vi.stubGlobal('fetch', vi.fn((input: unknown, init?: RequestInit) => {
+      const path = String(input)
+      if (path.endsWith('/dsh-market/catalogs')) return reply({ ...baseCatalogs, sources: sources() })
+      if (path.endsWith('/dsh-market/offline/import')) {
+        const body = init?.body as Blob
+        uploads.push({ type: new Headers(init?.headers).get('content-type'), size: body.size })
+        return reply(answer(body))
+      }
+      return inner(input, init)
+    }))
+    return { uploads }
+  }
+
+  async function openAdvanced(): Promise<void> {
+    render(<SettingsCard t={t} />)
+    fireEvent.click(screen.getByRole('button', { expanded: false }))
+    await waitFor(() => { expect(screen.getByRole('button', { name: t('setAdvanced') })).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: t('setAdvanced') }))
+  }
+  const choose = (file: File): void => {
+    fireEvent.change(screen.getByLabelText(t('setCatalogImport'), { selector: 'input' }), { target: { files: [file] } })
+  }
+  const bundleFile = (): File => new File([new Uint8Array(1200)], 'acme-offline.tgz', { type: 'application/gzip' })
+
+  it('offers the import beside Add catalog, with what it is for on hover', async () => {
+    stubImport(() => ({ ok: true }))
+    await openAdvanced()
+    const button = screen.getByRole('button', { name: t('setCatalogImport') })
+    expect(button.getAttribute('title')).toBe(t('setCatalogImportHint'))
+    expect(screen.getByRole('button', { name: t('setCatalogAdd') })).toBeTruthy()
+  })
+
+  it('sends the chosen file as it is, shows the count, and re-reads the list with the bundle marked offline', async () => {
+    let imported = false
+    const { uploads } = stubImport(() => { imported = true; return { ok: true, count: 2 } }, () => (imported ? [BUNDLE] : []))
+    await openAdvanced()
+    choose(bundleFile())
+    await waitFor(() => { expect(screen.getByText(t('setCatalogImported').replace('{0}', '2'))).toBeTruthy() })
+    expect(uploads).toEqual([{ type: 'application/octet-stream', size: 1200 }])
+    await waitFor(() => { expect(screen.getByText(new RegExp(`2 plugins · ${t('setCatalogOffline')}`))).toBeTruthy() })
+    // an imported bundle is removable like the user's own catalogs
+    expect(screen.getByRole('button', { name: `${t('setCatalogRemove')} Acme bundle` })).toBeTruthy()
+  })
+
+  it.each([
+    ['not-archive', 'setCatalogImportBad'],
+    ['layout', 'setCatalogImportBad'],
+    ['unreadable', 'setCatalogImportBad'],
+    ['unsafe', 'setCatalogImportUnsafe'],
+    ['too-big', 'setCatalogImportBig'],
+    ['locked', 'setCatalogErrLocked'],
+  ])('words the server\'s %s refusal as what happened and what to do', async (code, key) => {
+    stubImport(() => ({ ok: false, code }))
+    await openAdvanced()
+    choose(bundleFile())
+    await waitFor(() => { expect(screen.getByText(t(key))).toBeTruthy() })
+  })
+
+  it('offers no import when the organization forbids adding catalogs', async () => {
+    stubFetch()
+    const inner = globalThis.fetch as unknown as (input: unknown, init?: RequestInit) => Promise<Response>
+    vi.stubGlobal('fetch', vi.fn((input: unknown, init?: RequestInit) => String(input).endsWith('/dsh-market/catalogs')
+      ? Promise.resolve(new Response(JSON.stringify({ ...baseCatalogs, userCatalogsAllowed: false, problems: [{ zh: '问题', en: 'problem' }] }), { status: 200 }))
+      : inner(input, init)))
+    await openAdvanced()
+    expect(screen.queryByRole('button', { name: t('setCatalogImport') })).toBeNull()
+  })
+})

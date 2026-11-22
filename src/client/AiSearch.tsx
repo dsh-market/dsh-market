@@ -8,7 +8,9 @@ import { useCallback, useRef, useState, type ReactElement } from 'react'
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import css from './Market.module.css'
 import { api } from './market-data.ts'
-import type { FindPick, FindResult } from './FindPluginCard.tsx'
+import { readMarketJson } from './client-version.ts'
+import { openModelSettings } from './model-settings.ts'
+import { UseMyPluginsNote, type FindPick, type FindResult } from './FindPluginCard.tsx'
 import type { SearchAiMode } from './SearchInput.tsx'
 
 type Translate = (key: string) => string
@@ -35,7 +37,7 @@ export function useAiSearch(t: Translate): { mode: SearchAiMode; status: ReactEl
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ query }),
     })
-      .then(res => res.json().then((body: { result?: FindResult; code?: string; error?: string }) => ({ ok: res.ok, body })))
+      .then(res => readMarketJson<{ result?: FindResult }>(res))
       .then(({ ok, body }) => {
         if (mine !== seq.current) return
         if (ok && body.result !== undefined) setState({ phase: 'done', query, result: body.result })
@@ -66,13 +68,15 @@ export function useAiSearch(t: Translate): { mode: SearchAiMode; status: ReactEl
         {state.phase === 'running' && <span className={css.aiHint}>{t('aiSearchRunning')}</span>}
         {state.phase === 'error' && (
           <span className={css.fpNote} data-tone="error">
-            {state.code === 'no-model' ? t('aiSearchNoModel') : t('aiSearchFailed') + state.message}
-            {state.code !== 'no-model' && <> <Button size="sm" variant="outline" onClick={() => submit(state.query)}>{t('aiSearchRetry')}</Button></>}
+            {state.code === 'no-model' ? t('aiSearchNoModel') : state.code === 'stale-server' ? t('staleServer') : state.code === 'bad-reply' ? t('aiSearchFailed') + t('badReply') : t('aiSearchFailed') + state.message}
+            {state.code === 'no-model' && <> <Button size="sm" variant="primary" onClick={() => { void openModelSettings() }}>{t('recSetupModel')}</Button></>}
+            {state.code !== 'no-model' && state.code !== 'stale-server' && <> <Button size="sm" variant="outline" onClick={() => submit(state.query)}>{t('aiSearchRetry')}</Button></>}
           </span>
         )}
         {state.phase === 'done' && (
           <>
             <span className={css.aiHint}>{t('fpFoot')}</span>
+            <UseMyPluginsNote key={state.result.at} personalized={state.result.personalized === true} t={t} />
           </>
         )}
       </div>

@@ -23,6 +23,7 @@
 
 import { absoluteTarballUrl, fileFromTarball } from './catalog-npm.ts'
 import { marketFetch } from './net.ts'
+import { registryFor } from './npmrc.ts'
 import { activeRegion, routesFor } from './regions.ts'
 import { profileDir, readGitResolutionCommit, readInstalled, readInstalledRepoEvidence, readInstalledVersion, readLockCommits } from './profile.ts'
 import { githubRepoOfRemote, hostedRepoKey, isGitHostedSpec, lookupRepoFromUrl, parseHostShorthand, parseSourceUrl, repoOf, repoOfTarget } from './sources.ts'
@@ -282,7 +283,7 @@ const TIMES_TTL_MS = 30 * 60 * 1000
 export async function npmPublishTimes(name: string): Promise<{ version: string; date: string }[]> {
   const hit = timesCache.get(name)
   if (hit !== undefined && Date.now() - hit.at < TIMES_TTL_MS) return hit.data
-  const registry = routesFor(activeRegion()).npmRegistry
+  const registry = registryFor(name, routesFor(activeRegion()).npmRegistry)
   const res = await marketFetch(`${registry}/${encodeURIComponent(name)}`, {
     signal: AbortSignal.timeout(TIMEOUT_MS),
     headers: { accept: 'application/json', 'user-agent': 'dsh-market' },

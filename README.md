@@ -95,21 +95,25 @@ its own dsh: it may be older than the one `npm` would give you (#139).
 <table>
 <tr>
 <td width="50%" valign="top"><b>AI search</b><br>Describe the plugin you want in a sentence; the model you configured in DSH picks from the catalog, and the results are ordinary plugin cards. Off by default; it uses your tokens only when you switch it on and press Enter.<br><br><img src="assets/features/ai-search-en.png" alt="AI search results"></td>
+<td width="50%" valign="top"><b>Let AI guess what you'd like</b><br>One click, and your model looks at the plugins you installed and favorited and picks others you may want. The two lists are read, and your tokens spent, only when you click.<br><br><img src="assets/features/recommend-en.png" alt="AI recommendations"></td>
+</tr>
+<tr>
 <td width="50%" valign="top"><b>/find-plugin in the chat</b><br>Say what you need mid-conversation; the model picks a few plugins from the market and says why. Each card offers install in the market, install here, or copy the command.<br><br><img src="assets/features/find-plugin-en.png" alt="/find-plugin result cards"></td>
-</tr>
-<tr>
 <td width="50%" valign="top"><b>See what it does before installing</b><br>Every plugin is statically scanned: file access, network, running commands, at a glance. Build scripts do not run by default.<br><br><img src="assets/features/install-en.png" alt="Install confirmation dialog"></td>
-<td width="50%" valign="top"><b>Themes in one click</b><br>Install and it applies; themes are mutually exclusive and your choice survives restarts.<br><br><img src="assets/themes-en.png" alt="Themes tab"></td>
 </tr>
 <tr>
+<td width="50%" valign="top"><b>Themes in one click</b><br>Install and it applies; themes are mutually exclusive and your choice survives restarts.<br><br><img src="assets/themes-en.png" alt="Themes tab"></td>
 <td width="50%" valign="top"><b>Updates</b><br>Update one plugin or all of them, each with its "What changed"; the market updates itself the same way.<br><br><img src="assets/features/updates-en.png" alt="Update offer on Installed"></td>
+</tr>
+<tr>
 <td width="50%" valign="top"><b>Backup & restore</b><br>Export to a file, WebDAV or a private Gist; restores are validated first and roll back on failure.<br><br><img src="assets/features/backup-en.png" alt="Backup & restore page"></td>
+<td width="50%" valign="top"><b>Favorites</b><br>Save plugins to install later; the Favorites tab searches, sorts and installs them, and AI recommendations take them into account.<br><br><img src="assets/features/favorites-en.png" alt="Favorites tab"></td>
 </tr>
 </table>
 
 ## What you get
 
-- **AI search and `/find-plugin`**: find plugins by describing what you want, picked by your own model
+- **AI search, `/find-plugin` and AI recommendations**: find plugins by describing what you want, or let AI guess from what you have, picked by your own model
 - **Browse & search** 12,000+ community plugins, with screenshots and comments
 - **One-click install**: most plugins work after a page refresh, no restart
 - **Themes**: install and switch with one click
@@ -123,7 +127,8 @@ its own dsh: it may be older than the one `npm` would give you (#139).
 <summary>Full feature list</summary>
 
 - **AI search** — a switch inside the Discover search box: describe the plugin you want in a sentence and the model you configured in DSH (its default model and API key) picks from the catalog; the picks show as ordinary plugin cards in the model's order. Off by default and remembered; it runs only on Enter, so it spends your tokens only when you ask. With no model or key set up it says so and points at Settings → Models instead of failing
-- **`/find-plugin` in the chat** — on DSH 0.2.0+ the market registers a slash command: `/find-plugin plugins that send notifications`. The same recall-then-pick runs on the model of the current chat, and the result draws as cards with *Install in market* (opens that plugin's install dialog), *Install here* (confirms first) and *Copy install command*. The answer is a command result, so it never enters the conversation the model sees. Run on the home screen, where DSH draws no conversation yet, the same cards open in an overlay
+- **`/find-plugin` in the chat** — on DSH 0.2.0+ the market registers a slash command: `/find-plugin plugins that send notifications`. The same recall-then-pick runs on the model of the current chat, and the result draws as cards with *Install in market* (opens that plugin's install dialog), *Install here* (confirms first) and *Copy install command*. The answer is a command result, so it never enters the conversation the model sees. Run on the home screen, where DSH draws no conversation yet, the same cards open in an overlay. A line under the result offers to let AI consider the plugins you installed and favorited; once you allow it (one click, undone the same way), searches leave out what you already have and lean towards what goes with it
+- **Let AI guess what you'd like** — a link under Recently added on Discover. Click it and your default model reads the plugins you installed and favorited and picks up to ten others, drawn as ordinary plugin cards; *Show others* asks again without repeating the last set. Nothing is read and no token is spent until you click; the last set is kept on this device. With no model set up, *Set up a model* opens Settings → Models
 - **Browse & search** the full community catalog (12,000+ plugins, growing daily) — category filters, star counts, top/new sorting, bilingual descriptions that follow your UI language
 - **Host-aware discovery** — cards show the DSH requirement declared by `engines.dsh` or lockstep `@deepseek-ai/dsh-*` peers; the compatibility filter hides only confirmed mismatches with the running host. GitHub-only entries read the linked package's manifest, including monorepo subdirectories; Release downloads read the selected release tag, including the current tag behind `latest/download`. Undeclared, malformed or unavailable requirements stay unknown and visible. Public manifest facts are cached; compatibility is evaluated against the running host
 - **Screenshots** — AppStore-style screenshots, auto-carousel when there's more than one, click to preview full-size: author-curated shots show right on the card (zero extra requests); plugins without curated shots fall back to automatic README extraction once you open the install dialog. Images load from GitHub hosting only
@@ -234,6 +239,19 @@ DSHM_REGISTRY_URL=https://your-mirror.example/plugins.json dsh web
 ```
 
 </details>
+
+## Enterprise
+
+For teams that want their own plugins next to the public catalog, or need the market locked down. All optional; with nothing configured the market behaves as before.
+
+- **Private catalogs**: add your own `plugins.json` by URL or file. Its plugins show on Discover with a source tag, and AI search and recommendations include them
+- **Private npm**: Verdaccio, Nexus, Artifactory and GitHub Packages through the profile's `.npmrc`; updates and changelogs work for private packages too
+- **Internal Git**: install from GitLab, Gitea and other Git hosts over https or ssh
+- **Offline bundles**: pack a catalog with its plugin files and import it on machines without npm access
+- **Policy file**: an administrator decides which catalogs load, what may be installed, which versions are pinned, and turns off telemetry, comments or outside images
+- **Same safety boundary**: only entries from loaded catalogs can be installed, and tokens never leave the server
+
+Setup, the full `policy.json` reference and examples: [ENTERPRISE.md](ENTERPRISE.md).
 
 ## Friends
 

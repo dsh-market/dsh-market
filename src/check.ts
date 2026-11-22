@@ -1123,7 +1123,14 @@ export function buildBundleLayers(
     // shadow, never evidence for the layer the running host loaded (#371).
     // Keep walking the profile anchor's parent search paths: Desktop heals an
     // authoritative host fallback at <profiles>/node_modules.
-    const ignoredProfilePackage = dshInstallDir === null && hostProvided
+    //
+    // The same holds for ANY official-scope bundle while the installation is
+    // out of sight, not only the ones INBOX_BUNDLES names (#1281): pnpm lays
+    // `@deepseek-ai/dsh-mcp-client` into the profile as a community plugin's
+    // peer, and that npm copy carries no `dsh.bundle.patch`, because the one
+    // the host loads comes from the installation. Judging the copy declared
+    // the profile unbootable and rolled back every install and update.
+    const ignoredProfilePackage = dshInstallDir === null && (hostProvided || officialScope)
       ? join(profileDirectory, 'node_modules', name)
       : undefined
     const anchors: Array<{ anchor: string | null; ignoredPackageDirectory?: string }> = [

@@ -14,6 +14,7 @@ import { compareSemver, isSemver, satisfiesRange } from './check.ts'
 import { classifyPeer, crossesImplicitCeiling } from './compatibility.ts'
 import { openDiscoveryCache, type CacheEntry } from './discovery-cache.ts'
 import { marketFetch } from './net.ts'
+import { registryFor } from './npmrc.ts'
 import { isStableReleaseVersion } from './release-candidates.ts'
 import { activeRegion, githubRoutesFor, rememberGithubRoute, throughProxy } from './regions.ts'
 import { parseSourceUrl } from './sources.ts'
@@ -452,7 +453,7 @@ export class DiscoveryManifestIndex {
   }
 
   private async readNpmManifest(name: string, version: string, registry: string): Promise<unknown> {
-    const response = await this.fetcher(`${registry}/${encodeURIComponent(name)}/${encodeURIComponent(version)}`, {
+    const response = await this.fetcher(`${registryFor(name, registry)}/${encodeURIComponent(name)}/${encodeURIComponent(version)}`, {
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       headers: { accept: 'application/json', 'user-agent': 'dsh-market' },
     })
@@ -579,7 +580,7 @@ export async function findCompatibleVersion(
   let doc: unknown
   try {
     const res = await fetcher(
-      `${registry}/${encodeURIComponent(npmName)}`,
+      `${registryFor(npmName, registry)}/${encodeURIComponent(npmName)}`,
       { signal: AbortSignal.timeout(15_000), headers: { accept: 'application/json', 'user-agent': 'dsh-market' } },
     )
     if (!res.ok) return null

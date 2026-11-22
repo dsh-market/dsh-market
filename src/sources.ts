@@ -496,9 +496,24 @@ export function pinnedAllowBuildsKeys(name: string, spec: string, sha: string): 
  * full-repo downloads and local build scripts.
  * @returns the target spec, or null when the source url is unsupported.
  */
-export function installTargetFor(entry: { url: string; npm?: unknown; tarball?: unknown }): string | null {
+export function installTargetFor(entry: { url: string; npm?: unknown; tarball?: unknown; source?: unknown; git?: unknown; offlineTarball?: unknown }): string | null {
+  // An entry from an offline bundle installs from the package file that came
+  // with it. The path was resolved and checked when the catalog was read.
+  if (entry.source !== undefined && typeof entry.offlineTarball === 'string' && entry.offlineTarball !== '') return `file:${entry.offlineTarball}`
+  const hasNpm = typeof entry.npm === 'string' && NPM_NAME_RE.test(entry.npm)
+  if (entry.source !== undefined && !hasNpm && typeof entry.git === 'string' && /^git\+(?:https?|ssh):\/\//u.test(entry.git)) return entry.git
   const source = parseSourceUrl(entry.url)
-  if (source === null) return null
+  if (source === null) {
+    // An entry from a catalog the organization or the user added may link to
+    // anywhere (an internal repository host, a docs page). `source` is stamped
+    // by the market after merging and never read from a catalog's own text, so
+    // its presence means "a configured catalog listed this"; the install is
+    // then an ordinary registry install of that package.
+    if (entry.source === undefined) return null
+    if (typeof entry.npm === 'string' && NPM_NAME_RE.test(entry.npm)) return entry.npm
+    // No registry name: an internal repository, as normalized when the catalog was read.
+    return typeof entry.git === 'string' && /^git\+(?:https?|ssh):\/\//u.test(entry.git) ? entry.git : null
+  }
   // The market manages its own installation and is published to npm. Keep
   // legacy catalog snapshots and self-update requests on that prebuilt
   // registry package even when the entry has not yet gained its generated

@@ -31,6 +31,7 @@
  */
 
 import { Agent, EnvHttpProxyAgent, fetch as undiciFetch } from 'undici'
+import { authorizationFor } from './npmrc.ts'
 
 /**
  * Hand the host's own undici the dispatcher our import took (#861).
@@ -134,8 +135,15 @@ let directAgent: Agent | null = null
  */
 export async function marketFetch(
   url: string,
-  init?: { signal?: AbortSignal; headers?: Record<string, string>; method?: 'GET' | 'HEAD' | 'POST'; body?: string; redirect?: 'follow' | 'manual' },
+  given?: { signal?: AbortSignal; headers?: Record<string, string>; method?: 'GET' | 'HEAD' | 'POST'; body?: string; redirect?: 'follow' | 'manual' },
 ): Promise<Response> {
+  // A private npm registry's credential (an `.npmrc` scope routes there) rides
+  // along; a caller that set its own Authorization keeps it. A cross-origin
+  // redirect drops the header again, per the fetch spec.
+  const credential = given?.headers !== undefined && Object.keys(given.headers).some(name => name.toLowerCase() === 'authorization')
+    ? null
+    : authorizationFor(url)
+  const init = credential === null ? given : { ...given, headers: { ...given?.headers, authorization: credential } }
   const { http, https } = proxyFromEnv()
   if (http === null && https === null) {
     directAgent ??= new Agent()

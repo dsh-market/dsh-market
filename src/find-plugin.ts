@@ -156,8 +156,8 @@ export interface Candidate {
  * most downloaded of the rest fill the list, because a model can still pick
  * something sensible from popular plugins, and an empty list helps no one.
  */
-export function recall(registry: Registry, terms: string[], limit = CANDIDATE_LIMIT): { candidates: Candidate[]; matched: number } {
-  const usable = registry.plugins.filter(plugin => plugin.deprecated !== true && plugin.npm !== 'dshmarket' && plugin.name !== 'dsh-market')
+export function recall(registry: Registry, terms: string[], limit = CANDIDATE_LIMIT, exclude: ReadonlySet<string> = new Set()): { candidates: Candidate[]; matched: number } {
+  const usable = registry.plugins.filter(plugin => plugin.deprecated !== true && plugin.npm !== 'dshmarket' && plugin.name !== 'dsh-market' && !exclude.has(plugin.name))
   const rarity = termRarity(usable, terms)
   const scored = usable
     .map(plugin => ({ plugin, score: terms.length === 0 ? 0 : scoreFor(plugin, terms, registry.categories, rarity) }))
@@ -196,9 +196,11 @@ export interface FindResult {
   /** Which model answered, for the card's footnote. */
   model: string
   at: string
+  /** Whether the user's installed and favorited plugins informed the picks (they allowed it). */
+  personalized?: boolean
 }
 
-export type FindErrorCode = 'empty' | 'catalog' | 'no-model' | 'model-failed'
+export type FindErrorCode = 'empty' | 'catalog' | 'no-model' | 'no-seeds' | 'model-failed'
 
 export class FindPluginError extends Error {
   constructor(readonly code: FindErrorCode, message: string) {
@@ -218,7 +220,7 @@ export interface LlmLike {
     maxTokens?: number
     temperature?: number
     signal?: AbortSignal
-  }): AsyncIterable<{ type: string; text?: string }>
+  }): AsyncIterable<{ type: string; text?: string; error?: unknown; reason?: unknown }>
 }
 
 export interface ModelSelectionLike { provider: string; model: string; reasoningEffort?: string }
@@ -230,7 +232,7 @@ function catalogLine(plugin: RegistryPlugin, index: number, registry: Registry, 
 }
 
 /** The instruction and the candidates, as the one message the model reads. */
-export function buildPickPrompt(request: string, registry: Registry, found: { candidates: Candidate[]; matched: number }): { system: string; user: string } {
+export function buildPickPrompt(request: string, registry: Registry, found: { candidates: Candidate[]; matched: number }, have?: UserSeeds): { system: string; user: string } {
   const preferZh = /\p{Script=Han}/u.test(request)
   const weak = found.matched === 0
     ? 'None of the candidates matched the request\'s words; they are only the most-downloaded plugins. Return an empty list unless one genuinely fits.'
@@ -245,16 +247,31 @@ export function buildPickPrompt(request: string, registry: Registry, found: { ca
     '- intro: one short sentence framing the result, e.g. what you understood they want, or that nothing fits.',
     `- Write intro and why in ${preferZh ? 'Simplified Chinese' : 'the language of the request'}.`,
     weak,
+    have === undefined ? '' : '- The user\'s installed and favorited plugins are listed too (installed ones are already left out of the candidates). Use them to judge what suits this user; skip near-duplicates of what they have.',
   ].filter(Boolean).join('\n')
-  const user = [`Request: ${request}`, '', 'Candidates:', ...found.candidates.map(({ plugin }, i) => catalogLine(plugin, i, registry, preferZh))].join('\n')
+  const mine = have === undefined ? [] : [
+    '', 'Already installed:', ...(have.installed.length === 0 ? ['(none)'] : have.installed.map(plugin => `- ${plugin.name}: ${describe(plugin, preferZh).slice(0, 160)}`)),
+    'Favorited:', ...(have.favorited.length === 0 ? ['(none)'] : have.favorited.map(plugin => `- ${plugin.name}: ${describe(plugin, preferZh).slice(0, 160)}`)),
+  ]
+  const user = [`Request: ${request}`, ...mine, '', 'Candidates:', ...found.candidates.map(({ plugin }, i) => catalogLine(plugin, i, registry, preferZh))].join('\n')
   return { system, user }
 }
 
 /** Pull the JSON object out of a model reply (it may wrap it in a code fence). */
-export function parsePickReply(text: string, allowed: Set<string>): { intro: string; picks: Array<{ name: string; why: string }> } {
+export function parsePickReply(text: string, allowed: Set<string>, max = 5): { intro: string; picks: Array<{ name: string; why: string }> } {
   const start = text.indexOf('{'), end = text.lastIndexOf('}')
-  if (start < 0 || end <= start) throw new Error('the model did not return JSON')
-  const value = JSON.parse(text.slice(start, end + 1)) as { intro?: unknown; picks?: unknown }
+  let value: { intro?: unknown; picks?: unknown } | null = null
+  if (start >= 0 && end > start) {
+    try { value = JSON.parse(text.slice(start, end + 1)) as { intro?: unknown; picks?: unknown } } catch { value = null }
+  }
+  if (value === null) {
+    // A reply cut off at the token limit (or with a stray character) still
+    // names its picks: take every complete {"name": ..., "why": ...} in order.
+    const found = [...text.matchAll(/"name"\s*:\s*"((?:[^"\\]|\\.)*)"(?:\s*,\s*"why"\s*:\s*"((?:[^"\\]|\\.)*)")?/gu)]
+    if (found.length === 0) throw new Error('the model did not return JSON')
+    const intro = /"intro"\s*:\s*"((?:[^"\\]|\\.)*)"/u.exec(text)?.[1] ?? ''
+    value = { intro, picks: found.map(match => ({ name: match[1], why: match[2] ?? '' })) }
+  }
   const picks: Array<{ name: string; why: string }> = []
   const seen = new Set<string>()
   if (Array.isArray(value.picks)) {
@@ -263,7 +280,7 @@ export function parsePickReply(text: string, allowed: Set<string>): { intro: str
       if (!allowed.has(name) || seen.has(name)) continue
       seen.add(name)
       picks.push({ name, why: typeof item?.why === 'string' ? item.why.trim().slice(0, 300) : '' })
-      if (picks.length === 5) break
+      if (picks.length === max) break
     }
   }
   return { intro: typeof value.intro === 'string' ? value.intro.trim().slice(0, 300) : '', picks }
@@ -280,39 +297,72 @@ const errorCode = (error: unknown): string => {
 
 const NO_MODEL = '还没有可用的模型：AI 找插件用的是你在 DSH 里配置的模型和 API Key，请先在「设置 → 模型」里配置一个。 / No model is set up yet: AI plugin search uses the model and API key you configured in DSH. Set one up under Settings → Models first.'
 
-/** Recall, then let the model pick. Throws FindPluginError with a user-facing message. */
-export async function findPlugins(options: {
-  request: string
-  registry: Registry
-  llm: LlmLike | undefined
-  selection: ModelSelectionLike | undefined
-  signal?: AbortSignal
-}): Promise<FindResult> {
-  const request = options.request.trim()
-  if (request === '') throw new FindPluginError('empty', USAGE)
-  if (options.llm === undefined || options.selection === undefined || !options.selection.provider || !options.selection.model) {
-    throw new FindPluginError('no-model', NO_MODEL)
+/** A catalog entry as a card-ready pick. */
+function toPick(plugin: RegistryPlugin, registry: Registry, preferZh: boolean, why: string): FindPick {
+  return {
+    name: plugin.name, owner: plugin.owner, url: plugin.url, npm: plugin.npm ?? null, install: plugin.install,
+    categories: pluginCategories(plugin).map(id => registry.categories[id]?.[preferZh ? 'zh' : 'en'] ?? registry.categories[id]?.en ?? id),
+    description: describe(plugin, preferZh),
+    downloads: typeof plugin.downloads === 'number' ? plugin.downloads : null,
+    stars: typeof plugin.stars === 'number' ? plugin.stars : null,
+    why,
   }
-  const { registry, selection } = options
-  const found = recall(registry, extractTerms(request))
-  const prompt = buildPickPrompt(request, registry, found)
+}
+
+const hasModel = (llm: LlmLike | undefined, selection: ModelSelectionLike | undefined): selection is ModelSelectionLike =>
+  llm !== undefined && selection !== undefined && Boolean(selection.provider) && Boolean(selection.model)
+
+/** One model call over the candidates; the reply parsed to names that were offered. */
+async function askForPicks(options: {
+  llm: LlmLike
+  selection: ModelSelectionLike
+  prompt: { system: string; user: string }
+  candidates: Candidate[]
+  max: number
+  maxTokens: number
+  temperature: number
+  signal?: AbortSignal
+}): Promise<{ intro: string; picks: Array<{ plugin: RegistryPlugin; why: string }> }> {
+  const { selection, prompt } = options
   let text = ''
+  let reasoning = ''
+  const seen: string[] = []
   try {
     const stream = options.llm.stream({
       provider: selection.provider,
       model: selection.model,
-      ...(selection.reasoningEffort === undefined ? {} : { reasoningEffort: selection.reasoningEffort }),
+      // Picking from a list needs little thought, and a model set to think
+      // hard can spend the whole budget thinking and answer nothing (seen with
+      // DeepSeek at "high"). A selection that names an effort supports
+      // efforts, so it can be turned down; one that does not is left alone.
+      ...(selection.reasoningEffort === undefined ? {} : { reasoningEffort: selection.reasoningEffort === 'off' ? 'off' : 'low' }),
       system: prompt.system,
       messages: [Object.freeze({
         id: randomUUID(), role: 'user',
         content: [{ type: 'text', text: prompt.user }],
         source: { kind: 'plugin:dshmarket' },
       })],
-      maxTokens: 1200,
-      temperature: 0.2,
+      maxTokens: options.maxTokens,
+      temperature: options.temperature,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     })
-    for await (const chunk of stream) if (chunk.type === 'text-delta' && typeof chunk.text === 'string') text += chunk.text
+    for await (const chunk of stream) {
+      if (seen.length < 12) seen.push(JSON.stringify(chunk).slice(0, 300))
+      if (chunk.type === 'text-delta' && typeof chunk.text === 'string') text += chunk.text
+      else if (chunk.type === 'reasoning-delta' && typeof chunk.text === 'string') reasoning += chunk.text
+      else if (chunk.type === 'finish') {
+        // The host ends a failed call (no key, bad key, provider down) with a
+        // finish whose reason is an error, rather than throwing.
+        const reason = (chunk as { reason?: { kind?: unknown; failure?: { message?: unknown; code?: unknown } } }).reason
+        if (reason?.kind === 'error') {
+          const failure = reason.failure ?? {}
+          throw Object.assign(new Error(typeof failure.message === 'string' ? failure.message : 'the model call failed'), typeof failure.code === 'string' ? { code: failure.code } : {})
+        }
+      } else if (chunk.type === 'error') {
+        const failure = (chunk as { error?: unknown; message?: unknown }).error ?? (chunk as { message?: unknown }).message
+        throw failure instanceof Error ? failure : Object.assign(new Error(typeof failure === 'string' ? failure : JSON.stringify(failure)), typeof failure === 'object' && failure !== null ? { cause: failure } : {})
+      }
+    }
   } catch (error) {
     const code = errorCode(error)
     if (code === 'MISSING_CREDENTIAL' || code === 'INVALID_CREDENTIAL') throw new FindPluginError('no-model', NO_MODEL)
@@ -321,24 +371,146 @@ export async function findPlugins(options: {
   }
   let parsed: ReturnType<typeof parsePickReply>
   try {
-    parsed = parsePickReply(text, new Set(found.candidates.map(item => item.plugin.name)))
+    const allowed = new Set(options.candidates.map(item => item.plugin.name))
+    // Out of budget before the answer: the thinking often already holds it.
+    parsed = text.trim() === '' && reasoning !== '' ? parsePickReply(reasoning, allowed, options.max) : parsePickReply(text, allowed, options.max)
   } catch {
+    logEvent('warn', 'find-plugin', `unreadable model reply (${String(text.length)} chars, ${String(reasoning.length)} thinking): ${text.slice(0, 300)} … ${text.slice(-200)} | chunks: ${seen.join(' ')}`)
     throw new FindPluginError('model-failed', '模型的回答格式不对，没法整理成结果。请重试一次。 / The model\'s answer was not in the expected shape. Try again.')
   }
-  const byName = new Map(found.candidates.map(item => [item.plugin.name, item.plugin]))
-  const preferZh = /\p{Script=Han}/u.test(request)
-  const picks = parsed.picks.map(({ name, why }): FindPick => {
-    const plugin = byName.get(name)!
-    return {
-      name: plugin.name, owner: plugin.owner, url: plugin.url, npm: plugin.npm ?? null, install: plugin.install,
-      categories: pluginCategories(plugin).map(id => registry.categories[id]?.[preferZh ? 'zh' : 'en'] ?? registry.categories[id]?.en ?? id),
-      description: describe(plugin, preferZh),
-      downloads: typeof plugin.downloads === 'number' ? plugin.downloads : null,
-      stars: typeof plugin.stars === 'number' ? plugin.stars : null,
-      why,
-    }
+  const byName = new Map(options.candidates.map(item => [item.plugin.name, item.plugin]))
+  return { intro: parsed.intro, picks: parsed.picks.map(({ name, why }) => ({ plugin: byName.get(name)!, why })) }
+}
+
+/** Recall, then let the model pick. Throws FindPluginError with a user-facing message. */
+export async function findPlugins(options: {
+  request: string
+  registry: Registry
+  llm: LlmLike | undefined
+  selection: ModelSelectionLike | undefined
+  /** The user's own plugins, only when they allowed reading them. */
+  have?: UserSeeds
+  signal?: AbortSignal
+}): Promise<FindResult> {
+  const request = options.request.trim()
+  if (request === '') throw new FindPluginError('empty', USAGE)
+  const { llm, registry, selection } = options
+  if (!hasModel(llm, selection)) throw new FindPluginError('no-model', NO_MODEL)
+  const { have } = options
+  const found = recall(registry, extractTerms(request), CANDIDATE_LIMIT, new Set((have?.installed ?? []).map(plugin => plugin.name)))
+  const answer = await askForPicks({
+    llm: llm!, selection, prompt: buildPickPrompt(request, registry, found, have), candidates: found.candidates,
+    max: 5, maxTokens: 6000, temperature: 0.2, ...(options.signal === undefined ? {} : { signal: options.signal }),
   })
-  return { request, intro: parsed.intro, picks, model: selection.model, at: new Date().toISOString() }
+  const preferZh = /\p{Script=Han}/u.test(request)
+  const picks = answer.picks.map(({ plugin, why }) => toPick(plugin, registry, preferZh, why))
+  return { request, intro: answer.intro, picks, model: selection.model, at: new Date().toISOString(), personalized: have !== undefined }
+}
+
+// ---------- recommendations from what the user already has ----------
+
+/** How many candidates a recommendation offers the model. */
+export const RECOMMEND_CANDIDATES = 40
+/** How many plugins a recommendation shows. */
+export const RECOMMEND_MAX = 10
+
+const isMarket = (plugin: RegistryPlugin): boolean => plugin.npm === 'dshmarket' || plugin.name === 'dsh-market'
+
+/**
+ * The catalog entries the user already has: installed (by package name) or
+ * favorited (by repository URL, as favorites are stored).
+ */
+export interface UserSeeds { installed: RegistryPlugin[]; favorited: RegistryPlugin[] }
+
+export function userSeeds(registry: Registry, have: { installed: string[]; favorites: string[] }): UserSeeds {
+  const names = new Set(have.installed.map(name => name.toLowerCase()))
+  const urls = new Set(have.favorites.map(url => url.toLowerCase().replace(/\.git$|\/+$/u, '')))
+  const installed: RegistryPlugin[] = []
+  const favorited: RegistryPlugin[] = []
+  for (const plugin of registry.plugins) {
+    if (isMarket(plugin)) continue
+    if ((plugin.npm !== undefined && plugin.npm !== null && names.has(plugin.npm.toLowerCase())) || names.has(plugin.name.toLowerCase())) installed.push(plugin)
+    else if (urls.has(plugin.url.toLowerCase().replace(/\.git$|\/+$/u, ''))) favorited.push(plugin)
+  }
+  return { installed, favorited }
+}
+
+/**
+ * What to offer the model: entries that share categories and words with what
+ * the user has (their taste), plus some popular ones from categories they have
+ * not touched (so a recommendation can open a new need, not only repeat one).
+ * Never what they already have, what was shown last time, or a deprecated one.
+ */
+export function recommendCandidates(registry: Registry, seeds: RegistryPlugin[], exclude: string[] = [], limit = RECOMMEND_CANDIDATES): Candidate[] {
+  const skip = new Set([...seeds.map(plugin => plugin.name), ...exclude])
+  const usable = registry.plugins.filter(plugin => plugin.deprecated !== true && !isMarket(plugin) && !skip.has(plugin.name))
+  const catWeight = new Map<string, number>()
+  for (const plugin of seeds) for (const id of pluginCategories(plugin)) catWeight.set(id, (catWeight.get(id) ?? 0) + 1)
+  const termCount = new Map<string, number>()
+  for (const plugin of seeds) {
+    for (const term of new Set(extractTerms(`${describe(plugin, true)} ${describe(plugin, false)}`))) termCount.set(term, (termCount.get(term) ?? 0) + 1)
+  }
+  const terms = [...termCount.entries()].sort((a, b) => b[1] - a[1]).slice(0, 40).map(([term]) => term)
+  const rarity = termRarity(usable, terms)
+  const popularity = (plugin: RegistryPlugin): number => Math.log10(2 + Math.max(0, downloadsOf(plugin))) + Math.log10(2 + Math.max(0, starsOf(plugin)))
+  const scored = usable.map(plugin => {
+    const cats = pluginCategories(plugin).reduce((sum, id) => sum + (catWeight.get(id) ?? 0), 0)
+    const words = terms.length === 0 ? 0 : scoreFor(plugin, terms, registry.categories, rarity)
+    return { plugin, score: cats * 4 + words + popularity(plugin) }
+  })
+  const fresh = (candidate: Candidate): boolean => pluginCategories(candidate.plugin).every(id => !catWeight.has(id))
+  const byScore = (a: Candidate, b: Candidate): number => b.score - a.score || a.plugin.name.localeCompare(b.plugin.name)
+  const wider = Math.floor(limit / 4)
+  const near = scored.filter(item => !fresh(item)).sort(byScore).slice(0, limit - wider)
+  const far = scored.filter(fresh).sort((a, b) => popularity(b.plugin) - popularity(a.plugin) || byScore(a, b)).slice(0, limit - near.length)
+  return [...near, ...far]
+}
+
+export function buildRecommendPrompt(registry: Registry, seeds: UserSeeds, candidates: Candidate[], preferZh: boolean): { system: string; user: string } {
+  const system = [
+    'You recommend plugins from the DSH plugin market to one user, based on the plugins they already installed and favorited. Answer ONLY with one JSON object, no prose around it:',
+    '{"intro": string, "picks": [{"name": string, "why": string}]}',
+    `- picks: ${String(RECOMMEND_MAX - 4)} to ${String(RECOMMEND_MAX)} candidates this user is most likely to want next, best first. Use names exactly as listed; never a name that is not in the list.`,
+    '- Read what they have as a picture of how they use DSH. Prefer plugins that add something they do not have yet, or go well with what they have; skip near-duplicates of plugins they already have.',
+    '- Spread the picks over different needs rather than many plugins for one need. A well-used, maintained plugin beats an obscure one when both fit.',
+    '- why: one short sentence. intro: one short sentence on what you read from their plugins.',
+    `- Write intro and why in ${preferZh ? 'Simplified Chinese' : 'English'}.`,
+  ].join('\n')
+  const list = (plugins: RegistryPlugin[]): string[] => plugins.length === 0 ? ['(none)'] : plugins.map((plugin, i) => catalogLine(plugin, i, registry, preferZh))
+  const user = [
+    'Installed:', ...list(seeds.installed), '',
+    'Favorited (not necessarily installed):', ...list(seeds.favorited), '',
+    'Candidates:', ...candidates.map(({ plugin }, i) => catalogLine(plugin, i, registry, preferZh)),
+  ].join('\n')
+  return { system, user }
+}
+
+const NO_SEEDS = '还没有装或收藏插件，AI 不知道你喜欢什么。先装或收藏几个插件再试试。 / Nothing installed or favorited yet, so there is nothing to go on. Install or favorite a few plugins first.'
+
+/** Recommend plugins from what the user installed and favorited. Throws FindPluginError. */
+export async function recommendPlugins(options: {
+  registry: Registry
+  installed: string[]
+  favorites: string[]
+  exclude?: string[]
+  preferZh: boolean
+  llm: LlmLike | undefined
+  selection: ModelSelectionLike | undefined
+  signal?: AbortSignal
+}): Promise<FindResult> {
+  const { llm, registry, selection, preferZh } = options
+  const seeds = userSeeds(registry, options)
+  if (seeds.installed.length + seeds.favorited.length === 0) throw new FindPluginError('no-seeds', NO_SEEDS)
+  if (!hasModel(llm, selection)) throw new FindPluginError('no-model', NO_MODEL)
+  let candidates = recommendCandidates(registry, [...seeds.installed, ...seeds.favorited], options.exclude ?? [])
+  // "Show others" ran out of fresh entries: start over rather than show nothing.
+  if (candidates.length < RECOMMEND_MAX && (options.exclude ?? []).length > 0) candidates = recommendCandidates(registry, [...seeds.installed, ...seeds.favorited])
+  const answer = await askForPicks({
+    llm: llm!, selection, prompt: buildRecommendPrompt(registry, seeds, candidates, preferZh), candidates,
+    max: RECOMMEND_MAX, maxTokens: 8000, temperature: 0.5, ...(options.signal === undefined ? {} : { signal: options.signal }),
+  })
+  const picks = answer.picks.map(({ plugin, why }) => toPick(plugin, registry, preferZh, why))
+  return { request: '', intro: answer.intro, picks, model: selection.model, at: new Date().toISOString() }
 }
 
 /** Plain text of a result, for hosts that draw the command row as text. */
@@ -410,6 +582,48 @@ let access: ModelAccess = NO_ACCESS
 export function setModelAccess(next: ModelAccess): void { access = next }
 export function modelAccess(): ModelAccess { return access }
 
+// ---------- "use my plugins": the user's say-so, and where the lists come from ----------
+
+/**
+ * Whether AI search and `/find-plugin` may read the user's installed and
+ * favorited plugins. Off until the user allows it from a result; one switch
+ * for the whole DSH home, kept beside the saved results.
+ */
+export function consentFile(home: string = resolveDshHome()): string {
+  return join(home, 'dsh-market', 'ai-consent.json')
+}
+
+export function usesMyPlugins(file: string = consentFile()): boolean {
+  try {
+    return (JSON.parse(readFileSync(file, 'utf8')) as { useMyPlugins?: unknown }).useMyPlugins === true
+  } catch {
+    return false
+  }
+}
+
+export function setUsesMyPlugins(on: boolean, file: string = consentFile()): void {
+  mkdirSync(dirname(file), { recursive: true })
+  const temp = `${file}.${process.pid}.tmp`
+  writeFileSync(temp, JSON.stringify({ useMyPlugins: on }))
+  renameSync(temp, file)
+}
+
+export interface UserPluginLists { installed: string[]; favorites: string[] }
+let readUserPlugins: () => UserPluginLists = () => ({ installed: [], favorites: [] })
+/** Set by the routes, which know the active profile. */
+export function setUserPluginsReader(next: () => UserPluginLists): void { readUserPlugins = next }
+
+/** The user's own plugins for a search, or undefined when they have not allowed it. */
+function allowedSeeds(registry: Registry): UserSeeds | undefined {
+  if (!usesMyPlugins()) return undefined
+  try {
+    return userSeeds(registry, readUserPlugins())
+  } catch (error) {
+    logEvent('warn', 'find-plugin', `could not read the user's plugins: ${error instanceof Error ? error.message : String(error)}`)
+    return undefined
+  }
+}
+
 /** The market page's AI search: the same recall and pick, with the default model. */
 export async function aiSearch(request: string, loadRegistry: () => Promise<Registry>, signal?: AbortSignal): Promise<FindResult> {
   let registry: Registry
@@ -418,7 +632,23 @@ export async function aiSearch(request: string, loadRegistry: () => Promise<Regi
   } catch (error) {
     throw new FindPluginError('catalog', `暂时拿不到插件目录（${error instanceof Error ? error.message : String(error)}）。 / Could not reach the plugin catalog.`)
   }
-  return findPlugins({ request, registry, llm: access.llm(), selection: access.defaultSelection(), ...(signal === undefined ? {} : { signal }) })
+  const have = allowedSeeds(registry)
+  return findPlugins({ request, registry, llm: access.llm(), selection: access.defaultSelection(), ...(have === undefined ? {} : { have }), ...(signal === undefined ? {} : { signal }) })
+}
+
+/** The market page's "recommend for me": what the user has, judged by their default model. */
+export async function aiRecommend(
+  have: { installed: string[]; favorites: string[]; exclude?: string[]; preferZh: boolean },
+  loadRegistry: () => Promise<Registry>,
+  signal?: AbortSignal,
+): Promise<FindResult> {
+  let registry: Registry
+  try {
+    registry = await loadRegistry()
+  } catch (error) {
+    throw new FindPluginError('catalog', `暂时拿不到插件目录（${error instanceof Error ? error.message : String(error)}）。 / Could not reach the plugin catalog.`)
+  }
+  return recommendPlugins({ registry, ...have, llm: access.llm(), selection: access.defaultSelection(), ...(signal === undefined ? {} : { signal }) })
 }
 
 /** Run one `/find-plugin`. The structured result is kept under the command id for the card renderer. */
@@ -440,7 +670,8 @@ export async function runFindPlugin(
   const own = invocation.agent.options
   const selection = own?.provider && own?.model ? { provider: own.provider, model: own.model } : models.defaultSelection()
   try {
-    const result = await findPlugins({ request: invocation.rawInput, registry, llm: models.llm(), selection, signal: invocation.signal })
+    const have = allowedSeeds(registry)
+    const result = await findPlugins({ request: invocation.rawInput, registry, llm: models.llm(), selection, ...(have === undefined ? {} : { have }), signal: invocation.signal })
     rememberResult(invocation.commandId, result)
     // Also as this session's latest: on a blank session the chat draws no
     // command row, and the client shows the result from here instead.
