@@ -8,7 +8,7 @@ import css from './Market.module.css'
 import { OperationsPanel } from './OperationsPanel.tsx'
 import { rememberDismissedHostId } from './dismissed-host.ts'
 import { clearSettled, drop } from './operations.ts'
-import { CLIENT_VERSION, serverIsBehind } from './client-version.ts'
+import { CLIENT_VERSION, requestSelfReload, serverIsBehind } from './client-version.ts'
 import { api, localizeBilingual, localizeBilingualList, profileBlockedText, restartHintKey } from './market-data.ts'
 import {
   IconCordisPluginOutline14,
@@ -53,7 +53,7 @@ type MarketHeadCtx = { props: MarketSectionProps }
     'setRestartNoticeDismissed' | 'setRestoreConfirmOpen' | 'setSidebarTipDismissed' | 'setTab' |
     'showSidebarTip' | 'sidebarTipError' | 'sidebarTipSaving' | 'staleName' | 'startupRepair' |
     'supervisor' | 'surface' | 't' | 'tab' | 'themeSnap' | 'uiLocale' | 'updates' | 'updatingName' |
-    'version' | 'hostCaps'>
+    'version' | 'hostCaps' | 'restartNames' | 'updatedNames' | 'activations'>
   & Pick<MarketSyncCtx, 'fixEnv'>
   & Pick<MarketInstallCtx,
     'compatibilitySummary' | 'doInstall' | 'doRollback' | 'favoriteTabCount' | 'shadowSummary'>
@@ -85,10 +85,33 @@ export function MarketHead({ c }: { c: MarketHeadCtx }) {
     setRestartNoticeDismissed, setRestoreConfirmOpen, setSidebarTipDismissed, setTab, shadowSummary,
     showHostPending, showMarketWait, showSidebarTip, sidebarTipError, sidebarTipSaving, staleName,
     startupRepair, supervisor, surface, t, tab, themeSnap, uiLocale, updateCheckFailed, updates,
-    updatingName, version, marketOffer, takeMarketOffer, hostCaps,
+    updatingName, version, marketOffer, takeMarketOffer, hostCaps, restartNames, updatedNames, activations,
   } = c
   const [reloadingSelf, setReloadingSelf] = useState<'idle' | 'working' | 'failed'>('idle')
+  // Why the server said it could not switch, in its own words; '' = no reason given.
+  const [reloadError, setReloadError] = useState('')
   const staleServer = serverIsBehind(version)
+  /** Swap the new server half in, then reload the page so it matches. */
+  const applyNow = (): void => {
+    setReloadingSelf('working')
+    requestSelfReload(
+      () => fetch(api('/dsh-market/reload-self'), { method: 'POST' }),
+      async () => {
+        const status = await (await fetch(api('/dsh-market/status'))).json() as { version?: unknown }
+        return typeof status.version === 'string' ? status.version : null
+      },
+    ).then(result => {
+      if (result.ok) { location.reload(); return }
+      setReloadError(localizeBilingual(result.error, lang))
+      setReloadingSelf('failed')
+    }, () => { setReloadError(''); setReloadingSelf('failed') })
+  }
+  // The market itself is among the changes waiting for a restart, and this
+  // host can swap it in place: offer that instead of a restart (or on a
+  // Desktop that cannot restart, instead of nothing).
+  const marketWaiting = [...restartNames, ...updatedNames, ...Object.keys(activations).filter(name => activations[name]?.state === 'restart')]
+    .some(name => name === 'dshmarket' || name === 'dsh-market')
+  const applyInPlace = hostCaps.selfReload && marketWaiting && !staleServer && reloadingSelf !== 'failed'
   // Four everyday tabs in the row; the rarely used ones (Hidden, Advanced)
   // and the rarely used actions sit behind ···.
   const [moreOpen, setMoreOpen] = useState(false)
@@ -375,19 +398,14 @@ export function MarketHead({ c }: { c: MarketHeadCtx }) {
               {hostCaps.selfReload || (restartEnabled && restartReachable && debuggerLatch === null)
                 ? null
                 : t(hostCaps.desktop ? 'staleDesktopHint' : 'staleManualHint')}
-              {reloadingSelf === 'failed' && <> {t(hostCaps.desktop ? 'staleDesktopHint' : 'staleManualHint')}</>}
+              {reloadingSelf === 'failed' && <> {reloadError !== '' ? reloadError : t(hostCaps.desktop ? 'staleDesktopHint' : 'staleManualHint')}</>}
             </span>
             {hostCaps.selfReload && reloadingSelf !== 'failed' ? (
               <Button
                 variant="primary"
                 size="sm"
                 disabled={reloadingSelf === 'working' || hostBusy || busyUrl !== null || updatingName !== null || removingName !== null}
-                onClick={() => {
-                  setReloadingSelf('working')
-                  fetch(api('/dsh-market/reload-self'), { method: 'POST' })
-                    .then(res => { if (res.ok) location.reload(); else setReloadingSelf('failed') })
-                    .catch(() => setReloadingSelf('failed'))
-                }}
+                onClick={applyNow}
               >{reloadingSelf === 'working' ? t('restarting') : t('staleReload')}</Button>
             ) : restartEnabled && restartReachable && debuggerLatch === null && recovery === null && !marketGone && (
               <Button
@@ -442,7 +460,14 @@ export function MarketHead({ c }: { c: MarketHeadCtx }) {
             >
               <span className={css.bannerHint}><IconQuestionOutline14 size={14} /></span>
             </Tooltip>
-            {restartEnabled && restartReachable && debuggerLatch === null && recovery === null && !marketGone && (
+            {applyInPlace ? (
+              <Button
+                variant="primary"
+                size="sm"
+                disabled={reloadingSelf === 'working' || hostBusy || busyUrl !== null || updatingName !== null || removingName !== null}
+                onClick={applyNow}
+              >{reloadingSelf === 'working' ? t('restarting') : t('staleReload')}</Button>
+            ) : restartEnabled && restartReachable && debuggerLatch === null && recovery === null && !marketGone && (
               <Button
                 variant="primary"
                 size="sm"
@@ -450,6 +475,7 @@ export function MarketHead({ c }: { c: MarketHeadCtx }) {
                 onClick={doRestart}
               >{restarting ? t('restarting') : t('restartNow')}</Button>
             )}
+            {reloadingSelf === 'failed' && reloadError !== '' && marketWaiting && <span className={css.grow}>{reloadError}</span>}
             <button
               type="button"
               className={css.bannerClose}
