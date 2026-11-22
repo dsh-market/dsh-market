@@ -1027,6 +1027,25 @@ export function forgetInstalled(profileDir: string, name: string): void {
   writeState(profileDir, state, true)
 }
 
+/**
+ * Forget every hot mount. Called when the market's routes unload.
+ *
+ * The trees these tables point at hang off the market's own instance, so
+ * they go down with it. The tables do not: they are module state, and a
+ * module the host did not replace — its file did not change — is still
+ * loaded when the next instance starts (src/self-reload.ts). Left as they
+ * are, the new instance would believe a plugin is still mounted that its
+ * predecessor took down: its shim would never be mounted again, and
+ * "switch off" would dispose a handle that is already gone while the plugin,
+ * brought back by the host's own composition, kept running.
+ */
+export function resetHotState(): void {
+  hotHandles.clear()
+  hotTrees.clear()
+  hotTreeOf.clear()
+  shimNames.clear()
+}
+
 /** Package names whose hot-mount trees are still attached and can be removed. */
 export function listHotMounts(): string[] {
   return [...hotHandles.keys()]

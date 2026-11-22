@@ -21,7 +21,7 @@ import { aiSearch, FindPluginError, resultFor } from './find-plugin.ts'
 import { forgetCatalog, loadRegistry, pluginCategories, type Registry, type RegistryPlugin } from './registry.ts'
 import { settingsNamespaceState } from './settings.ts'
 import {
-  buildEnvFromUnknown, cleanHotDir, forgetInstalled, hotMount, hotMountFailure, hotUnmount, listHotMounts, listLiveHotMounts,
+  buildEnvFromUnknown, cleanHotDir, forgetInstalled, hotMount, hotMountFailure, hotUnmount, listHotMounts, listLiveHotMounts, resetHotState,
   MAX_BLOCKED, MAX_BLOCKED_NAME, MAX_FAVORITES, MAX_NOTE, MAX_UPDATE_EXEMPT,
   mountClientOnlyDeps, purgeMarketState, readMarketState, recordInstalled, recordUpdated, writeMarketState,
   type BrokenReason, type MarketState,
@@ -77,6 +77,7 @@ import { DEFAULT_UPDATE_CHECK_INTERVAL_HOURS, isUpdateCheckIntervalHours } from 
 import { createThemeManager, type LoaderEntry } from './themes.ts'
 import { readJsonBody, refuseUnadmitted, sameOrigin, sendJson } from './http.ts'
 import { resolveDshHome } from './home-paths.ts'
+import { asHmr, claimInstance, reloadSelf, selfReloadReply, type SelfReloadOutcome } from './self-reload.ts'
 import { readTelemetryState, sendOpened, setTelemetryEnabled, startHeartbeat, type HeartbeatOptions } from './telemetry.ts'
 import { clearWebdavSecret, readWebdavSecret, webdavSecretFor, writeWebdavSecret } from './webdav-secret.ts'
 import { detectedDebugger, detectedSupervisor, restartAllowed, scheduleRestart, servingPort, trustedRestartRequest, trustedDownloadRequest, trustedSelfUninstallRequest, selfUninstallReachableFrom, type RecoveryHandoffConfig, restartReachableFrom } from './restart.ts'
@@ -178,6 +179,8 @@ export interface MarketHost {
   loader: { entries(): Iterable<LoaderEntry> }
   plugin(plugin: unknown, config: unknown): { await(): Promise<unknown>; dispose(): Promise<unknown> | void }
   on?(event: string, callback: (payload: unknown) => void): () => void
+  /** Service lookup; the host context has it, test doubles may not. */
+  get?(name: string): unknown
   logger?: { info?(message: string): void; warn(message: string): void }
 }
 
@@ -271,6 +274,18 @@ export interface MarketConfig {
  * in frame the first reply always has to ask which one it was.
  */
 let cachedVersion: string | null = null
+
+/**
+ * Forget the version read from disk. Called when the routes unload: a module
+ * the host did not replace (its file did not change) stays loaded across an
+ * in-process reload (src/self-reload.ts), and the instance that comes next
+ * must report the package.json that is on disk now, not the one it started
+ * beside.
+ */
+export function forgetMarketVersion(): void {
+  cachedVersion = null
+}
+
 export function marketVersion(): string {
   if (cachedVersion !== null) return cachedVersion
   try {
@@ -3416,6 +3431,21 @@ export function mountMarketRoutes(
     region: () => region,
   }
 
+  /**
+   * In-process reload of the market itself (see src/self-reload.ts).
+   *
+   * Available when the host can replace modules (its HMR service, DSH 0.2.1
+   * and later) and the market is an installed package of this profile — a
+   * development checkout has no newer files on disk to switch to.
+   */
+  const selfPackageName = (): string | null =>
+    ['dshmarket', 'dsh-market'].find(candidate => readInstalled(config.profile, activeProfileDir)[candidate] !== undefined) ?? null
+  const hostHmr = () => asHmr(host.get?.('hmr'))
+  const selfReloadAvailable = (): boolean =>
+    hostHmr() !== undefined && host.get?.('profileContext') !== undefined && selfPackageName() !== null
+  // Announced once the routes below are up; handlers read it lazily.
+  let instanceClaim: ReturnType<typeof claimInstance> | undefined
+
   const disposers = [
     // The market page was opened. The page says so once per load; the count
     // keeps the first one of each UTC day and ignores the rest. Answered at
@@ -5605,6 +5635,11 @@ export function mountMarketRoutes(
           // card hides a remove button that could only ever answer 403.
           selfUninstallReachable: selfUninstallReachableFrom(request),
           selfManaged: installed.dshmarket !== undefined || installed['dsh-market'] !== undefined,
+          // Whether POST /dsh-market/reload-self can swap a newer build of the
+          // market in without restarting DSH. The page that has just loaded a
+          // newer client than this server reads it to choose between "reload
+          // the market" and "restart DSH".
+          selfReload: selfReloadAvailable(),
           // Whether the host took the market's settings namespace (#677).
           // `unsupported-by-host` is 0.1.7 and newer, where settings come from
           // a plugin's Config schema and no third-party namespace is served —
@@ -8112,6 +8147,49 @@ export function mountMarketRoutes(
       },
     }),
 
+    registerRoute({
+      kind: 'exact',
+      path: '/dsh-market/reload-self',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) {
+          sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        if (restarting) {
+          sendJson(response, 409, { busy: true, error: 'restart already scheduled' })
+          return
+        }
+        try {
+          // Under the same lock as every other change: a swap ends the instance
+          // that would have finished a running install, so none may be running,
+          // and none may start while it happens. A second request answers 409.
+          const outcome = await withMutationLock(response, 'write', async (): Promise<SelfReloadOutcome> => {
+            const name = selfPackageName()
+            return await reloadSelf({
+              hmr: hostHmr,
+              runningVersion: marketVersion(),
+              installedVersion: () => name === null ? null : readInstalledVersion(config.profile, name, activeProfileDir),
+              packageDir: () => join(activeProfileDir, 'node_modules', name ?? 'dshmarket'),
+              instanceId: instanceClaim?.id ?? '',
+              log: (level, detail) => logEvent(level, 'reload', detail),
+            })
+          })
+          if (outcome === null) return
+          const reply = selfReloadReply(outcome)
+          sendJson(response, reply.status, reply.body)
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          logEvent('error', 'reload', `route error: ${message}`)
+          sendJson(response, 500, { ok: false, error: message })
+        }
+      },
+    }),
+
     registerRoute(captureLegacy('/dsh-market/restart', {
       kind: 'exact',
       path: '/dsh-market/restart',
@@ -9442,8 +9520,12 @@ export function mountMarketRoutes(
 
   startCheckoutRepair()
   const stopHeartbeat = startHeartbeat(telemetryOptions)
+  instanceClaim = claimInstance(marketVersion())
   return async () => {
     disposed = true
+    instanceClaim?.release()
+    forgetMarketVersion()
+    resetHotState()
     stopHeartbeat()
     checkoutRepairRound = undefined
     if (checkoutRepairTimer !== undefined) clearTimeout(checkoutRepairTimer)
