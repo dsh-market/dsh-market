@@ -302,15 +302,15 @@ export async function reloadSelf(deps: SelfReloadDeps): Promise<SelfReloadOutcom
 export function selfReloadReply(outcome: SelfReloadOutcome): { status: number; body: Record<string, unknown> } {
   switch (outcome.state) {
     case 'reloaded':
-      return { status: 200, body: { ok: true, state: 'reloaded', from: outcome.from, to: outcome.to } }
+      return { status: 200, body: { ok: true, outcome: 'reloaded', from: outcome.from, to: outcome.to } }
     case 'current':
-      return { status: 200, body: { ok: true, state: 'current', version: outcome.version } }
+      return { status: 200, body: { ok: true, outcome: 'current', version: outcome.version } }
     case 'queued':
       return {
         status: 202,
         body: {
           ok: true,
-          state: 'queued',
+          outcome: 'queued',
           message: 'DSH 正在处理另一项变更，市场会在它结束后自动换成新版。 / DSH is busy with another change. The market will switch to the new version when it finishes.',
         },
       }
@@ -319,7 +319,7 @@ export function selfReloadReply(outcome: SelfReloadOutcome): { status: number; b
         status: 501,
         body: {
           ok: false,
-          state: 'unsupported',
+          outcome: 'unsupported',
           error: outcome.reason === 'no-hmr'
             ? '这个 DSH 版本不能原地换上新版市场。重启 DSH 就会用上新版。 / This DSH version cannot switch to the new market in place. Restart DSH to use it.'
             : '市场不是作为插件装在这里的，没有新版文件可换。要用磁盘上的文件，请重启 DSH。 / The market is not installed as a plugin here, so there is no new version to switch to. Restart DSH to run what is on disk.',
@@ -330,7 +330,7 @@ export function selfReloadReply(outcome: SelfReloadOutcome): { status: number; b
         status: 422,
         body: {
           ok: false,
-          state: 'refused',
+          outcome: 'refused',
           detail: outcome.detail,
           error: '新版本没能加载，已保留正在运行的版本，它照常可用。请再更新一次；重启 DSH 能看到具体原因。 / The new version could not load, so the running one was kept and still works. Update again, or restart DSH to see why.',
         },
@@ -340,7 +340,7 @@ export function selfReloadReply(outcome: SelfReloadOutcome): { status: number; b
         status: 502,
         body: {
           ok: false,
-          state: 'restart-needed',
+          outcome: 'restart-needed',
           detail: outcome.detail,
           error: 'DSH 这次没能换上新版，当前仍是旧版，功能照常。重启 DSH 就会用上新版。 / DSH could not switch to the new version this time. The old one keeps working. Restart DSH to use the new one.',
         },
@@ -350,7 +350,7 @@ export function selfReloadReply(outcome: SelfReloadOutcome): { status: number; b
         status: 502,
         body: {
           ok: false,
-          state: 'failed',
+          outcome: 'failed',
           serving: outcome.serving,
           detail: outcome.detail,
           error: '切换到新版时出了问题，市场暂时不可用。重启 DSH 即可恢复。 / Switching to the new version went wrong and the market is unavailable. Restart DSH to recover.',

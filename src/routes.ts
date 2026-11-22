@@ -294,6 +294,18 @@ export function forgetMarketVersion(): void {
   cachedVersion = null
 }
 
+/**
+ * True only while this market is asking the host to swap in its own new build.
+ *
+ * The version a market reports must be the version of the CODE that is
+ * running. Any other reason this instance unloads (a settings change makes
+ * the host restart the entry) leaves the same code running, so the version
+ * read at first use stays true even though a newer package.json is on disk —
+ * forgetting it there would report the new version over the old code and
+ * hide exactly the mismatch the page needs to see.
+ */
+let swappingSelf = false
+
 export function marketVersion(): string {
   if (cachedVersion !== null) return cachedVersion
   try {
@@ -8525,14 +8537,17 @@ export function mountMarketRoutes(
           // and none may start while it happens. A second request answers 409.
           const outcome = await withMutationLock(response, 'write', async (): Promise<SelfReloadOutcome> => {
             const name = selfPackageName()
-            return await reloadSelf({
-              hmr: hostHmr,
-              runningVersion: marketVersion(),
-              installedVersion: () => name === null ? null : readInstalledVersion(config.profile, name, activeProfileDir),
-              packageDir: () => join(activeProfileDir, 'node_modules', name ?? 'dshmarket'),
-              instanceId: instanceClaim?.id ?? '',
-              log: (level, detail) => logEvent(level, 'reload', detail),
-            })
+            swappingSelf = true
+            try {
+              return await reloadSelf({
+                hmr: hostHmr,
+                runningVersion: marketVersion(),
+                installedVersion: () => name === null ? null : readInstalledVersion(config.profile, name, activeProfileDir),
+                packageDir: () => join(activeProfileDir, 'node_modules', name ?? 'dshmarket'),
+                instanceId: instanceClaim?.id ?? '',
+                log: (level, detail) => logEvent(level, 'reload', detail),
+              })
+            } finally { swappingSelf = false }
           })
           if (outcome === null) return
           const reply = selfReloadReply(outcome)
@@ -9891,7 +9906,7 @@ export function mountMarketRoutes(
   return async () => {
     disposed = true
     instanceClaim?.release()
-    forgetMarketVersion()
+    if (swappingSelf) forgetMarketVersion()
     resetHotState()
     stopHeartbeat()
     checkoutRepairRound = undefined

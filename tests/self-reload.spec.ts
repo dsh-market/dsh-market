@@ -260,7 +260,7 @@ describe('selfReloadReply', () => {
   it('maps every outcome to a status that matches its ok flag', () => {
     for (const outcome of every) {
       const { status, body } = selfReloadReply(outcome)
-      expect(body.state, JSON.stringify(outcome)).toBe(outcome.state)
+      expect(body.outcome, JSON.stringify(outcome)).toBe(outcome.state)
       expect(status >= 200 && status < 300, JSON.stringify(outcome)).toBe(body.ok === true)
     }
   })
@@ -466,7 +466,7 @@ describe('POST /dsh-market/reload-self and selfReload in /status', () => {
     delete services.hmr
     const reply = await hit('POST', '/dsh-market/reload-self')
     expect(reply.status).toBe(501)
-    expect(reply.json).toMatchObject({ ok: false, state: 'unsupported' })
+    expect(reply.json).toMatchObject({ ok: false, outcome: 'unsupported' })
     expect(String(reply.json?.error)).toMatch(/重启 DSH|Restart DSH/)
   })
 
@@ -474,14 +474,14 @@ describe('POST /dsh-market/reload-self and selfReload in /status', () => {
     installMarket(marketVersion())
     const reply = await hit('POST', '/dsh-market/reload-self')
     expect(reply.status).toBe(200)
-    expect(reply.json).toMatchObject({ ok: true, state: 'current', version: marketVersion() })
+    expect(reply.json).toMatchObject({ ok: true, outcome: 'current', version: marketVersion() })
     expect(reconcile).not.toHaveBeenCalled()
   })
 
   it('swaps in the new version and answers from the instance that was replaced', async () => {
     const reply = await hit('POST', '/dsh-market/reload-self')
     expect(reply.status).toBe(200)
-    expect(reply.json).toMatchObject({ ok: true, state: 'reloaded', from: marketVersion(), to: '9.9.9' })
+    expect(reply.json).toMatchObject({ ok: true, outcome: 'reloaded', from: marketVersion(), to: '9.9.9' })
     expect(reconcile).toHaveBeenCalledOnce()
     expect(currentInstance()?.version).toBe('9.9.9')
   })
@@ -490,7 +490,7 @@ describe('POST /dsh-market/reload-self and selfReload in /status', () => {
     installMarket('9.9.9', "throw new Error('broken release')\n")
     const reply = await hit('POST', '/dsh-market/reload-self')
     expect(reply.status).toBe(422)
-    expect(reply.json).toMatchObject({ ok: false, state: 'refused' })
+    expect(reply.json).toMatchObject({ ok: false, outcome: 'refused' })
     expect(String(reply.json?.detail)).toContain('broken release')
     expect(reconcile).not.toHaveBeenCalled()
     expect(handlers.has('/dsh-market/status'), 'the running instance must still be serving').toBe(true)
