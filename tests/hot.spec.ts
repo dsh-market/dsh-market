@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { load } from 'js-yaml'
-import { hotMount, hotUnmount, listHotMounts, mountClientOnlyDeps, parseSimplePatch, resolveProfileEntry } from '../src/hot.ts'
+import { hotMount, hotUnmount, listHotMounts, mountClientOnlyDeps, parseSimplePatch, resetHotState, resolveProfileEntry } from '../src/hot.ts'
 import { configurePersistentLog, readPersistentLog } from '../src/log.ts'
 
 // The harness-vendored Include class is not importable in the unit lane;
@@ -36,6 +36,33 @@ function clientOnlyPkg(dir: string, name: string): void {
 
 afterEach(async () => {
   for (const name of listHotMounts()) await hotUnmount(name)
+})
+
+describe('resetHotState (the market reloads itself in-process)', () => {
+  it('forgets mounts whose trees went down with the instance that owned them', async () => {
+    // The trees hang off the market's own instance; the tables are module
+    // state a reload may keep. A stale table makes the next instance believe
+    // a plugin is mounted that is not, and "switch off" dispose a dead handle.
+    const dir = mkdtempSync(join(tmpdir(), 'dshm-hot-'))
+    const name = 'dsh-test-reset-state'
+    try {
+      const pkg = join(dir, 'node_modules', name)
+      mkdirSync(pkg, { recursive: true })
+      writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name }))
+      writeFileSync(join(pkg, 'cordis.patch.yml'), `- insert:\n    - id: main\n      name: ${name}\n`)
+      expect((await hotMount(ctx, dir, name)).ok).toBe(true)
+      expect(listHotMounts()).toContain(name)
+
+      resetHotState()
+      expect(listHotMounts()).toEqual([])
+      expect(await hotUnmount(name)).toBe(false)
+      expect((await hotMount(ctx, dir, name)).ok).toBe(true)
+      expect(listHotMounts()).toContain(name)
+    } finally {
+      await hotUnmount(name)
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('hotMount finds a patch the package declares in a subdirectory (#646)', () => {

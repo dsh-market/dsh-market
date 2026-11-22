@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
-import { compareMarketVersions, readMarketJson, serverIsBehind } from '../../src/client/client-version.ts'
+import { compareMarketVersions, readMarketJson, requestSelfReload, serverIsBehind } from '../../src/client/client-version.ts'
 import { AiRecommend } from '../../src/client/AiRecommend.tsx'
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
@@ -24,6 +24,36 @@ it('reads the empty 405 a host sends for a route this server lacks as stale-serv
   expect((await readMarketJson(new Response('', { status: 404 }))).body.code).toBe('stale-server')
   expect((await readMarketJson(new Response('<html>', { status: 502 }))).body.code).toBe('bad-reply')
   expect((await readMarketJson(new Response('{"result":1}', { status: 200 }))).body).toEqual({ result: 1 })
+})
+
+const json = (status: number, body: unknown): Response => new Response(JSON.stringify(body), { status })
+
+it('applies at once when the server swaps in the new version (200)', async () => {
+  const read = vi.fn()
+  expect(await requestSelfReload(async () => json(200, { ok: true, outcome: 'reloaded' }), read)).toEqual({ ok: true })
+  expect(read).not.toHaveBeenCalled()
+})
+
+it('waits for a queued swap (202) until /status reaches the page version, then applies', async () => {
+  vi.stubGlobal('__DSHM_CLIENT_VERSION__', undefined)
+  const versions = ['1.0.0', '1.0.0', '1.0.1']
+  const read = vi.fn(async () => versions.shift() ?? '1.0.1')
+  // Without a built-in client version the page cannot be "ahead", so the first
+  // poll already counts: the point here is that 202 is not treated as failure.
+  const result = await requestSelfReload(async () => json(202, { ok: true, outcome: 'queued' }), read, { pollMs: 1, timeoutMs: 1000 })
+  expect(result).toEqual({ ok: true })
+  expect(read).toHaveBeenCalled()
+})
+
+it('gives up on a queued swap that never lands, with no reason of its own', async () => {
+  const result = await requestSelfReload(async () => json(202, {}), async () => null, { pollMs: 1, timeoutMs: 20 })
+  expect(result).toEqual({ ok: false, error: '' })
+})
+
+it('hands back the server\'s own words when it cannot switch', async () => {
+  const error = '新版本没能加载 / The new version could not load'
+  expect(await requestSelfReload(async () => json(422, { ok: false, outcome: 'refused', error }), vi.fn())).toEqual({ ok: false, error })
+  expect(await requestSelfReload(async () => new Response(null, { status: 405 }), vi.fn())).toEqual({ ok: false, error: '' })
 })
 
 it('says the server is still the old version when the recommendation route is missing', async () => {

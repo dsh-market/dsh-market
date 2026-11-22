@@ -1,0 +1,12 @@
+{
+  "name": "dshm-e2e-fixture-shim",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "exports": { ".": "./index.js", "./client": "./client.js", "./package.json": "./package.json" },
+  "files": ["index.js", "client.js"],
+  "dsh": {
+    "client": { "platform": "web", "immediately": true }
+  }
+}

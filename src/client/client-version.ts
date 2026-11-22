@@ -31,6 +31,36 @@ export function serverIsBehind(serverVersion: string | null, clientVersion: stri
 }
 
 /**
+ * Ask the server to swap in the version the page already is (POST
+ * /dsh-market/reload-self), and wait until it has.
+ *
+ * 200 means the new server half is serving. 202 means the host was busy with
+ * another change and will do it when that ends: poll /status until the
+ * version catches up, within a bound. Any other answer carries the reason in
+ * plain words (`error`, zh / en); an empty one means the server could not say.
+ */
+export async function requestSelfReload(
+  post: () => Promise<Response>,
+  readVersion: () => Promise<string | null>,
+  options: { pollMs?: number; timeoutMs?: number } = {},
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const res = await post()
+  if (res.status !== 202) {
+    if (res.ok) return { ok: true }
+    const { body } = await readMarketJson<{ error?: string }>(res)
+    return { ok: false, error: typeof body.error === 'string' ? body.error : '' }
+  }
+  const pollMs = options.pollMs ?? 1000
+  const deadline = Date.now() + (options.timeoutMs ?? 120_000)
+  while (Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, pollMs))
+    const version = await readVersion().catch(() => null)
+    if (version !== null && !serverIsBehind(version)) return { ok: true }
+  }
+  return { ok: false, error: '' }
+}
+
+/**
  * Read a JSON reply; an empty or non-JSON body from a route this server does
  * not have (the host answers 404/405 with nothing) becomes `stale-server`,
  * never a JSON parse error.
