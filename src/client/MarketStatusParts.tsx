@@ -114,6 +114,9 @@ export function activationMeta(
   if (state === 'incompatible') return { label: t('stateIncompatible'), dot: 'error' }
   if (state === 'inert') return { label: t('stateInert'), dot: 'warning' }
   if (state === 'broken') return { label: t('stateBroken'), dot: 'error' }
+  // The package is not on disk at all (verify → 未安装 / not installed): the
+  // row has to read as unavailable, not as a state nobody set (#1278).
+  if (state === 'missing') return { label: t('notInstalled'), dot: 'error' }
   // The host's loader made a row for it and never started one (#1023): not a
   // pending change, so it must not read like one.
   if (state === 'failed') return { label: t('stateFailed'), dot: 'error' }
