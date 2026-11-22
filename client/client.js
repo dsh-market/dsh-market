@@ -3930,6 +3930,23 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			else anyOn = true;
 			return anyOn && anyOff ? "mixed" : anyOff ? "off" : "on";
 		}
+		/**
+		* What an installed row's on/off tag is allowed to claim (#1278).
+		*
+		* The tag reports switch membership: "off" means the market's disable list
+		* holds this name. Membership is not availability — a bundle whose package
+		* no longer resolves (installed failed, node_modules cleaned, declared by
+		* hand) verifies as `missing` and is absent from that list, so the naive
+		* answer would be "on": a row claiming a running plugin for a package no
+		* boot can load, next to red text asking the user to reinstall it.
+		*
+		* `null` means the row keeps the activation's own diagnosis instead, which
+		* is what inert and broken rows already do (#60).
+		*/
+		function installedStateTag(off, state) {
+			if (state === "missing") return null;
+			return off ? "off" : "on";
+		}
 		/** Match the languages for which the market registers its own dictionary. */
 		function marketUiLocale(active) {
 			const language = active.toLowerCase().split(/[-_]/)[0];
@@ -9825,6 +9842,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			};
 			if (state === "broken") return {
 				label: t("stateBroken"),
+				dot: "error"
+			};
+			if (state === "missing") return {
+				label: t("notInstalled"),
 				dot: "error"
 			};
 			if (state === "failed") return {
@@ -21600,6 +21621,7 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 						const repoUrl = entry !== void 0 ? entry.url : ghSpec !== null ? "https://github.com/" + ghSpec[1] : null;
 						const off = act?.library !== true && effectiveDisabledSet.has(name);
 						const toggleable = act?.library !== true && (off || act !== void 0 && (act.state === "live" || act.state === "restart"));
+						const stateTag = installedStateTag(off, act?.state);
 						const updatable = isPluginUpdatable(name, String(spec), status, updatedNames);
 						const metaBits = [
 							version,
@@ -21924,13 +21946,13 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 							}), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 								className: Market_module_css_default.irowActions,
 								children: [
-									!missing && act?.library !== true && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
+									!missing && act?.library !== true && stateTag !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
 										className: Market_module_css_default.stateTag,
-										"data-on": off ? "false" : "true",
+										"data-on": stateTag === "off" ? "false" : "true",
 										children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 											className: Market_module_css_default.stateDot,
-											"data-on": off ? "false" : "true"
-										}), off ? t("disabledState") : t("switchOnLabel")]
+											"data-on": stateTag === "off" ? "false" : "true"
+										}), stateTag === "off" ? t("disabledState") : t("switchOnLabel")]
 									}),
 									toggleable && onOffSwitch({
 										label: (off ? t("enable") : t("disable")) + " " + name,

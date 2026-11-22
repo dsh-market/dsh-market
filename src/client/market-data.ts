@@ -571,6 +571,24 @@ export function groupSwitchState(members: string[] | undefined, disabled: Readon
   return anyOn && anyOff ? 'mixed' : anyOff ? 'off' : 'on'
 }
 
+/**
+ * What an installed row's on/off tag is allowed to claim (#1278).
+ *
+ * The tag reports switch membership: "off" means the market's disable list
+ * holds this name. Membership is not availability — a bundle whose package
+ * no longer resolves (installed failed, node_modules cleaned, declared by
+ * hand) verifies as `missing` and is absent from that list, so the naive
+ * answer would be "on": a row claiming a running plugin for a package no
+ * boot can load, next to red text asking the user to reinstall it.
+ *
+ * `null` means the row keeps the activation's own diagnosis instead, which
+ * is what inert and broken rows already do (#60).
+ */
+export function installedStateTag(off: boolean, state: ActivationState | undefined): 'on' | 'off' | null {
+  if (state === 'missing') return null
+  return off ? 'off' : 'on'
+}
+
 /** Registered theme definition surfaced by the theme service snapshot. */
 export interface ThemeDef {
   id: string

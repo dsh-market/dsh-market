@@ -8,7 +8,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
-  entryForDep, installCommandFor, extractReadmeImageCandidates, extractReadmeImages, formatCount, groupSwitchState, installedForCatalog, isInstalled, isMarketItself, localizeBilingual, localizeBilingualList, looksTerminal, matchInstalledName, orderedCategories, pageItems, pluginCategories, pluginName, pluginScreenshotCandidates, pluginsForFavorites, previewDimensionScore, rankThemeScreenshots, releaseNotesHttpsImage, resetGithubRouting, resetScreenshotsCache, safeScreenshots, sanitizeReleaseNotesBody, staleFavoriteUrls, themePlugins, visiblePlugins, sourceLabel, sourceErrorText, loadedSources, isPublicImageHost, safeIcon, humanOutput, failureText, catalogEntryForInstalled, profileBlockedText, profileBlockStillHolds } from '../src/client/market-data.ts'
+  entryForDep, installCommandFor, extractReadmeImageCandidates, extractReadmeImages, formatCount, groupSwitchState, installedForCatalog, installedStateTag, isInstalled, isMarketItself, localizeBilingual, localizeBilingualList, looksTerminal, matchInstalledName, orderedCategories, pageItems, pluginCategories, pluginName, pluginScreenshotCandidates, pluginsForFavorites, previewDimensionScore, rankThemeScreenshots, releaseNotesHttpsImage, resetGithubRouting, resetScreenshotsCache, safeScreenshots, sanitizeReleaseNotesBody, staleFavoriteUrls, themePlugins, visiblePlugins, sourceLabel, sourceErrorText, loadedSources, isPublicImageHost, safeIcon, humanOutput, failureText, catalogEntryForInstalled, profileBlockedText, profileBlockStillHolds } from '../src/client/market-data.ts'
 import { imageAllowed, orgPolicy, setOrgPolicy } from '../src/client/org-policy.ts'
 import type { RegistryPlugin, ScreenshotCandidate, ScreenshotRejection } from '../src/client/market-data.ts'
 
@@ -750,6 +750,23 @@ describe('group switch derivation (#60)', () => {
     expect(groupSwitchState(['a', 'b'], new Set())).toBe('on')
     expect(groupSwitchState(['a', 'b'], new Set(['a', 'b']))).toBe('off')
     expect(groupSwitchState(['a', 'b'], new Set(['a']))).toBe('mixed')
+  })
+})
+
+describe('installed row tag vs availability (#1278)', () => {
+  it('reports the disable list for a package that is on disk', () => {
+    expect(installedStateTag(false, 'live')).toBe('on')
+    expect(installedStateTag(true, 'disabled')).toBe('off')
+    // No activation row yet (still resolving): the list is all there is.
+    expect(installedStateTag(false, undefined)).toBe('on')
+  })
+
+  it('claims nothing for a package that is not on disk', () => {
+    // The row must not read as a running plugin just because the name is
+    // absent from the disable list -- that is the whole bug.
+    expect(installedStateTag(false, 'missing')).toBeNull()
+    // Even when it is also in the list, the availability is the louder fact.
+    expect(installedStateTag(true, 'missing')).toBeNull()
   })
 })
 

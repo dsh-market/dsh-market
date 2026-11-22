@@ -11,6 +11,7 @@ import {
   groupSwitchState,
   hostCompatibilityKey,
   installedDateText,
+  installedStateTag,
   isGenerationSpec,
   isInstalled,
   localizeBilingualList,
@@ -445,6 +446,8 @@ export function InstalledTab({ c }: { c: InstalledTabCtx }) {
                 // states. inert/broken rows keep their diagnosis
                 // without a misleading toggle (#60).
                 const toggleable = act?.library !== true && (off || (act !== undefined && (act.state === 'live' || act.state === 'restart')))
+                // Null for a package that is not on disk: see installedStateTag.
+                const stateTag = installedStateTag(off, act?.state)
                 const updatable = isPluginUpdatable(name, String(spec), status, updatedNames)
                 const metaBits = [
                   version,
@@ -773,11 +776,13 @@ export function InstalledTab({ c }: { c: InstalledTabCtx }) {
                         card), so no self-toggle special case is needed. */}
                     <div className={css.irowActions}>
                     {/* Dot + tag, the pairing the host's own plugin
-                        inventory uses for exactly this state. */}
-                    {!missing && act?.library !== true && (
-                      <span className={css.stateTag} data-on={off ? 'false' : 'true'}>
-                        <span className={css.stateDot} data-on={off ? 'false' : 'true'} />
-                        {off ? t('disabledState') : t('switchOnLabel')}
+                        inventory uses for exactly this state. A package that
+                        is not on disk has no membership worth reporting, so
+                        the line keeps its 未安装 diagnosis instead (#1278). */}
+                    {!missing && act?.library !== true && stateTag !== null && (
+                      <span className={css.stateTag} data-on={stateTag === 'off' ? 'false' : 'true'}>
+                        <span className={css.stateDot} data-on={stateTag === 'off' ? 'false' : 'true'} />
+                        {stateTag === 'off' ? t('disabledState') : t('switchOnLabel')}
                       </span>
                     )}
                     {toggleable && (
